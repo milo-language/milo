@@ -1,0 +1,19 @@
+// @expect: hello world
+// @expect: foobar
+// @expect: done
+// tests: string drop on scope exit, reassignment drops old value, move zeroes source
+fn consume(s: String) {
+    println(s)
+}
+
+fn main() -> i32 {
+    let a = "hello" + " world"
+    consume(a)
+
+    var b = "foo" + "bar"
+    println(b)
+    b = "replaced"
+
+    println("done")
+    return 0
+}
