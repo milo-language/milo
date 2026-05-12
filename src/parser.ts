@@ -273,6 +273,9 @@ export class Parser {
   private parseIf(): Stmt {
     const s = this.span(this.peek());
     this.expect(TokenKind.If);
+    if (this.at(TokenKind.Let)) {
+      return this.parseIfLet(s);
+    }
     const cond = this.parseExpr();
     this.expect(TokenKind.LBrace);
     const thenBody = this.parseStmts();
@@ -288,6 +291,23 @@ export class Parser {
       }
     }
     return { kind: "IfStmt", cond, thenBody, elseBody, span: s };
+  }
+
+  private parseIfLet(s: Span): Stmt {
+    this.expect(TokenKind.Let);
+    const pattern = this.parsePattern();
+    this.expect(TokenKind.Eq);
+    const subject = this.parseExpr();
+    this.expect(TokenKind.LBrace);
+    const thenBody = this.parseStmts();
+    this.expect(TokenKind.RBrace);
+    let elseBody: Stmt[] | null = null;
+    if (this.match(TokenKind.Else)) {
+      this.expect(TokenKind.LBrace);
+      elseBody = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+    }
+    return { kind: "IfLetStmt", pattern, subject, thenBody, elseBody, span: s };
   }
 
   private parseWhile(): Stmt {

@@ -133,6 +133,29 @@ class LowerCtx {
         return { kind: "Continue", span: stmt.span };
       case "ExprStmt":
         return { kind: "ExprStmt", expr: this.lowerExpr(stmt.expr), span: stmt.span };
+      case "IfLetStmt": {
+        const subjType = this.typeOf(stmt.subject);
+        const enumName = subjType?.tag === "enum" ? subjType.name : "";
+        const enumInfo = this.c.enums.get(enumName);
+        const arms = [
+          {
+            pattern: this.lowerPattern(stmt.pattern, enumInfo),
+            body: stmt.thenBody.map(s => this.lowerStmt(s, fnRetType)),
+          },
+        ];
+        if (stmt.elseBody) {
+          arms.push({
+            pattern: { kind: "WildcardPattern" as const },
+            body: stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)),
+          });
+        } else {
+          arms.push({
+            pattern: { kind: "WildcardPattern" as const },
+            body: [],
+          });
+        }
+        return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, span: stmt.span };
+      }
       case "MatchStmt": {
         const subjType = this.typeOf(stmt.subject);
         const enumName = subjType?.tag === "enum" ? subjType.name : "";

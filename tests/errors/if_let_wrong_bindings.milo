@@ -1,0 +1,14 @@
+// @error: variant 'Some' has 1 fields, but pattern has 2 bindings
+
+enum Option {
+    Some(i32),
+    None,
+}
+
+fn main() -> i32 {
+    let x = Option::Some(42)
+    if let Option::Some(a, b) = x {
+        return 0
+    }
+    return 0
+}

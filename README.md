@@ -50,12 +50,15 @@ fn main() -> i32 {
 - Structs (value types, move semantics)
 - Bounds-checked arrays
 - Enums / tagged unions with exhaustive `match`
-- `Vec<T>` dynamic arrays with push/pop/len, bounds-checked indexing
+- `Box<T>` — heap-allocated single-owner pointer, recursive enum payloads (linked lists, trees, ASTs)
+- `Vec<T>` — dynamic arrays with `push`/`pop`/`len`, bounds-checked indexing
+- Drop semantics — heap-owning values auto-freed on scope exit
 - Generics on functions, enums, and structs (monomorphization, type inference)
 
 **Control flow**
 - `if`/`else`, `while`, `break`, `continue`, `return`
 - `match` with exhaustiveness checking
+- `if let` for single-variant pattern matching
 
 **Option / Result ergonomics**
 ```
@@ -78,8 +81,9 @@ Recursive resolution, dedup, transitive imports.
 **Tooling**
 - LSP server (`milod`): diagnostics, hover, go-to-definition
 - VS Code extension: syntax highlighting + LSP client
+- GitHub Actions CI
 
-90 tests pass on the current build.
+95 tests pass on the current build.
 
 ## Design Principles
 
@@ -99,9 +103,12 @@ Recursive resolution, dedup, transitive imports.
 
 Honest list of major gaps:
 
-- **No hash maps or arenas.** `Box<T>` works for recursive types; `Vec<T>` provides dynamic arrays. Key-value stores not yet.
-- **No arenas yet.** The arena design is the planned answer for cyclic data; Box<T> handles trees and recursive structures today.
-- **No `if let` / `guard let`.** `!` `?` `??` cover most Option/Result cases; full sugar pending.
+- **No `HashMap<K, V>`.** Key-value storage is the biggest stdlib hole today — blocks symbol tables, frequency counts, JSON object trees.
+- **No arenas yet.** Planned answer for cyclic data and bulk-allocated graphs. `Box<T>` handles trees and recursive structures meanwhile.
+- **No string slices or `split`.** Strings are owned; substring views via references can't escape function scope yet.
+- **No closures.** No `map`/`filter`-style iteration.
+- **No `guard let`.** `if let` works; `guard let ... else { return }` not yet.
+- **No concurrency story.** Design open — leaning toward structured concurrency + channels, not async/await.
 - **No formatter, no package manager, no REPL.**
 - **Not self-hosting.** Compiler is ~4k lines of TypeScript.
 
@@ -115,4 +122,4 @@ Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics, 
 
 ## Status
 
-Phase 2 — most language features in place, heap and arenas next.
+Phase 2 — language core in place. `Box<T>` and `Vec<T>` shipped. Next: `HashMap<K, V>`, arenas, closures.

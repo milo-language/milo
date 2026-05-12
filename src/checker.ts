@@ -528,6 +528,45 @@ export class TypeChecker {
         this.tryMove(stmt.subject);
         break;
       }
+      case "IfLetStmt": {
+        const subjType = this.checkExpr(stmt.subject);
+        if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
+          this.error(`if let subject must be an enum, got ${typeName(subjType)}`, sp);
+          break;
+        }
+        if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
+          const enumInfo = this.enums.get(subjType.name)!;
+          const ps = stmt.pattern.span;
+          if (stmt.pattern.enumName !== subjType.name && enumInfo.baseName !== stmt.pattern.enumName) {
+            this.error(`pattern enum '${stmt.pattern.enumName}' does not match subject type '${subjType.name}'`, ps);
+          }
+          const variant = enumInfo.variants.get(stmt.pattern.variant);
+          if (!variant) {
+            this.error(`enum '${subjType.name}' has no variant '${stmt.pattern.variant}'`, ps);
+          } else if (stmt.pattern.bindings.length !== variant.fields.length) {
+            this.error(`variant '${stmt.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${stmt.pattern.bindings.length} bindings`, ps);
+          }
+          this.pushScope();
+          if (variant) {
+            for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
+              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false });
+            }
+          }
+          for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
+          this.popScope();
+        } else {
+          this.pushScope();
+          for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
+          this.popScope();
+        }
+        if (stmt.elseBody) {
+          this.pushScope();
+          for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
+          this.popScope();
+        }
+        this.tryMove(stmt.subject);
+        break;
+      }
     }
   }
 

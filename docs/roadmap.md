@@ -40,7 +40,7 @@ Remaining (priority order):
 - [x] **P6: Char literals** — `'x'`, i8 representation
 - [x] **P7: Type casts** — `expr as Type`, checked in sema
 - [x] **P8: Integer literal coercion** — auto-coerce int literals in binary ops
-- [ ] **P9: if-let / guard-let** — `if let Some(n) = opt { ... }`, `guard let Ok(n) = expr else { return ... }`
+- [x] **P9: if-let** — `if let Some(n) = opt { ... }` with optional else branch
 - [ ] Array utilities (push, slice, etc. — needs runtime/heap)
 
 Milestone: JSON parser ✅, simple HTTP server, a toy compiler

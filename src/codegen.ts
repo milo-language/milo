@@ -18,7 +18,7 @@ export class Codegen {
   private strCounter = 0;
   private tempCounter = 0;
   private labelCounter = 0;
-  private locals = new Map<string, { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean }>();
+  private locals = new Map<string, { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }>();
   private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
   private structLayouts = new Map<string, StructLayout>();
   private enumLayouts = new Map<string, EnumLayout>();
@@ -43,6 +43,7 @@ export class Codegen {
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
+  private localAddr(name: string): string { return this.locals.get(name)?.addr ?? `%${name}.addr`; }
   private emit(line: string) { this.output.push(line); }
 
   private llvmType(t: TypeKind): string {
@@ -363,10 +364,10 @@ export class Codegen {
       const local = this.locals.get(expr.name);
       if (local?.isRef) {
         const tmp = this.nextTemp();
-        lines.push(`  ${tmp} = load ptr, ptr %${expr.name}.addr`);
+        lines.push(`  ${tmp} = load ptr, ptr ${this.localAddr(expr.name)}`);
         return [lines, tmp, local.type];
       }
-      return [lines, `%${expr.name}.addr`, local?.type ?? "i32"];
+      return [lines, this.localAddr(expr.name), local?.type ?? "i32"];
     }
     if (expr.kind === "FieldAccess") {
       const [objLines, objPtr, objTy] = this.genLValue(expr.object);
@@ -556,9 +557,11 @@ export class Codegen {
       const ty = variant.fieldTypes[0];
       const val = this.nextTemp();
       lines.push(`  ${val} = load ${ty}, ptr ${payloadPtr}`);
-      lines.push(`  %${pattern.bindings[0].name}.addr = alloca ${ty}`);
-      lines.push(`  store ${ty} ${val}, ptr %${pattern.bindings[0].name}.addr`);
-      this.locals.set(pattern.bindings[0].name, { type: ty, typeKind: pattern.bindings[0].type, mutable: false, isRef: false });
+      const uid = this.labelCounter++;
+      const addr = `%${pattern.bindings[0].name}.${uid}.addr`;
+      lines.push(`  ${addr} = alloca ${ty}`);
+      lines.push(`  store ${ty} ${val}, ptr ${addr}`);
+      this.locals.set(pattern.bindings[0].name, { type: ty, typeKind: pattern.bindings[0].type, mutable: false, isRef: false, addr });
     } else {
       const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
       for (let i = 0; i < pattern.bindings.length; i++) {
@@ -567,9 +570,11 @@ export class Codegen {
         lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
-        lines.push(`  %${pattern.bindings[i].name}.addr = alloca ${ty}`);
-        lines.push(`  store ${ty} ${val}, ptr %${pattern.bindings[i].name}.addr`);
-        this.locals.set(pattern.bindings[i].name, { type: ty, typeKind: pattern.bindings[i].type, mutable: false, isRef: false });
+        const uid = this.labelCounter++;
+        const addr = `%${pattern.bindings[i].name}.${uid}.addr`;
+        lines.push(`  ${addr} = alloca ${ty}`);
+        lines.push(`  store ${ty} ${val}, ptr ${addr}`);
+        this.locals.set(pattern.bindings[i].name, { type: ty, typeKind: pattern.bindings[i].type, mutable: false, isRef: false, addr });
       }
     }
   }
@@ -636,16 +641,17 @@ export class Codegen {
         if (!local) { console.error(`error[codegen]: undefined variable '${expr.name}'`); process.exit(1); }
         if (local.isRef) {
           const ptr = this.nextTemp();
-          lines.push(`  ${ptr} = load ptr, ptr %${expr.name}.addr`);
+          lines.push(`  ${ptr} = load ptr, ptr ${this.localAddr(expr.name)}`);
           if (this.getStructName(local.type)) return [lines, ptr, local.type];
           const val = this.nextTemp();
           lines.push(`  ${val} = load ${local.type}, ptr ${ptr}`);
           return [lines, val, local.type];
         }
+        const addr = this.localAddr(expr.name);
         const tmp = this.nextTemp();
-        lines.push(`  ${tmp} = load ${local.type}, ptr %${expr.name}.addr`);
+        lines.push(`  ${tmp} = load ${local.type}, ptr ${addr}`);
         if (expr.isMove && this.needsDropCg(local.typeKind)) {
-          lines.push(`  store ${local.type} zeroinitializer, ptr %${expr.name}.addr`);
+          lines.push(`  store ${local.type} zeroinitializer, ptr ${addr}`);
         }
         return [lines, tmp, local.type];
       }
@@ -1217,10 +1223,10 @@ export class Codegen {
       if (local?.isRef) {
         const lines: string[] = [];
         const tmp = this.nextTemp();
-        lines.push(`  ${tmp} = load ptr, ptr %${expr.name}.addr`);
+        lines.push(`  ${tmp} = load ptr, ptr ${this.localAddr(expr.name)}`);
         return [lines, tmp];
       }
-      return [[], `%${expr.name}.addr`];
+      return [[], this.localAddr(expr.name)];
     }
     if (expr.kind === "FieldAccess") {
       const [lines, ptr] = this.genFieldPtr(expr);
@@ -1597,7 +1603,7 @@ export class Codegen {
   // emit drop glue for all droppable locals before a scope exit
   private emitDropGlue(lines: string[]) {
     for (const local of this.droppableLocals) {
-      this.emitDropValue(lines, `%${local.name}.addr`, local.typeKind);
+      this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
     }
   }
 }
