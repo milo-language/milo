@@ -1,0 +1,7 @@
+// @expect: AB
+fn main() -> i32 {
+    print("A")
+    print("B")
+    println("")
+    return 0
+}

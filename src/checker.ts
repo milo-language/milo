@@ -140,6 +140,13 @@ export class TypeChecker {
   }
 
   check(program: Program): string[] {
+    // register built-in functions
+    const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
+    const i32t: TypeKind = { tag: "int", bits: 32, signed: true };
+    this.functions.set("print", { params: [{ type: ptrU8, name: "fmt" }], ret: { tag: "void" }, variadic: true });
+    this.functions.set("println", { params: [{ type: ptrU8, name: "fmt" }], ret: { tag: "void" }, variadic: true });
+    this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
+
     // register structs
     for (const s of program.structs) {
       const fields = s.fields.map(f => ({ name: f.name, type: this.resolve(f.type) }));

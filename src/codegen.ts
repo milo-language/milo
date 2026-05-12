@@ -28,7 +28,12 @@ export class Codegen {
   private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; params: { type: MiloType; name: string }[] }>();
   private structLayouts = new Map<string, StructLayout>();
   private enumLayouts = new Map<string, EnumLayout>();
+  private userDeclaredFns = new Set<string>();
   private needsBoundsCheck = false;
+  private needsPrintf = false;
+  private needsPutchar = false;
+  private needsExit = false;
+  private static BUILTINS = new Set(["print", "println", "exit"]);
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
@@ -120,6 +125,7 @@ export class Codegen {
 
     // register function signatures
     for (const fn of program.functions) {
+      this.userDeclaredFns.add(fn.name);
       const ret = this.llvmType(fn.retType);
       this.fnSigs.set(fn.name, {
         paramTypes: fn.params.map(p => this.llvmType(p.type)),
@@ -139,13 +145,17 @@ export class Codegen {
     const fnBodies: string[][] = [];
     for (const fn of functions) fnBodies.push(this.genFunction(fn));
 
-    // insert bounds check helper if needed
-    const hasExternPrintf = externs.some(e => e.name === "printf");
-    if (this.needsBoundsCheck) {
+    // auto-declare C functions needed by built-ins and bounds checks
+    const declaredExterns = new Set(externs.map(e => e.name));
+    if (this.needsBoundsCheck) { this.needsPrintf = true; this.needsExit = true; }
+    if (this.needsExit && !declaredExterns.has("exit"))
       this.output.splice(1, 0, "declare void @exit(i32) noreturn");
-      if (!hasExternPrintf) this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
+    if (this.needsPutchar && !declaredExterns.has("putchar"))
+      this.output.splice(1, 0, "declare i32 @putchar(i32)");
+    if (this.needsPrintf && !declaredExterns.has("printf"))
+      this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
+    if (this.needsBoundsCheck)
       this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
-    }
 
     // insert string constants
     for (let i = this.strings.length - 1; i >= 0; i--) {
@@ -486,6 +496,31 @@ export class Codegen {
     }
   }
 
+  private genBuiltinCall(expr: Expr & { kind: "Call" }, lines: string[]): [string[], string, string] {
+    if (expr.func === "print" || expr.func === "println") {
+      this.needsPrintf = true;
+      if (expr.func === "println") this.needsPutchar = true;
+      const argVals: { val: string; type: string }[] = [];
+      for (const arg of expr.args) {
+        const [al, av, at] = this.genExpr(arg);
+        lines.push(...al);
+        argVals.push({ val: av, type: at });
+      }
+      const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
+      lines.push(`  call i32 (ptr, ...) @printf(${argsStr})`);
+      if (expr.func === "println") lines.push(`  call i32 @putchar(i32 10)`);
+      return [lines, "void", "void"];
+    }
+    if (expr.func === "exit") {
+      this.needsExit = true;
+      const [al, av] = this.genExpr(expr.args[0]);
+      lines.push(...al);
+      lines.push(`  call void @exit(i32 ${av})`);
+      return [lines, "void", "void"];
+    }
+    return [lines, "void", "void"];
+  }
+
   private genExpr(expr: Expr): [string[], string, string] {
     const lines: string[] = [];
 
@@ -554,6 +589,10 @@ export class Codegen {
         console.error(`error[codegen]: unknown unary op '${expr.op}'`); process.exit(1);
       }
       case "Call": {
+        // built-in functions
+        if (Codegen.BUILTINS.has(expr.func) && !this.userDeclaredFns.has(expr.func)) {
+          return this.genBuiltinCall(expr, lines);
+        }
         const sig = this.fnSigs.get(expr.func);
         const argVals: { val: string; type: string }[] = [];
         for (let i = 0; i < expr.args.length; i++) {
