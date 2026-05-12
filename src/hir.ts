@@ -21,7 +21,10 @@ export type HIRExpr =
   | { kind: "IndexAccess"; object: HIRExpr; index: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "EnumLit"; enumName: string; variant: string; args: HIRExpr[]; type: TypeKind; span?: Span }
   | { kind: "ArrayLen"; object: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "StringLen"; object: HIRExpr; type: TypeKind; span?: Span };
+  | { kind: "StringLen"; object: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "Unwrap"; operand: HIRExpr; enumName: string; type: TypeKind; span?: Span }
+  | { kind: "Propagate"; operand: HIRExpr; enumName: string; retType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;

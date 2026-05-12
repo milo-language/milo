@@ -34,15 +34,8 @@ Remaining (priority order):
 - [x] **P0: String type** — owned UTF-8 `{ ptr, len, cap }`, ops: len, concat (+), eq (==, !=), byte index, auto-coercion to `*u8` for FFI
 - [x] **P1: Imports / modules** — `import "path.milo"`, recursive resolution, dedup, transitive
 - [x] **P2: Generics — structs** — monomorphization, type inference from field values
-- [ ] **P3: Option/Result ergonomics** — flatten-first design, no method-chain zoo:
-  - `expr?` — postfix propagate. Works on `Option` and `Result`. Requires fn return type matches.
-  - `expr ?? default` — postfix default value.
-  - `expr!` — postfix panic-unwrap. Panic message includes source span (`file:line:col`) via existing AST spans. Beats Rust's anonymous `unwrap()`.
-  - `if let Some(n) = opt { ... } else { ... }` — expression form, binds in then-branch.
-  - `guard let Ok(n) = expr else { return ... }` — early-return sugar. `n` in scope after. Flattens nested match.
-  - Explicit `Option → Result` conversion required. Builtin: `opt.ok_or(e)`.
-  - No `.map`/`.and_then`/`.or_else` method chains — banned at checker level. Force flat code, `?`, or `match`.
-- [ ] **P4: if-let syntax** — covered by P3 (`if let` + `guard let`).
+- [x] **P3: Option/Result ergonomics** — `!` (unwrap with panic + span), `?` (propagate), `??` (default value)
+- [ ] **P4: if-let / guard-let** — `if let Some(n) = opt { ... }`, `guard let Ok(n) = expr else { return ... }`
 - [ ] Array utilities
 
 Milestone: JSON parser, simple HTTP server, a toy compiler

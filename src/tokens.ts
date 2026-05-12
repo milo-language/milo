@@ -49,6 +49,8 @@ export enum TokenKind {
   GtEq = ">=",
   Bang = "!",
   DotDotDot = "...",
+  Question = "?",
+  QuestionQuestion = "??",
   Eof = "EOF",
 }
 

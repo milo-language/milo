@@ -72,6 +72,7 @@ export class TypeChecker {
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
   private rewrittenStructLits = new Map<Expr, string>();
+  private currentFnRetType: TypeKind = { tag: "void" };
 
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
@@ -342,6 +343,7 @@ export class TypeChecker {
   private checkFunction(fn: Function) {
     this.pushScope();
     const retType = this.resolve(fn.retType);
+    this.currentFnRetType = retType;
 
     for (const p of fn.params) {
       const pType = this.resolve(p.type);
@@ -885,6 +887,60 @@ export class TypeChecker {
         }
         return this.setType(expr, { tag: "enum", name: expr.enumName });
       }
+      case "Unwrap": {
+        const operandType = this.checkExpr(expr.operand);
+        const inner = this.unwrapableInner(operandType);
+        if (!inner) {
+          this.error(`'!' requires Option or Result type, got ${typeName(operandType)}`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        return this.setType(expr, inner);
+      }
+      case "Propagate": {
+        const operandType = this.checkExpr(expr.operand);
+        const inner = this.unwrapableInner(operandType);
+        if (!inner) {
+          this.error(`'?' requires Option or Result type, got ${typeName(operandType)}`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        if (!typeEq(this.currentFnRetType, operandType)) {
+          this.error(`'?' requires function to return ${typeName(operandType)}, but returns ${typeName(this.currentFnRetType)}`, sp);
+        }
+        return this.setType(expr, inner);
+      }
+      case "DefaultValue": {
+        const operandType = this.checkExpr(expr.operand);
+        const inner = this.unwrapableInner(operandType);
+        if (!inner) {
+          this.error(`'??' requires Option or Result type, got ${typeName(operandType)}`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        const defaultType = this.checkExprWithHint(expr.default, inner);
+        if (!typeEq(inner, defaultType) && defaultType.tag !== "unknown") {
+          this.error(`'??' default type mismatch: expected ${typeName(inner)}, got ${typeName(defaultType)}`, sp);
+        }
+        return this.setType(expr, inner);
+      }
     }
+  }
+
+  // extract T from Option-like (Some(T)/None) or Result-like (Ok(T)/Err(E)) enums
+  private unwrapableInner(t: TypeKind): TypeKind | null {
+    if (t.tag !== "enum") return null;
+    const info = this.enums.get(t.name);
+    if (!info) return null;
+    // Option-like: has Some(T) and None
+    const some = info.variants.get("Some");
+    const none = info.variants.get("None");
+    if (some && none && some.fields.length === 1 && none.fields.length === 0) {
+      return some.fields[0];
+    }
+    // Result-like: has Ok(T) and Err(E)
+    const ok = info.variants.get("Ok");
+    const err = info.variants.get("Err");
+    if (ok && err && ok.fields.length === 1) {
+      return ok.fields[0];
+    }
+    return null;
   }
 }

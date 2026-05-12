@@ -341,7 +341,15 @@ export class Parser {
 
   // ── Expression parsing (precedence climbing) ──
 
-  private parseExpr(): Expr { return this.parseComparison(); }
+  private parseExpr(): Expr {
+    let left = this.parseComparison();
+    if (this.at(TokenKind.QuestionQuestion)) {
+      this.advance();
+      const defaultExpr = this.parseComparison();
+      left = { kind: "DefaultValue", operand: left, default: defaultExpr, span: left.span };
+    }
+    return left;
+  }
 
   private parseComparison(): Expr {
     let left = this.parseAdditive();
@@ -384,7 +392,6 @@ export class Parser {
     return this.parsePostfix();
   }
 
-  // field access (x.y) and index access (x[i]) are left-associative postfix ops
   private parsePostfix(): Expr {
     let expr = this.parsePrimary();
     while (true) {
@@ -397,6 +404,12 @@ export class Parser {
         const index = this.parseExpr();
         this.expect(TokenKind.RBracket);
         expr = { kind: "IndexAccess", object: expr, index, span: expr.span };
+      } else if (this.at(TokenKind.Bang)) {
+        this.advance();
+        expr = { kind: "Unwrap", operand: expr, span: expr.span };
+      } else if (this.at(TokenKind.Question)) {
+        this.advance();
+        expr = { kind: "Propagate", operand: expr, span: expr.span };
       } else {
         break;
       }

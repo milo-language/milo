@@ -43,9 +43,12 @@ export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string;
 export interface ArrayLit { kind: "ArrayLit"; elements: Expr[]; span?: Span }
 export interface IndexAccess { kind: "IndexAccess"; object: Expr; index: Expr; span?: Span }
 export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; args: Expr[]; span?: Span }
+export interface Unwrap { kind: "Unwrap"; operand: Expr; span?: Span }
+export interface Propagate { kind: "Propagate"; operand: Expr; span?: Span }
+export interface DefaultValue { kind: "DefaultValue"; operand: Expr; default: Expr; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit;
+  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue;
 
 // ── Statements ──
 

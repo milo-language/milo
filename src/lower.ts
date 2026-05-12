@@ -13,6 +13,7 @@ export function lower(program: Program, checked: CheckResult): HIRModule {
 }
 
 class LowerCtx {
+  private currentRetType: TypeKind = { tag: "void" };
   constructor(private c: CheckResult) {}
 
   lowerProgram(program: Program): HIRModule {
@@ -81,6 +82,7 @@ class LowerCtx {
   private lowerFn(fn: AstFn): HIRFunction {
     const sig = this.c.functions.get(fn.name);
     const retType = sig?.ret ?? typeFromAst(fn.retType);
+    this.currentRetType = retType;
     return {
       name: fn.name,
       params: fn.params.map((p, i) => this.lowerParam(p, sig, i)),
@@ -222,6 +224,39 @@ class LowerCtx {
           variant: expr.variant,
           args: expr.args.map(a => this.lowerExpr(a)),
           type: { tag: "enum", name: enumName },
+          span: expr.span,
+        };
+      }
+      case "Unwrap": {
+        const operandType = this.typeOf(expr.operand);
+        return {
+          kind: "Unwrap",
+          operand: this.lowerExpr(expr.operand),
+          enumName: operandType?.tag === "enum" ? operandType.name : "",
+          type,
+          span: expr.span,
+        };
+      }
+      case "Propagate": {
+        const operandType = this.typeOf(expr.operand);
+        const fnRetType = this.currentRetType;
+        return {
+          kind: "Propagate",
+          operand: this.lowerExpr(expr.operand),
+          enumName: operandType?.tag === "enum" ? operandType.name : "",
+          retType: fnRetType,
+          type,
+          span: expr.span,
+        };
+      }
+      case "DefaultValue": {
+        const operandType = this.typeOf(expr.operand);
+        return {
+          kind: "DefaultValue",
+          operand: this.lowerExpr(expr.operand),
+          default: this.lowerExpr(expr.default),
+          enumName: operandType?.tag === "enum" ? operandType.name : "",
+          type,
           span: expr.span,
         };
       }

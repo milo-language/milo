@@ -1,0 +1,25 @@
+// @expect: none
+extern fn printf(fmt: *u8, ...) -> i32
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+fn try_double(opt: Option<i32>) -> Option<i32> {
+    let val = opt?
+    return Option::Some(val * 2)
+}
+
+fn main() -> i32 {
+    let result = try_double(Option::None)
+    match result {
+        Option::Some(v) => {
+            printf("%d\n", v)
+        }
+        Option::None => {
+            printf("none\n")
+        }
+    }
+    return 0
+}

@@ -107,6 +107,7 @@ export class Lexer {
     if (ch === "!" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.Neq, "!=", line, col); }
     if (ch === "<" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.LtEq, "<=", line, col); }
     if (ch === ">" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.GtEq, ">=", line, col); }
+    if (ch === "?" && next === "?") { this.advance(); this.advance(); return this.token(TokenKind.QuestionQuestion, "??", line, col); }
 
     // single-char
     const singles: Record<string, TokenKind> = {
@@ -121,6 +122,7 @@ export class Lexer {
       "&": TokenKind.Amp, "=": TokenKind.Eq,
       "<": TokenKind.Lt, ">": TokenKind.Gt,
       "!": TokenKind.Bang,
+      "?": TokenKind.Question,
     };
 
     if (ch in singles) {

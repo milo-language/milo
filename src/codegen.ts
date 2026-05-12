@@ -746,7 +746,142 @@ export class Codegen {
         lines.push(`  ${val} = load ${enumTy}, ptr ${alloca}`);
         return [lines, val, enumTy];
       }
+      case "Unwrap":
+        return this.genUnwrap(expr, lines);
+      case "Propagate":
+        return this.genPropagate(expr, lines);
+      case "DefaultValue":
+        return this.genDefaultValue(expr, lines);
     }
+  }
+
+  private genUnwrap(expr: HIRExpr & { kind: "Unwrap" }, lines: string[]): [string[], string, string] {
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const [ol, ov, ot] = this.genExpr(expr.operand);
+    lines.push(...ol);
+
+    const layout = this.enumLayouts.get(expr.enumName)!;
+    const enumTy = `%${expr.enumName}`;
+    const resultTy = this.llvmType(expr.type);
+
+    // store enum value, extract tag
+    const enumAddr = this.nextTemp();
+    lines.push(`  ${enumAddr} = alloca ${enumTy}`);
+    lines.push(`  store ${enumTy} ${ov}, ptr ${enumAddr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    // Some/Ok is always tag 0
+    const okLabel = this.nextLabel("unwrap.ok");
+    const panicLabel = this.nextLabel("unwrap.panic");
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp eq i32 ${tag}, 0`);
+    lines.push(`  br i1 ${cmp}, label %${okLabel}, label %${panicLabel}`);
+
+    // panic branch
+    lines.push(`${panicLabel}:`);
+    const span = expr.span;
+    const errMsg = `unwrap failed at ${span?.line ?? 0}:${span?.col ?? 0}`;
+    const { label: errLabel, length: errLen } = this.addString(errMsg);
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    lines.push(`  call i32 @putchar(i32 10)`);
+    this.needsPutchar = true;
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+
+    // ok branch — extract payload
+    lines.push(`${okLabel}:`);
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = load ${resultTy}, ptr ${payloadPtr}`);
+    return [lines, result, resultTy];
+  }
+
+  private genPropagate(expr: HIRExpr & { kind: "Propagate" }, lines: string[]): [string[], string, string] {
+    const [ol, ov, ot] = this.genExpr(expr.operand);
+    lines.push(...ol);
+
+    const layout = this.enumLayouts.get(expr.enumName)!;
+    const enumTy = `%${expr.enumName}`;
+    const resultTy = this.llvmType(expr.type);
+    const retTy = this.llvmType(expr.retType);
+
+    // store enum value, extract tag
+    const enumAddr = this.nextTemp();
+    lines.push(`  ${enumAddr} = alloca ${enumTy}`);
+    lines.push(`  store ${enumTy} ${ov}, ptr ${enumAddr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    // Some/Ok is tag 0
+    const okLabel = this.nextLabel("prop.ok");
+    const errLabel = this.nextLabel("prop.err");
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp eq i32 ${tag}, 0`);
+    lines.push(`  br i1 ${cmp}, label %${okLabel}, label %${errLabel}`);
+
+    // error branch — return the enum as-is (early return)
+    lines.push(`${errLabel}:`);
+    lines.push(`  ret ${retTy} ${ov}`);
+
+    // ok branch — extract payload
+    lines.push(`${okLabel}:`);
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = load ${resultTy}, ptr ${payloadPtr}`);
+    return [lines, result, resultTy];
+  }
+
+  private genDefaultValue(expr: HIRExpr & { kind: "DefaultValue" }, lines: string[]): [string[], string, string] {
+    const [ol, ov] = this.genExpr(expr.operand);
+    lines.push(...ol);
+
+    const enumTy = `%${expr.enumName}`;
+    const resultTy = this.llvmType(expr.type);
+
+    const enumAddr = this.nextTemp();
+    lines.push(`  ${enumAddr} = alloca ${enumTy}`);
+    lines.push(`  store ${enumTy} ${ov}, ptr ${enumAddr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    const someLabel = this.nextLabel("default.some");
+    const noneLabel = this.nextLabel("default.none");
+    const doneLabel = this.nextLabel("default.done");
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp eq i32 ${tag}, 0`);
+    lines.push(`  br i1 ${cmp}, label %${someLabel}, label %${noneLabel}`);
+
+    // some branch — extract payload
+    lines.push(`${someLabel}:`);
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+    const someVal = this.nextTemp();
+    lines.push(`  ${someVal} = load ${resultTy}, ptr ${payloadPtr}`);
+    lines.push(`  br label %${doneLabel}`);
+
+    // none branch — use default
+    lines.push(`${noneLabel}:`);
+    const [dl, dv] = this.genExpr(expr.default);
+    lines.push(...dl);
+    lines.push(`  br label %${doneLabel}`);
+
+    // merge with phi
+    lines.push(`${doneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi ${resultTy} [${someVal}, %${someLabel}], [${dv}, %${noneLabel}]`);
+    return [lines, result, resultTy];
   }
 
   private genStringConcat(lines: string[], lv: string, rv: string): [string[], string, string] {
