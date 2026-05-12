@@ -1,7 +1,7 @@
 import { Token, TokenKind } from "./tokens";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
-  EnumDecl, EnumVariant, Pattern, MatchArm, Span,
+  EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl,
 } from "./ast";
 
 export class Parser {
@@ -34,8 +34,11 @@ export class Parser {
     const structs: StructDecl[] = [];
     const enums: EnumDecl[] = [];
     const functions: Function[] = [];
+    const imports: ImportDecl[] = [];
     while (!this.at(TokenKind.Eof)) {
-      if (this.at(TokenKind.Struct)) {
+      if (this.at(TokenKind.Import)) {
+        imports.push(this.parseImport());
+      } else if (this.at(TokenKind.Struct)) {
         structs.push(this.parseStruct());
       } else if (this.at(TokenKind.Enum)) {
         enums.push(this.parseEnum());
@@ -44,10 +47,16 @@ export class Parser {
       } else if (this.at(TokenKind.Fn)) {
         functions.push(this.parseFn());
       } else {
-        this.error(`expected 'struct', 'enum', 'fn', or 'extern', got '${this.peek().kind}'`, this.peek());
+        this.error(`expected 'import', 'struct', 'enum', 'fn', or 'extern', got '${this.peek().kind}'`, this.peek());
       }
     }
-    return { structs, enums, functions };
+    return { structs, enums, functions, imports };
+  }
+
+  private parseImport(): ImportDecl {
+    const tok = this.expect(TokenKind.Import);
+    const pathTok = this.expect(TokenKind.String);
+    return { kind: "ImportDecl", path: pathTok.value, span: { line: tok.line, col: tok.col } };
   }
 
   // ── Types ──

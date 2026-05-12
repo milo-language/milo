@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, unlinkSync } from "fs";
 import { execSync } from "child_process";
-import { basename, resolve } from "path";
+import { basename, resolve, dirname } from "path";
 import { tmpdir } from "os";
 import { join } from "path";
 import { Lexer } from "./lexer";
@@ -8,6 +8,7 @@ import { Parser } from "./parser";
 import { TypeChecker } from "./checker";
 import { Codegen } from "./codegen";
 import { lower } from "./lower";
+import { resolveImports } from "./resolver";
 import { formatDiagnostic } from "./diagnostics";
 
 function compile(source: string, filePath?: string): string {
@@ -15,6 +16,8 @@ function compile(source: string, filePath?: string): string {
   try {
     tokens = new Lexer(source).tokenize();
     program = new Parser(tokens).parse();
+    const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
+    program = resolveImports(program, sourceDir);
   } catch (e: any) {
     console.error(e.message);
     process.exit(1);

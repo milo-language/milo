@@ -1,0 +1,5 @@
+import "math.milo"
+
+fn cube(x: i32) -> i32 {
+    return x * square(x)
+}

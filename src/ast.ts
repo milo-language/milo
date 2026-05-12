@@ -97,10 +97,17 @@ export interface Function {
   isVariadic: boolean;
 }
 
-export type TopLevel = StructDecl | EnumDecl | Function;
+export interface ImportDecl {
+  kind: "ImportDecl";
+  path: string;
+  span?: Span;
+}
+
+export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl;
 
 export interface Program {
   structs: StructDecl[];
   enums: EnumDecl[];
   functions: Function[];
+  imports: ImportDecl[];
 }

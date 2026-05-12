@@ -13,7 +13,7 @@ bun test                                                    # run tests
 ## Architecture
 
 ```
-Source → Lexer → Parser → AST → TypeChecker → HIR Lowering → Codegen → LLVM IR → clang → Binary
+Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → TypeChecker → HIR Lowering → Codegen → LLVM IR → clang → Binary
 ```
 
 | File | Purpose |
@@ -23,6 +23,7 @@ Source → Lexer → Parser → AST → TypeChecker → HIR Lowering → Codegen
 | `src/parser.ts` | Recursive descent parser → AST |
 | `src/ast.ts` | AST node types |
 | `src/types.ts` | Internal type representations (`TypeKind` tagged union) |
+| `src/resolver.ts` | Import resolution — recursive parse + merge of imported files |
 | `src/checker.ts` | Type checking, move checking, scope validation → `CheckResult` |
 | `src/hir.ts` | Typed HIR node types (every expr carries `TypeKind`) |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering |

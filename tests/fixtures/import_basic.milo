@@ -1,0 +1,11 @@
+// @expect: 7
+// @expect: 25
+import "lib/math.milo"
+
+extern fn printf(fmt: *u8, ...) -> i32
+
+fn main() -> i32 {
+    printf("%d\n", add(3, 4))
+    printf("%d\n", square(5))
+    return 0
+}
