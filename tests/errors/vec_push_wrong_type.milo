@@ -1,0 +1,7 @@
+// @error: push: expected i32, got bool
+
+fn main() -> i32 {
+    var v: Vec<i32> = Vec::new()
+    v.push(true)
+    return 0
+}

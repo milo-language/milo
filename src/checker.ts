@@ -89,6 +89,10 @@ export class TypeChecker {
         if (resolvedArgs.length !== 1) { this.error(`'Box' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
         return { tag: "box", inner: resolvedArgs[0] };
       }
+      if (ty.name === "Vec") {
+        if (resolvedArgs.length !== 1) { this.error(`'Vec' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
+        return { tag: "vec", element: resolvedArgs[0] };
+      }
       const ge = this.genericEnums.get(ty.name);
       if (ge) {
         if (resolvedArgs.length !== ge.typeParams.length) {
@@ -126,6 +130,7 @@ export class TypeChecker {
       case "enum": return t.name;
       case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
       case "box": return `Box_${this.mangleTypeName(t.inner)}`;
+      case "vec": return `Vec_${this.mangleTypeName(t.element)}`;
       case "array": return `arr_${this.mangleTypeName(t.element)}_${t.size}`;
       case "ref": return `ref_${this.mangleTypeName(t.inner)}`;
       case "unknown": return "unknown";
@@ -195,6 +200,7 @@ export class TypeChecker {
     if (t.tag === "ref") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "ptr") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "box") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
+    if (t.tag === "vec") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
     return t;
   }
 
@@ -577,6 +583,11 @@ export class TypeChecker {
         const rootMut = this.isRootMutable(expr.object);
         return { type: objType.element, mutable: rootMut };
       }
+      if (objType.tag === "vec") {
+        this.setType(expr, objType.element);
+        const rootMut = this.isRootMutable(expr.object);
+        return { type: objType.element, mutable: rootMut };
+      }
       this.error(`cannot index non-array type ${typeName(objType)}`, sp);
       return null;
     }
@@ -607,6 +618,11 @@ export class TypeChecker {
       return hint;
     }
     if (hint && expr.kind === "FloatLit" && hint.tag === "float") {
+      this.exprTypes.set(expr, hint);
+      return hint;
+    }
+    if (expr.kind === "EnumLit" && expr.enumName === "Vec" && expr.variant === "new" && hint?.tag === "vec") {
+      if (expr.args.length !== 0) { this.error(`'Vec::new' takes no arguments`, sp); }
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -869,6 +885,9 @@ export class TypeChecker {
         if (objType.tag === "string" && expr.field === "len") {
           return this.setType(expr, { tag: "int", bits: 64, signed: true });
         }
+        if (objType.tag === "vec" && expr.field === "len") {
+          return this.setType(expr, { tag: "int", bits: 64, signed: true });
+        }
         this.error(`cannot access field '${expr.field}' on type ${typeName(objType)}`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
@@ -893,11 +912,17 @@ export class TypeChecker {
           this.error(`array index must be integer, got ${typeName(idxType)}`, sp);
         }
         if (objType.tag === "array") return this.setType(expr, objType.element);
+        if (objType.tag === "vec") return this.setType(expr, objType.element);
         if (objType.tag === "string") return this.setType(expr, { tag: "int", bits: 8, signed: false });
         this.error(`cannot index type ${typeName(objType)}`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
       case "EnumLit": {
+        if (expr.enumName === "Vec" && expr.variant === "new") {
+          if (expr.args.length !== 0) this.error(`'Vec::new' takes no arguments`, sp);
+          this.error(`cannot infer Vec element type — add a type annotation: 'let v: Vec<T> = Vec::new()'`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
         const genericInfo = this.genericEnums.get(expr.enumName);
         if (genericInfo) {
           const variant = genericInfo.variants.get(expr.variant);
@@ -989,6 +1014,34 @@ export class TypeChecker {
           this.error(`cannot cast to ${typeName(toType)}`, sp);
         }
         return this.setType(expr, toType);
+      }
+      case "MethodCall": {
+        const objType = this.checkExpr(expr.object);
+        if (objType.tag === "vec") {
+          if (expr.method === "push") {
+            if (expr.args.length !== 1) { this.error(`'push' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot push to immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            const argType = this.checkExprWithHint(expr.args[0], objType.element);
+            if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
+              this.error(`push: expected ${typeName(objType.element)}, got ${typeName(argType)}`, sp);
+            }
+            this.tryMove(expr.args[0]);
+            return this.setType(expr, { tag: "void" });
+          }
+          if (expr.method === "pop") {
+            if (expr.args.length !== 0) { this.error(`'pop' takes no arguments`, sp); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot pop from immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            return this.setType(expr, objType.element);
+          }
+          this.error(`Vec has no method '${expr.method}'`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        this.error(`type '${typeName(objType)}' has no methods`, sp);
+        return this.setType(expr, { tag: "unknown" });
       }
     }
   }

@@ -48,9 +48,10 @@ export interface Unwrap { kind: "Unwrap"; operand: Expr; span?: Span }
 export interface Propagate { kind: "Propagate"; operand: Expr; span?: Span }
 export interface DefaultValue { kind: "DefaultValue"; operand: Expr; default: Expr; span?: Span }
 export interface CastExpr { kind: "CastExpr"; operand: Expr; targetType: MiloType; span?: Span }
+export interface MethodCall { kind: "MethodCall"; object: Expr; method: string; args: Expr[]; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr;
+  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall;
 
 // ── Statements ──
 

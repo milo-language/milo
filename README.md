@@ -50,6 +50,7 @@ fn main() -> i32 {
 - Structs (value types, move semantics)
 - Bounds-checked arrays
 - Enums / tagged unions with exhaustive `match`
+- `Vec<T>` dynamic arrays with push/pop/len, bounds-checked indexing
 - Generics on functions, enums, and structs (monomorphization, type inference)
 
 **Control flow**
@@ -78,7 +79,7 @@ Recursive resolution, dedup, transitive imports.
 - LSP server (`milod`): diagnostics, hover, go-to-definition
 - VS Code extension: syntax highlighting + LSP client
 
-79 tests pass on the current build.
+90 tests pass on the current build.
 
 ## Design Principles
 
@@ -98,7 +99,7 @@ Recursive resolution, dedup, transitive imports.
 
 Honest list of major gaps:
 
-- **No `Vec<T>`, hash maps, or arenas.** `Box<T>` works for recursive types (trees, linked lists). Dynamic arrays and key-value stores not yet.
+- **No hash maps or arenas.** `Box<T>` works for recursive types; `Vec<T>` provides dynamic arrays. Key-value stores not yet.
 - **No arenas yet.** The arena design is the planned answer for cyclic data; Box<T> handles trees and recursive structures today.
 - **No `if let` / `guard let`.** `!` `?` `??` cover most Option/Result cases; full sugar pending.
 - **No formatter, no package manager, no REPL.**

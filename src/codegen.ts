@@ -32,6 +32,7 @@ export class Codegen {
   private needsMemcpy = false;
   private needsMemcmp = false;
   private hasStringType = false;
+  private hasVecType = false;
   private loopHeader: string | null = null;
   private loopExit: string | null = null;
   private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
@@ -53,6 +54,7 @@ export class Codegen {
       case "string": return "%String";
       case "ptr":    return "ptr";
       case "box":    return "ptr";
+      case "vec":    return "%Vec";
       case "ref":    return "ptr";
       case "struct": return `%${t.name}`;
       case "enum":   return `%${t.name}`;
@@ -86,6 +88,7 @@ export class Codegen {
     if (ty === "double") return 8;
     if (ty === "ptr") return 8;
     if (ty === "%String") return 24; // ptr + i64 + i64
+    if (ty === "%Vec") return 24; // ptr + i64 + i64
     const arrMatch = ty.match(/\[(\d+) x (.+)\]/);
     if (arrMatch) return parseInt(arrMatch[1]) * this.typeSize(arrMatch[2]);
     const structName = this.getStructName(ty);
@@ -110,6 +113,8 @@ export class Codegen {
     if (t.tag === "enum") return this.droppableEnums.has(t.name);
     return false;
   }
+
+  private needsPanicFmt = false;
 
   private structPayloadSize(fieldTypes: string[]): number {
     let offset = 0;
@@ -200,6 +205,8 @@ export class Codegen {
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
     if (this.needsBoundsCheck)
       this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
+    if (this.hasVecType)
+      this.output.splice(1, 0, `%Vec = type { ptr, i64, i64 }`);
     if (this.hasStringType)
       this.output.splice(1, 0, `%String = type { ptr, i64, i64 }`);
 
@@ -375,6 +382,9 @@ export class Codegen {
       }
     }
     if (expr.kind === "IndexAccess") {
+      if (expr.object.type.tag === "vec") {
+        return this.genVecBoundsCheckedPtr(expr, lines);
+      }
       return this.genBoundsCheckedPtr(expr, lines);
     }
     return [lines, "null", "i32"];
@@ -794,6 +804,12 @@ export class Codegen {
         if (expr.object.type.tag === "string") {
           return this.genStringIndex(expr, lines);
         }
+        if (expr.object.type.tag === "vec") {
+          const [ptrLines, ptr, elemTy] = this.genVecBoundsCheckedPtr(expr, lines);
+          const val = this.nextTemp();
+          lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
+          return [lines, val, elemTy];
+        }
         const [ptrLines, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
@@ -855,6 +871,28 @@ export class Codegen {
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${innerTy}, ptr ${ptrVal}`);
         return [lines, val, innerTy];
+      }
+      case "VecNew": {
+        this.hasVecType = true;
+        const s0 = this.nextTemp();
+        lines.push(`  ${s0} = insertvalue %Vec undef, ptr null, 0`);
+        const s1 = this.nextTemp();
+        lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 0, 1`);
+        const s2 = this.nextTemp();
+        lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
+        return [lines, s2, "%Vec"];
+      }
+      case "VecPush":
+        return this.genVecPush(expr, lines);
+      case "VecPop":
+        return this.genVecPop(expr, lines);
+      case "VecLen": {
+        this.hasVecType = true;
+        const [ol, ov] = this.genExpr(expr.object);
+        lines.push(...ol);
+        const len = this.nextTemp();
+        lines.push(`  ${len} = extractvalue %Vec ${ov}, 1`);
+        return [lines, len, "i64"];
       }
     }
   }
@@ -1197,6 +1235,204 @@ export class Codegen {
     return [lines, tmp];
   }
 
+  private genVecPush(expr: HIRExpr & { kind: "VecPush" }, lines: string[]): [string[], string, string] {
+    this.hasVecType = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    this.needsMemcpy = true;
+
+    const vecType = expr.vec.type;
+    if (vecType.tag !== "vec") throw new Error("VecPush on non-vec type");
+    const elemSize = this.typeSizeOf(vecType.element);
+    const elemTy = this.llvmType(vecType.element);
+
+    // get pointer to the vec struct
+    const [vecPtrLines, vecPtr] = this.genLValue(expr.vec);
+    lines.push(...vecPtrLines);
+
+    // generate the value to push
+    const [valLines, valVal, valTy] = this.genExpr(expr.value);
+    lines.push(...valLines);
+
+    // load len and cap
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+
+    // check if len >= cap (need to grow)
+    const needsGrow = this.nextTemp();
+    lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
+    const growLabel = this.nextLabel("vec.grow");
+    const pushLabel = this.nextLabel("vec.push");
+    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${pushLabel}`);
+
+    // grow: new_cap = cap == 0 ? 8 : cap * 2
+    lines.push(`${growLabel}:`);
+    const isZero = this.nextTemp();
+    lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
+    const newCap = this.nextTemp();
+    const doubled = this.nextTemp();
+    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
+    lines.push(`  ${newCap} = select i1 ${isZero}, i64 8, i64 ${doubled}`);
+    const newBytes = this.nextTemp();
+    lines.push(`  ${newBytes} = mul i64 ${newCap}, ${elemSize}`);
+    const newBuf = this.nextTemp();
+    lines.push(`  ${newBuf} = call ptr @malloc(i64 ${newBytes})`);
+
+    // copy old data if any
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const oldBuf = this.nextTemp();
+    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
+    const hasData = this.nextTemp();
+    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
+    const copyLabel = this.nextLabel("vec.copy");
+    const storeLabel = this.nextLabel("vec.store");
+    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${storeLabel}`);
+
+    lines.push(`${copyLabel}:`);
+    const copyBytes = this.nextTemp();
+    lines.push(`  ${copyBytes} = mul i64 ${len}, ${elemSize}`);
+    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${copyBytes})`);
+    lines.push(`  call void @free(ptr ${oldBuf})`);
+    lines.push(`  br label %${storeLabel}`);
+
+    // store new buf, cap
+    lines.push(`${storeLabel}:`);
+    const dataPtr2 = this.nextTemp();
+    lines.push(`  ${dataPtr2} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr2}`);
+    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
+    lines.push(`  br label %${pushLabel}`);
+
+    // push: store value at data[len], len++
+    lines.push(`${pushLabel}:`);
+    const curDataPtr = this.nextTemp();
+    lines.push(`  ${curDataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const curData = this.nextTemp();
+    lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
+    const curLen = this.nextTemp();
+    lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${curLen}`);
+    lines.push(`  store ${valTy} ${valVal}, ptr ${elemPtr}`);
+    const newLen = this.nextTemp();
+    lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
+    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+
+    return [lines, "void", "void"];
+  }
+
+  private genVecPop(expr: HIRExpr & { kind: "VecPop" }, lines: string[]): [string[], string, string] {
+    this.hasVecType = true;
+    this.needsPrintf = true;
+    this.needsExit = true;
+    this.needsPutchar = true;
+
+    const vecType = expr.vec.type;
+    if (vecType.tag !== "vec") throw new Error("VecPop on non-vec type");
+    const elemTy = this.llvmType(vecType.element);
+    const elemSize = this.typeSizeOf(vecType.element);
+
+    const [vecPtrLines, vecPtr] = this.genLValue(expr.vec);
+    lines.push(...vecPtrLines);
+
+    // load len
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+
+    // panic if empty
+    const isEmpty = this.nextTemp();
+    lines.push(`  ${isEmpty} = icmp eq i64 ${len}, 0`);
+    const panicLabel = this.nextLabel("vec.pop.panic");
+    const okLabel = this.nextLabel("vec.pop.ok");
+    lines.push(`  br i1 ${isEmpty}, label %${panicLabel}, label %${okLabel}`);
+
+    lines.push(`${panicLabel}:`);
+    const span = expr.span;
+    const errMsg = `pop on empty Vec at ${span?.line ?? 0}:${span?.col ?? 0}`;
+    const { label: errLabel, length: errLen } = this.addString(errMsg);
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    lines.push(`  call i32 @putchar(i32 10)`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+
+    // ok: len--, load value at data[new_len]
+    lines.push(`${okLabel}:`);
+    const newLen = this.nextTemp();
+    lines.push(`  ${newLen} = sub i64 ${len}, 1`);
+    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${newLen}`);
+    const val = this.nextTemp();
+    lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
+
+    return [lines, val, elemTy];
+  }
+
+  private genVecBoundsCheckedPtr(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {
+    this.hasVecType = true;
+    this.needsBoundsCheck = true;
+
+    const vecType = expr.object.type;
+    if (vecType.tag !== "vec") throw new Error("Vec index on non-vec type");
+    const elemTy = this.llvmType(vecType.element);
+
+    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
+    lines.push(...vecPtrLines);
+    const [idxLines, idxVal, idxTy] = this.genExpr(expr.index);
+    lines.push(...idxLines);
+
+    // load len for bounds check
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const len32 = this.nextTemp();
+    lines.push(`  ${len32} = trunc i64 ${len} to i32`);
+
+    // bounds check
+    let idx32: string;
+    if (idxTy === "i64") {
+      idx32 = this.nextTemp();
+      lines.push(`  ${idx32} = trunc i64 ${idxVal} to i32`);
+    } else {
+      idx32 = idxVal;
+    }
+    this.emitBoundsCheck(lines, idx32, len32);
+
+    // load data pointer and GEP to element
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+    let idx64: string;
+    if (idxTy === "i64") {
+      idx64 = idxVal;
+    } else {
+      idx64 = this.nextTemp();
+      lines.push(`  ${idx64} = sext ${idxTy} ${idxVal} to i64`);
+    }
+    const ptr = this.nextTemp();
+    lines.push(`  ${ptr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx64}`);
+
+    return [lines, ptr, elemTy];
+  }
+
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
     if (typeKind.tag === "string") {
       this.needsFree = true;
@@ -1213,6 +1449,50 @@ export class Codegen {
       const ptr = this.nextTemp();
       lines.push(`  ${ptr} = extractvalue %String ${old}, 0`);
       lines.push(`  call void @free(ptr ${ptr})`);
+      lines.push(`  br label %${skipLabel}`);
+      lines.push(`${skipLabel}:`);
+    }
+    if (typeKind.tag === "vec") {
+      this.needsFree = true;
+      const vecVal = this.nextTemp();
+      lines.push(`  ${vecVal} = load %Vec, ptr ${allocaPtr}`);
+      const dataPtr = this.nextTemp();
+      lines.push(`  ${dataPtr} = extractvalue %Vec ${vecVal}, 0`);
+      const isNull = this.nextTemp();
+      lines.push(`  ${isNull} = icmp eq ptr ${dataPtr}, null`);
+      const dropLabel = this.nextLabel("vec.drop");
+      const skipLabel = this.nextLabel("vec.skip");
+      lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
+      lines.push(`${dropLabel}:`);
+      if (this.needsDropCg(typeKind.element)) {
+        // drop each element: for i in 0..len
+        const vecLen = this.nextTemp();
+        lines.push(`  ${vecLen} = extractvalue %Vec ${vecVal}, 1`);
+        const elemTy = this.llvmType(typeKind.element);
+        const loopCond = this.nextLabel("vec.drop.cond");
+        const loopBody = this.nextLabel("vec.drop.body");
+        const loopEnd = this.nextLabel("vec.drop.end");
+        const iAddr = this.nextTemp();
+        lines.push(`  ${iAddr} = alloca i64`);
+        lines.push(`  store i64 0, ptr ${iAddr}`);
+        lines.push(`  br label %${loopCond}`);
+        lines.push(`${loopCond}:`);
+        const iVal = this.nextTemp();
+        lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
+        const cmp = this.nextTemp();
+        lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${vecLen}`);
+        lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${loopEnd}`);
+        lines.push(`${loopBody}:`);
+        const elemPtr = this.nextTemp();
+        lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${dataPtr}, i64 ${iVal}`);
+        this.emitDropValue(lines, elemPtr, typeKind.element);
+        const nextI = this.nextTemp();
+        lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
+        lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
+        lines.push(`  br label %${loopCond}`);
+        lines.push(`${loopEnd}:`);
+      }
+      lines.push(`  call void @free(ptr ${dataPtr})`);
       lines.push(`  br label %${skipLabel}`);
       lines.push(`${skipLabel}:`);
     }

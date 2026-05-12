@@ -9,6 +9,7 @@ export type TypeKind =
   | { tag: "struct"; name: string }
   | { tag: "enum"; name: string }
   | { tag: "box"; inner: TypeKind }
+  | { tag: "vec"; element: TypeKind }
   | { tag: "array"; element: TypeKind; size: number | null }
   | { tag: "unknown" };
 
@@ -45,6 +46,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
     case "bool": case "void": case "string": case "unknown": return true;
     case "ptr": return typeEq(a.inner, (b as typeof a).inner);
     case "box": return typeEq(a.inner, (b as typeof a).inner);
+    case "vec": return typeEq(a.element, (b as typeof a).element);
     case "ref": return typeEq(a.inner, (b as typeof a).inner) && a.mutable === (b as typeof a).mutable;
     case "struct": return a.name === (b as typeof a).name;
     case "enum": return a.name === (b as typeof a).name;
@@ -64,6 +66,7 @@ export function typeName(t: TypeKind): string {
     case "string": return "String";
     case "ptr": return `*${typeName(t.inner)}`;
     case "box": return `Box<${typeName(t.inner)}>`;
+    case "vec": return `Vec<${typeName(t.element)}>`;
     case "ref": return `&${t.mutable ? "mut " : ""}${typeName(t.inner)}`;
     case "struct": return t.name;
     case "enum": return t.name;
@@ -91,5 +94,5 @@ export function isCopy(t: TypeKind): boolean {
 
 // heap-owning types that need destructor calls at scope exit
 export function needsDrop(t: TypeKind): boolean {
-  return t.tag === "string" || t.tag === "box";
+  return t.tag === "string" || t.tag === "box" || t.tag === "vec";
 }

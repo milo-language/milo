@@ -1,0 +1,22 @@
+// @expect: 30
+// @expect: 2
+// @expect: 20
+// @expect: 1
+extern fn printf(fmt: *u8, ...) -> i32
+
+fn main() -> i32 {
+    var v: Vec<i32> = Vec::new()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+
+    let a = v.pop()
+    printf("%d\n", a)
+    printf("%lld\n", v.len)
+
+    let b = v.pop()
+    printf("%d\n", b)
+    printf("%lld\n", v.len)
+
+    return 0
+}

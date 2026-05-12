@@ -220,6 +220,9 @@ class LowerCtx {
         if (objType?.tag === "string" && expr.field === "len") {
           return { kind: "StringLen", object: this.lowerExpr(expr.object), type, span: expr.span };
         }
+        if (objType?.tag === "vec" && expr.field === "len") {
+          return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
+        }
         return { kind: "FieldAccess", object: this.lowerExpr(expr.object), field: expr.field, type, span: expr.span };
       }
       case "ArrayLit":
@@ -227,6 +230,9 @@ class LowerCtx {
       case "IndexAccess":
         return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, span: expr.span };
       case "EnumLit": {
+        if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
+          return { kind: "VecNew", elementType: type.element, type, span: expr.span };
+        }
         const enumName = this.c.rewrittenEnums.get(expr) ?? expr.enumName;
         return {
           kind: "EnumLit",
@@ -278,6 +284,18 @@ class LowerCtx {
           type,
           span: expr.span,
         };
+      case "MethodCall": {
+        const objType = this.typeOf(expr.object);
+        if (objType?.tag === "vec") {
+          if (expr.method === "push") {
+            return { kind: "VecPush", vec: this.lowerExpr(expr.object), value: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          }
+          if (expr.method === "pop") {
+            return { kind: "VecPop", vec: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+        }
+        throw new Error(`unsupported method call: ${expr.method}`);
+      }
     }
   }
 

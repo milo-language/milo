@@ -420,7 +420,18 @@ export class Parser {
       if (this.at(TokenKind.Dot)) {
         this.advance();
         const field = this.expect(TokenKind.Ident).value;
-        expr = { kind: "FieldAccess", object: expr, field, span: expr.span };
+        if (this.at(TokenKind.LParen)) {
+          this.advance();
+          const args: Expr[] = [];
+          while (!this.at(TokenKind.RParen)) {
+            args.push(this.parseExpr());
+            this.match(TokenKind.Comma);
+          }
+          this.expect(TokenKind.RParen);
+          expr = { kind: "MethodCall", object: expr, method: field, args, span: expr.span };
+        } else {
+          expr = { kind: "FieldAccess", object: expr, field, span: expr.span };
+        }
       } else if (this.at(TokenKind.LBracket)) {
         this.advance();
         const index = this.parseExpr();

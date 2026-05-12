@@ -28,7 +28,11 @@ export type HIRExpr =
   | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "Cast"; operand: HIRExpr; targetType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "BoxCreate"; value: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "BoxDeref"; operand: HIRExpr; type: TypeKind; span?: Span };
+  | { kind: "BoxDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "VecPush"; vec: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "VecPop"; vec: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;
