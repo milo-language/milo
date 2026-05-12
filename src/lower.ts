@@ -18,6 +18,12 @@ class LowerCtx {
   lowerProgram(program: Program): HIRModule {
     const structs: HIRStruct[] = [];
     for (const s of program.structs) {
+      if (s.typeParams.length > 0) continue;
+      const info = this.c.structs.get(s.name);
+      if (!info) continue;
+      structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })) });
+    }
+    for (const s of this.c.monomorphizedStructs) {
       const info = this.c.structs.get(s.name);
       if (!info) continue;
       structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })) });
@@ -184,14 +190,16 @@ class LowerCtx {
         });
         return { kind: "Call", func: funcName, args, type, variadic: sig?.variadic ?? false, span: expr.span };
       }
-      case "StructLit":
+      case "StructLit": {
+        const structName = this.c.rewrittenStructLits.get(expr) ?? expr.name;
         return {
           kind: "StructLit",
-          name: expr.name,
+          name: structName,
           fields: expr.fields.map(f => ({ name: f.name, value: this.lowerExpr(f.value) })),
-          type,
+          type: { tag: "struct", name: structName },
           span: expr.span,
         };
+      }
       case "FieldAccess": {
         const objType = this.typeOf(expr.object);
         if (objType?.tag === "array" && expr.field === "len") {

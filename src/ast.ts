@@ -71,6 +71,7 @@ export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | Ex
 export interface StructDecl {
   kind: "StructDecl";
   name: string;
+  typeParams: string[];
   fields: StructField[];
 }
 

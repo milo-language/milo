@@ -29,17 +29,25 @@ export interface CheckResult {
   autoBorrowed: Map<Expr, { mutable: boolean }>;
   rewrittenCalls: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
+  rewrittenStructLits: Map<Expr, string>;
   functions: Map<string, FnSig>;
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
   monomorphizedFns: Function[];
   monomorphizedEnums: import("./ast").EnumDecl[];
+  monomorphizedStructs: StructDecl[];
 }
 
 interface GenericEnumInfo {
   typeParams: string[];
   variants: Map<string, { tag: number; fields: TypeKind[] }>;
   decl: import("./ast").EnumDecl;
+}
+
+interface GenericStructInfo {
+  typeParams: string[];
+  fields: { name: string; type: TypeKind }[];
+  decl: StructDecl;
 }
 
 interface GenericFnInfo {
@@ -54,13 +62,16 @@ export class TypeChecker {
   private structs = new Map<string, StructInfo>();
   private enums = new Map<string, EnumInfo>();
   private genericEnums = new Map<string, GenericEnumInfo>();
+  private genericStructs = new Map<string, GenericStructInfo>();
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
+  private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
   private scopes: Map<string, VarInfo>[] = [];
   private exprTypes = new Map<Expr, TypeKind>();
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
+  private rewrittenStructLits = new Map<Expr, string>();
 
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
@@ -77,6 +88,14 @@ export class TypeChecker {
           return { tag: "unknown" };
         }
         return { tag: "enum", name: this.monomorphizeEnum(ty.name, resolvedArgs) };
+      }
+      const gs = this.genericStructs.get(ty.name);
+      if (gs) {
+        if (resolvedArgs.length !== gs.typeParams.length) {
+          this.error(`'${ty.name}' expects ${gs.typeParams.length} type args, got ${resolvedArgs.length}`);
+          return { tag: "unknown" };
+        }
+        return { tag: "struct", name: this.monomorphizeStruct(ty.name, resolvedArgs) };
       }
       this.error(`'${ty.name}' is not a generic type`);
       return { tag: "unknown" };
@@ -131,6 +150,33 @@ export class TypeChecker {
       })),
     };
     this.monomorphizedDecls.push(decl);
+    return mangled;
+  }
+
+  private monomorphizeStruct(baseName: string, typeArgs: TypeKind[]): string {
+    const mangled = `${baseName}_${typeArgs.map(a => this.mangleTypeName(a)).join("_")}`;
+    if (this.structs.has(mangled)) return mangled;
+
+    const generic = this.genericStructs.get(baseName)!;
+    const typeMap = new Map<string, TypeKind>();
+    generic.typeParams.forEach((p, i) => typeMap.set(p, typeArgs[i]));
+
+    const fields = generic.fields.map(f => ({
+      name: f.name,
+      type: this.substituteTypeKind(f.type, typeMap),
+    }));
+    this.structs.set(mangled, { fields });
+
+    const decl: StructDecl = {
+      kind: "StructDecl",
+      name: mangled,
+      typeParams: [],
+      fields: generic.decl.fields.map(f => ({
+        name: f.name,
+        type: this.substituteMiloType(f.type, generic.typeParams, typeArgs),
+      })),
+    };
+    this.monomorphizedStructDecls.push(decl);
     return mangled;
   }
 
@@ -228,14 +274,18 @@ export class TypeChecker {
 
     // register structs
     for (const s of program.structs) {
-      const fields = s.fields.map(f => ({ name: f.name, type: this.resolve(f.type) }));
-      // reject references in struct fields
-      for (const f of fields) {
-        if (f.type.tag === "ref") {
-          this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
+      if (s.typeParams.length > 0) {
+        const fields = s.fields.map(f => ({ name: f.name, type: typeFromAst(f.type) }));
+        this.genericStructs.set(s.name, { typeParams: s.typeParams, fields, decl: s });
+      } else {
+        const fields = s.fields.map(f => ({ name: f.name, type: this.resolve(f.type) }));
+        for (const f of fields) {
+          if (f.type.tag === "ref") {
+            this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
+          }
         }
+        this.structs.set(s.name, { fields });
       }
-      this.structs.set(s.name, { fields });
     }
 
     // register enums
@@ -279,11 +329,13 @@ export class TypeChecker {
       autoBorrowed: this.autoBorrowed,
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
+      rewrittenStructLits: this.rewrittenStructLits,
       functions: this.functions,
       structs: this.structs,
       enums: this.enums,
       monomorphizedFns: this.monomorphizedFns,
       monomorphizedEnums: this.monomorphizedDecls,
+      monomorphizedStructs: this.monomorphizedStructDecls,
     };
   }
 
@@ -681,6 +733,46 @@ export class TypeChecker {
         return this.setType(expr, sig.ret);
       }
       case "StructLit": {
+        const genericInfo = this.genericStructs.get(expr.name);
+        if (genericInfo) {
+          const typeMap = new Map<string, TypeKind>();
+          for (const f of expr.fields) {
+            const fieldDef = genericInfo.fields.find(d => d.name === f.name);
+            if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp); continue; }
+            const valType = this.checkExpr(f.value);
+            if (fieldDef.type.tag === "struct" && genericInfo.typeParams.includes(fieldDef.type.name)) {
+              const existing = typeMap.get(fieldDef.type.name);
+              if (existing && !typeEq(existing, valType)) {
+                this.error(`conflicting inference for type parameter '${fieldDef.type.name}'`, sp);
+              } else {
+                typeMap.set(fieldDef.type.name, valType);
+              }
+            }
+          }
+          const missing = genericInfo.typeParams.filter(p => !typeMap.has(p));
+          if (missing.length > 0) {
+            this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for struct '${expr.name}'`, sp);
+            return this.setType(expr, { tag: "unknown" });
+          }
+          const typeArgs = genericInfo.typeParams.map(p => typeMap.get(p)!);
+          const mangled = this.monomorphizeStruct(expr.name, typeArgs);
+          this.rewrittenStructLits.set(expr, mangled);
+          const info = this.structs.get(mangled)!;
+          for (const f of expr.fields) {
+            const fieldDef = info.fields.find(d => d.name === f.name);
+            if (!fieldDef) continue;
+            const valType = this.exprTypes.get(f.value)!;
+            if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
+              this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
+            }
+          }
+          for (const d of info.fields) {
+            if (!expr.fields.find(f => f.name === d.name)) {
+              this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
+            }
+          }
+          return this.setType(expr, { tag: "struct", name: mangled });
+        }
         const info = this.structs.get(expr.name);
         if (!info) { this.error(`unknown struct '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
         for (const f of expr.fields) {

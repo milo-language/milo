@@ -101,6 +101,7 @@ export class Parser {
   private parseStruct(): StructDecl {
     this.expect(TokenKind.Struct);
     const name = this.expect(TokenKind.Ident).value;
+    const typeParams = this.parseTypeParams();
     this.expect(TokenKind.LBrace);
     const fields: StructField[] = [];
     while (!this.at(TokenKind.RBrace)) {
@@ -111,7 +112,7 @@ export class Parser {
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "StructDecl", name, fields };
+    return { kind: "StructDecl", name, typeParams, fields };
   }
 
   // ── Enum ──

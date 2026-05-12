@@ -1,0 +1,16 @@
+// @expect: 42
+extern fn printf(fmt: *u8, ...) -> i32
+
+struct Box<T> {
+    value: T
+}
+
+fn unbox(b: Box<i32>) -> i32 {
+    return b.value
+}
+
+fn main() -> i32 {
+    let b = Box { value: 42 }
+    printf("%d\n", unbox(b))
+    return 0
+}

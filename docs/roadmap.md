@@ -33,7 +33,7 @@ Done:
 Remaining (priority order):
 - [x] **P0: String type** — owned UTF-8 `{ ptr, len, cap }`, ops: len, concat (+), eq (==, !=), byte index, auto-coercion to `*u8` for FFI
 - [x] **P1: Imports / modules** — `import "path.milo"`, recursive resolution, dedup, transitive
-- [ ] **P2: Generics — structs** — gap vs generic fns/enums.
+- [x] **P2: Generics — structs** — monomorphization, type inference from field values
 - [ ] **P3: Option/Result ergonomics** — flatten-first design, no method-chain zoo:
   - `expr?` — postfix propagate. Works on `Option` and `Result`. Requires fn return type matches.
   - `expr ?? default` — postfix default value.
