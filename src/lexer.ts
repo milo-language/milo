@@ -56,6 +56,23 @@ export class Lexer {
     return this.token(TokenKind.String, value, line, col);
   }
 
+  private lexChar(line: number, col: number): Token {
+    this.advance(); // opening '
+    if (this.pos >= this.source.length) this.error("unterminated char literal", line, col);
+    let value: number;
+    const escapes: Record<string, number> = { n: 10, t: 9, r: 13, "\\": 92, "'": 39, "0": 0 };
+    if (this.peek() === "\\") {
+      this.advance();
+      const esc = this.advance();
+      value = escapes[esc] ?? esc.charCodeAt(0);
+    } else {
+      value = this.advance().charCodeAt(0);
+    }
+    if (this.peek() !== "'") this.error("unterminated char literal", line, col);
+    this.advance(); // closing '
+    return this.token(TokenKind.Char, String(value), line, col);
+  }
+
   private lexNumber(line: number, col: number): Token {
     let value = "";
     while (this.pos < this.source.length && this.peek() >= "0" && this.peek() <= "9") {
@@ -91,6 +108,7 @@ export class Lexer {
     const ch = this.peek();
 
     if (ch === '"') return this.lexString(line, col);
+    if (ch === "'") return this.lexChar(line, col);
     if (ch >= "0" && ch <= "9") return this.lexNumber(line, col);
     if (/[a-zA-Z_]/.test(ch)) return this.lexIdent(line, col);
 
@@ -108,6 +126,8 @@ export class Lexer {
     if (ch === "<" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.LtEq, "<=", line, col); }
     if (ch === ">" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.GtEq, ">=", line, col); }
     if (ch === "?" && next === "?") { this.advance(); this.advance(); return this.token(TokenKind.QuestionQuestion, "??", line, col); }
+    if (ch === "&" && next === "&") { this.advance(); this.advance(); return this.token(TokenKind.AmpAmp, "&&", line, col); }
+    if (ch === "|" && next === "|") { this.advance(); this.advance(); return this.token(TokenKind.PipePipe, "||", line, col); }
 
     // single-char
     const singles: Record<string, TokenKind> = {

@@ -10,8 +10,9 @@ export type HIRExpr =
   | { kind: "IntLit"; value: number; type: TypeKind; span?: Span }
   | { kind: "FloatLit"; value: number; type: TypeKind; span?: Span }
   | { kind: "BoolLit"; value: boolean; type: TypeKind; span?: Span }
+  | { kind: "CharLit"; value: number; type: TypeKind; span?: Span }
   | { kind: "StringLit"; value: string; type: TypeKind; span?: Span }
-  | { kind: "Ident"; name: string; type: TypeKind; span?: Span }
+  | { kind: "Ident"; name: string; type: TypeKind; isMove?: boolean; span?: Span }
   | { kind: "BinOp"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "UnaryOp"; op: string; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "Call"; func: string; args: HIRArg[]; type: TypeKind; variadic: boolean; span?: Span }
@@ -24,7 +25,8 @@ export type HIRExpr =
   | { kind: "StringLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "Unwrap"; operand: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "Propagate"; operand: HIRExpr; enumName: string; retType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span };
+  | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span }
+  | { kind: "Cast"; operand: HIRExpr; targetType: TypeKind; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;
@@ -40,6 +42,8 @@ export type HIRStmt =
   | { kind: "Return"; value: HIRExpr | null; retType: TypeKind; span?: Span }
   | { kind: "If"; cond: HIRExpr; thenBody: HIRStmt[]; elseBody: HIRStmt[] | null; span?: Span }
   | { kind: "While"; cond: HIRExpr; body: HIRStmt[]; span?: Span }
+  | { kind: "Break"; span?: Span }
+  | { kind: "Continue"; span?: Span }
   | { kind: "ExprStmt"; expr: HIRExpr; span?: Span }
   | { kind: "Match"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; span?: Span };
 

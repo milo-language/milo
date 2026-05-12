@@ -1,0 +1,30 @@
+// @expect: 0
+// @expect: 1
+// @expect: 2
+// @expect: sum: 20
+
+fn main() -> i32 {
+    // break: stop at 3
+    var i: i32 = 0
+    while i < 10 {
+        if i == 3 {
+            break
+        }
+        println("%d", i)
+        i = i + 1
+    }
+
+    // continue: sum only even numbers 0..8
+    var sum: i32 = 0
+    var j: i32 = 0
+    while j < 8 {
+        j = j + 1
+        if j % 2 != 0 {
+            continue
+        }
+        sum = sum + j
+    }
+    println("sum: %d", sum)
+
+    return 0
+}

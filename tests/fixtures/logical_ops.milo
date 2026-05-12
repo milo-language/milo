@@ -1,0 +1,38 @@
+// @expect: both true
+// @expect: one true
+// @expect: neither
+// @expect: short-circuit works
+
+fn main() -> i32 {
+    let a = true
+    let b = true
+    let c = false
+
+    if a && b {
+        println("both true")
+    }
+    if a || c {
+        println("one true")
+    }
+    if c && a {
+        println("should not print")
+    } else {
+        println("neither")
+    }
+
+    // short-circuit: side_effect should not be called
+    var called: bool = false
+    if c && set_flag(called) {
+        println("should not print")
+    }
+    if !called {
+        println("short-circuit works")
+    }
+
+    return 0
+}
+
+fn set_flag(x: &mut bool) -> bool {
+    x = true
+    return true
+}

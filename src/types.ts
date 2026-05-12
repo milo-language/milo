@@ -85,3 +85,8 @@ export function isFloat(t: TypeKind): boolean {
 export function isCopy(t: TypeKind): boolean {
   return t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr";
 }
+
+// heap-owning types that need destructor calls at scope exit
+export function needsDrop(t: TypeKind): boolean {
+  return t.tag === "string";
+}

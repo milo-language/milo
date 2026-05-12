@@ -127,6 +127,10 @@ class LowerCtx {
           body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
           span: stmt.span,
         };
+      case "BreakStmt":
+        return { kind: "Break", span: stmt.span };
+      case "ContinueStmt":
+        return { kind: "Continue", span: stmt.span };
       case "ExprStmt":
         return { kind: "ExprStmt", expr: this.lowerExpr(stmt.expr), span: stmt.span };
       case "MatchStmt": {
@@ -171,10 +175,12 @@ class LowerCtx {
         return { kind: "FloatLit", value: expr.value, type, span: expr.span };
       case "BoolLit":
         return { kind: "BoolLit", value: expr.value, type, span: expr.span };
+      case "CharLit":
+        return { kind: "CharLit", value: expr.value, type, span: expr.span };
       case "StringLit":
         return { kind: "StringLit", value: expr.value, type, span: expr.span };
       case "Ident":
-        return { kind: "Ident", name: expr.name, type, span: expr.span };
+        return { kind: "Ident", name: expr.name, type, isMove: this.c.movedExprs.has(expr), span: expr.span };
       case "BinOp":
         return { kind: "BinOp", op: expr.op, left: this.lowerExpr(expr.left), right: this.lowerExpr(expr.right), type, span: expr.span };
       case "UnaryOp":
@@ -260,6 +266,14 @@ class LowerCtx {
           span: expr.span,
         };
       }
+      case "CastExpr":
+        return {
+          kind: "Cast",
+          operand: this.lowerExpr(expr.operand),
+          targetType: type,
+          type,
+          span: expr.span,
+        };
     }
   }
 

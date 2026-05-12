@@ -1,7 +1,7 @@
 import { Token, TokenKind } from "./tokens";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
-  EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl,
+  EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
 } from "./ast";
 
 export class Parser {
@@ -228,6 +228,8 @@ export class Parser {
     if (this.at(TokenKind.If)) return this.parseIf();
     if (this.at(TokenKind.While)) return this.parseWhile();
     if (this.at(TokenKind.Match)) return this.parseMatch();
+    if (this.at(TokenKind.Break)) { const s = this.span(this.advance()); return { kind: "BreakStmt", span: s }; }
+    if (this.at(TokenKind.Continue)) { const s = this.span(this.advance()); return { kind: "ContinueStmt", span: s }; }
 
     const expr = this.parseExpr();
     // assignment: x = ..., x.field = ..., x[i] = ...
@@ -342,11 +344,31 @@ export class Parser {
   // ── Expression parsing (precedence climbing) ──
 
   private parseExpr(): Expr {
-    let left = this.parseComparison();
+    let left = this.parseOr();
     if (this.at(TokenKind.QuestionQuestion)) {
       this.advance();
-      const defaultExpr = this.parseComparison();
+      const defaultExpr = this.parseOr();
       left = { kind: "DefaultValue", operand: left, default: defaultExpr, span: left.span };
+    }
+    return left;
+  }
+
+  private parseOr(): Expr {
+    let left = this.parseAnd();
+    while (this.at(TokenKind.PipePipe)) {
+      this.advance();
+      const right = this.parseAnd();
+      left = { kind: "BinOp", op: "||", left, right, span: left.span };
+    }
+    return left;
+  }
+
+  private parseAnd(): Expr {
+    let left = this.parseComparison();
+    while (this.at(TokenKind.AmpAmp)) {
+      this.advance();
+      const right = this.parseComparison();
+      left = { kind: "BinOp", op: "&&", left, right, span: left.span };
     }
     return left;
   }
@@ -410,6 +432,10 @@ export class Parser {
       } else if (this.at(TokenKind.Question)) {
         this.advance();
         expr = { kind: "Propagate", operand: expr, span: expr.span };
+      } else if (this.at(TokenKind.As)) {
+        this.advance();
+        const targetType = this.parseType();
+        expr = { kind: "CastExpr", operand: expr, targetType, span: expr.span };
       } else {
         break;
       }
@@ -440,6 +466,10 @@ export class Parser {
     if (tok.kind === TokenKind.String) {
       this.advance();
       return { kind: "StringLit", value: tok.value, span: s };
+    }
+    if (tok.kind === TokenKind.Char) {
+      this.advance();
+      return { kind: "CharLit", value: parseInt(tok.value), span: s };
     }
     if (tok.kind === TokenKind.Ident) {
       this.advance();

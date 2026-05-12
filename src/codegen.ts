@@ -1,5 +1,5 @@
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern } from "./hir";
-import type { TypeKind } from "./types";
+import { type TypeKind, needsDrop } from "./types";
 
 interface StructLayout {
   name: string;
@@ -28,9 +28,13 @@ export class Codegen {
   private needsPutchar = false;
   private needsExit = false;
   private needsMalloc = false;
+  private needsFree = false;
   private needsMemcpy = false;
   private needsMemcmp = false;
   private hasStringType = false;
+  private loopHeader: string | null = null;
+  private loopExit: string | null = null;
+  private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
   private static BUILTINS = new Set(["print", "println", "exit"]);
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -150,6 +154,8 @@ export class Codegen {
       this.output.splice(1, 0, "declare i32 @memcmp(ptr, ptr, i64)");
     if (this.needsMemcpy && !declaredExterns.has("memcpy"))
       this.output.splice(1, 0, "declare ptr @memcpy(ptr, ptr, i64)");
+    if (this.needsFree && !declaredExterns.has("free"))
+      this.output.splice(1, 0, "declare void @free(ptr)");
     if (this.needsMalloc && !declaredExterns.has("malloc"))
       this.output.splice(1, 0, "declare ptr @malloc(i64)");
     if (this.needsExit && !declaredExterns.has("exit"))
@@ -206,6 +212,7 @@ export class Codegen {
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.locals.clear();
+    this.droppableLocals = [];
     const lines: string[] = [];
 
     const params = fn.params.map(p => {
@@ -227,6 +234,7 @@ export class Codegen {
         lines.push(`  %${p.name}.addr = alloca ${lt}`);
         lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
         this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
+        if (needsDrop(p.type)) this.droppableLocals.push({ name: p.name, typeKind: p.type });
       }
     }
 
@@ -238,6 +246,7 @@ export class Codegen {
     }
 
     if (!hasTerminator) {
+      this.emitDropGlue(lines);
       if (ret === "void") lines.push("  ret void");
       else if (ret === "i32") lines.push("  ret i32 0");
     }
@@ -257,6 +266,7 @@ export class Codegen {
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false });
         lines.push(`  %${stmt.name}.addr = alloca ${declTy}`);
         lines.push(`  store ${declTy} ${val}, ptr %${stmt.name}.addr`);
+        if (needsDrop(stmt.type)) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
         return [lines, false];
       }
       case "Assign": {
@@ -264,18 +274,32 @@ export class Codegen {
         lines.push(...valLines);
         const [targetLines, targetPtr, targetTy] = this.genLValue(stmt.target);
         lines.push(...targetLines);
+        if (stmt.target.kind === "Ident" && needsDrop(stmt.target.type)) {
+          this.emitDropValue(lines, targetPtr, stmt.target.type);
+        }
         lines.push(`  store ${valTy} ${val}, ptr ${targetPtr}`);
         return [lines, false];
       }
       case "Return": {
-        if (!stmt.value) { lines.push("  ret void"); return [lines, true]; }
+        if (!stmt.value) {
+          this.emitDropGlue(lines);
+          lines.push("  ret void");
+          return [lines, true];
+        }
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
+        this.emitDropGlue(lines);
         lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
       }
       case "If": return this.genIf(stmt);
       case "While": return this.genWhile(stmt);
+      case "Break":
+        if (this.loopExit) lines.push(`  br label %${this.loopExit}`);
+        return [lines, true];
+      case "Continue":
+        if (this.loopHeader) lines.push(`  br label %${this.loopHeader}`);
+        return [lines, true];
       case "ExprStmt": {
         const [exprLines] = this.genExpr(stmt.expr);
         lines.push(...exprLines);
@@ -382,15 +406,26 @@ export class Codegen {
     const condLabel = this.nextLabel("while.cond");
     const bodyLabel = this.nextLabel("while.body");
     const endLabel = this.nextLabel("while.end");
+    const prevHeader = this.loopHeader;
+    const prevExit = this.loopExit;
+    this.loopHeader = condLabel;
+    this.loopExit = endLabel;
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
     const [condLines, condVal] = this.genExpr(stmt.cond);
     lines.push(...condLines);
     lines.push(`  br i1 ${condVal}, label %${bodyLabel}, label %${endLabel}`);
     lines.push(`${bodyLabel}:`);
-    for (const s of stmt.body) { const [sl] = this.genStmt(s); lines.push(...sl); }
-    lines.push(`  br label %${condLabel}`);
+    let bodyTerminated = false;
+    for (const s of stmt.body) {
+      const [sl, t] = this.genStmt(s);
+      lines.push(...sl);
+      if (t) { bodyTerminated = true; break; }
+    }
+    if (!bodyTerminated) lines.push(`  br label %${condLabel}`);
     lines.push(`${endLabel}:`);
+    this.loopHeader = prevHeader;
+    this.loopExit = prevExit;
     return [lines, false];
   }
 
@@ -559,9 +594,18 @@ export class Codegen {
         }
         const tmp = this.nextTemp();
         lines.push(`  ${tmp} = load ${local.type}, ptr %${expr.name}.addr`);
+        if (expr.isMove && needsDrop(local.typeKind)) {
+          lines.push(`  store ${local.type} zeroinitializer, ptr %${expr.name}.addr`);
+        }
         return [lines, tmp, local.type];
       }
+      case "CharLit": {
+        return [lines, String(expr.value), "i8"];
+      }
       case "BinOp": {
+        if (expr.op === "&&" || expr.op === "||") {
+          return this.genShortCircuit(expr, lines);
+        }
         const [ll, lv, llt] = this.genExpr(expr.left);
         const [rl, rv] = this.genExpr(expr.right);
         lines.push(...ll, ...rl);
@@ -752,6 +796,8 @@ export class Codegen {
         return this.genPropagate(expr, lines);
       case "DefaultValue":
         return this.genDefaultValue(expr, lines);
+      case "Cast":
+        return this.genCast(expr, lines);
     }
   }
 
@@ -884,6 +930,70 @@ export class Codegen {
     return [lines, result, resultTy];
   }
 
+  private genShortCircuit(expr: HIRExpr & { kind: "BinOp" }, lines: string[]): [string[], string, string] {
+    const isAnd = expr.op === "&&";
+    const resultAddr = this.nextTemp();
+    lines.push(`  ${resultAddr} = alloca i1`);
+    const [ll, lv] = this.genExpr(expr.left);
+    lines.push(...ll);
+    lines.push(`  store i1 ${lv}, ptr ${resultAddr}`);
+    const rhsLabel = this.nextLabel(isAnd ? "and.rhs" : "or.rhs");
+    const endLabel = this.nextLabel(isAnd ? "and.end" : "or.end");
+    if (isAnd) {
+      lines.push(`  br i1 ${lv}, label %${rhsLabel}, label %${endLabel}`);
+    } else {
+      lines.push(`  br i1 ${lv}, label %${endLabel}, label %${rhsLabel}`);
+    }
+    lines.push(`${rhsLabel}:`);
+    const [rl, rv] = this.genExpr(expr.right);
+    lines.push(...rl);
+    lines.push(`  store i1 ${rv}, ptr ${resultAddr}`);
+    lines.push(`  br label %${endLabel}`);
+    lines.push(`${endLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+    return [lines, result, "i1"];
+  }
+
+  private genCast(expr: HIRExpr & { kind: "Cast" }, lines: string[]): [string[], string, string] {
+    const [ol, ov, fromTy] = this.genExpr(expr.operand);
+    lines.push(...ol);
+    const toTy = this.llvmType(expr.targetType);
+    if (fromTy === toTy) return [lines, ov, toTy];
+    const tmp = this.nextTemp();
+    const fromKind = expr.operand.type;
+    const toKind = expr.targetType;
+    const fromFloat = fromKind.tag === "float";
+    const toFloat = toKind.tag === "float";
+    if (fromFloat && toFloat) {
+      const op = this.bitWidth(toKind) > this.bitWidth(fromKind) ? "fpext" : "fptrunc";
+      lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
+    } else if (fromFloat) {
+      const op = toKind.tag === "int" && !toKind.signed ? "fptoui" : "fptosi";
+      lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
+    } else if (toFloat) {
+      const op = fromKind.tag === "int" && !fromKind.signed ? "uitofp" : "sitofp";
+      lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
+    } else {
+      const fromBits = this.bitWidth(fromKind);
+      const toBits = this.bitWidth(toKind);
+      if (toBits > fromBits) {
+        const op = fromKind.tag === "int" && !fromKind.signed ? "zext" : "sext";
+        lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
+      } else {
+        lines.push(`  ${tmp} = trunc ${fromTy} ${ov} to ${toTy}`);
+      }
+    }
+    return [lines, tmp, toTy];
+  }
+
+  private bitWidth(t: TypeKind): number {
+    if (t.tag === "int") return t.bits;
+    if (t.tag === "float") return t.bits;
+    if (t.tag === "bool") return 1;
+    return 64;
+  }
+
   private genStringConcat(lines: string[], lv: string, rv: string): [string[], string, string] {
     this.hasStringType = true;
     this.needsMalloc = true;
@@ -960,20 +1070,30 @@ export class Codegen {
     this.needsBoundsCheck = true;
     const [ol, ov] = this.genExpr(expr.object);
     lines.push(...ol);
-    const [il, iv] = this.genExpr(expr.index);
+    const [il, iv, idxTy] = this.genExpr(expr.index);
     lines.push(...il);
     const len = this.nextTemp();
     lines.push(`  ${len} = extractvalue %String ${ov}, 1`);
-    // bounds check: idx < len (i64 comparison, truncated for bounds error msg)
     const len32 = this.nextTemp();
     lines.push(`  ${len32} = trunc i64 ${len} to i32`);
-    this.emitBoundsCheck(lines, iv, len32);
+    if (idxTy === "i64") {
+      const idx32 = this.nextTemp();
+      lines.push(`  ${idx32} = trunc i64 ${iv} to i32`);
+      this.emitBoundsCheck(lines, idx32, len32);
+    } else {
+      this.emitBoundsCheck(lines, iv, len32);
+    }
     const data = this.nextTemp();
     lines.push(`  ${data} = extractvalue %String ${ov}, 0`);
-    const idxExt = this.nextTemp();
-    lines.push(`  ${idxExt} = sext i32 ${iv} to i64`);
+    let idx64: string;
+    if (idxTy === "i64") {
+      idx64 = iv;
+    } else {
+      idx64 = this.nextTemp();
+      lines.push(`  ${idx64} = sext ${idxTy} ${iv} to i64`);
+    }
     const bytePtr = this.nextTemp();
-    lines.push(`  ${bytePtr} = getelementptr i8, ptr ${data}, i64 ${idxExt}`);
+    lines.push(`  ${bytePtr} = getelementptr i8, ptr ${data}, i64 ${idx64}`);
     const byte = this.nextTemp();
     lines.push(`  ${byte} = load i8, ptr ${bytePtr}`);
     return [lines, byte, "i8"];
@@ -1017,5 +1137,34 @@ export class Codegen {
     lines.push(`  ${tmp} = alloca ${et}`);
     lines.push(`  store ${et} ${ev}, ptr ${tmp}`);
     return [lines, tmp];
+  }
+
+  // free a heap-owned value at a given alloca ptr (for reassignment)
+  private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
+    if (typeKind.tag === "string") {
+      this.needsFree = true;
+      const old = this.nextTemp();
+      lines.push(`  ${old} = load %String, ptr ${allocaPtr}`);
+      const cap = this.nextTemp();
+      lines.push(`  ${cap} = extractvalue %String ${old}, 2`);
+      const owned = this.nextTemp();
+      lines.push(`  ${owned} = icmp ugt i64 ${cap}, 0`);
+      const dropLabel = this.nextLabel("drop");
+      const skipLabel = this.nextLabel("drop.skip");
+      lines.push(`  br i1 ${owned}, label %${dropLabel}, label %${skipLabel}`);
+      lines.push(`${dropLabel}:`);
+      const ptr = this.nextTemp();
+      lines.push(`  ${ptr} = extractvalue %String ${old}, 0`);
+      lines.push(`  call void @free(ptr ${ptr})`);
+      lines.push(`  br label %${skipLabel}`);
+      lines.push(`${skipLabel}:`);
+    }
+  }
+
+  // emit drop glue for all droppable locals before a scope exit
+  private emitDropGlue(lines: string[]) {
+    for (const local of this.droppableLocals) {
+      this.emitDropValue(lines, `%${local.name}.addr`, local.typeKind);
+    }
   }
 }

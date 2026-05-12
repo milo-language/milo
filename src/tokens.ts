@@ -3,6 +3,7 @@ export enum TokenKind {
   Int = "INT",
   Float = "FLOAT",
   String = "STRING",
+  Char = "CHAR",
   Ident = "IDENT",
   // keywords
   Fn = "fn",
@@ -20,6 +21,9 @@ export enum TokenKind {
   Match = "match",
   Mut = "mut",
   Import = "import",
+  Break = "break",
+  Continue = "continue",
+  As = "as",
   // symbols
   LParen = "(",
   RParen = ")",
@@ -38,6 +42,8 @@ export enum TokenKind {
   Slash = "/",
   Percent = "%",
   Amp = "&",
+  AmpAmp = "&&",
+  PipePipe = "||",
   Eq = "=",
   EqEq = "==",
   FatArrow = "=>",
@@ -64,4 +70,5 @@ export interface Token {
 export const KEYWORDS = new Set([
   "fn", "extern", "let", "var", "return", "if", "else", "while",
   "true", "false", "struct", "enum", "match", "mut", "import",
+  "break", "continue", "as",
 ]);

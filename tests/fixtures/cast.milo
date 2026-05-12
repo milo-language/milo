@@ -1,0 +1,22 @@
+// @expect: 42
+// @expect: 200
+// @expect: 3
+
+fn main() -> i32 {
+    // i64 to i32
+    let big: i64 = 42
+    let small = big as i32
+    println("%d", small)
+
+    // u8 to i32
+    let byte: u8 = 200
+    let wide = byte as i32
+    println("%d", wide)
+
+    // f64 to i32
+    let f: f64 = 3.7
+    let n = f as i32
+    println("%d", n)
+
+    return 0
+}

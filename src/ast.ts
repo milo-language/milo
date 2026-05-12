@@ -34,6 +34,7 @@ export interface IntLit { kind: "IntLit"; value: number; span?: Span }
 export interface FloatLit { kind: "FloatLit"; value: number; span?: Span }
 export interface BoolLit { kind: "BoolLit"; value: boolean; span?: Span }
 export interface StringLit { kind: "StringLit"; value: string; span?: Span }
+export interface CharLit { kind: "CharLit"; value: number; span?: Span }
 export interface Ident { kind: "Ident"; name: string; span?: Span }
 export interface BinOp { kind: "BinOp"; op: string; left: Expr; right: Expr; span?: Span }
 export interface UnaryOp { kind: "UnaryOp"; op: string; operand: Expr; span?: Span }
@@ -46,9 +47,10 @@ export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; a
 export interface Unwrap { kind: "Unwrap"; operand: Expr; span?: Span }
 export interface Propagate { kind: "Propagate"; operand: Expr; span?: Span }
 export interface DefaultValue { kind: "DefaultValue"; operand: Expr; default: Expr; span?: Span }
+export interface CastExpr { kind: "CastExpr"; operand: Expr; targetType: MiloType; span?: Span }
 
-export type Expr = IntLit | FloatLit | BoolLit | StringLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue;
+export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call
+  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr;
 
 // ── Statements ──
 
@@ -59,6 +61,8 @@ export interface Return { kind: "Return"; value: Expr | null; span?: Span }
 export interface IfStmt { kind: "IfStmt"; cond: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
 export interface WhileStmt { kind: "WhileStmt"; cond: Expr; body: Stmt[]; span?: Span }
 export interface ExprStmt { kind: "ExprStmt"; expr: Expr; span?: Span }
+export interface BreakStmt { kind: "BreakStmt"; span?: Span }
+export interface ContinueStmt { kind: "ContinueStmt"; span?: Span }
 
 export type Pattern =
   | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; span?: Span }
@@ -67,7 +71,7 @@ export type Pattern =
 export interface MatchArm { pattern: Pattern; body: Stmt[] }
 export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[]; span?: Span }
 
-export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt;
+export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt;
 
 // ── Top-level ──
 

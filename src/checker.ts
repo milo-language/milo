@@ -30,6 +30,7 @@ export interface CheckResult {
   rewrittenCalls: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
   rewrittenStructLits: Map<Expr, string>;
+  movedExprs: Set<Expr>;
   functions: Map<string, FnSig>;
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
@@ -72,7 +73,9 @@ export class TypeChecker {
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
   private rewrittenStructLits = new Map<Expr, string>();
+  private movedExprs = new Set<Expr>();
   private currentFnRetType: TypeKind = { tag: "void" };
+  private loopDepth = 0;
 
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
@@ -331,6 +334,7 @@ export class TypeChecker {
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
       rewrittenStructLits: this.rewrittenStructLits,
+      movedExprs: this.movedExprs,
       functions: this.functions,
       structs: this.structs,
       enums: this.enums,
@@ -434,10 +438,18 @@ export class TypeChecker {
           this.error(`while condition must be bool, got ${typeName(condType)}`, sp);
         }
         this.pushScope();
+        this.loopDepth++;
         for (const s of stmt.body) this.checkStmt(s, fnRetType);
+        this.loopDepth--;
         this.popScope();
         break;
       }
+      case "BreakStmt":
+        if (this.loopDepth === 0) this.error("'break' outside of loop", sp);
+        break;
+      case "ContinueStmt":
+        if (this.loopDepth === 0) this.error("'continue' outside of loop", sp);
+        break;
       case "ExprStmt":
         this.checkExpr(stmt.expr);
         break;
@@ -510,6 +522,7 @@ export class TypeChecker {
       const info = this.lookup(expr.name);
       if (info && !isCopy(info.type)) {
         info.moved = true;
+        this.movedExprs.add(expr);
       }
     }
   }
@@ -574,7 +587,7 @@ export class TypeChecker {
   }
 
   private checkExprWithHint(expr: Expr, hint: TypeKind | null): TypeKind {
-    if (hint && expr.kind === "IntLit" && hint.tag === "int") {
+    if (hint && (expr.kind === "IntLit" || expr.kind === "CharLit") && hint.tag === "int") {
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -619,6 +632,8 @@ export class TypeChecker {
         return this.setType(expr, { tag: "float", bits: 64 });
       case "BoolLit":
         return this.setType(expr, { tag: "bool" });
+      case "CharLit":
+        return this.setType(expr, { tag: "int", bits: 8, signed: false });
       case "StringLit":
         return this.setType(expr, { tag: "string" });
       case "Ident": {
@@ -631,8 +646,21 @@ export class TypeChecker {
         return this.setType(expr, this.deref(info.type));
       }
       case "BinOp": {
-        const lt = this.checkExpr(expr.left);
-        const rt = this.checkExpr(expr.right);
+        if (expr.op === "&&" || expr.op === "||") {
+          const lt = this.checkExpr(expr.left);
+          const rt = this.checkExpr(expr.right);
+          if (lt.tag !== "bool" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${typeName(lt)}`, sp);
+          if (rt.tag !== "bool" && rt.tag !== "unknown") this.error(`operator '${expr.op}' requires bool, got ${typeName(rt)}`, sp);
+          return this.setType(expr, { tag: "bool" });
+        }
+        let lt = this.checkExpr(expr.left);
+        let rt = this.checkExpr(expr.right);
+        // Integer literal coercion: widen IntLit to match the other operand's int type
+        if (lt.tag === "int" && (expr.right.kind === "IntLit" || expr.right.kind === "CharLit") && !typeEq(lt, rt)) {
+          rt = this.checkExprWithHint(expr.right, lt);
+        } else if (rt.tag === "int" && (expr.left.kind === "IntLit" || expr.left.kind === "CharLit") && !typeEq(lt, rt)) {
+          lt = this.checkExprWithHint(expr.left, rt);
+        }
         const arithOps = ["+", "-", "*", "/", "%"];
         const cmpOps = ["==", "!=", "<", ">", "<=", ">="];
         if (expr.op === "+" && lt.tag === "string" && rt.tag === "string") {
@@ -730,7 +758,12 @@ export class TypeChecker {
         }
         for (let i = sig.params.length; i < expr.args.length; i++) this.checkExpr(expr.args[i]);
         for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
-          if (sig.params[i].type.tag !== "ref") this.tryMove(expr.args[i]);
+          if (sig.params[i].type.tag === "ref") continue;
+          // String→*u8 auto-coercion borrows the ptr, doesn't move the String
+          const argType = this.exprTypes.get(expr.args[i]);
+          const paramType = sig.params[i].type;
+          if (argType?.tag === "string" && paramType.tag === "ptr") continue;
+          this.tryMove(expr.args[i]);
         }
         return this.setType(expr, sig.ret);
       }
@@ -920,6 +953,17 @@ export class TypeChecker {
           this.error(`'??' default type mismatch: expected ${typeName(inner)}, got ${typeName(defaultType)}`, sp);
         }
         return this.setType(expr, inner);
+      }
+      case "CastExpr": {
+        const fromType = this.checkExpr(expr.operand);
+        const toType = this.resolve(expr.targetType);
+        if (!isNumeric(fromType) && fromType.tag !== "unknown") {
+          this.error(`cannot cast from ${typeName(fromType)}`, sp);
+        }
+        if (!isNumeric(toType)) {
+          this.error(`cannot cast to ${typeName(toType)}`, sp);
+        }
+        return this.setType(expr, toType);
       }
     }
   }
