@@ -1,0 +1,16 @@
+// @expect: 10
+// @expect: 99
+extern fn printf(fmt: *u8, ...) -> i32
+
+struct Pair {
+    a: i32,
+    b: i32,
+}
+
+fn main() -> i32 {
+    var p = Pair { a: 10, b: 20 }
+    printf("%d\n", p.a)
+    p.b = 99
+    printf("%d\n", p.b)
+    return 0
+}

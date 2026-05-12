@@ -6,11 +6,11 @@
 - [x] Functions with return values
 - [x] while loops, if/else
 - [x] String literals, extern fn for FFI to C
-- [ ] Structs (value types, move semantics)
-- [ ] Arrays with bounds checking
-- [ ] Second-class references (&T in function params only)
-- [ ] Move checking (use-after-move = compile error)
-- [ ] Type checker pass (between parser and codegen)
+- [x] Structs (value types, move semantics)
+- [x] Arrays with bounds checking
+- [x] Second-class references (&T, &mut T in function params only)
+- [x] Move checking (use-after-move = compile error)
+- [x] Type checker pass (between parser and codegen)
 
 Milestone: FizzBuzz, Fibonacci, simple file I/O via FFI
 

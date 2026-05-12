@@ -1,0 +1,17 @@
+// @expect: 5
+extern fn printf(fmt: *u8, ...) -> i32
+
+struct Vec2 {
+    x: i32,
+    y: i32,
+}
+
+fn manhattan(v: &Vec2) -> i32 {
+    return v.x + v.y
+}
+
+fn main() -> i32 {
+    let v = Vec2 { x: 2, y: 3 }
+    printf("%d\n", manhattan(v))
+    return 0
+}

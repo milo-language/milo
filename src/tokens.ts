@@ -1,6 +1,7 @@
 export enum TokenKind {
   // literals
   Int = "INT",
+  Float = "FLOAT",
   String = "STRING",
   Ident = "IDENT",
   // keywords
@@ -14,14 +15,19 @@ export enum TokenKind {
   While = "while",
   True = "true",
   False = "false",
+  Struct = "struct",
+  Mut = "mut",
   // symbols
   LParen = "(",
   RParen = ")",
   LBrace = "{",
   RBrace = "}",
+  LBracket = "[",
+  RBracket = "]",
   Colon = ":",
   Semicolon = ";",
   Comma = ",",
+  Dot = ".",
   Arrow = "->",
   Star = "*",
   Plus = "+",
@@ -49,5 +55,6 @@ export interface Token {
 }
 
 export const KEYWORDS = new Set([
-  "fn", "extern", "let", "var", "return", "if", "else", "while", "true", "false",
+  "fn", "extern", "let", "var", "return", "if", "else", "while",
+  "true", "false", "struct", "mut",
 ]);

@@ -1,6 +1,6 @@
 import { Token, TokenKind } from "./tokens";
 import type {
-  MiloType, Param, Expr, Stmt, Function, Program,
+  MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
 } from "./ast";
 
 export class Parser {
@@ -30,34 +30,75 @@ export class Parser {
   }
 
   parse(): Program {
+    const structs: StructDecl[] = [];
     const functions: Function[] = [];
     while (!this.at(TokenKind.Eof)) {
-      if (this.at(TokenKind.Extern)) {
+      if (this.at(TokenKind.Struct)) {
+        structs.push(this.parseStruct());
+      } else if (this.at(TokenKind.Extern)) {
         functions.push(this.parseExternFn());
       } else if (this.at(TokenKind.Fn)) {
         functions.push(this.parseFn());
       } else {
-        this.error(`expected 'fn' or 'extern', got '${this.peek().kind}'`, this.peek());
+        this.error(`expected 'struct', 'fn', or 'extern', got '${this.peek().kind}'`, this.peek());
       }
     }
-    return { functions };
+    return { structs, functions };
   }
+
+  // ── Types ──
 
   private parseType(): MiloType {
+    // &T or &mut T
+    if (this.match(TokenKind.Amp)) {
+      const isMut = !!this.match(TokenKind.Mut);
+      const inner = this.parseType();
+      return { ...inner, isRef: !isMut, isRefMut: isMut };
+    }
+    // *T
     if (this.match(TokenKind.Star)) {
       const inner = this.parseType();
-      return { name: inner.name, isPtr: true };
+      return { ...inner, isPtr: true };
+    }
+    // [T] or [T; N]
+    if (this.match(TokenKind.LBracket)) {
+      const inner = this.parseType();
+      let arraySize: number | null = null;
+      if (this.match(TokenKind.Semicolon)) {
+        arraySize = parseInt(this.expect(TokenKind.Int).value);
+      }
+      this.expect(TokenKind.RBracket);
+      return { name: inner.name, isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize };
     }
     const tok = this.advance();
-    return { name: tok.value, isPtr: false };
+    return { name: tok.value, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
   }
 
+  // ── Struct ──
+
+  private parseStruct(): StructDecl {
+    this.expect(TokenKind.Struct);
+    const name = this.expect(TokenKind.Ident).value;
+    this.expect(TokenKind.LBrace);
+    const fields: StructField[] = [];
+    while (!this.at(TokenKind.RBrace)) {
+      const fieldName = this.expect(TokenKind.Ident).value;
+      this.expect(TokenKind.Colon);
+      const fieldType = this.parseType();
+      fields.push({ name: fieldName, type: fieldType });
+      this.match(TokenKind.Comma);
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "StructDecl", name, fields };
+  }
+
+  // ── Functions ──
+
   private parseParam(): Param {
-    const isRef = !!this.match(TokenKind.Amp);
     const name = this.expect(TokenKind.Ident).value;
     this.expect(TokenKind.Colon);
     const type = this.parseType();
-    return { name, type, isRef };
+    return { name, type };
   }
 
   private parseParamList(): { params: Param[]; variadic: boolean } {
@@ -79,7 +120,7 @@ export class Parser {
 
   private parseReturnType(): MiloType {
     if (this.match(TokenKind.Arrow)) return this.parseType();
-    return { name: "void", isPtr: false };
+    return { name: "void", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
   }
 
   private parseExternFn(): Function {
@@ -102,6 +143,8 @@ export class Parser {
     return { kind: "Function", name, params, retType, body, isExtern: false, isVariadic: variadic };
   }
 
+  // ── Statements ──
+
   private parseStmts(): Stmt[] {
     const stmts: Stmt[] = [];
     while (!this.at(TokenKind.RBrace) && !this.at(TokenKind.Eof)) {
@@ -118,11 +161,11 @@ export class Parser {
     if (this.at(TokenKind.While)) return this.parseWhile();
 
     const expr = this.parseExpr();
-    // check for assignment
-    if (expr.kind === "Ident" && this.at(TokenKind.Eq)) {
+    // assignment: x = ..., x.field = ..., x[i] = ...
+    if (this.at(TokenKind.Eq)) {
       this.advance();
       const value = this.parseExpr();
-      return { kind: "Assign", name: expr.name, value };
+      return { kind: "Assign", target: expr, value };
     }
     return { kind: "ExprStmt", expr };
   }
@@ -223,7 +266,27 @@ export class Parser {
       const operand = this.parseUnary();
       return { kind: "UnaryOp", op, operand };
     }
-    return this.parsePrimary();
+    return this.parsePostfix();
+  }
+
+  // field access (x.y) and index access (x[i]) are left-associative postfix ops
+  private parsePostfix(): Expr {
+    let expr = this.parsePrimary();
+    while (true) {
+      if (this.at(TokenKind.Dot)) {
+        this.advance();
+        const field = this.expect(TokenKind.Ident).value;
+        expr = { kind: "FieldAccess", object: expr, field };
+      } else if (this.at(TokenKind.LBracket)) {
+        this.advance();
+        const index = this.parseExpr();
+        this.expect(TokenKind.RBracket);
+        expr = { kind: "IndexAccess", object: expr, index };
+      } else {
+        break;
+      }
+    }
+    return expr;
   }
 
   private parsePrimary(): Expr {
@@ -232,6 +295,10 @@ export class Parser {
     if (tok.kind === TokenKind.Int) {
       this.advance();
       return { kind: "IntLit", value: parseInt(tok.value) };
+    }
+    if (tok.kind === TokenKind.Float) {
+      this.advance();
+      return { kind: "FloatLit", value: parseFloat(tok.value) };
     }
     if (tok.kind === TokenKind.True) {
       this.advance();
@@ -247,8 +314,17 @@ export class Parser {
     }
     if (tok.kind === TokenKind.Ident) {
       this.advance();
+      // struct literal: Name { field: value, ... }
+      if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
+        return this.parseStructLit(tok.value);
+      }
+      // function call: name(args)
       if (this.at(TokenKind.LParen)) return this.parseCall(tok.value);
       return { kind: "Ident", name: tok.value };
+    }
+    // array literal: [a, b, c]
+    if (tok.kind === TokenKind.LBracket) {
+      return this.parseArrayLit();
     }
     if (tok.kind === TokenKind.LParen) {
       this.advance();
@@ -260,6 +336,20 @@ export class Parser {
     this.error(`unexpected token '${tok.kind}'`, tok);
   }
 
+  private parseStructLit(name: string): Expr {
+    this.expect(TokenKind.LBrace);
+    const fields: { name: string; value: Expr }[] = [];
+    while (!this.at(TokenKind.RBrace)) {
+      const fieldName = this.expect(TokenKind.Ident).value;
+      this.expect(TokenKind.Colon);
+      const value = this.parseExpr();
+      fields.push({ name: fieldName, value });
+      this.match(TokenKind.Comma);
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "StructLit", name, fields };
+  }
+
   private parseCall(name: string): Expr {
     this.expect(TokenKind.LParen);
     const args: Expr[] = [];
@@ -269,5 +359,16 @@ export class Parser {
     }
     this.expect(TokenKind.RParen);
     return { kind: "Call", func: name, args };
+  }
+
+  private parseArrayLit(): Expr {
+    this.expect(TokenKind.LBracket);
+    const elements: Expr[] = [];
+    while (!this.at(TokenKind.RBracket)) {
+      elements.push(this.parseExpr());
+      this.match(TokenKind.Comma);
+    }
+    this.expect(TokenKind.RBracket);
+    return { kind: "ArrayLit", elements };
   }
 }

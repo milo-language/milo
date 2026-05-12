@@ -62,6 +62,13 @@ export class Lexer {
     while (this.pos < this.source.length && this.peek() >= "0" && this.peek() <= "9") {
       value += this.advance();
     }
+    if (this.peek() === "." && this.source[this.pos + 1] >= "0" && this.source[this.pos + 1] <= "9") {
+      value += this.advance(); // the dot
+      while (this.pos < this.source.length && this.peek() >= "0" && this.peek() <= "9") {
+        value += this.advance();
+      }
+      return this.token(TokenKind.Float, value, line, col);
+    }
     return this.token(TokenKind.Int, value, line, col);
   }
 
@@ -104,8 +111,10 @@ export class Lexer {
     const singles: Record<string, TokenKind> = {
       "(": TokenKind.LParen, ")": TokenKind.RParen,
       "{": TokenKind.LBrace, "}": TokenKind.RBrace,
+      "[": TokenKind.LBracket, "]": TokenKind.RBracket,
       ":": TokenKind.Colon, ";": TokenKind.Semicolon,
-      ",": TokenKind.Comma, "*": TokenKind.Star,
+      ",": TokenKind.Comma, ".": TokenKind.Dot,
+      "*": TokenKind.Star,
       "+": TokenKind.Plus, "-": TokenKind.Minus,
       "/": TokenKind.Slash, "%": TokenKind.Percent,
       "&": TokenKind.Amp, "=": TokenKind.Eq,

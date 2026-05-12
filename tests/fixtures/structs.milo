@@ -1,0 +1,15 @@
+// @expect: 3
+// @expect: 7
+extern fn printf(fmt: *u8, ...) -> i32
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    let p = Point { x: 3, y: 7 }
+    printf("%d\n", p.x)
+    printf("%d\n", p.y)
+    return 0
+}

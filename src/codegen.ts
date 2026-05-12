@@ -1,4 +1,4 @@
-import type { MiloType, Expr, Stmt, Function, Program } from "./ast";
+import type { MiloType, Expr, Stmt, Function, Program, StructDecl } from "./ast";
 
 const MILO_TO_LLVM: Record<string, string> = {
   i8: "i8", i16: "i16", i32: "i32", i64: "i64",
@@ -7,47 +7,73 @@ const MILO_TO_LLVM: Record<string, string> = {
   bool: "i1", void: "void",
 };
 
+interface StructLayout {
+  name: string;
+  fields: { name: string; type: string; miloType: MiloType }[];
+}
+
 export class Codegen {
   private output: string[] = [];
   private strings: { label: string; escaped: string; length: number }[] = [];
   private strCounter = 0;
   private tempCounter = 0;
   private labelCounter = 0;
-  private locals = new Map<string, { type: string; mutable: boolean }>();
-  private fnRetTypes = new Map<string, string>();
-  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
+  private locals = new Map<string, { type: string; mutable: boolean; isRef: boolean }>();
+  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; params: { type: MiloType; name: string }[] }>();
+  private structLayouts = new Map<string, StructLayout>();
+  private needsBoundsCheck = false;
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
   private emit(line: string) { this.output.push(line); }
 
   private llvmType(ty: MiloType): string {
+    if (ty.isRef || ty.isRefMut) return "ptr"; // references are pointers
     if (ty.isPtr) return "ptr";
-    return MILO_TO_LLVM[ty.name] ?? ty.name;
+    if (ty.isArray) {
+      const elem = MILO_TO_LLVM[ty.name] ?? `%${ty.name}`;
+      if (ty.arraySize !== null) return `[${ty.arraySize} x ${elem}]`;
+      return `{ ptr, i32 }`; // fat pointer for dynamic arrays
+    }
+    return MILO_TO_LLVM[ty.name] ?? `%${ty.name}`;
+  }
+
+  private llvmTypeFromName(name: string): string {
+    return MILO_TO_LLVM[name] ?? `%${name}`;
   }
 
   private addString(value: string): { label: string; length: number } {
     const label = `@.str.${this.strCounter++}`;
     const escaped = value
-      .replace(/\\/g, "\\5C")
-      .replace(/\n/g, "\\0A")
-      .replace(/\t/g, "\\09")
-      .replace(/\0/g, "\\00")
-      .replace(/"/g, "\\22");
-    const length = value.length + 1; // null terminator
+      .replace(/\\/g, "\\5C").replace(/\n/g, "\\0A")
+      .replace(/\t/g, "\\09").replace(/\0/g, "\\00").replace(/"/g, "\\22");
+    const length = value.length + 1;
     this.strings.push({ label, escaped, length });
     return { label, length };
   }
 
   generate(program: Program): string {
-    // build function signature table
+    // register struct layouts
+    for (const s of program.structs) {
+      const layout: StructLayout = {
+        name: s.name,
+        fields: s.fields.map(f => ({
+          name: f.name,
+          type: this.llvmType(f.type),
+          miloType: f.type,
+        })),
+      };
+      this.structLayouts.set(s.name, layout);
+    }
+
+    // register function signatures
     for (const fn of program.functions) {
       const ret = this.llvmType(fn.retType);
-      this.fnRetTypes.set(fn.name, ret);
       this.fnSigs.set(fn.name, {
         paramTypes: fn.params.map(p => this.llvmType(p.type)),
         retType: ret,
         variadic: fn.isVariadic,
+        params: fn.params.map(p => ({ type: p.type, name: p.name })),
       });
     }
 
@@ -57,18 +83,30 @@ export class Codegen {
     const externs = program.functions.filter(f => f.isExtern);
     const functions = program.functions.filter(f => !f.isExtern);
 
-    // generate function bodies first (collects string constants)
+    // generate function bodies first (collects string constants, sets needsBoundsCheck)
     const fnBodies: string[][] = [];
-    for (const fn of functions) {
-      fnBodies.push(this.genFunction(fn));
+    for (const fn of functions) fnBodies.push(this.genFunction(fn));
+
+    // insert bounds check helper if needed
+    const hasExternPrintf = externs.some(e => e.name === "printf");
+    if (this.needsBoundsCheck) {
+      this.output.splice(1, 0, "declare void @exit(i32) noreturn");
+      if (!hasExternPrintf) this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
+      this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
     }
 
-    // insert string constants after target triple
+    // insert string constants
     for (let i = this.strings.length - 1; i >= 0; i--) {
       const { label, escaped, length } = this.strings[i];
       this.output.splice(1, 0, `${label} = private unnamed_addr constant [${length} x i8] c"${escaped}\\00"`);
     }
     if (this.strings.length > 0) this.output.splice(1, 0, "");
+
+    // insert struct type definitions
+    for (const [name, layout] of this.structLayouts) {
+      const fieldTypes = layout.fields.map(f => f.type).join(", ");
+      this.output.splice(1, 0, `%${name} = type { ${fieldTypes} }`);
+    }
 
     // insert extern declarations
     for (const ext of externs) {
@@ -99,12 +137,20 @@ export class Codegen {
     lines.push(`define ${ret} @${fn.name}(${params}) {`);
     lines.push("entry:");
 
-    // alloca for params
     for (const p of fn.params) {
-      const lt = this.llvmType(p.type);
-      lines.push(`  %${p.name}.addr = alloca ${lt}`);
-      lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
-      this.locals.set(p.name, { type: lt, mutable: false });
+      const isRef = p.type.isRef || p.type.isRefMut;
+      if (isRef) {
+        // refs are pointers; store the pointer, track inner type for load/store
+        const innerTy = this.llvmTypeFromName(p.type.name);
+        lines.push(`  %${p.name}.addr = alloca ptr`);
+        lines.push(`  store ptr %${p.name}, ptr %${p.name}.addr`);
+        this.locals.set(p.name, { type: innerTy, mutable: p.type.isRefMut, isRef: true });
+      } else {
+        const lt = this.llvmType(p.type);
+        lines.push(`  %${p.name}.addr = alloca ${lt}`);
+        lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
+        this.locals.set(p.name, { type: lt, mutable: false, isRef: false });
+      }
     }
 
     let hasTerminator = false;
@@ -127,45 +173,33 @@ export class Codegen {
     const lines: string[] = [];
 
     switch (stmt.kind) {
-      case "LetDecl": {
-        const [exprLines, val, valTy] = this.genExpr(stmt.value);
-        lines.push(...exprLines);
-        this.locals.set(stmt.name, { type: valTy, mutable: false });
-        lines.push(`  %${stmt.name}.addr = alloca ${valTy}`);
-        lines.push(`  store ${valTy} ${val}, ptr %${stmt.name}.addr`);
-        return [lines, false];
-      }
+      case "LetDecl":
       case "VarDecl": {
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
-        this.locals.set(stmt.name, { type: valTy, mutable: true });
+        const mutable = stmt.kind === "VarDecl";
+        this.locals.set(stmt.name, { type: valTy, mutable, isRef: false });
         lines.push(`  %${stmt.name}.addr = alloca ${valTy}`);
         lines.push(`  store ${valTy} ${val}, ptr %${stmt.name}.addr`);
         return [lines, false];
       }
       case "Assign": {
-        const local = this.locals.get(stmt.name);
-        if (!local) { console.error(`error[codegen]: undefined variable '${stmt.name}'`); process.exit(1); }
-        if (!local.mutable) { console.error(`error[codegen]: cannot assign to immutable variable '${stmt.name}'`); process.exit(1); }
-        const [exprLines, val] = this.genExpr(stmt.value);
-        lines.push(...exprLines);
-        lines.push(`  store ${local.type} ${val}, ptr %${stmt.name}.addr`);
+        const [valLines, val, valTy] = this.genExpr(stmt.value);
+        lines.push(...valLines);
+        const [targetLines, targetPtr, targetTy] = this.genLValue(stmt.target);
+        lines.push(...targetLines);
+        lines.push(`  store ${valTy} ${val}, ptr ${targetPtr}`);
         return [lines, false];
       }
       case "Return": {
-        if (!stmt.value) {
-          lines.push("  ret void");
-          return [lines, true];
-        }
+        if (!stmt.value) { lines.push("  ret void"); return [lines, true]; }
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
         lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
       }
-      case "IfStmt":
-        return this.genIf(stmt);
-      case "WhileStmt":
-        return this.genWhile(stmt);
+      case "IfStmt": return this.genIf(stmt);
+      case "WhileStmt": return this.genWhile(stmt);
       case "ExprStmt": {
         const [exprLines] = this.genExpr(stmt.expr);
         lines.push(...exprLines);
@@ -174,37 +208,95 @@ export class Codegen {
     }
   }
 
+  // returns (lines, pointer to the storage location, element type)
+  private genLValue(expr: Expr): [string[], string, string] {
+    const lines: string[] = [];
+    if (expr.kind === "Ident") {
+      const local = this.locals.get(expr.name);
+      if (local?.isRef) {
+        // ref params: load the pointer
+        const tmp = this.nextTemp();
+        lines.push(`  ${tmp} = load ptr, ptr %${expr.name}.addr`);
+        return [lines, tmp, local.type];
+      }
+      return [lines, `%${expr.name}.addr`, local?.type ?? "i32"];
+    }
+    if (expr.kind === "FieldAccess") {
+      const [objLines, objPtr, objTy] = this.genLValue(expr.object);
+      lines.push(...objLines);
+      const structName = this.getStructName(objTy);
+      if (structName) {
+        const layout = this.structLayouts.get(structName)!;
+        const idx = layout.fields.findIndex(f => f.name === expr.field);
+        const fieldTy = layout.fields[idx].type;
+        const tmp = this.nextTemp();
+        lines.push(`  ${tmp} = getelementptr %${structName}, ptr ${objPtr}, i32 0, i32 ${idx}`);
+        return [lines, tmp, fieldTy];
+      }
+    }
+    if (expr.kind === "IndexAccess") {
+      return this.genBoundsCheckedPtr(expr, lines);
+    }
+    return [lines, "null", "i32"];
+  }
+
+  private genBoundsCheckedPtr(expr: Expr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {
+    const [objLines, objPtr, objTy] = this.genLValue(expr.object);
+    lines.push(...objLines);
+    const [idxLines, idxVal] = this.genExpr(expr.index);
+    lines.push(...idxLines);
+
+    const match = objTy.match(/\[(\d+) x (.+)\]/);
+    if (match) {
+      const size = parseInt(match[1]);
+      const elemTy = match[2];
+      this.emitBoundsCheck(lines, idxVal, String(size));
+      const ptr = this.nextTemp();
+      lines.push(`  ${ptr} = getelementptr ${objTy}, ptr ${objPtr}, i32 0, i32 ${idxVal}`);
+      return [lines, ptr, elemTy];
+    }
+    return [lines, "null", "i32"];
+  }
+
+  private emitBoundsCheck(lines: string[], idx: string, size: string) {
+    this.needsBoundsCheck = true;
+    const cmpTmp = this.nextTemp();
+    const okLabel = this.nextLabel("bounds.ok");
+    const failLabel = this.nextLabel("bounds.fail");
+
+    lines.push(`  ${cmpTmp} = icmp ult i32 ${idx}, ${size}`);
+    lines.push(`  br i1 ${cmpTmp}, label %${okLabel}, label %${failLabel}`);
+    lines.push(`${failLabel}:`);
+    const fmtPtr = this.nextTemp();
+    lines.push(`  ${fmtPtr} = getelementptr [40 x i8], ptr @.bounds_err, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtPtr}, i32 ${idx}, i32 ${size})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+  }
+
+  private getStructName(llvmTy: string): string | null {
+    const m = llvmTy.match(/^%(.+)$/);
+    if (m && this.structLayouts.has(m[1])) return m[1];
+    return null;
+  }
+
   private genIf(stmt: Stmt & { kind: "IfStmt" }): [string[], boolean] {
     const lines: string[] = [];
     const [condLines, condVal] = this.genExpr(stmt.cond);
     lines.push(...condLines);
-
     const thenLabel = this.nextLabel("then");
     const elseLabel = this.nextLabel("else");
     const endLabel = this.nextLabel("endif");
-
     lines.push(`  br i1 ${condVal}, label %${thenLabel}, label %${elseLabel}`);
-
     lines.push(`${thenLabel}:`);
     let thenTerminated = false;
-    for (const s of stmt.thenBody) {
-      const [sl, t] = this.genStmt(s);
-      lines.push(...sl);
-      if (t) thenTerminated = true;
-    }
+    for (const s of stmt.thenBody) { const [sl, t] = this.genStmt(s); lines.push(...sl); if (t) thenTerminated = true; }
     if (!thenTerminated) lines.push(`  br label %${endLabel}`);
-
     lines.push(`${elseLabel}:`);
     let elseTerminated = false;
-    if (stmt.elseBody) {
-      for (const s of stmt.elseBody) {
-        const [sl, t] = this.genStmt(s);
-        lines.push(...sl);
-        if (t) elseTerminated = true;
-      }
-    }
+    if (stmt.elseBody) { for (const s of stmt.elseBody) { const [sl, t] = this.genStmt(s); lines.push(...sl); if (t) elseTerminated = true; } }
     if (!elseTerminated) lines.push(`  br label %${endLabel}`);
-
     lines.push(`${endLabel}:`);
     return [lines, thenTerminated && elseTerminated];
   }
@@ -214,20 +306,14 @@ export class Codegen {
     const condLabel = this.nextLabel("while.cond");
     const bodyLabel = this.nextLabel("while.body");
     const endLabel = this.nextLabel("while.end");
-
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
     const [condLines, condVal] = this.genExpr(stmt.cond);
     lines.push(...condLines);
     lines.push(`  br i1 ${condVal}, label %${bodyLabel}, label %${endLabel}`);
-
     lines.push(`${bodyLabel}:`);
-    for (const s of stmt.body) {
-      const [sl] = this.genStmt(s);
-      lines.push(...sl);
-    }
+    for (const s of stmt.body) { const [sl] = this.genStmt(s); lines.push(...sl); }
     lines.push(`  br label %${condLabel}`);
-
     lines.push(`${endLabel}:`);
     return [lines, false];
   }
@@ -238,6 +324,8 @@ export class Codegen {
     switch (expr.kind) {
       case "IntLit":
         return [lines, String(expr.value), "i32"];
+      case "FloatLit":
+        return [lines, `${expr.value.toExponential()}`, "double"];
       case "BoolLit":
         return [lines, expr.value ? "1" : "0", "i1"];
       case "StringLit": {
@@ -249,6 +337,16 @@ export class Codegen {
       case "Ident": {
         const local = this.locals.get(expr.name);
         if (!local) { console.error(`error[codegen]: undefined variable '${expr.name}'`); process.exit(1); }
+        if (local.isRef) {
+          // ref: load the pointer, then load the value
+          const ptr = this.nextTemp();
+          lines.push(`  ${ptr} = load ptr, ptr %${expr.name}.addr`);
+          // for struct refs, return the pointer (structs are passed by ptr)
+          if (this.getStructName(local.type)) return [lines, ptr, local.type];
+          const val = this.nextTemp();
+          lines.push(`  ${val} = load ${local.type}, ptr ${ptr}`);
+          return [lines, val, local.type];
+        }
         const tmp = this.nextTemp();
         lines.push(`  ${tmp} = load ${local.type}, ptr %${expr.name}.addr`);
         return [lines, tmp, local.type];
@@ -258,66 +356,59 @@ export class Codegen {
         const [rl, rv] = this.genExpr(expr.right);
         lines.push(...ll, ...rl);
         const tmp = this.nextTemp();
-
         const isFloat = lt === "float" || lt === "double";
         const intOps: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "sdiv", "%": "srem" };
         const floatOps: Record<string, string> = { "+": "fadd", "-": "fsub", "*": "fmul", "/": "fdiv", "%": "frem" };
         const intCmps: Record<string, string> = { "==": "eq", "!=": "ne", "<": "slt", ">": "sgt", "<=": "sle", ">=": "sge" };
         const floatCmps: Record<string, string> = { "==": "oeq", "!=": "one", "<": "olt", ">": "ogt", "<=": "ole", ">=": "oge" };
-
         if (expr.op in intOps) {
           const op = isFloat ? floatOps[expr.op] : intOps[expr.op];
           lines.push(`  ${tmp} = ${op} ${lt} ${lv}, ${rv}`);
           return [lines, tmp, lt];
         }
         if (expr.op in intCmps) {
-          if (isFloat) {
-            lines.push(`  ${tmp} = fcmp ${floatCmps[expr.op]} ${lt} ${lv}, ${rv}`);
-          } else {
-            lines.push(`  ${tmp} = icmp ${intCmps[expr.op]} ${lt} ${lv}, ${rv}`);
-          }
+          if (isFloat) lines.push(`  ${tmp} = fcmp ${floatCmps[expr.op]} ${lt} ${lv}, ${rv}`);
+          else lines.push(`  ${tmp} = icmp ${intCmps[expr.op]} ${lt} ${lv}, ${rv}`);
           return [lines, tmp, "i1"];
         }
-        console.error(`error[codegen]: unknown binary op '${expr.op}'`);
-        process.exit(1);
+        console.error(`error[codegen]: unknown binary op '${expr.op}'`); process.exit(1);
       }
       case "UnaryOp": {
         const [ol, ov, ot] = this.genExpr(expr.operand);
         lines.push(...ol);
         const tmp = this.nextTemp();
         if (expr.op === "-") {
-          if (ot === "float" || ot === "double") {
-            lines.push(`  ${tmp} = fneg ${ot} ${ov}`);
-          } else {
-            lines.push(`  ${tmp} = sub ${ot} 0, ${ov}`);
-          }
+          if (ot === "float" || ot === "double") lines.push(`  ${tmp} = fneg ${ot} ${ov}`);
+          else lines.push(`  ${tmp} = sub ${ot} 0, ${ov}`);
           return [lines, tmp, ot];
         }
-        if (expr.op === "!") {
-          lines.push(`  ${tmp} = xor i1 ${ov}, 1`);
-          return [lines, tmp, "i1"];
-        }
-        console.error(`error[codegen]: unknown unary op '${expr.op}'`);
-        process.exit(1);
+        if (expr.op === "!") { lines.push(`  ${tmp} = xor i1 ${ov}, 1`); return [lines, tmp, "i1"]; }
+        console.error(`error[codegen]: unknown unary op '${expr.op}'`); process.exit(1);
       }
       case "Call": {
+        const sig = this.fnSigs.get(expr.func);
         const argVals: { val: string; type: string }[] = [];
-        for (const arg of expr.args) {
-          const [al, av, at] = this.genExpr(arg);
-          lines.push(...al);
-          argVals.push({ val: av, type: at });
+        for (let i = 0; i < expr.args.length; i++) {
+          const paramDef = sig?.params[i];
+          const isRefParam = paramDef && (paramDef.type.isRef || paramDef.type.isRefMut);
+          if (isRefParam) {
+            // auto-borrow: pass pointer to the variable
+            const [al, aPtr] = this.genLValueForArg(expr.args[i]);
+            lines.push(...al);
+            argVals.push({ val: aPtr, type: "ptr" });
+          } else {
+            const [al, av, at] = this.genExpr(expr.args[i]);
+            lines.push(...al);
+            argVals.push({ val: av, type: at });
+          }
         }
         const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
-        const sig = this.fnSigs.get(expr.func);
         const retTy = sig?.retType ?? "i32";
-
-        // variadic calls need explicit function type: call i32 (ptr, ...) @printf(...)
         let callPrefix = retTy;
         if (sig?.variadic) {
           const paramStr = sig.paramTypes.join(", ");
           callPrefix = `${retTy} (${paramStr}, ...)`;
         }
-
         if (retTy === "void") {
           lines.push(`  call ${callPrefix} @${expr.func}(${argsStr})`);
           return [lines, "void", "void"];
@@ -326,6 +417,106 @@ export class Codegen {
         lines.push(`  ${tmp} = call ${callPrefix} @${expr.func}(${argsStr})`);
         return [lines, tmp, retTy];
       }
+      case "StructLit": {
+        const layout = this.structLayouts.get(expr.name)!;
+        const structTy = `%${expr.name}`;
+        const alloca = this.nextTemp();
+        lines.push(`  ${alloca} = alloca ${structTy}`);
+        for (const f of expr.fields) {
+          const idx = layout.fields.findIndex(lf => lf.name === f.name);
+          const fieldTy = layout.fields[idx].type;
+          const [fLines, fVal] = this.genExpr(f.value);
+          lines.push(...fLines);
+          const ptr = this.nextTemp();
+          lines.push(`  ${ptr} = getelementptr ${structTy}, ptr ${alloca}, i32 0, i32 ${idx}`);
+          lines.push(`  store ${fieldTy} ${fVal}, ptr ${ptr}`);
+        }
+        // load the whole struct as a value
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${structTy}, ptr ${alloca}`);
+        return [lines, val, structTy];
+      }
+      case "FieldAccess": {
+        // get pointer to field, then load
+        const [ptrLines, ptr, fieldTy] = this.genFieldPtr(expr);
+        lines.push(...ptrLines);
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${fieldTy}, ptr ${ptr}`);
+        return [lines, val, fieldTy];
+      }
+      case "ArrayLit": {
+        if (expr.elements.length === 0) return [lines, "zeroinitializer", "[0 x i32]"];
+        const [firstLines, firstVal, elemTy] = this.genExpr(expr.elements[0]);
+        lines.push(...firstLines);
+        const arrTy = `[${expr.elements.length} x ${elemTy}]`;
+        const alloca = this.nextTemp();
+        lines.push(`  ${alloca} = alloca ${arrTy}`);
+        // store first element
+        const ptr0 = this.nextTemp();
+        lines.push(`  ${ptr0} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 0`);
+        lines.push(`  store ${elemTy} ${firstVal}, ptr ${ptr0}`);
+        for (let i = 1; i < expr.elements.length; i++) {
+          const [el, ev] = this.genExpr(expr.elements[i]);
+          lines.push(...el);
+          const pi = this.nextTemp();
+          lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
+          lines.push(`  store ${elemTy} ${ev}, ptr ${pi}`);
+        }
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${arrTy}, ptr ${alloca}`);
+        return [lines, val, arrTy];
+      }
+      case "IndexAccess": {
+        const [ptrLines, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
+        // ptrLines already pushed into lines
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
+        return [lines, val, elemTy];
+      }
     }
+  }
+
+  private genFieldPtr(expr: Expr & { kind: "FieldAccess" }): [string[], string, string] {
+    const lines: string[] = [];
+    // get lvalue of the object
+    const [objLines, objPtr, objTy] = this.genLValue(expr.object);
+    lines.push(...objLines);
+    const structName = this.getStructName(objTy);
+    if (structName) {
+      const layout = this.structLayouts.get(structName)!;
+      const idx = layout.fields.findIndex(f => f.name === expr.field);
+      const fieldTy = layout.fields[idx].type;
+      const ptr = this.nextTemp();
+      lines.push(`  ${ptr} = getelementptr %${structName}, ptr ${objPtr}, i32 0, i32 ${idx}`);
+      return [lines, ptr, fieldTy];
+    }
+    return [lines, "null", "i32"];
+  }
+
+  // for auto-borrow: get a pointer to a variable for passing as &T
+  private genLValueForArg(expr: Expr): [string[], string] {
+    if (expr.kind === "Ident") {
+      const local = this.locals.get(expr.name);
+      if (local?.isRef) {
+        // already a ref — load the pointer
+        const lines: string[] = [];
+        const tmp = this.nextTemp();
+        lines.push(`  ${tmp} = load ptr, ptr %${expr.name}.addr`);
+        return [lines, tmp];
+      }
+      return [[], `%${expr.name}.addr`];
+    }
+    if (expr.kind === "FieldAccess") {
+      const [lines, ptr] = this.genFieldPtr(expr);
+      return [lines, ptr];
+    }
+    // fallback: evaluate to a temp, alloca, store, return ptr
+    const lines: string[] = [];
+    const [el, ev, et] = this.genExpr(expr);
+    lines.push(...el);
+    const tmp = this.nextTemp();
+    lines.push(`  ${tmp} = alloca ${et}`);
+    lines.push(`  store ${et} ${ev}, ptr ${tmp}`);
+    return [lines, tmp];
   }
 }
