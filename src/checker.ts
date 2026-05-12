@@ -93,6 +93,11 @@ export class TypeChecker {
         if (resolvedArgs.length !== 1) { this.error(`'Vec' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
         return { tag: "vec", element: resolvedArgs[0] };
       }
+      if (ty.name === "HashMap") {
+        if (resolvedArgs.length !== 2) { this.error(`'HashMap' expects 2 type arguments, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
+        this.validateHashableKey(resolvedArgs[0]);
+        return { tag: "hashmap", key: resolvedArgs[0], value: resolvedArgs[1] };
+      }
       const ge = this.genericEnums.get(ty.name);
       if (ge) {
         if (resolvedArgs.length !== ge.typeParams.length) {
@@ -131,6 +136,7 @@ export class TypeChecker {
       case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
       case "box": return `Box_${this.mangleTypeName(t.inner)}`;
       case "vec": return `Vec_${this.mangleTypeName(t.element)}`;
+      case "hashmap": return `HashMap_${this.mangleTypeName(t.key)}_${this.mangleTypeName(t.value)}`;
       case "array": return `arr_${this.mangleTypeName(t.element)}_${t.size}`;
       case "ref": return `ref_${this.mangleTypeName(t.inner)}`;
       case "unknown": return "unknown";
@@ -201,6 +207,7 @@ export class TypeChecker {
     if (t.tag === "ptr") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "box") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "vec") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
+    if (t.tag === "hashmap") return { ...t, key: this.substituteTypeKind(t.key, typeMap), value: this.substituteTypeKind(t.value, typeMap) };
     return t;
   }
 
@@ -665,6 +672,11 @@ export class TypeChecker {
       this.exprTypes.set(expr, hint);
       return hint;
     }
+    if (expr.kind === "EnumLit" && expr.enumName === "HashMap" && expr.variant === "new" && hint?.tag === "hashmap") {
+      if (expr.args.length !== 0) { this.error(`'HashMap::new' takes no arguments`, sp); }
+      this.exprTypes.set(expr, hint);
+      return hint;
+    }
     if (expr.kind === "EnumLit" && hint?.tag === "enum") {
       const sp = expr.span;
       const hintEnum = this.enums.get(hint.name);
@@ -927,6 +939,9 @@ export class TypeChecker {
         if (objType.tag === "vec" && expr.field === "len") {
           return this.setType(expr, { tag: "int", bits: 64, signed: true });
         }
+        if (objType.tag === "hashmap" && expr.field === "len") {
+          return this.setType(expr, { tag: "int", bits: 64, signed: true });
+        }
         this.error(`cannot access field '${expr.field}' on type ${typeName(objType)}`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
@@ -960,6 +975,11 @@ export class TypeChecker {
         if (expr.enumName === "Vec" && expr.variant === "new") {
           if (expr.args.length !== 0) this.error(`'Vec::new' takes no arguments`, sp);
           this.error(`cannot infer Vec element type — add a type annotation: 'let v: Vec<T> = Vec::new()'`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        if (expr.enumName === "HashMap" && expr.variant === "new") {
+          if (expr.args.length !== 0) this.error(`'HashMap::new' takes no arguments`, sp);
+          this.error(`cannot infer HashMap types — add a type annotation: 'let m: HashMap<K, V> = HashMap::new()'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         const genericInfo = this.genericEnums.get(expr.enumName);
@@ -1079,10 +1099,76 @@ export class TypeChecker {
           this.error(`Vec has no method '${expr.method}'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
+        if (objType.tag === "hashmap") {
+          if (expr.method === "insert") {
+            if (expr.args.length !== 2) { this.error(`'insert' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot insert into immutable HashMap`, sp, `declare with 'var' to make it mutable`);
+            }
+            const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+            if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
+              this.error(`insert key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+            }
+            const valType = this.checkExprWithHint(expr.args[1], objType.value);
+            if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
+              this.error(`insert value: expected ${typeName(objType.value)}, got ${typeName(valType)}`, sp);
+            }
+            this.tryMove(expr.args[0]);
+            this.tryMove(expr.args[1]);
+            return this.setType(expr, { tag: "void" });
+          }
+          if (expr.method === "get") {
+            if (expr.args.length !== 1) { this.error(`'get' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+            if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
+              this.error(`get key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+            }
+            const optionType = this.resolveOptionForValue(objType.value, sp);
+            return this.setType(expr, optionType);
+          }
+          if (expr.method === "contains") {
+            if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+            if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
+              this.error(`contains key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+            }
+            return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "remove") {
+            if (expr.args.length !== 1) { this.error(`'remove' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot remove from immutable HashMap`, sp, `declare with 'var' to make it mutable`);
+            }
+            const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+            if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
+              this.error(`remove key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+            }
+            return this.setType(expr, { tag: "void" });
+          }
+          this.error(`HashMap has no method '${expr.method}'`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
         this.error(`type '${typeName(objType)}' has no methods`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
     }
+  }
+
+  private validateHashableKey(t: TypeKind, span?: Span) {
+    if (t.tag === "int" || t.tag === "bool" || t.tag === "string") return;
+    if (t.tag !== "unknown") {
+      this.error(`type '${typeName(t)}' is not hashable — only integer, bool, and String keys are supported`, span);
+    }
+  }
+
+  private resolveOptionForValue(valueType: TypeKind, span?: Span): TypeKind {
+    const ge = this.genericEnums.get("Option");
+    if (!ge) {
+      this.error(`HashMap::get requires 'enum Option<T> { Some(T), None }' to be defined`, span);
+      return { tag: "unknown" };
+    }
+    const mangled = this.monomorphizeEnum("Option", [valueType]);
+    return { tag: "enum", name: mangled };
   }
 
   // extract T from Option-like (Some(T)/None) or Result-like (Ok(T)/Err(E)) enums

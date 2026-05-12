@@ -60,6 +60,7 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 - [x] Box\<T\> — single-owner heap pointer, auto-drop, recursive enum drop glue
 - [x] Recursive enums via boxed payload (linked list, tree, AST)
 - [x] Vec\<T\> — dynamic array with push/pop/len, bounds-checked indexing, drop glue
+- [x] HashMap\<K, V\> — open addressing, FNV-1a + seeded hash, insert/get/contains/remove/len, drop glue
 - [ ] MIR — lower-level IR for optimization passes
 - [ ] Arena system designed based on real needs from self-hosting
 - [ ] Write the compiler in Milo itself

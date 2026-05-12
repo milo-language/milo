@@ -32,7 +32,13 @@ export type HIRExpr =
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecPush"; vec: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecPop"; vec: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span };
+  | { kind: "VecLen"; object: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "HashMapNew"; keyType: TypeKind; valueType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "HashMapInsert"; map: HIRExpr; key: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "HashMapGet"; map: HIRExpr; key: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
+  | { kind: "HashMapContains"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "HashMapRemove"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;

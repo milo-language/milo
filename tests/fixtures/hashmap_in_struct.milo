@@ -1,0 +1,22 @@
+// @expect: len: 2
+// @expect: done
+extern fn printf(fmt: *u8, ...) -> i32
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+fn make_map() -> HashMap<i32, i32> {
+    var m: HashMap<i32, i32> = HashMap::new()
+    m.insert(1, 10)
+    m.insert(2, 20)
+    return m
+}
+
+fn main() -> i32 {
+    let m = make_map()
+    printf("len: %ld\n", m.len)
+    printf("done\n")
+    return 0
+}

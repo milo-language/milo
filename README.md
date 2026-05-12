@@ -52,6 +52,7 @@ fn main() -> i32 {
 - Enums / tagged unions with exhaustive `match`
 - `Box<T>` — heap-allocated single-owner pointer, recursive enum payloads (linked lists, trees, ASTs)
 - `Vec<T>` — dynamic arrays with `push`/`pop`/`len`, bounds-checked indexing
+- `HashMap<K, V>` — open-addressing hash table with `insert`/`get`/`contains`/`remove`/`len`
 - Drop semantics — heap-owning values auto-freed on scope exit
 - Generics on functions, enums, and structs (monomorphization, type inference)
 
@@ -83,7 +84,7 @@ Recursive resolution, dedup, transitive imports.
 - VS Code extension: syntax highlighting + LSP client
 - GitHub Actions CI
 
-95 tests pass on the current build.
+105 tests pass on the current build.
 
 ## Design Principles
 
@@ -103,7 +104,6 @@ Recursive resolution, dedup, transitive imports.
 
 Honest list of major gaps:
 
-- **No `HashMap<K, V>`.** Key-value storage is the biggest stdlib hole today — blocks symbol tables, frequency counts, JSON object trees.
 - **No arenas yet.** Planned answer for cyclic data and bulk-allocated graphs. `Box<T>` handles trees and recursive structures meanwhile.
 - **No string slices or `split`.** Strings are owned; substring views via references can't escape function scope yet.
 - **No closures.** No `map`/`filter`-style iteration.
@@ -122,4 +122,4 @@ Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics, 
 
 ## Status
 
-Phase 2 — language core in place. `Box<T>` and `Vec<T>` shipped. Next: `HashMap<K, V>`, arenas, closures.
+Phase 3 — language core in place. `Box<T>`, `Vec<T>`, and `HashMap<K, V>` shipped. Next: arenas, closures, string slices.

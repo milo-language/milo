@@ -1,0 +1,36 @@
+// @expect: len: 2
+// @expect: has hello: true
+// @expect: has nope: false
+// @expect: got hello: 42
+extern fn printf(fmt: *u8, ...) -> i32
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+fn main() -> i32 {
+    var m: HashMap<String, i32> = HashMap::new()
+    m.insert("hello", 42)
+    m.insert("world", 99)
+
+    printf("len: %ld\n", m.len)
+    if m.contains("hello") {
+        printf("has hello: true\n")
+    } else {
+        printf("has hello: false\n")
+    }
+    if m.contains("nope") {
+        printf("has nope: true\n")
+    } else {
+        printf("has nope: false\n")
+    }
+
+    let r = m.get("hello")
+    if let Option::Some(v) = r {
+        printf("got hello: %d\n", v)
+    } else {
+        printf("hello not found\n")
+    }
+    return 0
+}

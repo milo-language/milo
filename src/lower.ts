@@ -246,6 +246,9 @@ class LowerCtx {
         if (objType?.tag === "vec" && expr.field === "len") {
           return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
         }
+        if (objType?.tag === "hashmap" && expr.field === "len") {
+          return { kind: "HashMapLen", object: this.lowerExpr(expr.object), type, span: expr.span };
+        }
         return { kind: "FieldAccess", object: this.lowerExpr(expr.object), field: expr.field, type, span: expr.span };
       }
       case "ArrayLit":
@@ -255,6 +258,9 @@ class LowerCtx {
       case "EnumLit": {
         if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
           return { kind: "VecNew", elementType: type.element, type, span: expr.span };
+        }
+        if (expr.enumName === "HashMap" && expr.variant === "new" && type.tag === "hashmap") {
+          return { kind: "HashMapNew", keyType: type.key, valueType: type.value, type, span: expr.span };
         }
         const enumName = this.c.rewrittenEnums.get(expr) ?? expr.enumName;
         return {
@@ -315,6 +321,21 @@ class LowerCtx {
           }
           if (expr.method === "pop") {
             return { kind: "VecPop", vec: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+        }
+        if (objType?.tag === "hashmap") {
+          if (expr.method === "insert") {
+            return { kind: "HashMapInsert", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), type, span: expr.span };
+          }
+          if (expr.method === "get") {
+            const optionEnumName = type.tag === "enum" ? type.name : "";
+            return { kind: "HashMapGet", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), optionEnumName, type, span: expr.span };
+          }
+          if (expr.method === "contains") {
+            return { kind: "HashMapContains", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          }
+          if (expr.method === "remove") {
+            return { kind: "HashMapRemove", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
         }
         throw new Error(`unsupported method call: ${expr.method}`);
