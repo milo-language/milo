@@ -193,10 +193,12 @@ class LowerCtx {
           span: expr.span,
         };
       case "FieldAccess": {
-        // array.len → ArrayLen node
         const objType = this.typeOf(expr.object);
         if (objType?.tag === "array" && expr.field === "len") {
           return { kind: "ArrayLen", object: this.lowerExpr(expr.object), type, span: expr.span };
+        }
+        if (objType?.tag === "string" && expr.field === "len") {
+          return { kind: "StringLen", object: this.lowerExpr(expr.object), type, span: expr.span };
         }
         return { kind: "FieldAccess", object: this.lowerExpr(expr.object), field: expr.field, type, span: expr.span };
       }

@@ -1,0 +1,8 @@
+// @expect: hello world
+fn main() -> i32 {
+    let a = "hello "
+    let b = "world"
+    let c = a + b
+    println("%s", c)
+    return 0
+}

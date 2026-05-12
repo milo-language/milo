@@ -1,0 +1,9 @@
+// @expect: 104
+extern fn printf(fmt: *u8, ...) -> i32
+
+fn main() -> i32 {
+    let s = "hello"
+    let byte = s[0]
+    printf("%d\n", byte)
+    return 0
+}

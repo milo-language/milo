@@ -94,6 +94,7 @@ export class TypeChecker {
       case "float": return `f${t.bits}`;
       case "bool": return "bool";
       case "void": return "void";
+      case "string": return "String";
       case "struct": return t.name;
       case "enum": return t.name;
       case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
@@ -565,7 +566,7 @@ export class TypeChecker {
       case "BoolLit":
         return this.setType(expr, { tag: "bool" });
       case "StringLit":
-        return this.setType(expr, { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } });
+        return this.setType(expr, { tag: "string" });
       case "Ident": {
         const info = this.lookup(expr.name);
         if (!info) { this.error(`undefined variable '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -580,6 +581,12 @@ export class TypeChecker {
         const rt = this.checkExpr(expr.right);
         const arithOps = ["+", "-", "*", "/", "%"];
         const cmpOps = ["==", "!=", "<", ">", "<=", ">="];
+        if (expr.op === "+" && lt.tag === "string" && rt.tag === "string") {
+          return this.setType(expr, { tag: "string" });
+        }
+        if ((expr.op === "==" || expr.op === "!=") && lt.tag === "string" && rt.tag === "string") {
+          return this.setType(expr, { tag: "bool" });
+        }
         if (arithOps.includes(expr.op)) {
           if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${typeName(lt)}`, sp);
           if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
@@ -660,7 +667,11 @@ export class TypeChecker {
               this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
             }
           } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
-            this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+            // String auto-coerces to *u8 for FFI/builtins
+            const isStringToPtr = argType.tag === "string" && paramType.tag === "ptr" && paramType.inner.tag === "int" && paramType.inner.bits === 8;
+            if (!isStringToPtr) {
+              this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+            }
           }
         }
         for (let i = sig.params.length; i < expr.args.length; i++) this.checkExpr(expr.args[i]);
@@ -703,6 +714,9 @@ export class TypeChecker {
         if (objType.tag === "array" && expr.field === "len") {
           return this.setType(expr, { tag: "int", bits: 32, signed: true });
         }
+        if (objType.tag === "string" && expr.field === "len") {
+          return this.setType(expr, { tag: "int", bits: 64, signed: true });
+        }
         this.error(`cannot access field '${expr.field}' on type ${typeName(objType)}`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
@@ -727,6 +741,7 @@ export class TypeChecker {
           this.error(`array index must be integer, got ${typeName(idxType)}`, sp);
         }
         if (objType.tag === "array") return this.setType(expr, objType.element);
+        if (objType.tag === "string") return this.setType(expr, { tag: "int", bits: 8, signed: false });
         this.error(`cannot index type ${typeName(objType)}`, sp);
         return this.setType(expr, { tag: "unknown" });
       }

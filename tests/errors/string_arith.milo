@@ -1,0 +1,7 @@
+// @error: requires numeric type
+fn main() -> i32 {
+    let a = "hello"
+    let b = "world"
+    let c = a - b
+    return 0
+}

@@ -3,6 +3,7 @@ export type TypeKind =
   | { tag: "float"; bits: number }
   | { tag: "bool" }
   | { tag: "void" }
+  | { tag: "string" }
   | { tag: "ptr"; inner: TypeKind }
   | { tag: "ref"; inner: TypeKind; mutable: boolean }
   | { tag: "struct"; name: string }
@@ -25,6 +26,7 @@ export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; 
     case "f64": base = { tag: "float", bits: 64 }; break;
     case "bool": base = { tag: "bool" }; break;
     case "void": base = { tag: "void" }; break;
+    case "String": base = { tag: "string" }; break;
     default: base = { tag: "struct", name: ty.name }; break;
   }
   if (ty.isArray) return { tag: "array", element: base, size: ty.arraySize };
@@ -39,7 +41,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
   switch (a.tag) {
     case "int": return (b as typeof a).bits === a.bits && (b as typeof a).signed === a.signed;
     case "float": return (b as typeof a).bits === a.bits;
-    case "bool": case "void": case "unknown": return true;
+    case "bool": case "void": case "string": case "unknown": return true;
     case "ptr": return typeEq(a.inner, (b as typeof a).inner);
     case "ref": return typeEq(a.inner, (b as typeof a).inner) && a.mutable === (b as typeof a).mutable;
     case "struct": return a.name === (b as typeof a).name;
@@ -57,6 +59,7 @@ export function typeName(t: TypeKind): string {
     case "float": return `f${t.bits}`;
     case "bool": return "bool";
     case "void": return "void";
+    case "string": return "String";
     case "ptr": return `*${typeName(t.inner)}`;
     case "ref": return `&${t.mutable ? "mut " : ""}${typeName(t.inner)}`;
     case "struct": return t.name;

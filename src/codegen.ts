@@ -27,6 +27,10 @@ export class Codegen {
   private needsPrintf = false;
   private needsPutchar = false;
   private needsExit = false;
+  private needsMalloc = false;
+  private needsMemcpy = false;
+  private needsMemcmp = false;
+  private hasStringType = false;
   private static BUILTINS = new Set(["print", "println", "exit"]);
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -39,6 +43,7 @@ export class Codegen {
       case "float":  return t.bits === 32 ? "float" : "double";
       case "bool":   return "i1";
       case "void":   return "void";
+      case "string": return "%String";
       case "ptr":    return "ptr";
       case "ref":    return "ptr";
       case "struct": return `%${t.name}`;
@@ -72,6 +77,7 @@ export class Codegen {
     if (ty === "float") return 4;
     if (ty === "double") return 8;
     if (ty === "ptr") return 8;
+    if (ty === "%String") return 24; // ptr + i64 + i64
     const arrMatch = ty.match(/\[(\d+) x (.+)\]/);
     if (arrMatch) return parseInt(arrMatch[1]) * this.typeSize(arrMatch[2]);
     return 8;
@@ -140,6 +146,12 @@ export class Codegen {
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.name));
     if (this.needsBoundsCheck) { this.needsPrintf = true; this.needsExit = true; }
+    if (this.needsMemcmp && !declaredExterns.has("memcmp"))
+      this.output.splice(1, 0, "declare i32 @memcmp(ptr, ptr, i64)");
+    if (this.needsMemcpy && !declaredExterns.has("memcpy"))
+      this.output.splice(1, 0, "declare ptr @memcpy(ptr, ptr, i64)");
+    if (this.needsMalloc && !declaredExterns.has("malloc"))
+      this.output.splice(1, 0, "declare ptr @malloc(i64)");
     if (this.needsExit && !declaredExterns.has("exit"))
       this.output.splice(1, 0, "declare void @exit(i32) noreturn");
     if (this.needsPutchar && !declaredExterns.has("putchar"))
@@ -148,6 +160,8 @@ export class Codegen {
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
     if (this.needsBoundsCheck)
       this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
+    if (this.hasStringType)
+      this.output.splice(1, 0, `%String = type { ptr, i64, i64 }`);
 
     // insert string constants
     for (let i = this.strings.length - 1; i >= 0; i--) {
@@ -483,7 +497,14 @@ export class Codegen {
       for (const arg of expr.args) {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
-        argVals.push({ val: av, type: at });
+        if (at === "%String") {
+          // coerce String → ptr (extract data pointer) for printf
+          const dataPtr = this.nextTemp();
+          lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
+          argVals.push({ val: dataPtr, type: "ptr" });
+        } else {
+          argVals.push({ val: av, type: at });
+        }
       }
       const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
       lines.push(`  call i32 (ptr, ...) @printf(${argsStr})`);
@@ -512,10 +533,18 @@ export class Codegen {
       case "BoolLit":
         return [lines, expr.value ? "1" : "0", "i1"];
       case "StringLit": {
+        this.hasStringType = true;
         const { label, length } = this.addString(expr.value);
-        const tmp = this.nextTemp();
-        lines.push(`  ${tmp} = getelementptr [${length} x i8], ptr ${label}, i32 0, i32 0`);
-        return [lines, tmp, "ptr"];
+        const strLen = length - 1; // exclude null terminator
+        const ptr = this.nextTemp();
+        lines.push(`  ${ptr} = getelementptr [${length} x i8], ptr ${label}, i32 0, i32 0`);
+        const s0 = this.nextTemp();
+        lines.push(`  ${s0} = insertvalue %String undef, ptr ${ptr}, 0`);
+        const s1 = this.nextTemp();
+        lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${strLen}, 1`);
+        const s2 = this.nextTemp();
+        lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
+        return [lines, s2, "%String"];
       }
       case "Ident": {
         const local = this.locals.get(expr.name);
@@ -536,6 +565,12 @@ export class Codegen {
         const [ll, lv, llt] = this.genExpr(expr.left);
         const [rl, rv] = this.genExpr(expr.right);
         lines.push(...ll, ...rl);
+
+        if (llt === "%String") {
+          if (expr.op === "+") return this.genStringConcat(lines, lv, rv);
+          if (expr.op === "==" || expr.op === "!=") return this.genStringCmp(lines, lv, rv, expr.op === "==");
+        }
+
         const tmp = this.nextTemp();
         const isFloat = llt === "float" || llt === "double";
         const unsigned = !isFloat && this.isUnsigned(expr.left.type);
@@ -577,7 +612,8 @@ export class Codegen {
         }
         const sig = this.fnSigs.get(expr.func);
         const argVals: { val: string; type: string }[] = [];
-        for (const arg of expr.args) {
+        for (let i = 0; i < expr.args.length; i++) {
+          const arg = expr.args[i];
           if (arg.passByRef) {
             const [al, aPtr] = this.genLValueForArg(arg.expr);
             lines.push(...al);
@@ -585,7 +621,14 @@ export class Codegen {
           } else {
             const [al, av, at] = this.genExpr(arg.expr);
             lines.push(...al);
-            argVals.push({ val: av, type: at });
+            // String → ptr coercion for extern/FFI calls
+            if (at === "%String" && sig && i < sig.paramTypes.length && sig.paramTypes[i] === "ptr") {
+              const dataPtr = this.nextTemp();
+              lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
+              argVals.push({ val: dataPtr, type: "ptr" });
+            } else {
+              argVals.push({ val: av, type: at });
+            }
           }
         }
         const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
@@ -629,12 +672,18 @@ export class Codegen {
         return [lines, val, fieldTy];
       }
       case "ArrayLen": {
-        // compile-time constant — extract size from the object's array type
         const objType = expr.object.type;
         if (objType.tag === "array" && objType.size !== null) {
           return [lines, String(objType.size), "i32"];
         }
         return [lines, "0", "i32"];
+      }
+      case "StringLen": {
+        const [ol, ov] = this.genExpr(expr.object);
+        lines.push(...ol);
+        const len = this.nextTemp();
+        lines.push(`  ${len} = extractvalue %String ${ov}, 1`);
+        return [lines, len, "i64"];
       }
       case "ArrayLit": {
         if (expr.elements.length === 0) return [lines, "zeroinitializer", "[0 x i32]"];
@@ -658,6 +707,9 @@ export class Codegen {
         return [lines, val, arrTy];
       }
       case "IndexAccess": {
+        if (expr.object.type.tag === "string") {
+          return this.genStringIndex(expr, lines);
+        }
         const [ptrLines, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
@@ -695,6 +747,101 @@ export class Codegen {
         return [lines, val, enumTy];
       }
     }
+  }
+
+  private genStringConcat(lines: string[], lv: string, rv: string): [string[], string, string] {
+    this.hasStringType = true;
+    this.needsMalloc = true;
+    this.needsMemcpy = true;
+    const aData = this.nextTemp();
+    lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
+    const aLen = this.nextTemp();
+    lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
+    const bData = this.nextTemp();
+    lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
+    const bLen = this.nextTemp();
+    lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
+    const total = this.nextTemp();
+    lines.push(`  ${total} = add i64 ${aLen}, ${bLen}`);
+    // +1 for null terminator
+    const allocSz = this.nextTemp();
+    lines.push(`  ${allocSz} = add i64 ${total}, 1`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${allocSz})`);
+    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${aData}, i64 ${aLen})`);
+    const dst = this.nextTemp();
+    lines.push(`  ${dst} = getelementptr i8, ptr ${buf}, i64 ${aLen}`);
+    lines.push(`  call ptr @memcpy(ptr ${dst}, ptr ${bData}, i64 ${bLen})`);
+    // null terminate
+    const nullPtr = this.nextTemp();
+    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${total}`);
+    lines.push(`  store i8 0, ptr ${nullPtr}`);
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${total}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocSz}, 2`);
+    return [lines, s2, "%String"];
+  }
+
+  private genStringCmp(lines: string[], lv: string, rv: string, isEq: boolean): [string[], string, string] {
+    this.needsMemcmp = true;
+    const aLen = this.nextTemp();
+    lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
+    const bLen = this.nextTemp();
+    lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
+    const lenEq = this.nextTemp();
+    lines.push(`  ${lenEq} = icmp eq i64 ${aLen}, ${bLen}`);
+    const cmpDataLabel = this.nextLabel("str.cmpdata");
+    const cmpFalseLabel = this.nextLabel("str.short");
+    const cmpDoneLabel = this.nextLabel("str.done");
+    lines.push(`  br i1 ${lenEq}, label %${cmpDataLabel}, label %${cmpFalseLabel}`);
+    lines.push(`${cmpDataLabel}:`);
+    const aData = this.nextTemp();
+    lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
+    const bData = this.nextTemp();
+    lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
+    const cmpResult = this.nextTemp();
+    lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${aLen})`);
+    const dataEq = this.nextTemp();
+    lines.push(`  ${dataEq} = icmp eq i32 ${cmpResult}, 0`);
+    lines.push(`  br label %${cmpDoneLabel}`);
+    lines.push(`${cmpFalseLabel}:`);
+    lines.push(`  br label %${cmpDoneLabel}`);
+    lines.push(`${cmpDoneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi i1 [${dataEq}, %${cmpDataLabel}], [false, %${cmpFalseLabel}]`);
+    if (!isEq) {
+      const negated = this.nextTemp();
+      lines.push(`  ${negated} = xor i1 ${result}, 1`);
+      return [lines, negated, "i1"];
+    }
+    return [lines, result, "i1"];
+  }
+
+  private genStringIndex(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {
+    this.hasStringType = true;
+    this.needsBoundsCheck = true;
+    const [ol, ov] = this.genExpr(expr.object);
+    lines.push(...ol);
+    const [il, iv] = this.genExpr(expr.index);
+    lines.push(...il);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = extractvalue %String ${ov}, 1`);
+    // bounds check: idx < len (i64 comparison, truncated for bounds error msg)
+    const len32 = this.nextTemp();
+    lines.push(`  ${len32} = trunc i64 ${len} to i32`);
+    this.emitBoundsCheck(lines, iv, len32);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = extractvalue %String ${ov}, 0`);
+    const idxExt = this.nextTemp();
+    lines.push(`  ${idxExt} = sext i32 ${iv} to i64`);
+    const bytePtr = this.nextTemp();
+    lines.push(`  ${bytePtr} = getelementptr i8, ptr ${data}, i64 ${idxExt}`);
+    const byte = this.nextTemp();
+    lines.push(`  ${byte} = load i8, ptr ${bytePtr}`);
+    return [lines, byte, "i8"];
   }
 
   private genFieldPtr(expr: HIRExpr & { kind: "FieldAccess" }): [string[], string, string] {

@@ -1,0 +1,18 @@
+// @expect: equal
+// @expect: not equal
+fn main() -> i32 {
+    let a = "hello"
+    let b = "hello"
+    let c = "world"
+    if a == b {
+        println("equal")
+    } else {
+        println("nope")
+    }
+    if a != c {
+        println("not equal")
+    } else {
+        println("nope")
+    }
+    return 0
+}

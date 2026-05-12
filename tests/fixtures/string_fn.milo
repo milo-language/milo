@@ -1,0 +1,10 @@
+// @expect: greeting: hello world!
+fn greet(name: String) -> String {
+    return "hello " + name + "!"
+}
+
+fn main() -> i32 {
+    let msg = greet("world")
+    println("greeting: %s", msg)
+    return 0
+}

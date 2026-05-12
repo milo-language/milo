@@ -1,0 +1,7 @@
+// @expect: Hello, Milo!
+extern fn puts(s: *u8) -> i32
+
+fn main() -> i32 {
+    puts("Hello, Milo!")
+    return 0
+}
