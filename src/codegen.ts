@@ -9,7 +9,7 @@ interface StructLayout {
 interface EnumLayout {
   name: string;
   payloadSlots: number;
-  variants: Map<string, { tag: number; fieldTypes: string[] }>;
+  variants: Map<string, { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }>;
 }
 
 export class Codegen {
@@ -35,6 +35,9 @@ export class Codegen {
   private loopHeader: string | null = null;
   private loopExit: string | null = null;
   private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
+  private droppableEnums = new Set<string>();
+  private generatedDropHelpers = new Set<string>();
+  private dropHelperBodies: string[][] = [];
   private static BUILTINS = new Set(["print", "println", "exit"]);
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -49,6 +52,7 @@ export class Codegen {
       case "void":   return "void";
       case "string": return "%String";
       case "ptr":    return "ptr";
+      case "box":    return "ptr";
       case "ref":    return "ptr";
       case "struct": return `%${t.name}`;
       case "enum":   return `%${t.name}`;
@@ -84,7 +88,27 @@ export class Codegen {
     if (ty === "%String") return 24; // ptr + i64 + i64
     const arrMatch = ty.match(/\[(\d+) x (.+)\]/);
     if (arrMatch) return parseInt(arrMatch[1]) * this.typeSize(arrMatch[2]);
+    const structName = this.getStructName(ty);
+    if (structName) {
+      const layout = this.structLayouts.get(structName);
+      if (layout) return this.structPayloadSize(layout.fields.map(f => f.type));
+    }
+    const enumMatch = ty.match(/^%(.+)$/);
+    if (enumMatch && this.enumLayouts.has(enumMatch[1])) {
+      const layout = this.enumLayouts.get(enumMatch[1])!;
+      return 4 + layout.payloadSlots * 8;
+    }
     return 8;
+  }
+
+  private typeSizeOf(t: TypeKind): number {
+    return this.typeSize(this.llvmType(t));
+  }
+
+  private needsDropCg(t: TypeKind): boolean {
+    if (needsDrop(t)) return true;
+    if (t.tag === "enum") return this.droppableEnums.has(t.name);
+    return false;
   }
 
   private structPayloadSize(fieldTypes: string[]): number {
@@ -113,18 +137,28 @@ export class Codegen {
     // register enum layouts
     for (const e of module.enums) {
       let maxPayload = 0;
-      const variants = new Map<string, { tag: number; fieldTypes: string[] }>();
+      const variants = new Map<string, { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }>();
       for (const v of e.variants) {
         const fieldTypes = v.fields.map(f => this.llvmType(f));
         const payloadSize = this.structPayloadSize(fieldTypes);
         maxPayload = Math.max(maxPayload, payloadSize);
-        variants.set(v.name, { tag: v.tag, fieldTypes });
+        variants.set(v.name, { tag: v.tag, fieldTypes, fieldTypeKinds: v.fields });
       }
       this.enumLayouts.set(e.name, {
         name: e.name,
         payloadSlots: Math.ceil(maxPayload / 8),
         variants,
       });
+    }
+
+    // compute which enums need drop glue
+    for (const [name, layout] of this.enumLayouts) {
+      for (const [, variant] of layout.variants) {
+        if (variant.fieldTypeKinds.some(f => needsDrop(f) || (f.tag === "enum" && f.name === name))) {
+          this.droppableEnums.add(name);
+          break;
+        }
+      }
     }
 
     // register function signatures
@@ -205,6 +239,12 @@ export class Codegen {
       for (const line of body) this.emit(line);
     }
 
+    // append drop helper functions
+    for (const body of this.dropHelperBodies) {
+      this.emit("");
+      for (const line of body) this.emit(line);
+    }
+
     return this.output.join("\n") + "\n";
   }
 
@@ -234,7 +274,7 @@ export class Codegen {
         lines.push(`  %${p.name}.addr = alloca ${lt}`);
         lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
         this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
-        if (needsDrop(p.type)) this.droppableLocals.push({ name: p.name, typeKind: p.type });
+        if (this.needsDropCg(p.type)) this.droppableLocals.push({ name: p.name, typeKind: p.type });
       }
     }
 
@@ -266,7 +306,7 @@ export class Codegen {
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false });
         lines.push(`  %${stmt.name}.addr = alloca ${declTy}`);
         lines.push(`  store ${declTy} ${val}, ptr %${stmt.name}.addr`);
-        if (needsDrop(stmt.type)) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
+        if (this.needsDropCg(stmt.type)) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
         return [lines, false];
       }
       case "Assign": {
@@ -274,7 +314,7 @@ export class Codegen {
         lines.push(...valLines);
         const [targetLines, targetPtr, targetTy] = this.genLValue(stmt.target);
         lines.push(...targetLines);
-        if (stmt.target.kind === "Ident" && needsDrop(stmt.target.type)) {
+        if (stmt.target.kind === "Ident" && this.needsDropCg(stmt.target.type)) {
           this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
         lines.push(`  store ${valTy} ${val}, ptr ${targetPtr}`);
@@ -594,7 +634,7 @@ export class Codegen {
         }
         const tmp = this.nextTemp();
         lines.push(`  ${tmp} = load ${local.type}, ptr %${expr.name}.addr`);
-        if (expr.isMove && needsDrop(local.typeKind)) {
+        if (expr.isMove && this.needsDropCg(local.typeKind)) {
           lines.push(`  store ${local.type} zeroinitializer, ptr %${expr.name}.addr`);
         }
         return [lines, tmp, local.type];
@@ -798,6 +838,24 @@ export class Codegen {
         return this.genDefaultValue(expr, lines);
       case "Cast":
         return this.genCast(expr, lines);
+      case "BoxCreate": {
+        this.needsMalloc = true;
+        const [valLines, valVal, valTy] = this.genExpr(expr.value);
+        lines.push(...valLines);
+        const size = this.typeSizeOf(expr.value.type);
+        const ptr = this.nextTemp();
+        lines.push(`  ${ptr} = call ptr @malloc(i64 ${size})`);
+        lines.push(`  store ${valTy} ${valVal}, ptr ${ptr}`);
+        return [lines, ptr, "ptr"];
+      }
+      case "BoxDeref": {
+        const [ptrLines, ptrVal] = this.genExpr(expr.operand);
+        lines.push(...ptrLines);
+        const innerTy = this.llvmType(expr.type);
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${innerTy}, ptr ${ptrVal}`);
+        return [lines, val, innerTy];
+      }
     }
   }
 
@@ -1139,7 +1197,6 @@ export class Codegen {
     return [lines, tmp];
   }
 
-  // free a heap-owned value at a given alloca ptr (for reassignment)
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
     if (typeKind.tag === "string") {
       this.needsFree = true;
@@ -1159,6 +1216,102 @@ export class Codegen {
       lines.push(`  br label %${skipLabel}`);
       lines.push(`${skipLabel}:`);
     }
+    if (typeKind.tag === "box") {
+      this.needsFree = true;
+      const boxPtr = this.nextTemp();
+      lines.push(`  ${boxPtr} = load ptr, ptr ${allocaPtr}`);
+      const isNull = this.nextTemp();
+      lines.push(`  ${isNull} = icmp eq ptr ${boxPtr}, null`);
+      const dropLabel = this.nextLabel("box.drop");
+      const skipLabel = this.nextLabel("box.skip");
+      lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
+      lines.push(`${dropLabel}:`);
+      if (this.needsDropCg(typeKind.inner)) {
+        this.emitDropValue(lines, boxPtr, typeKind.inner);
+      }
+      lines.push(`  call void @free(ptr ${boxPtr})`);
+      lines.push(`  br label %${skipLabel}`);
+      lines.push(`${skipLabel}:`);
+    }
+    if (typeKind.tag === "enum" && this.droppableEnums.has(typeKind.name)) {
+      const helperName = `milo.drop.${typeKind.name}`;
+      this.ensureDropHelper(typeKind.name);
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load %${typeKind.name}, ptr ${allocaPtr}`);
+      const tmp = this.nextTemp();
+      lines.push(`  ${tmp} = alloca %${typeKind.name}`);
+      lines.push(`  store %${typeKind.name} ${val}, ptr ${tmp}`);
+      lines.push(`  call void @${helperName}(ptr ${tmp})`);
+    }
+  }
+
+  private ensureDropHelper(enumName: string) {
+    if (this.generatedDropHelpers.has(enumName)) return;
+    this.generatedDropHelpers.add(enumName);
+
+    const layout = this.enumLayouts.get(enumName)!;
+    const enumTy = `%${enumName}`;
+    const helperName = `milo.drop.${enumName}`;
+    const savedTemp = this.tempCounter;
+    const savedLabel = this.labelCounter;
+    this.tempCounter = 0;
+    this.labelCounter = 0;
+
+    const body: string[] = [];
+    body.push(`define void @${helperName}(ptr %self) {`);
+    body.push("entry:");
+    const tagPtr = this.nextTemp();
+    body.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr %self, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    body.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    const doneLabel = this.nextLabel("drop.done");
+    const cases: string[] = [];
+    const variantBodies: string[][] = [];
+
+    for (const [vName, variant] of layout.variants) {
+      const hasDroppable = variant.fieldTypeKinds.some(f => this.needsDropCg(f));
+      if (!hasDroppable) continue;
+
+      const label = this.nextLabel(`drop.${vName}`);
+      cases.push(`    i32 ${variant.tag}, label %${label}`);
+
+      const vLines: string[] = [];
+      vLines.push(`${label}:`);
+      const payloadPtr = this.nextTemp();
+      vLines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr %self, i32 0, i32 1`);
+
+      if (variant.fieldTypes.length === 1) {
+        if (this.needsDropCg(variant.fieldTypeKinds[0])) {
+          this.emitDropValue(vLines, payloadPtr, variant.fieldTypeKinds[0]);
+        }
+      } else {
+        const structTy = `{ ${variant.fieldTypes.join(", ")} }`;
+        for (let i = 0; i < variant.fieldTypes.length; i++) {
+          if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
+          const fieldPtr = this.nextTemp();
+          vLines.push(`  ${fieldPtr} = getelementptr ${structTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
+          this.emitDropValue(vLines, fieldPtr, variant.fieldTypeKinds[i]);
+        }
+      }
+      vLines.push(`  br label %${doneLabel}`);
+      variantBodies.push(vLines);
+    }
+
+    if (cases.length > 0) {
+      body.push(`  switch i32 ${tag}, label %${doneLabel} [`);
+      for (const c of cases) body.push(c);
+      body.push("  ]");
+      for (const vb of variantBodies) body.push(...vb);
+    }
+
+    body.push(`${doneLabel}:`);
+    body.push("  ret void");
+    body.push("}");
+
+    this.dropHelperBodies.push(body);
+    this.tempCounter = savedTemp;
+    this.labelCounter = savedLabel;
   }
 
   // emit drop glue for all droppable locals before a scope exit

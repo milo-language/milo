@@ -1,16 +1,16 @@
 // @expect: 42
 extern fn printf(fmt: *u8, ...) -> i32
 
-struct Box<T> {
+struct Wrapper<T> {
     value: T
 }
 
-fn unbox(b: Box<i32>) -> i32 {
+fn unbox(b: Wrapper<i32>) -> i32 {
     return b.value
 }
 
 fn main() -> i32 {
-    let b = Box { value: 42 }
+    let b = Wrapper { value: 42 }
     printf("%d\n", unbox(b))
     return 0
 }

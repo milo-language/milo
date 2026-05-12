@@ -1,0 +1,13 @@
+// @expect: 42
+// @expect: hello
+extern fn printf(fmt: *u8, ...) -> i32
+
+fn main() -> i32 {
+    let b = Box(42)
+    printf("%d\n", *b)
+
+    let s = Box("hello")
+    println(*s)
+
+    return 0
+}

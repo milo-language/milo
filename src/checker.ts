@@ -85,6 +85,10 @@ export class TypeChecker {
     const typeArgs = ty.typeArgs ?? [];
     if (typeArgs.length > 0) {
       const resolvedArgs = typeArgs.map(a => this.resolve(a));
+      if (ty.name === "Box") {
+        if (resolvedArgs.length !== 1) { this.error(`'Box' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
+        return { tag: "box", inner: resolvedArgs[0] };
+      }
       const ge = this.genericEnums.get(ty.name);
       if (ge) {
         if (resolvedArgs.length !== ge.typeParams.length) {
@@ -121,6 +125,7 @@ export class TypeChecker {
       case "struct": return t.name;
       case "enum": return t.name;
       case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
+      case "box": return `Box_${this.mangleTypeName(t.inner)}`;
       case "array": return `arr_${this.mangleTypeName(t.element)}_${t.size}`;
       case "ref": return `ref_${this.mangleTypeName(t.inner)}`;
       case "unknown": return "unknown";
@@ -189,6 +194,7 @@ export class TypeChecker {
     if (t.tag === "array") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
     if (t.tag === "ref") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "ptr") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
+    if (t.tag === "box") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     return t;
   }
 
@@ -301,9 +307,18 @@ export class TypeChecker {
         });
         this.genericEnums.set(e.name, { typeParams: e.typeParams, variants, decl: e });
       } else {
+        // pre-register so self-referential fields (Box<Self>) resolve correctly
+        this.enums.set(e.name, { variants: new Map() });
         const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
         e.variants.forEach((v, i) => {
-          variants.set(v.name, { tag: i, fields: v.fields.map(f => this.resolve(f)) });
+          const fields = v.fields.map(f => this.resolve(f));
+          for (const field of fields) {
+            if (field.tag === "enum" && field.name === e.name) {
+              this.error(`enum '${e.name}' has infinite size due to recursive field`, undefined,
+                `wrap the recursive field in Box<${e.name}> for heap allocation`);
+            }
+          }
+          variants.set(v.name, { tag: i, fields });
         });
         this.enums.set(e.name, { variants });
       }
@@ -683,6 +698,10 @@ export class TypeChecker {
       }
       case "UnaryOp": {
         const ot = this.checkExpr(expr.operand);
+        if (expr.op === "*") {
+          if (ot.tag !== "box" && ot.tag !== "unknown") this.error(`cannot dereference non-Box type '${typeName(ot)}'`, sp);
+          return this.setType(expr, ot.tag === "box" ? ot.inner : { tag: "unknown" });
+        }
         if (expr.op === "-") {
           if (!isNumeric(ot) && ot.tag !== "unknown") this.error(`unary '-' requires numeric type, got ${typeName(ot)}`, sp);
           return this.setType(expr, ot);
@@ -694,6 +713,12 @@ export class TypeChecker {
         return this.setType(expr, { tag: "unknown" });
       }
       case "Call": {
+        if (expr.func === "Box") {
+          if (expr.args.length !== 1) { this.error(`Box() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const argType = this.checkExpr(expr.args[0]);
+          this.tryMove(expr.args[0]);
+          return this.setType(expr, { tag: "box", inner: argType });
+        }
         // Generic function — infer type params from args, monomorphize
         const genericFn = this.genericFns.get(expr.func);
         if (genericFn) {

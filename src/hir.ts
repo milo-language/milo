@@ -26,7 +26,9 @@ export type HIRExpr =
   | { kind: "Unwrap"; operand: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "Propagate"; operand: HIRExpr; enumName: string; retType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span }
-  | { kind: "Cast"; operand: HIRExpr; targetType: TypeKind; type: TypeKind; span?: Span };
+  | { kind: "Cast"; operand: HIRExpr; targetType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "BoxCreate"; value: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "BoxDeref"; operand: HIRExpr; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;

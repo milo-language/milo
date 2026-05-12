@@ -184,8 +184,12 @@ class LowerCtx {
       case "BinOp":
         return { kind: "BinOp", op: expr.op, left: this.lowerExpr(expr.left), right: this.lowerExpr(expr.right), type, span: expr.span };
       case "UnaryOp":
+        if (expr.op === "*") return { kind: "BoxDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
+        if (expr.func === "Box") {
+          return { kind: "BoxCreate", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
+        }
         const funcName = this.c.rewrittenCalls.get(expr) ?? expr.func;
         const sig = this.c.functions.get(funcName);
         const args: HIRArg[] = expr.args.map((arg, i) => {

@@ -1,0 +1,9 @@
+// @error: enum 'List' has infinite size due to recursive field
+enum List {
+    Cons(i32, List),
+    Nil
+}
+
+fn main() -> i32 {
+    return 0
+}

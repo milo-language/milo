@@ -57,8 +57,8 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 
 - [x] HIR — typed intermediate representation (every expr carries TypeKind)
 - [x] Drop semantics — compiler emits free on scope exit for heap-owned values (String)
-- [ ] Box\<T\> — single-owner heap pointer, auto-drop
-- [ ] Recursive enums via boxed payload (linked list, tree, AST)
+- [x] Box\<T\> — single-owner heap pointer, auto-drop, recursive enum drop glue
+- [x] Recursive enums via boxed payload (linked list, tree, AST)
 - [ ] Vec\<T\> — dynamic array with push/pop/len
 - [ ] MIR — lower-level IR for optimization passes
 - [ ] Arena system designed based on real needs from self-hosting
