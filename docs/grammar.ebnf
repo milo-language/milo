@@ -1,0 +1,55 @@
+(* Milo Language Grammar — EBNF *)
+(* Phase 1 subset *)
+
+program     = { function_decl } ;
+
+function_decl
+            = extern_fn | fn_def ;
+
+extern_fn   = "extern" "fn" IDENT "(" [ param_list ] ")" [ "->" type ] ;
+
+fn_def      = "fn" IDENT "(" [ param_list ] ")" [ "->" type ] block ;
+
+param_list  = param { "," param } ;
+param       = [ "&" [ "mut" ] ] IDENT ":" type ;
+
+type        = [ "*" ] type_name ;
+type_name   = "i8" | "i16" | "i32" | "i64"
+            | "u8" | "u16" | "u32" | "u64"
+            | "f32" | "f64"
+            | "bool" | "void"
+            | IDENT ;
+
+block       = "{" { statement } "}" ;
+
+statement   = let_decl | var_decl | assign_stmt | return_stmt
+            | if_stmt | while_stmt | expr_stmt ;
+
+let_decl    = "let" IDENT [ ":" type ] "=" expr ;
+var_decl    = "var" IDENT [ ":" type ] "=" expr ;
+assign_stmt = IDENT "=" expr ;
+return_stmt = "return" [ expr ] ;
+if_stmt     = "if" expr block [ "else" ( if_stmt | block ) ] ;
+while_stmt  = "while" expr block ;
+expr_stmt   = expr ;
+
+(* Expressions — precedence low to high *)
+expr        = comparison ;
+comparison  = additive { ( "==" | "!=" | "<" | ">" | "<=" | ">=" ) additive } ;
+additive    = multiplicative { ( "+" | "-" ) multiplicative } ;
+multiplicative = unary { ( "*" | "/" | "%" ) unary } ;
+unary       = ( "-" | "!" ) unary | primary ;
+
+primary     = INT | STRING | "true" | "false"
+            | IDENT [ "(" [ arg_list ] ")" ]
+            | "(" expr ")" ;
+
+arg_list    = expr { "," expr } ;
+
+(* Tokens *)
+IDENT       = letter { letter | digit | "_" } ;
+INT         = digit { digit } ;
+STRING      = '"' { char | escape } '"' ;
+letter      = "a".."z" | "A".."Z" | "_" ;
+digit       = "0".."9" ;
+escape      = "\" ( "n" | "t" | "\" | '"' | "0" ) ;

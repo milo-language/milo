@@ -1,0 +1,95 @@
+{
+  "scopeName": "source.milo",
+  "name": "Milo",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#operators" },
+    { "include": "#constants" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [{
+        "name": "comment.line.double-slash.milo",
+        "match": "//.*$"
+      }]
+    },
+    "strings": {
+      "patterns": [{
+        "name": "string.quoted.double.milo",
+        "begin": "\"",
+        "end": "\"",
+        "patterns": [{
+          "name": "constant.character.escape.milo",
+          "match": "\\\\[nrt0\\\\\"']"
+        }]
+      }]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.milo",
+          "match": "\\b0x[0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.milo",
+          "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.milo",
+          "match": "\\b[0-9][0-9_]*\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.milo",
+          "match": "\\b(if|else|while|for|match|return|break|continue)\\b"
+        },
+        {
+          "name": "keyword.declaration.milo",
+          "match": "\\b(fn|let|var|struct|enum|impl|extern|pub|mut)\\b"
+        },
+        {
+          "name": "keyword.other.milo",
+          "match": "\\b(as|in|is)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.milo",
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|void)\\b"
+        },
+        {
+          "name": "storage.type.milo",
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    },
+    "functions": {
+      "patterns": [{
+        "name": "entity.name.function.milo",
+        "match": "\\b([a-z_][a-zA-Z0-9_]*)\\s*(?=\\()"
+      }]
+    },
+    "operators": {
+      "patterns": [{
+        "name": "keyword.operator.milo",
+        "match": "(->|==|!=|<=|>=|&&|\\|\\||[+\\-*/%=<>!&|])"
+      }]
+    },
+    "constants": {
+      "patterns": [{
+        "name": "constant.language.milo",
+        "match": "\\b(true|false|null)\\b"
+      }]
+    }
+  }
+}

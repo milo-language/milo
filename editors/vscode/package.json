@@ -1,0 +1,21 @@
+{
+  "name": "milo-lang",
+  "displayName": "Milo Language",
+  "description": "Syntax highlighting for the Milo programming language",
+  "version": "0.1.0",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [{
+      "id": "milo",
+      "aliases": ["Milo", "milo"],
+      "extensions": [".milo"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "milo",
+      "scopeName": "source.milo",
+      "path": "./syntaxes/milo.tmLanguage.json"
+    }]
+  }
+}
