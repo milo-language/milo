@@ -15,6 +15,7 @@ export class Codegen {
   private labelCounter = 0;
   private locals = new Map<string, { type: string; mutable: boolean }>();
   private fnRetTypes = new Map<string, string>();
+  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
@@ -39,9 +40,15 @@ export class Codegen {
   }
 
   generate(program: Program): string {
-    // build return type table
+    // build function signature table
     for (const fn of program.functions) {
-      this.fnRetTypes.set(fn.name, this.llvmType(fn.retType));
+      const ret = this.llvmType(fn.retType);
+      this.fnRetTypes.set(fn.name, ret);
+      this.fnSigs.set(fn.name, {
+        paramTypes: fn.params.map(p => this.llvmType(p.type)),
+        retType: ret,
+        variadic: fn.isVariadic,
+      });
     }
 
     this.emit(`target triple = "arm64-apple-darwin25.3.0"`);
@@ -65,7 +72,9 @@ export class Codegen {
 
     // insert extern declarations
     for (const ext of externs) {
-      const params = ext.params.map(p => this.llvmType(p.type)).join(", ");
+      const paramTypes = ext.params.map(p => this.llvmType(p.type));
+      if (ext.isVariadic) paramTypes.push("...");
+      const params = paramTypes.join(", ");
       const ret = this.llvmType(ext.retType);
       this.output.splice(1, 0, `declare ${ret} @${ext.name}(${params})`);
     }
@@ -299,13 +308,22 @@ export class Codegen {
           argVals.push({ val: av, type: at });
         }
         const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
-        const retTy = this.fnRetTypes.get(expr.func) ?? "i32";
+        const sig = this.fnSigs.get(expr.func);
+        const retTy = sig?.retType ?? "i32";
+
+        // variadic calls need explicit function type: call i32 (ptr, ...) @printf(...)
+        let callPrefix = retTy;
+        if (sig?.variadic) {
+          const paramStr = sig.paramTypes.join(", ");
+          callPrefix = `${retTy} (${paramStr}, ...)`;
+        }
+
         if (retTy === "void") {
-          lines.push(`  call void @${expr.func}(${argsStr})`);
+          lines.push(`  call ${callPrefix} @${expr.func}(${argsStr})`);
           return [lines, "void", "void"];
         }
         const tmp = this.nextTemp();
-        lines.push(`  ${tmp} = call ${retTy} @${expr.func}(${argsStr})`);
+        lines.push(`  ${tmp} = call ${callPrefix} @${expr.func}(${argsStr})`);
         return [lines, tmp, retTy];
       }
     }

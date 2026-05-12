@@ -13,6 +13,7 @@ interface VarInfo {
 interface FnSig {
   params: TypeKind[];
   ret: TypeKind;
+  variadic: boolean;
 }
 
 class CheckError {
@@ -57,7 +58,7 @@ export class TypeChecker {
     for (const fn of program.functions) {
       const params = fn.params.map(p => this.resolve(p.type));
       const ret = this.resolve(fn.retType);
-      this.functions.set(fn.name, { params, ret });
+      this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic });
     }
 
     // check non-extern function bodies
@@ -241,14 +242,23 @@ export class TypeChecker {
           this.error(`undefined function '${expr.func}'`);
           return { tag: "unknown" };
         }
-        if (expr.args.length !== sig.params.length) {
+        if (sig.variadic) {
+          if (expr.args.length < sig.params.length) {
+            this.error(`function '${expr.func}' expects at least ${sig.params.length} args, got ${expr.args.length}`);
+          }
+        } else if (expr.args.length !== sig.params.length) {
           this.error(`function '${expr.func}' expects ${sig.params.length} args, got ${expr.args.length}`);
         }
+        // check fixed params
         for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
           const argType = this.checkExpr(expr.args[i]);
           if (!typeEq(sig.params[i], argType) && argType.tag !== "unknown") {
             this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(sig.params[i])}, got ${typeName(argType)}`);
           }
+        }
+        // still type-check variadic args (but don't enforce types)
+        for (let i = sig.params.length; i < expr.args.length; i++) {
+          this.checkExpr(expr.args[i]);
         }
         return sig.ret;
       }

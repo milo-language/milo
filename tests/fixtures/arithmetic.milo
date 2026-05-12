@@ -1,0 +1,8 @@
+// @expect: 42
+extern fn printf(fmt: *u8, ...) -> i32
+
+fn main() -> i32 {
+    let x: i32 = 6 * 7
+    printf("%d\n", x)
+    return 0
+}

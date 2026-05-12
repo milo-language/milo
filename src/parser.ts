@@ -60,15 +60,21 @@ export class Parser {
     return { name, type, isRef };
   }
 
-  private parseParamList(): Param[] {
+  private parseParamList(): { params: Param[]; variadic: boolean } {
     this.expect(TokenKind.LParen);
     const params: Param[] = [];
+    let variadic = false;
     while (!this.at(TokenKind.RParen)) {
+      if (this.at(TokenKind.DotDotDot)) {
+        this.advance();
+        variadic = true;
+        break;
+      }
       params.push(this.parseParam());
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RParen);
-    return params;
+    return { params, variadic };
   }
 
   private parseReturnType(): MiloType {
@@ -80,20 +86,20 @@ export class Parser {
     this.expect(TokenKind.Extern);
     this.expect(TokenKind.Fn);
     const name = this.expect(TokenKind.Ident).value;
-    const params = this.parseParamList();
+    const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
-    return { kind: "Function", name, params, retType, body: [], isExtern: true };
+    return { kind: "Function", name, params, retType, body: [], isExtern: true, isVariadic: variadic };
   }
 
   private parseFn(): Function {
     this.expect(TokenKind.Fn);
     const name = this.expect(TokenKind.Ident).value;
-    const params = this.parseParamList();
+    const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
-    return { kind: "Function", name, params, retType, body, isExtern: false };
+    return { kind: "Function", name, params, retType, body, isExtern: false, isVariadic: variadic };
   }
 
   private parseStmts(): Stmt[] {

@@ -42,6 +42,7 @@ export interface Function {
   retType: MiloType;
   body: Stmt[];
   isExtern: boolean;
+  isVariadic: boolean;
 }
 
 export interface Program {

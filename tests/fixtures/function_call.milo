@@ -1,0 +1,11 @@
+// @expect: 25
+extern fn printf(fmt: *u8, ...) -> i32
+
+fn square(x: i32) -> i32 {
+    return x * x
+}
+
+fn main() -> i32 {
+    printf("%d\n", square(5))
+    return 0
+}

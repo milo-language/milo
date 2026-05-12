@@ -21,34 +21,60 @@ function compile(source: string): string {
   return new Codegen().generate(program);
 }
 
-function compileFile(sourcePath: string, outputPath: string | null, emitIr: boolean) {
+function compileToIr(sourcePath: string, outputPath: string | null) {
   const source = readFileSync(sourcePath, "utf-8");
   const ir = compile(source);
-
-  if (emitIr) {
-    if (outputPath) {
-      writeFileSync(outputPath, ir);
-      console.log(`wrote ${outputPath}`);
-    } else {
-      process.stdout.write(ir);
-    }
-    return;
+  if (outputPath) {
+    writeFileSync(outputPath, ir);
+    console.log(`wrote ${outputPath}`);
+  } else {
+    process.stdout.write(ir);
   }
+}
 
+function compileToBinary(sourcePath: string, outputPath: string | null): string {
+  const source = readFileSync(sourcePath, "utf-8");
+  const ir = compile(source);
   const base = basename(sourcePath).replace(/\.milo$/, "");
-  const out = outputPath ?? base;
-  const tmpPath = join(tmpdir(), `milo_${Date.now()}.ll`);
+  const out = outputPath ?? join(tmpdir(), `milo_${base}_${Date.now()}`);
+  const tmpLl = join(tmpdir(), `milo_${Date.now()}.ll`);
 
   try {
-    writeFileSync(tmpPath, ir);
-    execSync(`clang ${tmpPath} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
-    console.log(`compiled ${sourcePath} -> ${out}`);
+    writeFileSync(tmpLl, ir);
+    execSync(`clang ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     console.error(`error[link]: clang failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
   } finally {
-    try { unlinkSync(tmpPath); } catch {}
+    try { unlinkSync(tmpLl); } catch {}
   }
+  return out;
+}
+
+function runFile(sourcePath: string, extraArgs: string[]) {
+  const bin = compileToBinary(sourcePath, null);
+  try {
+    const result = execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), {
+      stdio: "inherit",
+    });
+  } catch (e: any) {
+    process.exit(e.status ?? 1);
+  } finally {
+    try { unlinkSync(bin); } catch {}
+  }
+}
+
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[] } {
+  let output: string | null = null;
+  let source: string | null = null;
+  const rest: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
+    else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
+    else if (!source) { source = args[i]; }
+    else { rest.push(args[i]); }
+  }
+  return { output, source, rest };
 }
 
 function main() {
@@ -56,31 +82,24 @@ function main() {
   if (args.length < 1) {
     console.log("usage: milo <command> [options] <file>");
     console.log("commands:");
-    console.log("  build <file>           compile to executable");
+    console.log("  run <file> [args]      compile and run (no artifacts left behind)");
+    console.log("  build <file> [-o out]  compile to executable");
     console.log("  emit-ir <file>         emit LLVM IR");
     process.exit(1);
   }
 
   const cmd = args[0];
+  const { output, source, rest } = parseArgs(args.slice(1));
 
-  if (cmd === "build") {
-    let output: string | null = null;
-    let source: string | null = null;
-    for (let i = 1; i < args.length; i++) {
-      if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
-      else { source = args[i]; }
-    }
-    if (!source) { console.error("error: no source file"); process.exit(1); }
-    compileFile(source, output, false);
+  if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
+
+  if (cmd === "run") {
+    runFile(source!, rest);
+  } else if (cmd === "build") {
+    const bin = compileToBinary(source!, output);
+    console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
-    let output: string | null = null;
-    let source: string | null = null;
-    for (let i = 1; i < args.length; i++) {
-      if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
-      else { source = args[i]; }
-    }
-    if (!source) { console.error("error: no source file"); process.exit(1); }
-    compileFile(source, output, true);
+    compileToIr(source!, output);
   } else {
     console.error(`unknown command: ${cmd}`);
     process.exit(1);

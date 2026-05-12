@@ -37,6 +37,7 @@ export enum TokenKind {
   LtEq = "<=",
   GtEq = ">=",
   Bang = "!",
+  DotDotDot = "...",
   Eof = "EOF",
 }
 

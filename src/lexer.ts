@@ -88,8 +88,12 @@ export class Lexer {
     if (ch >= "0" && ch <= "9") return this.lexNumber(line, col);
     if (/[a-zA-Z_]/.test(ch)) return this.lexIdent(line, col);
 
-    // two-char operators
+    // three-char operators
     const next = this.source[this.pos + 1];
+    const next2 = this.source[this.pos + 2];
+    if (ch === "." && next === "." && next2 === ".") { this.advance(); this.advance(); this.advance(); return this.token(TokenKind.DotDotDot, "...", line, col); }
+
+    // two-char operators
     if (ch === "-" && next === ">") { this.advance(); this.advance(); return this.token(TokenKind.Arrow, "->", line, col); }
     if (ch === "=" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.EqEq, "==", line, col); }
     if (ch === "!" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.Neq, "!=", line, col); }
