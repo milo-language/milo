@@ -1,0 +1,6 @@
+// @expect: 3
+fn main() -> i32 {
+    let arr = [10, 20, 30]
+    println("%d", arr.len)
+    return 0
+}

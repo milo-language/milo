@@ -1,0 +1,76 @@
+// Typed HIR — every expression carries its resolved TypeKind.
+// Eliminates string-based type re-derivation between checker and codegen.
+
+import type { TypeKind } from "./types";
+import type { Span } from "./ast";
+
+// ── Expressions ──
+
+export type HIRExpr =
+  | { kind: "IntLit"; value: number; type: TypeKind; span?: Span }
+  | { kind: "FloatLit"; value: number; type: TypeKind; span?: Span }
+  | { kind: "BoolLit"; value: boolean; type: TypeKind; span?: Span }
+  | { kind: "StringLit"; value: string; type: TypeKind; span?: Span }
+  | { kind: "Ident"; name: string; type: TypeKind; span?: Span }
+  | { kind: "BinOp"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "UnaryOp"; op: string; operand: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "Call"; func: string; args: HIRArg[]; type: TypeKind; variadic: boolean; span?: Span }
+  | { kind: "StructLit"; name: string; fields: { name: string; value: HIRExpr }[]; type: TypeKind; span?: Span }
+  | { kind: "FieldAccess"; object: HIRExpr; field: string; type: TypeKind; span?: Span }
+  | { kind: "ArrayLit"; elements: HIRExpr[]; type: TypeKind; span?: Span }
+  | { kind: "IndexAccess"; object: HIRExpr; index: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "EnumLit"; enumName: string; variant: string; args: HIRExpr[]; type: TypeKind; span?: Span }
+  | { kind: "ArrayLen"; object: HIRExpr; type: TypeKind; span?: Span };
+
+export interface HIRArg {
+  expr: HIRExpr;
+  passByRef: boolean;
+  refMut: boolean;
+}
+
+// ── Statements ──
+
+export type HIRStmt =
+  | { kind: "Let"; name: string; type: TypeKind; value: HIRExpr; mutable: boolean; span?: Span }
+  | { kind: "Assign"; target: HIRExpr; value: HIRExpr; span?: Span }
+  | { kind: "Return"; value: HIRExpr | null; retType: TypeKind; span?: Span }
+  | { kind: "If"; cond: HIRExpr; thenBody: HIRStmt[]; elseBody: HIRStmt[] | null; span?: Span }
+  | { kind: "While"; cond: HIRExpr; body: HIRStmt[]; span?: Span }
+  | { kind: "ExprStmt"; expr: HIRExpr; span?: Span }
+  | { kind: "Match"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; span?: Span };
+
+export interface HIRMatchArm {
+  pattern: HIRPattern;
+  body: HIRStmt[];
+}
+
+export type HIRPattern =
+  | { kind: "EnumPattern"; variant: string; bindings: { name: string; type: TypeKind }[]; tag: number }
+  | { kind: "WildcardPattern" };
+
+// ── Top-level ──
+
+export interface HIRFunction {
+  name: string;
+  params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[];
+  retType: TypeKind;
+  body: HIRStmt[];
+  isExtern: boolean;
+  isVariadic: boolean;
+}
+
+export interface HIRStruct {
+  name: string;
+  fields: { name: string; type: TypeKind }[];
+}
+
+export interface HIREnum {
+  name: string;
+  variants: { name: string; tag: number; fields: TypeKind[] }[];
+}
+
+export interface HIRModule {
+  structs: HIRStruct[];
+  enums: HIREnum[];
+  functions: HIRFunction[];
+}

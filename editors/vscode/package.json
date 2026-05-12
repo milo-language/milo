@@ -1,11 +1,13 @@
 {
   "name": "milo-lang",
   "displayName": "Milo Language",
-  "description": "Syntax highlighting for the Milo programming language",
+  "description": "Language support for Milo — syntax highlighting, diagnostics, hover, go-to-definition",
   "publisher": "milo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "engines": { "vscode": "^1.75.0" },
   "categories": ["Programming Languages"],
+  "main": "./out/extension.js",
+  "activationEvents": ["onLanguage:milo"],
   "contributes": {
     "languages": [{
       "id": "milo",
@@ -18,5 +20,16 @@
       "scopeName": "source.milo",
       "path": "./syntaxes/milo.tmLanguage.json"
     }]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -watch -p tsconfig.json"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "typescript": "^5.0.0"
   }
 }

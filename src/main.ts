@@ -7,23 +7,32 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { TypeChecker } from "./checker";
 import { Codegen } from "./codegen";
+import { lower } from "./lower";
+import { formatDiagnostic } from "./diagnostics";
 
-function compile(source: string): string {
-  const tokens = new Lexer(source).tokenize();
-  const program = new Parser(tokens).parse();
-
-  const errors = new TypeChecker().check(program);
-  if (errors.length > 0) {
-    for (const err of errors) console.error(`error[type]: ${err}`);
+function compile(source: string, filePath?: string): string {
+  let tokens, program;
+  try {
+    tokens = new Lexer(source).tokenize();
+    program = new Parser(tokens).parse();
+  } catch (e: any) {
+    console.error(e.message);
     process.exit(1);
   }
 
-  return new Codegen().generate(program);
+  const result = new TypeChecker().check(program);
+  if (result.diagnostics.length > 0) {
+    for (const d of result.diagnostics) console.error(formatDiagnostic(d, source, filePath));
+    process.exit(1);
+  }
+
+  const hirModule = lower(program, result);
+  return new Codegen().generate(hirModule);
 }
 
 function compileToIr(sourcePath: string, outputPath: string | null) {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source);
+  const ir = compile(source, sourcePath);
   if (outputPath) {
     writeFileSync(outputPath, ir);
     console.log(`wrote ${outputPath}`);
@@ -34,10 +43,11 @@ function compileToIr(sourcePath: string, outputPath: string | null) {
 
 function compileToBinary(sourcePath: string, outputPath: string | null): string {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source);
+  const ir = compile(source, sourcePath);
   const base = basename(sourcePath).replace(/\.milo$/, "");
-  const out = outputPath ?? join(tmpdir(), `milo_${base}_${Date.now()}`);
-  const tmpLl = join(tmpdir(), `milo_${Date.now()}.ll`);
+  const id = crypto.randomUUID().slice(0, 8);
+  const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
+  const tmpLl = join(tmpdir(), `milo_${id}.ll`);
 
   try {
     writeFileSync(tmpLl, ir);
@@ -92,6 +102,12 @@ function main() {
   const { output, source, rest } = parseArgs(args.slice(1));
 
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
+
+  if (cmd === "lsp") {
+    // Launch language server — dynamically import to avoid loading LSP code in normal compilation
+    import("./lsp");
+    return;
+  }
 
   if (cmd === "run") {
     runFile(source!, rest);

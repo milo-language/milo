@@ -1,20 +1,14 @@
-import type { MiloType, Expr, Stmt, Function, Program, StructDecl, EnumDecl, Pattern } from "./ast";
-
-const MILO_TO_LLVM: Record<string, string> = {
-  i8: "i8", i16: "i16", i32: "i32", i64: "i64",
-  u8: "i8", u16: "i16", u32: "i32", u64: "i64",
-  f32: "float", f64: "double",
-  bool: "i1", void: "void",
-};
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern } from "./hir";
+import type { TypeKind } from "./types";
 
 interface StructLayout {
   name: string;
-  fields: { name: string; type: string; miloType: MiloType }[];
+  fields: { name: string; type: string; typeKind: TypeKind }[];
 }
 
 interface EnumLayout {
   name: string;
-  payloadSlots: number; // number of i64 slots for payload (0 = tag-only)
+  payloadSlots: number;
   variants: Map<string, { tag: number; fieldTypes: string[] }>;
 }
 
@@ -24,8 +18,8 @@ export class Codegen {
   private strCounter = 0;
   private tempCounter = 0;
   private labelCounter = 0;
-  private locals = new Map<string, { type: string; mutable: boolean; isRef: boolean }>();
-  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; params: { type: MiloType; name: string }[] }>();
+  private locals = new Map<string, { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean }>();
+  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
   private structLayouts = new Map<string, StructLayout>();
   private enumLayouts = new Map<string, EnumLayout>();
   private userDeclaredFns = new Set<string>();
@@ -39,19 +33,25 @@ export class Codegen {
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
   private emit(line: string) { this.output.push(line); }
 
-  private llvmType(ty: MiloType): string {
-    if (ty.isRef || ty.isRefMut) return "ptr"; // references are pointers
-    if (ty.isPtr) return "ptr";
-    if (ty.isArray) {
-      const elem = MILO_TO_LLVM[ty.name] ?? `%${ty.name}`;
-      if (ty.arraySize !== null) return `[${ty.arraySize} x ${elem}]`;
-      return `{ ptr, i32 }`; // fat pointer for dynamic arrays
+  private llvmType(t: TypeKind): string {
+    switch (t.tag) {
+      case "int":    return `i${t.bits}`;
+      case "float":  return t.bits === 32 ? "float" : "double";
+      case "bool":   return "i1";
+      case "void":   return "void";
+      case "ptr":    return "ptr";
+      case "ref":    return "ptr";
+      case "struct": return `%${t.name}`;
+      case "enum":   return `%${t.name}`;
+      case "array":
+        if (t.size !== null) return `[${t.size} x ${this.llvmType(t.element)}]`;
+        return `{ ptr, i32 }`;
+      case "unknown": throw new Error("unknown type in codegen");
     }
-    return MILO_TO_LLVM[ty.name] ?? `%${ty.name}`;
   }
 
-  private llvmTypeFromName(name: string): string {
-    return MILO_TO_LLVM[name] ?? `%${name}`;
+  private isUnsigned(t: TypeKind): boolean {
+    return t.tag === "int" && !t.signed;
   }
 
   private addString(value: string): { label: string; length: number } {
@@ -77,7 +77,6 @@ export class Codegen {
     return 8;
   }
 
-  // approximate LLVM struct layout to compute payload buffer size
   private structPayloadSize(fieldTypes: string[]): number {
     let offset = 0;
     let maxAlign = 1;
@@ -91,31 +90,26 @@ export class Codegen {
     return Math.ceil(offset / maxAlign) * maxAlign;
   }
 
-  generate(program: Program): string {
+  generate(module: HIRModule): string {
     // register struct layouts
-    for (const s of program.structs) {
+    for (const s of module.structs) {
       const layout: StructLayout = {
         name: s.name,
-        fields: s.fields.map(f => ({
-          name: f.name,
-          type: this.llvmType(f.type),
-          miloType: f.type,
-        })),
+        fields: s.fields.map(f => ({ name: f.name, type: this.llvmType(f.type), typeKind: f.type })),
       };
       this.structLayouts.set(s.name, layout);
     }
 
-    // register enum layouts (skip generic templates — only concrete/monomorphized)
-    for (const e of program.enums) {
-      if (e.typeParams.length > 0) continue;
+    // register enum layouts
+    for (const e of module.enums) {
       let maxPayload = 0;
       const variants = new Map<string, { tag: number; fieldTypes: string[] }>();
-      e.variants.forEach((v, i) => {
+      for (const v of e.variants) {
         const fieldTypes = v.fields.map(f => this.llvmType(f));
         const payloadSize = this.structPayloadSize(fieldTypes);
         maxPayload = Math.max(maxPayload, payloadSize);
-        variants.set(v.name, { tag: i, fieldTypes });
-      });
+        variants.set(v.name, { tag: v.tag, fieldTypes });
+      }
       this.enumLayouts.set(e.name, {
         name: e.name,
         payloadSlots: Math.ceil(maxPayload / 8),
@@ -124,22 +118,20 @@ export class Codegen {
     }
 
     // register function signatures
-    for (const fn of program.functions) {
+    for (const fn of module.functions) {
       this.userDeclaredFns.add(fn.name);
-      const ret = this.llvmType(fn.retType);
       this.fnSigs.set(fn.name, {
-        paramTypes: fn.params.map(p => this.llvmType(p.type)),
-        retType: ret,
+        paramTypes: fn.params.map(p => p.isRef || p.isRefMut ? "ptr" : this.llvmType(p.type)),
+        retType: this.llvmType(fn.retType),
         variadic: fn.isVariadic,
-        params: fn.params.map(p => ({ type: p.type, name: p.name })),
       });
     }
 
     this.emit(`target triple = "arm64-apple-darwin25.3.0"`);
     this.emit("");
 
-    const externs = program.functions.filter(f => f.isExtern);
-    const functions = program.functions.filter(f => !f.isExtern);
+    const externs = module.functions.filter(f => f.isExtern);
+    const functions = module.functions.filter(f => !f.isExtern);
 
     // generate function bodies first (collects string constants, sets needsBoundsCheck)
     const fnBodies: string[][] = [];
@@ -181,11 +173,10 @@ export class Codegen {
 
     // insert extern declarations
     for (const ext of externs) {
-      const paramTypes = ext.params.map(p => this.llvmType(p.type));
+      const sig = this.fnSigs.get(ext.name)!;
+      const paramTypes = [...sig.paramTypes];
       if (ext.isVariadic) paramTypes.push("...");
-      const params = paramTypes.join(", ");
-      const ret = this.llvmType(ext.retType);
-      this.output.splice(1, 0, `declare ${ret} @${ext.name}(${params})`);
+      this.output.splice(1, 0, `declare ${sig.retType} @${ext.name}(${paramTypes.join(", ")})`);
     }
 
     // append function bodies
@@ -197,30 +188,31 @@ export class Codegen {
     return this.output.join("\n") + "\n";
   }
 
-  private genFunction(fn: Function): string[] {
+  private genFunction(fn: HIRFunction): string[] {
     this.tempCounter = 0;
     this.labelCounter = 0;
     this.locals.clear();
     const lines: string[] = [];
 
-    const params = fn.params.map(p => `${this.llvmType(p.type)} %${p.name}`).join(", ");
+    const params = fn.params.map(p => {
+      const lt = p.isRef || p.isRefMut ? "ptr" : this.llvmType(p.type);
+      return `${lt} %${p.name}`;
+    }).join(", ");
     const ret = this.llvmType(fn.retType);
     lines.push(`define ${ret} @${fn.name}(${params}) {`);
     lines.push("entry:");
 
     for (const p of fn.params) {
-      const isRef = p.type.isRef || p.type.isRefMut;
-      if (isRef) {
-        // refs are pointers; store the pointer, track inner type for load/store
-        const innerTy = this.llvmTypeFromName(p.type.name);
+      if (p.isRef || p.isRefMut) {
+        const innerTy = this.llvmType(p.type);
         lines.push(`  %${p.name}.addr = alloca ptr`);
         lines.push(`  store ptr %${p.name}, ptr %${p.name}.addr`);
-        this.locals.set(p.name, { type: innerTy, mutable: p.type.isRefMut, isRef: true });
+        this.locals.set(p.name, { type: innerTy, typeKind: p.type, mutable: p.isRefMut, isRef: true });
       } else {
         const lt = this.llvmType(p.type);
         lines.push(`  %${p.name}.addr = alloca ${lt}`);
         lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
-        this.locals.set(p.name, { type: lt, mutable: false, isRef: false });
+        this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
       }
     }
 
@@ -240,18 +232,17 @@ export class Codegen {
     return lines;
   }
 
-  private genStmt(stmt: Stmt): [string[], boolean] {
+  private genStmt(stmt: HIRStmt): [string[], boolean] {
     const lines: string[] = [];
 
     switch (stmt.kind) {
-      case "LetDecl":
-      case "VarDecl": {
+      case "Let": {
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
-        const mutable = stmt.kind === "VarDecl";
-        this.locals.set(stmt.name, { type: valTy, mutable, isRef: false });
-        lines.push(`  %${stmt.name}.addr = alloca ${valTy}`);
-        lines.push(`  store ${valTy} ${val}, ptr %${stmt.name}.addr`);
+        const declTy = this.llvmType(stmt.type);
+        this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false });
+        lines.push(`  %${stmt.name}.addr = alloca ${declTy}`);
+        lines.push(`  store ${declTy} ${val}, ptr %${stmt.name}.addr`);
         return [lines, false];
       }
       case "Assign": {
@@ -269,25 +260,23 @@ export class Codegen {
         lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
       }
-      case "IfStmt": return this.genIf(stmt);
-      case "WhileStmt": return this.genWhile(stmt);
+      case "If": return this.genIf(stmt);
+      case "While": return this.genWhile(stmt);
       case "ExprStmt": {
         const [exprLines] = this.genExpr(stmt.expr);
         lines.push(...exprLines);
         return [lines, false];
       }
-      case "MatchStmt":
+      case "Match":
         return this.genMatch(stmt);
     }
   }
 
-  // returns (lines, pointer to the storage location, element type)
-  private genLValue(expr: Expr): [string[], string, string] {
+  private genLValue(expr: HIRExpr): [string[], string, string] {
     const lines: string[] = [];
     if (expr.kind === "Ident") {
       const local = this.locals.get(expr.name);
       if (local?.isRef) {
-        // ref params: load the pointer
         const tmp = this.nextTemp();
         lines.push(`  ${tmp} = load ptr, ptr %${expr.name}.addr`);
         return [lines, tmp, local.type];
@@ -313,7 +302,7 @@ export class Codegen {
     return [lines, "null", "i32"];
   }
 
-  private genBoundsCheckedPtr(expr: Expr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {
+  private genBoundsCheckedPtr(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {
     const [objLines, objPtr, objTy] = this.genLValue(expr.object);
     lines.push(...objLines);
     const [idxLines, idxVal] = this.genExpr(expr.index);
@@ -354,7 +343,7 @@ export class Codegen {
     return null;
   }
 
-  private genIf(stmt: Stmt & { kind: "IfStmt" }): [string[], boolean] {
+  private genIf(stmt: HIRStmt & { kind: "If" }): [string[], boolean] {
     const lines: string[] = [];
     const [condLines, condVal] = this.genExpr(stmt.cond);
     lines.push(...condLines);
@@ -374,7 +363,7 @@ export class Codegen {
     return [lines, thenTerminated && elseTerminated];
   }
 
-  private genWhile(stmt: Stmt & { kind: "WhileStmt" }): [string[], boolean] {
+  private genWhile(stmt: HIRStmt & { kind: "While" }): [string[], boolean] {
     const lines: string[] = [];
     const condLabel = this.nextLabel("while.cond");
     const bodyLabel = this.nextLabel("while.body");
@@ -391,37 +380,32 @@ export class Codegen {
     return [lines, false];
   }
 
-  private genMatch(stmt: Stmt & { kind: "MatchStmt" }): [string[], boolean] {
+  private genMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
     const lines: string[] = [];
     const [subjLines, subjVal, subjTy] = this.genExpr(stmt.subject);
     lines.push(...subjLines);
 
-    // store subject to alloca so we can GEP into it
     const subjAddr = this.nextTemp();
     lines.push(`  ${subjAddr} = alloca ${subjTy}`);
     lines.push(`  store ${subjTy} ${subjVal}, ptr ${subjAddr}`);
 
-    // load tag (field 0)
     const tagPtr = this.nextTemp();
     lines.push(`  ${tagPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 0`);
     const tag = this.nextTemp();
     lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
 
-    const enumName = subjTy.replace(/^%/, "");
-    const layout = this.enumLayouts.get(enumName)!;
+    const layout = this.enumLayouts.get(stmt.enumName)!;
     const endLabel = this.nextLabel("match.end");
     const defaultLabel = this.nextLabel("match.default");
 
-    // build switch cases
     const armLabels: { tag: number; label: string; arm: typeof stmt.arms[0] }[] = [];
     let wildcardArm: typeof stmt.arms[0] | null = null;
     for (const arm of stmt.arms) {
       if (arm.pattern.kind === "WildcardPattern") {
         wildcardArm = arm;
       } else {
-        const variant = layout.variants.get(arm.pattern.variant)!;
         const label = this.nextLabel(`match.${arm.pattern.variant}`);
-        armLabels.push({ tag: variant.tag, label, arm });
+        armLabels.push({ tag: arm.pattern.tag, label, arm });
       }
     }
 
@@ -429,12 +413,11 @@ export class Codegen {
     const defaultTarget = wildcardArm ? this.nextLabel("match.wildcard") : defaultLabel;
     lines.push(`  switch i32 ${tag}, label %${defaultTarget} [${cases}]`);
 
-    // generate each arm
     for (const { label, arm } of armLabels) {
       lines.push(`${label}:`);
       if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
         const variant = layout.variants.get(arm.pattern.variant)!;
-        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern.bindings);
+        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern);
       }
       for (const s of arm.body) {
         const [sl] = this.genStmt(s);
@@ -443,7 +426,6 @@ export class Codegen {
       lines.push(`  br label %${endLabel}`);
     }
 
-    // wildcard arm
     if (wildcardArm) {
       lines.push(`${defaultTarget}:`);
       for (const s of wildcardArm.body) {
@@ -453,7 +435,6 @@ export class Codegen {
       lines.push(`  br label %${endLabel}`);
     }
 
-    // default (unreachable if exhaustive)
     if (!wildcardArm) {
       lines.push(`${defaultLabel}:`);
       lines.push(`  unreachable`);
@@ -465,44 +446,42 @@ export class Codegen {
 
   private extractBindings(
     lines: string[], subjAddr: string, subjTy: string,
-    variant: { tag: number; fieldTypes: string[] }, bindings: string[],
+    variant: { tag: number; fieldTypes: string[] },
+    pattern: HIRPattern & { kind: "EnumPattern" },
   ) {
-    if (bindings.length === 0) return;
-    // get pointer to payload (field 1)
+    if (pattern.bindings.length === 0) return;
     const payloadPtr = this.nextTemp();
     lines.push(`  ${payloadPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 1`);
 
-    if (bindings.length === 1) {
-      // single field: load directly from payload pointer
+    if (pattern.bindings.length === 1) {
       const ty = variant.fieldTypes[0];
       const val = this.nextTemp();
       lines.push(`  ${val} = load ${ty}, ptr ${payloadPtr}`);
-      lines.push(`  %${bindings[0]}.addr = alloca ${ty}`);
-      lines.push(`  store ${ty} ${val}, ptr %${bindings[0]}.addr`);
-      this.locals.set(bindings[0], { type: ty, mutable: false, isRef: false });
+      lines.push(`  %${pattern.bindings[0].name}.addr = alloca ${ty}`);
+      lines.push(`  store ${ty} ${val}, ptr %${pattern.bindings[0].name}.addr`);
+      this.locals.set(pattern.bindings[0].name, { type: ty, typeKind: pattern.bindings[0].type, mutable: false, isRef: false });
     } else {
-      // multiple fields: use literal struct type for GEP
       const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
-      for (let i = 0; i < bindings.length; i++) {
+      for (let i = 0; i < pattern.bindings.length; i++) {
         const ty = variant.fieldTypes[i];
         const fieldPtr = this.nextTemp();
         lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
-        lines.push(`  %${bindings[i]}.addr = alloca ${ty}`);
-        lines.push(`  store ${ty} ${val}, ptr %${bindings[i]}.addr`);
-        this.locals.set(bindings[i], { type: ty, mutable: false, isRef: false });
+        lines.push(`  %${pattern.bindings[i].name}.addr = alloca ${ty}`);
+        lines.push(`  store ${ty} ${val}, ptr %${pattern.bindings[i].name}.addr`);
+        this.locals.set(pattern.bindings[i].name, { type: ty, typeKind: pattern.bindings[i].type, mutable: false, isRef: false });
       }
     }
   }
 
-  private genBuiltinCall(expr: Expr & { kind: "Call" }, lines: string[]): [string[], string, string] {
+  private genBuiltinCall(expr: HIRExpr & { kind: "Call" }, lines: string[]): [string[], string, string] {
     if (expr.func === "print" || expr.func === "println") {
       this.needsPrintf = true;
       if (expr.func === "println") this.needsPutchar = true;
       const argVals: { val: string; type: string }[] = [];
       for (const arg of expr.args) {
-        const [al, av, at] = this.genExpr(arg);
+        const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
         argVals.push({ val: av, type: at });
       }
@@ -513,7 +492,7 @@ export class Codegen {
     }
     if (expr.func === "exit") {
       this.needsExit = true;
-      const [al, av] = this.genExpr(expr.args[0]);
+      const [al, av] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
       lines.push(`  call void @exit(i32 ${av})`);
       return [lines, "void", "void"];
@@ -521,14 +500,15 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
-  private genExpr(expr: Expr): [string[], string, string] {
+  private genExpr(expr: HIRExpr): [string[], string, string] {
     const lines: string[] = [];
+    const lt = this.llvmType(expr.type);
 
     switch (expr.kind) {
       case "IntLit":
-        return [lines, String(expr.value), "i32"];
+        return [lines, String(expr.value), lt];
       case "FloatLit":
-        return [lines, `${expr.value.toExponential()}`, "double"];
+        return [lines, `${expr.value.toExponential()}`, lt];
       case "BoolLit":
         return [lines, expr.value ? "1" : "0", "i1"];
       case "StringLit": {
@@ -541,10 +521,8 @@ export class Codegen {
         const local = this.locals.get(expr.name);
         if (!local) { console.error(`error[codegen]: undefined variable '${expr.name}'`); process.exit(1); }
         if (local.isRef) {
-          // ref: load the pointer, then load the value
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = load ptr, ptr %${expr.name}.addr`);
-          // for struct refs, return the pointer (structs are passed by ptr)
           if (this.getStructName(local.type)) return [lines, ptr, local.type];
           const val = this.nextTemp();
           lines.push(`  ${val} = load ${local.type}, ptr ${ptr}`);
@@ -555,23 +533,28 @@ export class Codegen {
         return [lines, tmp, local.type];
       }
       case "BinOp": {
-        const [ll, lv, lt] = this.genExpr(expr.left);
+        const [ll, lv, llt] = this.genExpr(expr.left);
         const [rl, rv] = this.genExpr(expr.right);
         lines.push(...ll, ...rl);
         const tmp = this.nextTemp();
-        const isFloat = lt === "float" || lt === "double";
-        const intOps: Record<string, string> = { "+": "add", "-": "sub", "*": "mul", "/": "sdiv", "%": "srem" };
+        const isFloat = llt === "float" || llt === "double";
+        const unsigned = !isFloat && this.isUnsigned(expr.left.type);
+        const intOps: Record<string, string> = unsigned
+          ? { "+": "add", "-": "sub", "*": "mul", "/": "udiv", "%": "urem" }
+          : { "+": "add", "-": "sub", "*": "mul", "/": "sdiv", "%": "srem" };
         const floatOps: Record<string, string> = { "+": "fadd", "-": "fsub", "*": "fmul", "/": "fdiv", "%": "frem" };
-        const intCmps: Record<string, string> = { "==": "eq", "!=": "ne", "<": "slt", ">": "sgt", "<=": "sle", ">=": "sge" };
+        const intCmps: Record<string, string> = unsigned
+          ? { "==": "eq", "!=": "ne", "<": "ult", ">": "ugt", "<=": "ule", ">=": "uge" }
+          : { "==": "eq", "!=": "ne", "<": "slt", ">": "sgt", "<=": "sle", ">=": "sge" };
         const floatCmps: Record<string, string> = { "==": "oeq", "!=": "one", "<": "olt", ">": "ogt", "<=": "ole", ">=": "oge" };
         if (expr.op in intOps) {
           const op = isFloat ? floatOps[expr.op] : intOps[expr.op];
-          lines.push(`  ${tmp} = ${op} ${lt} ${lv}, ${rv}`);
-          return [lines, tmp, lt];
+          lines.push(`  ${tmp} = ${op} ${llt} ${lv}, ${rv}`);
+          return [lines, tmp, llt];
         }
         if (expr.op in intCmps) {
-          if (isFloat) lines.push(`  ${tmp} = fcmp ${floatCmps[expr.op]} ${lt} ${lv}, ${rv}`);
-          else lines.push(`  ${tmp} = icmp ${intCmps[expr.op]} ${lt} ${lv}, ${rv}`);
+          if (isFloat) lines.push(`  ${tmp} = fcmp ${floatCmps[expr.op]} ${llt} ${lv}, ${rv}`);
+          else lines.push(`  ${tmp} = icmp ${intCmps[expr.op]} ${llt} ${lv}, ${rv}`);
           return [lines, tmp, "i1"];
         }
         console.error(`error[codegen]: unknown binary op '${expr.op}'`); process.exit(1);
@@ -589,22 +572,18 @@ export class Codegen {
         console.error(`error[codegen]: unknown unary op '${expr.op}'`); process.exit(1);
       }
       case "Call": {
-        // built-in functions
         if (Codegen.BUILTINS.has(expr.func) && !this.userDeclaredFns.has(expr.func)) {
           return this.genBuiltinCall(expr, lines);
         }
         const sig = this.fnSigs.get(expr.func);
         const argVals: { val: string; type: string }[] = [];
-        for (let i = 0; i < expr.args.length; i++) {
-          const paramDef = sig?.params[i];
-          const isRefParam = paramDef && (paramDef.type.isRef || paramDef.type.isRefMut);
-          if (isRefParam) {
-            // auto-borrow: pass pointer to the variable
-            const [al, aPtr] = this.genLValueForArg(expr.args[i]);
+        for (const arg of expr.args) {
+          if (arg.passByRef) {
+            const [al, aPtr] = this.genLValueForArg(arg.expr);
             lines.push(...al);
             argVals.push({ val: aPtr, type: "ptr" });
           } else {
-            const [al, av, at] = this.genExpr(expr.args[i]);
+            const [al, av, at] = this.genExpr(arg.expr);
             lines.push(...al);
             argVals.push({ val: av, type: at });
           }
@@ -612,8 +591,8 @@ export class Codegen {
         const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
         const retTy = sig?.retType ?? "i32";
         let callPrefix = retTy;
-        if (sig?.variadic) {
-          const paramStr = sig.paramTypes.join(", ");
+        if (expr.variadic) {
+          const paramStr = sig!.paramTypes.join(", ");
           callPrefix = `${retTy} (${paramStr}, ...)`;
         }
         if (retTy === "void") {
@@ -638,18 +617,24 @@ export class Codegen {
           lines.push(`  ${ptr} = getelementptr ${structTy}, ptr ${alloca}, i32 0, i32 ${idx}`);
           lines.push(`  store ${fieldTy} ${fVal}, ptr ${ptr}`);
         }
-        // load the whole struct as a value
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${structTy}, ptr ${alloca}`);
         return [lines, val, structTy];
       }
       case "FieldAccess": {
-        // get pointer to field, then load
         const [ptrLines, ptr, fieldTy] = this.genFieldPtr(expr);
         lines.push(...ptrLines);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${fieldTy}, ptr ${ptr}`);
         return [lines, val, fieldTy];
+      }
+      case "ArrayLen": {
+        // compile-time constant — extract size from the object's array type
+        const objType = expr.object.type;
+        if (objType.tag === "array" && objType.size !== null) {
+          return [lines, String(objType.size), "i32"];
+        }
+        return [lines, "0", "i32"];
       }
       case "ArrayLit": {
         if (expr.elements.length === 0) return [lines, "zeroinitializer", "[0 x i32]"];
@@ -658,7 +643,6 @@ export class Codegen {
         const arrTy = `[${expr.elements.length} x ${elemTy}]`;
         const alloca = this.nextTemp();
         lines.push(`  ${alloca} = alloca ${arrTy}`);
-        // store first element
         const ptr0 = this.nextTemp();
         lines.push(`  ${ptr0} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 0`);
         lines.push(`  store ${elemTy} ${firstVal}, ptr ${ptr0}`);
@@ -675,7 +659,6 @@ export class Codegen {
       }
       case "IndexAccess": {
         const [ptrLines, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
-        // ptrLines already pushed into lines
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
         return [lines, val, elemTy];
@@ -686,11 +669,9 @@ export class Codegen {
         const enumTy = `%${expr.enumName}`;
         const alloca = this.nextTemp();
         lines.push(`  ${alloca} = alloca ${enumTy}`);
-        // store tag
         const tagPtr = this.nextTemp();
         lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${alloca}, i32 0, i32 0`);
         lines.push(`  store i32 ${variant.tag}, ptr ${tagPtr}`);
-        // store payload fields
         if (expr.args.length > 0) {
           const payloadPtr = this.nextTemp();
           lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${alloca}, i32 0, i32 1`);
@@ -709,7 +690,6 @@ export class Codegen {
             }
           }
         }
-        // load whole enum value
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${enumTy}, ptr ${alloca}`);
         return [lines, val, enumTy];
@@ -717,9 +697,8 @@ export class Codegen {
     }
   }
 
-  private genFieldPtr(expr: Expr & { kind: "FieldAccess" }): [string[], string, string] {
+  private genFieldPtr(expr: HIRExpr & { kind: "FieldAccess" }): [string[], string, string] {
     const lines: string[] = [];
-    // get lvalue of the object
     const [objLines, objPtr, objTy] = this.genLValue(expr.object);
     lines.push(...objLines);
     const structName = this.getStructName(objTy);
@@ -734,12 +713,10 @@ export class Codegen {
     return [lines, "null", "i32"];
   }
 
-  // for auto-borrow: get a pointer to a variable for passing as &T
-  private genLValueForArg(expr: Expr): [string[], string] {
+  private genLValueForArg(expr: HIRExpr): [string[], string] {
     if (expr.kind === "Ident") {
       const local = this.locals.get(expr.name);
       if (local?.isRef) {
-        // already a ref — load the pointer
         const lines: string[] = [];
         const tmp = this.nextTemp();
         lines.push(`  ${tmp} = load ptr, ptr %${expr.name}.addr`);
@@ -751,7 +728,6 @@ export class Codegen {
       const [lines, ptr] = this.genFieldPtr(expr);
       return [lines, ptr];
     }
-    // fallback: evaluate to a temp, alloca, store, return ptr
     const lines: string[] = [];
     const [el, ev, et] = this.genExpr(expr);
     lines.push(...el);

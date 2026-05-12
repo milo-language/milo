@@ -1,0 +1,9 @@
+// @expect: 5
+// @expect: 3
+fn main() -> i32 {
+    let a: i64 = 5
+    let b: u64 = 3
+    println("%ld", a)
+    println("%ld", b)
+    return 0
+}

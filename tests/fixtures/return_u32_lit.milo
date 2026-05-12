@@ -1,0 +1,8 @@
+// @expect: 7
+fn get() -> u32 {
+    return 7
+}
+fn main() -> i32 {
+    println("%d", get())
+    return 0
+}

@@ -35,8 +35,7 @@ export class Lexer {
   }
 
   private error(msg: string, line: number, col: number): never {
-    console.error(`error[lex]: ${msg} at ${line}:${col}`);
-    process.exit(1);
+    throw new Error(`error[lex]: ${line}:${col}: ${msg}`);
   }
 
   private lexString(line: number, col: number): Token {

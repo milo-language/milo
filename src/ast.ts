@@ -1,3 +1,5 @@
+export interface Span { line: number; col: number }
+
 export interface MiloType {
   name: string; // "i32", "u8", "bool", "void", etc.
   typeArgs?: MiloType[]; // generic type arguments, e.g. Option<i32>
@@ -28,39 +30,39 @@ export interface StructField {
 
 // ── Expressions ──
 
-export interface IntLit { kind: "IntLit"; value: number }
-export interface FloatLit { kind: "FloatLit"; value: number }
-export interface BoolLit { kind: "BoolLit"; value: boolean }
-export interface StringLit { kind: "StringLit"; value: string }
-export interface Ident { kind: "Ident"; name: string }
-export interface BinOp { kind: "BinOp"; op: string; left: Expr; right: Expr }
-export interface UnaryOp { kind: "UnaryOp"; op: string; operand: Expr }
-export interface Call { kind: "Call"; func: string; args: Expr[] }
-export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr }[] }
-export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string }
-export interface ArrayLit { kind: "ArrayLit"; elements: Expr[] }
-export interface IndexAccess { kind: "IndexAccess"; object: Expr; index: Expr }
-export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; args: Expr[] }
+export interface IntLit { kind: "IntLit"; value: number; span?: Span }
+export interface FloatLit { kind: "FloatLit"; value: number; span?: Span }
+export interface BoolLit { kind: "BoolLit"; value: boolean; span?: Span }
+export interface StringLit { kind: "StringLit"; value: string; span?: Span }
+export interface Ident { kind: "Ident"; name: string; span?: Span }
+export interface BinOp { kind: "BinOp"; op: string; left: Expr; right: Expr; span?: Span }
+export interface UnaryOp { kind: "UnaryOp"; op: string; operand: Expr; span?: Span }
+export interface Call { kind: "Call"; func: string; args: Expr[]; typeArgs?: MiloType[]; span?: Span }
+export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr }[]; span?: Span }
+export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string; span?: Span }
+export interface ArrayLit { kind: "ArrayLit"; elements: Expr[]; span?: Span }
+export interface IndexAccess { kind: "IndexAccess"; object: Expr; index: Expr; span?: Span }
+export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; args: Expr[]; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | Ident | BinOp | UnaryOp | Call
   | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit;
 
 // ── Statements ──
 
-export interface LetDecl { kind: "LetDecl"; name: string; type: MiloType | null; value: Expr }
-export interface VarDecl { kind: "VarDecl"; name: string; type: MiloType | null; value: Expr }
-export interface Assign { kind: "Assign"; target: Expr; value: Expr }
-export interface Return { kind: "Return"; value: Expr | null }
-export interface IfStmt { kind: "IfStmt"; cond: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null }
-export interface WhileStmt { kind: "WhileStmt"; cond: Expr; body: Stmt[] }
-export interface ExprStmt { kind: "ExprStmt"; expr: Expr }
+export interface LetDecl { kind: "LetDecl"; name: string; type: MiloType | null; value: Expr; span?: Span }
+export interface VarDecl { kind: "VarDecl"; name: string; type: MiloType | null; value: Expr; span?: Span }
+export interface Assign { kind: "Assign"; target: Expr; value: Expr; span?: Span }
+export interface Return { kind: "Return"; value: Expr | null; span?: Span }
+export interface IfStmt { kind: "IfStmt"; cond: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
+export interface WhileStmt { kind: "WhileStmt"; cond: Expr; body: Stmt[]; span?: Span }
+export interface ExprStmt { kind: "ExprStmt"; expr: Expr; span?: Span }
 
 export type Pattern =
-  | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[] }
-  | { kind: "WildcardPattern" };
+  | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; span?: Span }
+  | { kind: "WildcardPattern"; span?: Span };
 
 export interface MatchArm { pattern: Pattern; body: Stmt[] }
-export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[] }
+export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[]; span?: Span }
 
 export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt;
 
@@ -87,6 +89,7 @@ export interface EnumDecl {
 export interface Function {
   kind: "Function";
   name: string;
+  typeParams: string[];
   params: Param[];
   retType: MiloType;
   body: Stmt[];

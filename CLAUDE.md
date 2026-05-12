@@ -13,7 +13,7 @@ bun test                                                    # run tests
 ## Architecture
 
 ```
-Source → Lexer → Parser → AST → TypeChecker → Codegen → LLVM IR → clang → Binary
+Source → Lexer → Parser → AST → TypeChecker → HIR Lowering → Codegen → LLVM IR → clang → Binary
 ```
 
 | File | Purpose |
@@ -22,9 +22,11 @@ Source → Lexer → Parser → AST → TypeChecker → Codegen → LLVM IR → 
 | `src/lexer.ts` | Tokenizer |
 | `src/parser.ts` | Recursive descent parser → AST |
 | `src/ast.ts` | AST node types |
-| `src/types.ts` | Internal type representations |
-| `src/checker.ts` | Type checking, move checking, scope validation |
-| `src/codegen.ts` | AST → LLVM IR emission |
+| `src/types.ts` | Internal type representations (`TypeKind` tagged union) |
+| `src/checker.ts` | Type checking, move checking, scope validation → `CheckResult` |
+| `src/hir.ts` | Typed HIR node types (every expr carries `TypeKind`) |
+| `src/lower.ts` | AST + CheckResult → HIRModule lowering |
+| `src/codegen.ts` | HIR → LLVM IR emission |
 | `src/main.ts` | CLI driver |
 
 ## Language Design
