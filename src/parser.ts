@@ -1,6 +1,7 @@
 import { Token, TokenKind } from "./tokens";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
+  EnumDecl, EnumVariant, Pattern, MatchArm,
 } from "./ast";
 
 export class Parser {
@@ -31,19 +32,22 @@ export class Parser {
 
   parse(): Program {
     const structs: StructDecl[] = [];
+    const enums: EnumDecl[] = [];
     const functions: Function[] = [];
     while (!this.at(TokenKind.Eof)) {
       if (this.at(TokenKind.Struct)) {
         structs.push(this.parseStruct());
+      } else if (this.at(TokenKind.Enum)) {
+        enums.push(this.parseEnum());
       } else if (this.at(TokenKind.Extern)) {
         functions.push(this.parseExternFn());
       } else if (this.at(TokenKind.Fn)) {
         functions.push(this.parseFn());
       } else {
-        this.error(`expected 'struct', 'fn', or 'extern', got '${this.peek().kind}'`, this.peek());
+        this.error(`expected 'struct', 'enum', 'fn', or 'extern', got '${this.peek().kind}'`, this.peek());
       }
     }
-    return { structs, functions };
+    return { structs, enums, functions };
   }
 
   // ── Types ──
@@ -71,7 +75,16 @@ export class Parser {
       return { name: inner.name, isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize };
     }
     const tok = this.advance();
-    return { name: tok.value, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    let typeArgs: MiloType[] | undefined;
+    if (this.at(TokenKind.Lt)) {
+      this.advance();
+      typeArgs = [this.parseType()];
+      while (this.match(TokenKind.Comma)) {
+        typeArgs.push(this.parseType());
+      }
+      this.expect(TokenKind.Gt);
+    }
+    return { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
   }
 
   // ── Struct ──
@@ -90,6 +103,38 @@ export class Parser {
     }
     this.expect(TokenKind.RBrace);
     return { kind: "StructDecl", name, fields };
+  }
+
+  // ── Enum ──
+
+  private parseEnum(): EnumDecl {
+    this.expect(TokenKind.Enum);
+    const name = this.expect(TokenKind.Ident).value;
+    const typeParams: string[] = [];
+    if (this.match(TokenKind.Lt)) {
+      typeParams.push(this.expect(TokenKind.Ident).value);
+      while (this.match(TokenKind.Comma)) {
+        typeParams.push(this.expect(TokenKind.Ident).value);
+      }
+      this.expect(TokenKind.Gt);
+    }
+    this.expect(TokenKind.LBrace);
+    const variants: EnumVariant[] = [];
+    while (!this.at(TokenKind.RBrace)) {
+      const variantName = this.expect(TokenKind.Ident).value;
+      const fields: MiloType[] = [];
+      if (this.match(TokenKind.LParen)) {
+        while (!this.at(TokenKind.RParen)) {
+          fields.push(this.parseType());
+          this.match(TokenKind.Comma);
+        }
+        this.expect(TokenKind.RParen);
+      }
+      variants.push({ name: variantName, fields });
+      this.match(TokenKind.Comma);
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "EnumDecl", name, typeParams, variants };
   }
 
   // ── Functions ──
@@ -159,6 +204,7 @@ export class Parser {
     if (this.at(TokenKind.Return)) return this.parseReturn();
     if (this.at(TokenKind.If)) return this.parseIf();
     if (this.at(TokenKind.While)) return this.parseWhile();
+    if (this.at(TokenKind.Match)) return this.parseMatch();
 
     const expr = this.parseExpr();
     // assignment: x = ..., x.field = ..., x[i] = ...
@@ -222,6 +268,45 @@ export class Parser {
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
     return { kind: "WhileStmt", cond, body };
+  }
+
+  // ── Match ──
+
+  private parseMatch(): Stmt {
+    this.expect(TokenKind.Match);
+    const subject = this.parseExpr();
+    this.expect(TokenKind.LBrace);
+    const arms: MatchArm[] = [];
+    while (!this.at(TokenKind.RBrace)) {
+      const pattern = this.parsePattern();
+      this.expect(TokenKind.FatArrow);
+      this.expect(TokenKind.LBrace);
+      const body = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+      arms.push({ pattern, body });
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "MatchStmt", subject, arms };
+  }
+
+  private parsePattern(): Pattern {
+    const tok = this.peek();
+    if (tok.kind === TokenKind.Ident && tok.value === "_") {
+      this.advance();
+      return { kind: "WildcardPattern" };
+    }
+    const enumName = this.expect(TokenKind.Ident).value;
+    this.expect(TokenKind.ColonColon);
+    const variant = this.expect(TokenKind.Ident).value;
+    const bindings: string[] = [];
+    if (this.match(TokenKind.LParen)) {
+      while (!this.at(TokenKind.RParen)) {
+        bindings.push(this.expect(TokenKind.Ident).value);
+        this.match(TokenKind.Comma);
+      }
+      this.expect(TokenKind.RParen);
+    }
+    return { kind: "EnumPattern", enumName, variant, bindings };
   }
 
   // ── Expression parsing (precedence climbing) ──
@@ -314,6 +399,20 @@ export class Parser {
     }
     if (tok.kind === TokenKind.Ident) {
       this.advance();
+      // enum variant: Name::Variant or Name::Variant(args)
+      if (this.at(TokenKind.ColonColon)) {
+        this.advance();
+        const variant = this.expect(TokenKind.Ident).value;
+        const args: Expr[] = [];
+        if (this.match(TokenKind.LParen)) {
+          while (!this.at(TokenKind.RParen)) {
+            args.push(this.parseExpr());
+            this.match(TokenKind.Comma);
+          }
+          this.expect(TokenKind.RParen);
+        }
+        return { kind: "EnumLit", enumName: tok.value, variant, args };
+      }
       // struct literal: Name { field: value, ... }
       if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
         return this.parseStructLit(tok.value);

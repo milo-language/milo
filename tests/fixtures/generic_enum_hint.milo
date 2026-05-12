@@ -1,0 +1,20 @@
+// @expect: none
+extern fn printf(fmt: *u8, ...) -> i32
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+fn main() -> i32 {
+    let x: Option<i32> = Option::None
+    match x {
+        Option::Some(val) => {
+            printf("%d\n", val)
+        }
+        Option::None => {
+            printf("none\n")
+        }
+    }
+    return 0
+}

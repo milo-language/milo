@@ -1,0 +1,20 @@
+// @expect: error: 404
+extern fn printf(fmt: *u8, ...) -> i32
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn main() -> i32 {
+    let r: Result<i32, i32> = Result::Err(404)
+    match r {
+        Result::Ok(val) => {
+            printf("ok: %d\n", val)
+        }
+        Result::Err(code) => {
+            printf("error: %d\n", code)
+        }
+    }
+    return 0
+}

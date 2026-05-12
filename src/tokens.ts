@@ -16,6 +16,8 @@ export enum TokenKind {
   True = "true",
   False = "false",
   Struct = "struct",
+  Enum = "enum",
+  Match = "match",
   Mut = "mut",
   // symbols
   LParen = "(",
@@ -37,6 +39,8 @@ export enum TokenKind {
   Amp = "&",
   Eq = "=",
   EqEq = "==",
+  FatArrow = "=>",
+  ColonColon = "::",
   Neq = "!=",
   Lt = "<",
   Gt = ">",
@@ -56,5 +60,5 @@ export interface Token {
 
 export const KEYWORDS = new Set([
   "fn", "extern", "let", "var", "return", "if", "else", "while",
-  "true", "false", "struct", "mut",
+  "true", "false", "struct", "enum", "match", "mut",
 ]);

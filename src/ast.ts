@@ -1,5 +1,6 @@
 export interface MiloType {
   name: string; // "i32", "u8", "bool", "void", etc.
+  typeArgs?: MiloType[]; // generic type arguments, e.g. Option<i32>
   isPtr: boolean;
   isRef: boolean;      // &T
   isRefMut: boolean;   // &mut T
@@ -39,9 +40,10 @@ export interface StructLit { kind: "StructLit"; name: string; fields: { name: st
 export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string }
 export interface ArrayLit { kind: "ArrayLit"; elements: Expr[] }
 export interface IndexAccess { kind: "IndexAccess"; object: Expr; index: Expr }
+export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; args: Expr[] }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | IndexAccess;
+  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit;
 
 // ── Statements ──
 
@@ -53,7 +55,14 @@ export interface IfStmt { kind: "IfStmt"; cond: Expr; thenBody: Stmt[]; elseBody
 export interface WhileStmt { kind: "WhileStmt"; cond: Expr; body: Stmt[] }
 export interface ExprStmt { kind: "ExprStmt"; expr: Expr }
 
-export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt;
+export type Pattern =
+  | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[] }
+  | { kind: "WildcardPattern" };
+
+export interface MatchArm { pattern: Pattern; body: Stmt[] }
+export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[] }
+
+export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt;
 
 // ── Top-level ──
 
@@ -61,6 +70,18 @@ export interface StructDecl {
   kind: "StructDecl";
   name: string;
   fields: StructField[];
+}
+
+export interface EnumVariant {
+  name: string;
+  fields: MiloType[];
+}
+
+export interface EnumDecl {
+  kind: "EnumDecl";
+  name: string;
+  typeParams: string[];
+  variants: EnumVariant[];
 }
 
 export interface Function {
@@ -73,9 +94,10 @@ export interface Function {
   isVariadic: boolean;
 }
 
-export type TopLevel = StructDecl | Function;
+export type TopLevel = StructDecl | EnumDecl | Function;
 
 export interface Program {
   structs: StructDecl[];
+  enums: EnumDecl[];
   functions: Function[];
 }

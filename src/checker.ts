@@ -1,4 +1,4 @@
-import type { Program, Function, Stmt, Expr, MiloType, StructDecl } from "./ast";
+import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern } from "./ast";
 import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy } from "./types";
 
 interface VarInfo {
@@ -17,15 +17,110 @@ interface StructInfo {
   fields: { name: string; type: TypeKind }[];
 }
 
+interface EnumInfo {
+  baseName?: string;
+  variants: Map<string, { tag: number; fields: TypeKind[] }>;
+}
+
+interface GenericEnumInfo {
+  typeParams: string[];
+  variants: Map<string, { tag: number; fields: TypeKind[] }>;
+  decl: import("./ast").EnumDecl;
+}
+
 export class TypeChecker {
   private errors: string[] = [];
   private functions = new Map<string, FnSig>();
   private structs = new Map<string, StructInfo>();
+  private enums = new Map<string, EnumInfo>();
+  private genericEnums = new Map<string, GenericEnumInfo>();
+  private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private scopes: Map<string, VarInfo>[] = [];
 
   private error(msg: string) { this.errors.push(msg); }
 
-  private resolve(ty: MiloType): TypeKind { return typeFromAst(ty); }
+  private resolve(ty: MiloType): TypeKind {
+    const typeArgs = ty.typeArgs ?? [];
+    if (typeArgs.length > 0) {
+      const resolvedArgs = typeArgs.map(a => this.resolve(a));
+      const ge = this.genericEnums.get(ty.name);
+      if (ge) {
+        if (resolvedArgs.length !== ge.typeParams.length) {
+          this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${resolvedArgs.length}`);
+          return { tag: "unknown" };
+        }
+        return { tag: "enum", name: this.monomorphizeEnum(ty.name, resolvedArgs) };
+      }
+      this.error(`'${ty.name}' is not a generic type`);
+      return { tag: "unknown" };
+    }
+    const base = typeFromAst(ty);
+    if (base.tag === "struct" && this.enums.has(base.name)) {
+      return { tag: "enum", name: base.name };
+    }
+    return base;
+  }
+
+  private mangleTypeName(t: TypeKind): string {
+    switch (t.tag) {
+      case "int": return `${t.signed ? "i" : "u"}${t.bits}`;
+      case "float": return `f${t.bits}`;
+      case "bool": return "bool";
+      case "void": return "void";
+      case "struct": return t.name;
+      case "enum": return t.name;
+      case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
+      case "array": return `arr_${this.mangleTypeName(t.element)}_${t.size}`;
+      case "ref": return `ref_${this.mangleTypeName(t.inner)}`;
+      case "unknown": return "unknown";
+    }
+  }
+
+  private monomorphizeEnum(baseName: string, typeArgs: TypeKind[]): string {
+    const mangled = `${baseName}_${typeArgs.map(a => this.mangleTypeName(a)).join("_")}`;
+    if (this.enums.has(mangled)) return mangled;
+
+    const generic = this.genericEnums.get(baseName)!;
+    const typeMap = new Map<string, TypeKind>();
+    generic.typeParams.forEach((p, i) => typeMap.set(p, typeArgs[i]));
+
+    const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
+    for (const [vName, vInfo] of generic.variants) {
+      variants.set(vName, {
+        tag: vInfo.tag,
+        fields: vInfo.fields.map(f => this.substituteTypeKind(f, typeMap)),
+      });
+    }
+    this.enums.set(mangled, { baseName, variants });
+
+    const decl: import("./ast").EnumDecl = {
+      kind: "EnumDecl",
+      name: mangled,
+      typeParams: [],
+      variants: generic.decl.variants.map(v => ({
+        name: v.name,
+        fields: v.fields.map(f => this.substituteMiloType(f, generic.typeParams, typeArgs)),
+      })),
+    };
+    this.monomorphizedDecls.push(decl);
+    return mangled;
+  }
+
+  private substituteTypeKind(t: TypeKind, typeMap: Map<string, TypeKind>): TypeKind {
+    if (t.tag === "struct" && typeMap.has(t.name)) return typeMap.get(t.name)!;
+    if (t.tag === "array") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
+    if (t.tag === "ref") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
+    if (t.tag === "ptr") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
+    return t;
+  }
+
+  private substituteMiloType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType {
+    const idx = typeParams.indexOf(ty.name);
+    if (idx !== -1 && !ty.isPtr && !ty.isRef && !ty.isRefMut && !ty.isArray) {
+      return { ...ty, name: typeName(typeArgs[idx]) };
+    }
+    return ty;
+  }
 
   private pushScope() { this.scopes.push(new Map()); }
   private popScope() { this.scopes.pop(); }
@@ -57,6 +152,23 @@ export class TypeChecker {
       this.structs.set(s.name, { fields });
     }
 
+    // register enums
+    for (const e of program.enums) {
+      if (e.typeParams.length > 0) {
+        const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
+        e.variants.forEach((v, i) => {
+          variants.set(v.name, { tag: i, fields: v.fields.map(f => typeFromAst(f)) });
+        });
+        this.genericEnums.set(e.name, { typeParams: e.typeParams, variants, decl: e });
+      } else {
+        const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
+        e.variants.forEach((v, i) => {
+          variants.set(v.name, { tag: i, fields: v.fields.map(f => this.resolve(f)) });
+        });
+        this.enums.set(e.name, { variants });
+      }
+    }
+
     // register functions
     for (const fn of program.functions) {
       const params = fn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
@@ -70,6 +182,11 @@ export class TypeChecker {
 
     for (const fn of program.functions) {
       if (!fn.isExtern) this.checkFunction(fn);
+    }
+
+    // add monomorphized enum declarations for codegen
+    for (const decl of this.monomorphizedDecls) {
+      program.enums.push(decl);
     }
 
     return this.errors;
@@ -91,36 +208,28 @@ export class TypeChecker {
   private checkStmt(stmt: Stmt, fnRetType: TypeKind) {
     switch (stmt.kind) {
       case "LetDecl": {
-        const valType = this.checkExpr(stmt.value);
-        if (stmt.type) {
-          const declared = this.resolve(stmt.type);
-          // second-class refs: can't store refs in variables
-          if (declared.tag === "ref") {
-            this.error(`cannot store a reference in variable '${stmt.name}'`);
-          }
-          if (!typeEq(declared, valType) && valType.tag !== "unknown") {
-            this.error(`type mismatch: '${stmt.name}' declared as ${typeName(declared)} but got ${typeName(valType)}`);
-          }
+        const hint = stmt.type ? this.resolve(stmt.type) : null;
+        if (hint?.tag === "ref") {
+          this.error(`cannot store a reference in variable '${stmt.name}'`);
         }
-        const finalType = stmt.type ? this.resolve(stmt.type) : valType;
-        this.declare(stmt.name, { type: finalType, mutable: false, moved: false });
-        // if RHS is a non-copy ident, mark it moved
+        const valType = this.checkExprWithHint(stmt.value, hint);
+        if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
+          this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`);
+        }
+        this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false });
         this.tryMove(stmt.value);
         break;
       }
       case "VarDecl": {
-        const valType = this.checkExpr(stmt.value);
-        if (stmt.type) {
-          const declared = this.resolve(stmt.type);
-          if (declared.tag === "ref") {
-            this.error(`cannot store a reference in variable '${stmt.name}'`);
-          }
-          if (!typeEq(declared, valType) && valType.tag !== "unknown") {
-            this.error(`type mismatch: '${stmt.name}' declared as ${typeName(declared)} but got ${typeName(valType)}`);
-          }
+        const hint = stmt.type ? this.resolve(stmt.type) : null;
+        if (hint?.tag === "ref") {
+          this.error(`cannot store a reference in variable '${stmt.name}'`);
         }
-        const finalType = stmt.type ? this.resolve(stmt.type) : valType;
-        this.declare(stmt.name, { type: finalType, mutable: true, moved: false });
+        const valType = this.checkExprWithHint(stmt.value, hint);
+        if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
+          this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`);
+        }
+        this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false });
         this.tryMove(stmt.value);
         break;
       }
@@ -183,6 +292,59 @@ export class TypeChecker {
       case "ExprStmt":
         this.checkExpr(stmt.expr);
         break;
+      case "MatchStmt": {
+        const subjType = this.checkExpr(stmt.subject);
+        if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
+          this.error(`match subject must be an enum, got ${typeName(subjType)}`);
+          break;
+        }
+        if (subjType.tag === "enum") {
+          const enumInfo = this.enums.get(subjType.name)!;
+          const covered = new Set<string>();
+          let hasWildcard = false;
+          for (const arm of stmt.arms) {
+            if (arm.pattern.kind === "WildcardPattern") {
+              hasWildcard = true;
+            } else {
+              if (arm.pattern.enumName !== subjType.name && enumInfo.baseName !== arm.pattern.enumName) {
+                this.error(`pattern enum '${arm.pattern.enumName}' does not match subject type '${subjType.name}'`);
+              }
+              const variant = enumInfo.variants.get(arm.pattern.variant);
+              if (!variant) {
+                this.error(`enum '${subjType.name}' has no variant '${arm.pattern.variant}'`);
+                continue;
+              }
+              if (covered.has(arm.pattern.variant)) {
+                this.error(`duplicate match arm for '${arm.pattern.variant}'`);
+              }
+              covered.add(arm.pattern.variant);
+              if (arm.pattern.bindings.length !== variant.fields.length) {
+                this.error(`variant '${arm.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${arm.pattern.bindings.length} bindings`);
+              }
+            }
+            this.pushScope();
+            if (arm.pattern.kind === "EnumPattern") {
+              const variant = enumInfo.variants.get(arm.pattern.variant);
+              if (variant) {
+                for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
+                  this.declare(arm.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false });
+                }
+              }
+            }
+            for (const s of arm.body) this.checkStmt(s, fnRetType);
+            this.popScope();
+          }
+          if (!hasWildcard) {
+            for (const [name] of enumInfo.variants) {
+              if (!covered.has(name)) {
+                this.error(`non-exhaustive match: missing variant '${name}'`);
+              }
+            }
+          }
+        }
+        this.tryMove(stmt.subject);
+        break;
+      }
     }
   }
 
@@ -254,6 +416,28 @@ export class TypeChecker {
     if (expr.kind === "FieldAccess") return `${this.describeExpr(expr.object)}.${expr.field}`;
     if (expr.kind === "IndexAccess") return `${this.describeExpr(expr.object)}[...]`;
     return "<expr>";
+  }
+
+  private checkExprWithHint(expr: Expr, hint: TypeKind | null): TypeKind {
+    if (expr.kind === "EnumLit" && hint?.tag === "enum") {
+      const hintEnum = this.enums.get(hint.name);
+      if (hintEnum && (hintEnum.baseName === expr.enumName || hint.name === expr.enumName)) {
+        const variant = hintEnum.variants.get(expr.variant);
+        if (!variant) { this.error(`enum '${expr.enumName}' has no variant '${expr.variant}'`); return { tag: "unknown" }; }
+        if (expr.args.length !== variant.fields.length) {
+          this.error(`variant '${expr.enumName}::${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`);
+        }
+        for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
+          const argType = this.checkExpr(expr.args[i]);
+          if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
+            this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`);
+          }
+        }
+        (expr as any).enumName = hint.name;
+        return hint;
+      }
+    }
+    return this.checkExpr(expr);
   }
 
   private checkExpr(expr: Expr): TypeKind {
@@ -359,6 +543,10 @@ export class TypeChecker {
           if (!field) { this.error(`struct '${objType.name}' has no field '${expr.field}'`); return { tag: "unknown" }; }
           return field.type;
         }
+        if (objType.tag === "enum") {
+          this.error(`cannot access field on enum '${objType.name}' — use match to extract values`);
+          return { tag: "unknown" };
+        }
         // array.len
         if (objType.tag === "array" && expr.field === "len") {
           return { tag: "int", bits: 32, signed: true };
@@ -389,6 +577,56 @@ export class TypeChecker {
         if (objType.tag === "array") return objType.element;
         this.error(`cannot index type ${typeName(objType)}`);
         return { tag: "unknown" };
+      }
+      case "EnumLit": {
+        // generic enum — infer type params from args
+        const genericInfo = this.genericEnums.get(expr.enumName);
+        if (genericInfo) {
+          const variant = genericInfo.variants.get(expr.variant);
+          if (!variant) { this.error(`enum '${expr.enumName}' has no variant '${expr.variant}'`); return { tag: "unknown" }; }
+          if (expr.args.length !== variant.fields.length) {
+            this.error(`variant '${expr.enumName}::${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`);
+          }
+          const typeMap = new Map<string, TypeKind>();
+          for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
+            const argType = this.checkExpr(expr.args[i]);
+            const field = variant.fields[i];
+            if (field.tag === "struct" && genericInfo.typeParams.includes(field.name)) {
+              const existing = typeMap.get(field.name);
+              if (existing && !typeEq(existing, argType)) {
+                this.error(`conflicting inference for type parameter '${field.name}'`);
+              } else {
+                typeMap.set(field.name, argType);
+              }
+            } else if (!typeEq(field, argType) && argType.tag !== "unknown") {
+              this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(field)}, got ${typeName(argType)}`);
+            }
+          }
+          const missing = genericInfo.typeParams.filter(p => !typeMap.has(p));
+          if (missing.length > 0) {
+            this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for ${expr.enumName}::${expr.variant}`);
+            return { tag: "unknown" };
+          }
+          const typeArgs = genericInfo.typeParams.map(p => typeMap.get(p)!);
+          const mangled = this.monomorphizeEnum(expr.enumName, typeArgs);
+          expr.enumName = mangled;
+          return { tag: "enum", name: mangled };
+        }
+        // concrete enum
+        const info = this.enums.get(expr.enumName);
+        if (!info) { this.error(`unknown enum '${expr.enumName}'`); return { tag: "unknown" }; }
+        const variant = info.variants.get(expr.variant);
+        if (!variant) { this.error(`enum '${expr.enumName}' has no variant '${expr.variant}'`); return { tag: "unknown" }; }
+        if (expr.args.length !== variant.fields.length) {
+          this.error(`variant '${expr.enumName}::${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`);
+        }
+        for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
+          const argType = this.checkExpr(expr.args[i]);
+          if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
+            this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`);
+          }
+        }
+        return { tag: "enum", name: expr.enumName };
       }
     }
   }

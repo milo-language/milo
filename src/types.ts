@@ -6,6 +6,7 @@ export type TypeKind =
   | { tag: "ptr"; inner: TypeKind }
   | { tag: "ref"; inner: TypeKind; mutable: boolean }
   | { tag: "struct"; name: string }
+  | { tag: "enum"; name: string }
   | { tag: "array"; element: TypeKind; size: number | null }
   | { tag: "unknown" };
 
@@ -42,6 +43,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
     case "ptr": return typeEq(a.inner, (b as typeof a).inner);
     case "ref": return typeEq(a.inner, (b as typeof a).inner) && a.mutable === (b as typeof a).mutable;
     case "struct": return a.name === (b as typeof a).name;
+    case "enum": return a.name === (b as typeof a).name;
     case "array": {
       const ba = b as typeof a;
       return typeEq(a.element, ba.element) && a.size === ba.size;
@@ -58,6 +60,7 @@ export function typeName(t: TypeKind): string {
     case "ptr": return `*${typeName(t.inner)}`;
     case "ref": return `&${t.mutable ? "mut " : ""}${typeName(t.inner)}`;
     case "struct": return t.name;
+    case "enum": return t.name;
     case "array": return t.size !== null ? `[${typeName(t.element)}; ${t.size}]` : `[${typeName(t.element)}]`;
     case "unknown": return "<unknown>";
   }

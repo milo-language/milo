@@ -1,0 +1,21 @@
+// @expect: other
+extern fn printf(fmt: *u8, ...) -> i32
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() -> i32 {
+    let c = Color::Blue
+    match c {
+        Color::Red => {
+            printf("red\n")
+        }
+        _ => {
+            printf("other\n")
+        }
+    }
+    return 0
+}

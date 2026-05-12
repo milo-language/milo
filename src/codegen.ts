@@ -1,4 +1,4 @@
-import type { MiloType, Expr, Stmt, Function, Program, StructDecl } from "./ast";
+import type { MiloType, Expr, Stmt, Function, Program, StructDecl, EnumDecl, Pattern } from "./ast";
 
 const MILO_TO_LLVM: Record<string, string> = {
   i8: "i8", i16: "i16", i32: "i32", i64: "i64",
@@ -12,6 +12,12 @@ interface StructLayout {
   fields: { name: string; type: string; miloType: MiloType }[];
 }
 
+interface EnumLayout {
+  name: string;
+  payloadSlots: number; // number of i64 slots for payload (0 = tag-only)
+  variants: Map<string, { tag: number; fieldTypes: string[] }>;
+}
+
 export class Codegen {
   private output: string[] = [];
   private strings: { label: string; escaped: string; length: number }[] = [];
@@ -21,6 +27,7 @@ export class Codegen {
   private locals = new Map<string, { type: string; mutable: boolean; isRef: boolean }>();
   private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; params: { type: MiloType; name: string }[] }>();
   private structLayouts = new Map<string, StructLayout>();
+  private enumLayouts = new Map<string, EnumLayout>();
   private needsBoundsCheck = false;
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -52,6 +59,33 @@ export class Codegen {
     return { label, length };
   }
 
+  private typeSize(ty: string): number {
+    if (ty === "i1" || ty === "i8") return 1;
+    if (ty === "i16") return 2;
+    if (ty === "i32") return 4;
+    if (ty === "i64") return 8;
+    if (ty === "float") return 4;
+    if (ty === "double") return 8;
+    if (ty === "ptr") return 8;
+    const arrMatch = ty.match(/\[(\d+) x (.+)\]/);
+    if (arrMatch) return parseInt(arrMatch[1]) * this.typeSize(arrMatch[2]);
+    return 8;
+  }
+
+  // approximate LLVM struct layout to compute payload buffer size
+  private structPayloadSize(fieldTypes: string[]): number {
+    let offset = 0;
+    let maxAlign = 1;
+    for (const ty of fieldTypes) {
+      const size = this.typeSize(ty);
+      const align = Math.min(size, 8);
+      offset = Math.ceil(offset / align) * align;
+      offset += size;
+      maxAlign = Math.max(maxAlign, align);
+    }
+    return Math.ceil(offset / maxAlign) * maxAlign;
+  }
+
   generate(program: Program): string {
     // register struct layouts
     for (const s of program.structs) {
@@ -64,6 +98,24 @@ export class Codegen {
         })),
       };
       this.structLayouts.set(s.name, layout);
+    }
+
+    // register enum layouts (skip generic templates — only concrete/monomorphized)
+    for (const e of program.enums) {
+      if (e.typeParams.length > 0) continue;
+      let maxPayload = 0;
+      const variants = new Map<string, { tag: number; fieldTypes: string[] }>();
+      e.variants.forEach((v, i) => {
+        const fieldTypes = v.fields.map(f => this.llvmType(f));
+        const payloadSize = this.structPayloadSize(fieldTypes);
+        maxPayload = Math.max(maxPayload, payloadSize);
+        variants.set(v.name, { tag: i, fieldTypes });
+      });
+      this.enumLayouts.set(e.name, {
+        name: e.name,
+        payloadSlots: Math.ceil(maxPayload / 8),
+        variants,
+      });
     }
 
     // register function signatures
@@ -106,6 +158,15 @@ export class Codegen {
     for (const [name, layout] of this.structLayouts) {
       const fieldTypes = layout.fields.map(f => f.type).join(", ");
       this.output.splice(1, 0, `%${name} = type { ${fieldTypes} }`);
+    }
+
+    // insert enum type definitions
+    for (const [name, layout] of this.enumLayouts) {
+      if (layout.payloadSlots > 0) {
+        this.output.splice(1, 0, `%${name} = type { i32, [${layout.payloadSlots} x i64] }`);
+      } else {
+        this.output.splice(1, 0, `%${name} = type { i32 }`);
+      }
     }
 
     // insert extern declarations
@@ -205,6 +266,8 @@ export class Codegen {
         lines.push(...exprLines);
         return [lines, false];
       }
+      case "MatchStmt":
+        return this.genMatch(stmt);
     }
   }
 
@@ -316,6 +379,111 @@ export class Codegen {
     lines.push(`  br label %${condLabel}`);
     lines.push(`${endLabel}:`);
     return [lines, false];
+  }
+
+  private genMatch(stmt: Stmt & { kind: "MatchStmt" }): [string[], boolean] {
+    const lines: string[] = [];
+    const [subjLines, subjVal, subjTy] = this.genExpr(stmt.subject);
+    lines.push(...subjLines);
+
+    // store subject to alloca so we can GEP into it
+    const subjAddr = this.nextTemp();
+    lines.push(`  ${subjAddr} = alloca ${subjTy}`);
+    lines.push(`  store ${subjTy} ${subjVal}, ptr ${subjAddr}`);
+
+    // load tag (field 0)
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    const enumName = subjTy.replace(/^%/, "");
+    const layout = this.enumLayouts.get(enumName)!;
+    const endLabel = this.nextLabel("match.end");
+    const defaultLabel = this.nextLabel("match.default");
+
+    // build switch cases
+    const armLabels: { tag: number; label: string; arm: typeof stmt.arms[0] }[] = [];
+    let wildcardArm: typeof stmt.arms[0] | null = null;
+    for (const arm of stmt.arms) {
+      if (arm.pattern.kind === "WildcardPattern") {
+        wildcardArm = arm;
+      } else {
+        const variant = layout.variants.get(arm.pattern.variant)!;
+        const label = this.nextLabel(`match.${arm.pattern.variant}`);
+        armLabels.push({ tag: variant.tag, label, arm });
+      }
+    }
+
+    const cases = armLabels.map(a => `i32 ${a.tag}, label %${a.label}`).join(" ");
+    const defaultTarget = wildcardArm ? this.nextLabel("match.wildcard") : defaultLabel;
+    lines.push(`  switch i32 ${tag}, label %${defaultTarget} [${cases}]`);
+
+    // generate each arm
+    for (const { label, arm } of armLabels) {
+      lines.push(`${label}:`);
+      if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
+        const variant = layout.variants.get(arm.pattern.variant)!;
+        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern.bindings);
+      }
+      for (const s of arm.body) {
+        const [sl] = this.genStmt(s);
+        lines.push(...sl);
+      }
+      lines.push(`  br label %${endLabel}`);
+    }
+
+    // wildcard arm
+    if (wildcardArm) {
+      lines.push(`${defaultTarget}:`);
+      for (const s of wildcardArm.body) {
+        const [sl] = this.genStmt(s);
+        lines.push(...sl);
+      }
+      lines.push(`  br label %${endLabel}`);
+    }
+
+    // default (unreachable if exhaustive)
+    if (!wildcardArm) {
+      lines.push(`${defaultLabel}:`);
+      lines.push(`  unreachable`);
+    }
+
+    lines.push(`${endLabel}:`);
+    return [lines, false];
+  }
+
+  private extractBindings(
+    lines: string[], subjAddr: string, subjTy: string,
+    variant: { tag: number; fieldTypes: string[] }, bindings: string[],
+  ) {
+    if (bindings.length === 0) return;
+    // get pointer to payload (field 1)
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 1`);
+
+    if (bindings.length === 1) {
+      // single field: load directly from payload pointer
+      const ty = variant.fieldTypes[0];
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load ${ty}, ptr ${payloadPtr}`);
+      lines.push(`  %${bindings[0]}.addr = alloca ${ty}`);
+      lines.push(`  store ${ty} ${val}, ptr %${bindings[0]}.addr`);
+      this.locals.set(bindings[0], { type: ty, mutable: false, isRef: false });
+    } else {
+      // multiple fields: use literal struct type for GEP
+      const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
+      for (let i = 0; i < bindings.length; i++) {
+        const ty = variant.fieldTypes[i];
+        const fieldPtr = this.nextTemp();
+        lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
+        lines.push(`  %${bindings[i]}.addr = alloca ${ty}`);
+        lines.push(`  store ${ty} ${val}, ptr %${bindings[i]}.addr`);
+        this.locals.set(bindings[i], { type: ty, mutable: false, isRef: false });
+      }
+    }
   }
 
   private genExpr(expr: Expr): [string[], string, string] {
@@ -472,6 +640,40 @@ export class Codegen {
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
         return [lines, val, elemTy];
+      }
+      case "EnumLit": {
+        const layout = this.enumLayouts.get(expr.enumName)!;
+        const variant = layout.variants.get(expr.variant)!;
+        const enumTy = `%${expr.enumName}`;
+        const alloca = this.nextTemp();
+        lines.push(`  ${alloca} = alloca ${enumTy}`);
+        // store tag
+        const tagPtr = this.nextTemp();
+        lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${alloca}, i32 0, i32 0`);
+        lines.push(`  store i32 ${variant.tag}, ptr ${tagPtr}`);
+        // store payload fields
+        if (expr.args.length > 0) {
+          const payloadPtr = this.nextTemp();
+          lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${alloca}, i32 0, i32 1`);
+          if (expr.args.length === 1) {
+            const [argLines, argVal, argTy] = this.genExpr(expr.args[0]);
+            lines.push(...argLines);
+            lines.push(`  store ${argTy} ${argVal}, ptr ${payloadPtr}`);
+          } else {
+            const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
+            for (let i = 0; i < expr.args.length; i++) {
+              const [argLines, argVal, argTy] = this.genExpr(expr.args[i]);
+              lines.push(...argLines);
+              const fieldPtr = this.nextTemp();
+              lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
+              lines.push(`  store ${argTy} ${argVal}, ptr ${fieldPtr}`);
+            }
+          }
+        }
+        // load whole enum value
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${enumTy}, ptr ${alloca}`);
+        return [lines, val, enumTy];
       }
     }
   }

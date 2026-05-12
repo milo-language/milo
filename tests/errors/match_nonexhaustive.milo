@@ -1,0 +1,19 @@
+// @error: non-exhaustive match: missing variant
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+fn main() -> i32 {
+    let c = Color::Red
+    match c {
+        Color::Red => {
+            return 0
+        }
+        Color::Green => {
+            return 1
+        }
+    }
+    return 0
+}
