@@ -208,14 +208,15 @@ fn fizzbuzz_handler(req: &Request): Response {
 // ── Main ──
 
 fn main(): i32 {
-    var routes: Vec<Route> = Vec.new()
-    routes.push(Route { method: "GET", prefix: "/",         exact: true,  handler: home_handler })
-    routes.push(Route { method: "GET", prefix: "/hello",    exact: true,  handler: hello_handler })
-    routes.push(Route { method: "GET", prefix: "/json",     exact: true,  handler: json_handler })
-    routes.push(Route { method: "GET", prefix: "/fib/",     exact: false, handler: fib_handler })
-    routes.push(Route { method: "GET", prefix: "/prime/",   exact: false, handler: prime_handler })
-    routes.push(Route { method: "GET", prefix: "/collatz/", exact: false, handler: collatz_handler })
-    routes.push(Route { method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzz_handler })
+    let routes: Vec<Route> = [
+        Route { method: "GET", prefix: "/",          exact: true,  handler: home_handler },
+        Route { method: "GET", prefix: "/hello",     exact: true,  handler: hello_handler },
+        Route { method: "GET", prefix: "/json",      exact: true,  handler: json_handler },
+        Route { method: "GET", prefix: "/fib/",      exact: false, handler: fib_handler },
+        Route { method: "GET", prefix: "/prime/",    exact: false, handler: prime_handler },
+        Route { method: "GET", prefix: "/collatz/",  exact: false, handler: collatz_handler },
+        Route { method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzz_handler },
+    ]
 
     print("starting on :8080\n")
     serve(8080, (req: &Request) => {

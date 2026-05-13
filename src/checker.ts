@@ -1179,6 +1179,14 @@ export class TypeChecker {
       const result: TypeKind = { tag: "array", element: hint.element, size: expr.elements.length };
       return this.setType(expr, result);
     }
+    // Vec literal: `let v: Vec<T> = [a, b, c]` lowers to Vec.new() + N pushes in codegen.
+    if (hint && expr.kind === "ArrayLit" && hint.tag === "vec") {
+      for (const elem of expr.elements) {
+        this.checkExprWithHint(elem, hint.element);
+        this.tryMove(elem);
+      }
+      return this.setType(expr, hint);
+    }
     if (hint && expr.kind === "ArrayRepeat" && hint.tag === "array") {
       this.checkExprWithHint(expr.value, hint.element);
       const result: TypeKind = { tag: "array", element: hint.element, size: expr.count };

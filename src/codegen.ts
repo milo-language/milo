@@ -864,6 +864,40 @@ export class Codegen {
         return [lines, len, "i64"];
       }
       case "ArrayLit": {
+        // Vec literal: `[a, b, c]` with Vec<T> type hint. Emit malloc + N stores, build %Vec struct.
+        if (expr.type.tag === "vec") {
+          this.hasVecType = true;
+          const vecElemTy = this.llvmType(expr.type.element);
+          const n = expr.elements.length;
+          if (n === 0) {
+            const s0 = this.nextTemp();
+            lines.push(`  ${s0} = insertvalue %Vec undef, ptr null, 0`);
+            const s1 = this.nextTemp();
+            lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 0, 1`);
+            const s2 = this.nextTemp();
+            lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
+            return [lines, s2, "%Vec"];
+          }
+          this.needsMalloc = true;
+          const elemSize = this.typeSizeOf(expr.type.element);
+          const bytes = n * elemSize;
+          const buf = this.nextTemp();
+          lines.push(`  ${buf} = call ptr @malloc(i64 ${bytes})`);
+          for (let i = 0; i < n; i++) {
+            const [el, ev] = this.genExpr(expr.elements[i]);
+            lines.push(...el);
+            const pi = this.nextTemp();
+            lines.push(`  ${pi} = getelementptr ${vecElemTy}, ptr ${buf}, i64 ${i}`);
+            lines.push(`  store ${vecElemTy} ${ev}, ptr ${pi}`);
+          }
+          const v0 = this.nextTemp();
+          lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
+          const v1 = this.nextTemp();
+          lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${n}, 1`);
+          const v2 = this.nextTemp();
+          lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${n}, 2`);
+          return [lines, v2, "%Vec"];
+        }
         if (expr.elements.length === 0) return [lines, "zeroinitializer", "[0 x i32]"];
         const [firstLines, firstVal, elemTy] = this.genExpr(expr.elements[0]);
         lines.push(...firstLines);
