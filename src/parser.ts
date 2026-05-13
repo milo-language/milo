@@ -686,6 +686,10 @@ export class Parser {
       this.advance();
       return { kind: "BoolLit", value: false, span: s };
     }
+    if (tok.kind === TokenKind.Null) {
+      this.advance();
+      return { kind: "EnumLit", enumName: "Option", variant: "None", args: [], span: s };
+    }
     if (tok.kind === TokenKind.String) {
       this.advance();
       return { kind: "StringLit", value: tok.value, span: s };
