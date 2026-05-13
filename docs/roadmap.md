@@ -189,8 +189,20 @@ Verification:
   // area: 75, 24, 0
   ```
 
+- [x] **Box<T> in milo0.** Parser: generic suffix `Name<T1,T2,...>` in types. Codegen: `Box<T>` → ptr at LL. `Box(expr)` → `malloc(sizeof(T))` + store + return ptr. Unary `*` deref unwraps `Box<T>` to load inner. Local types stored as raw strings (not LL) so `unwrap_box` can recover inner. Tested:
+  ```
+  enum Tree { Leaf(i64), Node(Box<Tree>, Box<Tree>) }
+  fn sum(t: Tree): i64 {
+      match t {
+          Tree.Leaf(n) => { return n }
+          Tree.Node(l, r) => { return sum(*l) + sum(*r) }
+      }
+  }
+  // tree of 1,2,3,4 → sum = 10
+  ```
+
 Still missing for full milo0-on-milo0:
-- [ ] Generics, Box, Vec, HashMap, closures, String type with methods.
+- [ ] Vec, HashMap, closures, String type with methods, drop semantics (free on Box).
 
 ### Phase 3.5 — Beyond Stage-0
 

@@ -16,13 +16,16 @@ fn ll_type(t: &string): string {
     if t == "f64" || t == "float" { return "double" }
     if t == "bool" { return "i1" }
     if t == "void" { return "void" }
+    if t == "ptr" { return "ptr" }
     if t.len > 0 && t[0] == 42 { return "ptr" }
     if t == "string" { return "ptr" }
+    // Built-in generic containers — all pointer-shaped at LL.
+    if t.len >= 4 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
+        return "ptr" // Box<...>
+    }
     if t.len > 0 {
         let c = t[0]
-        // Already LL form like "%Point" — pass through.
         if c == 37 { return t.clone() }
-        // Uppercase first letter — treat as user struct, emit %Name.
         if c >= 65 && c <= 90 {
             return "%" + t.clone()
         }
@@ -61,6 +64,7 @@ struct Cgen {
     cur_cont_lbl: string,
     declared_printf: bool,
     declared_putchar: bool,
+    declared_malloc: bool,
     // Struct table encoded as one big string: "Name|f1:t1|f2:t2;Name2|fa:ta;..."
     // Lookups walk the string and substr — substrings copy bytes, so no aliasing pain
     // (versus HashMap<string, string> or Vec<StructDecl> which both reuse heap pointers).
@@ -80,6 +84,7 @@ fn cgen_new(): Cgen {
         cur_cont_lbl: "",
         declared_printf: false,
         declared_putchar: false,
+        declared_malloc: false,
         struct_db: "",
         enum_db: "",
         enum_payload_db: "",
@@ -552,10 +557,18 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
             if local.addr.len == 0 {
                 return Val { v: "0".clone(), ty: "i64".clone() }
             }
-            let lt = ll_type(local.ty)
-            return gen_load(cg, local.addr, lt)
+            let raw_ty = local.ty.clone()
+            let lt = ll_type(raw_ty.clone())
+            let loaded = gen_load(cg, local.addr, lt)
+            // Preserve the raw user-facing type (e.g. "Box<Tree>") so subsequent unary `*`
+            // can unwrap to find the inner type.
+            return Val { v: loaded.v, ty: raw_ty }
         }
         Expr.Unary(op, inner) => {
+            // Unary `*` is Box-deref. Load the inner type from the ptr.
+            if op == TokKind.Star {
+                return gen_box_deref(cg, inner, locs, sigs)
+            }
             let v = gen_expr(cg, inner, locs, sigs, hint_ty)
             let t = next_temp(cg)
             if op == TokKind.Minus {
@@ -606,6 +619,29 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
             return Val { v: "0".clone(), ty: "i64".clone() }
         }
         Expr.Call(name, args) => {
+            // Built-in Box(expr) — malloc(sizeof(T)) + store inner + return ptr.
+            if name == "Box" {
+                let inner = gen_expr(cg, args[0], locs, sigs, "")
+                let inner_ll = inner.ty.clone()
+                let sz_id = cg.temp
+                cg.temp = cg.temp + 1
+                let sz_ptr = "%t" + sz_id.to_string()
+                emit(cg, "  " + sz_ptr + " = getelementptr " + inner_ll.clone() + ", ptr null, i32 1\n")
+                let sz_int_id = cg.temp
+                cg.temp = cg.temp + 1
+                let sz_int = "%t" + sz_int_id.to_string()
+                emit(cg, "  " + sz_int + " = ptrtoint ptr " + sz_ptr + " to i64\n")
+                if !cg.declared_malloc {
+                    emit_g(cg, "declare ptr @malloc(i64)\n")
+                    cg.declared_malloc = true
+                }
+                let box_id = cg.temp
+                cg.temp = cg.temp + 1
+                let box_ptr = "%t" + box_id.to_string()
+                emit(cg, "  " + box_ptr + " = call ptr @malloc(i64 " + sz_int + ")\n")
+                emit(cg, "  store " + inner_ll + " " + inner.v + ", ptr " + box_ptr + "\n")
+                return Val { v: box_ptr, ty: "ptr".clone() }
+            }
             // Stage-0: skip sigs table lookup (Vec<FnSig> indexing aliases owned strings
             // and double-frees on scope exit). Hardcode i32 return; recognize variadic
             // externs by name.
@@ -718,6 +754,28 @@ fn gen_assign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec
 }
 
 // Byte size of an LL primitive type. Used to compute enum payload slot count.
+// Strip "Box<...>" wrapper from a type string, returning the inner type.
+// Returns "" if not a Box.
+fn unwrap_box(t: &string): string {
+    if t.len >= 5 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
+        return t[4..t.len - 1]
+    }
+    return "".clone()
+}
+
+fn gen_box_deref(cg: &mut Cgen, inner: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let v = gen_expr(cg, inner, locs, sigs, "")
+    // Default inner type: caller responsible for context. If v.ty is "Box<T>", strip.
+    var inner_raw: string = unwrap_box(v.ty.clone())
+    if inner_raw.len == 0 { inner_raw = "i64".clone() }
+    let inner_ll = ll_type(inner_raw)
+    let load_id = cg.temp
+    cg.temp = cg.temp + 1
+    let loaded = "%t" + load_id.to_string()
+    emit(cg, "  " + loaded + " = load " + inner_ll.clone() + ", ptr " + v.v + "\n")
+    return Val { v: loaded, ty: inner_ll }
+}
+
 fn ll_type_bytes(ll: &string): i64 {
     if ll == "i1" { return 1 }
     if ll == "i8" { return 1 }
@@ -869,8 +927,8 @@ fn gen_match(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut 
                 var bi: i64 = 0
                 while bi < arm.bindings.len {
                     let bname = arm.bindings[bi].clone()
-                    let fty_str = payload_ty_nth(v_types.clone(), bi)
-                    let fty_ll = ll_type(fty_str)
+                    let fty_raw = payload_ty_nth(v_types.clone(), bi)
+                    let fty_ll = ll_type(fty_raw.clone())
                     let fp_id = cg.temp
                     cg.temp = cg.temp + 1
                     let fp = "%t" + fp_id.to_string()
@@ -884,7 +942,8 @@ fn gen_match(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut 
                     let bind_addr = "%v" + addr_id.to_string()
                     emit(cg, "  " + bind_addr + " = alloca " + fty_ll.clone() + "\n")
                     emit(cg, "  store " + fty_ll.clone() + " " + loaded + ", ptr " + bind_addr.clone() + "\n")
-                    locs.push(Local { name: bname, ty: fty_ll, addr: bind_addr })
+                    // Store raw type (e.g. "Box<Tree>") so unwrap_box can recover inner.
+                    locs.push(Local { name: bname, ty: fty_raw, addr: bind_addr })
                     bi = bi + 1
                 }
             }

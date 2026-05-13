@@ -115,17 +115,32 @@ fn parse_type(src: &string, toks: &Vec<Token>, pos: &mut i64): string {
     }
     var result: string = ""
     while stars > 0 {
-        let ast: u8 = 42 // '*'
+        let ast: u8 = 42
         result.push(ast)
         stars = stars - 1
     }
     if toks[pos].kind != TokKind.Ident {
         return result
-    } else {
-        let name = token_text(src, toks, pos)
-        pos = pos + 1
-        return result + name
     }
+    let name = token_text(src, toks, pos)
+    pos = pos + 1
+    result = result + name
+    // Generic suffix: Name<T1, T2, ...>
+    if toks[pos].kind == TokKind.Lt {
+        pos = pos + 1
+        result = result + "<"
+        var first: bool = true
+        while toks[pos].kind != TokKind.Gt && toks[pos].kind != TokKind.Eof {
+            if !first { result = result + "," }
+            let inner = parse_type(src, toks, pos)
+            result = result + inner
+            first = false
+            if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+        }
+        if toks[pos].kind == TokKind.Gt { pos = pos + 1 }
+        result = result + ">"
+    }
+    return result
 }
 
 // ── Expressions ──
@@ -235,7 +250,7 @@ fn parse_postfix(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
 
 fn parse_unary(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
     let k = toks[pos].kind
-    if k == TokKind.Minus || k == TokKind.Bang {
+    if k == TokKind.Minus || k == TokKind.Bang || k == TokKind.Star {
         pos = pos + 1
         let inner = parse_unary(src, toks, pos)
         return Box(Expr.Unary(k, inner))
