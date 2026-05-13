@@ -6,15 +6,17 @@ import type { CheckResult, FnSig, EnumInfo } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum } from "./hir";
 import type { TypeKind } from "./types";
 import { typeFromAst } from "./types";
+import { readFileSync, existsSync } from "fs";
+import { resolve } from "path";
 
-export function lower(program: Program, checked: CheckResult): HIRModule {
-  const ctx = new LowerCtx(checked);
+export function lower(program: Program, checked: CheckResult, sourceDir?: string): HIRModule {
+  const ctx = new LowerCtx(checked, sourceDir ?? process.cwd());
   return ctx.lowerProgram(program);
 }
 
 class LowerCtx {
   private currentRetType: TypeKind = { tag: "void" };
-  constructor(private c: CheckResult) {}
+  constructor(private c: CheckResult, private sourceDir: string) {}
 
   lowerProgram(program: Program): HIRModule {
     const structs: HIRStruct[] = [];
@@ -212,6 +214,15 @@ class LowerCtx {
       case "Call": {
         if (expr.func === "Box") {
           return { kind: "BoxCreate", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
+        }
+        if (expr.func === "embed_file") {
+          const path = (expr.args[0] as { value: string }).value;
+          const absPath = resolve(this.sourceDir, path);
+          if (!existsSync(absPath)) {
+            throw new Error(`error[embed]: ${expr.span?.line}:${expr.span?.col}: cannot open '${path}'`);
+          }
+          const contents = readFileSync(absPath, "utf-8");
+          return { kind: "StringLit", value: contents, type: { tag: "string" as const }, span: expr.span };
         }
         if (expr.func === "json_stringify") {
           const argType = this.typeOf(expr.args[0]) ?? { tag: "unknown" as const };

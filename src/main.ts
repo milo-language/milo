@@ -12,11 +12,11 @@ import { resolveImports } from "./resolver";
 import { formatDiagnostic } from "./diagnostics";
 
 function compile(source: string, filePath?: string): string {
+  const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let tokens, program;
   try {
     tokens = new Lexer(source).tokenize();
     program = new Parser(tokens).parse();
-    const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
     program = resolveImports(program, sourceDir);
   } catch (e: any) {
     console.error(e.message);
@@ -29,7 +29,7 @@ function compile(source: string, filePath?: string): string {
     process.exit(1);
   }
 
-  const hirModule = lower(program, result);
+  const hirModule = lower(program, result, sourceDir);
   return new Codegen().generate(hirModule);
 }
 

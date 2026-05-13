@@ -1297,6 +1297,12 @@ export class TypeChecker {
           this.tryMove(expr.args[0]);
           return this.setType(expr, { tag: "box", inner: argType });
         }
+        if (expr.func === "embed_file") {
+          if (expr.args.length !== 1) { this.error(`embed_file() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const arg = expr.args[0];
+          if (arg.kind !== "StringLit") { this.error(`embed_file() argument must be a string literal`, sp); return this.setType(expr, { tag: "unknown" }); }
+          return this.setType(expr, { tag: "string" });
+        }
         if (expr.func === "json_stringify") {
           if (expr.args.length !== 1) { this.error(`json_stringify() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
           const argType = this.checkExpr(expr.args[0]);
