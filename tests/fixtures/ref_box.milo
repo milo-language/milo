@@ -1,0 +1,28 @@
+// @expect: value: 42
+// @expect: leaf: 7
+extern fn printf(fmt: *u8, ...) -> i32
+
+enum Tree {
+    Node(Box<Tree>, Box<Tree>),
+    Leaf(i32)
+}
+
+fn print_boxed(b: &Box<i32>) {
+    printf("value: %d\n", *b)
+}
+
+fn print_leaf(t: &Box<Tree>) {
+    match *t {
+        Tree::Leaf(n) => { printf("leaf: %d\n", n) }
+        Tree::Node(l, r) => { }
+    }
+}
+
+fn main() -> i32 {
+    let b = Box(42)
+    print_boxed(b)
+
+    let t = Box(Tree::Leaf(7))
+    print_leaf(t)
+    return 0
+}
