@@ -3,10 +3,10 @@
 
 fn main(): i32 {
     let b = Box(42)
-    print("%d\n", *b)
+    print("%d", *b)
 
     let s = Box("hello")
-    println(*s)
+    print(*s)
 
     return 0
 }

@@ -7,13 +7,13 @@ fn main(): i32 {
     m.insert("world", 99)
     let r1 = m.get("hello")
     if let Option.Some(v) = r1 {
-        print("found: %lld\n", v)
+        print("found: %lld", v)
     }
     let r2 = m.get("missing")
     if let Option.Some(v) = r2 {
-        print("found: %lld\n", v)
+        print("found: %lld", v)
     } else {
-        print("missing\n")
+        print("missing")
     }
     return 0
 }

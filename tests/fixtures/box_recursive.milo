@@ -20,6 +20,6 @@ fn main(): i32 {
         Box(Tree.Node(Box(Tree.Leaf(1)), Box(Tree.Leaf(2)))),
         Box(Tree.Node(Box(Tree.Leaf(3)), Box(Tree.Leaf(4))))
     )
-    print("sum: %d\n", sum(tree))
+    print("sum: %d", sum(tree))
     return 0
 }

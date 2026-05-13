@@ -28,7 +28,7 @@ Requires: [Bun](https://bun.sh), LLVM/Clang.
 
 ```
 fn main(): i32 {
-    println("Hello, Milo!")
+    print("Hello, Milo!")
     return 0
 }
 ```
@@ -106,8 +106,20 @@ let n: i64 = parse_int(s) ?? 0    // default on None/Err
 **Modules**
 ```
 import "math.milo"
+from "std/http" import { Request, Response, serve }
 ```
-Recursive resolution, dedup, transitive imports.
+Recursive resolution, dedup, transitive imports, selective `from ... import {}`.
+
+**Standard Library**
+- `std/http` — HTTP server with routing, response types (`Text`, `Html`, `Json`, `NotFound`, `Status`)
+- `std/net` — TCP, DNS, HTTP client (`fetch`)
+- `std/json` — view-based JSON parser, zero-allocation navigation
+- `std/io` — file and directory I/O with automatic cleanup
+- `std/mem` — memory management
+- `std/args`, `std/argparse` — command-line argument parsing with typed getters and auto-generated help
+- `std/process` — command execution and process control
+- `std/os` — typed libc bindings
+- `std/platform.{darwin,linux}` — platform-specific struct layouts and constants (auto-selected by host target)
 
 **Diagnostics**
 - Source spans on every AST node
@@ -119,7 +131,7 @@ Recursive resolution, dedup, transitive imports.
 - VS Code extension: syntax highlighting + LSP client
 - GitHub Actions CI
 
-131 tests pass on the current build.
+158 tests pass on the current build.
 
 ## Design Principles
 
@@ -141,12 +153,12 @@ Honest list of major gaps:
 
 - **Traits Phase 1 only.** Nominal traits with monomorphized dispatch work. Missing: `dyn Trait`, associated types, operator overloading via traits, `where` clauses. Built-in types (Vec, HashMap, String) still use hardcoded methods rather than trait impls.
 - **No arenas yet.** Planned answer for cyclic data and bulk-allocated graphs. `Box<T>` handles trees and recursive structures meanwhile.
-- **No string slices or `split`.** Strings are owned; substring views via references can't escape function scope yet.
+- **No string `split`/`find`/`starts_with`.** `substr(start, end)` and slice sugar `s[a..b]` work, but richer string operations are missing.
 - **Closures non-escaping only.** Cannot be returned or stored in structs, so no `map`/`filter` chains that outlive a single call frame.
 - **No `guard let`.** `if let` works; `guard let ... else { return }` not yet.
 - **No concurrency story.** Design open — leaning toward structured concurrency + channels, not async/await.
 - **No formatter, no package manager, no REPL.**
-- **Not self-hosting.** Compiler is ~6k lines of TypeScript.
+- **Not self-hosting.** Compiler is ~8.4k lines of TypeScript. A stage-0 bootstrap (`milo0/`) written in Milo can compile basic programs end-to-end; stage-1 (structs, enums, match, Box, strings) is in progress.
 
 See [docs/roadmap.md](docs/roadmap.md) for full status.
 
@@ -158,4 +170,4 @@ Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics, 
 
 ## Status
 
-Phase 3 — language core in place. `Box<T>`, `Vec<T>`, `HashMap<K, V>`, non-escaping closures, and traits (Phase 1) shipped. Next: string slices, operator overloading, arenas.
+Phase 3 — language core in place. `Box<T>`, `Vec<T>`, `HashMap<K, V>`, non-escaping closures, traits (Phase 1), cross-platform stdlib, and a stage-0 self-hosting bootstrap shipped. Next: operator overloading via traits, arenas, stage-1 bootstrap (Vec/HashMap in milo0).

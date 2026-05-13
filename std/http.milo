@@ -5,11 +5,15 @@ import "std/platform"
 
 // ── Public types ──
 
+// Incoming HTTP request with method and path.
 struct Request {
     method: string,
     path: string,
 }
 
+// HTTP response type.
+// Text/Html/Json set the content-type automatically.
+// Status(code, content_type, body) for custom responses.
 enum Response {
     Text(string),
     Html(string),
@@ -105,6 +109,13 @@ impl Drop for Socket {
 
 // ── Public API ──
 
+// Start an HTTP server on the given port.
+// Pass null for port to let the OS pick an available port.
+// The handler receives a Request and returns a Response.
+// Example:
+//   serve(8080, fn(req: &Request): Response {
+//       return Response.Text("hello")
+//   })
 fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
@@ -144,7 +155,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         getsockname(sock.fd, bound_addr, bound_len)
         let actual_port = ntohs(bound_addr.sin_port)
 
-        print("listening on http://localhost:%d\n", actual_port)
+        print("listening on http://localhost:%d", actual_port)
 
         while true {
             var client_addr = make_zeroed_sockaddr()

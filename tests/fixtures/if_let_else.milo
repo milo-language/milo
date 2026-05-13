@@ -9,16 +9,16 @@ enum Option {
 fn main(): i32 {
     let a = Option.Some(10)
     if let Option.Some(v) = a {
-        print("got %d\n", v)
+        print("got %d", v)
     } else {
-        print("was none\n")
+        print("was none")
     }
 
     let b = Option.None
     if let Option.Some(v) = b {
-        print("got value\n")
+        print("got value")
     } else {
-        print("was none\n")
+        print("was none")
     }
 
     return 0

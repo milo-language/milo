@@ -8,9 +8,9 @@ struct Pair<A, B> {
 
 fn main(): i32 {
     let p1 = Pair { first: 10, second: 20 }
-    print("%d %d\n", p1.first, p1.second)
+    print("%d %d", p1.first, p1.second)
 
     let p2 = Pair { first: "hello", second: 99 }
-    print("%s\n", p2.first)
+    print("%s", p2.first)
     return 0
 }

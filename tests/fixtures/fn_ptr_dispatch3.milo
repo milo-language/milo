@@ -12,7 +12,7 @@ fn main(): i32 {
     ops.push(Op { name: "double", apply: double })
 
     let op = ops[0]
-    print("name: %s\n", op.name)
-    print("result: %d\n", op.apply(5))
+    print("name: %s", op.name)
+    print("result: %d", op.apply(5))
     return 0
 }

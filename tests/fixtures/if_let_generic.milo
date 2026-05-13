@@ -5,16 +5,16 @@ fn main(): i32 {
     let v: i64 = 7
     let a: i64? = Option.Some(v)
     if let Option.Some(val) = a {
-        print("found: %ld\n", val)
+        print("found: %ld", val)
     } else {
-        print("nothing\n")
+        print("nothing")
     }
 
     let b: i64? = Option.None
     if let Option.Some(val) = b {
-        print("found: %ld\n", val)
+        print("found: %ld", val)
     } else {
-        print("nothing\n")
+        print("nothing")
     }
 
     return 0

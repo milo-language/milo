@@ -5,8 +5,8 @@ fn main(): i32 {
     let a: i8 = 100
     let b: i16 = 200
     let c: i64 = 300
-    println("%d", a)
-    println("%d", b)
-    println("%ld", c)
+    print("%d", a)
+    print("%d", b)
+    print("%ld", c)
     return 0
 }

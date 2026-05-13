@@ -19,7 +19,7 @@ fn main(): i32 {
     let c = Point { x: 3, y: 4 }
     let r1 = a.eq(b)
     let r2 = a.eq(c)
-    if r1 { print("1\n") } else { print("0\n") }
-    if r2 { print("1\n") } else { print("0\n") }
+    if r1 { print("1") } else { print("0") }
+    if r2 { print("1") } else { print("0") }
     return 0
 }

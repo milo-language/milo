@@ -188,10 +188,10 @@ fn validate(json: string): bool {
 fn check(json: string, expected: bool) {
     let result = validate(json)
     if result == expected {
-        if expected { println("valid") }
-        else { println("invalid") }
+        if expected { print("valid") }
+        else { print("invalid") }
     } else {
-        println("ERROR")
+        print("ERROR")
     }
 }
 

@@ -2,6 +2,6 @@
 import "lib/math.milo"
 import "lib/math.milo"
 fn main(): i32 {
-    print("%d\n", add(3, 4))
+    print("%d", add(3, 4))
     return 0
 }

@@ -10,6 +10,6 @@ fn unbox(b: Wrapper<i32>): i32 {
 
 fn main(): i32 {
     let b = Wrapper { value: 42 }
-    print("%d\n", unbox(b))
+    print("%d", unbox(b))
     return 0
 }

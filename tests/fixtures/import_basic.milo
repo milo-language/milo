@@ -2,7 +2,7 @@
 // @expect: 25
 import "lib/math.milo"
 fn main(): i32 {
-    print("%d\n", add(3, 4))
-    print("%d\n", square(5))
+    print("%d", add(3, 4))
+    print("%d", square(5))
     return 0
 }

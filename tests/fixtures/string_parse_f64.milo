@@ -3,6 +3,6 @@
 fn main(): i32 {
     let s = "3.14"
     let x: f64 = s.parse_f64()
-    print("%f\n", x)
+    print("%f", x)
     return 0
 }

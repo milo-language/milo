@@ -2,6 +2,6 @@
 struct P { x: i64 }
 fn main(): i32 {
     let p = P { x: 42 }
-    println("%ld", p.x)
+    print("%ld", p.x)
     return 0
 }

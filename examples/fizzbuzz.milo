@@ -2,13 +2,13 @@ fn main(): i32 {
     var i: i32 = 1
     while i <= 20 {
         if i % 15 == 0 {
-            println("FizzBuzz")
+            print("FizzBuzz")
         } else if i % 3 == 0 {
-            println("Fizz")
+            print("Fizz")
         } else if i % 5 == 0 {
-            println("Buzz")
+            print("Buzz")
         } else {
-            println(".")
+            print(".")
         }
         i = i + 1
     }

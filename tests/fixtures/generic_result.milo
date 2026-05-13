@@ -9,10 +9,10 @@ fn main(): i32 {
     let r: Result<i32, i32> = Result.Err(404)
     match r {
         Result.Ok(val) => {
-            print("ok: %d\n", val)
+            print("ok: %d", val)
         }
         Result.Err(code) => {
-            print("error: %d\n", code)
+            print("error: %d", code)
         }
     }
     return 0

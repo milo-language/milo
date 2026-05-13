@@ -3,6 +3,6 @@ fn get(): i64 {
     return 5
 }
 fn main(): i32 {
-    println("%ld", get())
+    print("%ld", get())
     return 0
 }

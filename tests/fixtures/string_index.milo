@@ -3,6 +3,6 @@
 fn main(): i32 {
     let s = "hello"
     let byte = s[0]
-    print("%d\n", byte)
+    print("%d", byte)
     return 0
 }

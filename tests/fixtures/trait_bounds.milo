@@ -13,7 +13,7 @@ impl HasValue for Box99 {
 }
 
 fn print_value<T: HasValue>(thing: &T) {
-    print("%d\n", thing.value())
+    print("%d", thing.value())
 }
 
 fn main(): i32 {

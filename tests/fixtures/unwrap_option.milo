@@ -3,6 +3,6 @@
 fn main(): i32 {
     let x = Option.Some(42)
     let val = x!
-    print("%d\n", val)
+    print("%d", val)
     return 0
 }

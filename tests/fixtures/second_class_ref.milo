@@ -11,6 +11,6 @@ fn read_it(x: &i32): i32 {
 fn main(): i32 {
     var n: i32 = 21
     double_it(n)
-    print("%d\n", read_it(n))
+    print("%d", read_it(n))
     return 0
 }

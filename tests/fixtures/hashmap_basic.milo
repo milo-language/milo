@@ -9,21 +9,21 @@ fn main(): i32 {
     m.insert(5, 50)
     m.insert(42, 420)
 
-    print("len: %ld\n", m.len)
+    print("len: %ld", m.len)
     if m.contains(1) {
-        print("has 1: true\n")
+        print("has 1: true")
     } else {
-        print("has 1: false\n")
+        print("has 1: false")
     }
     if m.contains(5) {
-        print("has 5: true\n")
+        print("has 5: true")
     } else {
-        print("has 5: false\n")
+        print("has 5: false")
     }
     if m.contains(99) {
-        print("has 99: true\n")
+        print("has 99: true")
     } else {
-        print("has 99: false\n")
+        print("has 99: false")
     }
     return 0
 }

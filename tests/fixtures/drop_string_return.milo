@@ -8,7 +8,7 @@ fn make_greeting(name: string): string {
 
 fn main(): i32 {
     let msg = make_greeting("world")
-    println(msg)
-    println("done")
+    print(msg)
+    print("done")
     return 0
 }

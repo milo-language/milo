@@ -9,24 +9,24 @@ fn main(): i32 {
     let c = false
 
     if a && b {
-        println("both true")
+        print("both true")
     }
     if a || c {
-        println("one true")
+        print("one true")
     }
     if c && a {
-        println("should not print")
+        print("should not print")
     } else {
-        println("neither")
+        print("neither")
     }
 
     // short-circuit: side_effect should not be called
     var called: bool = false
     if c && set_flag(called) {
-        println("should not print")
+        print("should not print")
     }
     if !called {
-        println("short-circuit works")
+        print("short-circuit works")
     }
 
     return 0

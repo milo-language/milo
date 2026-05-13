@@ -10,7 +10,7 @@ fn main(): i32 {
         if i == 3 {
             break
         }
-        println("%d", i)
+        print("%d", i)
         i = i + 1
     }
 
@@ -24,7 +24,7 @@ fn main(): i32 {
         }
         sum = sum + j
     }
-    println("sum: %d", sum)
+    print("sum: %d", sum)
 
     return 0
 }

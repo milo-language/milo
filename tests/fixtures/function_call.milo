@@ -5,6 +5,6 @@ fn square(x: i32): i32 {
 }
 
 fn main(): i32 {
-    print("%d\n", square(5))
+    print("%d", square(5))
     return 0
 }

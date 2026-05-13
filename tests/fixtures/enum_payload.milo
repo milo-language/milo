@@ -9,10 +9,10 @@ fn main(): i32 {
     let x = Option.Some(42)
     match x {
         Option.Some(val) => {
-            print("%d\n", val)
+            print("%d", val)
         }
         Option.None => {
-            print("none\n")
+            print("none")
         }
     }
     return 0

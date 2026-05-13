@@ -51,7 +51,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "println", "exit", "_milo_arg_count", "_milo_arg_at"]);
+  private static BUILTINS = new Set(["print", "exit", "_milo_arg_count", "_milo_arg_at"]);
   private needsArgGlobals = false;
 
   constructor(target: TargetInfo) { this.target = target; }
@@ -740,9 +740,9 @@ export class Codegen {
   }
 
   private genBuiltinCall(expr: HIRExpr & { kind: "Call" }, lines: string[]): [string[], string, string] {
-    if (expr.func === "print" || expr.func === "println") {
+    if (expr.func === "print") {
       this.needsPrintf = true;
-      if (expr.func === "println") this.needsPutchar = true;
+      this.needsPutchar = true;
       const argVals: { val: string; type: string }[] = [];
       for (const arg of expr.args) {
         const [al, av, at] = this.genExpr(arg.expr);
@@ -758,7 +758,7 @@ export class Codegen {
       }
       const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
       lines.push(`  call i32 (ptr, ...) @printf(${argsStr})`);
-      if (expr.func === "println") lines.push(`  call i32 @putchar(i32 10)`);
+      lines.push(`  call i32 @putchar(i32 10)`);
       return [lines, "void", "void"];
     }
     if (expr.func === "exit") {

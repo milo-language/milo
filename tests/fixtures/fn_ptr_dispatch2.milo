@@ -12,7 +12,7 @@ fn dispatch(ops: &Vec<Op>, x: i32): void {
     var i: i64 = 0
     while i < ops.len {
         let op = ops[i]
-        print("%s(%d) = %d\n", op.name, x, op.apply(x))
+        print("%s(%d) = %d", op.name, x, op.apply(x))
         i = i + 1
     }
 }

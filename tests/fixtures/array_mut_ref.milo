@@ -11,6 +11,6 @@ fn fill(buf: &mut [u8; 4], n: i32): void {
 fn main(): i32 {
     var buf: [u8; 4] = [0; 4]
     fill(buf, 3)
-    print("%d %d %d\n", buf[0], buf[1], buf[2])
+    print("%d %d %d", buf[0], buf[1], buf[2])
     return 0
 }

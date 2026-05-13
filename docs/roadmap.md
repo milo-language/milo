@@ -14,14 +14,14 @@
 
 Milestone: FizzBuzz, Fibonacci, simple file I/O via FFI ✅
 
-## Phase 2 — Real Programs (in progress)
+## Phase 2 — Real Programs ✅
 
 Done:
 - [x] Enums / sum types (tagged unions, LLVM `{i32, [N x i64]}`)
 - [x] Pattern matching (match + exhaustiveness checking)
 - [x] Generics — enums (monomorphization)
 - [x] Generics — functions (monomorphization, type inference from args)
-- [x] Built-in functions (print, println, exit)
+- [x] Built-in functions (print, exit)
 - [x] Option<T>, Result<T,E> — definable, no convenience methods yet
 - [x] Unsigned integer types (u8/u16/u32/u64, udiv/urem/ult)
 - [x] Literal type hint propagation (return, struct fields, fn args, assignment)
@@ -135,7 +135,7 @@ Still blocking full stage-0 self-host:
 - `putchar`, `printf("done\n")` from same program
 - Polynomial evaluation (Horner)
 - **`examples/fib.milo` unmodified** — milo0 auto-rewrites `print` to printf; `fib(42) = 267914296`
-- **`examples/fizzbuzz.milo` unmodified** — milo0 maps `println(s)` to printf(s) + putchar(10)
+- **`examples/fizzbuzz.milo` unmodified** — milo0 maps `print(s)` to printf(s) + putchar(10)
 - **`examples/hello.milo` unmodified** — `extern fn puts(...)` honored
 
 Verification:

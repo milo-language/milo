@@ -12,31 +12,31 @@ fn main(): i32 {
     m.insert(2, 20)
     m.insert(3, 30)
 
-    print("len: %ld\n", m.len)
+    print("len: %ld", m.len)
     if m.contains(2) {
-        print("has 2: true\n")
+        print("has 2: true")
     } else {
-        print("has 2: false\n")
+        print("has 2: false")
     }
 
     m.remove(2)
-    print("removed\n")
-    print("len: %ld\n", m.len)
+    print("removed")
+    print("len: %ld", m.len)
 
     if m.contains(2) {
-        print("has 2: true\n")
+        print("has 2: true")
     } else {
-        print("has 2: false\n")
+        print("has 2: false")
     }
     if m.contains(1) {
-        print("has 1: true\n")
+        print("has 1: true")
     } else {
-        print("has 1: false\n")
+        print("has 1: false")
     }
     if m.contains(3) {
-        print("has 3: true\n")
+        print("has 3: true")
     } else {
-        print("has 3: false\n")
+        print("has 3: false")
     }
     return 0
 }

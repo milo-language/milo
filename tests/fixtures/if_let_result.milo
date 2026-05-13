@@ -9,16 +9,16 @@ enum Result {
 fn main(): i32 {
     let a = Result.Ok(99)
     if let Result.Ok(v) = a {
-        print("ok: %d\n", v)
+        print("ok: %d", v)
     } else {
-        print("err branch\n")
+        print("err branch")
     }
 
     let b = Result.Err(-1)
     if let Result.Ok(v) = b {
-        print("ok branch\n")
+        print("ok branch")
     } else {
-        print("err: %d\n", -1)
+        print("err: %d", -1)
     }
 
     return 0

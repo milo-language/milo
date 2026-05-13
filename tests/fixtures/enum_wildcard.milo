@@ -10,10 +10,10 @@ fn main(): i32 {
     let c = Color.Blue
     match c {
         Color.Red => {
-            print("red\n")
+            print("red")
         }
         _ => {
-            print("other\n")
+            print("other")
         }
     }
     return 0

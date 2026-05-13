@@ -80,8 +80,8 @@ enum Result<T, E> {
 ### Pattern Matching
 ```
 match result {
-    Ok(v)  => println(v),
-    Err(e) => println(e),
+    Ok(v)  => print(v),
+    Err(e) => print(e),
 }
 ```
 
@@ -132,13 +132,18 @@ Frontend: TypeScript (Bun). Backend: LLVM toolchain.
 | Learning curve | Low (goal) | High | Medium then deadly | Medium |
 | GC | No | No | No | No |
 
+## Resolved Design Decisions
+
+- **Traits** — nominal traits with monomorphized static dispatch, `impl Trait for Type`, inherent `impl Type`, generic bounds, supertraits, `@derive`. No vtables (dyn Trait deferred).
+- **Error handling** — `Result<T, E>` + `Option<T>` with `!` (unwrap), `?` (propagate), `??` (default). No try/catch.
+- **String type** — owned UTF-8 `{ ptr, len, cap }`, heap-allocated. `substr`, `clone`, `push`, `+`, `==`, byte indexing, slice sugar `s[a..b]`.
+- **Module/import system** — `import "path.milo"` and `from "path" import { names }`, recursive resolution, dedup.
+
 ## Open Questions
 
-- Trait/interface system or just structs + generics?
-- Error handling: Result everywhere? try/catch sugar?
-- String type: owned bytes? UTF-8 validated?
 - FFI safety boundary: opaque handles? unsafe blocks?
-- Module/import system
+- Concurrency model: structured concurrency + channels, or async/await?
+- Arena API shape (deferred until self-hosting reveals real needs)
 
 ## Prior Art
 

@@ -6,6 +6,6 @@ fn fib(n: i64): i64 {
 fn main(): i32 {
     let n: i64 = 42
     let r = fib(n)
-    print("fib(%d) = %d\n", n, r)
+    print("fib(%d) = %d", n, r)
     return 0
 }

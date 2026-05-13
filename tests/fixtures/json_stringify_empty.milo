@@ -5,6 +5,6 @@ struct Empty {}
 fn main(): i32 {
     let e = Empty {}
     let json = json_stringify(e)
-    print("%s\n", json)
+    print("%s", json)
     return 0
 }

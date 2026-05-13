@@ -7,6 +7,6 @@ fn try_double(opt: i32?): i32? {
 
 fn main(): i32 {
     let result = try_double(Option.Some(42))
-    print("%d\n", result!)
+    print("%d", result!)
     return 0
 }

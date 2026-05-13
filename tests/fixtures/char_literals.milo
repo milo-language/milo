@@ -4,15 +4,15 @@
 
 fn main(): i32 {
     let a = 'A'
-    println("%d", a)
+    print("%d", a)
 
     let s = "ABC"
     if s[0] == 'A' {
-        println("match")
+        print("match")
     }
 
     let nl = '\n'
-    println("newline: %d", nl)
+    print("newline: %d", nl)
 
     return 0
 }

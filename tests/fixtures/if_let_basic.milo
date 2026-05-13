@@ -9,14 +9,14 @@ enum Option {
 fn main(): i32 {
     let x = Option.Some(42)
     if let Option.Some(val) = x {
-        print("got %d\n", val)
+        print("got %d", val)
     }
 
     let y = Option.None
     if let Option.Some(val) = y {
-        print("should not print\n")
+        print("should not print")
     }
 
-    print("done\n")
+    print("done")
     return 0
 }

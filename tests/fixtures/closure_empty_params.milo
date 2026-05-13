@@ -7,7 +7,7 @@ fn run(f: () => i32): i32 {
 fn main(): i32 {
     let x: i32 = 42
     let result = run(() => x)
-    print("%d\n", result)
+    print("%d", result)
     return 0
 }
 // @expect: 42

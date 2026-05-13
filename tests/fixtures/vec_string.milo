@@ -6,8 +6,8 @@ fn main(): i32 {
     var v: Vec<string> = Vec.new()
     v.push("hello")
     v.push("world")
-    println(v[0])
-    println(v[1])
-    print("%lld\n", v.len)
+    print(v[0])
+    print(v[1])
+    print("%lld", v.len)
     return 0
 }

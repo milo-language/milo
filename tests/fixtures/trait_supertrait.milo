@@ -27,7 +27,7 @@ fn main(): i32 {
     let a = Score { val: 5 }
     let b = Score { val: 5 }
     let c = Score { val: 10 }
-    if a.eq(b) { print("equal\n") }
-    if a.less(c) { print("less\n") }
+    if a.eq(b) { print("equal") }
+    if a.less(c) { print("less") }
     return 0
 }

@@ -9,8 +9,8 @@ struct Op {
 
 fn use_ops(ops: &Vec<Op>): void {
     let op = ops[0]
-    print("name: %s\n", op.name)
-    print("result: %d\n", op.apply(5))
+    print("name: %s", op.name)
+    print("result: %d", op.apply(5))
 }
 
 fn main(): i32 {

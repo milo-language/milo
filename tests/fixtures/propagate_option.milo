@@ -9,10 +9,10 @@ fn main(): i32 {
     let result = try_double(Option.None)
     match result {
         Option.Some(v) => {
-            print("%d\n", v)
+            print("%d", v)
         }
         Option.None => {
-            print("none\n")
+            print("none")
         }
     }
     return 0

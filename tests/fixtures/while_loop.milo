@@ -7,6 +7,6 @@ fn main(): i32 {
         sum = sum + i
         i = i + 1
     }
-    print("%d\n", sum)
+    print("%d", sum)
     return 0
 }

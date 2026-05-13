@@ -10,12 +10,12 @@ fn main(): i32 {
     v.push(30)
 
     let a = v.pop()
-    print("%d\n", a)
-    print("%lld\n", v.len)
+    print("%d", a)
+    print("%lld", v.len)
 
     let b = v.pop()
-    print("%d\n", b)
-    print("%lld\n", v.len)
+    print("%d", b)
+    print("%lld", v.len)
 
     return 0
 }

@@ -182,12 +182,12 @@ fn validate(json: string): bool {
 fn test(label: string, json: string, expected: bool) {
     let result = validate(json)
     if result == expected {
-        println("PASS: %s", label)
+        print("PASS: %s", label)
     } else {
         if expected {
-            println("FAIL: %s (expected valid)", label)
+            print("FAIL: %s (expected valid)", label)
         } else {
-            println("FAIL: %s (expected invalid)", label)
+            print("FAIL: %s (expected invalid)", label)
         }
     }
 }

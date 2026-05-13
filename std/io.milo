@@ -3,8 +3,14 @@
 import "std/os"
 import "std/platform"
 
+// Write a string to stdout without appending a newline.
+fn write_stdout(s: &string): void {
+    unsafe { write(1, s, s.len) }
+}
+
 // ── File ──
 
+// Owned file handle. Automatically closes the fd when dropped.
 struct File {
     fd: i32,
 }
@@ -17,6 +23,8 @@ impl Drop for File {
     }
 }
 
+// Open a file for reading.
+// Returns Err if the file doesn't exist or can't be opened.
 fn open_read(path: string): Result<File> {
     unsafe {
         let fd = open(path, 0)
@@ -27,6 +35,8 @@ fn open_read(path: string): Result<File> {
     }
 }
 
+// Create or truncate a file for writing.
+// Creates the file if it doesn't exist, truncates if it does.
 fn open_write(path: string): Result<File> {
     unsafe {
         let fd = open(path, o_write_create_trunc(), 420)
@@ -37,6 +47,8 @@ fn open_write(path: string): Result<File> {
     }
 }
 
+// Open a file for appending.
+// Creates the file if it doesn't exist.
 fn open_append(path: string): Result<File> {
     unsafe {
         let fd = open(path, o_write_create_append(), 420)
@@ -47,6 +59,7 @@ fn open_append(path: string): Result<File> {
     }
 }
 
+// Get the size of a file in bytes.
 fn file_size(f: &File): i64 {
     unsafe {
         let cur = lseek(f.fd, 0, 1)
@@ -56,6 +69,7 @@ fn file_size(f: &File): i64 {
     }
 }
 
+// Read the entire file contents as a string.
 fn read_all(f: &File): Result<string> {
     let size = file_size(f)
     if size < 0 {
@@ -78,6 +92,7 @@ fn read_all(f: &File): Result<string> {
     return Result.Ok(result)
 }
 
+// Write a string to the file. Returns the number of bytes written.
 fn write_all(f: &File, data: &string): Result<i64> {
     unsafe {
         let n = write(f.fd, data, data.len)

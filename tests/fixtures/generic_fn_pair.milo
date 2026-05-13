@@ -9,7 +9,7 @@ fn second<A, B>(a: A, b: B): B {
 fn main(): i32 {
     let x = first(10, 20)
     let y = second(10, 20)
-    println("%d", x)
-    println("%d", y)
+    print("%d", x)
+    print("%d", y)
     return 0
 }

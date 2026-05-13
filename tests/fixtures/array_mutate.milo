@@ -3,6 +3,6 @@
 fn main(): i32 {
     var arr = [1, 2, 3]
     arr[1] = 99
-    print("%d\n", arr[1])
+    print("%d", arr[1])
     return 0
 }

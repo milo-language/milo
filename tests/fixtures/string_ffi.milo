@@ -1,6 +1,6 @@
 // @expect: Hello, Milo!
 
 fn main(): i32 {
-    print("Hello, Milo!\n")
+    print("Hello, Milo!")
     return 0
 }

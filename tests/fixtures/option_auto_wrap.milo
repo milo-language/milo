@@ -6,10 +6,10 @@
 fn check(val: u16?) {
   match val {
     Option.Some(v) => {
-      print("got %d\n", v)
+      print("got %d", v)
     }
     Option.None => {
-      print("is null\n")
+      print("is null")
     }
   }
 }

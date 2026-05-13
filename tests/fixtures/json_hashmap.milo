@@ -116,25 +116,25 @@ fn main(): i32 {
             let r1 = obj.get("name")
             if let Option.Some(val) = r1 {
                 match *val {
-                    JsonValue.Str(s) => { print("name=%s\n", s) }
-                    _ => { print("name=?\n") }
+                    JsonValue.Str(s) => { print("name=%s", s) }
+                    _ => { print("name=?") }
                 }
             }
             let r2 = obj.get("version")
             if let Option.Some(val) = r2 {
                 match *val {
-                    JsonValue.Number(n) => { print("version=%lld\n", n) }
-                    _ => { print("version=?\n") }
+                    JsonValue.Number(n) => { print("version=%lld", n) }
+                    _ => { print("version=?") }
                 }
             }
             let r3 = obj.get("missing_key")
             if let Option.Some(val) = r3 {
-                print("missing=yes\n")
+                print("missing=yes")
             } else {
-                print("missing=no\n")
+                print("missing=no")
             }
         }
-        _ => { print("not an object\n") }
+        _ => { print("not an object") }
     }
     return 0
 }

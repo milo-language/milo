@@ -10,12 +10,18 @@ struct FlagDef {
     required: bool,
 }
 
+// Declarative command-line argument parser with auto-generated --help.
+// Create with new_parser(), add flags with add_string/add_bool/add_required,
+// then call .parse() to get a ParsedArgs.
 struct ArgParser {
     name: string,
     description: string,
     flags: Vec<FlagDef>,
 }
 
+// Parsed command-line arguments.
+// Access values with .get_string(), .get_i64(), .get_u16(), .get_bool().
+// Check presence with .has(). Positional args in .positional field.
 struct ParsedArgs {
     prog: string,
     entries: Vec<ArgEntry>,
@@ -28,6 +34,7 @@ struct ArgEntry {
     present: bool,
 }
 
+// Create a new argument parser with a program name and description.
 fn new_parser(name: string, description: string): ArgParser {
     return ArgParser {
         name: name,
@@ -37,6 +44,8 @@ fn new_parser(name: string, description: string): ArgParser {
 }
 
 impl ArgParser {
+    // Add a string flag with long name, short alias, help text, and default.
+    // Example: parser.add_string("output", "o", "Output file", "out.txt")
     fn add_string(self: &mut Self, long: string, short: string, help: string, default_val: string): void {
         self.flags.push(FlagDef {
             long_name: long,
@@ -48,6 +57,7 @@ impl ArgParser {
         })
     }
 
+    // Add a required string flag. parse() exits with error if missing.
     fn add_required(self: &mut Self, long: string, short: string, help: string): void {
         self.flags.push(FlagDef {
             long_name: long,
@@ -59,6 +69,7 @@ impl ArgParser {
         })
     }
 
+    // Add a boolean flag (present = true, absent = false).
     fn add_bool(self: &mut Self, long: string, short: string, help: string): void {
         self.flags.push(FlagDef {
             long_name: long,
@@ -70,6 +81,7 @@ impl ArgParser {
         })
     }
 
+    // Generate formatted help text for all registered flags.
     fn help_text(self: &Self): string {
         var text: string = self.name + " - " + self.description + "\n\n"
         text = text + "usage: " + self.name + " [options]\n\n"
@@ -104,6 +116,8 @@ impl ArgParser {
         return text
     }
 
+    // Parse command-line arguments and return ParsedArgs.
+    // Automatically handles --help. Exits on invalid input.
     fn parse(self: &Self): ParsedArgs {
         let argv = args()
         var result = ParsedArgs {
@@ -228,6 +242,7 @@ fn _argparse_is_numeric(s: &string): bool {
 }
 
 impl ParsedArgs {
+    // Get the string value of a flag by its long name.
     fn get_string(self: &Self, name: &string): string {
         var i: i64 = 0
         while i < self.entries.len {
@@ -239,33 +254,36 @@ impl ParsedArgs {
         return ""
     }
 
+    // Get an integer value of a flag. Exits if the value is not numeric.
     fn get_i64(self: &Self, name: &string): i64 {
         var i: i64 = 0
         while i < self.entries.len {
             if self.entries[i].name == name {
                 let val = self.entries[i].value
                 if !_argparse_is_numeric(val) {
-                    print("error: --%s: expected integer, got '%s'\n", name, val)
+                    print("error: --%s: expected integer, got '%s'", name, val)
                     unsafe { exit(1) }
                 }
                 return _argparse_parse_i64(val)
             }
             i = i + 1
         }
-        print("error: --%s: unknown flag\n", name)
+        print("error: --%s: unknown flag", name)
         unsafe { exit(1) }
         return 0
     }
 
+    // Get a u16 value of a flag. Exits if out of range 0..65535.
     fn get_u16(self: &Self, name: &string): u16 {
         let val = self.get_i64(name)
         if val < 0 || val > 65535 {
-            print("error: --%s: value %d out of range 0..65535\n", name, val)
+            print("error: --%s: value %d out of range 0..65535", name, val)
             unsafe { exit(1) }
         }
         return val as u16
     }
 
+    // Check if a boolean flag was set.
     fn get_bool(self: &Self, name: &string): bool {
         var i: i64 = 0
         while i < self.entries.len {
@@ -277,6 +295,7 @@ impl ParsedArgs {
         return false
     }
 
+    // Check if a flag was provided on the command line.
     fn has(self: &Self, name: &string): bool {
         var i: i64 = 0
         while i < self.entries.len {

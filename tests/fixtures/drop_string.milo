@@ -3,7 +3,7 @@
 // @expect: done
 // tests: string drop on scope exit, reassignment drops old value, move zeroes source
 fn consume(s: string) {
-    println(s)
+    print(s)
 }
 
 fn main(): i32 {
@@ -11,9 +11,9 @@ fn main(): i32 {
     consume(a)
 
     var b = "foo" + "bar"
-    println(b)
+    print(b)
     b = "replaced"
 
-    println("done")
+    print("done")
     return 0
 }

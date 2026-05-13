@@ -23,7 +23,7 @@ bun run src/main.ts emit-ir examples/hello.milo
 
 ```milo
 fn main(): i32 {
-    println("Hello, Milo!")
+    print("Hello, Milo!")
     return 0
 }
 ```
@@ -124,7 +124,7 @@ fn add(a: i32, b: i32): i32 {
 }
 
 fn greet(name: string): void {
-    println("hello, %s", name)
+    print("hello, %s", name)
 }
 ```
 
@@ -143,8 +143,7 @@ let s = identity("hello")  // T inferred as string
 
 | Function | Description |
 |----------|-------------|
-| `print(fmt, ...)` | Print formatted text (no newline) |
-| `println(fmt, ...)` | Print formatted text with newline |
+| `print(fmt, ...)` | Print formatted text with trailing newline |
 | `exit(code)` | Exit the process |
 | `json_stringify(val)` | Serialize a struct to JSON string |
 | `embed_file(path)` | Embed file contents as string at compile time |
@@ -177,7 +176,7 @@ let copy = greeting.clone()
 
 // Comparison
 if greeting == "hello" {
-    println("match!")
+    print("match!")
 }
 
 // Building strings character by character
@@ -201,7 +200,7 @@ struct Point {
 }
 
 let p = Point { x: 10, y: 20 }
-println("%d", p.x)
+print("%d", p.x)
 
 // Mutable struct
 var q = Point { x: 1, y: 2 }
@@ -233,7 +232,7 @@ impl Dog {
 }
 
 let d = Dog { age: 7 }
-println("%d", d.get_age())
+print("%d", d.get_age())
 ```
 
 ---
@@ -270,8 +269,8 @@ Use `_` as a wildcard to match remaining variants:
 
 ```milo
 match s {
-    Shape.Circle(r) => { println("circle") }
-    _ => { println("something else") }
+    Shape.Circle(r) => { print("circle") }
+    _ => { print("something else") }
 }
 ```
 
@@ -339,7 +338,7 @@ For when you only care about one variant:
 ```milo
 let x = Option.Some(42)
 if let Option.Some(val) = x {
-    println("got %d", val)
+    print("got %d", val)
 }
 ```
 
@@ -351,8 +350,8 @@ Fixed-size, stack-allocated, bounds-checked.
 
 ```milo
 let arr = [10, 20, 30]
-println("%d", arr[0])
-println("%lld", arr.len)
+print("%d", arr[0])
+print("%lld", arr.len)
 
 // Repeat syntax
 let zeros = [0; 100]      // 100 zeros
@@ -374,8 +373,8 @@ v.push(10)
 v.push(20)
 v.push(30)
 
-println("%d", v[0])           // bounds-checked
-println("%lld", v.len)
+print("%d", v[0])           // bounds-checked
+print("%lld", v.len)
 
 let last = v.pop()            // removes and returns last element
 ```
@@ -387,7 +386,7 @@ Vec owns its elements and frees them when it goes out of scope.
 var names: Vec<string> = Vec.new()
 names.push("Alice")
 names.push("Bob")
-println(names[0])
+print(names[0])
 ```
 
 ---
@@ -401,15 +400,15 @@ var m: HashMap<string, i32> = HashMap.new()
 m.insert("hello", 42)
 m.insert("world", 99)
 
-println("%ld", m.len)
+print("%ld", m.len)
 
 if m.contains("hello") {
-    println("found it")
+    print("found it")
 }
 
 let val = m.get("hello")       // returns Option<i32>
 if let Option.Some(v) = val {
-    println("value: %d", v)
+    print("value: %d", v)
 }
 
 m.remove("hello")
@@ -442,7 +441,7 @@ let tree = Tree.Node(
     Box(Tree.Leaf(1)),
     Box(Tree.Leaf(2))
 )
-println("%d", sum(tree))   // 3
+print("%d", sum(tree))   // 3
 ```
 
 Box auto-frees when it goes out of scope.
@@ -457,7 +456,7 @@ Values have a single owner. Assignment transfers ownership.
 let a = "hello"
 let b = a          // a is moved into b
 // a is now invalid — using it here is a compile error
-println(b)         // fine
+print(b)         // fine
 ```
 
 This applies to structs, enums, strings, Vec, HashMap, and Box.
@@ -548,7 +547,7 @@ impl Greet for Cat {}    // uses the default
 ```milo
 fn print_if_equal<T: Eq>(a: &T, b: &T) {
     if a.eq(b) {
-        println("equal!")
+        print("equal!")
     }
 }
 ```
@@ -612,7 +611,7 @@ fn call_it(f: fn(): void) {
 var count: i32 = 0
 call_it(() => { count = count + 1 })
 call_it(() => { count = count + 1 })
-println("%d", count)   // 2
+print("%d", count)   // 2
 ```
 
 ---
@@ -622,11 +621,11 @@ println("%d", count)   // 2
 ```milo
 // if/else
 if x > 0 {
-    println("positive")
+    print("positive")
 } else if x == 0 {
-    println("zero")
+    print("zero")
 } else {
-    println("negative")
+    print("negative")
 }
 
 // while
@@ -634,7 +633,7 @@ var i: i32 = 0
 while i < 10 {
     if i == 5 { break }
     if i % 2 == 0 { i = i + 1; continue }
-    println("%d", i)
+    print("%d", i)
     i = i + 1
 }
 ```
@@ -771,13 +770,13 @@ fn main(): i32 {
     var i: i32 = 1
     while i <= 20 {
         if i % 15 == 0 {
-            println("FizzBuzz")
+            print("FizzBuzz")
         } else if i % 3 == 0 {
-            println("Fizz")
+            print("Fizz")
         } else if i % 5 == 0 {
-            println("Buzz")
+            print("Buzz")
         } else {
-            println(".")
+            print(".")
         }
         i = i + 1
     }
@@ -810,7 +809,7 @@ fn main(): i32 {
         Box(Tree.Node(Box(Tree.Leaf(1)), Box(Tree.Leaf(2)))),
         Box(Tree.Node(Box(Tree.Leaf(3)), Box(Tree.Leaf(4))))
     )
-    println("sum: %d", sum(tree))   // sum: 10
+    print("sum: %d", sum(tree))   // sum: 10
     return 0
 }
 ```

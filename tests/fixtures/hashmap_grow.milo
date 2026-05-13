@@ -11,21 +11,21 @@ fn main(): i32 {
         i = i + 1
     }
 
-    print("len: %ld\n", m.len)
+    print("len: %ld", m.len)
     if m.contains(0) {
-        print("has 0: true\n")
+        print("has 0: true")
     } else {
-        print("has 0: false\n")
+        print("has 0: false")
     }
     if m.contains(19) {
-        print("has 19: true\n")
+        print("has 19: true")
     } else {
-        print("has 19: false\n")
+        print("has 19: false")
     }
     if m.contains(20) {
-        print("has 20: true\n")
+        print("has 20: true")
     } else {
-        print("has 20: false\n")
+        print("has 20: false")
     }
     return 0
 }

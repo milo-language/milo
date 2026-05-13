@@ -11,6 +11,6 @@ fn main(): i32 {
     } else {
         result = consume(p)
     }
-    print("%d\n", result)
+    print("%d", result)
     return 0
 }

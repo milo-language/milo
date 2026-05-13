@@ -5,6 +5,6 @@ fn greet(name: string): string {
 
 fn main(): i32 {
     let msg = greet("world")
-    println("greeting: %s", msg)
+    print("greeting: %s", msg)
     return 0
 }
