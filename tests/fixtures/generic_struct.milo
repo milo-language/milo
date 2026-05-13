@@ -1,12 +1,12 @@
 // @expect: 42
 // @expect: 99
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 struct Box<T> {
     value: T
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let a = Box { value: 42 }
     let b = Box { value: 99 }
     printf("%d\n", a.value)

@@ -1,13 +1,13 @@
 // @expect: got 42
 // @expect: done
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Option {
     Some(i32),
     None,
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let x = Option::Some(42)
     if let Option::Some(val) = x {
         printf("got %d\n", val)

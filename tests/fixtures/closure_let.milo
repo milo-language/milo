@@ -1,11 +1,11 @@
 // store closure in a let, then pass to function
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
-fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+fn apply(f: fn(i32): i32, x: i32): i32 {
     return f(x)
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let double = (x: i32) => x * 2
     let result = apply(double, 21)
     printf("%d\n", result)

@@ -1,5 +1,5 @@
 // @error: cannot assign to immutable variable 'x'
-fn main() -> i32 {
+fn main(): i32 {
     let x: i32 = 5
     x = 10
     return 0

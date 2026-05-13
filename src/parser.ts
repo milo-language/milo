@@ -83,7 +83,7 @@ export class Parser {
       this.expect(TokenKind.RBracket);
       return { name: inner.name, isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize };
     }
-    // fn(T1, T2) -> R
+    // fn(T1, T2): R
     if (this.at(TokenKind.Fn)) {
       this.advance();
       this.expect(TokenKind.LParen);
@@ -93,7 +93,7 @@ export class Parser {
         if (!this.at(TokenKind.RParen)) this.expect(TokenKind.Comma);
       }
       this.expect(TokenKind.RParen);
-      this.expect(TokenKind.Arrow);
+      this.expect(TokenKind.Colon);
       const fnRet = this.parseType();
       return { name: "fn", isFn: true, fnParams, fnRet, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     }
@@ -188,7 +188,7 @@ export class Parser {
   }
 
   private parseReturnType(): MiloType {
-    if (this.match(TokenKind.Arrow)) return this.parseType();
+    if (this.match(TokenKind.Colon)) return this.parseType();
     return { name: "void", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
   }
 

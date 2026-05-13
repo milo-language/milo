@@ -1,11 +1,11 @@
 // closure capturing multiple variables
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
-fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+fn apply(f: fn(i32): i32, x: i32): i32 {
     return f(x)
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let a: i32 = 10
     let b: i32 = 20
     let c: i32 = 12

@@ -6,7 +6,7 @@ fn consume(s: String) {
     println(s)
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let a = "hello" + " world"
     consume(a)
 

@@ -1,7 +1,7 @@
 // @error: expects 1 args, got 2
-extern fn puts(s: *u8) -> i32
+extern fn puts(s: *u8): i32
 
-fn main() -> i32 {
+fn main(): i32 {
     puts("a", "b")
     return 0
 }

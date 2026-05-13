@@ -1,11 +1,11 @@
 // zero-param closure
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
-fn run(f: fn() -> i32) -> i32 {
+fn run(f: fn(): i32): i32 {
     return f()
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let x: i32 = 42
     let result = run(() => x)
     printf("%d\n", result)

@@ -1,5 +1,5 @@
 // @error: type mismatch in '-': u32 vs i32
-fn main() -> i32 {
+fn main(): i32 {
     let s: i32 = 5
     let u: u32 = 7
     let r = u - s

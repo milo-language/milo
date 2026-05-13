@@ -3,7 +3,7 @@
 // @expect: neither
 // @expect: short-circuit works
 
-fn main() -> i32 {
+fn main(): i32 {
     let a = true
     let b = true
     let c = false
@@ -32,7 +32,7 @@ fn main() -> i32 {
     return 0
 }
 
-fn set_flag(x: &mut bool) -> bool {
+fn set_flag(x: &mut bool): bool {
     x = true
     return true
 }

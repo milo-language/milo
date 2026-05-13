@@ -1,15 +1,15 @@
 // @expect: 42
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 struct Wrapper<T> {
     value: T
 }
 
-fn unbox(b: Wrapper<i32>) -> i32 {
+fn unbox(b: Wrapper<i32>): i32 {
     return b.value
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let b = Wrapper { value: 42 }
     printf("%d\n", unbox(b))
     return 0

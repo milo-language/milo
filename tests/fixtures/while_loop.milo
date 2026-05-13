@@ -1,7 +1,7 @@
 // @expect: 55
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
-fn main() -> i32 {
+fn main(): i32 {
     var sum: i32 = 0
     var i: i32 = 1
     while i <= 10 {

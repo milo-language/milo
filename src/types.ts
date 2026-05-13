@@ -82,7 +82,7 @@ export function typeName(t: TypeKind): string {
     case "struct": return t.name;
     case "enum": return t.name;
     case "array": return t.size !== null ? `[${typeName(t.element)}; ${t.size}]` : `[${typeName(t.element)}]`;
-    case "fn": return `fn(${t.params.map(typeName).join(", ")}) -> ${typeName(t.ret)}`;
+    case "fn": return `fn(${t.params.map(typeName).join(", ")}): ${typeName(t.ret)}`;
     case "unknown": return "<unknown>";
   }
 }

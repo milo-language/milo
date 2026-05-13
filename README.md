@@ -25,7 +25,7 @@ Requires: [Bun](https://bun.sh), LLVM/Clang.
 ## Hello, Milo
 
 ```
-fn main() -> i32 {
+fn main(): i32 {
     println("Hello, Milo!")
     return 0
 }
@@ -34,9 +34,9 @@ fn main() -> i32 {
 C FFI when you need it:
 
 ```
-extern fn puts(s: *u8) -> i32
+extern fn puts(s: *u8): i32
 
-fn main() -> i32 {
+fn main(): i32 {
     puts("via libc")
     return 0
 }
@@ -58,7 +58,7 @@ fn main() -> i32 {
 
 **Closures**
 ```
-fn apply(f: fn(i32) -> i32, x: i32) -> i32 { return f(x) }
+fn apply(f: fn(i32): i32, x: i32): i32 { return f(x) }
 
 let result = apply((x: i32) => x * 2, 21)    // expression closure
 let inc = (x: i32) => x + 1                   // stored in local

@@ -1,5 +1,5 @@
 // @error: type mismatch in '+': i64 vs i32
-fn main() -> i32 {
+fn main(): i32 {
     let a: i64 = 10
     let b: i32 = 5
     let c = a + b

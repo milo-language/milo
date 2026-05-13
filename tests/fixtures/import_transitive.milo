@@ -1,9 +1,9 @@
 // @expect: 27
 import "lib/math_ext.milo"
 
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
-fn main() -> i32 {
+fn main(): i32 {
     printf("%d\n", cube(3))
     return 0
 }

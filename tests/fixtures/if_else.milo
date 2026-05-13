@@ -1,7 +1,7 @@
 // @expect: yes
-extern fn puts(s: *u8) -> i32
+extern fn puts(s: *u8): i32
 
-fn main() -> i32 {
+fn main(): i32 {
     let x: i32 = 10
     if x > 5 {
         puts("yes")

@@ -1,11 +1,11 @@
 // block closure with explicit return type
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
-fn apply(f: fn(i32) -> i32, x: i32) -> i32 {
+fn apply(f: fn(i32): i32, x: i32): i32 {
     return f(x)
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let result = apply((x: i32): i32 => {
         let doubled = x * 2
         return doubled + 1

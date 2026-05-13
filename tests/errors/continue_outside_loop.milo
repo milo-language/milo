@@ -1,5 +1,5 @@
 // @error: 'continue' outside of loop
-fn main() -> i32 {
+fn main(): i32 {
     continue
     return 0
 }

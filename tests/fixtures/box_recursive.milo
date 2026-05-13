@@ -1,12 +1,12 @@
 // @expect: sum: 10
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Tree {
     Node(Box<Tree>, Box<Tree>),
     Leaf(i32)
 }
 
-fn sum(t: Tree) -> i32 {
+fn sum(t: Tree): i32 {
     match t {
         Tree::Leaf(n) => { return n }
         Tree::Node(left, right) => {
@@ -16,7 +16,7 @@ fn sum(t: Tree) -> i32 {
     return 0
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let tree = Tree::Node(
         Box(Tree::Node(Box(Tree::Leaf(1)), Box(Tree::Leaf(2)))),
         Box(Tree::Node(Box(Tree::Leaf(3)), Box(Tree::Leaf(4))))

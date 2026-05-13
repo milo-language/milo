@@ -1,5 +1,5 @@
 // @error: cannot store a reference in variable
-fn main() -> i32 {
+fn main(): i32 {
     let x: i32 = 5
     let r: &i32 = x
     return 0

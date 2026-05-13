@@ -184,7 +184,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
           const f = program.functions.find(f => f.name === sym.name);
           if (f) {
             const params = f.params.map(p => `${p.name}: ${p.type.name}`).join(", ");
-            const sig = `fn ${f.name}(${params}) -> ${f.retType.name}`;
+            const sig = `fn ${f.name}(${params}): ${f.retType.name}`;
             return { contents: { kind: "markdown", value: `\`\`\`milo\n${sig}\n\`\`\`` } };
           }
         }

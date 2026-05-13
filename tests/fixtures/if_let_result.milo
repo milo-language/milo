@@ -1,13 +1,13 @@
 // @expect: ok: 99
 // @expect: err: -1
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Result {
     Ok(i32),
     Err(i32),
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let a = Result::Ok(99)
     if let Result::Ok(v) = a {
         printf("ok: %d\n", v)

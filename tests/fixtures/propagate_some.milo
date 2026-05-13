@@ -1,17 +1,17 @@
 // @expect: 84
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Option<T> {
     Some(T),
     None,
 }
 
-fn try_double(opt: Option<i32>) -> Option<i32> {
+fn try_double(opt: Option<i32>): Option<i32> {
     let val = opt?
     return Option::Some(val * 2)
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let result = try_double(Option::Some(42))
     printf("%d\n", result!)
     return 0

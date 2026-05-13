@@ -1,13 +1,13 @@
 // @expect: len: 1
 // @expect: has key: true
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Option<T> {
     Some(T),
     None,
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap::new()
     m.insert(1, 100)
     m.insert(1, 200)

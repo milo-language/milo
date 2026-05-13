@@ -1,5 +1,5 @@
 // @expect: 99
-fn main() -> i32 {
+fn main(): i32 {
     var x: i64 = 0
     x = 99
     println("%ld", x)

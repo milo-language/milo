@@ -1,12 +1,12 @@
 // @expect: error: 404
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Result<T, E> {
     Ok(T),
     Err(E),
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let r: Result<i32, i32> = Result::Err(404)
     match r {
         Result::Ok(val) => {

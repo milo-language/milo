@@ -1,13 +1,13 @@
 // @expect: got 42: 420
 // @expect: key 99 not found
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Option<T> {
     Some(T),
     None,
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap::new()
     m.insert(42, 420)
     m.insert(7, 70)

@@ -1,12 +1,12 @@
 // @expect: hello world
 // @expect: done
 // tests: returning String transfers ownership, callee doesn't double-free
-fn make_greeting(name: String) -> String {
+fn make_greeting(name: String): String {
     let result = "hello " + name
     return result
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let msg = make_greeting("world")
     println(msg)
     println("done")

@@ -1,6 +1,6 @@
 // @expect: 42
 struct P { x: i64 }
-fn main() -> i32 {
+fn main(): i32 {
     let p = P { x: 42 }
     println("%ld", p.x)
     return 0

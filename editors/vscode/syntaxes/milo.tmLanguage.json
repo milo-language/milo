@@ -116,7 +116,7 @@
     },
     "operators": {
       "patterns": [
-        { "name": "keyword.operator.arrow.milo", "match": "->|=>" },
+        { "name": "keyword.operator.arrow.milo", "match": "=>" },
         { "name": "keyword.operator.comparison.milo", "match": "==|!=|<=|>=|<|>" },
         { "name": "keyword.operator.logical.milo", "match": "&&|\\|\\||!" },
         { "name": "keyword.operator.try.milo", "match": "\\?\\?|\\?" },

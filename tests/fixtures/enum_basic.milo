@@ -1,5 +1,5 @@
 // @expect: 1
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Color {
     Red,
@@ -7,7 +7,7 @@ enum Color {
     Blue,
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let c = Color::Green
     match c {
         Color::Red => {

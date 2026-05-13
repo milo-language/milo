@@ -5,9 +5,9 @@
 // @expect: has 2: false
 // @expect: has 1: true
 // @expect: has 3: true
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
-fn main() -> i32 {
+fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap::new()
     m.insert(1, 10)
     m.insert(2, 20)

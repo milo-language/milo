@@ -5,7 +5,7 @@ enum Color {
     Blue,
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let c = Color::Red
     match c {
         Color::Red => {

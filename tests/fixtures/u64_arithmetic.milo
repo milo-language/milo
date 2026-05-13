@@ -1,5 +1,5 @@
 // @expect: 3
-fn main() -> i32 {
+fn main(): i32 {
     let a: u64 = 10
     let b: u64 = 3
     let q: u64 = a / b

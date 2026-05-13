@@ -1,7 +1,7 @@
 // @expect: hello, world!
 import "lib/greeting.milo"
 
-fn main() -> i32 {
+fn main(): i32 {
     let msg = greet("world")
     println("%s", msg)
     return 0

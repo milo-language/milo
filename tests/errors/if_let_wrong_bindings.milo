@@ -5,7 +5,7 @@ enum Option {
     None,
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let x = Option::Some(42)
     if let Option::Some(a, b) = x {
         return 0

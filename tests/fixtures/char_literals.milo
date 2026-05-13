@@ -2,7 +2,7 @@
 // @expect: match
 // @expect: newline: 10
 
-fn main() -> i32 {
+fn main(): i32 {
     let a = 'A'
     println("%d", a)
 

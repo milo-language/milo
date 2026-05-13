@@ -1,5 +1,5 @@
 // @expect: 7
-extern fn printf(fmt: *u8, ...) -> i32
+extern fn printf(fmt: *u8, ...): i32
 
 enum Shape {
     Circle(i32),
@@ -7,7 +7,7 @@ enum Shape {
     Point,
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let s = Shape::Rectangle(3, 4)
     match s {
         Shape::Circle(r) => {

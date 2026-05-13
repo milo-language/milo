@@ -1,8 +1,8 @@
-fn bad() -> fn(i32) -> i32 {
+fn bad(): fn(i32): i32 {
     return (x: i32) => x
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     return 0
 }
 // @error: cannot return a closure

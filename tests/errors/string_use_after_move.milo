@@ -1,9 +1,9 @@
 // @error: use of moved variable
-fn take(s: String) -> i32 {
+fn take(s: String): i32 {
     return 0
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     let s = "hello"
     take(s)
     take(s)

@@ -3,7 +3,7 @@
 // @expect: 2
 // @expect: sum: 20
 
-fn main() -> i32 {
+fn main(): i32 {
     // break: stop at 3
     var i: i32 = 0
     while i < 10 {

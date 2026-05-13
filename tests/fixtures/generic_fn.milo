@@ -1,9 +1,9 @@
 // @expect: 42
 // @expect: 99
-fn identity<T>(x: T) -> T {
+fn identity<T>(x: T): T {
     return x
 }
-fn main() -> i32 {
+fn main(): i32 {
     let a = identity(42)
     let v: i64 = 99
     let b = identity(v)

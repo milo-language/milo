@@ -1,10 +1,10 @@
 // @error: use of moved variable
 
-fn check(m: HashMap<i32, i32>) -> i32 {
+fn check(m: HashMap<i32, i32>): i32 {
     return 0
 }
 
-fn main() -> i32 {
+fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap::new()
     check(m)
     check(m)

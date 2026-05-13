@@ -8,7 +8,7 @@ export interface MiloType {
   isRefMut: boolean;   // &mut T
   isArray: boolean;    // [T]
   arraySize: number | null; // [T; N] — null for dynamic
-  isFn?: boolean;      // fn(T) -> R
+  isFn?: boolean;      // fn(T): R
   fnParams?: MiloType[];
   fnRet?: MiloType;
 }

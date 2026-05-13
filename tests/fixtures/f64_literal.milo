@@ -1,5 +1,5 @@
 // @expect: 2.500000
-fn main() -> i32 {
+fn main(): i32 {
     let x: f64 = 2.5
     println("%f", x)
     return 0
