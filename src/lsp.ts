@@ -9,7 +9,7 @@ import type { Diagnostic } from "./diagnostics";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 
 // ── JSON-RPC transport ──
 
@@ -248,6 +248,33 @@ function resolveImportPath(sourceDir: string, importPath: string): string | null
   return null;
 }
 
+function findInImportedFiles(parsed: Program, sourceDir: string, word: string): object | null {
+  for (const imp of parsed.imports) {
+    const absPath = resolveImportPath(sourceDir, imp.path);
+    if (!absPath) continue;
+    let fileSource: string;
+    try { fileSource = readFileSync(absPath, "utf-8"); } catch { continue; }
+
+    for (const [keyword, re] of [["fn", new RegExp(`\\bfn\\s+${word}\\s*[<(]`)], ["struct", new RegExp(`\\bstruct\\s+${word}\\b`)], ["enum", new RegExp(`\\benum\\s+${word}\\b`)]] as const) {
+      const lines = fileSource.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        if (re.test(lines[i])) {
+          return { uri: pathToFileURL(absPath).href, range: { start: { line: i, character: 0 }, end: { line: i, character: 0 } } };
+        }
+      }
+    }
+
+    // recurse into transitive imports
+    try {
+      const tokens = new Lexer(fileSource).tokenize();
+      const importedParsed = new Parser(tokens).parse();
+      const result = findInImportedFiles(importedParsed, dirname(absPath), word);
+      if (result) return result;
+    } catch {}
+  }
+  return null;
+}
+
 function handleDefinition(uri: string, line: number, character: number): object | null {
   const source = documents.get(uri);
   if (!source) return null;
@@ -276,24 +303,17 @@ function handleDefinition(uri: string, line: number, character: number): object 
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
     const program = resolveImports(parsed, sourceDir);
 
-    // Find function definition
+    // Find function definition — local first, then imported files
     for (const fn of program.functions) {
       if (fn.name === word && !fn.isExtern) {
-        // Scan source for fn declaration line
         const fnLine = findFnLine(source, fn.name);
         if (fnLine >= 0) {
-          return {
-            uri,
-            range: {
-              start: { line: fnLine, character: 0 },
-              end: { line: fnLine, character: 0 },
-            },
-          };
+          return { uri, range: { start: { line: fnLine, character: 0 }, end: { line: fnLine, character: 0 } } };
         }
       }
     }
 
-    // Find struct definition
+    // Find struct definition — local first
     for (const s of program.structs) {
       if (s.name === word) {
         const sLine = findDeclLine(source, "struct", s.name);
@@ -303,7 +323,7 @@ function handleDefinition(uri: string, line: number, character: number): object 
       }
     }
 
-    // Find enum definition
+    // Find enum definition — local first
     for (const e of program.enums) {
       if (e.name === word) {
         const eLine = findDeclLine(source, "enum", e.name);
@@ -312,6 +332,10 @@ function handleDefinition(uri: string, line: number, character: number): object 
         }
       }
     }
+
+    // Search imported files for the symbol
+    const importedResult = findInImportedFiles(parsed, sourceDir, word);
+    if (importedResult) return importedResult;
 
     // Find variable in enclosing function only — scope to cursor's fn
     const enclosing = findEnclosingFn(source, program, line);
