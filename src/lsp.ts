@@ -277,10 +277,19 @@ function handleDefinition(uri: string, line: number, character: number): object 
       }
     }
 
-    // Find variable declaration in current function
-    for (const fn of program.functions) {
-      if (fn.isExtern) continue;
-      for (const stmt of fn.body) {
+    // Find variable in enclosing function only — scope to cursor's fn
+    const enclosing = findEnclosingFn(source, program, line);
+    if (enclosing) {
+      // Param match: locate name in fn signature line(s)
+      for (const p of enclosing.fn.params) {
+        if (p.name === word) {
+          const ploc = findParamPos(source, enclosing.declLine, word);
+          if (ploc) {
+            return { uri, range: { start: { line: ploc.line, character: ploc.col }, end: { line: ploc.line, character: ploc.col } } };
+          }
+        }
+      }
+      for (const stmt of enclosing.fn.body) {
         const loc = findVarDecl(stmt, word);
         if (loc) {
           return { uri, range: { start: { line: loc.line - 1, character: loc.col - 1 }, end: { line: loc.line - 1, character: loc.col - 1 } } };
@@ -323,7 +332,70 @@ function findVarDecl(stmt: Stmt, name: string): Span | null {
   }
   if (stmt.kind === "MatchStmt") {
     for (const arm of stmt.arms) {
+      if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.includes(name) && arm.pattern.span) {
+        return arm.pattern.span;
+      }
       for (const s of arm.body) { const r = findVarDecl(s, name); if (r) return r; }
+    }
+  }
+  if (stmt.kind === "IfLetStmt") {
+    if (stmt.pattern.kind === "EnumPattern" && stmt.pattern.bindings.includes(name) && stmt.pattern.span) {
+      return stmt.pattern.span;
+    }
+    for (const s of stmt.thenBody) { const r = findVarDecl(s, name); if (r) return r; }
+    if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findVarDecl(s, name); if (r) return r; }
+  }
+  return null;
+}
+
+// Locate enclosing fn by scanning source for `fn NAME(` line boundaries.
+// Function AST has no span, so we use the declaration line as the boundary.
+function findEnclosingFn(source: string, program: Program, line: number): { fn: Function; declLine: number } | null {
+  const lines = source.split("\n");
+  const decls: { fn: Function; declLine: number }[] = [];
+  for (const fn of program.functions) {
+    if (fn.isExtern) continue;
+    const re = new RegExp(`\\bfn\\s+${fn.name}\\s*[<(]`);
+    for (let i = 0; i < lines.length; i++) {
+      if (re.test(lines[i])) {
+        decls.push({ fn, declLine: i });
+        break;
+      }
+    }
+  }
+  decls.sort((a, b) => a.declLine - b.declLine);
+  let match: { fn: Function; declLine: number } | null = null;
+  for (const d of decls) {
+    if (d.declLine <= line) match = d;
+    else break;
+  }
+  return match;
+}
+
+// Find param identifier position on/after the fn declaration line.
+// Params can span multiple lines; scan forward until matching close paren.
+function findParamPos(source: string, declLine: number, name: string): { line: number; col: number } | null {
+  const lines = source.split("\n");
+  const re = new RegExp(`\\b${name}\\b`);
+  let depth = 0;
+  let started = false;
+  for (let i = declLine; i < lines.length; i++) {
+    const text = lines[i];
+    for (let j = 0; j < text.length; j++) {
+      const ch = text[j];
+      if (ch === "(") { depth++; started = true; }
+      else if (ch === ")") {
+        depth--;
+        if (started && depth === 0) {
+          // Confine match search to signature portion seen so far
+          for (let k = declLine; k <= i; k++) {
+            const slice = k === i ? lines[k].slice(0, j) : lines[k];
+            const m = slice.match(re);
+            if (m && m.index !== undefined) return { line: k, col: m.index };
+          }
+          return null;
+        }
+      }
     }
   }
   return null;
