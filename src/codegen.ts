@@ -1470,7 +1470,11 @@ export class Codegen {
     const toKind = expr.targetType;
     const fromFloat = fromKind.tag === "float";
     const toFloat = toKind.tag === "float";
-    if (fromFloat && toFloat) {
+    if (fromKind.tag === "ptr" && (toKind.tag === "int" || toKind.tag === "bool")) {
+      lines.push(`  ${tmp} = ptrtoint ${fromTy} ${ov} to ${toTy}`);
+    } else if ((fromKind.tag === "int" || fromKind.tag === "bool") && toKind.tag === "ptr") {
+      lines.push(`  ${tmp} = inttoptr ${fromTy} ${ov} to ${toTy}`);
+    } else if (fromFloat && toFloat) {
       const op = this.bitWidth(toKind) > this.bitWidth(fromKind) ? "fpext" : "fptrunc";
       lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
     } else if (fromFloat) {

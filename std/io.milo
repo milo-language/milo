@@ -1,0 +1,80 @@
+// std/io — file and directory I/O with automatic cleanup
+
+import "std/os"
+
+// ── File ──
+
+struct File {
+    fd: i32,
+}
+
+impl Drop for File {
+    fn drop(self: &mut Self): void {
+        if self.fd >= 0 {
+            close(self.fd)
+        }
+    }
+}
+
+fn open_read(path: string): Result<File> {
+    let fd = open(path, 0)
+    if fd < 0 {
+        return Result.Err("failed to open file")
+    }
+    return Result.Ok(File { fd: fd })
+}
+
+fn open_write(path: string): Result<File> {
+    // O_WRONLY | O_CREAT | O_TRUNC = 0x601
+    let fd = open(path, 1537, 420)
+    if fd < 0 {
+        return Result.Err("failed to create file")
+    }
+    return Result.Ok(File { fd: fd })
+}
+
+fn open_append(path: string): Result<File> {
+    // O_WRONLY | O_CREAT | O_APPEND = 0x209
+    let fd = open(path, 521, 420)
+    if fd < 0 {
+        return Result.Err("failed to open file for append")
+    }
+    return Result.Ok(File { fd: fd })
+}
+
+fn file_size(f: &File): i64 {
+    let cur = lseek(f.fd, 0, 1)
+    let size = lseek(f.fd, 0, 2)
+    lseek(f.fd, cur, 0)
+    return size
+}
+
+fn read_all(f: &File): Result<string> {
+    let size = file_size(f)
+    if size < 0 {
+        return Result.Err("failed to get file size")
+    }
+    lseek(f.fd, 0, 0)
+    var result: string = ""
+    var buf: [u8; 4096] = [0; 4096]
+    while true {
+        let n = read(f.fd, buf, 4096)
+        if n <= 0 { break }
+        var i: i64 = 0
+        while i < n {
+            result.push(buf[i])
+            i = i + 1
+        }
+    }
+    return Result.Ok(result)
+}
+
+fn write_all(f: &File, data: &string): Result<i64> {
+    let n = write(f.fd, data, data.len)
+    if n < 0 {
+        return Result.Err("write failed")
+    }
+    return Result.Ok(n)
+}
+
+// Dir requires opaque pointer null-checking + ptr↔int casts — deferred

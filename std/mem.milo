@@ -1,0 +1,84 @@
+// std/mem — memory management with automatic cleanup
+
+import "std/os"
+
+// ── MappedMemory ──
+
+struct MappedMemory {
+    ptr: i64,
+    len: i64,
+}
+
+impl Drop for MappedMemory {
+    fn drop(self: &mut Self): void {
+        if self.ptr != 0 {
+            munmap(self.ptr as *u8, self.len)
+        }
+    }
+}
+
+fn mmap_anon(size: i64): Result<MappedMemory> {
+    // PROT_READ | PROT_WRITE = 3, MAP_PRIVATE | MAP_ANON = 0x1002 (macOS)
+    let PROT_RW: i32 = 3
+    let MAP_PRIVATE_ANON: i32 = 4098
+    let p = mmap(0 as *u8, size, PROT_RW, MAP_PRIVATE_ANON, -1, 0)
+    let addr = p as i64
+    let map_failed: i64 = -1 as i64
+    if addr == map_failed {
+        return Result.Err("mmap failed")
+    }
+    return Result.Ok(MappedMemory { ptr: addr, len: size })
+}
+
+fn mmap_file(f_fd: i32, size: i64): Result<MappedMemory> {
+    let PROT_READ: i32 = 1
+    let MAP_PRIVATE: i32 = 2
+    let p = mmap(0 as *u8, size, PROT_READ, MAP_PRIVATE, f_fd, 0)
+    let addr = p as i64
+    let map_failed: i64 = -1 as i64
+    if addr == map_failed {
+        return Result.Err("mmap failed")
+    }
+    return Result.Ok(MappedMemory { ptr: addr, len: size })
+}
+
+// ── Arena ──
+
+struct Arena {
+    base: i64,
+    cap: i64,
+    used: i64,
+}
+
+impl Drop for Arena {
+    fn drop(self: &mut Self): void {
+        if self.base != 0 {
+            free(self.base as *u8)
+        }
+    }
+}
+
+fn arena_new(capacity: i64): Result<Arena> {
+    let p = malloc(capacity)
+    let addr = p as i64
+    if addr == 0 {
+        return Result.Err("arena allocation failed")
+    }
+    return Result.Ok(Arena { base: addr, cap: capacity, used: 0 })
+}
+
+fn arena_alloc(a: &mut Arena, size: i64): Result<i64> {
+    // align to 8 bytes
+    let seven: i64 = 7
+    let aligned = (a.used + seven) & ~seven
+    if aligned + size > a.cap {
+        return Result.Err("arena out of memory")
+    }
+    let ptr = a.base + aligned
+    a.used = aligned + size
+    return Result.Ok(ptr)
+}
+
+fn arena_reset(a: &mut Arena): void {
+    a.used = 0
+}

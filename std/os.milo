@@ -4,8 +4,10 @@
 
 extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
 extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
-extern fn open(path: *u8, flags: i32): i32
+extern fn open(path: *u8, flags: i32, ...): i32
 extern fn close(fd: i32): i32
+extern fn lseek(fd: i32, offset: i64, whence: i32): i64
+extern fn fstat(fd: i32, buf: *u8): i32
 extern fn puts(s: *u8): i32
 extern fn printf(fmt: *u8, ...): i32
 
@@ -17,6 +19,8 @@ extern fn free(ptr: *u8): void
 extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
 extern fn memset(dst: *u8, c: i32, n: i64): *u8
 extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
+extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
+extern fn munmap(addr: *u8, len: i64): i32
 
 // ── Strings ──
 
@@ -41,6 +45,12 @@ extern fn listen(sockfd: i32, backlog: i32): i32
 extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
 extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 extern fn htons(hostshort: u16): u16
+
+// ── Directory ──
+
+extern fn opendir(path: *u8): *u8
+extern fn closedir(dir: *u8): i32
+extern fn readdir(dir: *u8): *u8
 
 // ── Process ──
 

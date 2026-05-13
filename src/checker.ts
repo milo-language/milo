@@ -1763,10 +1763,12 @@ export class TypeChecker {
       case "CastExpr": {
         const fromType = this.checkExpr(expr.operand);
         const toType = this.resolve(expr.targetType);
-        if (!isNumeric(fromType) && fromType.tag !== "unknown") {
+        const fromOk = isNumeric(fromType) || fromType.tag === "ptr" || fromType.tag === "unknown";
+        const toOk = isNumeric(toType) || toType.tag === "ptr";
+        if (!fromOk) {
           this.error(`cannot cast from ${typeName(fromType)}`, sp);
         }
-        if (!isNumeric(toType)) {
+        if (!toOk) {
           this.error(`cannot cast to ${typeName(toType)}`, sp);
         }
         return this.setType(expr, toType);
