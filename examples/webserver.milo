@@ -1,5 +1,7 @@
-// HTTP server — serves HTML, JSON, and plain text
+// Router-based HTTP server — demos Milo language features
 from "std/http" import { Request, Response, serve }
+
+// ── JSON response structs ──
 
 struct MiloInfo {
     language: string,
@@ -7,22 +9,217 @@ struct MiloInfo {
     memory_safe: bool,
 }
 
-fn handler(req: &Request): Response {
-    if req.path == "/" {
-        return Response.Html(embed_file("index.html"))
-    }
-    if req.path == "/hello" {
-        return Response.Text("Hello, World!")
-    }
-    if req.path == "/json" {
-        let info = MiloInfo { language: "milo", backend: "llvm", memory_safe: true }
-        return Response.Json(json_stringify(info))
+struct FibResult {
+    n: i64,
+    result: i64,
+}
+
+struct PrimeResult {
+    n: i64,
+    is_prime: bool,
+}
+
+struct CollatzResult {
+    start: i64,
+    steps: i64,
+    sequence: string,
+}
+
+// ── Router ──
+
+struct Route {
+    method: string,
+    prefix: string,
+    exact: bool,
+    handler: fn(&Request): Response,
+}
+
+fn dispatch(routes: &Vec<Route>, req: &Request): Response {
+    print("dispatch: routes.len=%d method='%s' path='%s'\n", routes.len, req.method, req.path)
+    var i: i64 = 0
+    while i < routes.len {
+        let r = routes[i]
+        print("  checking route %d: '%s' '%s'\n", i, r.method, r.prefix)
+        if req.method == r.method {
+            if r.exact && req.path == r.prefix {
+                return r.handler(req)
+            }
+            if !r.exact && starts_with(req.path, r.prefix) {
+                return r.handler(req)
+            }
+        }
+        i = i + 1
     }
     return Response.NotFound
 }
 
+// ── String helpers ──
+
+fn starts_with(s: &string, prefix: &string): bool {
+    if s.len < prefix.len { return false }
+    var i: i64 = 0
+    while i < prefix.len {
+        if s[i] != prefix[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn path_after(s: &string, prefix_len: i64): string {
+    var result: string = ""
+    var i: i64 = prefix_len
+    while i < s.len {
+        result.push(s[i])
+        i = i + 1
+    }
+    return result
+}
+
+fn parse_i64(s: string): i64 {
+    var result: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let d = s[i] as i64 - 48
+        if d >= 0 && d <= 9 {
+            result = result * 10 + d
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn int_to_str(n: i64): string {
+    if n == 0 { return "0" }
+    var s: string = ""
+    var x: i64 = n
+    while x > 0 {
+        s.push(((x % 10) + 48) as u8)
+        x = x / 10
+    }
+    var result: string = ""
+    var i: i64 = s.len - 1
+    while i >= 0 {
+        result.push(s[i])
+        i = i - 1
+    }
+    return result
+}
+
+// ── Algorithms ──
+
+fn fibonacci(n: i64): i64 {
+    if n <= 1 { return n }
+    var a: i64 = 0
+    var b: i64 = 1
+    var i: i64 = 2
+    while i <= n {
+        let next = a + b
+        a = b
+        b = next
+        i = i + 1
+    }
+    return b
+}
+
+fn is_prime(n: i64): bool {
+    if n < 2 { return false }
+    if n < 4 { return true }
+    if n % 2 == 0 { return false }
+    var i: i64 = 3
+    while i * i <= n {
+        if n % i == 0 { return false }
+        i = i + 2
+    }
+    return true
+}
+
+fn collatz_seq(start: i64): CollatzResult {
+    var x: i64 = start
+    var seq: string = int_to_str(x)
+    var steps: i64 = 0
+    while x != 1 && steps < 500 {
+        if x % 2 == 0 {
+            x = x / 2
+        } else {
+            x = x * 3 + 1
+        }
+        seq = seq + " > " + int_to_str(x)
+        steps = steps + 1
+    }
+    return CollatzResult { start: start, steps: steps, sequence: seq }
+}
+
+fn fizzbuzz_text(n: i64): string {
+    var result: string = ""
+    var i: i64 = 1
+    while i <= n {
+        if i > 1 { result = result + "\n" }
+        if i % 15 == 0 {
+            result = result + "FizzBuzz"
+        } else if i % 3 == 0 {
+            result = result + "Fizz"
+        } else if i % 5 == 0 {
+            result = result + "Buzz"
+        } else {
+            result = result + int_to_str(i)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// ── Route handlers ──
+
+fn home_handler(req: &Request): Response {
+    return Response.Html(embed_file("index.html"))
+}
+
+fn hello_handler(req: &Request): Response {
+    return Response.Text("Hello from Milo!")
+}
+
+fn json_handler(req: &Request): Response {
+    let info = MiloInfo { language: "milo", backend: "llvm", memory_safe: true }
+    return Response.Json(json_stringify(info))
+}
+
+fn fib_handler(req: &Request): Response {
+    let n = parse_i64(path_after(req.path, 5))
+    let result = FibResult { n: n, result: fibonacci(n) }
+    return Response.Json(json_stringify(result))
+}
+
+fn prime_handler(req: &Request): Response {
+    let n = parse_i64(path_after(req.path, 7))
+    let result = PrimeResult { n: n, is_prime: is_prime(n) }
+    return Response.Json(json_stringify(result))
+}
+
+fn collatz_handler(req: &Request): Response {
+    let n = parse_i64(path_after(req.path, 9))
+    return Response.Json(json_stringify(collatz_seq(n)))
+}
+
+fn fizzbuzz_handler(req: &Request): Response {
+    let n = parse_i64(path_after(req.path, 10))
+    return Response.Text(fizzbuzz_text(n))
+}
+
+// ── Main ──
+
 fn main(): i32 {
+    var routes: Vec<Route> = Vec.new()
+    routes.push(Route { method: "GET", prefix: "/",         exact: true,  handler: home_handler })
+    routes.push(Route { method: "GET", prefix: "/hello",    exact: true,  handler: hello_handler })
+    routes.push(Route { method: "GET", prefix: "/json",     exact: true,  handler: json_handler })
+    routes.push(Route { method: "GET", prefix: "/fib/",     exact: false, handler: fib_handler })
+    routes.push(Route { method: "GET", prefix: "/prime/",   exact: false, handler: prime_handler })
+    routes.push(Route { method: "GET", prefix: "/collatz/", exact: false, handler: collatz_handler })
+    routes.push(Route { method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzz_handler })
+
     print("starting on :8080\n")
-    serve(8080, handler)
+    serve(8080, (req: &Request) => {
+        return dispatch(routes, req)
+    })
     return 0
 }

@@ -1,8 +1,5 @@
 // std/http — high-level HTTP server for Milo
-// Usage:
-//   from "std/http" import { Request, Response, serve }
-//   fn handler(req: &Request): Response { ... }
-//   fn main(): i32 { serve(8080, handler); return 0 }
+// Supports HTTP/1.1 keep-alive, Content-Length, Server header
 
 extern fn printf(fmt: *u8, ...): i32
 extern fn socket(domain: i32, type: i32, protocol: i32): i32
@@ -40,6 +37,23 @@ enum Response {
 
 // ── Internal helpers ──
 
+fn i64_to_str(n: i64): string {
+    if n == 0 { return "0" }
+    var s: string = ""
+    var x: i64 = n
+    while x > 0 {
+        s.push(((x % 10) + 48) as u8)
+        x = x / 10
+    }
+    var result: string = ""
+    var i: i64 = s.len - 1
+    while i >= 0 {
+        result.push(s[i])
+        i = i - 1
+    }
+    return result
+}
+
 fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): string {
     var s: string = ""
     var i: i64 = start
@@ -52,12 +66,10 @@ fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): string {
 
 fn parse_request(buf: &[u8; 8192], n: i64): Request {
     var i: i64 = 0
-    // method
     while i < n && buf[i] != ' ' {
         i = i + 1
     }
     let method = buf_to_str(buf, 0, i)
-    // skip space
     while i < n && buf[i] == ' ' {
         i = i + 1
     }
@@ -69,28 +81,23 @@ fn parse_request(buf: &[u8; 8192], n: i64): Request {
     return Request { method: method, path: path }
 }
 
+fn status_text(status: i32): string {
+    if status == 200 { return "200 OK" }
+    if status == 201 { return "201 Created" }
+    if status == 204 { return "204 No Content" }
+    if status == 301 { return "301 Moved Permanently" }
+    if status == 400 { return "400 Bad Request" }
+    if status == 404 { return "404 Not Found" }
+    if status == 500 { return "500 Internal Server Error" }
+    return "200 OK"
+}
+
 fn send_raw(fd: i32, status: i32, content_type: string, body: string): void {
-    var resp: string = "HTTP/1.1 "
-    if status == 200 {
-        resp = resp + "200 OK"
-    } else if status == 201 {
-        resp = resp + "201 Created"
-    } else if status == 204 {
-        resp = resp + "204 No Content"
-    } else if status == 301 {
-        resp = resp + "301 Moved Permanently"
-    } else if status == 400 {
-        resp = resp + "400 Bad Request"
-    } else if status == 404 {
-        resp = resp + "404 Not Found"
-    } else if status == 500 {
-        resp = resp + "500 Internal Server Error"
-    } else {
-        resp = resp + "200 OK"
-    }
-    resp = resp + "\r\nContent-Type: "
-    resp = resp + content_type
-    resp = resp + "\r\nConnection: close\r\n\r\n"
+    var resp: string = "HTTP/1.1 " + status_text(status)
+    resp = resp + "\r\nContent-Type: " + content_type
+    resp = resp + "\r\nContent-Length: " + i64_to_str(body.len)
+    resp = resp + "\r\nServer: milo"
+    resp = resp + "\r\n\r\n"
     resp = resp + body
     write(fd, resp, resp.len)
 }
@@ -107,7 +114,7 @@ fn send_response(fd: i32, response: Response): void {
             send_raw(fd, 200, "application/json", body)
         }
         Response.NotFound => {
-            send_raw(fd, 404, "text/plain", "404 Not Found")
+            send_raw(fd, 404, "text/plain; charset=utf-8", "404 Not Found")
         }
         Response.Status(code, ct, body) => {
             send_raw(fd, code, ct, body)
@@ -141,7 +148,7 @@ fn serve(port: u16, handler: fn(&Request): Response): void {
         return
     }
 
-    if listen(fd, 128) < 0 {
+    if listen(fd, 1024) < 0 {
         printf("error: listen() failed\n")
         close(fd)
         return
@@ -159,9 +166,12 @@ fn serve(port: u16, handler: fn(&Request): Response): void {
             continue
         }
 
-        var buf: [u8; 8192] = [0; 8192]
-        let n = read(client, buf, 8192)
-        if n > 0 {
+        // keep-alive: handle multiple requests per connection
+        while true {
+            var buf: [u8; 8192] = [0; 8192]
+            let n = read(client, buf, 8192)
+            if n <= 0 { break }
+
             let req = parse_request(buf, n)
             printf("%s %s\n", req.method, req.path)
             let resp = handler(req)

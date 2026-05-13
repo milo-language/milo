@@ -38,41 +38,45 @@ body{font-family:'SF Mono',Menlo,Consolas,monospace;background:#0a0a0a;color:#e4
   <h1>milo</h1>
   <p class="sub">a memory-safe systems language compiled to LLVM IR</p>
   <span class="badge g">server running</span>
-  <span class="badge">zero dependencies</span>
-  <span class="badge">pure libc FFI</span>
+  <span class="badge">router pattern</span>
+  <span class="badge">keep-alive</span>
 </div>
 
 <div class="cards">
+  <div class="card"><h3>Router + Dispatch</h3><p>Routes stored in <code>Vec&lt;Route&gt;</code> with fn pointer handlers. Closure captures route table for dispatch.</p></div>
   <div class="card"><h3>Memory Safe</h3><p>Move semantics, ownership tracking, no GC. Use-after-move caught at compile time.</p></div>
   <div class="card"><h3>LLVM Backend</h3><p>Compiles to LLVM IR, then native code via clang. Full optimization pipeline.</p></div>
-  <div class="card"><h3>Zero-Cost FFI</h3><p>Call any C function with <code>extern fn</code>. Strings auto-coerce to <code>*u8</code>.</p></div>
-  <div class="card"><h3>Traits + Generics</h3><p>Monomorphized generics, trait bounds, <code>@derive</code>. Zero runtime cost.</p></div>
+  <div class="card"><h3>Fn Pointers in Structs</h3><p>Store <code>fn(&amp;Request): Response</code> in struct fields. <code>{ ptr, ptr }</code> calling convention.</p></div>
 </div>
 
-<div class="src"><h2>This Server's Source Code</h2><pre>
-<span class="kw">from</span> <span class="st">"std/http"</span> <span class="kw">import</span> { <span class="ty">Request</span>, <span class="ty">Response</span>, <span class="fn">serve</span> }
-
-<span class="kw">fn</span> <span class="fn">handler</span>(req: &amp;<span class="ty">Request</span>): <span class="ty">Response</span> {
-    <span class="kw">if</span> req.path == <span class="st">"/"</span> {
-        <span class="kw">return</span> <span class="ty">Response</span>.<span class="fn">Html</span>(embed_file(<span class="st">"index.html"</span>))
-    }
-    <span class="kw">if</span> req.path == <span class="st">"/hello"</span> {
-        <span class="kw">return</span> <span class="ty">Response</span>.<span class="fn">Text</span>(<span class="st">"Hello, World!"</span>)
-    }
-    <span class="kw">return</span> <span class="ty">Response</span>.<span class="fn">NotFound</span>
+<div class="src"><h2>Router Source</h2><pre>
+<span class="kw">struct</span> <span class="ty">Route</span> {
+    method: <span class="ty">string</span>,
+    prefix: <span class="ty">string</span>,
+    exact: <span class="ty">bool</span>,
+    handler: <span class="kw">fn</span>(&amp;<span class="ty">Request</span>): <span class="ty">Response</span>,
 }
 
 <span class="kw">fn</span> <span class="fn">main</span>(): <span class="ty">i32</span> {
-    serve(<span class="st">8080</span>, handler)
-    <span class="kw">return</span> <span class="st">0</span>
+    <span class="kw">var</span> routes: <span class="ty">Vec</span>&lt;<span class="ty">Route</span>&gt; = <span class="ty">Vec</span>.new()
+    routes.push(<span class="ty">Route</span> { method: <span class="st">"GET"</span>, prefix: <span class="st">"/"</span>, exact: <span class="st">true</span>, handler: home })
+    routes.push(<span class="ty">Route</span> { method: <span class="st">"GET"</span>, prefix: <span class="st">"/fib/"</span>, exact: <span class="st">false</span>, handler: fib })
+    <span class="cm">// ...</span>
+    serve(<span class="st">8080</span>, (req: &amp;<span class="ty">Request</span>) => {
+        <span class="kw">return</span> <span class="fn">dispatch</span>(routes, req)
+    })
 }</pre></div>
 
 <div class="ep"><h2>Try the API</h2>
   <a href="/"><span class="m">GET</span><span class="p">/</span><span class="d">this page</span></a>
   <a href="/hello"><span class="m">GET</span><span class="p">/hello</span><span class="d">plain text</span></a>
   <a href="/json"><span class="m">GET</span><span class="p">/json</span><span class="d">language info</span></a>
+  <a href="/fib/10"><span class="m">GET</span><span class="p">/fib/10</span><span class="d">fibonacci(10) = 55</span></a>
+  <a href="/prime/97"><span class="m">GET</span><span class="p">/prime/97</span><span class="d">primality check</span></a>
+  <a href="/collatz/27"><span class="m">GET</span><span class="p">/collatz/27</span><span class="d">collatz sequence</span></a>
+  <a href="/fizzbuzz/20"><span class="m">GET</span><span class="p">/fizzbuzz/20</span><span class="d">classic fizzbuzz</span></a>
 </div>
 
-<div class="foot">served by milo | compiled to native arm64 via LLVM</div>
+<div class="foot">served by milo | router dispatch via fn pointers + closures | compiled to native arm64</div>
 </body>
 </html>
