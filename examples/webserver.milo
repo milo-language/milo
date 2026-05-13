@@ -1,6 +1,6 @@
 // Router-based HTTP server — demos Milo language features
 from "std/http" import { Request, Response, serve }
-from "std/args" import { get_flag }
+from "std/argparse" import { new_parser, ArgParser, ParsedArgs }
 
 // ── JSON response structs ──
 
@@ -209,6 +209,11 @@ fn fizzbuzz_handler(req: &Request): Response {
 // ── Main ──
 
 fn main(): i32 {
+    var parser = new_parser("webserver", "Router-based HTTP server")
+    parser.add_string("port", "p", "Port to listen on", "8080")
+    parser.add_bool("verbose", "v", "Enable verbose logging")
+    let args = parser.parse()
+
     let routes: Vec<Route> = [
         Route { method: "GET", prefix: "/",          exact: true,  handler: home_handler },
         Route { method: "GET", prefix: "/hello",     exact: true,  handler: hello_handler },
@@ -219,8 +224,7 @@ fn main(): i32 {
         Route { method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzz_handler },
     ]
 
-    let port_str = get_flag("port") ?? "8080"
-    let port: u16 = parse_i64(port_str) as u16
+    let port = args.get_u16("port")
     let result = serve(port, (req: &Request) => {
         return dispatch(routes, req)
     })
