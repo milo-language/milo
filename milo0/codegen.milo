@@ -932,7 +932,26 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
                     return gen_string_eq(cg, lv_v_str, rv_v_str, op == TokKind.EqEq)
                 }
             }
-            // (enum == disabled — was crashing milo0 in some path; reverted pending diag)
+            // Enum equality via tag compare (extractvalue field 0 + icmp i32).
+            if op == TokKind.EqEq || op == TokKind.NotEq {
+                if lv_ll_check.len > 1 {
+                    let first = lv_ll_check[0]
+                    if first == 37 {
+                        let lt_id = cg.temp
+                        cg.temp = cg.temp + 1
+                        let rt_id = cg.temp
+                        cg.temp = cg.temp + 1
+                        let res_id = cg.temp
+                        cg.temp = cg.temp + 1
+                        emit(cg, "  %t" + lt_id.to_string() + " = extractvalue " + lv_ll_check.clone() + " " + lv_v_str + ", 0\n")
+                        emit(cg, "  %t" + rt_id.to_string() + " = extractvalue " + lv_ll_check + " " + rv_v_str + ", 0\n")
+                        var opn: string = "eq"
+                        if op == TokKind.NotEq { opn = "ne".clone() }
+                        emit(cg, "  %t" + res_id.to_string() + " = icmp " + opn + " i32 %t" + lt_id.to_string() + ", %t" + rt_id.to_string() + "\n")
+                        return Val { v: "%t" + res_id.to_string(), ty: "bool".clone() }
+                    }
+                }
+            }
             let t_id = cg.temp
             cg.temp = cg.temp + 1
             let t_emit = "%t" + t_id.to_string()
