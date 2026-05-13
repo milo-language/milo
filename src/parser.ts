@@ -11,6 +11,13 @@ export class Parser {
   constructor(private tokens: Token[]) {}
 
   private peek(): Token { return this.tokens[this.pos]; }
+  private peekN(n: number): Token { return this.tokens[this.pos + n]; }
+  // adjacent same-kind tokens with no intervening whitespace — used for << and >>
+  private atAdjacent(k: TokenKind): boolean {
+    const a = this.peek();
+    const b = this.peekN(1);
+    return a && b && a.kind === k && b.kind === k && a.line === b.line && b.col === a.col + 1;
+  }
   private advance(): Token { return this.tokens[this.pos++]; }
   private span(tok: Token): Span { return { line: tok.line, col: tok.col }; }
 
@@ -509,23 +516,67 @@ export class Parser {
   }
 
   private parseAnd(): Expr {
-    let left = this.parseComparison();
+    let left = this.parseBitOr();
     while (this.at(TokenKind.AmpAmp)) {
       this.advance();
-      const right = this.parseComparison();
+      const right = this.parseBitOr();
       left = { kind: "BinOp", op: "&&", left, right, span: left.span };
     }
     return left;
   }
 
+  private parseBitOr(): Expr {
+    let left = this.parseBitXor();
+    while (this.at(TokenKind.Pipe)) {
+      this.advance();
+      const right = this.parseBitXor();
+      left = { kind: "BinOp", op: "|", left, right, span: left.span };
+    }
+    return left;
+  }
+
+  private parseBitXor(): Expr {
+    let left = this.parseBitAnd();
+    while (this.at(TokenKind.Caret)) {
+      this.advance();
+      const right = this.parseBitAnd();
+      left = { kind: "BinOp", op: "^", left, right, span: left.span };
+    }
+    return left;
+  }
+
+  private parseBitAnd(): Expr {
+    let left = this.parseComparison();
+    // single & between exprs (&& already consumed at higher level)
+    while (this.at(TokenKind.Amp) && this.peekN(1).kind !== TokenKind.Mut) {
+      this.advance();
+      const right = this.parseComparison();
+      left = { kind: "BinOp", op: "&", left, right, span: left.span };
+    }
+    return left;
+  }
+
   private parseComparison(): Expr {
-    let left = this.parseAdditive();
+    let left = this.parseShift();
     while (this.peek().kind === TokenKind.EqEq || this.peek().kind === TokenKind.Neq ||
-           this.peek().kind === TokenKind.Lt || this.peek().kind === TokenKind.Gt ||
-           this.peek().kind === TokenKind.LtEq || this.peek().kind === TokenKind.GtEq) {
+           this.peek().kind === TokenKind.LtEq || this.peek().kind === TokenKind.GtEq ||
+           // single Lt/Gt only when not part of an adjacent shift pair (handled at parseShift)
+           (this.peek().kind === TokenKind.Lt && !this.atAdjacent(TokenKind.Lt)) ||
+           (this.peek().kind === TokenKind.Gt && !this.atAdjacent(TokenKind.Gt))) {
       const opTok = this.advance();
-      const right = this.parseAdditive();
+      const right = this.parseShift();
       left = { kind: "BinOp", op: opTok.value, left, right, span: left.span };
+    }
+    return left;
+  }
+
+  private parseShift(): Expr {
+    let left = this.parseAdditive();
+    while (this.atAdjacent(TokenKind.Lt) || this.atAdjacent(TokenKind.Gt)) {
+      const isLeft = this.peek().kind === TokenKind.Lt;
+      this.advance(); this.advance();
+      const right = this.parseAdditive();
+      left = { kind: "BinOp", op: isLeft ? "<<" : ">>", left, right, span: left.span };
     }
     return left;
   }
@@ -551,7 +602,7 @@ export class Parser {
   }
 
   private parseUnary(): Expr {
-    if (this.peek().kind === TokenKind.Minus || this.peek().kind === TokenKind.Bang || this.peek().kind === TokenKind.Star) {
+    if (this.peek().kind === TokenKind.Minus || this.peek().kind === TokenKind.Bang || this.peek().kind === TokenKind.Star || this.peek().kind === TokenKind.Tilde) {
       const tok = this.advance();
       const operand = this.parseUnary();
       return { kind: "UnaryOp", op: tok.value, operand, span: this.span(tok) };
@@ -579,9 +630,17 @@ export class Parser {
         }
       } else if (this.at(TokenKind.LBracket)) {
         this.advance();
-        const index = this.parseExpr();
-        this.expect(TokenKind.RBracket);
-        expr = { kind: "IndexAccess", object: expr, index, span: expr.span };
+        const first = this.parseExpr();
+        if (this.at(TokenKind.DotDot)) {
+          this.advance();
+          const end = this.parseExpr();
+          this.expect(TokenKind.RBracket);
+          // s[a..b] desugars to s.substr(a, b)
+          expr = { kind: "MethodCall", object: expr, method: "substr", args: [first, end], span: expr.span };
+        } else {
+          this.expect(TokenKind.RBracket);
+          expr = { kind: "IndexAccess", object: expr, index: first, span: expr.span };
+        }
       } else if (this.at(TokenKind.Bang)) {
         this.advance();
         expr = { kind: "Unwrap", operand: expr, span: expr.span };

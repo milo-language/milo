@@ -349,6 +349,11 @@ export class Codegen {
         const addrName = this.locals.has(stmt.name) ? `%${stmt.name}.${this.scopeCounter++}.addr` : `%${stmt.name}.addr`;
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false, addr: addrName });
         this.entryAllocas.push(`  ${addrName} = alloca ${declTy}`);
+        // Zero-init droppable allocas so a drop-glue pass over a never-initialized
+        // branch-local (e.g. `let s` inside an `if` that wasn't taken) reads cap=0 and skips free.
+        if (this.needsDropCg(stmt.type)) {
+          this.entryAllocas.push(`  store ${declTy} zeroinitializer, ptr ${addrName}`);
+        }
         lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
         if (this.needsDropCg(stmt.type)) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
         return [lines, false];
@@ -491,6 +496,8 @@ export class Codegen {
     if (stmt.elseBody) { for (const s of stmt.elseBody) { const [sl, t] = this.genStmt(s); lines.push(...sl); if (t) elseTerminated = true; } }
     if (!elseTerminated) lines.push(`  br label %${endLabel}`);
     lines.push(`${endLabel}:`);
+    // when both arms return/diverge, the merge block is unreachable; LLVM still requires a terminator
+    if (thenTerminated && elseTerminated) lines.push(`  unreachable`);
     return [lines, thenTerminated && elseTerminated];
   }
 
@@ -524,12 +531,31 @@ export class Codegen {
 
   private genMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
     const lines: string[] = [];
-    const [subjLines, subjVal, subjTy] = this.genExpr(stmt.subject);
-    lines.push(...subjLines);
-
-    const subjAddr = this.nextTemp();
-    lines.push(`  ${subjAddr} = alloca ${subjTy}`);
-    lines.push(`  store ${subjTy} ${subjVal}, ptr ${subjAddr}`);
+    // Subject-source direct path: matching `match *box` writes the "zero payload after
+    // extraction" stores into the actual Box heap, not a staged copy. Without this, the
+    // staged copy + the source both end up owning the same field heaps and double-free
+    // when each drops independently.
+    let subjAddr: string;
+    let subjTy: string;
+    if (stmt.subject.kind === "BoxDeref" && stmt.subject.operand.kind === "Ident") {
+      // Only handle the simple `match *ident` form; anything more complex falls through
+      // to the staged copy path (genExpr would synthesize an undef-laden ptr otherwise).
+      const [boxLines, boxVal] = this.genExpr(stmt.subject.operand);
+      lines.push(...boxLines);
+      subjAddr = boxVal;
+      subjTy = this.llvmType(stmt.subject.type);
+    } else if (stmt.subject.kind === "Ident" && this.locals.has(stmt.subject.name)) {
+      const local = this.locals.get(stmt.subject.name)!;
+      subjAddr = this.localAddr(stmt.subject.name);
+      subjTy = local.type;
+    } else {
+      const [subjLines, subjVal, subjTyL] = this.genExpr(stmt.subject);
+      lines.push(...subjLines);
+      subjAddr = this.nextTemp();
+      subjTy = subjTyL;
+      lines.push(`  ${subjAddr} = alloca ${subjTy}`);
+      lines.push(`  store ${subjTy} ${subjVal}, ptr ${subjAddr}`);
+    }
 
     const tagPtr = this.nextTemp();
     lines.push(`  ${tagPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 0`);
@@ -555,26 +581,33 @@ export class Codegen {
     const defaultTarget = wildcardArm ? this.nextLabel("match.wildcard") : defaultLabel;
     lines.push(`  switch i32 ${tag}, label %${defaultTarget} [${cases}]`);
 
+    let allArmsTerminated = true;
     for (const { label, arm } of armLabels) {
       lines.push(`${label}:`);
       if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
         const variant = layout.variants.get(arm.pattern.variant)!;
         this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern);
       }
+      let armTerminated = false;
       for (const s of arm.body) {
-        const [sl] = this.genStmt(s);
+        const [sl, t] = this.genStmt(s);
         lines.push(...sl);
+        if (t) { armTerminated = true; break; }
       }
-      lines.push(`  br label %${endLabel}`);
+      if (!armTerminated) lines.push(`  br label %${endLabel}`);
+      if (!armTerminated) allArmsTerminated = false;
     }
 
     if (wildcardArm) {
       lines.push(`${defaultTarget}:`);
+      let wcTerminated = false;
       for (const s of wildcardArm.body) {
-        const [sl] = this.genStmt(s);
+        const [sl, t] = this.genStmt(s);
         lines.push(...sl);
+        if (t) { wcTerminated = true; break; }
       }
-      lines.push(`  br label %${endLabel}`);
+      if (!wcTerminated) lines.push(`  br label %${endLabel}`);
+      if (!wcTerminated) allArmsTerminated = false;
     }
 
     if (!wildcardArm) {
@@ -583,7 +616,8 @@ export class Codegen {
     }
 
     lines.push(`${endLabel}:`);
-    return [lines, false];
+    if (allArmsTerminated) lines.push(`  unreachable`);
+    return [lines, allArmsTerminated];
   }
 
   private extractBindings(
@@ -597,26 +631,36 @@ export class Codegen {
 
     if (pattern.bindings.length === 1) {
       const ty = variant.fieldTypes[0];
+      const fieldKind = pattern.bindings[0].type;
       const val = this.nextTemp();
       lines.push(`  ${val} = load ${ty}, ptr ${payloadPtr}`);
+      // Move semantics: binding consumes the payload. Zero the source so the subject's
+      // drop chain doesn't free the same heap data the binding now owns.
+      if (this.needsDropCg(fieldKind)) {
+        lines.push(`  store ${ty} zeroinitializer, ptr ${payloadPtr}`);
+      }
       const uid = this.labelCounter++;
       const addr = `%${pattern.bindings[0].name}.${uid}.addr`;
       lines.push(`  ${addr} = alloca ${ty}`);
       lines.push(`  store ${ty} ${val}, ptr ${addr}`);
-      this.locals.set(pattern.bindings[0].name, { type: ty, typeKind: pattern.bindings[0].type, mutable: false, isRef: false, addr });
+      this.locals.set(pattern.bindings[0].name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
     } else {
       const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
       for (let i = 0; i < pattern.bindings.length; i++) {
         const ty = variant.fieldTypes[i];
+        const fieldKind = pattern.bindings[i].type;
         const fieldPtr = this.nextTemp();
         lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
+        if (this.needsDropCg(fieldKind)) {
+          lines.push(`  store ${ty} zeroinitializer, ptr ${fieldPtr}`);
+        }
         const uid = this.labelCounter++;
         const addr = `%${pattern.bindings[i].name}.${uid}.addr`;
         lines.push(`  ${addr} = alloca ${ty}`);
         lines.push(`  store ${ty} ${val}, ptr ${addr}`);
-        this.locals.set(pattern.bindings[i].name, { type: ty, typeKind: pattern.bindings[i].type, mutable: false, isRef: false, addr });
+        this.locals.set(pattern.bindings[i].name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
       }
     }
   }
@@ -749,12 +793,23 @@ export class Codegen {
           if (expr.op === "==" || expr.op === "!=") return this.genStringCmp(lines, lv, rv, expr.op === "==");
         }
 
+        // enum equality: compare tag field only (checker rejects payload-bearing enums)
+        if ((expr.op === "==" || expr.op === "!=") && llt.startsWith("%") && this.enumLayouts.has(llt.slice(1))) {
+          const lTag = this.nextTemp();
+          const rTag = this.nextTemp();
+          const cmp = this.nextTemp();
+          lines.push(`  ${lTag} = extractvalue ${llt} ${lv}, 0`);
+          lines.push(`  ${rTag} = extractvalue ${llt} ${rv}, 0`);
+          lines.push(`  ${cmp} = icmp ${expr.op === "==" ? "eq" : "ne"} i32 ${lTag}, ${rTag}`);
+          return [lines, cmp, "i1"];
+        }
+
         const tmp = this.nextTemp();
         const isFloat = llt === "float" || llt === "double";
         const unsigned = !isFloat && this.isUnsigned(expr.left.type);
         const intOps: Record<string, string> = unsigned
-          ? { "+": "add", "-": "sub", "*": "mul", "/": "udiv", "%": "urem" }
-          : { "+": "add", "-": "sub", "*": "mul", "/": "sdiv", "%": "srem" };
+          ? { "+": "add", "-": "sub", "*": "mul", "/": "udiv", "%": "urem", "&": "and", "|": "or", "^": "xor", "<<": "shl", ">>": "lshr" }
+          : { "+": "add", "-": "sub", "*": "mul", "/": "sdiv", "%": "srem", "&": "and", "|": "or", "^": "xor", "<<": "shl", ">>": "ashr" };
         const floatOps: Record<string, string> = { "+": "fadd", "-": "fsub", "*": "fmul", "/": "fdiv", "%": "frem" };
         const intCmps: Record<string, string> = unsigned
           ? { "==": "eq", "!=": "ne", "<": "ult", ">": "ugt", "<=": "ule", ">=": "uge" }
@@ -782,6 +837,7 @@ export class Codegen {
           return [lines, tmp, ot];
         }
         if (expr.op === "!") { lines.push(`  ${tmp} = xor i1 ${ov}, 1`); return [lines, tmp, "i1"]; }
+        if (expr.op === "~") { lines.push(`  ${tmp} = xor ${ot} ${ov}, -1`); return [lines, tmp, ot]; }
         console.error(`error[codegen]: unknown unary op '${expr.op}'`); process.exit(1);
       }
       case "Call": {
@@ -797,6 +853,15 @@ export class Codegen {
             lines.push(...al);
             argVals.push({ val: aPtr, type: "ptr" });
           } else {
+            // [T; N] → *T decay: pass the array's address as a ptr
+            const argTk = arg.expr.type;
+            const paramExpectsPtr = sig && i < sig.paramTypes.length && sig.paramTypes[i] === "ptr";
+            if (argTk.tag === "array" && paramExpectsPtr) {
+              const [al, aPtr] = this.genLValueForArg(arg.expr);
+              lines.push(...al);
+              argVals.push({ val: aPtr, type: "ptr" });
+              continue;
+            }
             const [al, av, at] = this.genExpr(arg.expr);
             lines.push(...al);
             // String → ptr coercion for extern/FFI calls (including variadic args)
@@ -945,6 +1010,14 @@ export class Codegen {
           const [ptrLines, ptr, elemTy] = this.genVecBoundsCheckedPtr(expr, lines);
           const val = this.nextTemp();
           lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
+          // Zero the slot ONLY when the checker marked this read as a move (the result
+          // is consumed by a let-bind, return, fn arg, struct field, etc.). Borrow-style
+          // reads (e.g. `if v[i].len == 0`) leave the slot intact so the Vec's later
+          // drop walks valid data. Drop glue is null-safe so the zeroed-on-move slot
+          // is also safe.
+          if (expr.isMove && this.needsDropCg(expr.object.type.element)) {
+            lines.push(`  store ${elemTy} zeroinitializer, ptr ${ptr}`);
+          }
           return [lines, val, elemTy];
         }
         const [ptrLines, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
@@ -1055,6 +1128,10 @@ export class Codegen {
         return this.genStringSubstr(expr, lines);
       case "StringParseF64":
         return this.genStringParseF64(expr, lines);
+      case "StringClone":
+        return this.genStringClone(expr, lines);
+      case "NumberToString":
+        return this.genNumberToString(expr, lines);
       case "JsonStringify":
         return this.genJsonStringify(expr, lines);
       case "Closure": {
@@ -1820,6 +1897,94 @@ export class Codegen {
     const s2 = this.nextTemp();
     lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocLen}, 2`);
 
+    return [lines, s2, "%String"];
+  }
+
+  // n.to_string() / x.to_string() — snprintf into heap buffer, return owned %String
+  private genNumberToString(expr: HIRExpr & { kind: "NumberToString" }, lines: string[]): [string[], string, string] {
+    this.needsSnprintf = true;
+    this.needsMalloc = true;
+    this.hasStringType = true;
+
+    const [vLines, vVal] = this.genExpr(expr.value);
+    lines.push(...vLines);
+
+    const vt = expr.valueType;
+    let fmtStr: string;
+    let argType: string;
+    let argVal = vVal;
+    if (vt.tag === "int") {
+      // widen narrow ints to i32 / i64 for snprintf
+      if (vt.bits < 32) {
+        const widened = this.nextTemp();
+        lines.push(`  ${widened} = ${vt.signed ? "sext" : "zext"} i${vt.bits} ${vVal} to i32`);
+        argVal = widened;
+        argType = "i32";
+        fmtStr = vt.signed ? "%d" : "%u";
+      } else if (vt.bits === 32) {
+        argType = "i32";
+        fmtStr = vt.signed ? "%d" : "%u";
+      } else {
+        argType = "i64";
+        fmtStr = vt.signed ? "%lld" : "%llu";
+      }
+    } else {
+      // float — promote f32 to double
+      if (vt.tag === "float" && vt.bits === 32) {
+        const promoted = this.nextTemp();
+        lines.push(`  ${promoted} = fpext float ${vVal} to double`);
+        argVal = promoted;
+      }
+      argType = "double";
+      fmtStr = "%g";
+    }
+
+    const fmt = this.addString(fmtStr);
+    // size = snprintf(null, 0, fmt, val)
+    const lenRes = this.nextTemp();
+    lines.push(`  ${lenRes} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmt.label}, ${argType} ${argVal})`);
+    const len64 = this.nextTemp();
+    lines.push(`  ${len64} = sext i32 ${lenRes} to i64`);
+    const bufSize = this.nextTemp();
+    lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
+    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmt.label}, ${argType} ${argVal})`);
+
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len64}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
+    return [lines, s2, "%String"];
+  }
+
+  // s.clone() — deep copy of the underlying byte buffer; result is an owned %String
+  private genStringClone(expr: HIRExpr & { kind: "StringClone" }, lines: string[]): [string[], string, string] {
+    this.hasStringType = true;
+    this.needsMalloc = true;
+    this.needsMemcpy = true;
+    const [sLines, sVal] = this.genExpr(expr.str);
+    lines.push(...sLines);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = extractvalue %String ${sVal}, 0`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = extractvalue %String ${sVal}, 1`);
+    const allocSz = this.nextTemp();
+    lines.push(`  ${allocSz} = add i64 ${len}, 1`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${allocSz})`);
+    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${len})`);
+    const nullPtr = this.nextTemp();
+    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
+    lines.push(`  store i8 0, ptr ${nullPtr}`);
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocSz}, 2`);
     return [lines, s2, "%String"];
   }
 

@@ -1,0 +1,1222 @@
+// milo0 codegen — AST → LLVM IR text
+// Subset: no checker, no String type, no enums. Just functions, primitives,
+// pointers, control flow, calls (incl. variadic externs). Targets a minimal
+// useful Milo dialect: fib, fizzbuzz, simple programs using extern printf.
+
+import "parser.milo"
+
+// ── Helpers: int → string (Milo's .to_string already exists for i64) ──
+
+fn ll_type(t: &string): string {
+    if t == "i8" || t == "u8" { return "i8" }
+    if t == "i16" || t == "u16" { return "i16" }
+    if t == "i32" || t == "u32" { return "i32" }
+    if t == "i64" || t == "u64" || t == "int" { return "i64" }
+    if t == "f32" { return "float" }
+    if t == "f64" || t == "float" { return "double" }
+    if t == "bool" { return "i1" }
+    if t == "void" { return "void" }
+    if t.len > 0 && t[0] == 42 { return "ptr" }
+    if t == "string" { return "ptr" }
+    if t.len > 0 {
+        let c = t[0]
+        // Already LL form like "%Point" — pass through.
+        if c == 37 { return t.clone() }
+        // Uppercase first letter — treat as user struct, emit %Name.
+        if c >= 65 && c <= 90 {
+            return "%" + t.clone()
+        }
+    }
+    return "i32"
+}
+
+fn is_unsigned(t: &string): bool {
+    if t.len < 1 { return false }
+    let c = t[0]
+    return c == 117
+}
+
+// ── Codegen state ──
+
+struct Cgen {
+    body: string,
+    globals: string,
+    temp: i64,
+    label: i64,
+    str_id: i64,
+    needs_printf: bool,
+    // Encoded "name|retty;..." for fn return types. Walked by find_fn_ret to dodge
+    // HashMap<string, string> heap-aliasing.
+    fn_ret_db: string,
+    // Encoded "EnumName!Variant=tag:payloadType&...;". payloadType is empty for unit
+    // variants or single type name (e.g. i32, i64). Stage-0 supports single-field
+    // payloads only.
+    enum_db: string,
+    // For each enum, the LL type of its payload slot ("" for payload-free enums,
+    // "i64" or similar for those with payloads). Looked up by enum name.
+    // Format: "EnumName=lltype;"
+    enum_payload_db: string,
+    // Loop labels for break/continue. Empty when not inside a loop.
+    cur_break_lbl: string,
+    cur_cont_lbl: string,
+    declared_printf: bool,
+    declared_putchar: bool,
+    // Struct table encoded as one big string: "Name|f1:t1|f2:t2;Name2|fa:ta;..."
+    // Lookups walk the string and substr — substrings copy bytes, so no aliasing pain
+    // (versus HashMap<string, string> or Vec<StructDecl> which both reuse heap pointers).
+    struct_db: string,
+}
+
+fn cgen_new(): Cgen {
+    return Cgen {
+        body: "",
+        globals: "",
+        temp: 0,
+        label: 0,
+        str_id: 0,
+        needs_printf: false,
+        fn_ret_db: "",
+        cur_break_lbl: "",
+        cur_cont_lbl: "",
+        declared_printf: false,
+        declared_putchar: false,
+        struct_db: "",
+        enum_db: "",
+        enum_payload_db: "",
+    }
+}
+
+// Look up enum's payload LL type. Returns "" if payload-free.
+fn enum_payload_ty(db: &string, name: &string): string {
+    var i: i64 = 0
+    let nlen = name.len
+    while i + nlen < db.len {
+        var matches: bool = true
+        if db[i + nlen] != 61 { matches = false }
+        if matches {
+            var j: i64 = 0
+            while j < nlen {
+                if db[i + j] != name[j] { matches = false }
+                j = j + 1
+            }
+        }
+        if matches {
+            let start = i + nlen + 1
+            var k: i64 = start
+            while k < db.len && db[k] != 59 { k = k + 1 }
+            return db[start..k]
+        }
+        i = i + 1
+    }
+    return "".clone()
+}
+
+// Look up comma-separated payload types for `enum_name.variant`. Returns "" if none.
+fn variant_payload_ty(db: &string, enum_name: &string, variant: &string): string {
+    var i: i64 = 0
+    let enlen = enum_name.len
+    while i + enlen < db.len {
+        var match_e: bool = true
+        if db[i + enlen] != 33 { match_e = false }
+        if match_e {
+            var j: i64 = 0
+            while j < enlen {
+                if db[i + j] != enum_name[j] { match_e = false }
+                j = j + 1
+            }
+        }
+        if match_e {
+            var k: i64 = i + enlen + 1
+            while k < db.len && db[k] != 59 {
+                let vstart = k
+                while k < db.len && db[k] != 61 { k = k + 1 }
+                let vname = db[vstart..k]
+                if k < db.len { k = k + 1 }
+                while k < db.len && db[k] != 58 && db[k] != 38 && db[k] != 59 { k = k + 1 }
+                if k < db.len && db[k] == 58 {
+                    k = k + 1
+                    let pstart = k
+                    while k < db.len && db[k] != 38 && db[k] != 59 { k = k + 1 }
+                    if vname == variant { return db[pstart..k] }
+                } else {
+                    if vname == variant { return "".clone() }
+                }
+                if k < db.len && db[k] == 38 { k = k + 1 }
+            }
+            return "".clone()
+        }
+        i = i + 1
+    }
+    return "".clone()
+}
+
+// Walk comma-separated types, return Nth one. Returns "" if out of range.
+fn payload_ty_nth(types: &string, n: i64): string {
+    var idx: i64 = 0
+    var i: i64 = 0
+    while i < types.len {
+        let start = i
+        while i < types.len && types[i] != 44 { i = i + 1 }
+        if idx == n { return types[start..i] }
+        if i < types.len { i = i + 1 }
+        idx = idx + 1
+    }
+    return "".clone()
+}
+
+fn payload_ty_count(types: &string): i64 {
+    if types.len == 0 { return 0 }
+    var n: i64 = 1
+    var i: i64 = 0
+    while i < types.len {
+        if types[i] == 44 { n = n + 1 }
+        i = i + 1
+    }
+    return n
+}
+
+// Look up variant tag for `enum_name.variant`. Returns -1 if not found.
+// Handles entries `Variant=tag:type` or `Variant=tag` (no payload).
+fn db_find_variant_tag(db: &string, enum_name: &string, variant: &string): i32 {
+    var i: i64 = 0
+    let enlen = enum_name.len
+    while i + enlen < db.len {
+        var match_e: bool = true
+        if db[i + enlen] != 33 { match_e = false }
+        if match_e {
+            var j: i64 = 0
+            while j < enlen {
+                if db[i + j] != enum_name[j] { match_e = false }
+                j = j + 1
+            }
+        }
+        if match_e {
+            var k: i64 = i + enlen + 1
+            while k < db.len && db[k] != 59 {
+                let vstart = k
+                while k < db.len && db[k] != 61 { k = k + 1 }
+                let vname = db[vstart..k]
+                if k < db.len { k = k + 1 }
+                let tstart = k
+                while k < db.len && db[k] != 58 && db[k] != 38 && db[k] != 59 { k = k + 1 }
+                if vname == variant {
+                    let tstr = db[tstart..k]
+                    return parse_i32_from(tstr)
+                }
+                // Skip payload spec if present
+                if k < db.len && db[k] == 58 {
+                    k = k + 1
+                    while k < db.len && db[k] != 38 && db[k] != 59 { k = k + 1 }
+                }
+                if k < db.len && db[k] == 38 { k = k + 1 }
+            }
+            return -1
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn parse_i32_from(s: string): i32 {
+    var n: i32 = 0
+    var i: i64 = 0
+    while i < s.len {
+        n = n * 10 + (s[i] as i32) - 48
+        i = i + 1
+    }
+    return n
+}
+
+// Find return type for fn `name`. Returns "" if not registered.
+fn find_fn_ret(db: &string, name: &string): string {
+    var i: i64 = 0
+    let nlen = name.len
+    while i + nlen < db.len {
+        var matches: bool = true
+        if db[i + nlen] != 124 { matches = false }
+        if matches {
+            var j: i64 = 0
+            while j < nlen {
+                if db[i + j] != name[j] { matches = false }
+                j = j + 1
+            }
+        }
+        if matches {
+            let start = i + nlen + 1
+            var k: i64 = start
+            while k < db.len && db[k] != 59 { k = k + 1 }
+            return db[start..k]
+        }
+        i = i + 1
+    }
+    return "".clone()
+}
+
+// ── Struct table helpers ──
+
+// Find the "f1:t1|f2:t2|..." segment for a given struct name. Returns "" if not found.
+fn db_lookup_fields(db: &string, name: &string): string {
+    var i: i64 = 0
+    let nlen = name.len
+    while i + nlen < db.len {
+        // Check if db[i..i+nlen] == name followed by '|'
+        var matches: bool = true
+        if db[i + nlen] != 124 { matches = false }
+        if matches {
+            var j: i64 = 0
+            while j < nlen {
+                if db[i + j] != name[j] { matches = false }
+                j = j + 1
+            }
+        }
+        if matches {
+            let start = i + nlen + 1
+            var k: i64 = start
+            while k < db.len && db[k] != 59 { k = k + 1 }
+            return db[start..k]
+        }
+        i = i + 1
+    }
+    return "".clone()
+}
+
+// Within "f1:t1|f2:t2|..." find field name → 0-based index. Returns -1 if missing.
+fn fields_find_index(fields: &string, fname: &string): i64 {
+    var idx: i64 = 0
+    var i: i64 = 0
+    while i < fields.len {
+        let start = i
+        while i < fields.len && fields[i] != 58 { i = i + 1 }
+        let candidate = fields[start..i]
+        if candidate == fname { return idx }
+        while i < fields.len && fields[i] != 124 { i = i + 1 }
+        if i < fields.len { i = i + 1 }
+        idx = idx + 1
+    }
+    return -1 as i64
+}
+
+// Return the type string for field at `target_idx`.
+fn fields_find_type(fields: &string, target_idx: i64): string {
+    var idx: i64 = 0
+    var i: i64 = 0
+    while i < fields.len {
+        while i < fields.len && fields[i] != 58 { i = i + 1 }
+        if i < fields.len { i = i + 1 }
+        let start = i
+        while i < fields.len && fields[i] != 124 { i = i + 1 }
+        if idx == target_idx { return fields[start..i] }
+        if i < fields.len { i = i + 1 }
+        idx = idx + 1
+    }
+    return "".clone()
+}
+
+fn cgen_find_ret(cg: &Cgen, name: &string): string {
+    let raw = find_fn_ret(cg.fn_ret_db.clone(), name)
+    if raw.len == 0 { return "i32".clone() }
+    return raw
+}
+
+fn next_temp(cg: &mut Cgen): string {
+    let n = cg.temp
+    cg.temp = cg.temp + 1
+    return "%t" + n.to_string()
+}
+
+fn next_label(cg: &mut Cgen, base: string): string {
+    let n = cg.label
+    cg.label = cg.label + 1
+    return base + n.to_string()
+}
+
+fn emit(cg: &mut Cgen, s: &string): void {
+    cg.body = cg.body + s
+}
+
+fn emit_g(cg: &mut Cgen, s: &string): void {
+    cg.globals = cg.globals + s
+}
+
+// ── String literal handling ──
+// Emit a global constant for a Milo string literal. Returns the @.strN label.
+// Handles escape sequences \n \t \r \\ \" \0.
+fn emit_string_lit(cg: &mut Cgen, raw: &string): string {
+    let id = cg.str_id
+    cg.str_id = cg.str_id + 1
+    let label = "@.str" + id.to_string()
+    var encoded: string = ""
+    var byte_count: i64 = 0
+    var i: i64 = 0
+    while i < raw.len {
+        let c = raw[i]
+        if c == 92 && i + 1 < raw.len { // '\\'
+            let n = raw[i + 1]
+            var actual: u8 = 0
+            if n == 110 { actual = 10 }      // \n
+            else if n == 116 { actual = 9 }  // \t
+            else if n == 114 { actual = 13 } // \r
+            else if n == 48 { actual = 0 }   // \0
+            else if n == 92 { actual = 92 }
+            else if n == 34 { actual = 34 }
+            else { actual = n }
+            encoded = encoded + "\\" + hex2(actual)
+            i = i + 2
+        } else if c < 32 || c == 34 || c == 92 || c >= 127 {
+            encoded = encoded + "\\" + hex2(c)
+            i = i + 1
+        } else {
+            encoded.push(c)
+            i = i + 1
+        }
+        byte_count = byte_count + 1
+    }
+    encoded = encoded + "\\00" // null terminator
+    let total = byte_count + 1
+    emit_g(cg, label + " = private unnamed_addr constant [" + total.to_string() + " x i8] c\"" + encoded + "\"\n")
+    return label
+}
+
+fn hex2(b: u8): string {
+    let hi = b >> 4
+    let lo = b & 15
+    var s: string = ""
+    s.push(hex_digit(hi))
+    s.push(hex_digit(lo))
+    return s
+}
+
+fn hex_digit(n: u8): u8 {
+    if n < 10 { return n + 48 }
+    return n - 10 + 65 // 'A'
+}
+
+// ── Function table for type lookup ──
+
+struct FnSig {
+    name: string,
+    ret_ty: string,
+    param_tys: Vec<string>,
+    is_variadic: bool,
+}
+
+fn build_fn_table(prog: &Program): Vec<FnSig> {
+    var sigs: Vec<FnSig> = Vec.new()
+    var i: i64 = 0
+    while i < prog.fns.len {
+        let f = prog.fns[i]
+        var pts: Vec<string> = Vec.new()
+        var j: i64 = 0
+        while j < f.params.len {
+            pts.push(f.params[j].ty)
+            j = j + 1
+        }
+        sigs.push(FnSig { name: f.name, ret_ty: f.ret_ty, param_tys: pts, is_variadic: f.is_variadic })
+        i = i + 1
+    }
+    return sigs
+}
+
+fn lookup_fn(sigs: &Vec<FnSig>, name: &string): i64 {
+    var i: i64 = 0
+    while i < sigs.len {
+        if sigs[i].name == name { return i }
+        i = i + 1
+    }
+    return -1 as i64
+}
+
+// ── Local symbol table ──
+
+struct Local {
+    name: string,
+    ty: string,
+    addr: string,
+}
+
+fn locals_new(): Vec<Local> {
+    var v: Vec<Local> = Vec.new()
+    return v
+}
+
+// Returns the matched Local by value. Vec<needs-drop> indexing zeros the matched slot
+// (wide-zero is on), so on a hit the caller owns the strings. Lookup-then-second-lookup
+// for the same name will miss — milo0 never needs that pattern: a single Ident or Assign
+// invocation does one lookup, and the returned Local feeds emit() directly.
+fn locals_take(locs: &Vec<Local>, name: &string): Local {
+    var i: i64 = locs.len - 1
+    while i >= 0 {
+        // Borrow read: locs[i].name is a FieldAccess on an IndexAccess in expression
+        // position. The IndexAccess is NOT in a move-position so checker leaves the
+        // slot intact. Matching, we clone each field into a fresh Local so caller's
+        // ownership is independent of the Vec's storage.
+        if locs[i].name == name {
+            return Local {
+                name: locs[i].name.clone(),
+                ty: locs[i].ty.clone(),
+                addr: locs[i].addr.clone(),
+            }
+        }
+        i = i - 1
+    }
+    return Local { name: "".clone(), ty: "".clone(), addr: "".clone() }
+}
+
+// ── Expression codegen ──
+// Returns (ssa_value, llvm_type).
+
+struct Val {
+    v: string,
+    ty: string,
+}
+
+fn gen_int_const(n: i64, ty: string): Val {
+    return Val { v: n.to_string(), ty: ty }
+}
+
+fn gen_bool_const(b: bool): Val {
+    if b { return Val { v: "1", ty: "i1" } }
+    return Val { v: "0", ty: "i1" }
+}
+
+fn gen_load(cg: &mut Cgen, addr: &string, ty: &string): Val {
+    let t = next_temp(cg)
+    emit(cg, "  " + t + " = load " + ty + ", ptr " + addr + "\n")
+    return Val { v: t, ty: ty.clone() }
+}
+
+fn bin_op_int(op: TokKind, unsigned: bool): string {
+    if op == TokKind.Plus { return "add" }
+    if op == TokKind.Minus { return "sub" }
+    if op == TokKind.Star { return "mul" }
+    if op == TokKind.Slash {
+        if unsigned { return "udiv" } else { return "sdiv" }
+    }
+    if op == TokKind.Percent {
+        if unsigned { return "urem" } else { return "srem" }
+    }
+    if op == TokKind.Amp { return "and" }
+    if op == TokKind.Pipe { return "or" }
+    if op == TokKind.Caret { return "xor" }
+    return ""
+}
+
+fn cmp_op_int(op: TokKind, unsigned: bool): string {
+    if op == TokKind.EqEq { return "eq" }
+    if op == TokKind.NotEq { return "ne" }
+    if op == TokKind.Lt {
+        if unsigned { return "ult" } else { return "slt" }
+    }
+    if op == TokKind.Gt {
+        if unsigned { return "ugt" } else { return "sgt" }
+    }
+    if op == TokKind.LtEq {
+        if unsigned { return "ule" } else { return "sle" }
+    }
+    if op == TokKind.GtEq {
+        if unsigned { return "uge" } else { return "sge" }
+    }
+    return ""
+}
+
+fn is_arith(op: TokKind): bool {
+    if op == TokKind.Plus { return true }
+    if op == TokKind.Minus { return true }
+    if op == TokKind.Star { return true }
+    if op == TokKind.Slash { return true }
+    if op == TokKind.Percent { return true }
+    if op == TokKind.Amp { return true }
+    if op == TokKind.Pipe { return true }
+    if op == TokKind.Caret { return true }
+    return false
+}
+
+fn is_cmp(op: TokKind): bool {
+    return op == TokKind.EqEq || op == TokKind.NotEq || op == TokKind.Lt || op == TokKind.Gt || op == TokKind.LtEq || op == TokKind.GtEq
+}
+
+fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hint_ty: string): Val {
+    match *e {
+        Expr.IntLit(n) => {
+            var ty: string = hint_ty
+            if ty.len == 0 { ty = "i64" }
+            return gen_int_const(n, ll_type(ty))
+        }
+        Expr.BoolLit(b) => { return gen_bool_const(b) }
+        Expr.StrLit(s) => {
+            let label = emit_string_lit(cg, s)
+            return Val { v: label, ty: "ptr" }
+        }
+        Expr.Ident(name) => {
+            let local = locals_take(locs, name)
+            if local.addr.len == 0 {
+                return Val { v: "0".clone(), ty: "i64".clone() }
+            }
+            let lt = ll_type(local.ty)
+            return gen_load(cg, local.addr, lt)
+        }
+        Expr.Unary(op, inner) => {
+            let v = gen_expr(cg, inner, locs, sigs, hint_ty)
+            let t = next_temp(cg)
+            if op == TokKind.Minus {
+                emit(cg, "  " + t + " = sub " + v.ty + " 0, " + v.v + "\n")
+                return Val { v: t, ty: v.ty }
+            }
+            if op == TokKind.Bang {
+                emit(cg, "  " + t + " = xor i1 " + v.v + ", 1\n")
+                return Val { v: t, ty: "i1" }
+            }
+            return v
+        }
+        Expr.Binary(op, l, r) => {
+            // Pre-clone every read of lv/rv fields. Milo strings move on each use, and the
+            // codegen-text emit + the returned Val both need lv.ty etc, so we materialize
+            // independent string copies up front.
+            let lv = gen_expr(cg, l, locs, sigs, hint_ty)
+            let lv_ty_a = lv.ty.clone()
+            let lv_ty_b = lv.ty.clone()
+            let lv_ty_c = lv.ty.clone()
+            let lv_ty_d = lv.ty.clone()
+            let lv_v = lv.v.clone()
+            let rv = gen_expr(cg, r, locs, sigs, lv_ty_a)
+            let rv_v = rv.v.clone()
+            let t_id = cg.temp
+            cg.temp = cg.temp + 1
+            let t_emit = "%t" + t_id.to_string()
+            let t_ret = "%t" + t_id.to_string()
+            let unsigned_b = is_unsigned(lv_ty_b)
+            if is_arith(op) {
+                let opname = bin_op_int(op, unsigned_b)
+                emit(cg, "  " + t_emit + " = " + opname + " " + lv_ty_c + " " + lv_v + ", " + rv_v + "\n")
+                return Val { v: t_ret, ty: lv_ty_d }
+            }
+            if is_cmp(op) {
+                let opname = cmp_op_int(op, unsigned_b)
+                emit(cg, "  " + t_emit + " = icmp " + opname + " " + lv_ty_c + " " + lv_v + ", " + rv_v + "\n")
+                return Val { v: t_ret, ty: "i1".clone() }
+            }
+            if op == TokKind.AmpAmp {
+                emit(cg, "  " + t_emit + " = and i1 " + lv_v + ", " + rv_v + "\n")
+                return Val { v: t_ret, ty: "i1".clone() }
+            }
+            if op == TokKind.PipePipe {
+                emit(cg, "  " + t_emit + " = or i1 " + lv_v + ", " + rv_v + "\n")
+                return Val { v: t_ret, ty: "i1".clone() }
+            }
+            return Val { v: "0".clone(), ty: "i64".clone() }
+        }
+        Expr.Call(name, args) => {
+            // Stage-0: skip sigs table lookup (Vec<FnSig> indexing aliases owned strings
+            // and double-frees on scope exit). Hardcode i32 return; recognize variadic
+            // externs by name.
+            var arg_vals: Vec<Val> = Vec.new()
+            var i: i64 = 0
+            while i < args.len {
+                let a = args[i]
+                let av = gen_expr(cg, a, locs, sigs, "")
+                arg_vals.push(av)
+                i = i + 1
+            }
+            var arg_str: string = ""
+            var ai: i64 = 0
+            while ai < arg_vals.len {
+                if ai > 0 { arg_str = arg_str + ", " }
+                // Cache loaded element — Vec index zeros the slot for needs-drop element types,
+                // so a second `arg_vals[ai].field` access would see an empty Val.
+                let elem = arg_vals[ai]
+                arg_str = arg_str + elem.ty + " " + elem.v
+                ai = ai + 1
+            }
+            let ret_raw = cgen_find_ret(cg, name)
+            let ret_ll_for_sig = ll_type(ret_raw)
+            let ret_ll_for_val = ll_type(ret_raw)
+            var sig_str: string = ret_ll_for_sig
+            // Builtins: rewrite print/println as printf (println adds trailing \n via putchar)
+            let is_print = name == "print"
+            let is_println = name == "println"
+            var emit_name = name.clone()
+            if is_print || is_println {
+                emit_name = "printf".clone()
+                sig_str = "i32 (ptr, ...)"
+                if !cg.declared_printf {
+                    emit_g(cg, "declare i32 @printf(ptr, ...)\n")
+                    cg.declared_printf = true
+                }
+                if is_println && !cg.declared_putchar {
+                    emit_g(cg, "declare i32 @putchar(i32)\n")
+                    cg.declared_putchar = true
+                }
+            }
+            if name == "printf" || name == "fprintf" || name == "snprintf" {
+                sig_str = "i32 (ptr, ...)"
+            }
+            let t_id = cg.temp
+            cg.temp = cg.temp + 1
+            emit(cg, "  %t" + t_id.to_string() + " = call " + sig_str + " @" + emit_name + "(" + arg_str + ")\n")
+            if is_println {
+                let t_nl = cg.temp
+                cg.temp = cg.temp + 1
+                emit(cg, "  %t" + t_nl.to_string() + " = call i32 @putchar(i32 10)\n")
+            }
+            return Val { v: "%t" + t_id.to_string(), ty: ret_ll_for_val }
+        }
+        Expr.StructLit(name, fields) => {
+            return gen_struct_lit(cg, name, fields, locs, sigs)
+        }
+        Expr.FieldAccess(object, field) => {
+            return gen_field_access(cg, object, field, locs)
+        }
+        Expr.EnumLit(enum_name, variant, args) => {
+            return gen_enum_lit(cg, enum_name, variant, args, locs, sigs)
+        }
+        Expr.As(inner, target_ty) => {
+            return gen_as_cast(cg, inner, target_ty, locs, sigs)
+        }
+    }
+}
+
+// ── Statement codegen ──
+// Returns true if the statement always terminates the current block (e.g. return).
+
+fn gen_assign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>): void {
+    match *target {
+        Expr.Ident(name) => {
+            let local = locals_take(locs, name)
+            if local.addr.len == 0 { return }
+            let v = gen_expr(cg, value, locs, sigs, local.ty.clone())
+            emit(cg, "  store " + v.ty + " " + v.v + ", ptr " + local.addr + "\n")
+        }
+        Expr.FieldAccess(object, field) => {
+            let lv = gen_lvalue(cg, object, locs)
+            var raw_name: string = lv.ty.clone()
+            if raw_name.len > 0 && raw_name[0] == 37 {
+                let stripped = raw_name[1..raw_name.len]
+                raw_name = stripped
+            }
+            let fields_enc = db_lookup_fields(cg.struct_db.clone(), raw_name)
+            let idx = fields_find_index(fields_enc.clone(), field)
+            let fty = fields_find_type(fields_enc, idx)
+            let fty_ll = ll_type(fty.clone())
+            let struct_ty = "%" + raw_name
+            let fp_id = cg.temp
+            cg.temp = cg.temp + 1
+            let fp = "%t" + fp_id.to_string()
+            emit(cg, "  " + fp + " = getelementptr " + struct_ty + ", ptr " + lv.v + ", i32 0, i32 " + idx.to_string() + "\n")
+            let v = gen_expr(cg, value, locs, sigs, fty_ll.clone())
+            emit(cg, "  store " + v.ty + " " + v.v + ", ptr " + fp + "\n")
+        }
+        Expr.IntLit(n) => { return }
+        Expr.StrLit(s) => { return }
+        Expr.BoolLit(b) => { return }
+        Expr.Binary(op, l, r) => { return }
+        Expr.Unary(op, x) => { return }
+        Expr.Call(name, args) => { return }
+        Expr.StructLit(name, fields) => { return }
+        Expr.EnumLit(en, vn, args) => { return }
+        Expr.As(inner, ty) => { return }
+    }
+}
+
+fn int_bits(ll: &string): i64 {
+    if ll == "i1" { return 1 }
+    if ll == "i8" { return 8 }
+    if ll == "i16" { return 16 }
+    if ll == "i32" { return 32 }
+    if ll == "i64" { return 64 }
+    if ll == "ptr" { return 64 }
+    return 0
+}
+
+fn gen_as_cast(cg: &mut Cgen, inner: Box<Expr>, target_ty: string, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let v = gen_expr(cg, inner, locs, sigs, "")
+    let from_ll = v.ty.clone()
+    let to_ll = ll_type(target_ty.clone())
+    if from_ll == to_ll { return v }
+    let from_bits = int_bits(from_ll.clone())
+    let to_bits = int_bits(to_ll.clone())
+    if from_bits == 0 || to_bits == 0 {
+        return Val { v: v.v, ty: to_ll }
+    }
+    let t_id = cg.temp
+    cg.temp = cg.temp + 1
+    let t = "%t" + t_id.to_string()
+    if to_bits < from_bits {
+        emit(cg, "  " + t + " = trunc " + from_ll + " " + v.v + " to " + to_ll.clone() + "\n")
+    } else if to_bits > from_bits {
+        var op: string = "sext"
+        if from_ll.len > 0 && from_ll[0] == 117 { op = "zext".clone() }
+        emit(cg, "  " + t + " = " + op + " " + from_ll + " " + v.v + " to " + to_ll.clone() + "\n")
+    } else {
+        emit(cg, "  " + t + " = bitcast " + from_ll + " " + v.v + " to " + to_ll.clone() + "\n")
+    }
+    return Val { v: t, ty: to_ll }
+}
+
+// Build enum value: store tag, optionally store payload, load aggregate.
+fn gen_enum_lit(cg: &mut Cgen, enum_name: string, variant: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let tag = db_find_variant_tag(cg.enum_db.clone(), enum_name.clone(), variant.clone())
+    let struct_ty = "%" + enum_name.clone()
+    let alloc_id = cg.temp
+    cg.temp = cg.temp + 1
+    let alloc_tmp = "%t" + alloc_id.to_string()
+    emit(cg, "  " + alloc_tmp + " = alloca " + struct_ty + "\n")
+    let tag_id = cg.temp
+    cg.temp = cg.temp + 1
+    let tag_ptr = "%t" + tag_id.to_string()
+    emit(cg, "  " + tag_ptr + " = getelementptr " + struct_ty + ", ptr " + alloc_tmp + ", i32 0, i32 0\n")
+    emit(cg, "  store i32 " + tag.to_string() + ", ptr " + tag_ptr + "\n")
+    // Payload (stage-0: single-field max)
+    let pay_ll = enum_payload_ty(cg.enum_payload_db.clone(), enum_name.clone())
+    if pay_ll.len > 0 && args.len > 0 {
+        let v_pay = variant_payload_ty(cg.enum_db.clone(), enum_name.clone(), variant.clone())
+        let v_pay_ll = ll_type(v_pay)
+        let pay_ptr_id = cg.temp
+        cg.temp = cg.temp + 1
+        let pay_ptr = "%t" + pay_ptr_id.to_string()
+        emit(cg, "  " + pay_ptr + " = getelementptr " + struct_ty + ", ptr " + alloc_tmp + ", i32 0, i32 1\n")
+        let fv = gen_expr(cg, args[0], locs, sigs, v_pay_ll.clone())
+        emit(cg, "  store " + v_pay_ll + " " + fv.v + ", ptr " + pay_ptr + "\n")
+    }
+    let load_id = cg.temp
+    cg.temp = cg.temp + 1
+    let loaded = "%t" + load_id.to_string()
+    emit(cg, "  " + loaded + " = load " + struct_ty + ", ptr " + alloc_tmp + "\n")
+    return Val { v: loaded, ty: struct_ty }
+}
+
+fn gen_match(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, ret_ty: string): bool {
+    let subj_lv = gen_lvalue(cg, subject, locs)
+    var raw_name: string = subj_lv.ty.clone()
+    if raw_name.len > 0 && raw_name[0] == 37 {
+        let stripped = raw_name[1..raw_name.len]
+        raw_name = stripped
+    }
+    let struct_ty = "%" + raw_name.clone()
+    let tag_ptr_id = cg.temp
+    cg.temp = cg.temp + 1
+    let tag_ptr = "%t" + tag_ptr_id.to_string()
+    emit(cg, "  " + tag_ptr + " = getelementptr " + struct_ty + ", ptr " + subj_lv.v + ", i32 0, i32 0\n")
+    let tag_id = cg.temp
+    cg.temp = cg.temp + 1
+    let tag = "%t" + tag_id.to_string()
+    emit(cg, "  " + tag + " = load i32, ptr " + tag_ptr + "\n")
+    let pay_ll = enum_payload_ty(cg.enum_payload_db.clone(), raw_name.clone())
+    let end_lbl = next_label(cg, "match.end")
+    var i: i64 = 0
+    var switch_cases: string = ""
+    var arm_labels: Vec<string> = Vec.new()
+    while i < arms.len {
+        let arm_lbl = next_label(cg, "match.arm")
+        let tg = db_find_variant_tag(cg.enum_db.clone(), arms[i].enum_name.clone(), arms[i].variant_name.clone())
+        switch_cases = switch_cases + "i32 " + tg.to_string() + ", label %" + arm_lbl.clone() + " "
+        arm_labels.push(arm_lbl)
+        i = i + 1
+    }
+    let default_lbl = next_label(cg, "match.default")
+    emit(cg, "  switch i32 " + tag + ", label %" + default_lbl.clone() + " [" + switch_cases + "]\n")
+    var ai: i64 = 0
+    var all_terminated: bool = true
+    while ai < arms.len {
+        emit(cg, arm_labels[ai].clone() + ":\n")
+        let arm = arms[ai]
+        let locs_pre_len = locs.len
+        // Bind payload if present
+        if arm.bindings.len > 0 && pay_ll.len > 0 {
+            let bind_name = arm.bindings[0].clone()
+            let v_pay = variant_payload_ty(cg.enum_db.clone(), arm.enum_name.clone(), arm.variant_name.clone())
+            let v_pay_ll = ll_type(v_pay)
+            let pay_ptr_id = cg.temp
+            cg.temp = cg.temp + 1
+            let pay_ptr = "%t" + pay_ptr_id.to_string()
+            emit(cg, "  " + pay_ptr + " = getelementptr " + struct_ty.clone() + ", ptr " + subj_lv.v.clone() + ", i32 0, i32 1\n")
+            let load_id = cg.temp
+            cg.temp = cg.temp + 1
+            let loaded = "%t" + load_id.to_string()
+            emit(cg, "  " + loaded + " = load " + v_pay_ll.clone() + ", ptr " + pay_ptr + "\n")
+            let addr_id = cg.temp
+            cg.temp = cg.temp + 1
+            let bind_addr = "%v" + addr_id.to_string()
+            emit(cg, "  " + bind_addr + " = alloca " + v_pay_ll.clone() + "\n")
+            emit(cg, "  store " + v_pay_ll.clone() + " " + loaded + ", ptr " + bind_addr.clone() + "\n")
+            locs.push(Local { name: bind_name, ty: v_pay_ll, addr: bind_addr })
+        }
+        var arm_term: bool = false
+        var si: i64 = 0
+        while si < arm.body.len {
+            let t = gen_stmt(cg, arm.body[si], locs, sigs, ret_ty.clone())
+            if t { arm_term = true }
+            si = si + 1
+        }
+        // Pop bindings added for this arm
+        while locs.len > locs_pre_len { locs.pop() }
+        if !arm_term {
+            emit(cg, "  br label %" + end_lbl.clone() + "\n")
+            all_terminated = false
+        }
+        ai = ai + 1
+    }
+    emit(cg, default_lbl + ":\n")
+    emit(cg, "  unreachable\n")
+    emit(cg, end_lbl + ":\n")
+    if all_terminated && arms.len > 0 { emit(cg, "  unreachable\n") }
+    return all_terminated && arms.len > 0
+}
+
+fn gen_struct_lit(cg: &mut Cgen, name: string, fields: Vec<ExprField>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let struct_ty = "%" + name.clone()
+    let alloc_id = cg.temp
+    cg.temp = cg.temp + 1
+    let alloc_tmp = "%t" + alloc_id.to_string()
+    emit(cg, "  " + alloc_tmp + " = alloca " + struct_ty + "\n")
+    let db_fields = db_lookup_fields(cg.struct_db.clone(), name)
+    var fi: i64 = 0
+    while fi < fields.len {
+        let ef = fields[fi]
+        let idx = fields_find_index(db_fields.clone(), ef.name)
+        let fty = fields_find_type(db_fields.clone(), idx)
+        let fv = gen_expr(cg, ef.value, locs, sigs, fty.clone())
+        let fp_id = cg.temp
+        cg.temp = cg.temp + 1
+        let fp = "%t" + fp_id.to_string()
+        emit(cg, "  " + fp + " = getelementptr " + struct_ty + ", ptr " + alloc_tmp + ", i32 0, i32 " + idx.to_string() + "\n")
+        emit(cg, "  store " + fv.ty + " " + fv.v + ", ptr " + fp + "\n")
+        fi = fi + 1
+    }
+    let load_id = cg.temp
+    cg.temp = cg.temp + 1
+    let loaded = "%t" + load_id.to_string()
+    emit(cg, "  " + loaded + " = load " + struct_ty + ", ptr " + alloc_tmp + "\n")
+    return Val { v: loaded, ty: struct_ty }
+}
+
+fn gen_field_access(cg: &mut Cgen, object: Box<Expr>, field: string, locs: &Vec<Local>): Val {
+    let lv = gen_lvalue(cg, object, locs)
+    var raw_name: string = lv.ty.clone()
+    if raw_name.len > 0 && raw_name[0] == 37 {
+        let stripped = raw_name[1..raw_name.len]
+        raw_name = stripped
+    }
+    let fields_enc = db_lookup_fields(cg.struct_db.clone(), raw_name)
+    let idx = fields_find_index(fields_enc.clone(), field)
+    let fty = fields_find_type(fields_enc, idx)
+    let fty_ll = ll_type(fty.clone())
+    let struct_ty = "%" + raw_name
+    let fp_id = cg.temp
+    cg.temp = cg.temp + 1
+    let fp = "%t" + fp_id.to_string()
+    emit(cg, "  " + fp + " = getelementptr " + struct_ty + ", ptr " + lv.v + ", i32 0, i32 " + idx.to_string() + "\n")
+    let load_id = cg.temp
+    cg.temp = cg.temp + 1
+    let loaded = "%t" + load_id.to_string()
+    emit(cg, "  " + loaded + " = load " + fty_ll.clone() + ", ptr " + fp + "\n")
+    return Val { v: loaded, ty: fty_ll }
+}
+
+// Get the lvalue address of an expression — currently only Ident is supported.
+// Returns Val { v: alloca-ptr-name, ty: ll-type-of-pointee }. On miss returns "0"/"i64".
+fn gen_lvalue(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>): Val {
+    match *e {
+        Expr.Ident(name) => {
+            let local = locals_take(locs, name)
+            if local.addr.len == 0 {
+                return Val { v: "0".clone(), ty: "i64".clone() }
+            }
+            return Val { v: local.addr, ty: local.ty }
+        }
+        Expr.IntLit(n) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.StrLit(s) => { return Val { v: "0".clone(), ty: "ptr".clone() } }
+        Expr.BoolLit(b) => { return Val { v: "0".clone(), ty: "i1".clone() } }
+        Expr.Binary(op, l, r) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.Unary(op, x) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.Call(name, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.StructLit(name, fields) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.FieldAccess(object, field) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.EnumLit(en, vn, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.As(inner, ty) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+    }
+}
+
+fn gen_break(cg: &mut Cgen): void {
+    let bl = cg.cur_break_lbl.clone()
+    if bl.len > 0 {
+        emit(cg, "  br label %" + bl + "\n")
+        let after = next_label(cg, "after_break")
+        emit(cg, after + ":\n")
+    }
+}
+
+fn gen_continue(cg: &mut Cgen): void {
+    let cl = cg.cur_cont_lbl.clone()
+    if cl.len > 0 {
+        emit(cg, "  br label %" + cl + "\n")
+        let after = next_label(cg, "after_cont")
+        emit(cg, after + ":\n")
+    }
+}
+
+fn gen_while(cg: &mut Cgen, cond: Box<Expr>, body: Vec<Box<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, ret_ty: string): void {
+    let cond_lbl = next_label(cg, "wcond")
+    let body_lbl = next_label(cg, "wbody")
+    let end_lbl = next_label(cg, "wend")
+    // Save outer loop labels so nested loops restore on exit.
+    let saved_break = cg.cur_break_lbl.clone()
+    let saved_cont = cg.cur_cont_lbl.clone()
+    cg.cur_break_lbl = end_lbl.clone()
+    cg.cur_cont_lbl = cond_lbl.clone()
+    emit(cg, "  br label %" + cond_lbl + "\n")
+    emit(cg, cond_lbl + ":\n")
+    let cv = gen_expr(cg, cond, locs, sigs, "bool")
+    emit(cg, "  br i1 " + cv.v + ", label %" + body_lbl + ", label %" + end_lbl + "\n")
+    emit(cg, body_lbl + ":\n")
+    var body_term: bool = false
+    var bi: i64 = 0
+    while bi < body.len {
+        let t = gen_stmt(cg, body[bi], locs, sigs, ret_ty.clone())
+        if t { body_term = true }
+        bi = bi + 1
+    }
+    if !body_term { emit(cg, "  br label %" + cond_lbl + "\n") }
+    emit(cg, end_lbl + ":\n")
+    cg.cur_break_lbl = saved_break
+    cg.cur_cont_lbl = saved_cont
+}
+
+fn gen_stmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, ret_ty: string): bool {
+    match *s {
+        Stmt.Let(name, ty, value) => {
+            let v = gen_expr(cg, value, locs, sigs, ty.clone())
+            let addr = "%" + name.clone() + "_addr_" + cg.temp.to_string()
+            cg.temp = cg.temp + 1
+            let vty = v.ty
+            let vv = v.v
+            emit(cg, "  " + addr.clone() + " = alloca " + vty.clone() + "\n")
+            emit(cg, "  store " + vty.clone() + " " + vv + ", ptr " + addr.clone() + "\n")
+            var rty: string = ""
+            if ty.len == 0 { rty = vty.clone() } else { rty = ty.clone() }
+            locs.push(Local { name: name, ty: rty, addr: addr })
+            return false
+        }
+        Stmt.Var(name, ty, value) => {
+            // Note: parser currently lowers `var` to Stmt.Let, so this arm is dead code.
+            // Kept for symmetry; mirror Let arm verbatim if the parser changes.
+            let v = gen_expr(cg, value, locs, sigs, ty.clone())
+            let addr = "%" + name.clone() + "_addr_" + cg.temp.to_string()
+            cg.temp = cg.temp + 1
+            let vty = v.ty
+            let vv = v.v
+            emit(cg, "  " + addr.clone() + " = alloca " + vty.clone() + "\n")
+            emit(cg, "  store " + vty.clone() + " " + vv + ", ptr " + addr.clone() + "\n")
+            var rty: string = ""
+            if ty.len == 0 { rty = vty.clone() } else { rty = ty.clone() }
+            locs.push(Local { name: name, ty: rty, addr: addr })
+            return false
+        }
+        Stmt.Assign(target, value) => {
+            gen_assign(cg, target, value, locs, sigs)
+            return false
+        }
+        Stmt.Return(value) => {
+            let v = gen_expr(cg, value, locs, sigs, ret_ty.clone())
+            // Insert a trunc when the computed expression type doesn't match the fn's
+            // declared return type — common case: i64 math returned from `fn main(): i32`.
+            let fn_ret_a = ll_type(ret_ty)
+            let fn_ret_b = fn_ret_a.clone()
+            let fn_ret_c = fn_ret_a.clone()
+            let val_ty = v.ty.clone()
+            if val_ty == fn_ret_a {
+                emit(cg, "  ret " + v.ty + " " + v.v + "\n")
+            } else {
+                let t_id = cg.temp
+                cg.temp = cg.temp + 1
+                let cast = "%t" + t_id.to_string()
+                let cast2 = "%t" + t_id.to_string()
+                emit(cg, "  " + cast + " = trunc " + v.ty + " " + v.v + " to " + fn_ret_b + "\n")
+                emit(cg, "  ret " + fn_ret_c + " " + cast2 + "\n")
+            }
+            return true
+        }
+        Stmt.ReturnVoid => {
+            emit(cg, "  ret void\n")
+            return true
+        }
+        Stmt.ExprStmt(e) => {
+            let _ = gen_expr(cg, e, locs, sigs, "")
+            return false
+        }
+        Stmt.If(cond, then_body, else_body) => {
+            let cv = gen_expr(cg, cond, locs, sigs, "bool")
+            let then_lbl = next_label(cg, "then")
+            let else_lbl = next_label(cg, "else")
+            let end_lbl = next_label(cg, "endif")
+            emit(cg, "  br i1 " + cv.v + ", label %" + then_lbl + ", label %" + else_lbl + "\n")
+            emit(cg, then_lbl + ":\n")
+            var then_term: bool = false
+            var ti: i64 = 0
+            while ti < then_body.len {
+                let t = gen_stmt(cg, then_body[ti], locs, sigs, ret_ty.clone())
+                if t { then_term = true }
+                ti = ti + 1
+            }
+            if !then_term { emit(cg, "  br label %" + end_lbl + "\n") }
+            emit(cg, else_lbl + ":\n")
+            var else_term: bool = false
+            var ei: i64 = 0
+            while ei < else_body.len {
+                let t = gen_stmt(cg, else_body[ei], locs, sigs, ret_ty.clone())
+                if t { else_term = true }
+                ei = ei + 1
+            }
+            if !else_term { emit(cg, "  br label %" + end_lbl + "\n") }
+            emit(cg, end_lbl + ":\n")
+            if then_term && else_term { emit(cg, "  unreachable\n") }
+            return then_term && else_term
+        }
+        Stmt.While(cond, body) => {
+            gen_while(cg, cond, body, locs, sigs, ret_ty)
+            return false
+        }
+        Stmt.Break => {
+            gen_break(cg)
+            return false
+        }
+        Stmt.Continue => {
+            gen_continue(cg)
+            return false
+        }
+        Stmt.Match(subject, arms) => {
+            return gen_match(cg, subject, arms, locs, sigs, ret_ty)
+        }
+    }
+}
+
+// ── Function codegen ──
+
+fn gen_fn(cg: &mut Cgen, f: FnDecl, sigs: &Vec<FnSig>): void {
+    if f.is_extern {
+        var ps: string = ""
+        var i: i64 = 0
+        while i < f.params.len {
+            if i > 0 { ps = ps + ", " }
+            ps = ps + ll_type(f.params[i].ty)
+            i = i + 1
+        }
+        if f.is_variadic {
+            if f.params.len > 0 { ps = ps + ", " }
+            ps = ps + "..."
+        }
+        emit_g(cg, "declare " + ll_type(f.ret_ty) + " @" + f.name + "(" + ps + ")\n")
+        return
+    }
+
+    cg.temp = 0
+    cg.label = 0
+    var locs: Vec<Local> = Vec.new()
+
+    var hdr: string = "define " + ll_type(f.ret_ty) + " @" + f.name + "("
+    var pi: i64 = 0
+    while pi < f.params.len {
+        if pi > 0 { hdr = hdr + ", " }
+        hdr = hdr + ll_type(f.params[pi].ty) + " %" + f.params[pi].name
+        pi = pi + 1
+    }
+    hdr = hdr + ") {\n"
+    emit(cg, hdr)
+    emit(cg, "entry:\n")
+
+    // Spill each parameter to an alloca so loads/stores compose with the rest of codegen.
+    var pj: i64 = 0
+    while pj < f.params.len {
+        let p = f.params[pj]
+        let llt = ll_type(p.ty)
+        let addr = "%" + p.name + "_addr"
+        emit(cg, "  " + addr + " = alloca " + llt + "\n")
+        emit(cg, "  store " + llt + " %" + p.name + ", ptr " + addr + "\n")
+        locs.push(Local { name: p.name, ty: p.ty, addr: addr })
+        pj = pj + 1
+    }
+
+    var terminated: bool = false
+    var si: i64 = 0
+    while si < f.body.len {
+        let t = gen_stmt(cg, f.body[si], locs, sigs, f.ret_ty.clone())
+        if t { terminated = true }
+        si = si + 1
+    }
+    if !terminated {
+        if ll_type(f.ret_ty) == "void" {
+            emit(cg, "  ret void\n")
+        } else {
+            emit(cg, "  ret " + ll_type(f.ret_ty) + " 0\n")
+        }
+    }
+    emit(cg, "}\n\n")
+}
+
+fn gen_program(cg: &mut Cgen, prog: Program): void {
+    // Pre-pass: collect fn name → ret_ty so calls can pick the right return type.
+    var i: i64 = 0
+    while i < prog.fns.len {
+        cg.fn_ret_db = cg.fn_ret_db + prog.fns[i].name.clone() + "|" + prog.fns[i].ret_ty.clone() + ";"
+        i = i + 1
+    }
+    // Pre-pass: register enums. Compute payload LL type (single i64-or-narrower field
+    // supported in stage-0). Emit %Name = type { i32 } or { i32, payload_ty } depending.
+    var ei: i64 = 0
+    while ei < prog.enums.len {
+        let e = prog.enums[ei]
+        var entry: string = e.name.clone() + "!"
+        var pay_ll: string = ""
+        var vi: i64 = 0
+        while vi < e.variants.len {
+            if vi > 0 { entry = entry + "&" }
+            let v = e.variants[vi]
+            entry = entry + v.name.clone() + "=" + vi.to_string()
+            if v.payload_types.len > 0 {
+                let p_ty = v.payload_types[0].clone()
+                entry = entry + ":" + p_ty.clone()
+                let p_ll = ll_type(p_ty.clone())
+                if pay_ll.len == 0 { pay_ll = p_ll.clone() }
+            }
+            vi = vi + 1
+        }
+        entry = entry + ";"
+        cg.enum_db = cg.enum_db + entry
+        cg.enum_payload_db = cg.enum_payload_db + e.name.clone() + "=" + pay_ll.clone() + ";"
+        if pay_ll.len > 0 {
+            emit_g(cg, "%" + e.name + " = type { i32, " + pay_ll + " }\n")
+        } else {
+            emit_g(cg, "%" + e.name + " = type { i32 }\n")
+        }
+        ei = ei + 1
+    }
+    // Pre-pass: register struct decls + emit %Name = type {...} for each.
+    var si: i64 = 0
+    while si < prog.structs.len {
+        let s = prog.structs[si]
+        // Build LLVM "{ ll1, ll2, ... }" + db entry "Name|f1:t1|f2:t2"
+        var ll_struct: string = "{ "
+        var db_entry: string = s.name.clone() + "|"
+        var fi: i64 = 0
+        while fi < s.fields.len {
+            let f = s.fields[fi]
+            if fi > 0 {
+                ll_struct = ll_struct + ", "
+                db_entry = db_entry + "|"
+            }
+            ll_struct = ll_struct + ll_type(f.ty)
+            db_entry = db_entry + f.name + ":" + f.ty
+            fi = fi + 1
+        }
+        ll_struct = ll_struct + " }"
+        db_entry = db_entry + ";"
+        emit_g(cg, "%" + s.name + " = type " + ll_struct + "\n")
+        cg.struct_db = cg.struct_db + db_entry
+        si = si + 1
+    }
+    let sigs = build_fn_table(prog)
+    var j: i64 = 0
+    while j < prog.fns.len {
+        gen_fn(cg, prog.fns[j], sigs)
+        j = j + 1
+    }
+}

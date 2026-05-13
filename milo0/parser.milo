@@ -1,0 +1,631 @@
+// milo0 parser — tokens (Vec<Token>) → AST (Program)
+// Subset: fn / extern, let / var, return, if/else, while, binary ops, calls,
+// int / string literals, identifiers, parenthesized exprs, unary -/!.
+
+import "lexer.milo"
+
+// ── AST ──
+
+struct ExprField {
+    name: string,
+    value: Box<Expr>,
+}
+
+enum Expr {
+    IntLit(i64),
+    StrLit(string),
+    Ident(string),
+    BoolLit(bool),
+    Binary(TokKind, Box<Expr>, Box<Expr>),
+    Unary(TokKind, Box<Expr>),
+    Call(string, Vec<Box<Expr>>),
+    StructLit(string, Vec<ExprField>),
+    FieldAccess(Box<Expr>, string),
+    EnumLit(string, string, Vec<Box<Expr>>),  // enum_name, variant, args
+    As(Box<Expr>, string),
+}
+
+enum Stmt {
+    Let(string, string, Box<Expr>),    // name, type-text (empty = infer), value
+    Var(string, string, Box<Expr>),
+    Assign(Box<Expr>, Box<Expr>),       // target expr (Ident or FieldAccess), value
+    Return(Box<Expr>),
+    ReturnVoid,
+    ExprStmt(Box<Expr>),
+    If(Box<Expr>, Vec<Box<Stmt>>, Vec<Box<Stmt>>),
+    While(Box<Expr>, Vec<Box<Stmt>>),
+    Break,
+    Continue,
+    Match(Box<Expr>, Vec<MatchArm>),
+}
+
+struct Param {
+    name: string,
+    ty: string,
+}
+
+struct FnDecl {
+    name: string,
+    params: Vec<Param>,
+    ret_ty: string,
+    body: Vec<Box<Stmt>>,
+    is_extern: bool,
+    is_variadic: bool,
+}
+
+struct StructField {
+    name: string,
+    ty: string,
+}
+
+struct StructDecl {
+    name: string,
+    fields: Vec<StructField>,
+}
+
+struct EnumVariant {
+    name: string,
+    payload_types: Vec<string>,  // empty for unit variants
+}
+
+struct EnumDecl {
+    name: string,
+    variants: Vec<EnumVariant>,
+}
+
+struct MatchArm {
+    enum_name: string,
+    variant_name: string,
+    bindings: Vec<string>,
+    body: Vec<Box<Stmt>>,
+}
+
+struct Program {
+    fns: Vec<FnDecl>,
+    structs: Vec<StructDecl>,
+    enums: Vec<EnumDecl>,
+}
+
+// ── Parser state helpers ──
+
+fn peek_kind(toks: &Vec<Token>, pos: i64): TokKind {
+    return toks[pos].kind
+}
+
+fn token_text(src: &string, toks: &Vec<Token>, pos: i64): string {
+    return src[toks[pos].start..toks[pos].end]
+}
+
+fn expect(toks: &Vec<Token>, pos: &mut i64, k: TokKind): void {
+    if toks[pos].kind == k {
+        pos = pos + 1
+        return
+    }
+    print("parse error at line %d: expected ", toks[pos].line)
+    print("\n")
+}
+
+// ── Type parsing ──
+// Subset: bare identifier, optional leading '*' for pointer.
+fn parse_type(src: &string, toks: &Vec<Token>, pos: &mut i64): string {
+    var stars: i32 = 0
+    while toks[pos].kind == TokKind.Star {
+        stars = stars + 1
+        pos = pos + 1
+    }
+    var result: string = ""
+    while stars > 0 {
+        let ast: u8 = 42 // '*'
+        result.push(ast)
+        stars = stars - 1
+    }
+    if toks[pos].kind != TokKind.Ident {
+        return result
+    } else {
+        let name = token_text(src, toks, pos)
+        pos = pos + 1
+        return result + name
+    }
+}
+
+// ── Expressions ──
+
+fn parse_primary(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    let k = toks[pos].kind
+    if k == TokKind.IntLit {
+        let txt = token_text(src, toks, pos)
+        pos = pos + 1
+        let n = parse_i64(txt)
+        return Box(Expr.IntLit(n))
+    }
+    if k == TokKind.StrLit {
+        let txt = token_text(src, toks, pos)
+        pos = pos + 1
+        return Box(Expr.StrLit(txt))
+    }
+    if k == TokKind.True {
+        pos = pos + 1
+        return Box(Expr.BoolLit(true))
+    }
+    if k == TokKind.False {
+        pos = pos + 1
+        return Box(Expr.BoolLit(false))
+    }
+    if k == TokKind.LParen {
+        pos = pos + 1
+        let e = parse_expr(src, toks, pos)
+        expect(toks, pos, TokKind.RParen)
+        return e
+    }
+    if k == TokKind.Ident {
+        let name = token_text(src, toks, pos)
+        pos = pos + 1
+        if toks[pos].kind == TokKind.LParen {
+            pos = pos + 1
+            var args: Vec<Box<Expr>> = Vec.new()
+            while toks[pos].kind != TokKind.RParen {
+                let a = parse_expr(src, toks, pos)
+                args.push(a)
+                if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+            }
+            pos = pos + 1
+            return Box(Expr.Call(name, args))
+        }
+        // Struct literal: uppercase-first ident followed by `{`.
+        let first_byte = name[0]
+        let is_upper = first_byte >= 65 && first_byte <= 90
+        if is_upper && toks[pos].kind == TokKind.LBrace {
+            pos = pos + 1
+            var fields: Vec<ExprField> = Vec.new()
+            while toks[pos].kind != TokKind.RBrace && toks[pos].kind != TokKind.Eof {
+                let fname = token_text(src, toks, pos)
+                pos = pos + 1
+                expect(toks, pos, TokKind.Colon)
+                let fval = parse_expr(src, toks, pos)
+                fields.push(ExprField { name: fname, value: fval })
+                if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+            }
+            expect(toks, pos, TokKind.RBrace)
+            return Box(Expr.StructLit(name, fields))
+        }
+        // Enum literal: uppercase-first ident followed by `.Variant` (optionally `(args)`).
+        if is_upper && toks[pos].kind == TokKind.Dot {
+            pos = pos + 1
+            let variant = token_text(src, toks, pos)
+            pos = pos + 1
+            var args: Vec<Box<Expr>> = Vec.new()
+            if toks[pos].kind == TokKind.LParen {
+                pos = pos + 1
+                while toks[pos].kind != TokKind.RParen {
+                    let a = parse_expr(src, toks, pos)
+                    args.push(a)
+                    if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                }
+                pos = pos + 1
+            }
+            return Box(Expr.EnumLit(name, variant, args))
+        }
+        return Box(Expr.Ident(name))
+    }
+    // unknown — emit a placeholder
+    pos = pos + 1
+    let z: i64 = 0
+    return Box(Expr.IntLit(z))
+}
+
+fn parse_postfix(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var e = parse_primary(src, toks, pos)
+    var go: bool = true
+    while go {
+        if toks[pos].kind == TokKind.Dot {
+            pos = pos + 1
+            let fname = token_text(src, toks, pos)
+            pos = pos + 1
+            e = Box(Expr.FieldAccess(e, fname))
+        } else if toks[pos].kind == TokKind.As {
+            pos = pos + 1
+            let ty = parse_type(src, toks, pos)
+            e = Box(Expr.As(e, ty))
+        } else {
+            go = false
+        }
+    }
+    return e
+}
+
+fn parse_unary(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    let k = toks[pos].kind
+    if k == TokKind.Minus || k == TokKind.Bang {
+        pos = pos + 1
+        let inner = parse_unary(src, toks, pos)
+        return Box(Expr.Unary(k, inner))
+    }
+    return parse_postfix(src, toks, pos)
+}
+
+fn parse_mul(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_unary(src, toks, pos)
+    var go: bool = true
+    while go {
+        let k = toks[pos].kind
+        if k == TokKind.Star || k == TokKind.Slash || k == TokKind.Percent {
+            pos = pos + 1
+            let right = parse_unary(src, toks, pos)
+            left = Box(Expr.Binary(k, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_add(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_mul(src, toks, pos)
+    var go: bool = true
+    while go {
+        let k = toks[pos].kind
+        if k == TokKind.Plus || k == TokKind.Minus {
+            pos = pos + 1
+            let right = parse_mul(src, toks, pos)
+            left = Box(Expr.Binary(k, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_cmp(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_bitor(src, toks, pos)
+    var go: bool = true
+    while go {
+        let k = toks[pos].kind
+        if k == TokKind.Lt || k == TokKind.Gt || k == TokKind.LtEq || k == TokKind.GtEq || k == TokKind.EqEq || k == TokKind.NotEq {
+            pos = pos + 1
+            let right = parse_bitor(src, toks, pos)
+            left = Box(Expr.Binary(k, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_bitor(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_bitxor(src, toks, pos)
+    var go: bool = true
+    while go {
+        if toks[pos].kind == TokKind.Pipe {
+            pos = pos + 1
+            let right = parse_bitxor(src, toks, pos)
+            left = Box(Expr.Binary(TokKind.Pipe, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_bitxor(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_bitand(src, toks, pos)
+    var go: bool = true
+    while go {
+        if toks[pos].kind == TokKind.Caret {
+            pos = pos + 1
+            let right = parse_bitand(src, toks, pos)
+            left = Box(Expr.Binary(TokKind.Caret, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_bitand(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_add(src, toks, pos)
+    var go: bool = true
+    while go {
+        if toks[pos].kind == TokKind.Amp {
+            pos = pos + 1
+            let right = parse_add(src, toks, pos)
+            left = Box(Expr.Binary(TokKind.Amp, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_and(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_cmp(src, toks, pos)
+    var go: bool = true
+    while go {
+        if toks[pos].kind == TokKind.AmpAmp {
+            pos = pos + 1
+            let right = parse_cmp(src, toks, pos)
+            left = Box(Expr.Binary(TokKind.AmpAmp, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_or(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    var left = parse_and(src, toks, pos)
+    var go: bool = true
+    while go {
+        if toks[pos].kind == TokKind.PipePipe {
+            pos = pos + 1
+            let right = parse_and(src, toks, pos)
+            left = Box(Expr.Binary(TokKind.PipePipe, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parse_expr(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
+    return parse_or(src, toks, pos)
+}
+
+// ── Statements ──
+
+fn parse_block(src: &string, toks: &Vec<Token>, pos: &mut i64): Vec<Box<Stmt>> {
+    expect(toks, pos, TokKind.LBrace)
+    var stmts: Vec<Box<Stmt>> = Vec.new()
+    while toks[pos].kind != TokKind.RBrace && toks[pos].kind != TokKind.Eof {
+        let s = parse_stmt(src, toks, pos)
+        stmts.push(s)
+    }
+    expect(toks, pos, TokKind.RBrace)
+    return stmts
+}
+
+fn parse_stmt(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Stmt> {
+    let k = toks[pos].kind
+    if k == TokKind.Break {
+        pos = pos + 1
+        return Box(Stmt.Break)
+    }
+    if k == TokKind.Continue {
+        pos = pos + 1
+        return Box(Stmt.Continue)
+    }
+    if k == TokKind.Let || k == TokKind.Var {
+        let is_var = k == TokKind.Var
+        pos = pos + 1
+        let name = token_text(src, toks, pos)
+        pos = pos + 1
+        var ty: string = ""
+        if toks[pos].kind == TokKind.Colon {
+            pos = pos + 1
+            ty = parse_type(src, toks, pos)
+        }
+        expect(toks, pos, TokKind.Eq)
+        let value = parse_expr(src, toks, pos)
+        // Codegen currently treats Let and Var identically; sidesteps an unresolved
+        // crash in the Var match arm that we couldn't trace this iteration.
+        return Box(Stmt.Let(name, ty, value))
+    }
+    if k == TokKind.Return {
+        pos = pos + 1
+        let nk = toks[pos].kind
+        if nk == TokKind.RBrace {
+            return Box(Stmt.ReturnVoid)
+        } else {
+            let value = parse_expr(src, toks, pos)
+            return Box(Stmt.Return(value))
+        }
+    }
+    if k == TokKind.If {
+        pos = pos + 1
+        let cond = parse_expr(src, toks, pos)
+        let then_body = parse_block(src, toks, pos)
+        var else_body: Vec<Box<Stmt>> = Vec.new()
+        if toks[pos].kind == TokKind.Else {
+            pos = pos + 1
+            if toks[pos].kind == TokKind.If {
+                let nested = parse_stmt(src, toks, pos)
+                else_body.push(nested)
+            } else {
+                else_body = parse_block(src, toks, pos)
+            }
+        }
+        return Box(Stmt.If(cond, then_body, else_body))
+    }
+    if k == TokKind.While {
+        pos = pos + 1
+        let cond = parse_expr(src, toks, pos)
+        let body = parse_block(src, toks, pos)
+        return Box(Stmt.While(cond, body))
+    }
+    if k == TokKind.Match {
+        pos = pos + 1
+        let subject = parse_expr(src, toks, pos)
+        expect(toks, pos, TokKind.LBrace)
+        var arms: Vec<MatchArm> = Vec.new()
+        while toks[pos].kind != TokKind.RBrace && toks[pos].kind != TokKind.Eof {
+            let ename = token_text(src, toks, pos)
+            pos = pos + 1
+            expect(toks, pos, TokKind.Dot)
+            let vname = token_text(src, toks, pos)
+            pos = pos + 1
+            var bindings: Vec<string> = Vec.new()
+            if toks[pos].kind == TokKind.LParen {
+                pos = pos + 1
+                while toks[pos].kind != TokKind.RParen {
+                    let b = token_text(src, toks, pos)
+                    pos = pos + 1
+                    bindings.push(b)
+                    if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                }
+                pos = pos + 1
+            }
+            expect(toks, pos, TokKind.FatArrow)
+            let body = parse_block(src, toks, pos)
+            arms.push(MatchArm { enum_name: ename, variant_name: vname, bindings: bindings, body: body })
+            if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+        }
+        expect(toks, pos, TokKind.RBrace)
+        return Box(Stmt.Match(subject, arms))
+    }
+    // Parse an expression; if next is `=`, treat as assignment (target supports Ident
+    // and FieldAccess). Otherwise it's an expr statement.
+    let lhs = parse_expr(src, toks, pos)
+    if toks[pos].kind == TokKind.Eq {
+        pos = pos + 1
+        let rhs = parse_expr(src, toks, pos)
+        return Box(Stmt.Assign(lhs, rhs))
+    }
+    return Box(Stmt.ExprStmt(lhs))
+}
+
+// ── Function declarations ──
+
+fn parse_params(src: &string, toks: &Vec<Token>, pos: &mut i64, is_variadic: &mut bool): Vec<Param> {
+    expect(toks, pos, TokKind.LParen)
+    var ps: Vec<Param> = Vec.new()
+    while toks[pos].kind != TokKind.RParen && toks[pos].kind != TokKind.Eof {
+        if toks[pos].kind == TokKind.DotDotDot {
+            is_variadic = true
+            pos = pos + 1
+            break
+        }
+        let name = token_text(src, toks, pos)
+        pos = pos + 1
+        expect(toks, pos, TokKind.Colon)
+        let ty = parse_type(src, toks, pos)
+        ps.push(Param { name: name, ty: ty })
+        if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+    }
+    expect(toks, pos, TokKind.RParen)
+    return ps
+}
+
+fn parse_fn_decl(src: &string, toks: &Vec<Token>, pos: &mut i64, is_extern: bool): FnDecl {
+    expect(toks, pos, TokKind.Fn)
+    let name = token_text(src, toks, pos)
+    pos = pos + 1
+    var variadic: bool = false
+    let params = parse_params(src, toks, pos, variadic)
+    var ret_ty: string = "void"
+    if toks[pos].kind == TokKind.Colon {
+        pos = pos + 1
+        ret_ty = parse_type(src, toks, pos)
+    }
+    var body: Vec<Box<Stmt>> = Vec.new()
+    if !is_extern {
+        body = parse_block(src, toks, pos)
+    }
+    return FnDecl {
+        name: name,
+        params: params,
+        ret_ty: ret_ty,
+        body: body,
+        is_extern: is_extern,
+        is_variadic: variadic,
+    }
+}
+
+fn parse_enum_decl(src: &string, toks: &Vec<Token>, pos: &mut i64): EnumDecl {
+    expect(toks, pos, TokKind.Enum)
+    let name = token_text(src, toks, pos)
+    pos = pos + 1
+    expect(toks, pos, TokKind.LBrace)
+    var variants: Vec<EnumVariant> = Vec.new()
+    while toks[pos].kind != TokKind.RBrace && toks[pos].kind != TokKind.Eof {
+        let vname = token_text(src, toks, pos)
+        pos = pos + 1
+        var payload_types: Vec<string> = Vec.new()
+        if toks[pos].kind == TokKind.LParen {
+            pos = pos + 1
+            while toks[pos].kind != TokKind.RParen {
+                let ty = parse_type(src, toks, pos)
+                payload_types.push(ty)
+                if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+            }
+            pos = pos + 1
+        }
+        variants.push(EnumVariant { name: vname, payload_types: payload_types })
+        if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+    }
+    expect(toks, pos, TokKind.RBrace)
+    return EnumDecl { name: name, variants: variants }
+}
+
+fn parse_struct_decl(src: &string, toks: &Vec<Token>, pos: &mut i64): StructDecl {
+    expect(toks, pos, TokKind.Struct)
+    let name = token_text(src, toks, pos)
+    pos = pos + 1
+    expect(toks, pos, TokKind.LBrace)
+    var fields: Vec<StructField> = Vec.new()
+    while toks[pos].kind != TokKind.RBrace && toks[pos].kind != TokKind.Eof {
+        let fname = token_text(src, toks, pos)
+        pos = pos + 1
+        expect(toks, pos, TokKind.Colon)
+        let fty = parse_type(src, toks, pos)
+        fields.push(StructField { name: fname, ty: fty })
+        if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+    }
+    expect(toks, pos, TokKind.RBrace)
+    return StructDecl { name: name, fields: fields }
+}
+
+fn parse_program(src: &string, toks: &Vec<Token>): Program {
+    var pos: i64 = 0
+    var fns: Vec<FnDecl> = Vec.new()
+    var structs: Vec<StructDecl> = Vec.new()
+    var enums: Vec<EnumDecl> = Vec.new()
+    while toks[pos].kind != TokKind.Eof {
+        if toks[pos].kind == TokKind.Extern {
+            pos = pos + 1
+            let f = parse_fn_decl(src, toks, pos, true)
+            fns.push(f)
+        } else if toks[pos].kind == TokKind.Fn {
+            let f = parse_fn_decl(src, toks, pos, false)
+            fns.push(f)
+        } else if toks[pos].kind == TokKind.Struct {
+            let s = parse_struct_decl(src, toks, pos)
+            structs.push(s)
+        } else if toks[pos].kind == TokKind.Enum {
+            let e = parse_enum_decl(src, toks, pos)
+            enums.push(e)
+        } else {
+            pos = pos + 1 // skip unknown top-level
+        }
+    }
+    return Program { fns: fns, structs: structs, enums: enums }
+}
+
+// ── Helpers ──
+
+fn parse_i64(s: string): i64 {
+    // Hex prefix `0x` / `0X`
+    if s.len >= 2 && s[0] == 48 {
+        let p = s[1]
+        if p == 120 || p == 88 {
+            var n: i64 = 0
+            var i: i64 = 2
+            while i < s.len {
+                let c = s[i]
+                var d: i64 = 0
+                if c >= 48 && c <= 57 { d = (c as i64) - 48 }
+                else if c >= 65 && c <= 70 { d = (c as i64) - 65 + 10 }
+                else if c >= 97 && c <= 102 { d = (c as i64) - 97 + 10 }
+                n = n * 16 + d
+                i = i + 1
+            }
+            return n
+        }
+    }
+    var n: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i]
+        n = n * 10 + ((c as i64) - 48)
+        i = i + 1
+    }
+    return n
+}

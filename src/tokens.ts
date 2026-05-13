@@ -58,10 +58,13 @@ export enum TokenKind {
   LtEq = "<=",
   GtEq = ">=",
   Bang = "!",
+  DotDot = "..",
   DotDotDot = "...",
   Question = "?",
   QuestionQuestion = "??",
   Pipe = "|",
+  Caret = "^",
+  Tilde = "~",
   At = "@",
   Eof = "EOF",
 }

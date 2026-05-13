@@ -55,6 +55,7 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 
 ## Phase 3 — Self-Hosting
 
+Done:
 - [x] HIR — typed intermediate representation (every expr carries TypeKind)
 - [x] Closures — non-escaping, arrow syntax `(x: i32) => x * 2`, by-reference captures, fn type params
 - [x] Drop semantics — compiler emits free on scope exit for heap-owned values (String)
@@ -63,13 +64,142 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 - [x] Vec\<T\> — dynamic array with push/pop/len, bounds-checked indexing, drop glue
 - [x] HashMap\<K, V\> — open addressing, FNV-1a + seeded hash, insert/get/contains/remove/len, drop glue
 - [x] Traits Phase 1 — trait decls, impl blocks, inherent methods, generic bounds, supertraits, @derive(Eq), Self type, monomorphized static dispatch
+- [x] String `substr(start, end)`, `parse_f64` builtins
+- [x] String `push(u8)`, concat, byte index, len, eq
+- [x] String slice sugar `s[a..b]` (desugars to `substr`)
+- [x] Enum equality `==` / `!=` for payload-free variants (codegen compares tag)
+- [x] Bitwise operators `& | ^ << >> ~` with C-style precedence
+- [x] Hex (`0xFF`) and binary (`0b1010`) integer literals; `_` digit separator
+- [x] `.to_string()` for integer and float types (via snprintf)
+
+### Phase 3.0 — Stage-0 Bootstrap (current focus)
+
+Goal: a self-hosted Milo compiler (`milo0`) capable of compiling a useful subset of Milo, written entirely in Milo. Proves the loop end-to-end before tackling the full port.
+
+Subset (Milo-0):
+- Primitive numeric types: `i32`, `i64`
+- `fn` decls, `extern fn` decls (variadic)
+- `let` / `var` with explicit or inferred types
+- `return`, `if`/`else`, `while`
+- Binary ops: `+`, `-`, `*`, `/`, `%`, `<`, `>`, `<=`, `>=`, `==`, `!=`
+- Function calls (incl. recursion + variadic externs)
+- Integer + string literals
+- Skips: structs, enums, generics, traits, move checking, closures, imports — proven by full TS compiler; bootstrap covers them in later stages.
+
+Design:
+- Stage-0 reads source from stdin, writes IR to stdout — sidesteps argv (currently `main` takes no params, and the `MiloType` flat `isPtr` cannot express `**u8`)
+- Wrapper script `milo0-wrap.sh` bridges filename → stdin and stdout → clang
+
+Bootstrap pieces (in `milo0/`):
+- [x] `lexer.milo` — char stream → Vec\<Token\> (40+ token kinds, line comments, keyword table)
+- [x] `parser.milo` — tokens → AST (Box-recursive enums for Expr/Stmt; FnDecl/Program/Param structs; full precedence ladder including `||` `&&` cmp add mul unary call primary)
+- [ ] `codegen.milo` — AST → LLVM IR text (no checker; trust input)
+- [ ] `main.milo` — stdin → lex → parse → codegen → stdout, wrapper script for clang invocation
+
+Compiler fixes unlocked while building `milo0/`:
+- [x] `[T; N]` → `*T` auto-decay for FFI calls (was forcing manual extern signatures with array refs)
+- [x] Zero-init droppable allocas at function entry — fixes UB where drop-glue ran over uninitialized branch-local strings/vecs/boxes when the declaring branch wasn't taken
+- [x] Emit `unreachable` terminator after if/else when both arms return — LLVM was rejecting empty merge blocks with no terminator
+- [x] Match arms tracked as mutually exclusive in the move checker (no more spurious "moved in earlier arm" when both arms return)
+- [x] If-without-else with `return` in then-body no longer propagates branch moves past the if
+- [x] Match codegen: skip `br label %end` after an arm that already terminated; emit `unreachable` on the merge block if all arms terminated
+- [x] Payload-free enums are Copy — `let k1 = k; let k2 = k` works without explicit clones
+- [x] `string.clone()` — explicit deep copy so codegen-style code that needs the same string twice has an escape hatch from move semantics
+- [x] `Vec<Box<T>>` index no longer double-frees: when the element type is `Box`, the slot is zeroed after load (Box drop is null-safe)
+
+Still blocking full stage-0 self-host:
+- [x] Vec index of needs-drop element type now zeros the source slot universally (not just Box). Drop chains stay null-safe.
+- [x] Match-binding zeros the source payload field for needs-drop variants, so the subject's later drop doesn't double-free.
+- [x] Match codegen uses the source's storage directly (Box deref ptr / Ident alloca) so the binding-zero step actually touches the backing memory.
+- [x] Root cause of the `binop(call(), call())` crash: every read of `lv.ty` from a returned `Val { v, ty }` produces a new heap aliased with the previous one; the second read sees freed memory. Workaround in `milo0`: `.clone()` each field access before consuming. Documented as the move-on-field-read limitation.
+- [x] Stage-0 milestone passed: `milo0` compiles `examples/fib.milo` end-to-end (Milo source → milo0 → LLVM IR → clang → native binary). Output `fib(10) = 55`. Also handles `(call() + call())` patterns via the trunc-on-return path for fn main.
+- [x] Workaround for the while-arm crash: extract body of `Stmt.While` arm into a separate `gen_while` function in milo0/codegen.milo. The extracted function isolates the drop chain, sidestepping the cross-arm aliasing that crashed in Hour-4. Symptom + fix both confirm the bug lives in the interaction between many fn-scope droppable locals and the arm-scope let-bindings; the precise mechanism still uncharacterized but the refactor is a clean dodge.
+- [x] Compiler fix Hour-4: re-enabled BoxDeref-subject source-direct match codegen, gated to `match *ident` form. The earlier disabling caused double-frees when arm bindings (e.g. body Vec) AND the source's drop chain both freed the same heap. Source-direct + extractBindings zero-out severs ownership cleanly.
+
+### Stage-0 self-host coverage as of Hour-6
+
+`milo0` (Milo compiler written in Milo) self-compiles and produces correct native binaries for:
+- `fn main(): i32 { return N }` and `let x = N; return x`
+- Recursive fns: `fib`, `factorial`, `gcd`, `pow`, recursive FizzBuzz
+- Multi-call expressions: `add(1,2) + add(3,4)`
+- Trunc-on-return when expr type widens fn return (e.g. i64 math returning to `main() -> i32`)
+- `while` with `assign` (after the gen_while extraction)
+- `if`/`else if`/`else` chains
+- `extern fn printf(fmt: *u8, ...): i32` and variadic calls with string-literal first arg
+- String-literal `*u8` arguments to externs (`Hello, %s!\n` style)
+- `is_prime`-style nested while + if (15 primes under 50, verified)
+- Iterative fib via while (matches recursive fib results; fib(30) = 832040)
+- Collatz trip length via while
+- `break` and `continue` (each extracted to its own helper fn to dodge the arm-scope drop interaction)
+- Bitwise `& | ^` on integers; hex literals `0xFF` etc.
+- `putchar`, `printf("done\n")` from same program
+- Polynomial evaluation (Horner)
+- **`examples/fib.milo` unmodified** — milo0 auto-rewrites `print` to printf; `fib(42) = 267914296`
+- **`examples/fizzbuzz.milo` unmodified** — milo0 maps `println(s)` to printf(s) + putchar(10)
+- **`examples/hello.milo` unmodified** — `extern fn puts(...)` honored
+
+Verification:
+- [x] `milo0` compiles `examples/fib.milo` and produces correct runtime output (fib(42) = 267914296)
+- [x] `milo0` compiles `examples/fizzbuzz.milo` and produces correct runtime output (1..20 with dots, Fizz, Buzz, FizzBuzz)
+- [x] `milo0` compiles `examples/hello.milo` and produces "Hello, Milo!"
+
+### Stage-1 progress — structs
+
+- [x] **Structs end-to-end in milo0**: decl, literal, field access, struct args, struct returns.
+  - Struct table stored as one big string (`Name|f1:t1|f2:t2;`) walked manually — dodges Vec/HashMap aliasing.
+  - `Point { x: 3, y: 4 }` constructs OK; `p.x` reads OK.
+  - `fn dist_sq(a: Point, b: Point): i32` correctly computes 25 for (3,4)→(6,8).
+  - Struct-state fib (`struct FibPair { a: i64, b: i64 }`) returns 0,1,1,2,3,5,8,13,21,34,55.
+- [x] **Compiler fix: IndexAccess move-tracking.** Checker marks `v[i]` as moved only when the result is consumed (let-bind, return, fn arg, etc.). Codegen zeros the Vec slot on move, leaves it intact on borrow. Unblocks lookup-style code that re-reads the same Vec across calls.
+- [x] **Compiler-adjacent: fn-ret table as single-string DB in Cgen.** Same delimited-string trick the struct table uses. Lets struct return types round-trip correctly through the milo0 fn-call codegen.
+
+- [x] **Field assignment** `p.field = expr`. Stmt.Assign generalized to take target expression (Ident or FieldAccess); parser uses parse_expr then checks for `=`; codegen dispatches on target shape. Mutating counter loop works:
+  ```
+  var c = Counter { value: 0, max: 5 }
+  while c.value < c.max { printf("%d\n", c.value); c.value = c.value + 1 }
+  // → 0 1 2 3 4
+  ```
+
+### Stage-1 progress — enums + match
+
+- [x] **Payload-free enums + match in milo0.** Lexer: enum/match/FatArrow. Parser: enum decl, EnumLit (uppercase `Name.Variant(args)`), match stmt with arms. Codegen: %Name = type { i32 } per enum, EnumLit alloca+tag+load, match emits `switch i32 %tag, label %default [...]` + per-arm body blocks. Enum table stored as `Name!Variant=tag&Variant=tag;` in single Cgen string. Tested:
+  ```
+  enum Color { Red, Green, Blue }
+  fn name(c: Color): i32 {
+      match c { Color.Red => {...} Color.Green => {...} Color.Blue => {...} }
+  }
+  // → Red, Green, Blue
+  ```
+  Also `enum Op { Add, Sub, Mul, Div }` with arithmetic dispatch (correct).
+
+- [x] **Enum payloads + match binding in milo0.** Single-field payloads (i32/i64/i8/u8/ptr/bool). Layout `%Name = type { i32 tag, payloadTy }`. EnumLit stores tag + optional payload. Match arms extract via GEP, load, alloca binding, push to locs (pop at arm exit). Tested:
+  ```
+  enum Maybe { Some(i64), None }
+  show(Maybe.Some(42))   // → Some(42)
+  show(Maybe.None)       // → None
+  ```
+  And `enum Result { Ok(i64), Err(i32) }` with divide() that returns Err on zero — correct.
+
+- [x] **`as` cast codegen in milo0.** trunc when narrowing, sext/zext when widening (zext if source is u-prefixed), bitcast for same-size. Tested `1234567890123 as i32 = 1912276171` (matches host).
+- [x] **Combined struct + enum payload + cast test.** Mini tokenizer that returns `Token.Num(i64)/Plus/Minus` from a char code, with `as i64` widening — produces correct output.
+
+Still missing for full milo0-on-milo0:
+- [ ] Multi-field enum payloads (e.g. `Binary(TokKind, Box<Expr>, Box<Expr>)`).
+- [ ] Generics, Box, Vec, HashMap, closures, String type with methods.
+
+### Phase 3.5 — Beyond Stage-0
+
 - [ ] Traits Phase 1.5 — operator overloading via traits (Add/Sub/Mul/Div), migrate built-in methods to trait impls, @derive(Hash, Clone)
-- [ ] String slices — substring views, split, find
+- [ ] String slices — substring views, split, find, starts_with
+- [ ] `to_string` / format / int+float → string conversions
+- [ ] Stdlib `io` module — file read/write, stderr, args
 - [ ] MIR — lower-level IR for optimization passes
 - [ ] Arena system designed based on real needs from self-hosting
-- [ ] Write the compiler in Milo itself
+- [ ] Port type checker to Milo
+- [ ] Port HIR + lower to Milo
+- [ ] Port full codegen (enums, generics, traits, Box, Vec, HashMap) to Milo
 
-Milestone: Compiler compiles itself
+Milestone: Compiler compiles itself, bit-identical (or equivalent) IR for the full Milo source set.
 
 ## Phase 4 — Ecosystem
 

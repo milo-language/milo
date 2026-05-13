@@ -289,7 +289,7 @@ class LowerCtx {
       case "ArrayRepeat":
         return { kind: "ArrayRepeat", value: this.lowerExpr(expr.value), count: expr.count, type, span: expr.span };
       case "IndexAccess":
-        return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, span: expr.span };
+        return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, isMove: this.c.movedExprs.has(expr), span: expr.span };
       case "EnumLit": {
         if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
           return { kind: "VecNew", elementType: type.element, type, span: expr.span };
@@ -350,6 +350,9 @@ class LowerCtx {
         };
       case "MethodCall": {
         const objType = this.typeOf(expr.object);
+        if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "to_string") {
+          return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
+        }
         if (objType?.tag === "vec") {
           if (expr.method === "push") {
             return { kind: "VecPush", vec: this.lowerExpr(expr.object), value: this.lowerExpr(expr.args[0]), type, span: expr.span };
@@ -382,6 +385,9 @@ class LowerCtx {
           }
           if (expr.method === "parse_f64") {
             return { kind: "StringParseF64", str: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+          if (expr.method === "clone") {
+            return { kind: "StringClone", str: this.lowerExpr(expr.object), type, span: expr.span };
           }
         }
         // user-defined method (trait or inherent)

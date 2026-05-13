@@ -101,8 +101,13 @@ export function isFloat(t: TypeKind): boolean {
 }
 
 // primitives are Copy (no move tracking needed)
-export function isCopy(t: TypeKind): boolean {
-  return t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn" || t.tag === "ref";
+// Payload-free enums are also Copy — they're just a tag, no heap-owning data inside.
+// The optional `enumIsPayloadFree` callback lets the caller (the checker) inject its
+// view of which enums have payload-bearing variants without us reaching into checker state here.
+export function isCopy(t: TypeKind, enumIsPayloadFree?: (name: string) => boolean): boolean {
+  if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn" || t.tag === "ref") return true;
+  if (t.tag === "enum" && enumIsPayloadFree && enumIsPayloadFree(t.name)) return true;
+  return false;
 }
 
 // heap-owning types that need destructor calls at scope exit

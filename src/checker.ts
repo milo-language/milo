@@ -929,16 +929,28 @@ export class TypeChecker {
         this.pushScope();
         for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
         this.popScope();
+        const thenReturns = this.bodyAlwaysReturns(stmt.thenBody);
         if (stmt.elseBody) {
           const afterThen = this.snapshotMoveState();
           this.restoreMoveState(preMoves);
           this.pushScope();
           for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
           this.popScope();
-          // moved if moved in either branch
-          for (const [info, thenMoved] of afterThen) {
-            if (thenMoved) info.moved = true;
+          const elseReturns = this.bodyAlwaysReturns(stmt.elseBody);
+          // moved if moved in a branch that DOESN'T always exit (branches that always return
+          // don't leak their moves to code after the if)
+          const afterElse = this.snapshotMoveState();
+          this.restoreMoveState(preMoves);
+          for (const [info, m] of afterThen) {
+            if (m && !thenReturns) info.moved = true;
           }
+          for (const [info, m] of afterElse) {
+            if (m && !elseReturns) info.moved = true;
+          }
+        } else if (thenReturns) {
+          // No else and the then-branch always returns: control flow only continues past
+          // the if if the condition was false, so moves inside thenBody don't apply here.
+          this.restoreMoveState(preMoves);
         }
         break;
       }
@@ -982,6 +994,10 @@ export class TypeChecker {
           const enumInfo = this.enums.get(subjType.name)!;
           const covered = new Set<string>();
           let hasWildcard = false;
+          // Treat arms as mutually exclusive for move tracking: snapshot before each arm,
+          // record any new moves, restore between arms, then merge the union at the end.
+          const preMoves = this.snapshotMoveState();
+          const mergedMoves = new Map<typeof preMoves extends Map<infer K, infer V> ? K : never, boolean>();
           for (const arm of stmt.arms) {
             if (arm.pattern.kind === "WildcardPattern") {
               hasWildcard = true;
@@ -1003,6 +1019,7 @@ export class TypeChecker {
                 this.error(`variant '${arm.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${arm.pattern.bindings.length} bindings`, ps);
               }
             }
+            this.restoreMoveState(preMoves);
             this.pushScope();
             if (arm.pattern.kind === "EnumPattern") {
               const variant = enumInfo.variants.get(arm.pattern.variant);
@@ -1014,7 +1031,12 @@ export class TypeChecker {
             }
             for (const s of arm.body) this.checkStmt(s, fnRetType);
             this.popScope();
+            for (const [info, moved] of this.snapshotMoveState()) {
+              if (moved) mergedMoves.set(info, true);
+            }
           }
+          this.restoreMoveState(preMoves);
+          for (const [info] of mergedMoves) info.moved = true;
           if (!hasWildcard) {
             for (const [name] of enumInfo.variants) {
               if (!covered.has(name)) {
@@ -1075,15 +1097,49 @@ export class TypeChecker {
     return t;
   }
 
+  // Does this body unconditionally exit (return/break/continue) on every path?
+  // Used by move tracking to avoid propagating moves from branches that never fall through.
+  private bodyAlwaysReturns(body: Stmt[]): boolean {
+    for (const s of body) {
+      if (s.kind === "Return") return true;
+      if (s.kind === "BreakStmt" || s.kind === "ContinueStmt") return true;
+      if (s.kind === "IfStmt" && s.elseBody && this.bodyAlwaysReturns(s.thenBody) && this.bodyAlwaysReturns(s.elseBody)) return true;
+      if (s.kind === "MatchStmt") {
+        // exhaustive matches where every arm always returns
+        let allReturn = true;
+        for (const arm of s.arms) {
+          if (!this.bodyAlwaysReturns(arm.body)) { allReturn = false; break; }
+        }
+        if (allReturn && s.arms.length > 0) return true;
+      }
+    }
+    return false;
+  }
+
+  private isPayloadFreeEnum(name: string): boolean {
+    const info = this.enums.get(name);
+    if (!info) return false;
+    for (const [, v] of info.variants) if (v.fields.length > 0) return false;
+    return true;
+  }
+
   private tryMove(expr: Expr) {
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
-      if (info && !isCopy(info.type)) {
+      if (info && !isCopy(info.type, (n) => this.isPayloadFreeEnum(n))) {
         if (info.borrowed) {
           this.error(`cannot move '${expr.name}' because it is captured by a closure`, expr.span);
           return;
         }
         info.moved = true;
+        this.movedExprs.add(expr);
+      }
+    }
+    // Mark `v[i]` as a move-out when consumed in a move position. Codegen uses this
+    // flag to zero the Vec slot so the slot's drop doesn't double-free.
+    if (expr.kind === "IndexAccess") {
+      const elemType = this.exprTypes.get(expr);
+      if (elemType && !isCopy(elemType, (n) => this.isPayloadFreeEnum(n))) {
         this.movedExprs.add(expr);
       }
     }
@@ -1269,6 +1325,7 @@ export class TypeChecker {
         }
         const arithOps = ["+", "-", "*", "/", "%"];
         const cmpOps = ["==", "!=", "<", ">", "<=", ">="];
+        const bitOps = ["&", "|", "^", "<<", ">>"];
         if (expr.op === "+" && lt.tag === "string" && rt.tag === "string") {
           return this.setType(expr, { tag: "string" });
         }
@@ -1280,8 +1337,32 @@ export class TypeChecker {
           if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
           return this.setType(expr, lt);
         }
+        if (bitOps.includes(expr.op)) {
+          if (lt.tag !== "int" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires integer type, got ${typeName(lt)}`, sp);
+          if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
+          return this.setType(expr, lt);
+        }
         if (cmpOps.includes(expr.op)) {
           if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
+          if (expr.op === "==" || expr.op === "!=") {
+            if (lt.tag === "enum") {
+              const info = this.enums.get(lt.name);
+              if (info) {
+                let hasPayload = false;
+                for (const [, v] of info.variants) {
+                  if (v.fields.length > 0) { hasPayload = true; break; }
+                }
+                if (hasPayload) {
+                  this.error(`cannot use '${expr.op}' on enum '${lt.name}' with payload-bearing variants`, sp, `use 'match' to compare`);
+                }
+              }
+            } else if (lt.tag === "struct" || lt.tag === "vec" || lt.tag === "hashmap" || lt.tag === "box" || lt.tag === "array") {
+              this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `compare individual fields or implement an eq method`);
+            }
+          } else {
+            // ordering ops require numeric
+            if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${typeName(lt)}`, sp);
+          }
           return this.setType(expr, { tag: "bool" });
         }
         this.error(`unknown operator '${expr.op}'`, sp);
@@ -1300,6 +1381,10 @@ export class TypeChecker {
         if (expr.op === "!") {
           if (ot.tag !== "bool" && ot.tag !== "unknown") this.error(`unary '!' requires bool, got ${typeName(ot)}`, sp);
           return this.setType(expr, { tag: "bool" });
+        }
+        if (expr.op === "~") {
+          if (ot.tag !== "int" && ot.tag !== "unknown") this.error(`unary '~' requires integer type, got ${typeName(ot)}`, sp);
+          return this.setType(expr, ot);
         }
         return this.setType(expr, { tag: "unknown" });
       }
@@ -1416,7 +1501,9 @@ export class TypeChecker {
           } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
             // String auto-coerces to *u8 for FFI/builtins
             const isStringToPtr = argType.tag === "string" && paramType.tag === "ptr" && paramType.inner.tag === "int" && paramType.inner.bits === 8;
-            if (!isStringToPtr) {
+            // [T; N] auto-decays to *T for FFI (array → ptr-to-element)
+            const isArrayToPtr = argType.tag === "array" && paramType.tag === "ptr" && typeEq(argType.element, paramType.inner);
+            if (!isStringToPtr && !isArrayToPtr) {
               this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
             }
           }
@@ -1428,6 +1515,7 @@ export class TypeChecker {
           const argType = this.exprTypes.get(expr.args[i]);
           const paramType = sig.params[i].type;
           if (argType?.tag === "string" && paramType.tag === "ptr") continue;
+          if (argType?.tag === "array" && paramType.tag === "ptr") continue;
           this.tryMove(expr.args[i]);
         }
         return this.setType(expr, sig.ret);
@@ -1697,6 +1785,10 @@ export class TypeChecker {
       }
       case "MethodCall": {
         const objType = this.checkExpr(expr.object);
+        if ((objType.tag === "int" || objType.tag === "float") && expr.method === "to_string") {
+          if (expr.args.length !== 0) { this.error(`'to_string' takes no arguments`, sp); }
+          return this.setType(expr, { tag: "string" });
+        }
         if (objType.tag === "vec") {
           if (expr.method === "push") {
             if (expr.args.length !== 1) { this.error(`'push' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
@@ -1793,6 +1885,10 @@ export class TypeChecker {
           if (expr.method === "parse_f64") {
             if (expr.args.length !== 0) { this.error(`'parse_f64' takes no arguments`, sp); }
             return this.setType(expr, { tag: "float", bits: 64 });
+          }
+          if (expr.method === "clone") {
+            if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "string" });
           }
           // fall through to trait/inherent lookup for String
         }

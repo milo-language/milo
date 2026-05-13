@@ -20,7 +20,7 @@ export type HIRExpr =
   | { kind: "FieldAccess"; object: HIRExpr; field: string; type: TypeKind; span?: Span }
   | { kind: "ArrayLit"; elements: HIRExpr[]; type: TypeKind; span?: Span }
   | { kind: "ArrayRepeat"; value: HIRExpr; count: number; type: TypeKind; span?: Span }
-  | { kind: "IndexAccess"; object: HIRExpr; index: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "IndexAccess"; object: HIRExpr; index: HIRExpr; type: TypeKind; isMove?: boolean; span?: Span }
   | { kind: "EnumLit"; enumName: string; variant: string; args: HIRExpr[]; type: TypeKind; span?: Span }
   | { kind: "ArrayLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringLen"; object: HIRExpr; type: TypeKind; span?: Span }
@@ -43,6 +43,8 @@ export type HIRExpr =
   | { kind: "StringPush"; str: HIRExpr; byte: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringSubstr"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringParseF64"; str: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "StringClone"; str: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "NumberToString"; value: HIRExpr; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "JsonStringify"; value: HIRExpr; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "Closure"; params: { name: string; type: TypeKind }[]; body: HIRStmt[]; captures: { name: string; type: TypeKind; mutable: boolean }[]; retType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "ClosureCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span };

@@ -110,14 +110,39 @@ export class Lexer {
   }
 
   private lexNumber(line: number, col: number): Token {
+    // hex: 0x... / binary: 0b... — emit as decimal-string Int token so downstream parses as plain integer
+    if (this.peek() === "0" && (this.source[this.pos + 1] === "x" || this.source[this.pos + 1] === "X")) {
+      this.advance(); this.advance();
+      let raw = "";
+      while (this.pos < this.source.length && /[0-9a-fA-F_]/.test(this.peek())) {
+        const c = this.advance();
+        if (c !== "_") raw += c;
+      }
+      if (!raw) this.error("hex literal needs at least one digit", line, col);
+      const n = BigInt("0x" + raw);
+      return this.token(TokenKind.Int, n.toString(), line, col);
+    }
+    if (this.peek() === "0" && (this.source[this.pos + 1] === "b" || this.source[this.pos + 1] === "B")) {
+      this.advance(); this.advance();
+      let raw = "";
+      while (this.pos < this.source.length && /[01_]/.test(this.peek())) {
+        const c = this.advance();
+        if (c !== "_") raw += c;
+      }
+      if (!raw) this.error("binary literal needs at least one digit", line, col);
+      const n = BigInt("0b" + raw);
+      return this.token(TokenKind.Int, n.toString(), line, col);
+    }
     let value = "";
-    while (this.pos < this.source.length && this.peek() >= "0" && this.peek() <= "9") {
-      value += this.advance();
+    while (this.pos < this.source.length && ((this.peek() >= "0" && this.peek() <= "9") || this.peek() === "_")) {
+      const c = this.advance();
+      if (c !== "_") value += c;
     }
     if (this.peek() === "." && this.source[this.pos + 1] >= "0" && this.source[this.pos + 1] <= "9") {
       value += this.advance(); // the dot
-      while (this.pos < this.source.length && this.peek() >= "0" && this.peek() <= "9") {
-        value += this.advance();
+      while (this.pos < this.source.length && ((this.peek() >= "0" && this.peek() <= "9") || this.peek() === "_")) {
+        const c = this.advance();
+        if (c !== "_") value += c;
       }
       return this.token(TokenKind.Float, value, line, col);
     }
@@ -151,6 +176,7 @@ export class Lexer {
     const next = this.source[this.pos + 1];
     const next2 = this.source[this.pos + 2];
     if (ch === "." && next === "." && next2 === ".") { this.advance(); this.advance(); this.advance(); return this.token(TokenKind.DotDotDot, "...", line, col); }
+    if (ch === "." && next === ".") { this.advance(); this.advance(); return this.token(TokenKind.DotDot, "..", line, col); }
 
     // two-char operators
     if (ch === "-" && next === ">") { this.advance(); this.advance(); return this.token(TokenKind.Arrow, "->", line, col); }
@@ -179,6 +205,8 @@ export class Lexer {
       "!": TokenKind.Bang,
       "?": TokenKind.Question,
       "|": TokenKind.Pipe,
+      "^": TokenKind.Caret,
+      "~": TokenKind.Tilde,
       "@": TokenKind.At,
     };
 

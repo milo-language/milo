@@ -37,23 +37,6 @@ enum Response {
 
 // ── Internal helpers ──
 
-fn i64_to_str(n: i64): string {
-    if n == 0 { return "0" }
-    var s: string = ""
-    var x: i64 = n
-    while x > 0 {
-        s.push(((x % 10) + 48) as u8)
-        x = x / 10
-    }
-    var result: string = ""
-    var i: i64 = s.len - 1
-    while i >= 0 {
-        result.push(s[i])
-        i = i - 1
-    }
-    return result
-}
-
 fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): string {
     var s: string = ""
     var i: i64 = start
@@ -95,7 +78,7 @@ fn status_text(status: i32): string {
 fn send_raw(fd: i32, status: i32, content_type: string, body: string): void {
     var resp: string = "HTTP/1.1 " + status_text(status)
     resp = resp + "\r\nContent-Type: " + content_type
-    resp = resp + "\r\nContent-Length: " + i64_to_str(body.len)
+    resp = resp + "\r\nContent-Length: " + body.len.to_string()
     resp = resp + "\r\nServer: milo"
     resp = resp + "\r\n\r\n"
     resp = resp + body

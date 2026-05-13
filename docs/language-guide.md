@@ -61,6 +61,35 @@ This means what you write is what LLVM sees — no hidden costs.
 | `float` | Alias for `f64` |
 | `byte` | Alias for `u8` |
 
+### Number Literals
+
+```milo
+let dec: i32 = 1_000_000      // decimal with underscores for readability
+let hex: i32 = 0xFF            // hexadecimal
+let bin: i32 = 0b1010_1010     // binary
+```
+
+### Bitwise Operators
+
+Integer-only. C-style precedence: `~` (unary) > `<<` `>>` > `&` > `^` > `|`.
+
+```milo
+let mask: i32 = 0xFF & 0x0F    // 15
+let combined = a | b
+let toggled = a ^ b
+let shifted = a << 2
+let negated = ~a               // ones-complement
+```
+
+### Number → String
+
+```milo
+let n: i64 = 42
+let s = n.to_string()          // "42"
+let pi: f64 = 3.14
+let t = pi.to_string()         // "3.14"
+```
+
 ### Type Casts
 
 Use `as` to convert between numeric types:
@@ -139,6 +168,12 @@ let n = message.len
 
 // Byte indexing
 let first_byte = message[0]    // u8
+
+// Slicing: s[start..end] desugars to s.substr(start, end)
+let hello = message[0..5]
+
+// Deep copy
+let copy = greeting.clone()
 
 // Comparison
 if greeting == "hello" {
@@ -816,3 +851,7 @@ fn main(): i32 {
 | Cast | `expr as Type` |
 | Embed file | `embed_file("path")` |
 | JSON serialize | `json_stringify(struct_val)` |
+| String slice | `s[start..end]` |
+| Number to string | `n.to_string()` |
+| Bitwise | `& \| ^ << >> ~` |
+| Hex / binary literal | `0xFF`, `0b1010` |
