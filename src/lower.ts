@@ -353,6 +353,14 @@ class LowerCtx {
             return { kind: "HashMapRemove", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
         }
+        if (objType?.tag === "string") {
+          if (expr.method === "push") {
+            return { kind: "StringPush", str: this.lowerExpr(expr.object), byte: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          }
+          if (expr.method === "substr") {
+            return { kind: "StringSubstr", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
+          }
+        }
         throw new Error(`unsupported method call: ${expr.method}`);
       }
       case "Closure": {

@@ -319,6 +319,13 @@ export class TypeChecker {
     this.functions.set("println", { params: [{ type: ptrU8, name: "fmt" }], ret: { tag: "void" }, variadic: true });
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
 
+    // pre-register enum names so struct fields can reference enum types
+    for (const e of program.enums) {
+      if (e.typeParams.length === 0) {
+        this.enums.set(e.name, { variants: new Map() });
+      }
+    }
+
     // register structs
     for (const s of program.structs) {
       if (s.typeParams.length > 0) {
@@ -727,6 +734,7 @@ export class TypeChecker {
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
             this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, sp);
           }
+          this.tryMove(expr.args[i]);
         }
         this.rewrittenEnums.set(expr, hint.name);
         this.exprTypes.set(expr, hint);
@@ -965,6 +973,7 @@ export class TypeChecker {
           if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
             this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
           }
+          this.tryMove(f.value);
         }
         for (const d of info.fields) {
           if (!expr.fields.find(f => f.name === d.name)) {
@@ -1059,6 +1068,7 @@ export class TypeChecker {
             } else if (!typeEq(field, argType) && argType.tag !== "unknown") {
               this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(field)}, got ${typeName(argType)}`, expr.args[i].span);
             }
+            this.tryMove(expr.args[i]);
           }
           const missing = genericInfo.typeParams.filter(p => !typeMap.has(p));
           if (missing.length > 0) {
@@ -1082,6 +1092,7 @@ export class TypeChecker {
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
             this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, expr.args[i].span);
           }
+          this.tryMove(expr.args[i]);
         }
         return this.setType(expr, { tag: "enum", name: expr.enumName });
       }
@@ -1241,6 +1252,30 @@ export class TypeChecker {
             return this.setType(expr, { tag: "void" });
           }
           this.error(`HashMap has no method '${expr.method}'`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        if (objType.tag === "string") {
+          if (expr.method === "push") {
+            if (expr.args.length !== 1) { this.error(`'push' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot push to immutable String`, sp, `declare with 'var' to make it mutable`);
+            }
+            const argType = this.checkExpr(expr.args[0]);
+            const u8t: TypeKind = { tag: "int", bits: 8, signed: false };
+            if (!typeEq(u8t, argType) && argType.tag !== "unknown") {
+              this.error(`String.push: expected u8, got ${typeName(argType)}`, sp);
+            }
+            return this.setType(expr, { tag: "void" });
+          }
+          if (expr.method === "substr") {
+            if (expr.args.length !== 2) { this.error(`'substr' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
+            const startType = this.checkExpr(expr.args[0]);
+            const endType = this.checkExpr(expr.args[1]);
+            if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`substr start: expected integer, got ${typeName(startType)}`, sp);
+            if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`substr end: expected integer, got ${typeName(endType)}`, sp);
+            return this.setType(expr, { tag: "string" });
+          }
+          this.error(`String has no method '${expr.method}'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         this.error(`type '${typeName(objType)}' has no methods`, sp);

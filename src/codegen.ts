@@ -43,6 +43,7 @@ export class Codegen {
   private dropHelperBodies: string[][] = [];
   private closureBodies: string[][] = [];
   private closureCounter = 0;
+  private scopeCounter = 0;
   private static BUILTINS = new Set(["print", "println", "exit"]);
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -330,9 +331,10 @@ export class Codegen {
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
         const declTy = this.llvmType(stmt.type);
-        this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false });
-        lines.push(`  %${stmt.name}.addr = alloca ${declTy}`);
-        lines.push(`  store ${declTy} ${val}, ptr %${stmt.name}.addr`);
+        const addrName = this.locals.has(stmt.name) ? `%${stmt.name}.${this.scopeCounter++}.addr` : `%${stmt.name}.addr`;
+        this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false, addr: addrName });
+        lines.push(`  ${addrName} = alloca ${declTy}`);
+        lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
         if (this.needsDropCg(stmt.type)) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
         return [lines, false];
       }
@@ -740,8 +742,8 @@ export class Codegen {
           } else {
             const [al, av, at] = this.genExpr(arg.expr);
             lines.push(...al);
-            // String → ptr coercion for extern/FFI calls
-            if (at === "%String" && sig && i < sig.paramTypes.length && sig.paramTypes[i] === "ptr") {
+            // String → ptr coercion for extern/FFI calls (including variadic args)
+            if (at === "%String" && sig && (i >= sig.paramTypes.length || sig.paramTypes[i] === "ptr")) {
               const dataPtr = this.nextTemp();
               lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
               argVals.push({ val: dataPtr, type: "ptr" });
@@ -937,6 +939,10 @@ export class Codegen {
         lines.push(`  ${len} = extractvalue %HashMap ${ov}, 1`);
         return [lines, len, "i64"];
       }
+      case "StringPush":
+        return this.genStringPush(expr, lines);
+      case "StringSubstr":
+        return this.genStringSubstr(expr, lines);
       case "Closure": {
         const closureName = `__closure_${this.closureCounter++}`;
         const captures = expr.captures;
@@ -1560,6 +1566,133 @@ export class Codegen {
     lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
 
     return [lines, val, elemTy];
+  }
+
+  // String.push(u8) — same grow logic as Vec but element size is 1
+  private genStringPush(expr: HIRExpr & { kind: "StringPush" }, lines: string[]): [string[], string, string] {
+    this.hasStringType = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    this.needsMemcpy = true;
+
+    const [strPtrLines, strPtr] = this.genLValue(expr.str);
+    lines.push(...strPtrLines);
+    const [byteLines, byteVal] = this.genExpr(expr.byte);
+    lines.push(...byteLines);
+
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 1`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 2`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+
+    const needsGrow = this.nextTemp();
+    lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
+    const growLabel = this.nextLabel("str.grow");
+    const pushLabel = this.nextLabel("str.push");
+    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${pushLabel}`);
+
+    lines.push(`${growLabel}:`);
+    const isZero = this.nextTemp();
+    lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
+    const doubled = this.nextTemp();
+    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
+    const newCap = this.nextTemp();
+    lines.push(`  ${newCap} = select i1 ${isZero}, i64 16, i64 ${doubled}`);
+    const newBuf = this.nextTemp();
+    lines.push(`  ${newBuf} = call ptr @malloc(i64 ${newCap})`);
+
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    const oldBuf = this.nextTemp();
+    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
+    const hasData = this.nextTemp();
+    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
+    const copyLabel = this.nextLabel("str.copy");
+    const storeLabel = this.nextLabel("str.store");
+    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${storeLabel}`);
+
+    lines.push(`${copyLabel}:`);
+    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${len})`);
+    // only free if cap > 0 (cap == 0 means static/unowned buffer)
+    const canFree = this.nextTemp();
+    lines.push(`  ${canFree} = icmp ugt i64 ${cap}, 0`);
+    const freeLabel = this.nextLabel("str.free");
+    const skipFreeLabel = this.nextLabel("str.skipfree");
+    lines.push(`  br i1 ${canFree}, label %${freeLabel}, label %${skipFreeLabel}`);
+    lines.push(`${freeLabel}:`);
+    lines.push(`  call void @free(ptr ${oldBuf})`);
+    lines.push(`  br label %${skipFreeLabel}`);
+    lines.push(`${skipFreeLabel}:`);
+    lines.push(`  br label %${storeLabel}`);
+
+    lines.push(`${storeLabel}:`);
+    const dataPtr2 = this.nextTemp();
+    lines.push(`  ${dataPtr2} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr2}`);
+    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
+    lines.push(`  br label %${pushLabel}`);
+
+    lines.push(`${pushLabel}:`);
+    const curDataPtr = this.nextTemp();
+    lines.push(`  ${curDataPtr} = getelementptr %String, ptr ${strPtr}, i32 0, i32 0`);
+    const curData = this.nextTemp();
+    lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
+    const curLen = this.nextTemp();
+    lines.push(`  ${curLen} = load i64, ptr ${lenPtr}`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr i8, ptr ${curData}, i64 ${curLen}`);
+    lines.push(`  store i8 ${byteVal}, ptr ${elemPtr}`);
+    const newLen = this.nextTemp();
+    lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
+    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+
+    return [lines, "void", "void"];
+  }
+
+  // String.substr(start, end) — allocate new string from s[start..end]
+  private genStringSubstr(expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): [string[], string, string] {
+    this.hasStringType = true;
+    this.needsMalloc = true;
+    this.needsMemcpy = true;
+
+    const [strLines, strVal] = this.genExpr(expr.str);
+    lines.push(...strLines);
+    const [startLines, startVal] = this.genExpr(expr.start);
+    lines.push(...startLines);
+    const [endLines, endVal] = this.genExpr(expr.end);
+    lines.push(...endLines);
+
+    const subLen = this.nextTemp();
+    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
+
+    const buf = this.nextTemp();
+    const allocLen = this.nextTemp();
+    lines.push(`  ${allocLen} = add i64 ${subLen}, 1`);
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${allocLen})`);
+
+    const srcPtr = this.nextTemp();
+    lines.push(`  ${srcPtr} = extractvalue %String ${strVal}, 0`);
+    const srcOff = this.nextTemp();
+    lines.push(`  ${srcOff} = getelementptr i8, ptr ${srcPtr}, i64 ${startVal}`);
+    lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${srcOff}, i64 ${subLen})`);
+
+    // null-terminate
+    const nullPtr = this.nextTemp();
+    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${subLen}`);
+    lines.push(`  store i8 0, ptr ${nullPtr}`);
+
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${subLen}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocLen}, 2`);
+
+    return [lines, s2, "%String"];
   }
 
   private genVecBoundsCheckedPtr(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {

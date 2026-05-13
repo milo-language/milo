@@ -101,7 +101,7 @@ export function isFloat(t: TypeKind): boolean {
 
 // primitives are Copy (no move tracking needed)
 export function isCopy(t: TypeKind): boolean {
-  return t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn";
+  return t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn" || t.tag === "ref";
 }
 
 // heap-owning types that need destructor calls at scope exit
