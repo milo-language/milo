@@ -253,16 +253,32 @@ function formatVariantInfo(e: import("./ast").EnumDecl, v: import("./ast").EnumV
   return `\`\`\`milo\n${e.name}${tparams}.${v.name}${fields}\n\`\`\``;
 }
 
+const BUILTIN_ENUMS: import("./ast").EnumDecl[] = [
+  {
+    kind: "EnumDecl", name: "Option", typeParams: [{ name: "T", bounds: [] }],
+    variants: [
+      { name: "Some", fields: [{ name: "T", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
+      { name: "None", fields: [] },
+    ],
+  },
+  {
+    kind: "EnumDecl", name: "Result", typeParams: [{ name: "T", bounds: [] }],
+    variants: [
+      { name: "Ok", fields: [{ name: "T", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
+      { name: "Err", fields: [{ name: "string", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
+    ],
+  },
+];
+
 function findEnumHover(source: string, program: Program, word: string, line: number, character: number): string | null {
   const lineText = source.split("\n")[line] ?? "";
+  const allEnums = [...program.enums, ...BUILTIN_ENUMS];
 
-  // Check if word is an enum name
-  for (const e of program.enums) {
+  for (const e of allEnums) {
     if (e.name === word) return formatEnumDecl(e);
   }
 
-  // Check if word is a variant name — look for "EnumName.Variant" pattern on the line
-  for (const e of program.enums) {
+  for (const e of allEnums) {
     for (const v of e.variants) {
       if (v.name === word) {
         const pat = new RegExp(`\\b${e.name}\\.${v.name}\\b`);
