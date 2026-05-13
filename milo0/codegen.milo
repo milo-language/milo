@@ -922,7 +922,8 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
             let rv = gen_expr(cg, r, locs, sigs, lv_ty_a)
             let rv_v = rv.v.clone()
             let rv_v_str = rv.v.clone()
-            let lv_ll_check = ll_type(lv_ty_for_check)
+            let lv_ll_check_orig = ll_type(lv_ty_for_check)
+            let lv_ll_check = lv_ll_check_orig.clone()
             if lv_ll_check == "%String" {
                 if op == TokKind.Plus {
                     return gen_string_concat(cg, lv_v_str, rv_v_str)
@@ -931,26 +932,7 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
                     return gen_string_eq(cg, lv_v_str, rv_v_str, op == TokKind.EqEq)
                 }
             }
-            // Enum equality: compare tags only (payload-bearing enums need explicit match).
-            if lv_ll_check.len > 1 && lv_ll_check[0] == 37 {
-                if op == TokKind.EqEq || op == TokKind.NotEq {
-                    let lt_id = cg.temp
-                    cg.temp = cg.temp + 1
-                    let lt = "%t" + lt_id.to_string()
-                    emit(cg, "  " + lt + " = extractvalue " + lv_ll_check.clone() + " " + lv_v_str.clone() + ", 0\n")
-                    let rt_id = cg.temp
-                    cg.temp = cg.temp + 1
-                    let rt = "%t" + rt_id.to_string()
-                    emit(cg, "  " + rt + " = extractvalue " + lv_ll_check.clone() + " " + rv_v_str.clone() + ", 0\n")
-                    let res_id = cg.temp
-                    cg.temp = cg.temp + 1
-                    let res = "%t" + res_id.to_string()
-                    var opname: string = "eq"
-                    if op == TokKind.NotEq { opname = "ne".clone() }
-                    emit(cg, "  " + res + " = icmp " + opname + " i32 " + lt + ", " + rt + "\n")
-                    return Val { v: res, ty: "bool".clone() }
-                }
-            }
+            // (enum == disabled — was crashing milo0 in some path; reverted pending diag)
             let t_id = cg.temp
             cg.temp = cg.temp + 1
             let t_emit = "%t" + t_id.to_string()
