@@ -1,0 +1,21 @@
+// @expect: using 1 2
+// @expect: drop 1
+// @expect: drop 2
+extern fn printf(fmt: *u8, ...): i32
+
+struct Resource {
+    id: i32,
+}
+
+impl Drop for Resource {
+    fn drop(self: &mut Self): void {
+        printf("drop %d\n", self.id)
+    }
+}
+
+fn main(): i32 {
+    let r1 = Resource { id: 1 }
+    let r2 = Resource { id: 2 }
+    printf("using %d %d\n", r1.id, r2.id)
+    return 0
+}

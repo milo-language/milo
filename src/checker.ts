@@ -657,7 +657,7 @@ export class TypeChecker {
       ]),
     });
 
-    // Drop trait
+    // Drop trait — self: &mut Self
     const selfRefMut: TypeKind = { tag: "ref", inner: { tag: "struct", name: "Self" }, mutable: true };
     this.traits.set("Drop", {
       name: "Drop",
