@@ -88,7 +88,9 @@ export interface MatchArm { pattern: Pattern; body: Stmt[] }
 export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[]; span?: Span }
 export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
 
-export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt;
+export interface UnsafeBlock { kind: "UnsafeBlock"; body: Stmt[]; span?: Span }
+
+export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | UnsafeBlock;
 
 // ── Top-level ──
 

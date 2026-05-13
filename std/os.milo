@@ -43,8 +43,10 @@ extern fn socket(domain: i32, type: i32, protocol: i32): i32
 extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 extern fn listen(sockfd: i32, backlog: i32): i32
 extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
+extern fn connect(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 extern fn htons(hostshort: u16): u16
+extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 
 // ── Directory ──
 
@@ -56,3 +58,10 @@ extern fn readdir(dir: *u8): *u8
 
 extern fn exit(status: i32): void
 extern fn getenv(name: *u8): *u8
+extern fn system(cmd: *u8): i32
+extern fn fork(): i32
+extern fn execl(path: *u8, ...): i32
+extern fn waitpid(pid: i32, status: *u8, options: i32): i32
+extern fn dup2(oldfd: i32, newfd: i32): i32
+extern fn pipe(fds: *u8): i32
+extern fn kill(pid: i32, sig: i32): i32

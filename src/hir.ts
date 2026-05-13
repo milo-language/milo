@@ -30,6 +30,7 @@ export type HIRExpr =
   | { kind: "Cast"; operand: HIRExpr; targetType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "BoxCreate"; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "BoxDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "PtrDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecPush"; vec: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecPop"; vec: HIRExpr; type: TypeKind; span?: Span }
@@ -66,7 +67,8 @@ export type HIRStmt =
   | { kind: "Break"; span?: Span }
   | { kind: "Continue"; span?: Span }
   | { kind: "ExprStmt"; expr: HIRExpr; span?: Span }
-  | { kind: "Match"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; span?: Span };
+  | { kind: "Match"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; span?: Span }
+  | { kind: "UnsafeBlock"; body: HIRStmt[]; span?: Span };
 
 export interface HIRMatchArm {
   pattern: HIRPattern;

@@ -362,6 +362,13 @@ export class Parser {
     if (this.at(TokenKind.Match)) return this.parseMatch();
     if (this.at(TokenKind.Break)) { const s = this.span(this.advance()); return { kind: "BreakStmt", span: s }; }
     if (this.at(TokenKind.Continue)) { const s = this.span(this.advance()); return { kind: "ContinueStmt", span: s }; }
+    if (this.at(TokenKind.Unsafe)) {
+      const s = this.span(this.advance());
+      this.expect(TokenKind.LBrace);
+      const body = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+      return { kind: "UnsafeBlock", body, span: s };
+    }
 
     const expr = this.parseExpr();
     // assignment: x = ..., x.field = ..., x[i] = ...
@@ -594,6 +601,8 @@ export class Parser {
   private parseMultiplicative(): Expr {
     let left = this.parseUnary();
     while (this.peek().kind === TokenKind.Star || this.peek().kind === TokenKind.Slash || this.peek().kind === TokenKind.Percent) {
+      // `*` on a new line is unary dereference, not binary multiply
+      if (this.peek().kind === TokenKind.Star && this.pos > 0 && this.tokens[this.pos - 1].line < this.peek().line) break;
       const opTok = this.advance();
       const right = this.parseUnary();
       left = { kind: "BinOp", op: opTok.value, left, right, span: left.span };

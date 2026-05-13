@@ -99,6 +99,7 @@ export class TypeChecker {
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
   private dropImpls = new Set<string>();
+  private unsafeDepth = 0;
   private scopes: Map<string, VarInfo>[] = [];
   private exprTypes = new Map<Expr, TypeKind>();
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
@@ -1114,6 +1115,14 @@ export class TypeChecker {
         this.tryMove(stmt.subject);
         break;
       }
+      case "UnsafeBlock": {
+        this.unsafeDepth++;
+        this.pushScope();
+        for (const s of stmt.body) this.checkStmt(s, fnRetType);
+        this.popScope();
+        this.unsafeDepth--;
+        break;
+      }
     }
   }
 
@@ -1212,7 +1221,24 @@ export class TypeChecker {
         const rootMut = this.isRootMutable(expr.object);
         return { type: objType.element, mutable: rootMut };
       }
+      if (objType.tag === "ptr") {
+        this.setType(expr, objType.inner);
+        return { type: objType.inner, mutable: true };
+      }
       this.error(`cannot index non-array type ${typeName(objType)}`, sp);
+      return null;
+    }
+    if (expr.kind === "UnaryOp" && expr.op === "*") {
+      const ot = this.checkExpr(expr.operand);
+      if (ot.tag === "ptr") {
+        this.setType(expr, ot.inner);
+        return { type: ot.inner, mutable: true };
+      }
+      if (ot.tag === "box") {
+        this.setType(expr, ot.inner);
+        return { type: ot.inner, mutable: true };
+      }
+      this.error(`cannot dereference type '${typeName(ot)}' for assignment`, sp);
       return null;
     }
     this.error("invalid assignment target", sp);
@@ -1398,8 +1424,13 @@ export class TypeChecker {
       case "UnaryOp": {
         const ot = this.checkExpr(expr.operand);
         if (expr.op === "*") {
-          if (ot.tag !== "box" && ot.tag !== "unknown") this.error(`cannot dereference non-Box type '${typeName(ot)}'`, sp);
-          return this.setType(expr, ot.tag === "box" ? ot.inner : { tag: "unknown" });
+          if (ot.tag === "box") return this.setType(expr, ot.inner);
+          if (ot.tag === "ptr") {
+            if (this.unsafeDepth === 0) this.error(`pointer dereference requires 'unsafe' block`, sp);
+            return this.setType(expr, ot.inner);
+          }
+          if (ot.tag !== "unknown") this.error(`cannot dereference type '${typeName(ot)}' (expected *T or Box<T>)`, sp);
+          return this.setType(expr, { tag: "unknown" });
         }
         if (expr.op === "-") {
           if (!isNumeric(ot) && ot.tag !== "unknown") this.error(`unary '-' requires numeric type, got ${typeName(ot)}`, sp);
@@ -1663,6 +1694,10 @@ export class TypeChecker {
         if (objType.tag === "array") return this.setType(expr, objType.element);
         if (objType.tag === "vec") return this.setType(expr, objType.element);
         if (objType.tag === "string") return this.setType(expr, { tag: "int", bits: 8, signed: false });
+        if (objType.tag === "ptr") {
+          if (this.unsafeDepth === 0) this.error(`pointer indexing requires 'unsafe' block`, sp);
+          return this.setType(expr, objType.inner);
+        }
         this.error(`cannot index type ${typeName(objType)}`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
@@ -1763,13 +1798,16 @@ export class TypeChecker {
       case "CastExpr": {
         const fromType = this.checkExpr(expr.operand);
         const toType = this.resolve(expr.targetType);
-        const fromOk = isNumeric(fromType) || fromType.tag === "ptr" || fromType.tag === "unknown";
+        const fromOk = isNumeric(fromType) || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "unknown";
         const toOk = isNumeric(toType) || toType.tag === "ptr";
         if (!fromOk) {
           this.error(`cannot cast from ${typeName(fromType)}`, sp);
         }
         if (!toOk) {
           this.error(`cannot cast to ${typeName(toType)}`, sp);
+        }
+        if (toType.tag === "ptr" && this.unsafeDepth === 0) {
+          this.error(`cast to pointer type requires 'unsafe' block`, sp);
         }
         return this.setType(expr, toType);
       }

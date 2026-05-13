@@ -173,6 +173,13 @@ class LowerCtx {
           span: stmt.span,
         };
       }
+      case "UnsafeBlock": {
+        return {
+          kind: "UnsafeBlock",
+          body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
+          span: stmt.span,
+        };
+      }
     }
   }
 
@@ -209,7 +216,11 @@ class LowerCtx {
       case "BinOp":
         return { kind: "BinOp", op: expr.op, left: this.lowerExpr(expr.left), right: this.lowerExpr(expr.right), type, span: expr.span };
       case "UnaryOp":
-        if (expr.op === "*") return { kind: "BoxDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
+        if (expr.op === "*") {
+          const operandType = this.c.exprTypes.get(expr.operand);
+          if (operandType?.tag === "ptr") return { kind: "PtrDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
+          return { kind: "BoxDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
+        }
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
         if (expr.func === "Box") {

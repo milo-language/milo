@@ -416,6 +416,15 @@ export class Codegen {
       }
       case "Match":
         return this.genMatch(stmt);
+      case "UnsafeBlock": {
+        let terminated = false;
+        for (const s of stmt.body) {
+          const [sl, st] = this.genStmt(s);
+          lines.push(...sl);
+          if (st) { terminated = true; break; }
+        }
+        return [lines, terminated];
+      }
     }
   }
 
@@ -444,10 +453,32 @@ export class Codegen {
       }
     }
     if (expr.kind === "IndexAccess") {
+      if (expr.object.type.tag === "ptr") {
+        const [objLines, objVal] = this.genExpr(expr.object);
+        lines.push(...objLines);
+        const [idxLines, idxVal] = this.genExpr(expr.index);
+        lines.push(...idxLines);
+        const elemTy = this.llvmType(expr.type);
+        const gep = this.nextTemp();
+        lines.push(`  ${gep} = getelementptr ${elemTy}, ptr ${objVal}, i64 ${idxVal}`);
+        return [lines, gep, elemTy];
+      }
       if (expr.object.type.tag === "vec") {
         return this.genVecBoundsCheckedPtr(expr, lines);
       }
       return this.genBoundsCheckedPtr(expr, lines);
+    }
+    if (expr.kind === "PtrDeref") {
+      const [ptrLines, ptrVal] = this.genExpr(expr.operand);
+      lines.push(...ptrLines);
+      const innerTy = this.llvmType(expr.type);
+      return [lines, ptrVal, innerTy];
+    }
+    if (expr.kind === "BoxDeref") {
+      const [ptrLines, ptrVal] = this.genExpr(expr.operand);
+      lines.push(...ptrLines);
+      const innerTy = this.llvmType(expr.type);
+      return [lines, ptrVal, innerTy];
     }
     return [lines, "null", "i32"];
   }
@@ -1026,15 +1057,22 @@ export class Codegen {
         if (expr.object.type.tag === "string") {
           return this.genStringIndex(expr, lines);
         }
+        if (expr.object.type.tag === "ptr") {
+          const [objLines, objVal] = this.genExpr(expr.object);
+          lines.push(...objLines);
+          const [idxLines, idxVal] = this.genExpr(expr.index);
+          lines.push(...idxLines);
+          const elemTy = this.llvmType(expr.type);
+          const gep = this.nextTemp();
+          lines.push(`  ${gep} = getelementptr ${elemTy}, ptr ${objVal}, i64 ${idxVal}`);
+          const val = this.nextTemp();
+          lines.push(`  ${val} = load ${elemTy}, ptr ${gep}`);
+          return [lines, val, elemTy];
+        }
         if (expr.object.type.tag === "vec") {
           const [ptrLines, ptr, elemTy] = this.genVecBoundsCheckedPtr(expr, lines);
           const val = this.nextTemp();
           lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
-          // Zero the slot ONLY when the checker marked this read as a move (the result
-          // is consumed by a let-bind, return, fn arg, struct field, etc.). Borrow-style
-          // reads (e.g. `if v[i].len == 0`) leave the slot intact so the Vec's later
-          // drop walks valid data. Drop glue is null-safe so the zeroed-on-move slot
-          // is also safe.
           if (expr.isMove && this.needsDropCg(expr.object.type.element)) {
             lines.push(`  store ${elemTy} zeroinitializer, ptr ${ptr}`);
           }
@@ -1094,7 +1132,8 @@ export class Codegen {
         lines.push(`  store ${valTy} ${valVal}, ptr ${ptr}`);
         return [lines, ptr, "ptr"];
       }
-      case "BoxDeref": {
+      case "BoxDeref":
+      case "PtrDeref": {
         const [ptrLines, ptrVal] = this.genExpr(expr.operand);
         lines.push(...ptrLines);
         const innerTy = this.llvmType(expr.type);
@@ -1461,13 +1500,19 @@ export class Codegen {
   }
 
   private genCast(expr: HIRExpr & { kind: "Cast" }, lines: string[]): [string[], string, string] {
-    const [ol, ov, fromTy] = this.genExpr(expr.operand);
-    lines.push(...ol);
-    const toTy = this.llvmType(expr.targetType);
-    if (fromTy === toTy) return [lines, ov, toTy];
-    const tmp = this.nextTemp();
     const fromKind = expr.operand.type;
     const toKind = expr.targetType;
+    const toTy = this.llvmType(expr.targetType);
+    // array → ptr: decay to pointer (use alloca address directly)
+    if (fromKind.tag === "array" && toKind.tag === "ptr") {
+      const [al, addr] = this.genLValue(expr.operand);
+      lines.push(...al);
+      return [lines, addr, toTy];
+    }
+    const [ol, ov, fromTy] = this.genExpr(expr.operand);
+    lines.push(...ol);
+    if (fromTy === toTy) return [lines, ov, toTy];
+    const tmp = this.nextTemp();
     const fromFloat = fromKind.tag === "float";
     const toFloat = toKind.tag === "float";
     if (fromKind.tag === "ptr" && (toKind.tag === "int" || toKind.tag === "bool")) {

@@ -1,0 +1,117 @@
+// std/net — TCP client with automatic cleanup
+
+import "std/os"
+
+// ── TcpStream ──
+
+struct TcpStream {
+    fd: i32,
+}
+
+impl Drop for TcpStream {
+    fn drop(self: &mut Self): void {
+        if self.fd >= 0 {
+            close(self.fd)
+        }
+    }
+}
+
+fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
+    let a32 = a as u32
+    let b32 = b as u32
+    let c32 = c as u32
+    let d32 = d as u32
+    return a32 | (b32 << 8) | (c32 << 16) | (d32 << 24)
+}
+
+fn tcp_connect(ip: u32, port: u16): Result<TcpStream> {
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 {
+        return Result.Err("socket() failed")
+    }
+
+    var addr = SockAddrIn {
+        sin_len: SIZEOF_SOCKADDR_IN as u8,
+        sin_family: AF_INET as u8,
+        sin_port: htons(port),
+        sin_addr: ip,
+        sin_zero: [0; 8],
+    }
+
+    if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        close(fd)
+        return Result.Err("connect() failed")
+    }
+
+    return Result.Ok(TcpStream { fd: fd })
+}
+
+fn tcp_send(s: &TcpStream, data: &string): Result<i64> {
+    let n = write(s.fd, data, data.len)
+    if n < 0 {
+        return Result.Err("send failed")
+    }
+    return Result.Ok(n)
+}
+
+fn tcp_recv(s: &TcpStream): Result<string> {
+    var result: string = ""
+    var buf: [u8; 4096] = [0; 4096]
+    while true {
+        let n = read(s.fd, buf, 4096)
+        if n <= 0 { break }
+        var i: i64 = 0
+        while i < n {
+            result.push(buf[i])
+            i = i + 1
+        }
+    }
+    return Result.Ok(result)
+}
+
+// ── HTTP ──
+
+// extract body from raw HTTP response by finding \r\n\r\n separator
+fn http_body(raw: &string): string {
+    var i: i64 = 0
+    while i + 3 < raw.len {
+        if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
+            return raw[i + 4 .. raw.len]
+        }
+        i = i + 1
+    }
+    return raw.clone()
+}
+
+fn http_get(ip: u32, port: u16, host: string, path: string): Result<string> {
+    let conn = tcp_connect(ip, port)
+    match conn {
+        Result.Ok(stream) => {
+            var req: string = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n"
+            let s = tcp_send(stream, req)
+            match s {
+                Result.Ok(n) => {
+                    let raw = tcp_recv(stream)
+                    match raw {
+                        Result.Ok(r) => {
+                            return Result.Ok(http_body(r))
+                        }
+                        Result.Err(msg) => {
+                            return Result.Err(msg)
+                        }
+                    }
+                }
+                Result.Err(msg) => {
+                    return Result.Err(msg)
+                }
+            }
+        }
+        Result.Err(msg) => {
+            return Result.Err(msg)
+        }
+    }
+}

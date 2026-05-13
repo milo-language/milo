@@ -12,17 +12,19 @@ struct MappedMemory {
 impl Drop for MappedMemory {
     fn drop(self: &mut Self): void {
         if self.ptr != 0 {
-            munmap(self.ptr as *u8, self.len)
+            unsafe { munmap(self.ptr as *u8, self.len) }
         }
     }
 }
 
 fn mmap_anon(size: i64): Result<MappedMemory> {
-    // PROT_READ | PROT_WRITE = 3, MAP_PRIVATE | MAP_ANON = 0x1002 (macOS)
     let PROT_RW: i32 = 3
     let MAP_PRIVATE_ANON: i32 = 4098
-    let p = mmap(0 as *u8, size, PROT_RW, MAP_PRIVATE_ANON, -1, 0)
-    let addr = p as i64
+    var addr: i64 = 0
+    unsafe {
+        let p = mmap(0 as *u8, size, PROT_RW, MAP_PRIVATE_ANON, -1, 0)
+        addr = p as i64
+    }
     let map_failed: i64 = -1 as i64
     if addr == map_failed {
         return Result.Err("mmap failed")
@@ -33,8 +35,11 @@ fn mmap_anon(size: i64): Result<MappedMemory> {
 fn mmap_file(f_fd: i32, size: i64): Result<MappedMemory> {
     let PROT_READ: i32 = 1
     let MAP_PRIVATE: i32 = 2
-    let p = mmap(0 as *u8, size, PROT_READ, MAP_PRIVATE, f_fd, 0)
-    let addr = p as i64
+    var addr: i64 = 0
+    unsafe {
+        let p = mmap(0 as *u8, size, PROT_READ, MAP_PRIVATE, f_fd, 0)
+        addr = p as i64
+    }
     let map_failed: i64 = -1 as i64
     if addr == map_failed {
         return Result.Err("mmap failed")
@@ -53,7 +58,7 @@ struct Arena {
 impl Drop for Arena {
     fn drop(self: &mut Self): void {
         if self.base != 0 {
-            free(self.base as *u8)
+            unsafe { free(self.base as *u8) }
         }
     }
 }
