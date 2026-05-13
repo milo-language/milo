@@ -3,7 +3,7 @@
 extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
-    var m: HashMap<String, i64> = HashMap.new()
+    var m: HashMap<string, i64> = HashMap.new()
     m.insert("hello", 42)
     m.insert("world", 99)
     let r1 = m.get("hello")

@@ -26,22 +26,22 @@ struct SockAddrIn {
 // ── Public types ──
 
 struct Request {
-    method: String,
-    path: String,
+    method: string,
+    path: string,
 }
 
 enum Response {
-    Text(String),
-    Html(String),
-    Json(String),
+    Text(string),
+    Html(string),
+    Json(string),
     NotFound,
-    Status(i32, String, String),
+    Status(i32, string, string),
 }
 
 // ── Internal helpers ──
 
-fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): String {
-    var s: String = ""
+fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): string {
+    var s: string = ""
     var i: i64 = start
     while i < end {
         s.push(buf[i])
@@ -69,8 +69,8 @@ fn parse_request(buf: &[u8; 8192], n: i64): Request {
     return Request { method: method, path: path }
 }
 
-fn send_raw(fd: i32, status: i32, content_type: String, body: String): void {
-    var resp: String = "HTTP/1.1 "
+fn send_raw(fd: i32, status: i32, content_type: string, body: string): void {
+    var resp: string = "HTTP/1.1 "
     if status == 200 {
         resp = resp + "200 OK"
     } else if status == 201 {

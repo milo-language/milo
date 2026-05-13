@@ -1,8 +1,8 @@
 from "std/http" import { Request, Response, serve }
 
 struct ApiResponse {
-    language: String,
-    backend: String,
+    language: string,
+    backend: string,
     version: i32,
     stable: bool,
 }

@@ -1,5 +1,5 @@
 // @expect: greeting: hello world!
-fn greet(name: String): String {
+fn greet(name: string): string {
     return "hello " + name + "!"
 }
 

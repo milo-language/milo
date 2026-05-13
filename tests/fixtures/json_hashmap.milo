@@ -7,8 +7,8 @@ enum JsonValue {
     Null,
     Bool(bool),
     Number(i64),
-    Str(String),
-    Object(HashMap<String, Box<JsonValue>>),
+    Str(string),
+    Object(HashMap<string, Box<JsonValue>>),
 }
 
 fn is_ws(ch: u8): bool {
@@ -19,13 +19,13 @@ fn is_digit(ch: u8): bool {
     return ch >= '0' && ch <= '9'
 }
 
-fn skip_ws(s: &String, pos: &mut i64) {
+fn skip_ws(s: &string, pos: &mut i64) {
     while pos < s.len && is_ws(s[pos]) {
         pos = pos + 1
     }
 }
 
-fn parse_value(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_value(s: &string, pos: &mut i64): Box<JsonValue> {
     skip_ws(s, pos)
     if pos >= s.len { return Box(JsonValue.Null) }
     let ch = s[pos]
@@ -47,7 +47,7 @@ fn parse_value(s: &String, pos: &mut i64): Box<JsonValue> {
     return Box(JsonValue.Null)
 }
 
-fn parse_number(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_number(s: &string, pos: &mut i64): Box<JsonValue> {
     var neg: bool = false
     if s[pos] == '-' {
         neg = true
@@ -62,14 +62,14 @@ fn parse_number(s: &String, pos: &mut i64): Box<JsonValue> {
     return Box(JsonValue.Number(n))
 }
 
-fn parse_string(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_string(s: &string, pos: &mut i64): Box<JsonValue> {
     let value = parse_string_raw(s, pos)
     return Box(JsonValue.Str(value))
 }
 
-fn parse_string_raw(s: &String, pos: &mut i64): String {
+fn parse_string_raw(s: &string, pos: &mut i64): string {
     pos = pos + 1
-    var result: String = ""
+    var result: string = ""
     while pos < s.len && s[pos] != '"' {
         if s[pos] == '\\' {
             pos = pos + 1
@@ -81,9 +81,9 @@ fn parse_string_raw(s: &String, pos: &mut i64): String {
     return result
 }
 
-fn parse_object(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_object(s: &string, pos: &mut i64): Box<JsonValue> {
     pos = pos + 1
-    var entries: HashMap<String, Box<JsonValue>> = HashMap.new()
+    var entries: HashMap<string, Box<JsonValue>> = HashMap.new()
     skip_ws(s, pos)
     if pos < s.len && s[pos] != '}' {
         skip_ws(s, pos)
@@ -109,7 +109,7 @@ fn parse_object(s: &String, pos: &mut i64): Box<JsonValue> {
 }
 
 fn main(): i32 {
-    let input: String = "{\"name\": \"milo\", \"version\": 1, \"active\": true}"
+    let input: string = "{\"name\": \"milo\", \"version\": 1, \"active\": true}"
     var pos: i64 = 0
     let result = parse_value(input, pos)
     match *result {

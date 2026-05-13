@@ -1,10 +1,10 @@
 // Full JSON parser — builds a value tree from JSON text
-// Exercises: enums with complex payloads, Box, Vec, structs, recursion, String.push/substr
+// Exercises: enums with complex payloads, Box, Vec, structs, recursion, string.push/substr
 
 extern fn printf(fmt: *u8, ...): i32
 
 struct JsonKV {
-    key: String,
+    key: string,
     value: Box<JsonValue>,
 }
 
@@ -12,7 +12,7 @@ enum JsonValue {
     Null,
     Bool(bool),
     Number(i64),
-    Str(String),
+    Str(string),
     Array(Vec<Box<JsonValue>>),
     Object(Vec<JsonKV>),
 }
@@ -25,13 +25,13 @@ fn is_digit(ch: u8): bool {
     return ch >= '0' && ch <= '9'
 }
 
-fn skip_ws(s: &String, pos: &mut i64) {
+fn skip_ws(s: &string, pos: &mut i64) {
     while pos < s.len && is_ws(s[pos]) {
         pos = pos + 1
     }
 }
 
-fn parse_value(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_value(s: &string, pos: &mut i64): Box<JsonValue> {
     skip_ws(s, pos)
     if pos >= s.len { return Box(JsonValue.Null) }
     let ch = s[pos]
@@ -45,22 +45,22 @@ fn parse_value(s: &String, pos: &mut i64): Box<JsonValue> {
     return Box(JsonValue.Null)
 }
 
-fn parse_null(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_null(s: &string, pos: &mut i64): Box<JsonValue> {
     pos = pos + 4
     return Box(JsonValue.Null)
 }
 
-fn parse_true(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_true(s: &string, pos: &mut i64): Box<JsonValue> {
     pos = pos + 4
     return Box(JsonValue.Bool(true))
 }
 
-fn parse_false(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_false(s: &string, pos: &mut i64): Box<JsonValue> {
     pos = pos + 5
     return Box(JsonValue.Bool(false))
 }
 
-fn parse_number(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_number(s: &string, pos: &mut i64): Box<JsonValue> {
     var neg: bool = false
     if s[pos] == '-' {
         neg = true
@@ -91,14 +91,14 @@ fn parse_number(s: &String, pos: &mut i64): Box<JsonValue> {
     return Box(JsonValue.Number(n))
 }
 
-fn parse_string(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_string(s: &string, pos: &mut i64): Box<JsonValue> {
     let value = parse_string_raw(s, pos)
     return Box(JsonValue.Str(value))
 }
 
-fn parse_string_raw(s: &String, pos: &mut i64): String {
+fn parse_string_raw(s: &string, pos: &mut i64): string {
     pos = pos + 1
-    var result: String = ""
+    var result: string = ""
     while pos < s.len && s[pos] != '"' {
         if s[pos] == '\\' {
             pos = pos + 1
@@ -110,7 +110,7 @@ fn parse_string_raw(s: &String, pos: &mut i64): String {
     return result
 }
 
-fn parse_array(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_array(s: &string, pos: &mut i64): Box<JsonValue> {
     pos = pos + 1
     var items: Vec<Box<JsonValue>> = Vec.new()
     skip_ws(s, pos)
@@ -127,7 +127,7 @@ fn parse_array(s: &String, pos: &mut i64): Box<JsonValue> {
     return Box(JsonValue.Array(items))
 }
 
-fn parse_kv(s: &String, pos: &mut i64): JsonKV {
+fn parse_kv(s: &string, pos: &mut i64): JsonKV {
     let k = parse_string_raw(s, pos)
     skip_ws(s, pos)
     pos = pos + 1
@@ -135,7 +135,7 @@ fn parse_kv(s: &String, pos: &mut i64): JsonKV {
     return JsonKV { key: k, value: v }
 }
 
-fn parse_object(s: &String, pos: &mut i64): Box<JsonValue> {
+fn parse_object(s: &string, pos: &mut i64): Box<JsonValue> {
     pos = pos + 1
     var entries: Vec<JsonKV> = Vec.new()
     skip_ws(s, pos)
@@ -154,10 +154,10 @@ fn parse_object(s: &String, pos: &mut i64): Box<JsonValue> {
     return Box(JsonValue.Object(entries))
 }
 
-fn test(label: String, input: String, expected: String) {
+fn test(label: string, input: string, expected: string) {
     var pos: i64 = 0
     let result = parse_value(input, pos)
-    var got: String = ""
+    var got: string = ""
     match *result {
         JsonValue.Null => { got = "null" }
         JsonValue.Bool(b) => {

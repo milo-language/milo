@@ -2,7 +2,7 @@
 // @expect: foobar
 // @expect: done
 // tests: string drop on scope exit, reassignment drops old value, move zeroes source
-fn consume(s: String) {
+fn consume(s: string) {
     println(s)
 }
 

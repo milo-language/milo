@@ -1,5 +1,5 @@
 // @error: use of moved variable
-fn take(s: String): i32 {
+fn take(s: string): i32 {
     return 0
 }
 

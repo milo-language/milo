@@ -170,7 +170,7 @@ export class TypeChecker {
       case "float": return `f${t.bits}`;
       case "bool": return "bool";
       case "void": return "void";
-      case "string": return "String";
+      case "string": return "string";
       case "struct": return t.name;
       case "enum": return t.name;
       case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
@@ -590,7 +590,7 @@ export class TypeChecker {
 
   private registerBuiltinResult() {
     if (this.genericEnums.has("Result")) return;
-    const stringType: MiloType = { name: "String", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    const stringType: MiloType = { name: "string", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     const decl: import("./ast").EnumDecl = {
       kind: "EnumDecl",
       name: "Result",
@@ -650,7 +650,7 @@ export class TypeChecker {
     });
 
     // register primitive impls for Eq (checker-only, no codegen needed)
-    const primTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "String"];
+    const primTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "string"];
     for (const pt of primTypes) {
       const eqMethods = new Map<string, FnSig>();
       eqMethods.set("eq", { params: [{ type: selfRef, name: "self" }, { type: selfRef, name: "other" }], ret: bool_t, variadic: false });
@@ -658,7 +658,7 @@ export class TypeChecker {
     }
 
     // Hash impls for hashable primitives
-    const hashTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "bool", "String"];
+    const hashTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "bool", "string"];
     for (const pt of hashTypes) {
       const existing = this.traitImpls.get(pt) || [];
       const hashMethods = new Map<string, FnSig>();
@@ -1746,12 +1746,12 @@ export class TypeChecker {
           if (expr.method === "push") {
             if (expr.args.length !== 1) { this.error(`'push' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
             if (!this.isRootMutable(expr.object)) {
-              this.error(`cannot push to immutable String`, sp, `declare with 'var' to make it mutable`);
+              this.error(`cannot push to immutable string`, sp, `declare with 'var' to make it mutable`);
             }
             const argType = this.checkExpr(expr.args[0]);
             const u8t: TypeKind = { tag: "int", bits: 8, signed: false };
             if (!typeEq(u8t, argType) && argType.tag !== "unknown") {
-              this.error(`String.push: expected u8, got ${typeName(argType)}`, sp);
+              this.error(`string.push: expected u8, got ${typeName(argType)}`, sp);
             }
             return this.setType(expr, { tag: "void" });
           }
@@ -1816,7 +1816,7 @@ export class TypeChecker {
   private validateHashableKey(t: TypeKind, span?: Span) {
     if (t.tag === "int" || t.tag === "bool" || t.tag === "string") return;
     if (t.tag !== "unknown") {
-      this.error(`type '${typeName(t)}' is not hashable — only integer, bool, and String keys are supported`, span);
+      this.error(`type '${typeName(t)}' is not hashable — only integer, bool, and string keys are supported`, span);
     }
   }
 

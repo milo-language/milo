@@ -2,8 +2,8 @@
 from "std/http" import { Request, Response, serve }
 
 struct MiloInfo {
-    language: String,
-    backend: String,
+    language: string,
+    backend: string,
     memory_safe: bool,
 }
 

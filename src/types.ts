@@ -33,7 +33,7 @@ export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; 
     case "f64": base = { tag: "float", bits: 64 }; break;
     case "bool": base = { tag: "bool" }; break;
     case "void": base = { tag: "void" }; break;
-    case "String": base = { tag: "string" }; break;
+    case "string": base = { tag: "string" }; break;
     default: base = { tag: "struct", name: ty.name }; break;
   }
   let result: TypeKind = base;
@@ -74,7 +74,7 @@ export function typeName(t: TypeKind): string {
     case "float": return `f${t.bits}`;
     case "bool": return "bool";
     case "void": return "void";
-    case "string": return "String";
+    case "string": return "string";
     case "ptr": return `*${typeName(t.inner)}`;
     case "box": return `Box<${typeName(t.inner)}>`;
     case "vec": return `Vec<${typeName(t.element)}>`;
