@@ -1,4 +1,4 @@
-// std/net — TCP client, DNS, HTTP with automatic cleanup
+// std/net — TCP, DNS, HTTP client with automatic cleanup
 
 import "std/os"
 
@@ -79,9 +79,7 @@ fn resolve(hostname: string): Result<u32> {
     var hints: [u8; 48] = [0; 48]
     unsafe {
         let hints_family = (hints as *i32)
-        // ai_family at offset 4 = AF_INET (2)
         hints_family[1] = 2
-        // ai_socktype at offset 8 = SOCK_STREAM (1)
         hints_family[2] = 1
     }
 
@@ -92,9 +90,7 @@ fn resolve(hostname: string): Result<u32> {
             return Result.Err("DNS resolution failed")
         }
         let info_ptr = *(res_buf as *i64)
-        // addrinfo.ai_addr at offset 32
         let addr_ptr = *((info_ptr + 32) as *i64)
-        // sockaddr_in.sin_addr at offset 4
         let ip = *((addr_ptr + 4) as *u32)
         freeaddrinfo(info_ptr as *u8)
         return Result.Ok(ip)
@@ -114,13 +110,79 @@ impl Response {
         return self.body.clone()
     }
 
+    fn json(self: &Self): string {
+        return self.body.clone()
+    }
+
     fn ok(self: &Self): bool {
         return self.status >= 200 && self.status < 300
     }
+
+    fn header(self: &Self, name: &string): string {
+        return find_header(self.headers, name)
+    }
 }
 
+// ── String helpers ──
+
+fn str_eq_nocase(a: &string, ai: i64, b: &string, blen: i64): bool {
+    var i: i64 = 0
+    while i < blen {
+        var ca: u8 = a[ai + i]
+        var cb: u8 = b[i]
+        // lowercase ASCII
+        if ca >= 'A' && ca <= 'Z' { ca = ca + 32 }
+        if cb >= 'A' && cb <= 'Z' { cb = cb + 32 }
+        if ca != cb { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn find_header(headers: &string, name: &string): string {
+    // search for "Name: value" in headers (case-insensitive name match)
+    var i: i64 = 0
+    while i + name.len + 1 < headers.len {
+        // check if we're at line start (i==0 or preceded by \n)
+        if i == 0 || headers[i - 1] == '\n' {
+            if str_eq_nocase(headers, i, name, name.len) && headers[i + name.len] == ':' {
+                var start: i64 = i + name.len + 1
+                // skip spaces after colon
+                while start < headers.len && headers[start] == ' ' {
+                    start = start + 1
+                }
+                var end: i64 = start
+                while end < headers.len && headers[end] != '\r' && headers[end] != '\n' {
+                    end = end + 1
+                }
+                return headers[start .. end]
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn starts_with(s: &string, prefix: &string): bool {
+    if s.len < prefix.len { return false }
+    var i: i64 = 0
+    while i < prefix.len {
+        if s[i] != prefix[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn hex_digit(c: u8): i64 {
+    if c >= '0' && c <= '9' { return (c - '0') as i64 }
+    if c >= 'a' && c <= 'f' { return (c - 'a') as i64 + 10 }
+    if c >= 'A' && c <= 'F' { return (c - 'A') as i64 + 10 }
+    return -1 as i64
+}
+
+// ── HTTP parsing ──
+
 fn parse_status(raw: &string): i32 {
-    // "HTTP/1.1 200 OK\r\n..." — status code starts at index 9
     if raw.len < 12 { return 0 }
     var code: i32 = 0
     var i: i64 = 9
@@ -131,8 +193,7 @@ fn parse_status(raw: &string): i32 {
     return code
 }
 
-fn parse_headers(raw: &string): string {
-    // headers are between first \r\n and \r\n\r\n
+fn parse_raw_headers(raw: &string): string {
     var start: i64 = 0
     var i: i64 = 0
     while i + 1 < raw.len {
@@ -158,11 +219,51 @@ fn parse_body(raw: &string): string {
     return raw.clone()
 }
 
+fn decode_chunked(raw_body: &string): string {
+    var result: string = ""
+    var i: i64 = 0
+    while i < raw_body.len {
+        // parse hex chunk size
+        var chunk_size: i64 = 0
+        while i < raw_body.len {
+            let d = hex_digit(raw_body[i])
+            if d < 0 { break }
+            chunk_size = chunk_size * 16 + d
+            i = i + 1
+        }
+        // skip \r\n after size
+        if i + 1 < raw_body.len && raw_body[i] == '\r' { i = i + 2 }
+        if chunk_size == 0 { break }
+        // copy chunk data
+        var j: i64 = 0
+        while j < chunk_size && i < raw_body.len {
+            result.push(raw_body[i])
+            i = i + 1
+            j = j + 1
+        }
+        // skip trailing \r\n
+        if i + 1 < raw_body.len && raw_body[i] == '\r' { i = i + 2 }
+    }
+    return result
+}
+
+fn parse_response(raw: string): Response {
+    let status = parse_status(raw)
+    let headers = parse_raw_headers(raw)
+    var body = parse_body(raw)
+    // handle chunked transfer encoding
+    let te = find_header(headers, "Transfer-Encoding")
+    let chunked: string = "chunked"
+    if starts_with(te, chunked) {
+        body = decode_chunked(body)
+    }
+    return Response { status: status, headers: headers, body: body }
+}
+
 // ── URL parsing ──
 
 fn parse_host(url: &string): string {
     var start: i64 = 0
-    // skip "http://"
     if url.len > 7 && url[0] == 'h' && url[4] == ':' {
         start = 7
     }
@@ -178,7 +279,6 @@ fn parse_port(url: &string): u16 {
     if url.len > 7 && url[0] == 'h' && url[4] == ':' {
         i = 7
     }
-    // skip host
     while i < url.len && url[i] != '/' && url[i] != ':' {
         i = i + 1
     }
@@ -199,7 +299,6 @@ fn parse_path(url: &string): string {
     if url.len > 7 && url[0] == 'h' && url[4] == ':' {
         i = 7
     }
-    // skip host and optional port
     while i < url.len && url[i] != '/' {
         i = i + 1
     }
@@ -207,15 +306,26 @@ fn parse_path(url: &string): string {
     return url[i .. url.len]
 }
 
+// ── FetchOptions ──
+
+struct FetchOptions {
+    method: string,
+    headers: string,
+    body: string,
+}
+
 // ── HTTP client ──
 
-fn http_request(method: string, ip: u32, port: u16, host: string, path: string, req_body: &string): Result<Response> {
+fn http_do(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response> {
     let conn = tcp_connect(ip, port)
     match conn {
         Result.Ok(stream) => {
-            var req: string = method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
-            if req_body.len > 0 {
-                req = req + "Content-Length: " + req_body.len.to_string() + "\r\n\r\n" + req_body.clone()
+            var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
+            if opts.headers.len > 0 {
+                req = req + opts.headers.clone() + "\r\n"
+            }
+            if opts.body.len > 0 {
+                req = req + "Content-Length: " + opts.body.len.to_string() + "\r\n\r\n" + opts.body.clone()
             } else {
                 req = req + "\r\n"
             }
@@ -225,10 +335,7 @@ fn http_request(method: string, ip: u32, port: u16, host: string, path: string, 
                     let raw = tcp_recv(stream)
                     match raw {
                         Result.Ok(r) => {
-                            let status = parse_status(r)
-                            let headers = parse_headers(r)
-                            let body = parse_body(r)
-                            return Result.Ok(Response { status: status, headers: headers, body: body })
+                            return Result.Ok(parse_response(r))
                         }
                         Result.Err(msg) => { return Result.Err(msg) }
                     }
@@ -240,33 +347,81 @@ fn http_request(method: string, ip: u32, port: u16, host: string, path: string, 
     }
 }
 
-fn fetch(url: string): Result<Response> {
+fn do_fetch(url: string, opts: FetchOptions): Result<Response> {
     let host = parse_host(url)
     let port = parse_port(url)
     let path = parse_path(url)
     let ip_result = resolve(host.clone())
     match ip_result {
         Result.Ok(ip) => {
-            var empty: string = ""
-            return http_request("GET", ip, port, host, path, empty)
+            let resp = http_do(ip, port, host, path, opts)
+            match resp {
+                Result.Ok(r) => {
+                    // follow redirects (301, 302, 307, 308)
+                    if r.status == 301 || r.status == 302 || r.status == 307 || r.status == 308 {
+                        let loc = r.header("Location")
+                        if loc.len > 0 {
+                            // build new options, preserve method for 307/308
+                            var redir_opts = FetchOptions {
+                                method: opts.method.clone(),
+                                headers: opts.headers.clone(),
+                                body: opts.body.clone(),
+                            }
+                            if r.status == 301 || r.status == 302 {
+                                redir_opts.method = "GET"
+                                redir_opts.body = ""
+                            }
+                            return do_fetch(loc, redir_opts)
+                        }
+                    }
+                    return Result.Ok(r)
+                }
+                Result.Err(msg) => { return Result.Err(msg) }
+            }
         }
-        Result.Err(msg) => {
-            return Result.Err(msg)
-        }
+        Result.Err(msg) => { return Result.Err(msg) }
     }
 }
 
+// ── Public API ──
+
+fn fetch(url: string): Result<Response> {
+    var opts = FetchOptions { method: "GET", headers: "", body: "" }
+    return do_fetch(url, opts)
+}
+
+fn fetch_with(url: string, opts: FetchOptions): Result<Response> {
+    return do_fetch(url, opts)
+}
+
 fn fetch_post(url: string, body: string): Result<Response> {
-    let host = parse_host(url)
-    let port = parse_port(url)
-    let path = parse_path(url)
-    let ip_result = resolve(host.clone())
-    match ip_result {
-        Result.Ok(ip) => {
-            return http_request("POST", ip, port, host, path, body)
-        }
-        Result.Err(msg) => {
-            return Result.Err(msg)
-        }
+    var opts = FetchOptions {
+        method: "POST",
+        headers: "Content-Type: application/json",
+        body: body,
     }
+    return do_fetch(url, opts)
+}
+
+fn fetch_put(url: string, body: string): Result<Response> {
+    var opts = FetchOptions {
+        method: "PUT",
+        headers: "Content-Type: application/json",
+        body: body,
+    }
+    return do_fetch(url, opts)
+}
+
+fn fetch_delete(url: string): Result<Response> {
+    var opts = FetchOptions { method: "DELETE", headers: "", body: "" }
+    return do_fetch(url, opts)
+}
+
+fn fetch_patch(url: string, body: string): Result<Response> {
+    var opts = FetchOptions {
+        method: "PATCH",
+        headers: "Content-Type: application/json",
+        body: body,
+    }
+    return do_fetch(url, opts)
 }
