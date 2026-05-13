@@ -21,8 +21,9 @@ enum Expr {
     Call(string, Vec<Box<Expr>>),
     StructLit(string, Vec<ExprField>),
     FieldAccess(Box<Expr>, string),
-    EnumLit(string, string, Vec<Box<Expr>>),  // enum_name, variant, args
+    EnumLit(string, string, Vec<Box<Expr>>),
     As(Box<Expr>, string),
+    MethodCall(Box<Expr>, string, Vec<Box<Expr>>),
 }
 
 enum Stmt {
@@ -108,6 +109,34 @@ fn expect(toks: &Vec<Token>, pos: &mut i64, k: TokKind): void {
 // ── Type parsing ──
 // Subset: bare identifier, optional leading '*' for pointer.
 fn parse_type(src: &string, toks: &Vec<Token>, pos: &mut i64): string {
+    // Stage-0: parse `&T` / `&mut T` but strip the reference qualifier — references are
+    // treated as pass-by-value at codegen. (Loses mutation through refs; OK for most milo0
+    // patterns that just want to avoid moves, since structs/strings are bit-copied here.)
+    if toks[pos].kind == TokKind.Amp {
+        pos = pos + 1
+        // optional `mut`
+        if toks[pos].kind == TokKind.Ident {
+            let txt = token_text(src, toks, pos)
+            if txt == "mut" { pos = pos + 1 }
+        }
+        return parse_type(src, toks, pos)
+    }
+    // Fixed array: `[T; N]` → encode as "[T;N]" string. Codegen handles via ll_type lookup.
+    if toks[pos].kind == TokKind.LBracket {
+        pos = pos + 1
+        let elem = parse_type(src, toks, pos)
+        var sz: i64 = 0
+        if toks[pos].kind == TokKind.Semi {
+            pos = pos + 1
+            if toks[pos].kind == TokKind.IntLit {
+                let szs = token_text(src, toks, pos)
+                pos = pos + 1
+                sz = parse_i64(szs)
+            }
+        }
+        if toks[pos].kind == TokKind.RBracket { pos = pos + 1 }
+        return "[" + elem + ";" + sz.to_string() + "]"
+    }
     var stars: i32 = 0
     while toks[pos].kind == TokKind.Star {
         stars = stars + 1
@@ -236,7 +265,20 @@ fn parse_postfix(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
             pos = pos + 1
             let fname = token_text(src, toks, pos)
             pos = pos + 1
-            e = Box(Expr.FieldAccess(e, fname))
+            // Method call: `.name(args)` — distinguish from plain field access.
+            if toks[pos].kind == TokKind.LParen {
+                pos = pos + 1
+                var args: Vec<Box<Expr>> = Vec.new()
+                while toks[pos].kind != TokKind.RParen && toks[pos].kind != TokKind.Eof {
+                    let a = parse_expr(src, toks, pos)
+                    args.push(a)
+                    if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                }
+                if toks[pos].kind == TokKind.RParen { pos = pos + 1 }
+                e = Box(Expr.MethodCall(e, fname, args))
+            } else {
+                e = Box(Expr.FieldAccess(e, fname))
+            }
         } else if toks[pos].kind == TokKind.As {
             pos = pos + 1
             let ty = parse_type(src, toks, pos)

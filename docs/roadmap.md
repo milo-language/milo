@@ -201,8 +201,21 @@ Verification:
   // tree of 1,2,3,4 → sum = 10
   ```
 
+- [x] **String type in milo0.** `%String = { ptr, i64, i64 }` aggregate. String literals build the aggregate. Variadic externs (printf etc.) auto-extract the data ptr. `.len` via `extractvalue` 1. `+` concat via malloc+memcpy. `==`/`!=` via memcmp + length compare. Tested:
+  ```
+  let a: string = "hello"
+  let b: string = " world"
+  let c = a + b              // "hello world"
+  c.len                       // 11
+  c == "hello world"          // true
+  a != b                      // true
+  ```
+
 Still missing for full milo0-on-milo0:
-- [ ] Vec, HashMap, closures, String type with methods, drop semantics (free on Box).
+- [ ] String.push, String.clone, slice [a..b], substr.
+- [ ] Vec<T>, HashMap<K,V>.
+- [ ] References (&T, &mut T) and method calls.
+- [ ] Closures, generics, drop semantics on Box.
 
 ### Phase 3.5 — Beyond Stage-0
 

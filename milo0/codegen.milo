@@ -68,6 +68,7 @@ struct Cgen {
     declared_memcpy: bool,
     declared_memcmp: bool,
     declared_string_ty: bool,
+    declared_snprintf: bool,
     // Struct table encoded as one big string: "Name|f1:t1|f2:t2;Name2|fa:ta;..."
     // Lookups walk the string and substr — substrings copy bytes, so no aliasing pain
     // (versus HashMap<string, string> or Vec<StructDecl> which both reuse heap pointers).
@@ -91,6 +92,7 @@ fn cgen_new(): Cgen {
         declared_memcpy: false,
         declared_memcmp: false,
         declared_string_ty: false,
+        declared_snprintf: false,
         struct_db: "",
         enum_db: "",
         enum_payload_db: "",
@@ -357,6 +359,110 @@ fn ensure_string_ty(cg: &mut Cgen): void {
         emit_g(cg, "%String = type { ptr, i64, i64 }\n")
         cg.declared_string_ty = true
     }
+}
+
+fn gen_method_call(cg: &mut Cgen, object: Box<Expr>, method: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let obj = gen_expr(cg, object, locs, sigs, "")
+    let obj_ty_ll = ll_type(obj.ty.clone())
+    // string.clone() — deep copy
+    if obj_ty_ll == "%String" && method == "clone" {
+        return gen_string_clone(cg, obj.v.clone())
+    }
+    // string.len()? handled by FieldAccess separately, but accept method form too.
+    if obj_ty_ll == "%String" && method == "len" {
+        let len_id = cg.temp
+        cg.temp = cg.temp + 1
+        let len_t = "%t" + len_id.to_string()
+        emit(cg, "  " + len_t + " = extractvalue %String " + obj.v + ", 1\n")
+        return Val { v: len_t, ty: "i64".clone() }
+    }
+    // i64.to_string() — snprintf-based (simple impl: use %lld format, malloc 32 bytes).
+    if obj_ty_ll == "i64" && method == "to_string" {
+        return gen_int_to_string(cg, obj.v.clone())
+    }
+    if obj_ty_ll == "i32" && method == "to_string" {
+        // widen to i64 then format
+        let w_id = cg.temp
+        cg.temp = cg.temp + 1
+        let w = "%t" + w_id.to_string()
+        emit(cg, "  " + w + " = sext i32 " + obj.v + " to i64\n")
+        return gen_int_to_string(cg, w)
+    }
+    return Val { v: "0".clone(), ty: "i64".clone() }
+}
+
+fn gen_string_clone(cg: &mut Cgen, sv: string): Val {
+    ensure_string_ty(cg)
+    ensure_malloc(cg)
+    ensure_memcpy(cg)
+    let data_id = cg.temp
+    cg.temp = cg.temp + 1
+    let data = "%t" + data_id.to_string()
+    emit(cg, "  " + data + " = extractvalue %String " + sv.clone() + ", 0\n")
+    let len_id = cg.temp
+    cg.temp = cg.temp + 1
+    let len = "%t" + len_id.to_string()
+    emit(cg, "  " + len + " = extractvalue %String " + sv + ", 1\n")
+    let sz_id = cg.temp
+    cg.temp = cg.temp + 1
+    let sz = "%t" + sz_id.to_string()
+    emit(cg, "  " + sz + " = add i64 " + len.clone() + ", 1\n")
+    let buf_id = cg.temp
+    cg.temp = cg.temp + 1
+    let buf = "%t" + buf_id.to_string()
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + buf.clone() + ", ptr " + data + ", i64 " + len.clone() + ")\n")
+    let null_id = cg.temp
+    cg.temp = cg.temp + 1
+    let null_ptr = "%t" + null_id.to_string()
+    emit(cg, "  " + null_ptr + " = getelementptr i8, ptr " + buf.clone() + ", i64 " + len.clone() + "\n")
+    emit(cg, "  store i8 0, ptr " + null_ptr + "\n")
+    let s0_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s0 = "%t" + s0_id.to_string()
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s1 = "%t" + s1_id.to_string()
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
+    return Val { v: s1, ty: "string".clone() }
+}
+
+fn gen_int_to_string(cg: &mut Cgen, val: string): Val {
+    ensure_string_ty(cg)
+    ensure_malloc(cg)
+    if !cg.declared_snprintf {
+        emit_g(cg, "declare i32 @snprintf(ptr, i64, ptr, ...)\n")
+        cg.declared_snprintf = true
+    }
+    let fmt = emit_string_lit(cg, "%lld")
+    // Two-pass: snprintf(null, 0, fmt, val) to measure, then alloc + snprintf
+    let len_id = cg.temp
+    cg.temp = cg.temp + 1
+    let len = "%t" + len_id.to_string()
+    emit(cg, "  " + len + " = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr " + fmt.clone() + ", i64 " + val.clone() + ")\n")
+    let len64_id = cg.temp
+    cg.temp = cg.temp + 1
+    let len64 = "%t" + len64_id.to_string()
+    emit(cg, "  " + len64 + " = sext i32 " + len + " to i64\n")
+    let sz_id = cg.temp
+    cg.temp = cg.temp + 1
+    let sz = "%t" + sz_id.to_string()
+    emit(cg, "  " + sz + " = add i64 " + len64.clone() + ", 1\n")
+    let buf_id = cg.temp
+    cg.temp = cg.temp + 1
+    let buf = "%t" + buf_id.to_string()
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz.clone() + ")\n")
+    emit(cg, "  call i32 (ptr, i64, ptr, ...) @snprintf(ptr " + buf.clone() + ", i64 " + sz + ", ptr " + fmt + ", i64 " + val + ")\n")
+    let s0_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s0 = "%t" + s0_id.to_string()
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s1 = "%t" + s1_id.to_string()
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len64 + ", 1\n")
+    return Val { v: s1, ty: "string".clone() }
 }
 
 fn ensure_malloc(cg: &mut Cgen): void {
@@ -814,6 +920,8 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
                 arg_vals.push(av)
                 i = i + 1
             }
+            // Coerce string→ptr ONLY when target is a known variadic extern (printf etc.).
+            let is_variadic_extern = name == "printf" || name == "fprintf" || name == "snprintf" || name == "print" || name == "println"
             var arg_str: string = ""
             var ai: i64 = 0
             while ai < arg_vals.len {
@@ -822,7 +930,7 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
                 let elem_ty = elem.ty.clone()
                 let elem_v = elem.v.clone()
                 let elem_ll = ll_type(elem_ty.clone())
-                if elem_ll == "%String" {
+                if elem_ll == "%String" && is_variadic_extern {
                     let p_id = cg.temp
                     cg.temp = cg.temp + 1
                     let p = "%t" + p_id.to_string()
@@ -878,6 +986,9 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
         Expr.As(inner, target_ty) => {
             return gen_as_cast(cg, inner, target_ty, locs, sigs)
         }
+        Expr.MethodCall(object, method, args) => {
+            return gen_method_call(cg, object, method, args, locs, sigs)
+        }
     }
 }
 
@@ -920,6 +1031,7 @@ fn gen_assign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec
         Expr.StructLit(name, fields) => { return }
         Expr.EnumLit(en, vn, args) => { return }
         Expr.As(inner, ty) => { return }
+        Expr.MethodCall(obj, m, ma) => { return }
     }
 }
 
@@ -1224,6 +1336,7 @@ fn gen_lvalue(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>): Val {
         Expr.FieldAccess(object, field) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.EnumLit(en, vn, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.As(inner, ty) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.MethodCall(obj, m, ma) => { return Val { v: "0".clone(), ty: "i64".clone() } }
     }
 }
 
