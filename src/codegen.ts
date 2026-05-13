@@ -97,6 +97,7 @@ export class Codegen {
     if (ty === "float") return 4;
     if (ty === "double") return 8;
     if (ty === "ptr") return 8;
+    if (ty === "{ ptr, ptr }") return 16;
     if (ty === "%String") return 24; // ptr + i64 + i64
     if (ty === "%Vec") return 24; // ptr + i64 + i64
     if (ty === "%HashMap") return 32; // ptr + i64 + i64 + i64
@@ -719,7 +720,7 @@ export class Codegen {
         if (local.isRef) {
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = load ptr, ptr ${this.localAddr(expr.name)}`);
-          if (this.getStructName(local.type) || local.typeKind.tag === "box") return [lines, ptr, local.type];
+          if (this.getStructName(local.type)) return [lines, ptr, local.type];
           const val = this.nextTemp();
           lines.push(`  ${val} = load ${local.type}, ptr ${ptr}`);
           return [lines, val, local.type];
@@ -1071,9 +1072,10 @@ export class Codegen {
         // set up params
         for (const p of expr.params) {
           const lt = this.llvmType(p.type);
+          const isRefParam = p.type.tag === "ref";
           closureBody.push(`  %${p.name}.addr = alloca ${lt}`);
           closureBody.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
-          this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
+          this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: isRefParam });
         }
 
         // generate body
@@ -1149,9 +1151,15 @@ export class Codegen {
         // evaluate args
         const argVals: { val: string; type: string }[] = [{ val: envPtr, type: "ptr" }];
         for (const arg of expr.args) {
-          const [al, av, at] = this.genExpr(arg.expr);
-          lines.push(...al);
-          argVals.push({ val: av, type: at });
+          if (arg.passByRef) {
+            const [al, aPtr] = this.genLValueForArg(arg.expr);
+            lines.push(...al);
+            argVals.push({ val: aPtr, type: "ptr" });
+          } else {
+            const [al, av, at] = this.genExpr(arg.expr);
+            lines.push(...al);
+            argVals.push({ val: av, type: at });
+          }
         }
 
         const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");

@@ -1,0 +1,19 @@
+// @expect: 60
+fn sum(v: &Vec<i32>): i32 {
+    var total: i32 = 0
+    var i: i64 = 0
+    while i < v.len {
+        total = total + v[i]
+        i = i + 1
+    }
+    return total
+}
+
+fn main(): i32 {
+    var v: Vec<i32> = Vec.new()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    print("%d\n", sum(v))
+    return 0
+}

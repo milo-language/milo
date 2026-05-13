@@ -230,11 +230,14 @@ class LowerCtx {
         }
         const closureFnType = this.c.closureCalls.get(expr);
         if (closureFnType) {
-          const args: HIRArg[] = expr.args.map(arg => ({
-            expr: this.lowerExpr(arg),
-            passByRef: false,
-            refMut: false,
-          }));
+          const args: HIRArg[] = expr.args.map(arg => {
+            const borrowed = this.c.autoBorrowed.get(arg);
+            return {
+              expr: this.lowerExpr(arg),
+              passByRef: !!borrowed,
+              refMut: borrowed?.mutable ?? false,
+            };
+          });
           return {
             kind: "ClosureCall",
             callee: { kind: "Ident", name: expr.func, type: closureFnType, span: expr.span },
@@ -395,6 +398,22 @@ class LowerCtx {
             };
           });
           return { kind: "Call", func: resolved, args, type, variadic: false, span: expr.span };
+        }
+        // fn-typed struct field call: h.apply(args) → ClosureCall(FieldAccess(h, "apply"), args)
+        if (this.c.fnFieldCalls.has(expr)) {
+          const callee: HIRExpr = {
+            kind: "FieldAccess",
+            object: this.lowerExpr(expr.object),
+            field: expr.method,
+            type: { tag: "fn" as const, params: [], ret: type },
+          };
+          const fnType = this.typeOf(expr);
+          const objFnType = this.c.exprTypes.get(expr);
+          const args: HIRArg[] = expr.args.map((a, i) => {
+            const borrowed = this.c.autoBorrowed.get(a);
+            return { expr: this.lowerExpr(a), passByRef: !!borrowed, refMut: borrowed?.mutable ?? false };
+          });
+          return { kind: "ClosureCall", callee, args, type, span: expr.span };
         }
         throw new Error(`unsupported method call: ${expr.method}`);
       }

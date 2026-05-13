@@ -1,0 +1,26 @@
+// @expect: double(5) = 10
+// @expect: triple(5) = 15
+// @expect: negate(5) = -5
+fn double(x: i32): i32 { return x * 2 }
+fn triple(x: i32): i32 { return x * 3 }
+fn negate(x: i32): i32 { return 0 - x }
+
+struct Op {
+    name: string,
+    apply: fn(i32): i32,
+}
+
+fn main(): i32 {
+    var ops: Vec<Op> = Vec.new()
+    ops.push(Op { name: "double", apply: double })
+    ops.push(Op { name: "triple", apply: triple })
+    ops.push(Op { name: "negate", apply: negate })
+
+    var i: i64 = 0
+    while i < ops.len {
+        let op = ops[i]
+        print("%s(5) = %d\n", op.name, op.apply(5))
+        i = i + 1
+    }
+    return 0
+}

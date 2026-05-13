@@ -1,8 +1,0 @@
-struct Handler {
-    callback: fn(i32): void
-}
-
-fn main(): i32 {
-    return 0
-}
-// @error: closures cannot be stored in structs

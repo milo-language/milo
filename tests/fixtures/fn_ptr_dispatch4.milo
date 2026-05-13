@@ -1,0 +1,21 @@
+// @expect: name: double
+// @expect: result: 10
+fn double(x: i32): i32 { return x * 2 }
+
+struct Op {
+    name: string,
+    apply: fn(i32): i32,
+}
+
+fn use_ops(ops: &Vec<Op>): void {
+    let op = ops[0]
+    print("name: %s\n", op.name)
+    print("result: %d\n", op.apply(5))
+}
+
+fn main(): i32 {
+    var ops: Vec<Op> = Vec.new()
+    ops.push(Op { name: "double", apply: double })
+    use_ops(ops)
+    return 0
+}

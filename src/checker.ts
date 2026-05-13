@@ -48,6 +48,7 @@ export interface CheckResult {
   closureCaptures: Map<Expr, CaptureInfo[]>;
   closureCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
+  fnFieldCalls: Set<Expr>;
 }
 
 interface GenericEnumInfo {
@@ -113,6 +114,7 @@ export class TypeChecker {
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
   private resolvedMethods = new Map<Expr, string>();
+  private fnFieldCalls = new Set<Expr>();
 
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
@@ -125,37 +127,42 @@ export class TypeChecker {
     const typeArgs = ty.typeArgs ?? [];
     if (typeArgs.length > 0) {
       const resolvedArgs = typeArgs.map(a => this.resolve(a));
+      let result: TypeKind;
       if (ty.name === "Box") {
         if (resolvedArgs.length !== 1) { this.error(`'Box' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
-        return { tag: "box", inner: resolvedArgs[0] };
-      }
-      if (ty.name === "Vec") {
+        result = { tag: "box", inner: resolvedArgs[0] };
+      } else if (ty.name === "Vec") {
         if (resolvedArgs.length !== 1) { this.error(`'Vec' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
-        return { tag: "vec", element: resolvedArgs[0] };
-      }
-      if (ty.name === "HashMap") {
+        result = { tag: "vec", element: resolvedArgs[0] };
+      } else if (ty.name === "HashMap") {
         if (resolvedArgs.length !== 2) { this.error(`'HashMap' expects 2 type arguments, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
         this.validateHashableKey(resolvedArgs[0]);
-        return { tag: "hashmap", key: resolvedArgs[0], value: resolvedArgs[1] };
-      }
-      const ge = this.genericEnums.get(ty.name);
-      if (ge) {
-        if (resolvedArgs.length !== ge.typeParams.length) {
-          this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${resolvedArgs.length}`);
-          return { tag: "unknown" };
+        result = { tag: "hashmap", key: resolvedArgs[0], value: resolvedArgs[1] };
+      } else {
+        const ge = this.genericEnums.get(ty.name);
+        if (ge) {
+          if (resolvedArgs.length !== ge.typeParams.length) {
+            this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${resolvedArgs.length}`);
+            return { tag: "unknown" };
+          }
+          result = { tag: "enum", name: this.monomorphizeEnum(ty.name, resolvedArgs) };
+        } else {
+          const gs = this.genericStructs.get(ty.name);
+          if (gs) {
+            if (resolvedArgs.length !== gs.typeParams.length) {
+              this.error(`'${ty.name}' expects ${gs.typeParams.length} type args, got ${resolvedArgs.length}`);
+              return { tag: "unknown" };
+            }
+            result = { tag: "struct", name: this.monomorphizeStruct(ty.name, resolvedArgs) };
+          } else {
+            this.error(`'${ty.name}' is not a generic type`);
+            return { tag: "unknown" };
+          }
         }
-        return { tag: "enum", name: this.monomorphizeEnum(ty.name, resolvedArgs) };
       }
-      const gs = this.genericStructs.get(ty.name);
-      if (gs) {
-        if (resolvedArgs.length !== gs.typeParams.length) {
-          this.error(`'${ty.name}' expects ${gs.typeParams.length} type args, got ${resolvedArgs.length}`);
-          return { tag: "unknown" };
-        }
-        return { tag: "struct", name: this.monomorphizeStruct(ty.name, resolvedArgs) };
-      }
-      this.error(`'${ty.name}' is not a generic type`);
-      return { tag: "unknown" };
+      if (ty.isRef) return { tag: "ref", inner: result, mutable: false };
+      if (ty.isRefMut) return { tag: "ref", inner: result, mutable: true };
+      return result;
     }
     const base = typeFromAst(ty);
     if (base.tag === "struct" && this.enums.has(base.name)) {
@@ -391,9 +398,6 @@ export class TypeChecker {
           if (f.type.tag === "ref") {
             this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
           }
-          if (f.type.tag === "fn") {
-            this.error(`struct '${s.name}' field '${f.name}': closures cannot be stored in structs`, undefined, `closures are second-class — pass them as function parameters instead`);
-          }
         }
         this.structs.set(s.name, { fields });
       }
@@ -495,6 +499,7 @@ export class TypeChecker {
       closureCaptures: this.closureCaptures,
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
+      fnFieldCalls: this.fnFieldCalls,
     };
   }
 
@@ -1359,12 +1364,23 @@ export class TypeChecker {
               this.error(`closure expects ${fnType.params.length} args, got ${expr.args.length}`, sp);
             }
             for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
-              const argType = this.checkExprWithHint(expr.args[i], fnType.params[i]);
-              if (!typeEq(fnType.params[i], argType) && argType.tag !== "unknown") {
-                this.error(`closure argument ${i + 1}: expected ${typeName(fnType.params[i])}, got ${typeName(argType)}`, expr.args[i].span);
+              const paramType = fnType.params[i];
+              const hint = paramType.tag === "ref" ? paramType.inner : paramType;
+              const argType = this.checkExprWithHint(expr.args[i], hint);
+              if (paramType.tag === "ref") {
+                if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
+                  continue;
+                }
+                this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
+                if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
+                  this.error(`closure argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+                }
+              } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
+                this.error(`closure argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
               }
             }
             for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
+              if (fnType.params[i].tag === "ref") continue;
               this.tryMove(expr.args[i]);
             }
             this.closureCalls.set(expr, fnType);
@@ -1382,6 +1398,9 @@ export class TypeChecker {
           const hint = paramType.tag === "ref" ? paramType.inner : paramType;
           const argType = this.checkExprWithHint(expr.args[i], hint);
           if (paramType.tag === "ref") {
+            if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
+              continue;
+            }
             this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
             if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
               this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
@@ -1805,6 +1824,38 @@ export class TypeChecker {
           }
           this.resolvedMethods.set(expr, mangled);
           return this.setType(expr, sig.ret);
+        }
+
+        // fn-typed struct field call: h.apply(args) where apply: fn(...): T
+        const structType = bareObjType.tag === "struct" ? bareObjType : null;
+        if (structType) {
+          const sdef = this.structs.get(structType.name);
+          if (sdef) {
+            const field = sdef.fields.find(f => f.name === expr.method);
+            if (field && field.type.tag === "fn") {
+              const fnType = field.type;
+              if (expr.args.length !== fnType.params.length) {
+                this.error(`'${expr.method}' expects ${fnType.params.length} argument(s), got ${expr.args.length}`, sp);
+              }
+              for (let i = 0; i < expr.args.length; i++) {
+                const expected = fnType.params[i];
+                if (!expected) break;
+                const bare = expected.tag === "ref" ? expected.inner : expected;
+                const argType = this.checkExprWithHint(expr.args[i], bare);
+                if (!typeEq(bare, argType) && argType.tag !== "unknown") {
+                  this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+                }
+                if (expected.tag === "ref") {
+                  this.autoBorrowed.set(expr.args[i], { mutable: expected.mutable });
+                } else {
+                  this.tryMove(expr.args[i]);
+                }
+              }
+              this.fnFieldCalls = this.fnFieldCalls || new Set();
+              this.fnFieldCalls.add(expr);
+              return this.setType(expr, fnType.ret);
+            }
+          }
         }
 
         this.error(`type '${typeName(objType)}' has no method '${expr.method}'`, sp);
