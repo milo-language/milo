@@ -1,0 +1,25 @@
+// @expect: found: 42
+// @expect: missing
+extern fn printf(fmt: *u8, ...): i32
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+fn main(): i32 {
+    var m: HashMap<String, i64> = HashMap.new()
+    m.insert("hello", 42)
+    m.insert("world", 99)
+    let r1 = m.get("hello")
+    if let Option.Some(v) = r1 {
+        printf("found: %lld\n", v)
+    }
+    let r2 = m.get("missing")
+    if let Option.Some(v) = r2 {
+        printf("found: %lld\n", v)
+    } else {
+        printf("missing\n")
+    }
+    return 0
+}

@@ -1,0 +1,146 @@
+// @expect: name=milo
+// @expect: version=1
+// @expect: missing=no
+extern fn printf(fmt: *u8, ...): i32
+
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+enum JsonValue {
+    Null,
+    Bool(bool),
+    Number(i64),
+    Str(String),
+    Object(HashMap<String, Box<JsonValue>>),
+}
+
+fn is_ws(ch: u8): bool {
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
+}
+
+fn is_digit(ch: u8): bool {
+    return ch >= '0' && ch <= '9'
+}
+
+fn skip_ws(s: &String, pos: &mut i64) {
+    while pos < s.len && is_ws(s[pos]) {
+        pos = pos + 1
+    }
+}
+
+fn parse_value(s: &String, pos: &mut i64): Box<JsonValue> {
+    skip_ws(s, pos)
+    if pos >= s.len { return Box(JsonValue.Null) }
+    let ch = s[pos]
+    if ch == '"' { return parse_string(s, pos) }
+    if ch == '{' { return parse_object(s, pos) }
+    if ch == 't' {
+        pos = pos + 4
+        return Box(JsonValue.Bool(true))
+    }
+    if ch == 'f' {
+        pos = pos + 5
+        return Box(JsonValue.Bool(false))
+    }
+    if ch == 'n' {
+        pos = pos + 4
+        return Box(JsonValue.Null)
+    }
+    if is_digit(ch) || ch == '-' { return parse_number(s, pos) }
+    return Box(JsonValue.Null)
+}
+
+fn parse_number(s: &String, pos: &mut i64): Box<JsonValue> {
+    var neg: bool = false
+    if s[pos] == '-' {
+        neg = true
+        pos = pos + 1
+    }
+    var n: i64 = 0
+    while pos < s.len && is_digit(s[pos]) {
+        n = n * 10 + (s[pos] as i64 - '0' as i64)
+        pos = pos + 1
+    }
+    if neg { n = 0 - n }
+    return Box(JsonValue.Number(n))
+}
+
+fn parse_string(s: &String, pos: &mut i64): Box<JsonValue> {
+    let value = parse_string_raw(s, pos)
+    return Box(JsonValue.Str(value))
+}
+
+fn parse_string_raw(s: &String, pos: &mut i64): String {
+    pos = pos + 1
+    var result: String = ""
+    while pos < s.len && s[pos] != '"' {
+        if s[pos] == '\\' {
+            pos = pos + 1
+        }
+        result.push(s[pos])
+        pos = pos + 1
+    }
+    pos = pos + 1
+    return result
+}
+
+fn parse_object(s: &String, pos: &mut i64): Box<JsonValue> {
+    pos = pos + 1
+    var entries: HashMap<String, Box<JsonValue>> = HashMap.new()
+    skip_ws(s, pos)
+    if pos < s.len && s[pos] != '}' {
+        skip_ws(s, pos)
+        let k1 = parse_string_raw(s, pos)
+        skip_ws(s, pos)
+        pos = pos + 1
+        let v1 = parse_value(s, pos)
+        entries.insert(k1, v1)
+        skip_ws(s, pos)
+        while pos < s.len && s[pos] == ',' {
+            pos = pos + 1
+            skip_ws(s, pos)
+            let k = parse_string_raw(s, pos)
+            skip_ws(s, pos)
+            pos = pos + 1
+            let v = parse_value(s, pos)
+            entries.insert(k, v)
+            skip_ws(s, pos)
+        }
+    }
+    pos = pos + 1
+    return Box(JsonValue.Object(entries))
+}
+
+fn main(): i32 {
+    let input: String = "{\"name\": \"milo\", \"version\": 1, \"active\": true}"
+    var pos: i64 = 0
+    let result = parse_value(input, pos)
+    match *result {
+        JsonValue.Object(obj) => {
+            let r1 = obj.get("name")
+            if let Option.Some(val) = r1 {
+                match *val {
+                    JsonValue.Str(s) => { printf("name=%s\n", s) }
+                    _ => { printf("name=?\n") }
+                }
+            }
+            let r2 = obj.get("version")
+            if let Option.Some(val) = r2 {
+                match *val {
+                    JsonValue.Number(n) => { printf("version=%lld\n", n) }
+                    _ => { printf("version=?\n") }
+                }
+            }
+            let r3 = obj.get("missing_key")
+            if let Option.Some(val) = r3 {
+                printf("missing=yes\n")
+            } else {
+                printf("missing=no\n")
+            }
+        }
+        _ => { printf("not an object\n") }
+    }
+    return 0
+}
