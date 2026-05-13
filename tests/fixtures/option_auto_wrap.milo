@@ -1,0 +1,29 @@
+// @expect: is null
+// @expect: got 42
+// @expect: got 100
+// @expect: is null
+
+fn check(val: u16?) {
+  match val {
+    Option.Some(v) => {
+      print("got %d\n", v)
+    }
+    Option.None => {
+      print("is null\n")
+    }
+  }
+}
+
+fn main(): i32 {
+  var x: u16? = null
+  check(x)
+  x = 42
+  check(x)
+
+  let y: u16? = 100
+  check(y)
+
+  let z: u16? = null
+  check(z)
+  return 0
+}

@@ -99,13 +99,14 @@ class LowerCtx {
     switch (stmt.kind) {
       case "LetDecl":
       case "VarDecl": {
-        // Value's exprType is already hint-resolved (checker propagated the declared type)
-        const valType = this.typeOf(stmt.value) ?? { tag: "unknown" as const };
+        const value = this.lowerExpr(stmt.value);
+        // Use auto-wrapped type (Option<T>) when value was wrapped, otherwise expression type
+        const valType = value.type ?? this.typeOf(stmt.value) ?? { tag: "unknown" as const };
         return {
           kind: "Let",
           name: stmt.name,
           type: valType,
-          value: this.lowerExpr(stmt.value),
+          value,
           mutable: stmt.kind === "VarDecl",
           span: stmt.span,
         };

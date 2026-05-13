@@ -908,7 +908,12 @@ export class TypeChecker {
         }
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
-          this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
+          const optInner = this.optionInnerType(hint);
+          if (optInner && typeEq(optInner, valType)) {
+            this.autoWrappedOption.set(stmt.value, hint.name);
+          } else {
+            this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
+          }
         }
         this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false, borrowed: false });
         this.tryMove(stmt.value);
@@ -921,7 +926,12 @@ export class TypeChecker {
         }
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
-          this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
+          const optInner = this.optionInnerType(hint);
+          if (optInner && typeEq(optInner, valType)) {
+            this.autoWrappedOption.set(stmt.value, hint.name);
+          } else {
+            this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
+          }
         }
         this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false, borrowed: false });
         this.tryMove(stmt.value);
@@ -936,7 +946,12 @@ export class TypeChecker {
         }
         const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
         if (!typeEq(targetInfo.type, valType) && valType.tag !== "unknown") {
-          this.error(`type mismatch: cannot assign ${typeName(valType)} to ${typeName(targetInfo.type)}`, sp);
+          const optInner = this.optionInnerType(targetInfo.type);
+          if (optInner && typeEq(optInner, valType)) {
+            this.autoWrappedOption.set(stmt.value, targetInfo.type.name);
+          } else {
+            this.error(`type mismatch: cannot assign ${typeName(valType)} to ${typeName(targetInfo.type)}`, sp);
+          }
         }
         if (stmt.target.kind === "Ident") {
           const info = this.lookup(stmt.target.name);
