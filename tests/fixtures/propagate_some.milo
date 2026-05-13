@@ -1,5 +1,4 @@
 // @expect: 84
-extern fn printf(fmt: *u8, ...): i32
 
 fn try_double(opt: i32?): i32? {
     let val = opt?
@@ -8,6 +7,6 @@ fn try_double(opt: i32?): i32? {
 
 fn main(): i32 {
     let result = try_double(Option.Some(42))
-    printf("%d\n", result!)
+    print("%d\n", result!)
     return 0
 }

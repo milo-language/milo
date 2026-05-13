@@ -1,11 +1,10 @@
 // @expect: 42
 // @expect: 0
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     let a = Option.Some(42)
     let b: i32? = Option.None
-    printf("%d\n", a ?? 0)
-    printf("%d\n", b ?? 0)
+    print("%d\n", a ?? 0)
+    print("%d\n", b ?? 0)
     return 0
 }

@@ -1,6 +1,5 @@
 // @expect: found: 42
 // @expect: missing
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var m: HashMap<string, i64> = HashMap.new()
@@ -8,13 +7,13 @@ fn main(): i32 {
     m.insert("world", 99)
     let r1 = m.get("hello")
     if let Option.Some(v) = r1 {
-        printf("found: %lld\n", v)
+        print("found: %lld\n", v)
     }
     let r2 = m.get("missing")
     if let Option.Some(v) = r2 {
-        printf("found: %lld\n", v)
+        print("found: %lld\n", v)
     } else {
-        printf("missing\n")
+        print("missing\n")
     }
     return 0
 }

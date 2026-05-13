@@ -1,6 +1,5 @@
 // @expect: 1
 // @expect: 0
-extern fn printf(fmt: *u8, ...): i32
 
 trait Eq {
     fn eq(self: &Self, other: &Self): bool
@@ -20,7 +19,7 @@ fn main(): i32 {
     let c = Point { x: 3, y: 4 }
     let r1 = a.eq(b)
     let r2 = a.eq(c)
-    if r1 { printf("1\n") } else { printf("0\n") }
-    if r2 { printf("1\n") } else { printf("0\n") }
+    if r1 { print("1\n") } else { print("0\n") }
+    if r2 { print("1\n") } else { print("0\n") }
     return 0
 }

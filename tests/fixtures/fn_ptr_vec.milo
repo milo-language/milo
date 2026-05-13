@@ -7,7 +7,7 @@ fn negate(x: i32): i32 { return 0 - x }
 
 struct Op {
     name: string,
-    apply: fn(i32): i32,
+    apply: (i32) => i32,
 }
 
 fn main(): i32 {

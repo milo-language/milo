@@ -1,6 +1,5 @@
 // @expect: got 42: 420
 // @expect: key 99 not found
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
@@ -9,16 +8,16 @@ fn main(): i32 {
 
     let r1 = m.get(42)
     if let Option.Some(v) = r1 {
-        printf("got 42: %d\n", v)
+        print("got 42: %d\n", v)
     } else {
-        printf("42 not found\n")
+        print("42 not found\n")
     }
 
     let r2 = m.get(99)
     if let Option.Some(v) = r2 {
-        printf("got 99: %d\n", v)
+        print("got 99: %d\n", v)
     } else {
-        printf("key 99 not found\n")
+        print("key 99 not found\n")
     }
     return 0
 }

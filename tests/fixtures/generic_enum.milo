@@ -1,14 +1,13 @@
 // @expect: 42
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     let x = Option.Some(42)
     match x {
         Option.Some(val) => {
-            printf("%d\n", val)
+            print("%d\n", val)
         }
         Option.None => {
-            printf("none\n")
+            print("none\n")
         }
     }
     return 0

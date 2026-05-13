@@ -5,7 +5,6 @@
 // @expect: has 2: false
 // @expect: has 1: true
 // @expect: has 3: true
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
@@ -13,31 +12,31 @@ fn main(): i32 {
     m.insert(2, 20)
     m.insert(3, 30)
 
-    printf("len: %ld\n", m.len)
+    print("len: %ld\n", m.len)
     if m.contains(2) {
-        printf("has 2: true\n")
+        print("has 2: true\n")
     } else {
-        printf("has 2: false\n")
+        print("has 2: false\n")
     }
 
     m.remove(2)
-    printf("removed\n")
-    printf("len: %ld\n", m.len)
+    print("removed\n")
+    print("len: %ld\n", m.len)
 
     if m.contains(2) {
-        printf("has 2: true\n")
+        print("has 2: true\n")
     } else {
-        printf("has 2: false\n")
+        print("has 2: false\n")
     }
     if m.contains(1) {
-        printf("has 1: true\n")
+        print("has 1: true\n")
     } else {
-        printf("has 1: false\n")
+        print("has 1: false\n")
     }
     if m.contains(3) {
-        printf("has 3: true\n")
+        print("has 3: true\n")
     } else {
-        printf("has 3: false\n")
+        print("has 3: false\n")
     }
     return 0
 }

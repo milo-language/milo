@@ -1,12 +1,11 @@
 // @expect: 100000000000
 // @expect: 200000000000
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var v: Vec<i64> = Vec.new()
     v.push(100000000000)
     v.push(200000000000)
-    printf("%lld\n", v[0])
-    printf("%lld\n", v[1])
+    print("%lld\n", v[0])
+    print("%lld\n", v[1])
     return 0
 }

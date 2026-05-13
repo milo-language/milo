@@ -1,6 +1,5 @@
 // @expect: got 10
 // @expect: was none
-extern fn printf(fmt: *u8, ...): i32
 
 enum Option {
     Some(i32),
@@ -10,16 +9,16 @@ enum Option {
 fn main(): i32 {
     let a = Option.Some(10)
     if let Option.Some(v) = a {
-        printf("got %d\n", v)
+        print("got %d\n", v)
     } else {
-        printf("was none\n")
+        print("was none\n")
     }
 
     let b = Option.None
     if let Option.Some(v) = b {
-        printf("got value\n")
+        print("got value\n")
     } else {
-        printf("was none\n")
+        print("was none\n")
     }
 
     return 0

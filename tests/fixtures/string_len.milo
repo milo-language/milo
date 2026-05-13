@@ -1,8 +1,7 @@
 // @expect: 5
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     let s = "hello"
-    printf("%ld\n", s.len)
+    print("%ld\n", s.len)
     return 0
 }

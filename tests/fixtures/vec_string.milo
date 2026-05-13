@@ -1,7 +1,6 @@
 // @expect: hello
 // @expect: world
 // @expect: 2
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var v: Vec<string> = Vec.new()
@@ -9,6 +8,6 @@ fn main(): i32 {
     v.push("world")
     println(v[0])
     println(v[1])
-    printf("%lld\n", v.len)
+    print("%lld\n", v.len)
     return 0
 }

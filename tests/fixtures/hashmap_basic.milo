@@ -2,7 +2,6 @@
 // @expect: has 1: true
 // @expect: has 5: true
 // @expect: has 99: false
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
@@ -10,21 +9,21 @@ fn main(): i32 {
     m.insert(5, 50)
     m.insert(42, 420)
 
-    printf("len: %ld\n", m.len)
+    print("len: %ld\n", m.len)
     if m.contains(1) {
-        printf("has 1: true\n")
+        print("has 1: true\n")
     } else {
-        printf("has 1: false\n")
+        print("has 1: false\n")
     }
     if m.contains(5) {
-        printf("has 5: true\n")
+        print("has 5: true\n")
     } else {
-        printf("has 5: false\n")
+        print("has 5: false\n")
     }
     if m.contains(99) {
-        printf("has 99: true\n")
+        print("has 99: true\n")
     } else {
-        printf("has 99: false\n")
+        print("has 99: false\n")
     }
     return 0
 }

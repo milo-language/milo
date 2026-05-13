@@ -64,12 +64,14 @@ impl Drop for Arena {
 }
 
 fn arena_new(capacity: i64): Result<Arena> {
-    let p = malloc(capacity)
-    let addr = p as i64
-    if addr == 0 {
-        return Result.Err("arena allocation failed")
+    unsafe {
+        let p = malloc(capacity)
+        let addr = p as i64
+        if addr == 0 {
+            return Result.Err("arena allocation failed")
+        }
+        return Result.Ok(Arena { base: addr, cap: capacity, used: 0 })
     }
-    return Result.Ok(Arena { base: addr, cap: capacity, used: 0 })
 }
 
 fn arena_alloc(a: &mut Arena, size: i64): Result<i64> {

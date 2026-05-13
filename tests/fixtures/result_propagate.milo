@@ -1,6 +1,5 @@
 // @expect: got 84
 // @expect: failed: negative
-extern fn printf(fmt: *u8, ...): i32
 
 fn validate(x: i32): Result<i32> {
     if x < 0 {
@@ -17,14 +16,14 @@ fn double_valid(x: i32): Result<i32> {
 fn main(): i32 {
     let a = double_valid(42)
     match a {
-        Result.Ok(v) => { printf("got %d\n", v) }
-        Result.Err(msg) => { printf("failed: %s\n", msg) }
+        Result.Ok(v) => { print("got %d\n", v) }
+        Result.Err(msg) => { print("failed: %s\n", msg) }
     }
 
     let b = double_valid(-1)
     match b {
-        Result.Ok(v) => { printf("got %d\n", v) }
-        Result.Err(msg) => { printf("failed: %s\n", msg) }
+        Result.Ok(v) => { print("got %d\n", v) }
+        Result.Err(msg) => { print("failed: %s\n", msg) }
     }
 
     return 0

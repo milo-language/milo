@@ -1,5 +1,4 @@
 // @expect: other
-extern fn printf(fmt: *u8, ...): i32
 
 enum Color {
     Red,
@@ -11,10 +10,10 @@ fn main(): i32 {
     let c = Color.Blue
     match c {
         Color.Red => {
-            printf("red\n")
+            print("red\n")
         }
         _ => {
-            printf("other\n")
+            print("other\n")
         }
     }
     return 0

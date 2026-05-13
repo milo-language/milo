@@ -6,7 +6,6 @@
 // @expect: success
 // @expect: drop 1
 // @expect: drop 2
-extern fn printf(fmt: *u8, ...): i32
 
 struct Guard {
     id: i32,
@@ -14,7 +13,7 @@ struct Guard {
 
 impl Drop for Guard {
     fn drop(self: &mut Self): void {
-        printf("drop %d\n", self.id)
+        print("drop %d\n", self.id)
     }
 }
 
@@ -22,17 +21,17 @@ fn might_fail(fail: bool): i32 {
     let g1 = Guard { id: 1 }
     let g2 = Guard { id: 2 }
     if fail {
-        printf("failing early\n")
+        print("failing early\n")
         return -1
     }
-    printf("success\n")
+    print("success\n")
     return 0
 }
 
 fn main(): i32 {
-    printf("--- fail path ---\n")
+    print("--- fail path ---\n")
     might_fail(true)
-    printf("--- success path ---\n")
+    print("--- success path ---\n")
     might_fail(false)
     return 0
 }

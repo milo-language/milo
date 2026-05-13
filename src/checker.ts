@@ -20,6 +20,7 @@ export interface FnSig {
   params: { type: TypeKind; name: string }[];
   ret: TypeKind;
   variadic: boolean;
+  isExtern?: boolean;
 }
 
 export interface StructInfo {
@@ -448,7 +449,7 @@ export class TypeChecker {
       if (ret.tag === "fn") {
         this.error(`function '${fn.name}': cannot return a closure`, undefined, `closures are second-class — pass them as function parameters instead`);
       }
-      this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic });
+      this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern });
     }
 
     // register traits (user-defined override built-ins)
@@ -1507,6 +1508,9 @@ export class TypeChecker {
         }
 
         const sig = this.functions.get(expr.func);
+        if (sig?.isExtern && this.unsafeDepth === 0) {
+          this.error(`calling extern function '${expr.func}' requires an unsafe block`, sp);
+        }
         if (!sig) {
           const varInfo = this.lookup(expr.func);
           if (varInfo && varInfo.type.tag === "fn") {

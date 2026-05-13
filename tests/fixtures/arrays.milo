@@ -1,12 +1,11 @@
 // @expect: 10
 // @expect: 20
 // @expect: 30
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     let arr = [10, 20, 30]
-    printf("%d\n", arr[0])
-    printf("%d\n", arr[1])
-    printf("%d\n", arr[2])
+    print("%d\n", arr[0])
+    print("%d\n", arr[1])
+    print("%d\n", arr[2])
     return 0
 }

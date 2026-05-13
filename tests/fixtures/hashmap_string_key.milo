@@ -2,30 +2,29 @@
 // @expect: has hello: true
 // @expect: has nope: false
 // @expect: got hello: 42
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var m: HashMap<string, i32> = HashMap.new()
     m.insert("hello", 42)
     m.insert("world", 99)
 
-    printf("len: %ld\n", m.len)
+    print("len: %ld\n", m.len)
     if m.contains("hello") {
-        printf("has hello: true\n")
+        print("has hello: true\n")
     } else {
-        printf("has hello: false\n")
+        print("has hello: false\n")
     }
     if m.contains("nope") {
-        printf("has nope: true\n")
+        print("has nope: true\n")
     } else {
-        printf("has nope: false\n")
+        print("has nope: false\n")
     }
 
     let r = m.get("hello")
     if let Option.Some(v) = r {
-        printf("got hello: %d\n", v)
+        print("got hello: %d\n", v)
     } else {
-        printf("hello not found\n")
+        print("hello not found\n")
     }
     return 0
 }

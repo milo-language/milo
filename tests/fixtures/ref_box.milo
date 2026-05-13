@@ -1,6 +1,5 @@
 // @expect: value: 42
 // @expect: leaf: 7
-extern fn printf(fmt: *u8, ...): i32
 
 enum Tree {
     Node(Box<Tree>, Box<Tree>),
@@ -8,12 +7,12 @@ enum Tree {
 }
 
 fn print_boxed(b: &Box<i32>) {
-    printf("value: %d\n", *b)
+    print("value: %d\n", *b)
 }
 
 fn print_leaf(t: &Box<Tree>) {
     match *t {
-        Tree.Leaf(n) => { printf("leaf: %d\n", n) }
+        Tree.Leaf(n) => { print("leaf: %d\n", n) }
         Tree.Node(l, r) => { }
     }
 }

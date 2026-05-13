@@ -1,15 +1,14 @@
 // @expect: true
 // @expect: false
-extern fn puts(s: *u8): i32
 
 fn main(): i32 {
     if !false {
-        puts("true")
+        print("true\n")
     }
     if !true {
-        puts("true")
+        print("true\n")
     } else {
-        puts("false")
+        print("false\n")
     }
     return 0
 }

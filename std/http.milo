@@ -1,5 +1,4 @@
 // std/http — high-level HTTP server for Milo
-// Supports HTTP/1.1 keep-alive, Content-Length, Server header
 
 import "std/os"
 
@@ -65,7 +64,7 @@ fn send_raw(fd: i32, status: i32, content_type: string, body: string): void {
     resp = resp + "\r\nServer: milo"
     resp = resp + "\r\n\r\n"
     resp = resp + body
-    write(fd, resp, resp.len)
+    unsafe { write(fd, resp, resp.len) }
 }
 
 fn send_response(fd: i32, response: Response): void {
@@ -97,14 +96,14 @@ struct Socket {
 impl Drop for Socket {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            close(self.fd)
+            unsafe { close(self.fd) }
         }
     }
 }
 
 // ── Public API ──
 
-fn serve(port: u16, handler: fn(&Request): Response): Result<void> {
+fn serve(port: u16, handler: (&Request) => Response): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let SOL_SOCKET: i32 = 65535
@@ -113,55 +112,55 @@ fn serve(port: u16, handler: fn(&Request): Response): Result<void> {
     let BUF_SIZE: i64 = 8192
     let SIZEOF_SOCKADDR_IN: u32 = 16
 
-    let raw_fd = socket(AF_INET, SOCK_STREAM, 0)
-    if raw_fd < 0 {
-        return Result.Err("socket() failed")
-    }
-    let sock = Socket { fd: raw_fd }
-
-    var one: i32 = 1
-    setsockopt(sock.fd, SOL_SOCKET, SO_REUSEADDR, one, 4)
-
-    var addr = SockAddrIn {
-        sin_len: SIZEOF_SOCKADDR_IN as u8,
-        sin_family: AF_INET as u8,
-        sin_port: htons(port),
-        sin_addr: 0,
-        sin_zero: [0; 8],
-    }
-
-    if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-        return Result.Err("bind() failed")
-    }
-
-    if listen(sock.fd, BACKLOG) < 0 {
-        return Result.Err("listen() failed")
-    }
-
-    printf("listening on http://localhost:%d\n", port)
-
-    while true {
-        var client_addr = SockAddrIn {
-            sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    unsafe {
+        let raw_fd = socket(AF_INET, SOCK_STREAM, 0)
+        if raw_fd < 0 {
+            return Result.Err("socket() failed")
         }
-        var addrlen: u32 = SIZEOF_SOCKADDR_IN
-        let client_fd = accept(sock.fd, client_addr, addrlen)
-        if client_fd < 0 {
-            continue
+        let sock = Socket { fd: raw_fd }
+
+        var one: i32 = 1
+        setsockopt(sock.fd, SOL_SOCKET, SO_REUSEADDR, one, 4)
+
+        var addr = SockAddrIn {
+            sin_len: SIZEOF_SOCKADDR_IN as u8,
+            sin_family: AF_INET as u8,
+            sin_port: htons(port),
+            sin_addr: 0,
+            sin_zero: [0; 8],
         }
-        let client = Socket { fd: client_fd }
+
+        if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            return Result.Err("bind() failed")
+        }
+
+        if listen(sock.fd, BACKLOG) < 0 {
+            return Result.Err("listen() failed")
+        }
+
+        print("listening on http://localhost:%d\n", port)
 
         while true {
-            var buf: [u8; 8192] = [0; 8192]
-            let n = read(client.fd, buf, BUF_SIZE)
-            if n <= 0 { break }
+            var client_addr = SockAddrIn {
+                sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+            }
+            var addrlen: u32 = SIZEOF_SOCKADDR_IN
+            let client_fd = accept(sock.fd, client_addr, addrlen)
+            if client_fd < 0 {
+                continue
+            }
+            let client = Socket { fd: client_fd }
 
-            let req = parse_request(buf, n)
-            printf("%s %s\n", req.method, req.path)
-            let resp = handler(req)
-            send_response(client.fd, resp)
+            while true {
+                var buf: [u8; 8192] = [0; 8192]
+                let n = read(client.fd, buf, BUF_SIZE)
+                if n <= 0 { break }
+
+                let req = parse_request(buf, n)
+                print("%s %s\n", req.method, req.path)
+                let resp = handler(req)
+                send_response(client.fd, resp)
+            }
         }
-        // client.fd auto-closed here via Drop
     }
-    // sock.fd auto-closed here via Drop
 }

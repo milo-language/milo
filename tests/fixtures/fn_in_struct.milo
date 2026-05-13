@@ -1,6 +1,6 @@
 // @expect: called: 42
 struct Handler {
-    callback: fn(i32): void
+    callback: (i32) => void
 }
 
 fn print_val(x: i32): void {

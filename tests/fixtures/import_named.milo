@@ -1,9 +1,6 @@
 // @expect: 7
 from "lib/math" import { add }
-
-extern fn printf(fmt: *u8, ...): i32
-
 fn main(): i32 {
-    printf("%d\n", add(3, 4))
+    print("%d\n", add(3, 4))
     return 0
 }

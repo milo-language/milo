@@ -1,7 +1,6 @@
 // @expect: 16
 // @expect: 0
 // @expect: 15
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var v: Vec<i32> = Vec.new()
@@ -10,8 +9,8 @@ fn main(): i32 {
         v.push(i)
         i = i + 1
     }
-    printf("%lld\n", v.len)
-    printf("%d\n", v[0])
-    printf("%d\n", v[15])
+    print("%lld\n", v.len)
+    print("%d\n", v[0])
+    print("%d\n", v[15])
     return 0
 }

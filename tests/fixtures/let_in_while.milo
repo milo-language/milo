@@ -1,5 +1,4 @@
 // @expect: 55
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var sum: i32 = 0
@@ -9,6 +8,6 @@ fn main(): i32 {
         sum = sum + x
         i = i + 1
     }
-    printf("%d\n", sum)
+    print("%d\n", sum)
     return 0
 }

@@ -1,5 +1,4 @@
 // @expect: 42
-extern fn printf(fmt: *u8, ...): i32
 
 fn double_it(x: &mut i32) {
     x = x * 2
@@ -12,6 +11,6 @@ fn read_it(x: &i32): i32 {
 fn main(): i32 {
     var n: i32 = 21
     double_it(n)
-    printf("%d\n", read_it(n))
+    print("%d\n", read_it(n))
     return 0
 }

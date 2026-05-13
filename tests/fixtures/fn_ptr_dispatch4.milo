@@ -4,7 +4,7 @@ fn double(x: i32): i32 { return x * 2 }
 
 struct Op {
     name: string,
-    apply: fn(i32): i32,
+    apply: (i32) => i32,
 }
 
 fn use_ops(ops: &Vec<Op>): void {

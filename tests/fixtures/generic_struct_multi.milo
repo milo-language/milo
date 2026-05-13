@@ -1,6 +1,5 @@
 // @expect: 10 20
 // @expect: hello
-extern fn printf(fmt: *u8, ...): i32
 
 struct Pair<A, B> {
     first: A,
@@ -9,9 +8,9 @@ struct Pair<A, B> {
 
 fn main(): i32 {
     let p1 = Pair { first: 10, second: 20 }
-    printf("%d %d\n", p1.first, p1.second)
+    print("%d %d\n", p1.first, p1.second)
 
     let p2 = Pair { first: "hello", second: 99 }
-    printf("%s\n", p2.first)
+    print("%s\n", p2.first)
     return 0
 }

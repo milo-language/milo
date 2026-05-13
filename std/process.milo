@@ -5,13 +5,15 @@ import "std/os"
 // ── Simple command execution ──
 
 fn run(cmd: string): Result<i32> {
-    let status = system(cmd)
-    if status < 0 {
-        return Result.Err("system() failed")
+    unsafe {
+        let status = system(cmd)
+        if status < 0 {
+            return Result.Err("system() failed")
+        }
+        // macOS: exit code is in bits 8-15
+        let exit_code = (status >> 8) & 255
+        return Result.Ok(exit_code)
     }
-    // macOS: exit code is in bits 8-15
-    let exit_code = (status >> 8) & 255
-    return Result.Ok(exit_code)
 }
 
 // ── Process with lifecycle management ──
@@ -21,34 +23,37 @@ struct Process {
 }
 
 fn spawn(path: string): Result<Process> {
-    let pid = fork()
-    if pid < 0 {
-        return Result.Err("fork() failed")
+    unsafe {
+        let pid = fork()
+        if pid < 0 {
+            return Result.Err("fork() failed")
+        }
+        if pid == 0 {
+            execl(path, path, 0 as *u8)
+            exit(127)
+        }
+        return Result.Ok(Process { pid: pid })
     }
-    if pid == 0 {
-        // child: exec the command, NULL-terminate arg list
-        unsafe { execl(path, path, 0 as *u8) }
-        // execl only returns on error
-        exit(127)
-    }
-    return Result.Ok(Process { pid: pid })
 }
 
 fn wait_for(p: &Process): Result<i32> {
     var status_buf: [u8; 4] = [0; 4]
-    let r = waitpid(p.pid, status_buf, 0)
-    if r < 0 {
-        return Result.Err("waitpid() failed")
+    unsafe {
+        let r = waitpid(p.pid, status_buf, 0)
+        if r < 0 {
+            return Result.Err("waitpid() failed")
+        }
+        let raw = (status_buf[1] as i32)
+        return Result.Ok(raw)
     }
-    // extract exit status from wait status (bits 8-15)
-    let raw = (status_buf[1] as i32)
-    return Result.Ok(raw)
 }
 
 fn signal(p: &Process, sig: i32): Result<i32> {
-    let r = kill(p.pid, sig)
-    if r < 0 {
-        return Result.Err("kill() failed")
+    unsafe {
+        let r = kill(p.pid, sig)
+        if r < 0 {
+            return Result.Err("kill() failed")
+        }
+        return Result.Ok(0)
     }
-    return Result.Ok(0)
 }

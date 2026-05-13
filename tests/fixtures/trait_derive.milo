@@ -1,6 +1,5 @@
 // @expect: 1
 // @expect: 0
-extern fn printf(fmt: *u8, ...): i32
 
 @derive(Eq)
 struct Point { x: i32, y: i32 }
@@ -9,7 +8,7 @@ fn main(): i32 {
     let a = Point { x: 1, y: 2 }
     let b = Point { x: 1, y: 2 }
     let c = Point { x: 3, y: 4 }
-    if a.eq(b) { printf("1\n") } else { printf("0\n") }
-    if a.eq(c) { printf("1\n") } else { printf("0\n") }
+    if a.eq(b) { print("1\n") } else { print("0\n") }
+    if a.eq(c) { print("1\n") } else { print("0\n") }
     return 0
 }

@@ -122,17 +122,16 @@ export class Parser {
       this.expect(TokenKind.RBracket);
       return { name: inner.name, isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize };
     }
-    // fn(T1, T2): R
-    if (this.at(TokenKind.Fn)) {
+    // (T1, T2) => R
+    if (this.at(TokenKind.LParen) && this.isFnType()) {
       this.advance();
-      this.expect(TokenKind.LParen);
       const fnParams: MiloType[] = [];
       while (!this.at(TokenKind.RParen)) {
         fnParams.push(this.parseType());
         if (!this.at(TokenKind.RParen)) this.expect(TokenKind.Comma);
       }
       this.expect(TokenKind.RParen);
-      this.expect(TokenKind.Colon);
+      this.expect(TokenKind.FatArrow);
       const fnRet = this.parseType();
       return { name: "fn", isFn: true, fnParams, fnRet, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     }
@@ -777,6 +776,18 @@ export class Parser {
     }
     this.expect(TokenKind.RBracket);
     return { kind: "ArrayLit", elements, span: s };
+  }
+
+  // lookahead: is this ( a function type like (T1, T2) => R?
+  private isFnType(): boolean {
+    let i = this.pos + 1;
+    let depth = 1;
+    while (depth > 0 && i < this.tokens.length) {
+      if (this.tokens[i].kind === TokenKind.LParen) depth++;
+      else if (this.tokens[i].kind === TokenKind.RParen) depth--;
+      i++;
+    }
+    return i < this.tokens.length && this.tokens[i].kind === TokenKind.FatArrow;
   }
 
   // lookahead: is this ( the start of an arrow closure?

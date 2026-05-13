@@ -31,7 +31,7 @@ struct Route {
     method: string,
     prefix: string,
     exact: bool,
-    handler: fn(&Request): Response,
+    handler: (&Request) => Response,
 }
 
 fn dispatch(routes: &Vec<Route>, req: &Request): Response {

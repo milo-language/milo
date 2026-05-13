@@ -2,7 +2,6 @@
 // @expect: has 0: true
 // @expect: has 19: true
 // @expect: has 20: false
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     var m: HashMap<i32, i32> = HashMap.new()
@@ -12,21 +11,21 @@ fn main(): i32 {
         i = i + 1
     }
 
-    printf("len: %ld\n", m.len)
+    print("len: %ld\n", m.len)
     if m.contains(0) {
-        printf("has 0: true\n")
+        print("has 0: true\n")
     } else {
-        printf("has 0: false\n")
+        print("has 0: false\n")
     }
     if m.contains(19) {
-        printf("has 19: true\n")
+        print("has 19: true\n")
     } else {
-        printf("has 19: false\n")
+        print("has 19: false\n")
     }
     if m.contains(20) {
-        printf("has 20: true\n")
+        print("has 20: true\n")
     } else {
-        printf("has 20: false\n")
+        print("has 20: false\n")
     }
     return 0
 }

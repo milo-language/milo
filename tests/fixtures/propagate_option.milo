@@ -1,5 +1,4 @@
 // @expect: none
-extern fn printf(fmt: *u8, ...): i32
 
 fn try_double(opt: i32?): i32? {
     let val = opt?
@@ -10,10 +9,10 @@ fn main(): i32 {
     let result = try_double(Option.None)
     match result {
         Option.Some(v) => {
-            printf("%d\n", v)
+            print("%d\n", v)
         }
         Option.None => {
-            printf("none\n")
+            print("none\n")
         }
     }
     return 0

@@ -1,5 +1,4 @@
 // @expect: 1
-extern fn printf(fmt: *u8, ...): i32
 
 struct Point { x: i32, y: i32 }
 fn consume(p: Point): i32 { return p.x }
@@ -12,6 +11,6 @@ fn main(): i32 {
     } else {
         result = consume(p)
     }
-    printf("%d\n", result)
+    print("%d\n", result)
     return 0
 }

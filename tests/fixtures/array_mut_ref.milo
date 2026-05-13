@@ -1,5 +1,4 @@
 // @expect: 65 66 67
-extern fn printf(fmt: *u8, ...): i32
 
 fn fill(buf: &mut [u8; 4], n: i32): void {
     var i: i32 = 0
@@ -12,6 +11,6 @@ fn fill(buf: &mut [u8; 4], n: i32): void {
 fn main(): i32 {
     var buf: [u8; 4] = [0; 4]
     fill(buf, 3)
-    printf("%d %d %d\n", buf[0], buf[1], buf[2])
+    print("%d %d %d\n", buf[0], buf[1], buf[2])
     return 0
 }

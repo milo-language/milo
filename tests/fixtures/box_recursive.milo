@@ -1,5 +1,4 @@
 // @expect: sum: 10
-extern fn printf(fmt: *u8, ...): i32
 
 enum Tree {
     Node(Box<Tree>, Box<Tree>),
@@ -21,6 +20,6 @@ fn main(): i32 {
         Box(Tree.Node(Box(Tree.Leaf(1)), Box(Tree.Leaf(2)))),
         Box(Tree.Node(Box(Tree.Leaf(3)), Box(Tree.Leaf(4))))
     )
-    printf("sum: %d\n", sum(tree))
+    print("sum: %d\n", sum(tree))
     return 0
 }

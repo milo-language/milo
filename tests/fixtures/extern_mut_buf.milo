@@ -1,11 +1,10 @@
 // @expect: 72 101 108
 // tests that extern fn can write into a &mut array buffer (like read() would)
-extern fn printf(fmt: *u8, ...): i32
 extern fn memcpy(dst: &mut [u8; 16], src: *u8, n: i64): void
 
 fn main(): i32 {
     var buf: [u8; 16] = [0; 16]
-    memcpy(buf, "Hello", 3)
-    printf("%d %d %d\n", buf[0], buf[1], buf[2])
+    unsafe { memcpy(buf, "Hello", 3) }
+    print("%d %d %d\n", buf[0], buf[1], buf[2])
     return 0
 }

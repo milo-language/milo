@@ -1,6 +1,5 @@
 // @expect: connected: fd=42
 // @expect: closing connection 42
-extern fn printf(fmt: *u8, ...): i32
 
 struct Connection {
     name: string,
@@ -9,12 +8,12 @@ struct Connection {
 
 impl Drop for Connection {
     fn drop(self: &mut Self): void {
-        printf("closing connection %d\n", self.fd)
+        print("closing connection %d\n", self.fd)
     }
 }
 
 fn main(): i32 {
     let c = Connection { name: "db", fd: 42 }
-    printf("connected: fd=%d\n", c.fd)
+    print("connected: fd=%d\n", c.fd)
     return 0
 }

@@ -1,5 +1,4 @@
 // @expect: 99
-extern fn printf(fmt: *u8, ...): i32
 
 trait HasValue {
     fn value(self: &Self): i32
@@ -14,7 +13,7 @@ impl HasValue for Box99 {
 }
 
 fn print_value<T: HasValue>(thing: &T) {
-    printf("%d\n", thing.value())
+    print("%d\n", thing.value())
 }
 
 fn main(): i32 {

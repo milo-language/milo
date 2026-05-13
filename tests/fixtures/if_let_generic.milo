@@ -1,21 +1,20 @@
 // @expect: found: 7
 // @expect: nothing
-extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
     let v: i64 = 7
     let a: i64? = Option.Some(v)
     if let Option.Some(val) = a {
-        printf("found: %ld\n", val)
+        print("found: %ld\n", val)
     } else {
-        printf("nothing\n")
+        print("nothing\n")
     }
 
     let b: i64? = Option.None
     if let Option.Some(val) = b {
-        printf("found: %ld\n", val)
+        print("found: %ld\n", val)
     } else {
-        printf("nothing\n")
+        print("nothing\n")
     }
 
     return 0
