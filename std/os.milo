@@ -31,14 +31,6 @@ extern fn snprintf(buf: *u8, size: i64, fmt: *u8, ...): i32
 
 // ── Network ──
 
-struct SockAddrIn {
-    sin_len: u8,
-    sin_family: u8,
-    sin_port: u16,
-    sin_addr: u32,
-    sin_zero: [u8; 8],
-}
-
 extern fn socket(domain: i32, type: i32, protocol: i32): i32
 extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 extern fn listen(sockfd: i32, backlog: i32): i32

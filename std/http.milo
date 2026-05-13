@@ -1,6 +1,7 @@
 // std/http — high-level HTTP server for Milo
 
 import "std/os"
+import "std/platform"
 
 // ── Public types ──
 
@@ -107,8 +108,6 @@ impl Drop for Socket {
 fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
-    let SOL_SOCKET: i32 = 65535
-    let SO_REUSEADDR: i32 = 4
     let BACKLOG: i32 = 1024
     let BUF_SIZE: i64 = 8192
     let SIZEOF_SOCKADDR_IN: u32 = 16
@@ -127,15 +126,9 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         let sock = Socket { fd: raw_fd }
 
         var one: i32 = 1
-        setsockopt(sock.fd, SOL_SOCKET, SO_REUSEADDR, one, 4)
+        setsockopt(sock.fd, sol_socket(), so_reuseaddr(), one, 4)
 
-        var addr = SockAddrIn {
-            sin_len: SIZEOF_SOCKADDR_IN as u8,
-            sin_family: AF_INET as u8,
-            sin_port: htons(bind_port),
-            sin_addr: 0,
-            sin_zero: [0; 8],
-        }
+        var addr = make_sockaddr(bind_port, 0)
 
         if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             return Result.Err("bind() failed")
@@ -146,9 +139,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         }
 
         // retrieve actual port (needed when bind_port was 0)
-        var bound_addr = SockAddrIn {
-            sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
-        }
+        var bound_addr = make_zeroed_sockaddr()
         var bound_len: u32 = SIZEOF_SOCKADDR_IN
         getsockname(sock.fd, bound_addr, bound_len)
         let actual_port = ntohs(bound_addr.sin_port)
@@ -156,9 +147,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         print("listening on http://localhost:%d\n", actual_port)
 
         while true {
-            var client_addr = SockAddrIn {
-                sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
-            }
+            var client_addr = make_zeroed_sockaddr()
             var addrlen: u32 = SIZEOF_SOCKADDR_IN
             let client_fd = accept(sock.fd, client_addr, addrlen)
             if client_fd < 0 {

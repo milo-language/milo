@@ -1,5 +1,6 @@
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern } from "./hir";
 import { type TypeKind, needsDrop } from "./types";
+import type { TargetInfo } from "./target";
 
 interface StructLayout {
   name: string;
@@ -13,6 +14,7 @@ interface EnumLayout {
 }
 
 export class Codegen {
+  private target: TargetInfo;
   private output: string[] = [];
   private strings: { label: string; escaped: string; length: number }[] = [];
   private strCounter = 0;
@@ -51,6 +53,8 @@ export class Codegen {
   private entryAllocas: string[] = [];
   private static BUILTINS = new Set(["print", "println", "exit", "_milo_arg_count", "_milo_arg_at"]);
   private needsArgGlobals = false;
+
+  constructor(target: TargetInfo) { this.target = target; }
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
@@ -210,7 +214,7 @@ export class Codegen {
       });
     }
 
-    this.emit(`target triple = "arm64-apple-darwin25.3.0"`);
+    this.emit(`target triple = "${this.target.triple}"`);
     this.emit("");
 
     const externs = module.functions.filter(f => f.isExtern);

@@ -4,13 +4,14 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import type { Program } from "./ast";
+import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 
 // repo root: walk up from src/ to find the directory containing std/
 const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
 
-export function resolveImports(program: Program, sourceDir: string): Program {
+export function resolveImports(program: Program, sourceDir: string, target: TargetInfo): Program {
   const visited = new Set<string>();
   const structs = [...program.structs];
   const enums = [...program.enums];
@@ -19,10 +20,13 @@ export function resolveImports(program: Program, sourceDir: string): Program {
   const impls = [...program.impls];
 
   function resolvePath(dir: string, importPath: string): string {
-    // auto-append .milo if missing
     const withExt = importPath.endsWith(".milo") ? importPath : importPath + ".milo";
     let absPath = resolve(dir, withExt);
     if (!existsSync(absPath)) {
+      // for stdlib paths, try platform-specific file first (e.g. platform.darwin.milo)
+      const base = withExt.replace(/\.milo$/, "");
+      const platformPath = resolve(STDLIB_DIR, `${base}.${target.os}.milo`);
+      if (existsSync(platformPath)) return platformPath;
       const stdPath = resolve(STDLIB_DIR, withExt);
       if (existsSync(stdPath)) absPath = stdPath;
     }

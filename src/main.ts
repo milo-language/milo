@@ -10,14 +10,15 @@ import { Codegen } from "./codegen";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { formatDiagnostic } from "./diagnostics";
+import { type TargetInfo, getHostTarget } from "./target";
 
-function compile(source: string, filePath?: string): string {
+function compile(source: string, target: TargetInfo, filePath?: string): string {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let tokens, program;
   try {
     tokens = new Lexer(source).tokenize();
     program = new Parser(tokens).parse();
-    program = resolveImports(program, sourceDir);
+    program = resolveImports(program, sourceDir, target);
   } catch (e: any) {
     console.error(e.message);
     process.exit(1);
@@ -30,12 +31,12 @@ function compile(source: string, filePath?: string): string {
   }
 
   const hirModule = lower(program, result, sourceDir);
-  return new Codegen().generate(hirModule);
+  return new Codegen(target).generate(hirModule);
 }
 
-function compileToIr(sourcePath: string, outputPath: string | null) {
+function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo) {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, sourcePath);
+  const ir = compile(source, target, sourcePath);
   if (outputPath) {
     writeFileSync(outputPath, ir);
     console.log(`wrote ${outputPath}`);
@@ -44,9 +45,9 @@ function compileToIr(sourcePath: string, outputPath: string | null) {
   }
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, optFlag: string = ""): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = ""): string {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, sourcePath);
+  const ir = compile(source, target, sourcePath);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
@@ -57,7 +58,9 @@ function compileToBinary(sourcePath: string, outputPath: string | null, optFlag:
     const opt = optFlag ? ` ${optFlag}` : "";
     let libs = "";
     if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
-      libs = " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto";
+      libs = target.os === "darwin"
+        ? " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
+        : " -lssl -lcrypto";
     }
     execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
@@ -69,8 +72,8 @@ function compileToBinary(sourcePath: string, outputPath: string | null, optFlag:
   return out;
 }
 
-function runFile(sourcePath: string, extraArgs: string[], optFlag: string = "") {
-  const bin = compileToBinary(sourcePath, null, optFlag);
+function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "") {
+  const bin = compileToBinary(sourcePath, null, target, optFlag);
   try {
     const result = execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), {
       stdio: "inherit",
@@ -122,16 +125,17 @@ function main() {
   }
 
   const { output, source, rest, optFlag } = parseArgs(args.slice(1));
+  const target = getHostTarget();
 
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
 
   if (cmd === "run") {
-    runFile(source!, rest, optFlag);
+    runFile(source!, rest, target, optFlag);
   } else if (cmd === "build") {
-    const bin = compileToBinary(source!, output, optFlag);
+    const bin = compileToBinary(source!, output, target, optFlag);
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
-    compileToIr(source!, output);
+    compileToIr(source!, output, target);
   } else {
     console.error(`unknown command: ${cmd}`);
     process.exit(1);

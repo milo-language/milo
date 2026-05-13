@@ -1,0 +1,37 @@
+// platform-specific constants and helpers for macOS/BSD
+
+import "std/os"
+
+struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+fn make_sockaddr(port: u16, addr: u32): SockAddrIn {
+    unsafe {
+        return SockAddrIn {
+            sin_len: 16 as u8,
+            sin_family: 2 as u8,
+            sin_port: htons(port),
+            sin_addr: addr,
+            sin_zero: [0; 8],
+        }
+    }
+}
+
+fn make_zeroed_sockaddr(): SockAddrIn {
+    return SockAddrIn {
+        sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+    }
+}
+
+fn sol_socket(): i32 { return 65535 }
+fn so_reuseaddr(): i32 { return 4 }
+fn map_private_anon(): i32 { return 4098 }
+fn o_write_create_trunc(): i32 { return 1537 }
+fn o_write_create_append(): i32 { return 521 }
+// offset of ai_addr field in struct addrinfo
+fn addrinfo_addr_offset(): i64 { return 32 }

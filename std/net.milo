@@ -1,6 +1,7 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
 import "std/os"
+import "std/platform"
 import "std/json"
 
 // ── TcpStream ──
@@ -36,13 +37,7 @@ fn tcp_connect(ip: u32, port: u16): Result<TcpStream> {
             return Result.Err("socket() failed")
         }
 
-        var addr = SockAddrIn {
-            sin_len: SIZEOF_SOCKADDR_IN as u8,
-            sin_family: AF_INET as u8,
-            sin_port: htons(port),
-            sin_addr: ip,
-            sin_zero: [0; 8],
-        }
+        var addr = make_sockaddr(port, ip)
 
         if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             close(fd)
@@ -115,13 +110,7 @@ fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream> {
             return Result.Err("socket() failed")
         }
 
-        var addr = SockAddrIn {
-            sin_len: SIZEOF_SOCKADDR_IN as u8,
-            sin_family: AF_INET as u8,
-            sin_port: htons(port),
-            sin_addr: ip,
-            sin_zero: [0; 8],
-        }
+        var addr = make_sockaddr(port, ip)
 
         if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             close(fd)
@@ -205,7 +194,7 @@ fn resolve(hostname: string): Result<u32> {
             return Result.Err("DNS resolution failed")
         }
         let info_ptr = *(res_buf as *i64)
-        let addr_ptr = *((info_ptr + 32) as *i64)
+        let addr_ptr = *((info_ptr + addrinfo_addr_offset()) as *i64)
         let ip = *((addr_ptr + 4) as *u32)
         freeaddrinfo(info_ptr as *u8)
         return Result.Ok(ip)

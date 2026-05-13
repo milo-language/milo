@@ -1,6 +1,7 @@
 // std/mem — memory management with automatic cleanup
 
 import "std/os"
+import "std/platform"
 
 // ── MappedMemory ──
 
@@ -19,10 +20,9 @@ impl Drop for MappedMemory {
 
 fn mmap_anon(size: i64): Result<MappedMemory> {
     let PROT_RW: i32 = 3
-    let MAP_PRIVATE_ANON: i32 = 4098
     var addr: i64 = 0
     unsafe {
-        let p = mmap(0 as *u8, size, PROT_RW, MAP_PRIVATE_ANON, -1, 0)
+        let p = mmap(0 as *u8, size, PROT_RW, map_private_anon(), -1, 0)
         addr = p as i64
     }
     let map_failed: i64 = -1 as i64

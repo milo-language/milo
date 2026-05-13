@@ -1,6 +1,7 @@
 // std/io — file and directory I/O with automatic cleanup
 
 import "std/os"
+import "std/platform"
 
 // ── File ──
 
@@ -28,8 +29,7 @@ fn open_read(path: string): Result<File> {
 
 fn open_write(path: string): Result<File> {
     unsafe {
-        // O_WRONLY | O_CREAT | O_TRUNC = 0x601
-        let fd = open(path, 1537, 420)
+        let fd = open(path, o_write_create_trunc(), 420)
         if fd < 0 {
             return Result.Err("failed to create file")
         }
@@ -39,8 +39,7 @@ fn open_write(path: string): Result<File> {
 
 fn open_append(path: string): Result<File> {
     unsafe {
-        // O_WRONLY | O_CREAT | O_APPEND = 0x209
-        let fd = open(path, 521, 420)
+        let fd = open(path, o_write_create_append(), 420)
         if fd < 0 {
             return Result.Err("failed to open file for append")
         }
