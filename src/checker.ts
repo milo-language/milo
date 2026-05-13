@@ -290,6 +290,18 @@ export class TypeChecker {
   private pushScope() { this.scopes.push(new Map()); }
   private popScope() { this.scopes.pop(); }
 
+  private snapshotMoveState(): Map<VarInfo, boolean> {
+    const snap = new Map<VarInfo, boolean>();
+    for (const scope of this.scopes) {
+      for (const [, info] of scope) snap.set(info, info.moved);
+    }
+    return snap;
+  }
+
+  private restoreMoveState(snap: Map<VarInfo, boolean>) {
+    for (const [info, moved] of snap) info.moved = moved;
+  }
+
   private declare(name: string, info: VarInfo) {
     const scope = this.scopes[this.scopes.length - 1];
     if (scope.has(name)) { this.error(`variable '${name}' already declared in this scope`); return; }
@@ -489,13 +501,20 @@ export class TypeChecker {
         if (condType.tag !== "bool" && condType.tag !== "unknown") {
           this.error(`if condition must be bool, got ${typeName(condType)}`, sp);
         }
+        const preMoves = this.snapshotMoveState();
         this.pushScope();
         for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
         this.popScope();
         if (stmt.elseBody) {
+          const afterThen = this.snapshotMoveState();
+          this.restoreMoveState(preMoves);
           this.pushScope();
           for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
           this.popScope();
+          // moved if moved in either branch
+          for (const [info, thenMoved] of afterThen) {
+            if (thenMoved) info.moved = true;
+          }
         }
         break;
       }
@@ -504,11 +523,20 @@ export class TypeChecker {
         if (condType.tag !== "bool" && condType.tag !== "unknown") {
           this.error(`while condition must be bool, got ${typeName(condType)}`, sp);
         }
+        const preMoves = this.snapshotMoveState();
         this.pushScope();
         this.loopDepth++;
         for (const s of stmt.body) this.checkStmt(s, fnRetType);
         this.loopDepth--;
         this.popScope();
+        // outer variable moved in loop body → error (would be use-after-move on next iteration)
+        for (const scope of this.scopes) {
+          for (const [name, info] of scope) {
+            if (preMoves.get(info) === false && info.moved) {
+              this.error(`cannot move '${name}' out of a loop`, sp);
+            }
+          }
+        }
         break;
       }
       case "BreakStmt":

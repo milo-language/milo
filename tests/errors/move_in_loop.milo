@@ -1,0 +1,12 @@
+// @error: cannot move 'p' out of a loop
+struct Point { x: i32, y: i32 }
+fn consume(p: Point): i32 { return p.x }
+fn main(): i32 {
+    let p = Point { x: 1, y: 2 }
+    var i: i32 = 0
+    while i < 3 {
+        let a = consume(p)
+        i = i + 1
+    }
+    return 0
+}

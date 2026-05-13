@@ -1,0 +1,17 @@
+// @expect: 1
+extern fn printf(fmt: *u8, ...): i32
+
+struct Point { x: i32, y: i32 }
+fn consume(p: Point): i32 { return p.x }
+
+fn main(): i32 {
+    let p = Point { x: 1, y: 2 }
+    var result: i32 = 0
+    if true {
+        result = consume(p)
+    } else {
+        result = consume(p)
+    }
+    printf("%d\n", result)
+    return 0
+}
