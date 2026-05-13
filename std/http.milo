@@ -91,28 +91,36 @@ fn send_response(fd: i32, response: Response): void {
 // ── Public API ──
 
 fn serve(port: u16, handler: fn(&Request): Response): Result<void> {
-    let fd = socket(2, 1, 0)
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    let SOL_SOCKET: i32 = 65535
+    let SO_REUSEADDR: i32 = 4
+    let BACKLOG: i32 = 1024
+    let BUF_SIZE: i64 = 8192
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
     if fd < 0 {
         return Result.Err("socket() failed")
     }
 
     var one: i32 = 1
-    setsockopt(fd, 65535, 4, one, 4)
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, one, 4)
 
     var addr = SockAddrIn {
-        sin_len: 16,
-        sin_family: 2,
+        sin_len: SIZEOF_SOCKADDR_IN as u8,
+        sin_family: AF_INET as u8,
         sin_port: htons(port),
         sin_addr: 0,
         sin_zero: [0; 8],
     }
 
-    if bind(fd, addr, 16) < 0 {
+    if bind(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
         close(fd)
         return Result.Err("bind() failed")
     }
 
-    if listen(fd, 1024) < 0 {
+    if listen(fd, BACKLOG) < 0 {
         close(fd)
         return Result.Err("listen() failed")
     }
@@ -123,7 +131,7 @@ fn serve(port: u16, handler: fn(&Request): Response): Result<void> {
         var client_addr = SockAddrIn {
             sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
         }
-        var addrlen: u32 = 16
+        var addrlen: u32 = SIZEOF_SOCKADDR_IN
         let client = accept(fd, client_addr, addrlen)
         if client < 0 {
             continue
@@ -131,7 +139,7 @@ fn serve(port: u16, handler: fn(&Request): Response): Result<void> {
 
         while true {
             var buf: [u8; 8192] = [0; 8192]
-            let n = read(client, buf, 8192)
+            let n = read(client, buf, BUF_SIZE)
             if n <= 0 { break }
 
             let req = parse_request(buf, n)
