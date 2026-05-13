@@ -127,6 +127,7 @@ export interface Function {
 export interface ImportDecl {
   kind: "ImportDecl";
   path: string;
+  names: string[] | null; // null = glob import (import "path"), array = named (from "path" import { a, b })
   span?: Span;
 }
 

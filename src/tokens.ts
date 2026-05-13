@@ -21,6 +21,7 @@ export enum TokenKind {
   Match = "match",
   Mut = "mut",
   Import = "import",
+  From = "from",
   Break = "break",
   Continue = "continue",
   As = "as",
@@ -82,6 +83,6 @@ export interface Token {
 
 export const KEYWORDS = new Set([
   "fn", "extern", "let", "var", "return", "if", "else", "while",
-  "true", "false", "struct", "enum", "match", "mut", "import",
+  "true", "false", "struct", "enum", "match", "mut", "import", "from",
   "break", "continue", "as", "trait", "impl", "for",
 ]);

@@ -45,7 +45,7 @@ export class Parser {
         if (!attrs) attrs = [];
         attrs.push(this.parseAttribute());
       }
-      if (this.at(TokenKind.Import)) {
+      if (this.at(TokenKind.Import) || this.at(TokenKind.From)) {
         imports.push(this.parseImport());
       } else if (this.at(TokenKind.Struct)) {
         const s = this.parseStruct();
@@ -71,9 +71,24 @@ export class Parser {
   }
 
   private parseImport(): ImportDecl {
+    // from "path" import { a, b, c }
+    if (this.at(TokenKind.From)) {
+      const tok = this.advance();
+      const pathTok = this.expect(TokenKind.String);
+      this.expect(TokenKind.Import);
+      this.expect(TokenKind.LBrace);
+      const names: string[] = [];
+      while (!this.at(TokenKind.RBrace)) {
+        names.push(this.expect(TokenKind.Ident).value);
+        this.match(TokenKind.Comma);
+      }
+      this.expect(TokenKind.RBrace);
+      return { kind: "ImportDecl", path: pathTok.value, names, span: { line: tok.line, col: tok.col } };
+    }
+    // import "path" (glob — backward compat)
     const tok = this.expect(TokenKind.Import);
     const pathTok = this.expect(TokenKind.String);
-    return { kind: "ImportDecl", path: pathTok.value, span: { line: tok.line, col: tok.col } };
+    return { kind: "ImportDecl", path: pathTok.value, names: null, span: { line: tok.line, col: tok.col } };
   }
 
   // ── Types ──

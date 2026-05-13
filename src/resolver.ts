@@ -18,14 +18,20 @@ export function resolveImports(program: Program, sourceDir: string): Program {
   const traits = [...program.traits];
   const impls = [...program.impls];
 
+  function resolvePath(dir: string, importPath: string): string {
+    // auto-append .milo if missing
+    const withExt = importPath.endsWith(".milo") ? importPath : importPath + ".milo";
+    let absPath = resolve(dir, withExt);
+    if (!existsSync(absPath)) {
+      const stdPath = resolve(STDLIB_DIR, withExt);
+      if (existsSync(stdPath)) absPath = stdPath;
+    }
+    return absPath;
+  }
+
   function processImports(prog: Program, dir: string) {
     for (const imp of prog.imports) {
-      // try relative to source first, then stdlib
-      let absPath = resolve(dir, imp.path);
-      if (!existsSync(absPath)) {
-        const stdPath = resolve(STDLIB_DIR, imp.path);
-        if (existsSync(stdPath)) absPath = stdPath;
-      }
+      const absPath = resolvePath(dir, imp.path);
       if (visited.has(absPath)) continue;
       visited.add(absPath);
 
@@ -38,6 +44,21 @@ export function resolveImports(program: Program, sourceDir: string): Program {
 
       const tokens = new Lexer(source).tokenize();
       const imported = new Parser(tokens).parse();
+
+      if (imp.names) {
+        // validate that all named symbols exist in the imported module
+        const available = new Set<string>();
+        for (const s of imported.structs) available.add(s.name);
+        for (const e of imported.enums) available.add(e.name);
+        for (const f of imported.functions) available.add(f.name);
+        for (const t of imported.traits) available.add(t.name);
+        for (const name of imp.names) {
+          if (!available.has(name)) {
+            throw new Error(`error[import]: ${imp.span?.line}:${imp.span?.col}: '${name}' not found in '${imp.path}'`);
+          }
+        }
+      }
+      // merge everything — named imports validate but don't restrict (flat compilation)
       structs.push(...imported.structs);
       enums.push(...imported.enums);
       functions.push(...imported.functions);

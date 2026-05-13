@@ -1,5 +1,5 @@
 // HTTP server using std/http — clean, high-level API
-import "std/http.milo"
+from "std/http" import { Request, Response, serve }
 
 fn handler(req: &Request): Response {
     if req.path == "/" {
@@ -9,9 +9,16 @@ fn handler(req: &Request): Response {
         return Response.Text("Hello, World!")
     }
     if req.path == "/json" {
-        return Response.Json("{\"language\":\"milo\",\"backend\":\"llvm\",\"memory_safe\":true}")
+        let info = MiloInfo { language: "milo", backend: "llvm", memory_safe: true }
+        return Response.Json(json_stringify(info))
     }
     return Response.NotFound
+}
+
+struct MiloInfo {
+    language: String,
+    backend: String,
+    memory_safe: bool,
 }
 
 fn index_page(): String {
@@ -57,7 +64,7 @@ fn index_page(): String {
 
     // source code showcase — this is the actual server code
     h = h + "<div class='src'><h2>This Server's Source Code</h2><pre>"
-    h = h + "<span class='kw'>import</span> <span class='st'>\"std/http.milo\"</span>\n\n"
+    h = h + "<span class='kw'>from</span> <span class='st'>\"std/http\"</span> <span class='kw'>import</span> { <span class='ty'>Request</span>, <span class='ty'>Response</span>, <span class='fn'>serve</span> }\n\n"
     h = h + "<span class='kw'>fn</span> <span class='fn'>handler</span>(req: &amp;<span class='ty'>Request</span>): <span class='ty'>Response</span> {\n"
     h = h + "    <span class='kw'>if</span> req.path == <span class='st'>\"/\"</span> {\n"
     h = h + "        <span class='kw'>return</span> <span class='ty'>Response</span>.<span class='fn'>Html</span>(index_page())\n"

@@ -1,6 +1,6 @@
 // std/http — high-level HTTP server for Milo
 // Usage:
-//   import "std/http.milo"
+//   from "std/http" import { Request, Response, serve }
 //   fn handler(req: &Request): Response { ... }
 //   fn main(): i32 { serve(8080, handler); return 0 }
 

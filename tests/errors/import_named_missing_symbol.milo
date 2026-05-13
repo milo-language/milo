@@ -1,0 +1,6 @@
+// @error: 'nonexistent' not found in 'lib/math'
+from "lib/math" import { nonexistent }
+
+fn main(): i32 {
+    return 0
+}
