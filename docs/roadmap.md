@@ -62,6 +62,9 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 - [x] Recursive enums via boxed payload (linked list, tree, AST)
 - [x] Vec\<T\> — dynamic array with push/pop/len, bounds-checked indexing, drop glue
 - [x] HashMap\<K, V\> — open addressing, FNV-1a + seeded hash, insert/get/contains/remove/len, drop glue
+- [x] Traits Phase 1 — trait decls, impl blocks, inherent methods, generic bounds, supertraits, @derive(Eq), Self type, monomorphized static dispatch
+- [ ] Traits Phase 1.5 — operator overloading via traits (Add/Sub/Mul/Div), migrate built-in methods to trait impls, @derive(Hash, Clone)
+- [ ] String slices — substring views, split, find
 - [ ] MIR — lower-level IR for optimization passes
 - [ ] Arena system designed based on real needs from self-hosting
 - [ ] Write the compiler in Milo itself

@@ -56,6 +56,28 @@ fn main(): i32 {
 - Drop semantics — heap-owning values auto-freed on scope exit
 - Generics on functions, enums, and structs (monomorphization, type inference)
 
+**Traits**
+```
+trait Eq {
+    fn eq(self: &Self, other: &Self): bool
+}
+
+@derive(Eq)
+struct Point { x: i32, y: i32 }
+
+impl Point {
+    fn manhattan(self: &Self): i32 { return self.x + self.y }
+}
+
+fn print_if_eq<T: Eq>(a: &T, b: &T) { ... }  // generic bounds
+```
+- `trait` declarations with required and default methods
+- `impl Trait for Type` and inherent `impl Type` blocks
+- Generic bounds `<T: Bound1 + Bound2>`, supertraits `trait Ord: Eq`
+- `@derive(Eq)` auto-generates implementations
+- `Self` type alias in trait/impl bodies
+- Monomorphized static dispatch (zero-cost, no vtables)
+
 **Closures**
 ```
 fn apply(f: fn(i32): i32, x: i32): i32 { return f(x) }
@@ -95,7 +117,7 @@ Recursive resolution, dedup, transitive imports.
 - VS Code extension: syntax highlighting + LSP client
 - GitHub Actions CI
 
-115 tests pass on the current build.
+131 tests pass on the current build.
 
 ## Design Principles
 
@@ -115,7 +137,7 @@ Recursive resolution, dedup, transitive imports.
 
 Honest list of major gaps:
 
-- **No traits / interfaces.** Generic containers can't yet constrain `K: Hash + Eq` or define `Display`, `Ord`, iterator protocols. Open design question.
+- **Traits Phase 1 only.** Nominal traits with monomorphized dispatch work. Missing: `dyn Trait`, associated types, operator overloading via traits, `where` clauses. Built-in types (Vec, HashMap, String) still use hardcoded methods rather than trait impls.
 - **No arenas yet.** Planned answer for cyclic data and bulk-allocated graphs. `Box<T>` handles trees and recursive structures meanwhile.
 - **No string slices or `split`.** Strings are owned; substring views via references can't escape function scope yet.
 - **Closures non-escaping only.** Cannot be returned or stored in structs, so no `map`/`filter` chains that outlive a single call frame.
@@ -134,4 +156,4 @@ Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics, 
 
 ## Status
 
-Phase 3 — language core in place. `Box<T>`, `Vec<T>`, `HashMap<K, V>`, and non-escaping closures shipped. Next: traits, arenas, string slices.
+Phase 3 — language core in place. `Box<T>`, `Vec<T>`, `HashMap<K, V>`, non-escaping closures, and traits (Phase 1) shipped. Next: string slices, operator overloading, arenas.
