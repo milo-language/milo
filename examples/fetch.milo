@@ -1,0 +1,40 @@
+// Fetch data from an HTTP API and parse the JSON response
+import "std/net"
+
+fn main(): i32 {
+    let resp = fetch("http://httpbin.org/get")
+    match resp {
+        Result.Ok(r) => {
+            print("status: %d\n", r.status)
+
+            let data = r.json()
+
+            let origin = data.get("origin")
+            match origin {
+                Option.Some(v) => { print("origin: %s\n", v.str()) }
+                Option.None => {}
+            }
+
+            let headers = data.get("headers")
+            match headers {
+                Option.Some(h) => {
+                    let host = h.get("Host")
+                    match host {
+                        Option.Some(v) => { print("host: %s\n", v.str()) }
+                        Option.None => {}
+                    }
+                }
+                Option.None => {}
+            }
+
+            let url = data.get("url")
+            match url {
+                Option.Some(v) => { print("url: %s\n", v.str()) }
+                Option.None => {}
+            }
+        }
+        Result.Err(msg) => { print("error: %s\n", msg) }
+    }
+
+    return 0
+}

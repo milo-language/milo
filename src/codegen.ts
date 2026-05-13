@@ -755,8 +755,13 @@ export class Codegen {
     switch (expr.kind) {
       case "IntLit":
         return [lines, String(expr.value), lt];
-      case "FloatLit":
-        return [lines, `${expr.value.toExponential()}`, lt];
+      case "FloatLit": {
+        // LLVM needs hex float for exact representation
+        const buf = new ArrayBuffer(8);
+        new Float64Array(buf)[0] = expr.value;
+        const hex = [...new Uint8Array(buf)].reverse().map(b => b.toString(16).padStart(2, "0")).join("");
+        return [lines, `0x${hex.toUpperCase()}`, lt];
+      }
       case "BoolLit":
         return [lines, expr.value ? "1" : "0", "i1"];
       case "StringLit": {

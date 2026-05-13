@@ -1,6 +1,7 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
 import "std/os"
+import "std/json"
 
 // ── TcpStream ──
 
@@ -110,8 +111,8 @@ impl Response {
         return self.body.clone()
     }
 
-    fn json(self: &Self): string {
-        return self.body.clone()
+    fn json(self: &Self): Json {
+        return json_parse(self.body.clone())
     }
 
     fn ok(self: &Self): bool {

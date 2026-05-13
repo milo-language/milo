@@ -1,0 +1,347 @@
+// std/json — view-based JSON parser, no allocation per navigation
+
+struct Json {
+    raw: string,
+    start: i64,
+    end: i64,
+}
+
+impl Json {
+    fn get(self: &Self, key: &string): Option<Json> {
+        return json_get(self.raw, self.start, self.end, key)
+    }
+
+    fn at(self: &Self, index: i64): Option<Json> {
+        return json_at(self.raw, self.start, self.end, index)
+    }
+
+    fn str(self: &Self): string {
+        return json_str(self.raw, self.start, self.end)
+    }
+
+    fn num(self: &Self): f64 {
+        return json_num(self.raw, self.start, self.end)
+    }
+
+    fn int(self: &Self): i64 {
+        return json_int(self.raw, self.start, self.end)
+    }
+
+    fn bool(self: &Self): bool {
+        return self.start < self.end && self.raw[self.start] == 't'
+    }
+
+    fn is_null(self: &Self): bool {
+        return self.start < self.end && self.raw[self.start] == 'n'
+    }
+
+    fn is_str(self: &Self): bool {
+        return self.start < self.end && self.raw[self.start] == '"'
+    }
+
+    fn is_num(self: &Self): bool {
+        if self.start >= self.end { return false }
+        let c = self.raw[self.start]
+        return c == '-' || (c >= '0' && c <= '9')
+    }
+
+    fn is_bool(self: &Self): bool {
+        if self.start >= self.end { return false }
+        let c = self.raw[self.start]
+        return c == 't' || c == 'f'
+    }
+
+    fn is_array(self: &Self): bool {
+        return self.start < self.end && self.raw[self.start] == '['
+    }
+
+    fn is_object(self: &Self): bool {
+        return self.start < self.end && self.raw[self.start] == '{'
+    }
+
+    fn len(self: &Self): i64 {
+        return json_len(self.raw, self.start, self.end)
+    }
+
+    fn raw_str(self: &Self): string {
+        return self.raw[self.start .. self.end]
+    }
+}
+
+fn json_parse(s: string): Json {
+    let i = skip_ws(s, 0)
+    let e = skip_value(s, i)
+    return Json { raw: s, start: i, end: e }
+}
+
+// ── Whitespace ──
+
+fn skip_ws(s: &string, pos: i64): i64 {
+    var i: i64 = pos
+    while i < s.len {
+        let c = s[i]
+        if c != ' ' && c != '\t' && c != '\n' && c != '\r' { break }
+        i = i + 1
+    }
+    return i
+}
+
+// ── Skip a complete JSON value, return end position ──
+
+fn skip_value(s: &string, pos: i64): i64 {
+    if pos >= s.len { return pos }
+    let c = s[pos]
+    if c == '"' { return skip_string(s, pos) }
+    if c == '{' { return skip_object(s, pos) }
+    if c == '[' { return skip_array(s, pos) }
+    if c == 't' { return pos + 4 }
+    if c == 'f' { return pos + 5 }
+    if c == 'n' { return pos + 4 }
+    // number
+    return skip_number(s, pos)
+}
+
+fn skip_string(s: &string, pos: i64): i64 {
+    var i: i64 = pos + 1
+    while i < s.len {
+        if s[i] == '\\' {
+            i = i + 2
+        } else if s[i] == '"' {
+            return i + 1
+        } else {
+            i = i + 1
+        }
+    }
+    return i
+}
+
+fn skip_number(s: &string, pos: i64): i64 {
+    var i: i64 = pos
+    if i < s.len && s[i] == '-' { i = i + 1 }
+    while i < s.len && s[i] >= '0' && s[i] <= '9' { i = i + 1 }
+    if i < s.len && s[i] == '.' {
+        i = i + 1
+        while i < s.len && s[i] >= '0' && s[i] <= '9' { i = i + 1 }
+    }
+    // exponent
+    if i < s.len && (s[i] == 'e' || s[i] == 'E') {
+        i = i + 1
+        if i < s.len && (s[i] == '+' || s[i] == '-') { i = i + 1 }
+        while i < s.len && s[i] >= '0' && s[i] <= '9' { i = i + 1 }
+    }
+    return i
+}
+
+fn skip_object(s: &string, pos: i64): i64 {
+    var i: i64 = pos + 1
+    i = skip_ws(s, i)
+    if i < s.len && s[i] == '}' { return i + 1 }
+    while i < s.len {
+        i = skip_ws(s, i)
+        if i >= s.len || s[i] != '"' { break }
+        i = skip_string(s, i)
+        i = skip_ws(s, i)
+        if i < s.len && s[i] == ':' { i = i + 1 }
+        i = skip_ws(s, i)
+        i = skip_value(s, i)
+        i = skip_ws(s, i)
+        if i < s.len && s[i] == ',' {
+            i = i + 1
+        } else {
+            break
+        }
+    }
+    if i < s.len && s[i] == '}' { i = i + 1 }
+    return i
+}
+
+fn skip_array(s: &string, pos: i64): i64 {
+    var i: i64 = pos + 1
+    i = skip_ws(s, i)
+    if i < s.len && s[i] == ']' { return i + 1 }
+    while i < s.len {
+        i = skip_ws(s, i)
+        i = skip_value(s, i)
+        i = skip_ws(s, i)
+        if i < s.len && s[i] == ',' {
+            i = i + 1
+        } else {
+            break
+        }
+    }
+    if i < s.len && s[i] == ']' { i = i + 1 }
+    return i
+}
+
+// ── Object key lookup ──
+
+fn key_matches(s: &string, pos: i64, key: &string): bool {
+    // pos points at opening quote
+    if pos >= s.len || s[pos] != '"' { return false }
+    var i: i64 = 0
+    var j: i64 = pos + 1
+    while i < key.len && j < s.len {
+        if s[j] == '\\' {
+            j = j + 1
+            if j >= s.len { return false }
+        }
+        if s[j] != key[i] { return false }
+        i = i + 1
+        j = j + 1
+    }
+    return i == key.len && j < s.len && s[j] == '"'
+}
+
+fn json_get(s: &string, start: i64, end: i64, key: &string): Option<Json> {
+    if start >= end || s[start] != '{' { return Option.None }
+    var i: i64 = start + 1
+    while i < end {
+        i = skip_ws(s, i)
+        if i >= end || s[i] == '}' { return Option.None }
+        // at a key string
+        let key_start = i
+        if s[i] != '"' { return Option.None }
+        let key_end = skip_string(s, i)
+        let matched = key_matches(s, key_start, key)
+        i = skip_ws(s, key_end)
+        if i < end && s[i] == ':' { i = i + 1 }
+        i = skip_ws(s, i)
+        let val_start = i
+        let val_end = skip_value(s, i)
+        if matched {
+            return Option.Some(Json { raw: s.clone(), start: val_start, end: val_end })
+        }
+        i = skip_ws(s, val_end)
+        if i < end && s[i] == ',' { i = i + 1 }
+    }
+    return Option.None
+}
+
+// ── Array index access ──
+
+fn json_at(s: &string, start: i64, end: i64, index: i64): Option<Json> {
+    if start >= end || s[start] != '[' { return Option.None }
+    var i: i64 = start + 1
+    var idx: i64 = 0
+    while i < end {
+        i = skip_ws(s, i)
+        if i >= end || s[i] == ']' { return Option.None }
+        let val_start = i
+        let val_end = skip_value(s, i)
+        if idx == index {
+            return Option.Some(Json { raw: s.clone(), start: val_start, end: val_end })
+        }
+        idx = idx + 1
+        i = skip_ws(s, val_end)
+        if i < end && s[i] == ',' { i = i + 1 }
+    }
+    return Option.None
+}
+
+// ── Array/object length ──
+
+fn json_len(s: &string, start: i64, end: i64): i64 {
+    if start >= end { return 0 }
+    let c = s[start]
+    if c == '[' {
+        var i: i64 = start + 1
+        i = skip_ws(s, i)
+        if i < end && s[i] == ']' { return 0 }
+        var count: i64 = 0
+        while i < end {
+            i = skip_ws(s, i)
+            if i >= end || s[i] == ']' { break }
+            i = skip_value(s, i)
+            count = count + 1
+            i = skip_ws(s, i)
+            if i < end && s[i] == ',' { i = i + 1 }
+        }
+        return count
+    }
+    if c == '{' {
+        var i: i64 = start + 1
+        i = skip_ws(s, i)
+        if i < end && s[i] == '}' { return 0 }
+        var count: i64 = 0
+        while i < end {
+            i = skip_ws(s, i)
+            if i >= end || s[i] == '}' { break }
+            i = skip_string(s, i)
+            i = skip_ws(s, i)
+            if i < end && s[i] == ':' { i = i + 1 }
+            i = skip_ws(s, i)
+            i = skip_value(s, i)
+            count = count + 1
+            i = skip_ws(s, i)
+            if i < end && s[i] == ',' { i = i + 1 }
+        }
+        return count
+    }
+    return 0
+}
+
+// ── Value extraction ──
+
+fn json_str(s: &string, start: i64, end: i64): string {
+    if start >= end || s[start] != '"' { return "" }
+    var result: string = ""
+    var i: i64 = start + 1
+    while i < end && s[i] != '"' {
+        if s[i] == '\\' && i + 1 < end {
+            i = i + 1
+            let esc = s[i]
+            if esc == 'n' { result.push('\n') }
+            else if esc == 't' { result.push('\t') }
+            else if esc == 'r' { result.push('\r') }
+            else if esc == '"' { result.push('"') }
+            else if esc == '\\' { result.push('\\') }
+            else if esc == '/' { result.push('/') }
+            else { result.push(esc) }
+        } else {
+            result.push(s[i])
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn json_num(s: &string, start: i64, end: i64): f64 {
+    var result: f64 = 0.0
+    var negative: bool = false
+    var i: i64 = start
+    if i < end && s[i] == '-' {
+        negative = true
+        i = i + 1
+    }
+    while i < end && s[i] >= '0' && s[i] <= '9' {
+        result = result * 10.0 + (s[i] as i32 - 48) as f64
+        i = i + 1
+    }
+    if i < end && s[i] == '.' {
+        i = i + 1
+        var frac: f64 = 0.1
+        while i < end && s[i] >= '0' && s[i] <= '9' {
+            result = result + (s[i] as i32 - 48) as f64 * frac
+            frac = frac * 0.1
+            i = i + 1
+        }
+    }
+    if negative { result = 0.0 - result }
+    return result
+}
+
+fn json_int(s: &string, start: i64, end: i64): i64 {
+    var result: i64 = 0
+    var negative: bool = false
+    var i: i64 = start
+    if i < end && s[i] == '-' {
+        negative = true
+        i = i + 1
+    }
+    while i < end && s[i] >= '0' && s[i] <= '9' {
+        result = result * 10 + (s[i] as i32 - 48) as i64
+        i = i + 1
+    }
+    if negative { result = 0 - result }
+    return result
+}
