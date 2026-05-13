@@ -2,6 +2,7 @@ import { Token, TokenKind } from "./tokens";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
+  TraitDecl, TraitMethod, ImplDecl, Attribute,
 } from "./ast";
 
 export class Parser {
@@ -35,22 +36,38 @@ export class Parser {
     const enums: EnumDecl[] = [];
     const functions: Function[] = [];
     const imports: ImportDecl[] = [];
+    const traits: TraitDecl[] = [];
+    const impls: ImplDecl[] = [];
     while (!this.at(TokenKind.Eof)) {
+      // collect attributes before struct/enum
+      let attrs: Attribute[] | undefined;
+      while (this.at(TokenKind.At)) {
+        if (!attrs) attrs = [];
+        attrs.push(this.parseAttribute());
+      }
       if (this.at(TokenKind.Import)) {
         imports.push(this.parseImport());
       } else if (this.at(TokenKind.Struct)) {
-        structs.push(this.parseStruct());
+        const s = this.parseStruct();
+        if (attrs) s.attributes = attrs;
+        structs.push(s);
       } else if (this.at(TokenKind.Enum)) {
-        enums.push(this.parseEnum());
+        const e = this.parseEnum();
+        if (attrs) e.attributes = attrs;
+        enums.push(e);
       } else if (this.at(TokenKind.Extern)) {
         functions.push(this.parseExternFn());
       } else if (this.at(TokenKind.Fn)) {
         functions.push(this.parseFn());
+      } else if (this.at(TokenKind.Trait)) {
+        traits.push(this.parseTraitDecl());
+      } else if (this.at(TokenKind.Impl)) {
+        impls.push(this.parseImplDecl());
       } else {
-        this.error(`expected 'import', 'struct', 'enum', 'fn', or 'extern', got '${this.peek().kind}'`, this.peek());
+        this.error(`expected declaration, got '${this.peek().kind}'`, this.peek());
       }
     }
-    return { structs, enums, functions, imports };
+    return { structs, enums, functions, imports, traits, impls };
   }
 
   private parseImport(): ImportDecl {
@@ -134,14 +151,7 @@ export class Parser {
   private parseEnum(): EnumDecl {
     this.expect(TokenKind.Enum);
     const name = this.expect(TokenKind.Ident).value;
-    const typeParams: string[] = [];
-    if (this.match(TokenKind.Lt)) {
-      typeParams.push(this.expect(TokenKind.Ident).value);
-      while (this.match(TokenKind.Comma)) {
-        typeParams.push(this.expect(TokenKind.Ident).value);
-      }
-      this.expect(TokenKind.Gt);
-    }
+    const typeParams = this.parseTypeParams();
     this.expect(TokenKind.LBrace);
     const variants: EnumVariant[] = [];
     while (!this.at(TokenKind.RBrace)) {
@@ -213,16 +223,97 @@ export class Parser {
     return { kind: "Function", name, typeParams, params, retType, body, isExtern: false, isVariadic: variadic };
   }
 
-  private parseTypeParams(): string[] {
-    const typeParams: string[] = [];
+  private parseTypeParams(): import("./ast").TypeParam[] {
+    const typeParams: import("./ast").TypeParam[] = [];
     if (this.match(TokenKind.Lt)) {
-      typeParams.push(this.expect(TokenKind.Ident).value);
+      typeParams.push(this.parseOneTypeParam());
       while (this.match(TokenKind.Comma)) {
-        typeParams.push(this.expect(TokenKind.Ident).value);
+        typeParams.push(this.parseOneTypeParam());
       }
       this.expect(TokenKind.Gt);
     }
     return typeParams;
+  }
+
+  private parseOneTypeParam(): import("./ast").TypeParam {
+    const name = this.expect(TokenKind.Ident).value;
+    const bounds: string[] = [];
+    if (this.match(TokenKind.Colon)) {
+      bounds.push(this.expect(TokenKind.Ident).value);
+      while (this.match(TokenKind.Plus)) {
+        bounds.push(this.expect(TokenKind.Ident).value);
+      }
+    }
+    return { name, bounds };
+  }
+
+  private parseAttribute(): Attribute {
+    this.expect(TokenKind.At);
+    const name = this.expect(TokenKind.Ident).value;
+    const args: string[] = [];
+    if (this.match(TokenKind.LParen)) {
+      args.push(this.expect(TokenKind.Ident).value);
+      while (this.match(TokenKind.Comma)) {
+        args.push(this.expect(TokenKind.Ident).value);
+      }
+      this.expect(TokenKind.RParen);
+    }
+    return { name, args };
+  }
+
+  private parseTraitDecl(): TraitDecl {
+    const tok = this.expect(TokenKind.Trait);
+    const name = this.expect(TokenKind.Ident).value;
+    const typeParams = this.parseTypeParams();
+    const supertraits: string[] = [];
+    if (this.match(TokenKind.Colon)) {
+      supertraits.push(this.expect(TokenKind.Ident).value);
+      while (this.match(TokenKind.Plus)) {
+        supertraits.push(this.expect(TokenKind.Ident).value);
+      }
+    }
+    this.expect(TokenKind.LBrace);
+    const methods: TraitMethod[] = [];
+    while (!this.at(TokenKind.RBrace) && !this.at(TokenKind.Eof)) {
+      methods.push(this.parseTraitMethod());
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "TraitDecl", name, typeParams, supertraits, methods, span: this.span(tok) };
+  }
+
+  private parseTraitMethod(): TraitMethod {
+    const tok = this.expect(TokenKind.Fn);
+    const name = this.expect(TokenKind.Ident).value;
+    const { params } = this.parseParamList();
+    const retType = this.parseReturnType();
+    let body: Stmt[] | null = null;
+    if (this.at(TokenKind.LBrace)) {
+      this.advance();
+      body = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+    }
+    return { name, params, retType, body, span: this.span(tok) };
+  }
+
+  private parseImplDecl(): ImplDecl {
+    const tok = this.expect(TokenKind.Impl);
+    const firstName = this.expect(TokenKind.Ident).value;
+    let traitName: string | null = null;
+    let typeName: string;
+    const typeParams = this.parseTypeParams();
+    if (this.match(TokenKind.For)) {
+      traitName = firstName;
+      typeName = this.expect(TokenKind.Ident).value;
+    } else {
+      typeName = firstName;
+    }
+    this.expect(TokenKind.LBrace);
+    const methods: Function[] = [];
+    while (!this.at(TokenKind.RBrace) && !this.at(TokenKind.Eof)) {
+      methods.push(this.parseFn());
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "ImplDecl", traitName, typeName, typeParams, methods, span: this.span(tok) };
   }
 
   // ── Statements ──

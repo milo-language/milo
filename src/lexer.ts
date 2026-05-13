@@ -179,6 +179,7 @@ export class Lexer {
       "!": TokenKind.Bang,
       "?": TokenKind.Question,
       "|": TokenKind.Pipe,
+      "@": TokenKind.At,
     };
 
     if (ch in singles) {

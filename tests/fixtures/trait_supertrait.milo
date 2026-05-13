@@ -1,0 +1,34 @@
+// @expect: equal
+// @expect: less
+extern fn printf(fmt: *u8, ...): i32
+
+trait Eq {
+    fn eq(self: &Self, other: &Self): bool
+}
+
+trait Ord: Eq {
+    fn less(self: &Self, other: &Self): bool
+}
+
+struct Score { val: i32 }
+
+impl Eq for Score {
+    fn eq(self: &Self, other: &Self): bool {
+        return self.val == other.val
+    }
+}
+
+impl Ord for Score {
+    fn less(self: &Self, other: &Self): bool {
+        return self.val < other.val
+    }
+}
+
+fn main(): i32 {
+    let a = Score { val: 5 }
+    let b = Score { val: 5 }
+    let c = Score { val: 10 }
+    if a.eq(b) { printf("equal\n") }
+    if a.less(c) { printf("less\n") }
+    return 0
+}

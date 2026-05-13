@@ -1,0 +1,16 @@
+// @error: does not implement trait 'HasValue'
+
+trait HasValue {
+    fn value(self: &Self): i32
+}
+
+struct Empty { x: i32 }
+
+fn print_value<T: HasValue>(thing: &T): i32 {
+    return thing.value()
+}
+
+fn main(): i32 {
+    let e = Empty { x: 0 }
+    return print_value(e)
+}

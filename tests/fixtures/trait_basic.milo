@@ -1,0 +1,16 @@
+// @expect: 42
+extern fn printf(fmt: *u8, ...): i32
+
+struct Dog { age: i32 }
+
+impl Dog {
+    fn get_age(self: &Self): i32 {
+        return self.age
+    }
+}
+
+fn main(): i32 {
+    let d = Dog { age: 42 }
+    printf("%d\n", d.get_age())
+    return 0
+}

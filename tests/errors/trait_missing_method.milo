@@ -1,0 +1,11 @@
+// @error: missing required method 'eq'
+
+trait Eq {
+    fn eq(self: &Self, other: &Self): bool
+}
+
+struct Point { x: i32 }
+
+impl Eq for Point {}
+
+fn main(): i32 { return 0 }

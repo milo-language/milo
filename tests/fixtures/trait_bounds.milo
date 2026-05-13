@@ -1,0 +1,24 @@
+// @expect: 99
+extern fn printf(fmt: *u8, ...): i32
+
+trait HasValue {
+    fn value(self: &Self): i32
+}
+
+struct Box99 { x: i32 }
+
+impl HasValue for Box99 {
+    fn value(self: &Self): i32 {
+        return 99
+    }
+}
+
+fn print_value<T: HasValue>(thing: &T) {
+    printf("%d\n", thing.value())
+}
+
+fn main(): i32 {
+    let b = Box99 { x: 0 }
+    print_value(b)
+    return 0
+}

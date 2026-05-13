@@ -1,0 +1,19 @@
+// @error: requires impl 'Eq' for 'Score'
+
+trait Eq {
+    fn eq(self: &Self, other: &Self): bool
+}
+
+trait Ord: Eq {
+    fn less(self: &Self, other: &Self): bool
+}
+
+struct Score { val: i32 }
+
+impl Ord for Score {
+    fn less(self: &Self, other: &Self): bool {
+        return self.val < other.val
+    }
+}
+
+fn main(): i32 { return 0 }

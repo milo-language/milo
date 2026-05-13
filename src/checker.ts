@@ -1,4 +1,5 @@
-import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span } from "./ast";
+import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl } from "./ast";
+import { simpleType } from "./ast";
 import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy } from "./types";
 import type { Diagnostic } from "./diagnostics";
 
@@ -46,6 +47,7 @@ export interface CheckResult {
   monomorphizedStructs: StructDecl[];
   closureCaptures: Map<Expr, CaptureInfo[]>;
   closureCalls: Map<Expr, TypeKind>;
+  resolvedMethods: Map<Expr, string>;
 }
 
 interface GenericEnumInfo {
@@ -63,6 +65,24 @@ interface GenericStructInfo {
 interface GenericFnInfo {
   typeParams: string[];
   decl: Function;
+}
+
+interface TraitMethodInfo {
+  params: { name: string; type: TypeKind }[];
+  ret: TypeKind;
+  hasDefault: boolean;
+}
+
+interface TraitInfo {
+  name: string;
+  supertraits: string[];
+  methods: Map<string, TraitMethodInfo>;
+}
+
+interface ImplInfo {
+  traitName: string | null;
+  typeName: string;
+  methods: Map<string, FnSig>;
 }
 
 export class TypeChecker {
@@ -89,6 +109,10 @@ export class TypeChecker {
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
   private loopDepth = 0;
+  private traits = new Map<string, TraitInfo>();
+  private traitImpls = new Map<string, ImplInfo[]>();
+  private inherentImpls = new Map<string, ImplInfo>();
+  private resolvedMethods = new Map<Expr, string>();
 
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
@@ -230,8 +254,11 @@ export class TypeChecker {
 
   private substituteMiloType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType {
     const idx = typeParams.indexOf(ty.name);
-    if (idx !== -1 && !ty.isPtr && !ty.isRef && !ty.isRefMut && !ty.isArray) {
+    if (idx !== -1) {
       return { ...ty, name: typeName(typeArgs[idx]) };
+    }
+    if (ty.typeArgs) {
+      return { ...ty, typeArgs: ty.typeArgs.map(a => this.substituteMiloType(a, typeParams, typeArgs)) };
     }
     return ty;
   }
@@ -243,6 +270,17 @@ export class TypeChecker {
     const generic = this.genericFns.get(baseName)!;
     const typeMap = new Map<string, TypeKind>();
     generic.typeParams.forEach((p, i) => typeMap.set(p, typeArgs[i]));
+
+    // check trait bounds
+    for (let i = 0; i < generic.decl.typeParams.length; i++) {
+      const tp = generic.decl.typeParams[i];
+      const concreteType = typeArgs[i];
+      for (const bound of tp.bounds) {
+        if (!this.typeImplementsTrait(typeName(concreteType), bound)) {
+          this.error(`type '${typeName(concreteType)}' does not implement trait '${bound}'`);
+        }
+      }
+    }
 
     // Build concrete param types
     const params = generic.decl.params.map(p => ({
@@ -342,7 +380,7 @@ export class TypeChecker {
     for (const s of program.structs) {
       if (s.typeParams.length > 0) {
         const fields = s.fields.map(f => ({ name: f.name, type: typeFromAst(f.type) }));
-        this.genericStructs.set(s.name, { typeParams: s.typeParams, fields, decl: s });
+        this.genericStructs.set(s.name, { typeParams: s.typeParams.map(tp => tp.name), fields, decl: s });
       } else {
         const fields = s.fields.map(f => ({ name: f.name, type: this.resolve(f.type) }));
         for (const f of fields) {
@@ -364,7 +402,7 @@ export class TypeChecker {
         e.variants.forEach((v, i) => {
           variants.set(v.name, { tag: i, fields: v.fields.map(f => typeFromAst(f)) });
         });
-        this.genericEnums.set(e.name, { typeParams: e.typeParams, variants, decl: e });
+        this.genericEnums.set(e.name, { typeParams: e.typeParams.map(tp => tp.name), variants, decl: e });
       } else {
         // pre-register so self-referential fields (Box<Self>) resolve correctly
         this.enums.set(e.name, { variants: new Map() });
@@ -386,7 +424,7 @@ export class TypeChecker {
     // register functions
     for (const fn of program.functions) {
       if (fn.typeParams.length > 0) {
-        this.genericFns.set(fn.name, { typeParams: fn.typeParams, decl: fn });
+        this.genericFns.set(fn.name, { typeParams: fn.typeParams.map(tp => tp.name), decl: fn });
         continue;
       }
       const params = fn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
@@ -400,8 +438,39 @@ export class TypeChecker {
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic });
     }
 
+    // register traits
+    for (const t of program.traits) {
+      if (this.traits.has(t.name)) {
+        this.error(`duplicate trait '${t.name}'`, t.span);
+        continue;
+      }
+      for (const sup of t.supertraits) {
+        if (!this.traits.has(sup)) {
+          this.error(`supertrait '${sup}' not found`, t.span);
+        }
+      }
+      const methods = new Map<string, TraitMethodInfo>();
+      for (const m of t.methods) {
+        const params = m.params.map(p => ({ name: p.name, type: this.resolve(p.type) }));
+        const ret = this.resolve(m.retType);
+        methods.set(m.name, { params, ret, hasDefault: m.body !== null });
+      }
+      this.traits.set(t.name, { name: t.name, supertraits: t.supertraits, methods });
+    }
+
+    // register impls
+    const implFnsToCheck: Function[] = [];
+    for (const impl of program.impls) {
+      this.registerImpl(impl, program, implFnsToCheck);
+    }
+
     for (const fn of program.functions) {
       if (!fn.isExtern && fn.typeParams.length === 0) this.checkFunction(fn);
+    }
+
+    // type-check impl method bodies after all registrations
+    for (const fn of implFnsToCheck) {
+      this.checkFunction(fn);
     }
 
     return {
@@ -420,7 +489,182 @@ export class TypeChecker {
       monomorphizedStructs: this.monomorphizedStructDecls,
       closureCaptures: this.closureCaptures,
       closureCalls: this.closureCalls,
+      resolvedMethods: this.resolvedMethods,
     };
+  }
+
+  private resolveTypeNameForImpl(name: string): string {
+    if (this.structs.has(name) || this.genericStructs.has(name)) return name;
+    if (this.enums.has(name) || this.genericEnums.has(name)) return name;
+    return name;
+  }
+
+  private substituteSelfInMiloType(ty: MiloType, concreteName: string): MiloType {
+    if (ty.name === "Self") return { ...ty, name: concreteName };
+    if (ty.typeArgs) return { ...ty, typeArgs: ty.typeArgs.map(a => this.substituteSelfInMiloType(a, concreteName)) };
+    return ty;
+  }
+
+  private registerImpl(impl: import("./ast").ImplDecl, program: Program, implFnsToCheck: Function[]) {
+    const typeName = impl.typeName;
+
+    if (impl.traitName) {
+      const trait = this.traits.get(impl.traitName);
+      if (!trait) {
+        this.error(`unknown trait '${impl.traitName}'`, impl.span);
+        return;
+      }
+
+      // check for duplicate impl
+      const existing = this.traitImpls.get(typeName) || [];
+      if (existing.some(i => i.traitName === impl.traitName)) {
+        this.error(`duplicate impl '${impl.traitName}' for '${typeName}'`, impl.span);
+        return;
+      }
+
+      // check supertraits
+      for (const sup of trait.supertraits) {
+        if (!existing.some(i => i.traitName === sup)) {
+          this.error(`impl '${impl.traitName}' for '${typeName}' requires impl '${sup}' for '${typeName}'`, impl.span);
+        }
+      }
+
+      // validate all required methods are present
+      const implMethodNames = new Set(impl.methods.map(m => m.name));
+      for (const [mName, mInfo] of trait.methods) {
+        if (!mInfo.hasDefault && !implMethodNames.has(mName)) {
+          this.error(`impl '${impl.traitName}' for '${typeName}': missing required method '${mName}'`, impl.span);
+        }
+      }
+
+      // register each method as a concrete function
+      const methods = new Map<string, FnSig>();
+      for (const m of impl.methods) {
+        const traitMethod = trait.methods.get(m.name);
+        if (!traitMethod) {
+          this.error(`method '${m.name}' is not defined in trait '${impl.traitName}'`, impl.span);
+          continue;
+        }
+        const mangled = `${typeName}$${impl.traitName}$${m.name}`;
+        const concreteFn: Function = {
+          ...m,
+          name: mangled,
+          params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+          retType: this.substituteSelfInMiloType(m.retType, typeName),
+        };
+        const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+        const ret = this.resolve(concreteFn.retType);
+        this.functions.set(mangled, { params, ret, variadic: false });
+        methods.set(m.name, { params, ret, variadic: false });
+        this.monomorphizedFns.push(concreteFn);
+        implFnsToCheck.push(concreteFn);
+      }
+
+      // register default methods that weren't overridden
+      for (const [mName, mInfo] of trait.methods) {
+        if (mInfo.hasDefault && !implMethodNames.has(mName)) {
+          const traitDecl = program.traits.find(t => t.name === impl.traitName)!;
+          const traitMethod = traitDecl.methods.find(m => m.name === mName)!;
+          const mangled = `${typeName}$${impl.traitName}$${mName}`;
+          const concreteFn: Function = {
+            kind: "Function",
+            name: mangled,
+            typeParams: [],
+            params: traitMethod.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+            retType: this.substituteSelfInMiloType(traitMethod.retType, typeName),
+            body: traitMethod.body!,
+            isExtern: false,
+            isVariadic: false,
+          };
+          const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+          const ret = this.resolve(concreteFn.retType);
+          this.functions.set(mangled, { params, ret, variadic: false });
+          methods.set(mName, { params, ret, variadic: false });
+          this.monomorphizedFns.push(concreteFn);
+          implFnsToCheck.push(concreteFn);
+        }
+      }
+
+      existing.push({ traitName: impl.traitName, typeName, methods });
+      this.traitImpls.set(typeName, existing);
+    } else {
+      // inherent impl
+      if (this.inherentImpls.has(typeName)) {
+        // merge methods into existing
+        const existing = this.inherentImpls.get(typeName)!;
+        for (const m of impl.methods) {
+          const mangled = `${typeName}$${m.name}`;
+          const concreteFn: Function = {
+            ...m,
+            name: mangled,
+            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+            retType: this.substituteSelfInMiloType(m.retType, typeName),
+          };
+          const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+          const ret = this.resolve(concreteFn.retType);
+          this.functions.set(mangled, { params, ret, variadic: false });
+          existing.methods.set(m.name, { params, ret, variadic: false });
+          this.monomorphizedFns.push(concreteFn);
+          implFnsToCheck.push(concreteFn);
+        }
+      } else {
+        const methods = new Map<string, FnSig>();
+        for (const m of impl.methods) {
+          const mangled = `${typeName}$${m.name}`;
+          const concreteFn: Function = {
+            ...m,
+            name: mangled,
+            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+            retType: this.substituteSelfInMiloType(m.retType, typeName),
+          };
+          const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+          const ret = this.resolve(concreteFn.retType);
+          this.functions.set(mangled, { params, ret, variadic: false });
+          methods.set(m.name, { params, ret, variadic: false });
+          this.monomorphizedFns.push(concreteFn);
+          implFnsToCheck.push(concreteFn);
+        }
+        this.inherentImpls.set(typeName, { traitName: null, typeName, methods });
+      }
+    }
+  }
+
+  private resolveMethod(objTypeName: string, methodName: string): { mangled: string; sig: FnSig } | null {
+    // inherent first
+    const inherent = this.inherentImpls.get(objTypeName);
+    if (inherent) {
+      const sig = inherent.methods.get(methodName);
+      if (sig) return { mangled: `${objTypeName}$${methodName}`, sig };
+    }
+    // then trait impls
+    const impls = this.traitImpls.get(objTypeName);
+    if (impls) {
+      const matches: { mangled: string; sig: FnSig }[] = [];
+      for (const impl of impls) {
+        const sig = impl.methods.get(methodName);
+        if (sig) matches.push({ mangled: `${objTypeName}$${impl.traitName}$${methodName}`, sig });
+      }
+      if (matches.length === 1) return matches[0];
+      if (matches.length > 1) {
+        this.error(`ambiguous method '${methodName}' on '${objTypeName}' — implemented by multiple traits`);
+        return matches[0];
+      }
+    }
+    return null;
+  }
+
+  private typeImplementsTrait(tName: string, traitName: string): boolean {
+    const impls = this.traitImpls.get(tName);
+    if (!impls) return false;
+    if (impls.some(i => i.traitName === traitName)) return true;
+    // check supertraits transitively
+    const trait = this.traits.get(traitName);
+    if (trait) {
+      for (const sup of trait.supertraits) {
+        if (!this.typeImplementsTrait(tName, sup)) return false;
+      }
+    }
+    return false;
   }
 
   private checkFunction(fn: Function) {
@@ -1011,7 +1255,9 @@ export class TypeChecker {
         return this.setType(expr, { tag: "struct", name: expr.name });
       }
       case "FieldAccess": {
-        const objType = this.checkExpr(expr.object);
+        let objType = this.checkExpr(expr.object);
+        // auto-deref through references for field access
+        if (objType.tag === "ref") objType = objType.inner;
         if (objType.tag === "struct") {
           const info = this.structs.get(objType.name);
           if (!info) { this.error(`unknown struct '${objType.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -1307,10 +1553,47 @@ export class TypeChecker {
             if (expr.args.length !== 0) { this.error(`'parse_f64' takes no arguments`, sp); }
             return this.setType(expr, { tag: "float", bits: 64 });
           }
-          this.error(`String has no method '${expr.method}'`, sp);
-          return this.setType(expr, { tag: "unknown" });
+          // fall through to trait/inherent lookup for String
         }
-        this.error(`type '${typeName(objType)}' has no methods`, sp);
+
+        // user-defined method resolution: inherent first, then traits
+        const bareObjType = objType.tag === "ref" ? objType.inner : objType;
+        const objTName = typeName(bareObjType);
+        const resolved = this.resolveMethod(objTName, expr.method);
+        if (resolved) {
+          const { mangled, sig } = resolved;
+          // args: self is expr.object, rest are expr.args
+          // first param is self — check remaining args
+          const selfParam = sig.params[0];
+          if (selfParam) {
+            if (selfParam.type.tag === "ref") {
+              this.autoBorrowed.set(expr.object, { mutable: selfParam.type.mutable });
+            } else {
+              this.tryMove(expr.object);
+            }
+          }
+          if (expr.args.length !== sig.params.length - 1) {
+            this.error(`'${expr.method}' expects ${sig.params.length - 1} argument(s), got ${expr.args.length}`, sp);
+          }
+          for (let i = 0; i < expr.args.length; i++) {
+            const expected = sig.params[i + 1];
+            if (!expected) break;
+            const argType = this.checkExprWithHint(expr.args[i], expected.type.tag === "ref" ? expected.type.inner : expected.type);
+            const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
+            if (!typeEq(bare, argType) && argType.tag !== "unknown") {
+              this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+            }
+            if (expected.type.tag === "ref") {
+              this.autoBorrowed.set(expr.args[i], { mutable: expected.type.mutable });
+            } else {
+              this.tryMove(expr.args[i]);
+            }
+          }
+          this.resolvedMethods.set(expr, mangled);
+          return this.setType(expr, sig.ret);
+        }
+
+        this.error(`type '${typeName(objType)}' has no method '${expr.method}'`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
     }

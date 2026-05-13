@@ -24,6 +24,9 @@ export enum TokenKind {
   Break = "break",
   Continue = "continue",
   As = "as",
+  Trait = "trait",
+  Impl = "impl",
+  For = "for",
   // symbols
   LParen = "(",
   RParen = ")",
@@ -58,6 +61,7 @@ export enum TokenKind {
   Question = "?",
   QuestionQuestion = "??",
   Pipe = "|",
+  At = "@",
   Eof = "EOF",
 }
 
@@ -79,5 +83,5 @@ export interface Token {
 export const KEYWORDS = new Set([
   "fn", "extern", "let", "var", "return", "if", "else", "while",
   "true", "false", "struct", "enum", "match", "mut", "import",
-  "break", "continue", "as",
+  "break", "continue", "as", "trait", "impl", "for",
 ]);

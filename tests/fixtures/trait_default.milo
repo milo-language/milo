@@ -1,0 +1,18 @@
+// @expect: 42
+extern fn printf(fmt: *u8, ...): i32
+
+trait Greet {
+    fn greet(self: &Self): i32 {
+        return 42
+    }
+}
+
+struct Cat { name: i32 }
+
+impl Greet for Cat {}
+
+fn main(): i32 {
+    let c = Cat { name: 1 }
+    printf("%d\n", c.greet())
+    return 0
+}

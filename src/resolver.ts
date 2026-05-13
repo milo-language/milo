@@ -12,6 +12,8 @@ export function resolveImports(program: Program, sourceDir: string): Program {
   const structs = [...program.structs];
   const enums = [...program.enums];
   const functions = [...program.functions];
+  const traits = [...program.traits];
+  const impls = [...program.impls];
 
   function processImports(prog: Program, dir: string) {
     for (const imp of prog.imports) {
@@ -31,10 +33,12 @@ export function resolveImports(program: Program, sourceDir: string): Program {
       structs.push(...imported.structs);
       enums.push(...imported.enums);
       functions.push(...imported.functions);
+      traits.push(...imported.traits);
+      impls.push(...imported.impls);
       processImports(imported, dirname(absPath));
     }
   }
 
   processImports(program, sourceDir);
-  return { structs, enums, functions, imports: [] };
+  return { structs, enums, functions, imports: [], traits, impls };
 }

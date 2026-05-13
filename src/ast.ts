@@ -31,6 +31,16 @@ export interface StructField {
   type: MiloType;
 }
 
+export interface TypeParam {
+  name: string;
+  bounds: string[];
+}
+
+export interface Attribute {
+  name: string;
+  args: string[];
+}
+
 // ── Expressions ──
 
 export interface IntLit { kind: "IntLit"; value: number; span?: Span }
@@ -84,8 +94,9 @@ export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | Ex
 export interface StructDecl {
   kind: "StructDecl";
   name: string;
-  typeParams: string[];
+  typeParams: TypeParam[];
   fields: StructField[];
+  attributes?: Attribute[];
 }
 
 export interface EnumVariant {
@@ -96,14 +107,15 @@ export interface EnumVariant {
 export interface EnumDecl {
   kind: "EnumDecl";
   name: string;
-  typeParams: string[];
+  typeParams: TypeParam[];
   variants: EnumVariant[];
+  attributes?: Attribute[];
 }
 
 export interface Function {
   kind: "Function";
   name: string;
-  typeParams: string[];
+  typeParams: TypeParam[];
   params: Param[];
   retType: MiloType;
   body: Stmt[];
@@ -117,11 +129,39 @@ export interface ImportDecl {
   span?: Span;
 }
 
-export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl;
+export interface TraitMethod {
+  name: string;
+  params: Param[];
+  retType: MiloType;
+  body: Stmt[] | null;
+  span?: Span;
+}
+
+export interface TraitDecl {
+  kind: "TraitDecl";
+  name: string;
+  typeParams: TypeParam[];
+  supertraits: string[];
+  methods: TraitMethod[];
+  span?: Span;
+}
+
+export interface ImplDecl {
+  kind: "ImplDecl";
+  traitName: string | null;
+  typeName: string;
+  typeParams: TypeParam[];
+  methods: Function[];
+  span?: Span;
+}
+
+export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl | TraitDecl | ImplDecl;
 
 export interface Program {
   structs: StructDecl[];
   enums: EnumDecl[];
   functions: Function[];
   imports: ImportDecl[];
+  traits: TraitDecl[];
+  impls: ImplDecl[];
 }

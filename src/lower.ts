@@ -364,6 +364,21 @@ class LowerCtx {
             return { kind: "StringParseF64", str: this.lowerExpr(expr.object), type, span: expr.span };
           }
         }
+        // user-defined method (trait or inherent)
+        const resolved = this.c.resolvedMethods.get(expr);
+        if (resolved) {
+          const sig = this.c.functions.get(resolved)!;
+          const allExprs = [expr.object, ...expr.args];
+          const args: HIRArg[] = allExprs.map((a, i) => {
+            const borrowed = this.c.autoBorrowed.get(a);
+            return {
+              expr: this.lowerExpr(a),
+              passByRef: !!borrowed,
+              refMut: borrowed?.mutable ?? false,
+            };
+          });
+          return { kind: "Call", func: resolved, args, type, variadic: false, span: expr.span };
+        }
         throw new Error(`unsupported method call: ${expr.method}`);
       }
       case "Closure": {
