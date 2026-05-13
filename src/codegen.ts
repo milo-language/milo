@@ -44,6 +44,7 @@ export class Codegen {
   private closureBodies: string[][] = [];
   private closureCounter = 0;
   private scopeCounter = 0;
+  private entryAllocas: string[] = [];
   private static BUILTINS = new Set(["print", "println", "exit"]);
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -281,6 +282,7 @@ export class Codegen {
     this.labelCounter = 0;
     this.locals.clear();
     this.droppableLocals = [];
+    this.entryAllocas = [];
     const lines: string[] = [];
 
     const params = fn.params.map(p => {
@@ -306,6 +308,8 @@ export class Codegen {
       }
     }
 
+    const allocaInsertPoint = lines.length;
+
     let hasTerminator = false;
     for (const stmt of fn.body) {
       const [stmtLines, terminated] = this.genStmt(stmt);
@@ -317,6 +321,11 @@ export class Codegen {
       this.emitDropGlue(lines);
       if (ret === "void") lines.push("  ret void");
       else if (ret === "i32") lines.push("  ret i32 0");
+    }
+
+    // hoist body allocas to entry block
+    if (this.entryAllocas.length > 0) {
+      lines.splice(allocaInsertPoint, 0, ...this.entryAllocas);
     }
 
     lines.push("}");
@@ -333,7 +342,7 @@ export class Codegen {
         const declTy = this.llvmType(stmt.type);
         const addrName = this.locals.has(stmt.name) ? `%${stmt.name}.${this.scopeCounter++}.addr` : `%${stmt.name}.addr`;
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false, addr: addrName });
-        lines.push(`  ${addrName} = alloca ${declTy}`);
+        this.entryAllocas.push(`  ${addrName} = alloca ${declTy}`);
         lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
         if (this.needsDropCg(stmt.type)) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
         return [lines, false];
@@ -960,10 +969,12 @@ export class Codegen {
         const savedDroppable = this.droppableLocals;
         const savedLoopHeader = this.loopHeader;
         const savedLoopExit = this.loopExit;
+        const savedEntryAllocas = this.entryAllocas;
         this.tempCounter = 0;
         this.labelCounter = 0;
         this.locals = new Map();
         this.droppableLocals = [];
+        this.entryAllocas = [];
         this.loopHeader = null;
         this.loopExit = null;
 
@@ -996,6 +1007,7 @@ export class Codegen {
         }
 
         // generate body
+        const closureAllocaInsertPoint = closureBody.length;
         let hasTerminator = false;
         for (const stmt of expr.body) {
           const [stmtLines, terminated] = this.genStmt(stmt);
@@ -1006,6 +1018,9 @@ export class Codegen {
           if (retTy === "void") closureBody.push("  ret void");
           else closureBody.push(`  ret ${retTy} 0`);
         }
+        if (this.entryAllocas.length > 0) {
+          closureBody.splice(closureAllocaInsertPoint, 0, ...this.entryAllocas);
+        }
         closureBody.push("}");
         this.closureBodies.push(closureBody);
 
@@ -1014,6 +1029,7 @@ export class Codegen {
         this.labelCounter = savedLabel;
         this.locals = savedLocals;
         this.droppableLocals = savedDroppable;
+        this.entryAllocas = savedEntryAllocas;
         this.loopHeader = savedLoopHeader;
         this.loopExit = savedLoopExit;
 
