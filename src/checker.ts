@@ -42,6 +42,7 @@ export interface CheckResult {
   functions: Map<string, FnSig>;
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
+  dropImpls: Set<string>;
   monomorphizedFns: Function[];
   monomorphizedEnums: import("./ast").EnumDecl[];
   monomorphizedStructs: StructDecl[];
@@ -97,6 +98,7 @@ export class TypeChecker {
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
+  private dropImpls = new Set<string>();
   private scopes: Map<string, VarInfo>[] = [];
   private exprTypes = new Map<Expr, TypeKind>();
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
@@ -493,6 +495,7 @@ export class TypeChecker {
       functions: this.functions,
       structs: this.structs,
       enums: this.enums,
+      dropImpls: this.dropImpls,
       monomorphizedFns: this.monomorphizedFns,
       monomorphizedEnums: this.monomorphizedDecls,
       monomorphizedStructs: this.monomorphizedStructDecls,
@@ -654,6 +657,16 @@ export class TypeChecker {
       ]),
     });
 
+    // Drop trait
+    const selfRefMut: TypeKind = { tag: "ref", inner: { tag: "struct", name: "Self" }, mutable: true };
+    this.traits.set("Drop", {
+      name: "Drop",
+      supertraits: [],
+      methods: new Map([
+        ["drop", { params: [{ name: "self", type: selfRefMut }], ret: { tag: "void" }, hasDefault: false }],
+      ]),
+    });
+
     // register primitive impls for Eq (checker-only, no codegen needed)
     const primTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "string"];
     for (const pt of primTypes) {
@@ -700,6 +713,20 @@ export class TypeChecker {
       if (existing.some(i => i.traitName === impl.traitName)) {
         this.error(`duplicate impl '${impl.traitName}' for '${typeName}'`, impl.span);
         return;
+      }
+
+      // Drop-specific validations
+      if (impl.traitName === "Drop") {
+        const builtins = ["string", "Vec", "Box", "HashMap"];
+        if (builtins.includes(typeName)) {
+          this.error(`cannot impl Drop for built-in type '${typeName}'`, impl.span);
+          return;
+        }
+        if (!this.structs.has(typeName) && !this.enums.has(typeName)) {
+          this.error(`impl Drop requires a struct or enum type, got '${typeName}'`, impl.span);
+          return;
+        }
+        this.dropImpls.add(typeName);
       }
 
       // check supertraits

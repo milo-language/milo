@@ -40,6 +40,8 @@ export class Codegen {
   private loopExit: string | null = null;
   private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
   private droppableEnums = new Set<string>();
+  private dropImpls = new Set<string>();
+  private structDropCache = new Map<string, boolean>();
   private generatedDropHelpers = new Set<string>();
   private dropHelperBodies: string[][] = [];
   private closureBodies: string[][] = [];
@@ -123,7 +125,21 @@ export class Codegen {
   private needsDropCg(t: TypeKind): boolean {
     if (needsDrop(t)) return true;
     if (t.tag === "enum") return this.droppableEnums.has(t.name);
+    if (t.tag === "struct") return this.structNeedsDrop(t.name);
     return false;
+  }
+
+  private structNeedsDrop(name: string): boolean {
+    if (this.structDropCache.has(name)) return this.structDropCache.get(name)!;
+    // guard against recursion (recursive structs use Box, not direct embedding)
+    this.structDropCache.set(name, false);
+    let result = this.dropImpls.has(name);
+    if (!result) {
+      const layout = this.structLayouts.get(name);
+      if (layout) result = layout.fields.some(f => this.needsDropCg(f.typeKind));
+    }
+    this.structDropCache.set(name, result);
+    return result;
   }
 
   private needsPanicFmt = false;
@@ -168,10 +184,14 @@ export class Codegen {
       });
     }
 
+    // store user-defined Drop impls
+    this.dropImpls = module.dropImpls;
+    this.structDropCache.clear();
+
     // compute which enums need drop glue
     for (const [name, layout] of this.enumLayouts) {
       for (const [, variant] of layout.variants) {
-        if (variant.fieldTypeKinds.some(f => needsDrop(f) || (f.tag === "enum" && f.name === name))) {
+        if (variant.fieldTypeKinds.some(f => this.needsDropCg(f) || (f.tag === "enum" && f.name === name))) {
           this.droppableEnums.add(name);
           break;
         }
@@ -3048,6 +3068,36 @@ export class Codegen {
       lines.push(`  ${tmp} = alloca %${typeKind.name}`);
       lines.push(`  store %${typeKind.name} ${val}, ptr ${tmp}`);
       lines.push(`  call void @${helperName}(ptr ${tmp})`);
+    }
+    if (typeKind.tag === "struct" && this.structNeedsDrop(typeKind.name)) {
+      const layout = this.structLayouts.get(typeKind.name);
+      if (layout) {
+        // guard: skip drop if struct has been zeroed (moved)
+        const probe = this.nextTemp();
+        lines.push(`  ${probe} = load i64, ptr ${allocaPtr}`);
+        const isZero = this.nextTemp();
+        lines.push(`  ${isZero} = icmp eq i64 ${probe}, 0`);
+        const skipLabel = this.nextLabel("struct.drop.skip");
+        const dropLabel = this.nextLabel("struct.drop");
+        lines.push(`  br i1 ${isZero}, label %${skipLabel}, label %${dropLabel}`);
+        lines.push(`${dropLabel}:`);
+        // call user-defined drop first (can still use fields)
+        if (this.dropImpls.has(typeKind.name)) {
+          const mangledDrop = `${typeKind.name}$Drop$drop`;
+          lines.push(`  call void @${mangledDrop}(ptr ${allocaPtr})`);
+        }
+        // then drop fields that need dropping (reverse order)
+        for (let i = layout.fields.length - 1; i >= 0; i--) {
+          const field = layout.fields[i];
+          if (this.needsDropCg(field.typeKind)) {
+            const fieldPtr = this.nextTemp();
+            lines.push(`  ${fieldPtr} = getelementptr %${typeKind.name}, ptr ${allocaPtr}, i32 0, i32 ${i}`);
+            this.emitDropValue(lines, fieldPtr, field.typeKind);
+          }
+        }
+        lines.push(`  br label %${skipLabel}`);
+        lines.push(`${skipLabel}:`);
+      }
     }
   }
 

@@ -54,7 +54,7 @@ class LowerCtx {
       functions.push(this.lowerFn(fn));
     }
 
-    return { structs, enums, functions };
+    return { structs, enums, functions, dropImpls: this.c.dropImpls };
   }
 
   private lowerParam(p: { name: string; type: import("./ast").MiloType }, sig: import("./checker").FnSig | undefined, i: number) {

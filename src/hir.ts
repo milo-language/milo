@@ -102,4 +102,5 @@ export interface HIRModule {
   structs: HIRStruct[];
   enums: HIREnum[];
   functions: HIRFunction[];
+  dropImpls: Set<string>;
 }
