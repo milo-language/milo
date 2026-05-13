@@ -35,6 +35,7 @@ export class Codegen {
   private hasVecType = false;
   private hasHashMapType = false;
   private needsGetentropy = false;
+  private needsStrtod = false;
   private loopHeader: string | null = null;
   private loopExit: string | null = null;
   private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
@@ -199,6 +200,8 @@ export class Codegen {
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.name));
     if (this.needsBoundsCheck) { this.needsPrintf = true; this.needsExit = true; }
+    if (this.needsStrtod && !declaredExterns.has("strtod"))
+      this.output.splice(1, 0, "declare double @strtod(ptr, ptr)");
     if (this.needsMemset && !declaredExterns.has("memset"))
       this.output.splice(1, 0, "declare ptr @memset(ptr, i32, i64)");
     if (this.needsGetentropy && !declaredExterns.has("getentropy"))
@@ -952,6 +955,8 @@ export class Codegen {
         return this.genStringPush(expr, lines);
       case "StringSubstr":
         return this.genStringSubstr(expr, lines);
+      case "StringParseF64":
+        return this.genStringParseF64(expr, lines);
       case "Closure": {
         const closureName = `__closure_${this.closureCounter++}`;
         const captures = expr.captures;
@@ -1709,6 +1714,18 @@ export class Codegen {
     lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocLen}, 2`);
 
     return [lines, s2, "%String"];
+  }
+
+  private genStringParseF64(expr: HIRExpr & { kind: "StringParseF64" }, lines: string[]): [string[], string, string] {
+    this.needsStrtod = true;
+    this.hasStringType = true;
+    const [strLines, strVal] = this.genExpr(expr.str);
+    lines.push(...strLines);
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = extractvalue %String ${strVal}, 0`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = call double @strtod(ptr ${dataPtr}, ptr null)`);
+    return [lines, result, "double"];
   }
 
   private genVecBoundsCheckedPtr(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {

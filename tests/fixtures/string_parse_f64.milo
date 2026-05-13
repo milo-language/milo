@@ -1,0 +1,9 @@
+// @expect: 3.140000
+extern fn printf(fmt: *u8, ...): i32
+
+fn main(): i32 {
+    let s = "3.14"
+    let x: f64 = s.parse_f64()
+    printf("%f\n", x)
+    return 0
+}

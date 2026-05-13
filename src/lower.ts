@@ -360,6 +360,9 @@ class LowerCtx {
           if (expr.method === "substr") {
             return { kind: "StringSubstr", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
+          if (expr.method === "parse_f64") {
+            return { kind: "StringParseF64", str: this.lowerExpr(expr.object), type, span: expr.span };
+          }
         }
         throw new Error(`unsupported method call: ${expr.method}`);
       }

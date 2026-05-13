@@ -1303,6 +1303,10 @@ export class TypeChecker {
             if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`substr end: expected integer, got ${typeName(endType)}`, sp);
             return this.setType(expr, { tag: "string" });
           }
+          if (expr.method === "parse_f64") {
+            if (expr.args.length !== 0) { this.error(`'parse_f64' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "float", bits: 64 });
+          }
           this.error(`String has no method '${expr.method}'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
