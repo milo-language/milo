@@ -163,4 +163,5 @@ fn serve(port: u16, handler: (&Request) => Response): Result<void> {
             }
         }
     }
+    return Result.Err("server exited")
 }
