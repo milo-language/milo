@@ -25,6 +25,7 @@ export interface FnSig {
 
 export interface StructInfo {
   fields: { name: string; type: TypeKind }[];
+  baseName?: string;
 }
 
 export interface EnumInfo {
@@ -237,11 +238,11 @@ export class TypeChecker {
     const typeMap = new Map<string, TypeKind>();
     generic.typeParams.forEach((p, i) => typeMap.set(p, typeArgs[i]));
 
-    const fields = generic.fields.map(f => ({
+    const fields = generic.decl.fields.map(f => ({
       name: f.name,
-      type: this.substituteTypeKind(f.type, typeMap),
+      type: this.resolve(this.substituteMiloType(f.type, generic.typeParams, typeArgs)),
     }));
-    this.structs.set(mangled, { fields });
+    this.structs.set(mangled, { fields, baseName });
 
     const decl: StructDecl = {
       kind: "StructDecl",
@@ -1319,7 +1320,7 @@ export class TypeChecker {
       return hint;
     }
     if (expr.kind === "EnumLit" && expr.enumName === "Vec" && expr.variant === "new" && hint?.tag === "vec") {
-      if (expr.args.length !== 0) { this.error(`'Vec.new' takes no arguments`, sp); }
+      if (expr.args.length !== 0) { this.error(`'Vec.new' takes no arguments`, expr.span); }
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -1367,6 +1368,30 @@ export class TypeChecker {
         this.rewrittenEnums.set(expr, hint.name);
         this.exprTypes.set(expr, hint);
         return hint;
+      }
+    }
+    // Generic struct literal with a monomorphized hint — use hint to resolve type params
+    if (hint && hint.tag === "struct" && expr.kind === "StructLit") {
+      const genericInfo = this.genericStructs.get(expr.name);
+      const hintInfo = this.structs.get(hint.name);
+      if (genericInfo && hintInfo && hintInfo.baseName === expr.name) {
+        const sp = expr.span;
+        for (const f of expr.fields) {
+          const fieldDef = hintInfo.fields.find(d => d.name === f.name);
+          if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp); continue; }
+          const valType = this.checkExprWithHint(f.value, fieldDef.type);
+          if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
+            this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
+          }
+          this.tryMove(f.value);
+        }
+        for (const d of hintInfo.fields) {
+          if (!expr.fields.find(f => f.name === d.name)) {
+            this.error(`missing field '${d.name}' in struct '${expr.name}'`, sp);
+          }
+        }
+        this.rewrittenStructLits.set(expr, hint.name);
+        return this.setType(expr, hint);
       }
     }
     return this.checkExpr(expr);
