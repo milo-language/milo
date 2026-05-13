@@ -2,7 +2,7 @@
 import "std/net"
 
 fn main(): i32 {
-    let resp = fetch("http://httpbin.org/get")
+    let resp = fetch("https://httpbin.org/get")
     match resp {
         Result.Ok(r) => {
             print("status: %d\n", r.status)

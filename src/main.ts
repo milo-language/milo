@@ -55,7 +55,11 @@ function compileToBinary(sourcePath: string, outputPath: string | null, optFlag:
   try {
     writeFileSync(tmpLl, ir);
     const opt = optFlag ? ` ${optFlag}` : "";
-    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+    let libs = "";
+    if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
+      libs = " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto";
+    }
+    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     console.error(`error[link]: clang failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);

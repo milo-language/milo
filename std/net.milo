@@ -12,7 +12,7 @@ struct TcpStream {
 impl Drop for TcpStream {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            close(self.fd)
+            unsafe { close(self.fd) }
         }
     }
 }
@@ -30,45 +30,159 @@ fn tcp_connect(ip: u32, port: u16): Result<TcpStream> {
     let SOCK_STREAM: i32 = 1
     let SIZEOF_SOCKADDR_IN: u32 = 16
 
-    let fd = socket(AF_INET, SOCK_STREAM, 0)
-    if fd < 0 {
-        return Result.Err("socket() failed")
-    }
+    unsafe {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 {
+            return Result.Err("socket() failed")
+        }
 
-    var addr = SockAddrIn {
-        sin_len: SIZEOF_SOCKADDR_IN as u8,
-        sin_family: AF_INET as u8,
-        sin_port: htons(port),
-        sin_addr: ip,
-        sin_zero: [0; 8],
-    }
+        var addr = SockAddrIn {
+            sin_len: SIZEOF_SOCKADDR_IN as u8,
+            sin_family: AF_INET as u8,
+            sin_port: htons(port),
+            sin_addr: ip,
+            sin_zero: [0; 8],
+        }
 
-    if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-        close(fd)
-        return Result.Err("connect() failed")
-    }
+        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            close(fd)
+            return Result.Err("connect() failed")
+        }
 
-    return Result.Ok(TcpStream { fd: fd })
+        return Result.Ok(TcpStream { fd: fd })
+    }
 }
 
 fn tcp_send(s: &TcpStream, data: &string): Result<i64> {
-    let n = write(s.fd, data, data.len)
-    if n < 0 {
-        return Result.Err("send failed")
+    unsafe {
+        let n = write(s.fd, data, data.len)
+        if n < 0 {
+            return Result.Err("send failed")
+        }
+        return Result.Ok(n)
     }
-    return Result.Ok(n)
 }
 
 fn tcp_recv(s: &TcpStream): Result<string> {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]
     while true {
-        let n = read(s.fd, buf, 4096)
-        if n <= 0 { break }
-        var i: i64 = 0
-        while i < n {
-            result.push(buf[i])
-            i = i + 1
+        unsafe {
+            let n = read(s.fd, buf, 4096)
+            if n <= 0 { break }
+            var i: i64 = 0
+            while i < n {
+                result.push(buf[i])
+                i = i + 1
+            }
+        }
+    }
+    return Result.Ok(result)
+}
+
+// ── TLS Stream ──
+
+struct TlsStream {
+    fd: i32,
+    ssl: i64,
+    ctx: i64,
+}
+
+impl Drop for TlsStream {
+    fn drop(self: &mut Self): void {
+        unsafe {
+            if self.ssl != 0 {
+                SSL_free(self.ssl as *u8)
+            }
+            if self.ctx != 0 {
+                SSL_CTX_free(self.ctx as *u8)
+            }
+            if self.fd >= 0 {
+                close(self.fd)
+            }
+        }
+    }
+}
+
+fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream> {
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    unsafe {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 {
+            return Result.Err("socket() failed")
+        }
+
+        var addr = SockAddrIn {
+            sin_len: SIZEOF_SOCKADDR_IN as u8,
+            sin_family: AF_INET as u8,
+            sin_port: htons(port),
+            sin_addr: ip,
+            sin_zero: [0; 8],
+        }
+
+        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            close(fd)
+            return Result.Err("connect() failed")
+        }
+
+        let method = TLS_client_method()
+        let ctx = SSL_CTX_new(method)
+        let ctx_addr = ctx as i64
+        if ctx_addr == 0 {
+            close(fd)
+            return Result.Err("SSL_CTX_new failed")
+        }
+        SSL_CTX_set_default_verify_paths(ctx)
+
+        let ssl = SSL_new(ctx)
+        let ssl_addr = ssl as i64
+        if ssl_addr == 0 {
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("SSL_new failed")
+        }
+
+        // SNI hostname for certificate validation
+        SSL_ctrl(ssl, 55, 0, hostname)
+        SSL_set_fd(ssl, fd)
+
+        let r = SSL_connect(ssl)
+        if r != 1 {
+            SSL_free(ssl)
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("SSL handshake failed")
+        }
+
+        return Result.Ok(TlsStream { fd: fd, ssl: ssl_addr, ctx: ctx_addr })
+    }
+}
+
+fn tls_send(s: &TlsStream, data: &string): Result<i64> {
+    unsafe {
+        let n = SSL_write(s.ssl as *u8, data, data.len as i32)
+        if n < 0 {
+            return Result.Err("SSL_write failed")
+        }
+        return Result.Ok(n as i64)
+    }
+}
+
+fn tls_recv(s: &TlsStream): Result<string> {
+    var result: string = ""
+    var buf: [u8; 4096] = [0; 4096]
+    while true {
+        unsafe {
+            let n = SSL_read(s.ssl as *u8, buf as *u8, 4096)
+            if n <= 0 { break }
+            var i: i64 = 0
+            while i < n as i64 {
+                result.push(buf[i])
+                i = i + 1
+            }
         }
     }
     return Result.Ok(result)
@@ -263,11 +377,20 @@ fn parse_response(raw: string): Response {
 
 // ── URL parsing ──
 
-fn parse_host(url: &string): string {
-    var start: i64 = 0
-    if url.len > 7 && url[0] == 'h' && url[4] == ':' {
-        start = 7
+fn is_https(url: &string): bool {
+    return url.len > 8 && url[0] == 'h' && url[4] == 's' && url[5] == ':' && url[6] == '/' && url[7] == '/'
+}
+
+fn scheme_offset(url: &string): i64 {
+    if is_https(url) { return 8 }
+    if url.len > 7 && url[0] == 'h' && url[4] == ':' && url[5] == '/' && url[6] == '/' {
+        return 7
     }
+    return 0
+}
+
+fn parse_host(url: &string): string {
+    let start = scheme_offset(url)
     var end: i64 = start
     while end < url.len && url[end] != '/' && url[end] != ':' {
         end = end + 1
@@ -276,10 +399,7 @@ fn parse_host(url: &string): string {
 }
 
 fn parse_port(url: &string): u16 {
-    var i: i64 = 0
-    if url.len > 7 && url[0] == 'h' && url[4] == ':' {
-        i = 7
-    }
+    var i: i64 = scheme_offset(url)
     while i < url.len && url[i] != '/' && url[i] != ':' {
         i = i + 1
     }
@@ -292,14 +412,12 @@ fn parse_port(url: &string): u16 {
         }
         return port as u16
     }
+    if is_https(url) { return 443 }
     return 80
 }
 
 fn parse_path(url: &string): string {
-    var i: i64 = 0
-    if url.len > 7 && url[0] == 'h' && url[4] == ':' {
-        i = 7
-    }
+    var i: i64 = scheme_offset(url)
     while i < url.len && url[i] != '/' {
         i = i + 1
     }
@@ -348,14 +466,51 @@ fn http_do(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions):
     }
 }
 
+fn https_do(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response> {
+    let conn = tls_connect(ip, port, host)
+    match conn {
+        Result.Ok(stream) => {
+            var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
+            if opts.headers.len > 0 {
+                req = req + opts.headers.clone() + "\r\n"
+            }
+            if opts.body.len > 0 {
+                req = req + "Content-Length: " + opts.body.len.to_string() + "\r\n\r\n" + opts.body.clone()
+            } else {
+                req = req + "\r\n"
+            }
+            let s = tls_send(stream, req)
+            match s {
+                Result.Ok(n) => {
+                    let raw = tls_recv(stream)
+                    match raw {
+                        Result.Ok(r) => {
+                            return Result.Ok(parse_response(r))
+                        }
+                        Result.Err(msg) => { return Result.Err(msg) }
+                    }
+                }
+                Result.Err(msg) => { return Result.Err(msg) }
+            }
+        }
+        Result.Err(msg) => { return Result.Err(msg) }
+    }
+}
+
 fn do_fetch(url: string, opts: FetchOptions): Result<Response> {
+    let use_tls = is_https(url)
     let host = parse_host(url)
     let port = parse_port(url)
     let path = parse_path(url)
     let ip_result = resolve(host.clone())
     match ip_result {
         Result.Ok(ip) => {
-            let resp = http_do(ip, port, host, path, opts)
+            var resp: Result<Response> = Result.Err("")
+            if use_tls {
+                resp = https_do(ip, port, host.clone(), path, opts)
+            } else {
+                resp = http_do(ip, port, host, path, opts)
+            }
             match resp {
                 Result.Ok(r) => {
                     // follow redirects (301, 302, 307, 308)

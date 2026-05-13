@@ -48,6 +48,20 @@ extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 extern fn htons(hostshort: u16): u16
 extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 
+// ── TLS (OpenSSL) ──
+
+extern fn TLS_client_method(): *u8
+extern fn SSL_CTX_new(method: *u8): *u8
+extern fn SSL_CTX_free(ctx: *u8): void
+extern fn SSL_CTX_set_default_verify_paths(ctx: *u8): i32
+extern fn SSL_new(ctx: *u8): *u8
+extern fn SSL_set_fd(ssl: *u8, fd: i32): i32
+extern fn SSL_connect(ssl: *u8): i32
+extern fn SSL_read(ssl: *u8, buf: *u8, num: i32): i32
+extern fn SSL_write(ssl: *u8, buf: *u8, num: i32): i32
+extern fn SSL_free(ssl: *u8): void
+extern fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
+
 // ── DNS ──
 
 extern fn getaddrinfo(node: *u8, service: *u8, hints: *u8, res: *u8): i32
