@@ -215,11 +215,21 @@ Verification:
 - [x] **References (&T / &mut T) parsed.** Stage-0 strips the reference qualifier — pass-by-value. Loses mutation-through-ref but covers most milo0 patterns where refs only avoid moves. printf coercion gated to known variadic externs so user fns taking %String receive the aggregate.
 - [x] **Fixed array types `[T; N]`** parsed into "[T;N]" string encoding.
 
+- [x] **String slice `s[a..b]`** in milo0 — Index/Slice AST + codegen. Tested: `"hello world"[0..5]` → `"hello"`.
+- [x] **String index `s[i]`** in milo0 — returns u8. Tested: `"hello world"[1]` → 101.
+- [x] **Method call parser**: `.name(args)` distinguished from `.field`.
+- [x] **string.clone()**, **i64.to_string()**, **i32.to_string()** as method calls.
+- [x] **Match on `expr.field`** (gen_lvalue extended for FieldAccess).
+- [x] **`&T` / `&mut T`** parsed and treated as pass-by-value (covers most milo0 patterns).
+- [x] **Fixed array types `[T; N]`** parsed.
+
 Still missing for full milo0-on-milo0:
-- [ ] String.push (realloc-heavy), slice [a..b] in milo0, substr.
-- [ ] Vec<T>, HashMap<K,V>.
-- [ ] Proper `&mut` mutation through refs (currently stripped to pass-by-value).
-- [ ] Closures, generics, drop semantics on Box.
+- [ ] **`Vec<T>`** — 84 use sites in milo0. Biggest blocker.
+- [ ] **String.push** — realloc-heavy, plus needs mutation-through-self.
+- [ ] **`HashMap<K, V>`** — 2 use sites, removable.
+- [ ] **Drop semantics on Box** — currently leaks, fine for small programs.
+- [ ] **Enum equality (==/!=)** — re-enable after diag (currently crashed milo0-runtime).
+- [ ] Closures, generics, imports.
 
 ### Phase 3.5 — Beyond Stage-0
 
