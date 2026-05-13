@@ -78,19 +78,82 @@ fn send_response(fd: i32, status: i32, content_type: String, body: String): void
     write(fd, resp, resp.len)
 }
 
-fn handle_index(fd: i32): void {
-    var html: String = "<!DOCTYPE html><html><head><title>Milo Server</title>"
-    html = html + "<style>body{font-family:system-ui;max-width:640px;margin:40px auto;padding:0 20px;}"
-    html = html + "h1{color:#2563eb}pre{background:#f1f5f9;padding:16px;border-radius:8px}</style></head>"
-    html = html + "<body><h1>Hello from Milo!</h1>"
-    html = html + "<p>This page is served by a webserver written entirely in Milo,</p>"
-    html = html + "<p>a memory-safe systems language that compiles to LLVM IR.</p>"
-    html = html + "<pre>extern fn socket(domain: i32, type: i32, protocol: i32): i32\n"
-    html = html + "extern fn bind(sockfd: i32, addr: &amp;SockAddrIn, addrlen: u32): i32\n"
-    html = html + "extern fn listen(sockfd: i32, backlog: i32): i32</pre>"
-    html = html + "<p>Try: <a href='/hello'>/hello</a> | <a href='/json'>/json</a> | <a href='/stats'>/stats</a></p>"
-    html = html + "</body></html>"
-    send_response(fd, 200, "text/html", html)
+fn handle_index(fd: i32, request_count: i64): void {
+    var h: String = "<!DOCTYPE html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    h = h + "<title>Milo</title><style>"
+    h = h + "*{margin:0;padding:0;box-sizing:border-box}"
+    h = h + "body{font-family:'SF Mono',SFMono-Regular,Menlo,Consolas,monospace;background:#0a0a0a;color:#e4e4e7;min-height:100vh}"
+    h = h + ".hero{padding:80px 24px 60px;text-align:center;background:linear-gradient(180deg,#18181b 0%,#0a0a0a 100%)}"
+    h = h + ".hero h1{font-size:3.5rem;font-weight:700;background:linear-gradient(135deg,#60a5fa,#a78bfa,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}"
+    h = h + ".hero .sub{color:#71717a;font-size:0.95rem;margin-bottom:40px}"
+    h = h + ".badge{display:inline-block;padding:6px 16px;border-radius:999px;font-size:0.75rem;font-weight:600;border:1px solid #27272a;color:#a1a1aa;margin:0 4px}"
+    h = h + ".badge.green{border-color:#166534;color:#4ade80;background:#052e16}"
+    h = h + ".cards{max-width:720px;margin:0 auto;padding:0 24px 80px;display:grid;grid-template-columns:1fr 1fr;gap:16px}"
+    h = h + ".card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:24px;transition:border-color .2s}"
+    h = h + ".card:hover{border-color:#3f3f46}"
+    h = h + ".card h3{font-size:0.9rem;color:#fafafa;margin-bottom:8px}"
+    h = h + ".card p{font-size:0.8rem;color:#71717a;line-height:1.5}"
+    h = h + ".card code{color:#60a5fa;font-size:0.75rem}"
+    h = h + ".endpoints{max-width:720px;margin:0 auto;padding:0 24px 60px}"
+    h = h + ".endpoints h2{font-size:1rem;color:#fafafa;margin-bottom:16px}"
+    h = h + ".ep{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#18181b;border:1px solid #27272a;border-radius:8px;margin-bottom:8px;text-decoration:none;transition:border-color .2s}"
+    h = h + ".ep:hover{border-color:#3f3f46}"
+    h = h + ".method{font-size:0.7rem;font-weight:700;color:#4ade80;min-width:36px}"
+    h = h + ".ep .path{color:#e4e4e7;font-size:0.85rem}"
+    h = h + ".ep .desc{color:#52525b;font-size:0.75rem;margin-left:auto}"
+    h = h + ".src{max-width:720px;margin:0 auto;padding:0 24px 80px}"
+    h = h + ".src h2{font-size:1rem;color:#fafafa;margin-bottom:16px}"
+    h = h + ".src pre{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px;overflow-x:auto;font-size:0.78rem;line-height:1.6;color:#a1a1aa}"
+    h = h + ".kw{color:#c084fc}.fn{color:#60a5fa}.ty{color:#4ade80}.st{color:#fbbf24}.cm{color:#525252}"
+    h = h + ".foot{text-align:center;padding:40px 24px;color:#3f3f46;font-size:0.75rem;border-top:1px solid #18181b}"
+    h = h + "</style></head><body>"
+
+    // hero
+    h = h + "<div class='hero'>"
+    h = h + "<h1>milo</h1>"
+    h = h + "<p class='sub'>a memory-safe systems language compiled to LLVM IR</p>"
+    h = h + "<span class='badge green'>server running</span>"
+    h = h + "<span class='badge'>zero dependencies</span>"
+    h = h + "<span class='badge'>pure libc FFI</span>"
+    h = h + "</div>"
+
+    // feature cards
+    h = h + "<div class='cards'>"
+    h = h + "<div class='card'><h3>Memory Safe</h3><p>Move semantics, ownership tracking, no GC, no RC. Use-after-move caught at compile time.</p></div>"
+    h = h + "<div class='card'><h3>LLVM Backend</h3><p>Compiles to LLVM IR, then native code via clang. Full optimization pipeline.</p></div>"
+    h = h + "<div class='card'><h3>Zero-Cost FFI</h3><p>Call any C function with <code>extern fn</code>. Strings auto-coerce to <code>*u8</code>.</p></div>"
+    h = h + "<div class='card'><h3>Traits + Generics</h3><p>Monomorphized generics, trait bounds, supertraits, <code>@derive</code>. Zero runtime cost.</p></div>"
+    h = h + "</div>"
+
+    // endpoints
+    h = h + "<div class='endpoints'><h2>API Endpoints</h2>"
+    h = h + "<a class='ep' href='/'><span class='method'>GET</span><span class='path'>/</span><span class='desc'>this page</span></a>"
+    h = h + "<a class='ep' href='/hello'><span class='method'>GET</span><span class='path'>/hello</span><span class='desc'>plain text</span></a>"
+    h = h + "<a class='ep' href='/json'><span class='method'>GET</span><span class='path'>/json</span><span class='desc'>language info</span></a>"
+    h = h + "<a class='ep' href='/stats'><span class='method'>GET</span><span class='path'>/stats</span><span class='desc'>request counter</span></a>"
+    h = h + "</div>"
+
+    // source code snippet
+    h = h + "<div class='src'><h2>How This Server Works</h2><pre>"
+    h = h + "<span class='cm'>// the entire server is ~200 lines of Milo</span>\n"
+    h = h + "<span class='kw'>extern fn</span> <span class='fn'>socket</span>(domain: <span class='ty'>i32</span>, type: <span class='ty'>i32</span>, protocol: <span class='ty'>i32</span>): <span class='ty'>i32</span>\n"
+    h = h + "<span class='kw'>extern fn</span> <span class='fn'>bind</span>(sockfd: <span class='ty'>i32</span>, addr: &amp;<span class='ty'>SockAddrIn</span>, addrlen: <span class='ty'>u32</span>): <span class='ty'>i32</span>\n"
+    h = h + "<span class='kw'>extern fn</span> <span class='fn'>listen</span>(sockfd: <span class='ty'>i32</span>, backlog: <span class='ty'>i32</span>): <span class='ty'>i32</span>\n"
+    h = h + "<span class='kw'>extern fn</span> <span class='fn'>accept</span>(sockfd: <span class='ty'>i32</span>, addr: &amp;<span class='kw'>mut</span> <span class='ty'>SockAddrIn</span>, ...): <span class='ty'>i32</span>\n"
+    h = h + "<span class='kw'>extern fn</span> <span class='fn'>read</span>(fd: <span class='ty'>i32</span>, buf: &amp;<span class='kw'>mut</span> [<span class='ty'>u8</span>; <span class='st'>4096</span>], ...): <span class='ty'>i64</span>\n\n"
+    h = h + "<span class='kw'>struct</span> <span class='ty'>SockAddrIn</span> {\n"
+    h = h + "    sin_len: <span class='ty'>u8</span>,   sin_family: <span class='ty'>u8</span>,\n"
+    h = h + "    sin_port: <span class='ty'>u16</span>,  sin_addr:   <span class='ty'>u32</span>,\n"
+    h = h + "    sin_zero: [<span class='ty'>u8</span>; <span class='st'>8</span>],\n"
+    h = h + "}\n\n"
+    h = h + "<span class='cm'>// C-compatible struct layout, verified by LLVM:</span>\n"
+    h = h + "<span class='cm'>// %SockAddrIn = type { i8, i8, i16, i32, [8 x i8] }</span>"
+    h = h + "</pre></div>"
+
+    // footer
+    h = h + "<div class='foot'>served by milo webserver | compiled to native arm64 via LLVM</div>"
+    h = h + "</body></html>"
+    send_response(fd, 200, "text/html", h)
 }
 
 fn handle_hello(fd: i32): void {
@@ -170,7 +233,7 @@ fn main(): i32 {
             printf("[%lld] %s %s\n", request_count, method, path)
 
             if path == "/" {
-                handle_index(client)
+                handle_index(client, request_count)
             } else if path == "/hello" {
                 handle_hello(client)
             } else if path == "/json" {
