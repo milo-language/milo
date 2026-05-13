@@ -6,6 +6,8 @@ Values move by default. References are second-class — they can only appear as 
 
 The bet: restricting references to function parameters eliminates lifetimes entirely while preserving most of what borrows are good for. Cyclic and recursive data structures will be handled by generational-index arenas (planned, not yet implemented).
 
+**[Language Guide →](docs/language-guide.md)** — full walkthrough with examples covering every feature.
+
 ## Quick Start
 
 ```bash
