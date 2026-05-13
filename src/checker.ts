@@ -369,6 +369,8 @@ export class TypeChecker {
     this.functions.set("println", { params: [{ type: ptrU8, name: "fmt" }], ret: { tag: "void" }, variadic: true });
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
 
+    this.registerBuiltinTraits();
+
     // pre-register enum names so struct fields can reference enum types
     for (const e of program.enums) {
       if (e.typeParams.length === 0) {
@@ -438,12 +440,8 @@ export class TypeChecker {
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic });
     }
 
-    // register traits
+    // register traits (user-defined override built-ins)
     for (const t of program.traits) {
-      if (this.traits.has(t.name)) {
-        this.error(`duplicate trait '${t.name}'`, t.span);
-        continue;
-      }
       for (const sup of t.supertraits) {
         if (!this.traits.has(sup)) {
           this.error(`supertrait '${sup}' not found`, t.span);
@@ -458,9 +456,12 @@ export class TypeChecker {
       this.traits.set(t.name, { name: t.name, supertraits: t.supertraits, methods });
     }
 
+    // process @derive attributes — synthesize impl decls
+    const derivedImpls = this.processDerives(program);
+
     // register impls
     const implFnsToCheck: Function[] = [];
-    for (const impl of program.impls) {
+    for (const impl of [...program.impls, ...derivedImpls]) {
       this.registerImpl(impl, program, implFnsToCheck);
     }
 
@@ -491,6 +492,141 @@ export class TypeChecker {
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
     };
+  }
+
+  private processDerives(program: Program): import("./ast").ImplDecl[] {
+    const result: import("./ast").ImplDecl[] = [];
+    for (const s of program.structs) {
+      if (!s.attributes || s.typeParams.length > 0) continue;
+      for (const attr of s.attributes) {
+        if (attr.name !== "derive") continue;
+        for (const traitName of attr.args) {
+          const impl = this.synthesizeDeriveImpl(s, traitName);
+          if (impl) result.push(impl);
+        }
+      }
+    }
+    return result;
+  }
+
+  private synthesizeDeriveImpl(s: import("./ast").StructDecl, traitName: string): import("./ast").ImplDecl | null {
+    if (traitName === "Eq") return this.deriveEq(s);
+    this.error(`cannot derive '${traitName}' — only Eq is supported`);
+    return null;
+  }
+
+  private deriveEq(s: import("./ast").StructDecl): import("./ast").ImplDecl {
+    // verify all fields implement Eq
+    for (const f of s.fields) {
+      const ft = this.resolve(f.type);
+      const ftName = typeName(ft);
+      if (!this.typeImplementsTrait(ftName, "Eq")) {
+        this.error(`cannot derive Eq for '${s.name}': field '${f.name}' of type '${ftName}' does not implement Eq`);
+      }
+    }
+
+    // synthesize: fn eq(self: &Self, other: &Self): bool { return self.f1 == other.f1 && self.f2 == other.f2 && ... }
+    const selfParam: import("./ast").Param = { name: "self", type: { name: "Self", isPtr: false, isRef: true, isRefMut: false, isArray: false, arraySize: null } };
+    const otherParam: import("./ast").Param = { name: "other", type: { name: "Self", isPtr: false, isRef: true, isRefMut: false, isArray: false, arraySize: null } };
+
+    let body: Expr;
+    if (s.fields.length === 0) {
+      body = { kind: "BoolLit", value: true };
+    } else {
+      const comparisons: Expr[] = s.fields.map(f => ({
+        kind: "BinOp" as const,
+        op: "==",
+        left: { kind: "FieldAccess" as const, object: { kind: "Ident" as const, name: "self" }, field: f.name },
+        right: { kind: "FieldAccess" as const, object: { kind: "Ident" as const, name: "other" }, field: f.name },
+      }));
+      body = comparisons.reduce((acc, cmp) => ({
+        kind: "BinOp" as const,
+        op: "&&",
+        left: acc,
+        right: cmp,
+      }));
+    }
+
+    const eqFn: Function = {
+      kind: "Function",
+      name: "eq",
+      typeParams: [],
+      params: [selfParam, otherParam],
+      retType: simpleType("bool"),
+      body: [{ kind: "Return" as const, value: body }],
+      isExtern: false,
+      isVariadic: false,
+    };
+
+    return {
+      kind: "ImplDecl",
+      traitName: "Eq",
+      typeName: s.name,
+      typeParams: [],
+      methods: [eqFn],
+    };
+  }
+
+  private registerBuiltinTraits() {
+    const selfRef: TypeKind = { tag: "ref", inner: { tag: "struct", name: "Self" }, mutable: false };
+    const bool_t: TypeKind = { tag: "bool" };
+    const i32_t: TypeKind = { tag: "int", bits: 32, signed: true };
+    const u64_t: TypeKind = { tag: "int", bits: 64, signed: false };
+    const string_t: TypeKind = { tag: "string" };
+
+    // Eq trait
+    this.traits.set("Eq", {
+      name: "Eq",
+      supertraits: [],
+      methods: new Map([
+        ["eq", { params: [{ name: "self", type: selfRef }, { name: "other", type: selfRef }], ret: bool_t, hasDefault: false }],
+      ]),
+    });
+
+    // Hash trait
+    this.traits.set("Hash", {
+      name: "Hash",
+      supertraits: [],
+      methods: new Map([
+        ["hash", { params: [{ name: "self", type: selfRef }], ret: u64_t, hasDefault: false }],
+      ]),
+    });
+
+    // Clone trait
+    this.traits.set("Clone", {
+      name: "Clone",
+      supertraits: [],
+      methods: new Map([
+        ["clone", { params: [{ name: "self", type: selfRef }], ret: { tag: "struct", name: "Self" }, hasDefault: false }],
+      ]),
+    });
+
+    // Display trait
+    this.traits.set("Display", {
+      name: "Display",
+      supertraits: [],
+      methods: new Map([
+        ["to_string", { params: [{ name: "self", type: selfRef }], ret: string_t, hasDefault: false }],
+      ]),
+    });
+
+    // register primitive impls for Eq (checker-only, no codegen needed)
+    const primTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "String"];
+    for (const pt of primTypes) {
+      const eqMethods = new Map<string, FnSig>();
+      eqMethods.set("eq", { params: [{ type: selfRef, name: "self" }, { type: selfRef, name: "other" }], ret: bool_t, variadic: false });
+      this.traitImpls.set(pt, [{ traitName: "Eq", typeName: pt, methods: eqMethods }]);
+    }
+
+    // Hash impls for hashable primitives
+    const hashTypes = ["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "bool", "String"];
+    for (const pt of hashTypes) {
+      const existing = this.traitImpls.get(pt) || [];
+      const hashMethods = new Map<string, FnSig>();
+      hashMethods.set("hash", { params: [{ type: selfRef, name: "self" }], ret: u64_t, variadic: false });
+      existing.push({ traitName: "Hash", typeName: pt, methods: hashMethods });
+      this.traitImpls.set(pt, existing);
+    }
   }
 
   private resolveTypeNameForImpl(name: string): string {
