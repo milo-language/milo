@@ -717,6 +717,17 @@ fn gen_assign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec
     }
 }
 
+// Byte size of an LL primitive type. Used to compute enum payload slot count.
+fn ll_type_bytes(ll: &string): i64 {
+    if ll == "i1" { return 1 }
+    if ll == "i8" { return 1 }
+    if ll == "i16" { return 2 }
+    if ll == "i32" { return 4 }
+    if ll == "i64" { return 8 }
+    if ll == "ptr" { return 8 }
+    return 8
+}
+
 fn int_bits(ll: &string): i64 {
     if ll == "i1" { return 1 }
     if ll == "i8" { return 8 }
@@ -752,7 +763,23 @@ fn gen_as_cast(cg: &mut Cgen, inner: Box<Expr>, target_ty: string, locs: &Vec<Lo
     return Val { v: t, ty: to_ll }
 }
 
-// Build enum value: store tag, optionally store payload, load aggregate.
+// Build a synthetic struct type string "{ t1, t2, ... }" from comma-separated types.
+fn variant_struct_ty(types: &string): string {
+    var s: string = "{ "
+    var idx: i64 = 0
+    var i: i64 = 0
+    while i < types.len {
+        let start = i
+        while i < types.len && types[i] != 44 { i = i + 1 }
+        if idx > 0 { s = s + ", " }
+        s = s + ll_type(types[start..i])
+        if i < types.len { i = i + 1 }
+        idx = idx + 1
+    }
+    s = s + " }"
+    return s
+}
+
 fn gen_enum_lit(cg: &mut Cgen, enum_name: string, variant: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
     let tag = db_find_variant_tag(cg.enum_db.clone(), enum_name.clone(), variant.clone())
     let struct_ty = "%" + enum_name.clone()
@@ -765,17 +792,26 @@ fn gen_enum_lit(cg: &mut Cgen, enum_name: string, variant: string, args: Vec<Box
     let tag_ptr = "%t" + tag_id.to_string()
     emit(cg, "  " + tag_ptr + " = getelementptr " + struct_ty + ", ptr " + alloc_tmp + ", i32 0, i32 0\n")
     emit(cg, "  store i32 " + tag.to_string() + ", ptr " + tag_ptr + "\n")
-    // Payload (stage-0: single-field max)
-    let pay_ll = enum_payload_ty(cg.enum_payload_db.clone(), enum_name.clone())
-    if pay_ll.len > 0 && args.len > 0 {
-        let v_pay = variant_payload_ty(cg.enum_db.clone(), enum_name.clone(), variant.clone())
-        let v_pay_ll = ll_type(v_pay)
+    let v_types = variant_payload_ty(cg.enum_db.clone(), enum_name.clone(), variant.clone())
+    if args.len > 0 && v_types.len > 0 {
+        // Get pointer to payload slot (i32 1 within enum struct).
         let pay_ptr_id = cg.temp
         cg.temp = cg.temp + 1
         let pay_ptr = "%t" + pay_ptr_id.to_string()
         emit(cg, "  " + pay_ptr + " = getelementptr " + struct_ty + ", ptr " + alloc_tmp + ", i32 0, i32 1\n")
-        let fv = gen_expr(cg, args[0], locs, sigs, v_pay_ll.clone())
-        emit(cg, "  store " + v_pay_ll + " " + fv.v + ", ptr " + pay_ptr + "\n")
+        let vstruct_ty = variant_struct_ty(v_types.clone())
+        var fi: i64 = 0
+        while fi < args.len {
+            let fty_str = payload_ty_nth(v_types.clone(), fi)
+            let fty_ll = ll_type(fty_str)
+            let fp_id = cg.temp
+            cg.temp = cg.temp + 1
+            let fp = "%t" + fp_id.to_string()
+            emit(cg, "  " + fp + " = getelementptr " + vstruct_ty.clone() + ", ptr " + pay_ptr.clone() + ", i32 0, i32 " + fi.to_string() + "\n")
+            let fv = gen_expr(cg, args[fi], locs, sigs, fty_ll.clone())
+            emit(cg, "  store " + fty_ll + " " + fv.v + ", ptr " + fp + "\n")
+            fi = fi + 1
+        }
     }
     let load_id = cg.temp
     cg.temp = cg.temp + 1
@@ -820,25 +856,38 @@ fn gen_match(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut 
         emit(cg, arm_labels[ai].clone() + ":\n")
         let arm = arms[ai]
         let locs_pre_len = locs.len
-        // Bind payload if present
-        if arm.bindings.len > 0 && pay_ll.len > 0 {
-            let bind_name = arm.bindings[0].clone()
-            let v_pay = variant_payload_ty(cg.enum_db.clone(), arm.enum_name.clone(), arm.variant_name.clone())
-            let v_pay_ll = ll_type(v_pay)
-            let pay_ptr_id = cg.temp
-            cg.temp = cg.temp + 1
-            let pay_ptr = "%t" + pay_ptr_id.to_string()
-            emit(cg, "  " + pay_ptr + " = getelementptr " + struct_ty.clone() + ", ptr " + subj_lv.v.clone() + ", i32 0, i32 1\n")
-            let load_id = cg.temp
-            cg.temp = cg.temp + 1
-            let loaded = "%t" + load_id.to_string()
-            emit(cg, "  " + loaded + " = load " + v_pay_ll.clone() + ", ptr " + pay_ptr + "\n")
-            let addr_id = cg.temp
-            cg.temp = cg.temp + 1
-            let bind_addr = "%v" + addr_id.to_string()
-            emit(cg, "  " + bind_addr + " = alloca " + v_pay_ll.clone() + "\n")
-            emit(cg, "  store " + v_pay_ll.clone() + " " + loaded + ", ptr " + bind_addr.clone() + "\n")
-            locs.push(Local { name: bind_name, ty: v_pay_ll, addr: bind_addr })
+        // Extract payload bindings (multi-field). GEP from payload-slot via synthetic
+        // variant struct, load each field, alloca + store, register in locs.
+        if arm.bindings.len > 0 {
+            let v_types = variant_payload_ty(cg.enum_db.clone(), arm.enum_name.clone(), arm.variant_name.clone())
+            if v_types.len > 0 {
+                let pay_ptr_id = cg.temp
+                cg.temp = cg.temp + 1
+                let pay_ptr = "%t" + pay_ptr_id.to_string()
+                emit(cg, "  " + pay_ptr + " = getelementptr " + struct_ty.clone() + ", ptr " + subj_lv.v.clone() + ", i32 0, i32 1\n")
+                let vstruct_ty = variant_struct_ty(v_types.clone())
+                var bi: i64 = 0
+                while bi < arm.bindings.len {
+                    let bname = arm.bindings[bi].clone()
+                    let fty_str = payload_ty_nth(v_types.clone(), bi)
+                    let fty_ll = ll_type(fty_str)
+                    let fp_id = cg.temp
+                    cg.temp = cg.temp + 1
+                    let fp = "%t" + fp_id.to_string()
+                    emit(cg, "  " + fp + " = getelementptr " + vstruct_ty.clone() + ", ptr " + pay_ptr.clone() + ", i32 0, i32 " + bi.to_string() + "\n")
+                    let load_id = cg.temp
+                    cg.temp = cg.temp + 1
+                    let loaded = "%t" + load_id.to_string()
+                    emit(cg, "  " + loaded + " = load " + fty_ll.clone() + ", ptr " + fp + "\n")
+                    let addr_id = cg.temp
+                    cg.temp = cg.temp + 1
+                    let bind_addr = "%v" + addr_id.to_string()
+                    emit(cg, "  " + bind_addr + " = alloca " + fty_ll.clone() + "\n")
+                    emit(cg, "  store " + fty_ll.clone() + " " + loaded + ", ptr " + bind_addr.clone() + "\n")
+                    locs.push(Local { name: bname, ty: fty_ll, addr: bind_addr })
+                    bi = bi + 1
+                }
+            }
         }
         var arm_term: bool = false
         var si: i64 = 0
@@ -1159,31 +1208,41 @@ fn gen_program(cg: &mut Cgen, prog: Program): void {
         cg.fn_ret_db = cg.fn_ret_db + prog.fns[i].name.clone() + "|" + prog.fns[i].ret_ty.clone() + ";"
         i = i + 1
     }
-    // Pre-pass: register enums. Compute payload LL type (single i64-or-narrower field
-    // supported in stage-0). Emit %Name = type { i32 } or { i32, payload_ty } depending.
+    // Pre-pass: register enums. Multi-field variants supported; payload is laid out
+    // as [SLOTS x i64] where SLOTS = ceil(max_payload_bytes / 8). Variant-specific
+    // field accesses are GEP'd through a synthetic { t1, t2, ... } struct.
     var ei: i64 = 0
     while ei < prog.enums.len {
         let e = prog.enums[ei]
         var entry: string = e.name.clone() + "!"
-        var pay_ll: string = ""
+        var max_bytes: i64 = 0
         var vi: i64 = 0
         while vi < e.variants.len {
             if vi > 0 { entry = entry + "&" }
             let v = e.variants[vi]
             entry = entry + v.name.clone() + "=" + vi.to_string()
             if v.payload_types.len > 0 {
-                let p_ty = v.payload_types[0].clone()
-                entry = entry + ":" + p_ty.clone()
-                let p_ll = ll_type(p_ty.clone())
-                if pay_ll.len == 0 { pay_ll = p_ll.clone() }
+                entry = entry + ":"
+                var v_bytes: i64 = 0
+                var fi: i64 = 0
+                while fi < v.payload_types.len {
+                    if fi > 0 { entry = entry + "," }
+                    let pt = v.payload_types[fi].clone()
+                    entry = entry + pt.clone()
+                    v_bytes = v_bytes + ll_type_bytes(ll_type(pt))
+                    fi = fi + 1
+                }
+                if v_bytes > max_bytes { max_bytes = v_bytes }
             }
             vi = vi + 1
         }
         entry = entry + ";"
         cg.enum_db = cg.enum_db + entry
-        cg.enum_payload_db = cg.enum_payload_db + e.name.clone() + "=" + pay_ll.clone() + ";"
-        if pay_ll.len > 0 {
-            emit_g(cg, "%" + e.name + " = type { i32, " + pay_ll + " }\n")
+        let slots = (max_bytes + 7) / 8
+        let payload_marker = slots.to_string()
+        cg.enum_payload_db = cg.enum_payload_db + e.name.clone() + "=" + payload_marker + ";"
+        if slots > 0 {
+            emit_g(cg, "%" + e.name + " = type { i32, [" + slots.to_string() + " x i64] }\n")
         } else {
             emit_g(cg, "%" + e.name + " = type { i32 }\n")
         }

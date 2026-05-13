@@ -183,8 +183,13 @@ Verification:
 - [x] **`as` cast codegen in milo0.** trunc when narrowing, sext/zext when widening (zext if source is u-prefixed), bitcast for same-size. Tested `1234567890123 as i32 = 1912276171` (matches host).
 - [x] **Combined struct + enum payload + cast test.** Mini tokenizer that returns `Token.Num(i64)/Plus/Minus` from a char code, with `as i64` widening — produces correct output.
 
+- [x] **Multi-field enum payloads.** Enum layout `{ i32 tag, [SLOTS x i64] payload }` with SLOTS = ceil(max_payload_bytes / 8). Variant-specific access via synthetic `{ t1, t2, ... }` GEP. Tested:
+  ```
+  enum Shape { Circle(i64), Rect(i32, i32), Point }
+  // area: 75, 24, 0
+  ```
+
 Still missing for full milo0-on-milo0:
-- [ ] Multi-field enum payloads (e.g. `Binary(TokKind, Box<Expr>, Box<Expr>)`).
 - [ ] Generics, Box, Vec, HashMap, closures, String type with methods.
 
 ### Phase 3.5 — Beyond Stage-0
