@@ -11,6 +11,9 @@ dist
 *.ll
 hello
 fizzbuzz
+tests/fixtures/*
+!tests/fixtures/*.milo
+!tests/fixtures/lib/
 
 # code coverage
 coverage
