@@ -7,12 +7,12 @@ enum Result<T, E> {
 }
 
 fn main(): i32 {
-    let r: Result<i32, i32> = Result::Err(404)
+    let r: Result<i32, i32> = Result.Err(404)
     match r {
-        Result::Ok(val) => {
+        Result.Ok(val) => {
             printf("ok: %d\n", val)
         }
-        Result::Err(code) => {
+        Result.Err(code) => {
             printf("error: %d\n", code)
         }
     }

@@ -5,7 +5,7 @@
 extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
-    var m: HashMap<i32, i32> = HashMap::new()
+    var m: HashMap<i32, i32> = HashMap.new()
     var i: i32 = 0
     while i < 20 {
         m.insert(i, i * 10)

@@ -8,15 +8,15 @@ enum Shape {
 }
 
 fn main(): i32 {
-    let s = Shape::Rectangle(3, 4)
+    let s = Shape.Rectangle(3, 4)
     match s {
-        Shape::Circle(r) => {
+        Shape.Circle(r) => {
             printf("%d\n", r)
         }
-        Shape::Rectangle(w, h) => {
+        Shape.Rectangle(w, h) => {
             printf("%d\n", w + h)
         }
-        Shape::Point => {
+        Shape.Point => {
             printf("0\n")
         }
     }

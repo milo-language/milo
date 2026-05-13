@@ -4,7 +4,7 @@
 extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
-    var v: Vec<i32> = Vec::new()
+    var v: Vec<i32> = Vec.new()
     var i: i32 = 0
     while i < 16 {
         v.push(i)

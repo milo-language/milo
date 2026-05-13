@@ -7,12 +7,12 @@ enum Option<T> {
 }
 
 fn main(): i32 {
-    let x: Option<i32> = Option::None
+    let x: Option<i32> = Option.None
     match x {
-        Option::Some(val) => {
+        Option.Some(val) => {
             printf("%d\n", val)
         }
-        Option::None => {
+        Option.None => {
             printf("none\n")
         }
     }

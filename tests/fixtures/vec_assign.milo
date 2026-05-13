@@ -3,7 +3,7 @@
 extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
-    var v: Vec<i32> = Vec::new()
+    var v: Vec<i32> = Vec.new()
     v.push(10)
     v.push(20)
     v[0] = 99

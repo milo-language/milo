@@ -120,7 +120,6 @@
         { "name": "keyword.operator.comparison.milo", "match": "==|!=|<=|>=|<|>" },
         { "name": "keyword.operator.logical.milo", "match": "&&|\\|\\||!" },
         { "name": "keyword.operator.try.milo", "match": "\\?\\?|\\?" },
-        { "name": "keyword.operator.path.milo", "match": "::" },
         { "name": "keyword.operator.assignment.milo", "match": "=" },
         { "name": "keyword.operator.arithmetic.milo", "match": "[+\\-*/%]" },
         { "name": "keyword.operator.reference.milo", "match": "&" }

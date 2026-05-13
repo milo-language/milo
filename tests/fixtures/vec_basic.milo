@@ -6,7 +6,7 @@
 extern fn printf(fmt: *u8, ...): i32
 
 fn main(): i32 {
-    var v: Vec<i32> = Vec::new()
+    var v: Vec<i32> = Vec.new()
     printf("%lld\n", v.len)
 
     v.push(10)

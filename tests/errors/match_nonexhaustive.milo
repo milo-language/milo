@@ -6,12 +6,12 @@ enum Color {
 }
 
 fn main(): i32 {
-    let c = Color::Red
+    let c = Color.Red
     match c {
-        Color::Red => {
+        Color.Red => {
             return 0
         }
-        Color::Green => {
+        Color.Green => {
             return 1
         }
     }

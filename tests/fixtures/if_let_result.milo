@@ -8,15 +8,15 @@ enum Result {
 }
 
 fn main(): i32 {
-    let a = Result::Ok(99)
-    if let Result::Ok(v) = a {
+    let a = Result.Ok(99)
+    if let Result.Ok(v) = a {
         printf("ok: %d\n", v)
     } else {
         printf("err branch\n")
     }
 
-    let b = Result::Err(-1)
-    if let Result::Ok(v) = b {
+    let b = Result.Err(-1)
+    if let Result.Ok(v) = b {
         printf("ok branch\n")
     } else {
         printf("err: %d\n", -1)

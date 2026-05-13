@@ -13,8 +13,8 @@ fn print_boxed(b: &Box<i32>) {
 
 fn print_leaf(t: &Box<Tree>) {
     match *t {
-        Tree::Leaf(n) => { printf("leaf: %d\n", n) }
-        Tree::Node(l, r) => { }
+        Tree.Leaf(n) => { printf("leaf: %d\n", n) }
+        Tree.Node(l, r) => { }
     }
 }
 
@@ -22,7 +22,7 @@ fn main(): i32 {
     let b = Box(42)
     print_boxed(b)
 
-    let t = Box(Tree::Leaf(7))
+    let t = Box(Tree.Leaf(7))
     print_leaf(t)
     return 0
 }

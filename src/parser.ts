@@ -362,7 +362,7 @@ export class Parser {
       return { kind: "WildcardPattern", span: s };
     }
     const enumName = this.expect(TokenKind.Ident).value;
-    this.expect(TokenKind.ColonColon);
+    this.expect(TokenKind.Dot);
     const variant = this.expect(TokenKind.Ident).value;
     const bindings: string[] = [];
     if (this.match(TokenKind.LParen)) {
@@ -518,8 +518,8 @@ export class Parser {
     }
     if (tok.kind === TokenKind.Ident) {
       this.advance();
-      // enum variant: Name::Variant or Name::Variant(args)
-      if (this.at(TokenKind.ColonColon)) {
+      // enum variant: Name.Variant or Name.Variant(args)
+      if (this.at(TokenKind.Dot) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
         this.advance();
         const variant = this.expect(TokenKind.Ident).value;
         const args: Expr[] = [];

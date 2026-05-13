@@ -8,8 +8,8 @@ enum Option<T> {
 }
 
 fn main(): i32 {
-    let a = Option::Some(42)
-    let b: Option<i32> = Option::None
+    let a = Option.Some(42)
+    let b: Option<i32> = Option.None
     printf("%d\n", a ?? 0)
     printf("%d\n", b ?? 0)
     return 0

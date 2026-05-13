@@ -8,15 +8,15 @@ enum Color {
 }
 
 fn main(): i32 {
-    let c = Color::Green
+    let c = Color.Green
     match c {
-        Color::Red => {
+        Color.Red => {
             printf("%d\n", 0)
         }
-        Color::Green => {
+        Color.Green => {
             printf("%d\n", 1)
         }
-        Color::Blue => {
+        Color.Blue => {
             printf("%d\n", 2)
         }
     }

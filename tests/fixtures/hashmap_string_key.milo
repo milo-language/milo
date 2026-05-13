@@ -10,7 +10,7 @@ enum Option<T> {
 }
 
 fn main(): i32 {
-    var m: HashMap<String, i32> = HashMap::new()
+    var m: HashMap<String, i32> = HashMap.new()
     m.insert("hello", 42)
     m.insert("world", 99)
 
@@ -27,7 +27,7 @@ fn main(): i32 {
     }
 
     let r = m.get("hello")
-    if let Option::Some(v) = r {
+    if let Option.Some(v) = r {
         printf("got hello: %d\n", v)
     } else {
         printf("hello not found\n")

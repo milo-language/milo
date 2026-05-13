@@ -7,7 +7,7 @@ enum Option<T> {
 }
 
 fn main(): i32 {
-    let x = Option::Some(42)
+    let x = Option.Some(42)
     let val = x!
     printf("%d\n", val)
     return 0

@@ -8,13 +8,13 @@ enum Option {
 }
 
 fn main(): i32 {
-    let x = Option::Some(42)
-    if let Option::Some(val) = x {
+    let x = Option.Some(42)
+    if let Option.Some(val) = x {
         printf("got %d\n", val)
     }
 
-    let y = Option::None
-    if let Option::Some(val) = y {
+    let y = Option.None
+    if let Option.Some(val) = y {
         printf("should not print\n")
     }
 

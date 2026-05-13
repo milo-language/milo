@@ -3,6 +3,6 @@
 struct Point { x: i32, y: i32 }
 
 fn main(): i32 {
-    var m: HashMap<Point, i32> = HashMap::new()
+    var m: HashMap<Point, i32> = HashMap.new()
     return 0
 }

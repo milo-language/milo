@@ -8,7 +8,7 @@ enum Option<T> {
 }
 
 fn make_map(): HashMap<i32, i32> {
-    var m: HashMap<i32, i32> = HashMap::new()
+    var m: HashMap<i32, i32> = HashMap.new()
     m.insert(1, 10)
     m.insert(2, 20)
     return m

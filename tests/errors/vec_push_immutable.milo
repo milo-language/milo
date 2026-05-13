@@ -1,7 +1,7 @@
 // @error: cannot push to immutable Vec
 
 fn main(): i32 {
-    let v: Vec<i32> = Vec::new()
+    let v: Vec<i32> = Vec.new()
     v.push(10)
     return 0
 }

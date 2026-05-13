@@ -1,7 +1,7 @@
 // @error: cannot insert into immutable HashMap
 
 fn main(): i32 {
-    let m: HashMap<i32, i32> = HashMap::new()
+    let m: HashMap<i32, i32> = HashMap.new()
     m.insert(1, 2)
     return 0
 }

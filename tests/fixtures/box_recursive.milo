@@ -8,8 +8,8 @@ enum Tree {
 
 fn sum(t: Tree): i32 {
     match t {
-        Tree::Leaf(n) => { return n }
-        Tree::Node(left, right) => {
+        Tree.Leaf(n) => { return n }
+        Tree.Node(left, right) => {
             return sum(*left) + sum(*right)
         }
     }
@@ -17,9 +17,9 @@ fn sum(t: Tree): i32 {
 }
 
 fn main(): i32 {
-    let tree = Tree::Node(
-        Box(Tree::Node(Box(Tree::Leaf(1)), Box(Tree::Leaf(2)))),
-        Box(Tree::Node(Box(Tree::Leaf(3)), Box(Tree::Leaf(4))))
+    let tree = Tree.Node(
+        Box(Tree.Node(Box(Tree.Leaf(1)), Box(Tree.Leaf(2)))),
+        Box(Tree.Node(Box(Tree.Leaf(3)), Box(Tree.Leaf(4))))
     )
     printf("sum: %d\n", sum(tree))
     return 0

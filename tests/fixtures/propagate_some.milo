@@ -8,11 +8,11 @@ enum Option<T> {
 
 fn try_double(opt: Option<i32>): Option<i32> {
     let val = opt?
-    return Option::Some(val * 2)
+    return Option.Some(val * 2)
 }
 
 fn main(): i32 {
-    let result = try_double(Option::Some(42))
+    let result = try_double(Option.Some(42))
     printf("%d\n", result!)
     return 0
 }

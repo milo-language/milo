@@ -8,15 +8,15 @@ enum Option {
 }
 
 fn main(): i32 {
-    let a = Option::Some(10)
-    if let Option::Some(v) = a {
+    let a = Option.Some(10)
+    if let Option.Some(v) = a {
         printf("got %d\n", v)
     } else {
         printf("was none\n")
     }
 
-    let b = Option::None
-    if let Option::Some(v) = b {
+    let b = Option.None
+    if let Option.Some(v) = b {
         printf("got value\n")
     } else {
         printf("was none\n")

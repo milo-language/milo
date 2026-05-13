@@ -190,7 +190,9 @@ function handleHover(uri: string, line: number, character: number): object | nul
         }
       }
     }
-  } catch { /* parse failed, no hover */ }
+  } catch (e) {
+    process.stderr.write(`milod: hover parse error: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 
   return null;
 }
@@ -285,7 +287,9 @@ function handleDefinition(uri: string, line: number, character: number): object 
         }
       }
     }
-  } catch { /* parse failed */ }
+  } catch (e) {
+    process.stderr.write(`milod: definition parse error for word="${word}": ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 
   return null;
 }

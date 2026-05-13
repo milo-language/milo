@@ -6,8 +6,8 @@ enum Option {
 }
 
 fn main(): i32 {
-    let x = Option::Some(42)
-    if let Option::Some(a, b) = x {
+    let x = Option.Some(42)
+    if let Option.Some(a, b) = x {
         return 0
     }
     return 0

@@ -711,12 +711,12 @@ export class TypeChecker {
       return hint;
     }
     if (expr.kind === "EnumLit" && expr.enumName === "Vec" && expr.variant === "new" && hint?.tag === "vec") {
-      if (expr.args.length !== 0) { this.error(`'Vec::new' takes no arguments`, sp); }
+      if (expr.args.length !== 0) { this.error(`'Vec.new' takes no arguments`, sp); }
       this.exprTypes.set(expr, hint);
       return hint;
     }
     if (expr.kind === "EnumLit" && expr.enumName === "HashMap" && expr.variant === "new" && hint?.tag === "hashmap") {
-      if (expr.args.length !== 0) { this.error(`'HashMap::new' takes no arguments`, sp); }
+      if (expr.args.length !== 0) { this.error(`'HashMap.new' takes no arguments`, sp); }
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -727,12 +727,12 @@ export class TypeChecker {
         const variant = hintEnum.variants.get(expr.variant);
         if (!variant) { this.error(`enum '${expr.enumName}' has no variant '${expr.variant}'`, sp); return { tag: "unknown" }; }
         if (expr.args.length !== variant.fields.length) {
-          this.error(`variant '${expr.enumName}::${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
+          this.error(`variant '${expr.enumName}.${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
         }
         for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
           const argType = this.checkExpr(expr.args[i]);
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
-            this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, sp);
+            this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, sp);
           }
           this.tryMove(expr.args[i]);
         }
@@ -1038,13 +1038,13 @@ export class TypeChecker {
       }
       case "EnumLit": {
         if (expr.enumName === "Vec" && expr.variant === "new") {
-          if (expr.args.length !== 0) this.error(`'Vec::new' takes no arguments`, sp);
-          this.error(`cannot infer Vec element type — add a type annotation: 'let v: Vec<T> = Vec::new()'`, sp);
+          if (expr.args.length !== 0) this.error(`'Vec.new' takes no arguments`, sp);
+          this.error(`cannot infer Vec element type — add a type annotation: 'let v: Vec<T> = Vec.new()'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         if (expr.enumName === "HashMap" && expr.variant === "new") {
-          if (expr.args.length !== 0) this.error(`'HashMap::new' takes no arguments`, sp);
-          this.error(`cannot infer HashMap types — add a type annotation: 'let m: HashMap<K, V> = HashMap::new()'`, sp);
+          if (expr.args.length !== 0) this.error(`'HashMap.new' takes no arguments`, sp);
+          this.error(`cannot infer HashMap types — add a type annotation: 'let m: HashMap<K, V> = HashMap.new()'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         const genericInfo = this.genericEnums.get(expr.enumName);
@@ -1052,7 +1052,7 @@ export class TypeChecker {
           const variant = genericInfo.variants.get(expr.variant);
           if (!variant) { this.error(`enum '${expr.enumName}' has no variant '${expr.variant}'`, sp); return this.setType(expr, { tag: "unknown" }); }
           if (expr.args.length !== variant.fields.length) {
-            this.error(`variant '${expr.enumName}::${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
+            this.error(`variant '${expr.enumName}.${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
           }
           const typeMap = new Map<string, TypeKind>();
           for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
@@ -1066,13 +1066,13 @@ export class TypeChecker {
                 typeMap.set(field.name, argType);
               }
             } else if (!typeEq(field, argType) && argType.tag !== "unknown") {
-              this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(field)}, got ${typeName(argType)}`, expr.args[i].span);
+              this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(field)}, got ${typeName(argType)}`, expr.args[i].span);
             }
             this.tryMove(expr.args[i]);
           }
           const missing = genericInfo.typeParams.filter(p => !typeMap.has(p));
           if (missing.length > 0) {
-            this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for ${expr.enumName}::${expr.variant}`, sp);
+            this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for ${expr.enumName}.${expr.variant}`, sp);
             return this.setType(expr, { tag: "unknown" });
           }
           const typeArgs = genericInfo.typeParams.map(p => typeMap.get(p)!);
@@ -1085,12 +1085,12 @@ export class TypeChecker {
         const variant = info.variants.get(expr.variant);
         if (!variant) { this.error(`enum '${expr.enumName}' has no variant '${expr.variant}'`, sp); return this.setType(expr, { tag: "unknown" }); }
         if (expr.args.length !== variant.fields.length) {
-          this.error(`variant '${expr.enumName}::${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
+          this.error(`variant '${expr.enumName}.${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
         }
         for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
           const argType = this.checkExpr(expr.args[i]);
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
-            this.error(`argument ${i + 1} of '${expr.enumName}::${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, expr.args[i].span);
+            this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, expr.args[i].span);
           }
           this.tryMove(expr.args[i]);
         }
@@ -1294,7 +1294,7 @@ export class TypeChecker {
   private resolveOptionForValue(valueType: TypeKind, span?: Span): TypeKind {
     const ge = this.genericEnums.get("Option");
     if (!ge) {
-      this.error(`HashMap::get requires 'enum Option<T> { Some(T), None }' to be defined`, span);
+      this.error(`HashMap.get requires 'enum Option<T> { Some(T), None }' to be defined`, span);
       return { tag: "unknown" };
     }
     const mangled = this.monomorphizeEnum("Option", [valueType]);
