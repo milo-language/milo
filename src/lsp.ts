@@ -8,9 +8,12 @@ import { resolveImports } from "./resolver";
 import type { Diagnostic } from "./diagnostics";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
 import { typeName as formatTypeName } from "./types";
+import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, readFileSync } from "fs";
+
+const hostTarget = getHostTarget();
 
 // ── JSON-RPC transport ──
 
@@ -124,6 +127,98 @@ function inferLiteralType(expr: Expr): string | null {
   }
 }
 
+// ── Type formatting ──
+
+function formatMiloType(t: import("./ast").MiloType): string {
+  if (t.isFn && t.fnParams && t.fnRet) {
+    return `(${t.fnParams.map(formatMiloType).join(", ")}) => ${formatMiloType(t.fnRet)}`;
+  }
+  let base = t.name;
+  if (t.typeArgs?.length) {
+    base += `<${t.typeArgs.map(formatMiloType).join(", ")}>`;
+  }
+  if (t.isArray) {
+    return t.arraySize !== null ? `[${base}; ${t.arraySize}]` : `[${base}]`;
+  }
+  if (t.isRef) return `&${base}`;
+  if (t.isRefMut) return `&mut ${base}`;
+  if (t.isPtr) return `*${base}`;
+  return base;
+}
+
+// ── Doc comment extraction ──
+
+function extractDocComment(source: string, declLineIndex: number): string | null {
+  const lines = source.split("\n");
+  const comments: string[] = [];
+  for (let i = declLineIndex - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim();
+    if (trimmed.startsWith("//")) {
+      if (trimmed.includes("──")) break;
+      comments.unshift(trimmed.replace(/^\/\/\s?/, ""));
+    } else {
+      break;
+    }
+  }
+  return comments.length > 0 ? comments.join("\n") : null;
+}
+
+function findSymbolDoc(source: string, word: string, kind: "fn" | "struct" | "enum"): string | null {
+  const lines = source.split("\n");
+  const re = kind === "fn"
+    ? new RegExp(`\\bfn\\s+${word}\\s*[<(]`)
+    : new RegExp(`\\b${kind}\\s+${word}\\b`);
+  for (let i = 0; i < lines.length; i++) {
+    if (re.test(lines[i])) {
+      return extractDocComment(source, i);
+    }
+  }
+  return null;
+}
+
+function symbolExistsInSource(source: string, word: string, kind: "fn" | "struct" | "enum"): boolean {
+  const re = kind === "fn"
+    ? new RegExp(`\\bfn\\s+${word}\\s*[<(]`)
+    : new RegExp(`\\b${kind}\\s+${word}\\b`);
+  return re.test(source);
+}
+
+function findDocInImports(parsed: Program, sourceDir: string, word: string, kind: "fn" | "struct" | "enum"): { doc: string | null, module: string } | null {
+  for (const imp of parsed.imports) {
+    const absPath = resolveImportPath(sourceDir, imp.path);
+    if (!absPath) continue;
+    let fileSource: string;
+    try { fileSource = readFileSync(absPath, "utf-8"); } catch { continue; }
+
+    if (symbolExistsInSource(fileSource, word, kind)) {
+      return { doc: findSymbolDoc(fileSource, word, kind), module: imp.path };
+    }
+
+    try {
+      const tokens = new Lexer(fileSource).tokenize();
+      const importedParsed = new Parser(tokens).parse();
+      const transResult = findDocInImports(importedParsed, dirname(absPath), word, kind);
+      if (transResult) return transResult;
+    } catch {}
+  }
+  return null;
+}
+
+function appendDocAndModule(hover: string, source: string, parsed: Program, sourceDir: string, word: string, kind: "fn" | "struct" | "enum"): string {
+  if (symbolExistsInSource(source, word, kind)) {
+    const doc = findSymbolDoc(source, word, kind);
+    return doc ? hover + `\n\n---\n\n${doc}` : hover;
+  }
+  const imported = findDocInImports(parsed, sourceDir, word, kind);
+  if (imported) {
+    let suffix = "\n\n---\n\n";
+    if (imported.doc) suffix += imported.doc + "\n\n";
+    suffix += `*from \`${imported.module}\`*`;
+    return hover + suffix;
+  }
+  return hover;
+}
+
 // ── Diagnostics ──
 
 function validateDocument(uri: string) {
@@ -135,7 +230,7 @@ function validateDocument(uri: string) {
     const tokens = new Lexer(source).tokenize();
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir);
+    const program = resolveImports(parsed, sourceDir, hostTarget);
     diagnostics = new TypeChecker().check(program).diagnostics;
     buildSymbolIndex(uri, program);
   } catch (e: any) {
@@ -176,41 +271,90 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const tokens = new Lexer(source).tokenize();
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir);
-    const checkResult = new TypeChecker().check(program);
-
+    const program = resolveImports(parsed, sourceDir, hostTarget);
+    let checkResult: CheckResult | null = null;
+    try { checkResult = new TypeChecker().check(program); } catch {}
+    const exprTypes = checkResult?.exprTypes ?? new Map();
     const word = getWordAt(source, line, character);
 
-    // Check functions
+    // Variable declarations — only when hovering on the variable name itself
     for (const fn of program.functions) {
       if (fn.isExtern) continue;
       for (const stmt of fn.body) {
-        const info = findHoverInStmt(stmt, line + 1, character + 1, checkResult.exprTypes);
+        const info = findHoverInStmt(stmt, line + 1, character + 1, exprTypes, word);
         if (info) return { contents: { kind: "markdown", value: `\`\`\`milo\n${info}\n\`\`\`` } };
       }
-      for (const sym of symbolIndex) {
-        if (sym.name === word && sym.kind === "function") {
-          const f = program.functions.find(f => f.name === sym.name);
-          if (f) {
-            const params = f.params.map(p => `${p.name}: ${p.type.name}`).join(", ");
-            const sig = `fn ${f.name}(${params}): ${f.retType.name}`;
-            return { contents: { kind: "markdown", value: `\`\`\`milo\n${sig}\n\`\`\`` } };
-          }
+    }
+
+    // Free functions
+    const f = program.functions.find(fn => fn.name === word && !fn.isExtern);
+    if (f) {
+      const params = f.params.map(p => `${p.name}: ${formatMiloType(p.type)}`).join(", ");
+      const sig = `fn ${f.name}(${params}): ${formatMiloType(f.retType)}`;
+      let hover = `\`\`\`milo\n${sig}\n\`\`\``;
+      hover = appendDocAndModule(hover, source, parsed, sourceDir, word, "fn");
+      return { contents: { kind: "markdown", value: hover } };
+    }
+
+    // Impl methods
+    for (const impl of program.impls) {
+      for (const method of impl.methods) {
+        if (method.name === word) {
+          const params = method.params
+            .filter(p => p.name !== "self")
+            .map(p => `${p.name}: ${formatMiloType(p.type)}`).join(", ");
+          const sig = `fn ${impl.typeName}.${method.name}(${params}): ${formatMiloType(method.retType)}`;
+          let hover = `\`\`\`milo\n${sig}\n\`\`\``;
+          hover = appendDocAndModule(hover, source, parsed, sourceDir, word, "fn");
+          return { contents: { kind: "markdown", value: hover } };
         }
       }
     }
 
-    // Enum and variant hover — handles "Result", "Err" in Result.Err(...)
-    const enumHover = findEnumHover(source, program, word, line, character);
+    // Enums and variants
+    const enumHover = findEnumHover(source, program, word, line, character, parsed, sourceDir);
     if (enumHover) return { contents: { kind: "markdown", value: enumHover } };
 
-    // Struct hover
+    // Structs
     for (const s of program.structs) {
       if (s.name === word) {
         const tparams = s.typeParams.length ? `<${s.typeParams.map(t => t.name).join(", ")}>` : "";
-        const fields = s.fields.map(f => `    ${f.name}: ${f.type.name},`).join("\n");
-        return { contents: { kind: "markdown", value: `\`\`\`milo\nstruct ${s.name}${tparams} {\n${fields}\n}\n\`\`\`` } };
+        const fields = s.fields.map(f => `    ${f.name}: ${formatMiloType(f.type)},`).join("\n");
+        let hover = `\`\`\`milo\nstruct ${s.name}${tparams} {\n${fields}\n}\n\`\`\``;
+        hover = appendDocAndModule(hover, source, parsed, sourceDir, word, "struct");
+        return { contents: { kind: "markdown", value: hover } };
       }
+    }
+
+    // Struct fields
+    const lineText = source.split("\n")[line] ?? "";
+    const fieldMatches: { s: import("./ast").StructDecl; f: import("./ast").StructField }[] = [];
+    for (const s of program.structs) {
+      for (const f of s.fields) {
+        if (f.name === word) fieldMatches.push({ s, f });
+      }
+    }
+    if (fieldMatches.length === 1) {
+      const { s, f } = fieldMatches[0];
+      return { contents: { kind: "markdown", value: `\`\`\`milo\n${s.name}.${f.name}: ${formatMiloType(f.type)}\n\`\`\`` } };
+    } else if (fieldMatches.length > 1) {
+      for (const { s, f } of fieldMatches) {
+        if (lineText.includes(s.name)) {
+          return { contents: { kind: "markdown", value: `\`\`\`milo\n${s.name}.${f.name}: ${formatMiloType(f.type)}\n\`\`\`` } };
+        }
+      }
+    }
+
+    // Variable references (params and locals in enclosing function)
+    const enclosing = findEnclosingFn(source, program, line);
+    if (enclosing) {
+      for (const p of enclosing.fn.params) {
+        if (p.name === word) {
+          return { contents: { kind: "markdown", value: `\`\`\`milo\n${p.name}: ${formatMiloType(p.type)}\n\`\`\`` } };
+        }
+      }
+      const varHover = findVarHover(enclosing.fn.body, word, exprTypes);
+      if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`` } };
     }
   } catch (e) {
     process.stderr.write(`milod: hover parse error: ${e instanceof Error ? e.message : String(e)}\n`);
@@ -219,8 +363,34 @@ function handleHover(uri: string, line: number, character: number): object | nul
   return null;
 }
 
-function findHoverInStmt(stmt: Stmt, line: number, col: number, exprTypes: Map<Expr, import("./types").TypeKind>): string | null {
-  if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.span?.line === line) {
+function findVarHover(stmts: Stmt[], word: string, exprTypes: Map<Expr, import("./types").TypeKind>): string | null {
+  for (const stmt of stmts) {
+    if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.name === word) {
+      let resolved = stmt.type?.name ?? inferLiteralType(stmt.value);
+      if (!resolved) {
+        const tk = exprTypes.get(stmt.value);
+        if (tk) resolved = formatTypeName(tk);
+      }
+      if (resolved) return `${stmt.kind === "LetDecl" ? "let" : "var"} ${stmt.name}: ${resolved}`;
+    }
+    if (stmt.kind === "IfStmt") {
+      const r = findVarHover(stmt.thenBody, word, exprTypes); if (r) return r;
+      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes); if (r2) return r2; }
+    }
+    if (stmt.kind === "WhileStmt") {
+      const r = findVarHover(stmt.body, word, exprTypes); if (r) return r;
+    }
+    if (stmt.kind === "MatchStmt") {
+      for (const arm of stmt.arms) {
+        const r = findVarHover(arm.body, word, exprTypes); if (r) return r;
+      }
+    }
+  }
+  return null;
+}
+
+function findHoverInStmt(stmt: Stmt, line: number, col: number, exprTypes: Map<Expr, import("./types").TypeKind>, word: string): string | null {
+  if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.span?.line === line && stmt.name === word) {
     let resolved = stmt.type?.name ?? inferLiteralType(stmt.value);
     if (!resolved) {
       const tk = exprTypes.get(stmt.value);
@@ -229,15 +399,15 @@ function findHoverInStmt(stmt: Stmt, line: number, col: number, exprTypes: Map<E
     return `${stmt.kind === "LetDecl" ? "let" : "var"} ${stmt.name}: ${resolved ?? "unknown"}`;
   }
   if (stmt.kind === "IfStmt") {
-    for (const s of stmt.thenBody) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
-    if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
+    for (const s of stmt.thenBody) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
+    if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
   }
   if (stmt.kind === "WhileStmt") {
-    for (const s of stmt.body) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
+    for (const s of stmt.body) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
   }
   if (stmt.kind === "MatchStmt") {
     for (const arm of stmt.arms) {
-      for (const s of arm.body) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
+      for (const s of arm.body) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
     }
   }
   return null;
@@ -316,7 +486,7 @@ const BUILTIN_DOCS: Record<string, { enum: string; variants: Record<string, stri
   },
 };
 
-function findEnumHover(source: string, program: Program, word: string, line: number, character: number): string | null {
+function findEnumHover(source: string, program: Program, word: string, line: number, character: number, parsed: Program, sourceDir: string): string | null {
   const lineText = source.split("\n")[line] ?? "";
   const allEnums = [...program.enums, ...BUILTIN_ENUMS];
 
@@ -324,7 +494,8 @@ function findEnumHover(source: string, program: Program, word: string, line: num
     if (e.name === word) {
       const decl = formatEnumDecl(e);
       const docs = BUILTIN_DOCS[e.name];
-      return docs ? `${decl}\n\n---\n\n${docs.enum}` : decl;
+      if (docs) return `${decl}\n\n---\n\n${docs.enum}`;
+      return appendDocAndModule(decl, source, parsed, sourceDir, word, "enum");
     }
   }
 
@@ -420,7 +591,7 @@ function handleDefinition(uri: string, line: number, character: number): object 
     const tokens = new Lexer(source).tokenize();
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir);
+    const program = resolveImports(parsed, sourceDir, hostTarget);
 
     // Find function definition — local first, then imported files
     for (const fn of program.functions) {

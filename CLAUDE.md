@@ -28,6 +28,9 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 | `src/hir.ts` | Typed HIR node types (every expr carries `TypeKind`) |
 | `src/lower.ts` | AST + CheckResult → HIRModule lowering |
 | `src/codegen.ts` | HIR → LLVM IR emission |
+| `src/diagnostics.ts` | Elm-style error formatting with source context and carets |
+| `src/target.ts` | Host platform detection, target triple resolution |
+| `src/lsp.ts` | LSP server (diagnostics, hover, go-to-definition) |
 | `src/main.ts` | CLI driver |
 
 ## Language Design
@@ -44,4 +47,4 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 - Use Bun for everything (not Node)
 - Type checker runs before codegen — semantic errors must be caught there, not in codegen
 - LLVM IR uses opaque `ptr` (not `i8*`) — LLVM 15+ requirement
-- Target triple: arm64-apple-darwin25.3.0
+- Target triple auto-detected via `src/target.ts` (supports darwin + linux, aarch64 + x86_64)

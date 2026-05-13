@@ -6,6 +6,7 @@ import "std/json"
 
 // ── TcpStream ──
 
+// TCP connection handle. Automatically closes the fd when dropped.
 struct TcpStream {
     fd: i32,
 }
@@ -18,6 +19,8 @@ impl Drop for TcpStream {
     }
 }
 
+// Construct an IPv4 address from four octets.
+// Example: ip4(127, 0, 0, 1) for localhost.
 fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     let a32 = a as u32
     let b32 = b as u32
@@ -26,6 +29,7 @@ fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     return a32 | (b32 << 8) | (c32 << 16) | (d32 << 24)
 }
 
+// Open a TCP connection to ip:port. Returns a TcpStream on success.
 fn tcp_connect(ip: u32, port: u16): Result<TcpStream> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
@@ -48,6 +52,7 @@ fn tcp_connect(ip: u32, port: u16): Result<TcpStream> {
     }
 }
 
+// Send string data over a TCP connection. Returns bytes sent.
 fn tcp_send(s: &TcpStream, data: &string): Result<i64> {
     unsafe {
         let n = write(s.fd, data, data.len)
@@ -58,6 +63,7 @@ fn tcp_send(s: &TcpStream, data: &string): Result<i64> {
     }
 }
 
+// Receive all data from a TCP connection until the remote end closes.
 fn tcp_recv(s: &TcpStream): Result<string> {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]
@@ -77,6 +83,7 @@ fn tcp_recv(s: &TcpStream): Result<string> {
 
 // ── TLS Stream ──
 
+// TLS/SSL connection handle. Frees SSL context and closes fd on drop.
 struct TlsStream {
     fd: i32,
     ssl: i64,
@@ -99,6 +106,7 @@ impl Drop for TlsStream {
     }
 }
 
+// Open a TLS connection to ip:port with SNI hostname for cert validation.
 fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
@@ -150,6 +158,7 @@ fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream> {
     }
 }
 
+// Send data over a TLS connection. Returns bytes sent.
 fn tls_send(s: &TlsStream, data: &string): Result<i64> {
     unsafe {
         let n = SSL_write(s.ssl as *u8, data, data.len as i32)
@@ -160,6 +169,7 @@ fn tls_send(s: &TlsStream, data: &string): Result<i64> {
     }
 }
 
+// Receive all data from a TLS connection until the remote end closes.
 fn tls_recv(s: &TlsStream): Result<string> {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]
@@ -179,6 +189,7 @@ fn tls_recv(s: &TlsStream): Result<string> {
 
 // ── DNS ──
 
+// Resolve a hostname to an IPv4 address via DNS.
 fn resolve(hostname: string): Result<u32> {
     var hints: [u8; 48] = [0; 48]
     unsafe {
@@ -203,6 +214,7 @@ fn resolve(hostname: string): Result<u32> {
 
 // ── HTTP Response ──
 
+// HTTP response with status code, headers, and body.
 struct Response {
     status: i32,
     headers: string,
@@ -210,18 +222,22 @@ struct Response {
 }
 
 impl Response {
+    // Return the response body as a string.
     fn text(self: &Self): string {
         return self.body.clone()
     }
 
+    // Parse the response body as JSON.
     fn json(self: &Self): Json {
         return json_parse(self.body.clone())
     }
 
+    // Return true if the status code is 2xx (success).
     fn ok(self: &Self): bool {
         return self.status >= 200 && self.status < 300
     }
 
+    // Look up a response header by name (case-insensitive).
     fn header(self: &Self, name: &string): string {
         return find_header(self.headers, name)
     }
@@ -416,6 +432,7 @@ fn parse_path(url: &string): string {
 
 // ── FetchOptions ──
 
+// HTTP request configuration: method, headers, and body.
 struct FetchOptions {
     method: string,
     headers: string,
@@ -530,15 +547,19 @@ fn do_fetch(url: string, opts: FetchOptions): Result<Response> {
 
 // ── Public API ──
 
+// HTTP GET request. Follows redirects automatically.
+// Example: let resp = fetch("https://example.com")!
 fn fetch(url: string): Result<Response> {
     var opts = FetchOptions { method: "GET", headers: "", body: "" }
     return do_fetch(url, opts)
 }
 
+// HTTP request with custom method, headers, and body.
 fn fetch_with(url: string, opts: FetchOptions): Result<Response> {
     return do_fetch(url, opts)
 }
 
+// HTTP POST with JSON content-type.
 fn fetch_post(url: string, body: string): Result<Response> {
     var opts = FetchOptions {
         method: "POST",
@@ -548,6 +569,7 @@ fn fetch_post(url: string, body: string): Result<Response> {
     return do_fetch(url, opts)
 }
 
+// HTTP PUT with JSON content-type.
 fn fetch_put(url: string, body: string): Result<Response> {
     var opts = FetchOptions {
         method: "PUT",
@@ -557,11 +579,13 @@ fn fetch_put(url: string, body: string): Result<Response> {
     return do_fetch(url, opts)
 }
 
+// HTTP DELETE request.
 fn fetch_delete(url: string): Result<Response> {
     var opts = FetchOptions { method: "DELETE", headers: "", body: "" }
     return do_fetch(url, opts)
 }
 
+// HTTP PATCH with JSON content-type.
 fn fetch_patch(url: string, body: string): Result<Response> {
     var opts = FetchOptions {
         method: "PATCH",

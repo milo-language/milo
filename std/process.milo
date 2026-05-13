@@ -4,6 +4,8 @@ import "std/os"
 
 // ── Simple command execution ──
 
+// Execute a shell command and return its exit code.
+// Example: let code = run("ls -la")!
 fn run(cmd: string): Result<i32> {
     unsafe {
         let status = system(cmd)
@@ -18,10 +20,13 @@ fn run(cmd: string): Result<i32> {
 
 // ── Process with lifecycle management ──
 
+// Handle to a spawned child process.
 struct Process {
     pid: i32,
 }
 
+// Fork and exec a program at the given path.
+// Returns a Process handle for lifecycle management.
 fn spawn(path: string): Result<Process> {
     unsafe {
         let pid = fork()
@@ -36,6 +41,7 @@ fn spawn(path: string): Result<Process> {
     }
 }
 
+// Block until the process exits and return its exit code.
 fn wait_for(p: &Process): Result<i32> {
     var status_buf: [u8; 4] = [0; 4]
     unsafe {
@@ -48,6 +54,7 @@ fn wait_for(p: &Process): Result<i32> {
     }
 }
 
+// Send a signal to the process (e.g., 9 for SIGKILL, 15 for SIGTERM).
 fn signal(p: &Process, sig: i32): Result<i32> {
     unsafe {
         let r = kill(p.pid, sig)

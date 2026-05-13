@@ -1,5 +1,9 @@
 // std/json — view-based JSON parser, no allocation per navigation
 
+// Zero-copy JSON value — a view into the original parsed string.
+// Navigate objects with .get(key), arrays with .at(index).
+// Extract values with .str(), .num(), .int(), .bool().
+// Check types with .is_str(), .is_num(), .is_array(), .is_object(), .is_null().
 struct Json {
     raw: string,
     start: i64,
@@ -7,67 +11,83 @@ struct Json {
 }
 
 impl Json {
+    // Look up a key in a JSON object. Returns None if not found.
     fn get(self: &Self, key: &string): Option<Json> {
         return json_get(self.raw, self.start, self.end, key)
     }
 
+    // Access a JSON array element by index. Returns None if out of bounds.
     fn at(self: &Self, index: i64): Option<Json> {
         return json_at(self.raw, self.start, self.end, index)
     }
 
+    // Extract the string value with JSON unescaping. Returns "" if not a string.
     fn str(self: &Self): string {
         return json_str(self.raw, self.start, self.end)
     }
 
+    // Extract a numeric value as f64.
     fn num(self: &Self): f64 {
         return json_num(self.raw, self.start, self.end)
     }
 
+    // Extract a numeric value as i64.
     fn int(self: &Self): i64 {
         return json_int(self.raw, self.start, self.end)
     }
 
+    // Return true if this JSON value is true.
     fn bool(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == 't'
     }
 
+    // Return true if this is a JSON null.
     fn is_null(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == 'n'
     }
 
+    // Return true if this is a JSON string.
     fn is_str(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == '"'
     }
 
+    // Return true if this is a JSON number.
     fn is_num(self: &Self): bool {
         if self.start >= self.end { return false }
         let c = self.raw[self.start]
         return c == '-' || (c >= '0' && c <= '9')
     }
 
+    // Return true if this is a JSON boolean.
     fn is_bool(self: &Self): bool {
         if self.start >= self.end { return false }
         let c = self.raw[self.start]
         return c == 't' || c == 'f'
     }
 
+    // Return true if this is a JSON array.
     fn is_array(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == '['
     }
 
+    // Return true if this is a JSON object.
     fn is_object(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == '{'
     }
 
+    // Return the number of elements in a JSON array or object.
     fn len(self: &Self): i64 {
         return json_len(self.raw, self.start, self.end)
     }
 
+    // Return the raw JSON text of this value.
     fn raw_str(self: &Self): string {
         return self.raw[self.start .. self.end]
     }
 }
 
+// Parse a JSON string and return a Json view.
+// Example: let j = json_parse("{\"name\": \"milo\"}")
 fn json_parse(s: string): Json {
     let i = skip_ws(s, 0)
     let e = skip_value(s, i)

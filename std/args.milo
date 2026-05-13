@@ -1,5 +1,7 @@
 // std/args — command-line argument parsing
 
+// Return all command-line arguments as a Vec<string>.
+// Index 0 is the program name.
 fn args(): Vec<string> {
     var result: Vec<string> = Vec.new()
     let n = _milo_arg_count()
@@ -11,6 +13,9 @@ fn args(): Vec<string> {
     return result
 }
 
+// Get the value following a --name flag.
+// Returns null if the flag is not present.
+// Example: get_flag("port") returns the value after --port.
 fn get_flag(name: &string): string? {
     let all = args()
     let flag = "--" + name
@@ -26,6 +31,7 @@ fn get_flag(name: &string): string? {
     return null
 }
 
+// Check if a --name flag is present in the arguments.
 fn has_flag(name: &string): bool {
     let all = args()
     let flag = "--" + name
