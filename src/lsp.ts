@@ -178,17 +178,17 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const program = resolveImports(parsed, sourceDir);
     new TypeChecker().check(program);
 
+    const word = getWordAt(source, line, character);
+
     // Check functions
     for (const fn of program.functions) {
       if (fn.isExtern) continue;
-      // Find variable declarations at this position
       for (const stmt of fn.body) {
         const info = findHoverInStmt(stmt, line + 1, character + 1);
         if (info) return { contents: { kind: "markdown", value: `\`\`\`milo\n${info}\n\`\`\`` } };
       }
-      // Function signature hover
       for (const sym of symbolIndex) {
-        if (sym.name === getWordAt(source, line, character) && sym.kind === "function") {
+        if (sym.name === word && sym.kind === "function") {
           const f = program.functions.find(f => f.name === sym.name);
           if (f) {
             const params = f.params.map(p => `${p.name}: ${p.type.name}`).join(", ");
@@ -196,6 +196,19 @@ function handleHover(uri: string, line: number, character: number): object | nul
             return { contents: { kind: "markdown", value: `\`\`\`milo\n${sig}\n\`\`\`` } };
           }
         }
+      }
+    }
+
+    // Enum and variant hover — handles "Result", "Err" in Result.Err(...)
+    const enumHover = findEnumHover(source, program, word, line, character);
+    if (enumHover) return { contents: { kind: "markdown", value: enumHover } };
+
+    // Struct hover
+    for (const s of program.structs) {
+      if (s.name === word) {
+        const tparams = s.typeParams.length ? `<${s.typeParams.map(t => t.name).join(", ")}>` : "";
+        const fields = s.fields.map(f => `    ${f.name}: ${f.type.name},`).join("\n");
+        return { contents: { kind: "markdown", value: `\`\`\`milo\nstruct ${s.name}${tparams} {\n${fields}\n}\n\`\`\`` } };
       }
     }
   } catch (e) {
@@ -222,6 +235,42 @@ function findHoverInStmt(stmt: Stmt, line: number, col: number): string | null {
       for (const s of arm.body) { const r = findHoverInStmt(s, line, col); if (r) return r; }
     }
   }
+  return null;
+}
+
+function formatEnumDecl(e: import("./ast").EnumDecl): string {
+  const tparams = e.typeParams.length ? `<${e.typeParams.map(t => t.name).join(", ")}>` : "";
+  const variants = e.variants.map(v => {
+    if (v.fields.length === 0) return `    ${v.name},`;
+    return `    ${v.name}(${v.fields.map(f => f.name).join(", ")}),`;
+  }).join("\n");
+  return `\`\`\`milo\nenum ${e.name}${tparams} {\n${variants}\n}\n\`\`\``;
+}
+
+function formatVariantInfo(e: import("./ast").EnumDecl, v: import("./ast").EnumVariant): string {
+  const tparams = e.typeParams.length ? `<${e.typeParams.map(t => t.name).join(", ")}>` : "";
+  const fields = v.fields.length ? `(${v.fields.map(f => f.name).join(", ")})` : "";
+  return `\`\`\`milo\n${e.name}${tparams}.${v.name}${fields}\n\`\`\``;
+}
+
+function findEnumHover(source: string, program: Program, word: string, line: number, character: number): string | null {
+  const lineText = source.split("\n")[line] ?? "";
+
+  // Check if word is an enum name
+  for (const e of program.enums) {
+    if (e.name === word) return formatEnumDecl(e);
+  }
+
+  // Check if word is a variant name — look for "EnumName.Variant" pattern on the line
+  for (const e of program.enums) {
+    for (const v of e.variants) {
+      if (v.name === word) {
+        const pat = new RegExp(`\\b${e.name}\\.${v.name}\\b`);
+        if (pat.test(lineText)) return formatVariantInfo(e, v);
+      }
+    }
+  }
+
   return null;
 }
 
