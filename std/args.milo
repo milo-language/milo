@@ -1,0 +1,40 @@
+// std/args — command-line argument parsing
+
+fn args(): Vec<string> {
+    var result: Vec<string> = Vec.new()
+    let n = _milo_arg_count()
+    var i: i64 = 0
+    while i < n {
+        result.push(_milo_arg_at(i))
+        i = i + 1
+    }
+    return result
+}
+
+fn get_flag(name: &string): string? {
+    let all = args()
+    let flag = "--" + name
+    var i: i64 = 0
+    while i < all.len {
+        if all[i] == flag {
+            if i + 1 < all.len {
+                return Option.Some(all[i + 1])
+            }
+        }
+        i = i + 1
+    }
+    return null
+}
+
+fn has_flag(name: &string): bool {
+    let all = args()
+    let flag = "--" + name
+    var i: i64 = 0
+    while i < all.len {
+        if all[i] == flag {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}

@@ -1,5 +1,6 @@
 // Router-based HTTP server — demos Milo language features
 from "std/http" import { Request, Response, serve }
+from "std/args" import { get_flag }
 
 // ── JSON response structs ──
 
@@ -218,8 +219,9 @@ fn main(): i32 {
         Route { method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzz_handler },
     ]
 
-    print("starting on :8080\n")
-    let result = serve(8080, (req: &Request) => {
+    let port_str = get_flag("port") ?? "8080"
+    let port: u16 = parse_i64(port_str) as u16
+    let result = serve(port, (req: &Request) => {
         return dispatch(routes, req)
     })
     if let Result.Err(msg) = result {
