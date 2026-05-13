@@ -1532,7 +1532,7 @@ export class Codegen {
       const fromBits = this.bitWidth(fromKind);
       const toBits = this.bitWidth(toKind);
       if (toBits > fromBits) {
-        const op = fromKind.tag === "int" && !fromKind.signed ? "zext" : "sext";
+        const op = fromKind.tag === "bool" || (fromKind.tag === "int" && !fromKind.signed) ? "zext" : "sext";
         lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
       } else {
         lines.push(`  ${tmp} = trunc ${fromTy} ${ov} to ${toTy}`);

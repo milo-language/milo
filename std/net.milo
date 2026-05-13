@@ -1,4 +1,4 @@
-// std/net — TCP client with automatic cleanup
+// std/net — TCP client, DNS, HTTP with automatic cleanup
 
 import "std/os"
 
@@ -76,7 +76,6 @@ fn tcp_recv(s: &TcpStream): Result<string> {
 // ── DNS ──
 
 fn resolve(hostname: string): Result<u32> {
-    // hints: 48-byte addrinfo struct, request IPv4 + TCP
     var hints: [u8; 48] = [0; 48]
     unsafe {
         let hints_family = (hints as *i32)
@@ -102,10 +101,53 @@ fn resolve(hostname: string): Result<u32> {
     }
 }
 
-// ── HTTP ──
+// ── HTTP Response ──
 
-// extract body from raw HTTP response by finding \r\n\r\n separator
-fn http_body(raw: &string): string {
+struct Response {
+    status: i32,
+    headers: string,
+    body: string,
+}
+
+impl Response {
+    fn text(self: &Self): string {
+        return self.body.clone()
+    }
+
+    fn ok(self: &Self): bool {
+        return self.status >= 200 && self.status < 300
+    }
+}
+
+fn parse_status(raw: &string): i32 {
+    // "HTTP/1.1 200 OK\r\n..." — status code starts at index 9
+    if raw.len < 12 { return 0 }
+    var code: i32 = 0
+    var i: i64 = 9
+    while i < raw.len && raw[i] >= '0' && raw[i] <= '9' {
+        code = code * 10 + (raw[i] as i32 - 48)
+        i = i + 1
+    }
+    return code
+}
+
+fn parse_headers(raw: &string): string {
+    // headers are between first \r\n and \r\n\r\n
+    var start: i64 = 0
+    var i: i64 = 0
+    while i + 1 < raw.len {
+        if raw[i] == '\r' && raw[i + 1] == '\n' {
+            if start == 0 { start = i + 2 }
+            if i + 3 < raw.len && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
+                return raw[start .. i]
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn parse_body(raw: &string): string {
     var i: i64 = 0
     while i + 3 < raw.len {
         if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
@@ -116,28 +158,97 @@ fn http_body(raw: &string): string {
     return raw.clone()
 }
 
-fn http_get(ip: u32, port: u16, host: string, path: string): Result<string> {
+// ── URL parsing ──
+
+fn parse_host(url: &string): string {
+    var start: i64 = 0
+    // skip "http://"
+    if url.len > 7 && url[0] == 'h' && url[4] == ':' {
+        start = 7
+    }
+    var end: i64 = start
+    while end < url.len && url[end] != '/' && url[end] != ':' {
+        end = end + 1
+    }
+    return url[start .. end]
+}
+
+fn parse_port(url: &string): u16 {
+    var i: i64 = 0
+    if url.len > 7 && url[0] == 'h' && url[4] == ':' {
+        i = 7
+    }
+    // skip host
+    while i < url.len && url[i] != '/' && url[i] != ':' {
+        i = i + 1
+    }
+    if i < url.len && url[i] == ':' {
+        i = i + 1
+        var port: i32 = 0
+        while i < url.len && url[i] >= '0' && url[i] <= '9' {
+            port = port * 10 + (url[i] as i32 - 48)
+            i = i + 1
+        }
+        return port as u16
+    }
+    return 80
+}
+
+fn parse_path(url: &string): string {
+    var i: i64 = 0
+    if url.len > 7 && url[0] == 'h' && url[4] == ':' {
+        i = 7
+    }
+    // skip host and optional port
+    while i < url.len && url[i] != '/' {
+        i = i + 1
+    }
+    if i >= url.len { return "/" }
+    return url[i .. url.len]
+}
+
+// ── HTTP client ──
+
+fn http_request(method: string, ip: u32, port: u16, host: string, path: string, req_body: &string): Result<Response> {
     let conn = tcp_connect(ip, port)
     match conn {
         Result.Ok(stream) => {
-            var req: string = "GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n\r\n"
+            var req: string = method + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
+            if req_body.len > 0 {
+                req = req + "Content-Length: " + req_body.len.to_string() + "\r\n\r\n" + req_body.clone()
+            } else {
+                req = req + "\r\n"
+            }
             let s = tcp_send(stream, req)
             match s {
                 Result.Ok(n) => {
                     let raw = tcp_recv(stream)
                     match raw {
                         Result.Ok(r) => {
-                            return Result.Ok(http_body(r))
+                            let status = parse_status(r)
+                            let headers = parse_headers(r)
+                            let body = parse_body(r)
+                            return Result.Ok(Response { status: status, headers: headers, body: body })
                         }
-                        Result.Err(msg) => {
-                            return Result.Err(msg)
-                        }
+                        Result.Err(msg) => { return Result.Err(msg) }
                     }
                 }
-                Result.Err(msg) => {
-                    return Result.Err(msg)
-                }
+                Result.Err(msg) => { return Result.Err(msg) }
             }
+        }
+        Result.Err(msg) => { return Result.Err(msg) }
+    }
+}
+
+fn fetch(url: string): Result<Response> {
+    let host = parse_host(url)
+    let port = parse_port(url)
+    let path = parse_path(url)
+    let ip_result = resolve(host.clone())
+    match ip_result {
+        Result.Ok(ip) => {
+            var empty: string = ""
+            return http_request("GET", ip, port, host, path, empty)
         }
         Result.Err(msg) => {
             return Result.Err(msg)
@@ -145,11 +256,14 @@ fn http_get(ip: u32, port: u16, host: string, path: string): Result<string> {
     }
 }
 
-fn fetch(host: string, path: string): Result<string> {
+fn fetch_post(url: string, body: string): Result<Response> {
+    let host = parse_host(url)
+    let port = parse_port(url)
+    let path = parse_path(url)
     let ip_result = resolve(host.clone())
     match ip_result {
         Result.Ok(ip) => {
-            return http_get(ip, 80, host, path)
+            return http_request("POST", ip, port, host, path, body)
         }
         Result.Err(msg) => {
             return Result.Err(msg)

@@ -1798,7 +1798,7 @@ export class TypeChecker {
       case "CastExpr": {
         const fromType = this.checkExpr(expr.operand);
         const toType = this.resolve(expr.targetType);
-        const fromOk = isNumeric(fromType) || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "unknown";
+        const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "unknown";
         const toOk = isNumeric(toType) || toType.tag === "ptr";
         if (!fromOk) {
           this.error(`cannot cast from ${typeName(fromType)}`, sp);
