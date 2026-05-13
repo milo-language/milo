@@ -4,11 +4,6 @@
 // @expect: got hello: 42
 extern fn printf(fmt: *u8, ...): i32
 
-enum Option<T> {
-    Some(T),
-    None,
-}
-
 fn main(): i32 {
     var m: HashMap<String, i32> = HashMap.new()
     m.insert("hello", 42)

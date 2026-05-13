@@ -1,0 +1,27 @@
+// @expect: 16 2 8080
+extern fn printf(fmt: *u8, ...): i32
+
+struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+// simulates passing struct pointer to C — printf reads from the pointer
+fn dump(addr: &SockAddrIn): void {
+    printf("%d %d %d\n", addr.sin_len, addr.sin_family, addr.sin_port)
+}
+
+fn main(): i32 {
+    var addr = SockAddrIn {
+        sin_len: 16,
+        sin_family: 2,
+        sin_port: 8080,
+        sin_addr: 0,
+        sin_zero: [0, 0, 0, 0, 0, 0, 0, 0],
+    }
+    dump(addr)
+    return 0
+}

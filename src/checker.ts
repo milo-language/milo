@@ -370,6 +370,7 @@ export class TypeChecker {
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
 
     this.registerBuiltinTraits();
+    this.registerBuiltinOption();
 
     // pre-register enum names so struct fields can reference enum types
     for (const e of program.enums) {
@@ -406,6 +407,8 @@ export class TypeChecker {
         });
         this.genericEnums.set(e.name, { typeParams: e.typeParams.map(tp => tp.name), variants, decl: e });
       } else {
+        // user-declared non-generic enum overrides any built-in generic of the same name
+        this.genericEnums.delete(e.name);
         // pre-register so self-referential fields (Box<Self>) resolve correctly
         this.enums.set(e.name, { variants: new Map() });
         const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
@@ -565,6 +568,23 @@ export class TypeChecker {
       typeParams: [],
       methods: [eqFn],
     };
+  }
+
+  private registerBuiltinOption() {
+    if (this.genericEnums.has("Option")) return;
+    const decl: import("./ast").EnumDecl = {
+      kind: "EnumDecl",
+      name: "Option",
+      typeParams: [{ name: "T", bounds: [] }],
+      variants: [
+        { name: "Some", fields: [{ name: "T", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
+        { name: "None", fields: [] },
+      ],
+    };
+    const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
+    variants.set("Some", { tag: 0, fields: [{ tag: "struct", name: "T" }] });
+    variants.set("None", { tag: 1, fields: [] });
+    this.genericEnums.set("Option", { typeParams: ["T"], variants, decl });
   }
 
   private registerBuiltinTraits() {
@@ -1127,6 +1147,13 @@ export class TypeChecker {
       if (expr.args.length !== 0) { this.error(`'HashMap.new' takes no arguments`, sp); }
       this.exprTypes.set(expr, hint);
       return hint;
+    }
+    if (hint && expr.kind === "ArrayLit" && hint.tag === "array") {
+      for (const elem of expr.elements) {
+        this.checkExprWithHint(elem, hint.element);
+      }
+      const result: TypeKind = { tag: "array", element: hint.element, size: expr.elements.length };
+      return this.setType(expr, result);
     }
     if (expr.kind === "EnumLit" && hint?.tag === "enum") {
       const sp = expr.span;

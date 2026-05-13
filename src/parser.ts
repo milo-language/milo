@@ -124,7 +124,12 @@ export class Parser {
       }
       this.expect(TokenKind.Gt);
     }
-    return { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    let result: MiloType = { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    // T? desugars to Option<T>
+    if (this.match(TokenKind.Question)) {
+      result = { name: "Option", typeArgs: [result], isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    }
+    return result;
   }
 
   // ── Struct ──

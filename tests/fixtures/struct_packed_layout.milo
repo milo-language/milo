@@ -1,0 +1,36 @@
+// @expect: 16
+// @expect: 2
+// @expect: 8080
+// @expect: 3232235777
+// @expect: 0 0 0 0 0 0 0 0
+extern fn printf(fmt: *u8, ...): i32
+
+struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+fn print_addr(a: &SockAddrIn): void {
+    printf("%d\n", a.sin_len)
+    printf("%d\n", a.sin_family)
+    printf("%d\n", a.sin_port)
+    printf("%u\n", a.sin_addr)
+    printf("%d %d %d %d %d %d %d %d\n",
+        a.sin_zero[0], a.sin_zero[1], a.sin_zero[2], a.sin_zero[3],
+        a.sin_zero[4], a.sin_zero[5], a.sin_zero[6], a.sin_zero[7])
+}
+
+fn main(): i32 {
+    let addr = SockAddrIn {
+        sin_len: 16,
+        sin_family: 2,
+        sin_port: 8080,
+        sin_addr: 3232235777,
+        sin_zero: [0, 0, 0, 0, 0, 0, 0, 0],
+    }
+    print_addr(addr)
+    return 0
+}

@@ -1,12 +1,7 @@
 // @expect: none
 extern fn printf(fmt: *u8, ...): i32
 
-enum Option<T> {
-    Some(T),
-    None,
-}
-
-fn try_double(opt: Option<i32>): Option<i32> {
+fn try_double(opt: i32?): i32? {
     let val = opt?
     return Option.Some(val * 2)
 }

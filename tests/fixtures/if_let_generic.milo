@@ -2,21 +2,16 @@
 // @expect: nothing
 extern fn printf(fmt: *u8, ...): i32
 
-enum Option<T> {
-    Some(T),
-    None,
-}
-
 fn main(): i32 {
     let v: i64 = 7
-    let a: Option<i64> = Option.Some(v)
+    let a: i64? = Option.Some(v)
     if let Option.Some(val) = a {
         printf("found: %ld\n", val)
     } else {
         printf("nothing\n")
     }
 
-    let b: Option<i64> = Option.None
+    let b: i64? = Option.None
     if let Option.Some(val) = b {
         printf("found: %ld\n", val)
     } else {

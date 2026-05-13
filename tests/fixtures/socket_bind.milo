@@ -1,0 +1,39 @@
+// @expect: bind ok
+extern fn printf(fmt: *u8, ...): i32
+extern fn socket(domain: i32, type: i32, protocol: i32): i32
+extern fn close(fd: i32): i32
+extern fn htons(hostshort: u16): u16
+
+// bind takes &SockAddrIn — auto-borrow passes the pointer, matching C ABI
+extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+
+struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+fn main(): i32 {
+    let fd = socket(2, 1, 0)
+    if fd < 0 {
+        printf("socket failed\n")
+        return 1
+    }
+    var addr = SockAddrIn {
+        sin_len: 16,
+        sin_family: 2,
+        sin_port: htons(0),
+        sin_addr: 0,
+        sin_zero: [0, 0, 0, 0, 0, 0, 0, 0],
+    }
+    let result = bind(fd, addr, 16)
+    if result == 0 {
+        printf("bind ok\n")
+    } else {
+        printf("bind failed: %d\n", result)
+    }
+    close(fd)
+    return 0
+}

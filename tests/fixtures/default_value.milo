@@ -2,14 +2,9 @@
 // @expect: 0
 extern fn printf(fmt: *u8, ...): i32
 
-enum Option<T> {
-    Some(T),
-    None,
-}
-
 fn main(): i32 {
     let a = Option.Some(42)
-    let b: Option<i32> = Option.None
+    let b: i32? = Option.None
     printf("%d\n", a ?? 0)
     printf("%d\n", b ?? 0)
     return 0

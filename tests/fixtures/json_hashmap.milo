@@ -3,11 +3,6 @@
 // @expect: missing=no
 extern fn printf(fmt: *u8, ...): i32
 
-enum Option<T> {
-    Some(T),
-    None,
-}
-
 enum JsonValue {
     Null,
     Bool(bool),

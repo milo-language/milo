@@ -1,0 +1,34 @@
+// @expect: 42
+// @expect: none
+extern fn printf(fmt: *u8, ...): i32
+
+fn maybe_double(x: i32?): i32? {
+    let val = x?
+    return Option.Some(val * 2)
+}
+
+fn main(): i32 {
+    let a = Option.Some(21)
+    let result = maybe_double(a)
+    match result {
+        Option.Some(v) => {
+            printf("%d\n", v)
+        }
+        Option.None => {
+            printf("none\n")
+        }
+    }
+
+    let b: i32? = Option.None
+    let result2 = maybe_double(b)
+    match result2 {
+        Option.Some(v) => {
+            printf("%d\n", v)
+        }
+        Option.None => {
+            printf("none\n")
+        }
+    }
+
+    return 0
+}
