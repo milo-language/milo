@@ -4,8 +4,12 @@
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { TypeChecker } from "./checker";
+import { resolveImports } from "./resolver";
 import type { Diagnostic } from "./diagnostics";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
+import { dirname, resolve } from "path";
+import { fileURLToPath, pathToFileURL } from "url";
+import { existsSync } from "fs";
 
 // ── JSON-RPC transport ──
 
@@ -128,7 +132,9 @@ function validateDocument(uri: string) {
   let diagnostics: Diagnostic[] = [];
   try {
     const tokens = new Lexer(source).tokenize();
-    const program = new Parser(tokens).parse();
+    const parsed = new Parser(tokens).parse();
+    const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+    const program = resolveImports(parsed, sourceDir);
     diagnostics = new TypeChecker().check(program).diagnostics;
     buildSymbolIndex(uri, program);
   } catch (e: any) {
@@ -167,7 +173,9 @@ function handleHover(uri: string, line: number, character: number): object | nul
 
   try {
     const tokens = new Lexer(source).tokenize();
-    const program = new Parser(tokens).parse();
+    const parsed = new Parser(tokens).parse();
+    const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+    const program = resolveImports(parsed, sourceDir);
     new TypeChecker().check(program);
 
     // Check functions
@@ -229,16 +237,44 @@ function getWordAt(source: string, line: number, character: number): string {
 
 // ── Go to definition ──
 
+const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
+
+function resolveImportPath(sourceDir: string, importPath: string): string | null {
+  const withExt = importPath.endsWith(".milo") ? importPath : importPath + ".milo";
+  const rel = resolve(sourceDir, withExt);
+  if (existsSync(rel)) return rel;
+  const std = resolve(STDLIB_DIR, withExt);
+  if (existsSync(std)) return std;
+  return null;
+}
+
 function handleDefinition(uri: string, line: number, character: number): object | null {
   const source = documents.get(uri);
   if (!source) return null;
+
+  const lines = source.split("\n");
+  const lineText = lines[line] ?? "";
+
+  // cmd-click on import path → jump to file
+  const importMatch = lineText.match(/(?:from\s+"([^"]+)"\s+import|import\s+"([^"]+)")/);
+  if (importMatch) {
+    const importPath = importMatch[1] ?? importMatch[2];
+    const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+    const resolved = resolveImportPath(sourceDir, importPath);
+    if (resolved) {
+      const targetUri = pathToFileURL(resolved).href;
+      return { uri: targetUri, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
+    }
+  }
 
   const word = getWordAt(source, line, character);
   if (!word) return null;
 
   try {
     const tokens = new Lexer(source).tokenize();
-    const program = new Parser(tokens).parse();
+    const parsed = new Parser(tokens).parse();
+    const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+    const program = resolveImports(parsed, sourceDir);
 
     // Find function definition
     for (const fn of program.functions) {
