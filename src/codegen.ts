@@ -82,7 +82,7 @@ export class Codegen {
   private addString(value: string): { label: string; length: number } {
     const label = `@.str.${this.strCounter++}`;
     const escaped = value
-      .replace(/\\/g, "\\5C").replace(/\n/g, "\\0A")
+      .replace(/\\/g, "\\5C").replace(/\n/g, "\\0A").replace(/\r/g, "\\0D")
       .replace(/\t/g, "\\09").replace(/\0/g, "\\00").replace(/"/g, "\\22");
     const length = value.length + 1;
     this.strings.push({ label, escaped, length });
@@ -427,16 +427,22 @@ export class Codegen {
   private genBoundsCheckedPtr(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {
     const [objLines, objPtr, objTy] = this.genLValue(expr.object);
     lines.push(...objLines);
-    const [idxLines, idxVal] = this.genExpr(expr.index);
+    const [idxLines, idxVal, idxTy] = this.genExpr(expr.index);
     lines.push(...idxLines);
 
     const match = objTy.match(/\[(\d+) x (.+)\]/);
     if (match) {
       const size = parseInt(match[1]);
       const elemTy = match[2];
-      this.emitBoundsCheck(lines, idxVal, String(size));
+      // truncate i64 index to i32 for bounds check and GEP
+      let idx32 = idxVal;
+      if (idxTy === "i64") {
+        idx32 = this.nextTemp();
+        lines.push(`  ${idx32} = trunc i64 ${idxVal} to i32`);
+      }
+      this.emitBoundsCheck(lines, idx32, String(size));
       const ptr = this.nextTemp();
-      lines.push(`  ${ptr} = getelementptr ${objTy}, ptr ${objPtr}, i32 0, i32 ${idxVal}`);
+      lines.push(`  ${ptr} = getelementptr ${objTy}, ptr ${objPtr}, i32 0, i32 ${idx32}`);
       return [lines, ptr, elemTy];
     }
     return [lines, "null", "i32"];
@@ -834,6 +840,25 @@ export class Codegen {
           const pi = this.nextTemp();
           lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
           lines.push(`  store ${elemTy} ${ev}, ptr ${pi}`);
+        }
+        const val = this.nextTemp();
+        lines.push(`  ${val} = load ${arrTy}, ptr ${alloca}`);
+        return [lines, val, arrTy];
+      }
+      case "ArrayRepeat": {
+        const elemTy = this.llvmType(expr.type.tag === "array" ? expr.type.element : { tag: "int", bits: 32, signed: true });
+        const arrTy = `[${expr.count} x ${elemTy}]`;
+        const [vl, vv] = this.genExpr(expr.value);
+        lines.push(...vl);
+        if (vv === "0" || vv === "0.0" || vv === "false") {
+          return [lines, "zeroinitializer", arrTy];
+        }
+        const alloca = this.nextTemp();
+        lines.push(`  ${alloca} = alloca ${arrTy}`);
+        for (let i = 0; i < expr.count; i++) {
+          const pi = this.nextTemp();
+          lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
+          lines.push(`  store ${elemTy} ${vv}, ptr ${pi}`);
         }
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${arrTy}, ptr ${alloca}`);

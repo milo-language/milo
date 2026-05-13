@@ -55,6 +55,7 @@ export interface Call { kind: "Call"; func: string; args: Expr[]; typeArgs?: Mil
 export interface StructLit { kind: "StructLit"; name: string; fields: { name: string; value: Expr }[]; span?: Span }
 export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string; span?: Span }
 export interface ArrayLit { kind: "ArrayLit"; elements: Expr[]; span?: Span }
+export interface ArrayRepeat { kind: "ArrayRepeat"; value: Expr; count: number; span?: Span }
 export interface IndexAccess { kind: "IndexAccess"; object: Expr; index: Expr; span?: Span }
 export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; args: Expr[]; span?: Span }
 export interface Unwrap { kind: "Unwrap"; operand: Expr; span?: Span }
@@ -65,7 +66,7 @@ export interface MethodCall { kind: "MethodCall"; object: Expr; method: string; 
 export interface ClosureExpr { kind: "Closure"; params: Param[]; retType: MiloType | null; body: Stmt[]; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr;
+  | StructLit | FieldAccess | ArrayLit | ArrayRepeat | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr;
 
 // ── Statements ──
 

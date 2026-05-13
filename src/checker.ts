@@ -1155,6 +1155,11 @@ export class TypeChecker {
       const result: TypeKind = { tag: "array", element: hint.element, size: expr.elements.length };
       return this.setType(expr, result);
     }
+    if (hint && expr.kind === "ArrayRepeat" && hint.tag === "array") {
+      this.checkExprWithHint(expr.value, hint.element);
+      const result: TypeKind = { tag: "array", element: hint.element, size: expr.count };
+      return this.setType(expr, result);
+    }
     if (expr.kind === "EnumLit" && hint?.tag === "enum") {
       const sp = expr.span;
       const hintEnum = this.enums.get(hint.name);
@@ -1460,6 +1465,10 @@ export class TypeChecker {
           }
         }
         return this.setType(expr, { tag: "array", element: elemType, size: expr.elements.length });
+      }
+      case "ArrayRepeat": {
+        const elemType = this.checkExprWithHint(expr.value, null);
+        return this.setType(expr, { tag: "array", element: elemType, size: expr.count });
       }
       case "IndexAccess": {
         const objType = this.checkExpr(expr.object);

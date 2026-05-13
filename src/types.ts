@@ -36,11 +36,12 @@ export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; 
     case "String": base = { tag: "string" }; break;
     default: base = { tag: "struct", name: ty.name }; break;
   }
-  if (ty.isArray) return { tag: "array", element: base, size: ty.arraySize };
-  if (ty.isPtr) return { tag: "ptr", inner: base };
-  if (ty.isRef) return { tag: "ref", inner: base, mutable: false };
-  if (ty.isRefMut) return { tag: "ref", inner: base, mutable: true };
-  return base;
+  let result: TypeKind = base;
+  if (ty.isArray) result = { tag: "array", element: base, size: ty.arraySize };
+  if (ty.isPtr) return { tag: "ptr", inner: result };
+  if (ty.isRef) return { tag: "ref", inner: result, mutable: false };
+  if (ty.isRefMut) return { tag: "ref", inner: result, mutable: true };
+  return result;
 }
 
 export function typeEq(a: TypeKind, b: TypeKind): boolean {

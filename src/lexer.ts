@@ -77,7 +77,7 @@ export class Lexer {
   private lexString(line: number, col: number): Token {
     this.advance(); // opening "
     let value = "";
-    const escapes: Record<string, string> = { n: "\n", t: "\t", "\\": "\\", '"': '"', "0": "\0" };
+    const escapes: Record<string, string> = { n: "\n", t: "\t", r: "\r", "\\": "\\", '"': '"', "0": "\0" };
     while (this.peek() !== '"') {
       if (this.pos >= this.source.length) this.error("unterminated string", line, col);
       const ch = this.advance();

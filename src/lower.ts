@@ -268,6 +268,8 @@ class LowerCtx {
       }
       case "ArrayLit":
         return { kind: "ArrayLit", elements: expr.elements.map(e => this.lowerExpr(e)), type, span: expr.span };
+      case "ArrayRepeat":
+        return { kind: "ArrayRepeat", value: this.lowerExpr(expr.value), count: expr.count, type, span: expr.span };
       case "IndexAccess":
         return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, span: expr.span };
       case "EnumLit": {

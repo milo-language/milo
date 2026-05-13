@@ -684,6 +684,12 @@ export class Parser {
     const elements: Expr[] = [];
     while (!this.at(TokenKind.RBracket)) {
       elements.push(this.parseExpr());
+      // [value; count] repeat syntax
+      if (elements.length === 1 && this.match(TokenKind.Semicolon)) {
+        const count = parseInt(this.expect(TokenKind.Int).value);
+        this.expect(TokenKind.RBracket);
+        return { kind: "ArrayRepeat", value: elements[0], count, span: s };
+      }
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBracket);

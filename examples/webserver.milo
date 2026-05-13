@@ -1,0 +1,211 @@
+// Minimal HTTP server — pure Milo + libc, zero dependencies
+extern fn printf(fmt: *u8, ...): i32
+extern fn socket(domain: i32, type: i32, protocol: i32): i32
+extern fn close(fd: i32): i32
+extern fn htons(hostshort: u16): u16
+extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
+extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+extern fn listen(sockfd: i32, backlog: i32): i32
+extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
+extern fn read(fd: i32, buf: &mut [u8; 4096], nbyte: i64): i64
+extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
+
+struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+// ── HTTP parsing ──
+
+fn is_space(ch: u8): bool {
+    return ch == ' '
+}
+
+fn buf_to_string(buf: &[u8; 4096], start: i64, end: i64): String {
+    var s: String = ""
+    var i: i64 = start
+    while i < end {
+        s.push(buf[i])
+        i = i + 1
+    }
+    return s
+}
+
+fn parse_method(buf: &[u8; 4096], n: i64): String {
+    var i: i64 = 0
+    while i < n && !is_space(buf[i]) {
+        i = i + 1
+    }
+    return buf_to_string(buf, 0, i)
+}
+
+fn parse_path(buf: &[u8; 4096], n: i64): String {
+    var i: i64 = 0
+    // skip method
+    while i < n && !is_space(buf[i]) {
+        i = i + 1
+    }
+    // skip space
+    while i < n && is_space(buf[i]) {
+        i = i + 1
+    }
+    let start = i
+    // read path
+    while i < n && !is_space(buf[i]) {
+        i = i + 1
+    }
+    return buf_to_string(buf, start, i)
+}
+
+// ── Response helpers ──
+
+fn send_response(fd: i32, status: i32, content_type: String, body: String): void {
+    var resp: String = "HTTP/1.1 "
+    if status == 200 {
+        resp = resp + "200 OK"
+    } else if status == 404 {
+        resp = resp + "404 Not Found"
+    } else {
+        resp = resp + "500 Internal Server Error"
+    }
+    resp = resp + "\r\nContent-Type: "
+    resp = resp + content_type
+    resp = resp + "\r\nConnection: close\r\n\r\n"
+    resp = resp + body
+    write(fd, resp, resp.len)
+}
+
+fn handle_index(fd: i32): void {
+    var html: String = "<!DOCTYPE html><html><head><title>Milo Server</title>"
+    html = html + "<style>body{font-family:system-ui;max-width:640px;margin:40px auto;padding:0 20px;}"
+    html = html + "h1{color:#2563eb}pre{background:#f1f5f9;padding:16px;border-radius:8px}</style></head>"
+    html = html + "<body><h1>Hello from Milo!</h1>"
+    html = html + "<p>This page is served by a webserver written entirely in Milo,</p>"
+    html = html + "<p>a memory-safe systems language that compiles to LLVM IR.</p>"
+    html = html + "<pre>extern fn socket(domain: i32, type: i32, protocol: i32): i32\n"
+    html = html + "extern fn bind(sockfd: i32, addr: &amp;SockAddrIn, addrlen: u32): i32\n"
+    html = html + "extern fn listen(sockfd: i32, backlog: i32): i32</pre>"
+    html = html + "<p>Try: <a href='/hello'>/hello</a> | <a href='/json'>/json</a> | <a href='/stats'>/stats</a></p>"
+    html = html + "</body></html>"
+    send_response(fd, 200, "text/html", html)
+}
+
+fn handle_hello(fd: i32): void {
+    send_response(fd, 200, "text/plain", "Hello, World!")
+}
+
+fn handle_json(fd: i32): void {
+    var json: String = "{\"language\":\"milo\",\"backend\":\"llvm\",\"memory_safe\":true,\"gc\":false}"
+    send_response(fd, 200, "application/json", json)
+}
+
+fn handle_not_found(fd: i32, path: String): void {
+    var body: String = "404 - not found: "
+    body = body + path
+    send_response(fd, 404, "text/plain", body)
+}
+
+// ── Main ──
+
+fn main(): i32 {
+    let port: u16 = 8080
+
+    let fd = socket(2, 1, 0)
+    if fd < 0 {
+        printf("error: socket() failed\n")
+        return 1
+    }
+
+    var one: i32 = 1
+    setsockopt(fd, 65535, 4, one, 4)
+
+    var addr = SockAddrIn {
+        sin_len: 16,
+        sin_family: 2,
+        sin_port: htons(port),
+        sin_addr: 0,
+        sin_zero: [0; 8],
+    }
+
+    if bind(fd, addr, 16) < 0 {
+        printf("error: bind() failed\n")
+        close(fd)
+        return 1
+    }
+
+    if listen(fd, 128) < 0 {
+        printf("error: listen() failed\n")
+        close(fd)
+        return 1
+    }
+
+    printf("milo webserver listening on http://localhost:%d\n", port)
+
+    var request_count: i64 = 0
+
+    while true {
+        var client_addr = SockAddrIn {
+            sin_len: 0,
+            sin_family: 0,
+            sin_port: 0,
+            sin_addr: 0,
+            sin_zero: [0; 8],
+        }
+        var addrlen: u32 = 16
+        let client = accept(fd, client_addr, addrlen)
+        if client < 0 {
+            continue
+        }
+
+        var buf: [u8; 4096] = [0; 4096]
+        let n = read(client, buf, 4096)
+        if n > 0 {
+            let method = parse_method(buf, n)
+            let path = parse_path(buf, n)
+            request_count = request_count + 1
+
+            printf("[%lld] %s %s\n", request_count, method, path)
+
+            if path == "/" {
+                handle_index(client)
+            } else if path == "/hello" {
+                handle_hello(client)
+            } else if path == "/json" {
+                handle_json(client)
+            } else if path == "/stats" {
+                var body: String = "{\"requests\":"
+                // manual int-to-string since we don't have format strings yet
+                var tmp: String = ""
+                var num: i64 = request_count
+                if num == 0 {
+                    tmp = "0"
+                } else {
+                    while num > 0 {
+                        let digit: u8 = (num % 10) as u8
+                    tmp.push('0' + digit)
+                        num = num / 10
+                    }
+                }
+                // reverse tmp
+                var rev: String = ""
+                var ri: i64 = tmp.len - 1
+                while ri >= 0 {
+                    rev.push(tmp[ri])
+                    ri = ri - 1
+                }
+                body = body + rev + "}"
+                send_response(client, 200, "application/json", body)
+            } else {
+                handle_not_found(client, path)
+            }
+        }
+
+        close(client)
+    }
+
+    close(fd)
+    return 0
+}
