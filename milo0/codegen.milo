@@ -18,7 +18,7 @@ fn ll_type(t: &string): string {
     if t == "void" { return "void" }
     if t == "ptr" { return "ptr" }
     if t.len > 0 && t[0] == 42 { return "ptr" }
-    if t == "string" { return "ptr" }
+    if t == "string" { return "%String" }
     // Built-in generic containers — all pointer-shaped at LL.
     if t.len >= 4 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
         return "ptr" // Box<...>
@@ -65,6 +65,9 @@ struct Cgen {
     declared_printf: bool,
     declared_putchar: bool,
     declared_malloc: bool,
+    declared_memcpy: bool,
+    declared_memcmp: bool,
+    declared_string_ty: bool,
     // Struct table encoded as one big string: "Name|f1:t1|f2:t2;Name2|fa:ta;..."
     // Lookups walk the string and substr — substrings copy bytes, so no aliasing pain
     // (versus HashMap<string, string> or Vec<StructDecl> which both reuse heap pointers).
@@ -85,6 +88,9 @@ fn cgen_new(): Cgen {
         declared_printf: false,
         declared_putchar: false,
         declared_malloc: false,
+        declared_memcpy: false,
+        declared_memcmp: false,
+        declared_string_ty: false,
         struct_db: "",
         enum_db: "",
         enum_payload_db: "",
@@ -346,6 +352,152 @@ fn emit_g(cg: &mut Cgen, s: &string): void {
 // ── String literal handling ──
 // Emit a global constant for a Milo string literal. Returns the @.strN label.
 // Handles escape sequences \n \t \r \\ \" \0.
+fn ensure_string_ty(cg: &mut Cgen): void {
+    if !cg.declared_string_ty {
+        emit_g(cg, "%String = type { ptr, i64, i64 }\n")
+        cg.declared_string_ty = true
+    }
+}
+
+fn ensure_malloc(cg: &mut Cgen): void {
+    if !cg.declared_malloc {
+        emit_g(cg, "declare ptr @malloc(i64)\n")
+        cg.declared_malloc = true
+    }
+}
+
+fn ensure_memcpy(cg: &mut Cgen): void {
+    if !cg.declared_memcpy {
+        emit_g(cg, "declare ptr @memcpy(ptr, ptr, i64)\n")
+        cg.declared_memcpy = true
+    }
+}
+
+fn ensure_memcmp(cg: &mut Cgen): void {
+    if !cg.declared_memcmp {
+        emit_g(cg, "declare i32 @memcmp(ptr, ptr, i64)\n")
+        cg.declared_memcmp = true
+    }
+}
+
+// String concat: malloc(a.len + b.len + 1), memcpy from both, build %String.
+fn gen_string_concat(cg: &mut Cgen, av: string, bv: string): Val {
+    ensure_string_ty(cg)
+    ensure_malloc(cg)
+    ensure_memcpy(cg)
+    let a_data_id = cg.temp
+    cg.temp = cg.temp + 1
+    let a_data = "%t" + a_data_id.to_string()
+    emit(cg, "  " + a_data + " = extractvalue %String " + av.clone() + ", 0\n")
+    let a_len_id = cg.temp
+    cg.temp = cg.temp + 1
+    let a_len = "%t" + a_len_id.to_string()
+    emit(cg, "  " + a_len + " = extractvalue %String " + av + ", 1\n")
+    let b_data_id = cg.temp
+    cg.temp = cg.temp + 1
+    let b_data = "%t" + b_data_id.to_string()
+    emit(cg, "  " + b_data + " = extractvalue %String " + bv.clone() + ", 0\n")
+    let b_len_id = cg.temp
+    cg.temp = cg.temp + 1
+    let b_len = "%t" + b_len_id.to_string()
+    emit(cg, "  " + b_len + " = extractvalue %String " + bv + ", 1\n")
+    let total_id = cg.temp
+    cg.temp = cg.temp + 1
+    let total = "%t" + total_id.to_string()
+    emit(cg, "  " + total + " = add i64 " + a_len.clone() + ", " + b_len.clone() + "\n")
+    let alloc_sz_id = cg.temp
+    cg.temp = cg.temp + 1
+    let alloc_sz = "%t" + alloc_sz_id.to_string()
+    emit(cg, "  " + alloc_sz + " = add i64 " + total.clone() + ", 1\n")
+    let buf_id = cg.temp
+    cg.temp = cg.temp + 1
+    let buf = "%t" + buf_id.to_string()
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + alloc_sz + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + buf.clone() + ", ptr " + a_data + ", i64 " + a_len + ")\n")
+    let dst_id = cg.temp
+    cg.temp = cg.temp + 1
+    let dst = "%t" + dst_id.to_string()
+    emit(cg, "  " + dst + " = getelementptr i8, ptr " + buf.clone() + ", i64 " + a_len.clone() + "\n")
+    emit(cg, "  call ptr @memcpy(ptr " + dst + ", ptr " + b_data + ", i64 " + b_len + ")\n")
+    let null_id = cg.temp
+    cg.temp = cg.temp + 1
+    let null_ptr = "%t" + null_id.to_string()
+    emit(cg, "  " + null_ptr + " = getelementptr i8, ptr " + buf.clone() + ", i64 " + total.clone() + "\n")
+    emit(cg, "  store i8 0, ptr " + null_ptr + "\n")
+    let s0_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s0 = "%t" + s0_id.to_string()
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s1 = "%t" + s1_id.to_string()
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + total + ", 1\n")
+    return Val { v: s1, ty: "string".clone() }
+}
+
+// String equality (compare lengths, then memcmp). Returns i1.
+fn gen_string_eq(cg: &mut Cgen, av: string, bv: string, want_eq: bool): Val {
+    ensure_memcmp(cg)
+    let a_len_id = cg.temp
+    cg.temp = cg.temp + 1
+    let a_len = "%t" + a_len_id.to_string()
+    emit(cg, "  " + a_len + " = extractvalue %String " + av.clone() + ", 1\n")
+    let b_len_id = cg.temp
+    cg.temp = cg.temp + 1
+    let b_len = "%t" + b_len_id.to_string()
+    emit(cg, "  " + b_len + " = extractvalue %String " + bv.clone() + ", 1\n")
+    let len_eq_id = cg.temp
+    cg.temp = cg.temp + 1
+    let len_eq = "%t" + len_eq_id.to_string()
+    emit(cg, "  " + len_eq + " = icmp eq i64 " + a_len.clone() + ", " + b_len + "\n")
+    let a_data_id = cg.temp
+    cg.temp = cg.temp + 1
+    let a_data = "%t" + a_data_id.to_string()
+    emit(cg, "  " + a_data + " = extractvalue %String " + av + ", 0\n")
+    let b_data_id = cg.temp
+    cg.temp = cg.temp + 1
+    let b_data = "%t" + b_data_id.to_string()
+    emit(cg, "  " + b_data + " = extractvalue %String " + bv + ", 0\n")
+    let mc_id = cg.temp
+    cg.temp = cg.temp + 1
+    let mc = "%t" + mc_id.to_string()
+    emit(cg, "  " + mc + " = call i32 @memcmp(ptr " + a_data + ", ptr " + b_data + ", i64 " + a_len + ")\n")
+    let mc_zero_id = cg.temp
+    cg.temp = cg.temp + 1
+    let mc_zero = "%t" + mc_zero_id.to_string()
+    emit(cg, "  " + mc_zero + " = icmp eq i32 " + mc + ", 0\n")
+    let combined_id = cg.temp
+    cg.temp = cg.temp + 1
+    let combined = "%t" + combined_id.to_string()
+    emit(cg, "  " + combined + " = and i1 " + len_eq + ", " + mc_zero + "\n")
+    if want_eq { return Val { v: combined, ty: "bool".clone() } }
+    let neg_id = cg.temp
+    cg.temp = cg.temp + 1
+    let neg = "%t" + neg_id.to_string()
+    emit(cg, "  " + neg + " = xor i1 " + combined + ", 1\n")
+    return Val { v: neg, ty: "bool".clone() }
+}
+
+// Build %String aggregate { @.strN, len, 0 } for a string literal.
+fn gen_string_lit(cg: &mut Cgen, raw: string): Val {
+    ensure_string_ty(cg)
+    let label = emit_string_lit(cg, raw.clone())
+    let len = raw.len
+    let s0_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s0 = "%t" + s0_id.to_string()
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + label.clone() + ", 0\n")
+    let s1_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s1 = "%t" + s1_id.to_string()
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len.to_string() + ", 1\n")
+    let s2_id = cg.temp
+    cg.temp = cg.temp + 1
+    let s2 = "%t" + s2_id.to_string()
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 0, 2\n")
+    return Val { v: s2, ty: "string".clone() }
+}
+
 fn emit_string_lit(cg: &mut Cgen, raw: &string): string {
     let id = cg.str_id
     cg.str_id = cg.str_id + 1
@@ -549,8 +701,7 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
         }
         Expr.BoolLit(b) => { return gen_bool_const(b) }
         Expr.StrLit(s) => {
-            let label = emit_string_lit(cg, s)
-            return Val { v: label, ty: "ptr" }
+            return gen_string_lit(cg, s)
         }
         Expr.Ident(name) => {
             let local = locals_take(locs, name)
@@ -582,17 +733,27 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
             return v
         }
         Expr.Binary(op, l, r) => {
-            // Pre-clone every read of lv/rv fields. Milo strings move on each use, and the
-            // codegen-text emit + the returned Val both need lv.ty etc, so we materialize
-            // independent string copies up front.
             let lv = gen_expr(cg, l, locs, sigs, hint_ty)
             let lv_ty_a = lv.ty.clone()
             let lv_ty_b = lv.ty.clone()
             let lv_ty_c = lv.ty.clone()
             let lv_ty_d = lv.ty.clone()
+            let lv_ty_for_check = lv.ty.clone()
             let lv_v = lv.v.clone()
+            let lv_v_str = lv.v.clone()
             let rv = gen_expr(cg, r, locs, sigs, lv_ty_a)
             let rv_v = rv.v.clone()
+            let rv_v_str = rv.v.clone()
+            // String operations: concat (+) and equality (==/!=).
+            let lv_ll_check = ll_type(lv_ty_for_check)
+            if lv_ll_check == "%String" {
+                if op == TokKind.Plus {
+                    return gen_string_concat(cg, lv_v_str, rv_v_str)
+                }
+                if op == TokKind.EqEq || op == TokKind.NotEq {
+                    return gen_string_eq(cg, lv_v_str, rv_v_str, op == TokKind.EqEq)
+                }
+            }
             let t_id = cg.temp
             cg.temp = cg.temp + 1
             let t_emit = "%t" + t_id.to_string()
@@ -657,10 +818,19 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
             var ai: i64 = 0
             while ai < arg_vals.len {
                 if ai > 0 { arg_str = arg_str + ", " }
-                // Cache loaded element — Vec index zeros the slot for needs-drop element types,
-                // so a second `arg_vals[ai].field` access would see an empty Val.
                 let elem = arg_vals[ai]
-                arg_str = arg_str + elem.ty + " " + elem.v
+                let elem_ty = elem.ty.clone()
+                let elem_v = elem.v.clone()
+                let elem_ll = ll_type(elem_ty.clone())
+                if elem_ll == "%String" {
+                    let p_id = cg.temp
+                    cg.temp = cg.temp + 1
+                    let p = "%t" + p_id.to_string()
+                    emit(cg, "  " + p + " = extractvalue %String " + elem_v + ", 0\n")
+                    arg_str = arg_str + "ptr " + p
+                } else {
+                    arg_str = arg_str + elem_ll + " " + elem_v
+                }
                 ai = ai + 1
             }
             let ret_raw = cgen_find_ret(cg, name)
@@ -720,7 +890,7 @@ fn gen_assign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec
             let local = locals_take(locs, name)
             if local.addr.len == 0 { return }
             let v = gen_expr(cg, value, locs, sigs, local.ty.clone())
-            emit(cg, "  store " + v.ty + " " + v.v + ", ptr " + local.addr + "\n")
+            emit(cg, "  store " + ll_type(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
         }
         Expr.FieldAccess(object, field) => {
             let lv = gen_lvalue(cg, object, locs)
@@ -999,6 +1169,19 @@ fn gen_struct_lit(cg: &mut Cgen, name: string, fields: Vec<ExprField>, locs: &Ve
 
 fn gen_field_access(cg: &mut Cgen, object: Box<Expr>, field: string, locs: &Vec<Local>): Val {
     let lv = gen_lvalue(cg, object, locs)
+    // Built-in: string.len — extract i64 length field.
+    let lvty_ll = ll_type(lv.ty.clone())
+    if lvty_ll == "%String" && field == "len" {
+        let load_id = cg.temp
+        cg.temp = cg.temp + 1
+        let load_tmp = "%t" + load_id.to_string()
+        emit(cg, "  " + load_tmp + " = load %String, ptr " + lv.v + "\n")
+        let len_id = cg.temp
+        cg.temp = cg.temp + 1
+        let len_tmp = "%t" + len_id.to_string()
+        emit(cg, "  " + len_tmp + " = extractvalue %String " + load_tmp + ", 1\n")
+        return Val { v: len_tmp, ty: "i64".clone() }
+    }
     var raw_name: string = lv.ty.clone()
     if raw_name.len > 0 && raw_name[0] == 37 {
         let stripped = raw_name[1..raw_name.len]
@@ -1095,12 +1278,13 @@ fn gen_stmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig
             let v = gen_expr(cg, value, locs, sigs, ty.clone())
             let addr = "%" + name.clone() + "_addr_" + cg.temp.to_string()
             cg.temp = cg.temp + 1
-            let vty = v.ty
+            let vty_raw = v.ty
+            let vty_ll = ll_type(vty_raw.clone())
             let vv = v.v
-            emit(cg, "  " + addr.clone() + " = alloca " + vty.clone() + "\n")
-            emit(cg, "  store " + vty.clone() + " " + vv + ", ptr " + addr.clone() + "\n")
+            emit(cg, "  " + addr.clone() + " = alloca " + vty_ll.clone() + "\n")
+            emit(cg, "  store " + vty_ll.clone() + " " + vv + ", ptr " + addr.clone() + "\n")
             var rty: string = ""
-            if ty.len == 0 { rty = vty.clone() } else { rty = ty.clone() }
+            if ty.len == 0 { rty = vty_raw.clone() } else { rty = ty.clone() }
             locs.push(Local { name: name, ty: rty, addr: addr })
             return false
         }
