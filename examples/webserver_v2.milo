@@ -1,0 +1,90 @@
+// HTTP server using std/http — clean, high-level API
+import "std/http.milo"
+
+fn handler(req: &Request): Response {
+    if req.path == "/" {
+        return Response.Html(index_page())
+    }
+    if req.path == "/hello" {
+        return Response.Text("Hello, World!")
+    }
+    if req.path == "/json" {
+        return Response.Json("{\"language\":\"milo\",\"backend\":\"llvm\",\"memory_safe\":true}")
+    }
+    return Response.NotFound
+}
+
+fn index_page(): String {
+    var h: String = "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    h = h + "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+    h = h + "<title>Milo</title><style>"
+    h = h + "*{margin:0;padding:0;box-sizing:border-box}"
+    h = h + "body{font-family:'SF Mono',Menlo,Consolas,monospace;background:#0a0a0a;color:#e4e4e7;min-height:100vh}"
+    h = h + ".hero{padding:80px 24px 60px;text-align:center;background:linear-gradient(180deg,#18181b,#0a0a0a)}"
+    h = h + ".hero h1{font-size:3.5rem;font-weight:700;background:linear-gradient(135deg,#60a5fa,#a78bfa,#f472b6);-webkit-background-clip:text;-webkit-text-fill-color:transparent;margin-bottom:8px}"
+    h = h + ".sub{color:#71717a;font-size:0.95rem;margin-bottom:40px}"
+    h = h + ".badge{display:inline-block;padding:6px 16px;border-radius:999px;font-size:0.75rem;font-weight:600;border:1px solid #27272a;color:#a1a1aa;margin:0 4px}"
+    h = h + ".badge.g{border-color:#166534;color:#4ade80;background:#052e16}"
+    h = h + ".cards{max-width:720px;margin:0 auto;padding:0 24px 80px;display:grid;grid-template-columns:1fr 1fr;gap:16px}"
+    h = h + ".card{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:24px;transition:border-color .2s}"
+    h = h + ".card:hover{border-color:#3f3f46}.card h3{font-size:.9rem;color:#fafafa;margin-bottom:8px}"
+    h = h + ".card p{font-size:.8rem;color:#71717a;line-height:1.5}.card code{color:#60a5fa;font-size:.75rem}"
+    h = h + ".src{max-width:720px;margin:0 auto;padding:0 24px 80px}"
+    h = h + ".src h2{font-size:1rem;color:#fafafa;margin-bottom:16px}"
+    h = h + ".src pre{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:20px;overflow-x:auto;font-size:.78rem;line-height:1.7;color:#a1a1aa}"
+    h = h + ".kw{color:#c084fc}.fn{color:#60a5fa}.ty{color:#4ade80}.st{color:#fbbf24}.cm{color:#525252}"
+    h = h + ".ep{max-width:720px;margin:0 auto;padding:0 24px 60px}"
+    h = h + ".ep h2{font-size:1rem;color:#fafafa;margin-bottom:16px}"
+    h = h + ".ep a{display:flex;align-items:center;gap:12px;padding:12px 16px;background:#18181b;border:1px solid #27272a;border-radius:8px;margin-bottom:8px;text-decoration:none;transition:border-color .2s}"
+    h = h + ".ep a:hover{border-color:#3f3f46}"
+    h = h + ".m{font-size:.7rem;font-weight:700;color:#4ade80;min-width:36px}"
+    h = h + ".p{color:#e4e4e7;font-size:.85rem}.d{color:#52525b;font-size:.75rem;margin-left:auto}"
+    h = h + ".foot{text-align:center;padding:40px 24px;color:#3f3f46;font-size:.75rem;border-top:1px solid #18181b}"
+    h = h + "</style></head><body>"
+
+    h = h + "<div class='hero'><h1>milo</h1>"
+    h = h + "<p class='sub'>a memory-safe systems language compiled to LLVM IR</p>"
+    h = h + "<span class='badge g'>server running</span>"
+    h = h + "<span class='badge'>zero dependencies</span>"
+    h = h + "<span class='badge'>pure libc FFI</span></div>"
+
+    h = h + "<div class='cards'>"
+    h = h + "<div class='card'><h3>Memory Safe</h3><p>Move semantics, ownership tracking, no GC. Use-after-move caught at compile time.</p></div>"
+    h = h + "<div class='card'><h3>LLVM Backend</h3><p>Compiles to LLVM IR, then native code via clang. Full optimization pipeline.</p></div>"
+    h = h + "<div class='card'><h3>Zero-Cost FFI</h3><p>Call any C function with <code>extern fn</code>. Strings auto-coerce to <code>*u8</code>.</p></div>"
+    h = h + "<div class='card'><h3>Traits + Generics</h3><p>Monomorphized generics, trait bounds, <code>@derive</code>. Zero runtime cost.</p></div>"
+    h = h + "</div>"
+
+    // source code showcase — this is the actual server code
+    h = h + "<div class='src'><h2>This Server's Source Code</h2><pre>"
+    h = h + "<span class='kw'>import</span> <span class='st'>\"std/http.milo\"</span>\n\n"
+    h = h + "<span class='kw'>fn</span> <span class='fn'>handler</span>(req: &amp;<span class='ty'>Request</span>): <span class='ty'>Response</span> {\n"
+    h = h + "    <span class='kw'>if</span> req.path == <span class='st'>\"/\"</span> {\n"
+    h = h + "        <span class='kw'>return</span> <span class='ty'>Response</span>.<span class='fn'>Html</span>(index_page())\n"
+    h = h + "    }\n"
+    h = h + "    <span class='kw'>if</span> req.path == <span class='st'>\"/hello\"</span> {\n"
+    h = h + "        <span class='kw'>return</span> <span class='ty'>Response</span>.<span class='fn'>Text</span>(<span class='st'>\"Hello, World!\"</span>)\n"
+    h = h + "    }\n"
+    h = h + "    <span class='kw'>return</span> <span class='ty'>Response</span>.<span class='fn'>NotFound</span>\n"
+    h = h + "}\n\n"
+    h = h + "<span class='kw'>fn</span> <span class='fn'>main</span>(): <span class='ty'>i32</span> {\n"
+    h = h + "    serve(<span class='st'>8080</span>, handler)\n"
+    h = h + "    <span class='kw'>return</span> <span class='st'>0</span>\n"
+    h = h + "}"
+    h = h + "</pre></div>"
+
+    h = h + "<div class='ep'><h2>Try the API</h2>"
+    h = h + "<a href='/'><span class='m'>GET</span><span class='p'>/</span><span class='d'>this page</span></a>"
+    h = h + "<a href='/hello'><span class='m'>GET</span><span class='p'>/hello</span><span class='d'>plain text</span></a>"
+    h = h + "<a href='/json'><span class='m'>GET</span><span class='p'>/json</span><span class='d'>language info</span></a>"
+    h = h + "</div>"
+
+    h = h + "<div class='foot'>served by milo | compiled to native arm64 via LLVM</div>"
+    h = h + "</body></html>"
+    return h
+}
+
+fn main(): i32 {
+    serve(8080, handler)
+    return 0
+}

@@ -677,7 +677,43 @@ export class Codegen {
       }
       case "Ident": {
         const local = this.locals.get(expr.name);
-        if (!local) { console.error(`error[codegen]: undefined variable '${expr.name}'`); process.exit(1); }
+        if (!local) {
+          // named function used as value — generate trampoline with closure calling convention
+          if (this.fnSigs.has(expr.name)) {
+            const sig = this.fnSigs.get(expr.name)!;
+            const trampolineName = `__trampoline_${expr.name}`;
+            if (!this.fnSigs.has(trampolineName)) {
+              const paramNames = sig.paramTypes.map((_, i) => `p${i}`);
+              const trampolineParams = [`ptr %env`, ...sig.paramTypes.map((t, i) => `${t} %${paramNames[i]}`)].join(", ");
+              const fwdArgs = sig.paramTypes.map((t, i) => `${t} %${paramNames[i]}`).join(", ");
+              const body: string[] = [];
+              body.push(`define ${sig.retType} @${trampolineName}(${trampolineParams}) {`);
+              body.push("entry:");
+              if (sig.retType === "void") {
+                body.push(`  call void @${expr.name}(${fwdArgs})`);
+                body.push("  ret void");
+              } else {
+                body.push(`  %r = call ${sig.retType} @${expr.name}(${fwdArgs})`);
+                body.push(`  ret ${sig.retType} %r`);
+              }
+              body.push("}");
+              this.closureBodies.push(body);
+              this.fnSigs.set(trampolineName, sig);
+            }
+            const alloca = this.nextTemp();
+            lines.push(`  ${alloca} = alloca { ptr, ptr }`);
+            const fpSlot = this.nextTemp();
+            lines.push(`  ${fpSlot} = getelementptr { ptr, ptr }, ptr ${alloca}, i32 0, i32 0`);
+            lines.push(`  store ptr @${trampolineName}, ptr ${fpSlot}`);
+            const envSlot = this.nextTemp();
+            lines.push(`  ${envSlot} = getelementptr { ptr, ptr }, ptr ${alloca}, i32 0, i32 1`);
+            lines.push(`  store ptr null, ptr ${envSlot}`);
+            const val = this.nextTemp();
+            lines.push(`  ${val} = load { ptr, ptr }, ptr ${alloca}`);
+            return [lines, val, "{ ptr, ptr }"];
+          }
+          console.error(`error[codegen]: undefined variable '${expr.name}'`); process.exit(1);
+        }
         if (local.isRef) {
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = load ptr, ptr ${this.localAddr(expr.name)}`);

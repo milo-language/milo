@@ -1,0 +1,173 @@
+// std/http — high-level HTTP server for Milo
+// Usage:
+//   import "std/http.milo"
+//   fn handler(req: &Request): Response { ... }
+//   fn main(): i32 { serve(8080, handler); return 0 }
+
+extern fn printf(fmt: *u8, ...): i32
+extern fn socket(domain: i32, type: i32, protocol: i32): i32
+extern fn close(fd: i32): i32
+extern fn htons(hostshort: u16): u16
+extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
+extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+extern fn listen(sockfd: i32, backlog: i32): i32
+extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
+extern fn read(fd: i32, buf: &mut [u8; 8192], nbyte: i64): i64
+extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
+
+struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+// ── Public types ──
+
+struct Request {
+    method: String,
+    path: String,
+}
+
+enum Response {
+    Text(String),
+    Html(String),
+    Json(String),
+    NotFound,
+    Status(i32, String, String),
+}
+
+// ── Internal helpers ──
+
+fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): String {
+    var s: String = ""
+    var i: i64 = start
+    while i < end {
+        s.push(buf[i])
+        i = i + 1
+    }
+    return s
+}
+
+fn parse_request(buf: &[u8; 8192], n: i64): Request {
+    var i: i64 = 0
+    // method
+    while i < n && buf[i] != ' ' {
+        i = i + 1
+    }
+    let method = buf_to_str(buf, 0, i)
+    // skip space
+    while i < n && buf[i] == ' ' {
+        i = i + 1
+    }
+    let path_start = i
+    while i < n && buf[i] != ' ' {
+        i = i + 1
+    }
+    let path = buf_to_str(buf, path_start, i)
+    return Request { method: method, path: path }
+}
+
+fn send_raw(fd: i32, status: i32, content_type: String, body: String): void {
+    var resp: String = "HTTP/1.1 "
+    if status == 200 {
+        resp = resp + "200 OK"
+    } else if status == 201 {
+        resp = resp + "201 Created"
+    } else if status == 204 {
+        resp = resp + "204 No Content"
+    } else if status == 301 {
+        resp = resp + "301 Moved Permanently"
+    } else if status == 400 {
+        resp = resp + "400 Bad Request"
+    } else if status == 404 {
+        resp = resp + "404 Not Found"
+    } else if status == 500 {
+        resp = resp + "500 Internal Server Error"
+    } else {
+        resp = resp + "200 OK"
+    }
+    resp = resp + "\r\nContent-Type: "
+    resp = resp + content_type
+    resp = resp + "\r\nConnection: close\r\n\r\n"
+    resp = resp + body
+    write(fd, resp, resp.len)
+}
+
+fn send_response(fd: i32, response: Response): void {
+    match response {
+        Response.Text(body) => {
+            send_raw(fd, 200, "text/plain; charset=utf-8", body)
+        }
+        Response.Html(body) => {
+            send_raw(fd, 200, "text/html; charset=utf-8", body)
+        }
+        Response.Json(body) => {
+            send_raw(fd, 200, "application/json", body)
+        }
+        Response.NotFound => {
+            send_raw(fd, 404, "text/plain", "404 Not Found")
+        }
+        Response.Status(code, ct, body) => {
+            send_raw(fd, code, ct, body)
+        }
+    }
+}
+
+// ── Public API ──
+
+fn serve(port: u16, handler: fn(&Request): Response): void {
+    let fd = socket(2, 1, 0)
+    if fd < 0 {
+        printf("error: socket() failed\n")
+        return
+    }
+
+    var one: i32 = 1
+    setsockopt(fd, 65535, 4, one, 4)
+
+    var addr = SockAddrIn {
+        sin_len: 16,
+        sin_family: 2,
+        sin_port: htons(port),
+        sin_addr: 0,
+        sin_zero: [0; 8],
+    }
+
+    if bind(fd, addr, 16) < 0 {
+        printf("error: bind() failed on port %d\n", port)
+        close(fd)
+        return
+    }
+
+    if listen(fd, 128) < 0 {
+        printf("error: listen() failed\n")
+        close(fd)
+        return
+    }
+
+    printf("listening on http://localhost:%d\n", port)
+
+    while true {
+        var client_addr = SockAddrIn {
+            sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+        }
+        var addrlen: u32 = 16
+        let client = accept(fd, client_addr, addrlen)
+        if client < 0 {
+            continue
+        }
+
+        var buf: [u8; 8192] = [0; 8192]
+        let n = read(client, buf, 8192)
+        if n > 0 {
+            let req = parse_request(buf, n)
+            printf("%s %s\n", req.method, req.path)
+            let resp = handler(req)
+            send_response(client, resp)
+        }
+
+        close(client)
+    }
+}

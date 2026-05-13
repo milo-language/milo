@@ -371,6 +371,7 @@ export class TypeChecker {
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
+    this.registerBuiltinResult();
 
     // pre-register enum names so struct fields can reference enum types
     for (const e of program.enums) {
@@ -585,6 +586,24 @@ export class TypeChecker {
     variants.set("Some", { tag: 0, fields: [{ tag: "struct", name: "T" }] });
     variants.set("None", { tag: 1, fields: [] });
     this.genericEnums.set("Option", { typeParams: ["T"], variants, decl });
+  }
+
+  private registerBuiltinResult() {
+    if (this.genericEnums.has("Result")) return;
+    const stringType: MiloType = { name: "String", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    const decl: import("./ast").EnumDecl = {
+      kind: "EnumDecl",
+      name: "Result",
+      typeParams: [{ name: "T", bounds: [] }],
+      variants: [
+        { name: "Ok", fields: [{ name: "T", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
+        { name: "Err", fields: [stringType] },
+      ],
+    };
+    const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
+    variants.set("Ok", { tag: 0, fields: [{ tag: "struct", name: "T" }] });
+    variants.set("Err", { tag: 1, fields: [{ tag: "string" }] });
+    this.genericEnums.set("Result", { typeParams: ["T"], variants, decl });
   }
 
   private registerBuiltinTraits() {
@@ -1204,7 +1223,15 @@ export class TypeChecker {
         return this.setType(expr, { tag: "string" });
       case "Ident": {
         const info = this.lookup(expr.name);
-        if (!info) { this.error(`undefined variable '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
+        if (!info) {
+          // named function used as a value (function pointer)
+          const fnSig = this.functions.get(expr.name);
+          if (fnSig) {
+            const fnType: TypeKind = { tag: "fn", params: fnSig.params.map(p => p.type), ret: fnSig.ret };
+            return this.setType(expr, fnType);
+          }
+          this.error(`undefined variable '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" });
+        }
         if (info.moved) {
           this.error(`use of moved variable '${expr.name}'`, sp, `'${expr.name}' was moved to a new owner and can no longer be used here`);
           return this.setType(expr, this.deref(info.type));

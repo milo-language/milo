@@ -1,11 +1,14 @@
 // resolves import declarations by recursively parsing imported files
 // and merging all declarations into a single program
 
-import { readFileSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import type { Program } from "./ast";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
+
+// repo root: walk up from src/ to find the directory containing std/
+const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
 
 export function resolveImports(program: Program, sourceDir: string): Program {
   const visited = new Set<string>();
@@ -17,7 +20,12 @@ export function resolveImports(program: Program, sourceDir: string): Program {
 
   function processImports(prog: Program, dir: string) {
     for (const imp of prog.imports) {
-      const absPath = resolve(dir, imp.path);
+      // try relative to source first, then stdlib
+      let absPath = resolve(dir, imp.path);
+      if (!existsSync(absPath)) {
+        const stdPath = resolve(STDLIB_DIR, imp.path);
+        if (existsSync(stdPath)) absPath = stdPath;
+      }
       if (visited.has(absPath)) continue;
       visited.add(absPath);
 
