@@ -270,19 +270,68 @@ const BUILTIN_ENUMS: import("./ast").EnumDecl[] = [
   },
 ];
 
+const BUILTIN_DOCS: Record<string, { enum: string; variants: Record<string, string> }> = {
+  Option: {
+    enum: [
+      "A value that may or may not exist.",
+      "",
+      "**Operators:** `!` unwrap (panic if None) · `?` propagate None · `??` default value",
+      "",
+      "```milo",
+      "let x: Option<i32> = Option.Some(42)",
+      "let n = x!              // unwrap: 42",
+      "let m = x ?? 0          // default: 42",
+      "if let Option.Some(v) = x { ... }",
+      "```",
+    ].join("\n"),
+    variants: {
+      Some: "Wraps a value of type `T`.\n\n```milo\nlet x = Option.Some(42)\nlet v = x!   // unwrap → 42\n```",
+      None: "No value present.\n\n```milo\nlet x: Option<i32> = Option.None\nlet v = x ?? 0   // default → 0\n```",
+    },
+  },
+  Result: {
+    enum: [
+      "A value that is either a success (`Ok`) or an error (`Err`).",
+      "",
+      "**Operators:** `!` unwrap (panic if Err) · `?` propagate Err · `??` default value",
+      "",
+      "```milo",
+      "fn parse(s: string): Result<i64> {",
+      "    if s.len == 0 { return Result.Err(\"empty\") }",
+      "    return Result.Ok(42)",
+      "}",
+      "let v = parse(\"x\")?     // propagate on Err",
+      "let v = parse(\"x\") ?? 0 // default on Err",
+      "```",
+    ].join("\n"),
+    variants: {
+      Ok: "Success value of type `T`.\n\n```milo\nlet r = Result.Ok(42)\nlet v = r!   // unwrap → 42\nlet v = r?   // propagate: returns 42\n```",
+      Err: "Error with a `string` message.\n\n```milo\nlet r = Result.Err(\"not found\")\nmatch r {\n    Result.Ok(v) => { ... }\n    Result.Err(msg) => { print(msg) }\n}\n```",
+    },
+  },
+};
+
 function findEnumHover(source: string, program: Program, word: string, line: number, character: number): string | null {
   const lineText = source.split("\n")[line] ?? "";
   const allEnums = [...program.enums, ...BUILTIN_ENUMS];
 
   for (const e of allEnums) {
-    if (e.name === word) return formatEnumDecl(e);
+    if (e.name === word) {
+      const decl = formatEnumDecl(e);
+      const docs = BUILTIN_DOCS[e.name];
+      return docs ? `${decl}\n\n---\n\n${docs.enum}` : decl;
+    }
   }
 
   for (const e of allEnums) {
     for (const v of e.variants) {
       if (v.name === word) {
         const pat = new RegExp(`\\b${e.name}\\.${v.name}\\b`);
-        if (pat.test(lineText)) return formatVariantInfo(e, v);
+        if (pat.test(lineText)) {
+          const sig = formatVariantInfo(e, v);
+          const docs = BUILTIN_DOCS[e.name]?.variants[v.name];
+          return docs ? `${sig}\n\n---\n\n${docs}` : sig;
+        }
       }
     }
   }
