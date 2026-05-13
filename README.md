@@ -115,13 +115,14 @@ Recursive resolution, dedup, transitive imports.
 
 Honest list of major gaps:
 
+- **No traits / interfaces.** Generic containers can't yet constrain `K: Hash + Eq` or define `Display`, `Ord`, iterator protocols. Open design question.
 - **No arenas yet.** Planned answer for cyclic data and bulk-allocated graphs. `Box<T>` handles trees and recursive structures meanwhile.
 - **No string slices or `split`.** Strings are owned; substring views via references can't escape function scope yet.
-- **No closures.** No `map`/`filter`-style iteration.
+- **Closures non-escaping only.** Cannot be returned or stored in structs, so no `map`/`filter` chains that outlive a single call frame.
 - **No `guard let`.** `if let` works; `guard let ... else { return }` not yet.
 - **No concurrency story.** Design open — leaning toward structured concurrency + channels, not async/await.
 - **No formatter, no package manager, no REPL.**
-- **Not self-hosting.** Compiler is ~4k lines of TypeScript.
+- **Not self-hosting.** Compiler is ~6k lines of TypeScript.
 
 See [docs/roadmap.md](docs/roadmap.md) for full status.
 
@@ -133,4 +134,4 @@ Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics, 
 
 ## Status
 
-Phase 3 — language core in place. `Box<T>`, `Vec<T>`, and `HashMap<K, V>` shipped. Next: arenas, closures, string slices.
+Phase 3 — language core in place. `Box<T>`, `Vec<T>`, `HashMap<K, V>`, and non-escaping closures shipped. Next: traits, arenas, string slices.

@@ -61,11 +61,19 @@ export enum TokenKind {
   Eof = "EOF",
 }
 
+export interface Trivia {
+  kind: "comment" | "blank";
+  text: string;
+  line: number;
+}
+
 export interface Token {
   kind: TokenKind;
   value: string;
   line: number;
   col: number;
+  leadingTrivia?: Trivia[];
+  trailingTrivia?: Trivia[];
 }
 
 export const KEYWORDS = new Set([

@@ -1,4 +1,4 @@
-import { Token, TokenKind, KEYWORDS } from "./tokens";
+import { Token, TokenKind, KEYWORDS, Trivia } from "./tokens";
 
 export class Lexer {
   private pos = 0;
@@ -17,17 +17,53 @@ export class Lexer {
     return ch;
   }
 
-  private skipWhitespaceAndComments() {
+  // Leading trivia: comments and blank lines that appear *before* the next token.
+  // A "blank" marker is emitted once per >=2 consecutive newlines so the formatter
+  // can preserve logical paragraph breaks without preserving raw whitespace runs.
+  private readLeadingTrivia(): Trivia[] {
+    const trivia: Trivia[] = [];
+    let newlines = 0;
+    let emittedBlank = false;
     while (this.pos < this.source.length) {
       const ch = this.peek();
-      if (ch === " " || ch === "\t" || ch === "\r" || ch === "\n") {
+      if (ch === "\n") {
+        newlines++;
+        this.advance();
+        if (newlines >= 2 && !emittedBlank) {
+          trivia.push({ kind: "blank", text: "", line: this.line });
+          emittedBlank = true;
+        }
+      } else if (ch === " " || ch === "\t" || ch === "\r") {
         this.advance();
       } else if (ch === "/" && this.source[this.pos + 1] === "/") {
-        while (this.pos < this.source.length && this.peek() !== "\n") this.advance();
+        const line = this.line;
+        let text = "";
+        while (this.pos < this.source.length && this.peek() !== "\n") text += this.advance();
+        trivia.push({ kind: "comment", text, line });
+        newlines = 0;
+        emittedBlank = false;
       } else {
         break;
       }
     }
+    return trivia;
+  }
+
+  // Trailing trivia: a same-line comment that immediately follows a token,
+  // attached to that token rather than the next one. Stops at newline.
+  private readTrailingTrivia(): Trivia[] {
+    while (this.pos < this.source.length) {
+      const ch = this.peek();
+      if (ch === " " || ch === "\t" || ch === "\r") this.advance();
+      else break;
+    }
+    if (this.peek() === "/" && this.source[this.pos + 1] === "/") {
+      const line = this.line;
+      let text = "";
+      while (this.pos < this.source.length && this.peek() !== "\n") text += this.advance();
+      return [{ kind: "comment", text, line }];
+    }
+    return [];
   }
 
   private token(kind: TokenKind, value: string, line: number, col: number): Token {
@@ -98,7 +134,6 @@ export class Lexer {
   }
 
   private nextToken(): Token {
-    this.skipWhitespaceAndComments();
     if (this.pos >= this.source.length) {
       return this.token(TokenKind.Eof, "", this.line, this.col);
     }
@@ -156,10 +191,15 @@ export class Lexer {
 
   tokenize(): Token[] {
     const tokens: Token[] = [];
+    let pendingLeading = this.readLeadingTrivia();
     while (true) {
       const tok = this.nextToken();
+      if (pendingLeading.length) tok.leadingTrivia = pendingLeading;
       tokens.push(tok);
       if (tok.kind === TokenKind.Eof) break;
+      const trailing = this.readTrailingTrivia();
+      if (trailing.length) tok.trailingTrivia = trailing;
+      pendingLeading = this.readLeadingTrivia();
     }
     return tokens;
   }

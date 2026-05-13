@@ -102,15 +102,16 @@ function main() {
   }
 
   const cmd = args[0];
-  const { output, source, rest } = parseArgs(args.slice(1));
-
-  if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
 
   if (cmd === "lsp") {
     // Launch language server — dynamically import to avoid loading LSP code in normal compilation
     import("./lsp");
     return;
   }
+
+  const { output, source, rest } = parseArgs(args.slice(1));
+
+  if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
 
   if (cmd === "run") {
     runFile(source!, rest);

@@ -345,9 +345,13 @@ function handleRequest(id: number | string, method: string, params: any) {
     case "textDocument/hover":
       sendResponse(id, handleHover(params.textDocument.uri, params.position.line, params.position.character));
       break;
-    case "textDocument/definition":
-      sendResponse(id, handleDefinition(params.textDocument.uri, params.position.line, params.position.character));
+    case "textDocument/definition": {
+      const word = getWordAt(documents.get(params.textDocument.uri) ?? "", params.position.line, params.position.character);
+      const result = handleDefinition(params.textDocument.uri, params.position.line, params.position.character);
+      process.stderr.write(`milod: definition word="${word}" docs=${documents.size} result=${JSON.stringify(result)}\n`);
+      sendResponse(id, result);
       break;
+    }
     default:
       sendResponse(id, null);
   }
@@ -376,17 +380,19 @@ function handleNotification(method: string, params: any) {
 // ── Stdio transport reader ──
 
 function startServer() {
-  let buffer = "";
+  // Use raw Buffers, not utf-8 strings: Content-Length is byte count, but
+  // string-mode slicing counts characters — multibyte UTF-8 bodies (or chunks
+  // that split mid-codepoint) get misaligned and JSON.parse fails.
+  let buffer = Buffer.alloc(0);
 
-  process.stdin.setEncoding("utf-8");
-  process.stdin.on("data", (chunk: string) => {
-    buffer += chunk;
+  process.stdin.on("data", (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
 
     while (true) {
       const headerEnd = buffer.indexOf("\r\n\r\n");
       if (headerEnd < 0) break;
 
-      const header = buffer.slice(0, headerEnd);
+      const header = buffer.slice(0, headerEnd).toString("utf-8");
       const match = header.match(/Content-Length:\s*(\d+)/i);
       if (!match) { buffer = buffer.slice(headerEnd + 4); continue; }
 
@@ -394,17 +400,21 @@ function startServer() {
       const bodyStart = headerEnd + 4;
       if (buffer.length < bodyStart + contentLength) break;
 
-      const body = buffer.slice(bodyStart, bodyStart + contentLength);
+      const body = buffer.slice(bodyStart, bodyStart + contentLength).toString("utf-8");
       buffer = buffer.slice(bodyStart + contentLength);
 
       try {
         const msg = JSON.parse(body);
         if (msg.id !== undefined && msg.method) {
+          process.stderr.write(`milod: req ${msg.method}\n`);
           handleRequest(msg.id, msg.method, msg.params);
         } else if (msg.method) {
+          process.stderr.write(`milod: notif ${msg.method}\n`);
           handleNotification(msg.method, msg.params);
         }
-      } catch { /* malformed message */ }
+      } catch (e: any) {
+        process.stderr.write(`milod: parse error ${e.message}\n`);
+      }
     }
   });
 
