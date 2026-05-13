@@ -8,6 +8,7 @@ import "parser.milo"
 // ── Helpers: int → string (Milo's .to_string already exists for i64) ──
 
 fn ll_type(t: &string): string {
+    if t == "i1" { return "i1" }
     if t == "i8" || t == "u8" { return "i8" }
     if t == "i16" || t == "u16" { return "i16" }
     if t == "i32" || t == "u32" { return "i32" }
@@ -900,7 +901,7 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
             let v = gen_expr(cg, inner, locs, sigs, hint_ty)
             let t = next_temp(cg)
             if op == TokKind.Minus {
-                emit(cg, "  " + t + " = sub " + v.ty + " 0, " + v.v + "\n")
+                emit(cg, "  " + t + " = sub " + ll_type(v.ty.clone()) + " 0, " + v.v + "\n")
                 return Val { v: t, ty: v.ty }
             }
             if op == TokKind.Bang {
@@ -921,7 +922,6 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
             let rv = gen_expr(cg, r, locs, sigs, lv_ty_a)
             let rv_v = rv.v.clone()
             let rv_v_str = rv.v.clone()
-            // String operations: concat (+) and equality (==/!=).
             let lv_ll_check = ll_type(lv_ty_for_check)
             if lv_ll_check == "%String" {
                 if op == TokKind.Plus {
@@ -931,20 +931,41 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
                     return gen_string_eq(cg, lv_v_str, rv_v_str, op == TokKind.EqEq)
                 }
             }
+            // Enum equality: compare tags only (payload-bearing enums need explicit match).
+            if lv_ll_check.len > 1 && lv_ll_check[0] == 37 {
+                if op == TokKind.EqEq || op == TokKind.NotEq {
+                    let lt_id = cg.temp
+                    cg.temp = cg.temp + 1
+                    let lt = "%t" + lt_id.to_string()
+                    emit(cg, "  " + lt + " = extractvalue " + lv_ll_check.clone() + " " + lv_v_str.clone() + ", 0\n")
+                    let rt_id = cg.temp
+                    cg.temp = cg.temp + 1
+                    let rt = "%t" + rt_id.to_string()
+                    emit(cg, "  " + rt + " = extractvalue " + lv_ll_check.clone() + " " + rv_v_str.clone() + ", 0\n")
+                    let res_id = cg.temp
+                    cg.temp = cg.temp + 1
+                    let res = "%t" + res_id.to_string()
+                    var opname: string = "eq"
+                    if op == TokKind.NotEq { opname = "ne".clone() }
+                    emit(cg, "  " + res + " = icmp " + opname + " i32 " + lt + ", " + rt + "\n")
+                    return Val { v: res, ty: "bool".clone() }
+                }
+            }
             let t_id = cg.temp
             cg.temp = cg.temp + 1
             let t_emit = "%t" + t_id.to_string()
             let t_ret = "%t" + t_id.to_string()
             let unsigned_b = is_unsigned(lv_ty_b)
+            let lv_ty_c_ll = ll_type(lv_ty_c)
             if is_arith(op) {
                 let opname = bin_op_int(op, unsigned_b)
-                emit(cg, "  " + t_emit + " = " + opname + " " + lv_ty_c + " " + lv_v + ", " + rv_v + "\n")
+                emit(cg, "  " + t_emit + " = " + opname + " " + lv_ty_c_ll + " " + lv_v + ", " + rv_v + "\n")
                 return Val { v: t_ret, ty: lv_ty_d }
             }
             if is_cmp(op) {
                 let opname = cmp_op_int(op, unsigned_b)
-                emit(cg, "  " + t_emit + " = icmp " + opname + " " + lv_ty_c + " " + lv_v + ", " + rv_v + "\n")
-                return Val { v: t_ret, ty: "i1".clone() }
+                emit(cg, "  " + t_emit + " = icmp " + opname + " " + lv_ty_c_ll + " " + lv_v + ", " + rv_v + "\n")
+                return Val { v: t_ret, ty: "bool".clone() }
             }
             if op == TokKind.AmpAmp {
                 emit(cg, "  " + t_emit + " = and i1 " + lv_v + ", " + rv_v + "\n")
@@ -1097,7 +1118,7 @@ fn gen_assign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec
             let fp = "%t" + fp_id.to_string()
             emit(cg, "  " + fp + " = getelementptr " + struct_ty + ", ptr " + lv.v + ", i32 0, i32 " + idx.to_string() + "\n")
             let v = gen_expr(cg, value, locs, sigs, fty_ll.clone())
-            emit(cg, "  store " + v.ty + " " + v.v + ", ptr " + fp + "\n")
+            emit(cg, "  store " + ll_type(v.ty) + " " + v.v + ", ptr " + fp + "\n")
         }
         Expr.IntLit(n) => { return }
         Expr.StrLit(s) => { return }
@@ -1348,7 +1369,7 @@ fn gen_struct_lit(cg: &mut Cgen, name: string, fields: Vec<ExprField>, locs: &Ve
         cg.temp = cg.temp + 1
         let fp = "%t" + fp_id.to_string()
         emit(cg, "  " + fp + " = getelementptr " + struct_ty + ", ptr " + alloc_tmp + ", i32 0, i32 " + idx.to_string() + "\n")
-        emit(cg, "  store " + fv.ty + " " + fv.v + ", ptr " + fp + "\n")
+        emit(cg, "  store " + ll_type(fv.ty) + " " + fv.v + ", ptr " + fp + "\n")
         fi = fi + 1
     }
     let load_id = cg.temp
@@ -1412,7 +1433,24 @@ fn gen_lvalue(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>): Val {
         Expr.Unary(op, x) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.Call(name, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.StructLit(name, fields) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.FieldAccess(object, field) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.FieldAccess(object, field) => {
+            // GEP into object's lvalue. object must itself be lvalue (Ident).
+            let inner = gen_lvalue(cg, object, locs)
+            var raw_name: string = inner.ty.clone()
+            if raw_name.len > 0 && raw_name[0] == 37 {
+                let stripped = raw_name[1..raw_name.len]
+                raw_name = stripped
+            }
+            let fields_enc = db_lookup_fields(cg.struct_db.clone(), raw_name)
+            let idx = fields_find_index(fields_enc.clone(), field)
+            let fty = fields_find_type(fields_enc, idx)
+            let struct_ty = "%" + raw_name
+            let fp_id = cg.temp
+            cg.temp = cg.temp + 1
+            let fp = "%t" + fp_id.to_string()
+            emit(cg, "  " + fp + " = getelementptr " + struct_ty + ", ptr " + inner.v + ", i32 0, i32 " + idx.to_string() + "\n")
+            return Val { v: fp, ty: fty }
+        }
         Expr.EnumLit(en, vn, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.As(inner, ty) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.MethodCall(obj, m, ma) => { return Val { v: "0".clone(), ty: "i64".clone() } }
@@ -1508,15 +1546,15 @@ fn gen_stmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig
             let fn_ret_a = ll_type(ret_ty)
             let fn_ret_b = fn_ret_a.clone()
             let fn_ret_c = fn_ret_a.clone()
-            let val_ty = v.ty.clone()
-            if val_ty == fn_ret_a {
-                emit(cg, "  ret " + v.ty + " " + v.v + "\n")
+            let val_ty_ll = ll_type(v.ty.clone())
+            if val_ty_ll == fn_ret_a {
+                emit(cg, "  ret " + val_ty_ll + " " + v.v + "\n")
             } else {
                 let t_id = cg.temp
                 cg.temp = cg.temp + 1
                 let cast = "%t" + t_id.to_string()
                 let cast2 = "%t" + t_id.to_string()
-                emit(cg, "  " + cast + " = trunc " + v.ty + " " + v.v + " to " + fn_ret_b + "\n")
+                emit(cg, "  " + cast + " = trunc " + val_ty_ll + " " + v.v + " to " + fn_ret_b + "\n")
                 emit(cg, "  ret " + fn_ret_c + " " + cast2 + "\n")
             }
             return true
