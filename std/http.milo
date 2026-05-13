@@ -61,6 +61,7 @@ fn send_raw(fd: i32, status: i32, content_type: string, body: string): void {
     var resp: string = "HTTP/1.1 " + status_text(status)
     resp = resp + "\r\nContent-Type: " + content_type
     resp = resp + "\r\nContent-Length: " + body.len.to_string()
+    resp = resp + "\r\nConnection: close"
     resp = resp + "\r\nServer: milo"
     resp = resp + "\r\n\r\n"
     resp = resp + body
@@ -103,7 +104,7 @@ impl Drop for Socket {
 
 // ── Public API ──
 
-fn serve(port: u16, handler: (&Request) => Response): Result<void> {
+fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let SOL_SOCKET: i32 = 65535
@@ -111,6 +112,12 @@ fn serve(port: u16, handler: (&Request) => Response): Result<void> {
     let BACKLOG: i32 = 1024
     let BUF_SIZE: i64 = 8192
     let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    // port 0 tells the OS to pick a random available port
+    var bind_port: u16 = 0
+    if let Option.Some(p) = port {
+        bind_port = p
+    }
 
     unsafe {
         let raw_fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -125,7 +132,7 @@ fn serve(port: u16, handler: (&Request) => Response): Result<void> {
         var addr = SockAddrIn {
             sin_len: SIZEOF_SOCKADDR_IN as u8,
             sin_family: AF_INET as u8,
-            sin_port: htons(port),
+            sin_port: htons(bind_port),
             sin_addr: 0,
             sin_zero: [0; 8],
         }
@@ -138,7 +145,15 @@ fn serve(port: u16, handler: (&Request) => Response): Result<void> {
             return Result.Err("listen() failed")
         }
 
-        print("listening on http://localhost:%d\n", port)
+        // retrieve actual port (needed when bind_port was 0)
+        var bound_addr = SockAddrIn {
+            sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+        }
+        var bound_len: u32 = SIZEOF_SOCKADDR_IN
+        getsockname(sock.fd, bound_addr, bound_len)
+        let actual_port = ntohs(bound_addr.sin_port)
+
+        print("listening on http://localhost:%d\n", actual_port)
 
         while true {
             var client_addr = SockAddrIn {
@@ -149,18 +164,15 @@ fn serve(port: u16, handler: (&Request) => Response): Result<void> {
             if client_fd < 0 {
                 continue
             }
-            let client = Socket { fd: client_fd }
 
-            while true {
-                var buf: [u8; 8192] = [0; 8192]
-                let n = read(client.fd, buf, BUF_SIZE)
-                if n <= 0 { break }
-
+            var buf: [u8; 8192] = [0; 8192]
+            let n = read(client_fd, buf, BUF_SIZE)
+            if n > 0 {
                 let req = parse_request(buf, n)
-                print("%s %s\n", req.method, req.path)
                 let resp = handler(req)
-                send_response(client.fd, resp)
+                send_response(client_fd, resp)
             }
+            close(client_fd)
         }
     }
     return Result.Err("server exited")

@@ -46,6 +46,8 @@ extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
 extern fn connect(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 extern fn htons(hostshort: u16): u16
+extern fn ntohs(netshort: u16): u16
+extern fn getsockname(fd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
 extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 
 // ── TLS (OpenSSL) ──
