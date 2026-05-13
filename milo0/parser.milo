@@ -24,6 +24,8 @@ enum Expr {
     EnumLit(string, string, Vec<Box<Expr>>),
     As(Box<Expr>, string),
     MethodCall(Box<Expr>, string, Vec<Box<Expr>>),
+    Index(Box<Expr>, Box<Expr>),                // e[i]
+    Slice(Box<Expr>, Box<Expr>, Box<Expr>),     // e[a..b]
 }
 
 enum Stmt {
@@ -283,6 +285,18 @@ fn parse_postfix(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
             pos = pos + 1
             let ty = parse_type(src, toks, pos)
             e = Box(Expr.As(e, ty))
+        } else if toks[pos].kind == TokKind.LBracket {
+            pos = pos + 1
+            let first = parse_expr(src, toks, pos)
+            if toks[pos].kind == TokKind.DotDot {
+                pos = pos + 1
+                let second = parse_expr(src, toks, pos)
+                if toks[pos].kind == TokKind.RBracket { pos = pos + 1 }
+                e = Box(Expr.Slice(e, first, second))
+            } else {
+                if toks[pos].kind == TokKind.RBracket { pos = pos + 1 }
+                e = Box(Expr.Index(e, first))
+            }
         } else {
             go = false
         }

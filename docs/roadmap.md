@@ -211,10 +211,14 @@ Verification:
   a != b                      // true
   ```
 
+- [x] **MethodCall + string methods.** Parser distinguishes `.field` from `.method(args)`. Codegen dispatches string.clone() (malloc+memcpy), string.len() (extractvalue), i64.to_string() / i32.to_string() (snprintf two-pass: measure null,0 then alloc+write). Tested: "hello".clone(), 12345.to_string() = "12345".
+- [x] **References (&T / &mut T) parsed.** Stage-0 strips the reference qualifier — pass-by-value. Loses mutation-through-ref but covers most milo0 patterns where refs only avoid moves. printf coercion gated to known variadic externs so user fns taking %String receive the aggregate.
+- [x] **Fixed array types `[T; N]`** parsed into "[T;N]" string encoding.
+
 Still missing for full milo0-on-milo0:
-- [ ] String.push, String.clone, slice [a..b], substr.
+- [ ] String.push (realloc-heavy), slice [a..b] in milo0, substr.
 - [ ] Vec<T>, HashMap<K,V>.
-- [ ] References (&T, &mut T) and method calls.
+- [ ] Proper `&mut` mutation through refs (currently stripped to pass-by-value).
 - [ ] Closures, generics, drop semantics on Box.
 
 ### Phase 3.5 — Beyond Stage-0

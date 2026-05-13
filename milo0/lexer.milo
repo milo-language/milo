@@ -12,6 +12,7 @@ enum TokKind {
     Eq, EqEq, NotEq, Lt, Gt, LtEq, GtEq, Bang,
     Amp, Pipe, Caret, Tilde,
     AmpAmp, PipePipe,
+    DotDot,
     DotDotDot,
 }
 
@@ -162,6 +163,8 @@ fn next_token(src: &string, pos: &mut i64, line: &mut i32): Token {
 
     if c == 46 && nx == 46 && nx2 == 46 { pos = pos + 3
         return mk(TokKind.DotDotDot, start, pos, ln) }
+    if c == 46 && nx == 46 { pos = pos + 2
+        return mk(TokKind.DotDot, start, pos, ln) }
 
     if c == 45 && nx == 62 { pos = pos + 2
         return mk(TokKind.Arrow, start, pos, ln) }

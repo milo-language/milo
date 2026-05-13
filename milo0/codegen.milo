@@ -361,6 +361,77 @@ fn ensure_string_ty(cg: &mut Cgen): void {
     }
 }
 
+// Index: `s[i]` for strings → load byte. Other types not supported yet.
+fn gen_index(cg: &mut Cgen, obj: Box<Expr>, idx: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let o = gen_expr(cg, obj, locs, sigs, "")
+    let i = gen_expr(cg, idx, locs, sigs, "i64")
+    let o_ll = ll_type(o.ty.clone())
+    if o_ll == "%String" {
+        let data_id = cg.temp
+        cg.temp = cg.temp + 1
+        let data = "%t" + data_id.to_string()
+        emit(cg, "  " + data + " = extractvalue %String " + o.v + ", 0\n")
+        let p_id = cg.temp
+        cg.temp = cg.temp + 1
+        let p = "%t" + p_id.to_string()
+        emit(cg, "  " + p + " = getelementptr i8, ptr " + data + ", i64 " + i.v + "\n")
+        let v_id = cg.temp
+        cg.temp = cg.temp + 1
+        let v = "%t" + v_id.to_string()
+        emit(cg, "  " + v + " = load i8, ptr " + p + "\n")
+        return Val { v: v, ty: "u8".clone() }
+    }
+    return Val { v: "0".clone(), ty: "i64".clone() }
+}
+
+// Slice: `s[a..b]` for strings → substring. Other types not supported yet.
+fn gen_slice(cg: &mut Cgen, obj: Box<Expr>, a: Box<Expr>, b: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let o = gen_expr(cg, obj, locs, sigs, "")
+    let av = gen_expr(cg, a, locs, sigs, "i64")
+    let bv = gen_expr(cg, b, locs, sigs, "i64")
+    let o_ll = ll_type(o.ty.clone())
+    if o_ll == "%String" {
+        ensure_malloc(cg)
+        ensure_memcpy(cg)
+        let data_id = cg.temp
+        cg.temp = cg.temp + 1
+        let data = "%t" + data_id.to_string()
+        emit(cg, "  " + data + " = extractvalue %String " + o.v + ", 0\n")
+        let len_id = cg.temp
+        cg.temp = cg.temp + 1
+        let len = "%t" + len_id.to_string()
+        emit(cg, "  " + len + " = sub i64 " + bv.v.clone() + ", " + av.v.clone() + "\n")
+        let sz_id = cg.temp
+        cg.temp = cg.temp + 1
+        let sz = "%t" + sz_id.to_string()
+        emit(cg, "  " + sz + " = add i64 " + len.clone() + ", 1\n")
+        let buf_id = cg.temp
+        cg.temp = cg.temp + 1
+        let buf = "%t" + buf_id.to_string()
+        emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
+        let src_id = cg.temp
+        cg.temp = cg.temp + 1
+        let src_p = "%t" + src_id.to_string()
+        emit(cg, "  " + src_p + " = getelementptr i8, ptr " + data + ", i64 " + av.v + "\n")
+        emit(cg, "  call ptr @memcpy(ptr " + buf.clone() + ", ptr " + src_p + ", i64 " + len.clone() + ")\n")
+        let null_id = cg.temp
+        cg.temp = cg.temp + 1
+        let np = "%t" + null_id.to_string()
+        emit(cg, "  " + np + " = getelementptr i8, ptr " + buf.clone() + ", i64 " + len.clone() + "\n")
+        emit(cg, "  store i8 0, ptr " + np + "\n")
+        let s0_id = cg.temp
+        cg.temp = cg.temp + 1
+        let s0 = "%t" + s0_id.to_string()
+        emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+        let s1_id = cg.temp
+        cg.temp = cg.temp + 1
+        let s1 = "%t" + s1_id.to_string()
+        emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
+        return Val { v: s1, ty: "string".clone() }
+    }
+    return Val { v: "0".clone(), ty: "i64".clone() }
+}
+
 fn gen_method_call(cg: &mut Cgen, object: Box<Expr>, method: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
     let obj = gen_expr(cg, object, locs, sigs, "")
     let obj_ty_ll = ll_type(obj.ty.clone())
@@ -989,6 +1060,12 @@ fn gen_expr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, h
         Expr.MethodCall(object, method, args) => {
             return gen_method_call(cg, object, method, args, locs, sigs)
         }
+        Expr.Index(obj, idx) => {
+            return gen_index(cg, obj, idx, locs, sigs)
+        }
+        Expr.Slice(obj, a, b) => {
+            return gen_slice(cg, obj, a, b, locs, sigs)
+        }
     }
 }
 
@@ -1032,6 +1109,8 @@ fn gen_assign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec
         Expr.EnumLit(en, vn, args) => { return }
         Expr.As(inner, ty) => { return }
         Expr.MethodCall(obj, m, ma) => { return }
+        Expr.Index(o, i) => { return }
+        Expr.Slice(o, a, b) => { return }
     }
 }
 
@@ -1070,17 +1149,17 @@ fn ll_type_bytes(ll: &string): i64 {
 
 fn int_bits(ll: &string): i64 {
     if ll == "i1" { return 1 }
-    if ll == "i8" { return 8 }
-    if ll == "i16" { return 16 }
-    if ll == "i32" { return 32 }
-    if ll == "i64" { return 64 }
+    if ll == "i8" || ll == "u8" { return 8 }
+    if ll == "i16" || ll == "u16" { return 16 }
+    if ll == "i32" || ll == "u32" { return 32 }
+    if ll == "i64" || ll == "u64" { return 64 }
     if ll == "ptr" { return 64 }
     return 0
 }
 
 fn gen_as_cast(cg: &mut Cgen, inner: Box<Expr>, target_ty: string, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
     let v = gen_expr(cg, inner, locs, sigs, "")
-    let from_ll = v.ty.clone()
+    let from_ll = ll_type(v.ty.clone())
     let to_ll = ll_type(target_ty.clone())
     if from_ll == to_ll { return v }
     let from_bits = int_bits(from_ll.clone())
@@ -1337,6 +1416,8 @@ fn gen_lvalue(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>): Val {
         Expr.EnumLit(en, vn, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.As(inner, ty) => { return Val { v: "0".clone(), ty: "i64".clone() } }
         Expr.MethodCall(obj, m, ma) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.Index(o, i) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.Slice(o, a, b) => { return Val { v: "0".clone(), ty: "i64".clone() } }
     }
 }
 
