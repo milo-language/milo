@@ -1,0 +1,26 @@
+// @expect: 42
+// @expect: error: too small
+extern fn printf(fmt: *u8, ...): i32
+
+fn double_if_big(x: i32): Result<i32> {
+    if x < 10 {
+        return Result.Err("too small")
+    }
+    return Result.Ok(x * 2)
+}
+
+fn main(): i32 {
+    let a = double_if_big(21)
+    match a {
+        Result.Ok(v) => { printf("%d\n", v) }
+        Result.Err(msg) => { printf("error: %s\n", msg) }
+    }
+
+    let b = double_if_big(5)
+    match b {
+        Result.Ok(v) => { printf("%d\n", v) }
+        Result.Err(msg) => { printf("error: %s\n", msg) }
+    }
+
+    return 0
+}
