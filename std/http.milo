@@ -1,24 +1,7 @@
 // std/http — high-level HTTP server for Milo
 // Supports HTTP/1.1 keep-alive, Content-Length, Server header
 
-extern fn printf(fmt: *u8, ...): i32
-extern fn socket(domain: i32, type: i32, protocol: i32): i32
-extern fn close(fd: i32): i32
-extern fn htons(hostshort: u16): u16
-extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
-extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
-extern fn listen(sockfd: i32, backlog: i32): i32
-extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
-extern fn read(fd: i32, buf: &mut [u8; 8192], nbyte: i64): i64
-extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
-
-struct SockAddrIn {
-    sin_len: u8,
-    sin_family: u8,
-    sin_port: u16,
-    sin_addr: u32,
-    sin_zero: [u8; 8],
-}
+import "std/os"
 
 // ── Public types ──
 
@@ -107,11 +90,10 @@ fn send_response(fd: i32, response: Response): void {
 
 // ── Public API ──
 
-fn serve(port: u16, handler: fn(&Request): Response): void {
+fn serve(port: u16, handler: fn(&Request): Response): Result<void> {
     let fd = socket(2, 1, 0)
     if fd < 0 {
-        printf("error: socket() failed\n")
-        return
+        return Result.Err("socket() failed")
     }
 
     var one: i32 = 1
@@ -126,15 +108,13 @@ fn serve(port: u16, handler: fn(&Request): Response): void {
     }
 
     if bind(fd, addr, 16) < 0 {
-        printf("error: bind() failed on port %d\n", port)
         close(fd)
-        return
+        return Result.Err("bind() failed")
     }
 
     if listen(fd, 1024) < 0 {
-        printf("error: listen() failed\n")
         close(fd)
-        return
+        return Result.Err("listen() failed")
     }
 
     printf("listening on http://localhost:%d\n", port)
@@ -149,7 +129,6 @@ fn serve(port: u16, handler: fn(&Request): Response): void {
             continue
         }
 
-        // keep-alive: handle multiple requests per connection
         while true {
             var buf: [u8; 8192] = [0; 8192]
             let n = read(client, buf, 8192)

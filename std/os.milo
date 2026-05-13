@@ -1,0 +1,48 @@
+// std/os — typed libc bindings for Milo
+
+// ── I/O ──
+
+extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
+extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
+extern fn open(path: *u8, flags: i32): i32
+extern fn close(fd: i32): i32
+extern fn puts(s: *u8): i32
+extern fn printf(fmt: *u8, ...): i32
+
+// ── Memory ──
+
+extern fn malloc(size: i64): *u8
+extern fn realloc(ptr: *u8, size: i64): *u8
+extern fn free(ptr: *u8): void
+extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+extern fn memset(dst: *u8, c: i32, n: i64): *u8
+extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
+
+// ── Strings ──
+
+extern fn strlen(s: *u8): i64
+extern fn strcmp(a: *u8, b: *u8): i32
+extern fn strncmp(a: *u8, b: *u8, n: i64): i32
+extern fn snprintf(buf: *u8, size: i64, fmt: *u8, ...): i32
+
+// ── Network ──
+
+struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+
+extern fn socket(domain: i32, type: i32, protocol: i32): i32
+extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+extern fn listen(sockfd: i32, backlog: i32): i32
+extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
+extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
+extern fn htons(hostshort: u16): u16
+
+// ── Process ──
+
+extern fn exit(status: i32): void
+extern fn getenv(name: *u8): *u8

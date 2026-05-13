@@ -22,6 +22,10 @@ fn handler(req: &Request): Response {
 
 fn main(): i32 {
     print("starting on :8080\n")
-    serve(8080, handler)
+    let result = serve(8080, handler)
+    if let Result.Err(msg) = result {
+        print("server error: %s\n", msg)
+        return 1
+    }
     return 0
 }
