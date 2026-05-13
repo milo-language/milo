@@ -3,10 +3,11 @@
 
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
-import { TypeChecker } from "./checker";
+import { TypeChecker, type CheckResult } from "./checker";
 import { resolveImports } from "./resolver";
 import type { Diagnostic } from "./diagnostics";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
+import { typeName as formatTypeName } from "./types";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, readFileSync } from "fs";
@@ -176,7 +177,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
     const program = resolveImports(parsed, sourceDir);
-    new TypeChecker().check(program);
+    const checkResult = new TypeChecker().check(program);
 
     const word = getWordAt(source, line, character);
 
@@ -184,7 +185,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     for (const fn of program.functions) {
       if (fn.isExtern) continue;
       for (const stmt of fn.body) {
-        const info = findHoverInStmt(stmt, line + 1, character + 1);
+        const info = findHoverInStmt(stmt, line + 1, character + 1, checkResult.exprTypes);
         if (info) return { contents: { kind: "markdown", value: `\`\`\`milo\n${info}\n\`\`\`` } };
       }
       for (const sym of symbolIndex) {
@@ -218,21 +219,25 @@ function handleHover(uri: string, line: number, character: number): object | nul
   return null;
 }
 
-function findHoverInStmt(stmt: Stmt, line: number, col: number): string | null {
+function findHoverInStmt(stmt: Stmt, line: number, col: number, exprTypes: Map<Expr, import("./types").TypeKind>): string | null {
   if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.span?.line === line) {
-    const typeName = stmt.type?.name ?? inferLiteralType(stmt.value) ?? "unknown";
-    return `${stmt.kind === "LetDecl" ? "let" : "var"} ${stmt.name}: ${typeName}`;
+    let resolved = stmt.type?.name ?? inferLiteralType(stmt.value);
+    if (!resolved) {
+      const tk = exprTypes.get(stmt.value);
+      if (tk) resolved = formatTypeName(tk);
+    }
+    return `${stmt.kind === "LetDecl" ? "let" : "var"} ${stmt.name}: ${resolved ?? "unknown"}`;
   }
   if (stmt.kind === "IfStmt") {
-    for (const s of stmt.thenBody) { const r = findHoverInStmt(s, line, col); if (r) return r; }
-    if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findHoverInStmt(s, line, col); if (r) return r; }
+    for (const s of stmt.thenBody) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
+    if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
   }
   if (stmt.kind === "WhileStmt") {
-    for (const s of stmt.body) { const r = findHoverInStmt(s, line, col); if (r) return r; }
+    for (const s of stmt.body) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
   }
   if (stmt.kind === "MatchStmt") {
     for (const arm of stmt.arms) {
-      for (const s of arm.body) { const r = findHoverInStmt(s, line, col); if (r) return r; }
+      for (const s of arm.body) { const r = findHoverInStmt(s, line, col, exprTypes); if (r) return r; }
     }
   }
   return null;
