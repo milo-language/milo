@@ -73,6 +73,35 @@ fn tcp_recv(s: &TcpStream): Result<string> {
     return Result.Ok(result)
 }
 
+// ── DNS ──
+
+fn resolve(hostname: string): Result<u32> {
+    // hints: 48-byte addrinfo struct, request IPv4 + TCP
+    var hints: [u8; 48] = [0; 48]
+    unsafe {
+        let hints_family = (hints as *i32)
+        // ai_family at offset 4 = AF_INET (2)
+        hints_family[1] = 2
+        // ai_socktype at offset 8 = SOCK_STREAM (1)
+        hints_family[2] = 1
+    }
+
+    var res_buf: [u8; 8] = [0; 8]
+    unsafe {
+        let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, res_buf as *u8)
+        if err != 0 {
+            return Result.Err("DNS resolution failed")
+        }
+        let info_ptr = *(res_buf as *i64)
+        // addrinfo.ai_addr at offset 32
+        let addr_ptr = *((info_ptr + 32) as *i64)
+        // sockaddr_in.sin_addr at offset 4
+        let ip = *((addr_ptr + 4) as *u32)
+        freeaddrinfo(info_ptr as *u8)
+        return Result.Ok(ip)
+    }
+}
+
 // ── HTTP ──
 
 // extract body from raw HTTP response by finding \r\n\r\n separator
@@ -109,6 +138,18 @@ fn http_get(ip: u32, port: u16, host: string, path: string): Result<string> {
                     return Result.Err(msg)
                 }
             }
+        }
+        Result.Err(msg) => {
+            return Result.Err(msg)
+        }
+    }
+}
+
+fn fetch(host: string, path: string): Result<string> {
+    let ip_result = resolve(host.clone())
+    match ip_result {
+        Result.Ok(ip) => {
+            return http_get(ip, 80, host, path)
         }
         Result.Err(msg) => {
             return Result.Err(msg)

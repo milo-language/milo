@@ -48,6 +48,11 @@ extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 extern fn htons(hostshort: u16): u16
 extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 
+// ── DNS ──
+
+extern fn getaddrinfo(node: *u8, service: *u8, hints: *u8, res: *u8): i32
+extern fn freeaddrinfo(res: *u8): void
+
 // ── Directory ──
 
 extern fn opendir(path: *u8): *u8
