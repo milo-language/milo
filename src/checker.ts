@@ -40,6 +40,8 @@ export interface CheckResult {
   rewrittenEnums: Map<Expr, string>;
   rewrittenStructLits: Map<Expr, string>;
   movedExprs: Set<Expr>;
+  borrowedExprs: Set<Expr>;
+  autoWrappedOption: Map<Expr, string>;
   functions: Map<string, FnSig>;
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
@@ -108,6 +110,8 @@ export class TypeChecker {
   private rewrittenEnums = new Map<Expr, string>();
   private rewrittenStructLits = new Map<Expr, string>();
   private movedExprs = new Set<Expr>();
+  private borrowedExprs = new Set<Expr>();
+  private autoWrappedOption = new Map<Expr, string>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
   private closureScopeDepth: number | null = null;
@@ -379,6 +383,8 @@ export class TypeChecker {
     this.functions.set("print", { params: [{ type: ptrU8, name: "fmt" }], ret: { tag: "void" }, variadic: true });
     this.functions.set("println", { params: [{ type: ptrU8, name: "fmt" }], ret: { tag: "void" }, variadic: true });
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
+    this.functions.set("_milo_arg_count", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
+    this.functions.set("_milo_arg_at", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
@@ -494,6 +500,8 @@ export class TypeChecker {
       rewrittenEnums: this.rewrittenEnums,
       rewrittenStructLits: this.rewrittenStructLits,
       movedExprs: this.movedExprs,
+      borrowedExprs: this.borrowedExprs,
+      autoWrappedOption: this.autoWrappedOption,
       functions: this.functions,
       structs: this.structs,
       enums: this.enums,
@@ -1127,7 +1135,16 @@ export class TypeChecker {
     }
   }
 
-  // mark a value as moved if it's a non-copy variable
+  // T → Option<T> auto-wrapping: returns the monomorphized Option name if param is Option and arg matches inner type
+  private optionInnerType(paramType: TypeKind): TypeKind | null {
+    if (paramType.tag !== "enum") return null;
+    const info = this.enums.get(paramType.name);
+    if (!info || info.baseName !== "Option") return null;
+    const someVariant = info.variants.get("Some");
+    if (!someVariant || someVariant.fields.length !== 1) return null;
+    return someVariant.fields[0];
+  }
+
   // auto-deref: &T → T, &mut T → T
   private deref(t: TypeKind): TypeKind {
     if (t.tag === "ref") return t.inner;
@@ -1174,10 +1191,20 @@ export class TypeChecker {
     }
     // Mark `v[i]` as a move-out when consumed in a move position. Codegen uses this
     // flag to zero the Vec slot so the slot's drop doesn't double-free.
+    // But don't move out of borrowed Vecs — mark as borrowed instead.
     if (expr.kind === "IndexAccess") {
       const elemType = this.exprTypes.get(expr);
       if (elemType && !isCopy(elemType, (n) => this.isPayloadFreeEnum(n))) {
-        this.movedExprs.add(expr);
+        let objectIsRef = false;
+        if (expr.object.kind === "Ident") {
+          const info = this.lookup(expr.object.name);
+          if (info && info.type.tag === "ref") objectIsRef = true;
+        }
+        if (objectIsRef) {
+          this.borrowedExprs.add(expr);
+        } else {
+          this.movedExprs.add(expr);
+        }
       }
     }
   }
@@ -1264,6 +1291,11 @@ export class TypeChecker {
   }
 
   private checkExprWithHint(expr: Expr, hint: TypeKind | null): TypeKind {
+    // Unwrap Option<T> hint to T for non-null/non-None expressions (enables auto-wrapping)
+    if (hint && expr.kind !== "EnumLit") {
+      const inner = this.optionInnerType(hint);
+      if (inner) hint = inner;
+    }
     if (hint && (expr.kind === "IntLit" || expr.kind === "CharLit") && hint.tag === "int") {
       this.exprTypes.set(expr, hint);
       return hint;
@@ -1565,7 +1597,12 @@ export class TypeChecker {
             const isStringToPtr = argType.tag === "string" && paramType.tag === "ptr" && paramType.inner.tag === "int" && paramType.inner.bits === 8;
             // [T; N] auto-decays to *T for FFI (array → ptr-to-element)
             const isArrayToPtr = argType.tag === "array" && paramType.tag === "ptr" && typeEq(argType.element, paramType.inner);
-            if (!isStringToPtr && !isArrayToPtr) {
+            // T auto-wraps to Option<T> (Some(value))
+            const optInner = this.optionInnerType(paramType);
+            const isOptionWrap = optInner !== null && typeEq(optInner, argType);
+            if (isOptionWrap) {
+              this.autoWrappedOption.set(expr.args[i], paramType.name);
+            } else if (!isStringToPtr && !isArrayToPtr) {
               this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
             }
           }

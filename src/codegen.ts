@@ -30,6 +30,7 @@ export class Codegen {
   private needsMalloc = false;
   private needsFree = false;
   private needsMemcpy = false;
+  private needsStrlen = false;
   private needsMemcmp = false;
   private hasStringType = false;
   private hasVecType = false;
@@ -48,7 +49,8 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "println", "exit"]);
+  private static BUILTINS = new Set(["print", "println", "exit", "_milo_arg_count", "_milo_arg_at"]);
+  private needsArgGlobals = false;
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
@@ -231,6 +233,8 @@ export class Codegen {
       this.output.splice(1, 0, "declare i32 @getentropy(ptr, i64)");
     if (this.needsMemcmp && !declaredExterns.has("memcmp"))
       this.output.splice(1, 0, "declare i32 @memcmp(ptr, ptr, i64)");
+    if (this.needsStrlen && !declaredExterns.has("strlen"))
+      this.output.splice(1, 0, "declare i64 @strlen(ptr)");
     if (this.needsMemcpy && !declaredExterns.has("memcpy"))
       this.output.splice(1, 0, "declare ptr @memcpy(ptr, ptr, i64)");
     if (this.needsFree && !declaredExterns.has("free"))
@@ -251,6 +255,10 @@ export class Codegen {
       this.output.splice(1, 0, `%Vec = type { ptr, i64, i64 }`);
     if (this.hasStringType)
       this.output.splice(1, 0, `%String = type { ptr, i64, i64 }`);
+
+    // always emit argc/argv globals since main stores to them
+    this.output.splice(1, 0, "@_milo_argv_global = internal global ptr null");
+    this.output.splice(1, 0, "@_milo_argc_global = internal global i32 0");
 
     // insert string constants
     for (let i = this.strings.length - 1; i >= 0; i--) {
@@ -316,8 +324,17 @@ export class Codegen {
       return `${lt} %${p.name}`;
     }).join(", ");
     const ret = this.llvmType(fn.retType);
-    lines.push(`define ${ret} @${fn.name}(${params}) {`);
+    if (fn.name === "main") {
+      const mainParams = params ? `i32 %_milo_argc, ptr %_milo_argv, ${params}` : "i32 %_milo_argc, ptr %_milo_argv";
+      lines.push(`define ${ret} @${fn.name}(${mainParams}) {`);
+    } else {
+      lines.push(`define ${ret} @${fn.name}(${params}) {`);
+    }
     lines.push("entry:");
+    if (fn.name === "main") {
+      lines.push("  store i32 %_milo_argc, ptr @_milo_argc_global");
+      lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
+    }
 
     for (const p of fn.params) {
       if (p.isRef || p.isRefMut) {
@@ -375,7 +392,9 @@ export class Codegen {
           this.entryAllocas.push(`  store ${declTy} zeroinitializer, ptr ${addrName}`);
         }
         lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
-        if (this.needsDropCg(stmt.type)) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
+        // Don't drop locals that borrow from a ref (shallow copy, data owned elsewhere)
+        const isBorrowedInit = stmt.value.kind === "IndexAccess" && stmt.value.isBorrowed;
+        if (this.needsDropCg(stmt.type) && !isBorrowedInit) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
         return [lines, false];
       }
       case "Assign": {
@@ -744,6 +763,41 @@ export class Codegen {
       lines.push(...al);
       lines.push(`  call void @exit(i32 ${av})`);
       return [lines, "void", "void"];
+    }
+    if (expr.func === "_milo_arg_count") {
+      this.needsArgGlobals = true;
+      const raw = this.nextTemp();
+      lines.push(`  ${raw} = load i32, ptr @_milo_argc_global`);
+      const ext = this.nextTemp();
+      lines.push(`  ${ext} = sext i32 ${raw} to i64`);
+      return [lines, ext, "i64"];
+    }
+    if (expr.func === "_milo_arg_at") {
+      this.needsArgGlobals = true;
+      this.needsMalloc = true;
+      this.needsMemcpy = true;
+      this.needsStrlen = true;
+      this.hasStringType = true;
+      const [al, iv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const argv = this.nextTemp();
+      lines.push(`  ${argv} = load ptr, ptr @_milo_argv_global`);
+      const argPtr = this.nextTemp();
+      lines.push(`  ${argPtr} = getelementptr ptr, ptr ${argv}, i64 ${iv}`);
+      const cstr = this.nextTemp();
+      lines.push(`  ${cstr} = load ptr, ptr ${argPtr}`);
+      const len = this.nextTemp();
+      lines.push(`  ${len} = call i64 @strlen(ptr ${cstr})`);
+      const buf = this.nextTemp();
+      lines.push(`  ${buf} = call ptr @malloc(i64 ${len})`);
+      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${cstr}, i64 ${len})`);
+      const s1 = this.nextTemp();
+      lines.push(`  ${s1} = insertvalue %String zeroinitializer, ptr ${buf}, 0`);
+      const s2 = this.nextTemp();
+      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${len}, 1`);
+      const s3 = this.nextTemp();
+      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${len}, 2`);
+      return [lines, s3, "%String"];
     }
     return [lines, "void", "void"];
   }

@@ -200,6 +200,18 @@ class LowerCtx {
   private lowerExpr(expr: Expr): HIRExpr {
     const type = this.typeOf(expr) ?? { tag: "unknown" as const };
 
+    // T → Option<T> auto-wrapping: wrap value in Some(value)
+    const optionName = this.c.autoWrappedOption.get(expr);
+    if (optionName) {
+      const inner = this.lowerExprRaw(expr, type);
+      const optionType: TypeKind = { tag: "enum", name: optionName };
+      return { kind: "EnumLit", enumName: optionName, variant: "Some", args: [inner], type: optionType, span: expr.span };
+    }
+
+    return this.lowerExprRaw(expr, type);
+  }
+
+  private lowerExprRaw(expr: Expr, type: TypeKind): HIRExpr {
     switch (expr.kind) {
       case "IntLit":
         return { kind: "IntLit", value: expr.value, type, span: expr.span };
@@ -300,7 +312,7 @@ class LowerCtx {
       case "ArrayRepeat":
         return { kind: "ArrayRepeat", value: this.lowerExpr(expr.value), count: expr.count, type, span: expr.span };
       case "IndexAccess":
-        return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, isMove: this.c.movedExprs.has(expr), span: expr.span };
+        return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, isMove: this.c.movedExprs.has(expr), isBorrowed: this.c.borrowedExprs.has(expr), span: expr.span };
       case "EnumLit": {
         if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
           return { kind: "VecNew", elementType: type.element, type, span: expr.span };
