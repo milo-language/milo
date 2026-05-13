@@ -1,0 +1,27 @@
+from "std/http" import { Request, Response, serve }
+
+struct ApiResponse {
+    language: String,
+    backend: String,
+    version: i32,
+    stable: bool,
+}
+
+fn handler(req: &Request): Response {
+    if req.path == "/" {
+        let info = ApiResponse {
+            language: "milo",
+            backend: "llvm",
+            version: 1,
+            stable: true,
+        }
+        return Response.Json(json_stringify(info))
+    }
+    return Response.NotFound
+}
+
+fn main(): i32 {
+    print("starting on :8080\n")
+    serve(8080, handler)
+    return 0
+}

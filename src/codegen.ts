@@ -200,6 +200,8 @@ export class Codegen {
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.name));
     if (this.needsBoundsCheck) { this.needsPrintf = true; this.needsExit = true; }
+    if (this.needsSnprintf && !declaredExterns.has("snprintf"))
+      this.output.splice(1, 0, "declare i32 @snprintf(ptr, i64, ptr, ...)");
     if (this.needsStrtod && !declaredExterns.has("strtod"))
       this.output.splice(1, 0, "declare double @strtod(ptr, ptr)");
     if (this.needsMemset && !declaredExterns.has("memset"))
@@ -1018,6 +1020,8 @@ export class Codegen {
         return this.genStringSubstr(expr, lines);
       case "StringParseF64":
         return this.genStringParseF64(expr, lines);
+      case "JsonStringify":
+        return this.genJsonStringify(expr, lines);
       case "Closure": {
         const closureName = `__closure_${this.closureCounter++}`;
         const captures = expr.captures;
@@ -2594,6 +2598,97 @@ export class Codegen {
   }
 
   private needsMemset = false;
+  private needsSnprintf = false;
+
+  private genJsonStringify(expr: HIRExpr & { kind: "JsonStringify" }, lines: string[]): [string[], string, string] {
+    this.needsSnprintf = true;
+    this.needsMalloc = true;
+    this.hasStringType = true;
+
+    const valueType = expr.valueType;
+    if (valueType.tag !== "struct") {
+      throw new Error(`json_stringify: unsupported type '${valueType.tag}'`);
+    }
+
+    const layout = this.structLayouts.get(valueType.name)!;
+    const [ptrLines, structPtr] = this.genLValueForArg(expr.value);
+    lines.push(...ptrLines);
+
+    const formatParts: string[] = ["{"];
+    const snprintfArgs: { val: string; type: string }[] = [];
+
+    for (let i = 0; i < layout.fields.length; i++) {
+      const field = layout.fields[i];
+      const fk = field.typeKind;
+      if (i > 0) formatParts.push(",");
+
+      const fieldPtr = this.nextTemp();
+      lines.push(`  ${fieldPtr} = getelementptr %${valueType.name}, ptr ${structPtr}, i32 0, i32 ${i}`);
+      const fieldVal = this.nextTemp();
+      lines.push(`  ${fieldVal} = load ${field.type}, ptr ${fieldPtr}`);
+
+      formatParts.push(`"${field.name}":`);
+
+      if (fk.tag === "string") {
+        const dataPtr = this.nextTemp();
+        lines.push(`  ${dataPtr} = extractvalue %String ${fieldVal}, 0`);
+        formatParts.push(`"%s"`);
+        snprintfArgs.push({ val: dataPtr, type: "ptr" });
+      } else if (fk.tag === "bool") {
+        const trueStr = this.addString("true");
+        const falseStr = this.addString("false");
+        const boolStr = this.nextTemp();
+        lines.push(`  ${boolStr} = select i1 ${fieldVal}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
+        formatParts.push("%s");
+        snprintfArgs.push({ val: boolStr, type: "ptr" });
+      } else if (fk.tag === "int") {
+        let passVal = fieldVal;
+        let passType = field.type;
+        if (fk.bits < 32) {
+          const widened = this.nextTemp();
+          lines.push(`  ${widened} = ${fk.signed ? "sext" : "zext"} ${field.type} ${fieldVal} to i32`);
+          passVal = widened;
+          passType = "i32";
+        }
+        formatParts.push(fk.bits <= 32 ? (fk.signed ? "%d" : "%u") : (fk.signed ? "%lld" : "%llu"));
+        snprintfArgs.push({ val: passVal, type: passType });
+      } else if (fk.tag === "float") {
+        if (fk.bits === 32) {
+          const promoted = this.nextTemp();
+          lines.push(`  ${promoted} = fpext float ${fieldVal} to double`);
+          snprintfArgs.push({ val: promoted, type: "double" });
+        } else {
+          snprintfArgs.push({ val: fieldVal, type: "double" });
+        }
+        formatParts.push("%g");
+      }
+    }
+
+    formatParts.push("}");
+    const fmt = this.addString(formatParts.join(""));
+    const argsStr = snprintfArgs.map(a => `, ${a.type} ${a.val}`).join("");
+
+    // snprintf(null, 0, fmt, ...) to measure
+    const lenResult = this.nextTemp();
+    lines.push(`  ${lenResult} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmt.label}${argsStr})`);
+    const len64 = this.nextTemp();
+    lines.push(`  ${len64} = sext i32 ${lenResult} to i64`);
+    const bufSize = this.nextTemp();
+    lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
+
+    // snprintf(buf, size, fmt, ...) to write
+    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmt.label}${argsStr})`);
+
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len64}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
+    return [lines, s2, "%String"];
+  }
 
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
     if (typeKind.tag === "string") {

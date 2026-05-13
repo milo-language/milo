@@ -1297,6 +1297,15 @@ export class TypeChecker {
           this.tryMove(expr.args[0]);
           return this.setType(expr, { tag: "box", inner: argType });
         }
+        if (expr.func === "json_stringify") {
+          if (expr.args.length !== 1) { this.error(`json_stringify() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const argType = this.checkExpr(expr.args[0]);
+          if (argType.tag !== "struct" && argType.tag !== "string" && argType.tag !== "bool" && argType.tag !== "int" && argType.tag !== "float") {
+            this.error(`json_stringify: unsupported type '${typeName(argType)}'`, sp);
+          }
+          this.autoBorrowed.set(expr.args[0], { mutable: false });
+          return this.setType(expr, { tag: "string" });
+        }
         // Generic function — infer type params from args, monomorphize
         const genericFn = this.genericFns.get(expr.func);
         if (genericFn) {
