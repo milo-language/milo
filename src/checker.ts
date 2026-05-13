@@ -6,6 +6,13 @@ interface VarInfo {
   type: TypeKind;
   mutable: boolean;
   moved: boolean;
+  borrowed: boolean;
+}
+
+export interface CaptureInfo {
+  name: string;
+  type: TypeKind;
+  mutable: boolean;
 }
 
 export interface FnSig {
@@ -37,6 +44,8 @@ export interface CheckResult {
   monomorphizedFns: Function[];
   monomorphizedEnums: import("./ast").EnumDecl[];
   monomorphizedStructs: StructDecl[];
+  closureCaptures: Map<Expr, CaptureInfo[]>;
+  closureCalls: Map<Expr, TypeKind>;
 }
 
 interface GenericEnumInfo {
@@ -74,6 +83,10 @@ export class TypeChecker {
   private rewrittenEnums = new Map<Expr, string>();
   private rewrittenStructLits = new Map<Expr, string>();
   private movedExprs = new Set<Expr>();
+  private closureCaptures = new Map<Expr, CaptureInfo[]>();
+  private closureCalls = new Map<Expr, TypeKind>();
+  private closureScopeDepth: number | null = null;
+  private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
   private loopDepth = 0;
 
@@ -82,6 +95,9 @@ export class TypeChecker {
   }
 
   private resolve(ty: MiloType): TypeKind {
+    if (ty.isFn && ty.fnParams && ty.fnRet) {
+      return { tag: "fn", params: ty.fnParams.map(p => this.resolve(p)), ret: this.resolve(ty.fnRet) };
+    }
     const typeArgs = ty.typeArgs ?? [];
     if (typeArgs.length > 0) {
       const resolvedArgs = typeArgs.map(a => this.resolve(a));
@@ -139,6 +155,7 @@ export class TypeChecker {
       case "hashmap": return `HashMap_${this.mangleTypeName(t.key)}_${this.mangleTypeName(t.value)}`;
       case "array": return `arr_${this.mangleTypeName(t.element)}_${t.size}`;
       case "ref": return `ref_${this.mangleTypeName(t.inner)}`;
+      case "fn": return `fn_${t.params.map(p => this.mangleTypeName(p)).join("_")}_ret_${this.mangleTypeName(t.ret)}`;
       case "unknown": return "unknown";
     }
   }
@@ -282,7 +299,14 @@ export class TypeChecker {
   private lookup(name: string): VarInfo | null {
     for (let i = this.scopes.length - 1; i >= 0; i--) {
       const info = this.scopes[i].get(name);
-      if (info) return info;
+      if (info) {
+        if (this.closureScopeDepth !== null && i < this.closureScopeDepth && this.currentClosureCaptures) {
+          if (!this.currentClosureCaptures.has(name)) {
+            this.currentClosureCaptures.set(name, { name, type: info.type, mutable: info.mutable });
+          }
+        }
+        return info;
+      }
     }
     return null;
   }
@@ -305,6 +329,9 @@ export class TypeChecker {
         for (const f of fields) {
           if (f.type.tag === "ref") {
             this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
+          }
+          if (f.type.tag === "fn") {
+            this.error(`struct '${s.name}' field '${f.name}': closures cannot be stored in structs`, undefined, `closures are second-class — pass them as function parameters instead`);
           }
         }
         this.structs.set(s.name, { fields });
@@ -348,6 +375,9 @@ export class TypeChecker {
       if (ret.tag === "ref") {
         this.error(`function '${fn.name}': cannot return a reference`, undefined, `references are second-class — return an owned value instead`);
       }
+      if (ret.tag === "fn") {
+        this.error(`function '${fn.name}': cannot return a closure`, undefined, `closures are second-class — pass them as function parameters instead`);
+      }
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic });
     }
 
@@ -369,6 +399,8 @@ export class TypeChecker {
       monomorphizedFns: this.monomorphizedFns,
       monomorphizedEnums: this.monomorphizedDecls,
       monomorphizedStructs: this.monomorphizedStructDecls,
+      closureCaptures: this.closureCaptures,
+      closureCalls: this.closureCalls,
     };
   }
 
@@ -379,7 +411,7 @@ export class TypeChecker {
 
     for (const p of fn.params) {
       const pType = this.resolve(p.type);
-      this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false });
+      this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false });
     }
 
     for (const stmt of fn.body) this.checkStmt(stmt, retType);
@@ -398,7 +430,7 @@ export class TypeChecker {
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
         }
-        this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false });
+        this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false, borrowed: false });
         this.tryMove(stmt.value);
         break;
       }
@@ -411,7 +443,7 @@ export class TypeChecker {
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
         }
-        this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false });
+        this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false, borrowed: false });
         this.tryMove(stmt.value);
         break;
       }
@@ -438,7 +470,7 @@ export class TypeChecker {
           if (fnRetType.tag !== "void") this.error(`return without value in function returning ${typeName(fnRetType)}`, sp);
         } else {
           const valType = this.checkExprWithHint(stmt.value, fnRetType);
-          if (!typeEq(fnRetType, valType) && valType.tag !== "unknown") {
+          if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && fnRetType.tag !== "unknown") {
             this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
           }
           this.tryMove(stmt.value);
@@ -517,7 +549,7 @@ export class TypeChecker {
               const variant = enumInfo.variants.get(arm.pattern.variant);
               if (variant) {
                 for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
-                  this.declare(arm.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false });
+                  this.declare(arm.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false });
                 }
               }
             }
@@ -556,7 +588,7 @@ export class TypeChecker {
           this.pushScope();
           if (variant) {
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false });
+              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false });
             }
           }
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
@@ -588,6 +620,10 @@ export class TypeChecker {
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
       if (info && !isCopy(info.type)) {
+        if (info.borrowed) {
+          this.error(`cannot move '${expr.name}' because it is captured by a closure`, expr.span);
+          return;
+        }
         info.moved = true;
         this.movedExprs.add(expr);
       }
@@ -825,7 +861,27 @@ export class TypeChecker {
         }
 
         const sig = this.functions.get(expr.func);
-        if (!sig) { this.error(`undefined function '${expr.func}'`, sp); return this.setType(expr, { tag: "unknown" }); }
+        if (!sig) {
+          const varInfo = this.lookup(expr.func);
+          if (varInfo && varInfo.type.tag === "fn") {
+            const fnType = varInfo.type;
+            if (expr.args.length !== fnType.params.length) {
+              this.error(`closure expects ${fnType.params.length} args, got ${expr.args.length}`, sp);
+            }
+            for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
+              const argType = this.checkExprWithHint(expr.args[i], fnType.params[i]);
+              if (!typeEq(fnType.params[i], argType) && argType.tag !== "unknown") {
+                this.error(`closure argument ${i + 1}: expected ${typeName(fnType.params[i])}, got ${typeName(argType)}`, expr.args[i].span);
+              }
+            }
+            for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
+              this.tryMove(expr.args[i]);
+            }
+            this.closureCalls.set(expr, fnType);
+            return this.setType(expr, fnType.ret);
+          }
+          this.error(`undefined function '${expr.func}'`, sp); return this.setType(expr, { tag: "unknown" });
+        }
         if (sig.variadic) {
           if (expr.args.length < sig.params.length) this.error(`function '${expr.func}' expects at least ${sig.params.length} args, got ${expr.args.length}`, sp);
         } else if (expr.args.length !== sig.params.length) {
@@ -1073,6 +1129,45 @@ export class TypeChecker {
           this.error(`cannot cast to ${typeName(toType)}`, sp);
         }
         return this.setType(expr, toType);
+      }
+      case "Closure": {
+        const savedClosureScopeDepth = this.closureScopeDepth;
+        const savedClosureCaptures = this.currentClosureCaptures;
+        this.currentClosureCaptures = new Map();
+        this.pushScope();
+        this.closureScopeDepth = this.scopes.length - 1;
+        for (const p of expr.params) {
+          const pType = this.resolve(p.type);
+          this.declare(p.name, { type: pType, mutable: false, moved: false, borrowed: false });
+        }
+        let inferredRet: TypeKind = expr.retType ? this.resolve(expr.retType) : { tag: "unknown" };
+        const savedRetType = this.currentFnRetType;
+        this.currentFnRetType = inferredRet;
+        for (const s of expr.body) this.checkStmt(s, inferredRet);
+        if (inferredRet.tag === "unknown" && expr.body.length > 0) {
+          const lastStmt = expr.body[expr.body.length - 1];
+          if (lastStmt.kind === "Return" && lastStmt.value) {
+            inferredRet = this.exprTypes.get(lastStmt.value) ?? { tag: "void" };
+          } else if (lastStmt.kind === "ExprStmt") {
+            inferredRet = { tag: "void" };
+          } else {
+            inferredRet = { tag: "void" };
+          }
+        }
+        this.currentFnRetType = savedRetType;
+        this.popScope();
+        const captures = Array.from(this.currentClosureCaptures.values());
+        this.closureCaptures.set(expr, captures);
+        for (const cap of captures) {
+          for (let i = this.scopes.length - 1; i >= 0; i--) {
+            const info = this.scopes[i].get(cap.name);
+            if (info) { info.borrowed = true; break; }
+          }
+        }
+        this.closureScopeDepth = savedClosureScopeDepth;
+        this.currentClosureCaptures = savedClosureCaptures;
+        const paramTypes = expr.params.map(p => this.resolve(p.type));
+        return this.setType(expr, { tag: "fn", params: paramTypes, ret: inferredRet });
       }
       case "MethodCall": {
         const objType = this.checkExpr(expr.object);

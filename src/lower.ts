@@ -213,6 +213,21 @@ class LowerCtx {
         if (expr.func === "Box") {
           return { kind: "BoxCreate", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
         }
+        const closureFnType = this.c.closureCalls.get(expr);
+        if (closureFnType) {
+          const args: HIRArg[] = expr.args.map(arg => ({
+            expr: this.lowerExpr(arg),
+            passByRef: false,
+            refMut: false,
+          }));
+          return {
+            kind: "ClosureCall",
+            callee: { kind: "Ident", name: expr.func, type: closureFnType, span: expr.span },
+            args,
+            type,
+            span: expr.span,
+          };
+        }
         const funcName = this.c.rewrittenCalls.get(expr) ?? expr.func;
         const sig = this.c.functions.get(funcName);
         const args: HIRArg[] = expr.args.map((arg, i) => {
@@ -339,6 +354,23 @@ class LowerCtx {
           }
         }
         throw new Error(`unsupported method call: ${expr.method}`);
+      }
+      case "Closure": {
+        const captures = this.c.closureCaptures.get(expr) ?? [];
+        const retType = type.tag === "fn" ? type.ret : { tag: "void" as const };
+        return {
+          kind: "Closure",
+          params: expr.params.map(p => {
+            const pType = this.c.exprTypes.get(expr);
+            const resolvedType = pType?.tag === "fn" ? pType.params[expr.params.indexOf(p)] : { tag: "unknown" as const };
+            return { name: p.name, type: resolvedType };
+          }),
+          body: expr.body.map(s => this.lowerStmt(s, retType)),
+          captures,
+          retType,
+          type,
+          span: expr.span,
+        };
       }
     }
   }

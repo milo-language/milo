@@ -57,6 +57,7 @@ export enum TokenKind {
   DotDotDot = "...",
   Question = "?",
   QuestionQuestion = "??",
+  Pipe = "|",
   Eof = "EOF",
 }
 

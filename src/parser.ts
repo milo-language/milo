@@ -83,6 +83,20 @@ export class Parser {
       this.expect(TokenKind.RBracket);
       return { name: inner.name, isPtr: false, isRef: false, isRefMut: false, isArray: true, arraySize };
     }
+    // fn(T1, T2) -> R
+    if (this.at(TokenKind.Fn)) {
+      this.advance();
+      this.expect(TokenKind.LParen);
+      const fnParams: MiloType[] = [];
+      while (!this.at(TokenKind.RParen)) {
+        fnParams.push(this.parseType());
+        if (!this.at(TokenKind.RParen)) this.expect(TokenKind.Comma);
+      }
+      this.expect(TokenKind.RParen);
+      this.expect(TokenKind.Arrow);
+      const fnRet = this.parseType();
+      return { name: "fn", isFn: true, fnParams, fnRet, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    }
     const tok = this.advance();
     let typeArgs: MiloType[] | undefined;
     if (this.at(TokenKind.Lt)) {
@@ -531,6 +545,9 @@ export class Parser {
       return this.parseArrayLit();
     }
     if (tok.kind === TokenKind.LParen) {
+      if (this.isArrowClosure()) {
+        return this.parseClosure(s);
+      }
       this.advance();
       const expr = this.parseExpr();
       this.expect(TokenKind.RParen);
@@ -575,5 +592,48 @@ export class Parser {
     }
     this.expect(TokenKind.RBracket);
     return { kind: "ArrayLit", elements, span: s };
+  }
+
+  // lookahead: is this ( the start of an arrow closure?
+  // () =>  or  (ident : ...) =>
+  private isArrowClosure(): boolean {
+    const saved = this.pos;
+    this.advance(); // skip (
+    if (this.at(TokenKind.RParen)) {
+      this.advance();
+      const isArrow = this.at(TokenKind.FatArrow);
+      this.pos = saved;
+      return isArrow;
+    }
+    if (this.at(TokenKind.Ident)) {
+      this.advance();
+      const isColon = this.at(TokenKind.Colon);
+      this.pos = saved;
+      return isColon;
+    }
+    this.pos = saved;
+    return false;
+  }
+
+  // (params) => expr  or  (params): RetType => { body }
+  private parseClosure(span: Span): Expr {
+    this.expect(TokenKind.LParen);
+    const params: Param[] = [];
+    while (!this.at(TokenKind.RParen)) {
+      params.push(this.parseParam());
+      if (!this.at(TokenKind.RParen)) this.expect(TokenKind.Comma);
+    }
+    this.expect(TokenKind.RParen);
+    const retType = this.at(TokenKind.Colon) ? (this.advance(), this.parseType()) : null;
+    this.expect(TokenKind.FatArrow);
+    let body: Stmt[];
+    if (this.match(TokenKind.LBrace)) {
+      body = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+    } else {
+      const expr = this.parseExpr();
+      body = [{ kind: "Return" as const, value: expr, span: expr.span }];
+    }
+    return { kind: "Closure", params, retType, body, span };
   }
 }

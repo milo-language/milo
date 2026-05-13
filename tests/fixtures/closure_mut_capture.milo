@@ -1,0 +1,16 @@
+// closure mutating a captured var — visible outside
+extern fn printf(fmt: *u8, ...) -> i32
+
+fn call_it(f: fn() -> void) {
+    f()
+}
+
+fn main() -> i32 {
+    var count: i32 = 0
+    call_it(() => { count = count + 1 })
+    call_it(() => { count = count + 1 })
+    call_it(() => { count = count + 1 })
+    printf("%d\n", count)
+    return 0
+}
+// @expect: 3

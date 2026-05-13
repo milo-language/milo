@@ -8,6 +8,9 @@ export interface MiloType {
   isRefMut: boolean;   // &mut T
   isArray: boolean;    // [T]
   arraySize: number | null; // [T; N] — null for dynamic
+  isFn?: boolean;      // fn(T) -> R
+  fnParams?: MiloType[];
+  fnRet?: MiloType;
 }
 
 export function simpleType(name: string): MiloType {
@@ -49,9 +52,10 @@ export interface Propagate { kind: "Propagate"; operand: Expr; span?: Span }
 export interface DefaultValue { kind: "DefaultValue"; operand: Expr; default: Expr; span?: Span }
 export interface CastExpr { kind: "CastExpr"; operand: Expr; targetType: MiloType; span?: Span }
 export interface MethodCall { kind: "MethodCall"; object: Expr; method: string; args: Expr[]; span?: Span }
+export interface ClosureExpr { kind: "Closure"; params: Param[]; retType: MiloType | null; body: Stmt[]; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall;
+  | StructLit | FieldAccess | ArrayLit | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr;
 
 // ── Statements ──
 

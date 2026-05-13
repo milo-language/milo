@@ -143,6 +143,7 @@ export class Lexer {
       "<": TokenKind.Lt, ">": TokenKind.Gt,
       "!": TokenKind.Bang,
       "?": TokenKind.Question,
+      "|": TokenKind.Pipe,
     };
 
     if (ch in singles) {

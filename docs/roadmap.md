@@ -56,6 +56,7 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 ## Phase 3 — Self-Hosting
 
 - [x] HIR — typed intermediate representation (every expr carries TypeKind)
+- [x] Closures — non-escaping, arrow syntax `(x: i32) => x * 2`, by-reference captures, fn type params
 - [x] Drop semantics — compiler emits free on scope exit for heap-owned values (String)
 - [x] Box\<T\> — single-owner heap pointer, auto-drop, recursive enum drop glue
 - [x] Recursive enums via boxed payload (linked list, tree, AST)

@@ -56,6 +56,17 @@ fn main() -> i32 {
 - Drop semantics — heap-owning values auto-freed on scope exit
 - Generics on functions, enums, and structs (monomorphization, type inference)
 
+**Closures**
+```
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 { return f(x) }
+
+let result = apply((x: i32) => x * 2, 21)    // expression closure
+let inc = (x: i32) => x + 1                   // stored in local
+var count: i32 = 0
+call_it(() => { count = count + 1 })           // block closure, captures by reference
+```
+Non-escaping: closures can be passed as function params or stored in locals, but cannot be returned or stored in structs. Captures are by reference — mutations visible outside.
+
 **Control flow**
 - `if`/`else`, `while`, `break`, `continue`, `return`
 - `match` with exhaustiveness checking
@@ -84,7 +95,7 @@ Recursive resolution, dedup, transitive imports.
 - VS Code extension: syntax highlighting + LSP client
 - GitHub Actions CI
 
-105 tests pass on the current build.
+115 tests pass on the current build.
 
 ## Design Principles
 

@@ -41,6 +41,8 @@ export class Codegen {
   private droppableEnums = new Set<string>();
   private generatedDropHelpers = new Set<string>();
   private dropHelperBodies: string[][] = [];
+  private closureBodies: string[][] = [];
+  private closureCounter = 0;
   private static BUILTINS = new Set(["print", "println", "exit"]);
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -62,6 +64,7 @@ export class Codegen {
       case "ref":    return "ptr";
       case "struct": return `%${t.name}`;
       case "enum":   return `%${t.name}`;
+      case "fn":     return "{ ptr, ptr }";
       case "array":
         if (t.size !== null) return `[${t.size} x ${this.llvmType(t.element)}]`;
         return `{ ptr, i32 }`;
@@ -259,6 +262,12 @@ export class Codegen {
 
     // append drop helper functions
     for (const body of this.dropHelperBodies) {
+      this.emit("");
+      for (const line of body) this.emit(line);
+    }
+
+    // append closure function bodies
+    for (const body of this.closureBodies) {
       this.emit("");
       for (const line of body) this.emit(line);
     }
@@ -927,6 +936,141 @@ export class Codegen {
         const len = this.nextTemp();
         lines.push(`  ${len} = extractvalue %HashMap ${ov}, 1`);
         return [lines, len, "i64"];
+      }
+      case "Closure": {
+        const closureName = `__closure_${this.closureCounter++}`;
+        const captures = expr.captures;
+        const retTy = this.llvmType(expr.retType);
+
+        // build env struct type: { ptr, ptr, ... } — one ptr per capture
+        const envStructTy = captures.length > 0
+          ? `{ ${captures.map(() => "ptr").join(", ")} }`
+          : "{}";
+
+        // save codegen state
+        const savedTemp = this.tempCounter;
+        const savedLabel = this.labelCounter;
+        const savedLocals = this.locals;
+        const savedDroppable = this.droppableLocals;
+        const savedLoopHeader = this.loopHeader;
+        const savedLoopExit = this.loopExit;
+        this.tempCounter = 0;
+        this.labelCounter = 0;
+        this.locals = new Map();
+        this.droppableLocals = [];
+        this.loopHeader = null;
+        this.loopExit = null;
+
+        // generate closure function: @__closure_N(ptr %env, params...)
+        const closureBody: string[] = [];
+        const closureParams = [`ptr %env`, ...expr.params.map(p => `${this.llvmType(p.type)} %${p.name}`)].join(", ");
+        closureBody.push(`define ${retTy} @${closureName}(${closureParams}) {`);
+        closureBody.push("entry:");
+
+        // load captures from env struct
+        for (let i = 0; i < captures.length; i++) {
+          const cap = captures[i];
+          const capTy = this.llvmType(cap.type);
+          const gepPtr = this.nextTemp();
+          closureBody.push(`  ${gepPtr} = getelementptr ${envStructTy}, ptr %env, i32 0, i32 ${i}`);
+          const loadedPtr = this.nextTemp();
+          closureBody.push(`  ${loadedPtr} = load ptr, ptr ${gepPtr}`);
+          // the capture is a pointer to the original variable's alloca
+          this.locals.set(cap.name, { type: capTy, typeKind: cap.type, mutable: cap.mutable, isRef: true, addr: `${gepPtr}.ref` });
+          closureBody.push(`  ${gepPtr}.ref = alloca ptr`);
+          closureBody.push(`  store ptr ${loadedPtr}, ptr ${gepPtr}.ref`);
+        }
+
+        // set up params
+        for (const p of expr.params) {
+          const lt = this.llvmType(p.type);
+          closureBody.push(`  %${p.name}.addr = alloca ${lt}`);
+          closureBody.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
+          this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
+        }
+
+        // generate body
+        let hasTerminator = false;
+        for (const stmt of expr.body) {
+          const [stmtLines, terminated] = this.genStmt(stmt);
+          closureBody.push(...stmtLines);
+          if (terminated) hasTerminator = true;
+        }
+        if (!hasTerminator) {
+          if (retTy === "void") closureBody.push("  ret void");
+          else closureBody.push(`  ret ${retTy} 0`);
+        }
+        closureBody.push("}");
+        this.closureBodies.push(closureBody);
+
+        // restore codegen state
+        this.tempCounter = savedTemp;
+        this.labelCounter = savedLabel;
+        this.locals = savedLocals;
+        this.droppableLocals = savedDroppable;
+        this.loopHeader = savedLoopHeader;
+        this.loopExit = savedLoopExit;
+
+        // at the call site: build env struct and closure pair
+        if (captures.length > 0) {
+          const envAddr = this.nextTemp();
+          lines.push(`  ${envAddr} = alloca ${envStructTy}`);
+          for (let i = 0; i < captures.length; i++) {
+            const cap = captures[i];
+            const capAddr = this.localAddr(cap.name);
+            const local = this.locals.get(cap.name);
+            const gepSlot = this.nextTemp();
+            lines.push(`  ${gepSlot} = getelementptr ${envStructTy}, ptr ${envAddr}, i32 0, i32 ${i}`);
+            if (local?.isRef) {
+              // variable is already a ref (ptr to ptr) — load the inner ptr
+              const innerPtr = this.nextTemp();
+              lines.push(`  ${innerPtr} = load ptr, ptr ${capAddr}`);
+              lines.push(`  store ptr ${innerPtr}, ptr ${gepSlot}`);
+            } else {
+              // variable is a value — store pointer to its alloca
+              lines.push(`  store ptr ${capAddr}, ptr ${gepSlot}`);
+            }
+          }
+          // build { ptr fn_ptr, ptr env_ptr }
+          const closurePair = this.nextTemp();
+          lines.push(`  ${closurePair} = insertvalue { ptr, ptr } undef, ptr @${closureName}, 0`);
+          const closurePair2 = this.nextTemp();
+          lines.push(`  ${closurePair2} = insertvalue { ptr, ptr } ${closurePair}, ptr ${envAddr}, 1`);
+          return [lines, closurePair2, "{ ptr, ptr }"];
+        } else {
+          const closurePair = this.nextTemp();
+          lines.push(`  ${closurePair} = insertvalue { ptr, ptr } undef, ptr @${closureName}, 0`);
+          const closurePair2 = this.nextTemp();
+          lines.push(`  ${closurePair2} = insertvalue { ptr, ptr } ${closurePair}, ptr null, 1`);
+          return [lines, closurePair2, "{ ptr, ptr }"];
+        }
+      }
+      case "ClosureCall": {
+        // load the { fn_ptr, env_ptr } pair from the callee
+        const [calLines, calVal] = this.genExpr(expr.callee);
+        lines.push(...calLines);
+        const fnPtr = this.nextTemp();
+        lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${calVal}, 0`);
+        const envPtr = this.nextTemp();
+        lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${calVal}, 1`);
+
+        // evaluate args
+        const argVals: { val: string; type: string }[] = [{ val: envPtr, type: "ptr" }];
+        for (const arg of expr.args) {
+          const [al, av, at] = this.genExpr(arg.expr);
+          lines.push(...al);
+          argVals.push({ val: av, type: at });
+        }
+
+        const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
+        const retTy = this.llvmType(expr.type);
+        if (retTy === "void") {
+          lines.push(`  call void ${fnPtr}(${argsStr})`);
+          return [lines, "void", "void"];
+        }
+        const result = this.nextTemp();
+        lines.push(`  ${result} = call ${retTy} ${fnPtr}(${argsStr})`);
+        return [lines, result, retTy];
       }
     }
   }

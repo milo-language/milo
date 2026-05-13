@@ -38,7 +38,9 @@ export type HIRExpr =
   | { kind: "HashMapGet"; map: HIRExpr; key: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "HashMapContains"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapRemove"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span };
+  | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "Closure"; params: { name: string; type: TypeKind }[]; body: HIRStmt[]; captures: { name: string; type: TypeKind; mutable: boolean }[]; retType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "ClosureCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;

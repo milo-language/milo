@@ -12,9 +12,13 @@ export type TypeKind =
   | { tag: "vec"; element: TypeKind }
   | { tag: "hashmap"; key: TypeKind; value: TypeKind }
   | { tag: "array"; element: TypeKind; size: number | null }
+  | { tag: "fn"; params: TypeKind[]; ret: TypeKind }
   | { tag: "unknown" };
 
-export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null }): TypeKind {
+export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; fnParams?: any[]; fnRet?: any }): TypeKind {
+  if (ty.isFn && ty.fnParams && ty.fnRet) {
+    return { tag: "fn", params: ty.fnParams.map(typeFromAst), ret: typeFromAst(ty.fnRet) };
+  }
   let base: TypeKind;
   switch (ty.name) {
     case "i8": base = { tag: "int", bits: 8, signed: true }; break;
@@ -56,6 +60,10 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
       const ba = b as typeof a;
       return typeEq(a.element, ba.element) && a.size === ba.size;
     }
+    case "fn": {
+      const bf = b as typeof a;
+      return a.params.length === bf.params.length && a.params.every((p, i) => typeEq(p, bf.params[i])) && typeEq(a.ret, bf.ret);
+    }
   }
 }
 
@@ -74,6 +82,7 @@ export function typeName(t: TypeKind): string {
     case "struct": return t.name;
     case "enum": return t.name;
     case "array": return t.size !== null ? `[${typeName(t.element)}; ${t.size}]` : `[${typeName(t.element)}]`;
+    case "fn": return `fn(${t.params.map(typeName).join(", ")}) -> ${typeName(t.ret)}`;
     case "unknown": return "<unknown>";
   }
 }
@@ -92,7 +101,7 @@ export function isFloat(t: TypeKind): boolean {
 
 // primitives are Copy (no move tracking needed)
 export function isCopy(t: TypeKind): boolean {
-  return t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr";
+  return t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn";
 }
 
 // heap-owning types that need destructor calls at scope exit
