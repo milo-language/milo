@@ -44,7 +44,7 @@ function compileToIr(sourcePath: string, outputPath: string | null) {
   }
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, optFlag: string = ""): string {
   const source = readFileSync(sourcePath, "utf-8");
   const ir = compile(source, sourcePath);
   const base = basename(sourcePath).replace(/\.milo$/, "");
@@ -54,7 +54,8 @@ function compileToBinary(sourcePath: string, outputPath: string | null): string 
 
   try {
     writeFileSync(tmpLl, ir);
-    execSync(`clang ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+    const opt = optFlag ? ` ${optFlag}` : "";
+    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     console.error(`error[link]: clang failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
@@ -64,8 +65,8 @@ function compileToBinary(sourcePath: string, outputPath: string | null): string 
   return out;
 }
 
-function runFile(sourcePath: string, extraArgs: string[]) {
-  const bin = compileToBinary(sourcePath, null);
+function runFile(sourcePath: string, extraArgs: string[], optFlag: string = "") {
+  const bin = compileToBinary(sourcePath, null, optFlag);
   try {
     const result = execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), {
       stdio: "inherit",
@@ -77,17 +78,21 @@ function runFile(sourcePath: string, extraArgs: string[]) {
   }
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[] } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string } {
   let output: string | null = null;
   let source: string | null = null;
+  let optFlag = "";
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
+    else if (args[i] === "--release") { optFlag = "-O3"; }
+    else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
+    else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest };
+  return { output, source, rest, optFlag };
 }
 
 function main() {
@@ -98,6 +103,9 @@ function main() {
     console.log("  run <file> [args]      compile and run (no artifacts left behind)");
     console.log("  build <file> [-o out]  compile to executable");
     console.log("  emit-ir <file>         emit LLVM IR");
+    console.log("options:");
+    console.log("  --release              optimize (-O3)");
+    console.log("  -O<level>              clang opt level: 0,1,2,3,s,z");
     process.exit(1);
   }
 
@@ -109,14 +117,14 @@ function main() {
     return;
   }
 
-  const { output, source, rest } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag } = parseArgs(args.slice(1));
 
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
 
   if (cmd === "run") {
-    runFile(source!, rest);
+    runFile(source!, rest, optFlag);
   } else if (cmd === "build") {
-    const bin = compileToBinary(source!, output);
+    const bin = compileToBinary(source!, output, optFlag);
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output);
