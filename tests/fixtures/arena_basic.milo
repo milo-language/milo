@@ -1,44 +1,9 @@
 // @expect: 42
 // @expect: none
 // @expect: 99
-struct Handle {
-    index: i32,
-    generation: i32,
-}
-
-struct Arena<T> {
-    data: Vec<T>,
-    gens: Vec<i32>,
-}
-
-fn arena_new<T>(): Arena<T> {
-    var a: Arena<T> = Arena { data: Vec.new(), gens: Vec.new() }
-    return a
-}
-
-fn arena_alloc<T>(a: &mut Arena<T>, val: T): Handle {
-    let idx = a.data.len
-    a.data.push(val)
-    a.gens.push(1)
-    return Handle { index: idx as i32, generation: 1 }
-}
-
-fn arena_get(a: &Arena<i32>, h: Handle): Option<i32> {
-    let idx = h.index as i64
-    if idx < 0 { return Option.None }
-    if idx >= a.data.len { return Option.None }
-    if a.gens[idx] != h.generation { return Option.None }
-    return Option.Some(a.data[idx])
-}
-
-fn arena_free(a: &mut Arena<i32>, h: Handle): void {
-    let idx = h.index as i64
-    if idx >= 0 {
-        if idx < a.data.len {
-            a.gens[idx] = a.gens[idx] + 1
-        }
-    }
-}
+// @expect: 2
+// @expect: 100
+import "std/arena"
 
 fn main(): i32 {
     var arena: Arena<i32> = arena_new()
@@ -58,6 +23,15 @@ fn main(): i32 {
     }
 
     match arena_get(arena, h2) {
+        Option.Some(v) => { print("%d", v) }
+        Option.None => { print("none") }
+    }
+
+    // alloc reuses freed slot
+    let h3 = arena_alloc(arena, 100)
+    print("%lld", arena_len(arena))
+
+    match arena_get(arena, h3) {
         Option.Some(v) => { print("%d", v) }
         Option.None => { print("none") }
     }

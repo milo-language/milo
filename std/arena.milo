@@ -1,0 +1,91 @@
+// std/arena — generational arena for cyclic and graph data structures
+//
+// Handles are freely copyable and storable (unlike &T).
+// Generation checks detect use-after-free at runtime.
+
+// Opaque handle to an arena slot. Safe to copy, store, and return.
+struct Handle {
+    index: i32,
+    generation: i32,
+}
+
+// Generational arena backed by Vec<T>.
+struct Arena<T> {
+    data: Vec<T>,
+    gens: Vec<i32>,
+    free_list: Vec<i32>,
+    live: i64,
+}
+
+// Create a new empty arena.
+fn arena_new<T>(): Arena<T> {
+    var a: Arena<T> = Arena {
+        data: Vec.new(),
+        gens: Vec.new(),
+        free_list: Vec.new(),
+        live: 0,
+    }
+    return a
+}
+
+// Insert a value and return a handle to it.
+fn arena_alloc<T>(a: &mut Arena<T>, val: T): Handle {
+    if a.free_list.len > 0 {
+        let fi = a.free_list[a.free_list.len - 1]
+        a.free_list.pop()
+        let idx = fi as i64
+        a.data[idx] = val
+        let gen = a.gens[idx]
+        a.live = a.live + 1
+        return Handle { index: fi, generation: gen }
+    }
+    let idx = a.data.len
+    a.data.push(val)
+    a.gens.push(1)
+    a.live = a.live + 1
+    return Handle { index: idx as i32, generation: 1 }
+}
+
+// Check whether a handle is still valid.
+fn arena_valid<T>(a: &Arena<T>, h: Handle): bool {
+    let idx = h.index as i64
+    if idx < 0 { return false }
+    if idx >= a.data.len { return false }
+    return a.gens[idx] == h.generation
+}
+
+// Free a slot, bumping its generation so stale handles are detected.
+fn arena_free<T>(a: &mut Arena<T>, h: Handle): bool {
+    let idx = h.index as i64
+    if idx < 0 { return false }
+    if idx >= a.data.len { return false }
+    if a.gens[idx] != h.generation { return false }
+    a.gens[idx] = a.gens[idx] + 1
+    a.free_list.push(h.index)
+    a.live = a.live - 1
+    return true
+}
+
+// Get a copy of the value at a handle. Returns None if the handle is stale.
+fn arena_get<T>(a: &Arena<T>, h: Handle): Option<T> {
+    let idx = h.index as i64
+    if idx < 0 { return Option.None }
+    if idx >= a.data.len { return Option.None }
+    if a.gens[idx] != h.generation { return Option.None }
+    return Option.Some(a.data[idx])
+}
+
+// Overwrite the value at a handle. Returns false if the handle is stale.
+fn arena_set<T>(a: &mut Arena<T>, h: Handle, val: T): bool {
+    let idx = h.index as i64
+    if idx < 0 { return false }
+    if idx >= a.data.len { return false }
+    if a.gens[idx] != h.generation { return false }
+    a.data[idx] = val
+    return true
+}
+
+// Number of live entries.
+fn arena_len<T>(a: &Arena<T>): i64 {
+    return a.live
+}

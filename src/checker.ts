@@ -1599,12 +1599,32 @@ export class TypeChecker {
           const typeMap = new Map<string, TypeKind>();
           for (let i = 0; i < argTypes.length; i++) {
             const paramTy = genericFn.decl.params[i].type;
+            // Direct match: param type IS a type param (e.g. val: T)
             if (genericFn.typeParams.includes(paramTy.name)) {
               const existing = typeMap.get(paramTy.name);
               if (existing && !typeEq(existing, argTypes[i])) {
                 this.error(`conflicting inference for type parameter '${paramTy.name}'`, sp);
               } else {
                 typeMap.set(paramTy.name, argTypes[i]);
+              }
+            }
+            // Nested match: param type contains type params (e.g. &Arena<T>, Vec<T>)
+            if (paramTy.typeArgs) {
+              let argResolved = argTypes[i];
+              if (argResolved.tag === "ref") argResolved = argResolved.inner;
+              if (argResolved.tag === "struct") {
+                const info = this.structs.get(argResolved.name);
+                if (info?.baseName && info.typeArgs) {
+                  const gs = this.genericStructs.get(info.baseName);
+                  if (gs && info.baseName === paramTy.name) {
+                    for (let j = 0; j < paramTy.typeArgs.length && j < info.typeArgs.length; j++) {
+                      const ta = paramTy.typeArgs[j];
+                      if (genericFn.typeParams.includes(ta.name) && !typeMap.has(ta.name)) {
+                        typeMap.set(ta.name, info.typeArgs[j]);
+                      }
+                    }
+                  }
+                }
               }
             }
           }
