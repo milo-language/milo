@@ -1483,7 +1483,11 @@ export class TypeChecker {
           this.error(`undefined variable '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" });
         }
         if (info.moved) {
-          this.error(`use of moved variable '${expr.name}'`, sp, `'${expr.name}' was moved to a new owner and can no longer be used here`);
+          this.error(
+            `use of moved variable '${expr.name}'`,
+            sp,
+            `ownership of '${expr.name}' was transferred earlier and it can no longer be used here. To fix: pass a reference with '&${expr.name}', or make a copy with '${expr.name}.clone()' at the point of transfer.`,
+          );
           return this.setType(expr, this.deref(info.type));
         }
         return this.setType(expr, this.deref(info.type));
