@@ -1,129 +1,119 @@
-// Doubly-linked list via arena — the classic "needs stored references" structure
-// Nodes point to neighbors via Handle, which is safe to copy and store
+// Doubly-linked list via arena — nodes point to neighbors via Handle
 import "std/arena"
 
 struct DLNode {
     value: i64,
-    prev: Handle<DLNode>,
-    next: Handle<DLNode>,
-    has_prev: bool,
-    has_next: bool,
+    prev: Option<Handle<DLNode>>,
+    next: Option<Handle<DLNode>>,
 }
 
 struct DLList {
     arena: Arena<DLNode>,
-    head: Handle<DLNode>,
-    tail: Handle<DLNode>,
-    has_head: bool,
+    head: Option<Handle<DLNode>>,
+    tail: Option<Handle<DLNode>>,
     len: i64,
 }
 
 fn new_list(): DLList {
-    let nil: Handle<DLNode> = Handle { index: -1, generation: 0 }
     return DLList {
         arena: arena_new(),
-        head: nil,
-        tail: nil,
-        has_head: false,
+        head: Option.None,
+        tail: Option.None,
         len: 0,
     }
 }
 
 fn push_back(list: &mut DLList, value: i64) {
-    let nil: Handle<DLNode> = Handle { index: -1, generation: 0 }
     let node = DLNode {
         value: value,
         prev: list.tail,
-        next: nil,
-        has_prev: list.has_head,
-        has_next: false,
+        next: Option.None,
     }
     let h = arena_alloc(list.arena, node)
 
-    if list.has_head {
-        arena_modify(list.arena, list.tail, (n: DLNode) => {
-            var updated = n
-            updated.next = h
-            updated.has_next = true
-            return updated
-        })
-    } else {
-        list.head = h
-        list.has_head = true
+    match list.tail {
+        Option.Some(tail_h) => {
+            arena_modify(list.arena, tail_h, (n: DLNode) => {
+                var updated = n
+                updated.next = Option.Some(h)
+                return updated
+            })
+        }
+        Option.None => {
+            list.head = Option.Some(h)
+        }
     }
 
-    list.tail = h
+    list.tail = Option.Some(h)
     list.len = list.len + 1
 }
 
 fn push_front(list: &mut DLList, value: i64) {
-    let nil: Handle<DLNode> = Handle { index: -1, generation: 0 }
     let node = DLNode {
         value: value,
-        prev: nil,
+        prev: Option.None,
         next: list.head,
-        has_prev: false,
-        has_next: list.has_head,
     }
     let h = arena_alloc(list.arena, node)
 
-    if list.has_head {
-        arena_modify(list.arena, list.head, (n: DLNode) => {
-            var updated = n
-            updated.prev = h
-            updated.has_prev = true
-            return updated
-        })
-    } else {
-        list.tail = h
+    match list.head {
+        Option.Some(head_h) => {
+            arena_modify(list.arena, head_h, (n: DLNode) => {
+                var updated = n
+                updated.prev = Option.Some(h)
+                return updated
+            })
+        }
+        Option.None => {
+            list.tail = Option.Some(h)
+        }
     }
 
-    list.head = h
-    list.has_head = true
+    list.head = Option.Some(h)
     list.len = list.len + 1
 }
 
 fn print_forward(list: &DLList) {
-    if !list.has_head {
-        print("(empty)")
-        return
-    }
-    var cur: Handle<DLNode> = list.head
-    var has_cur: bool = true
+    var cur = list.head
     var result: string = ""
 
-    while has_cur {
-        match arena_get(list.arena, cur) {
-            Option.Some(node) => {
-                if result.len > 0 { result = result + " <-> " }
-                result = result + node.value.to_string()
-                cur = node.next
-                has_cur = node.has_next
+    var done = false
+    while !done {
+        match cur {
+            Option.Some(handle) => {
+                match arena_get(list.arena, handle) {
+                    Option.Some(node) => {
+                        if result.len > 0 { result = result + " <-> " }
+                        result = result + node.value.to_string()
+                        cur = node.next
+                    }
+                    Option.None => { done = true }
+                }
             }
-            Option.None => { has_cur = false }
+            Option.None => { done = true }
         }
     }
     print(result)
 }
 
 fn print_backward(list: &DLList) {
-    if !list.has_head {
-        print("(empty)")
-        return
-    }
-    var cur: Handle<DLNode> = list.tail
-    var has_cur: bool = true
+    var cur = list.tail
     var result: string = ""
 
-    while has_cur {
-        match arena_get(list.arena, cur) {
-            Option.Some(node) => {
-                if result.len > 0 { result = result + " <-> " }
-                result = result + node.value.to_string()
-                cur = node.prev
-                has_cur = node.has_prev
+    var done = false
+    while !done {
+        match cur {
+            Option.Some(handle) => {
+                match arena_get(list.arena, handle) {
+                    Option.Some(node) => {
+                        if result.len > 0 { result = result + " <-> " }
+                        result = result + node.value.to_string()
+                        cur = node.prev
+                    }
+                    Option.None => { done = true }
+                }
             }
-            Option.None => { has_cur = false }
+            Option.None => { done = true }
         }
     }
     print(result)

@@ -1215,6 +1215,20 @@ export class TypeChecker {
     return true;
   }
 
+  private allCopyEnumCache = new Map<string, boolean>();
+  private isAllCopyEnum(name: string): boolean {
+    const cached = this.allCopyEnumCache.get(name);
+    if (cached !== undefined) return cached;
+    const info = this.enums.get(name);
+    if (!info) { this.allCopyEnumCache.set(name, false); return false; }
+    this.allCopyEnumCache.set(name, false);
+    const result = [...info.variants.values()].every(v =>
+      v.fields.every(f => isCopy(f, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n)))
+    );
+    this.allCopyEnumCache.set(name, result);
+    return result;
+  }
+
   private allCopyCache = new Map<string, boolean>();
   private isAllCopyStruct(name: string): boolean {
     const cached = this.allCopyCache.get(name);
@@ -1224,7 +1238,7 @@ export class TypeChecker {
     // guard against cycles
     this.allCopyCache.set(name, false);
     const result = info.fields.every(f =>
-      isCopy(f.type, (n) => this.isPayloadFreeEnum(n), (n) => this.isAllCopyStruct(n))
+      isCopy(f.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))
     );
     this.allCopyCache.set(name, result);
     return result;
@@ -1256,7 +1270,7 @@ export class TypeChecker {
   private tryMove(expr: Expr) {
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
-      if (info && !isCopy(info.type, (n) => this.isPayloadFreeEnum(n), (n) => this.isAllCopyStruct(n))) {
+      if (info && !isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
         if (info.borrowed) {
           this.error(`cannot move '${expr.name}' because it is captured by a closure`, expr.span);
           return;
@@ -1270,7 +1284,7 @@ export class TypeChecker {
     // But don't move out of borrowed Vecs — mark as borrowed instead.
     if (expr.kind === "IndexAccess") {
       const elemType = this.exprTypes.get(expr);
-      if (elemType && !isCopy(elemType, (n) => this.isPayloadFreeEnum(n), (n) => this.isAllCopyStruct(n))) {
+      if (elemType && !isCopy(elemType, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
         let objectIsRef = false;
         if (expr.object.kind === "Ident") {
           const info = this.lookup(expr.object.name);

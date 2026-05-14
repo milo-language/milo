@@ -104,9 +104,9 @@ export function isFloat(t: TypeKind): boolean {
 // Payload-free enums are also Copy — they're just a tag, no heap-owning data inside.
 // The optional `enumIsPayloadFree` callback lets the caller (the checker) inject its
 // view of which enums have payload-bearing variants without us reaching into checker state here.
-export function isCopy(t: TypeKind, enumIsPayloadFree?: (name: string) => boolean, structIsAllCopy?: (name: string) => boolean): boolean {
+export function isCopy(t: TypeKind, enumIsCopy?: (name: string) => boolean, structIsAllCopy?: (name: string) => boolean): boolean {
   if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn" || t.tag === "ref") return true;
-  if (t.tag === "enum" && enumIsPayloadFree && enumIsPayloadFree(t.name)) return true;
+  if (t.tag === "enum" && enumIsCopy && enumIsCopy(t.name)) return true;
   if (t.tag === "struct" && structIsAllCopy && structIsAllCopy(t.name)) return true;
   return false;
 }
