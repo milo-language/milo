@@ -15,6 +15,7 @@ fn pad(n: i64): string {
 
 fn main(): i32 {
     var parser = new_parser("wc", "count lines, words, and characters")
+    parser.usage = "wc [options] <file...>"
     parser.add_bool("lines", "l", "only show line count")
     parser.add_bool("words", "w", "only show word count")
     parser.add_bool("chars", "c", "only show character count")

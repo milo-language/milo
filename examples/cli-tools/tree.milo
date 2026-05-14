@@ -45,6 +45,7 @@ fn print_tree(dir_path: &string, prefix: &string, depth: i64, max_level: i64, co
 
 fn main(): i32 {
     var parser = new_parser("tree", "display directory tree")
+    parser.usage = "tree [options] [dir]"
     parser.add_string("level", "L", "max display depth", "0")
     let args = parser.parse()
 

@@ -40,3 +40,8 @@ fn stat_buf_size(): i64 { return 144 }
 // struct dirent layout
 fn dirent_type_offset(): i64 { return 18 }
 fn dirent_name_offset(): i64 { return 19 }
+// errno access — glibc uses __errno_location() to get errno pointer
+extern fn __errno_location(): *u8
+fn get_errno(): i32 {
+    unsafe { return _load_i32(__errno_location()) }
+}

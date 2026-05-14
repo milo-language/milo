@@ -51,7 +51,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "exit", "_milo_arg_count", "_milo_arg_at", "_cstr_to_string", "_load_u8"]);
+  private static BUILTINS = new Set(["print", "exit", "_milo_arg_count", "_milo_arg_at", "_cstr_to_string", "_load_u8", "_load_i32"]);
   private needsArgGlobals = false;
 
   constructor(target: TargetInfo) { this.target = target; }
@@ -790,6 +790,13 @@ export class Codegen {
       const val = this.nextTemp();
       lines.push(`  ${val} = load i8, ptr ${pv}`);
       return [lines, val, "i8"];
+    }
+    if (expr.func === "_load_i32") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load i32, ptr ${pv}`);
+      return [lines, val, "i32"];
     }
     if (expr.func === "_cstr_to_string") {
       this.needsMalloc = true;

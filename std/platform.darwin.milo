@@ -45,8 +45,5 @@ fn dirent_name_offset(): i64 { return 21 }
 // errno access — macOS uses __error() to get errno pointer
 extern fn __error(): *u8
 fn get_errno(): i32 {
-    unsafe {
-        let ptr = __error()
-        return _load_u8(ptr) as i32 | ((_load_u8((ptr as i64 + 1) as *u8) as i32) << 8) | ((_load_u8((ptr as i64 + 2) as *u8) as i32) << 16) | ((_load_u8((ptr as i64 + 3) as *u8) as i32) << 24)
-    }
+    unsafe { return _load_i32(__error()) }
 }

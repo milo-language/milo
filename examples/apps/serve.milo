@@ -109,6 +109,7 @@ fn handle_request(req: &Request, root: &string, quiet: bool): Response {
 
 fn main(): i32 {
     var parser = new_parser("serve", "static file server")
+    parser.usage = "serve [options] [dir]"
     parser.add_string("port", "p", "port to listen on", "8080")
     parser.add_bool("quiet", "q", "suppress request logging")
     let args = parser.parse()

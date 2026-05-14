@@ -129,6 +129,7 @@ fn pretty_json(input: &string): string {
 
 fn main(): i32 {
     var parser = new_parser("http", "simple HTTP client")
+    parser.usage = "http [options] <url>"
     parser.add_string("output", "o", "save response body to file", "")
     parser.add_bool("verbose", "v", "show method and URL before request")
     let args = parser.parse()

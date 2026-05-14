@@ -292,6 +292,7 @@ fn output_value(val: &string, raw: bool): void {
 
 fn main(): i32 {
     var parser = new_parser("jq", "a minimal JSON query tool")
+    parser.usage = "jq [options] <filter> [file]"
     parser.add_bool("raw-output", "r", "output raw strings without quotes")
     let args = parser.parse()
 

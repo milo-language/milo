@@ -33,6 +33,7 @@ fn is_printable(b: u8): bool {
 
 fn main(): i32 {
     var parser = new_parser("hex", "hex dump viewer")
+    parser.usage = "hex [options] <file>"
     parser.add_string("length", "n", "number of bytes to display", "0")
     parser.add_string("skip", "s", "skip N bytes from start", "0")
     parser.add_bool("plain", "p", "no ASCII column, just hex")
