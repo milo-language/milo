@@ -1,0 +1,11 @@
+fn fib(n: i64): i64 {
+    if n < 2 { return n }
+    return fib(n - 1) + fib(n - 2)
+}
+
+fn main(): i32 {
+    let n: i64 = 42
+    let r = fib(n)
+    print("fib(%d) = %d", n, r)
+    return 0
+}

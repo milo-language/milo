@@ -1,0 +1,36 @@
+// minimal grep -c implementation for benchmarking
+import "std/io"
+
+fn main(): i32 {
+    if _milo_arg_count() < 3 {
+        print("usage: grep <pattern> <file>")
+        return 2
+    }
+    let pat = _milo_arg_at(1)
+    let path = _milo_arg_at(2)
+
+    var content: string = ""
+    match read_file(path) {
+        Result.Ok(d) => { content = d }
+        Result.Err(e) => {
+            print("grep: %s", e)
+            return 1
+        }
+    }
+
+    var count: i64 = 0
+    var line_start: i64 = 0
+    var pos: i64 = 0
+    while pos <= content.len {
+        if pos == content.len || content[pos] == 10 {
+            let line = content.substr(line_start, pos)
+            if line.contains(pat) { count = count + 1 }
+            line_start = pos + 1
+        }
+        pos = pos + 1
+    }
+
+    print("%lld", count)
+    if count == 0 { return 1 }
+    return 0
+}

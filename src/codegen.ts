@@ -807,15 +807,22 @@ export class Codegen {
       lines.push(...al);
       const len = this.nextTemp();
       lines.push(`  ${len} = call i64 @strlen(ptr ${pv})`);
+      // Allocate len+1 and write trailing NUL so the Milo string can be passed to
+      // C functions (open, printf, etc.) without re-copying. cap stays at len+1.
+      const cap = this.nextTemp();
+      lines.push(`  ${cap} = add i64 ${len}, 1`);
       const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${len})`);
+      lines.push(`  ${buf} = call ptr @malloc(i64 ${cap})`);
       lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${pv}, i64 ${len})`);
+      const nulPtr = this.nextTemp();
+      lines.push(`  ${nulPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
+      lines.push(`  store i8 0, ptr ${nulPtr}`);
       const s1 = this.nextTemp();
       lines.push(`  ${s1} = insertvalue %String zeroinitializer, ptr ${buf}, 0`);
       const s2 = this.nextTemp();
       lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${len}, 1`);
       const s3 = this.nextTemp();
-      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${len}, 2`);
+      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${cap}, 2`);
       return [lines, s3, "%String"];
     }
     if (expr.func === "_milo_arg_at") {
@@ -834,15 +841,22 @@ export class Codegen {
       lines.push(`  ${cstr} = load ptr, ptr ${argPtr}`);
       const len = this.nextTemp();
       lines.push(`  ${len} = call i64 @strlen(ptr ${cstr})`);
+      // Allocate len+1 and NUL-terminate so the arg string can be passed to
+      // C functions (open, etc.) directly without re-copying.
+      const cap = this.nextTemp();
+      lines.push(`  ${cap} = add i64 ${len}, 1`);
       const buf = this.nextTemp();
-      lines.push(`  ${buf} = call ptr @malloc(i64 ${len})`);
+      lines.push(`  ${buf} = call ptr @malloc(i64 ${cap})`);
       lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${cstr}, i64 ${len})`);
+      const nulPtr = this.nextTemp();
+      lines.push(`  ${nulPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
+      lines.push(`  store i8 0, ptr ${nulPtr}`);
       const s1 = this.nextTemp();
       lines.push(`  ${s1} = insertvalue %String zeroinitializer, ptr ${buf}, 0`);
       const s2 = this.nextTemp();
       lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${len}, 1`);
       const s3 = this.nextTemp();
-      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${len}, 2`);
+      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${cap}, 2`);
       return [lines, s3, "%String"];
     }
     return [lines, "void", "void"];

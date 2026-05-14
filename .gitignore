@@ -41,3 +41,13 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# benchmark artifacts
+benchmarks/fib/fib_milo
+benchmarks/fib/fib_c
+benchmarks/fib/fib_go
+benchmarks/grep/grep_milo
+benchmarks/grep/grep_c
+benchmarks/grep/grep_go
+benchmarks/grep/input.txt
+benchmarks/results-*.md
