@@ -26,6 +26,7 @@ export interface FnSig {
 export interface StructInfo {
   fields: { name: string; type: TypeKind }[];
   baseName?: string;
+  typeArgs?: TypeKind[];
 }
 
 export interface EnumInfo {
@@ -99,6 +100,7 @@ export class TypeChecker {
   private enums = new Map<string, EnumInfo>();
   private genericEnums = new Map<string, GenericEnumInfo>();
   private genericStructs = new Map<string, GenericStructInfo>();
+  private returnHint: TypeKind | null = null;
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
@@ -242,7 +244,7 @@ export class TypeChecker {
       name: f.name,
       type: this.resolve(this.substituteMiloType(f.type, generic.typeParams, typeArgs)),
     }));
-    this.structs.set(mangled, { fields, baseName });
+    this.structs.set(mangled, { fields, baseName, typeArgs });
 
     const decl: StructDecl = {
       kind: "StructDecl",
@@ -298,12 +300,12 @@ export class TypeChecker {
       }
     }
 
-    // Build concrete param types
+    // Build concrete param types — substitute type params first, then resolve
     const params = generic.decl.params.map(p => ({
-      type: this.substituteTypeKind(this.resolve(p.type), typeMap),
+      type: this.resolve(this.substituteMiloType(p.type, generic.typeParams, typeArgs)),
       name: p.name,
     }));
-    const ret = this.substituteTypeKind(this.resolve(generic.decl.retType), typeMap);
+    const ret = this.resolve(this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs));
 
     // Register the concrete sig so recursive calls and the rest of checking works
     this.functions.set(mangled, { params, ret, variadic: false });
@@ -331,9 +333,10 @@ export class TypeChecker {
   }
 
   private substituteBody(stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[]): Stmt[] {
-    // Deep clone body with type substitution
+    // Deep clone body with type substitution in all MiloType positions.
+    // MiloType objects have `name` but no `kind` (unlike AST nodes).
     return JSON.parse(JSON.stringify(stmts), (key, value) => {
-      if (key === "type" && value && typeof value === "object" && "name" in value) {
+      if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) return { ...value, name: typeName(typeArgs[idx]) };
       }
@@ -1192,10 +1195,48 @@ export class TypeChecker {
     return true;
   }
 
+  private allCopyCache = new Map<string, boolean>();
+  private isAllCopyStruct(name: string): boolean {
+    const cached = this.allCopyCache.get(name);
+    if (cached !== undefined) return cached;
+    const info = this.structs.get(name);
+    if (!info) { this.allCopyCache.set(name, false); return false; }
+    // guard against cycles
+    this.allCopyCache.set(name, false);
+    const result = info.fields.every(f =>
+      isCopy(f.type, (n) => this.isPayloadFreeEnum(n), (n) => this.isAllCopyStruct(n))
+    );
+    this.allCopyCache.set(name, result);
+    return result;
+  }
+
+  // Match a generic fn return type (MiloType) against a concrete hint (TypeKind) to infer type params.
+  // e.g. retType=Arena<T>, hint={tag:"struct",name:"Arena_i32"} → T=i32
+  private inferTypeParamsFromHint(retType: MiloType, hint: TypeKind, typeParams: string[], typeMap: Map<string, TypeKind>) {
+    if (typeParams.includes(retType.name)) {
+      typeMap.set(retType.name, hint);
+      return;
+    }
+    if (hint.tag === "struct" && retType.typeArgs) {
+      const info = this.structs.get(hint.name);
+      if (info?.baseName === retType.name && info.typeArgs) {
+        const gs = this.genericStructs.get(retType.name);
+        if (gs) {
+          for (let i = 0; i < retType.typeArgs.length && i < gs.typeParams.length; i++) {
+            const ta = retType.typeArgs[i];
+            if (typeParams.includes(ta.name) && i < info.typeArgs.length) {
+              typeMap.set(ta.name, info.typeArgs[i]);
+            }
+          }
+        }
+      }
+    }
+  }
+
   private tryMove(expr: Expr) {
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
-      if (info && !isCopy(info.type, (n) => this.isPayloadFreeEnum(n))) {
+      if (info && !isCopy(info.type, (n) => this.isPayloadFreeEnum(n), (n) => this.isAllCopyStruct(n))) {
         if (info.borrowed) {
           this.error(`cannot move '${expr.name}' because it is captured by a closure`, expr.span);
           return;
@@ -1209,7 +1250,7 @@ export class TypeChecker {
     // But don't move out of borrowed Vecs — mark as borrowed instead.
     if (expr.kind === "IndexAccess") {
       const elemType = this.exprTypes.get(expr);
-      if (elemType && !isCopy(elemType, (n) => this.isPayloadFreeEnum(n))) {
+      if (elemType && !isCopy(elemType, (n) => this.isPayloadFreeEnum(n), (n) => this.isAllCopyStruct(n))) {
         let objectIsRef = false;
         if (expr.object.kind === "Ident") {
           const info = this.lookup(expr.object.name);
@@ -1394,7 +1435,11 @@ export class TypeChecker {
         return this.setType(expr, hint);
       }
     }
-    return this.checkExpr(expr);
+    const prevHint = this.returnHint;
+    this.returnHint = hint;
+    const result = this.checkExpr(expr);
+    this.returnHint = prevHint;
+    return result;
   }
 
   private setType(expr: Expr, type: TypeKind): TypeKind {
@@ -1564,7 +1609,12 @@ export class TypeChecker {
             }
           }
 
-          const missing = genericFn.typeParams.filter(p => !typeMap.has(p));
+          // infer missing type params from return type hint
+          let missing = genericFn.typeParams.filter(p => !typeMap.has(p));
+          if (missing.length > 0 && this.returnHint) {
+            this.inferTypeParamsFromHint(genericFn.decl.retType, this.returnHint, genericFn.typeParams, typeMap);
+            missing = genericFn.typeParams.filter(p => !typeMap.has(p));
+          }
           if (missing.length > 0) {
             this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for ${expr.func}`, sp);
             return this.setType(expr, { tag: "unknown" });
@@ -1574,7 +1624,14 @@ export class TypeChecker {
           const mangled = this.monomorphizeFn(expr.func, typeArgs);
           this.rewrittenCalls.set(expr, mangled);
 
-          for (let i = 0; i < expr.args.length; i++) this.tryMove(expr.args[i]);
+          const concreteSig = this.functions.get(mangled)!;
+          for (let i = 0; i < expr.args.length; i++) {
+            if (i < concreteSig.params.length && concreteSig.params[i].type.tag === "ref") {
+              this.autoBorrowed.set(expr.args[i], { mutable: concreteSig.params[i].type.mutable });
+              continue;
+            }
+            this.tryMove(expr.args[i]);
+          }
           return this.setType(expr, this.functions.get(mangled)!.ret);
         }
 

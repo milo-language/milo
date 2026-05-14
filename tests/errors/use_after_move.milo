@@ -1,15 +1,10 @@
-// @error: use of moved variable 'p'
-struct Point { x: i32, y: i32 }
+// @error: use of moved variable 's'
 
-extern fn printf(fmt: *u8, ...): i32
-
-fn consume(p: Point): i32 {
-    return p.x
-}
+fn consume(s: string): void {}
 
 fn main(): i32 {
-    let p = Point { x: 1, y: 2 }
-    let a = consume(p)
-    let b = consume(p)
+    let s: string = "hello"
+    consume(s)
+    consume(s)
     return 0
 }
