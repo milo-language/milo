@@ -33,7 +33,7 @@ fn is_printable(b: u8): bool {
 
 fn main(): i32 {
     var parser = new_parser("hex", "hex dump viewer")
-    parser.usage = "hex [options] <file>"
+    parser.add_positional("file", "file to dump")
     parser.add_string("length", "n", "number of bytes to display", "0")
     parser.add_string("skip", "s", "skip N bytes from start", "0")
     parser.add_bool("plain", "p", "no ASCII column, just hex")
@@ -45,14 +45,8 @@ fn main(): i32 {
     var max_length: i64 = args.get_i64("length")
     var skip_bytes: i64 = args.get_i64("skip")
 
-    if args.positional.len < 1 {
-        print("hex: missing file argument")
-        print("usage: hex [options] <file>")
-        return 2
-    }
-
     var content: string = ""
-    match read_file(args.positional[0].clone()) {
+    match read_file(args.get_string("file")) {
         Result.Ok(data) => { content = data }
         Result.Err(e) => {
             print("hex: ", e)

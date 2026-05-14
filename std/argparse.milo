@@ -10,6 +10,12 @@ struct FlagDef {
     required: bool,
 }
 
+struct PositionalDef {
+    name: string,
+    help: string,
+    required: bool,
+}
+
 // Declarative command-line argument parser with auto-generated --help.
 // Create with new_parser(), add flags with add_string/add_bool/add_required,
 // then call .parse() to get a ParsedArgs.
@@ -18,6 +24,7 @@ struct ArgParser {
     description: string,
     usage: string,
     flags: Vec<FlagDef>,
+    positionals: Vec<PositionalDef>,
 }
 
 // Parsed command-line arguments.
@@ -42,6 +49,7 @@ fn new_parser(name: string, description: string): ArgParser {
         description: description,
         usage: "",
         flags: Vec.new(),
+        positionals: Vec.new(),
     }
 }
 
@@ -83,39 +91,73 @@ impl ArgParser {
         })
     }
 
+    // Add a required positional argument.
+    fn add_positional(self: &mut Self, name: string, help: string): void {
+        self.positionals.push(PositionalDef { name: name, help: help, required: true })
+    }
+
+    // Add an optional positional argument.
+    fn add_optional_positional(self: &mut Self, name: string, help: string): void {
+        self.positionals.push(PositionalDef { name: name, help: help, required: false })
+    }
+
     // Generate formatted help text for all registered flags.
     fn help_text(self: &Self): string {
         var text: string = self.name + " - " + self.description + "\n\n"
         if self.usage.len > 0 {
             text = text + "usage: " + self.usage + "\n\n"
         } else {
-            text = text + "usage: " + self.name + " [options]\n\n"
+            var usage_line: string = "usage: " + self.name + " [options]"
+            var pi: i64 = 0
+            while pi < self.positionals.len {
+                if self.positionals[pi].required {
+                    usage_line = usage_line + " <" + self.positionals[pi].name + ">"
+                } else {
+                    usage_line = usage_line + " [" + self.positionals[pi].name + "]"
+                }
+                pi = pi + 1
+            }
+            text = text + usage_line + "\n\n"
         }
-        text = text + "options:\n"
+        if self.positionals.len > 0 {
+            text = text + "arguments:\n"
+            var pi2: i64 = 0
+            while pi2 < self.positionals.len {
+                var pline: string = "  <" + self.positionals[pi2].name + ">"
+                while pline.len < 30 {
+                    pline = pline + " "
+                }
+                pline = pline + self.positionals[pi2].help
+                text = text + pline + "\n"
+                pi2 = pi2 + 1
+            }
+            text = text + "\n"
+        }
 
+        text = text + "options:\n"
         var i: i64 = 0
         while i < self.flags.len {
-            var line: string = "  "
+            var fline: string = "  "
             if self.flags[i].short_name.len > 0 {
-                line = line + "-" + self.flags[i].short_name + ", "
+                fline = fline + "-" + self.flags[i].short_name + ", "
             } else {
-                line = line + "    "
+                fline = fline + "    "
             }
-            line = line + "--" + self.flags[i].long_name
+            fline = fline + "--" + self.flags[i].long_name
             if !self.flags[i].is_bool {
-                line = line + " <value>"
+                fline = fline + " <value>"
             }
-            while line.len < 30 {
-                line = line + " "
+            while fline.len < 30 {
+                fline = fline + " "
             }
-            line = line + self.flags[i].help
+            fline = fline + self.flags[i].help
             if !self.flags[i].is_bool && self.flags[i].default_val.len > 0 {
-                line = line + " (default: " + self.flags[i].default_val + ")"
+                fline = fline + " (default: " + self.flags[i].default_val + ")"
             }
             if self.flags[i].required {
-                line = line + " (required)"
+                fline = fline + " (required)"
             }
-            text = text + line + "\n"
+            text = text + fline + "\n"
             i = i + 1
         }
         text = text + "  -h, --help                  Show this help message\n"
@@ -132,6 +174,7 @@ impl ArgParser {
             positional: Vec.new(),
         }
 
+        // initialize flag entries with defaults
         var fi: i64 = 0
         while fi < self.flags.len {
             result.entries.push(ArgEntry {
@@ -142,6 +185,18 @@ impl ArgParser {
             fi = fi + 1
         }
 
+        // initialize positional entries
+        var pi: i64 = 0
+        while pi < self.positionals.len {
+            result.entries.push(ArgEntry {
+                name: self.positionals[pi].name.clone(),
+                value: "",
+                present: false,
+            })
+            pi = pi + 1
+        }
+
+        var pos_idx: i64 = 0
         var i: i64 = 1
         while i < argv.len {
             let arg = argv[i]
@@ -197,11 +252,22 @@ impl ArgParser {
                 }
             } else {
                 result.positional.push(arg.clone())
+                // map to named positional entry
+                if pos_idx < self.positionals.len {
+                    let entry_idx = self.flags.len + pos_idx
+                    result.entries[entry_idx] = ArgEntry {
+                        name: self.positionals[pos_idx].name.clone(),
+                        value: arg.clone(),
+                        present: true,
+                    }
+                    pos_idx = pos_idx + 1
+                }
             }
 
             i = i + 1
         }
 
+        // validate required flags
         var ri: i64 = 0
         while ri < self.flags.len {
             if self.flags[ri].required && !result.entries[ri].present {
@@ -209,6 +275,19 @@ impl ArgParser {
                 unsafe { exit(1) }
             }
             ri = ri + 1
+        }
+
+        // validate required positionals
+        var rp: i64 = 0
+        while rp < self.positionals.len {
+            if self.positionals[rp].required {
+                let entry_idx = self.flags.len + rp
+                if !result.entries[entry_idx].present {
+                    print("error: missing required argument <", self.positionals[rp].name, ">\n\n", self.help_text())
+                    unsafe { exit(1) }
+                }
+            }
+            rp = rp + 1
         }
 
         return result

@@ -208,20 +208,14 @@ fn highlight_line(line: &string, lang: &string, kw_list: &Vec<string>, c_reset: 
 
 fn main(): i32 {
     var parser = new_parser("cat", "view files with line numbers and syntax highlighting")
-    parser.usage = "cat [options] <file...>"
+    parser.add_positional("file", "file to display")
     parser.add_bool("plain", "p", "plain output, no decorations")
     parser.add_bool("no-color", "C", "disable syntax highlighting")
     parser.add_string("range", "r", "line range to display (e.g. 10:20)", "")
     parser.add_string("language", "l", "force language for highlighting", "")
     let args = parser.parse()
 
-    if args.positional.len < 1 {
-        print("cat: missing file argument")
-        print("usage: cat [options] <file>")
-        return 2
-    }
-
-    let file_path = args.positional[0].clone()
+    let file_path = args.get_string("file")
     let plain = args.get_bool("plain")
     let no_color = args.get_bool("no-color")
     let range_str = args.get_string("range")

@@ -15,7 +15,7 @@ fn pad(n: i64): string {
 
 fn main(): i32 {
     var parser = new_parser("wc", "count lines, words, and characters")
-    parser.usage = "wc [options] <file...>"
+    parser.add_optional_positional("file", "file to count (default: stdin)")
     parser.add_bool("lines", "l", "only show line count")
     parser.add_bool("words", "w", "only show word count")
     parser.add_bool("chars", "c", "only show character count")
@@ -29,9 +29,9 @@ fn main(): i32 {
     var content: string = ""
     var label: string = ""
 
-    if args.positional.len > 0 {
-        label = args.positional[0].clone()
-        match read_file(args.positional[0].clone()) {
+    if args.has("file") {
+        label = args.get_string("file")
+        match read_file(args.get_string("file")) {
             Result.Ok(data) => { content = data }
             Result.Err(e) => {
                 print("wc: ", e)

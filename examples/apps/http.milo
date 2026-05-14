@@ -129,18 +129,12 @@ fn pretty_json(input: &string): string {
 
 fn main(): i32 {
     var parser = new_parser("http", "simple HTTP client")
-    parser.usage = "http [options] <url>"
+    parser.add_positional("url", "URL to fetch")
     parser.add_string("output", "o", "save response body to file", "")
     parser.add_bool("verbose", "v", "show method and URL before request")
     let args = parser.parse()
 
-    if args.positional.len < 1 {
-        print("http: missing URL")
-        print("usage: http [options] <url>")
-        return 2
-    }
-
-    let url = args.positional[0].clone()
+    let url = args.get_string("url")
     let output_file = args.get_string("output")
     let verbose = args.get_bool("verbose")
 

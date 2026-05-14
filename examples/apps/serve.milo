@@ -109,14 +109,14 @@ fn handle_request(req: &Request, root: &string, quiet: bool): Response {
 
 fn main(): i32 {
     var parser = new_parser("serve", "static file server")
-    parser.usage = "serve [options] [dir]"
+    parser.add_optional_positional("dir", "directory to serve (default: .)")
     parser.add_string("port", "p", "port to listen on", "8080")
     parser.add_bool("quiet", "q", "suppress request logging")
     let args = parser.parse()
 
     var root: string = "."
-    if args.positional.len > 0 {
-        root = args.positional[0].clone()
+    if args.has("dir") {
+        root = args.get_string("dir")
     }
 
     let quiet = args.get_bool("quiet")

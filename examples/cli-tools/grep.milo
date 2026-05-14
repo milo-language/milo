@@ -170,7 +170,8 @@ fn grep_recursive(dir_path: &string, opts: &mut GrepOpts): void {
 
 fn main(): i32 {
     var parser = new_parser("grep", "search for a string pattern in files")
-    parser.usage = "grep [options] <pattern> <file|dir>"
+    parser.add_positional("pattern", "string pattern to search for")
+    parser.add_positional("file", "file or directory to search")
     parser.add_bool("ignore-case", "i", "case-insensitive search")
     parser.add_bool("line-number", "n", "show line numbers")
     parser.add_bool("count", "c", "only print count of matching lines")
@@ -179,14 +180,8 @@ fn main(): i32 {
     parser.add_bool("no-color", "C", "disable colored output")
     let args = parser.parse()
 
-    if args.positional.len < 2 {
-        print("grep: missing pattern or file argument")
-        print(parser.help_text())
-        return 2
-    }
-
-    let pattern = args.positional[0].clone()
-    let target = args.positional[1].clone()
+    let pattern = args.get_string("pattern")
+    let target = args.get_string("file")
     let ignore_case = args.get_bool("ignore-case")
     let recursive = args.get_bool("recursive")
 

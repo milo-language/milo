@@ -292,22 +292,17 @@ fn output_value(val: &string, raw: bool): void {
 
 fn main(): i32 {
     var parser = new_parser("jq", "a minimal JSON query tool")
-    parser.usage = "jq [options] <filter> [file]"
+    parser.add_positional("filter", "jq filter expression (e.g. .foo.bar)")
+    parser.add_optional_positional("file", "JSON file (default: stdin)")
     parser.add_bool("raw-output", "r", "output raw strings without quotes")
     let args = parser.parse()
 
-    if args.positional.len < 1 {
-        print("jq: missing filter expression")
-        print("usage: jq [options] <filter> [file]")
-        return 2
-    }
-
-    let filter = args.positional[0].clone()
+    let filter = args.get_string("filter")
     let raw = args.get_bool("raw-output")
 
     var content: string = ""
-    if args.positional.len >= 2 {
-        match read_file(args.positional[1].clone()) {
+    if args.has("file") {
+        match read_file(args.get_string("file")) {
             Result.Ok(data) => { content = data }
             Result.Err(e) => {
                 print("jq: ", e)
