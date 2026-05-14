@@ -44,17 +44,19 @@ fn main(): i32 {
     var max_length: i64 = args.get_i64("length")
     var skip_bytes: i64 = args.get_i64("skip")
 
+    if args.positional.len < 1 {
+        print("hex: missing file argument")
+        print("usage: hex [options] <file>")
+        return 2
+    }
+
     var content: string = ""
-    if args.positional.len > 0 {
-        match read_file(args.positional[0].clone()) {
-            Result.Ok(data) => { content = data }
-            Result.Err(e) => {
-                print("hex: %s", e)
-                return 1
-            }
+    match read_file(args.positional[0].clone()) {
+        Result.Ok(data) => { content = data }
+        Result.Err(e) => {
+            print("hex: %s", e)
+            return 1
         }
-    } else {
-        content = read_stdin()
     }
 
     var start: i64 = skip_bytes

@@ -1,0 +1,139 @@
+// serve — static file server
+from "std/http" import { Request, Response, serve }
+import "std/argparse"
+import "std/io"
+import "std/fs"
+import "std/path"
+
+fn get_mime(path: &string): string {
+    if path.ends_with(".html") || path.ends_with(".htm") { return "text/html" }
+    if path.ends_with(".css") { return "text/css" }
+    if path.ends_with(".js") { return "application/javascript" }
+    if path.ends_with(".json") { return "application/json" }
+    if path.ends_with(".png") { return "image/png" }
+    if path.ends_with(".jpg") || path.ends_with(".jpeg") { return "image/jpeg" }
+    if path.ends_with(".gif") { return "image/gif" }
+    if path.ends_with(".svg") { return "image/svg+xml" }
+    if path.ends_with(".ico") { return "image/x-icon" }
+    if path.ends_with(".txt") { return "text/plain" }
+    if path.ends_with(".xml") { return "application/xml" }
+    if path.ends_with(".pdf") { return "application/pdf" }
+    if path.ends_with(".wasm") { return "application/wasm" }
+    if path.ends_with(".md") { return "text/plain" }
+    if path.ends_with(".ts") { return "text/plain" }
+    return "application/octet-stream"
+}
+
+fn format_size(size: i64): string {
+    if size < 1024 { return size.to_string() + "B" }
+    let kb: i64 = 1024
+    let mb: i64 = 1048576
+    if size < mb { return (size / kb).to_string() + "K" }
+    return (size / mb).to_string() + "M"
+}
+
+fn dir_listing(dir_path: &string, url_path: &string): string {
+    let entries = read_dir(dir_path.clone())
+    var html: string = "<!DOCTYPE html><html><head><title>Index of " + url_path + "</title>"
+    html = html + "<style>body{font-family:monospace;margin:2em}a{text-decoration:none;color:#0366d6}"
+    html = html + "a:hover{text-decoration:underline}table{border-collapse:collapse}"
+    html = html + "td{padding:4px 16px}tr:hover{background:#f6f8fa}</style></head>"
+    html = html + "<body><h2>Index of " + url_path + "</h2><table>"
+
+    if url_path != "/" {
+        html = html + "<tr><td><a href=\"../\">..</a></td><td></td></tr>"
+    }
+
+    var i: i64 = 0
+    while i < entries.len {
+        let name = entries[i].name.clone()
+        let entry_is_dir = entries[i].is_dir
+        // skip hidden files
+        if name[0] != 46 {
+            if entry_is_dir {
+                html = html + "<tr><td><a href=\"" + name.clone() + "/\">" + name + "/</a></td><td>-</td></tr>"
+            } else {
+                let entry_path = path_join(dir_path, name.clone())
+                let info = file_info(entry_path)
+                html = html + "<tr><td><a href=\"" + name.clone() + "\">" + name + "</a></td><td>" + format_size(info.size) + "</td></tr>"
+            }
+        }
+        i = i + 1
+    }
+
+    html = html + "</table></body></html>"
+    return html
+}
+
+fn handle_request(req: &Request, root: &string, quiet: bool): Response {
+    var req_path: string = req.path.clone()
+    if req_path == "/" { req_path = "" }
+
+    let file_path = root + req_path
+
+    if is_dir(file_path.clone()) {
+        // try index.html first
+        let index_path = path_join(file_path, "index.html")
+        if is_file(index_path.clone()) {
+            match read_file(index_path) {
+                Result.Ok(content) => {
+                    if !quiet { print("200 GET %s -> index.html", req.path) }
+                    return Response.Status(200, "text/html", content)
+                }
+                Result.Err(e) => {}
+            }
+        }
+        // directory listing
+        let listing = dir_listing(file_path, req.path)
+        if !quiet { print("200 GET %s (dir)", req.path) }
+        return Response.Html(listing)
+    }
+
+    if !is_file(file_path.clone()) {
+        if !quiet { print("404 GET %s", req.path) }
+        return Response.NotFound
+    }
+
+    match read_file(file_path.clone()) {
+        Result.Ok(content) => {
+            let mime = get_mime(file_path)
+            if !quiet { print("200 GET %s (%s)", req.path, format_size(content.len)) }
+            return Response.Status(200, mime, content)
+        }
+        Result.Err(e) => {
+            if !quiet { print("500 GET %s: %s", req.path, e) }
+            return Response.Status(500, "text/plain", "500 Internal Server Error")
+        }
+    }
+}
+
+fn main(): i32 {
+    var parser = new_parser("serve", "static file server")
+    parser.add_string("port", "p", "port to listen on", "8080")
+    parser.add_bool("quiet", "q", "suppress request logging")
+    let args = parser.parse()
+
+    var root: string = "."
+    if args.positional.len > 0 {
+        root = args.positional[0].clone()
+    }
+
+    let quiet = args.get_bool("quiet")
+    let port = args.get_u16("port")
+
+    print("serve - static file server")
+    print("  serving %s on port %d", root, port)
+    print("")
+
+    let result = serve(port, (req: &Request) => {
+        return handle_request(req, root, quiet)
+    })
+    match result {
+        Result.Err(msg) => {
+            print("error: %s", msg)
+            return 1
+        }
+        _ => {}
+    }
+    return 0
+}

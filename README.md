@@ -187,6 +187,10 @@ Requires: [Bun](https://bun.sh), LLVM/Clang.
 | [wc](examples/wc.milo) | Line/word/char counter | 85 |
 | [hex](examples/hex.milo) | Hex dump viewer with ASCII column | 100 |
 | [tree](examples/tree.milo) | Recursive directory tree with depth limiting | 95 |
+| [cat](examples/cat.milo) | File viewer with syntax highlighting | 330 |
+| [jq](examples/jq.milo) | JSON query tool (field access, array iteration) | 360 |
+| [serve](examples/serve.milo) | Static file server with directory listing | 140 |
+| [http](examples/http.milo) | HTTP client with JSON pretty-printing | 185 |
 | [webserver](examples/webserver.milo) | HTTP server with routing | 236 |
 | [json_parser](examples/json_parser.milo) | Full JSON parser into a value tree | 200 |
 | [fetch](examples/fetch.milo) | HTTP client with TLS | 40 |

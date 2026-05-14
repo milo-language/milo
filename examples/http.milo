@@ -1,0 +1,186 @@
+// http — simple HTTP client for fetching URLs
+import "std/argparse"
+import "std/net"
+import "std/io"
+import "std/fs"
+
+fn status_text(code: i32): string {
+    if code == 200 { return "OK" }
+    if code == 201 { return "Created" }
+    if code == 204 { return "No Content" }
+    if code == 301 { return "Moved Permanently" }
+    if code == 302 { return "Found" }
+    if code == 304 { return "Not Modified" }
+    if code == 400 { return "Bad Request" }
+    if code == 401 { return "Unauthorized" }
+    if code == 403 { return "Forbidden" }
+    if code == 404 { return "Not Found" }
+    if code == 405 { return "Method Not Allowed" }
+    if code == 500 { return "Internal Server Error" }
+    if code == 502 { return "Bad Gateway" }
+    if code == 503 { return "Service Unavailable" }
+    return ""
+}
+
+fn looks_like_json(s: &string): bool {
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i]
+        if c != ' ' && c != '\n' && c != '\r' && c != '\t' {
+            return c == '{' || c == '['
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// indent-only JSON pretty printer (no colors)
+fn pretty_json(input: &string): string {
+    var result: string = ""
+    var pos: i64 = 0
+    var indent: i64 = 0
+    var in_string: bool = false
+
+    while pos < input.len {
+        let ch = input[pos]
+
+        if in_string {
+            result.push(ch)
+            // skip escaped characters
+            if ch == '\\' && pos + 1 < input.len {
+                pos = pos + 1
+                result.push(input[pos])
+            }
+            if ch == '"' {
+                in_string = false
+            }
+            pos = pos + 1
+            continue
+        }
+
+        if ch == '"' {
+            in_string = true
+            result.push(ch)
+            pos = pos + 1
+            continue
+        }
+
+        // { or [
+        if ch == '{' || ch == '[' {
+            result.push(ch)
+            result.push('\n')
+            indent = indent + 1
+            var sp: i64 = 0
+            while sp < indent * 2 {
+                result.push(' ')
+                sp = sp + 1
+            }
+            pos = pos + 1
+            continue
+        }
+
+        // } or ]
+        if ch == '}' || ch == ']' {
+            result.push('\n')
+            indent = indent - 1
+            var sp: i64 = 0
+            while sp < indent * 2 {
+                result.push(' ')
+                sp = sp + 1
+            }
+            result.push(ch)
+            pos = pos + 1
+            continue
+        }
+
+        // comma
+        if ch == ',' {
+            result.push(',')
+            result.push('\n')
+            var sp: i64 = 0
+            while sp < indent * 2 {
+                result.push(' ')
+                sp = sp + 1
+            }
+            pos = pos + 1
+            continue
+        }
+
+        // colon — add space after
+        if ch == ':' {
+            result.push(':')
+            result.push(' ')
+            pos = pos + 1
+            continue
+        }
+
+        // skip whitespace outside strings
+        if ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t' {
+            pos = pos + 1
+            continue
+        }
+
+        result.push(ch)
+        pos = pos + 1
+    }
+
+    return result
+}
+
+fn main(): i32 {
+    var parser = new_parser("http", "simple HTTP client")
+    parser.add_string("output", "o", "save response body to file", "")
+    parser.add_bool("verbose", "v", "show method and URL before request")
+    let args = parser.parse()
+
+    if args.positional.len < 1 {
+        print("http: missing URL")
+        print("usage: http [options] <url>")
+        return 2
+    }
+
+    let url = args.positional[0].clone()
+    let output_file = args.get_string("output")
+    let verbose = args.get_bool("verbose")
+
+    if verbose {
+        print("GET %s", url)
+        print("")
+    }
+
+    let result = fetch(url)
+    match result {
+        Result.Ok(r) => {
+            let stext = status_text(r.status)
+            print("HTTP %d %s", r.status, stext)
+            print("")
+
+            if output_file.len > 0 {
+                match write_file(output_file.clone(), r.body) {
+                    Result.Ok(n) => {
+                        print("saved %lld bytes to %s", n, output_file)
+                    }
+                    Result.Err(e) => {
+                        print("http: failed to write file: %s", e)
+                        return 1
+                    }
+                }
+            } else {
+                if looks_like_json(r.body) {
+                    let formatted = pretty_json(r.body)
+                    write_stdout(formatted)
+                    print("")
+                } else {
+                    write_stdout(r.body)
+                    print("")
+                }
+            }
+        }
+        Result.Err(msg) => {
+            print("http: %s", msg)
+            return 1
+        }
+    }
+
+    return 0
+}

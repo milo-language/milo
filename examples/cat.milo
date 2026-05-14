@@ -1,0 +1,331 @@
+// cat — file viewer with line numbers and syntax highlighting
+import "std/argparse"
+import "std/io"
+import "std/path"
+
+// build an ANSI escape code — no \x escapes in milo, so we push ESC byte (27)
+fn esc(code: &string): string {
+    var s: string = ""
+    s.push(27 as u8)
+    s = s + "[" + code + "m"
+    return s
+}
+
+fn parse_i64(s: string): i64 {
+    var result: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let d = s[i] as i64 - 48
+        if d >= 0 && d <= 9 {
+            result = result * 10 + d
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn pad_num(n: i64, width: i64): string {
+    let s = n.to_string()
+    var result: string = ""
+    var p: i64 = 0
+    while p < width - s.len {
+        result = result + " "
+        p = p + 1
+    }
+    return result + s
+}
+
+fn num_digits(n: i64): i64 {
+    if n == 0 { return 1 }
+    var count: i64 = 0
+    var v: i64 = n
+    while v > 0 {
+        count = count + 1
+        v = v / 10
+    }
+    return count
+}
+
+fn detect_lang(ext: &string): string {
+    if ext == ".ts" || ext == ".tsx" { return "typescript" }
+    if ext == ".js" || ext == ".jsx" { return "javascript" }
+    if ext == ".py" { return "python" }
+    if ext == ".rs" { return "rust" }
+    if ext == ".go" { return "go" }
+    if ext == ".c" || ext == ".h" { return "c" }
+    if ext == ".cpp" || ext == ".hpp" { return "cpp" }
+    if ext == ".java" { return "java" }
+    if ext == ".sh" || ext == ".bash" { return "shell" }
+    if ext == ".milo" { return "milo" }
+    if ext == ".json" { return "json" }
+    if ext == ".yaml" || ext == ".yml" { return "yaml" }
+    if ext == ".toml" { return "toml" }
+    if ext == ".sql" { return "sql" }
+    if ext == ".md" { return "markdown" }
+    return "text"
+}
+
+fn get_keywords(lang: &string): string {
+    if lang == "typescript" || lang == "javascript" {
+        return "const,let,var,function,class,interface,type,import,export,from,return,if,else,while,for,new,this,async,await,try,catch,throw,switch,case,break,continue,true,false,null,undefined,void,of,in,as,enum"
+    }
+    if lang == "python" {
+        return "def,class,import,from,return,if,elif,else,while,for,in,try,except,finally,raise,with,as,lambda,pass,break,continue,yield,True,False,None,and,or,not,is"
+    }
+    if lang == "rust" {
+        return "fn,let,mut,const,struct,enum,impl,trait,use,mod,pub,return,if,else,while,for,in,loop,match,self,Self,true,false,as,break,continue,unsafe,ref,move"
+    }
+    if lang == "milo" {
+        return "fn,let,var,struct,enum,impl,import,return,if,else,while,match,true,false,as,break,continue,unsafe,new,void,bool,i32,i64,u8,u16,string"
+    }
+    if lang == "go" {
+        return "func,var,const,type,struct,interface,import,package,return,if,else,for,range,switch,case,break,continue,default,defer,go,nil,true,false,map,make"
+    }
+    if lang == "c" || lang == "cpp" {
+        return "int,char,void,float,double,long,struct,enum,union,typedef,return,if,else,while,for,do,switch,case,break,continue,sizeof,static,const,include,define,NULL,true,false"
+    }
+    if lang == "shell" {
+        return "if,then,elif,else,fi,while,do,done,for,in,case,esac,function,return,exit,echo,read,local,export,true,false"
+    }
+    if lang == "java" {
+        return "public,private,protected,static,final,abstract,class,interface,extends,implements,import,return,if,else,while,for,switch,case,break,continue,new,this,void,int,long,boolean,null,true,false"
+    }
+    return ""
+}
+
+fn is_alpha(ch: u8): bool {
+    return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || ch == 95
+}
+
+fn is_alnum(ch: u8): bool {
+    return is_alpha(ch) || (ch >= 48 && ch <= 57)
+}
+
+fn is_keyword(word: &string, kw_list: &Vec<string>): bool {
+    var i: i64 = 0
+    while i < kw_list.len {
+        if kw_list[i] == word { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// comment-start detection for a language
+fn is_line_comment(lang: &string, line: &string, pos: i64): bool {
+    if pos + 1 < line.len && line[pos] == 47 && line[pos + 1] == 47 {
+        // "//" for c-like langs
+        if lang == "typescript" || lang == "javascript" || lang == "rust" || lang == "go" || lang == "c" || lang == "cpp" || lang == "java" || lang == "milo" {
+            return true
+        }
+    }
+    if line[pos] == 35 {
+        // "#" for python, shell, yaml, toml
+        if lang == "python" || lang == "shell" || lang == "yaml" || lang == "toml" { return true }
+    }
+    if pos + 1 < line.len && line[pos] == 45 && line[pos + 1] == 45 && lang == "sql" {
+        return true
+    }
+    return false
+}
+
+fn highlight_line(line: &string, lang: &string, kw_list: &Vec<string>, c_reset: &string, c_gray: &string, c_green: &string, c_magenta: &string, c_red: &string, c_blue: &string, c_cyan: &string): string {
+    if lang == "text" || lang == "json" || lang == "markdown" { return line.clone() }
+
+    var result: string = ""
+    var pos: i64 = 0
+
+    while pos < line.len {
+        let ch = line[pos]
+
+        // line comment — color rest of line gray
+        if is_line_comment(lang, line, pos) {
+            result = result + c_gray + line.substr(pos, line.len) + c_reset
+            return result
+        }
+
+        // string literals
+        if ch == 34 || ch == 39 || ch == 96 {
+            let quote = ch
+            var end: i64 = pos + 1
+            while end < line.len {
+                if line[end] == 92 {
+                    end = end + 2
+                    continue
+                }
+                if line[end] == quote {
+                    end = end + 1
+                    break
+                }
+                end = end + 1
+            }
+            result = result + c_green + line.substr(pos, end) + c_reset
+            pos = end
+            continue
+        }
+
+        // numbers
+        if ch >= 48 && ch <= 57 {
+            var end: i64 = pos
+            while end < line.len && ((line[end] >= 48 && line[end] <= 57) || line[end] == 46) {
+                end = end + 1
+            }
+            result = result + c_magenta + line.substr(pos, end) + c_reset
+            pos = end
+            continue
+        }
+
+        // identifiers / keywords
+        if is_alpha(ch) {
+            var end: i64 = pos
+            while end < line.len && is_alnum(line[end]) {
+                end = end + 1
+            }
+            let word = line.substr(pos, end)
+            if is_keyword(word, kw_list) {
+                result = result + c_red + word + c_reset
+            } else if end < line.len && line[end] == 40 {
+                // function call
+                result = result + c_blue + word + c_reset
+            } else if word[0] >= 65 && word[0] <= 90 {
+                // capitalized = type name
+                result = result + c_cyan + word + c_reset
+            } else {
+                result = result + word
+            }
+            pos = end
+            continue
+        }
+
+        // default: emit char as-is
+        var ch_str: string = ""
+        ch_str.push(ch)
+        result = result + ch_str
+        pos = pos + 1
+    }
+
+    return result
+}
+
+fn main(): i32 {
+    var parser = new_parser("cat", "view files with line numbers and syntax highlighting")
+    parser.add_bool("plain", "p", "plain output, no decorations")
+    parser.add_bool("no-color", "C", "disable syntax highlighting")
+    parser.add_string("range", "r", "line range to display (e.g. 10:20)", "")
+    parser.add_string("language", "l", "force language for highlighting", "")
+    let args = parser.parse()
+
+    if args.positional.len < 1 {
+        print("cat: missing file argument")
+        print("usage: cat [options] <file>")
+        return 2
+    }
+
+    let file_path = args.positional[0].clone()
+    let plain = args.get_bool("plain")
+    let no_color = args.get_bool("no-color")
+    let range_str = args.get_string("range")
+    let force_lang = args.get_string("language")
+
+    var content: string = ""
+    match read_file(file_path.clone()) {
+        Result.Ok(data) => { content = data }
+        Result.Err(e) => {
+            print("cat: %s", e)
+            return 1
+        }
+    }
+
+    let lines = content.split("\n")
+
+    // detect language
+    var lang: string = ""
+    if force_lang.len > 0 {
+        lang = force_lang.clone()
+    } else {
+        let ext = path_ext(file_path)
+        lang = detect_lang(ext)
+    }
+
+    // parse range
+    var start_line: i64 = 1
+    var end_line: i64 = lines.len
+    if range_str.len > 0 {
+        let colon = range_str.index_of(":")
+        if colon >= 0 {
+            let s1 = range_str.substr(0 as i64, colon)
+            let s2 = range_str.substr(colon + 1, range_str.len)
+            if s1.len > 0 { start_line = parse_i64(s1) }
+            if s2.len > 0 { end_line = parse_i64(s2) }
+        } else {
+            start_line = parse_i64(range_str.clone())
+            end_line = start_line
+        }
+    }
+
+    // build ANSI color codes
+    let c_reset = esc("0")
+    let c_gray = esc("90")
+    let c_green = esc("32")
+    let c_magenta = esc("35")
+    let c_red = esc("31")
+    let c_blue = esc("34")
+    let c_cyan = esc("36")
+    let c_bold = esc("1")
+    let c_dim = esc("2")
+
+    // keyword list for highlighting
+    let kw_str = get_keywords(lang)
+    let kw_list = kw_str.split(",")
+
+    let width = num_digits(lines.len)
+    let separator = "------------------------------------------------"
+
+    // header
+    if !plain {
+        var lang_label: string = ""
+        if lang != "text" {
+            lang_label = " | " + lang
+        }
+        if no_color {
+            print("%s", separator)
+            print(" File: %s%s", file_path, lang_label)
+            print("%s", separator)
+        } else {
+            print("%s%s%s", c_dim, separator, c_reset)
+            print(" %sFile: %s%s%s%s%s", c_bold, file_path, c_reset, c_gray, lang_label, c_reset)
+            print("%s%s%s", c_dim, separator, c_reset)
+        }
+    }
+
+    // print lines
+    var idx: i64 = start_line - 1
+    while idx < end_line && idx < lines.len {
+        let raw_line = lines[idx].clone()
+
+        if plain {
+            print("%s", raw_line)
+        } else {
+            var display_line: string = raw_line.clone()
+            if !no_color {
+                display_line = highlight_line(raw_line, lang, kw_list, c_reset, c_gray, c_green, c_magenta, c_red, c_blue, c_cyan)
+            }
+            if no_color {
+                print(" %s | %s", pad_num(idx + 1, width), display_line)
+            } else {
+                print(" %s%s |%s %s", c_gray, pad_num(idx + 1, width), c_reset, display_line)
+            }
+        }
+        idx = idx + 1
+    }
+
+    // footer
+    if !plain {
+        if no_color {
+            print("%s", separator)
+        } else {
+            print("%s%s%s", c_dim, separator, c_reset)
+        }
+    }
+
+    return 0
+}
