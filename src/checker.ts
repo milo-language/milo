@@ -2114,6 +2114,43 @@ export class TypeChecker {
             if (expr.args.length !== 0) { this.error(`'clone' takes no arguments`, sp); }
             return this.setType(expr, { tag: "string" });
           }
+          // string methods delegated to std/string runtime functions
+          if (expr.method === "contains" || expr.method === "starts_with" || expr.method === "ends_with") {
+            if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "bool" }); }
+            const argType = this.checkExpr(expr.args[0]);
+            if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${typeName(argType)}`, sp);
+            return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "index_of") {
+            if (expr.args.length !== 1) { this.error(`'index_of' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "int", bits: 64, signed: true }); }
+            const argType = this.checkExpr(expr.args[0]);
+            if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'index_of': expected string, got ${typeName(argType)}`, sp);
+            return this.setType(expr, { tag: "int", bits: 64, signed: true });
+          }
+          if (expr.method === "split") {
+            if (expr.args.length !== 1) { this.error(`'split' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "vec", element: { tag: "string" } }); }
+            const argType = this.checkExpr(expr.args[0]);
+            if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'split': expected string, got ${typeName(argType)}`, sp);
+            return this.setType(expr, { tag: "vec", element: { tag: "string" } });
+          }
+          if (expr.method === "trim" || expr.method === "trim_start" || expr.method === "trim_end" || expr.method === "to_lower" || expr.method === "to_upper") {
+            if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "string" });
+          }
+          if (expr.method === "replace") {
+            if (expr.args.length !== 2) { this.error(`'replace' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
+            const a1 = this.checkExpr(expr.args[0]);
+            const a2 = this.checkExpr(expr.args[1]);
+            if (a1.tag !== "string" && a1.tag !== "unknown") this.error(`'replace' arg 1: expected string, got ${typeName(a1)}`, sp);
+            if (a2.tag !== "string" && a2.tag !== "unknown") this.error(`'replace' arg 2: expected string, got ${typeName(a2)}`, sp);
+            return this.setType(expr, { tag: "string" });
+          }
+          if (expr.method === "repeat") {
+            if (expr.args.length !== 1) { this.error(`'repeat' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
+            const argType = this.checkExpr(expr.args[0]);
+            if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'repeat': expected integer, got ${typeName(argType)}`, sp);
+            return this.setType(expr, { tag: "string" });
+          }
           // fall through to trait/inherent lookup for String
         }
 

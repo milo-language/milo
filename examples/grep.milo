@@ -1,7 +1,6 @@
 // grep — search for a pattern in files
 import "std/argparse"
 import "std/io"
-import "std/string"
 
 fn main(): i32 {
     var parser = new_parser("grep", "search for a string pattern in files")
@@ -26,7 +25,7 @@ fn main(): i32 {
 
     var search_pattern: string = pattern.clone()
     if ignore_case {
-        search_pattern = str_to_lower(pattern)
+        search_pattern = pattern.to_lower()
     }
 
     var content: string = ""
@@ -38,7 +37,7 @@ fn main(): i32 {
         }
     }
 
-    let lines = str_split(content, "\n")
+    let lines = content.split("\n")
     var match_count: i64 = 0
     var line_num: i64 = 0
 
@@ -46,10 +45,10 @@ fn main(): i32 {
         let line = lines[line_num]
         var haystack: string = line.clone()
         if ignore_case {
-            haystack = str_to_lower(line)
+            haystack = line.to_lower()
         }
 
-        let found = str_contains(haystack, search_pattern)
+        let found = haystack.contains(search_pattern)
         var is_match: bool = found
         if invert { is_match = !found }
 

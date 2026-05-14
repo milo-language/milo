@@ -413,6 +413,26 @@ class LowerCtx {
           if (expr.method === "clone") {
             return { kind: "StringClone", str: this.lowerExpr(expr.object), type, span: expr.span };
           }
+          // methods delegated to std/string runtime functions
+          const strMethodMap: Record<string, string> = {
+            "contains": "str_contains", "starts_with": "str_starts_with", "ends_with": "str_ends_with",
+            "index_of": "str_index_of", "split": "str_split", "trim": "str_trim",
+            "trim_start": "str_trim_start", "trim_end": "str_trim_end",
+            "to_lower": "str_to_lower", "to_upper": "str_to_upper",
+            "replace": "str_replace", "repeat": "str_repeat",
+          };
+          const fnName = strMethodMap[expr.method];
+          if (fnName) {
+            const args: HIRArg[] = [
+              { expr: this.lowerExpr(expr.object), passByRef: true, refMut: false },
+              ...expr.args.map(a => ({ expr: this.lowerExpr(a), passByRef: true, refMut: false })),
+            ];
+            // repeat takes i64 by value, not by ref
+            if (expr.method === "repeat" && args.length > 1) {
+              args[1] = { ...args[1], passByRef: false };
+            }
+            return { kind: "Call", func: fnName, args, type, variadic: false, span: expr.span };
+          }
         }
         // user-defined method (trait or inherent)
         const resolved = this.c.resolvedMethods.get(expr);

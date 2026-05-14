@@ -73,5 +73,21 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   }
 
   processImports(program, sourceDir);
+
+  // auto-include std/string runtime (string methods depend on these functions)
+  const stringStdlib = resolve(STDLIB_DIR, "std/string.milo");
+  if (!visited.has(stringStdlib) && existsSync(stringStdlib)) {
+    visited.add(stringStdlib);
+    const source = readFileSync(stringStdlib, "utf-8");
+    const tokens = new Lexer(source).tokenize();
+    const imported = new Parser(tokens).parse();
+    structs.push(...imported.structs);
+    enums.push(...imported.enums);
+    functions.push(...imported.functions);
+    traits.push(...imported.traits);
+    impls.push(...imported.impls);
+    processImports(imported, dirname(stringStdlib));
+  }
+
   return { structs, enums, functions, imports: [], traits, impls };
 }

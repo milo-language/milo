@@ -68,7 +68,7 @@ fn main(): i32 {
     print("replace: %s", str_replace(s, "world", "universe"))
 
     // is_* functions
-    print("is_funcs: %s %s %s %s", bool_str(is_digit(48)), bool_str(is_alpha(65)), bool_str(is_whitespace(65)), bool_str(is_alphanumeric(57)))
+    print("is_funcs: %s %s %s %s", bool_str(char_is_digit(48)), bool_str(char_is_alpha(65)), bool_str(char_is_whitespace(65)), bool_str(char_is_alphanumeric(57)))
 
     return 0
 }

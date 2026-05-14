@@ -213,21 +213,21 @@ fn str_replace(s: &string, old: &string, new_val: &string): string {
 }
 
 // Check if a byte is ASCII whitespace.
-fn is_whitespace(ch: u8): bool {
+fn char_is_whitespace(ch: u8): bool {
     return ch == 32 || ch == 9 || ch == 10 || ch == 13
 }
 
 // Check if a byte is an ASCII digit.
-fn is_digit(ch: u8): bool {
+fn char_is_digit(ch: u8): bool {
     return ch >= 48 && ch <= 57
 }
 
 // Check if a byte is an ASCII letter.
-fn is_alpha(ch: u8): bool {
+fn char_is_alpha(ch: u8): bool {
     return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122)
 }
 
 // Check if a byte is an ASCII letter or digit.
-fn is_alphanumeric(ch: u8): bool {
-    return is_alpha(ch) || is_digit(ch)
+fn char_is_alphanumeric(ch: u8): bool {
+    return char_is_alpha(ch) || char_is_digit(ch)
 }
