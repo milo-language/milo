@@ -1,0 +1,73 @@
+// std/path — file path manipulation
+
+import "std/string"
+
+// Get the file extension including the dot. Returns "" if none.
+fn path_ext(path: &string): string {
+    var i: i64 = path.len - 1
+    while i >= 0 as i64 {
+        if path[i] == 46 { return path.substr(i, path.len) }
+        if path[i] == 47 { return "" }
+        i = i - 1
+    }
+    return ""
+}
+
+// Get the last component of a path.
+fn path_basename(path: &string): string {
+    if path.len == 0 { return "" }
+    var end: i64 = path.len
+    // strip trailing slashes
+    while end > 0 as i64 && path[end - 1] == 47 {
+        end = end - 1
+    }
+    if end == 0 as i64 { return "/" }
+    var i: i64 = end - 1
+    while i >= 0 as i64 {
+        if path[i] == 47 { return path.substr(i + 1, end) }
+        i = i - 1
+    }
+    return path.substr(0 as i64, end)
+}
+
+// Get the directory portion of a path.
+fn path_dirname(path: &string): string {
+    if path.len == 0 { return "." }
+    var end: i64 = path.len
+    // strip trailing slashes
+    while end > 0 as i64 && path[end - 1] == 47 {
+        end = end - 1
+    }
+    if end == 0 as i64 { return "/" }
+    // find last slash
+    var i: i64 = end - 1
+    while i >= 0 as i64 {
+        if path[i] == 47 {
+            if i == 0 as i64 { return "/" }
+            return path.substr(0 as i64, i)
+        }
+        i = i - 1
+    }
+    return "."
+}
+
+// Join two path components with a separator.
+fn path_join(a: &string, b: &string): string {
+    if a.len == 0 { return b.clone() }
+    if b.len == 0 { return a.clone() }
+    if a[a.len - 1] == 47 {
+        return a + b
+    }
+    return a + "/" + b
+}
+
+// Get the filename without extension.
+fn path_stem(path: &string): string {
+    let base = path_basename(path)
+    var i: i64 = base.len - 1
+    while i > 0 as i64 {
+        if base[i] == 46 { return base.substr(0 as i64, i) }
+        i = i - 1
+    }
+    return base
+}

@@ -33,3 +33,10 @@ fn o_write_create_trunc(): i32 { return 577 }
 fn o_write_create_append(): i32 { return 1089 }
 // offset of ai_addr field in struct addrinfo (swapped with ai_canonname vs macOS)
 fn addrinfo_addr_offset(): i64 { return 24 }
+// struct stat layout (Linux x86_64)
+fn stat_mode_offset(): i64 { return 24 }
+fn stat_size_offset(): i64 { return 48 }
+fn stat_buf_size(): i64 { return 144 }
+// struct dirent layout
+fn dirent_type_offset(): i64 { return 18 }
+fn dirent_name_offset(): i64 { return 19 }

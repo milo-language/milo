@@ -267,6 +267,7 @@ export class TypeChecker {
     if (t.tag === "box") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "vec") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
     if (t.tag === "hashmap") return { ...t, key: this.substituteTypeKind(t.key, typeMap), value: this.substituteTypeKind(t.value, typeMap) };
+    if (t.tag === "fn") return { ...t, params: t.params.map(p => this.substituteTypeKind(p, typeMap)), ret: this.substituteTypeKind(t.ret, typeMap) };
     return t;
   }
 
@@ -274,6 +275,13 @@ export class TypeChecker {
     const idx = typeParams.indexOf(ty.name);
     if (idx !== -1) {
       return { ...ty, name: typeName(typeArgs[idx]) };
+    }
+    if (ty.isFn && ty.fnParams && ty.fnRet) {
+      return {
+        ...ty,
+        fnParams: ty.fnParams.map(p => this.substituteMiloType(p, typeParams, typeArgs)),
+        fnRet: this.substituteMiloType(ty.fnRet, typeParams, typeArgs),
+      };
     }
     if (ty.typeArgs) {
       return { ...ty, typeArgs: ty.typeArgs.map(a => this.substituteMiloType(a, typeParams, typeArgs)) };
@@ -388,6 +396,8 @@ export class TypeChecker {
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
     this.functions.set("_milo_arg_count", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
     this.functions.set("_milo_arg_at", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });
+    this.functions.set("_cstr_to_string", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "string" }, variadic: false });
+    this.functions.set("_load_u8", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 8, signed: false }, variadic: false });
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();

@@ -8,6 +8,8 @@ extern fn open(path: *u8, flags: i32, ...): i32
 extern fn close(fd: i32): i32
 extern fn lseek(fd: i32, offset: i64, whence: i32): i64
 extern fn fstat(fd: i32, buf: *u8): i32
+extern fn stat(path: *u8, buf: *u8): i32
+extern fn access(path: *u8, mode: i32): i32
 extern fn puts(s: *u8): i32
 extern fn printf(fmt: *u8, ...): i32
 

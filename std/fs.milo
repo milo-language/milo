@@ -1,0 +1,113 @@
+// std/fs — filesystem operations
+
+import "std/os"
+import "std/io"
+import "std/platform"
+
+// File metadata from stat().
+struct FileInfo {
+    size: i64,
+    mode: i32,
+    exists: bool,
+}
+
+// Get file metadata. Returns FileInfo with exists=false if path doesn't exist.
+fn file_info(path: string): FileInfo {
+    var buf: [u8; 144] = [0; 144]
+    unsafe {
+        let r = stat(path, buf)
+        if r != 0 {
+            return FileInfo { size: 0 as i64, mode: 0, exists: false }
+        }
+        let mode_off = stat_mode_offset()
+        let size_off = stat_size_offset()
+        // read u16 mode (macOS) — works for permission bits
+        let mode_lo = buf[mode_off] as i32
+        let mode_hi = buf[mode_off + 1] as i32
+        let mode = mode_lo | (mode_hi << 8)
+        // read i64 size
+        var size: i64 = 0
+        var i: i64 = 0
+        while i < 8 {
+            size = size | ((buf[size_off + i] as i64) << (i * 8))
+            i = i + 1
+        }
+        return FileInfo { size: size, mode: mode, exists: true }
+    }
+}
+
+// Check if a path exists.
+fn path_exists(path: string): bool {
+    unsafe {
+        return access(path, 0) == 0
+    }
+}
+
+// Check if a path is a directory.
+fn is_dir(path: string): bool {
+    let info = file_info(path)
+    if !info.exists { return false }
+    // S_IFDIR = 0x4000 = 16384, S_IFMT = 0xF000 = 61440
+    return (info.mode & 61440) == 16384
+}
+
+// Check if a path is a regular file.
+fn is_file(path: string): bool {
+    let info = file_info(path)
+    if !info.exists { return false }
+    // S_IFREG = 0x8000 = 32768
+    return (info.mode & 61440) == 32768
+}
+
+// Get file size in bytes. Returns -1 if file doesn't exist.
+fn file_size_path(path: string): i64 {
+    let info = file_info(path)
+    var neg_one: i64 = 0
+    neg_one = neg_one - 1
+    if !info.exists { return neg_one }
+    return info.size
+}
+
+// Directory entry from read_dir().
+struct DirEntry {
+    name: string,
+    is_dir: bool,
+    is_file: bool,
+}
+
+// List directory contents. Returns empty vec on error.
+fn read_dir(path: string): Vec<DirEntry> {
+    var entries: Vec<DirEntry> = Vec.new()
+    unsafe {
+        let dir = opendir(path)
+        if dir as i64 == 0 as i64 { return entries }
+        let name_off = dirent_name_offset()
+        let type_off = dirent_type_offset()
+        while true {
+            let ent = readdir(dir)
+            if ent as i64 == 0 as i64 { break }
+            let d_type = _load_u8((ent as i64 + type_off) as *u8)
+            let name_ptr = (ent as i64 + name_off) as *u8
+            let name = _cstr_to_string(name_ptr)
+
+            if name == "." || name == ".." {
+                let skip = 0
+            } else {
+                // DT_DIR = 4, DT_REG = 8
+                entries.push(DirEntry {
+                    name: name,
+                    is_dir: d_type == 4,
+                    is_file: d_type == 8,
+                })
+            }
+        }
+        closedir(dir)
+    }
+    return entries
+}
+
+// Write a string to a file, creating or truncating it.
+fn write_file(path: string, data: &string): Result<i64> {
+    let f = open_write(path)!
+    return write_all(f, data)
+}

@@ -1,0 +1,76 @@
+// tree — display directory tree
+import "std/argparse"
+import "std/fs"
+import "std/path"
+
+struct Counts {
+    dirs: i64,
+    files: i64,
+}
+
+fn print_tree(dir_path: &string, prefix: &string, depth: i64, max_level: i64, counts: &mut Counts): void {
+    if max_level > 0 as i64 && depth >= max_level { return }
+
+    let entries = read_dir(dir_path.clone())
+    var idx: i64 = 0
+    while idx < entries.len {
+        let name = entries[idx].name.clone()
+        let entry_is_dir = entries[idx].is_dir
+        let is_last = idx == entries.len - 1
+
+        // use ASCII tree characters
+        var connector: string = ""
+        var extension: string = ""
+        if is_last {
+            connector = "`-- "
+            extension = "    "
+        } else {
+            connector = "|-- "
+            extension = "|   "
+        }
+
+        print("%s%s%s", prefix, connector, name)
+
+        if entry_is_dir {
+            counts.dirs = counts.dirs + 1
+            let child_path = path_join(dir_path, name)
+            let child_prefix = prefix + extension
+            print_tree(child_path, child_prefix, depth + 1, max_level, counts)
+        } else {
+            counts.files = counts.files + 1
+        }
+        idx = idx + 1
+    }
+}
+
+fn main(): i32 {
+    var parser = new_parser("tree", "display directory tree")
+    parser.add_string("level", "L", "max display depth", "0")
+    let args = parser.parse()
+
+    var root: string = "."
+    if args.positional.len > 0 {
+        root = args.positional[0].clone()
+    }
+
+    let max_level = args.get_i64("level")
+
+    print("%s", root)
+    var counts = Counts { dirs: 1, files: 0 }
+    let prefix: string = ""
+    print_tree(root, prefix, 0 as i64, max_level, counts)
+
+    var summary: string = "\n" + counts.dirs.to_string() + " director"
+    if counts.dirs == 1 as i64 {
+        summary = summary + "y"
+    } else {
+        summary = summary + "ies"
+    }
+    summary = summary + ", " + counts.files.to_string() + " file"
+    if counts.files != 1 as i64 {
+        summary = summary + "s"
+    }
+    print("%s", summary)
+
+    return 0
+}

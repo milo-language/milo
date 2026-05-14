@@ -51,7 +51,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "exit", "_milo_arg_count", "_milo_arg_at"]);
+  private static BUILTINS = new Set(["print", "exit", "_milo_arg_count", "_milo_arg_at", "_cstr_to_string", "_load_u8"]);
   private needsArgGlobals = false;
 
   constructor(target: TargetInfo) { this.target = target; }
@@ -775,6 +775,33 @@ export class Codegen {
       const ext = this.nextTemp();
       lines.push(`  ${ext} = sext i32 ${raw} to i64`);
       return [lines, ext, "i64"];
+    }
+    if (expr.func === "_load_u8") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load i8, ptr ${pv}`);
+      return [lines, val, "i8"];
+    }
+    if (expr.func === "_cstr_to_string") {
+      this.needsMalloc = true;
+      this.needsMemcpy = true;
+      this.needsStrlen = true;
+      this.hasStringType = true;
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const len = this.nextTemp();
+      lines.push(`  ${len} = call i64 @strlen(ptr ${pv})`);
+      const buf = this.nextTemp();
+      lines.push(`  ${buf} = call ptr @malloc(i64 ${len})`);
+      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${pv}, i64 ${len})`);
+      const s1 = this.nextTemp();
+      lines.push(`  ${s1} = insertvalue %String zeroinitializer, ptr ${buf}, 0`);
+      const s2 = this.nextTemp();
+      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${len}, 1`);
+      const s3 = this.nextTemp();
+      lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${len}, 2`);
+      return [lines, s3, "%String"];
     }
     if (expr.func === "_milo_arg_at") {
       this.needsArgGlobals = true;
