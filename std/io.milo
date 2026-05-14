@@ -29,7 +29,8 @@ fn open_read(path: string): Result<File> {
     unsafe {
         let fd = open(path, 0)
         if fd < 0 {
-            return Result.Err("failed to open file")
+            let reason = _cstr_to_string(strerror(get_errno()))
+            return Result.Err("'" + path + "': " + reason)
         }
         return Result.Ok(File { fd: fd })
     }
@@ -41,7 +42,8 @@ fn open_write(path: string): Result<File> {
     unsafe {
         let fd = open(path, o_write_create_trunc(), 420)
         if fd < 0 {
-            return Result.Err("failed to create file")
+            let reason = _cstr_to_string(strerror(get_errno()))
+            return Result.Err("'" + path + "': " + reason)
         }
         return Result.Ok(File { fd: fd })
     }
@@ -53,7 +55,8 @@ fn open_append(path: string): Result<File> {
     unsafe {
         let fd = open(path, o_write_create_append(), 420)
         if fd < 0 {
-            return Result.Err("failed to open file for append")
+            let reason = _cstr_to_string(strerror(get_errno()))
+            return Result.Err("'" + path + "': " + reason)
         }
         return Result.Ok(File { fd: fd })
     }
@@ -105,8 +108,10 @@ fn write_all(f: &File, data: &string): Result<i64> {
 
 // Read an entire file into a string by path.
 fn read_file(path: string): Result<string> {
-    let f = open_read(path)!
-    return read_all(f)
+    match open_read(path) {
+        Result.Ok(f) => { return read_all(f) }
+        Result.Err(e) => { return Result.Err(e) }
+    }
 }
 
 // Read all available data from stdin into a string.

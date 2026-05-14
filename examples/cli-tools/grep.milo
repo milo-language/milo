@@ -1,0 +1,205 @@
+// grep — search for a pattern in files
+import "std/argparse"
+import "std/io"
+import "std/fs"
+import "std/path"
+
+fn make_color(code: &string): string {
+    var s: string = ""
+    s.push(27 as u8)
+    s = s + "[" + code + "m"
+    return s
+}
+
+// highlight all occurrences of pattern in line
+fn highlight(line: &string, pattern: &string, ignore_case: bool): string {
+    let red = make_color("1;31")
+    let reset = make_color("0")
+    var result: string = ""
+    var pos: i64 = 0
+
+    while pos < line.len {
+        var match_here: bool = false
+        if pos + pattern.len <= line.len {
+            var j: i64 = 0
+            match_here = true
+            while j < pattern.len {
+                var a: u8 = line[pos + j]
+                var b: u8 = pattern[j]
+                if ignore_case {
+                    if a >= 65 && a <= 90 { a = a + 32 }
+                    if b >= 65 && b <= 90 { b = b + 32 }
+                }
+                if a != b {
+                    match_here = false
+                    break
+                }
+                j = j + 1
+            }
+        }
+        if match_here {
+            result = result + red + line.substr(pos, pos + pattern.len) + reset
+            pos = pos + pattern.len
+        } else {
+            result.push(line[pos])
+            pos = pos + 1
+        }
+    }
+    return result
+}
+
+struct GrepOpts {
+    pattern: string,
+    search_pattern: string,
+    ignore_case: bool,
+    show_line_nums: bool,
+    count_only: bool,
+    invert: bool,
+    no_color: bool,
+    show_filename: bool,
+    total_matches: i64,
+}
+
+fn grep_file(file_path: &string, opts: &mut GrepOpts): i32 {
+    var content: string = ""
+    match read_file(file_path.clone()) {
+        Result.Ok(data) => { content = data }
+        Result.Err(e) => {
+            print("grep: %s", e)
+            return 1
+        }
+    }
+
+    let lines = content.split("\n")
+    let green = make_color("32")
+    let magenta = make_color("35")
+    let reset = make_color("0")
+    var match_count: i64 = 0
+    var line_num: i64 = 0
+
+    while line_num < lines.len {
+        let line = lines[line_num]
+        var haystack: string = line.clone()
+        if opts.ignore_case {
+            haystack = line.to_lower()
+        }
+
+        let found = haystack.contains(opts.search_pattern)
+        var is_match: bool = found
+        if opts.invert { is_match = !found }
+
+        if is_match {
+            match_count = match_count + 1
+            if !opts.count_only {
+                var output: string = ""
+                if opts.show_filename {
+                    if opts.no_color {
+                        output = file_path + ":"
+                    } else {
+                        output = magenta + file_path + reset + ":"
+                    }
+                }
+                if opts.show_line_nums {
+                    if opts.no_color {
+                        output = output + (line_num + 1).to_string() + ":"
+                    } else {
+                        output = output + green + (line_num + 1).to_string() + reset + ":"
+                    }
+                }
+                if !opts.no_color && !opts.invert {
+                    output = output + highlight(line, opts.pattern, opts.ignore_case)
+                } else {
+                    output = output + line
+                }
+                print("%s", output)
+            }
+        }
+
+        line_num = line_num + 1
+    }
+
+    opts.total_matches = opts.total_matches + match_count
+
+    if opts.count_only && match_count > 0 {
+        if opts.show_filename {
+            print("%s:%lld", file_path, match_count)
+        } else {
+            print("%lld", match_count)
+        }
+    }
+
+    return 0
+}
+
+fn grep_recursive(dir_path: &string, opts: &mut GrepOpts): void {
+    let entries = read_dir(dir_path.clone())
+    var i: i64 = 0
+    while i < entries.len {
+        let name = entries[i].name.clone()
+        let entry_is_dir = entries[i].is_dir
+        let entry_is_file = entries[i].is_file
+        // skip hidden files/dirs
+        if name[0] != 46 {
+            let full_path = path_join(dir_path, name)
+            if entry_is_dir {
+                grep_recursive(full_path, opts)
+            } else if entry_is_file {
+                grep_file(full_path, opts)
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn main(): i32 {
+    var parser = new_parser("grep", "search for a string pattern in files")
+    parser.add_bool("ignore-case", "i", "case-insensitive search")
+    parser.add_bool("line-number", "n", "show line numbers")
+    parser.add_bool("count", "c", "only print count of matching lines")
+    parser.add_bool("invert-match", "v", "select non-matching lines")
+    parser.add_bool("recursive", "r", "search directories recursively")
+    parser.add_bool("no-color", "C", "disable colored output")
+    let args = parser.parse()
+
+    if args.positional.len < 2 {
+        print("grep: missing pattern or file argument")
+        print("usage: grep [options] <pattern> <file|dir>")
+        return 2
+    }
+
+    let pattern = args.positional[0].clone()
+    let target = args.positional[1].clone()
+    let ignore_case = args.get_bool("ignore-case")
+    let recursive = args.get_bool("recursive")
+
+    var search_pattern: string = pattern.clone()
+    if ignore_case {
+        search_pattern = pattern.to_lower()
+    }
+
+    // show filenames when searching multiple files or recursively
+    let show_filename = recursive || is_dir(target.clone())
+
+    var opts = GrepOpts {
+        pattern: pattern,
+        search_pattern: search_pattern,
+        ignore_case: ignore_case,
+        show_line_nums: args.get_bool("line-number"),
+        count_only: args.get_bool("count"),
+        invert: args.get_bool("invert-match"),
+        no_color: args.get_bool("no-color"),
+        show_filename: show_filename,
+        total_matches: 0 as i64,
+    }
+
+    if recursive || is_dir(target.clone()) {
+        grep_recursive(target, opts)
+    } else {
+        grep_file(target, opts)
+    }
+
+    if opts.total_matches == 0 as i64 {
+        return 1
+    }
+    return 0
+}

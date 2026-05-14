@@ -181,19 +181,25 @@ Requires: [Bun](https://bun.sh), LLVM/Clang.
 
 ## Example Programs
 
+**CLI Tools** (`examples/cli-tools/`)
+
 | Program | Description | Lines |
 |---------|-------------|-------|
-| [grep](examples/grep.milo) | Pattern search with `-i`, `-n`, `-c`, `-v` flags | 80 |
-| [wc](examples/wc.milo) | Line/word/char counter | 85 |
-| [hex](examples/hex.milo) | Hex dump viewer with ASCII column | 100 |
-| [tree](examples/tree.milo) | Recursive directory tree with depth limiting | 95 |
-| [cat](examples/cat.milo) | File viewer with syntax highlighting | 330 |
-| [jq](examples/jq.milo) | JSON query tool (field access, array iteration) | 360 |
-| [serve](examples/serve.milo) | Static file server with directory listing | 140 |
-| [http](examples/http.milo) | HTTP client with JSON pretty-printing | 185 |
-| [webserver](examples/webserver.milo) | HTTP server with routing | 236 |
-| [json_parser](examples/json_parser.milo) | Full JSON parser into a value tree | 200 |
-| [fetch](examples/fetch.milo) | HTTP client with TLS | 40 |
+| [grep](examples/cli-tools/grep.milo) | Pattern search with color highlighting, `-i`, `-n`, `-c`, `-v` | 115 |
+| [wc](examples/cli-tools/wc.milo) | Line/word/char counter | 85 |
+| [hex](examples/cli-tools/hex.milo) | Hex dump viewer with ASCII column | 100 |
+| [tree](examples/cli-tools/tree.milo) | Recursive directory tree with depth limiting | 95 |
+| [cat](examples/cli-tools/cat.milo) | File viewer with syntax highlighting | 330 |
+| [jq](examples/cli-tools/jq.milo) | JSON query tool (field access, array iteration) | 360 |
+
+**Apps** (`examples/apps/`)
+
+| Program | Description | Lines |
+|---------|-------------|-------|
+| [serve](examples/apps/serve.milo) | Static file server with directory listing | 140 |
+| [http](examples/apps/http.milo) | HTTP client with JSON pretty-printing | 185 |
+| [webserver](examples/apps/webserver.milo) | HTTP server with routing | 236 |
+| [fetch](examples/apps/fetch.milo) | HTTP client with TLS | 40 |
 
 ## What Works Today
 

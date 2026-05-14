@@ -394,6 +394,10 @@ export class Codegen {
         // branch-local (e.g. `let s` inside an `if` that wasn't taken) reads cap=0 and skips free.
         if (this.needsDropCg(stmt.type)) {
           this.entryAllocas.push(`  store ${declTy} zeroinitializer, ptr ${addrName}`);
+          // Drop old value before overwriting — needed when this decl is inside a loop
+          // and runs multiple times at runtime. The zero-init above makes the first-iteration
+          // drop a no-op (null ptr / zero cap guards skip the free).
+          this.emitDropValue(lines, addrName, stmt.type);
         }
         lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
         // Don't drop locals that borrow from a ref (shallow copy, data owned elsewhere)
@@ -1461,14 +1465,30 @@ export class Codegen {
     lines.push(`  ${cmp} = icmp eq i32 ${tag}, 0`);
     lines.push(`  br i1 ${cmp}, label %${okLabel}, label %${panicLabel}`);
 
-    // panic branch
+    // panic branch — print error and exit
     lines.push(`${panicLabel}:`);
     const span = expr.span;
-    const errMsg = `unwrap failed at ${span?.line ?? 0}:${span?.col ?? 0}`;
-    const { label: errLabel, length: errLen } = this.addString(errMsg);
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    const isResult = expr.enumName.startsWith("Result_");
+    if (isResult) {
+      // extract the Err(string) payload and print it
+      const errPayloadPtr = this.nextTemp();
+      lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+      const errStr = this.nextTemp();
+      lines.push(`  ${errStr} = load %String, ptr ${errPayloadPtr}`);
+      const errDataPtr = this.nextTemp();
+      lines.push(`  ${errDataPtr} = extractvalue %String ${errStr}, 0`);
+      const fmtMsg = `error at ${span?.line ?? 0}:${span?.col ?? 0}: %s`;
+      const { label: fmtLabel, length: fmtLen } = this.addString(fmtMsg);
+      const fmtPtr = this.nextTemp();
+      lines.push(`  ${fmtPtr} = getelementptr [${fmtLen} x i8], ptr ${fmtLabel}, i32 0, i32 0`);
+      lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtPtr}, ptr ${errDataPtr})`);
+    } else {
+      const errMsg = `error at ${span?.line ?? 0}:${span?.col ?? 0}: unwrap called on None`;
+      const { label: errLabel, length: errLen } = this.addString(errMsg);
+      const errPtr = this.nextTemp();
+      lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+      lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    }
     lines.push(`  call i32 @putchar(i32 10)`);
     this.needsPutchar = true;
     lines.push(`  call void @exit(i32 1)`);
