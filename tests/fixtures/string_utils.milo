@@ -1,0 +1,74 @@
+// @expect: contains: true false true
+// @expect: index_of: 6 -1 0
+// @expect: index_of_from: 14 -1
+// @expect: starts_with: true false
+// @expect: ends_with: true false
+// @expect: to_lower: hello world
+// @expect: to_upper: HELLO WORLD
+// @expect: trim: [hello]
+// @expect: trim_start: [hello   ]
+// @expect: trim_end: [   hello]
+// @expect: split: [hello] [world] [foo] 3
+// @expect: split_char: [a] [b] [c] 3
+// @expect: repeat: ababab
+// @expect: replace: hello universe
+// @expect: is_funcs: true true false true
+import "std/string"
+
+fn bool_str(b: bool): string {
+    if b { return "true" }
+    return "false"
+}
+
+fn main(): i32 {
+    let s = "hello world"
+
+    // contains
+    print("contains: %s %s %s", bool_str(str_contains(s, "world")), bool_str(str_contains(s, "xyz")), bool_str(str_contains(s, "")))
+
+    // index_of
+    print("index_of: %lld %lld %lld", str_index_of(s, "world"), str_index_of(s, "xyz"), str_index_of(s, "hello"))
+
+    // index_of_from
+    let s2 = "hello world hello"
+    print("index_of_from: %lld %lld", str_index_of_from(s2, "llo", 5 as i64), str_index_of_from(s2, "xyz", 0 as i64))
+
+    // starts_with
+    print("starts_with: %s %s", bool_str(str_starts_with(s, "hello")), bool_str(str_starts_with(s, "world")))
+
+    // ends_with
+    print("ends_with: %s %s", bool_str(str_ends_with(s, "world")), bool_str(str_ends_with(s, "hello")))
+
+    // to_lower / to_upper
+    let lower = str_to_lower("HELLO WORLD")
+    print("to_lower: %s", lower)
+    let up = str_to_upper("hello world")
+    print("to_upper: %s", up)
+
+    // trim
+    let padded = "   hello   "
+    print("trim: [%s]", str_trim(padded))
+    print("trim_start: [%s]", str_trim_start(padded))
+    print("trim_end: [%s]", str_trim_end(padded))
+
+    // split
+    let csv = "hello,world,foo"
+    let parts = str_split(csv, ",")
+    print("split: [%s] [%s] [%s] %lld", parts[0], parts[1], parts[2], parts.len)
+
+    // split by char
+    let abc = "a:b:c"
+    let abc_parts = str_split(abc, ":")
+    print("split_char: [%s] [%s] [%s] %lld", abc_parts[0], abc_parts[1], abc_parts[2], abc_parts.len)
+
+    // repeat
+    print("repeat: %s", str_repeat("ab", 3))
+
+    // replace
+    print("replace: %s", str_replace(s, "world", "universe"))
+
+    // is_* functions
+    print("is_funcs: %s %s %s %s", bool_str(is_digit(48)), bool_str(is_alpha(65)), bool_str(is_whitespace(65)), bool_str(is_alphanumeric(57)))
+
+    return 0
+}

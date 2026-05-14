@@ -102,3 +102,27 @@ fn write_all(f: &File, data: &string): Result<i64> {
         return Result.Ok(n)
     }
 }
+
+// Read an entire file into a string by path.
+fn read_file(path: string): Result<string> {
+    let f = open_read(path)!
+    return read_all(f)
+}
+
+// Read all available data from stdin into a string.
+fn read_stdin(): string {
+    var result: string = ""
+    var buf: [u8; 4096] = [0; 4096]
+    while true {
+        unsafe {
+            let n = read(0, buf, 4096)
+            if n <= 0 { break }
+            var i: i64 = 0
+            while i < n {
+                result.push(buf[i])
+                i = i + 1
+            }
+        }
+    }
+    return result
+}

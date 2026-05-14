@@ -1,0 +1,233 @@
+// std/string — string utility functions
+
+// Check if haystack contains needle.
+fn str_contains(haystack: &string, needle: &string): bool {
+    if needle.len == 0 { return true }
+    if needle.len > haystack.len { return false }
+    var i: i64 = 0
+    while i <= haystack.len - needle.len {
+        var j: i64 = 0
+        while j < needle.len {
+            if haystack[i + j] != needle[j] { break }
+            j = j + 1
+        }
+        if j == needle.len { return true }
+        i = i + 1
+    }
+    return false
+}
+
+// Find first occurrence of needle in haystack. Returns -1 if not found.
+fn str_index_of(haystack: &string, needle: &string): i64 {
+    var not_found: i64 = 0
+    not_found = not_found - 1
+    if needle.len == 0 { return 0 as i64 }
+    if needle.len > haystack.len { return not_found }
+    var i: i64 = 0
+    while i <= haystack.len - needle.len {
+        var j: i64 = 0
+        while j < needle.len {
+            if haystack[i + j] != needle[j] { break }
+            j = j + 1
+        }
+        if j == needle.len { return i }
+        i = i + 1
+    }
+    return not_found
+}
+
+// Find first occurrence of needle starting at pos. Returns -1 if not found.
+fn str_index_of_from(haystack: &string, needle: &string, pos: i64): i64 {
+    var not_found: i64 = 0
+    not_found = not_found - 1
+    if needle.len == 0 { return pos }
+    if pos < 0 as i64 { return not_found }
+    if pos + needle.len > haystack.len { return not_found }
+    var i: i64 = pos
+    while i <= haystack.len - needle.len {
+        var j: i64 = 0
+        while j < needle.len {
+            if haystack[i + j] != needle[j] { break }
+            j = j + 1
+        }
+        if j == needle.len { return i }
+        i = i + 1
+    }
+    return not_found
+}
+
+// Check if string starts with prefix.
+fn str_starts_with(s: &string, prefix: &string): bool {
+    if prefix.len > s.len { return false }
+    var i: i64 = 0
+    while i < prefix.len {
+        if s[i] != prefix[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Check if string ends with suffix.
+fn str_ends_with(s: &string, suffix: &string): bool {
+    if suffix.len > s.len { return false }
+    let offset = s.len - suffix.len
+    var i: i64 = 0
+    while i < suffix.len {
+        if s[offset + i] != suffix[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Return new string with ASCII uppercase letters converted to lowercase.
+fn str_to_lower(s: &string): string {
+    var result: string = ""
+    var i: i64 = 0
+    while i < s.len {
+        let ch = s[i]
+        if ch >= 65 && ch <= 90 {
+            result.push(ch + 32)
+        } else {
+            result.push(ch)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Return new string with ASCII lowercase letters converted to uppercase.
+fn str_to_upper(s: &string): string {
+    var result: string = ""
+    var i: i64 = 0
+    while i < s.len {
+        let ch = s[i]
+        if ch >= 97 && ch <= 122 {
+            result.push(ch - 32)
+        } else {
+            result.push(ch)
+        }
+        i = i + 1
+    }
+    return result
+}
+
+// Strip leading and trailing ASCII whitespace (space, tab, newline, carriage return).
+fn str_trim(s: &string): string {
+    var start: i64 = 0
+    while start < s.len {
+        let ch = s[start]
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        start = start + 1
+    }
+    var end: i64 = s.len
+    while end > start {
+        let ch = s[end - 1]
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        end = end - 1
+    }
+    if start >= end { return "" }
+    return s.substr(start, end)
+}
+
+// Strip leading ASCII whitespace.
+fn str_trim_start(s: &string): string {
+    var start: i64 = 0
+    while start < s.len {
+        let ch = s[start]
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        start = start + 1
+    }
+    if start >= s.len { return "" }
+    return s.substr(start, s.len)
+}
+
+// Strip trailing ASCII whitespace.
+fn str_trim_end(s: &string): string {
+    var end: i64 = s.len
+    while end > 0 as i64 {
+        let ch = s[end - 1]
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        end = end - 1
+    }
+    if end <= 0 as i64 { return "" }
+    return s.substr(0 as i64, end)
+}
+
+// Split string by separator. Returns Vec of substrings.
+fn str_split(s: &string, sep: &string): Vec<string> {
+    var result: Vec<string> = Vec.new()
+    var not_found: i64 = 0
+    not_found = not_found - 1
+    if sep.len == 0 {
+        var i: i64 = 0
+        while i < s.len {
+            result.push(s.substr(i, i + 1))
+            i = i + 1
+        }
+        return result
+    }
+    var pos: i64 = 0
+    while pos <= s.len {
+        let idx = str_index_of_from(s, sep, pos)
+        if idx == not_found {
+            result.push(s.substr(pos, s.len))
+            break
+        }
+        result.push(s.substr(pos, idx))
+        pos = idx + sep.len
+    }
+    return result
+}
+
+// Repeat a string n times.
+fn str_repeat(s: &string, n: i64): string {
+    var result: string = ""
+    var i: i64 = 0
+    while i < n {
+        result = result + s
+        i = i + 1
+    }
+    return result
+}
+
+// Replace all occurrences of old with new_val.
+fn str_replace(s: &string, old: &string, new_val: &string): string {
+    if old.len == 0 { return s.clone() }
+    var not_found: i64 = 0
+    not_found = not_found - 1
+    var result: string = ""
+    var pos: i64 = 0
+    while pos < s.len {
+        let idx = str_index_of_from(s, old, pos)
+        if idx == not_found {
+            result = result + s.substr(pos, s.len)
+            break
+        }
+        if idx > pos {
+            result = result + s.substr(pos, idx)
+        }
+        result = result + new_val
+        pos = idx + old.len
+    }
+    return result
+}
+
+// Check if a byte is ASCII whitespace.
+fn is_whitespace(ch: u8): bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13
+}
+
+// Check if a byte is an ASCII digit.
+fn is_digit(ch: u8): bool {
+    return ch >= 48 && ch <= 57
+}
+
+// Check if a byte is an ASCII letter.
+fn is_alpha(ch: u8): bool {
+    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122)
+}
+
+// Check if a byte is an ASCII letter or digit.
+fn is_alphanumeric(ch: u8): bool {
+    return is_alpha(ch) || is_digit(ch)
+}
