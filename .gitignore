@@ -50,4 +50,10 @@ benchmarks/grep/grep_milo
 benchmarks/grep/grep_c
 benchmarks/grep/grep_go
 benchmarks/grep/input.txt
+benchmarks/sieve/sieve_milo
+benchmarks/sieve/sieve_c
+benchmarks/sieve/sieve_go
+benchmarks/sort/sort_milo
+benchmarks/sort/sort_c
+benchmarks/sort/sort_go
 benchmarks/results-*.md

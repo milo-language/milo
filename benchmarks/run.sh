@@ -46,4 +46,26 @@ hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-grep.md"
   -n "go"        "./grep_go fox $INPUT" \
   -n "sys grep"  "grep -c fox $INPUT"
 
+# ── sieve of Eratosthenes ──
+bold "==> sieve up to 10M"
+cd "$DIR/sieve"
+$MILO build sieve.milo -o sieve_milo > /dev/null
+$CC $CFLAGS sieve.c -o sieve_c
+go build $GOFLAGS -o sieve_go sieve.go
+hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-sieve.md" \
+  -n "milo" "./sieve_milo" \
+  -n "c"    "./sieve_c" \
+  -n "go"   "./sieve_go"
+
+# ── quicksort 2M f64s ──
+bold "==> quicksort 2M f64s"
+cd "$DIR/sort"
+$MILO build sort.milo -o sort_milo > /dev/null
+$CC $CFLAGS sort.c -o sort_c
+go build $GOFLAGS -o sort_go sort.go
+hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-sort.md" \
+  -n "milo" "./sort_milo" \
+  -n "c"    "./sort_c" \
+  -n "go"   "./sort_go"
+
 bold "==> results saved to $DIR/results-*.md"
