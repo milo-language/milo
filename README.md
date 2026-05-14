@@ -1,173 +1,253 @@
 # Milo
 
-A small, memory-safe systems language that compiles to LLVM IR.
+A memory-safe systems language that compiles to native code via LLVM. Ownership without lifetimes.
 
-Values move by default. References are second-class — they can only appear as function parameters, so they cannot dangle. No garbage collector, no reference counting, no lifetime annotations, no `unsafe`.
+```
+fn main(): i32 {
+    let name = "world"
+    print("hello, %s!", name)
+    return 0
+}
+```
 
-The bet: restricting references to function parameters eliminates lifetimes entirely while preserving most of what borrows are good for. Cyclic and recursive data structures will be handled by generational-index arenas (planned, not yet implemented).
+```bash
+$ milo build hello.milo -o hello && ./hello
+hello, world!
+```
 
-**[Language Guide →](docs/language-guide.md)** — full walkthrough with examples covering every feature.
+## Why Milo?
+
+**Rust's safety, TypeScript's readability, no compromises.**
+
+Milo proves you don't need lifetime annotations to get memory safety. The trick: references are second-class — `&T` can only appear as function parameters, never stored or returned. This single rule eliminates the entire borrow checker while keeping use-after-free, double-free, and dangling pointer bugs impossible.
+
+### The compiler catches use-after-free
+
+```
+fn main(): i32 {
+    var a = "hello"
+    let b = a          // ownership moves to b
+    print("%s", a)     // ← compile error: use of moved value 'a'
+    return 0
+}
+```
+
+```
+error: use of moved value 'a'
+  ──> example.milo:4:20
+   │
+ 4 │     print("%s", a)
+   │                 ^
+   │
+   = 'a' was moved on line 3
+```
+
+No runtime cost. No garbage collector. The compiler rejects the program before it ever runs.
+
+### References can't escape
+
+```
+fn first_byte(s: &string): u8 {   // borrow for the duration of the call
+    return s[0]
+}
+
+fn main(): i32 {
+    let s = "hello"
+    let b = first_byte(s)          // s is borrowed, not moved
+    print("%d %s", b, s)           // s is still valid
+    return 0
+}
+```
+
+References (`&T`) exist only as function parameters. You can't store them in structs, return them, or put them in a `Vec`. This means dangling references are structurally impossible — no lifetime annotations needed, ever.
+
+### Compare to Rust
+
+The same program in Rust requires you to think about lifetimes:
+
+```rust
+// Rust — this works, but add a struct that holds &str
+// and suddenly you need lifetime annotations everywhere
+fn first_byte(s: &str) -> u8 {
+    s.as_bytes()[0]
+}
+```
+
+In Milo, there's nothing to annotate. The rule is simple: references go in, but they don't come out.
+
+### Real programs, not toy examples
+
+Milo ships with CLI tools that compile to <300KB native binaries with sub-millisecond startup:
+
+```
+// grep.milo — 80 lines, full featured
+import "std/argparse"
+import "std/io"
+
+fn main(): i32 {
+    var parser = new_parser("grep", "search for a string pattern in files")
+    parser.add_bool("ignore-case", "i", "case-insensitive search")
+    parser.add_bool("line-number", "n", "show line numbers")
+    parser.add_bool("count", "c", "only print count of matching lines")
+    let args = parser.parse()
+
+    let pattern = args.positional[0].clone()
+    let file_path = args.positional[1].clone()
+
+    let content = read_file(file_path)!
+    let lines = content.split("\n")
+
+    var line_num: i64 = 0
+    while line_num < lines.len {
+        let line = lines[line_num]
+        if line.contains(pattern) {
+            print("%s", line)
+        }
+        line_num = line_num + 1
+    }
+    return 0
+}
+```
+
+String methods work like TypeScript — `s.contains()`, `s.split()`, `s.trim()`, `s.to_lower()`, `s.replace()` — no imports needed.
+
+### Ownership is simple
+
+```
+struct User {
+    name: string,
+    age: i32,
+}
+
+fn greet(user: &User): string {     // borrow — doesn't consume
+    return "hi, " + user.name
+}
+
+fn main(): i32 {
+    let u = User { name: "Alice", age: 30 }
+    print("%s", greet(u))           // auto-borrow for &User param
+    print("age: %d", u.age)        // u is still valid
+    return 0
+}
+```
+
+One rule: each value has one owner. When ownership transfers (`let b = a`), the old name is dead. When a function takes `&T`, it borrows without taking ownership. That's the entire model.
+
+### Heap types just work
+
+```
+fn main(): i32 {
+    // Vec — dynamic array, auto-freed on scope exit
+    var nums: Vec<i32> = Vec.new()
+    nums.push(1)
+    nums.push(2)
+    nums.push(3)
+    print("len: %lld", nums.len)    // 3
+
+    // HashMap — same deal
+    var ages: HashMap<string, i32> = HashMap.new()
+    ages.insert("alice", 30)
+    match ages.get("alice") {
+        Option.Some(age) => print("alice is %d", age)
+        Option.None => print("not found")
+    }
+
+    // Box — single-owner heap pointer for recursive types
+    enum Tree {
+        Leaf(i32),
+        Node(Box<Tree>, Box<Tree>),
+    }
+    let t = Tree.Node(Box.new(Tree.Leaf(1)), Box.new(Tree.Leaf(2)))
+
+    return 0
+}   // nums, ages, t — all freed here, no leaks
+```
+
+No `free()`, no `defer`, no GC. Drop semantics clean up heap memory when values go out of scope.
 
 ## Quick Start
 
 ```bash
-# compile to native binary
 bun run src/main.ts build examples/hello.milo -o hello
 ./hello
 
-# emit LLVM IR
-bun run src/main.ts emit-ir examples/hello.milo
-
-# run the test suite
-bun test
+bun run src/main.ts emit-ir examples/hello.milo   # see the LLVM IR
+bun test                                            # 163 tests
 ```
 
 Requires: [Bun](https://bun.sh), LLVM/Clang.
 
-## Hello, Milo
+**[Language Guide →](docs/language-guide.md)** — full walkthrough of every feature.
 
-```
-fn main(): i32 {
-    print("Hello, Milo!")
-    return 0
-}
-```
+## Example Programs
 
-C FFI when you need it:
-
-```
-extern fn puts(s: *u8): i32
-
-fn main(): i32 {
-    puts("via libc")
-    return 0
-}
-```
+| Program | Description | Lines |
+|---------|-------------|-------|
+| [grep](examples/grep.milo) | Pattern search with `-i`, `-n`, `-c`, `-v` flags | 80 |
+| [wc](examples/wc.milo) | Line/word/char counter | 85 |
+| [hex](examples/hex.milo) | Hex dump viewer with ASCII column | 100 |
+| [tree](examples/tree.milo) | Recursive directory tree with depth limiting | 95 |
+| [webserver](examples/webserver.milo) | HTTP server with routing | 236 |
+| [json_parser](examples/json_parser.milo) | Full JSON parser into a value tree | 200 |
+| [fetch](examples/fetch.milo) | HTTP client with TLS | 40 |
 
 ## What Works Today
 
-**Types**
-- Primitives: `i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`
-- Owned `String` (`{ptr, len, cap}`) with `+`, `==`, byte indexing, FFI coercion to `*u8`
-- Structs (value types, move semantics)
-- Bounds-checked arrays
-- Enums / tagged unions with exhaustive `match`
-- `Box<T>` — heap-allocated single-owner pointer, recursive enum payloads (linked lists, trees, ASTs)
-- `Vec<T>` — dynamic arrays with `push`/`pop`/`len`, bounds-checked indexing
-- `HashMap<K, V>` — open-addressing hash table with `insert`/`get`/`contains`/`remove`/`len`
-- Drop semantics — heap-owning values auto-freed on scope exit
-- Generics on functions, enums, and structs (monomorphization, type inference)
+**Types** — `i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, owned strings, structs, enums/tagged unions, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, fixed-size arrays, generics (monomorphization)
 
-**Traits**
-```
-trait Eq {
-    fn eq(self: &Self, other: &Self): bool
-}
+**Traits** — `trait` + `impl`, generic bounds (`<T: Eq + Hash>`), supertraits, `@derive(Eq)`, default methods, `Self` alias
 
-@derive(Eq)
-struct Point { x: i32, y: i32 }
+**Closures** — Non-escaping, captures by reference, block and expression forms
 
-impl Point {
-    fn manhattan(self: &Self): i32 { return self.x + self.y }
-}
+**Control flow** — `if`/`else`, `while`, `break`/`continue`, `match` (exhaustive), `if let`
 
-fn print_if_eq<T: Eq>(a: &T, b: &T) { ... }  // generic bounds
-```
-- `trait` declarations with required and default methods
-- `impl Trait for Type` and inherent `impl Type` blocks
-- Generic bounds `<T: Bound1 + Bound2>`, supertraits `trait Ord: Eq`
-- `@derive(Eq)` auto-generates implementations
-- `Self` type alias in trait/impl bodies
-- Monomorphized static dispatch (zero-cost, no vtables)
-
-**Closures**
-```
-fn apply(f: fn(i32): i32, x: i32): i32 { return f(x) }
-
-let result = apply((x: i32) => x * 2, 21)    // expression closure
-let inc = (x: i32) => x + 1                   // stored in local
-var count: i32 = 0
-call_it(() => { count = count + 1 })           // block closure, captures by reference
-```
-Non-escaping: closures can be passed as function params or stored in locals, but cannot be returned or stored in structs. Captures are by reference — mutations visible outside.
-
-**Control flow**
-- `if`/`else`, `while`, `break`, `continue`, `return`
-- `match` with exhaustiveness checking
-- `if let` for single-variant pattern matching
-
-**Option / Result ergonomics**
-```
-let n: i64 = parse_int(s)!        // unwrap or panic with span
-let n: i64 = parse_int(s)?        // propagate on error
-let n: i64 = parse_int(s) ?? 0    // default on None/Err
-```
-
-**Modules**
-```
-import "math.milo"
-from "std/http" import { Request, Response, serve }
-```
-Recursive resolution, dedup, transitive imports, selective `from ... import {}`.
+**Ergonomics** — `!` unwrap, `?` propagate, `??` default, move semantics, auto-borrow for `&T` params
 
 **Standard Library**
-- `std/http` — HTTP server with routing, response types (`Text`, `Html`, `Json`, `NotFound`, `Status`)
-- `std/net` — TCP, DNS, HTTP client (`fetch`)
-- `std/json` — view-based JSON parser, zero-allocation navigation
-- `std/io` — file and directory I/O with automatic cleanup
-- `std/mem` — memory management
-- `std/args`, `std/argparse` — command-line argument parsing with typed getters and auto-generated help
-- `std/process` — command execution and process control
-- `std/os` — typed libc bindings
-- `std/platform.{darwin,linux}` — platform-specific struct layouts and constants (auto-selected by host target)
+| Module | What it does |
+|--------|-------------|
+| `std/string` | `contains`, `split`, `trim`, `index_of`, `replace`, `starts_with`, `ends_with`, `to_lower`/`to_upper`, `repeat` — all as built-in methods |
+| `std/io` | `read_file`, `read_stdin`, `open_read`/`open_write`/`open_append`, `read_all`, `write_all`, RAII file handles |
+| `std/fs` | `read_dir`, `file_info`, `is_dir`/`is_file`, `path_exists`, `write_file` |
+| `std/path` | `path_join`, `path_basename`, `path_dirname`, `path_ext`, `path_stem` |
+| `std/env` | `get_env`, `get_env_or` |
+| `std/http` | HTTP server with routing, response types |
+| `std/net` | TCP, DNS, `fetch` with TLS |
+| `std/json` | View-based JSON parser |
+| `std/argparse` | CLI argument parsing with typed getters and `--help` generation |
+| `std/arena` | Generational arena for cyclic/graph data with safe handles |
+| `std/process` | Command execution, `spawn`/`wait_for`/`signal` |
 
-**Diagnostics**
-- Source spans on every AST node
-- Elm-style errors with source context, carets, hints
-- Type checker pass between parser and codegen — semantic errors caught before IR
-
-**Tooling**
-- LSP server (`milod`): diagnostics, hover, go-to-definition
-- VS Code extension: syntax highlighting + LSP client
-- GitHub Actions CI
-
-158 tests pass on the current build.
-
-## Design Principles
-
-- `let` = immutable (maps to SSA register in LLVM IR)
-- `var` = mutable (maps to alloca)
-- No pointers in safe code
-- No GC, no RC, no lifetimes, no `unsafe`
-- Cost model visible in syntax — what you write is what LLVM sees
-
-## Safety Mechanisms
-
-1. **Move semantics** — single owner, assignment transfers ownership, use-after-move is a compile error
-2. **Second-class references** — `&T` and `&mut T` may only appear as function parameters; cannot be returned, stored, or rebound
-3. **Bounds-checked arrays** — out-of-bounds is a clear panic, not silent corruption
-
-## What's Missing
-
-Honest list of major gaps:
-
-- **Traits Phase 1 only.** Nominal traits with monomorphized dispatch work. Missing: `dyn Trait`, associated types, operator overloading via traits, `where` clauses. Built-in types (Vec, HashMap, String) still use hardcoded methods rather than trait impls.
-- **No arenas yet.** Planned answer for cyclic data and bulk-allocated graphs. `Box<T>` handles trees and recursive structures meanwhile.
-- **No string `split`/`find`/`starts_with`.** `substr(start, end)` and slice sugar `s[a..b]` work, but richer string operations are missing.
-- **Closures non-escaping only.** Cannot be returned or stored in structs, so no `map`/`filter` chains that outlive a single call frame.
-- **No `guard let`.** `if let` works; `guard let ... else { return }` not yet.
-- **No concurrency story.** Design open — leaning toward structured concurrency + channels, not async/await.
-- **No formatter, no package manager, no REPL.**
-- **Not self-hosting.** Compiler is ~8.4k lines of TypeScript. A stage-0 bootstrap (`milo0/`) written in Milo can compile basic programs end-to-end; stage-1 (structs, enums, match, Box, strings) is in progress.
-
-See [docs/roadmap.md](docs/roadmap.md) for full status.
+**Tooling** — LSP server (diagnostics, hover, go-to-def), VS Code extension, Elm-style error messages
 
 ## Position
 
-Use instead of C. Use instead of Rust when you do not need Rust's full power. Not "learn before Rust" — Milo is not a teaching language and lacks the pedagogical tooling that requires.
+|  | GC | Lifetimes | Ownership | Native |
+|---|---|---|---|---|
+| Go | yes | no | no | yes |
+| Rust | no | yes | yes | yes |
+| TypeScript | yes | no | no | no |
+| **Milo** | **no** | **no** | **yes** | **yes** |
 
-Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics, closest research lineage), [Vale](https://vale.dev/) (generational references), [Austral](https://austral-lang.org/) (linear types). Milo differs by combining second-class-only references, conventional syntax, and a small approachable compiler.
+Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics), [Vale](https://vale.dev/) (generational references), [Austral](https://austral-lang.org/) (linear types). Milo differs by combining second-class-only references with familiar TS-like syntax and a small compiler.
 
-## Status
+## Design
 
-Phase 3 — language core in place. `Box<T>`, `Vec<T>`, `HashMap<K, V>`, non-escaping closures, traits (Phase 1), cross-platform stdlib, and a stage-0 self-hosting bootstrap shipped. Next: operator overloading via traits, arenas, stage-1 bootstrap (Vec/HashMap in milo0).
+- `let` = immutable (SSA register), `var` = mutable (alloca)
+- Move semantics — single owner, use-after-move is a compile error
+- Second-class references — `&T` only in function params, never stored or returned
+- Bounds-checked arrays — out-of-bounds is a clear panic
+- Drop semantics — heap values auto-freed on scope exit
+- No GC, no RC, no lifetimes, no `unsafe` needed for safe code
+- C FFI with `extern fn` when you need it
+
+## What's Missing
+
+- **Traits Phase 1 only.** No `dyn Trait`, associated types, operator overloading, `where` clauses
+- **Closures non-escaping.** Can't be returned or stored in structs
+- **No `for` loops.** `while` only for now
+- **No concurrency.** Design open — leaning toward structured concurrency + channels
+- **No formatter, package manager, or REPL**
+- **Not self-hosting.** Compiler is ~8.4k lines of TypeScript. Stage-0 bootstrap in progress
+
+See [docs/roadmap.md](docs/roadmap.md) for full status.
