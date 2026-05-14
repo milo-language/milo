@@ -1,0 +1,113 @@
+// hex — hex dump viewer
+import "std/argparse"
+import "std/io"
+
+fn byte_to_hex(b: u8): string {
+    let hex = "0123456789abcdef"
+    var result: string = ""
+    let hi = (b / 16) as i64
+    let lo = (b % 16) as i64
+    result.push(hex[hi])
+    result.push(hex[lo])
+    return result
+}
+
+fn offset_to_hex(n: i64): string {
+    let hex = "0123456789abcdef"
+    var result: string = ""
+    var val: i64 = n
+    var i: i32 = 0
+    while i < 8 {
+        var ch_buf: string = ""
+        ch_buf.push(hex[val % 16])
+        result = ch_buf + result
+        val = val / 16
+        i = i + 1
+    }
+    return result
+}
+
+fn is_printable(b: u8): bool {
+    return b >= 32 && b < 127
+}
+
+fn main(): i32 {
+    var parser = new_parser("hex", "hex dump viewer")
+    parser.add_string("length", "n", "number of bytes to display", "0")
+    parser.add_string("skip", "s", "skip N bytes from start", "0")
+    parser.add_bool("plain", "p", "no ASCII column, just hex")
+    let args = parser.parse()
+
+    let plain = args.get_bool("plain")
+    let cols: i64 = 16
+
+    var max_length: i64 = args.get_i64("length")
+    var skip_bytes: i64 = args.get_i64("skip")
+
+    var content: string = ""
+    if args.positional.len > 0 {
+        match read_file(args.positional[0].clone()) {
+            Result.Ok(data) => { content = data }
+            Result.Err(e) => {
+                print("hex: %s", e)
+                return 1
+            }
+        }
+    } else {
+        content = read_stdin()
+    }
+
+    var start: i64 = skip_bytes
+    var end: i64 = content.len
+    if max_length > 0 && start + max_length < end {
+        end = start + max_length
+    }
+
+    var offset: i64 = start
+    while offset < end {
+        var hex_part: string = ""
+        var ascii_part: string = ""
+        var col: i64 = 0
+
+        while col < cols && offset + col < end {
+            let b = content[offset + col]
+            hex_part = hex_part + byte_to_hex(b) + " "
+
+            if col == 7 {
+                hex_part = hex_part + " "
+            }
+
+            if !plain {
+                if is_printable(b) {
+                    var ch: string = ""
+                    ch.push(b)
+                    ascii_part = ascii_part + ch
+                } else {
+                    ascii_part = ascii_part + "."
+                }
+            }
+
+            col = col + 1
+        }
+
+        // pad remaining columns
+        while col < cols {
+            hex_part = hex_part + "   "
+            if col == 7 {
+                hex_part = hex_part + " "
+            }
+            col = col + 1
+        }
+
+        var line: string = offset_to_hex(offset) + ": " + hex_part
+
+        if !plain {
+            line = line + " |" + ascii_part + "|"
+        }
+
+        print("%s", line)
+        offset = offset + cols
+    }
+
+    return 0
+}

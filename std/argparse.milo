@@ -259,7 +259,7 @@ impl ParsedArgs {
         var i: i64 = 0
         while i < self.entries.len {
             if self.entries[i].name == name {
-                let val = self.entries[i].value
+                let val = self.entries[i].value.clone()
                 if !_argparse_is_numeric(val) {
                     print("error: --%s: expected integer, got '%s'", name, val)
                     unsafe { exit(1) }

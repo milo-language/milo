@@ -1,0 +1,85 @@
+// wc — count lines, words, and characters
+import "std/argparse"
+import "std/io"
+
+fn pad(n: i64): string {
+    let s = n.to_string()
+    var result: string = ""
+    var p: i64 = 0
+    while p < 8 - s.len {
+        result = result + " "
+        p = p + 1
+    }
+    return result + s
+}
+
+fn main(): i32 {
+    var parser = new_parser("wc", "count lines, words, and characters")
+    parser.add_bool("lines", "l", "only show line count")
+    parser.add_bool("words", "w", "only show word count")
+    parser.add_bool("chars", "c", "only show character count")
+    let args = parser.parse()
+
+    let show_lines = args.get_bool("lines")
+    let show_words = args.get_bool("words")
+    let show_chars = args.get_bool("chars")
+    let show_all = !show_lines && !show_words && !show_chars
+
+    var content: string = ""
+    var label: string = ""
+
+    if args.positional.len > 0 {
+        label = args.positional[0].clone()
+        match read_file(args.positional[0].clone()) {
+            Result.Ok(data) => { content = data }
+            Result.Err(e) => {
+                print("wc: %s", e)
+                return 1
+            }
+        }
+    } else {
+        content = read_stdin()
+    }
+
+    // count lines
+    var lines: i64 = 0
+    var i: i64 = 0
+    while i < content.len {
+        if content[i] == 10 {
+            lines = lines + 1
+        }
+        i = i + 1
+    }
+
+    // count words
+    var words: i64 = 0
+    var in_word: bool = false
+    i = 0
+    while i < content.len {
+        let ch = content[i]
+        if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
+            if in_word {
+                words = words + 1
+                in_word = false
+            }
+        } else {
+            in_word = true
+        }
+        i = i + 1
+    }
+    if in_word { words = words + 1 }
+
+    let chars = content.len
+
+    if show_all {
+        print("%s%s%s %s", pad(lines), pad(words), pad(chars), label)
+    } else {
+        var output: string = ""
+        if show_lines { output = output + pad(lines) }
+        if show_words { output = output + pad(words) }
+        if show_chars { output = output + pad(chars) }
+        print("%s %s", output, label)
+    }
+
+    return 0
+}
