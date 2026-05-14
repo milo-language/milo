@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#define N 3000
+#define N 100000
 int main(void) {
     char* chunk = "the quick brown fox jumps over the lazy dog";
     size_t clen = strlen(chunk);

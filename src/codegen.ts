@@ -410,6 +410,25 @@ export class Codegen {
         return [lines, false];
       }
       case "Assign": {
+        // Optimization: `x = x + rhs` for strings → in-place append (amortized O(1)).
+        // The naive path allocates a fresh String each time which makes accumulation O(n^2).
+        if (
+          stmt.target.kind === "Ident" &&
+          stmt.target.type.tag === "string" &&
+          stmt.value.kind === "BinOp" &&
+          stmt.value.op === "+" &&
+          stmt.value.left.kind === "Ident" &&
+          stmt.value.left.name === stmt.target.name &&
+          // Bail on `x = x + x` — overlapping memcpy is unsafe; let the slow path handle it.
+          !(stmt.value.right.kind === "Ident" && stmt.value.right.name === stmt.target.name)
+        ) {
+          const [rhsLines, rhsVal] = this.genExpr(stmt.value.right);
+          lines.push(...rhsLines);
+          const [tgtLines, tgtPtr] = this.genLValue(stmt.target);
+          lines.push(...tgtLines);
+          this.emitStringAppendInPlace(lines, tgtPtr, rhsVal);
+          return [lines, false];
+        }
         const [valLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...valLines);
         const [targetLines, targetPtr, targetTy] = this.genLValue(stmt.target);
@@ -1214,11 +1233,15 @@ export class Codegen {
         }
         if (expr.object.type.tag === "vec") {
           const [ptrLines, ptr, elemTy] = this.genVecBoundsCheckedPtr(expr, lines);
+          const elemKind = expr.object.type.element;
+          // Auto-clone non-Copy elements so the Vec stays intact. The user-facing
+          // semantics: Vec[i] always returns an independent value.
+          if (this.needsDropCg(elemKind)) {
+            const cloned = this.emitDeepCloneFromPtr(lines, ptr, elemKind);
+            return [lines, cloned, elemTy];
+          }
           const val = this.nextTemp();
           lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
-          if (expr.isMove && this.needsDropCg(expr.object.type.element)) {
-            lines.push(`  store ${elemTy} zeroinitializer, ptr ${ptr}`);
-          }
           return [lines, val, elemTy];
         }
         const [ptrLines, ptr, elemTy] = this.genBoundsCheckedPtr(expr, lines);
@@ -1706,6 +1729,91 @@ export class Codegen {
     if (t.tag === "float") return t.bits;
     if (t.tag === "bool") return 1;
     return 64;
+  }
+
+  // In-place append into the String at `tgtPtr` (an alloca holding a %String).
+  // Used to turn `x = x + rhs` into amortized-O(1) growth instead of fresh malloc each time.
+  private emitStringAppendInPlace(lines: string[], tgtPtr: string, rhsVal: string): void {
+    this.hasStringType = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    this.needsMemcpy = true;
+
+    // Load current x = {ptr, len, cap}
+    const cur = this.nextTemp();
+    lines.push(`  ${cur} = load %String, ptr ${tgtPtr}`);
+    const xData = this.nextTemp();
+    lines.push(`  ${xData} = extractvalue %String ${cur}, 0`);
+    const xLen = this.nextTemp();
+    lines.push(`  ${xLen} = extractvalue %String ${cur}, 1`);
+    const xCap = this.nextTemp();
+    lines.push(`  ${xCap} = extractvalue %String ${cur}, 2`);
+
+    // Extract rhs len + data
+    const rData = this.nextTemp();
+    lines.push(`  ${rData} = extractvalue %String ${rhsVal}, 0`);
+    const rLen = this.nextTemp();
+    lines.push(`  ${rLen} = extractvalue %String ${rhsVal}, 1`);
+
+    // Need cap >= xLen + rLen + 1 for the trailing NUL.
+    const newLen = this.nextTemp();
+    lines.push(`  ${newLen} = add i64 ${xLen}, ${rLen}`);
+    const needed = this.nextTemp();
+    lines.push(`  ${needed} = add i64 ${newLen}, 1`);
+    const fits = this.nextTemp();
+    lines.push(`  ${fits} = icmp uge i64 ${xCap}, ${needed}`);
+
+    const growLabel = this.nextLabel("strapp.grow");
+    const writeLabel = this.nextLabel("strapp.write");
+    lines.push(`  br i1 ${fits}, label %${writeLabel}, label %${growLabel}`);
+
+    // ── grow ──
+    lines.push(`${growLabel}:`);
+    // new_cap = max(needed, cap*2). If cap==0 use needed directly.
+    const doubled = this.nextTemp();
+    lines.push(`  ${doubled} = shl i64 ${xCap}, 1`);
+    const doubleBigger = this.nextTemp();
+    lines.push(`  ${doubleBigger} = icmp uge i64 ${doubled}, ${needed}`);
+    const newCap = this.nextTemp();
+    lines.push(`  ${newCap} = select i1 ${doubleBigger}, i64 ${doubled}, i64 ${needed}`);
+    const newBuf = this.nextTemp();
+    lines.push(`  ${newBuf} = call ptr @malloc(i64 ${newCap})`);
+    // copy old contents (xLen bytes — may be 0 on first append from "")
+    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${xData}, i64 ${xLen})`);
+    // free old buffer iff it was heap-owned (cap > 0); literals have cap==0
+    const capOwned = this.nextTemp();
+    lines.push(`  ${capOwned} = icmp ugt i64 ${xCap}, 0`);
+    const freeLabel = this.nextLabel("strapp.free");
+    const skipFreeLabel = this.nextLabel("strapp.skipfree");
+    lines.push(`  br i1 ${capOwned}, label %${freeLabel}, label %${skipFreeLabel}`);
+    lines.push(`${freeLabel}:`);
+    lines.push(`  call void @free(ptr ${xData})`);
+    lines.push(`  br label %${skipFreeLabel}`);
+    lines.push(`${skipFreeLabel}:`);
+    // store new ptr + cap into x; len updated below in writeLabel
+    const grewWithBuf = this.nextTemp();
+    lines.push(`  ${grewWithBuf} = insertvalue %String ${cur}, ptr ${newBuf}, 0`);
+    const grewWithCap = this.nextTemp();
+    lines.push(`  ${grewWithCap} = insertvalue %String ${grewWithBuf}, i64 ${newCap}, 2`);
+    lines.push(`  store %String ${grewWithCap}, ptr ${tgtPtr}`);
+    lines.push(`  br label %${writeLabel}`);
+
+    // ── write rhs at xLen, then bump len ──
+    lines.push(`${writeLabel}:`);
+    const cur2 = this.nextTemp();
+    lines.push(`  ${cur2} = load %String, ptr ${tgtPtr}`);
+    const xData2 = this.nextTemp();
+    lines.push(`  ${xData2} = extractvalue %String ${cur2}, 0`);
+    const writeDst = this.nextTemp();
+    lines.push(`  ${writeDst} = getelementptr i8, ptr ${xData2}, i64 ${xLen}`);
+    lines.push(`  call ptr @memcpy(ptr ${writeDst}, ptr ${rData}, i64 ${rLen})`);
+    // null terminator at new_len
+    const nulDst = this.nextTemp();
+    lines.push(`  ${nulDst} = getelementptr i8, ptr ${xData2}, i64 ${newLen}`);
+    lines.push(`  store i8 0, ptr ${nulDst}`);
+    const withLen = this.nextTemp();
+    lines.push(`  ${withLen} = insertvalue %String ${cur2}, i64 ${newLen}, 1`);
+    lines.push(`  store %String ${withLen}, ptr ${tgtPtr}`);
   }
 
   private genStringConcat(lines: string[], lv: string, rv: string): [string[], string, string] {
@@ -3371,6 +3479,164 @@ export class Codegen {
     const s2 = this.nextTemp();
     lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
     return [lines, s2, "%String"];
+  }
+
+  // emitDeepCloneFromPtr: given a pointer to a value of type `typeKind`,
+  // produce a fully-cloned value (deep copy of all heap-owned data).
+  // Used for auto-clone on Vec[i] reads so the source Vec stays intact.
+  private emitDeepCloneFromPtr(lines: string[], srcPtr: string, typeKind: TypeKind): string {
+    const lt = this.llvmType(typeKind);
+
+    // Copy types: just load
+    if (!this.needsDropCg(typeKind)) {
+      const v = this.nextTemp();
+      lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
+      return v;
+    }
+
+    if (typeKind.tag === "string") {
+      this.hasStringType = true;
+      this.needsMalloc = true;
+      this.needsMemcpy = true;
+      const orig = this.nextTemp();
+      lines.push(`  ${orig} = load %String, ptr ${srcPtr}`);
+      const data = this.nextTemp();
+      lines.push(`  ${data} = extractvalue %String ${orig}, 0`);
+      const len = this.nextTemp();
+      lines.push(`  ${len} = extractvalue %String ${orig}, 1`);
+      const allocSz = this.nextTemp();
+      lines.push(`  ${allocSz} = add i64 ${len}, 1`);
+      const buf = this.nextTemp();
+      lines.push(`  ${buf} = call ptr @malloc(i64 ${allocSz})`);
+      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${data}, i64 ${len})`);
+      const nullPtr = this.nextTemp();
+      lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${len}`);
+      lines.push(`  store i8 0, ptr ${nullPtr}`);
+      const s0 = this.nextTemp();
+      lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+      const s1 = this.nextTemp();
+      lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len}, 1`);
+      const s2 = this.nextTemp();
+      lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocSz}, 2`);
+      return s2;
+    }
+
+    if (typeKind.tag === "vec") {
+      this.hasVecType = true;
+      this.needsMalloc = true;
+      this.needsMemcpy = true;
+      const orig = this.nextTemp();
+      lines.push(`  ${orig} = load %Vec, ptr ${srcPtr}`);
+      const srcData = this.nextTemp();
+      lines.push(`  ${srcData} = extractvalue %Vec ${orig}, 0`);
+      const vecLen = this.nextTemp();
+      lines.push(`  ${vecLen} = extractvalue %Vec ${orig}, 1`);
+      const elemSize = this.typeSizeOf(typeKind.element);
+      const elemTy = this.llvmType(typeKind.element);
+
+      // result buf pointer (set conditionally below)
+      const newBufAddr = this.nextTemp();
+      lines.push(`  ${newBufAddr} = alloca ptr`);
+      lines.push(`  store ptr null, ptr ${newBufAddr}`);
+
+      const isEmpty = this.nextTemp();
+      lines.push(`  ${isEmpty} = icmp eq i64 ${vecLen}, 0`);
+      const allocLabel = this.nextLabel("vec.clone.alloc");
+      const endLabel = this.nextLabel("vec.clone.end");
+      lines.push(`  br i1 ${isEmpty}, label %${endLabel}, label %${allocLabel}`);
+
+      lines.push(`${allocLabel}:`);
+      const bytes = this.nextTemp();
+      lines.push(`  ${bytes} = mul i64 ${vecLen}, ${elemSize}`);
+      const newBuf = this.nextTemp();
+      lines.push(`  ${newBuf} = call ptr @malloc(i64 ${bytes})`);
+      lines.push(`  store ptr ${newBuf}, ptr ${newBufAddr}`);
+
+      if (this.needsDropCg(typeKind.element)) {
+        // deep-clone each element
+        const loopCond = this.nextLabel("vec.clone.cond");
+        const loopBody = this.nextLabel("vec.clone.body");
+        const iAddr = this.nextTemp();
+        lines.push(`  ${iAddr} = alloca i64`);
+        lines.push(`  store i64 0, ptr ${iAddr}`);
+        lines.push(`  br label %${loopCond}`);
+        lines.push(`${loopCond}:`);
+        const iVal = this.nextTemp();
+        lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
+        const cmp = this.nextTemp();
+        lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${vecLen}`);
+        lines.push(`  br i1 ${cmp}, label %${loopBody}, label %${endLabel}`);
+        lines.push(`${loopBody}:`);
+        const srcElemPtr = this.nextTemp();
+        lines.push(`  ${srcElemPtr} = getelementptr ${elemTy}, ptr ${srcData}, i64 ${iVal}`);
+        const clonedElem = this.emitDeepCloneFromPtr(lines, srcElemPtr, typeKind.element);
+        const dstElemPtr = this.nextTemp();
+        lines.push(`  ${dstElemPtr} = getelementptr ${elemTy}, ptr ${newBuf}, i64 ${iVal}`);
+        lines.push(`  store ${elemTy} ${clonedElem}, ptr ${dstElemPtr}`);
+        const nextI = this.nextTemp();
+        lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
+        lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
+        lines.push(`  br label %${loopCond}`);
+      } else {
+        // Copy element: just memcpy
+        lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${srcData}, i64 ${bytes})`);
+        lines.push(`  br label %${endLabel}`);
+      }
+
+      lines.push(`${endLabel}:`);
+      const finalPtr = this.nextTemp();
+      lines.push(`  ${finalPtr} = load ptr, ptr ${newBufAddr}`);
+      const v0 = this.nextTemp();
+      lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${finalPtr}, 0`);
+      const v1 = this.nextTemp();
+      lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${vecLen}, 1`);
+      const v2 = this.nextTemp();
+      lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${vecLen}, 2`);
+      return v2;
+    }
+
+    if (typeKind.tag === "box") {
+      this.needsMalloc = true;
+      const inner = typeKind.inner;
+      const innerTy = this.llvmType(inner);
+      const innerSize = this.typeSizeOf(inner);
+      const origPtr = this.nextTemp();
+      lines.push(`  ${origPtr} = load ptr, ptr ${srcPtr}`);
+      const newBox = this.nextTemp();
+      lines.push(`  ${newBox} = call ptr @malloc(i64 ${innerSize})`);
+      const clonedInner = this.emitDeepCloneFromPtr(lines, origPtr, inner);
+      lines.push(`  store ${innerTy} ${clonedInner}, ptr ${newBox}`);
+      return newBox;
+    }
+
+    if (typeKind.tag === "struct") {
+      const layout = this.structLayouts.get(typeKind.name);
+      if (!layout) {
+        const v = this.nextTemp();
+        lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
+        return v;
+      }
+      const structTy = `%${typeKind.name}`;
+      const newAlloca = this.nextTemp();
+      lines.push(`  ${newAlloca} = alloca ${structTy}`);
+      for (let i = 0; i < layout.fields.length; i++) {
+        const f = layout.fields[i];
+        const srcFieldPtr = this.nextTemp();
+        lines.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr ${srcPtr}, i32 0, i32 ${i}`);
+        const clonedField = this.emitDeepCloneFromPtr(lines, srcFieldPtr, f.typeKind);
+        const dstFieldPtr = this.nextTemp();
+        lines.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr ${newAlloca}, i32 0, i32 ${i}`);
+        lines.push(`  store ${f.type} ${clonedField}, ptr ${dstFieldPtr}`);
+      }
+      const result = this.nextTemp();
+      lines.push(`  ${result} = load ${structTy}, ptr ${newAlloca}`);
+      return result;
+    }
+
+    // enum/hashmap/array — fall back to shallow load (TODO: full enum deep clone)
+    const v = this.nextTemp();
+    lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
+    return v;
   }
 
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {

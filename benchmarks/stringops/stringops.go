@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-const N = 3000
+const N = 100000
 
 func main() {
 	chunk := "the quick brown fox jumps over the lazy dog"
