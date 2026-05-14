@@ -1,0 +1,47 @@
+// JSON parse + walk using std/json
+import "std/json"
+import "std/io"
+
+fn main(): i32 {
+    if _milo_arg_count() < 2 {
+        print("usage: json <file>")
+        return 2
+    }
+    var content: string = ""
+    match read_file(_milo_arg_at(1)) {
+        Result.Ok(d) => { content = d }
+        Result.Err(e) => {
+            print("err: ", e)
+            return 1
+        }
+    }
+    let doc = json_parse(content)
+    var sum: f64 = 0.0
+    var active: i64 = 0
+    var n: i64 = 0
+    match doc.get("items") {
+        Option.Some(items) => {
+            n = items.len()
+            var i: i64 = 0
+            while i < n {
+                match items.at(i) {
+                    Option.Some(item) => {
+                        match item.get("price") {
+                            Option.Some(p) => { sum = sum + p.num() }
+                            Option.None => {}
+                        }
+                        match item.get("active") {
+                            Option.Some(a) => { if a.bool() { active = active + 1 } }
+                            Option.None => {}
+                        }
+                    }
+                    Option.None => {}
+                }
+                i = i + 1
+            }
+        }
+        Option.None => {}
+    }
+    print("items=", n, " sum=", sum, " active=", active)
+    return 0
+}

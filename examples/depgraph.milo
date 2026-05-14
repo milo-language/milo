@@ -1,0 +1,134 @@
+// Dependency graph with topological sort — classic arena use case
+// Nodes cross-reference each other via Handle, not pointers or &T
+import "std/arena"
+
+struct Node {
+    name: string,
+    deps: Vec<Handle<Node>>,
+    dependents: Vec<Handle<Node>>,
+}
+
+struct DepGraph {
+    arena: Arena<Node>,
+    nodes: Vec<Handle<Node>>,
+}
+
+fn new_graph(): DepGraph {
+    return DepGraph {
+        arena: arena_new(),
+        nodes: Vec.new(),
+    }
+}
+
+fn add_node(g: &mut DepGraph, name: string): Handle<Node> {
+    let h = arena_alloc(g.arena, Node {
+        name: name,
+        deps: Vec.new(),
+        dependents: Vec.new(),
+    })
+    g.nodes.push(h)
+    return h
+}
+
+fn add_edge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
+    arena_modify(g.arena, src, (n: Node) => {
+        var updated = n
+        updated.deps.push(dst)
+        return updated
+    })
+    arena_modify(g.arena, dst, (n: Node) => {
+        var updated = n
+        updated.dependents.push(src)
+        return updated
+    })
+}
+
+fn node_name(g: &DepGraph, h: Handle<Node>): string {
+    match arena_get(g.arena, h) {
+        Option.Some(n) => { return n.name }
+        Option.None => { return "<invalid>" }
+    }
+}
+
+// Kahn's algorithm
+fn topo_sort(g: &DepGraph): Vec<string> {
+    var order: Vec<string> = Vec.new()
+    let n = g.nodes.len
+
+    var in_deg: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < n {
+        match arena_get(g.arena, g.nodes[i]) {
+            Option.Some(node) => { in_deg.push(node.deps.len) }
+            Option.None => { in_deg.push(0) }
+        }
+        i = i + 1
+    }
+
+    var queue: Vec<i64> = Vec.new()
+    i = 0
+    while i < n {
+        if in_deg[i] == 0 { queue.push(i) }
+        i = i + 1
+    }
+
+    var qi: i64 = 0
+    while qi < queue.len {
+        let idx = queue[qi]
+        let h = g.nodes[idx]
+        order.push(node_name(g, h))
+
+        match arena_get(g.arena, h) {
+            Option.Some(node) => {
+                var d: i64 = 0
+                while d < node.dependents.len {
+                    var j: i64 = 0
+                    while j < n {
+                        if g.nodes[j].index == node.dependents[d].index {
+                            in_deg[j] = in_deg[j] - 1
+                            if in_deg[j] == 0 { queue.push(j) }
+                        }
+                        j = j + 1
+                    }
+                    d = d + 1
+                }
+            }
+            Option.None => {}
+        }
+        qi = qi + 1
+    }
+
+    if order.len != n {
+        print("error: cycle detected!")
+    }
+    return order
+}
+
+fn main(): i32 {
+    var g = new_graph()
+
+    let libc = add_node(g, "libc")
+    let net  = add_node(g, "net")
+    let json = add_node(g, "json")
+    let http = add_node(g, "http")
+    let db   = add_node(g, "db")
+    let app  = add_node(g, "app")
+
+    add_edge(g, net, libc)
+    add_edge(g, json, libc)
+    add_edge(g, http, net)
+    add_edge(g, http, json)
+    add_edge(g, db, net)
+    add_edge(g, app, http)
+    add_edge(g, app, db)
+
+    print("build order:")
+    let order = topo_sort(g)
+    var i: i64 = 0
+    while i < order.len {
+        print("  ", order[i])
+        i = i + 1
+    }
+
+    return 0
+}

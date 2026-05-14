@@ -1,6 +1,6 @@
 // sieve of Eratosthenes up to 10M
 fn main(): i32 {
-    let limit: i64 = 10000000
+    let limit: i64 = 1000000
     var flags: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i <= limit {

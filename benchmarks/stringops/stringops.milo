@@ -1,0 +1,16 @@
+// concat 100k chunks via string +=
+fn main(): i32 {
+    // NOTE: smaller N because Milo's `buf = buf + chunk` is currently O(n^2)
+    // (each `+` allocates+copies a new String). Needs a push_str builtin or
+    // assign-back optimization to match C/Go.
+    let n: i64 = 3000
+    let chunk = "the quick brown fox jumps over the lazy dog"
+    var buf: string = ""
+    var i: i64 = 0
+    while i < n {
+        buf = buf + chunk
+        i = i + 1
+    }
+    print("len=", buf.len)
+    return 0
+}

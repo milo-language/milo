@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define LIMIT 10000000
+#define LIMIT 1000000
 
 int main(void) {
     char *flags = (char *)malloc(LIMIT + 1);

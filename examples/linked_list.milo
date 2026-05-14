@@ -1,0 +1,150 @@
+// Doubly-linked list via arena — the classic "needs stored references" structure
+// Nodes point to neighbors via Handle, which is safe to copy and store
+import "std/arena"
+
+struct DLNode {
+    value: i64,
+    prev: Handle<DLNode>,
+    next: Handle<DLNode>,
+    has_prev: bool,
+    has_next: bool,
+}
+
+struct DLList {
+    arena: Arena<DLNode>,
+    head: Handle<DLNode>,
+    tail: Handle<DLNode>,
+    has_head: bool,
+    len: i64,
+}
+
+fn new_list(): DLList {
+    let nil: Handle<DLNode> = Handle { index: -1, generation: 0 }
+    return DLList {
+        arena: arena_new(),
+        head: nil,
+        tail: nil,
+        has_head: false,
+        len: 0,
+    }
+}
+
+fn push_back(list: &mut DLList, value: i64) {
+    let nil: Handle<DLNode> = Handle { index: -1, generation: 0 }
+    let node = DLNode {
+        value: value,
+        prev: list.tail,
+        next: nil,
+        has_prev: list.has_head,
+        has_next: false,
+    }
+    let h = arena_alloc(list.arena, node)
+
+    if list.has_head {
+        arena_modify(list.arena, list.tail, (n: DLNode) => {
+            var updated = n
+            updated.next = h
+            updated.has_next = true
+            return updated
+        })
+    } else {
+        list.head = h
+        list.has_head = true
+    }
+
+    list.tail = h
+    list.len = list.len + 1
+}
+
+fn push_front(list: &mut DLList, value: i64) {
+    let nil: Handle<DLNode> = Handle { index: -1, generation: 0 }
+    let node = DLNode {
+        value: value,
+        prev: nil,
+        next: list.head,
+        has_prev: false,
+        has_next: list.has_head,
+    }
+    let h = arena_alloc(list.arena, node)
+
+    if list.has_head {
+        arena_modify(list.arena, list.head, (n: DLNode) => {
+            var updated = n
+            updated.prev = h
+            updated.has_prev = true
+            return updated
+        })
+    } else {
+        list.tail = h
+    }
+
+    list.head = h
+    list.has_head = true
+    list.len = list.len + 1
+}
+
+fn print_forward(list: &DLList) {
+    if !list.has_head {
+        print("(empty)")
+        return
+    }
+    var cur: Handle<DLNode> = list.head
+    var has_cur: bool = true
+    var result: string = ""
+
+    while has_cur {
+        match arena_get(list.arena, cur) {
+            Option.Some(node) => {
+                if result.len > 0 { result = result + " <-> " }
+                result = result + node.value.to_string()
+                cur = node.next
+                has_cur = node.has_next
+            }
+            Option.None => { has_cur = false }
+        }
+    }
+    print(result)
+}
+
+fn print_backward(list: &DLList) {
+    if !list.has_head {
+        print("(empty)")
+        return
+    }
+    var cur: Handle<DLNode> = list.tail
+    var has_cur: bool = true
+    var result: string = ""
+
+    while has_cur {
+        match arena_get(list.arena, cur) {
+            Option.Some(node) => {
+                if result.len > 0 { result = result + " <-> " }
+                result = result + node.value.to_string()
+                cur = node.prev
+                has_cur = node.has_prev
+            }
+            Option.None => { has_cur = false }
+        }
+    }
+    print(result)
+}
+
+fn main(): i32 {
+    var list = new_list()
+
+    push_back(list, 10)
+    push_back(list, 20)
+    push_back(list, 30)
+    push_front(list, 5)
+    push_front(list, 1)
+
+    print("forward:")
+    print_forward(list)
+
+    print("backward:")
+    print_backward(list)
+
+    print("len: ", list.len)
+
+    return 0
+}

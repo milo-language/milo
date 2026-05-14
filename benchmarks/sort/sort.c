@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define N 2000000
+#define N 500000
 
 void quicksort(double *arr, int lo, int hi) {
     if (lo >= hi) return;

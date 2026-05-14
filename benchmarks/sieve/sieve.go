@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-const LIMIT = 10000000
+const LIMIT = 1000000
 
 func main() {
 	flags := make([]bool, LIMIT+1)

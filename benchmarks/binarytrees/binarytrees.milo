@@ -1,0 +1,25 @@
+// allocation stress: Box<Tree> recursive build + walk
+enum Tree {
+    Leaf,
+    Node(Box<Tree>, Box<Tree>),
+}
+
+fn make_tree(d: i32): Box<Tree> {
+    if d <= 0 { return Box(Tree.Leaf) }
+    return Box(Tree.Node(make_tree(d - 1), make_tree(d - 1)))
+}
+
+fn check(t: &Box<Tree>): i32 {
+    match *t {
+        Tree.Leaf => { return 1 }
+        Tree.Node(l, r) => { return 1 + check(l) + check(r) }
+    }
+}
+
+fn main(): i32 {
+    let depth: i32 = 15
+    let t = make_tree(depth)
+    let c = check(t)
+    print("depth ", depth, " check=", c)
+    return 0
+}

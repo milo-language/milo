@@ -14,8 +14,8 @@ func fib(n int) int {
 
 func main() {
 	start := time.Now()
-	result := fib(42)
+	result := fib(35)
 	elapsed := time.Since(start).Seconds()
-	fmt.Printf("fib(42) = %d\n", result)
+	fmt.Printf("fib(35) = %d\n", result)
 	fmt.Printf("Time:   %.3fs\n", elapsed)
 }

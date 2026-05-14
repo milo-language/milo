@@ -414,12 +414,15 @@ export class TypeChecker {
       }
     }
 
-    // register structs
+    // register structs — two passes so generic structs are available when resolving fields
     for (const s of program.structs) {
       if (s.typeParams.length > 0) {
         const fields = s.fields.map(f => ({ name: f.name, type: typeFromAst(f.type) }));
         this.genericStructs.set(s.name, { typeParams: s.typeParams.map(tp => tp.name), fields, decl: s });
-      } else {
+      }
+    }
+    for (const s of program.structs) {
+      if (s.typeParams.length === 0) {
         const fields = s.fields.map(f => ({ name: f.name, type: this.resolve(f.type) }));
         for (const f of fields) {
           if (f.type.tag === "ref") {
@@ -430,7 +433,7 @@ export class TypeChecker {
       }
     }
 
-    // register enums
+    // register enums — two passes so generic enums are available when resolving variant fields
     for (const e of program.enums) {
       if (e.typeParams.length > 0) {
         const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
@@ -438,7 +441,10 @@ export class TypeChecker {
           variants.set(v.name, { tag: i, fields: v.fields.map(f => typeFromAst(f)) });
         });
         this.genericEnums.set(e.name, { typeParams: e.typeParams.map(tp => tp.name), variants, decl: e });
-      } else {
+      }
+    }
+    for (const e of program.enums) {
+      if (e.typeParams.length === 0) {
         // user-declared non-generic enum overrides any built-in generic of the same name
         this.genericEnums.delete(e.name);
         // pre-register so self-referential fields (Box<Self>) resolve correctly

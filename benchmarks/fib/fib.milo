@@ -4,7 +4,7 @@ fn fib(n: i64): i64 {
 }
 
 fn main(): i32 {
-    let n: i64 = 42
+    let n: i64 = 35
     let r = fib(n)
     print("fib(", n, ") = ", r)
     return 0

@@ -2,7 +2,7 @@ package main
 
 import "fmt"
 
-const N = 2000000
+const N = 500000
 
 func quicksort(arr []float64, lo, hi int) {
 	if lo >= hi {

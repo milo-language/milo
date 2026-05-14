@@ -959,7 +959,6 @@ export class Codegen {
         if (local.isRef) {
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = load ptr, ptr ${this.localAddr(expr.name)}`);
-          if (this.getStructName(local.type)) return [lines, ptr, local.type];
           const val = this.nextTemp();
           lines.push(`  ${val} = load ${local.type}, ptr ${ptr}`);
           return [lines, val, local.type];
