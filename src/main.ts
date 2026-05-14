@@ -88,11 +88,12 @@ function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, op
 function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string } {
   let output: string | null = null;
   let source: string | null = null;
-  let optFlag = "";
+  let optFlag = "-O2";
   const rest: string[] = [];
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
+    else if (args[i] === "--debug") { optFlag = "-O0"; }
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
@@ -112,7 +113,8 @@ function main() {
     console.log("  emit-ir <file>         emit LLVM IR");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
-    console.log("  -O<level>              clang opt level: 0,1,2,3,s,z");
+    console.log("  --debug                no optimization (-O0)");
+    console.log("  -O<level>              clang opt level: 0,1,2,3,s,z (default: -O2)");
     process.exit(1);
   }
 

@@ -119,7 +119,9 @@ export class Codegen {
     const enumMatch = ty.match(/^%(.+)$/);
     if (enumMatch && this.enumLayouts.has(enumMatch[1])) {
       const layout = this.enumLayouts.get(enumMatch[1])!;
-      return 4 + layout.payloadSlots * 8;
+      // i64 payload array requires 8-byte alignment, so the i32 tag is padded to 8.
+      // Without this, malloc undersizes by 4 bytes and store %Enum overruns the buffer.
+      return layout.payloadSlots > 0 ? 8 + layout.payloadSlots * 8 : 4;
     }
     return 8;
   }
@@ -397,7 +399,9 @@ export class Codegen {
           // Drop old value before overwriting — needed when this decl is inside a loop
           // and runs multiple times at runtime. The zero-init above makes the first-iteration
           // drop a no-op (null ptr / zero cap guards skip the free).
-          this.emitDropValue(lines, addrName, stmt.type);
+          if (this.loopHeader !== null) {
+            this.emitDropValue(lines, addrName, stmt.type);
+          }
         }
         lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
         // Don't drop locals that borrow from a ref (shallow copy, data owned elsewhere)
@@ -1587,7 +1591,8 @@ export class Codegen {
   private genShortCircuit(expr: HIRExpr & { kind: "BinOp" }, lines: string[]): [string[], string, string] {
     const isAnd = expr.op === "&&";
     const resultAddr = this.nextTemp();
-    lines.push(`  ${resultAddr} = alloca i1`);
+    // Hoist to entry block — alloca in loop body grows stack each iteration → overflow.
+    this.entryAllocas.push(`  ${resultAddr} = alloca i1`);
     const [ll, lv] = this.genExpr(expr.left);
     lines.push(...ll);
     lines.push(`  store i1 ${lv}, ptr ${resultAddr}`);

@@ -16,6 +16,7 @@ struct FlagDef {
 struct ArgParser {
     name: string,
     description: string,
+    usage: string,
     flags: Vec<FlagDef>,
 }
 
@@ -39,6 +40,7 @@ fn new_parser(name: string, description: string): ArgParser {
     return ArgParser {
         name: name,
         description: description,
+        usage: "",
         flags: Vec.new(),
     }
 }
@@ -84,7 +86,11 @@ impl ArgParser {
     // Generate formatted help text for all registered flags.
     fn help_text(self: &Self): string {
         var text: string = self.name + " - " + self.description + "\n\n"
-        text = text + "usage: " + self.name + " [options]\n\n"
+        if self.usage.len > 0 {
+            text = text + "usage: " + self.usage + "\n\n"
+        } else {
+            text = text + "usage: " + self.name + " [options]\n\n"
+        }
         text = text + "options:\n"
 
         var i: i64 = 0
@@ -112,7 +118,7 @@ impl ArgParser {
             text = text + line + "\n"
             i = i + 1
         }
-        text = text + "      --help                  Show this help message\n"
+        text = text + "  -h, --help                  Show this help message\n"
         return text
     }
 
@@ -140,7 +146,7 @@ impl ArgParser {
         while i < argv.len {
             let arg = argv[i]
 
-            if arg == "--help" {
+            if arg == "--help" || arg == "-h" {
                 print("%s", self.help_text())
                 unsafe { exit(0) }
             }
