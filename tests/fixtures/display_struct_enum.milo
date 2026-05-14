@@ -1,0 +1,35 @@
+// @expect: User { name: "alice", age: 30, happy: true }
+// @expect: Red
+// @expect: Rgb(255, 128, 0)
+// @expect: Some(42)
+// @expect: None
+
+struct User {
+    name: string,
+    age: i64,
+    happy: bool,
+}
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+    Rgb(u8, u8, u8),
+}
+
+fn main(): i32 {
+    let u = User { name: "alice", age: 30, happy: true }
+    print(u)
+
+    let c1 = Color.Red
+    let c2 = Color.Rgb(255 as u8, 128 as u8, 0 as u8)
+    print(c1)
+    print(c2)
+
+    let some_val: Option<i64> = Option.Some(42 as i64)
+    let no_val: Option<i64> = Option.None
+    print(some_val)
+    print(no_val)
+
+    return 0
+}

@@ -751,63 +751,18 @@ export class Codegen {
     if (expr.func === "print" || expr.func === "format") {
       this.needsPrintf = true;
       this.needsPutchar = true;
+      this.needsFree = true;
       // Each arg → one printf call sized to its type. Final newline via putchar.
-      // No fmt string — type-driven formatting. Strings rely on the NUL terminator
-      // appended by _milo_arg_at/_cstr_to_string/literals.
       const isFormat = expr.func === "format";
       const partFmts: string[] = [];
       const partArgs: { val: string; type: string }[] = [];
+      const tempBufs: string[] = []; // bufs to free after the outer call (struct/enum stringification)
       for (const arg of expr.args) {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
-        const tk = arg.expr.type;
-        if (tk.tag === "string") {
-          const dataPtr = this.nextTemp();
-          lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
-          const lenVal = this.nextTemp();
-          lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
-          const lenI32 = this.nextTemp();
-          lines.push(`  ${lenI32} = trunc i64 ${lenVal} to i32`);
-          partFmts.push("%.*s");
-          partArgs.push({ val: lenI32, type: "i32" });
-          partArgs.push({ val: dataPtr, type: "ptr" });
-        } else if (tk.tag === "bool") {
-          const trueStr = this.addString("true");
-          const falseStr = this.addString("false");
-          const boolStr = this.nextTemp();
-          lines.push(`  ${boolStr} = select i1 ${av}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
-          partFmts.push("%s");
-          partArgs.push({ val: boolStr, type: "ptr" });
-        } else if (tk.tag === "int") {
-          let passVal = av;
-          let passType = at;
-          if (tk.bits < 32) {
-            const widened = this.nextTemp();
-            lines.push(`  ${widened} = ${tk.signed ? "sext" : "zext"} ${at} ${av} to i32`);
-            passVal = widened;
-            passType = "i32";
-          }
-          partFmts.push(tk.bits <= 32 ? (tk.signed ? "%d" : "%u") : (tk.signed ? "%lld" : "%llu"));
-          partArgs.push({ val: passVal, type: passType });
-        } else if (tk.tag === "float") {
-          if (tk.bits === 32) {
-            const promoted = this.nextTemp();
-            lines.push(`  ${promoted} = fpext float ${av} to double`);
-            partArgs.push({ val: promoted, type: "double" });
-          } else {
-            partArgs.push({ val: av, type: "double" });
-          }
-          partFmts.push("%g");
-        } else if (tk.tag === "ptr") {
-          partFmts.push("%p");
-          partArgs.push({ val: av, type: "ptr" });
-        } else {
-          // unsupported type — checker should have caught this; fall back to %p
-          partFmts.push("%p");
-          partArgs.push({ val: av, type: "ptr" });
-        }
+        this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
       }
-      const fullFmt = partFmts.join("") + (isFormat ? "" : "");
+      const fullFmt = partFmts.join("");
       const fmtStr = this.addString(fullFmt);
       const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
 
@@ -815,7 +770,6 @@ export class Codegen {
         this.needsMalloc = true;
         this.needsSnprintf = true;
         this.hasStringType = true;
-        // snprintf(null, 0, fmt, ...) to measure
         const lenResult = this.nextTemp();
         lines.push(`  ${lenResult} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmtStr.label}${argsStr})`);
         const len64 = this.nextTemp();
@@ -825,6 +779,7 @@ export class Codegen {
         const buf = this.nextTemp();
         lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
         lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmtStr.label}${argsStr})`);
+        for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
         const s0 = this.nextTemp();
         lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
         const s1 = this.nextTemp();
@@ -836,6 +791,7 @@ export class Codegen {
 
       lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtStr.label}${argsStr})`);
       lines.push(`  call i32 @putchar(i32 10)`);
+      for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
       return [lines, "void", "void"];
     }
     if (expr.func === "exit") {
@@ -3080,6 +3036,253 @@ export class Codegen {
 
   private needsMemset = false;
   private needsSnprintf = false;
+
+  // Append printf-style format fragments for a value of type `tk`. `val` is the loaded
+  // LLVM value, `llvmTy` its LLVM type. Strings, ints, bool, float, ptr inline trivially.
+  // Structs/enums/refs go through emitStructDisplay/emitEnumDisplay which snprintf into
+  // a malloc'd temp buf — caller frees via `tempBufs`.
+  private emitDisplayPart(
+    tk: TypeKind,
+    val: string,
+    llvmTy: string,
+    lines: string[],
+    partFmts: string[],
+    partArgs: { val: string; type: string }[],
+    tempBufs: string[],
+  ): void {
+    if (tk.tag === "ref") {
+      // For ref types we currently load through the ref to get the inner value.
+      // But ref values are pointers; genExpr already loaded them, so val is the inner.
+      this.emitDisplayPart(tk.inner, val, this.llvmType(tk.inner), lines, partFmts, partArgs, tempBufs);
+      return;
+    }
+    if (tk.tag === "string") {
+      const dataPtr = this.nextTemp();
+      lines.push(`  ${dataPtr} = extractvalue %String ${val}, 0`);
+      const lenVal = this.nextTemp();
+      lines.push(`  ${lenVal} = extractvalue %String ${val}, 1`);
+      const lenI32 = this.nextTemp();
+      lines.push(`  ${lenI32} = trunc i64 ${lenVal} to i32`);
+      partFmts.push("%.*s");
+      partArgs.push({ val: lenI32, type: "i32" });
+      partArgs.push({ val: dataPtr, type: "ptr" });
+      return;
+    }
+    if (tk.tag === "bool") {
+      const trueStr = this.addString("true");
+      const falseStr = this.addString("false");
+      const boolStr = this.nextTemp();
+      lines.push(`  ${boolStr} = select i1 ${val}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
+      partFmts.push("%s");
+      partArgs.push({ val: boolStr, type: "ptr" });
+      return;
+    }
+    if (tk.tag === "int") {
+      let passVal = val;
+      let passType = llvmTy;
+      if (tk.bits < 32) {
+        const widened = this.nextTemp();
+        lines.push(`  ${widened} = ${tk.signed ? "sext" : "zext"} ${llvmTy} ${val} to i32`);
+        passVal = widened;
+        passType = "i32";
+      }
+      partFmts.push(tk.bits <= 32 ? (tk.signed ? "%d" : "%u") : (tk.signed ? "%lld" : "%llu"));
+      partArgs.push({ val: passVal, type: passType });
+      return;
+    }
+    if (tk.tag === "float") {
+      if (tk.bits === 32) {
+        const promoted = this.nextTemp();
+        lines.push(`  ${promoted} = fpext float ${val} to double`);
+        partArgs.push({ val: promoted, type: "double" });
+      } else {
+        partArgs.push({ val: val, type: "double" });
+      }
+      partFmts.push("%g");
+      return;
+    }
+    if (tk.tag === "struct") {
+      const buf = this.emitStructDisplay(tk.name, val, lines);
+      partFmts.push("%s");
+      partArgs.push({ val: buf, type: "ptr" });
+      tempBufs.push(buf);
+      return;
+    }
+    if (tk.tag === "enum") {
+      const buf = this.emitEnumDisplay(tk.name, val, lines);
+      partFmts.push("%s");
+      partArgs.push({ val: buf, type: "ptr" });
+      tempBufs.push(buf);
+      return;
+    }
+    if (tk.tag === "ptr") {
+      partFmts.push("%p");
+      partArgs.push({ val: val, type: "ptr" });
+      return;
+    }
+    // fallback for unsupported types: print as pointer (better than silent miscompile)
+    partFmts.push("<unprintable>");
+  }
+
+  // snprintf a struct into a malloc'd buffer formatted as `Name { f1: v1, f2: v2 }`.
+  // Returns the buf ptr; caller is responsible for free.
+  private emitStructDisplay(structName: string, structVal: string, lines: string[]): string {
+    this.needsSnprintf = true;
+    this.needsMalloc = true;
+    const layout = this.structLayouts.get(structName)!;
+    // Stage the struct value into an alloca so we can GEP each field.
+    const stagePtr = this.nextTemp();
+    lines.push(`  ${stagePtr} = alloca %${structName}`);
+    lines.push(`  store %${structName} ${structVal}, ptr ${stagePtr}`);
+    const formatParts: string[] = [`${structName} { `];
+    const snprintfArgs: { val: string; type: string }[] = [];
+    const tempBufs: string[] = [];
+    for (let i = 0; i < layout.fields.length; i++) {
+      const field = layout.fields[i];
+      if (i > 0) formatParts.push(", ");
+      formatParts.push(`${field.name}: `);
+      const fieldPtr = this.nextTemp();
+      lines.push(`  ${fieldPtr} = getelementptr %${structName}, ptr ${stagePtr}, i32 0, i32 ${i}`);
+      const fieldVal = this.nextTemp();
+      lines.push(`  ${fieldVal} = load ${field.type}, ptr ${fieldPtr}`);
+      // strings get extra quotes so output is unambiguous
+      if (field.typeKind.tag === "string") {
+        formatParts.push(`"`);
+        this.emitDisplayPart(field.typeKind, fieldVal, field.type, lines, formatParts, snprintfArgs, tempBufs);
+        formatParts.push(`"`);
+      } else {
+        this.emitDisplayPart(field.typeKind, fieldVal, field.type, lines, formatParts, snprintfArgs, tempBufs);
+      }
+    }
+    formatParts.push(" }");
+    return this.emitSnprintfToBuf(formatParts.join(""), snprintfArgs, tempBufs, lines);
+  }
+
+  // snprintf an enum into a malloc'd buffer formatted as `Variant` or `Variant(a, b)`.
+  // Returns the buf ptr.
+  private emitEnumDisplay(enumName: string, enumVal: string, lines: string[]): string {
+    this.needsSnprintf = true;
+    this.needsMalloc = true;
+    const layout = this.enumLayouts.get(enumName);
+    if (!layout) {
+      // generic monomorphization may not have registered yet — fall back to "<enum>"
+      const fb = this.addString(`<${enumName}>`);
+      // alloc a buf with a copy of the literal so caller can free uniformly
+      this.needsStrlen = true;
+      this.needsMemcpy = true;
+      const len = this.nextTemp();
+      lines.push(`  ${len} = call i64 @strlen(ptr ${fb.label})`);
+      const sz = this.nextTemp();
+      lines.push(`  ${sz} = add i64 ${len}, 1`);
+      const buf = this.nextTemp();
+      lines.push(`  ${buf} = call ptr @malloc(i64 ${sz})`);
+      lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${fb.label}, i64 ${sz})`);
+      return buf;
+    }
+    // Stage enum value into alloca so we can read tag + payload by GEP.
+    const stagePtr = this.nextTemp();
+    lines.push(`  ${stagePtr} = alloca %${enumName}`);
+    lines.push(`  store %${enumName} ${enumVal}, ptr ${stagePtr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr %${enumName}, ptr ${stagePtr}, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    // Allocate result ptr slot — each arm stores its own buf into it then we phi/load.
+    const resPtr = this.nextTemp();
+    lines.push(`  ${resPtr} = alloca ptr`);
+
+    const endLabel = this.nextLabel("enum.disp.end");
+    const variants = Array.from(layout.variants.entries());
+    const caseLabels: { tag: number; label: string }[] = [];
+    for (const [, info] of variants) {
+      caseLabels.push({ tag: info.tag, label: this.nextLabel("enum.disp.case") });
+    }
+    const defaultLabel = this.nextLabel("enum.disp.default");
+    const switchCases = caseLabels.map((c) => `i32 ${c.tag}, label %${c.label}`).join(" ");
+    lines.push(`  switch i32 ${tag}, label %${defaultLabel} [${switchCases}]`);
+
+    for (let vi = 0; vi < variants.length; vi++) {
+      const [variantName, info] = variants[vi];
+      lines.push(`${caseLabels[vi].label}:`);
+      const formatParts: string[] = [variantName];
+      const snprintfArgs: { val: string; type: string }[] = [];
+      const tempBufs: string[] = [];
+      if (info.fieldTypeKinds.length > 0) {
+        formatParts.push("(");
+        // Payload starts at offset 1 of the enum struct ({tag, [N x i64]}); cast to variant struct
+        const payloadPtr = this.nextTemp();
+        lines.push(`  ${payloadPtr} = getelementptr %${enumName}, ptr ${stagePtr}, i32 0, i32 1`);
+        // Build a synthetic struct type representing this variant's payload fields.
+        const payloadStructTy = `{ ${info.fieldTypes.join(", ")} }`;
+        for (let fi = 0; fi < info.fieldTypeKinds.length; fi++) {
+          if (fi > 0) formatParts.push(", ");
+          const fk = info.fieldTypeKinds[fi];
+          const ft = info.fieldTypes[fi];
+          const fieldPtr = this.nextTemp();
+          lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${fi}`);
+          const fieldVal = this.nextTemp();
+          lines.push(`  ${fieldVal} = load ${ft}, ptr ${fieldPtr}`);
+          if (fk.tag === "string") {
+            formatParts.push(`"`);
+            this.emitDisplayPart(fk, fieldVal, ft, lines, formatParts, snprintfArgs, tempBufs);
+            formatParts.push(`"`);
+          } else {
+            this.emitDisplayPart(fk, fieldVal, ft, lines, formatParts, snprintfArgs, tempBufs);
+          }
+        }
+        formatParts.push(")");
+      }
+      const buf = this.emitSnprintfToBuf(formatParts.join(""), snprintfArgs, tempBufs, lines);
+      lines.push(`  store ptr ${buf}, ptr ${resPtr}`);
+      lines.push(`  br label %${endLabel}`);
+    }
+
+    lines.push(`${defaultLabel}:`);
+    const unkFmt = this.addString(`<${enumName}.?>`);
+    this.needsStrlen = true;
+    this.needsMemcpy = true;
+    const unkLen = this.nextTemp();
+    lines.push(`  ${unkLen} = call i64 @strlen(ptr ${unkFmt.label})`);
+    const unkSz = this.nextTemp();
+    lines.push(`  ${unkSz} = add i64 ${unkLen}, 1`);
+    const unkBuf = this.nextTemp();
+    lines.push(`  ${unkBuf} = call ptr @malloc(i64 ${unkSz})`);
+    lines.push(`  call ptr @memcpy(ptr ${unkBuf}, ptr ${unkFmt.label}, i64 ${unkSz})`);
+    lines.push(`  store ptr ${unkBuf}, ptr ${resPtr}`);
+    lines.push(`  br label %${endLabel}`);
+
+    lines.push(`${endLabel}:`);
+    const out = this.nextTemp();
+    lines.push(`  ${out} = load ptr, ptr ${resPtr}`);
+    return out;
+  }
+
+  // snprintf into a freshly malloc'd buffer; return ptr to it. Frees any temp bufs
+  // produced by nested struct/enum field renderings after the snprintf completes.
+  private emitSnprintfToBuf(
+    fmt: string,
+    args: { val: string; type: string }[],
+    tempBufs: string[],
+    lines: string[],
+  ): string {
+    this.needsSnprintf = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    const fmtStr = this.addString(fmt);
+    const argsStr = args.map(a => `, ${a.type} ${a.val}`).join("");
+    const len = this.nextTemp();
+    lines.push(`  ${len} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmtStr.label}${argsStr})`);
+    const len64 = this.nextTemp();
+    lines.push(`  ${len64} = sext i32 ${len} to i64`);
+    const sz = this.nextTemp();
+    lines.push(`  ${sz} = add i64 ${len64}, 1`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${sz})`);
+    lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${sz}, ptr ${fmtStr.label}${argsStr})`);
+    for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+    return buf;
+  }
 
   private genJsonStringify(expr: HIRExpr & { kind: "JsonStringify" }, lines: string[]): [string[], string, string] {
     this.needsSnprintf = true;
