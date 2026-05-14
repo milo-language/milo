@@ -2,7 +2,7 @@
 
 A memory-safe systems language that compiles to native code via LLVM. Ownership without lifetimes.
 
-```
+```rust
 fn main(): i32 {
     let name = "world"
     print("hello, ", name, "!")
@@ -11,73 +11,226 @@ fn main(): i32 {
 ```
 
 ```bash
-$ milo build hello.milo -o hello && ./hello
+$ bun run src/main.ts run hello.milo
 hello, world!
 ```
 
-## Why Milo?
+## Where it fits
 
-**Rust's safety, TypeScript's readability, no compromises.**
+|  | GC | Lifetimes | Ownership | Native |
+|---|---|---|---|---|
+| Go | yes | no | no | yes |
+| Rust | no | yes | yes | yes |
+| TypeScript | yes | no | no | no |
+| **Milo** | **no** | **no** | **yes** | **yes** |
 
-Milo proves you don't need lifetime annotations to get memory safety. The trick: references are second-class — `&T` can only appear as function parameters, never stored or returned. This single rule eliminates the entire borrow checker while keeping use-after-free, double-free, and dangling pointer bugs impossible.
+Milo occupies the empty cell: native speed, memory safety, no GC, no lifetime annotations.
 
-### The compiler catches use-after-free
+- **Second-class references** — `&T` only as function params; no lifetime annotations, ever
+- **Move semantics** — single owner, use-after-move is a compile error
+- **Exhaustive pattern matching** — `match` on enums/tagged unions, compiler enforces all cases
+- **Result<T> and error propagation** — `?` to propagate, `!` to unwrap, `??` for defaults
+- **Rich type system** — structs, enums, generics, traits, `Vec`, `HashMap`, `Box`, closures
+- **TypeScript-like syntax** — `let`/`var`, type annotations after names, familiar string methods
+- **Small binaries** — CLI tools compile to <300KB, sub-millisecond startup
+- **LSP + VS Code** — diagnostics, hover, go-to-definition out of the box
+
+## Performance
+
+Milo compiles via LLVM with `-O2`, giving it access to the same backend optimizations as C and Rust. On most workloads it lands within noise of C:
+
+| Benchmark | C | Milo | Go | Milo vs C |
+|-----------|---|------|----|-----------|
+| matmul 256x256 | 12.4ms | 11.8ms | 13.3ms | **0.95x** |
+| binarytrees depth 15 | 2.5ms | 1.9ms | 9.7ms | **0.76x** |
+| startup empty main | 1.4ms | 1.1ms | 1.8ms | **0.77x** |
+| stringops 100k concat | 4.9ms | 4.8ms | 11.7ms | **0.97x** |
+| sieve to 1M | 2.1ms | 2.2ms | 3.6ms | 1.04x |
+| quicksort 500k f64 | 33.5ms | 34.5ms | 35.4ms | 1.03x |
+| fib(35) | 17.7ms | 20.8ms | 22.5ms | 1.17x |
+| maplookup 50k | 2.1ms | 2.7ms | 2.6ms | 1.28x |
+| grep -c 1MB | 2.1ms | 4.7ms | 3.0ms | 2.18x |
+
+Apple M-series, macOS. Slower entries (grep, maplookup) have known hot spots — not fundamental limits. Run `./benchmarks/run.sh` to reproduce.
+
+## The language
+
+### Enums and pattern matching
+
+Enums carry data. `match` is exhaustive — the compiler rejects unhandled cases.
+
+```
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Triangle(f64, f64, f64),
+}
+
+fn area(s: Shape): f64 {
+    match s {
+        Shape.Circle(r)          => 3.14159 * r * r
+        Shape.Rect(w, h)         => w * h
+        Shape.Triangle(a, b, c)  => {
+            let p = (a + b + c) / 2.0
+            return (p * (p-a) * (p-b) * (p-c))
+        }
+    }
+}
+```
+
+### Error handling
+
+Functions return `Result<T>` (`Err` always carries a `string` message). Use `?` to propagate errors up the call stack, `!` to unwrap (panics on failure), or `??` to supply a default.
+
+```
+fn read_number(path: &string): Result<i64> {
+    let text = read_file(path)?       // propagates Err on failure
+    return text.trim().parse_i64()
+}
+
+// ?? — use a default, error silently dropped
+fn main(): i32 {
+    let n = read_number("count.txt") ?? 0
+    print("count: ", n)
+    return 0
+}
+
+// ! — unwrap, panics with the error message on failure
+fn main(): i32 {
+    let n = read_number("count.txt")!
+    print("count: ", n)
+    return 0
+}
+
+// ? — propagate up; main calls a fallible inner fn
+fn run(): Result<i32> {
+    let n = read_number("count.txt")?   // returns Err to caller on failure
+    print("count: ", n)
+    return Result.Ok(0)
+}
+
+fn main(): i32 {
+    match run() {
+        Result.Ok(code)  => { return code }
+        Result.Err(msg)  => { print("error: ", msg); return 1 }
+    }
+}
+
+// match — inspect the error explicitly
+fn main(): i32 {
+    match read_number("count.txt") {
+        Result.Ok(n)    => { print("count: ", n) }
+        Result.Err(msg) => { print("error: ", msg) }
+    }
+    return 0
+}
+```
+
+### Ownership and borrowing
+
+Each value has one owner. When a function takes `&T`, it borrows without consuming. Milo auto-borrows at call sites — you pass `u`, not `&u`.
+
+```
+struct User {
+    name: string,
+    age: i32,
+}
+
+fn greet(user: &User): string {
+    return "hi, " + user.name
+}
+
+fn main(): i32 {
+    let u = User { name: "Alice", age: 30 }
+    print(greet(u))        // auto-borrows u for the &User param
+    print("age: ", u.age)  // u is still valid
+    return 0
+}
+```
+
+### C FFI
+
+Call any C library with `extern fn`. Requires an `unsafe` block at the call site.
+
+```
+extern fn sqrt(x: f64): f64
+extern fn getenv(name: *u8): *u8
+
+fn main(): i32 {
+    let root = unsafe { sqrt(2.0) }
+    print("sqrt(2) = ", root)
+    return 0
+}
+```
+
+## How memory safety works
+
+### Second-class references
+
+Rust's borrow checker is powerful but complex because references can escape — into structs, return values, nested closures — and the compiler must track all of it with lifetime annotations. Milo sidesteps this entirely: **references are second-class**. `&T` can only appear as function parameters, never stored or returned.
+
+Here's the same `Parser` struct in Rust and Milo:
+
+```rust
+// Rust — storing a reference requires lifetime annotations everywhere it touches
+struct Token<'a> { text: &'a str }
+
+struct Parser<'a> {
+    input: &'a str,
+    current: Option<Token<'a>>,
+}
+
+impl<'a> Parser<'a> {
+    fn peek(&self) -> Option<&Token<'a>> { self.current.as_ref() }
+}
+```
+
+```
+// Milo — struct owns its data, no annotations at any depth
+struct Token { text: string }
+
+struct Parser {
+    input: string,
+    current: Option<Token>,
+}
+
+fn peek(p: &Parser): Option<Token> { return p.current }
+```
+
+In Milo, you can't store a reference in a struct — so you own the data instead. That restriction *is* the borrow checker. The deeper you nest in Rust (`'a` propagates into every containing struct and `impl`), the worse it gets. In Milo it stays flat.
+
+The cost: Rust can pass references around freely — store them, return them, nest them. Milo's references are second-class: valid only as function parameters. When you need data to outlive a call, you own it. You either give up your original (a move) or explicitly duplicate it (`clone()`). No implicit sharing — the cost is always spelled out in code.
+
+**Isn't that too restrictive?** In practice, the overwhelming majority of references are just function arguments — "give me this value briefly, I won't keep it." The cases where you'd want to store a reference (iterators, self-referential structs) are real but rare, and Milo handles them differently: owned data, `Vec` indices, or generational arenas (`std/arena`). The tradeoff is a much simpler mental model and zero annotation overhead for the 95% case. (For a deeper treatment of this design space, see Fernando Borretti's [Second-Class References](https://borretti.me/article/second-class-references).)
+
+### Move semantics
+
+Each value has exactly one owner. Passing a value by value transfers ownership — the old name is dead.
 
 ```
 fn main(): i32 {
     var a = "hello"
     let b = a          // ownership moves to b
-    print(a)     // ← compile error: use of moved value 'a'
+    print(a)           // ← compile error: a was moved
     return 0
 }
 ```
 
 ```
-error: use of moved value 'a'
-  ──> example.milo:4:20
-   │
- 4 │     print(a)
-   │                 ^
-   │
-   = 'a' was moved on line 3
+error: use of moved variable 'a'
+  ──> example.milo:4:11
+  │
+4 │     print(a)
+  │           ^
+  hint: ownership of 'a' was transferred earlier and it can no longer be used here.
+        To keep it alive, clone it at the point of transfer: 'a.clone()'.
 ```
 
-No runtime cost. No garbage collector. The compiler rejects the program before it ever runs.
+No runtime cost. The compiler rejects the program before it ever runs.
 
-### References can't escape
+### Real programs
 
-```
-fn first_byte(s: &string): u8 {   // borrow for the duration of the call
-    return s[0]
-}
-
-fn main(): i32 {
-    let s = "hello"
-    let b = first_byte(s)          // s is borrowed, not moved
-    print(b, " ", s)           // s is still valid
-    return 0
-}
-```
-
-References (`&T`) exist only as function parameters. You can't store them in structs, return them, or put them in a `Vec`. This means dangling references are structurally impossible — no lifetime annotations needed, ever.
-
-### Compare to Rust
-
-The same program in Rust requires you to think about lifetimes:
-
-```rust
-// Rust — this works, but add a struct that holds &str
-// and suddenly you need lifetime annotations everywhere
-fn first_byte(s: &str) -> u8 {
-    s.as_bytes()[0]
-}
-```
-
-In Milo, there's nothing to annotate. The rule is simple: references go in, but they don't come out.
-
-### Real programs, not toy examples
-
-Milo ships with CLI tools that compile to <300KB native binaries with sub-millisecond startup:
+Milo ships with CLI tools that compile to <300KB native binaries with sub-millisecond startup. String methods work like TypeScript — `s.contains()`, `s.split()`, `s.trim()`, `s.to_lower()`, `s.replace()` — no imports needed.
 
 ```
 // grep.milo — 80 lines, full featured
@@ -86,13 +239,15 @@ import "std/io"
 
 fn main(): i32 {
     var parser = new_parser("grep", "search for a string pattern in files")
+    parser.add_positional("pattern", "string pattern to search for")
+    parser.add_positional("file", "file to search")
     parser.add_bool("ignore-case", "i", "case-insensitive search")
     parser.add_bool("line-number", "n", "show line numbers")
     parser.add_bool("count", "c", "only print count of matching lines")
     let args = parser.parse()
 
-    let pattern = args.positional[0].clone()
-    let file_path = args.positional[1].clone()
+    let pattern = args.get_string("pattern")
+    let file_path = args.get_string("file")
 
     let content = read_file(file_path)!
     let lines = content.split("\n")
@@ -109,31 +264,9 @@ fn main(): i32 {
 }
 ```
 
-String methods work like TypeScript — `s.contains()`, `s.split()`, `s.trim()`, `s.to_lower()`, `s.replace()` — no imports needed.
+### Heap types
 
-### Ownership is simple
-
-```
-struct User {
-    name: string,
-    age: i32,
-}
-
-fn greet(user: &User): string {     // borrow — doesn't consume
-    return "hi, " + user.name
-}
-
-fn main(): i32 {
-    let u = User { name: "Alice", age: 30 }
-    print(greet(u))           // auto-borrow for &User param
-    print("age: ", u.age)          // u is still valid
-    return 0
-}
-```
-
-One rule: each value has one owner. When ownership transfers (`let b = a`), the old name is dead. When a function takes `&T`, it borrows without taking ownership. That's the entire model.
-
-### Heap types just work
+Values own their heap memory and release it automatically when they go out of scope — no GC pauses, no `free()`, no `defer`.
 
 ```
 fn main(): i32 {
@@ -163,19 +296,49 @@ fn main(): i32 {
 }   // nums, ages, t — all freed here, no leaks
 ```
 
-No `free()`, no `defer`, no GC. Drop semantics clean up heap memory when values go out of scope.
+For cyclic data (graphs, doubly-linked lists), use `std/arena`. Nodes reference each other via `Handle<T>` — typed indices into the arena — instead of pointers, which keeps the ownership model intact:
+
+```
+import "std/arena"
+
+struct DLNode {
+    value: i64,
+    prev: Handle<DLNode>,
+    next: Handle<DLNode>,
+    has_prev: bool,
+    has_next: bool,
+}
+
+fn main(): i32 {
+    var arena: Arena<DLNode> = Arena.new()
+    let a = arena.insert(DLNode { value: 1, has_prev: false, has_next: false, prev: Handle.null(), next: Handle.null() })
+    let b = arena.insert(DLNode { value: 2, has_prev: true,  has_next: false, prev: a, next: Handle.null() })
+    arena.get_mut(a).next = b
+    arena.get_mut(a).has_next = true
+    return 0
+}
+```
 
 ## Quick Start
 
-```bash
-bun run src/main.ts build examples/hello.milo -o hello
-./hello
+Requires: [Bun](https://bun.sh), LLVM/Clang.
 
-bun run src/main.ts emit-ir examples/hello.milo   # see the LLVM IR
-bun test                                            # 163 tests
+```bash
+bun run src/main.ts run examples/hello.milo        # compile and run in one step
+
+bun run src/main.ts build examples/hello.milo -o hello && ./hello  # build a binary
+bun run src/main.ts emit-ir examples/hello.milo    # see the LLVM IR
+bun test
 ```
 
-Requires: [Bun](https://bun.sh), LLVM/Clang.
+**VS Code** — syntax highlighting, diagnostics, hover, and go-to-definition via the bundled LSP:
+
+```bash
+cd editors/vscode && bun install && bun run build
+ln -s "$(pwd)" ~/.vscode/extensions/milo.milo-lang-0.2.0
+```
+
+Restart VS Code and open any `.milo` file.
 
 **[Language Guide →](docs/language-guide.md)** — full walkthrough of every feature.
 
@@ -230,27 +393,6 @@ Requires: [Bun](https://bun.sh), LLVM/Clang.
 
 **Tooling** — LSP server (diagnostics, hover, go-to-def), VS Code extension, Elm-style error messages
 
-## Position
-
-|  | GC | Lifetimes | Ownership | Native |
-|---|---|---|---|---|
-| Go | yes | no | no | yes |
-| Rust | no | yes | yes | yes |
-| TypeScript | yes | no | no | no |
-| **Milo** | **no** | **no** | **yes** | **yes** |
-
-Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics), [Vale](https://vale.dev/) (generational references), [Austral](https://austral-lang.org/) (linear types). Milo differs by combining second-class-only references with familiar TS-like syntax and a small compiler.
-
-## Design
-
-- `let` = immutable (SSA register), `var` = mutable (alloca)
-- Move semantics — single owner, use-after-move is a compile error
-- Second-class references — `&T` only in function params, never stored or returned
-- Bounds-checked arrays — out-of-bounds is a clear panic
-- Drop semantics — heap values auto-freed on scope exit
-- No GC, no RC, no lifetimes, no `unsafe` needed for safe code
-- C FFI with `extern fn` when you need it
-
 ## What's Missing
 
 - **Traits Phase 1 only.** No `dyn Trait`, associated types, operator overloading, `where` clauses
@@ -258,6 +400,5 @@ Nearest neighbors: [Hylo](https://www.hylo-lang.org/) (mutable value semantics),
 - **No `for` loops.** `while` only for now
 - **No concurrency.** Design open — leaning toward structured concurrency + channels
 - **No formatter, package manager, or REPL**
-- **Not self-hosting.** Compiler is ~8.4k lines of TypeScript. Stage-0 bootstrap in progress
 
 See [docs/roadmap.md](docs/roadmap.md) for full status.

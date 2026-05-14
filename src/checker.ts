@@ -1509,7 +1509,7 @@ export class TypeChecker {
           this.error(
             `use of moved variable '${expr.name}'`,
             sp,
-            `ownership of '${expr.name}' was transferred earlier and it can no longer be used here. To fix: pass a reference with '&${expr.name}', or make a copy with '${expr.name}.clone()' at the point of transfer.`,
+            `ownership of '${expr.name}' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: '${expr.name}.clone()'.`,
           );
           return this.setType(expr, this.deref(info.type));
         }
