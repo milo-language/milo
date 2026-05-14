@@ -5,13 +5,13 @@ fn main(): i32 {
     let resp = fetch("https://httpbin.org/get")
     match resp {
         Result.Ok(r) => {
-            print("status: %d", r.status)
+            print("status: ", r.status)
 
             let data = r.json()
 
             let origin = data.get("origin")
             match origin {
-                Option.Some(v) => { print("origin: %s", v.str()) }
+                Option.Some(v) => { print("origin: ", v.str()) }
                 Option.None => {}
             }
 
@@ -20,7 +20,7 @@ fn main(): i32 {
                 Option.Some(h) => {
                     let host = h.get("Host")
                     match host {
-                        Option.Some(v) => { print("host: %s", v.str()) }
+                        Option.Some(v) => { print("host: ", v.str()) }
                         Option.None => {}
                     }
                 }
@@ -29,11 +29,11 @@ fn main(): i32 {
 
             let url = data.get("url")
             match url {
-                Option.Some(v) => { print("url: %s", v.str()) }
+                Option.Some(v) => { print("url: ", v.str()) }
                 Option.None => {}
             }
         }
-        Result.Err(msg) => { print("error: %s", msg) }
+        Result.Err(msg) => { print("error: ", msg) }
     }
 
     return 0

@@ -8,14 +8,14 @@ fn main(): i32 {
 
     let r1 = m.get(42)
     if let Option.Some(v) = r1 {
-        print("got 42: %d", v)
+        print("got 42: ", v)
     } else {
         print("42 not found")
     }
 
     let r2 = m.get(99)
     if let Option.Some(v) = r2 {
-        print("got 99: %d", v)
+        print("got 99: ", v)
     } else {
         print("key 99 not found")
     }

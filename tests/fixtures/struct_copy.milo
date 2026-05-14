@@ -10,7 +10,7 @@ fn main(): i32 {
     let p = Point { x: 1, y: 2 }
     let a = use_point(p)
     let b = use_point(p)
-    print("%d", a)
-    print("%d", b)
+    print(a)
+    print(b)
     return 0
 }

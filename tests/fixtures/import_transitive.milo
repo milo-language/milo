@@ -1,6 +1,6 @@
 // @expect: 27
 import "lib/math_ext.milo"
 fn main(): i32 {
-    print("%d", cube(3))
+    print(cube(3))
     return 0
 }

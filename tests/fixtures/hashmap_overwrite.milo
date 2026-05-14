@@ -6,7 +6,7 @@ fn main(): i32 {
     m.insert(1, 100)
     m.insert(1, 200)
 
-    print("len: %ld", m.len)
+    print("len: ", m.len)
     if m.contains(1) {
         print("has key: true")
     } else {

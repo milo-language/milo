@@ -11,7 +11,7 @@ fn main(): i32 {
         i = i + 1
     }
 
-    print("len: %ld", m.len)
+    print("len: ", m.len)
     if m.contains(0) {
         print("has 0: true")
     } else {

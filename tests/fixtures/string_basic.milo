@@ -1,6 +1,6 @@
 // @expect: hello
 fn main(): i32 {
     let s = "hello"
-    print("%s", s)
+    print(s)
     return 0
 }

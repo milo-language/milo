@@ -9,7 +9,7 @@ fn main(): i32 {
     m.insert(5, 50)
     m.insert(42, 420)
 
-    print("len: %ld", m.len)
+    print("len: ", m.len)
     if m.contains(1) {
         print("has 1: true")
     } else {

@@ -2,6 +2,6 @@
 
 fn main(): i32 {
     let s = "hello"
-    print("%ld", s.len)
+    print(s.len)
     return 0
 }

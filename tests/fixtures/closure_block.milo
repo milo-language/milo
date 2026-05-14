@@ -9,7 +9,7 @@ fn main(): i32 {
         let doubled = x * 2
         return doubled + 1
     }, 20)
-    print("%d", result)
+    print(result)
     return 0
 }
 // @expect: 41

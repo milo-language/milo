@@ -3,6 +3,6 @@ import "lib/greeting.milo"
 
 fn main(): i32 {
     let msg = greet("world")
-    print("%s", msg)
+    print(msg)
     return 0
 }

@@ -12,7 +12,7 @@ fn main(): i32 {
     m.insert(2, 20)
     m.insert(3, 30)
 
-    print("len: %ld", m.len)
+    print("len: ", m.len)
     if m.contains(2) {
         print("has 2: true")
     } else {
@@ -21,7 +21,7 @@ fn main(): i32 {
 
     m.remove(2)
     print("removed")
-    print("len: %ld", m.len)
+    print("len: ", m.len)
 
     if m.contains(2) {
         print("has 2: true")

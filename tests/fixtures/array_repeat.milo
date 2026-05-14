@@ -3,9 +3,9 @@
 
 fn main(): i32 {
     let zeros: [i32; 4] = [0; 4]
-    print("%d %d %d %d", zeros[0], zeros[1], zeros[2], zeros[3])
+    print(zeros[0], " ", zeros[1], " ", zeros[2], " ", zeros[3])
 
     let filled: [i32; 3] = [42; 3]
-    print("%d %d %d", filled[0], filled[1], filled[2])
+    print(filled[0], " ", filled[1], " ", filled[2])
     return 0
 }

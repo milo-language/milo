@@ -29,7 +29,7 @@ fn print_tree(dir_path: &string, prefix: &string, depth: i64, max_level: i64, co
             extension = "|   "
         }
 
-        print("%s%s%s", prefix, connector, name)
+        print(prefix, connector, name)
 
         if entry_is_dir {
             counts.dirs = counts.dirs + 1
@@ -56,7 +56,7 @@ fn main(): i32 {
 
     let max_level = args.get_i64("level")
 
-    print("%s", root)
+    print(root)
     var counts = Counts { dirs: 1, files: 0 }
     let prefix: string = ""
     print_tree(root, prefix, 0 as i64, max_level, counts)
@@ -71,7 +71,7 @@ fn main(): i32 {
     if counts.files != 1 as i64 {
         summary = summary + "s"
     }
-    print("%s", summary)
+    print(summary)
 
     return 0
 }

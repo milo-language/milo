@@ -9,6 +9,6 @@ fn double(x: i32): i32 {
 }
 
 fn main(): i32 {
-    print("%d", double(add(7, 8)))
+    print(double(add(7, 8)))
     return 0
 }

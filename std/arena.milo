@@ -2,9 +2,15 @@
 //
 // Handles are freely copyable and storable (unlike &T).
 // Generation checks detect use-after-free at runtime.
+//
+// Handle<T> carries a phantom type param so handles from one arena cannot
+// accidentally be used with another arena of a different element type.
+// Returning &T is forbidden by second-class refs; mutation goes through
+// arena_set (full overwrite) or arena_modify (closure on current value).
 
 // Opaque handle to an arena slot. Safe to copy, store, and return.
-struct Handle {
+// T is phantom — not stored, only used for type-checking handle/arena pairs.
+struct Handle<T> {
     index: i32,
     generation: i32,
 }
@@ -29,7 +35,7 @@ fn arena_new<T>(): Arena<T> {
 }
 
 // Insert a value and return a handle to it.
-fn arena_alloc<T>(a: &mut Arena<T>, val: T): Handle {
+fn arena_alloc<T>(a: &mut Arena<T>, val: T): Handle<T> {
     if a.free_list.len > 0 {
         let fi = a.free_list[a.free_list.len - 1]
         a.free_list.pop()
@@ -37,17 +43,19 @@ fn arena_alloc<T>(a: &mut Arena<T>, val: T): Handle {
         a.data[idx] = val
         let gen = a.gens[idx]
         a.live = a.live + 1
-        return Handle { index: fi, generation: gen }
+        var h: Handle<T> = Handle { index: fi, generation: gen }
+        return h
     }
     let idx = a.data.len
     a.data.push(val)
     a.gens.push(1)
     a.live = a.live + 1
-    return Handle { index: idx as i32, generation: 1 }
+    var h: Handle<T> = Handle { index: idx as i32, generation: 1 }
+    return h
 }
 
 // Check whether a handle is still valid.
-fn arena_valid<T>(a: &Arena<T>, h: Handle): bool {
+fn arena_valid<T>(a: &Arena<T>, h: Handle<T>): bool {
     let idx = h.index as i64
     if idx < 0 { return false }
     if idx >= a.data.len { return false }
@@ -55,7 +63,7 @@ fn arena_valid<T>(a: &Arena<T>, h: Handle): bool {
 }
 
 // Free a slot, bumping its generation so stale handles are detected.
-fn arena_free<T>(a: &mut Arena<T>, h: Handle): bool {
+fn arena_free<T>(a: &mut Arena<T>, h: Handle<T>): bool {
     let idx = h.index as i64
     if idx < 0 { return false }
     if idx >= a.data.len { return false }
@@ -67,7 +75,9 @@ fn arena_free<T>(a: &mut Arena<T>, h: Handle): bool {
 }
 
 // Get a copy of the value at a handle. Returns None if the handle is stale.
-fn arena_get<T>(a: &Arena<T>, h: Handle): Option<T> {
+// Returns by value, not &T, because second-class refs cannot be stored in
+// Option<_>. For large T, prefer arena_modify to avoid the copy churn.
+fn arena_get<T>(a: &Arena<T>, h: Handle<T>): Option<T> {
     let idx = h.index as i64
     if idx < 0 { return Option.None }
     if idx >= a.data.len { return Option.None }
@@ -76,12 +86,24 @@ fn arena_get<T>(a: &Arena<T>, h: Handle): Option<T> {
 }
 
 // Overwrite the value at a handle. Returns false if the handle is stale.
-fn arena_set<T>(a: &mut Arena<T>, h: Handle, val: T): bool {
+fn arena_set<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool {
     let idx = h.index as i64
     if idx < 0 { return false }
     if idx >= a.data.len { return false }
     if a.gens[idx] != h.generation { return false }
     a.data[idx] = val
+    return true
+}
+
+// In-place update via closure. Avoids the manual get/modify/set dance and
+// is the recommended way to mutate a single field of an arena value.
+// Returns false if the handle is stale (closure not invoked).
+fn arena_modify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
+    let idx = h.index as i64
+    if idx < 0 { return false }
+    if idx >= a.data.len { return false }
+    if a.gens[idx] != h.generation { return false }
+    a.data[idx] = f(a.data[idx])
     return true
 }
 

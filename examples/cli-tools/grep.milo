@@ -105,7 +105,7 @@ fn grep_file(file_path: &string, opts: &mut GrepOpts): i32 {
     match read_file(file_path.clone()) {
         Result.Ok(data) => { content = data }
         Result.Err(e) => {
-            print("grep: %s", e)
+            print("grep: ", e)
             return 1
         }
     }
@@ -140,9 +140,9 @@ fn grep_file(file_path: &string, opts: &mut GrepOpts): i32 {
 
     if opts.count_only && match_count > 0 {
         if opts.show_filename {
-            print("%s:%lld", file_path, match_count)
+            print(file_path, ":", match_count)
         } else {
-            print("%lld", match_count)
+            print(match_count)
         }
     }
 
@@ -181,7 +181,7 @@ fn main(): i32 {
 
     if args.positional.len < 2 {
         print("grep: missing pattern or file argument")
-        print("%s", parser.help_text())
+        print(parser.help_text())
         return 2
     }
 

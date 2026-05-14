@@ -55,7 +55,7 @@ fn main(): i32 {
     match read_file(args.positional[0].clone()) {
         Result.Ok(data) => { content = data }
         Result.Err(e) => {
-            print("hex: %s", e)
+            print("hex: ", e)
             return 1
         }
     }
@@ -108,7 +108,7 @@ fn main(): i32 {
             line = line + " |" + ascii_part + "|"
         }
 
-        print("%s", line)
+        print(line)
         offset = offset + cols
     }
 

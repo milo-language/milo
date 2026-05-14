@@ -10,6 +10,6 @@ struct User {
 fn main(): i32 {
     let user = User { name: "Chad", age: 30, score: 3.14, active: true }
     let json = json_stringify(user)
-    print("%s", json)
+    print(json)
     return 0
 }

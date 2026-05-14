@@ -12,6 +12,6 @@ impl Greet for Cat {}
 
 fn main(): i32 {
     let c = Cat { name: 1 }
-    print("%d", c.greet())
+    print(c.greet())
     return 0
 }

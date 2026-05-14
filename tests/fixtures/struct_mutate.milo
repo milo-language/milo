@@ -8,8 +8,8 @@ struct Pair {
 
 fn main(): i32 {
     var p = Pair { a: 10, b: 20 }
-    print("%d", p.a)
+    print(p.a)
     p.b = 99
-    print("%d", p.b)
+    print(p.b)
     return 0
 }

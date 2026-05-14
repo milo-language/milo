@@ -145,7 +145,7 @@ fn main(): i32 {
     let verbose = args.get_bool("verbose")
 
     if verbose {
-        print("GET %s", url)
+        print("GET ", url)
         print("")
     }
 
@@ -153,16 +153,16 @@ fn main(): i32 {
     match result {
         Result.Ok(r) => {
             let stext = status_text(r.status)
-            print("HTTP %d %s", r.status, stext)
+            print("HTTP ", r.status, " ", stext)
             print("")
 
             if output_file.len > 0 {
                 match write_file(output_file.clone(), r.body) {
                     Result.Ok(n) => {
-                        print("saved %lld bytes to %s", n, output_file)
+                        print("saved ", n, " bytes to ", output_file)
                     }
                     Result.Err(e) => {
-                        print("http: failed to write file: %s", e)
+                        print("http: failed to write file: ", e)
                         return 1
                     }
                 }
@@ -178,7 +178,7 @@ fn main(): i32 {
             }
         }
         Result.Err(msg) => {
-            print("http: %s", msg)
+            print("http: ", msg)
             return 1
         }
     }

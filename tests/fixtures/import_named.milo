@@ -1,6 +1,6 @@
 // @expect: 7
 from "lib/math" import { add }
 fn main(): i32 {
-    print("%d", add(3, 4))
+    print(add(3, 4))
     return 0
 }

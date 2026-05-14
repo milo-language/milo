@@ -3,6 +3,6 @@ fn get(): u32 {
     return 7
 }
 fn main(): i32 {
-    print("%d", get())
+    print(get())
     return 0
 }

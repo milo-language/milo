@@ -11,6 +11,6 @@ fn manhattan(v: &Vec2): i32 {
 
 fn main(): i32 {
     let v = Vec2 { x: 2, y: 3 }
-    print("%d", manhattan(v))
+    print(manhattan(v))
     return 0
 }

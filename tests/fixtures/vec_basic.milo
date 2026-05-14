@@ -6,16 +6,16 @@
 
 fn main(): i32 {
     var v: Vec<i32> = Vec.new()
-    print("%lld", v.len)
+    print(v.len)
 
     v.push(10)
     v.push(20)
     v.push(30)
-    print("%lld", v.len)
+    print(v.len)
 
-    print("%d", v[0])
-    print("%d", v[1])
-    print("%d", v[2])
+    print(v[0])
+    print(v[1])
+    print(v[2])
 
     return 0
 }

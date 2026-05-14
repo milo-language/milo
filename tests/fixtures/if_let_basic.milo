@@ -9,7 +9,7 @@ enum Option {
 fn main(): i32 {
     let x = Option.Some(42)
     if let Option.Some(val) = x {
-        print("got %d", val)
+        print("got ", val)
     }
 
     let y = Option.None

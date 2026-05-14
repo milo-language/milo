@@ -10,6 +10,6 @@ impl Dog {
 
 fn main(): i32 {
     let d = Dog { age: 42 }
-    print("%d", d.get_age())
+    print(d.get_age())
     return 0
 }

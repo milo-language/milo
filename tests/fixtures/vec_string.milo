@@ -8,6 +8,6 @@ fn main(): i32 {
     v.push("world")
     print(v[0])
     print(v[1])
-    print("%lld", v.len)
+    print(v.len)
     return 0
 }

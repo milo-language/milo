@@ -2,6 +2,6 @@
 fn main(): i32 {
     var x: i64 = 0
     x = 99
-    print("%ld", x)
+    print(x)
     return 0
 }

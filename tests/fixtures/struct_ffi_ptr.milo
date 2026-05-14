@@ -10,7 +10,7 @@ struct SockAddrIn {
 
 // simulates passing struct pointer to C — printf reads from the pointer
 fn dump(addr: &SockAddrIn): void {
-    print("%d %d %d", addr.sin_len, addr.sin_family, addr.sin_port)
+    print(addr.sin_len, " ", addr.sin_family, " ", addr.sin_port)
 }
 
 fn main(): i32 {

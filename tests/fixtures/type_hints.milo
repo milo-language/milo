@@ -3,7 +3,7 @@
 fn main(): i32 {
     let a: i64 = 5
     let b: u64 = 3
-    print("%ld", a)
-    print("%ld", b)
+    print(a)
+    print(b)
     return 0
 }

@@ -24,51 +24,51 @@ fn main(): i32 {
     let s = "hello world"
 
     // contains
-    print("contains: %s %s %s", bool_str(str_contains(s, "world")), bool_str(str_contains(s, "xyz")), bool_str(str_contains(s, "")))
+    print("contains: ", bool_str(str_contains(s, "world")), " ", bool_str(str_contains(s, "xyz")), " ", bool_str(str_contains(s, "")))
 
     // index_of
-    print("index_of: %lld %lld %lld", str_index_of(s, "world"), str_index_of(s, "xyz"), str_index_of(s, "hello"))
+    print("index_of: ", str_index_of(s, "world"), " ", str_index_of(s, "xyz"), " ", str_index_of(s, "hello"))
 
     // index_of_from
     let s2 = "hello world hello"
-    print("index_of_from: %lld %lld", str_index_of_from(s2, "llo", 5 as i64), str_index_of_from(s2, "xyz", 0 as i64))
+    print("index_of_from: ", str_index_of_from(s2, "llo", 5 as i64), " ", str_index_of_from(s2, "xyz", 0 as i64))
 
     // starts_with
-    print("starts_with: %s %s", bool_str(str_starts_with(s, "hello")), bool_str(str_starts_with(s, "world")))
+    print("starts_with: ", bool_str(str_starts_with(s, "hello")), " ", bool_str(str_starts_with(s, "world")))
 
     // ends_with
-    print("ends_with: %s %s", bool_str(str_ends_with(s, "world")), bool_str(str_ends_with(s, "hello")))
+    print("ends_with: ", bool_str(str_ends_with(s, "world")), " ", bool_str(str_ends_with(s, "hello")))
 
     // to_lower / to_upper
     let lower = str_to_lower("HELLO WORLD")
-    print("to_lower: %s", lower)
+    print("to_lower: ", lower)
     let up = str_to_upper("hello world")
-    print("to_upper: %s", up)
+    print("to_upper: ", up)
 
     // trim
     let padded = "   hello   "
-    print("trim: [%s]", str_trim(padded))
-    print("trim_start: [%s]", str_trim_start(padded))
-    print("trim_end: [%s]", str_trim_end(padded))
+    print("trim: [", str_trim(padded), "]")
+    print("trim_start: [", str_trim_start(padded), "]")
+    print("trim_end: [", str_trim_end(padded), "]")
 
     // split
     let csv = "hello,world,foo"
     let parts = str_split(csv, ",")
-    print("split: [%s] [%s] [%s] %lld", parts[0], parts[1], parts[2], parts.len)
+    print("split: [", parts[0], "] [", parts[1], "] [", parts[2], "] ", parts.len)
 
     // split by char
     let abc = "a:b:c"
     let abc_parts = str_split(abc, ":")
-    print("split_char: [%s] [%s] [%s] %lld", abc_parts[0], abc_parts[1], abc_parts[2], abc_parts.len)
+    print("split_char: [", abc_parts[0], "] [", abc_parts[1], "] [", abc_parts[2], "] ", abc_parts.len)
 
     // repeat
-    print("repeat: %s", str_repeat("ab", 3))
+    print("repeat: ", str_repeat("ab", 3))
 
     // replace
-    print("replace: %s", str_replace(s, "world", "universe"))
+    print("replace: ", str_replace(s, "world", "universe"))
 
     // is_* functions
-    print("is_funcs: %s %s %s %s", bool_str(char_is_digit(48)), bool_str(char_is_alpha(65)), bool_str(char_is_whitespace(65)), bool_str(char_is_alphanumeric(57)))
+    print("is_funcs: ", bool_str(char_is_digit(48)), " ", bool_str(char_is_alpha(65)), " ", bool_str(char_is_whitespace(65)), " ", bool_str(char_is_alphanumeric(57)))
 
     return 0
 }

@@ -11,7 +11,7 @@ fn main(): i32 {
     let result = maybe_double(a)
     match result {
         Option.Some(v) => {
-            print("%d", v)
+            print(v)
         }
         Option.None => {
             print("none")
@@ -22,7 +22,7 @@ fn main(): i32 {
     let result2 = maybe_double(b)
     match result2 {
         Option.Some(v) => {
-            print("%d", v)
+            print(v)
         }
         Option.None => {
             print("none")

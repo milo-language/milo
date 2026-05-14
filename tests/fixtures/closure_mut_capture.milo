@@ -9,7 +9,7 @@ fn main(): i32 {
     call_it(() => { count = count + 1 })
     call_it(() => { count = count + 1 })
     call_it(() => { count = count + 1 })
-    print("%d", count)
+    print(count)
     return 0
 }
 // @expect: 3

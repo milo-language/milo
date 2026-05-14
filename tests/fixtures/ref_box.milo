@@ -7,12 +7,12 @@ enum Tree {
 }
 
 fn print_boxed(b: &Box<i32>) {
-    print("value: %d", *b)
+    print("value: ", *b)
 }
 
 fn print_leaf(t: &Box<Tree>) {
     match *t {
-        Tree.Leaf(n) => { print("leaf: %d", n) }
+        Tree.Leaf(n) => { print("leaf: ", n) }
         Tree.Node(l, r) => { }
     }
 }

@@ -9,7 +9,7 @@ enum Result {
 fn main(): i32 {
     let a = Result.Ok(99)
     if let Result.Ok(v) = a {
-        print("ok: %d", v)
+        print("ok: ", v)
     } else {
         print("err branch")
     }
@@ -18,7 +18,7 @@ fn main(): i32 {
     if let Result.Ok(v) = b {
         print("ok branch")
     } else {
-        print("err: %d", -1)
+        print("err: ", -1)
     }
 
     return 0

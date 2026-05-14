@@ -13,7 +13,7 @@ struct Guard {
 
 impl Drop for Guard {
     fn drop(self: &mut Self): void {
-        print("drop %d", self.id)
+        print("drop ", self.id)
     }
 }
 

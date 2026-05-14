@@ -4,7 +4,7 @@ struct Handler {
 }
 
 fn print_val(x: i32): void {
-    print("called: %d", x)
+    print("called: ", x)
 }
 
 fn main(): i32 {

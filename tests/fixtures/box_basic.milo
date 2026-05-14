@@ -3,7 +3,7 @@
 
 fn main(): i32 {
     let b = Box(42)
-    print("%d", *b)
+    print(*b)
 
     let s = Box("hello")
     print(*s)

@@ -116,14 +116,14 @@ fn main(): i32 {
             let r1 = obj.get("name")
             if let Option.Some(val) = r1 {
                 match *val {
-                    JsonValue.Str(s) => { print("name=%s", s) }
+                    JsonValue.Str(s) => { print("name=", s) }
                     _ => { print("name=?") }
                 }
             }
             let r2 = obj.get("version")
             if let Option.Some(val) = r2 {
                 match *val {
-                    JsonValue.Number(n) => { print("version=%lld", n) }
+                    JsonValue.Number(n) => { print("version=", n) }
                     _ => { print("version=?") }
                 }
             }

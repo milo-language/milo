@@ -8,12 +8,12 @@ struct Connection {
 
 impl Drop for Connection {
     fn drop(self: &mut Self): void {
-        print("closing connection %d", self.fd)
+        print("closing connection ", self.fd)
     }
 }
 
 fn main(): i32 {
     let c = Connection { name: "db", fd: 42 }
-    print("connected: fd=%d", c.fd)
+    print("connected: fd=", c.fd)
     return 0
 }

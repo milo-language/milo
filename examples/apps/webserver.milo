@@ -36,11 +36,11 @@ struct Route {
 }
 
 fn dispatch(routes: &Vec<Route>, req: &Request): Response {
-    print("dispatch: routes.len=%d method='%s' path='%s'", routes.len, req.method, req.path)
+    print("dispatch: routes.len=", routes.len, " method='", req.method, "' path='", req.path, "'")
     var i: i64 = 0
     while i < routes.len {
         let r = routes[i]
-        print("  checking route %d: '%s' '%s'", i, r.method, r.prefix)
+        print("  checking route ", i, ": '", r.method, "' '", r.prefix, "'")
         if req.method == r.method {
             if r.exact && req.path == r.prefix {
                 return r.handler(req)
@@ -229,7 +229,7 @@ fn main(): i32 {
         return dispatch(routes, req)
     })
     if let Result.Err(msg) = result {
-        print("server error: %s", msg)
+        print("server error: ", msg)
         return 1
     }
     return 0

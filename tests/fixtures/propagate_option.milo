@@ -9,7 +9,7 @@ fn main(): i32 {
     let result = try_double(Option.None)
     match result {
         Option.Some(v) => {
-            print("%d", v)
+            print(v)
         }
         Option.None => {
             print("none")

@@ -4,8 +4,8 @@
 
 fn main(): i32 {
     let arr = [10, 20, 30]
-    print("%d", arr[0])
-    print("%d", arr[1])
-    print("%d", arr[2])
+    print(arr[0])
+    print(arr[1])
+    print(arr[2])
     return 0
 }

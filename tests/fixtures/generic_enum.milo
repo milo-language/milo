@@ -4,7 +4,7 @@ fn main(): i32 {
     let x = Option.Some(42)
     match x {
         Option.Some(val) => {
-            print("%d", val)
+            print(val)
         }
         Option.None => {
             print("none")

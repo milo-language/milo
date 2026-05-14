@@ -10,10 +10,10 @@ fn main(): i32 {
     let s = Shape.Rectangle(3, 4)
     match s {
         Shape.Circle(r) => {
-            print("%d", r)
+            print(r)
         }
         Shape.Rectangle(w, h) => {
-            print("%d", w + h)
+            print(w + h)
         }
         Shape.Point => {
             print("0")

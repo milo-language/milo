@@ -155,7 +155,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         getsockname(sock.fd, bound_addr, bound_len)
         let actual_port = ntohs(bound_addr.sin_port)
 
-        print("listening on http://localhost:%d", actual_port)
+        print("listening on http://localhost:", actual_port)
 
         while true {
             var client_addr = make_zeroed_sockaddr()

@@ -13,13 +13,11 @@ struct SockAddrIn {
 }
 
 fn print_addr(a: &SockAddrIn): void {
-    print("%d", a.sin_len)
-    print("%d", a.sin_family)
-    print("%d", a.sin_port)
-    print("%u", a.sin_addr)
-    print("%d %d %d %d %d %d %d %d",
-        a.sin_zero[0], a.sin_zero[1], a.sin_zero[2], a.sin_zero[3],
-        a.sin_zero[4], a.sin_zero[5], a.sin_zero[6], a.sin_zero[7])
+    print(a.sin_len)
+    print(a.sin_family)
+    print(a.sin_port)
+    print(a.sin_addr)
+    print(a.sin_zero[0], " ", a.sin_zero[1], " ", a.sin_zero[2], " ", a.sin_zero[3], " ", a.sin_zero[4], " ", a.sin_zero[5], " ", a.sin_zero[6], " ", a.sin_zero[7])
 }
 
 fn main(): i32 {

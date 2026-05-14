@@ -9,7 +9,7 @@ fn main(): i32 {
     let b: i32 = 20
     let c: i32 = 12
     let result = apply((x: i32) => x + a + b + c, 0)
-    print("%d", result)
+    print(result)
     return 0
 }
 // @expect: 42

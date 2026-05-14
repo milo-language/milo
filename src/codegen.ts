@@ -51,7 +51,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "exit", "_milo_arg_count", "_milo_arg_at", "_cstr_to_string", "_load_u8", "_load_i32"]);
+  private static BUILTINS = new Set(["print", "format", "exit", "_milo_arg_count", "_milo_arg_at", "_cstr_to_string", "_load_u8", "_load_i32"]);
   private needsArgGlobals = false;
 
   constructor(target: TargetInfo) { this.target = target; }
@@ -748,24 +748,93 @@ export class Codegen {
   }
 
   private genBuiltinCall(expr: HIRExpr & { kind: "Call" }, lines: string[]): [string[], string, string] {
-    if (expr.func === "print") {
+    if (expr.func === "print" || expr.func === "format") {
       this.needsPrintf = true;
       this.needsPutchar = true;
-      const argVals: { val: string; type: string }[] = [];
+      // Each arg → one printf call sized to its type. Final newline via putchar.
+      // No fmt string — type-driven formatting. Strings rely on the NUL terminator
+      // appended by _milo_arg_at/_cstr_to_string/literals.
+      const isFormat = expr.func === "format";
+      const partFmts: string[] = [];
+      const partArgs: { val: string; type: string }[] = [];
       for (const arg of expr.args) {
         const [al, av, at] = this.genExpr(arg.expr);
         lines.push(...al);
-        if (at === "%String") {
-          // coerce String → ptr (extract data pointer) for printf
+        const tk = arg.expr.type;
+        if (tk.tag === "string") {
           const dataPtr = this.nextTemp();
           lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
-          argVals.push({ val: dataPtr, type: "ptr" });
+          const lenVal = this.nextTemp();
+          lines.push(`  ${lenVal} = extractvalue %String ${av}, 1`);
+          const lenI32 = this.nextTemp();
+          lines.push(`  ${lenI32} = trunc i64 ${lenVal} to i32`);
+          partFmts.push("%.*s");
+          partArgs.push({ val: lenI32, type: "i32" });
+          partArgs.push({ val: dataPtr, type: "ptr" });
+        } else if (tk.tag === "bool") {
+          const trueStr = this.addString("true");
+          const falseStr = this.addString("false");
+          const boolStr = this.nextTemp();
+          lines.push(`  ${boolStr} = select i1 ${av}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
+          partFmts.push("%s");
+          partArgs.push({ val: boolStr, type: "ptr" });
+        } else if (tk.tag === "int") {
+          let passVal = av;
+          let passType = at;
+          if (tk.bits < 32) {
+            const widened = this.nextTemp();
+            lines.push(`  ${widened} = ${tk.signed ? "sext" : "zext"} ${at} ${av} to i32`);
+            passVal = widened;
+            passType = "i32";
+          }
+          partFmts.push(tk.bits <= 32 ? (tk.signed ? "%d" : "%u") : (tk.signed ? "%lld" : "%llu"));
+          partArgs.push({ val: passVal, type: passType });
+        } else if (tk.tag === "float") {
+          if (tk.bits === 32) {
+            const promoted = this.nextTemp();
+            lines.push(`  ${promoted} = fpext float ${av} to double`);
+            partArgs.push({ val: promoted, type: "double" });
+          } else {
+            partArgs.push({ val: av, type: "double" });
+          }
+          partFmts.push("%g");
+        } else if (tk.tag === "ptr") {
+          partFmts.push("%p");
+          partArgs.push({ val: av, type: "ptr" });
         } else {
-          argVals.push({ val: av, type: at });
+          // unsupported type — checker should have caught this; fall back to %p
+          partFmts.push("%p");
+          partArgs.push({ val: av, type: "ptr" });
         }
       }
-      const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
-      lines.push(`  call i32 (ptr, ...) @printf(${argsStr})`);
+      const fullFmt = partFmts.join("") + (isFormat ? "" : "");
+      const fmtStr = this.addString(fullFmt);
+      const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
+
+      if (isFormat) {
+        this.needsMalloc = true;
+        this.needsSnprintf = true;
+        this.hasStringType = true;
+        // snprintf(null, 0, fmt, ...) to measure
+        const lenResult = this.nextTemp();
+        lines.push(`  ${lenResult} = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr ${fmtStr.label}${argsStr})`);
+        const len64 = this.nextTemp();
+        lines.push(`  ${len64} = sext i32 ${lenResult} to i64`);
+        const bufSize = this.nextTemp();
+        lines.push(`  ${bufSize} = add i64 ${len64}, 1`);
+        const buf = this.nextTemp();
+        lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
+        lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmtStr.label}${argsStr})`);
+        const s0 = this.nextTemp();
+        lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+        const s1 = this.nextTemp();
+        lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len64}, 1`);
+        const s2 = this.nextTemp();
+        lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
+        return [lines, s2, "%String"];
+      }
+
+      lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtStr.label}${argsStr})`);
       lines.push(`  call i32 @putchar(i32 10)`);
       return [lines, "void", "void"];
     }

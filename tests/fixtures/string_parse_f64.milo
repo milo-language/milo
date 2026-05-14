@@ -1,8 +1,8 @@
-// @expect: 3.140000
+// @expect: 3.14
 
 fn main(): i32 {
     let s = "3.14"
     let x: f64 = s.parse_f64()
-    print("%f", x)
+    print(x)
     return 0
 }

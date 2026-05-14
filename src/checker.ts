@@ -392,7 +392,10 @@ export class TypeChecker {
     // register built-in functions
     const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
     const i32t: TypeKind = { tag: "int", bits: 32, signed: true };
-    this.functions.set("print", { params: [{ type: ptrU8, name: "fmt" }], ret: { tag: "void" }, variadic: true });
+    // print/format accept any number of Display-formattable args (handled in codegen).
+    // No required param — variadic-from-zero. Type-driven formatting per arg.
+    this.functions.set("print", { params: [], ret: { tag: "void" }, variadic: true });
+    this.functions.set("format", { params: [], ret: { tag: "string" }, variadic: true });
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
     this.functions.set("_milo_arg_count", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
     this.functions.set("_milo_arg_at", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });

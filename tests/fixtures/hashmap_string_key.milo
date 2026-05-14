@@ -8,7 +8,7 @@ fn main(): i32 {
     m.insert("hello", 42)
     m.insert("world", 99)
 
-    print("len: %ld", m.len)
+    print("len: ", m.len)
     if m.contains("hello") {
         print("has hello: true")
     } else {
@@ -22,7 +22,7 @@ fn main(): i32 {
 
     let r = m.get("hello")
     if let Option.Some(v) = r {
-        print("got hello: %d", v)
+        print("got hello: ", v)
     } else {
         print("hello not found")
     }

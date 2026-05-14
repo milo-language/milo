@@ -231,7 +231,7 @@ fn main(): i32 {
     match read_file(file_path.clone()) {
         Result.Ok(data) => { content = data }
         Result.Err(e) => {
-            print("cat: %s", e)
+            print("cat: ", e)
             return 1
         }
     }
@@ -288,13 +288,13 @@ fn main(): i32 {
             lang_label = " | " + lang
         }
         if no_color {
-            print("%s", separator)
-            print(" File: %s%s", file_path, lang_label)
-            print("%s", separator)
+            print(separator)
+            print(" File: ", file_path, lang_label)
+            print(separator)
         } else {
-            print("%s%s%s", c_dim, separator, c_reset)
-            print(" %sFile: %s%s%s%s%s", c_bold, file_path, c_reset, c_gray, lang_label, c_reset)
-            print("%s%s%s", c_dim, separator, c_reset)
+            print(c_dim, separator, c_reset)
+            print(" ", c_bold, "File: ", file_path, c_reset, c_gray, lang_label, c_reset)
+            print(c_dim, separator, c_reset)
         }
     }
 
@@ -304,16 +304,16 @@ fn main(): i32 {
         let raw_line = lines[idx].clone()
 
         if plain {
-            print("%s", raw_line)
+            print(raw_line)
         } else {
             var display_line: string = raw_line.clone()
             if !no_color {
                 display_line = highlight_line(raw_line, lang, kw_list, c_reset, c_gray, c_green, c_magenta, c_red, c_blue, c_cyan)
             }
             if no_color {
-                print(" %s | %s", pad_num(idx + 1, width), display_line)
+                print(" ", pad_num(idx + 1, width), " | ", display_line)
             } else {
-                print(" %s%s |%s %s", c_gray, pad_num(idx + 1, width), c_reset, display_line)
+                print(" ", c_gray, pad_num(idx + 1, width), " |", c_reset, " ", display_line)
             }
         }
         idx = idx + 1
@@ -322,9 +322,9 @@ fn main(): i32 {
     // footer
     if !plain {
         if no_color {
-            print("%s", separator)
+            print(separator)
         } else {
-            print("%s%s%s", c_dim, separator, c_reset)
+            print(c_dim, separator, c_reset)
         }
     }
 

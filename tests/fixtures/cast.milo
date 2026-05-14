@@ -6,17 +6,17 @@ fn main(): i32 {
     // i64 to i32
     let big: i64 = 42
     let small = big as i32
-    print("%d", small)
+    print(small)
 
     // u8 to i32
     let byte: u8 = 200
     let wide = byte as i32
-    print("%d", wide)
+    print(wide)
 
     // f64 to i32
     let f: f64 = 3.7
     let n = f as i32
-    print("%d", n)
+    print(n)
 
     return 0
 }

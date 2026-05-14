@@ -6,7 +6,7 @@
 fn check(val: u16?) {
   match val {
     Option.Some(v) => {
-      print("got %d", v)
+      print("got ", v)
     }
     Option.None => {
       print("is null")

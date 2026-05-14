@@ -125,7 +125,7 @@ fn extract_raw(s: &string, pos: i64): string {
 fn find_field(json: &string, field: &string): string {
     var pos: i64 = skip_ws(json, 0 as i64)
     if pos >= json.len || json[pos] != 123 {
-        print("jq: expected object for field '.%s'", field)
+        print("jq: expected object for field '.", field, "'")
         return "null"
     }
     pos = pos + 1
@@ -284,9 +284,9 @@ fn parse_filter(filter: &string): Vec<string> {
 
 fn output_value(val: &string, raw: bool): void {
     if raw && val.len >= 2 && val[0] == 34 && val[val.len - 1] == 34 {
-        print("%s", val.substr(1 as i64, val.len - 1))
+        print(val.substr(1 as i64, val.len - 1))
     } else {
-        print("%s", val)
+        print(val)
     }
 }
 
@@ -310,7 +310,7 @@ fn main(): i32 {
         match read_file(args.positional[1].clone()) {
             Result.Ok(data) => { content = data }
             Result.Err(e) => {
-                print("jq: %s", e)
+                print("jq: ", e)
                 return 1
             }
         }
@@ -326,7 +326,7 @@ fn main(): i32 {
 
     // identity filter
     if filter == "." {
-        print("%s", input)
+        print(input)
         return 0
     }
 

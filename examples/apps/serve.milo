@@ -77,7 +77,7 @@ fn handle_request(req: &Request, root: &string, quiet: bool): Response {
         if is_file(index_path.clone()) {
             match read_file(index_path) {
                 Result.Ok(content) => {
-                    if !quiet { print("200 GET %s -> index.html", req.path) }
+                    if !quiet { print("200 GET ", req.path, " -> index.html") }
                     return Response.Status(200, "text/html", content)
                 }
                 Result.Err(e) => {}
@@ -85,23 +85,23 @@ fn handle_request(req: &Request, root: &string, quiet: bool): Response {
         }
         // directory listing
         let listing = dir_listing(file_path, req.path)
-        if !quiet { print("200 GET %s (dir)", req.path) }
+        if !quiet { print("200 GET ", req.path, " (dir)") }
         return Response.Html(listing)
     }
 
     if !is_file(file_path.clone()) {
-        if !quiet { print("404 GET %s", req.path) }
+        if !quiet { print("404 GET ", req.path) }
         return Response.NotFound
     }
 
     match read_file(file_path.clone()) {
         Result.Ok(content) => {
             let mime = get_mime(file_path)
-            if !quiet { print("200 GET %s (%s)", req.path, format_size(content.len)) }
+            if !quiet { print("200 GET ", req.path, " (", format_size(content.len), ")") }
             return Response.Status(200, mime, content)
         }
         Result.Err(e) => {
-            if !quiet { print("500 GET %s: %s", req.path, e) }
+            if !quiet { print("500 GET ", req.path, ": ", e) }
             return Response.Status(500, "text/plain", "500 Internal Server Error")
         }
     }
@@ -123,7 +123,7 @@ fn main(): i32 {
     let port = args.get_u16("port")
 
     print("serve - static file server")
-    print("  serving %s on port %d", root, port)
+    print("  serving ", root, " on port ", port)
     print("")
 
     let result = serve(port, (req: &Request) => {
@@ -131,7 +131,7 @@ fn main(): i32 {
     })
     match result {
         Result.Err(msg) => {
-            print("error: %s", msg)
+            print("error: ", msg)
             return 1
         }
         _ => {}

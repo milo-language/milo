@@ -1,6 +1,6 @@
-// @expect: 2.500000
+// @expect: 2.5
 fn main(): i32 {
     let x: f64 = 2.5
-    print("%f", x)
+    print(x)
     return 0
 }

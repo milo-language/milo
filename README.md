@@ -5,7 +5,7 @@ A memory-safe systems language that compiles to native code via LLVM. Ownership 
 ```
 fn main(): i32 {
     let name = "world"
-    print("hello, %s!", name)
+    print("hello, ", name, "!")
     return 0
 }
 ```
@@ -27,7 +27,7 @@ Milo proves you don't need lifetime annotations to get memory safety. The trick:
 fn main(): i32 {
     var a = "hello"
     let b = a          // ownership moves to b
-    print("%s", a)     // ← compile error: use of moved value 'a'
+    print(a)     // ← compile error: use of moved value 'a'
     return 0
 }
 ```
@@ -36,7 +36,7 @@ fn main(): i32 {
 error: use of moved value 'a'
   ──> example.milo:4:20
    │
- 4 │     print("%s", a)
+ 4 │     print(a)
    │                 ^
    │
    = 'a' was moved on line 3
@@ -54,7 +54,7 @@ fn first_byte(s: &string): u8 {   // borrow for the duration of the call
 fn main(): i32 {
     let s = "hello"
     let b = first_byte(s)          // s is borrowed, not moved
-    print("%d %s", b, s)           // s is still valid
+    print(b, " ", s)           // s is still valid
     return 0
 }
 ```
@@ -101,7 +101,7 @@ fn main(): i32 {
     while line_num < lines.len {
         let line = lines[line_num]
         if line.contains(pattern) {
-            print("%s", line)
+            print(line)
         }
         line_num = line_num + 1
     }
@@ -125,8 +125,8 @@ fn greet(user: &User): string {     // borrow — doesn't consume
 
 fn main(): i32 {
     let u = User { name: "Alice", age: 30 }
-    print("%s", greet(u))           // auto-borrow for &User param
-    print("age: %d", u.age)        // u is still valid
+    print(greet(u))           // auto-borrow for &User param
+    print("age: ", u.age)          // u is still valid
     return 0
 }
 ```
@@ -142,13 +142,13 @@ fn main(): i32 {
     nums.push(1)
     nums.push(2)
     nums.push(3)
-    print("len: %lld", nums.len)    // 3
+    print("len: ", nums.len)        // 3
 
     // HashMap — same deal
     var ages: HashMap<string, i32> = HashMap.new()
     ages.insert("alice", 30)
     match ages.get("alice") {
-        Option.Some(age) => print("alice is %d", age)
+        Option.Some(age) => print("alice is ", age)
         Option.None => print("not found")
     }
 

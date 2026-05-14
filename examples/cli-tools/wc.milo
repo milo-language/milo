@@ -34,7 +34,7 @@ fn main(): i32 {
         match read_file(args.positional[0].clone()) {
             Result.Ok(data) => { content = data }
             Result.Err(e) => {
-                print("wc: %s", e)
+                print("wc: ", e)
                 return 1
             }
         }
@@ -73,13 +73,13 @@ fn main(): i32 {
     let chars = content.len
 
     if show_all {
-        print("%s%s%s %s", pad(lines), pad(words), pad(chars), label)
+        print(pad(lines), pad(words), pad(chars), " ", label)
     } else {
         var output: string = ""
         if show_lines { output = output + pad(lines) }
         if show_words { output = output + pad(words) }
         if show_chars { output = output + pad(chars) }
-        print("%s %s", output, label)
+        print(output, " ", label)
     }
 
     return 0

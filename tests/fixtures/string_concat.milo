@@ -3,6 +3,6 @@ fn main(): i32 {
     let a = "hello "
     let b = "world"
     let c = a + b
-    print("%s", c)
+    print(c)
     return 0
 }

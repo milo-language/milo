@@ -16,8 +16,8 @@ struct Handler {
 fn main(): i32 {
     let h = Handler { name: "double", apply: double }
     let result = h.apply(21)
-    print("%s: %d", h.name, result)
+    print(h.name, ": ", result)
     let h2 = Handler { name: "triple", apply: triple }
-    print("%s: %d", h2.name, h2.apply(10))
+    print(h2.name, ": ", h2.apply(10))
     return 0
 }

@@ -4,7 +4,7 @@
 
 fn main(): i32 {
     let a = 'A'
-    print("%d", a)
+    print(a)
 
     let s = "ABC"
     if s[0] == 'A' {
@@ -12,7 +12,7 @@ fn main(): i32 {
     }
 
     let nl = '\n'
-    print("newline: %d", nl)
+    print("newline: ", nl)
 
     return 0
 }

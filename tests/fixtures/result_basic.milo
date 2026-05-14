@@ -11,14 +11,14 @@ fn double_if_big(x: i32): Result<i32> {
 fn main(): i32 {
     let a = double_if_big(21)
     match a {
-        Result.Ok(v) => { print("%d", v) }
-        Result.Err(msg) => { print("error: %s", msg) }
+        Result.Ok(v) => { print(v) }
+        Result.Err(msg) => { print("error: ", msg) }
     }
 
     let b = double_if_big(5)
     match b {
-        Result.Ok(v) => { print("%d", v) }
-        Result.Err(msg) => { print("error: %s", msg) }
+        Result.Ok(v) => { print(v) }
+        Result.Err(msg) => { print("error: ", msg) }
     }
 
     return 0

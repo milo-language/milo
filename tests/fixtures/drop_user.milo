@@ -8,13 +8,13 @@ struct Resource {
 
 impl Drop for Resource {
     fn drop(self: &mut Self): void {
-        print("drop %d", self.id)
+        print("drop ", self.id)
     }
 }
 
 fn main(): i32 {
     let r1 = Resource { id: 1 }
     let r2 = Resource { id: 2 }
-    print("using %d %d", r1.id, r2.id)
+    print("using ", r1.id, " ", r2.id)
     return 0
 }

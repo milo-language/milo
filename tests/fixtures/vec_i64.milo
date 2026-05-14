@@ -5,7 +5,7 @@ fn main(): i32 {
     var v: Vec<i64> = Vec.new()
     v.push(100000000000)
     v.push(200000000000)
-    print("%lld", v[0])
-    print("%lld", v[1])
+    print(v[0])
+    print(v[1])
     return 0
 }

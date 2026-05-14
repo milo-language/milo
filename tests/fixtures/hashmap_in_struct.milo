@@ -10,7 +10,7 @@ fn make_map(): HashMap<i32, i32> {
 
 fn main(): i32 {
     let m = make_map()
-    print("len: %ld", m.len)
+    print("len: ", m.len)
     print("done")
     return 0
 }

@@ -4,6 +4,6 @@ fn double(x: i64): i64 {
 }
 fn main(): i32 {
     let r: i64 = double(5)
-    print("%ld", r)
+    print(r)
     return 0
 }

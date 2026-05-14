@@ -8,7 +8,7 @@ struct Box<T> {
 fn main(): i32 {
     let a = Box { value: 42 }
     let b = Box { value: 99 }
-    print("%d", a.value)
-    print("%d", b.value)
+    print(a.value)
+    print(b.value)
     return 0
 }

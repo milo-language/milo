@@ -10,13 +10,13 @@ fn main(): i32 {
     let c = Color.Green
     match c {
         Color.Red => {
-            print("%d", 0)
+            print(0)
         }
         Color.Green => {
-            print("%d", 1)
+            print(1)
         }
         Color.Blue => {
-            print("%d", 2)
+            print(2)
         }
     }
     return 0
