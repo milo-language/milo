@@ -648,7 +648,7 @@ export class Codegen {
   private genForRange(stmt: HIRStmt & { kind: "ForRange" }): [string[], boolean] {
     const lines: string[] = [];
     const varTy = this.llvmType(stmt.varType);
-    const addrName = `%${stmt.varName}.addr`;
+    const addrName = this.locals.has(stmt.varName) ? `%${stmt.varName}.${this.scopeCounter++}.addr` : `%${stmt.varName}.addr`;
     this.entryAllocas.push(`  ${addrName} = alloca ${varTy}`);
     this.locals.set(stmt.varName, { type: varTy, typeKind: stmt.varType, mutable: false, isRef: false, addr: addrName });
 
@@ -737,7 +737,7 @@ export class Codegen {
 
       const elemType = stmt.varType.tag === "ref" ? stmt.varType.inner : stmt.varType;
       const elemTy = this.llvmType(elemType);
-      const varAddr = `%${stmt.varName}.addr`;
+      const varAddr = this.locals.has(stmt.varName) ? `%${stmt.varName}.${this.scopeCounter++}.addr` : `%${stmt.varName}.addr`;
       this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
       this.locals.set(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: varAddr });
 
@@ -799,7 +799,7 @@ export class Codegen {
       this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
       lines.push(`  store i64 0, ptr ${idxAddr}`);
 
-      const varAddr = `%${stmt.varName}.addr`;
+      const varAddr = this.locals.has(stmt.varName) ? `%${stmt.varName}.${this.scopeCounter++}.addr` : `%${stmt.varName}.addr`;
       this.entryAllocas.push(`  ${varAddr} = alloca i8`);
       this.locals.set(stmt.varName, { type: "i8", typeKind: { tag: "int", bits: 8, signed: false }, mutable: false, isRef: false, addr: varAddr });
 
@@ -860,7 +860,7 @@ export class Codegen {
       this.entryAllocas.push(`  ${idxAddr} = alloca i32`);
       lines.push(`  store i32 0, ptr ${idxAddr}`);
 
-      const varAddr = `%${stmt.varName}.addr`;
+      const varAddr = this.locals.has(stmt.varName) ? `%${stmt.varName}.${this.scopeCounter++}.addr` : `%${stmt.varName}.addr`;
       this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
       this.locals.set(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: varAddr });
 

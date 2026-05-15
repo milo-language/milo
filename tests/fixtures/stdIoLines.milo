@@ -10,14 +10,14 @@ import "std/io"
 
 fn main(): i32 {
     let lines = splitLines("hello\nworld\nfoo")
-    for ln in lines {
-        print(ln)
+    for line in lines {
+        print(line)
     }
     print(lines.len.toString())
 
     let crlf = splitLines("a\r\nb\r\n")
-    for cl in crlf {
-        print(cl)
+    for line in crlf {
+        print(line)
     }
     print(crlf.len.toString())
     return 0

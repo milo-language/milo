@@ -1,0 +1,35 @@
+// @expect: 1
+// @expect: 2
+// @expect: 3
+// @expect: 4
+// @expect: 0
+// @expect: 1
+// @expect: 2
+// @expect: 5
+// @expect: 6
+// @expect: 7
+
+fn main(): i32 {
+    var v1: Vec<i32> = Vec.new()
+    v1.push(1)
+    v1.push(2)
+    for x in v1 {
+        print(x)
+    }
+
+    var v2: Vec<i32> = Vec.new()
+    v2.push(3)
+    v2.push(4)
+    for x in v2 {
+        print(x)
+    }
+
+    for i in 0..3 {
+        print(i)
+    }
+    for i in 5..8 {
+        print(i)
+    }
+
+    return 0
+}
