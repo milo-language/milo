@@ -107,7 +107,7 @@ fn read_dir(path: string): Vec<DirEntry> {
 }
 
 // Write a string to a file, creating or truncating it.
-fn write_file(path: string, data: &string): Result<i64> {
-    let f = open_write(path)!
+fn write_file(path: string, data: &string): Result<i64, IoError> {
+    let f = open_write(path)?
     return write_all(f, data)
 }

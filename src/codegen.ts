@@ -1906,8 +1906,10 @@ export class Codegen {
     lines.push(`${panicLabel}:`);
     const span = expr.span;
     const isResult = expr.enumName.startsWith("Result_");
-    if (isResult) {
-      // extract the Err(string) payload and print it
+    const errVariant = isResult ? layout.variants.get("Err") : null;
+    const errIsString = errVariant && errVariant.fieldTypes.length === 1 && errVariant.fieldTypes[0] === "%String";
+    if (isResult && errIsString) {
+      // Err(string) — extract and print the message
       const errPayloadPtr = this.nextTemp();
       lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
       const errStr = this.nextTemp();
@@ -1919,6 +1921,13 @@ export class Codegen {
       const fmtPtr = this.nextTemp();
       lines.push(`  ${fmtPtr} = getelementptr [${fmtLen} x i8], ptr ${fmtLabel}, i32 0, i32 0`);
       lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtPtr}, ptr ${errDataPtr})`);
+    } else if (isResult) {
+      // Err(non-string) — print generic message with enum type name
+      const errMsg = `error at ${span?.line ?? 0}:${span?.col ?? 0}: unwrap called on Err`;
+      const { label: errLabel, length: errLen } = this.addString(errMsg);
+      const errPtr = this.nextTemp();
+      lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+      lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
     } else {
       const errMsg = `error at ${span?.line ?? 0}:${span?.col ?? 0}: unwrap called on None`;
       const { label: errLabel, length: errLen } = this.addString(errMsg);
@@ -1965,9 +1974,65 @@ export class Codegen {
     lines.push(`  ${cmp} = icmp eq i32 ${tag}, 0`);
     lines.push(`  br i1 ${cmp}, label %${okLabel}, label %${errLabel}`);
 
-    // error branch — return the enum as-is (early return)
+    // error branch — reconstruct caller's return type with the Err payload
     lines.push(`${errLabel}:`);
-    lines.push(`  ret ${retTy} ${ov}`);
+    const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
+    if (retEnumName === expr.enumName && !expr.fromConversion) {
+      // same enum type — return as-is
+      lines.push(`  ret ${retTy} ${ov}`);
+    } else {
+      // extract source Err payload
+      const errPayloadPtr = this.nextTemp();
+      lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+      const srcErrVariant = layout.variants.get("Err") || layout.variants.get("None");
+      const srcErrFieldTy = srcErrVariant && srcErrVariant.fieldTypes.length > 0 ? srcErrVariant.fieldTypes[0] : null;
+
+      let finalErrPayload: string | null = null;
+      let finalErrFieldTy: string | null = null;
+
+      if (expr.fromConversion && srcErrFieldTy) {
+        // From conversion: wrap source err in target error enum variant
+        const convLayout = this.enumLayouts.get(expr.fromConversion.targetEnumName)!;
+        const convEnumTy = `%${expr.fromConversion.targetEnumName}`;
+        const srcPayload = this.nextTemp();
+        lines.push(`  ${srcPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
+        const convAlloca = this.nextTemp();
+        lines.push(`  ${convAlloca} = alloca ${convEnumTy}`);
+        const convTagPtr = this.nextTemp();
+        lines.push(`  ${convTagPtr} = getelementptr ${convEnumTy}, ptr ${convAlloca}, i32 0, i32 0`);
+        lines.push(`  store i32 ${expr.fromConversion.wrapTag}, ptr ${convTagPtr}`);
+        const convPayloadPtr = this.nextTemp();
+        lines.push(`  ${convPayloadPtr} = getelementptr ${convEnumTy}, ptr ${convAlloca}, i32 0, i32 1`);
+        lines.push(`  store ${srcErrFieldTy} ${srcPayload}, ptr ${convPayloadPtr}`);
+        finalErrPayload = this.nextTemp();
+        lines.push(`  ${finalErrPayload} = load ${convEnumTy}, ptr ${convAlloca}`);
+        finalErrFieldTy = convEnumTy;
+      } else if (srcErrFieldTy) {
+        // same E type, different T — just copy the Err payload
+        finalErrPayload = this.nextTemp();
+        lines.push(`  ${finalErrPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
+        finalErrFieldTy = srcErrFieldTy;
+      }
+
+      // construct caller's return Result with Err tag + payload
+      const retEnumTy = `%${retEnumName}`;
+      const retAlloca = this.nextTemp();
+      lines.push(`  ${retAlloca} = alloca ${retEnumTy}`);
+      const retTagPtr = this.nextTemp();
+      lines.push(`  ${retTagPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 0`);
+      const retLayout = this.enumLayouts.get(retEnumName)!;
+      const retErrVariant = retLayout.variants.get("Err") || retLayout.variants.get("None");
+      const retErrTag = retErrVariant ? retErrVariant.tag : 1;
+      lines.push(`  store i32 ${retErrTag}, ptr ${retTagPtr}`);
+      if (finalErrPayload && finalErrFieldTy) {
+        const retPayloadPtr = this.nextTemp();
+        lines.push(`  ${retPayloadPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 1`);
+        lines.push(`  store ${finalErrFieldTy} ${finalErrPayload}, ptr ${retPayloadPtr}`);
+      }
+      const retVal = this.nextTemp();
+      lines.push(`  ${retVal} = load ${retEnumTy}, ptr ${retAlloca}`);
+      lines.push(`  ret ${retEnumTy} ${retVal}`);
+    }
 
     // ok branch — extract payload
     lines.push(`${okLabel}:`);

@@ -1,0 +1,26 @@
+// @expect: got 3
+// @expect: none
+
+fn get_name(ok: bool): string? {
+    if !ok {
+        return Option.None
+    }
+    return Option.Some("abc")
+}
+
+fn name_len(ok: bool): i32? {
+    let s = get_name(ok)?
+    return Option.Some(s.len as i32)
+}
+
+fn main(): i32 {
+    match name_len(true) {
+        Option.Some(n) => { print("got ", n) }
+        Option.None => { print("none") }
+    }
+    match name_len(false) {
+        Option.Some(n) => { print("got ", n) }
+        Option.None => { print("none") }
+    }
+    return 0
+}

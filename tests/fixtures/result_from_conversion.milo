@@ -1,0 +1,69 @@
+// @expect: size: 8
+// @expect: io error: not found: missing.txt
+// @expect: parse error: bad format
+
+enum IoError {
+    NotFound(string),
+    PermissionDenied(string),
+}
+
+enum ParseError {
+    BadFormat(string),
+}
+
+enum AppError {
+    Io(IoError),
+    Parse(ParseError),
+}
+
+fn read_file(path: string): Result<string, IoError> {
+    if path == "missing.txt" {
+        return Result.Err(IoError.NotFound(path))
+    }
+    return Result.Ok(path.clone())
+}
+
+fn parse_data(s: string): Result<i32, ParseError> {
+    if s == "bad.txt" {
+        return Result.Err(ParseError.BadFormat("bad format"))
+    }
+    return Result.Ok(s.len as i32)
+}
+
+fn process(path: string): Result<i32, AppError> {
+    let contents = read_file(path)?
+    let size = parse_data(contents)?
+    return Result.Ok(size)
+}
+
+fn show_error(e: AppError): void {
+    match e {
+        AppError.Io(io) => {
+            match io {
+                IoError.NotFound(p) => { print("io error: not found: ", p) }
+                IoError.PermissionDenied(p) => { print("io error: denied: ", p) }
+            }
+        }
+        AppError.Parse(pe) => {
+            match pe {
+                ParseError.BadFormat(m) => { print("parse error: ", m) }
+            }
+        }
+    }
+}
+
+fn main(): i32 {
+    match process("data.txt") {
+        Result.Ok(n) => { print("size: ", n) }
+        Result.Err(e) => { show_error(e) }
+    }
+    match process("missing.txt") {
+        Result.Ok(n) => { print("size: ", n) }
+        Result.Err(e) => { show_error(e) }
+    }
+    match process("bad.txt") {
+        Result.Ok(n) => { print("size: ", n) }
+        Result.Err(e) => { show_error(e) }
+    }
+    return 0
+}

@@ -55,10 +55,12 @@ export interface CheckResult {
   closureCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
   fnFieldCalls: Set<Expr>;
+  propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
 }
 
 interface GenericEnumInfo {
   typeParams: string[];
+  typeParamDefaults?: (TypeKind | null)[];
   variants: Map<string, { tag: number; fields: TypeKind[] }>;
   decl: import("./ast").EnumDecl;
 }
@@ -126,6 +128,7 @@ export class TypeChecker {
   private inherentImpls = new Map<string, ImplInfo>();
   private resolvedMethods = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
+  private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
 
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
@@ -152,11 +155,23 @@ export class TypeChecker {
       } else {
         const ge = this.genericEnums.get(ty.name);
         if (ge) {
-          if (resolvedArgs.length !== ge.typeParams.length) {
-            this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${resolvedArgs.length}`);
+          let args = resolvedArgs;
+          if (args.length < ge.typeParams.length && ge.typeParamDefaults) {
+            // fill remaining type args from defaults
+            args = [...args];
+            for (let i = args.length; i < ge.typeParams.length; i++) {
+              const def = ge.typeParamDefaults[i];
+              if (!def) {
+                this.error(`'${ty.name}' requires type argument for '${ge.typeParams[i]}'`);
+                return { tag: "unknown" };
+              }
+              args.push(def);
+            }
+          } else if (args.length !== ge.typeParams.length) {
+            this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${args.length}`);
             return { tag: "unknown" };
           }
-          result = { tag: "enum", name: this.monomorphizeEnum(ty.name, resolvedArgs) };
+          result = { tag: "enum", name: this.monomorphizeEnum(ty.name, args) };
         } else {
           const gs = this.genericStructs.get(ty.name);
           if (gs) {
@@ -536,6 +551,7 @@ export class TypeChecker {
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
       fnFieldCalls: this.fnFieldCalls,
+      propagateConversions: this.propagateConversions,
     };
   }
 
@@ -631,20 +647,24 @@ export class TypeChecker {
 
   private registerBuiltinResult() {
     if (this.genericEnums.has("Result")) return;
-    const stringType: MiloType = { name: "string", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     const decl: import("./ast").EnumDecl = {
       kind: "EnumDecl",
       name: "Result",
-      typeParams: [{ name: "T", bounds: [] }],
+      typeParams: [{ name: "T", bounds: [] }, { name: "E", bounds: [] }],
       variants: [
         { name: "Ok", fields: [{ name: "T", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
-        { name: "Err", fields: [stringType] },
+        { name: "Err", fields: [{ name: "E", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
       ],
     };
     const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
     variants.set("Ok", { tag: 0, fields: [{ tag: "struct", name: "T" }] });
-    variants.set("Err", { tag: 1, fields: [{ tag: "string" }] });
-    this.genericEnums.set("Result", { typeParams: ["T"], variants, decl });
+    variants.set("Err", { tag: 1, fields: [{ tag: "struct", name: "E" }] });
+    this.genericEnums.set("Result", {
+      typeParams: ["T", "E"],
+      typeParamDefaults: [null, { tag: "string" }],
+      variants,
+      decl,
+    });
   }
 
   private registerBuiltinTraits() {
@@ -2058,6 +2078,15 @@ export class TypeChecker {
             }
             this.tryMove(expr.args[i]);
           }
+          // fill uninferred type params from defaults
+          if (genericInfo.typeParamDefaults) {
+            for (let i = 0; i < genericInfo.typeParams.length; i++) {
+              const p = genericInfo.typeParams[i];
+              if (!typeMap.has(p) && genericInfo.typeParamDefaults[i]) {
+                typeMap.set(p, genericInfo.typeParamDefaults[i]!);
+              }
+            }
+          }
           const missing = genericInfo.typeParams.filter(p => !typeMap.has(p));
           if (missing.length > 0) {
             this.error(`cannot infer type parameter(s) '${missing.join("', '")}' for ${expr.enumName}.${expr.variant}`, sp);
@@ -2100,8 +2129,28 @@ export class TypeChecker {
           this.error(`'?' requires Option or Result type, got ${typeName(operandType)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
-        if (!typeEq(this.currentFnRetType, operandType)) {
-          this.error(`'?' requires function to return ${typeName(operandType)}, but returns ${typeName(this.currentFnRetType)}`, sp);
+        const retInner = this.unwrapableInner(this.currentFnRetType);
+        if (!retInner) {
+          this.error(`'?' requires function to return Option or Result, but returns ${typeName(this.currentFnRetType)}`, sp);
+          return this.setType(expr, inner);
+        }
+        // Option ? in Option fn, or Result ? in Result fn — match error side only
+        const operandIsOption = this.isOptionLike(operandType);
+        const retIsOption = this.isOptionLike(this.currentFnRetType);
+        if (operandIsOption !== retIsOption) {
+          this.error(`'?' on ${operandIsOption ? "Option" : "Result"} requires function to return ${operandIsOption ? "Option" : "Result"}, but returns ${typeName(this.currentFnRetType)}`, sp);
+        } else if (!operandIsOption) {
+          // both Result-like: Err types must match, or From conversion must exist
+          const operandErr = this.unwrapableErr(operandType);
+          const retErr = this.unwrapableErr(this.currentFnRetType);
+          if (operandErr && retErr && !typeEq(operandErr, retErr)) {
+            const conversion = this.findFromConversion(operandErr, retErr);
+            if (conversion) {
+              this.propagateConversions.set(expr, conversion);
+            } else {
+              this.error(`'?' error type mismatch: '${typeName(operandErr)}' cannot convert to '${typeName(retErr)}' (no wrapping variant found)`, sp);
+            }
+          }
         }
         return this.setType(expr, inner);
       }
@@ -2476,6 +2525,50 @@ export class TypeChecker {
     const err = info.variants.get("Err");
     if (ok && err && ok.fields.length === 1) {
       return ok.fields[0];
+    }
+    return null;
+  }
+
+  // extract E from Result-like (Ok(T)/Err(E)) enums, or null for Option-like
+  private unwrapableErr(t: TypeKind): TypeKind | null {
+    if (t.tag !== "enum") return null;
+    const info = this.enums.get(t.name);
+    if (!info) return null;
+    const ok = info.variants.get("Ok");
+    const err = info.variants.get("Err");
+    if (ok && err && ok.fields.length === 1 && err.fields.length >= 1) {
+      return err.fields[0];
+    }
+    return null;
+  }
+
+  // true if enum is Option-like (Some(T)/None)
+  private isOptionLike(t: TypeKind): boolean {
+    if (t.tag !== "enum") return false;
+    const info = this.enums.get(t.name);
+    if (!info) return false;
+    const some = info.variants.get("Some");
+    const none = info.variants.get("None");
+    return !!(some && none && some.fields.length === 1 && none.fields.length === 0);
+  }
+
+  // compiler-magic From: find a variant in targetErr that wraps sourceErr
+  private findFromConversion(sourceErr: TypeKind, targetErr: TypeKind): { targetEnumName: string; wrapVariant: string; wrapTag: number } | null {
+    if (targetErr.tag !== "enum") return null;
+    const info = this.enums.get(targetErr.name);
+    if (!info) return null;
+    // also allow string source → any variant with string payload
+    let matches: { name: string; tag: number }[] = [];
+    for (const [vName, vInfo] of info.variants) {
+      if (vInfo.fields.length === 1 && typeEq(vInfo.fields[0], sourceErr)) {
+        matches.push({ name: vName, tag: vInfo.tag });
+      }
+    }
+    if (matches.length === 1) {
+      return { targetEnumName: targetErr.name, wrapVariant: matches[0].name, wrapTag: matches[0].tag };
+    }
+    if (matches.length > 1) {
+      this.error(`ambiguous From conversion: '${typeName(sourceErr)}' matches multiple variants in '${typeName(targetErr)}': ${matches.map(m => m.name).join(", ")}`);
     }
     return null;
   }
