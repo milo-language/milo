@@ -1,44 +1,26 @@
-// JSON parsing and access — using std/json
+// JSON in Milo — parse, access, stringify
 import "std/json"
 
-struct Project { name: string, stars: i64 }
+struct Project { name: string, version: i64, active: bool }
 
 fn main(): i32 {
-    let data = "{\"name\": \"Milo\", \"version\": 1, \"tags\": [\"fast\", \"safe\", \"native\"], \"repo\": {\"host\": \"github.com\", \"stars\": 42}}"
+    // Parse and access fields
+    let j = jsonParse("{\"name\": \"Milo\", \"version\": 1, \"tags\": [\"fast\", \"safe\", \"native\"]}")!
 
-    let j = jsonParse(data)!
+    print(j.str("name")!)              // Milo
+    print(j.i64("version")!)           // 1
 
-    // Grab typed fields
-    let name = j.str("name")!
-    let version = j.i64("version")!
-    print(name, " v", version)
-
-    // Nested object
-    let host = j.get("repo")!.str("host")!
-    let stars = j.get("repo")!.i64("stars")!
-    print("repo: ", host, " (", stars, " stars)")
-
-    // Array access
+    // Index into arrays
     let tags = j.get("tags")!
-    print("tags: ", tags.len())
-    print("  first: ", tags.at(0)!.asStr()!)
-    print("  last:  ", tags.at(2)!.asStr()!)
-
-    // Safe access — missing keys return None
-    if let Option.Some(desc) = j.str("description") {
-        print("desc: ", desc)
-    } else {
-        print("no description")
+    var i: i64 = 0
+    while i < tags.len() {
+        print("tag: ", tags.at(i)!.asStr()!)
+        i = i + 1
     }
 
-    // Null handling
-    let withNull = jsonParse("{\"value\": null}")!
-    let v = withNull.get("value")!
-    print("is null: ", v.isNull())
-
-    // Serialization (compiler builtin)
-    let proj = Project { name: "milo", stars: 42 }
-    print(jsonStringify(proj))
+    // Stringify a struct
+    let proj = Project { name: "milo", version: 1, active: true }
+    print(jsonStringify(proj))          // {"name":"milo","version":1,"active":true}
 
     return 0
 }
