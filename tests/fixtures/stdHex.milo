@@ -1,0 +1,17 @@
+// @expect: 48656c6c6f
+// @expect: Hello
+// @expect: 4142
+// @expect: AB
+
+import "std/hex"
+
+fn main(): i32 {
+    let e1 = hexEncode("Hello")
+    print(e1)
+    print(hexDecode(e1))
+
+    let e2 = hexEncode("AB")
+    print(e2)
+    print(hexDecode(e2))
+    return 0
+}

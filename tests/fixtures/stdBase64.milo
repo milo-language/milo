@@ -1,0 +1,23 @@
+// @expect: SGVsbG8sIFdvcmxkIQ==
+// @expect: Hello, World!
+// @expect: YWI=
+// @expect: ab
+// @expect: YQ==
+// @expect: a
+
+import "std/base64"
+
+fn main(): i32 {
+    let e1 = base64Encode("Hello, World!")
+    print(e1)
+    print(base64Decode(e1))
+
+    let e2 = base64Encode("ab")
+    print(e2)
+    print(base64Decode(e2))
+
+    let e3 = base64Encode("a")
+    print(e3)
+    print(base64Decode(e3))
+    return 0
+}

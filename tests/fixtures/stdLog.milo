@@ -1,0 +1,12 @@
+// @expect: done
+
+import "std/log"
+
+fn main(): i32 {
+    logInfo("server starting")
+    logWarn("disk space low")
+    logError("connection failed")
+    logDebug("trace info")
+    print("done")
+    return 0
+}
