@@ -275,7 +275,7 @@ Goal: fill stdlib gaps exposed by writing real programs. Prioritized by how ofte
 
 ### Tier 2 — painful to work around
 
-- [ ] **std/fmt** — string interpolation / formatting (sprintf-style or template-based)
+- [x] **std/fmt** — {} template formatting (fmt1-fmt4), padLeft/Right, zeroPad, join
 - [x] **std/io additions** — splitLines, readLine (byte-by-byte stdin), readLines (file→Vec<string>)
 - [x] **std/strconv** — parseInt, parseFloat, parseIntRadix, i64ToHex/Oct/Bin, formatFloat
 - [x] **std/unicode** — ASCII char classification (isDigit, isAlpha, isWhitespace, isPunctuation, isHexDigit, etc.), case conversion
