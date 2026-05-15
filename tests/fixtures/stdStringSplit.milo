@@ -1,0 +1,32 @@
+// @expect: hello
+// @expect: world
+// @expect: foo
+// @expect: 3
+// @expect: hello world
+// @expect: aXbXc
+// @expect: abcabc
+// @expect: 6
+
+import "std/string"
+
+fn main(): i32 {
+    let parts = strSplit("hello,world,foo", ",")
+    for p in parts {
+        print(p)
+    }
+    print(parts.len)
+
+    let replaced = strReplace("hello-world", "-", " ")
+    print(replaced)
+
+    let r2 = strReplace("a_b_c", "_", "X")
+    print(r2)
+
+    let repeated = strRepeat("abc", 2)
+    print(repeated)
+
+    let idx = strIndexOf("hello world", "world")
+    print(idx)
+
+    return 0
+}

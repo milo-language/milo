@@ -1,0 +1,20 @@
+// @expect: HELLO WORLD
+// @expect: hello world
+// @expect: hello
+// @expect: hello
+// @expect: hello
+// @expect: 0
+// @expect: true
+
+import "std/string"
+
+fn main(): i32 {
+    print(strToUpper("hello world"))
+    print(strToLower("HELLO WORLD"))
+    print(strTrim("  hello  "))
+    print(strTrimStart("  hello  "))
+    print(strTrimEnd("  hello"))
+    print(strTrim("   ").len)
+    print(strContains("hello world", "world"))
+    return 0
+}
