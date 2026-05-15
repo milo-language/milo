@@ -29,8 +29,8 @@ let s = identity("hello")  // T inferred as string
 |----------|-------------|
 | `print(args...)` | Print with trailing newline |
 | `exit(code)` | Exit the process |
-| `json_stringify(val)` | Serialize a struct to JSON |
-| `embed_file(path)` | Embed file contents at compile time |
+| `jsonStringify(val)` | Serialize a struct to JSON |
+| `embedFile(path)` | Embed file contents at compile time |
 
 ## Reference parameters
 

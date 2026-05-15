@@ -145,8 +145,8 @@ let s = identity("hello")  // T inferred as string
 |----------|-------------|
 | `print(fmt, ...)` | Print formatted text with trailing newline |
 | `exit(code)` | Exit the process |
-| `json_stringify(val)` | Serialize a struct to JSON string |
-| `embed_file(path)` | Embed file contents as string at compile time |
+| `jsonStringify(val)` | Serialize a struct to JSON string |
+| `embedFile(path)` | Embed file contents as string at compile time |
 
 ---
 
@@ -861,8 +861,8 @@ fn main(): i32 {
 | Derive | `@derive(Eq)` |
 | Generic bound | `<T: Eq + Hash>` |
 | Cast | `expr as Type` |
-| Embed file | `embed_file("path")` |
-| JSON serialize | `json_stringify(struct_val)` |
+| Embed file | `embedFile("path")` |
+| JSON serialize | `jsonStringify(struct_val)` |
 | String slice | `s[start..end]` |
 | Number to string | `n.toString()` |
 | Bitwise | `& \| ^ << >> ~` |
