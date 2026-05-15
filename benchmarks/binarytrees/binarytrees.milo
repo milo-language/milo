@@ -4,9 +4,9 @@ enum Tree {
     Node(Box<Tree>, Box<Tree>),
 }
 
-fn make_tree(d: i32): Box<Tree> {
+fn makeTree(d: i32): Box<Tree> {
     if d <= 0 { return Box(Tree.Leaf) }
-    return Box(Tree.Node(make_tree(d - 1), make_tree(d - 1)))
+    return Box(Tree.Node(makeTree(d - 1), makeTree(d - 1)))
 }
 
 fn check(t: &Box<Tree>): i32 {
@@ -18,7 +18,7 @@ fn check(t: &Box<Tree>): i32 {
 
 fn main(): i32 {
     let depth: i32 = 15
-    let t = make_tree(depth)
+    let t = makeTree(depth)
     let c = check(t)
     print("depth ", depth, " check=", c)
     return 0

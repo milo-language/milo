@@ -6,7 +6,7 @@ import "codegen.milo"
 extern fn read(fd: i32, buf: &mut [u8; 262144], n: i64): i64
 extern fn write(fd: i32, buf: *u8, n: i64): i64
 
-fn read_stdin(): string {
+fn readStdin(): string {
     var buf: [u8; 262144] = [0; 262144]
     var s: string = ""
     var total: i64 = 0
@@ -25,7 +25,7 @@ fn read_stdin(): string {
     return s
 }
 
-fn write_str(s: &string): void {
+fn writeStr(s: &string): void {
     write(1, s, s.len)
 }
 
@@ -34,12 +34,12 @@ fn dbg(s: &string): void {
 }
 
 fn main(): i32 {
-    let src = read_stdin()
+    let src = readStdin()
     let toks = tokenize(src)
-    let prog = parse_program(src, toks)
-    var cg = cgen_new()
-    gen_program(cg, prog)
-    write_str(cg.globals)
-    write_str(cg.body)
+    let prog = parseProgram(src, toks)
+    var cg = cgenNew()
+    genProgram(cg, prog)
+    writeStr(cg.globals)
+    writeStr(cg.body)
     return 0
 }

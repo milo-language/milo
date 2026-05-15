@@ -2,15 +2,15 @@
 import "std/io"
 
 fn main(): i32 {
-    if _milo_arg_count() < 3 {
+    if _miloArgCount() < 3 {
         print("usage: grep <pattern> <file>")
         return 2
     }
-    let pat = _milo_arg_at(1)
-    let path = _milo_arg_at(2)
+    let pat = _miloArgAt(1)
+    let path = _miloArgAt(2)
 
     var content: string = ""
-    match read_file(path) {
+    match readFile(path) {
         Result.Ok(d) => { content = d }
         Result.Err(e) => {
             print("grep: ", e)
@@ -19,13 +19,13 @@ fn main(): i32 {
     }
 
     var count: i64 = 0
-    var line_start: i64 = 0
+    var lineStart: i64 = 0
     var pos: i64 = 0
     while pos <= content.len {
         if pos == content.len || content[pos] == 10 {
-            let line = content.substr(line_start, pos)
+            let line = content.substr(lineStart, pos)
             if line.contains(pat) { count = count + 1 }
-            line_start = pos + 1
+            lineStart = pos + 1
         }
         pos = pos + 1
     }

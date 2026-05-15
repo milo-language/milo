@@ -3,19 +3,19 @@ import "std/json"
 import "std/io"
 
 fn main(): i32 {
-    if _milo_arg_count() < 2 {
+    if _miloArgCount() < 2 {
         print("usage: json <file>")
         return 2
     }
     var content: string = ""
-    match read_file(_milo_arg_at(1)) {
+    match readFile(_miloArgAt(1)) {
         Result.Ok(d) => { content = d }
         Result.Err(e) => {
             print("err: ", e)
             return 1
         }
     }
-    let doc = json_parse(content)
+    let doc = jsonParse(content)
     var sum: f64 = 0.0
     var active: i64 = 0
     var n: i64 = 0

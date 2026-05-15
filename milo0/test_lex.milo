@@ -1,6 +1,6 @@
 import "lexer.milo"
 
-fn print_kind(k: TokKind): void {
+fn printKind(k: TokKind): void {
     match k {
         TokKind.Eof => { print("EOF") }
         TokKind.Ident => { print("IDENT") }
@@ -60,7 +60,7 @@ fn main(): i32 {
     while i < toks.len {
         let s = src[toks[i].start..toks[i].end]
         print("- ")
-        print_kind(toks[i].kind)
+        printKind(toks[i].kind)
         print(" [%s]\n", s)
         i = i + 1
     }
