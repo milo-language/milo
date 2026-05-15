@@ -3,6 +3,7 @@
 
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
+import { homedir } from "os";
 import type { Program } from "./ast";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
@@ -10,6 +11,39 @@ import { Parser } from "./parser";
 
 // repo root: walk up from src/ to find the directory containing std/
 const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
+const CACHE_DIR = resolve(homedir(), ".milo", "cache");
+
+// find milo.json by walking up from sourceDir
+function findManifest(startDir: string): Record<string, string> | null {
+  let dir = startDir;
+  for (let i = 0; i < 20; i++) {
+    const manifestPath = resolve(dir, "milo.json");
+    if (existsSync(manifestPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(manifestPath, "utf-8"));
+        return raw.deps ?? {};
+      } catch { return null; }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+// parse "github.com/user/repo@v1.0" → { host, path, version }
+function parsePkgUrl(url: string): { host: string; path: string; version: string } | null {
+  const atIdx = url.indexOf("@");
+  let version = "main";
+  let fullPath = url;
+  if (atIdx !== -1) {
+    version = url.slice(atIdx + 1);
+    fullPath = url.slice(0, atIdx);
+  }
+  const slashIdx = fullPath.indexOf("/");
+  if (slashIdx === -1) return null;
+  return { host: fullPath.slice(0, slashIdx), path: fullPath.slice(slashIdx + 1), version };
+}
 
 export function resolveImports(program: Program, sourceDir: string, target: TargetInfo): Program {
   const visited = new Set<string>();
@@ -19,8 +53,38 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   const traits = [...program.traits];
   const impls = [...program.impls];
 
+  const deps = findManifest(sourceDir);
+
   function resolvePath(dir: string, importPath: string): string {
     const withExt = importPath.endsWith(".milo") ? importPath : importPath + ".milo";
+
+    // check if import starts with a known package name from milo.json
+    if (deps) {
+      const firstSlash = importPath.indexOf("/");
+      const pkgName = firstSlash !== -1 ? importPath.slice(0, firstSlash) : importPath;
+      const pkgUrl = deps[pkgName];
+      if (pkgUrl) {
+        const parsed = parsePkgUrl(pkgUrl);
+        if (parsed) {
+          const cacheBase = resolve(CACHE_DIR, parsed.host, parsed.path, parsed.version);
+          // import "pkg/module" → ~/.milo/cache/host/org/repo/version/module.milo
+          const subPath = firstSlash !== -1 ? importPath.slice(firstSlash + 1) : "";
+          if (subPath) {
+            const pkgPath = resolve(cacheBase, subPath + ".milo");
+            if (existsSync(pkgPath)) return pkgPath;
+            const platformPath = resolve(cacheBase, `${subPath}.${target.os}.milo`);
+            if (existsSync(platformPath)) return platformPath;
+          } else {
+            // import "pkg" → look for pkg/lib.milo or pkg/pkg.milo
+            const libPath = resolve(cacheBase, "lib.milo");
+            if (existsSync(libPath)) return libPath;
+            const namedPath = resolve(cacheBase, `${pkgName}.milo`);
+            if (existsSync(namedPath)) return namedPath;
+          }
+        }
+      }
+    }
+
     let absPath = resolve(dir, withExt);
     if (!existsSync(absPath)) {
       // for stdlib paths, try platform-specific file first (e.g. platform.darwin.milo)
