@@ -1,0 +1,17 @@
+// @expect: count: 3
+// @expect: total: 6
+fn main(): i32 {
+    var m: HashMap<string, i32> = HashMap.new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    m.insert("c", 3)
+    var total: i32 = 0
+    var count: i32 = 0
+    for key, value in m {
+        total = total + value
+        count = count + 1
+    }
+    print("count: ", count)
+    print("total: ", total)
+    return 0
+}

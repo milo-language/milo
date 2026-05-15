@@ -64,9 +64,10 @@ export interface DefaultValue { kind: "DefaultValue"; operand: Expr; default: Ex
 export interface CastExpr { kind: "CastExpr"; operand: Expr; targetType: MiloType; span?: Span }
 export interface MethodCall { kind: "MethodCall"; object: Expr; method: string; args: Expr[]; span?: Span }
 export interface ClosureExpr { kind: "Closure"; params: Param[]; retType: MiloType | null; body: Stmt[]; span?: Span }
+export interface RangeExpr { kind: "RangeExpr"; start: Expr; end: Expr; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | ArrayRepeat | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr;
+  | StructLit | FieldAccess | ArrayLit | ArrayRepeat | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr | RangeExpr;
 
 // ── Statements ──
 
@@ -89,8 +90,9 @@ export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[];
 export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
 
 export interface UnsafeBlock { kind: "UnsafeBlock"; body: Stmt[]; span?: Span }
+export interface ForInStmt { kind: "ForInStmt"; varName: string; varName2: string | null; iterable: Expr; body: Stmt[]; span?: Span }
 
-export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | UnsafeBlock;
+export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | UnsafeBlock | ForInStmt;
 
 // ── Top-level ──
 

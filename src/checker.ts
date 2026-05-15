@@ -1050,6 +1050,111 @@ export class TypeChecker {
         }
         break;
       }
+      case "ForInStmt": {
+        if (stmt.iterable.kind === "RangeExpr") {
+          const startType = this.checkExpr(stmt.iterable.start);
+          const endType = this.checkExpr(stmt.iterable.end);
+          if (startType.tag !== "int" && startType.tag !== "unknown") {
+            this.error(`for range start must be an integer, got ${typeName(startType)}`, sp);
+          }
+          if (endType.tag !== "int" && endType.tag !== "unknown") {
+            this.error(`for range end must be an integer, got ${typeName(endType)}`, sp);
+          }
+          if (stmt.varName2) {
+            this.error("range for loop takes one binding, not two", sp);
+          }
+          const varType = startType.tag === "int" ? startType : endType;
+          this.setType(stmt.iterable, varType);
+          const preMoves = this.snapshotMoveState();
+          this.pushScope();
+          this.declare(stmt.varName, { type: varType, mutable: false, moved: false, borrowed: false });
+          this.loopDepth++;
+          for (const s of stmt.body) this.checkStmt(s, fnRetType);
+          this.loopDepth--;
+          this.popScope();
+          for (const scope of this.scopes) {
+            for (const [name, info] of scope) {
+              if (preMoves.get(info) === false && info.moved) {
+                this.error(`cannot move '${name}' out of a loop`, sp);
+              }
+            }
+          }
+        } else {
+          const iterType = this.checkExpr(stmt.iterable);
+          if (iterType.tag === "vec") {
+            if (stmt.varName2) {
+              this.error("vec for loop takes one binding, not two", sp);
+            }
+            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
+            // mark vec as borrowed to prevent mutation during iteration
+            if (stmt.iterable.kind === "Ident") {
+              const info = this.lookup(stmt.iterable.name);
+              if (info) info.borrowed = true;
+            }
+            const preMoves = this.snapshotMoveState();
+            this.pushScope();
+            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false });
+            this.loopDepth++;
+            for (const s of stmt.body) this.checkStmt(s, fnRetType);
+            this.loopDepth--;
+            this.popScope();
+            for (const scope of this.scopes) {
+              for (const [name, info] of scope) {
+                if (preMoves.get(info) === false && info.moved) {
+                  this.error(`cannot move '${name}' out of a loop`, sp);
+                }
+              }
+            }
+          } else if (iterType.tag === "string") {
+            if (stmt.varName2) {
+              this.error("string for loop takes one binding, not two", sp);
+            }
+            const byteType: TypeKind = { tag: "int", bits: 8, signed: false };
+            const preMoves = this.snapshotMoveState();
+            this.pushScope();
+            this.declare(stmt.varName, { type: byteType, mutable: false, moved: false, borrowed: false });
+            this.loopDepth++;
+            for (const s of stmt.body) this.checkStmt(s, fnRetType);
+            this.loopDepth--;
+            this.popScope();
+            for (const scope of this.scopes) {
+              for (const [name, info] of scope) {
+                if (preMoves.get(info) === false && info.moved) {
+                  this.error(`cannot move '${name}' out of a loop`, sp);
+                }
+              }
+            }
+          } else if (iterType.tag === "hashmap") {
+            const keyRef: TypeKind = { tag: "ref", inner: iterType.key, mutable: false };
+            const valRef: TypeKind = { tag: "ref", inner: iterType.value, mutable: false };
+            // mark map as borrowed
+            if (stmt.iterable.kind === "Ident") {
+              const info = this.lookup(stmt.iterable.name);
+              if (info) info.borrowed = true;
+            }
+            const preMoves = this.snapshotMoveState();
+            this.pushScope();
+            this.declare(stmt.varName, { type: keyRef, mutable: false, moved: false, borrowed: false });
+            if (stmt.varName2) {
+              this.declare(stmt.varName2, { type: valRef, mutable: false, moved: false, borrowed: false });
+            }
+            this.loopDepth++;
+            for (const s of stmt.body) this.checkStmt(s, fnRetType);
+            this.loopDepth--;
+            this.popScope();
+            for (const scope of this.scopes) {
+              for (const [name, info] of scope) {
+                if (preMoves.get(info) === false && info.moved) {
+                  this.error(`cannot move '${name}' out of a loop`, sp);
+                }
+              }
+            }
+          } else if (iterType.tag !== "unknown") {
+            this.error(`cannot iterate over type '${typeName(iterType)}'`, sp);
+          }
+        }
+        break;
+      }
       case "BreakStmt":
         if (this.loopDepth === 0) this.error("'break' outside of loop", sp);
         break;
@@ -2264,6 +2369,9 @@ export class TypeChecker {
         this.error(`type '${typeName(objType)}' has no method '${expr.method}'`, sp);
         return this.setType(expr, { tag: "unknown" });
       }
+      case "RangeExpr":
+        this.error("range expressions can only be used in 'for' loops", sp);
+        return this.setType(expr, { tag: "unknown" });
     }
   }
 

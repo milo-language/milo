@@ -68,7 +68,9 @@ export type HIRStmt =
   | { kind: "Continue"; span?: Span }
   | { kind: "ExprStmt"; expr: HIRExpr; span?: Span }
   | { kind: "Match"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; span?: Span }
-  | { kind: "UnsafeBlock"; body: HIRStmt[]; span?: Span };
+  | { kind: "UnsafeBlock"; body: HIRStmt[]; span?: Span }
+  | { kind: "ForRange"; varName: string; varType: TypeKind; start: HIRExpr; end: HIRExpr; body: HIRStmt[]; span?: Span }
+  | { kind: "ForEach"; varName: string; varName2: string | null; varType: TypeKind; varType2: TypeKind | null; iterable: HIRExpr; iterableKind: "vec" | "string" | "hashmap"; body: HIRStmt[]; span?: Span };
 
 export interface HIRMatchArm {
   pattern: HIRPattern;

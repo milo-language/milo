@@ -28,6 +28,7 @@ export enum TokenKind {
   Trait = "trait",
   Impl = "impl",
   For = "for",
+  In = "in",
   Unsafe = "unsafe",
   Null = "null",
   // symbols
@@ -89,5 +90,5 @@ export interface Token {
 export const KEYWORDS = new Set([
   "fn", "extern", "let", "var", "return", "if", "else", "while",
   "true", "false", "struct", "enum", "match", "mut", "import", "from",
-  "break", "continue", "as", "trait", "impl", "for", "unsafe", "null",
+  "break", "continue", "as", "trait", "impl", "for", "in", "unsafe", "null",
 ]);

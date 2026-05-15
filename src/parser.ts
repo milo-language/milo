@@ -358,6 +358,7 @@ export class Parser {
     if (this.at(TokenKind.Return)) return this.parseReturn();
     if (this.at(TokenKind.If)) return this.parseIf();
     if (this.at(TokenKind.While)) return this.parseWhile();
+    if (this.at(TokenKind.For)) return this.parseFor();
     if (this.at(TokenKind.Match)) return this.parseMatch();
     if (this.at(TokenKind.Break)) { const s = this.span(this.advance()); return { kind: "BreakStmt", span: s }; }
     if (this.at(TokenKind.Continue)) { const s = this.span(this.advance()); return { kind: "ContinueStmt", span: s }; }
@@ -456,6 +457,29 @@ export class Parser {
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
     return { kind: "WhileStmt", cond, body, span: s };
+  }
+
+  private parseFor(): Stmt {
+    const s = this.span(this.peek());
+    this.expect(TokenKind.For);
+    const varName = this.expect(TokenKind.Ident).value;
+    let varName2: string | null = null;
+    if (this.match(TokenKind.Comma)) {
+      varName2 = this.expect(TokenKind.Ident).value;
+    }
+    this.expect(TokenKind.In);
+    const iterableOrStart = this.parseExpr();
+    let iterable: Expr;
+    if (this.match(TokenKind.DotDot)) {
+      const end = this.parseExpr();
+      iterable = { kind: "RangeExpr", start: iterableOrStart, end, span: iterableOrStart.span };
+    } else {
+      iterable = iterableOrStart;
+    }
+    this.expect(TokenKind.LBrace);
+    const body = this.parseStmts();
+    this.expect(TokenKind.RBrace);
+    return { kind: "ForInStmt", varName, varName2, iterable, body, span: s };
   }
 
   // ── Match ──

@@ -475,6 +475,10 @@ export class Codegen {
         }
         return [lines, terminated];
       }
+      case "ForRange":
+        return this.genForRange(stmt);
+      case "ForEach":
+        return this.genForEach(stmt);
     }
   }
 
@@ -628,6 +632,289 @@ export class Codegen {
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
     return [lines, false];
+  }
+
+  private genForRange(stmt: HIRStmt & { kind: "ForRange" }): [string[], boolean] {
+    const lines: string[] = [];
+    const varTy = this.llvmType(stmt.varType);
+    const addrName = `%${stmt.varName}.addr`;
+    this.entryAllocas.push(`  ${addrName} = alloca ${varTy}`);
+    this.locals.set(stmt.varName, { type: varTy, typeKind: stmt.varType, mutable: false, isRef: false, addr: addrName });
+
+    const [startLines, startVal] = this.genExpr(stmt.start);
+    lines.push(...startLines);
+    lines.push(`  store ${varTy} ${startVal}, ptr ${addrName}`);
+
+    const [endLines, endVal] = this.genExpr(stmt.end);
+    lines.push(...endLines);
+
+    const condLabel = this.nextLabel("for.cond");
+    const bodyLabel = this.nextLabel("for.body");
+    const incrLabel = this.nextLabel("for.incr");
+    const endLabel = this.nextLabel("for.end");
+    const prevHeader = this.loopHeader;
+    const prevExit = this.loopExit;
+    // continue goes to increment, not condition
+    this.loopHeader = incrLabel;
+    this.loopExit = endLabel;
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+    const cur = this.nextTemp();
+    lines.push(`  ${cur} = load ${varTy}, ptr ${addrName}`);
+    const cmp = this.nextTemp();
+    const signed = stmt.varType.tag === "int" && stmt.varType.signed;
+    lines.push(`  ${cmp} = icmp ${signed ? "slt" : "ult"} ${varTy} ${cur}, ${endVal}`);
+    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+    lines.push(`${bodyLabel}:`);
+
+    let bodyTerminated = false;
+    for (const s of stmt.body) {
+      const [sl, t] = this.genStmt(s);
+      lines.push(...sl);
+      if (t) { bodyTerminated = true; break; }
+    }
+    if (!bodyTerminated) lines.push(`  br label %${incrLabel}`);
+
+    lines.push(`${incrLabel}:`);
+    const cur2 = this.nextTemp();
+    const next = this.nextTemp();
+    lines.push(`  ${cur2} = load ${varTy}, ptr ${addrName}`);
+    lines.push(`  ${next} = add ${varTy} ${cur2}, 1`);
+    lines.push(`  store ${varTy} ${next}, ptr ${addrName}`);
+    lines.push(`  br label %${condLabel}`);
+
+    lines.push(`${endLabel}:`);
+    this.loopHeader = prevHeader;
+    this.loopExit = prevExit;
+    return [lines, false];
+  }
+
+  private genForEach(stmt: HIRStmt & { kind: "ForEach" }): [string[], boolean] {
+    const lines: string[] = [];
+
+    if (stmt.iterableKind === "vec") {
+      // get pointer to the vec so we can extract data ptr and len
+      const [iterLines, iterAddr, iterTy] = this.genLValue(stmt.iterable);
+      lines.push(...iterLines);
+      const dataPtr = this.nextTemp();
+      const lenPtr = this.nextTemp();
+      const data = this.nextTemp();
+      const len = this.nextTemp();
+      lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${iterAddr}, i32 0, i32 0`);
+      lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+      lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${iterAddr}, i32 0, i32 1`);
+      lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+
+      const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+      lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+      const elemType = stmt.varType.tag === "ref" ? stmt.varType.inner : stmt.varType;
+      const elemTy = this.llvmType(elemType);
+      const varAddr = `%${stmt.varName}.addr`;
+      this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
+      this.locals.set(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: varAddr });
+
+      const condLabel = this.nextLabel("for.cond");
+      const bodyLabel = this.nextLabel("for.body");
+      const incrLabel = this.nextLabel("for.incr");
+      const endLabel = this.nextLabel("for.end");
+      const prevHeader = this.loopHeader;
+      const prevExit = this.loopExit;
+      this.loopHeader = incrLabel;
+      this.loopExit = endLabel;
+
+      lines.push(`  br label %${condLabel}`);
+      lines.push(`${condLabel}:`);
+      const idx = this.nextTemp();
+      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+      const cmp = this.nextTemp();
+      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+      lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+      lines.push(`${bodyLabel}:`);
+      const elemPtr = this.nextTemp();
+      lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+      lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
+
+      let bodyTerminated = false;
+      for (const s of stmt.body) {
+        const [sl, t] = this.genStmt(s);
+        lines.push(...sl);
+        if (t) { bodyTerminated = true; break; }
+      }
+      if (!bodyTerminated) lines.push(`  br label %${incrLabel}`);
+
+      lines.push(`${incrLabel}:`);
+      const nextIdx = this.nextTemp();
+      const curIdx = this.nextTemp();
+      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
+      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
+      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+      lines.push(`  br label %${condLabel}`);
+
+      lines.push(`${endLabel}:`);
+      this.loopHeader = prevHeader;
+      this.loopExit = prevExit;
+      return [lines, false];
+
+    } else if (stmt.iterableKind === "string") {
+      const [iterLines, iterAddr] = this.genLValue(stmt.iterable);
+      lines.push(...iterLines);
+      const dataPtr = this.nextTemp();
+      const lenPtr = this.nextTemp();
+      const data = this.nextTemp();
+      const len = this.nextTemp();
+      lines.push(`  ${dataPtr} = getelementptr %String, ptr ${iterAddr}, i32 0, i32 0`);
+      lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+      lines.push(`  ${lenPtr} = getelementptr %String, ptr ${iterAddr}, i32 0, i32 1`);
+      lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+
+      const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+      lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+      const varAddr = `%${stmt.varName}.addr`;
+      this.entryAllocas.push(`  ${varAddr} = alloca i8`);
+      this.locals.set(stmt.varName, { type: "i8", typeKind: { tag: "int", bits: 8, signed: false }, mutable: false, isRef: false, addr: varAddr });
+
+      const condLabel = this.nextLabel("for.cond");
+      const bodyLabel = this.nextLabel("for.body");
+      const incrLabel = this.nextLabel("for.incr");
+      const endLabel = this.nextLabel("for.end");
+      const prevHeader = this.loopHeader;
+      const prevExit = this.loopExit;
+      this.loopHeader = incrLabel;
+      this.loopExit = endLabel;
+
+      lines.push(`  br label %${condLabel}`);
+      lines.push(`${condLabel}:`);
+      const idx = this.nextTemp();
+      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+      const cmp = this.nextTemp();
+      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+      lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+      lines.push(`${bodyLabel}:`);
+      const bytePtr = this.nextTemp();
+      lines.push(`  ${bytePtr} = getelementptr i8, ptr ${data}, i64 ${idx}`);
+      const byte = this.nextTemp();
+      lines.push(`  ${byte} = load i8, ptr ${bytePtr}`);
+      lines.push(`  store i8 ${byte}, ptr ${varAddr}`);
+
+      let bodyTerminated = false;
+      for (const s of stmt.body) {
+        const [sl, t] = this.genStmt(s);
+        lines.push(...sl);
+        if (t) { bodyTerminated = true; break; }
+      }
+      if (!bodyTerminated) lines.push(`  br label %${incrLabel}`);
+
+      lines.push(`${incrLabel}:`);
+      const nextIdx = this.nextTemp();
+      const curIdx = this.nextTemp();
+      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
+      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
+      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+      lines.push(`  br label %${condLabel}`);
+
+      lines.push(`${endLabel}:`);
+      this.loopHeader = prevHeader;
+      this.loopExit = prevExit;
+      return [lines, false];
+
+    } else {
+      // hashmap iteration
+      const [iterLines, iterAddr] = this.genLValue(stmt.iterable);
+      lines.push(...iterLines);
+      const dataPtr = this.nextTemp();
+      const capPtr = this.nextTemp();
+      const data = this.nextTemp();
+      const cap = this.nextTemp();
+      lines.push(`  ${dataPtr} = getelementptr %HashMap, ptr ${iterAddr}, i32 0, i32 0`);
+      lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+      lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${iterAddr}, i32 0, i32 2`);
+      lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+
+      const keyType = stmt.varType.tag === "ref" ? stmt.varType.inner : stmt.varType;
+      const valType = stmt.varType2?.tag === "ref" ? stmt.varType2.inner : (stmt.varType2 ?? { tag: "void" as const });
+      const entryTy = this.hashMapEntryType(keyType, valType);
+      const keyTy = this.llvmType(keyType);
+      const valTy = this.llvmType(valType);
+
+      const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+      lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+      const keyVarAddr = `%${stmt.varName}.addr`;
+      this.entryAllocas.push(`  ${keyVarAddr} = alloca ptr`);
+      this.locals.set(stmt.varName, { type: keyTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: keyVarAddr });
+
+      if (stmt.varName2 && stmt.varType2) {
+        const valVarAddr = `%${stmt.varName2}.addr`;
+        this.entryAllocas.push(`  ${valVarAddr} = alloca ptr`);
+        this.locals.set(stmt.varName2, { type: valTy, typeKind: stmt.varType2, mutable: false, isRef: true, addr: valVarAddr });
+      }
+
+      const condLabel = this.nextLabel("for.cond");
+      const checkLabel = this.nextLabel("for.check");
+      const bodyLabel = this.nextLabel("for.body");
+      const nextLabel = this.nextLabel("for.next");
+      const endLabel = this.nextLabel("for.end");
+      const prevHeader = this.loopHeader;
+      const prevExit = this.loopExit;
+      this.loopHeader = nextLabel;
+      this.loopExit = endLabel;
+
+      lines.push(`  br label %${condLabel}`);
+      lines.push(`${condLabel}:`);
+      const idx = this.nextTemp();
+      lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+      const cmp = this.nextTemp();
+      lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${cap}`);
+      lines.push(`  br i1 ${cmp}, label %${checkLabel}, label %${endLabel}`);
+
+      lines.push(`${checkLabel}:`);
+      const entryPtr = this.nextTemp();
+      lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${data}, i64 ${idx}`);
+      const statePtr = this.nextTemp();
+      lines.push(`  ${statePtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 0`);
+      const state = this.nextTemp();
+      lines.push(`  ${state} = load i8, ptr ${statePtr}`);
+      const isOccupied = this.nextTemp();
+      lines.push(`  ${isOccupied} = icmp eq i8 ${state}, 1`);
+      lines.push(`  br i1 ${isOccupied}, label %${bodyLabel}, label %${nextLabel}`);
+
+      lines.push(`${bodyLabel}:`);
+      const keyPtr = this.nextTemp();
+      lines.push(`  ${keyPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
+      lines.push(`  store ptr ${keyPtr}, ptr ${keyVarAddr}`);
+      if (stmt.varName2) {
+        const valPtr = this.nextTemp();
+        lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
+        lines.push(`  store ptr ${valPtr}, ptr %${stmt.varName2}.addr`);
+      }
+
+      let bodyTerminated = false;
+      for (const s of stmt.body) {
+        const [sl, t] = this.genStmt(s);
+        lines.push(...sl);
+        if (t) { bodyTerminated = true; break; }
+      }
+      if (!bodyTerminated) lines.push(`  br label %${nextLabel}`);
+
+      lines.push(`${nextLabel}:`);
+      const nextIdx = this.nextTemp();
+      const curIdx = this.nextTemp();
+      lines.push(`  ${curIdx} = load i64, ptr ${idxAddr}`);
+      lines.push(`  ${nextIdx} = add i64 ${curIdx}, 1`);
+      lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+      lines.push(`  br label %${condLabel}`);
+
+      lines.push(`${endLabel}:`);
+      this.loopHeader = prevHeader;
+      this.loopExit = prevExit;
+      return [lines, false];
+    }
   }
 
   private genMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {

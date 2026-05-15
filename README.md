@@ -233,7 +233,7 @@ No runtime cost. The compiler rejects the program before it ever runs.
 Milo ships with CLI tools that compile to <300KB native binaries with sub-millisecond startup. String methods work like TypeScript — `s.contains()`, `s.split()`, `s.trim()`, `s.to_lower()`, `s.replace()` — no imports needed.
 
 ```
-// grep.milo — 80 lines, full featured
+// grep.milo
 import "std/argparse"
 import "std/io"
 
@@ -303,18 +303,19 @@ import "std/arena"
 
 struct DLNode {
     value: i64,
-    prev: Handle<DLNode>,
-    next: Handle<DLNode>,
-    has_prev: bool,
-    has_next: bool,
+    prev: Option<Handle<DLNode>>,
+    next: Option<Handle<DLNode>>,
 }
 
 fn main(): i32 {
-    var arena: Arena<DLNode> = Arena.new()
-    let a = arena.insert(DLNode { value: 1, has_prev: false, has_next: false, prev: Handle.null(), next: Handle.null() })
-    let b = arena.insert(DLNode { value: 2, has_prev: true,  has_next: false, prev: a, next: Handle.null() })
-    arena.get_mut(a).next = b
-    arena.get_mut(a).has_next = true
+    var arena: Arena<DLNode> = arena_new()
+    let a = arena_alloc(arena, DLNode { value: 1, prev: Option.None, next: Option.None })
+    let b = arena_alloc(arena, DLNode { value: 2, prev: Option.Some(a), next: Option.None })
+    arena_modify(arena, a, (n: DLNode) => {
+        var updated = n
+        updated.next = Option.Some(b)
+        return updated
+    })
     return 0
 }
 ```
@@ -346,23 +347,23 @@ Restart VS Code and open any `.milo` file.
 
 **CLI Tools** (`examples/cli-tools/`)
 
-| Program | Description | Lines |
-|---------|-------------|-------|
-| [grep](examples/cli-tools/grep.milo) | Pattern search with color highlighting, `-i`, `-n`, `-c`, `-v` | 115 |
-| [wc](examples/cli-tools/wc.milo) | Line/word/char counter | 85 |
-| [hex](examples/cli-tools/hex.milo) | Hex dump viewer with ASCII column | 100 |
-| [tree](examples/cli-tools/tree.milo) | Recursive directory tree with depth limiting | 95 |
-| [cat](examples/cli-tools/cat.milo) | File viewer with syntax highlighting | 330 |
-| [jq](examples/cli-tools/jq.milo) | JSON query tool (field access, array iteration) | 360 |
+| Program | Description |
+|---------|-------------|
+| [grep](examples/cli-tools/grep.milo) | Pattern search with color highlighting, `-i`, `-n`, `-c`, `-v` |
+| [wc](examples/cli-tools/wc.milo) | Line/word/char counter |
+| [hex](examples/cli-tools/hex.milo) | Hex dump viewer with ASCII column |
+| [tree](examples/cli-tools/tree.milo) | Recursive directory tree with depth limiting |
+| [cat](examples/cli-tools/cat.milo) | File viewer with syntax highlighting |
+| [jq](examples/cli-tools/jq.milo) | JSON query tool (field access, array iteration) |
 
 **Apps** (`examples/apps/`)
 
-| Program | Description | Lines |
-|---------|-------------|-------|
-| [serve](examples/apps/serve.milo) | Static file server with directory listing | 140 |
-| [http](examples/apps/http.milo) | HTTP client with JSON pretty-printing | 185 |
-| [webserver](examples/apps/webserver.milo) | HTTP server with routing | 236 |
-| [fetch](examples/apps/fetch.milo) | HTTP client with TLS | 40 |
+| Program | Description |
+|---------|-------------|
+| [serve](examples/apps/serve.milo) | Static file server with directory listing |
+| [http](examples/apps/http.milo) | HTTP client with JSON pretty-printing |
+| [webserver](examples/apps/webserver.milo) | HTTP server with routing |
+| [fetch](examples/apps/fetch.milo) | HTTP client with TLS |
 
 ## What Works Today
 

@@ -181,6 +181,49 @@ class LowerCtx {
           span: stmt.span,
         };
       }
+      case "ForInStmt": {
+        if (stmt.iterable.kind === "RangeExpr") {
+          const rangeType = this.typeOf(stmt.iterable) ?? { tag: "int" as const, bits: 32, signed: true };
+          return {
+            kind: "ForRange",
+            varName: stmt.varName,
+            varType: rangeType,
+            start: this.lowerExpr(stmt.iterable.start),
+            end: this.lowerExpr(stmt.iterable.end),
+            body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
+            span: stmt.span,
+          };
+        }
+        const iterType = this.typeOf(stmt.iterable);
+        let iterableKind: "vec" | "string" | "hashmap";
+        let varType: TypeKind;
+        let varType2: TypeKind | null = null;
+        if (iterType?.tag === "vec") {
+          iterableKind = "vec";
+          varType = { tag: "ref", inner: iterType.element, mutable: false };
+        } else if (iterType?.tag === "string") {
+          iterableKind = "string";
+          varType = { tag: "int", bits: 8, signed: false };
+        } else if (iterType?.tag === "hashmap") {
+          iterableKind = "hashmap";
+          varType = { tag: "ref", inner: iterType.key, mutable: false };
+          varType2 = { tag: "ref", inner: iterType.value, mutable: false };
+        } else {
+          iterableKind = "vec";
+          varType = { tag: "unknown" };
+        }
+        return {
+          kind: "ForEach",
+          varName: stmt.varName,
+          varName2: stmt.varName2,
+          varType,
+          varType2,
+          iterable: this.lowerExpr(stmt.iterable),
+          iterableKind,
+          body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
+          span: stmt.span,
+        };
+      }
     }
   }
 
@@ -484,6 +527,8 @@ class LowerCtx {
           span: expr.span,
         };
       }
+      case "RangeExpr":
+        throw new Error("RangeExpr should not appear in lowerExprRaw — handled by ForInStmt");
     }
   }
 

@@ -1,0 +1,14 @@
+// @expect: 0,0
+// @expect: 0,1
+// @expect: 1,0
+// @expect: 1,1
+// @expect: 2,0
+// @expect: 2,1
+fn main(): i32 {
+    for i in 0..3 {
+        for j in 0..2 {
+            print(i, ",", j)
+        }
+    }
+    return 0
+}

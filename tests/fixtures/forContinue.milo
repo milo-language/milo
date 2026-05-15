@@ -1,0 +1,14 @@
+// @expect: 1
+// @expect: 3
+// @expect: 5
+// @expect: 7
+// @expect: 9
+fn main(): i32 {
+    for i in 0..10 {
+        if i % 2 == 0 {
+            continue
+        }
+        print(i)
+    }
+    return 0
+}

@@ -1,0 +1,13 @@
+// @expect: 10
+// @expect: 20
+// @expect: 30
+fn main(): i32 {
+    var nums: Vec<i32> = Vec.new()
+    nums.push(10)
+    nums.push(20)
+    nums.push(30)
+    for n in nums {
+        print(n)
+    }
+    return 0
+}
