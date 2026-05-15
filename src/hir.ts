@@ -86,6 +86,7 @@ export interface HIRMatchArm {
 
 export type HIRPattern =
   | { kind: "EnumPattern"; variant: string; bindings: { name: string; type: TypeKind }[]; tag: number }
+  | { kind: "LiteralPattern"; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool" }
   | { kind: "WildcardPattern" };
 
 // ── Top-level ──

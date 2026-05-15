@@ -1002,16 +1002,119 @@ export class Codegen {
   }
 
   private genMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
+    const hasLiteralPattern = stmt.arms.some(a => a.pattern.kind === "LiteralPattern");
+    if (hasLiteralPattern) return this.genLiteralMatch(stmt);
+    return this.genEnumMatch(stmt);
+  }
+
+  private genLiteralMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
     const lines: string[] = [];
-    // Subject-source direct path: matching `match *box` writes the "zero payload after
-    // extraction" stores into the actual Box heap, not a staged copy. Without this, the
-    // staged copy + the source both end up owning the same field heaps and double-free
-    // when each drops independently.
+    const [subjLines, subjVal, subjTy] = this.genExpr(stmt.subject);
+    lines.push(...subjLines);
+
+    const endLabel = this.nextLabel("match.end");
+    let allArmsTerminated = true;
+
+    const literalArms: { label: string; nextLabel: string; arm: typeof stmt.arms[0] }[] = [];
+    let wildcardArm: typeof stmt.arms[0] | null = null;
+
+    for (const arm of stmt.arms) {
+      if (arm.pattern.kind === "WildcardPattern") {
+        wildcardArm = arm;
+      } else {
+        const label = this.nextLabel("match.arm");
+        literalArms.push({ label, nextLabel: "", arm });
+      }
+    }
+
+    // chain: compare → arm body or fall through to next comparison
+    for (let i = 0; i < literalArms.length; i++) {
+      const next = i + 1 < literalArms.length
+        ? this.nextLabel("match.cmp")
+        : wildcardArm
+          ? this.nextLabel("match.wildcard")
+          : this.nextLabel("match.default");
+      literalArms[i].nextLabel = next;
+
+      const pat = literalArms[i].arm.pattern;
+      if (pat.kind !== "LiteralPattern") continue;
+
+      let cmpVal: string;
+      if (pat.literalKind === "string") {
+        this.hasStringType = true;
+        const litStr = this.addString(String(pat.value));
+        const litVal = this.nextTemp();
+        lines.push(`  ${litVal} = insertvalue %String undef, ptr ${litStr.label}, 0`);
+        const litVal2 = this.nextTemp();
+        lines.push(`  ${litVal2} = insertvalue %String ${litVal}, i64 ${litStr.length - 1}, 1`);
+        const [, cmpResult] = this.genStringCmp(lines, subjVal, litVal2, true);
+        cmpVal = cmpResult;
+      } else if (pat.literalKind === "bool") {
+        const litVal = pat.value ? "1" : "0";
+        cmpVal = this.nextTemp();
+        lines.push(`  ${cmpVal} = icmp eq i1 ${subjVal}, ${litVal}`);
+      } else if (pat.literalKind === "int" || pat.literalKind === "char") {
+        cmpVal = this.nextTemp();
+        lines.push(`  ${cmpVal} = icmp eq ${subjTy} ${subjVal}, ${pat.value}`);
+      } else {
+        // float
+        cmpVal = this.nextTemp();
+        const fval = Number.isInteger(pat.value as number) ? (pat.value as number).toFixed(1) : String(pat.value);
+        lines.push(`  ${cmpVal} = fcmp oeq ${subjTy} ${subjVal}, ${fval}`);
+      }
+
+      lines.push(`  br i1 ${cmpVal}, label %${literalArms[i].label}, label %${next}`);
+
+      // arm body
+      lines.push(`${literalArms[i].label}:`);
+      let armTerminated = false;
+      for (const s of literalArms[i].arm.body) {
+        const [sl, t] = this.genStmt(s);
+        lines.push(...sl);
+        if (t) { armTerminated = true; break; }
+      }
+      if (!armTerminated) lines.push(`  br label %${endLabel}`);
+      if (!armTerminated) allArmsTerminated = false;
+
+      // next comparison block (or wildcard/default)
+      if (i + 1 < literalArms.length) {
+        lines.push(`${next}:`);
+      }
+    }
+
+    // wildcard or default
+    const lastNext = literalArms.length > 0 ? literalArms[literalArms.length - 1].nextLabel : this.nextLabel("match.wildcard");
+    if (wildcardArm) {
+      if (literalArms.length === 0) {
+        lines.push(`  br label %${lastNext}`);
+      }
+      lines.push(`${lastNext}:`);
+      let wcTerminated = false;
+      for (const s of wildcardArm.body) {
+        const [sl, t] = this.genStmt(s);
+        lines.push(...sl);
+        if (t) { wcTerminated = true; break; }
+      }
+      if (!wcTerminated) lines.push(`  br label %${endLabel}`);
+      if (!wcTerminated) allArmsTerminated = false;
+    } else {
+      if (literalArms.length === 0) {
+        lines.push(`  br label %${lastNext}`);
+      }
+      lines.push(`${lastNext}:`);
+      lines.push(`  unreachable`);
+    }
+
+    lines.push(`${endLabel}:`);
+    if (allArmsTerminated) lines.push(`  unreachable`);
+    return [lines, allArmsTerminated];
+  }
+
+  private genEnumMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
+    const lines: string[] = [];
     let subjAddr: string;
     let subjTy: string;
     if (stmt.subject.kind === "BoxDeref" && stmt.subject.operand.kind === "Ident") {
-      // Only handle the simple `match *ident` form; anything more complex falls through
-      // to the staged copy path (genExpr would synthesize an undef-laden ptr otherwise).
       const [boxLines, boxVal] = this.genExpr(stmt.subject.operand);
       lines.push(...boxLines);
       subjAddr = boxVal;
@@ -1043,7 +1146,7 @@ export class Codegen {
     for (const arm of stmt.arms) {
       if (arm.pattern.kind === "WildcardPattern") {
         wildcardArm = arm;
-      } else {
+      } else if (arm.pattern.kind === "EnumPattern") {
         const label = this.nextLabel(`match.${arm.pattern.variant}`);
         armLabels.push({ tag: arm.pattern.tag, label, arm });
       }

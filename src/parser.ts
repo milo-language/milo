@@ -509,6 +509,41 @@ export class Parser {
       this.advance();
       return { kind: "WildcardPattern", span: s };
     }
+    // Literal patterns: integers, floats, strings, chars, bools
+    if (tok.kind === TokenKind.Int) {
+      this.advance();
+      return { kind: "LiteralPattern", value: Number(tok.value), literalKind: "int", span: s };
+    }
+    if (tok.kind === TokenKind.Float) {
+      this.advance();
+      return { kind: "LiteralPattern", value: Number(tok.value), literalKind: "float", span: s };
+    }
+    if (tok.kind === TokenKind.String) {
+      this.advance();
+      return { kind: "LiteralPattern", value: tok.value, literalKind: "string", span: s };
+    }
+    if (tok.kind === TokenKind.Char) {
+      this.advance();
+      return { kind: "LiteralPattern", value: tok.value, literalKind: "char", span: s };
+    }
+    if (tok.kind === TokenKind.True) {
+      this.advance();
+      return { kind: "LiteralPattern", value: true, literalKind: "bool", span: s };
+    }
+    if (tok.kind === TokenKind.False) {
+      this.advance();
+      return { kind: "LiteralPattern", value: false, literalKind: "bool", span: s };
+    }
+    // Negative integer/float literal
+    if (tok.kind === TokenKind.Minus) {
+      const next = this.tokens[this.pos + 1];
+      if (next && (next.kind === TokenKind.Int || next.kind === TokenKind.Float)) {
+        this.advance(); // consume -
+        const numTok = this.advance();
+        const lk = numTok.kind === TokenKind.Int ? "int" as const : "float" as const;
+        return { kind: "LiteralPattern", value: -Number(numTok.value), literalKind: lk, span: s };
+      }
+    }
     const enumName = this.expect(TokenKind.Ident).value;
     this.expect(TokenKind.Dot);
     const variant = this.expect(TokenKind.Ident).value;

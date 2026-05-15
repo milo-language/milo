@@ -1212,22 +1212,62 @@ export class TypeChecker {
         break;
       case "MatchStmt": {
         const subjType = this.checkExpr(stmt.subject);
-        if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
-          this.error(`match subject must be an enum, got ${typeName(subjType)}`, sp);
+        const isEnum = subjType.tag === "enum";
+        const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";
+        if (!isEnum && !isLiteralType && subjType.tag !== "unknown") {
+          this.error(`match subject must be an enum, integer, float, string, or bool, got ${typeName(subjType)}`, sp);
           break;
         }
-        if (subjType.tag === "enum") {
-          const enumInfo = this.enums.get(subjType.name)!;
-          const covered = new Set<string>();
+        if (isLiteralType) {
           let hasWildcard = false;
-          // Treat arms as mutually exclusive for move tracking: snapshot before each arm,
-          // record any new moves, restore between arms, then merge the union at the end.
           const preMoves = this.snapshotMoveState();
           const mergedMoves = new Map<typeof preMoves extends Map<infer K, infer V> ? K : never, boolean>();
           for (const arm of stmt.arms) {
             if (arm.pattern.kind === "WildcardPattern") {
               hasWildcard = true;
-            } else {
+            } else if (arm.pattern.kind === "LiteralPattern") {
+              const ps = arm.pattern.span;
+              if (subjType.tag === "int" && arm.pattern.literalKind !== "int") {
+                this.error(`expected integer literal in match arm`, ps);
+              } else if (subjType.tag === "float" && arm.pattern.literalKind !== "float" && arm.pattern.literalKind !== "int") {
+                this.error(`expected numeric literal in match arm`, ps);
+              } else if (subjType.tag === "string" && arm.pattern.literalKind !== "string") {
+                this.error(`expected string literal in match arm`, ps);
+              } else if (subjType.tag === "bool" && arm.pattern.literalKind !== "bool") {
+                this.error(`expected bool literal in match arm`, ps);
+              }
+            } else if (arm.pattern.kind === "EnumPattern") {
+              this.error(`cannot use enum pattern when matching on ${typeName(subjType)}`, arm.pattern.span);
+            }
+            this.restoreMoveState(preMoves);
+            this.pushScope();
+            for (const s of arm.body) this.checkStmt(s, fnRetType);
+            this.popScope();
+            for (const [info, moved] of this.snapshotMoveState()) {
+              if (moved) mergedMoves.set(info, true);
+            }
+          }
+          this.restoreMoveState(preMoves);
+          for (const [info] of mergedMoves) info.moved = true;
+          if (!hasWildcard && subjType.tag === "bool") {
+            const hasTrueArm = stmt.arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === true);
+            const hasFalseArm = stmt.arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === false);
+            if (!hasTrueArm || !hasFalseArm) {
+              this.error(`non-exhaustive match on bool`, sp);
+            }
+          } else if (!hasWildcard) {
+            this.error(`match on ${typeName(subjType)} requires a wildcard '_' arm`, sp);
+          }
+        } else if (isEnum) {
+          const enumInfo = this.enums.get(subjType.name)!;
+          const covered = new Set<string>();
+          let hasWildcard = false;
+          const preMoves = this.snapshotMoveState();
+          const mergedMoves = new Map<typeof preMoves extends Map<infer K, infer V> ? K : never, boolean>();
+          for (const arm of stmt.arms) {
+            if (arm.pattern.kind === "WildcardPattern") {
+              hasWildcard = true;
+            } else if (arm.pattern.kind === "EnumPattern") {
               const ps = arm.pattern.span;
               if (arm.pattern.enumName !== subjType.name && enumInfo.baseName !== arm.pattern.enumName) {
                 this.error(`pattern enum '${arm.pattern.enumName}' does not match subject type '${subjType.name}'`, ps);
@@ -1244,6 +1284,8 @@ export class TypeChecker {
               if (arm.pattern.bindings.length !== variant.fields.length) {
                 this.error(`variant '${arm.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${arm.pattern.bindings.length} bindings`, ps);
               }
+            } else if (arm.pattern.kind === "LiteralPattern") {
+              this.error(`cannot use literal pattern when matching on enum`, arm.pattern.span);
             }
             this.restoreMoveState(preMoves);
             this.pushScope();

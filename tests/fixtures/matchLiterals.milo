@@ -1,0 +1,45 @@
+// @expect: one
+// @expect: other
+// @expect: negative
+// @expect: greeting
+// @expect: farewell
+// @expect: unknown
+// @expect: yes
+// @expect: no
+
+fn describeInt(n: i32): string {
+    match n {
+        0 => { return "zero" }
+        1 => { return "one" }
+        2 => { return "two" }
+        -1 => { return "negative" }
+        _ => { return "other" }
+    }
+}
+
+fn handleCmd(cmd: string): string {
+    match cmd {
+        "hello" => { return "greeting" }
+        "bye" => { return "farewell" }
+        _ => { return "unknown" }
+    }
+}
+
+fn yesNo(b: bool): string {
+    match b {
+        true => { return "yes" }
+        false => { return "no" }
+    }
+}
+
+fn main(): i32 {
+    print(describeInt(1))
+    print(describeInt(99))
+    print(describeInt(0 - 1))
+    print(handleCmd("hello"))
+    print(handleCmd("bye"))
+    print(handleCmd("other"))
+    print(yesNo(true))
+    print(yesNo(false))
+    return 0
+}

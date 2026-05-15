@@ -83,6 +83,7 @@ export interface ContinueStmt { kind: "ContinueStmt"; span?: Span }
 
 export type Pattern =
   | { kind: "EnumPattern"; enumName: string; variant: string; bindings: string[]; span?: Span }
+  | { kind: "LiteralPattern"; value: number | string | boolean; literalKind: "int" | "float" | "string" | "char" | "bool"; span?: Span }
   | { kind: "WildcardPattern"; span?: Span };
 
 export interface MatchArm { pattern: Pattern; body: Stmt[] }

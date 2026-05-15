@@ -232,6 +232,9 @@ class LowerCtx {
 
   private lowerPattern(pattern: Pattern, enumInfo?: EnumInfo): HIRPattern {
     if (pattern.kind === "WildcardPattern") return { kind: "WildcardPattern" };
+    if (pattern.kind === "LiteralPattern") {
+      return { kind: "LiteralPattern", value: pattern.value, literalKind: pattern.literalKind };
+    }
     const variant = enumInfo?.variants.get(pattern.variant);
     return {
       kind: "EnumPattern",
