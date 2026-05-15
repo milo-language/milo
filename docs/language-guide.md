@@ -168,8 +168,14 @@ let n = message.len
 // Byte indexing
 let first_byte = message[0]    // u8
 
-// Slicing: s[start..end] desugars to s.substr(start, end)
-let hello = message[0..5]
+// Slicing — zero-copy view (returns &string, no allocation)
+let hello = message[0..5]       // &string, borrows from message
+print(hello)                    // auto-deref: methods/print/indexing all work
+var view = message[0..3]
+view = message[3..5]            // reassignable, just updates the pointer
+
+// Owned copy — when you need a string that outlives the source
+let owned = message.substr(0, 5)  // allocates new string
 
 // Deep copy
 let copy = greeting.clone()
@@ -480,9 +486,9 @@ if condition {
 
 ## References (Second-Class)
 
-References can **only** appear as function parameters. They cannot be returned,
-stored in structs, or assigned to variables. This eliminates dangling references
-by construction — no lifetime annotations needed.
+References can appear as function parameters and local variables, but cannot be
+returned from functions or stored in structs/collections. This eliminates dangling
+references by construction — no lifetime annotations needed.
 
 ```milo
 // Immutable reference
@@ -497,6 +503,12 @@ fn double(x: &mut i32) {
 
 var n: i32 = 21
 double(n)          // n is now 42
+
+// Ref locals — zero-copy slices
+fn process(content: &string): void {
+    let header = content[0..80]   // &string slice, no allocation
+    print(header.len)             // auto-deref for methods/fields
+}
 ```
 
 **What you can't do:**

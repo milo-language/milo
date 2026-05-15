@@ -32,23 +32,33 @@ struct Vec2 { x: f64, y: f64 }
 impl Copy for Vec2 {}
 ```
 
-### 2. Second-Class References
+### 2. Second-Class References (No Lifetimes)
 
-References (`&T`, `&mut T`) can ONLY appear as function parameters. They cannot be returned, stored in structs, or assigned to variables. Dangling references are impossible by construction — no lifetime annotations needed.
+References (`&T`, `&mut T`) can appear as function parameters and local variables, but cannot be returned from functions or stored in structs/collections. Dangling references are impossible by construction — no lifetime annotations needed.
 
 ```
-fn length(v: &Vec2) -> f64 {
-    sqrt(v.x * v.x + v.y * v.y)
+fn process(content: &string): void {
+    let view = content[0..80]   // zero-copy &string slice (cap=0, no malloc)
+    let byte = view[0]          // indexing works through auto-deref
+    print(view.len)             // methods work through auto-deref
 }
 
-fn bad() -> &Vec2 {            // COMPILE ERROR: can't return a reference
+fn bad(): &string {             // COMPILE ERROR: can't return a reference
     // ...
 }
 
 struct Bad {
-    ref: &Vec2                  // COMPILE ERROR: can't store a reference
+    ref: &string                // COMPILE ERROR: can't store a reference
 }
 ```
+
+#### Why not lifetimes?
+
+We studied ~1,200 lifetime annotations across ripgrep and deno. Roughly 70% were zero-copy views into owned data — slicing a string, iterating a vec, passing a buffer to a function. Milo covers all of these with second-class refs + zero-copy slices + `for` loops.
+
+The remaining 30% are patterns like structs holding borrowed fields (`Parser<'a>` with `&'a str`), iterators yielding borrowed data, and `Cow<'a, T>`. These require lifetime annotations to express. Milo's answer: restructure around functions (pass `&string` as a param instead of storing it in a struct) or just own the data. This is slightly less flexible but eliminates an entire class of complexity.
+
+The tradeoff is real — you can't write `struct LineIter { source: &string }`. But the typical workaround (a function that takes `&string` and a callback, or a `for` loop) is 2-3 lines of difference, not a fundamental limitation. Most well-structured Rust code naturally gravitates toward this style anyway.
 
 ### 3. Bounds-Checked Arrays
 
@@ -127,7 +137,7 @@ Frontend: TypeScript (Bun). Backend: LLVM toolchain.
 | | Milo | Rust | C | Zig |
 |---|---|---|---|---|
 | Memory safety | Yes (moves + second-class refs) | Yes (lifetimes + borrow checker) | No | Partial |
-| Cyclic data | Easy (arenas) | Painful | Easy (unsafe) | Manual |
+| Cyclic data | Index-based or arenas | Painful | Easy (unsafe) | Manual |
 | Lifetime annotations | None | Required | N/A | None |
 | Learning curve | Low (goal) | High | Medium then deadly | Medium |
 | GC | No | No | No | No |
@@ -136,7 +146,7 @@ Frontend: TypeScript (Bun). Backend: LLVM toolchain.
 
 - **Traits** — nominal traits with monomorphized static dispatch, `impl Trait for Type`, inherent `impl Type`, generic bounds, supertraits, `@derive`. No vtables (dyn Trait deferred).
 - **Error handling** — `Result<T, E>` + `Option<T>` with `!` (unwrap), `?` (propagate), `??` (default). No try/catch.
-- **String type** — owned UTF-8 `{ ptr, len, cap }`, heap-allocated. `substr`, `clone`, `push`, `+`, `==`, byte indexing, slice sugar `s[a..b]`.
+- **String type** — owned UTF-8 `{ ptr, len, cap }`, heap-allocated. `s[a..b]` returns zero-copy `&string` slice (cap=0). `.substr(a, b)` for owned copy. `clone`, `push`, `+`, `==`, byte indexing, functional methods on Vec.
 - **Module/import system** — `import "path.milo"` and `from "path" import { names }`, recursive resolution, dedup.
 
 ## Open Questions
