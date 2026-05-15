@@ -84,14 +84,14 @@ fn area(s: Shape): f64 {
 Return `Result<T>` for fallible operations. Three ways to handle them:
 
 ```
-fn read_number(path: &string): Result<i64> {
-    let text = read_file(path)?     // ? propagates errors to caller
-    return text.trim().parse_i64()
+fn readNumber(path: &string): Result<i64> {
+    let text = readFile(path)?     // ? propagates errors to caller
+    return text.trim().parseI64()
 }
 
 fn main(): i32 {
-    let a = read_number("count.txt") ?? 0   // ?? uses a default
-    let b = read_number("count.txt")!       // ! unwraps (panics on error)
+    let a = readNumber("count.txt") ?? 0   // ?? uses a default
+    let b = readNumber("count.txt")!       // ! unwraps (panics on error)
     print(a + b)
     return 0
 }
@@ -106,8 +106,8 @@ enum AppError {
 }
 
 fn process(path: string): Result<i32, AppError> {
-    let text = read_file(path)?        // IoError -> AppError, automatic
-    let data = parse_json(text)?       // ParseError -> AppError, automatic
+    let text = readFile(path)?        // IoError -> AppError, automatic
+    let data = parseJson(text)?       // ParseError -> AppError, automatic
     return Result.Ok(data.len as i32)
 }
 ```
@@ -156,7 +156,7 @@ Owned UTF-8 buffers with built-in methods — no imports needed.
 
 ```
 let s = "Hello, World!"
-print(s.to_lower())           // "hello, world!"
+print(s.toLower())           // "hello, world!"
 print(s.contains("World"))    // true
 print(s.split(", ")[0])       // "Hello"
 print(s.replace("World", "Milo"))  // "Hello, Milo!"
@@ -233,8 +233,8 @@ Milo ships real CLI tools and apps as examples — all compile to small native b
 
 | Module | Highlights |
 |--------|-----------|
-| `std/io` | `read_file`, file handles with RAII |
-| `std/fs` | `read_dir`, `file_info`, `path_exists` |
+| `std/io` | `readFile`, file handles with RAII |
+| `std/fs` | `readDir`, `file_info`, `pathExists` |
 | `std/net` | TCP, DNS, `fetch` with TLS |
 | `std/http` | HTTP server with routing |
 | `std/json` | View-based JSON parser |

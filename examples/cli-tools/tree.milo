@@ -8,20 +8,20 @@ struct Counts {
     files: i64,
 }
 
-fn print_tree(dir_path: &string, prefix: &string, depth: i64, max_level: i64, counts: &mut Counts): void {
-    if max_level > 0 as i64 && depth >= max_level { return }
+fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, counts: &mut Counts): void {
+    if maxLevel > 0 as i64 && depth >= maxLevel { return }
 
-    let entries = read_dir(dir_path.clone())
+    let entries = readDir(dirPath.clone())
     var idx: i64 = 0
     while idx < entries.len {
         let name = entries[idx].name.clone()
-        let entry_is_dir = entries[idx].is_dir
-        let is_last = idx == entries.len - 1
+        let entryIsDir = entries[idx].isDir
+        let isLast = idx == entries.len - 1
 
         // use ASCII tree characters
         var connector: string = ""
         var extension: string = ""
-        if is_last {
+        if isLast {
             connector = "`-- "
             extension = "    "
         } else {
@@ -31,11 +31,11 @@ fn print_tree(dir_path: &string, prefix: &string, depth: i64, max_level: i64, co
 
         print(prefix, connector, name)
 
-        if entry_is_dir {
+        if entryIsDir {
             counts.dirs = counts.dirs + 1
-            let child_path = path_join(dir_path, name)
-            let child_prefix = prefix + extension
-            print_tree(child_path, child_prefix, depth + 1, max_level, counts)
+            let childPath = pathJoin(dirPath, name)
+            let childPrefix = prefix + extension
+            printTree(childPath, childPrefix, depth + 1, maxLevel, counts)
         } else {
             counts.files = counts.files + 1
         }
@@ -44,30 +44,30 @@ fn print_tree(dir_path: &string, prefix: &string, depth: i64, max_level: i64, co
 }
 
 fn main(): i32 {
-    var parser = new_parser("tree", "display directory tree")
-    parser.add_optional_positional("dir", "directory to display (default: .)")
-    parser.add_string("level", "L", "max display depth", "0")
+    var parser = newParser("tree", "display directory tree")
+    parser.addOptionalPositional("dir", "directory to display (default: .)")
+    parser.addString("level", "L", "max display depth", "0")
     let args = parser.parse()
 
     var root: string = "."
     if args.has("dir") {
-        root = args.get_string("dir")
+        root = args.getString("dir")
     }
 
-    let max_level = args.get_i64("level")
+    let maxLevel = args.getI64("level")
 
     print(root)
     var counts = Counts { dirs: 1, files: 0 }
     let prefix: string = ""
-    print_tree(root, prefix, 0 as i64, max_level, counts)
+    printTree(root, prefix, 0 as i64, maxLevel, counts)
 
-    var summary: string = "\n" + counts.dirs.to_string() + " director"
+    var summary: string = "\n" + counts.dirs.toString() + " director"
     if counts.dirs == 1 as i64 {
         summary = summary + "y"
     } else {
         summary = summary + "ies"
     }
-    summary = summary + ", " + counts.files.to_string() + " file"
+    summary = summary + ", " + counts.files.toString() + " file"
     if counts.files != 1 as i64 {
         summary = summary + "s"
     }

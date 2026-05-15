@@ -51,7 +51,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "format", "exit", "_milo_arg_count", "_milo_arg_at", "_cstr_to_string", "_load_u8", "_load_i32"]);
+  private static BUILTINS = new Set(["print", "format", "exit", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32"]);
   private needsArgGlobals = false;
 
   constructor(target: TargetInfo) { this.target = target; }
@@ -1171,7 +1171,7 @@ export class Codegen {
       lines.push(`  call void @exit(i32 ${av})`);
       return [lines, "void", "void"];
     }
-    if (expr.func === "_milo_arg_count") {
+    if (expr.func === "_miloArgCount") {
       this.needsArgGlobals = true;
       const raw = this.nextTemp();
       lines.push(`  ${raw} = load i32, ptr @_milo_argc_global`);
@@ -1179,21 +1179,21 @@ export class Codegen {
       lines.push(`  ${ext} = sext i32 ${raw} to i64`);
       return [lines, ext, "i64"];
     }
-    if (expr.func === "_load_u8") {
+    if (expr.func === "_loadU8") {
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
       const val = this.nextTemp();
       lines.push(`  ${val} = load i8, ptr ${pv}`);
       return [lines, val, "i8"];
     }
-    if (expr.func === "_load_i32") {
+    if (expr.func === "_loadI32") {
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
       const val = this.nextTemp();
       lines.push(`  ${val} = load i32, ptr ${pv}`);
       return [lines, val, "i32"];
     }
-    if (expr.func === "_cstr_to_string") {
+    if (expr.func === "_cstrToString") {
       this.needsMalloc = true;
       this.needsMemcpy = true;
       this.needsStrlen = true;
@@ -1220,7 +1220,7 @@ export class Codegen {
       lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${cap}, 2`);
       return [lines, s3, "%String"];
     }
-    if (expr.func === "_milo_arg_at") {
+    if (expr.func === "_miloArgAt") {
       this.needsArgGlobals = true;
       this.needsMalloc = true;
       this.needsMemcpy = true;
@@ -3023,7 +3023,7 @@ export class Codegen {
     return [lines, s2, "%String"];
   }
 
-  // n.to_string() / x.to_string() — snprintf into heap buffer, return owned %String
+  // n.toString() / x.toString() — snprintf into heap buffer, return owned %String
   private genNumberToString(expr: HIRExpr & { kind: "NumberToString" }, lines: string[]): [string[], string, string] {
     this.needsSnprintf = true;
     this.needsMalloc = true;
@@ -4184,7 +4184,7 @@ export class Codegen {
 
     const valueType = expr.valueType;
     if (valueType.tag !== "struct") {
-      throw new Error(`json_stringify: unsupported type '${valueType.tag}'`);
+      throw new Error(`jsonStringify: unsupported type '${valueType.tag}'`);
     }
 
     const layout = this.structLayouts.get(valueType.name)!;

@@ -13,7 +13,7 @@ struct Request {
 
 // HTTP response type.
 // Text/Html/Json set the content-type automatically.
-// Status(code, content_type, body) for custom responses.
+// Status(code, contentType, body) for custom responses.
 enum Response {
     Text(string),
     Html(string),
@@ -24,7 +24,7 @@ enum Response {
 
 // ── Internal helpers ──
 
-fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): string {
+fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string {
     var s: string = ""
     var i: i64 = start
     while i < end {
@@ -34,24 +34,24 @@ fn buf_to_str(buf: &[u8; 8192], start: i64, end: i64): string {
     return s
 }
 
-fn parse_request(buf: &[u8; 8192], n: i64): Request {
+fn parseRequest(buf: &[u8; 8192], n: i64): Request {
     var i: i64 = 0
     while i < n && buf[i] != ' ' {
         i = i + 1
     }
-    let method = buf_to_str(buf, 0, i)
+    let method = bufToStr(buf, 0, i)
     while i < n && buf[i] == ' ' {
         i = i + 1
     }
-    let path_start = i
+    let pathStart = i
     while i < n && buf[i] != ' ' {
         i = i + 1
     }
-    let path = buf_to_str(buf, path_start, i)
+    let path = bufToStr(buf, pathStart, i)
     return Request { method: method, path: path }
 }
 
-fn status_text(status: i32): string {
+fn statusText(status: i32): string {
     if status == 200 { return "200 OK" }
     if status == 201 { return "201 Created" }
     if status == 204 { return "204 No Content" }
@@ -62,10 +62,10 @@ fn status_text(status: i32): string {
     return "200 OK"
 }
 
-fn send_raw(fd: i32, status: i32, content_type: string, body: string): void {
-    var resp: string = "HTTP/1.1 " + status_text(status)
-    resp = resp + "\r\nContent-Type: " + content_type
-    resp = resp + "\r\nContent-Length: " + body.len.to_string()
+fn sendRaw(fd: i32, status: i32, contentType: string, body: string): void {
+    var resp: string = "HTTP/1.1 " + statusText(status)
+    resp = resp + "\r\nContent-Type: " + contentType
+    resp = resp + "\r\nContent-Length: " + body.len.toString()
     resp = resp + "\r\nConnection: close"
     resp = resp + "\r\nServer: milo"
     resp = resp + "\r\n\r\n"
@@ -73,22 +73,22 @@ fn send_raw(fd: i32, status: i32, content_type: string, body: string): void {
     unsafe { write(fd, resp, resp.len) }
 }
 
-fn send_response(fd: i32, response: Response): void {
+fn sendResponse(fd: i32, response: Response): void {
     match response {
         Response.Text(body) => {
-            send_raw(fd, 200, "text/plain; charset=utf-8", body)
+            sendRaw(fd, 200, "text/plain; charset=utf-8", body)
         }
         Response.Html(body) => {
-            send_raw(fd, 200, "text/html; charset=utf-8", body)
+            sendRaw(fd, 200, "text/html; charset=utf-8", body)
         }
         Response.Json(body) => {
-            send_raw(fd, 200, "application/json", body)
+            sendRaw(fd, 200, "application/json", body)
         }
         Response.NotFound => {
-            send_raw(fd, 404, "text/plain; charset=utf-8", "404 Not Found")
+            sendRaw(fd, 404, "text/plain; charset=utf-8", "404 Not Found")
         }
         Response.Status(code, ct, body) => {
-            send_raw(fd, code, ct, body)
+            sendRaw(fd, code, ct, body)
         }
     }
 }
@@ -124,22 +124,22 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let SIZEOF_SOCKADDR_IN: u32 = 16
 
     // port 0 tells the OS to pick a random available port
-    var bind_port: u16 = 0
+    var bindPort: u16 = 0
     if let Option.Some(p) = port {
-        bind_port = p
+        bindPort = p
     }
 
     unsafe {
-        let raw_fd = socket(AF_INET, SOCK_STREAM, 0)
-        if raw_fd < 0 {
+        let rawFd = socket(AF_INET, SOCK_STREAM, 0)
+        if rawFd < 0 {
             return Result.Err("socket() failed")
         }
-        let sock = Socket { fd: raw_fd }
+        let sock = Socket { fd: rawFd }
 
         var one: i32 = 1
-        setsockopt(sock.fd, sol_socket(), so_reuseaddr(), one, 4)
+        setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
 
-        var addr = make_sockaddr(bind_port, 0)
+        var addr = makeSockaddr(bindPort, 0)
 
         if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             return Result.Err("bind() failed")
@@ -149,30 +149,30 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
             return Result.Err("listen() failed")
         }
 
-        // retrieve actual port (needed when bind_port was 0)
-        var bound_addr = make_zeroed_sockaddr()
-        var bound_len: u32 = SIZEOF_SOCKADDR_IN
-        getsockname(sock.fd, bound_addr, bound_len)
-        let actual_port = ntohs(bound_addr.sin_port)
+        // retrieve actual port (needed when bindPort was 0)
+        var boundAddr = makeZeroedSockaddr()
+        var boundLen: u32 = SIZEOF_SOCKADDR_IN
+        getsockname(sock.fd, boundAddr, boundLen)
+        let actualPort = ntohs(boundAddr.sinPort)
 
-        print("listening on http://localhost:", actual_port)
+        print("listening on http://localhost:", actualPort)
 
         while true {
-            var client_addr = make_zeroed_sockaddr()
+            var clientAddr = makeZeroedSockaddr()
             var addrlen: u32 = SIZEOF_SOCKADDR_IN
-            let client_fd = accept(sock.fd, client_addr, addrlen)
-            if client_fd < 0 {
+            let clientFd = accept(sock.fd, clientAddr, addrlen)
+            if clientFd < 0 {
                 continue
             }
 
             var buf: [u8; 8192] = [0; 8192]
-            let n = read(client_fd, buf, BUF_SIZE)
+            let n = read(clientFd, buf, BUF_SIZE)
             if n > 0 {
-                let req = parse_request(buf, n)
+                let req = parseRequest(buf, n)
                 let resp = handler(req)
-                send_response(client_fd, resp)
+                sendResponse(clientFd, resp)
             }
-            close(client_fd)
+            close(clientFd)
         }
     }
     return Result.Err("server exited")

@@ -1,25 +1,25 @@
 // @expect: 16 2 8080
 
 struct SockAddrIn {
-    sin_len: u8,
-    sin_family: u8,
-    sin_port: u16,
-    sin_addr: u32,
-    sin_zero: [u8; 8],
+    sinLen: u8,
+    sinFamily: u8,
+    sinPort: u16,
+    sinAddr: u32,
+    sinZero: [u8; 8],
 }
 
 // simulates passing struct pointer to C — printf reads from the pointer
 fn dump(addr: &SockAddrIn): void {
-    print(addr.sin_len, " ", addr.sin_family, " ", addr.sin_port)
+    print(addr.sinLen, " ", addr.sinFamily, " ", addr.sinPort)
 }
 
 fn main(): i32 {
     var addr = SockAddrIn {
-        sin_len: 16,
-        sin_family: 2,
-        sin_port: 8080,
-        sin_addr: 0,
-        sin_zero: [0, 0, 0, 0, 0, 0, 0, 0],
+        sinLen: 16,
+        sinFamily: 2,
+        sinPort: 8080,
+        sinAddr: 0,
+        sinZero: [0, 0, 0, 0, 0, 0, 0, 0],
     }
     dump(addr)
     return 0

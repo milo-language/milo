@@ -40,18 +40,18 @@ import "std/argparse"
 import "std/io"
 
 fn main(): i32 {
-    var parser = new_parser("grep", "search for a string pattern in files")
-    parser.add_positional("pattern", "string pattern to search for")
-    parser.add_positional("file", "file to search")
-    parser.add_bool("ignore-case", "i", "case-insensitive search")
-    parser.add_bool("line-number", "n", "show line numbers")
-    parser.add_bool("count", "c", "only print count of matching lines")
+    var parser = newParser("grep", "search for a string pattern in files")
+    parser.addPositional("pattern", "string pattern to search for")
+    parser.addPositional("file", "file to search")
+    parser.addBool("ignore-case", "i", "case-insensitive search")
+    parser.addBool("line-number", "n", "show line numbers")
+    parser.addBool("count", "c", "only print count of matching lines")
     let args = parser.parse()
 
-    let pattern = args.get_string("pattern")
-    let filePath = args.get_string("file")
+    let pattern = args.getString("pattern")
+    let filePath = args.getString("file")
 
-    let content = read_file(filePath)!
+    let content = readFile(filePath)!
     let lines = content.split("\n")
 
     var lineNum: i64 = 0

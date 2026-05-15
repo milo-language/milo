@@ -1,21 +1,21 @@
 // @expect: contains: true false true
-// @expect: index_of: 6 -1 0
-// @expect: index_of_from: 14 -1
-// @expect: starts_with: true false
-// @expect: ends_with: true false
-// @expect: to_lower: hello world
-// @expect: to_upper: HELLO WORLD
+// @expect: indexOf: 6 -1 0
+// @expect: indexOfFrom: 14 -1
+// @expect: startsWith: true false
+// @expect: endsWith: true false
+// @expect: toLower: hello world
+// @expect: toUpper: HELLO WORLD
 // @expect: trim: [hello]
-// @expect: trim_start: [hello   ]
-// @expect: trim_end: [   hello]
+// @expect: trimStart: [hello   ]
+// @expect: trimEnd: [   hello]
 // @expect: split: [hello] [world] [foo] 3
-// @expect: split_char: [a] [b] [c] 3
+// @expect: splitChar: [a] [b] [c] 3
 // @expect: repeat: ababab
 // @expect: replace: hello universe
-// @expect: is_funcs: true true false true
+// @expect: isFuncs: true true false true
 import "std/string"
 
-fn bool_str(b: bool): string {
+fn boolStr(b: bool): string {
     if b { return "true" }
     return "false"
 }
@@ -24,51 +24,51 @@ fn main(): i32 {
     let s = "hello world"
 
     // contains
-    print("contains: ", bool_str(str_contains(s, "world")), " ", bool_str(str_contains(s, "xyz")), " ", bool_str(str_contains(s, "")))
+    print("contains: ", boolStr(strContains(s, "world")), " ", boolStr(strContains(s, "xyz")), " ", boolStr(strContains(s, "")))
 
-    // index_of
-    print("index_of: ", str_index_of(s, "world"), " ", str_index_of(s, "xyz"), " ", str_index_of(s, "hello"))
+    // indexOf
+    print("indexOf: ", strIndexOf(s, "world"), " ", strIndexOf(s, "xyz"), " ", strIndexOf(s, "hello"))
 
-    // index_of_from
+    // indexOfFrom
     let s2 = "hello world hello"
-    print("index_of_from: ", str_index_of_from(s2, "llo", 5 as i64), " ", str_index_of_from(s2, "xyz", 0 as i64))
+    print("indexOfFrom: ", strIndexOfFrom(s2, "llo", 5 as i64), " ", strIndexOfFrom(s2, "xyz", 0 as i64))
 
-    // starts_with
-    print("starts_with: ", bool_str(str_starts_with(s, "hello")), " ", bool_str(str_starts_with(s, "world")))
+    // startsWith
+    print("startsWith: ", boolStr(strStartsWith(s, "hello")), " ", boolStr(strStartsWith(s, "world")))
 
-    // ends_with
-    print("ends_with: ", bool_str(str_ends_with(s, "world")), " ", bool_str(str_ends_with(s, "hello")))
+    // endsWith
+    print("endsWith: ", boolStr(strEndsWith(s, "world")), " ", boolStr(strEndsWith(s, "hello")))
 
-    // to_lower / to_upper
-    let lower = str_to_lower("HELLO WORLD")
-    print("to_lower: ", lower)
-    let up = str_to_upper("hello world")
-    print("to_upper: ", up)
+    // toLower / toUpper
+    let lower = strToLower("HELLO WORLD")
+    print("toLower: ", lower)
+    let up = strToUpper("hello world")
+    print("toUpper: ", up)
 
     // trim
     let padded = "   hello   "
-    print("trim: [", str_trim(padded), "]")
-    print("trim_start: [", str_trim_start(padded), "]")
-    print("trim_end: [", str_trim_end(padded), "]")
+    print("trim: [", strTrim(padded), "]")
+    print("trimStart: [", strTrimStart(padded), "]")
+    print("trimEnd: [", strTrimEnd(padded), "]")
 
     // split
     let csv = "hello,world,foo"
-    let parts = str_split(csv, ",")
+    let parts = strSplit(csv, ",")
     print("split: [", parts[0], "] [", parts[1], "] [", parts[2], "] ", parts.len)
 
     // split by char
     let abc = "a:b:c"
-    let abc_parts = str_split(abc, ":")
-    print("split_char: [", abc_parts[0], "] [", abc_parts[1], "] [", abc_parts[2], "] ", abc_parts.len)
+    let abcParts = strSplit(abc, ":")
+    print("splitChar: [", abcParts[0], "] [", abcParts[1], "] [", abcParts[2], "] ", abcParts.len)
 
     // repeat
-    print("repeat: ", str_repeat("ab", 3))
+    print("repeat: ", strRepeat("ab", 3))
 
     // replace
-    print("replace: ", str_replace(s, "world", "universe"))
+    print("replace: ", strReplace(s, "world", "universe"))
 
     // is_* functions
-    print("is_funcs: ", bool_str(char_is_digit(48)), " ", bool_str(char_is_alpha(65)), " ", bool_str(char_is_whitespace(65)), " ", bool_str(char_is_alphanumeric(57)))
+    print("isFuncs: ", boolStr(charIsDigit(48)), " ", boolStr(charIsAlpha(65)), " ", boolStr(charIsWhitespace(65)), " ", boolStr(charIsAlphanumeric(57)))
 
     return 0
 }

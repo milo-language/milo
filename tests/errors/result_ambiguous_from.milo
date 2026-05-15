@@ -9,12 +9,12 @@ enum AppError {
     AlsoIo(IoError),
 }
 
-fn read_file(path: string): Result<string, IoError> {
+fn readFile(path: string): Result<string, IoError> {
     return Result.Ok(path)
 }
 
 fn process(path: string): Result<string, AppError> {
-    let s = read_file(path)?
+    let s = readFile(path)?
     return Result.Ok(s)
 }
 

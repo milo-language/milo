@@ -1,24 +1,24 @@
 // @expect: got 3
 // @expect: none
 
-fn get_name(ok: bool): string? {
+fn getName(ok: bool): string? {
     if !ok {
         return Option.None
     }
     return Option.Some("abc")
 }
 
-fn name_len(ok: bool): i32? {
-    let s = get_name(ok)?
+fn nameLen(ok: bool): i32? {
+    let s = getName(ok)?
     return Option.Some(s.len as i32)
 }
 
 fn main(): i32 {
-    match name_len(true) {
+    match nameLen(true) {
         Option.Some(n) => { print("got ", n) }
         Option.None => { print("none") }
     }
-    match name_len(false) {
+    match nameLen(false) {
         Option.Some(n) => { print("got ", n) }
         Option.None => { print("none") }
     }

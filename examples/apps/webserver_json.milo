@@ -15,7 +15,7 @@ fn handler(req: &Request): Response {
             version: 1,
             stable: true,
         }
-        return Response.Json(json_stringify(info))
+        return Response.Json(jsonStringify(info))
     }
     return Response.NotFound
 }

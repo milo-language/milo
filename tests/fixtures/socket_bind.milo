@@ -7,11 +7,11 @@ extern fn htons(hostshort: u16): u16
 extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
 struct SockAddrIn {
-    sin_len: u8,
-    sin_family: u8,
-    sin_port: u16,
-    sin_addr: u32,
-    sin_zero: [u8; 8],
+    sinLen: u8,
+    sinFamily: u8,
+    sinPort: u16,
+    sinAddr: u32,
+    sinZero: [u8; 8],
 }
 
 fn main(): i32 {
@@ -22,11 +22,11 @@ fn main(): i32 {
             return 1
         }
         var addr = SockAddrIn {
-            sin_len: 16,
-            sin_family: 2,
-            sin_port: htons(0),
-            sin_addr: 0,
-            sin_zero: [0, 0, 0, 0, 0, 0, 0, 0],
+            sinLen: 16,
+            sinFamily: 2,
+            sinPort: htons(0),
+            sinAddr: 0,
+            sinZero: [0, 0, 0, 0, 0, 0, 0, 0],
         }
         let result = bind(fd, addr, 16)
         if result == 0 {

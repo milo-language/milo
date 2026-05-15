@@ -1,5 +1,5 @@
 // @error: cannot open 'nonexistent.txt'
 fn main(): i32 {
-    let x = embed_file("nonexistent.txt")
+    let x = embedFile("nonexistent.txt")
     return 0
 }

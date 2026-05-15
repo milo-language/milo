@@ -285,7 +285,7 @@ class LowerCtx {
         if (expr.func === "Box") {
           return { kind: "BoxCreate", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
         }
-        if (expr.func === "embed_file") {
+        if (expr.func === "embedFile") {
           const path = (expr.args[0] as { value: string }).value;
           const absPath = resolve(this.sourceDir, path);
           if (!existsSync(absPath)) {
@@ -294,7 +294,7 @@ class LowerCtx {
           const contents = readFileSync(absPath, "utf-8");
           return { kind: "StringLit", value: contents, type: { tag: "string" as const }, span: expr.span };
         }
-        if (expr.func === "json_stringify") {
+        if (expr.func === "jsonStringify") {
           const argType = this.typeOf(expr.args[0]) ?? { tag: "unknown" as const };
           return { kind: "JsonStringify", value: this.lowerExpr(expr.args[0]), valueType: argType, type, span: expr.span };
         }
@@ -426,7 +426,7 @@ class LowerCtx {
         const rawObjType = this.typeOf(expr.object);
         // auto-deref `&T` so methods (.substr, .len, .clone, etc.) dispatch through slices
         const objType = rawObjType?.tag === "ref" ? rawObjType.inner : rawObjType;
-        if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "to_string") {
+        if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "toString") {
           return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
         }
         if (objType?.tag === "vec") {
@@ -482,7 +482,7 @@ class LowerCtx {
           if (expr.method === "slice") {
             return { kind: "StringSlice", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
-          if (expr.method === "parse_f64") {
+          if (expr.method === "parseF64") {
             return { kind: "StringParseF64", str: this.lowerExpr(expr.object), type, span: expr.span };
           }
           if (expr.method === "clone") {
@@ -490,11 +490,11 @@ class LowerCtx {
           }
           // methods delegated to std/string runtime functions
           const strMethodMap: Record<string, string> = {
-            "contains": "str_contains", "starts_with": "str_starts_with", "ends_with": "str_ends_with",
-            "index_of": "str_index_of", "split": "str_split", "trim": "str_trim",
-            "trim_start": "str_trim_start", "trim_end": "str_trim_end",
-            "to_lower": "str_to_lower", "to_upper": "str_to_upper",
-            "replace": "str_replace", "repeat": "str_repeat",
+            "contains": "strContains", "startsWith": "strStartsWith", "endsWith": "strEndsWith",
+            "indexOf": "strIndexOf", "split": "strSplit", "trim": "strTrim",
+            "trimStart": "strTrimStart", "trimEnd": "strTrimEnd",
+            "toLower": "strToLower", "toUpper": "strToUpper",
+            "replace": "strReplace", "repeat": "strRepeat",
           };
           const fnName = strMethodMap[expr.method];
           if (fnName) {

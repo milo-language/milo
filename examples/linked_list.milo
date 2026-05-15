@@ -14,26 +14,26 @@ struct DLList {
     len: i64,
 }
 
-fn new_list(): DLList {
+fn newList(): DLList {
     return DLList {
-        arena: arena_new(),
+        arena: arenaNew(),
         head: Option.None,
         tail: Option.None,
         len: 0,
     }
 }
 
-fn push_back(list: &mut DLList, value: i64) {
+fn pushBack(list: &mut DLList, value: i64) {
     let node = DLNode {
         value: value,
         prev: list.tail,
         next: Option.None,
     }
-    let h = arena_alloc(list.arena, node)
+    let h = arenaAlloc(list.arena, node)
 
     match list.tail {
-        Option.Some(tail_h) => {
-            arena_modify(list.arena, tail_h, (n: DLNode) => {
+        Option.Some(tailH) => {
+            arenaModify(list.arena, tailH, (n: DLNode) => {
                 var updated = n
                 updated.next = Option.Some(h)
                 return updated
@@ -48,17 +48,17 @@ fn push_back(list: &mut DLList, value: i64) {
     list.len = list.len + 1
 }
 
-fn push_front(list: &mut DLList, value: i64) {
+fn pushFront(list: &mut DLList, value: i64) {
     let node = DLNode {
         value: value,
         prev: Option.None,
         next: list.head,
     }
-    let h = arena_alloc(list.arena, node)
+    let h = arenaAlloc(list.arena, node)
 
     match list.head {
-        Option.Some(head_h) => {
-            arena_modify(list.arena, head_h, (n: DLNode) => {
+        Option.Some(headH) => {
+            arenaModify(list.arena, headH, (n: DLNode) => {
                 var updated = n
                 updated.prev = Option.Some(h)
                 return updated
@@ -73,7 +73,7 @@ fn push_front(list: &mut DLList, value: i64) {
     list.len = list.len + 1
 }
 
-fn print_forward(list: &DLList) {
+fn printForward(list: &DLList) {
     var cur = list.head
     var result: string = ""
 
@@ -81,10 +81,10 @@ fn print_forward(list: &DLList) {
     while !done {
         match cur {
             Option.Some(handle) => {
-                match arena_get(list.arena, handle) {
+                match arenaGet(list.arena, handle) {
                     Option.Some(node) => {
                         if result.len > 0 { result = result + " <-> " }
-                        result = result + node.value.to_string()
+                        result = result + node.value.toString()
                         cur = node.next
                     }
                     Option.None => { done = true }
@@ -96,7 +96,7 @@ fn print_forward(list: &DLList) {
     print(result)
 }
 
-fn print_backward(list: &DLList) {
+fn printBackward(list: &DLList) {
     var cur = list.tail
     var result: string = ""
 
@@ -104,10 +104,10 @@ fn print_backward(list: &DLList) {
     while !done {
         match cur {
             Option.Some(handle) => {
-                match arena_get(list.arena, handle) {
+                match arenaGet(list.arena, handle) {
                     Option.Some(node) => {
                         if result.len > 0 { result = result + " <-> " }
-                        result = result + node.value.to_string()
+                        result = result + node.value.toString()
                         cur = node.prev
                     }
                     Option.None => { done = true }
@@ -120,19 +120,19 @@ fn print_backward(list: &DLList) {
 }
 
 fn main(): i32 {
-    var list = new_list()
+    var list = newList()
 
-    push_back(list, 10)
-    push_back(list, 20)
-    push_back(list, 30)
-    push_front(list, 5)
-    push_front(list, 1)
+    pushBack(list, 10)
+    pushBack(list, 20)
+    pushBack(list, 30)
+    pushFront(list, 5)
+    pushFront(list, 1)
 
     print("forward:")
-    print_forward(list)
+    printForward(list)
 
     print("backward:")
-    print_backward(list)
+    printBackward(list)
 
     print("len: ", list.len)
 

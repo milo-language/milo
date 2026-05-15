@@ -6,37 +6,37 @@
 import "std/arena"
 
 fn main(): i32 {
-    var arena: Arena<i32> = arena_new()
-    let h = arena_alloc(arena, 10)
+    var arena: Arena<i32> = arenaNew()
+    let h = arenaAlloc(arena, 10)
 
-    match arena_get(arena, h) {
+    match arenaGet(arena, h) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
     // in-place increment via closure
-    arena_modify(arena, h, (v: i32) => v + 1)
-    match arena_get(arena, h) {
+    arenaModify(arena, h, (v: i32) => v + 1)
+    match arenaGet(arena, h) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
     // chain modifications
-    arena_modify(arena, h, (v: i32) => v * 2)
-    arena_modify(arena, h, (v: i32) => v - 1)
-    match arena_get(arena, h) {
+    arenaModify(arena, h, (v: i32) => v * 2)
+    arenaModify(arena, h, (v: i32) => v - 1)
+    match arenaGet(arena, h) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
     // stale handle — modify returns false, value unchanged
-    arena_free(arena, h)
-    let ok = arena_modify(arena, h, (v: i32) => v + 100)
+    arenaFree(arena, h)
+    let ok = arenaModify(arena, h, (v: i32) => v + 100)
     if ok { print("true") } else { print("false") }
 
     // re-alloc reuses slot but with bumped gen; old handle still stale
-    let h2 = arena_alloc(arena, 21)
-    match arena_get(arena, h2) {
+    let h2 = arenaAlloc(arena, 21)
+    match arenaGet(arena, h2) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }

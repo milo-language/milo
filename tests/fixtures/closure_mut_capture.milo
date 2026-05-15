@@ -1,14 +1,14 @@
 // closure mutating a captured var — visible outside
 
-fn call_it(f: () => void) {
+fn callIt(f: () => void) {
     f()
 }
 
 fn main(): i32 {
     var count: i32 = 0
-    call_it(() => { count = count + 1 })
-    call_it(() => { count = count + 1 })
-    call_it(() => { count = count + 1 })
+    callIt(() => { count = count + 1 })
+    callIt(() => { count = count + 1 })
+    callIt(() => { count = count + 1 })
     print(count)
     return 0
 }

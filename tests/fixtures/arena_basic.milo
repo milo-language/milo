@@ -6,32 +6,32 @@
 import "std/arena"
 
 fn main(): i32 {
-    var arena: Arena<i32> = arena_new()
-    let h1 = arena_alloc(arena, 42)
-    let h2 = arena_alloc(arena, 99)
+    var arena: Arena<i32> = arenaNew()
+    let h1 = arenaAlloc(arena, 42)
+    let h2 = arenaAlloc(arena, 99)
 
-    match arena_get(arena, h1) {
+    match arenaGet(arena, h1) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
-    arena_free(arena, h1)
+    arenaFree(arena, h1)
 
-    match arena_get(arena, h1) {
+    match arenaGet(arena, h1) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
-    match arena_get(arena, h2) {
+    match arenaGet(arena, h2) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
     // alloc reuses freed slot
-    let h3 = arena_alloc(arena, 100)
-    print(arena_len(arena))
+    let h3 = arenaAlloc(arena, 100)
+    print(arenaLen(arena))
 
-    match arena_get(arena, h3) {
+    match arenaGet(arena, h3) {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }

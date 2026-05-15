@@ -2,11 +2,11 @@
 from "std/args" import { args }
 
 struct FlagDef {
-    long_name: string,
-    short_name: string,
+    longName: string,
+    shortName: string,
     help: string,
-    default_val: string,
-    is_bool: bool,
+    defaultVal: string,
+    isBool: bool,
     required: bool,
 }
 
@@ -17,7 +17,7 @@ struct PositionalDef {
 }
 
 // Declarative command-line argument parser with auto-generated --help.
-// Create with new_parser(), add flags with add_string/add_bool/add_required,
+// Create with newParser(), add flags with addString/addBool/addRequired,
 // then call .parse() to get a ParsedArgs.
 struct ArgParser {
     name: string,
@@ -28,7 +28,7 @@ struct ArgParser {
 }
 
 // Parsed command-line arguments.
-// Access values with .get_string(), .get_i64(), .get_u16(), .get_bool().
+// Access values with .getString(), .getI64(), .getU16(), .getBool().
 // Check presence with .has(). Positional args in .positional field.
 struct ParsedArgs {
     prog: string,
@@ -43,7 +43,7 @@ struct ArgEntry {
 }
 
 // Create a new argument parser with a program name and description.
-fn new_parser(name: string, description: string): ArgParser {
+fn newParser(name: string, description: string): ArgParser {
     return ArgParser {
         name: name,
         description: description,
@@ -55,69 +55,69 @@ fn new_parser(name: string, description: string): ArgParser {
 
 impl ArgParser {
     // Add a string flag with long name, short alias, help text, and default.
-    // Example: parser.add_string("output", "o", "Output file", "out.txt")
-    fn add_string(self: &mut Self, long: string, short: string, help: string, default_val: string): void {
+    // Example: parser.addString("output", "o", "Output file", "out.txt")
+    fn addString(self: &mut Self, long: string, short: string, help: string, defaultVal: string): void {
         self.flags.push(FlagDef {
-            long_name: long,
-            short_name: short,
+            longName: long,
+            shortName: short,
             help: help,
-            default_val: default_val,
-            is_bool: false,
+            defaultVal: defaultVal,
+            isBool: false,
             required: false,
         })
     }
 
     // Add a required string flag. parse() exits with error if missing.
-    fn add_required(self: &mut Self, long: string, short: string, help: string): void {
+    fn addRequired(self: &mut Self, long: string, short: string, help: string): void {
         self.flags.push(FlagDef {
-            long_name: long,
-            short_name: short,
+            longName: long,
+            shortName: short,
             help: help,
-            default_val: "",
-            is_bool: false,
+            defaultVal: "",
+            isBool: false,
             required: true,
         })
     }
 
     // Add a boolean flag (present = true, absent = false).
-    fn add_bool(self: &mut Self, long: string, short: string, help: string): void {
+    fn addBool(self: &mut Self, long: string, short: string, help: string): void {
         self.flags.push(FlagDef {
-            long_name: long,
-            short_name: short,
+            longName: long,
+            shortName: short,
             help: help,
-            default_val: "",
-            is_bool: true,
+            defaultVal: "",
+            isBool: true,
             required: false,
         })
     }
 
     // Add a required positional argument.
-    fn add_positional(self: &mut Self, name: string, help: string): void {
+    fn addPositional(self: &mut Self, name: string, help: string): void {
         self.positionals.push(PositionalDef { name: name, help: help, required: true })
     }
 
     // Add an optional positional argument.
-    fn add_optional_positional(self: &mut Self, name: string, help: string): void {
+    fn addOptionalPositional(self: &mut Self, name: string, help: string): void {
         self.positionals.push(PositionalDef { name: name, help: help, required: false })
     }
 
     // Generate formatted help text for all registered flags.
-    fn help_text(self: &Self): string {
+    fn helpText(self: &Self): string {
         var text: string = self.name + " - " + self.description + "\n\n"
         if self.usage.len > 0 {
             text = text + "usage: " + self.usage + "\n\n"
         } else {
-            var usage_line: string = "usage: " + self.name + " [options]"
+            var usageLine: string = "usage: " + self.name + " [options]"
             var pi: i64 = 0
             while pi < self.positionals.len {
                 if self.positionals[pi].required {
-                    usage_line = usage_line + " <" + self.positionals[pi].name + ">"
+                    usageLine = usageLine + " <" + self.positionals[pi].name + ">"
                 } else {
-                    usage_line = usage_line + " [" + self.positionals[pi].name + "]"
+                    usageLine = usageLine + " [" + self.positionals[pi].name + "]"
                 }
                 pi = pi + 1
             }
-            text = text + usage_line + "\n\n"
+            text = text + usageLine + "\n\n"
         }
         if self.positionals.len > 0 {
             text = text + "arguments:\n"
@@ -138,21 +138,21 @@ impl ArgParser {
         var i: i64 = 0
         while i < self.flags.len {
             var fline: string = "  "
-            if self.flags[i].short_name.len > 0 {
-                fline = fline + "-" + self.flags[i].short_name + ", "
+            if self.flags[i].shortName.len > 0 {
+                fline = fline + "-" + self.flags[i].shortName + ", "
             } else {
                 fline = fline + "    "
             }
-            fline = fline + "--" + self.flags[i].long_name
-            if !self.flags[i].is_bool {
+            fline = fline + "--" + self.flags[i].longName
+            if !self.flags[i].isBool {
                 fline = fline + " <value>"
             }
             while fline.len < 30 {
                 fline = fline + " "
             }
             fline = fline + self.flags[i].help
-            if !self.flags[i].is_bool && self.flags[i].default_val.len > 0 {
-                fline = fline + " (default: " + self.flags[i].default_val + ")"
+            if !self.flags[i].isBool && self.flags[i].defaultVal.len > 0 {
+                fline = fline + " (default: " + self.flags[i].defaultVal + ")"
             }
             if self.flags[i].required {
                 fline = fline + " (required)"
@@ -178,8 +178,8 @@ impl ArgParser {
         var fi: i64 = 0
         while fi < self.flags.len {
             result.entries.push(ArgEntry {
-                name: self.flags[fi].long_name.clone(),
-                value: self.flags[fi].default_val.clone(),
+                name: self.flags[fi].longName.clone(),
+                value: self.flags[fi].defaultVal.clone(),
                 present: false,
             })
             fi = fi + 1
@@ -196,13 +196,13 @@ impl ArgParser {
             pi = pi + 1
         }
 
-        var pos_idx: i64 = 0
+        var posIdx: i64 = 0
         var i: i64 = 1
         while i < argv.len {
             let arg = argv[i]
 
             if arg == "--help" || arg == "-h" {
-                print(self.help_text())
+                print(self.helpText())
                 unsafe { exit(0) }
             }
 
@@ -210,34 +210,34 @@ impl ArgParser {
                 var matched: bool = false
                 var fi2: i64 = 0
                 while fi2 < self.flags.len {
-                    let long_flag = "--" + self.flags[fi2].long_name
-                    var is_match: bool = false
-                    if arg == long_flag {
-                        is_match = true
+                    let longFlag = "--" + self.flags[fi2].longName
+                    var isMatch: bool = false
+                    if arg == longFlag {
+                        isMatch = true
                     }
-                    if self.flags[fi2].short_name.len > 0 {
-                        let short_flag = "-" + self.flags[fi2].short_name
-                        if arg == short_flag {
-                            is_match = true
+                    if self.flags[fi2].shortName.len > 0 {
+                        let shortFlag = "-" + self.flags[fi2].shortName
+                        if arg == shortFlag {
+                            isMatch = true
                         }
                     }
 
-                    if is_match {
+                    if isMatch {
                         matched = true
-                        if self.flags[fi2].is_bool {
+                        if self.flags[fi2].isBool {
                             result.entries[fi2] = ArgEntry {
-                                name: self.flags[fi2].long_name.clone(),
+                                name: self.flags[fi2].longName.clone(),
                                 value: "true",
                                 present: true,
                             }
                         } else {
                             if i + 1 >= argv.len {
-                                print("error: --", self.flags[fi2].long_name, " requires a value\n\n", self.help_text())
+                                print("error: --", self.flags[fi2].longName, " requires a value\n\n", self.helpText())
                                 unsafe { exit(1) }
                             }
                             i = i + 1
                             result.entries[fi2] = ArgEntry {
-                                name: self.flags[fi2].long_name.clone(),
+                                name: self.flags[fi2].longName.clone(),
                                 value: argv[i].clone(),
                                 present: true,
                             }
@@ -247,20 +247,20 @@ impl ArgParser {
                 }
 
                 if !matched {
-                    print("error: unknown flag '", arg, "'\n\n", self.help_text())
+                    print("error: unknown flag '", arg, "'\n\n", self.helpText())
                     unsafe { exit(1) }
                 }
             } else {
                 result.positional.push(arg.clone())
                 // map to named positional entry
-                if pos_idx < self.positionals.len {
-                    let entry_idx = self.flags.len + pos_idx
-                    result.entries[entry_idx] = ArgEntry {
-                        name: self.positionals[pos_idx].name.clone(),
+                if posIdx < self.positionals.len {
+                    let entryIdx = self.flags.len + posIdx
+                    result.entries[entryIdx] = ArgEntry {
+                        name: self.positionals[posIdx].name.clone(),
                         value: arg.clone(),
                         present: true,
                     }
-                    pos_idx = pos_idx + 1
+                    posIdx = posIdx + 1
                 }
             }
 
@@ -271,7 +271,7 @@ impl ArgParser {
         var ri: i64 = 0
         while ri < self.flags.len {
             if self.flags[ri].required && !result.entries[ri].present {
-                print("error: --", self.flags[ri].long_name, " is required\n\n", self.help_text())
+                print("error: --", self.flags[ri].longName, " is required\n\n", self.helpText())
                 unsafe { exit(1) }
             }
             ri = ri + 1
@@ -281,9 +281,9 @@ impl ArgParser {
         var rp: i64 = 0
         while rp < self.positionals.len {
             if self.positionals[rp].required {
-                let entry_idx = self.flags.len + rp
-                if !result.entries[entry_idx].present {
-                    print("error: missing required argument <", self.positionals[rp].name, ">\n\n", self.help_text())
+                let entryIdx = self.flags.len + rp
+                if !result.entries[entryIdx].present {
+                    print("error: missing required argument <", self.positionals[rp].name, ">\n\n", self.helpText())
                     unsafe { exit(1) }
                 }
             }
@@ -296,7 +296,7 @@ impl ArgParser {
 
 // ── integer parsing helper ──
 
-fn _argparse_parse_i64(s: &string): i64 {
+fn _argparseParseI64(s: &string): i64 {
     var result: i64 = 0
     var neg: bool = false
     var i: i64 = 0
@@ -313,7 +313,7 @@ fn _argparse_parse_i64(s: &string): i64 {
     return result
 }
 
-fn _argparse_is_numeric(s: &string): bool {
+fn _argparseIsNumeric(s: &string): bool {
     var i: i64 = 0
     if s.len == 0 { return false }
     if s[0] == 45 { i = 1 }
@@ -328,7 +328,7 @@ fn _argparse_is_numeric(s: &string): bool {
 
 impl ParsedArgs {
     // Get the string value of a flag by its long name.
-    fn get_string(self: &Self, name: &string): string {
+    fn getString(self: &Self, name: &string): string {
         var i: i64 = 0
         while i < self.entries.len {
             if self.entries[i].name == name {
@@ -340,16 +340,16 @@ impl ParsedArgs {
     }
 
     // Get an integer value of a flag. Exits if the value is not numeric.
-    fn get_i64(self: &Self, name: &string): i64 {
+    fn getI64(self: &Self, name: &string): i64 {
         var i: i64 = 0
         while i < self.entries.len {
             if self.entries[i].name == name {
                 let val = self.entries[i].value.clone()
-                if !_argparse_is_numeric(val) {
+                if !_argparseIsNumeric(val) {
                     print("error: --", name, ": expected integer, got '", val, "'")
                     unsafe { exit(1) }
                 }
-                return _argparse_parse_i64(val)
+                return _argparseParseI64(val)
             }
             i = i + 1
         }
@@ -359,8 +359,8 @@ impl ParsedArgs {
     }
 
     // Get a u16 value of a flag. Exits if out of range 0..65535.
-    fn get_u16(self: &Self, name: &string): u16 {
-        let val = self.get_i64(name)
+    fn getU16(self: &Self, name: &string): u16 {
+        let val = self.getI64(name)
         if val < 0 || val > 65535 {
             print("error: --", name, ": value ", val, " out of range 0..65535")
             unsafe { exit(1) }
@@ -369,7 +369,7 @@ impl ParsedArgs {
     }
 
     // Check if a boolean flag was set.
-    fn get_bool(self: &Self, name: &string): bool {
+    fn getBool(self: &Self, name: &string): bool {
         var i: i64 = 0
         while i < self.entries.len {
             if self.entries[i].name == name && self.entries[i].present {

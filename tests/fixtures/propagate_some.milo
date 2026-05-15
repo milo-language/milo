@@ -1,12 +1,12 @@
 // @expect: 84
 
-fn try_double(opt: i32?): i32? {
+fn tryDouble(opt: i32?): i32? {
     let val = opt?
     return Option.Some(val * 2)
 }
 
 fn main(): i32 {
-    let result = try_double(Option.Some(42))
+    let result = tryDouble(Option.Some(42))
     print(result!)
     return 0
 }

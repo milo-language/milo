@@ -33,6 +33,6 @@
 | Embed file | `embed_file("path")` |
 | JSON serialize | `json_stringify(struct_val)` |
 | String slice | `s[start..end]` |
-| Number to string | `n.to_string()` |
+| Number to string | `n.toString()` |
 | Bitwise | `& \| ^ << >> ~` |
 | Hex / binary literal | `0xFF`, `0b1010` |

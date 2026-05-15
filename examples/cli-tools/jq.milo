@@ -2,7 +2,7 @@
 import "std/argparse"
 import "std/io"
 
-fn skip_ws(s: &string, start: i64): i64 {
+fn skipWs(s: &string, start: i64): i64 {
     var pos: i64 = start
     while pos < s.len {
         let ch = s[pos]
@@ -16,7 +16,7 @@ fn skip_ws(s: &string, start: i64): i64 {
 }
 
 // parse digits from string into an integer
-fn parse_i64(s: &string, start: i64, end: i64): i64 {
+fn parseI64(s: &string, start: i64, end: i64): i64 {
     var result: i64 = 0
     var i: i64 = start
     while i < end {
@@ -27,24 +27,24 @@ fn parse_i64(s: &string, start: i64, end: i64): i64 {
 }
 
 // find matching } or ] accounting for nesting and strings
-fn find_matching_brace(s: &string, start: i64): i64 {
+fn findMatchingBrace(s: &string, start: i64): i64 {
     let open = s[start]
     var close: u8 = 125
     if open == 91 { close = 93 }
     var depth: i64 = 1
     var pos: i64 = start + 1
-    var in_str: bool = false
+    var inStr: bool = false
     while pos < s.len && depth > 0 {
         let ch = s[pos]
-        if in_str {
+        if inStr {
             if ch == 92 {
                 pos = pos + 1
             } else if ch == 34 {
-                in_str = false
+                inStr = false
             }
         } else {
             if ch == 34 {
-                in_str = true
+                inStr = true
             } else if ch == open {
                 depth = depth + 1
             } else if ch == close {
@@ -57,7 +57,7 @@ fn find_matching_brace(s: &string, start: i64): i64 {
 }
 
 // extract decoded content of a JSON string (starting at the opening quote)
-fn extract_string_value(s: &string, start: i64): string {
+fn extractStringValue(s: &string, start: i64): string {
     var pos: i64 = start + 1
     var result: string = ""
     while pos < s.len {
@@ -82,7 +82,7 @@ fn extract_string_value(s: &string, start: i64): string {
 }
 
 // skip past a JSON string starting at the opening quote
-fn skip_string(s: &string, start: i64): i64 {
+fn skipString(s: &string, start: i64): i64 {
     var pos: i64 = start + 1
     while pos < s.len {
         let ch = s[pos]
@@ -98,10 +98,10 @@ fn skip_string(s: &string, start: i64): i64 {
 }
 
 // skip past any JSON value (string, object, array, or primitive)
-fn skip_value(s: &string, pos: i64): i64 {
+fn skipValue(s: &string, pos: i64): i64 {
     let ch = s[pos]
-    if ch == 34 { return skip_string(s, pos) }
-    if ch == 123 || ch == 91 { return find_matching_brace(s, pos) }
+    if ch == 34 { return skipString(s, pos) }
+    if ch == 123 || ch == 91 { return findMatchingBrace(s, pos) }
     var p: i64 = pos
     while p < s.len {
         let c = s[p]
@@ -114,40 +114,40 @@ fn skip_value(s: &string, pos: i64): i64 {
 }
 
 // extract raw JSON text for the value at pos
-fn extract_raw(s: &string, pos: i64): string {
-    var p: i64 = skip_ws(s, pos)
+fn extractRaw(s: &string, pos: i64): string {
+    var p: i64 = skipWs(s, pos)
     if p >= s.len { return "" }
-    let end = skip_value(s, p)
+    let end = skipValue(s, p)
     return s.substr(p, end)
 }
 
 // find a field in a JSON object, return its raw value
-fn find_field(json: &string, field: &string): string {
-    var pos: i64 = skip_ws(json, 0 as i64)
+fn findField(json: &string, field: &string): string {
+    var pos: i64 = skipWs(json, 0 as i64)
     if pos >= json.len || json[pos] != 123 {
         print("jq: expected object for field '.", field, "'")
         return "null"
     }
     pos = pos + 1
     while pos < json.len {
-        pos = skip_ws(json, pos)
+        pos = skipWs(json, pos)
         if pos >= json.len || json[pos] == 125 { break }
         if json[pos] != 34 {
             pos = pos + 1
             continue
         }
-        let key = extract_string_value(json, pos)
-        pos = skip_string(json, pos)
-        pos = skip_ws(json, pos)
+        let key = extractStringValue(json, pos)
+        pos = skipString(json, pos)
+        pos = skipWs(json, pos)
         if pos < json.len && json[pos] == 58 {
             pos = pos + 1
         }
-        pos = skip_ws(json, pos)
+        pos = skipWs(json, pos)
         if key == field {
-            return extract_raw(json, pos)
+            return extractRaw(json, pos)
         }
-        pos = skip_value(json, pos)
-        pos = skip_ws(json, pos)
+        pos = skipValue(json, pos)
+        pos = skipWs(json, pos)
         if pos < json.len && json[pos] == 44 {
             pos = pos + 1
         }
@@ -156,20 +156,20 @@ fn find_field(json: &string, field: &string): string {
 }
 
 // collect all elements of a JSON array as raw value strings
-fn collect_array(json: &string, out: &mut Vec<string>): bool {
-    var pos: i64 = skip_ws(json, 0 as i64)
+fn collectArray(json: &string, out: &mut Vec<string>): bool {
+    var pos: i64 = skipWs(json, 0 as i64)
     if pos >= json.len || json[pos] != 91 {
         print("jq: expected array for '[]'")
         return false
     }
     pos = pos + 1
     while pos < json.len {
-        pos = skip_ws(json, pos)
+        pos = skipWs(json, pos)
         if pos >= json.len || json[pos] == 93 { break }
-        let val = extract_raw(json, pos)
+        let val = extractRaw(json, pos)
         out.push(val)
-        pos = skip_value(json, skip_ws(json, pos))
-        pos = skip_ws(json, pos)
+        pos = skipValue(json, skipWs(json, pos))
+        pos = skipWs(json, pos)
         if pos < json.len && json[pos] == 44 {
             pos = pos + 1
         }
@@ -178,8 +178,8 @@ fn collect_array(json: &string, out: &mut Vec<string>): bool {
 }
 
 // index into a JSON array, return raw value at idx
-fn index_array(json: &string, idx: i64): string {
-    var pos: i64 = skip_ws(json, 0 as i64)
+fn indexArray(json: &string, idx: i64): string {
+    var pos: i64 = skipWs(json, 0 as i64)
     if pos >= json.len || json[pos] != 91 {
         print("jq: expected array for indexing")
         return "null"
@@ -187,13 +187,13 @@ fn index_array(json: &string, idx: i64): string {
     pos = pos + 1
     var cur: i64 = 0
     while pos < json.len {
-        pos = skip_ws(json, pos)
+        pos = skipWs(json, pos)
         if pos >= json.len || json[pos] == 93 { break }
         if cur == idx {
-            return extract_raw(json, pos)
+            return extractRaw(json, pos)
         }
-        pos = skip_value(json, skip_ws(json, pos))
-        pos = skip_ws(json, pos)
+        pos = skipValue(json, skipWs(json, pos))
+        pos = skipWs(json, pos)
         if pos < json.len && json[pos] == 44 {
             pos = pos + 1
         }
@@ -203,25 +203,25 @@ fn index_array(json: &string, idx: i64): string {
 }
 
 // step appliers — extracted to avoid a codegen bug with nested loops in main
-fn apply_fields(values: &Vec<string>, field: &string): Vec<string> {
+fn applyFields(values: &Vec<string>, field: &string): Vec<string> {
     var next: Vec<string> = Vec.new()
     var vi: i64 = 0
     while vi < values.len {
         let v = values[vi].clone()
-        let result = find_field(v, field)
+        let result = findField(v, field)
         next.push(result)
         vi = vi + 1
     }
     return next
 }
 
-fn apply_iterate(values: &Vec<string>): Vec<string> {
+fn applyIterate(values: &Vec<string>): Vec<string> {
     var next: Vec<string> = Vec.new()
     var vi: i64 = 0
     while vi < values.len {
         let v = values[vi].clone()
         var items: Vec<string> = Vec.new()
-        let ok = collect_array(v, items)
+        let ok = collectArray(v, items)
         var ji: i64 = 0
         while ji < items.len {
             next.push(items[ji].clone())
@@ -232,12 +232,12 @@ fn apply_iterate(values: &Vec<string>): Vec<string> {
     return next
 }
 
-fn apply_index(values: &Vec<string>, idx: i64): Vec<string> {
+fn applyIndex(values: &Vec<string>, idx: i64): Vec<string> {
     var next: Vec<string> = Vec.new()
     var vi: i64 = 0
     while vi < values.len {
         let v = values[vi].clone()
-        let result = index_array(v, idx)
+        let result = indexArray(v, idx)
         next.push(result)
         vi = vi + 1
     }
@@ -245,7 +245,7 @@ fn apply_index(values: &Vec<string>, idx: i64): Vec<string> {
 }
 
 // parse ".foo.bar[].baz[0]" into steps: ["foo", "bar", "[]", "baz", "[0]"]
-fn parse_filter(filter: &string): Vec<string> {
+fn parseFilter(filter: &string): Vec<string> {
     var steps: Vec<string> = Vec.new()
     var fpos: i64 = 0
     if fpos < filter.len && filter[fpos] == 46 {
@@ -258,13 +258,13 @@ fn parse_filter(filter: &string): Vec<string> {
             if fpos < filter.len && filter[fpos] == 46 { fpos = fpos + 1 }
         } else if filter[fpos] == 91 {
             fpos = fpos + 1
-            var idx_str: string = ""
+            var idxStr: string = ""
             while fpos < filter.len && filter[fpos] != 93 {
-                idx_str.push(filter[fpos])
+                idxStr.push(filter[fpos])
                 fpos = fpos + 1
             }
             if fpos < filter.len { fpos = fpos + 1 }
-            let step = "[" + idx_str + "]"
+            let step = "[" + idxStr + "]"
             steps.push(step)
             if fpos < filter.len && filter[fpos] == 46 { fpos = fpos + 1 }
         } else {
@@ -282,7 +282,7 @@ fn parse_filter(filter: &string): Vec<string> {
     return steps
 }
 
-fn output_value(val: &string, raw: bool): void {
+fn outputValue(val: &string, raw: bool): void {
     if raw && val.len >= 2 && val[0] == 34 && val[val.len - 1] == 34 {
         print(val.substr(1 as i64, val.len - 1))
     } else {
@@ -291,18 +291,18 @@ fn output_value(val: &string, raw: bool): void {
 }
 
 fn main(): i32 {
-    var parser = new_parser("jq", "a minimal JSON query tool")
-    parser.add_positional("filter", "jq filter expression (e.g. .foo.bar)")
-    parser.add_optional_positional("file", "JSON file (default: stdin)")
-    parser.add_bool("raw-output", "r", "output raw strings without quotes")
+    var parser = newParser("jq", "a minimal JSON query tool")
+    parser.addPositional("filter", "jq filter expression (e.g. .foo.bar)")
+    parser.addOptionalPositional("file", "JSON file (default: stdin)")
+    parser.addBool("raw-output", "r", "output raw strings without quotes")
     let args = parser.parse()
 
-    let filter = args.get_string("filter")
-    let raw = args.get_bool("raw-output")
+    let filter = args.getString("filter")
+    let raw = args.getBool("raw-output")
 
     var content: string = ""
     if args.has("file") {
-        match read_file(args.get_string("file")) {
+        match readFile(args.getString("file")) {
             Result.Ok(data) => { content = data }
             Result.Err(e) => {
                 print("jq: ", e)
@@ -310,7 +310,7 @@ fn main(): i32 {
             }
         }
     } else {
-        content = read_stdin()
+        content = readStdin()
     }
 
     let input = content.trim()
@@ -325,33 +325,33 @@ fn main(): i32 {
         return 0
     }
 
-    let steps = parse_filter(filter)
+    let steps = parseFilter(filter)
 
     // apply steps iteratively
     var values: Vec<string> = Vec.new()
     values.push(input.clone())
 
-    var step_i: i64 = 0
-    while step_i < steps.len {
-        let step = steps[step_i].clone()
+    var stepI: i64 = 0
+    while stepI < steps.len {
+        let step = steps[stepI].clone()
 
         if step == "[]" {
-            values = apply_iterate(values)
+            values = applyIterate(values)
         } else if step[0] == 91 {
-            let idx_part = step.substr(1 as i64, step.len - 1)
-            let idx = parse_i64(idx_part, 0 as i64, idx_part.len)
-            values = apply_index(values, idx)
+            let idxPart = step.substr(1 as i64, step.len - 1)
+            let idx = parseI64(idxPart, 0 as i64, idxPart.len)
+            values = applyIndex(values, idx)
         } else {
-            values = apply_fields(values, step)
+            values = applyFields(values, step)
         }
 
-        step_i = step_i + 1
+        stepI = stepI + 1
     }
 
     var ri: i64 = 0
     while ri < values.len {
         let v = values[ri].clone()
-        output_value(v, raw)
+        outputValue(v, raw)
         ri = ri + 1
     }
 

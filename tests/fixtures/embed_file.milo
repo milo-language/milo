@@ -1,6 +1,6 @@
 // @expect: hello from embedded file
 fn main(): i32 {
-    let content = embed_file("lib/hello.txt")
+    let content = embedFile("lib/hello.txt")
     print(content)
     return 0
 }

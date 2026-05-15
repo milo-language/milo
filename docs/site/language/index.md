@@ -18,7 +18,7 @@ fn main(): i32 {
     items.push("hello")
     items.push("world")
 
-    let upper = items.map((s: &string) => s.to_upper())
+    let upper = items.map((s: &string) => s.toUpper())
     for s in upper {
         print(s)
     }

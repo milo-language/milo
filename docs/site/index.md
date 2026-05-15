@@ -31,7 +31,7 @@ fn main(): i32 {
     names.push("alice")
     names.push("bob")
 
-    let loud = names.map((n: &string) => n.to_upper())
+    let loud = names.map((n: &string) => n.toUpper())
     for name in loud {
         print(name)
     }

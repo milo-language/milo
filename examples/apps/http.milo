@@ -4,7 +4,7 @@ import "std/net"
 import "std/io"
 import "std/fs"
 
-fn status_text(code: i32): string {
+fn statusText(code: i32): string {
     if code == 200 { return "OK" }
     if code == 201 { return "Created" }
     if code == 204 { return "No Content" }
@@ -22,7 +22,7 @@ fn status_text(code: i32): string {
     return ""
 }
 
-fn looks_like_json(s: &string): bool {
+fn looksLikeJson(s: &string): bool {
     var i: i64 = 0
     while i < s.len {
         let c = s[i]
@@ -35,16 +35,16 @@ fn looks_like_json(s: &string): bool {
 }
 
 // indent-only JSON pretty printer (no colors)
-fn pretty_json(input: &string): string {
+fn prettyJson(input: &string): string {
     var result: string = ""
     var pos: i64 = 0
     var indent: i64 = 0
-    var in_string: bool = false
+    var inString: bool = false
 
     while pos < input.len {
         let ch = input[pos]
 
-        if in_string {
+        if inString {
             result.push(ch)
             // skip escaped characters
             if ch == '\\' && pos + 1 < input.len {
@@ -52,14 +52,14 @@ fn pretty_json(input: &string): string {
                 result.push(input[pos])
             }
             if ch == '"' {
-                in_string = false
+                inString = false
             }
             pos = pos + 1
             continue
         }
 
         if ch == '"' {
-            in_string = true
+            inString = true
             result.push(ch)
             pos = pos + 1
             continue
@@ -128,15 +128,15 @@ fn pretty_json(input: &string): string {
 }
 
 fn main(): i32 {
-    var parser = new_parser("http", "simple HTTP client")
-    parser.add_positional("url", "URL to fetch")
-    parser.add_string("output", "o", "save response body to file", "")
-    parser.add_bool("verbose", "v", "show method and URL before request")
+    var parser = newParser("http", "simple HTTP client")
+    parser.addPositional("url", "URL to fetch")
+    parser.addString("output", "o", "save response body to file", "")
+    parser.addBool("verbose", "v", "show method and URL before request")
     let args = parser.parse()
 
-    let url = args.get_string("url")
-    let output_file = args.get_string("output")
-    let verbose = args.get_bool("verbose")
+    let url = args.getString("url")
+    let outputFile = args.getString("output")
+    let verbose = args.getBool("verbose")
 
     if verbose {
         print("GET ", url)
@@ -146,14 +146,14 @@ fn main(): i32 {
     let result = fetch(url)
     match result {
         Result.Ok(r) => {
-            let stext = status_text(r.status)
+            let stext = statusText(r.status)
             print("HTTP ", r.status, " ", stext)
             print("")
 
-            if output_file.len > 0 {
-                match write_file(output_file.clone(), r.body) {
+            if outputFile.len > 0 {
+                match writeFile(outputFile.clone(), r.body) {
                     Result.Ok(n) => {
-                        print("saved ", n, " bytes to ", output_file)
+                        print("saved ", n, " bytes to ", outputFile)
                     }
                     Result.Err(e) => {
                         print("http: failed to write file: ", e)
@@ -161,12 +161,12 @@ fn main(): i32 {
                     }
                 }
             } else {
-                if looks_like_json(r.body) {
-                    let formatted = pretty_json(r.body)
-                    write_stdout(formatted)
+                if looksLikeJson(r.body) {
+                    let formatted = prettyJson(r.body)
+                    writeStdout(formatted)
                     print("")
                 } else {
-                    write_stdout(r.body)
+                    writeStdout(r.body)
                     print("")
                 }
             }

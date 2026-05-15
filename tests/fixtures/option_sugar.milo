@@ -1,14 +1,14 @@
 // @expect: 42
 // @expect: none
 
-fn maybe_double(x: i32?): i32? {
+fn maybeDouble(x: i32?): i32? {
     let val = x?
     return Option.Some(val * 2)
 }
 
 fn main(): i32 {
     let a = Option.Some(21)
-    let result = maybe_double(a)
+    let result = maybeDouble(a)
     match result {
         Option.Some(v) => {
             print(v)
@@ -19,7 +19,7 @@ fn main(): i32 {
     }
 
     let b: i32? = Option.None
-    let result2 = maybe_double(b)
+    let result2 = maybeDouble(b)
     match result2 {
         Option.Some(v) => {
             print(v)

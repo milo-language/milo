@@ -12,12 +12,12 @@ impl HasValue for Box99 {
     }
 }
 
-fn print_value<T: HasValue>(thing: &T) {
+fn printValue<T: HasValue>(thing: &T) {
     print(thing.value())
 }
 
 fn main(): i32 {
     let b = Box99 { x: 0 }
-    print_value(b)
+    printValue(b)
     return 0
 }

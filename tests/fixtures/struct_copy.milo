@@ -2,14 +2,14 @@
 // @expect: 1
 struct Point { x: i32, y: i32 }
 
-fn use_point(p: Point): i32 {
+fn usePoint(p: Point): i32 {
     return p.x
 }
 
 fn main(): i32 {
     let p = Point { x: 1, y: 2 }
-    let a = use_point(p)
-    let b = use_point(p)
+    let a = usePoint(p)
+    let b = usePoint(p)
     print(a)
     print(b)
     return 0

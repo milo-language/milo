@@ -17,7 +17,7 @@ impl Drop for Guard {
     }
 }
 
-fn might_fail(fail: bool): i32 {
+fn mightFail(fail: bool): i32 {
     let g1 = Guard { id: 1 }
     let g2 = Guard { id: 2 }
     if fail {
@@ -30,8 +30,8 @@ fn might_fail(fail: bool): i32 {
 
 fn main(): i32 {
     print("--- fail path ---")
-    might_fail(true)
+    mightFail(true)
     print("--- success path ---")
-    might_fail(false)
+    mightFail(false)
     return 0
 }

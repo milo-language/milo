@@ -3,45 +3,45 @@
 import "std/os"
 
 struct SockAddrIn {
-    sin_family: u16,
-    sin_port: u16,
-    sin_addr: u32,
-    sin_zero: [u8; 8],
+    sinFamily: u16,
+    sinPort: u16,
+    sinAddr: u32,
+    sinZero: [u8; 8],
 }
 
-fn make_sockaddr(port: u16, addr: u32): SockAddrIn {
+fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     unsafe {
         return SockAddrIn {
-            sin_family: 2 as u16,
-            sin_port: htons(port),
-            sin_addr: addr,
-            sin_zero: [0; 8],
+            sinFamily: 2 as u16,
+            sinPort: htons(port),
+            sinAddr: addr,
+            sinZero: [0; 8],
         }
     }
 }
 
-fn make_zeroed_sockaddr(): SockAddrIn {
+fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
-        sin_family: 0 as u16, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
+        sinFamily: 0 as u16, sinPort: 0, sinAddr: 0, sinZero: [0; 8],
     }
 }
 
-fn sol_socket(): i32 { return 1 }
-fn so_reuseaddr(): i32 { return 2 }
-fn map_private_anon(): i32 { return 34 }
-fn o_write_create_trunc(): i32 { return 577 }
-fn o_write_create_append(): i32 { return 1089 }
-// offset of ai_addr field in struct addrinfo (swapped with ai_canonname vs macOS)
-fn addrinfo_addr_offset(): i64 { return 24 }
-// struct stat layout (Linux x86_64)
-fn stat_mode_offset(): i64 { return 24 }
-fn stat_size_offset(): i64 { return 48 }
-fn stat_buf_size(): i64 { return 144 }
+fn solSocket(): i32 { return 1 }
+fn soReuseaddr(): i32 { return 2 }
+fn mapPrivateAnon(): i32 { return 34 }
+fn oWriteCreateTrunc(): i32 { return 577 }
+fn oWriteCreateAppend(): i32 { return 1089 }
+// offset of aiAddr field in struct addrinfo (swapped with aiCanonname vs macOS)
+fn addrinfoAddrOffset(): i64 { return 24 }
+// struct stat layout (Linux x8664)
+fn statModeOffset(): i64 { return 24 }
+fn statSizeOffset(): i64 { return 48 }
+fn statBufSize(): i64 { return 144 }
 // struct dirent layout
-fn dirent_type_offset(): i64 { return 18 }
-fn dirent_name_offset(): i64 { return 19 }
+fn direntTypeOffset(): i64 { return 18 }
+fn direntNameOffset(): i64 { return 19 }
 // errno access — glibc uses __errno_location() to get errno pointer
 extern fn __errno_location(): *u8
-fn get_errno(): i32 {
-    unsafe { return _load_i32(__errno_location()) }
+fn getErrno(): i32 {
+    unsafe { return _loadI32(__errno_location()) }
 }

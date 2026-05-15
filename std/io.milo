@@ -14,20 +14,20 @@ enum IoError {
 }
 
 // map errno to IoError variant with path context
-fn _io_error(path: string): IoError {
+fn _ioError(path: string): IoError {
     unsafe {
-        let e = get_errno()
+        let e = getErrno()
         if e == 2  { return IoError.NotFound(path) }
         if e == 13 { return IoError.PermissionDenied(path) }
         if e == 21 { return IoError.IsDirectory(path) }
         if e == 17 { return IoError.AlreadyExists(path) }
-        let reason = _cstr_to_string(strerror(e))
+        let reason = _cstrToString(strerror(e))
         return IoError.Other("'" + path + "': " + reason)
     }
 }
 
 // Write a string to stdout without appending a newline.
-fn write_stdout(s: &string): void {
+fn writeStdout(s: &string): void {
     unsafe { write(1, s, s.len) }
 }
 
@@ -46,37 +46,37 @@ impl Drop for File {
     }
 }
 
-fn open_read(path: string): Result<File, IoError> {
+fn openRead(path: string): Result<File, IoError> {
     unsafe {
         let fd = open(path, 0)
         if fd < 0 {
-            return Result.Err(_io_error(path))
+            return Result.Err(_ioError(path))
         }
         return Result.Ok(File { fd: fd })
     }
 }
 
-fn open_write(path: string): Result<File, IoError> {
+fn openWrite(path: string): Result<File, IoError> {
     unsafe {
-        let fd = open(path, o_write_create_trunc(), 420)
+        let fd = open(path, oWriteCreateTrunc(), 420)
         if fd < 0 {
-            return Result.Err(_io_error(path))
+            return Result.Err(_ioError(path))
         }
         return Result.Ok(File { fd: fd })
     }
 }
 
-fn open_append(path: string): Result<File, IoError> {
+fn openAppend(path: string): Result<File, IoError> {
     unsafe {
-        let fd = open(path, o_write_create_append(), 420)
+        let fd = open(path, oWriteCreateAppend(), 420)
         if fd < 0 {
-            return Result.Err(_io_error(path))
+            return Result.Err(_ioError(path))
         }
         return Result.Ok(File { fd: fd })
     }
 }
 
-fn file_size(f: &File): i64 {
+fn fileSize(f: &File): i64 {
     unsafe {
         let cur = lseek(f.fd, 0, 1)
         let size = lseek(f.fd, 0, 2)
@@ -85,8 +85,8 @@ fn file_size(f: &File): i64 {
     }
 }
 
-fn read_all(f: &File): Result<string, IoError> {
-    let size = file_size(f)
+fn readAll(f: &File): Result<string, IoError> {
+    let size = fileSize(f)
     if size < 0 {
         return Result.Err(IoError.Other("failed to get file size"))
     }
@@ -107,7 +107,7 @@ fn read_all(f: &File): Result<string, IoError> {
     return Result.Ok(result)
 }
 
-fn write_all(f: &File, data: &string): Result<i64, IoError> {
+fn writeAll(f: &File, data: &string): Result<i64, IoError> {
     unsafe {
         let n = write(f.fd, data, data.len)
         if n < 0 {
@@ -117,13 +117,13 @@ fn write_all(f: &File, data: &string): Result<i64, IoError> {
     }
 }
 
-fn read_file(path: string): Result<string, IoError> {
-    let f = open_read(path)?
-    return read_all(f)
+fn readFile(path: string): Result<string, IoError> {
+    let f = openRead(path)?
+    return readAll(f)
 }
 
 // Read all available data from stdin into a string.
-fn read_stdin(): string {
+fn readStdin(): string {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]
     while true {

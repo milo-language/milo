@@ -2,7 +2,7 @@
 
 fn main(): i32 {
     let s = "3.14"
-    let x: f64 = s.parse_f64()
+    let x: f64 = s.parseF64()
     print(x)
     return 0
 }

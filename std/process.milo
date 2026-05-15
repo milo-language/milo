@@ -13,8 +13,8 @@ fn run(cmd: string): Result<i32> {
             return Result.Err("system() failed")
         }
         // macOS: exit code is in bits 8-15
-        let exit_code = (status >> 8) & 255
-        return Result.Ok(exit_code)
+        let exitCode = (status >> 8) & 255
+        return Result.Ok(exitCode)
     }
 }
 
@@ -42,14 +42,14 @@ fn spawn(path: string): Result<Process> {
 }
 
 // Block until the process exits and return its exit code.
-fn wait_for(p: &Process): Result<i32> {
-    var status_buf: [u8; 4] = [0; 4]
+fn waitFor(p: &Process): Result<i32> {
+    var statusBuf: [u8; 4] = [0; 4]
     unsafe {
-        let r = waitpid(p.pid, status_buf, 0)
+        let r = waitpid(p.pid, statusBuf, 0)
         if r < 0 {
             return Result.Err("waitpid() failed")
         }
-        let raw = (status_buf[1] as i32)
+        let raw = (statusBuf[1] as i32)
         return Result.Ok(raw)
     }
 }

@@ -21,16 +21,16 @@ let copy = greeting.clone()            // deep copy
 let s = "Hello, World!"
 
 s.contains("World")              // true
-s.starts_with("Hello")           // true
-s.ends_with("!")                 // true
+s.startsWith("Hello")           // true
+s.endsWith("!")                 // true
 
-s.to_lower()                     // "hello, world!"
-s.to_upper()                     // "HELLO, WORLD!"
+s.toLower()                     // "hello, world!"
+s.toUpper()                     // "HELLO, WORLD!"
 s.trim()                         // removes leading/trailing whitespace
 
 s.split(", ")                    // Vec<string>: ["Hello", "World!"]
 s.replace("World", "Milo")      // "Hello, Milo!"
-s.index_of("World")             // Option<i64>: Some(7)
+s.indexOf("World")             // Option<i64>: Some(7)
 s.repeat(3)                      // "Hello, World!Hello, World!Hello, World!"
 ```
 
@@ -47,10 +47,10 @@ s.push('i')
 
 ```milo
 let n: i64 = 42
-let s = n.to_string()          // "42"
+let s = n.toString()          // "42"
 
 let pi: f64 = 3.14
-let t = pi.to_string()         // "3.14"
+let t = pi.toString()         // "3.14"
 ```
 
 ## String comparison

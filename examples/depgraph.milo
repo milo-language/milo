@@ -13,15 +13,15 @@ struct DepGraph {
     nodes: Vec<Handle<Node>>,
 }
 
-fn new_graph(): DepGraph {
+fn newGraph(): DepGraph {
     return DepGraph {
-        arena: arena_new(),
+        arena: arenaNew(),
         nodes: Vec.new(),
     }
 }
 
-fn add_node(g: &mut DepGraph, name: string): Handle<Node> {
-    let h = arena_alloc(g.arena, Node {
+fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
+    let h = arenaAlloc(g.arena, Node {
         name: name,
         deps: Vec.new(),
         dependents: Vec.new(),
@@ -30,37 +30,37 @@ fn add_node(g: &mut DepGraph, name: string): Handle<Node> {
     return h
 }
 
-fn add_edge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
-    arena_modify(g.arena, src, (n: Node) => {
+fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
+    arenaModify(g.arena, src, (n: Node) => {
         var updated = n
         updated.deps.push(dst)
         return updated
     })
-    arena_modify(g.arena, dst, (n: Node) => {
+    arenaModify(g.arena, dst, (n: Node) => {
         var updated = n
         updated.dependents.push(src)
         return updated
     })
 }
 
-fn node_name(g: &DepGraph, h: Handle<Node>): string {
-    match arena_get(g.arena, h) {
+fn nodeName(g: &DepGraph, h: Handle<Node>): string {
+    match arenaGet(g.arena, h) {
         Option.Some(n) => { return n.name }
         Option.None => { return "<invalid>" }
     }
 }
 
 // Kahn's algorithm
-fn topo_sort(g: &DepGraph): Vec<string> {
+fn topoSort(g: &DepGraph): Vec<string> {
     var order: Vec<string> = Vec.new()
     let n = g.nodes.len
 
-    var in_deg: Vec<i64> = Vec.new()
+    var inDeg: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < n {
-        match arena_get(g.arena, g.nodes[i]) {
-            Option.Some(node) => { in_deg.push(node.deps.len) }
-            Option.None => { in_deg.push(0) }
+        match arenaGet(g.arena, g.nodes[i]) {
+            Option.Some(node) => { inDeg.push(node.deps.len) }
+            Option.None => { inDeg.push(0) }
         }
         i = i + 1
     }
@@ -68,7 +68,7 @@ fn topo_sort(g: &DepGraph): Vec<string> {
     var queue: Vec<i64> = Vec.new()
     i = 0
     while i < n {
-        if in_deg[i] == 0 { queue.push(i) }
+        if inDeg[i] == 0 { queue.push(i) }
         i = i + 1
     }
 
@@ -76,17 +76,17 @@ fn topo_sort(g: &DepGraph): Vec<string> {
     while qi < queue.len {
         let idx = queue[qi]
         let h = g.nodes[idx]
-        order.push(node_name(g, h))
+        order.push(nodeName(g, h))
 
-        match arena_get(g.arena, h) {
+        match arenaGet(g.arena, h) {
             Option.Some(node) => {
                 var d: i64 = 0
                 while d < node.dependents.len {
                     var j: i64 = 0
                     while j < n {
                         if g.nodes[j].index == node.dependents[d].index {
-                            in_deg[j] = in_deg[j] - 1
-                            if in_deg[j] == 0 { queue.push(j) }
+                            inDeg[j] = inDeg[j] - 1
+                            if inDeg[j] == 0 { queue.push(j) }
                         }
                         j = j + 1
                     }
@@ -105,25 +105,25 @@ fn topo_sort(g: &DepGraph): Vec<string> {
 }
 
 fn main(): i32 {
-    var g = new_graph()
+    var g = newGraph()
 
-    let libc = add_node(g, "libc")
-    let net  = add_node(g, "net")
-    let json = add_node(g, "json")
-    let http = add_node(g, "http")
-    let db   = add_node(g, "db")
-    let app  = add_node(g, "app")
+    let libc = addNode(g, "libc")
+    let net  = addNode(g, "net")
+    let json = addNode(g, "json")
+    let http = addNode(g, "http")
+    let db   = addNode(g, "db")
+    let app  = addNode(g, "app")
 
-    add_edge(g, net, libc)
-    add_edge(g, json, libc)
-    add_edge(g, http, net)
-    add_edge(g, http, json)
-    add_edge(g, db, net)
-    add_edge(g, app, http)
-    add_edge(g, app, db)
+    addEdge(g, net, libc)
+    addEdge(g, json, libc)
+    addEdge(g, http, net)
+    addEdge(g, http, json)
+    addEdge(g, db, net)
+    addEdge(g, app, http)
+    addEdge(g, app, db)
 
     print("build order:")
-    let order = topo_sort(g)
+    let order = topoSort(g)
     var i: i64 = 0
     while i < order.len {
         print("  ", order[i])

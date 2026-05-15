@@ -49,7 +49,7 @@ print(d.getAge())
 
 ## JSON serialization
 
-Any struct can be serialized with the built-in `json_stringify`:
+Any struct can be serialized with the built-in `jsonStringify`:
 
 ```milo
 struct User {
@@ -59,7 +59,7 @@ struct User {
 }
 
 let user = User { name: "Alice", age: 30, active: true }
-let json = json_stringify(user)
+let json = jsonStringify(user)
 // {"name":"Alice","age":30,"active":true}
 ```
 

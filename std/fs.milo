@@ -12,24 +12,24 @@ struct FileInfo {
 }
 
 // Get file metadata. Returns FileInfo with exists=false if path doesn't exist.
-fn file_info(path: string): FileInfo {
+fn fileInfo(path: string): FileInfo {
     var buf: [u8; 144] = [0; 144]
     unsafe {
         let r = stat(path, buf)
         if r != 0 {
             return FileInfo { size: 0 as i64, mode: 0, exists: false }
         }
-        let mode_off = stat_mode_offset()
-        let size_off = stat_size_offset()
+        let modeOff = statModeOffset()
+        let sizeOff = statSizeOffset()
         // read u16 mode (macOS) — works for permission bits
-        let mode_lo = buf[mode_off] as i32
-        let mode_hi = buf[mode_off + 1] as i32
-        let mode = mode_lo | (mode_hi << 8)
+        let modeLo = buf[modeOff] as i32
+        let modeHi = buf[modeOff + 1] as i32
+        let mode = modeLo | (modeHi << 8)
         // read i64 size
         var size: i64 = 0
         var i: i64 = 0
         while i < 8 {
-            size = size | ((buf[size_off + i] as i64) << (i * 8))
+            size = size | ((buf[sizeOff + i] as i64) << (i * 8))
             i = i + 1
         }
         return FileInfo { size: size, mode: mode, exists: true }
@@ -37,58 +37,58 @@ fn file_info(path: string): FileInfo {
 }
 
 // Check if a path exists.
-fn path_exists(path: string): bool {
+fn pathExists(path: string): bool {
     unsafe {
         return access(path, 0) == 0
     }
 }
 
 // Check if a path is a directory.
-fn is_dir(path: string): bool {
-    let info = file_info(path)
+fn isDir(path: string): bool {
+    let info = fileInfo(path)
     if !info.exists { return false }
     // S_IFDIR = 0x4000 = 16384, S_IFMT = 0xF000 = 61440
     return (info.mode & 61440) == 16384
 }
 
 // Check if a path is a regular file.
-fn is_file(path: string): bool {
-    let info = file_info(path)
+fn isFile(path: string): bool {
+    let info = fileInfo(path)
     if !info.exists { return false }
     // S_IFREG = 0x8000 = 32768
     return (info.mode & 61440) == 32768
 }
 
 // Get file size in bytes. Returns -1 if file doesn't exist.
-fn file_size_path(path: string): i64 {
-    let info = file_info(path)
-    var neg_one: i64 = 0
-    neg_one = neg_one - 1
-    if !info.exists { return neg_one }
+fn fileSizePath(path: string): i64 {
+    let info = fileInfo(path)
+    var negOne: i64 = 0
+    negOne = negOne - 1
+    if !info.exists { return negOne }
     return info.size
 }
 
-// Directory entry from read_dir().
+// Directory entry from readDir().
 struct DirEntry {
     name: string,
-    is_dir: bool,
-    is_file: bool,
+    isDir: bool,
+    isFile: bool,
 }
 
 // List directory contents. Returns empty vec on error.
-fn read_dir(path: string): Vec<DirEntry> {
+fn readDir(path: string): Vec<DirEntry> {
     var entries: Vec<DirEntry> = Vec.new()
     unsafe {
         let dir = opendir(path)
         if dir as i64 == 0 as i64 { return entries }
-        let name_off = dirent_name_offset()
-        let type_off = dirent_type_offset()
+        let nameOff = direntNameOffset()
+        let typeOff = direntTypeOffset()
         while true {
             let ent = readdir(dir)
             if ent as i64 == 0 as i64 { break }
-            let d_type = _load_u8((ent as i64 + type_off) as *u8)
-            let name_ptr = (ent as i64 + name_off) as *u8
-            let name = _cstr_to_string(name_ptr)
+            let dType = _loadU8((ent as i64 + typeOff) as *u8)
+            let namePtr = (ent as i64 + nameOff) as *u8
+            let name = _cstrToString(namePtr)
 
             if name == "." || name == ".." {
                 let skip = 0
@@ -96,8 +96,8 @@ fn read_dir(path: string): Vec<DirEntry> {
                 // DT_DIR = 4, DT_REG = 8
                 entries.push(DirEntry {
                     name: name,
-                    is_dir: d_type == 4,
-                    is_file: d_type == 8,
+                    isDir: dType == 4,
+                    isFile: dType == 8,
                 })
             }
         }
@@ -107,7 +107,7 @@ fn read_dir(path: string): Vec<DirEntry> {
 }
 
 // Write a string to a file, creating or truncating it.
-fn write_file(path: string, data: &string): Result<i64, IoError> {
-    let f = open_write(path)?
-    return write_all(f, data)
+fn writeFile(path: string, data: &string): Result<i64, IoError> {
+    let f = openWrite(path)?
+    return writeAll(f, data)
 }

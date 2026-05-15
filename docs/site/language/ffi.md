@@ -41,5 +41,5 @@ fn main(): i32 {
 Inline file contents as a string at compile time:
 
 ```milo
-let html = embed_file("index.html")
+let html = embedFile("index.html")
 ```

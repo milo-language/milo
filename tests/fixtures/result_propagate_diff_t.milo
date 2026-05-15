@@ -1,24 +1,24 @@
 // @expect: got 3
 // @expect: failed: empty
 
-fn get_text(ok: bool): Result<string> {
+fn getText(ok: bool): Result<string> {
     if !ok {
         return Result.Err("empty")
     }
     return Result.Ok("abc")
 }
 
-fn count_chars(ok: bool): Result<i32> {
-    let s = get_text(ok)?
+fn countChars(ok: bool): Result<i32> {
+    let s = getText(ok)?
     return Result.Ok(s.len as i32)
 }
 
 fn main(): i32 {
-    match count_chars(true) {
+    match countChars(true) {
         Result.Ok(n) => { print("got ", n) }
         Result.Err(e) => { print("failed: ", e) }
     }
-    match count_chars(false) {
+    match countChars(false) {
         Result.Ok(n) => { print("got ", n) }
         Result.Err(e) => { print("failed: ", e) }
     }

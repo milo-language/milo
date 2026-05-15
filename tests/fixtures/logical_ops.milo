@@ -20,9 +20,9 @@ fn main(): i32 {
         print("neither")
     }
 
-    // short-circuit: side_effect should not be called
+    // short-circuit: sideEffect should not be called
     var called: bool = false
-    if c && set_flag(called) {
+    if c && setFlag(called) {
         print("should not print")
     }
     if !called {
@@ -32,7 +32,7 @@ fn main(): i32 {
     return 0
 }
 
-fn set_flag(x: &mut bool): bool {
+fn setFlag(x: &mut bool): bool {
     x = true
     return true
 }

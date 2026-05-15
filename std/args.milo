@@ -4,10 +4,10 @@
 // Index 0 is the program name.
 fn args(): Vec<string> {
     var result: Vec<string> = Vec.new()
-    let n = _milo_arg_count()
+    let n = _miloArgCount()
     var i: i64 = 0
     while i < n {
-        result.push(_milo_arg_at(i))
+        result.push(_miloArgAt(i))
         i = i + 1
     }
     return result
@@ -15,8 +15,8 @@ fn args(): Vec<string> {
 
 // Get the value following a --name flag.
 // Returns null if the flag is not present.
-// Example: get_flag("port") returns the value after --port.
-fn get_flag(name: &string): string? {
+// Example: getFlag("port") returns the value after --port.
+fn getFlag(name: &string): string? {
     let all = args()
     let flag = "--" + name
     var i: i64 = 0
@@ -32,7 +32,7 @@ fn get_flag(name: &string): string? {
 }
 
 // Check if a --name flag is present in the arguments.
-fn has_flag(name: &string): bool {
+fn hasFlag(name: &string): bool {
     let all = args()
     let flag = "--" + name
     var i: i64 = 0

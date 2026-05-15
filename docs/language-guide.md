@@ -85,9 +85,9 @@ let negated = ~a               // ones-complement
 
 ```milo
 let n: i64 = 42
-let s = n.to_string()          // "42"
+let s = n.toString()          // "42"
 let pi: f64 = 3.14
-let t = pi.to_string()         // "3.14"
+let t = pi.toString()         // "3.14"
 ```
 
 ### Type Casts
@@ -166,7 +166,7 @@ let message = greeting + " " + name
 let n = message.len
 
 // Byte indexing
-let first_byte = message[0]    // u8
+let firstByte = message[0]    // u8
 
 // Slicing — zero-copy view (returns &string, no allocation)
 let hello = message[0..5]       // &string, borrows from message
@@ -232,13 +232,13 @@ struct Dog {
 }
 
 impl Dog {
-    fn get_age(self: &Self): i32 {
+    fn getAge(self: &Self): i32 {
         return self.age
     }
 }
 
 let d = Dog { age: 7 }
-print("%d", d.get_age())
+print("%d", d.getAge())
 ```
 
 ---
@@ -331,7 +331,7 @@ fn validate(x: i32): Result<i32> {
     return Result.Ok(x)
 }
 
-fn double_valid(x: i32): Result<i32> {
+fn doubleValid(x: i32): Result<i32> {
     let v = validate(x)?                // propagate Err
     return Result.Ok(v * 2)
 }
@@ -557,7 +557,7 @@ impl Greet for Cat {}    // uses the default
 ### Generic Bounds
 
 ```milo
-fn print_if_equal<T: Eq>(a: &T, b: &T) {
+fn printIfEqual<T: Eq>(a: &T, b: &T) {
     if a.eq(b) {
         print("equal!")
     }
@@ -617,13 +617,13 @@ let result = apply(double, 21)   // 42
 Closures capture by reference — mutations are visible outside:
 
 ```milo
-fn call_it(f: fn(): void) {
+fn callIt(f: fn(): void) {
     f()
 }
 
 var count: i32 = 0
-call_it(() => { count = count + 1 })
-call_it(() => { count = count + 1 })
+callIt(() => { count = count + 1 })
+callIt(() => { count = count + 1 })
 print("%d", count)   // 2
 ```
 
@@ -692,7 +692,7 @@ Strings auto-coerce to `*u8` when passed to extern functions.
 
 ## JSON Serialization
 
-`json_stringify` is a built-in that serializes any struct to a JSON string:
+`jsonStringify` is a built-in that serializes any struct to a JSON string:
 
 ```milo
 struct User {
@@ -702,7 +702,7 @@ struct User {
 }
 
 let user = User { name: "Chad", age: 30, active: true }
-let json = json_stringify(user)
+let json = jsonStringify(user)
 // {"name":"Chad","age":30,"active":true}
 ```
 
@@ -710,10 +710,10 @@ let json = json_stringify(user)
 
 ## Compile-Time File Embedding
 
-`embed_file` inlines file contents as a string at compile time:
+`embedFile` inlines file contents as a string at compile time:
 
 ```milo
-let html = embed_file("index.html")
+let html = embedFile("index.html")
 ```
 
 ---
@@ -764,12 +764,12 @@ enum JsonValue {
     Object(Vec<JsonKV>),
 }
 
-fn parse_value(s: &string, pos: &mut i64): Box<JsonValue> {
-    skip_ws(s, pos)
+fn parseValue(s: &string, pos: &mut i64): Box<JsonValue> {
+    skipWs(s, pos)
     let ch = s[pos]
-    if ch == '"' { return parse_string(s, pos) }
-    if ch == '{' { return parse_object(s, pos) }
-    if ch == '[' { return parse_array(s, pos) }
+    if ch == '"' { return parseString(s, pos) }
+    if ch == '{' { return parseObject(s, pos) }
+    if ch == '[' { return parseArray(s, pos) }
     // ... etc
 }
 ```
@@ -864,6 +864,6 @@ fn main(): i32 {
 | Embed file | `embed_file("path")` |
 | JSON serialize | `json_stringify(struct_val)` |
 | String slice | `s[start..end]` |
-| Number to string | `n.to_string()` |
+| Number to string | `n.toString()` |
 | Bitwise | `& \| ^ << >> ~` |
 | Hex / binary literal | `0xFF`, `0b1010` |

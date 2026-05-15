@@ -80,13 +80,13 @@ Done:
 - [x] Vec\<T\> — dynamic array with push/pop/len, bounds-checked indexing, drop glue
 - [x] HashMap\<K, V\> — open addressing, FNV-1a + seeded hash, insert/get/contains/remove/len, drop glue
 - [x] Traits Phase 1 — trait decls, impl blocks, inherent methods, generic bounds, supertraits, @derive(Eq), Self type, monomorphized static dispatch
-- [x] String `substr(start, end)`, `parse_f64` builtins
+- [x] String `substr(start, end)`, `parseF64` builtins
 - [x] String `push(u8)`, concat, byte index, len, eq
 - [x] String slice sugar `s[a..b]` (zero-copy `&string` via `.slice()`; `.substr()` for owned copy)
 - [x] Enum equality `==` / `!=` for payload-free variants (codegen compares tag)
 - [x] Bitwise operators `& | ^ << >> ~` with C-style precedence
 - [x] Hex (`0xFF`) and binary (`0b1010`) integer literals; `_` digit separator
-- [x] `.to_string()` for integer and float types (via snprintf)
+- [x] `.toString()` for integer and float types (via snprintf)
 
 ### Phase 3.0 — Stage-0 Bootstrap (current focus)
 
@@ -227,14 +227,14 @@ Verification:
   a != b                      // true
   ```
 
-- [x] **MethodCall + string methods.** Parser distinguishes `.field` from `.method(args)`. Codegen dispatches string.clone() (malloc+memcpy), string.len() (extractvalue), i64.to_string() / i32.to_string() (snprintf two-pass: measure null,0 then alloc+write). Tested: "hello".clone(), 12345.to_string() = "12345".
+- [x] **MethodCall + string methods.** Parser distinguishes `.field` from `.method(args)`. Codegen dispatches string.clone() (malloc+memcpy), string.len() (extractvalue), i64.toString() / i32.toString() (snprintf two-pass: measure null,0 then alloc+write). Tested: "hello".clone(), 12345.toString() = "12345".
 - [x] **References (&T / &mut T) parsed.** Stage-0 strips the reference qualifier — pass-by-value. Loses mutation-through-ref but covers most milo0 patterns where refs only avoid moves. printf coercion gated to known variadic externs so user fns taking %String receive the aggregate.
 - [x] **Fixed array types `[T; N]`** parsed into "[T;N]" string encoding.
 
 - [x] **String slice `s[a..b]`** in milo0 — Index/Slice AST + codegen. Tested: `"hello world"[0..5]` → `"hello"`.
 - [x] **String index `s[i]`** in milo0 — returns u8. Tested: `"hello world"[1]` → 101.
 - [x] **Method call parser**: `.name(args)` distinguished from `.field`.
-- [x] **string.clone()**, **i64.to_string()**, **i32.to_string()** as method calls.
+- [x] **string.clone()**, **i64.toString()**, **i32.toString()** as method calls.
 - [x] **Match on `expr.field`** (gen_lvalue extended for FieldAccess).
 - [x] **`&T` / `&mut T`** parsed and treated as pass-by-value (covers most milo0 patterns).
 - [x] **Fixed array types `[T; N]`** parsed.
@@ -244,14 +244,14 @@ Still missing for full milo0-on-milo0:
 - [ ] **String.push** — realloc-heavy, plus needs mutation-through-self.
 - [ ] **`HashMap<K, V>`** — 2 use sites, removable.
 - [ ] **Drop semantics on Box** — currently leaks, fine for small programs.
-- [x] **Enum equality (==/!=)** re-enabled. Earlier crash was an internal milo0 abort triggered by some interaction in the let-bound clones; replaced with inline temp-name construction (`"%t" + id.to_string()`) and the runtime aborts disappeared. Likely the same heap-alias-on-many-string-locals issue that plagued earlier arm bodies — but here a small refactor sidesteps it.
+- [x] **Enum equality (==/!=)** re-enabled. Earlier crash was an internal milo0 abort triggered by some interaction in the let-bound clones; replaced with inline temp-name construction (`"%t" + id.toString()`) and the runtime aborts disappeared. Likely the same heap-alias-on-many-string-locals issue that plagued earlier arm bodies — but here a small refactor sidesteps it.
 - [ ] Closures, generics, imports.
 
 ### Phase 3.5 — Beyond Stage-0
 
 - [ ] Traits Phase 1.5 — operator overloading via traits (Add/Sub/Mul/Div), migrate built-in methods to trait impls, @derive(Hash, Clone)
 - [ ] String slices — substring views, split, find, starts_with
-- [ ] `to_string` / format / int+float → string conversions
+- [ ] `toString` / format / int+float → string conversions
 - [ ] Stdlib `io` module — file read/write, stderr, args
 - [ ] MIR — lower-level IR for optimization passes
 - [ ] Arena system designed based on real needs from self-hosting

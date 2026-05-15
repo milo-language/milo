@@ -39,7 +39,7 @@ fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     return a32 | (b32 << 8) | (c32 << 16) | (d32 << 24)
 }
 
-fn tcp_connect(ip: u32, port: u16): Result<TcpStream, NetError> {
+fn tcpConnect(ip: u32, port: u16): Result<TcpStream, NetError> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let SIZEOF_SOCKADDR_IN: u32 = 16
@@ -50,7 +50,7 @@ fn tcp_connect(ip: u32, port: u16): Result<TcpStream, NetError> {
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
 
-        var addr = make_sockaddr(port, ip)
+        var addr = makeSockaddr(port, ip)
 
         if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             close(fd)
@@ -61,7 +61,7 @@ fn tcp_connect(ip: u32, port: u16): Result<TcpStream, NetError> {
     }
 }
 
-fn tcp_send(s: &TcpStream, data: &string): Result<i64, NetError> {
+fn tcpSend(s: &TcpStream, data: &string): Result<i64, NetError> {
     unsafe {
         let n = write(s.fd, data, data.len)
         if n < 0 {
@@ -71,7 +71,7 @@ fn tcp_send(s: &TcpStream, data: &string): Result<i64, NetError> {
     }
 }
 
-fn tcp_recv(s: &TcpStream): Result<string, NetError> {
+fn tcpRecv(s: &TcpStream): Result<string, NetError> {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]
     while true {
@@ -113,7 +113,7 @@ impl Drop for TlsStream {
     }
 }
 
-fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError> {
+fn tlsConnect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
     let SIZEOF_SOCKADDR_IN: u32 = 16
@@ -124,7 +124,7 @@ fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetErro
             return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
 
-        var addr = make_sockaddr(port, ip)
+        var addr = makeSockaddr(port, ip)
 
         if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             close(fd)
@@ -133,16 +133,16 @@ fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetErro
 
         let method = TLS_client_method()
         let ctx = SSL_CTX_new(method)
-        let ctx_addr = ctx as i64
-        if ctx_addr == 0 {
+        let ctxAddr = ctx as i64
+        if ctxAddr == 0 {
             close(fd)
             return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
         }
         SSL_CTX_set_default_verify_paths(ctx)
 
         let ssl = SSL_new(ctx)
-        let ssl_addr = ssl as i64
-        if ssl_addr == 0 {
+        let sslAddr = ssl as i64
+        if sslAddr == 0 {
             SSL_CTX_free(ctx)
             close(fd)
             return Result.Err(NetError.TlsError("SSL_new failed"))
@@ -160,11 +160,11 @@ fn tls_connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetErro
             return Result.Err(NetError.TlsError("SSL handshake failed"))
         }
 
-        return Result.Ok(TlsStream { fd: fd, ssl: ssl_addr, ctx: ctx_addr })
+        return Result.Ok(TlsStream { fd: fd, ssl: sslAddr, ctx: ctxAddr })
     }
 }
 
-fn tls_send(s: &TlsStream, data: &string): Result<i64, NetError> {
+fn tlsSend(s: &TlsStream, data: &string): Result<i64, NetError> {
     unsafe {
         let n = SSL_write(s.ssl as *u8, data, data.len as i32)
         if n < 0 {
@@ -174,7 +174,7 @@ fn tls_send(s: &TlsStream, data: &string): Result<i64, NetError> {
     }
 }
 
-fn tls_recv(s: &TlsStream): Result<string, NetError> {
+fn tlsRecv(s: &TlsStream): Result<string, NetError> {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]
     while true {
@@ -196,21 +196,21 @@ fn tls_recv(s: &TlsStream): Result<string, NetError> {
 fn resolve(hostname: string): Result<u32, NetError> {
     var hints: [u8; 48] = [0; 48]
     unsafe {
-        let hints_family = (hints as *i32)
-        hints_family[1] = 2
-        hints_family[2] = 1
+        let hintsFamily = (hints as *i32)
+        hintsFamily[1] = 2
+        hintsFamily[2] = 1
     }
 
-    var res_buf: [u8; 8] = [0; 8]
+    var resBuf: [u8; 8] = [0; 8]
     unsafe {
-        let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, res_buf as *u8)
+        let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
         if err != 0 {
             return Result.Err(NetError.DnsFailure(hostname))
         }
-        let info_ptr = *(res_buf as *i64)
-        let addr_ptr = *((info_ptr + addrinfo_addr_offset()) as *i64)
-        let ip = *((addr_ptr + 4) as *u32)
-        freeaddrinfo(info_ptr as *u8)
+        let infoPtr = *(resBuf as *i64)
+        let addrPtr = *((infoPtr + addrinfoAddrOffset()) as *i64)
+        let ip = *((addrPtr + 4) as *u32)
+        freeaddrinfo(infoPtr as *u8)
         return Result.Ok(ip)
     }
 }
@@ -232,7 +232,7 @@ impl Response {
 
     // Parse the response body as JSON.
     fn json(self: &Self): Json {
-        return json_parse(self.body.clone())
+        return jsonParse(self.body.clone())
     }
 
     // Return true if the status code is 2xx (success).
@@ -242,13 +242,13 @@ impl Response {
 
     // Look up a response header by name (case-insensitive).
     fn header(self: &Self, name: &string): string {
-        return find_header(self.headers, name)
+        return findHeader(self.headers, name)
     }
 }
 
 // ── String helpers ──
 
-fn str_eq_nocase(a: &string, ai: i64, b: &string, blen: i64): bool {
+fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool {
     var i: i64 = 0
     while i < blen {
         var ca: u8 = a[ai + i]
@@ -262,13 +262,13 @@ fn str_eq_nocase(a: &string, ai: i64, b: &string, blen: i64): bool {
     return true
 }
 
-fn find_header(headers: &string, name: &string): string {
+fn findHeader(headers: &string, name: &string): string {
     // search for "Name: value" in headers (case-insensitive name match)
     var i: i64 = 0
     while i + name.len + 1 < headers.len {
         // check if we're at line start (i==0 or preceded by \n)
         if i == 0 || headers[i - 1] == '\n' {
-            if str_eq_nocase(headers, i, name, name.len) && headers[i + name.len] == ':' {
+            if strEqNocase(headers, i, name, name.len) && headers[i + name.len] == ':' {
                 var start: i64 = i + name.len + 1
                 // skip spaces after colon
                 while start < headers.len && headers[start] == ' ' {
@@ -286,7 +286,7 @@ fn find_header(headers: &string, name: &string): string {
     return ""
 }
 
-fn starts_with(s: &string, prefix: &string): bool {
+fn startsWith(s: &string, prefix: &string): bool {
     if s.len < prefix.len { return false }
     var i: i64 = 0
     while i < prefix.len {
@@ -296,7 +296,7 @@ fn starts_with(s: &string, prefix: &string): bool {
     return true
 }
 
-fn hex_digit(c: u8): i64 {
+fn hexDigit(c: u8): i64 {
     if c >= '0' && c <= '9' { return (c - '0') as i64 }
     if c >= 'a' && c <= 'f' { return (c - 'a') as i64 + 10 }
     if c >= 'A' && c <= 'F' { return (c - 'A') as i64 + 10 }
@@ -305,7 +305,7 @@ fn hex_digit(c: u8): i64 {
 
 // ── HTTP parsing ──
 
-fn parse_status(raw: &string): i32 {
+fn parseStatus(raw: &string): i32 {
     if raw.len < 12 { return 0 }
     var code: i32 = 0
     var i: i64 = 9
@@ -316,7 +316,7 @@ fn parse_status(raw: &string): i32 {
     return code
 }
 
-fn parse_raw_headers(raw: &string): string {
+fn parseRawHeaders(raw: &string): string {
     var start: i64 = 0
     var i: i64 = 0
     while i + 1 < raw.len {
@@ -331,7 +331,7 @@ fn parse_raw_headers(raw: &string): string {
     return ""
 }
 
-fn parse_body(raw: &string): string {
+fn parseBody(raw: &string): string {
     var i: i64 = 0
     while i + 3 < raw.len {
         if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
@@ -342,63 +342,63 @@ fn parse_body(raw: &string): string {
     return raw.clone()
 }
 
-fn decode_chunked(raw_body: &string): string {
+fn decodeChunked(rawBody: &string): string {
     var result: string = ""
     var i: i64 = 0
-    while i < raw_body.len {
+    while i < rawBody.len {
         // parse hex chunk size
-        var chunk_size: i64 = 0
-        while i < raw_body.len {
-            let d = hex_digit(raw_body[i])
+        var chunkSize: i64 = 0
+        while i < rawBody.len {
+            let d = hexDigit(rawBody[i])
             if d < 0 { break }
-            chunk_size = chunk_size * 16 + d
+            chunkSize = chunkSize * 16 + d
             i = i + 1
         }
         // skip \r\n after size
-        if i + 1 < raw_body.len && raw_body[i] == '\r' { i = i + 2 }
-        if chunk_size == 0 { break }
+        if i + 1 < rawBody.len && rawBody[i] == '\r' { i = i + 2 }
+        if chunkSize == 0 { break }
         // copy chunk data
         var j: i64 = 0
-        while j < chunk_size && i < raw_body.len {
-            result.push(raw_body[i])
+        while j < chunkSize && i < rawBody.len {
+            result.push(rawBody[i])
             i = i + 1
             j = j + 1
         }
         // skip trailing \r\n
-        if i + 1 < raw_body.len && raw_body[i] == '\r' { i = i + 2 }
+        if i + 1 < rawBody.len && rawBody[i] == '\r' { i = i + 2 }
     }
     return result
 }
 
-fn parse_response(raw: string): Response {
-    let status = parse_status(raw)
-    let headers = parse_raw_headers(raw)
-    var body = parse_body(raw)
+fn parseResponse(raw: string): Response {
+    let status = parseStatus(raw)
+    let headers = parseRawHeaders(raw)
+    var body = parseBody(raw)
     // handle chunked transfer encoding
-    let te = find_header(headers, "Transfer-Encoding")
+    let te = findHeader(headers, "Transfer-Encoding")
     let chunked: string = "chunked"
-    if starts_with(te, chunked) {
-        body = decode_chunked(body)
+    if startsWith(te, chunked) {
+        body = decodeChunked(body)
     }
     return Response { status: status, headers: headers, body: body }
 }
 
 // ── URL parsing ──
 
-fn is_https(url: &string): bool {
+fn isHttps(url: &string): bool {
     return url.len > 8 && url[0] == 'h' && url[4] == 's' && url[5] == ':' && url[6] == '/' && url[7] == '/'
 }
 
-fn scheme_offset(url: &string): i64 {
-    if is_https(url) { return 8 }
+fn schemeOffset(url: &string): i64 {
+    if isHttps(url) { return 8 }
     if url.len > 7 && url[0] == 'h' && url[4] == ':' && url[5] == '/' && url[6] == '/' {
         return 7
     }
     return 0
 }
 
-fn parse_host(url: &string): string {
-    let start = scheme_offset(url)
+fn parseHost(url: &string): string {
+    let start = schemeOffset(url)
     var end: i64 = start
     while end < url.len && url[end] != '/' && url[end] != ':' {
         end = end + 1
@@ -406,8 +406,8 @@ fn parse_host(url: &string): string {
     return url[start .. end]
 }
 
-fn parse_port(url: &string): u16 {
-    var i: i64 = scheme_offset(url)
+fn parsePort(url: &string): u16 {
+    var i: i64 = schemeOffset(url)
     while i < url.len && url[i] != '/' && url[i] != ':' {
         i = i + 1
     }
@@ -420,12 +420,12 @@ fn parse_port(url: &string): u16 {
         }
         return port as u16
     }
-    if is_https(url) { return 443 }
+    if isHttps(url) { return 443 }
     return 80
 }
 
-fn parse_path(url: &string): string {
-    var i: i64 = scheme_offset(url)
+fn parsePath(url: &string): string {
+    var i: i64 = schemeOffset(url)
     while i < url.len && url[i] != '/' {
         i = i + 1
     }
@@ -444,50 +444,50 @@ struct FetchOptions {
 
 // ── HTTP client ──
 
-fn http_do(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
-    let stream = tcp_connect(ip, port)?
+fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
+    let stream = tcpConnect(ip, port)?
     var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
     if opts.headers.len > 0 {
         req = req + opts.headers.clone() + "\r\n"
     }
     if opts.body.len > 0 {
-        req = req + "Content-Length: " + opts.body.len.to_string() + "\r\n\r\n" + opts.body.clone()
+        req = req + "Content-Length: " + opts.body.len.toString() + "\r\n\r\n" + opts.body.clone()
     } else {
         req = req + "\r\n"
     }
-    tcp_send(stream, req)?
-    let raw = tcp_recv(stream)?
-    return Result.Ok(parse_response(raw))
+    tcpSend(stream, req)?
+    let raw = tcpRecv(stream)?
+    return Result.Ok(parseResponse(raw))
 }
 
-fn https_do(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
-    let stream = tls_connect(ip, port, host)?
+fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
+    let stream = tlsConnect(ip, port, host)?
     var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
     if opts.headers.len > 0 {
         req = req + opts.headers.clone() + "\r\n"
     }
     if opts.body.len > 0 {
-        req = req + "Content-Length: " + opts.body.len.to_string() + "\r\n\r\n" + opts.body.clone()
+        req = req + "Content-Length: " + opts.body.len.toString() + "\r\n\r\n" + opts.body.clone()
     } else {
         req = req + "\r\n"
     }
-    tls_send(stream, req)?
-    let raw = tls_recv(stream)?
-    return Result.Ok(parse_response(raw))
+    tlsSend(stream, req)?
+    let raw = tlsRecv(stream)?
+    return Result.Ok(parseResponse(raw))
 }
 
-fn do_fetch(url: string, opts: FetchOptions): Result<Response, NetError> {
-    let use_tls = is_https(url)
-    let host = parse_host(url)
-    let port = parse_port(url)
-    let path = parse_path(url)
+fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
+    let useTls = isHttps(url)
+    let host = parseHost(url)
+    let port = parsePort(url)
+    let path = parsePath(url)
     let ip = resolve(host.clone())?
 
     var resp: Result<Response, NetError> = Result.Err(NetError.Other(""))
-    if use_tls {
-        resp = https_do(ip, port, host.clone(), path, opts)
+    if useTls {
+        resp = httpsDo(ip, port, host.clone(), path, opts)
     } else {
-        resp = http_do(ip, port, host, path, opts)
+        resp = httpDo(ip, port, host, path, opts)
     }
 
     let r = resp?
@@ -496,16 +496,16 @@ fn do_fetch(url: string, opts: FetchOptions): Result<Response, NetError> {
     if r.status == 301 || r.status == 302 || r.status == 307 || r.status == 308 {
         let loc = r.header("Location")
         if loc.len > 0 {
-            var redir_opts = FetchOptions {
+            var redirOpts = FetchOptions {
                 method: opts.method.clone(),
                 headers: opts.headers.clone(),
                 body: opts.body.clone(),
             }
             if r.status == 301 || r.status == 302 {
-                redir_opts.method = "GET"
-                redir_opts.body = ""
+                redirOpts.method = "GET"
+                redirOpts.body = ""
             }
-            return do_fetch(loc, redir_opts)
+            return doFetch(loc, redirOpts)
         }
     }
     return Result.Ok(r)
@@ -515,41 +515,41 @@ fn do_fetch(url: string, opts: FetchOptions): Result<Response, NetError> {
 
 fn fetch(url: string): Result<Response, NetError> {
     var opts = FetchOptions { method: "GET", headers: "", body: "" }
-    return do_fetch(url, opts)
+    return doFetch(url, opts)
 }
 
-fn fetch_with(url: string, opts: FetchOptions): Result<Response, NetError> {
-    return do_fetch(url, opts)
+fn fetchWith(url: string, opts: FetchOptions): Result<Response, NetError> {
+    return doFetch(url, opts)
 }
 
-fn fetch_post(url: string, body: string): Result<Response, NetError> {
+fn fetchPost(url: string, body: string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "POST",
         headers: "Content-Type: application/json",
         body: body,
     }
-    return do_fetch(url, opts)
+    return doFetch(url, opts)
 }
 
-fn fetch_put(url: string, body: string): Result<Response, NetError> {
+fn fetchPut(url: string, body: string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "PUT",
         headers: "Content-Type: application/json",
         body: body,
     }
-    return do_fetch(url, opts)
+    return doFetch(url, opts)
 }
 
-fn fetch_delete(url: string): Result<Response, NetError> {
+fn fetchDelete(url: string): Result<Response, NetError> {
     var opts = FetchOptions { method: "DELETE", headers: "", body: "" }
-    return do_fetch(url, opts)
+    return doFetch(url, opts)
 }
 
-fn fetch_patch(url: string, body: string): Result<Response, NetError> {
+fn fetchPatch(url: string, body: string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "PATCH",
         headers: "Content-Type: application/json",
         body: body,
     }
-    return do_fetch(url, opts)
+    return doFetch(url, opts)
 }

@@ -6,20 +6,20 @@ enum FileError {
     Locked(string),
 }
 
-fn read_file(path: string): Result<string, FileError> {
+fn readFile(path: string): Result<string, FileError> {
     if path == "readme.md" {
         return Result.Err(FileError.Missing(path))
     }
     return Result.Ok("hello")
 }
 
-fn file_length(path: string): Result<i32, FileError> {
-    let contents = read_file(path)?
+fn fileLength(path: string): Result<i32, FileError> {
+    let contents = readFile(path)?
     return Result.Ok(contents.len as i32)
 }
 
 fn main(): i32 {
-    match file_length("data.txt") {
+    match fileLength("data.txt") {
         Result.Ok(n) => { print("length: ", n) }
         Result.Err(e) => {
             match e {
@@ -28,7 +28,7 @@ fn main(): i32 {
             }
         }
     }
-    match file_length("readme.md") {
+    match fileLength("readme.md") {
         Result.Ok(n) => { print("length: ", n) }
         Result.Err(e) => {
             match e {

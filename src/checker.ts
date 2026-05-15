@@ -412,11 +412,11 @@ export class TypeChecker {
     this.functions.set("print", { params: [], ret: { tag: "void" }, variadic: true });
     this.functions.set("format", { params: [], ret: { tag: "string" }, variadic: true });
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
-    this.functions.set("_milo_arg_count", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
-    this.functions.set("_milo_arg_at", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });
-    this.functions.set("_cstr_to_string", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "string" }, variadic: false });
-    this.functions.set("_load_u8", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 8, signed: false }, variadic: false });
-    this.functions.set("_load_i32", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 32, signed: true }, variadic: false });
+    this.functions.set("_miloArgCount", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
+    this.functions.set("_miloArgAt", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });
+    this.functions.set("_cstrToString", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "string" }, variadic: false });
+    this.functions.set("_loadU8", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 8, signed: false }, variadic: false });
+    this.functions.set("_loadI32", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 32, signed: true }, variadic: false });
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
@@ -706,7 +706,7 @@ export class TypeChecker {
       name: "Display",
       supertraits: [],
       methods: new Map([
-        ["to_string", { params: [{ name: "self", type: selfRef }], ret: string_t, hasDefault: false }],
+        ["toString", { params: [{ name: "self", type: selfRef }], ret: string_t, hasDefault: false }],
       ]),
     });
 
@@ -1757,17 +1757,17 @@ export class TypeChecker {
           this.tryMove(expr.args[0]);
           return this.setType(expr, { tag: "box", inner: argType });
         }
-        if (expr.func === "embed_file") {
-          if (expr.args.length !== 1) { this.error(`embed_file() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+        if (expr.func === "embedFile") {
+          if (expr.args.length !== 1) { this.error(`embedFile() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
           const arg = expr.args[0];
-          if (arg.kind !== "StringLit") { this.error(`embed_file() argument must be a string literal`, sp); return this.setType(expr, { tag: "unknown" }); }
+          if (arg.kind !== "StringLit") { this.error(`embedFile() argument must be a string literal`, sp); return this.setType(expr, { tag: "unknown" }); }
           return this.setType(expr, { tag: "string" });
         }
-        if (expr.func === "json_stringify") {
-          if (expr.args.length !== 1) { this.error(`json_stringify() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+        if (expr.func === "jsonStringify") {
+          if (expr.args.length !== 1) { this.error(`jsonStringify() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
           const argType = this.checkExpr(expr.args[0]);
           if (argType.tag !== "struct" && argType.tag !== "string" && argType.tag !== "bool" && argType.tag !== "int" && argType.tag !== "float") {
-            this.error(`json_stringify: unsupported type '${typeName(argType)}'`, sp);
+            this.error(`jsonStringify: unsupported type '${typeName(argType)}'`, sp);
           }
           this.autoBorrowed.set(expr.args[0], { mutable: false });
           return this.setType(expr, { tag: "string" });
@@ -2228,8 +2228,8 @@ export class TypeChecker {
         const rawObjType = this.checkExpr(expr.object);
         // auto-deref `&T` for method dispatch (mutating methods still need !isRootMutable to allow)
         const objType = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
-        if ((objType.tag === "int" || objType.tag === "float") && expr.method === "to_string") {
-          if (expr.args.length !== 0) { this.error(`'to_string' takes no arguments`, sp); }
+        if ((objType.tag === "int" || objType.tag === "float") && expr.method === "toString") {
+          if (expr.args.length !== 0) { this.error(`'toString' takes no arguments`, sp); }
           return this.setType(expr, { tag: "string" });
         }
         if (objType.tag === "vec") {
@@ -2385,8 +2385,8 @@ export class TypeChecker {
             this.borrowedExprs.add(expr);
             return this.setType(expr, refStr);
           }
-          if (expr.method === "parse_f64") {
-            if (expr.args.length !== 0) { this.error(`'parse_f64' takes no arguments`, sp); }
+          if (expr.method === "parseF64") {
+            if (expr.args.length !== 0) { this.error(`'parseF64' takes no arguments`, sp); }
             return this.setType(expr, { tag: "float", bits: 64 });
           }
           if (expr.method === "clone") {
@@ -2394,16 +2394,16 @@ export class TypeChecker {
             return this.setType(expr, { tag: "string" });
           }
           // string methods delegated to std/string runtime functions
-          if (expr.method === "contains" || expr.method === "starts_with" || expr.method === "ends_with") {
+          if (expr.method === "contains" || expr.method === "startsWith" || expr.method === "endsWith") {
             if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "bool" }); }
             const argType = this.checkExpr(expr.args[0]);
             if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "bool" });
           }
-          if (expr.method === "index_of") {
-            if (expr.args.length !== 1) { this.error(`'index_of' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "int", bits: 64, signed: true }); }
+          if (expr.method === "indexOf") {
+            if (expr.args.length !== 1) { this.error(`'indexOf' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "int", bits: 64, signed: true }); }
             const argType = this.checkExpr(expr.args[0]);
-            if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'index_of': expected string, got ${typeName(argType)}`, sp);
+            if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'indexOf': expected string, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
           }
           if (expr.method === "split") {
@@ -2412,7 +2412,7 @@ export class TypeChecker {
             if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'split': expected string, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "vec", element: { tag: "string" } });
           }
-          if (expr.method === "trim" || expr.method === "trim_start" || expr.method === "trim_end" || expr.method === "to_lower" || expr.method === "to_upper") {
+          if (expr.method === "trim" || expr.method === "trimStart" || expr.method === "trimEnd" || expr.method === "toLower" || expr.method === "toUpper") {
             if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
             return this.setType(expr, { tag: "string" });
           }

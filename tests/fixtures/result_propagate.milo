@@ -8,19 +8,19 @@ fn validate(x: i32): Result<i32> {
     return Result.Ok(x)
 }
 
-fn double_valid(x: i32): Result<i32> {
+fn doubleValid(x: i32): Result<i32> {
     let v = validate(x)?
     return Result.Ok(v * 2)
 }
 
 fn main(): i32 {
-    let a = double_valid(42)
+    let a = doubleValid(42)
     match a {
         Result.Ok(v) => { print("got ", v) }
         Result.Err(msg) => { print("failed: ", msg) }
     }
 
-    let b = double_valid(-1)
+    let b = doubleValid(-1)
     match b {
         Result.Ok(v) => { print("got ", v) }
         Result.Err(msg) => { print("failed: ", msg) }

@@ -3,7 +3,7 @@ import "std/argparse"
 import "std/io"
 
 fn pad(n: i64): string {
-    let s = n.to_string()
+    let s = n.toString()
     var result: string = ""
     var p: i64 = 0
     while p < 8 - s.len {
@@ -14,24 +14,24 @@ fn pad(n: i64): string {
 }
 
 fn main(): i32 {
-    var parser = new_parser("wc", "count lines, words, and characters")
-    parser.add_optional_positional("file", "file to count (default: stdin)")
-    parser.add_bool("lines", "l", "only show line count")
-    parser.add_bool("words", "w", "only show word count")
-    parser.add_bool("chars", "c", "only show character count")
+    var parser = newParser("wc", "count lines, words, and characters")
+    parser.addOptionalPositional("file", "file to count (default: stdin)")
+    parser.addBool("lines", "l", "only show line count")
+    parser.addBool("words", "w", "only show word count")
+    parser.addBool("chars", "c", "only show character count")
     let args = parser.parse()
 
-    let show_lines = args.get_bool("lines")
-    let show_words = args.get_bool("words")
-    let show_chars = args.get_bool("chars")
-    let show_all = !show_lines && !show_words && !show_chars
+    let showLines = args.getBool("lines")
+    let showWords = args.getBool("words")
+    let showChars = args.getBool("chars")
+    let showAll = !showLines && !showWords && !showChars
 
     var content: string = ""
     var label: string = ""
 
     if args.has("file") {
-        label = args.get_string("file")
-        match read_file(args.get_string("file")) {
+        label = args.getString("file")
+        match readFile(args.getString("file")) {
             Result.Ok(data) => { content = data }
             Result.Err(e) => {
                 print("wc: ", e)
@@ -39,7 +39,7 @@ fn main(): i32 {
             }
         }
     } else {
-        content = read_stdin()
+        content = readStdin()
     }
 
     // count lines
@@ -54,31 +54,31 @@ fn main(): i32 {
 
     // count words
     var words: i64 = 0
-    var in_word: bool = false
+    var inWord: bool = false
     i = 0
     while i < content.len {
         let ch = content[i]
         if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
-            if in_word {
+            if inWord {
                 words = words + 1
-                in_word = false
+                inWord = false
             }
         } else {
-            in_word = true
+            inWord = true
         }
         i = i + 1
     }
-    if in_word { words = words + 1 }
+    if inWord { words = words + 1 }
 
     let chars = content.len
 
-    if show_all {
+    if showAll {
         print(pad(lines), pad(words), pad(chars), " ", label)
     } else {
         var output: string = ""
-        if show_lines { output = output + pad(lines) }
-        if show_words { output = output + pad(words) }
-        if show_chars { output = output + pad(chars) }
+        if showLines { output = output + pad(lines) }
+        if showWords { output = output + pad(words) }
+        if showChars { output = output + pad(chars) }
         print(output, " ", label)
     }
 

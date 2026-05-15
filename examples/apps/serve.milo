@@ -5,57 +5,57 @@ import "std/io"
 import "std/fs"
 import "std/path"
 
-fn get_mime(path: &string): string {
-    if path.ends_with(".html") || path.ends_with(".htm") { return "text/html" }
-    if path.ends_with(".css") { return "text/css" }
-    if path.ends_with(".js") { return "application/javascript" }
-    if path.ends_with(".json") { return "application/json" }
-    if path.ends_with(".png") { return "image/png" }
-    if path.ends_with(".jpg") || path.ends_with(".jpeg") { return "image/jpeg" }
-    if path.ends_with(".gif") { return "image/gif" }
-    if path.ends_with(".svg") { return "image/svg+xml" }
-    if path.ends_with(".ico") { return "image/x-icon" }
-    if path.ends_with(".txt") { return "text/plain" }
-    if path.ends_with(".xml") { return "application/xml" }
-    if path.ends_with(".pdf") { return "application/pdf" }
-    if path.ends_with(".wasm") { return "application/wasm" }
-    if path.ends_with(".md") { return "text/plain" }
-    if path.ends_with(".ts") { return "text/plain" }
+fn getMime(path: &string): string {
+    if path.endsWith(".html") || path.endsWith(".htm") { return "text/html" }
+    if path.endsWith(".css") { return "text/css" }
+    if path.endsWith(".js") { return "application/javascript" }
+    if path.endsWith(".json") { return "application/json" }
+    if path.endsWith(".png") { return "image/png" }
+    if path.endsWith(".jpg") || path.endsWith(".jpeg") { return "image/jpeg" }
+    if path.endsWith(".gif") { return "image/gif" }
+    if path.endsWith(".svg") { return "image/svg+xml" }
+    if path.endsWith(".ico") { return "image/x-icon" }
+    if path.endsWith(".txt") { return "text/plain" }
+    if path.endsWith(".xml") { return "application/xml" }
+    if path.endsWith(".pdf") { return "application/pdf" }
+    if path.endsWith(".wasm") { return "application/wasm" }
+    if path.endsWith(".md") { return "text/plain" }
+    if path.endsWith(".ts") { return "text/plain" }
     return "application/octet-stream"
 }
 
-fn format_size(size: i64): string {
-    if size < 1024 { return size.to_string() + "B" }
+fn formatSize(size: i64): string {
+    if size < 1024 { return size.toString() + "B" }
     let kb: i64 = 1024
     let mb: i64 = 1048576
-    if size < mb { return (size / kb).to_string() + "K" }
-    return (size / mb).to_string() + "M"
+    if size < mb { return (size / kb).toString() + "K" }
+    return (size / mb).toString() + "M"
 }
 
-fn dir_listing(dir_path: &string, url_path: &string): string {
-    let entries = read_dir(dir_path.clone())
-    var html: string = "<!DOCTYPE html><html><head><title>Index of " + url_path + "</title>"
+fn dirListing(dirPath: &string, urlPath: &string): string {
+    let entries = readDir(dirPath.clone())
+    var html: string = "<!DOCTYPE html><html><head><title>Index of " + urlPath + "</title>"
     html = html + "<style>body{font-family:monospace;margin:2em}a{text-decoration:none;color:#0366d6}"
     html = html + "a:hover{text-decoration:underline}table{border-collapse:collapse}"
     html = html + "td{padding:4px 16px}tr:hover{background:#f6f8fa}</style></head>"
-    html = html + "<body><h2>Index of " + url_path + "</h2><table>"
+    html = html + "<body><h2>Index of " + urlPath + "</h2><table>"
 
-    if url_path != "/" {
+    if urlPath != "/" {
         html = html + "<tr><td><a href=\"../\">..</a></td><td></td></tr>"
     }
 
     var i: i64 = 0
     while i < entries.len {
         let name = entries[i].name.clone()
-        let entry_is_dir = entries[i].is_dir
+        let entryIsDir = entries[i].isDir
         // skip hidden files
         if name[0] != 46 {
-            if entry_is_dir {
+            if entryIsDir {
                 html = html + "<tr><td><a href=\"" + name.clone() + "/\">" + name + "/</a></td><td>-</td></tr>"
             } else {
-                let entry_path = path_join(dir_path, name.clone())
-                let info = file_info(entry_path)
-                html = html + "<tr><td><a href=\"" + name.clone() + "\">" + name + "</a></td><td>" + format_size(info.size) + "</td></tr>"
+                let entryPath = pathJoin(dirPath, name.clone())
+                let info = fileInfo(entryPath)
+                html = html + "<tr><td><a href=\"" + name.clone() + "\">" + name + "</a></td><td>" + formatSize(info.size) + "</td></tr>"
             }
         }
         i = i + 1
@@ -65,17 +65,17 @@ fn dir_listing(dir_path: &string, url_path: &string): string {
     return html
 }
 
-fn handle_request(req: &Request, root: &string, quiet: bool): Response {
-    var req_path: string = req.path.clone()
-    if req_path == "/" { req_path = "" }
+fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
+    var reqPath: string = req.path.clone()
+    if reqPath == "/" { reqPath = "" }
 
-    let file_path = root + req_path
+    let filePath = root + reqPath
 
-    if is_dir(file_path.clone()) {
+    if isDir(filePath.clone()) {
         // try index.html first
-        let index_path = path_join(file_path, "index.html")
-        if is_file(index_path.clone()) {
-            match read_file(index_path) {
+        let indexPath = pathJoin(filePath, "index.html")
+        if isFile(indexPath.clone()) {
+            match readFile(indexPath) {
                 Result.Ok(content) => {
                     if !quiet { print("200 GET ", req.path, " -> index.html") }
                     return Response.Status(200, "text/html", content)
@@ -84,20 +84,20 @@ fn handle_request(req: &Request, root: &string, quiet: bool): Response {
             }
         }
         // directory listing
-        let listing = dir_listing(file_path, req.path)
+        let listing = dirListing(filePath, req.path)
         if !quiet { print("200 GET ", req.path, " (dir)") }
         return Response.Html(listing)
     }
 
-    if !is_file(file_path.clone()) {
+    if !isFile(filePath.clone()) {
         if !quiet { print("404 GET ", req.path) }
         return Response.NotFound
     }
 
-    match read_file(file_path.clone()) {
+    match readFile(filePath.clone()) {
         Result.Ok(content) => {
-            let mime = get_mime(file_path)
-            if !quiet { print("200 GET ", req.path, " (", format_size(content.len), ")") }
+            let mime = getMime(filePath)
+            if !quiet { print("200 GET ", req.path, " (", formatSize(content.len), ")") }
             return Response.Status(200, mime, content)
         }
         Result.Err(e) => {
@@ -108,26 +108,26 @@ fn handle_request(req: &Request, root: &string, quiet: bool): Response {
 }
 
 fn main(): i32 {
-    var parser = new_parser("serve", "static file server")
-    parser.add_optional_positional("dir", "directory to serve (default: .)")
-    parser.add_string("port", "p", "port to listen on", "8080")
-    parser.add_bool("quiet", "q", "suppress request logging")
+    var parser = newParser("serve", "static file server")
+    parser.addOptionalPositional("dir", "directory to serve (default: .)")
+    parser.addString("port", "p", "port to listen on", "8080")
+    parser.addBool("quiet", "q", "suppress request logging")
     let args = parser.parse()
 
     var root: string = "."
     if args.has("dir") {
-        root = args.get_string("dir")
+        root = args.getString("dir")
     }
 
-    let quiet = args.get_bool("quiet")
-    let port = args.get_u16("port")
+    let quiet = args.getBool("quiet")
+    let port = args.getU16("port")
 
     print("serve - static file server")
     print("  serving ", root, " on port ", port)
     print("")
 
     let result = serve(port, (req: &Request) => {
-        return handle_request(req, root, quiet)
+        return handleRequest(req, root, quiet)
     })
     match result {
         Result.Err(msg) => {

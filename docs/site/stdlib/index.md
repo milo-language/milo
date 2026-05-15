@@ -6,10 +6,10 @@ All modules are imported with `import "std/<name>"`.
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/io` | `read_file`, `read_stdin`, `open_read`/`open_write`/`open_append`, `read_all`, `write_all`, RAII file handles |
-| `std/fs` | `read_dir`, `file_info`, `is_dir`/`is_file`, `path_exists`, `write_file` |
-| `std/path` | `path_join`, `path_basename`, `path_dirname`, `path_ext`, `path_stem` |
-| `std/env` | `get_env`, `get_env_or` |
+| `std/io` | `readFile`, `readStdin`, `openRead`/`openWrite`/`openAppend`, `readAll`, `writeAll`, RAII file handles |
+| `std/fs` | `readDir`, `file_info`, `is_dir`/`is_file`, `pathExists`, `writeFile` |
+| `std/path` | `pathJoin`, `pathBasename`, `pathDirname`, `pathExt`, `pathStem` |
+| `std/env` | `getEnv`, `getEnvOr` |
 
 ## Networking
 
@@ -78,10 +78,10 @@ struct DLNode {
 }
 
 fn main(): i32 {
-    var arena: Arena<DLNode> = arena_new()
-    let a = arena_alloc(arena, DLNode { value: 1, prev: Option.None, next: Option.None })
-    let b = arena_alloc(arena, DLNode { value: 2, prev: Option.Some(a), next: Option.None })
-    arena_modify(arena, a, (n: DLNode) => {
+    var arena: Arena<DLNode> = arenaNew()
+    let a = arenaAlloc(arena, DLNode { value: 1, prev: Option.None, next: Option.None })
+    let b = arenaAlloc(arena, DLNode { value: 2, prev: Option.Some(a), next: Option.None })
+    arenaModify(arena, a, (n: DLNode) => {
         var updated = n
         updated.next = Option.Some(b)
         return updated

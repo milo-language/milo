@@ -26,10 +26,10 @@ fn main(): i32 {
     print(c1)
     print(c2)
 
-    let some_val: Option<i64> = Option.Some(42 as i64)
-    let no_val: Option<i64> = Option.None
-    print(some_val)
-    print(no_val)
+    let someVal: Option<i64> = Option.Some(42 as i64)
+    let noVal: Option<i64> = Option.None
+    print(someVal)
+    print(noVal)
 
     return 0
 }

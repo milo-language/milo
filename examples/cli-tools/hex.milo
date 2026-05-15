@@ -2,7 +2,7 @@
 import "std/argparse"
 import "std/io"
 
-fn byte_to_hex(b: u8): string {
+fn byteToHex(b: u8): string {
     let hex = "0123456789abcdef"
     var result: string = ""
     let hi = (b / 16) as i64
@@ -12,41 +12,41 @@ fn byte_to_hex(b: u8): string {
     return result
 }
 
-fn offset_to_hex(n: i64): string {
+fn offsetToHex(n: i64): string {
     let hex = "0123456789abcdef"
     var result: string = ""
     var val: i64 = n
     var i: i32 = 0
     while i < 8 {
-        var ch_buf: string = ""
-        ch_buf.push(hex[val % 16])
-        result = ch_buf + result
+        var chBuf: string = ""
+        chBuf.push(hex[val % 16])
+        result = chBuf + result
         val = val / 16
         i = i + 1
     }
     return result
 }
 
-fn is_printable(b: u8): bool {
+fn isPrintable(b: u8): bool {
     return b >= 32 && b < 127
 }
 
 fn main(): i32 {
-    var parser = new_parser("hex", "hex dump viewer")
-    parser.add_positional("file", "file to dump")
-    parser.add_string("length", "n", "number of bytes to display", "0")
-    parser.add_string("skip", "s", "skip N bytes from start", "0")
-    parser.add_bool("plain", "p", "no ASCII column, just hex")
+    var parser = newParser("hex", "hex dump viewer")
+    parser.addPositional("file", "file to dump")
+    parser.addString("length", "n", "number of bytes to display", "0")
+    parser.addString("skip", "s", "skip N bytes from start", "0")
+    parser.addBool("plain", "p", "no ASCII column, just hex")
     let args = parser.parse()
 
-    let plain = args.get_bool("plain")
+    let plain = args.getBool("plain")
     let cols: i64 = 16
 
-    var max_length: i64 = args.get_i64("length")
-    var skip_bytes: i64 = args.get_i64("skip")
+    var maxLength: i64 = args.getI64("length")
+    var skipBytes: i64 = args.getI64("skip")
 
     var content: string = ""
-    match read_file(args.get_string("file")) {
+    match readFile(args.getString("file")) {
         Result.Ok(data) => { content = data }
         Result.Err(e) => {
             print("hex: ", e)
@@ -54,33 +54,33 @@ fn main(): i32 {
         }
     }
 
-    var start: i64 = skip_bytes
+    var start: i64 = skipBytes
     var end: i64 = content.len
-    if max_length > 0 && start + max_length < end {
-        end = start + max_length
+    if maxLength > 0 && start + maxLength < end {
+        end = start + maxLength
     }
 
     var offset: i64 = start
     while offset < end {
-        var hex_part: string = ""
-        var ascii_part: string = ""
+        var hexPart: string = ""
+        var asciiPart: string = ""
         var col: i64 = 0
 
         while col < cols && offset + col < end {
             let b = content[offset + col]
-            hex_part = hex_part + byte_to_hex(b) + " "
+            hexPart = hexPart + byteToHex(b) + " "
 
             if col == 7 {
-                hex_part = hex_part + " "
+                hexPart = hexPart + " "
             }
 
             if !plain {
-                if is_printable(b) {
+                if isPrintable(b) {
                     var ch: string = ""
                     ch.push(b)
-                    ascii_part = ascii_part + ch
+                    asciiPart = asciiPart + ch
                 } else {
-                    ascii_part = ascii_part + "."
+                    asciiPart = asciiPart + "."
                 }
             }
 
@@ -89,17 +89,17 @@ fn main(): i32 {
 
         // pad remaining columns
         while col < cols {
-            hex_part = hex_part + "   "
+            hexPart = hexPart + "   "
             if col == 7 {
-                hex_part = hex_part + " "
+                hexPart = hexPart + " "
             }
             col = col + 1
         }
 
-        var line: string = offset_to_hex(offset) + ": " + hex_part
+        var line: string = offsetToHex(offset) + ": " + hexPart
 
         if !plain {
-            line = line + " |" + ascii_part + "|"
+            line = line + " |" + asciiPart + "|"
         }
 
         print(line)

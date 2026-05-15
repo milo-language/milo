@@ -4,7 +4,7 @@ struct Empty {}
 
 fn main(): i32 {
     let e = Empty {}
-    let json = json_stringify(e)
+    let json = jsonStringify(e)
     print(json)
     return 0
 }

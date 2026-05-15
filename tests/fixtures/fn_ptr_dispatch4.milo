@@ -7,7 +7,7 @@ struct Op {
     apply: (i32) => i32,
 }
 
-fn use_ops(ops: &Vec<Op>): void {
+fn useOps(ops: &Vec<Op>): void {
     let op = ops[0]
     print("name: ", op.name)
     print("result: ", op.apply(5))
@@ -16,6 +16,6 @@ fn use_ops(ops: &Vec<Op>): void {
 fn main(): i32 {
     var ops: Vec<Op> = Vec.new()
     ops.push(Op { name: "double", apply: double })
-    use_ops(ops)
+    useOps(ops)
     return 0
 }

@@ -1,7 +1,7 @@
 // std/string — string utility functions
 
 // Check if haystack contains needle.
-fn str_contains(haystack: &string, needle: &string): bool {
+fn strContains(haystack: &string, needle: &string): bool {
     if needle.len == 0 { return true }
     if needle.len > haystack.len { return false }
     var i: i64 = 0
@@ -18,11 +18,11 @@ fn str_contains(haystack: &string, needle: &string): bool {
 }
 
 // Find first occurrence of needle in haystack. Returns -1 if not found.
-fn str_index_of(haystack: &string, needle: &string): i64 {
-    var not_found: i64 = 0
-    not_found = not_found - 1
+fn strIndexOf(haystack: &string, needle: &string): i64 {
+    var notFound: i64 = 0
+    notFound = notFound - 1
     if needle.len == 0 { return 0 as i64 }
-    if needle.len > haystack.len { return not_found }
+    if needle.len > haystack.len { return notFound }
     var i: i64 = 0
     while i <= haystack.len - needle.len {
         var j: i64 = 0
@@ -33,16 +33,16 @@ fn str_index_of(haystack: &string, needle: &string): i64 {
         if j == needle.len { return i }
         i = i + 1
     }
-    return not_found
+    return notFound
 }
 
 // Find first occurrence of needle starting at pos. Returns -1 if not found.
-fn str_index_of_from(haystack: &string, needle: &string, pos: i64): i64 {
-    var not_found: i64 = 0
-    not_found = not_found - 1
+fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64 {
+    var notFound: i64 = 0
+    notFound = notFound - 1
     if needle.len == 0 { return pos }
-    if pos < 0 as i64 { return not_found }
-    if pos + needle.len > haystack.len { return not_found }
+    if pos < 0 as i64 { return notFound }
+    if pos + needle.len > haystack.len { return notFound }
     var i: i64 = pos
     while i <= haystack.len - needle.len {
         var j: i64 = 0
@@ -53,11 +53,11 @@ fn str_index_of_from(haystack: &string, needle: &string, pos: i64): i64 {
         if j == needle.len { return i }
         i = i + 1
     }
-    return not_found
+    return notFound
 }
 
 // Check if string starts with prefix.
-fn str_starts_with(s: &string, prefix: &string): bool {
+fn strStartsWith(s: &string, prefix: &string): bool {
     if prefix.len > s.len { return false }
     var i: i64 = 0
     while i < prefix.len {
@@ -68,7 +68,7 @@ fn str_starts_with(s: &string, prefix: &string): bool {
 }
 
 // Check if string ends with suffix.
-fn str_ends_with(s: &string, suffix: &string): bool {
+fn strEndsWith(s: &string, suffix: &string): bool {
     if suffix.len > s.len { return false }
     let offset = s.len - suffix.len
     var i: i64 = 0
@@ -80,7 +80,7 @@ fn str_ends_with(s: &string, suffix: &string): bool {
 }
 
 // Return new string with ASCII uppercase letters converted to lowercase.
-fn str_to_lower(s: &string): string {
+fn strToLower(s: &string): string {
     var result: string = ""
     var i: i64 = 0
     while i < s.len {
@@ -96,7 +96,7 @@ fn str_to_lower(s: &string): string {
 }
 
 // Return new string with ASCII lowercase letters converted to uppercase.
-fn str_to_upper(s: &string): string {
+fn strToUpper(s: &string): string {
     var result: string = ""
     var i: i64 = 0
     while i < s.len {
@@ -112,7 +112,7 @@ fn str_to_upper(s: &string): string {
 }
 
 // Strip leading and trailing ASCII whitespace (space, tab, newline, carriage return).
-fn str_trim(s: &string): string {
+fn strTrim(s: &string): string {
     var start: i64 = 0
     while start < s.len {
         let ch = s[start]
@@ -130,7 +130,7 @@ fn str_trim(s: &string): string {
 }
 
 // Strip leading ASCII whitespace.
-fn str_trim_start(s: &string): string {
+fn strTrimStart(s: &string): string {
     var start: i64 = 0
     while start < s.len {
         let ch = s[start]
@@ -142,7 +142,7 @@ fn str_trim_start(s: &string): string {
 }
 
 // Strip trailing ASCII whitespace.
-fn str_trim_end(s: &string): string {
+fn strTrimEnd(s: &string): string {
     var end: i64 = s.len
     while end > 0 as i64 {
         let ch = s[end - 1]
@@ -154,10 +154,10 @@ fn str_trim_end(s: &string): string {
 }
 
 // Split string by separator. Returns Vec of substrings.
-fn str_split(s: &string, sep: &string): Vec<string> {
+fn strSplit(s: &string, sep: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
-    var not_found: i64 = 0
-    not_found = not_found - 1
+    var notFound: i64 = 0
+    notFound = notFound - 1
     if sep.len == 0 {
         var i: i64 = 0
         while i < s.len {
@@ -168,8 +168,8 @@ fn str_split(s: &string, sep: &string): Vec<string> {
     }
     var pos: i64 = 0
     while pos <= s.len {
-        let idx = str_index_of_from(s, sep, pos)
-        if idx == not_found {
+        let idx = strIndexOfFrom(s, sep, pos)
+        if idx == notFound {
             result.push(s.substr(pos, s.len))
             break
         }
@@ -180,7 +180,7 @@ fn str_split(s: &string, sep: &string): Vec<string> {
 }
 
 // Repeat a string n times.
-fn str_repeat(s: &string, n: i64): string {
+fn strRepeat(s: &string, n: i64): string {
     var result: string = ""
     var i: i64 = 0
     while i < n {
@@ -190,44 +190,44 @@ fn str_repeat(s: &string, n: i64): string {
     return result
 }
 
-// Replace all occurrences of old with new_val.
-fn str_replace(s: &string, old: &string, new_val: &string): string {
+// Replace all occurrences of old with newVal.
+fn strReplace(s: &string, old: &string, newVal: &string): string {
     if old.len == 0 { return s.clone() }
-    var not_found: i64 = 0
-    not_found = not_found - 1
+    var notFound: i64 = 0
+    notFound = notFound - 1
     var result: string = ""
     var pos: i64 = 0
     while pos < s.len {
-        let idx = str_index_of_from(s, old, pos)
-        if idx == not_found {
+        let idx = strIndexOfFrom(s, old, pos)
+        if idx == notFound {
             result = result + s.substr(pos, s.len)
             break
         }
         if idx > pos {
             result = result + s.substr(pos, idx)
         }
-        result = result + new_val
+        result = result + newVal
         pos = idx + old.len
     }
     return result
 }
 
 // Check if a byte is ASCII whitespace.
-fn char_is_whitespace(ch: u8): bool {
+fn charIsWhitespace(ch: u8): bool {
     return ch == 32 || ch == 9 || ch == 10 || ch == 13
 }
 
 // Check if a byte is an ASCII digit.
-fn char_is_digit(ch: u8): bool {
+fn charIsDigit(ch: u8): bool {
     return ch >= 48 && ch <= 57
 }
 
 // Check if a byte is an ASCII letter.
-fn char_is_alpha(ch: u8): bool {
+fn charIsAlpha(ch: u8): bool {
     return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122)
 }
 
 // Check if a byte is an ASCII letter or digit.
-fn char_is_alphanumeric(ch: u8): bool {
-    return char_is_alpha(ch) || char_is_digit(ch)
+fn charIsAlphanumeric(ch: u8): bool {
+    return charIsAlpha(ch) || charIsDigit(ch)
 }

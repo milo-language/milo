@@ -16,14 +16,14 @@ enum AppError {
     Parse(ParseError),
 }
 
-fn read_file(path: string): Result<string, IoError> {
+fn readFile(path: string): Result<string, IoError> {
     if path == "missing.txt" {
         return Result.Err(IoError.NotFound(path))
     }
     return Result.Ok(path.clone())
 }
 
-fn parse_data(s: string): Result<i32, ParseError> {
+fn parseData(s: string): Result<i32, ParseError> {
     if s == "bad.txt" {
         return Result.Err(ParseError.BadFormat("bad format"))
     }
@@ -31,12 +31,12 @@ fn parse_data(s: string): Result<i32, ParseError> {
 }
 
 fn process(path: string): Result<i32, AppError> {
-    let contents = read_file(path)?
-    let size = parse_data(contents)?
+    let contents = readFile(path)?
+    let size = parseData(contents)?
     return Result.Ok(size)
 }
 
-fn show_error(e: AppError): void {
+fn showError(e: AppError): void {
     match e {
         AppError.Io(io) => {
             match io {
@@ -55,15 +55,15 @@ fn show_error(e: AppError): void {
 fn main(): i32 {
     match process("data.txt") {
         Result.Ok(n) => { print("size: ", n) }
-        Result.Err(e) => { show_error(e) }
+        Result.Err(e) => { showError(e) }
     }
     match process("missing.txt") {
         Result.Ok(n) => { print("size: ", n) }
-        Result.Err(e) => { show_error(e) }
+        Result.Err(e) => { showError(e) }
     }
     match process("bad.txt") {
         Result.Ok(n) => { print("size: ", n) }
-        Result.Err(e) => { show_error(e) }
+        Result.Err(e) => { showError(e) }
     }
     return 0
 }

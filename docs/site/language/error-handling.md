@@ -8,8 +8,8 @@ Functions that can fail return `Result<T>`:
 
 ```milo
 fn readNumber(path: &string): Result<i64> {
-    let text = read_file(path)?     // ? propagates errors to caller
-    return text.trim().parse_i64()
+    let text = readFile(path)?     // ? propagates errors to caller
+    return text.trim().parseI64()
 }
 ```
 

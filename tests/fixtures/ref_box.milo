@@ -6,11 +6,11 @@ enum Tree {
     Leaf(i32)
 }
 
-fn print_boxed(b: &Box<i32>) {
+fn printBoxed(b: &Box<i32>) {
     print("value: ", *b)
 }
 
-fn print_leaf(t: &Box<Tree>) {
+fn printLeaf(t: &Box<Tree>) {
     match *t {
         Tree.Leaf(n) => { print("leaf: ", n) }
         Tree.Node(l, r) => { }
@@ -19,9 +19,9 @@ fn print_leaf(t: &Box<Tree>) {
 
 fn main(): i32 {
     let b = Box(42)
-    print_boxed(b)
+    printBoxed(b)
 
     let t = Box(Tree.Leaf(7))
-    print_leaf(t)
+    printLeaf(t)
     return 0
 }

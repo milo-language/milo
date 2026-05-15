@@ -1,7 +1,7 @@
 // @expect: len: 2
 // @expect: done
 
-fn make_map(): HashMap<i32, i32> {
+fn makeMap(): HashMap<i32, i32> {
     var m: HashMap<i32, i32> = HashMap.new()
     m.insert(1, 10)
     m.insert(2, 20)
@@ -9,7 +9,7 @@ fn make_map(): HashMap<i32, i32> {
 }
 
 fn main(): i32 {
-    let m = make_map()
+    let m = makeMap()
     print("len: ", m.len)
     print("done")
     return 0
