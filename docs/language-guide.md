@@ -4,7 +4,7 @@ Milo is a memory-safe systems language that compiles to native binaries via LLVM
 It uses move semantics and second-class references to guarantee safety at compile time —
 no garbage collector, no reference counting, no lifetime annotations.
 
-If you know TypeScript, Go, or Swift, most Milo code will look familiar.
+The syntax is designed to be readable on first contact — no surprising sigils or ceremony.
 
 ## Getting Started
 
