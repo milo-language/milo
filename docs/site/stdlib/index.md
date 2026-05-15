@@ -37,18 +37,30 @@ All modules are imported with `import "std/<name>"`.
 ```milo
 from "std/http" import { Request, Response, serve }
 
-fn handler(req: &Request): Response {
-    if req.path == "/" {
-        return Response.Html("<h1>Hello!</h1>")
-    }
-    if req.path == "/api" {
-        return Response.Json("{\"status\": \"ok\"}")
+struct Route {
+    method: string,
+    prefix: string,
+    handler: (&Request) => Response,
+}
+
+fn dispatch(routes: &Vec<Route>, req: &Request): Response {
+    var i: i64 = 0
+    while i < routes.len {
+        let r = routes[i]
+        if req.method == r.method && req.path == r.prefix {
+            return r.handler(req)
+        }
+        i = i + 1
     }
     return Response.NotFound
 }
 
 fn main(): i32 {
-    serve(8080, handler)
+    let routes: Vec<Route> = [
+        Route { method: "GET", prefix: "/",     handler: (r: &Request) => Response.Html("<h1>Hello!</h1>") },
+        Route { method: "GET", prefix: "/json", handler: (r: &Request) => Response.Json("{\"ok\": true}") },
+    ]
+    serve(8080, (req: &Request) => dispatch(routes, req))
     return 0
 }
 ```
