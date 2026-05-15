@@ -596,19 +596,20 @@ or stored in local variables, but cannot be returned or stored in structs.
 
 ```milo
 // Expression closure
+let double = (x: i32) => x * 2
+
+// Block closure
+let clamp = (x: i32): i32 => {
+    if x < 0 { return 0 }
+    if x > 100 { return 100 }
+    return x
+}
+
+// Passed as argument
 fn apply(f: fn(i32): i32, x: i32): i32 {
     return f(x)
 }
-let result = apply((x: i32) => x * 2, 21)   // 42
-
-// Block closure
-let result = apply((x: i32): i32 => {
-    let doubled = x * 2
-    return doubled + 1
-}, 20)   // 41
-
-// Stored in local variable
-let inc = (x: i32) => x + 1
+let result = apply(double, 21)   // 42
 ```
 
 ### Capturing Variables
