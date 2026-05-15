@@ -298,3 +298,25 @@ fn charIsAlpha(ch: u8): bool {
 fn charIsAlphanumeric(ch: u8): bool {
     return charIsAlpha(ch) || charIsDigit(ch)
 }
+
+// Remove leading and trailing whitespace (spaces, tabs, newlines, carriage returns).
+
+fn trim(s: &string): string {
+    var start: i64 = 0
+    while start < s.len {
+        let ch = s[start]
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
+            break
+        }
+        start = start + 1
+    }
+    var end: i64 = s.len
+    while end > start {
+        let ch = s[end - 1]
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
+            break
+        }
+        end = end - 1
+    }
+    return s.substr(start, end)
+}

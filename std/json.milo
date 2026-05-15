@@ -136,6 +136,11 @@ impl Json {
     fn rawStr(self: &Self): string {
         return self.raw[self.start..self.end].clone()
     }
+
+    // Return all keys of a JSON object.
+    fn keys(self: &Self): Vec<string> {
+        return jsonKeysImpl(self.raw, self.start, self.end)
+    }
 }
 
 fn jsonParse(s: string): Result<Json> {
@@ -516,6 +521,38 @@ fn jsonIntImpl(s: &string, start: i64, end: i64): i64 {
     }
     if negative {
         result = 0 - result
+    }
+    return result
+}
+
+fn jsonKeysImpl(s: &string, start: i64, end: i64): Vec<string> {
+    var result: Vec<string> = Vec.new()
+    if start >= end || s[start] != '{' {
+        return result
+    }
+    var i: i64 = start + 1
+    while i < end {
+        i = skipWs(s, i)
+        if i >= end || s[i] == '}' {
+            break
+        }
+        if s[i] != '"' {
+            break
+        }
+        let keyStart = i
+        let keyEnd = skipString(s, i)
+        let key = jsonStrImpl(s, keyStart, keyEnd)
+        result.push(key)
+        i = skipWs(s, keyEnd)
+        if i < end && s[i] == ':' {
+            i = i + 1
+        }
+        i = skipWs(s, i)
+        i = skipValue(s, i)
+        i = skipWs(s, i)
+        if i < end && s[i] == ',' {
+            i = i + 1
+        }
     }
     return result
 }

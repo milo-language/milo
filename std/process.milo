@@ -1,6 +1,7 @@
 // std/process — command execution and process control
 
 import "std/os"
+import "std/io"
 
 // ── Simple command execution ──
 
@@ -58,6 +59,27 @@ fn waitFor(p: &Process): Result<i32> {
         }
         let raw = (statusBuf[1]as i32)
         return Result.Ok(raw)
+    }
+}
+
+// Execute a shell command and return its stdout as a string.
+// Uses shell redirection to a temp file under the hood.
+
+fn capture(cmd: string): Result<string> {
+    let tmpPath: string = "/tmp/.milo_capture"
+    let fullCmd = cmd + " > " + tmpPath + " 2>&1"
+    let code = run(fullCmd)!
+    if code != 0 {
+        return Result.Err("command failed with exit code")
+    }
+    let content = readFile(tmpPath)
+    match content {
+        Result.Ok(s) => {
+            return Result.Ok(s)
+        }
+        Result.Err(e) => {
+            return Result.Err("failed to read capture output")
+        }
     }
 }
 
