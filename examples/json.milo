@@ -1,26 +1,34 @@
-// JSON in Milo — parse, access, stringify
+// JSON in Milo — stringify structs, parse them back
 import "std/json"
 
-struct Project { name: string, version: i64, active: bool }
+struct User {
+    name: string,
+    age: i64,
+    active: bool,
+}
 
 fn main(): i32 {
-    // Parse and access fields
-    let j = jsonParse("{\"name\": \"Milo\", \"version\": 1, \"tags\": [\"fast\", \"safe\", \"native\"]}")!
+    // Stringify
+    let alice = User { name: "Alice", age: 30, active: true }
+    let json = jsonStringify(alice)
+    print(json)
 
-    print(j.str("name")!)              // Milo
-    print(j.i64("version")!)           // 1
+    // Parse it back
+    let j = jsonParse(json)!
+    print(j.str("name")!)
+    print(j.i64("age")!)
+    print(j.bool("active")!)
 
-    // Index into arrays
-    let tags = j.get("tags")!
+    // Array of objects
+    let bob = User { name: "Bob", age: 25, active: false }
+    let arr = "[" + jsonStringify(alice) + ", " + jsonStringify(bob) + "]"
+    let users = jsonParse(arr)!
     var i: i64 = 0
-    while i < tags.len() {
-        print("tag: ", tags.at(i)!.asStr()!)
+    while i < users.len() {
+        let u = users.at(i)!
+        print(u.str("name")!, " is ", u.i64("age")!)
         i = i + 1
     }
-
-    // Stringify a struct
-    let proj = Project { name: "milo", version: 1, active: true }
-    print(jsonStringify(proj))          // {"name":"milo","version":1,"active":true}
 
     return 0
 }
