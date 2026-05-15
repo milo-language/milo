@@ -245,7 +245,8 @@ Still missing for full milo0-on-milo0:
 - [ ] **`HashMap<K, V>`** — 2 use sites, removable.
 - [ ] **Drop semantics on Box** — currently leaks, fine for small programs.
 - [x] **Enum equality (==/!=)** re-enabled. Earlier crash was an internal milo0 abort triggered by some interaction in the let-bound clones; replaced with inline temp-name construction (`"%t" + id.toString()`) and the runtime aborts disappeared. Likely the same heap-alias-on-many-string-locals issue that plagued earlier arm bodies — but here a small refactor sidesteps it.
-- [ ] Closures, generics, imports.
+- [x] Closures — arrow syntax, captures, by-value and by-ref params
+- [x] Match on literals — integer, string, float, bool patterns with wildcard
 
 ### Phase 3.5 — Beyond Stage-0
 
