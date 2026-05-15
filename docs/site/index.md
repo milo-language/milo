@@ -10,7 +10,7 @@ hero:
       link: /getting-started/installation
     - theme: alt
       text: Learn the Language
-      link: /language/variables
+      link: /language/
 
 features:
   - title: You Already Know This
@@ -19,8 +19,8 @@ features:
     details: "The compiler tracks ownership and frees memory for you. Use-after-free? Caught at compile time. No garbage collector pauses, no manual malloc/free."
   - title: No Lifetime Annotations
     details: "Rust's biggest learning cliff, gone. References can't escape the function they're passed to — one simple rule replaces an entire chapter of the Rust book."
-  - title: Native Binaries via LLVM
-    details: "Compiles to optimized machine code. Sub-millisecond startup. Binaries under 300KB. Performance within noise of C."
+  - title: Fast
+    details: "Within 3% of C on most benchmarks. Sub-millisecond startup, binaries under 300KB. Compiles to native code via LLVM."
 ---
 
 ### Familiar syntax, serious guarantees
@@ -57,26 +57,37 @@ fn processLine(line: &string): void {
 ### Real programs, not toy demos
 
 ```milo
-enum JsonValue {
-    Null,
-    Bool(bool),
-    Number(i64),
-    Str(string),
-    Array(Vec<Box<JsonValue>>),
-    Object(Vec<JsonKV>),
+from "std/http" import { Request, Response, serve }
+
+struct Route {
+    method: string,
+    prefix: string,
+    handler: (&Request) => Response,
 }
 
-fn parse_value(s: &string, pos: &mut i64): Box<JsonValue> {
-    skip_ws(s, pos)
-    let ch = s[pos]
-    if ch == '"' { return parse_string(s, pos) }
-    if ch == '{' { return parse_object(s, pos) }
-    if ch == '[' { return parse_array(s, pos) }
-    return Box(JsonValue.Null)
+fn dispatch(routes: &Vec<Route>, req: &Request): Response {
+    var i: i64 = 0
+    while i < routes.len {
+        let r = routes[i]
+        if req.method == r.method && req.path == r.prefix {
+            return r.handler(req)
+        }
+        i = i + 1
+    }
+    return Response.NotFound
+}
+
+fn main(): i32 {
+    let routes: Vec<Route> = [
+        Route { method: "GET", prefix: "/",     handler: (r: &Request) => Response.Html("<h1>Hello!</h1>") },
+        Route { method: "GET", prefix: "/json", handler: (r: &Request) => Response.Json("{\"ok\": true}") },
+    ]
+    serve(8080, (req: &Request) => dispatch(routes, req))
+    return 0
 }
 ```
 
-Tagged unions, pattern matching, heap allocation with `Box<T>` — the tools you need for real systems code, in syntax you can actually read.
+Structs, closures, borrows, routing — a real web server in 25 lines.
 
 ### Where Milo fits
 

@@ -24,7 +24,7 @@ export default defineConfig({
 
     nav: [
       { text: 'Docs', link: '/getting-started/installation' },
-      { text: 'Language', link: '/language/variables' },
+      { text: 'Language', link: '/language/' },
       { text: 'Standard Library', link: '/stdlib/' },
       { text: 'Benchmarks', link: '/benchmarks' },
     ],
@@ -42,6 +42,7 @@ export default defineConfig({
         {
           text: 'Language',
           items: [
+            { text: 'Overview', link: '/language/' },
             { text: 'Variables & Types', link: '/language/variables' },
             { text: 'Functions', link: '/language/functions' },
             { text: 'Structs', link: '/language/structs' },
