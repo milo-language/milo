@@ -267,21 +267,21 @@ Goal: fill stdlib gaps exposed by writing real programs. Prioritized by how ofte
 
 ### Tier 1 — blocks most real programs
 
-- [ ] **std/math** — abs, min, max, pow, sqrt, floor, ceil, round, log, sin, cos, tan, atan2 (wrap libm)
-- [ ] **std/random** — seedable RNG, randInt(min, max), randFloat(), shuffle (wrap arc4random or /dev/urandom)
-- [ ] **std/time** — timestamps (epoch millis), monotonic clock, Duration struct, sleep, elapsed measurement (wrap clock_gettime/gettimeofday)
-- [ ] **std/sort** — sort Vec<T> with comparator closure, sortBy, sorted copy vs in-place
-- [ ] **std/set** — HashSet<T> built on HashMap<T, bool> or dedicated impl
+- [x] **std/math** — abs, min, max, pow, sqrt, floor, ceil, round, log, sin, cos, tan, atan2 (wrap libm), clamp, constants (pi, e)
+- [x] **std/random** — randInt, randRange, randFloat, randBool, shuffle (arc4random)
+- [x] **std/time** — Instant/Duration structs, now(), epochMillis(), since(), elapsed(), sleepMs/sleepSecs (gettimeofday/usleep)
+- [x] **std/sort** — quicksort for i64/i32, insertion sort for strings, reverse
+- [x] **std/set** — generic HashSet<T> backed by HashMap<T, bool>
 
 ### Tier 2 — painful to work around
 
 - [ ] **std/fmt** — string interpolation / formatting (sprintf-style or template-based)
 - [ ] **std/bufio** — BufReader (line-by-line file reading), BufWriter (batched writes)
-- [ ] **std/strconv** — parseInt, parseFloat, number-to-string with radix/precision control
+- [x] **std/strconv** — parseInt, parseFloat, parseIntRadix, i64ToHex/Oct/Bin, formatFloat
 - [ ] **std/unicode** — isLetter, isNumber, isPunctuation, toUpper/toLower for codepoints (beyond ASCII)
-- [ ] **std/base64** — encode/decode
-- [ ] **std/hex** — encode/decode bytes to/from hex strings
-- [ ] **std/log** — leveled logging (debug/info/warn/error) to stderr with timestamps
+- [x] **std/base64** — encode/decode
+- [x] **std/hex** — encode/decode bytes to/from hex strings
+- [x] **std/log** — leveled logging (debug/info/warn/error) to stderr with timestamps
 
 ### Tier 3 — nice to have
 
