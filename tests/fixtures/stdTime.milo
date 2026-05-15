@@ -1,0 +1,30 @@
+// @expect: epoch ok
+// @expect: sleep ok
+// @expect: 0
+// @expect: micros ok
+
+import "std/time"
+
+fn main(): i32 {
+    let start = now()
+    let epoch = epochMillis()
+    if epoch > 1000000000000 {
+        print("epoch ok")
+    }
+
+    sleepMs(50)
+    let d = since(start)
+    let ms = durationMillis(d)
+    if ms >= 40 {
+        print("sleep ok")
+    }
+
+    let secs = durationSecs(d)
+    print(secs.toString())
+
+    let micros = durationMicros(d)
+    if micros >= 40000 {
+        print("micros ok")
+    }
+    return 0
+}
