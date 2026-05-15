@@ -76,3 +76,5 @@ benchmarks/json/json_milo
 benchmarks/json/json_c
 benchmarks/json/json_go
 benchmarks/results-*.md
+docs/site/.vitepress/cache/
+.claude/
