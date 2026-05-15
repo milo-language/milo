@@ -276,18 +276,18 @@ Goal: fill stdlib gaps exposed by writing real programs. Prioritized by how ofte
 ### Tier 2 — painful to work around
 
 - [ ] **std/fmt** — string interpolation / formatting (sprintf-style or template-based)
-- [ ] **std/bufio** — BufReader (line-by-line file reading), BufWriter (batched writes)
+- [x] **std/io additions** — splitLines, readLine (byte-by-byte stdin), readLines (file→Vec<string>)
 - [x] **std/strconv** — parseInt, parseFloat, parseIntRadix, i64ToHex/Oct/Bin, formatFloat
-- [ ] **std/unicode** — isLetter, isNumber, isPunctuation, toUpper/toLower for codepoints (beyond ASCII)
+- [x] **std/unicode** — ASCII char classification (isDigit, isAlpha, isWhitespace, isPunctuation, isHexDigit, etc.), case conversion
 - [x] **std/base64** — encode/decode
 - [x] **std/hex** — encode/decode bytes to/from hex strings
 - [x] **std/log** — leveled logging (debug/info/warn/error) to stderr with timestamps
 
 ### Tier 3 — nice to have
 
-- [ ] **std/csv** — parse/write CSV with quoting/escaping
-- [ ] **std/regex** — basic regex matching (wrap POSIX regex.h or build NFA)
-- [ ] **std/crypto** — SHA-256, MD5, HMAC (wrap libc or implement in Milo)
+- [x] **std/csv** — parse and stringify with quoting/escaping
+- [x] **std/regex** — POSIX regex wrapping: regexNew, regexMatch, regexFind, regexFindAll
+- [x] **std/crypto** — SHA-256, MD5 via CommonCrypto (macOS); needs OpenSSL path for Linux
 - [ ] **std/testing** — assert helpers, test runner annotations (may need language support)
 
 ### Needs language design (not in scope here)
