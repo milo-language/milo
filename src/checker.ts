@@ -2305,6 +2305,10 @@ export class TypeChecker {
             this.checkExprWithHint(expr.args[0], cbHint);
             return this.setType(expr, { tag: "bool" });
           }
+          if (expr.method === "len") {
+            if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "int", bits: 64, signed: true });
+          }
           this.error(`Vec has no method '${expr.method}'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
@@ -2353,6 +2357,10 @@ export class TypeChecker {
               this.error(`remove key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
             }
             return this.setType(expr, { tag: "void" });
+          }
+          if (expr.method === "len") {
+            if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "int", bits: 64, signed: true });
           }
           this.error(`HashMap has no method '${expr.method}'`, sp);
           return this.setType(expr, { tag: "unknown" });
@@ -2437,6 +2445,10 @@ export class TypeChecker {
             const argType = this.checkExpr(expr.args[0]);
             if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'repeat': expected integer, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "string" });
+          }
+          if (expr.method === "len") {
+            if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "int", bits: 64, signed: true });
           }
           // fall through to trait/inherent lookup for String
         }

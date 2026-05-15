@@ -456,6 +456,9 @@ class LowerCtx {
           if (expr.method === "all") {
             return { kind: "VecAll", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
+          if (expr.method === "len") {
+            return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
+          }
         }
         if (objType?.tag === "hashmap") {
           if (expr.method === "insert") {
@@ -470,6 +473,9 @@ class LowerCtx {
           }
           if (expr.method === "remove") {
             return { kind: "HashMapRemove", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
+          }
+          if (expr.method === "len") {
+            return { kind: "HashMapLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
         }
         if (objType?.tag === "string") {
@@ -487,6 +493,9 @@ class LowerCtx {
           }
           if (expr.method === "clone") {
             return { kind: "StringClone", str: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+          if (expr.method === "len") {
+            return { kind: "StringLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
           // methods delegated to std/string runtime functions
           const strMethodMap: Record<string, string> = {

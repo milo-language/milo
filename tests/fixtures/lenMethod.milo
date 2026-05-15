@@ -1,0 +1,32 @@
+// @expect: 3
+// @expect: 3
+// @expect: 5
+// @expect: 5
+// @expect: 2
+
+fn getVecLen(v: &mut Vec<i64>): i64 {
+    return v.len()
+}
+
+fn getStrLen(s: &string): i64 {
+    return s.len()
+}
+
+fn main(): i32 {
+    var v: Vec<i64> = Vec.new()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    print(getVecLen(v).toString())
+    print(v.len().toString())
+
+    let s = "hello"
+    print(s.len().toString())
+    print(getStrLen(s).toString())
+
+    var m: HashMap<string, i32> = HashMap.new()
+    m.insert("a", 1)
+    m.insert("b", 2)
+    print(m.len().toString())
+    return 0
+}
