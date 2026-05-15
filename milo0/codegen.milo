@@ -8,25 +8,51 @@ import "parser.milo"
 // ── Helpers: int → string (Milo's .toString already exists for i64) ──
 
 fn llType(t: &string): string {
-    if t == "i1" { return "i1" }
-    if t == "i8" || t == "u8" { return "i8" }
-    if t == "i16" || t == "u16" { return "i16" }
-    if t == "i32" || t == "u32" { return "i32" }
-    if t == "i64" || t == "u64" || t == "int" { return "i64" }
-    if t == "f32" { return "float" }
-    if t == "f64" || t == "float" { return "double" }
-    if t == "bool" { return "i1" }
-    if t == "void" { return "void" }
-    if t == "ptr" { return "ptr" }
-    if t.len > 0 && t[0] == 42 { return "ptr" }
-    if t == "string" { return "%String" }
+    if t == "i1" {
+        return "i1"
+    }
+    if t == "i8" || t == "u8" {
+        return "i8"
+    }
+    if t == "i16" || t == "u16" {
+        return "i16"
+    }
+    if t == "i32" || t == "u32" {
+        return "i32"
+    }
+    if t == "i64" || t == "u64" || t == "int" {
+        return "i64"
+    }
+    if t == "f32" {
+        return "float"
+    }
+    if t == "f64" || t == "float" {
+        return "double"
+    }
+    if t == "bool" {
+        return "i1"
+    }
+    if t == "void" {
+        return "void"
+    }
+    if t == "ptr" {
+        return "ptr"
+    }
+    if t.len > 0 && t[0] == 42 {
+        return "ptr"
+    }
+    if t == "string" {
+        return "%String"
+    }
     // Built-in generic containers — all pointer-shaped at LL.
     if t.len >= 4 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
         return "ptr" // Box<...>
     }
     if t.len > 0 {
         let c = t[0]
-        if c == 37 { return t.clone() }
+        if c == 37 {
+            return t.clone()
+        }
         if c >= 65 && c <= 90 {
             return "%" + t.clone()
         }
@@ -35,7 +61,9 @@ fn llType(t: &string): string {
 }
 
 fn isUnsigned(t: &string): bool {
-    if t.len < 1 { return false }
+    if t.len < 1 {
+        return false
+    }
     let c = t[0]
     return c == 117
 }
@@ -101,23 +129,30 @@ fn cgenNew(): Cgen {
 }
 
 // Look up enum's payload LL type. Returns "" if payload-free.
+
 fn enumPayloadTy(db: &string, name: &string): string {
     var i: i64 = 0
     let nlen = name.len
     while i + nlen < db.len {
         var matches: bool = true
-        if db[i + nlen] != 61 { matches = false }
+        if db[i + nlen] != 61 {
+            matches = false
+        }
         if matches {
             var j: i64 = 0
             while j < nlen {
-                if db[i + j] != name[j] { matches = false }
+                if db[i + j] != name[j] {
+                    matches = false
+                }
                 j = j + 1
             }
         }
         if matches {
             let start = i + nlen + 1
             var k: i64 = start
-            while k < db.len && db[k] != 59 { k = k + 1 }
+            while k < db.len && db[k] != 59 {
+                k = k + 1
+            }
             return db[start..k]
         }
         i = i + 1
@@ -126,16 +161,21 @@ fn enumPayloadTy(db: &string, name: &string): string {
 }
 
 // Look up comma-separated payload types for `enumName.variant`. Returns "" if none.
+
 fn variantPayloadTy(db: &string, enumName: &string, variant: &string): string {
     var i: i64 = 0
     let enlen = enumName.len
     while i + enlen < db.len {
         var matchE: bool = true
-        if db[i + enlen] != 33 { matchE = false }
+        if db[i + enlen] != 33 {
+            matchE = false
+        }
         if matchE {
             var j: i64 = 0
             while j < enlen {
-                if db[i + j] != enumName[j] { matchE = false }
+                if db[i + j] != enumName[j] {
+                    matchE = false
+                }
                 j = j + 1
             }
         }
@@ -143,19 +183,33 @@ fn variantPayloadTy(db: &string, enumName: &string, variant: &string): string {
             var k: i64 = i + enlen + 1
             while k < db.len && db[k] != 59 {
                 let vstart = k
-                while k < db.len && db[k] != 61 { k = k + 1 }
+                while k < db.len && db[k] != 61 {
+                    k = k + 1
+                }
                 let vname = db[vstart..k]
-                if k < db.len { k = k + 1 }
-                while k < db.len && db[k] != 58 && db[k] != 38 && db[k] != 59 { k = k + 1 }
+                if k < db.len {
+                    k = k + 1
+                }
+                while k < db.len && db[k] != 58 && db[k] != 38 && db[k] != 59 {
+                    k = k + 1
+                }
                 if k < db.len && db[k] == 58 {
                     k = k + 1
                     let pstart = k
-                    while k < db.len && db[k] != 38 && db[k] != 59 { k = k + 1 }
-                    if vname == variant { return db[pstart..k] }
+                    while k < db.len && db[k] != 38 && db[k] != 59 {
+                        k = k + 1
+                    }
+                    if vname == variant {
+                        return db[pstart..k]
+                    }
                 } else {
-                    if vname == variant { return "".clone() }
+                    if vname == variant {
+                        return "".clone()
+                    }
                 }
-                if k < db.len && db[k] == 38 { k = k + 1 }
+                if k < db.len && db[k] == 38 {
+                    k = k + 1
+                }
             }
             return "".clone()
         }
@@ -165,25 +219,36 @@ fn variantPayloadTy(db: &string, enumName: &string, variant: &string): string {
 }
 
 // Walk comma-separated types, return Nth one. Returns "" if out of range.
+
 fn payloadTyNth(types: &string, n: i64): string {
     var idx: i64 = 0
     var i: i64 = 0
     while i < types.len {
         let start = i
-        while i < types.len && types[i] != 44 { i = i + 1 }
-        if idx == n { return types[start..i] }
-        if i < types.len { i = i + 1 }
+        while i < types.len && types[i] != 44 {
+            i = i + 1
+        }
+        if idx == n {
+            return types[start..i]
+        }
+        if i < types.len {
+            i = i + 1
+        }
         idx = idx + 1
     }
     return "".clone()
 }
 
 fn payloadTyCount(types: &string): i64 {
-    if types.len == 0 { return 0 }
+    if types.len == 0 {
+        return 0
+    }
     var n: i64 = 1
     var i: i64 = 0
     while i < types.len {
-        if types[i] == 44 { n = n + 1 }
+        if types[i] == 44 {
+            n = n + 1
+        }
         i = i + 1
     }
     return n
@@ -191,16 +256,21 @@ fn payloadTyCount(types: &string): i64 {
 
 // Look up variant tag for `enumName.variant`. Returns -1 if not found.
 // Handles entries `Variant=tag:type` or `Variant=tag` (no payload).
+
 fn dbFindVariantTag(db: &string, enumName: &string, variant: &string): i32 {
     var i: i64 = 0
     let enlen = enumName.len
     while i + enlen < db.len {
         var matchE: bool = true
-        if db[i + enlen] != 33 { matchE = false }
+        if db[i + enlen] != 33 {
+            matchE = false
+        }
         if matchE {
             var j: i64 = 0
             while j < enlen {
-                if db[i + j] != enumName[j] { matchE = false }
+                if db[i + j] != enumName[j] {
+                    matchE = false
+                }
                 j = j + 1
             }
         }
@@ -208,11 +278,17 @@ fn dbFindVariantTag(db: &string, enumName: &string, variant: &string): i32 {
             var k: i64 = i + enlen + 1
             while k < db.len && db[k] != 59 {
                 let vstart = k
-                while k < db.len && db[k] != 61 { k = k + 1 }
+                while k < db.len && db[k] != 61 {
+                    k = k + 1
+                }
                 let vname = db[vstart..k]
-                if k < db.len { k = k + 1 }
+                if k < db.len {
+                    k = k + 1
+                }
                 let tstart = k
-                while k < db.len && db[k] != 58 && db[k] != 38 && db[k] != 59 { k = k + 1 }
+                while k < db.len && db[k] != 58 && db[k] != 38 && db[k] != 59 {
+                    k = k + 1
+                }
                 if vname == variant {
                     let tstr = db[tstart..k]
                     return parseI32From(tstr)
@@ -220,45 +296,56 @@ fn dbFindVariantTag(db: &string, enumName: &string, variant: &string): i32 {
                 // Skip payload spec if present
                 if k < db.len && db[k] == 58 {
                     k = k + 1
-                    while k < db.len && db[k] != 38 && db[k] != 59 { k = k + 1 }
+                    while k < db.len && db[k] != 38 && db[k] != 59 {
+                        k = k + 1
+                    }
                 }
-                if k < db.len && db[k] == 38 { k = k + 1 }
+                if k < db.len && db[k] == 38 {
+                    k = k + 1
+                }
             }
-            return -1
+            return - 1
         }
         i = i + 1
     }
-    return -1
+    return - 1
 }
 
 fn parseI32From(s: string): i32 {
     var n: i32 = 0
     var i: i64 = 0
     while i < s.len {
-        n = n * 10 + (s[i] as i32) - 48
+        n = n * 10 + (s[i]as i32) - 48
         i = i + 1
     }
     return n
 }
 
 // Find return type for fn `name`. Returns "" if not registered.
+
 fn findFnRet(db: &string, name: &string): string {
     var i: i64 = 0
     let nlen = name.len
     while i + nlen < db.len {
         var matches: bool = true
-        if db[i + nlen] != 124 { matches = false }
+        if db[i + nlen] != 124 {
+            matches = false
+        }
         if matches {
             var j: i64 = 0
             while j < nlen {
-                if db[i + j] != name[j] { matches = false }
+                if db[i + j] != name[j] {
+                    matches = false
+                }
                 j = j + 1
             }
         }
         if matches {
             let start = i + nlen + 1
             var k: i64 = start
-            while k < db.len && db[k] != 59 { k = k + 1 }
+            while k < db.len && db[k] != 59 {
+                k = k + 1
+            }
             return db[start..k]
         }
         i = i + 1
@@ -269,24 +356,31 @@ fn findFnRet(db: &string, name: &string): string {
 // ── Struct table helpers ──
 
 // Find the "f1:t1|f2:t2|..." segment for a given struct name. Returns "" if not found.
+
 fn dbLookupFields(db: &string, name: &string): string {
     var i: i64 = 0
     let nlen = name.len
     while i + nlen < db.len {
         // Check if db[i..i+nlen] == name followed by '|'
         var matches: bool = true
-        if db[i + nlen] != 124 { matches = false }
+        if db[i + nlen] != 124 {
+            matches = false
+        }
         if matches {
             var j: i64 = 0
             while j < nlen {
-                if db[i + j] != name[j] { matches = false }
+                if db[i + j] != name[j] {
+                    matches = false
+                }
                 j = j + 1
             }
         }
         if matches {
             let start = i + nlen + 1
             var k: i64 = start
-            while k < db.len && db[k] != 59 { k = k + 1 }
+            while k < db.len && db[k] != 59 {
+                k = k + 1
+            }
             return db[start..k]
         }
         i = i + 1
@@ -295,32 +389,52 @@ fn dbLookupFields(db: &string, name: &string): string {
 }
 
 // Within "f1:t1|f2:t2|..." find field name → 0-based index. Returns -1 if missing.
+
 fn fieldsFindIndex(fields: &string, fname: &string): i64 {
     var idx: i64 = 0
     var i: i64 = 0
     while i < fields.len {
         let start = i
-        while i < fields.len && fields[i] != 58 { i = i + 1 }
+        while i < fields.len && fields[i] != 58 {
+            i = i + 1
+        }
         let candidate = fields[start..i]
-        if candidate == fname { return idx }
-        while i < fields.len && fields[i] != 124 { i = i + 1 }
-        if i < fields.len { i = i + 1 }
+        if candidate == fname {
+            return idx
+        }
+        while i < fields.len && fields[i] != 124 {
+            i = i + 1
+        }
+        if i < fields.len {
+            i = i + 1
+        }
         idx = idx + 1
     }
-    return -1 as i64
+    return - 1 as i64
 }
 
 // Return the type string for field at `targetIdx`.
+
 fn fieldsFindType(fields: &string, targetIdx: i64): string {
     var idx: i64 = 0
     var i: i64 = 0
     while i < fields.len {
-        while i < fields.len && fields[i] != 58 { i = i + 1 }
-        if i < fields.len { i = i + 1 }
+        while i < fields.len && fields[i] != 58 {
+            i = i + 1
+        }
+        if i < fields.len {
+            i = i + 1
+        }
         let start = i
-        while i < fields.len && fields[i] != 124 { i = i + 1 }
-        if idx == targetIdx { return fields[start..i] }
-        if i < fields.len { i = i + 1 }
+        while i < fields.len && fields[i] != 124 {
+            i = i + 1
+        }
+        if idx == targetIdx {
+            return fields[start..i]
+        }
+        if i < fields.len {
+            i = i + 1
+        }
         idx = idx + 1
     }
     return "".clone()
@@ -328,7 +442,9 @@ fn fieldsFindType(fields: &string, targetIdx: i64): string {
 
 fn cgenFindRet(cg: &Cgen, name: &string): string {
     let raw = findFnRet(cg.fnRetDb.clone(), name)
-    if raw.len == 0 { return "i32".clone() }
+    if raw.len == 0 {
+        return "i32".clone()
+    }
     return raw
 }
 
@@ -355,6 +471,7 @@ fn emitG(cg: &mut Cgen, s: &string): void {
 // ── String literal handling ──
 // Emit a global constant for a Milo string literal. Returns the @.strN label.
 // Handles escape sequences \n \t \r \\ \" \0.
+
 fn ensureStringTy(cg: &mut Cgen): void {
     if !cg.declaredStringTy {
         emitG(cg, "%String = type { ptr, i64, i64 }\n")
@@ -363,6 +480,7 @@ fn ensureStringTy(cg: &mut Cgen): void {
 }
 
 // Index: `s[i]` for strings → load byte. Other types not supported yet.
+
 fn genIndex(cg: &mut Cgen, obj: Box<Expr>, idx: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
     let o = genExpr(cg, obj, locs, sigs, "")
     let i = genExpr(cg, idx, locs, sigs, "i64")
@@ -380,12 +498,17 @@ fn genIndex(cg: &mut Cgen, obj: Box<Expr>, idx: Box<Expr>, locs: &Vec<Local>, si
         cg.temp = cg.temp + 1
         let v = "%t" + vId.toString()
         emit(cg, "  " + v + " = load i8, ptr " + p + "\n")
-        return Val { v: v, ty: "u8".clone() }
+        return Val {
+            v: v, ty: "u8".clone()
+        }
     }
-    return Val { v: "0".clone(), ty: "i64".clone() }
+    return Val {
+        v: "0".clone(), ty: "i64".clone()
+    }
 }
 
 // Slice: `s[a..b]` for strings → substring. Other types not supported yet.
+
 fn genSlice(cg: &mut Cgen, obj: Box<Expr>, a: Box<Expr>, b: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
     let o = genExpr(cg, obj, locs, sigs, "")
     let av = genExpr(cg, a, locs, sigs, "i64")
@@ -428,9 +551,13 @@ fn genSlice(cg: &mut Cgen, obj: Box<Expr>, a: Box<Expr>, b: Box<Expr>, locs: &Ve
         cg.temp = cg.temp + 1
         let s1 = "%t" + s1Id.toString()
         emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
-        return Val { v: s1, ty: "string".clone() }
+        return Val {
+            v: s1, ty: "string".clone()
+        }
     }
-    return Val { v: "0".clone(), ty: "i64".clone() }
+    return Val {
+        v: "0".clone(), ty: "i64".clone()
+    }
 }
 
 fn genMethodCall(cg: &mut Cgen, object: Box<Expr>, method: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
@@ -446,7 +573,9 @@ fn genMethodCall(cg: &mut Cgen, object: Box<Expr>, method: string, args: Vec<Box
         cg.temp = cg.temp + 1
         let lenT = "%t" + lenId.toString()
         emit(cg, "  " + lenT + " = extractvalue %String " + obj.v + ", 1\n")
-        return Val { v: lenT, ty: "i64".clone() }
+        return Val {
+            v: lenT, ty: "i64".clone()
+        }
     }
     // i64.toString() — snprintf-based (simple impl: use %lld format, malloc 32 bytes).
     if objTyLl == "i64" && method == "toString" {
@@ -460,7 +589,9 @@ fn genMethodCall(cg: &mut Cgen, object: Box<Expr>, method: string, args: Vec<Box
         emit(cg, "  " + w + " = sext i32 " + obj.v + " to i64\n")
         return genIntToString(cg, w)
     }
-    return Val { v: "0".clone(), ty: "i64".clone() }
+    return Val {
+        v: "0".clone(), ty: "i64".clone()
+    }
 }
 
 fn genStringClone(cg: &mut Cgen, sv: string): Val {
@@ -497,7 +628,9 @@ fn genStringClone(cg: &mut Cgen, sv: string): Val {
     cg.temp = cg.temp + 1
     let s1 = "%t" + s1Id.toString()
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
-    return Val { v: s1, ty: "string".clone() }
+    return Val {
+        v: s1, ty: "string".clone()
+    }
 }
 
 fn genIntToString(cg: &mut Cgen, val: string): Val {
@@ -534,7 +667,9 @@ fn genIntToString(cg: &mut Cgen, val: string): Val {
     cg.temp = cg.temp + 1
     let s1 = "%t" + s1Id.toString()
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len64 + ", 1\n")
-    return Val { v: s1, ty: "string".clone() }
+    return Val {
+        v: s1, ty: "string".clone()
+    }
 }
 
 fn ensureMalloc(cg: &mut Cgen): void {
@@ -559,6 +694,7 @@ fn ensureMemcmp(cg: &mut Cgen): void {
 }
 
 // String concat: malloc(a.len + b.len + 1), memcpy from both, build %String.
+
 fn genStringConcat(cg: &mut Cgen, av: string, bv: string): Val {
     ensureStringTy(cg)
     ensureMalloc(cg)
@@ -610,10 +746,13 @@ fn genStringConcat(cg: &mut Cgen, av: string, bv: string): Val {
     cg.temp = cg.temp + 1
     let s1 = "%t" + s1Id.toString()
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + total + ", 1\n")
-    return Val { v: s1, ty: "string".clone() }
+    return Val {
+        v: s1, ty: "string".clone()
+    }
 }
 
 // String equality (compare lengths, then memcmp). Returns i1.
+
 fn genStringEq(cg: &mut Cgen, av: string, bv: string, wantEq: bool): Val {
     ensureMemcmp(cg)
     let aLenId = cg.temp
@@ -648,15 +787,22 @@ fn genStringEq(cg: &mut Cgen, av: string, bv: string, wantEq: bool): Val {
     cg.temp = cg.temp + 1
     let combined = "%t" + combinedId.toString()
     emit(cg, "  " + combined + " = and i1 " + lenEq + ", " + mcZero + "\n")
-    if wantEq { return Val { v: combined, ty: "bool".clone() } }
+    if wantEq {
+        return Val {
+            v: combined, ty: "bool".clone()
+        }
+    }
     let negId = cg.temp
     cg.temp = cg.temp + 1
     let neg = "%t" + negId.toString()
     emit(cg, "  " + neg + " = xor i1 " + combined + ", 1\n")
-    return Val { v: neg, ty: "bool".clone() }
+    return Val {
+        v: neg, ty: "bool".clone()
+    }
 }
 
 // Build %String aggregate { @.strN, len, 0 } for a string literal.
+
 fn genStringLit(cg: &mut Cgen, raw: string): Val {
     ensureStringTy(cg)
     let label = emitStringLit(cg, raw.clone())
@@ -673,7 +819,9 @@ fn genStringLit(cg: &mut Cgen, raw: string): Val {
     cg.temp = cg.temp + 1
     let s2 = "%t" + s2Id.toString()
     emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 0, 2\n")
-    return Val { v: s2, ty: "string".clone() }
+    return Val {
+        v: s2, ty: "string".clone()
+    }
 }
 
 fn emitStringLit(cg: &mut Cgen, raw: &string): string {
@@ -685,16 +833,35 @@ fn emitStringLit(cg: &mut Cgen, raw: &string): string {
     var i: i64 = 0
     while i < raw.len {
         let c = raw[i]
-        if c == 92 && i + 1 < raw.len { // '\\'
+        if c == 92 && i + 1 < raw.len {
+            // '\\'
             let n = raw[i + 1]
             var actual: u8 = 0
-            if n == 110 { actual = 10 }      // \n
-            else if n == 116 { actual = 9 }  // \t
-            else if n == 114 { actual = 13 } // \r
-            else if n == 48 { actual = 0 }   // \0
-            else if n == 92 { actual = 92 }
-            else if n == 34 { actual = 34 }
-            else { actual = n }
+            if n == 110 {
+                actual = 10
+            }
+            // \n
+            else if n == 116 {
+                actual = 9
+            }
+            // \t
+            else if n == 114 {
+                actual = 13
+            }
+            // \r
+            else if n == 48 {
+                actual = 0
+            }
+            // \0
+            else if n == 92 {
+                actual = 92
+            } 
+            else if n == 34 {
+                actual = 34
+            } 
+            else {
+                actual = n
+            }
             encoded = encoded + "\\" + hex2(actual)
             i = i + 2
         } else if c < 32 || c == 34 || c == 92 || c >= 127 {
@@ -713,8 +880,8 @@ fn emitStringLit(cg: &mut Cgen, raw: &string): string {
 }
 
 fn hex2(b: u8): string {
-    let hi = b >> 4
-    let lo = b & 15
+    let hi = b > > 4
+    let lo = b&15
     var s: string = ""
     s.push(hexDigit(hi))
     s.push(hexDigit(lo))
@@ -722,7 +889,9 @@ fn hex2(b: u8): string {
 }
 
 fn hexDigit(n: u8): u8 {
-    if n < 10 { return n + 48 }
+    if n < 10 {
+        return n + 48
+    }
     return n - 10 + 65 // 'A'
 }
 
@@ -746,7 +915,10 @@ fn buildFnTable(prog: &Program): Vec<FnSig> {
             pts.push(f.params[j].ty)
             j = j + 1
         }
-        sigs.push(FnSig { name: f.name, retTy: f.retTy, paramTys: pts, isVariadic: f.isVariadic })
+        sigs.push(FnSig {
+            name: f.name, retTy: f.retTy, paramTys: pts, isVariadic: f.isVariadic
+        }
+        )
         i = i + 1
     }
     return sigs
@@ -755,10 +927,12 @@ fn buildFnTable(prog: &Program): Vec<FnSig> {
 fn lookupFn(sigs: &Vec<FnSig>, name: &string): i64 {
     var i: i64 = 0
     while i < sigs.len {
-        if sigs[i].name == name { return i }
+        if sigs[i].name == name {
+            return i
+        }
         i = i + 1
     }
-    return -1 as i64
+    return - 1 as i64
 }
 
 // ── Local symbol table ──
@@ -778,6 +952,7 @@ fn localsNew(): Vec<Local> {
 // (wide-zero is on), so on a hit the caller owns the strings. Lookup-then-second-lookup
 // for the same name will miss — milo0 never needs that pattern: a single Ident or Assign
 // invocation does one lookup, and the returned Local feeds emit() directly.
+
 fn localsTake(locs: &Vec<Local>, name: &string): Local {
     var i: i64 = locs.len - 1
     while i >= 0 {
@@ -794,7 +969,9 @@ fn localsTake(locs: &Vec<Local>, name: &string): Local {
         }
         i = i - 1
     }
-    return Local { name: "".clone(), ty: "".clone(), addr: "".clone() }
+    return Local {
+        name: "".clone(), ty: "".clone(), addr: "".clone()
+    }
 }
 
 // ── Expression codegen ──
@@ -806,63 +983,129 @@ struct Val {
 }
 
 fn genIntConst(n: i64, ty: string): Val {
-    return Val { v: n.toString(), ty: ty }
+    return Val {
+        v: n.toString(), ty: ty
+    }
 }
 
 fn genBoolConst(b: bool): Val {
-    if b { return Val { v: "1", ty: "i1" } }
-    return Val { v: "0", ty: "i1" }
+    if b {
+        return Val {
+            v: "1", ty: "i1"
+        }
+    }
+    return Val {
+        v: "0", ty: "i1"
+    }
 }
 
 fn genLoad(cg: &mut Cgen, addr: &string, ty: &string): Val {
     let t = nextTemp(cg)
     emit(cg, "  " + t + " = load " + ty + ", ptr " + addr + "\n")
-    return Val { v: t, ty: ty.clone() }
+    return Val {
+        v: t, ty: ty.clone()
+    }
 }
 
 fn binOpInt(op: TokKind, unsigned: bool): string {
-    if op == TokKind.Plus { return "add" }
-    if op == TokKind.Minus { return "sub" }
-    if op == TokKind.Star { return "mul" }
+    if op == TokKind.Plus {
+        return "add"
+    }
+    if op == TokKind.Minus {
+        return "sub"
+    }
+    if op == TokKind.Star {
+        return "mul"
+    }
     if op == TokKind.Slash {
-        if unsigned { return "udiv" } else { return "sdiv" }
+        if unsigned {
+            return "udiv"
+        } else {
+            return "sdiv"
+        }
     }
     if op == TokKind.Percent {
-        if unsigned { return "urem" } else { return "srem" }
+        if unsigned {
+            return "urem"
+        } else {
+            return "srem"
+        }
     }
-    if op == TokKind.Amp { return "and" }
-    if op == TokKind.Pipe { return "or" }
-    if op == TokKind.Caret { return "xor" }
+    if op == TokKind.Amp {
+        return "and"
+    }
+    if op == TokKind.Pipe {
+        return "or"
+    }
+    if op == TokKind.Caret {
+        return "xor"
+    }
     return ""
 }
 
 fn cmpOpInt(op: TokKind, unsigned: bool): string {
-    if op == TokKind.EqEq { return "eq" }
-    if op == TokKind.NotEq { return "ne" }
+    if op == TokKind.EqEq {
+        return "eq"
+    }
+    if op == TokKind.NotEq {
+        return "ne"
+    }
     if op == TokKind.Lt {
-        if unsigned { return "ult" } else { return "slt" }
+        if unsigned {
+            return "ult"
+        } else {
+            return "slt"
+        }
     }
     if op == TokKind.Gt {
-        if unsigned { return "ugt" } else { return "sgt" }
+        if unsigned {
+            return "ugt"
+        } else {
+            return "sgt"
+        }
     }
     if op == TokKind.LtEq {
-        if unsigned { return "ule" } else { return "sle" }
+        if unsigned {
+            return "ule"
+        } else {
+            return "sle"
+        }
     }
     if op == TokKind.GtEq {
-        if unsigned { return "uge" } else { return "sge" }
+        if unsigned {
+            return "uge"
+        } else {
+            return "sge"
+        }
     }
     return ""
 }
 
 fn isArith(op: TokKind): bool {
-    if op == TokKind.Plus { return true }
-    if op == TokKind.Minus { return true }
-    if op == TokKind.Star { return true }
-    if op == TokKind.Slash { return true }
-    if op == TokKind.Percent { return true }
-    if op == TokKind.Amp { return true }
-    if op == TokKind.Pipe { return true }
-    if op == TokKind.Caret { return true }
+    if op == TokKind.Plus {
+        return true
+    }
+    if op == TokKind.Minus {
+        return true
+    }
+    if op == TokKind.Star {
+        return true
+    }
+    if op == TokKind.Slash {
+        return true
+    }
+    if op == TokKind.Percent {
+        return true
+    }
+    if op == TokKind.Amp {
+        return true
+    }
+    if op == TokKind.Pipe {
+        return true
+    }
+    if op == TokKind.Caret {
+        return true
+    }
     return false
 }
 
@@ -871,27 +1114,35 @@ fn isCmp(op: TokKind): bool {
 }
 
 fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hintTy: string): Val {
-    match *e {
+    match * e {
         Expr.IntLit(n) => {
             var ty: string = hintTy
-            if ty.len == 0 { ty = "i64" }
+            if ty.len == 0 {
+                ty = "i64"
+            }
             return genIntConst(n, llType(ty))
         }
-        Expr.BoolLit(b) => { return genBoolConst(b) }
+        Expr.BoolLit(b) => {
+            return genBoolConst(b)
+        }
         Expr.StrLit(s) => {
             return genStringLit(cg, s)
         }
         Expr.Ident(name) => {
             let local = localsTake(locs, name)
             if local.addr.len == 0 {
-                return Val { v: "0".clone(), ty: "i64".clone() }
+                return Val {
+                    v: "0".clone(), ty: "i64".clone()
+                }
             }
             let rawTy = local.ty.clone()
             let lt = llType(rawTy.clone())
             let loaded = genLoad(cg, local.addr, lt)
             // Preserve the raw user-facing type (e.g. "Box<Tree>") so subsequent unary `*`
             // can unwrap to find the inner type.
-            return Val { v: loaded.v, ty: rawTy }
+            return Val {
+                v: loaded.v, ty: rawTy
+            }
         }
         Expr.Unary(op, inner) => {
             // Unary `*` is Box-deref. Load the inner type from the ptr.
@@ -902,11 +1153,15 @@ fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hi
             let t = nextTemp(cg)
             if op == TokKind.Minus {
                 emit(cg, "  " + t + " = sub " + llType(v.ty.clone()) + " 0, " + v.v + "\n")
-                return Val { v: t, ty: v.ty }
+                return Val {
+                    v: t, ty: v.ty
+                }
             }
             if op == TokKind.Bang {
                 emit(cg, "  " + t + " = xor i1 " + v.v + ", 1\n")
-                return Val { v: t, ty: "i1" }
+                return Val {
+                    v: t, ty: "i1"
+                }
             }
             return v
         }
@@ -946,9 +1201,13 @@ fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hi
                         emit(cg, "  %t" + ltId.toString() + " = extractvalue " + lvLlCheck.clone() + " " + lvVStr + ", 0\n")
                         emit(cg, "  %t" + rtId.toString() + " = extractvalue " + lvLlCheck + " " + rvVStr + ", 0\n")
                         var opn: string = "eq"
-                        if op == TokKind.NotEq { opn = "ne".clone() }
+                        if op == TokKind.NotEq {
+                            opn = "ne".clone()
+                        }
                         emit(cg, "  %t" + resId.toString() + " = icmp " + opn + " i32 %t" + ltId.toString() + ", %t" + rtId.toString() + "\n")
-                        return Val { v: "%t" + resId.toString(), ty: "bool".clone() }
+                        return Val {
+                            v: "%t" + resId.toString(), ty: "bool".clone()
+                        }
                     }
                 }
             }
@@ -961,22 +1220,32 @@ fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hi
             if isArith(op) {
                 let opname = binOpInt(op, unsignedB)
                 emit(cg, "  " + tEmit + " = " + opname + " " + lvTyCLl + " " + lvV + ", " + rvV + "\n")
-                return Val { v: tRet, ty: lvTyD }
+                return Val {
+                    v: tRet, ty: lvTyD
+                }
             }
             if isCmp(op) {
                 let opname = cmpOpInt(op, unsignedB)
                 emit(cg, "  " + tEmit + " = icmp " + opname + " " + lvTyCLl + " " + lvV + ", " + rvV + "\n")
-                return Val { v: tRet, ty: "bool".clone() }
+                return Val {
+                    v: tRet, ty: "bool".clone()
+                }
             }
             if op == TokKind.AmpAmp {
                 emit(cg, "  " + tEmit + " = and i1 " + lvV + ", " + rvV + "\n")
-                return Val { v: tRet, ty: "i1".clone() }
+                return Val {
+                    v: tRet, ty: "i1".clone()
+                }
             }
             if op == TokKind.PipePipe {
                 emit(cg, "  " + tEmit + " = or i1 " + lvV + ", " + rvV + "\n")
-                return Val { v: tRet, ty: "i1".clone() }
+                return Val {
+                    v: tRet, ty: "i1".clone()
+                }
             }
-            return Val { v: "0".clone(), ty: "i64".clone() }
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
         }
         Expr.Call(name, args) => {
             // Built-in Box(expr) — malloc(sizeof(T)) + store inner + return ptr.
@@ -1000,7 +1269,9 @@ fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hi
                 let boxPtr = "%t" + boxId.toString()
                 emit(cg, "  " + boxPtr + " = call ptr @malloc(i64 " + szInt + ")\n")
                 emit(cg, "  store " + innerLl + " " + inner.v + ", ptr " + boxPtr + "\n")
-                return Val { v: boxPtr, ty: "ptr".clone() }
+                return Val {
+                    v: boxPtr, ty: "ptr".clone()
+                }
             }
             // Stage-0: skip sigs table lookup (Vec<FnSig> indexing aliases owned strings
             // and double-frees on scope exit). Hardcode i32 return; recognize variadic
@@ -1018,7 +1289,9 @@ fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hi
             var argStr: string = ""
             var ai: i64 = 0
             while ai < argVals.len {
-                if ai > 0 { argStr = argStr + ", " }
+                if ai > 0 {
+                    argStr = argStr + ", "
+                }
                 let elem = argVals[ai]
                 let elemTy = elem.ty.clone()
                 let elemV = elem.v.clone()
@@ -1065,7 +1338,9 @@ fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hi
                 cg.temp = cg.temp + 1
                 emit(cg, "  %t" + tNl.toString() + " = call i32 @putchar(i32 10)\n")
             }
-            return Val { v: "%t" + tId.toString(), ty: retLlForVal }
+            return Val {
+                v: "%t" + tId.toString(), ty: retLlForVal
+            }
         }
         Expr.StructLit(name, fields) => {
             return genStructLit(cg, name, fields, locs, sigs)
@@ -1095,10 +1370,12 @@ fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hi
 // Returns true if the statement always terminates the current block (e.g. return).
 
 fn genAssign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>): void {
-    match *target {
+    match * target {
         Expr.Ident(name) => {
             let local = localsTake(locs, name)
-            if local.addr.len == 0 { return }
+            if local.addr.len == 0 {
+                return
+            }
             let v = genExpr(cg, value, locs, sigs, local.ty.clone())
             emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
         }
@@ -1121,24 +1398,49 @@ fn genAssign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec<
             let v = genExpr(cg, value, locs, sigs, ftyLl.clone())
             emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
         }
-        Expr.IntLit(n) => { return }
-        Expr.StrLit(s) => { return }
-        Expr.BoolLit(b) => { return }
-        Expr.Binary(op, l, r) => { return }
-        Expr.Unary(op, x) => { return }
-        Expr.Call(name, args) => { return }
-        Expr.StructLit(name, fields) => { return }
-        Expr.EnumLit(en, vn, args) => { return }
-        Expr.As(inner, ty) => { return }
-        Expr.MethodCall(obj, m, ma) => { return }
-        Expr.Index(o, i) => { return }
-        Expr.Slice(o, a, b) => { return }
+        Expr.IntLit(n) => {
+            return
+        }
+        Expr.StrLit(s) => {
+            return
+        }
+        Expr.BoolLit(b) => {
+            return
+        }
+        Expr.Binary(op, l, r) => {
+            return
+        }
+        Expr.Unary(op, x) => {
+            return
+        }
+        Expr.Call(name, args) => {
+            return
+        }
+        Expr.StructLit(name, fields) => {
+            return
+        }
+        Expr.EnumLit(en, vn, args) => {
+            return
+        }
+        Expr.As(inner, ty) => {
+            return
+        }
+        Expr.MethodCall(obj, m, ma) => {
+            return
+        }
+        Expr.Index(o, i) => {
+            return
+        }
+        Expr.Slice(o, a, b) => {
+            return
+        }
     }
 }
 
 // Byte size of an LL primitive type. Used to compute enum payload slot count.
 // Strip "Box<...>" wrapper from a type string, returning the inner type.
 // Returns "" if not a Box.
+
 fn unwrapBox(t: &string): string {
     if t.len >= 5 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
         return t[4..t.len - 1]
@@ -1150,32 +1452,60 @@ fn genBoxDeref(cg: &mut Cgen, inner: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<Fn
     let v = genExpr(cg, inner, locs, sigs, "")
     // Default inner type: caller responsible for context. If v.ty is "Box<T>", strip.
     var innerRaw: string = unwrapBox(v.ty.clone())
-    if innerRaw.len == 0 { innerRaw = "i64".clone() }
+    if innerRaw.len == 0 {
+        innerRaw = "i64".clone()
+    }
     let innerLl = llType(innerRaw)
     let loadId = cg.temp
     cg.temp = cg.temp + 1
     let loaded = "%t" + loadId.toString()
     emit(cg, "  " + loaded + " = load " + innerLl.clone() + ", ptr " + v.v + "\n")
-    return Val { v: loaded, ty: innerLl }
+    return Val {
+        v: loaded, ty: innerLl
+    }
 }
 
 fn llTypeBytes(ll: &string): i64 {
-    if ll == "i1" { return 1 }
-    if ll == "i8" { return 1 }
-    if ll == "i16" { return 2 }
-    if ll == "i32" { return 4 }
-    if ll == "i64" { return 8 }
-    if ll == "ptr" { return 8 }
+    if ll == "i1" {
+        return 1
+    }
+    if ll == "i8" {
+        return 1
+    }
+    if ll == "i16" {
+        return 2
+    }
+    if ll == "i32" {
+        return 4
+    }
+    if ll == "i64" {
+        return 8
+    }
+    if ll == "ptr" {
+        return 8
+    }
     return 8
 }
 
 fn intBits(ll: &string): i64 {
-    if ll == "i1" { return 1 }
-    if ll == "i8" || ll == "u8" { return 8 }
-    if ll == "i16" || ll == "u16" { return 16 }
-    if ll == "i32" || ll == "u32" { return 32 }
-    if ll == "i64" || ll == "u64" { return 64 }
-    if ll == "ptr" { return 64 }
+    if ll == "i1" {
+        return 1
+    }
+    if ll == "i8" || ll == "u8" {
+        return 8
+    }
+    if ll == "i16" || ll == "u16" {
+        return 16
+    }
+    if ll == "i32" || ll == "u32" {
+        return 32
+    }
+    if ll == "i64" || ll == "u64" {
+        return 64
+    }
+    if ll == "ptr" {
+        return 64
+    }
     return 0
 }
 
@@ -1183,11 +1513,15 @@ fn genAsCast(cg: &mut Cgen, inner: Box<Expr>, targetTy: string, locs: &Vec<Local
     let v = genExpr(cg, inner, locs, sigs, "")
     let fromLl = llType(v.ty.clone())
     let toLl = llType(targetTy.clone())
-    if fromLl == toLl { return v }
+    if fromLl == toLl {
+        return v
+    }
     let fromBits = intBits(fromLl.clone())
     let toBits = intBits(toLl.clone())
     if fromBits == 0 || toBits == 0 {
-        return Val { v: v.v, ty: toLl }
+        return Val {
+            v: v.v, ty: toLl
+        }
     }
     let tId = cg.temp
     cg.temp = cg.temp + 1
@@ -1196,25 +1530,36 @@ fn genAsCast(cg: &mut Cgen, inner: Box<Expr>, targetTy: string, locs: &Vec<Local
         emit(cg, "  " + t + " = trunc " + fromLl + " " + v.v + " to " + toLl.clone() + "\n")
     } else if toBits > fromBits {
         var op: string = "sext"
-        if fromLl.len > 0 && fromLl[0] == 117 { op = "zext".clone() }
+        if fromLl.len > 0 && fromLl[0] == 117 {
+            op = "zext".clone()
+        }
         emit(cg, "  " + t + " = " + op + " " + fromLl + " " + v.v + " to " + toLl.clone() + "\n")
     } else {
         emit(cg, "  " + t + " = bitcast " + fromLl + " " + v.v + " to " + toLl.clone() + "\n")
     }
-    return Val { v: t, ty: toLl }
+    return Val {
+        v: t, ty: toLl
+    }
 }
 
 // Build a synthetic struct type string "{ t1, t2, ... }" from comma-separated types.
+
 fn variantStructTy(types: &string): string {
     var s: string = "{ "
     var idx: i64 = 0
     var i: i64 = 0
     while i < types.len {
         let start = i
-        while i < types.len && types[i] != 44 { i = i + 1 }
-        if idx > 0 { s = s + ", " }
+        while i < types.len && types[i] != 44 {
+            i = i + 1
+        }
+        if idx > 0 {
+            s = s + ", "
+        }
         s = s + llType(types[start..i])
-        if i < types.len { i = i + 1 }
+        if i < types.len {
+            i = i + 1
+        }
         idx = idx + 1
     }
     s = s + " }"
@@ -1258,7 +1603,9 @@ fn genEnumLit(cg: &mut Cgen, enumName: string, variant: string, args: Vec<Box<Ex
     cg.temp = cg.temp + 1
     let loaded = "%t" + loadId.toString()
     emit(cg, "  " + loaded + " = load " + structTy + ", ptr " + allocTmp + "\n")
-    return Val { v: loaded, ty: structTy }
+    return Val {
+        v: loaded, ty: structTy
+    }
 }
 
 fn genMatch(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, retTy: string): bool {
@@ -1326,7 +1673,10 @@ fn genMatch(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut V
                     emit(cg, "  " + bindAddr + " = alloca " + ftyLl.clone() + "\n")
                     emit(cg, "  store " + ftyLl.clone() + " " + loaded + ", ptr " + bindAddr.clone() + "\n")
                     // Store raw type (e.g. "Box<Tree>") so unwrapBox can recover inner.
-                    locs.push(Local { name: bname, ty: ftyRaw, addr: bindAddr })
+                    locs.push(Local {
+                        name: bname, ty: ftyRaw, addr: bindAddr
+                    }
+                    )
                     bi = bi + 1
                 }
             }
@@ -1335,11 +1685,15 @@ fn genMatch(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut V
         var si: i64 = 0
         while si < arm.body.len {
             let t = genStmt(cg, arm.body[si], locs, sigs, retTy.clone())
-            if t { armTerm = true }
+            if t {
+                armTerm = true
+            }
             si = si + 1
         }
         // Pop bindings added for this arm
-        while locs.len > locsPreLen { locs.pop() }
+        while locs.len > locsPreLen {
+            locs.pop()
+        }
         if !armTerm {
             emit(cg, "  br label %" + endLbl.clone() + "\n")
             allTerminated = false
@@ -1349,7 +1703,9 @@ fn genMatch(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut V
     emit(cg, defaultLbl + ":\n")
     emit(cg, "  unreachable\n")
     emit(cg, endLbl + ":\n")
-    if allTerminated && arms.len > 0 { emit(cg, "  unreachable\n") }
+    if allTerminated && arms.len > 0 {
+        emit(cg, "  unreachable\n")
+    }
     return allTerminated && arms.len > 0
 }
 
@@ -1377,7 +1733,9 @@ fn genStructLit(cg: &mut Cgen, name: string, fields: Vec<ExprField>, locs: &Vec<
     cg.temp = cg.temp + 1
     let loaded = "%t" + loadId.toString()
     emit(cg, "  " + loaded + " = load " + structTy + ", ptr " + allocTmp + "\n")
-    return Val { v: loaded, ty: structTy }
+    return Val {
+        v: loaded, ty: structTy
+    }
 }
 
 fn genFieldAccess(cg: &mut Cgen, object: Box<Expr>, field: string, locs: &Vec<Local>): Val {
@@ -1393,7 +1751,9 @@ fn genFieldAccess(cg: &mut Cgen, object: Box<Expr>, field: string, locs: &Vec<Lo
         cg.temp = cg.temp + 1
         let lenTmp = "%t" + lenId.toString()
         emit(cg, "  " + lenTmp + " = extractvalue %String " + loadTmp + ", 1\n")
-        return Val { v: lenTmp, ty: "i64".clone() }
+        return Val {
+            v: lenTmp, ty: "i64".clone()
+        }
     }
     var rawName: string = lv.ty.clone()
     if rawName.len > 0 && rawName[0] == 37 {
@@ -1413,27 +1773,62 @@ fn genFieldAccess(cg: &mut Cgen, object: Box<Expr>, field: string, locs: &Vec<Lo
     cg.temp = cg.temp + 1
     let loaded = "%t" + loadId.toString()
     emit(cg, "  " + loaded + " = load " + ftyLl.clone() + ", ptr " + fp + "\n")
-    return Val { v: loaded, ty: ftyLl }
+    return Val {
+        v: loaded, ty: ftyLl
+    }
 }
 
 // Get the lvalue address of an expression — currently only Ident is supported.
 // Returns Val { v: alloca-ptr-name, ty: ll-type-of-pointee }. On miss returns "0"/"i64".
+
 fn genLvalue(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>): Val {
-    match *e {
+    match * e {
         Expr.Ident(name) => {
             let local = localsTake(locs, name)
             if local.addr.len == 0 {
-                return Val { v: "0".clone(), ty: "i64".clone() }
+                return Val {
+                    v: "0".clone(), ty: "i64".clone()
+                }
             }
-            return Val { v: local.addr, ty: local.ty }
+            return Val {
+                v: local.addr, ty: local.ty
+            }
         }
-        Expr.IntLit(n) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.StrLit(s) => { return Val { v: "0".clone(), ty: "ptr".clone() } }
-        Expr.BoolLit(b) => { return Val { v: "0".clone(), ty: "i1".clone() } }
-        Expr.Binary(op, l, r) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.Unary(op, x) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.Call(name, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.StructLit(name, fields) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.IntLit(n) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.StrLit(s) => {
+            return Val {
+                v: "0".clone(), ty: "ptr".clone()
+            }
+        }
+        Expr.BoolLit(b) => {
+            return Val {
+                v: "0".clone(), ty: "i1".clone()
+            }
+        }
+        Expr.Binary(op, l, r) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.Unary(op, x) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.Call(name, args) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.StructLit(name, fields) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
         Expr.FieldAccess(object, field) => {
             // GEP into object's lvalue. object must itself be lvalue (Ident).
             let inner = genLvalue(cg, object, locs)
@@ -1450,13 +1845,35 @@ fn genLvalue(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>): Val {
             cg.temp = cg.temp + 1
             let fp = "%t" + fpId.toString()
             emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + inner.v + ", i32 0, i32 " + idx.toString() + "\n")
-            return Val { v: fp, ty: fty }
+            return Val {
+                v: fp, ty: fty
+            }
         }
-        Expr.EnumLit(en, vn, args) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.As(inner, ty) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.MethodCall(obj, m, ma) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.Index(o, i) => { return Val { v: "0".clone(), ty: "i64".clone() } }
-        Expr.Slice(o, a, b) => { return Val { v: "0".clone(), ty: "i64".clone() } }
+        Expr.EnumLit(en, vn, args) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.As(inner, ty) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.MethodCall(obj, m, ma) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.Index(o, i) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
+        Expr.Slice(o, a, b) => {
+            return Val {
+                v: "0".clone(), ty: "i64".clone()
+            }
+        }
     }
 }
 
@@ -1496,17 +1913,21 @@ fn genWhile(cg: &mut Cgen, cond: Box<Expr>, body: Vec<Box<Stmt>>, locs: &mut Vec
     var bi: i64 = 0
     while bi < body.len {
         let t = genStmt(cg, body[bi], locs, sigs, retTy.clone())
-        if t { bodyTerm = true }
+        if t {
+            bodyTerm = true
+        }
         bi = bi + 1
     }
-    if !bodyTerm { emit(cg, "  br label %" + condLbl + "\n") }
+    if !bodyTerm {
+        emit(cg, "  br label %" + condLbl + "\n")
+    }
     emit(cg, endLbl + ":\n")
     cg.curBreakLbl = savedBreak
     cg.curContLbl = savedCont
 }
 
 fn genStmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, retTy: string): bool {
-    match *s {
+    match * s {
         Stmt.Let(name, ty, value) => {
             let v = genExpr(cg, value, locs, sigs, ty.clone())
             let addr = "%" + name.clone() + "_addr_" + cg.temp.toString()
@@ -1517,8 +1938,15 @@ fn genStmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>
             emit(cg, "  " + addr.clone() + " = alloca " + vtyLl.clone() + "\n")
             emit(cg, "  store " + vtyLl.clone() + " " + vv + ", ptr " + addr.clone() + "\n")
             var rty: string = ""
-            if ty.len == 0 { rty = vtyRaw.clone() } else { rty = ty.clone() }
-            locs.push(Local { name: name, ty: rty, addr: addr })
+            if ty.len == 0 {
+                rty = vtyRaw.clone()
+            } else {
+                rty = ty.clone()
+            }
+            locs.push(Local {
+                name: name, ty: rty, addr: addr
+            }
+            )
             return false
         }
         Stmt.Var(name, ty, value) => {
@@ -1532,8 +1960,15 @@ fn genStmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>
             emit(cg, "  " + addr.clone() + " = alloca " + vty.clone() + "\n")
             emit(cg, "  store " + vty.clone() + " " + vv + ", ptr " + addr.clone() + "\n")
             var rty: string = ""
-            if ty.len == 0 { rty = vty.clone() } else { rty = ty.clone() }
-            locs.push(Local { name: name, ty: rty, addr: addr })
+            if ty.len == 0 {
+                rty = vty.clone()
+            } else {
+                rty = ty.clone()
+            }
+            locs.push(Local {
+                name: name, ty: rty, addr: addr
+            }
+            )
             return false
         }
         Stmt.Assign(target, value) => {
@@ -1579,21 +2014,31 @@ fn genStmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>
             var ti: i64 = 0
             while ti < thenBody.len {
                 let t = genStmt(cg, thenBody[ti], locs, sigs, retTy.clone())
-                if t { thenTerm = true }
+                if t {
+                    thenTerm = true
+                }
                 ti = ti + 1
             }
-            if !thenTerm { emit(cg, "  br label %" + endLbl + "\n") }
+            if !thenTerm {
+                emit(cg, "  br label %" + endLbl + "\n")
+            }
             emit(cg, elseLbl + ":\n")
             var elseTerm: bool = false
             var ei: i64 = 0
             while ei < elseBody.len {
                 let t = genStmt(cg, elseBody[ei], locs, sigs, retTy.clone())
-                if t { elseTerm = true }
+                if t {
+                    elseTerm = true
+                }
                 ei = ei + 1
             }
-            if !elseTerm { emit(cg, "  br label %" + endLbl + "\n") }
+            if !elseTerm {
+                emit(cg, "  br label %" + endLbl + "\n")
+            }
             emit(cg, endLbl + ":\n")
-            if thenTerm && elseTerm { emit(cg, "  unreachable\n") }
+            if thenTerm && elseTerm {
+                emit(cg, "  unreachable\n")
+            }
             return thenTerm && elseTerm
         }
         Stmt.While(cond, body) => {
@@ -1621,12 +2066,16 @@ fn genFn(cg: &mut Cgen, f: FnDecl, sigs: &Vec<FnSig>): void {
         var ps: string = ""
         var i: i64 = 0
         while i < f.params.len {
-            if i > 0 { ps = ps + ", " }
+            if i > 0 {
+                ps = ps + ", "
+            }
             ps = ps + llType(f.params[i].ty)
             i = i + 1
         }
         if f.isVariadic {
-            if f.params.len > 0 { ps = ps + ", " }
+            if f.params.len > 0 {
+                ps = ps + ", "
+            }
             ps = ps + "..."
         }
         emitG(cg, "declare " + llType(f.retTy) + " @" + f.name + "(" + ps + ")\n")
@@ -1640,7 +2089,9 @@ fn genFn(cg: &mut Cgen, f: FnDecl, sigs: &Vec<FnSig>): void {
     var hdr: string = "define " + llType(f.retTy) + " @" + f.name + "("
     var pi: i64 = 0
     while pi < f.params.len {
-        if pi > 0 { hdr = hdr + ", " }
+        if pi > 0 {
+            hdr = hdr + ", "
+        }
         hdr = hdr + llType(f.params[pi].ty) + " %" + f.params[pi].name
         pi = pi + 1
     }
@@ -1656,7 +2107,10 @@ fn genFn(cg: &mut Cgen, f: FnDecl, sigs: &Vec<FnSig>): void {
         let addr = "%" + p.name + "_addr"
         emit(cg, "  " + addr + " = alloca " + llt + "\n")
         emit(cg, "  store " + llt + " %" + p.name + ", ptr " + addr + "\n")
-        locs.push(Local { name: p.name, ty: p.ty, addr: addr })
+        locs.push(Local {
+            name: p.name, ty: p.ty, addr: addr
+        }
+        )
         pj = pj + 1
     }
 
@@ -1664,7 +2118,9 @@ fn genFn(cg: &mut Cgen, f: FnDecl, sigs: &Vec<FnSig>): void {
     var si: i64 = 0
     while si < f.body.len {
         let t = genStmt(cg, f.body[si], locs, sigs, f.retTy.clone())
-        if t { terminated = true }
+        if t {
+            terminated = true
+        }
         si = si + 1
     }
     if !terminated {
@@ -1694,7 +2150,9 @@ fn genProgram(cg: &mut Cgen, prog: Program): void {
         var maxBytes: i64 = 0
         var vi: i64 = 0
         while vi < e.variants.len {
-            if vi > 0 { entry = entry + "&" }
+            if vi > 0 {
+                entry = entry + "&"
+            }
             let v = e.variants[vi]
             entry = entry + v.name.clone() + "=" + vi.toString()
             if v.payloadTypes.len > 0 {
@@ -1702,13 +2160,17 @@ fn genProgram(cg: &mut Cgen, prog: Program): void {
                 var vBytes: i64 = 0
                 var fi: i64 = 0
                 while fi < v.payloadTypes.len {
-                    if fi > 0 { entry = entry + "," }
+                    if fi > 0 {
+                        entry = entry + ","
+                    }
                     let pt = v.payloadTypes[fi].clone()
                     entry = entry + pt.clone()
                     vBytes = vBytes + llTypeBytes(llType(pt))
                     fi = fi + 1
                 }
-                if vBytes > maxBytes { maxBytes = vBytes }
+                if vBytes > maxBytes {
+                    maxBytes = vBytes
+                }
             }
             vi = vi + 1
         }
@@ -1755,3 +2217,4 @@ fn genProgram(cg: &mut Cgen, prog: Program): void {
         j = j + 1
     }
 }
+

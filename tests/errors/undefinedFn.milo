@@ -1,5 +1,7 @@
 // @error: undefined function 'foo'
+
 fn main(): i32 {
     foo()
     return 0
 }
+

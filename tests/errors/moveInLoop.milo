@@ -1,6 +1,7 @@
 // @error: cannot move 's' out of a loop
 
-fn consume(s: string): void {}
+fn consume(s: string): void {
+}
 
 fn main(): i32 {
     let s: string = "hello"
@@ -11,3 +12,4 @@ fn main(): i32 {
     }
     return 0
 }
+

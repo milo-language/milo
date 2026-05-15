@@ -32,7 +32,9 @@ fn main(): i32 {
     if args.has("file") {
         label = args.getString("file")
         match readFile(args.getString("file")) {
-            Result.Ok(data) => { content = data }
+            Result.Ok(data) => {
+                content = data
+            }
             Result.Err(e) => {
                 print("wc: ", e)
                 return 1
@@ -68,7 +70,9 @@ fn main(): i32 {
         }
         i = i + 1
     }
-    if inWord { words = words + 1 }
+    if inWord {
+        words = words + 1
+    }
 
     let chars = content.len
 
@@ -76,11 +80,18 @@ fn main(): i32 {
         print(pad(lines), pad(words), pad(chars), " ", label)
     } else {
         var output: string = ""
-        if showLines { output = output + pad(lines) }
-        if showWords { output = output + pad(words) }
-        if showChars { output = output + pad(chars) }
+        if showLines {
+            output = output + pad(lines)
+        }
+        if showWords {
+            output = output + pad(words)
+        }
+        if showChars {
+            output = output + pad(chars)
+        }
         print(output, " ", label)
     }
 
     return 0
 }
+

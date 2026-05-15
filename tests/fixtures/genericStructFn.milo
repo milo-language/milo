@@ -9,7 +9,10 @@ fn unbox(b: Wrapper<i32>): i32 {
 }
 
 fn main(): i32 {
-    let b = Wrapper { value: 42 }
+    let b = Wrapper {
+        value: 42
+    }
     print(unbox(b))
     return 0
 }
+

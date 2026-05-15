@@ -1,4 +1,5 @@
 // @expect: 3
+
 fn main(): i32 {
     let a: u64 = 10
     let b: u64 = 3
@@ -6,3 +7,4 @@ fn main(): i32 {
     print(q)
     return 0
 }
+

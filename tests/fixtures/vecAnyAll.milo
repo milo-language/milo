@@ -2,6 +2,7 @@
 // @expect: all: false
 // @expect: any: false
 // @expect: all: true
+
 fn main(): i32 {
     var nums: Vec<i32> = Vec.new()
     nums.push(1)
@@ -13,3 +14,4 @@ fn main(): i32 {
     print("all: ", nums.all((n: &i32) => n > 0))
     return 0
 }
+

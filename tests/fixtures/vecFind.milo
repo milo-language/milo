@@ -1,5 +1,6 @@
 // @expect: found: 3
 // @expect: not found
+
 fn main(): i32 {
     var nums: Vec<i32> = Vec.new()
     nums.push(1)
@@ -8,13 +9,22 @@ fn main(): i32 {
     nums.push(4)
     let found = nums.find((n: &i32) => n > 2)
     match found {
-        Option.Some(v) => { print("found: ", v) }
-        Option.None => { print("none") }
+        Option.Some(v) => {
+            print("found: ", v)
+        }
+        Option.None => {
+            print("none")
+        }
     }
     let missing = nums.find((n: &i32) => n > 100)
     match missing {
-        Option.Some(v) => { print("found: ", v) }
-        Option.None => { print("not found") }
+        Option.Some(v) => {
+            print("found: ", v)
+        }
+        Option.None => {
+            print("not found")
+        }
     }
     return 0
 }
+

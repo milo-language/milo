@@ -1,4 +1,5 @@
 // @error: requires function to return
+
 enum Option<T> {
     Some(T),
     None,
@@ -12,3 +13,4 @@ fn bad(opt: Option<i32>): i32 {
 fn main(): i32 {
     return bad(Option.Some(1))
 }
+

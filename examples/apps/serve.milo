@@ -1,34 +1,70 @@
 // serve — static file server
-from "std/http" import { Request, Response, serve }
+from "std/http" import {
+    Request, Response, serve
+}
 import "std/argparse"
 import "std/io"
 import "std/fs"
 import "std/path"
 
 fn getMime(path: &string): string {
-    if path.endsWith(".html") || path.endsWith(".htm") { return "text/html" }
-    if path.endsWith(".css") { return "text/css" }
-    if path.endsWith(".js") { return "application/javascript" }
-    if path.endsWith(".json") { return "application/json" }
-    if path.endsWith(".png") { return "image/png" }
-    if path.endsWith(".jpg") || path.endsWith(".jpeg") { return "image/jpeg" }
-    if path.endsWith(".gif") { return "image/gif" }
-    if path.endsWith(".svg") { return "image/svg+xml" }
-    if path.endsWith(".ico") { return "image/x-icon" }
-    if path.endsWith(".txt") { return "text/plain" }
-    if path.endsWith(".xml") { return "application/xml" }
-    if path.endsWith(".pdf") { return "application/pdf" }
-    if path.endsWith(".wasm") { return "application/wasm" }
-    if path.endsWith(".md") { return "text/plain" }
-    if path.endsWith(".ts") { return "text/plain" }
+    if path.endsWith(".html") || path.endsWith(".htm") {
+        return "text/html"
+    }
+    if path.endsWith(".css") {
+        return "text/css"
+    }
+    if path.endsWith(".js") {
+        return "application/javascript"
+    }
+    if path.endsWith(".json") {
+        return "application/json"
+    }
+    if path.endsWith(".png") {
+        return "image/png"
+    }
+    if path.endsWith(".jpg") || path.endsWith(".jpeg") {
+        return "image/jpeg"
+    }
+    if path.endsWith(".gif") {
+        return "image/gif"
+    }
+    if path.endsWith(".svg") {
+        return "image/svg+xml"
+    }
+    if path.endsWith(".ico") {
+        return "image/x-icon"
+    }
+    if path.endsWith(".txt") {
+        return "text/plain"
+    }
+    if path.endsWith(".xml") {
+        return "application/xml"
+    }
+    if path.endsWith(".pdf") {
+        return "application/pdf"
+    }
+    if path.endsWith(".wasm") {
+        return "application/wasm"
+    }
+    if path.endsWith(".md") {
+        return "text/plain"
+    }
+    if path.endsWith(".ts") {
+        return "text/plain"
+    }
     return "application/octet-stream"
 }
 
 fn formatSize(size: i64): string {
-    if size < 1024 { return size.toString() + "B" }
+    if size < 1024 {
+        return size.toString() + "B"
+    }
     let kb: i64 = 1024
     let mb: i64 = 1048576
-    if size < mb { return (size / kb).toString() + "K" }
+    if size < mb {
+        return (size / kb).toString() + "K"
+    }
     return (size / mb).toString() + "M"
 }
 
@@ -67,7 +103,9 @@ fn dirListing(dirPath: &string, urlPath: &string): string {
 
 fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
     var reqPath: string = req.path.clone()
-    if reqPath == "/" { reqPath = "" }
+    if reqPath == "/" {
+        reqPath = ""
+    }
 
     let filePath = root + reqPath
 
@@ -77,31 +115,42 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
         if isFile(indexPath.clone()) {
             match readFile(indexPath) {
                 Result.Ok(content) => {
-                    if !quiet { print("200 GET ", req.path, " -> index.html") }
+                    if !quiet {
+                        print("200 GET ", req.path, " -> index.html")
+                    }
                     return Response.Status(200, "text/html", content)
                 }
-                Result.Err(e) => {}
+                Result.Err(e) => {
+                }
             }
         }
         // directory listing
         let listing = dirListing(filePath, req.path)
-        if !quiet { print("200 GET ", req.path, " (dir)") }
+        if !quiet {
+            print("200 GET ", req.path, " (dir)")
+        }
         return Response.Html(listing)
     }
 
     if !isFile(filePath.clone()) {
-        if !quiet { print("404 GET ", req.path) }
+        if !quiet {
+            print("404 GET ", req.path)
+        }
         return Response.NotFound
     }
 
     match readFile(filePath.clone()) {
         Result.Ok(content) => {
             let mime = getMime(filePath)
-            if !quiet { print("200 GET ", req.path, " (", formatSize(content.len), ")") }
+            if !quiet {
+                print("200 GET ", req.path, " (", formatSize(content.len), ")")
+            }
             return Response.Status(200, mime, content)
         }
         Result.Err(e) => {
-            if !quiet { print("500 GET ", req.path, ": ", e) }
+            if !quiet {
+                print("500 GET ", req.path, ": ", e)
+            }
             return Response.Status(500, "text/plain", "500 Internal Server Error")
         }
     }
@@ -128,13 +177,16 @@ fn main(): i32 {
 
     let result = serve(port, (req: &Request) => {
         return handleRequest(req, root, quiet)
-    })
+    }
+    )
     match result {
         Result.Err(msg) => {
             print("error: ", msg)
             return 1
         }
-        _ => {}
+        _ => {
+        }
     }
     return 0
 }
+

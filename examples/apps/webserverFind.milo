@@ -1,4 +1,6 @@
-from "std/http" import { Request, Response, serve }
+from "std/http" import {
+    Request, Response, serve
+}
 
 struct Route {
     method: string,
@@ -17,11 +19,19 @@ fn dispatch(routes: &Vec<Route>, req: &Request): Response {
 
 fn main(): i32 {
     let routes: Vec<Route> = [
-        Route { method: "GET", prefix: "/",     handler: (r: &Request) => Response.Html("<h1>Hello!</h1>") },
-        Route { method: "GET", prefix: "/json", handler: (r: &Request) => Response.Json("{\"ok\": true}") },
+    Route {
+        method: "GET", prefix: "/", handler: (r: &Request) => Response.Html("<h1>Hello!</h1>")
+    }
+    ,
+    Route {
+        method: "GET", prefix: "/json", handler: (r: &Request) => Response.Json("{\"ok\": true}")
+    }
+    ,
     ]
     serve(8080, (req: &Request) => {
         return dispatch(routes, req)
-    })
+    }
+    )
     return 0
 }
+

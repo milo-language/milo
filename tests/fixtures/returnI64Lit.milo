@@ -1,8 +1,11 @@
 // @expect: 5
+
 fn get(): i64 {
     return 5
 }
+
 fn main(): i32 {
     print(get())
     return 0
 }
+

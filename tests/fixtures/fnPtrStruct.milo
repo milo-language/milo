@@ -1,5 +1,6 @@
 // @expect: double: 42
 // @expect: triple: 30
+
 fn double(x: i32): i32 {
     return x * 2
 }
@@ -14,10 +15,15 @@ struct Handler {
 }
 
 fn main(): i32 {
-    let h = Handler { name: "double", apply: double }
+    let h = Handler {
+        name: "double", apply: double
+    }
     let result = h.apply(21)
     print(h.name, ": ", result)
-    let h2 = Handler { name: "triple", apply: triple }
+    let h2 = Handler {
+        name: "triple", apply: triple
+    }
     print(h2.name, ": ", h2.apply(10))
     return 0
 }
+

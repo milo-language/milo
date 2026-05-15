@@ -1,4 +1,5 @@
 // @expect: 2
+
 fn main(): i32 {
     let x: u32 = 7
     let y: u32 = 3
@@ -6,3 +7,4 @@ fn main(): i32 {
     print(q)
     return 0
 }
+

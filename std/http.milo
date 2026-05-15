@@ -6,6 +6,7 @@ import "std/platform"
 // ── Public types ──
 
 // Incoming HTTP request with method and path.
+
 struct Request {
     method: string,
     path: string,
@@ -14,6 +15,7 @@ struct Request {
 // HTTP response type.
 // Text/Html/Json set the content-type automatically.
 // Status(code, contentType, body) for custom responses.
+
 enum Response {
     Text(string),
     Html(string),
@@ -24,7 +26,7 @@ enum Response {
 
 // ── Internal helpers ──
 
-fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string {
+fn bufToStr(buf: &[u8 ; 8192], start: i64, end: i64): string {
     var s: string = ""
     var i: i64 = start
     while i < end {
@@ -34,7 +36,7 @@ fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string {
     return s
 }
 
-fn parseRequest(buf: &[u8; 8192], n: i64): Request {
+fn parseRequest(buf: &[u8 ; 8192], n: i64): Request {
     var i: i64 = 0
     while i < n && buf[i] != ' ' {
         i = i + 1
@@ -48,17 +50,33 @@ fn parseRequest(buf: &[u8; 8192], n: i64): Request {
         i = i + 1
     }
     let path = bufToStr(buf, pathStart, i)
-    return Request { method: method, path: path }
+    return Request {
+        method: method, path: path
+    }
 }
 
 fn statusText(status: i32): string {
-    if status == 200 { return "200 OK" }
-    if status == 201 { return "201 Created" }
-    if status == 204 { return "204 No Content" }
-    if status == 301 { return "301 Moved Permanently" }
-    if status == 400 { return "400 Bad Request" }
-    if status == 404 { return "404 Not Found" }
-    if status == 500 { return "500 Internal Server Error" }
+    if status == 200 {
+        return "200 OK"
+    }
+    if status == 201 {
+        return "201 Created"
+    }
+    if status == 204 {
+        return "204 No Content"
+    }
+    if status == 301 {
+        return "301 Moved Permanently"
+    }
+    if status == 400 {
+        return "400 Bad Request"
+    }
+    if status == 404 {
+        return "404 Not Found"
+    }
+    if status == 500 {
+        return "500 Internal Server Error"
+    }
     return "200 OK"
 }
 
@@ -70,7 +88,9 @@ fn sendRaw(fd: i32, status: i32, contentType: string, body: string): void {
     resp = resp + "\r\nServer: milo"
     resp = resp + "\r\n\r\n"
     resp = resp + body
-    unsafe { write(fd, resp, resp.len) }
+    unsafe {
+        write(fd, resp, resp.len)
+    }
 }
 
 fn sendResponse(fd: i32, response: Response): void {
@@ -102,7 +122,9 @@ struct Socket {
 impl Drop for Socket {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            unsafe { close(self.fd) }
+            unsafe {
+                close(self.fd)
+            }
         }
     }
 }
@@ -116,6 +138,7 @@ impl Drop for Socket {
 //   serve(8080, fn(req: &Request): Response {
 //       return Response.Text("hello")
 //   })
+
 fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
@@ -134,7 +157,9 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         if rawFd < 0 {
             return Result.Err("socket() failed")
         }
-        let sock = Socket { fd: rawFd }
+        let sock = Socket {
+            fd: rawFd
+        }
 
         var one: i32 = 1
         setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
@@ -165,7 +190,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
                 continue
             }
 
-            var buf: [u8; 8192] = [0; 8192]
+            var buf: [u8 ; 8192] = [0 ; 8192]
             let n = read(clientFd, buf, BUF_SIZE)
             if n > 0 {
                 let req = parseRequest(buf, n)
@@ -177,3 +202,4 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     }
     return Result.Err("server exited")
 }
+

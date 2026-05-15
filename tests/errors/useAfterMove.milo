@@ -1,6 +1,7 @@
 // @error: use of moved variable 's'
 
-fn consume(s: string): void {}
+fn consume(s: string): void {
+}
 
 fn main(): i32 {
     let s: string = "hello"
@@ -8,3 +9,4 @@ fn main(): i32 {
     consume(s)
     return 0
 }
+

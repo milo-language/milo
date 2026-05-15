@@ -1,5 +1,6 @@
 // @expect: hello
 // @expect: world
+
 fn main(): i32 {
     let s: string = "hello world"
     var view = s[0..5]
@@ -8,3 +9,4 @@ fn main(): i32 {
     print(view)
     return 0
 }
+

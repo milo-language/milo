@@ -24,14 +24,14 @@ enum Expr {
     EnumLit(string, string, Vec<Box<Expr>>),
     As(Box<Expr>, string),
     MethodCall(Box<Expr>, string, Vec<Box<Expr>>),
-    Index(Box<Expr>, Box<Expr>),                // e[i]
-    Slice(Box<Expr>, Box<Expr>, Box<Expr>),     // e[a..b]
+    Index(Box<Expr>, Box<Expr>), // e[i]
+    Slice(Box<Expr>, Box<Expr>, Box<Expr>), // e[a..b]
 }
 
 enum Stmt {
-    Let(string, string, Box<Expr>),    // name, type-text (empty = infer), value
+    Let(string, string, Box<Expr>), // name, type-text (empty = infer), value
     Var(string, string, Box<Expr>),
-    Assign(Box<Expr>, Box<Expr>),       // target expr (Ident or FieldAccess), value
+    Assign(Box<Expr>, Box<Expr>), // target expr (Ident or FieldAccess), value
     Return(Box<Expr>),
     ReturnVoid,
     ExprStmt(Box<Expr>),
@@ -68,7 +68,7 @@ struct StructDecl {
 
 struct EnumVariant {
     name: string,
-    payloadTypes: Vec<string>,  // empty for unit variants
+    payloadTypes: Vec<string>, // empty for unit variants
 }
 
 struct EnumDecl {
@@ -110,6 +110,7 @@ fn expect(toks: &Vec<Token>, pos: &mut i64, k: TokKind): void {
 
 // ── Type parsing ──
 // Subset: bare identifier, optional leading '*' for pointer.
+
 fn parseType(src: &string, toks: &Vec<Token>, pos: &mut i64): string {
     // Stage-0: parse `&T` / `&mut T` but strip the reference qualifier — references are
     // treated as pass-by-value at codegen. (Loses mutation through refs; OK for most milo0
@@ -119,7 +120,9 @@ fn parseType(src: &string, toks: &Vec<Token>, pos: &mut i64): string {
         // optional `mut`
         if toks[pos].kind == TokKind.Ident {
             let txt = tokenText(src, toks, pos)
-            if txt == "mut" { pos = pos + 1 }
+            if txt == "mut" {
+                pos = pos + 1
+            }
         }
         return parseType(src, toks, pos)
     }
@@ -136,7 +139,9 @@ fn parseType(src: &string, toks: &Vec<Token>, pos: &mut i64): string {
                 sz = parseI64(szs)
             }
         }
-        if toks[pos].kind == TokKind.RBracket { pos = pos + 1 }
+        if toks[pos].kind == TokKind.RBracket {
+            pos = pos + 1
+        }
         return "[" + elem + ";" + sz.toString() + "]"
     }
     var stars: i32 = 0
@@ -162,13 +167,19 @@ fn parseType(src: &string, toks: &Vec<Token>, pos: &mut i64): string {
         result = result + "<"
         var first: bool = true
         while toks[pos].kind != TokKind.Gt && toks[pos].kind != TokKind.Eof {
-            if !first { result = result + "," }
+            if !first {
+                result = result + ","
+            }
             let inner = parseType(src, toks, pos)
             result = result + inner
             first = false
-            if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+            if toks[pos].kind == TokKind.Comma {
+                pos = pos + 1
+            }
         }
-        if toks[pos].kind == TokKind.Gt { pos = pos + 1 }
+        if toks[pos].kind == TokKind.Gt {
+            pos = pos + 1
+        }
         result = result + ">"
     }
     return result
@@ -212,7 +223,9 @@ fn parsePrimary(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
             while toks[pos].kind != TokKind.RParen {
                 let a = parseExpr(src, toks, pos)
                 args.push(a)
-                if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                if toks[pos].kind == TokKind.Comma {
+                    pos = pos + 1
+                }
             }
             pos = pos + 1
             return Box(Expr.Call(name, args))
@@ -228,8 +241,13 @@ fn parsePrimary(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
                 pos = pos + 1
                 expect(toks, pos, TokKind.Colon)
                 let fval = parseExpr(src, toks, pos)
-                fields.push(ExprField { name: fname, value: fval })
-                if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                fields.push(ExprField {
+                    name: fname, value: fval
+                }
+                )
+                if toks[pos].kind == TokKind.Comma {
+                    pos = pos + 1
+                }
             }
             expect(toks, pos, TokKind.RBrace)
             return Box(Expr.StructLit(name, fields))
@@ -245,7 +263,9 @@ fn parsePrimary(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
                 while toks[pos].kind != TokKind.RParen {
                     let a = parseExpr(src, toks, pos)
                     args.push(a)
-                    if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                    if toks[pos].kind == TokKind.Comma {
+                        pos = pos + 1
+                    }
                 }
                 pos = pos + 1
             }
@@ -274,9 +294,13 @@ fn parsePostfix(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
                 while toks[pos].kind != TokKind.RParen && toks[pos].kind != TokKind.Eof {
                     let a = parseExpr(src, toks, pos)
                     args.push(a)
-                    if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                    if toks[pos].kind == TokKind.Comma {
+                        pos = pos + 1
+                    }
                 }
-                if toks[pos].kind == TokKind.RParen { pos = pos + 1 }
+                if toks[pos].kind == TokKind.RParen {
+                    pos = pos + 1
+                }
                 e = Box(Expr.MethodCall(e, fname, args))
             } else {
                 e = Box(Expr.FieldAccess(e, fname))
@@ -291,10 +315,14 @@ fn parsePostfix(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Expr> {
             if toks[pos].kind == TokKind.DotDot {
                 pos = pos + 1
                 let second = parseExpr(src, toks, pos)
-                if toks[pos].kind == TokKind.RBracket { pos = pos + 1 }
+                if toks[pos].kind == TokKind.RBracket {
+                    pos = pos + 1
+                }
                 e = Box(Expr.Slice(e, first, second))
             } else {
-                if toks[pos].kind == TokKind.RBracket { pos = pos + 1 }
+                if toks[pos].kind == TokKind.RBracket {
+                    pos = pos + 1
+                }
                 e = Box(Expr.Index(e, first))
             }
         } else {
@@ -530,14 +558,21 @@ fn parseStmt(src: &string, toks: &Vec<Token>, pos: &mut i64): Box<Stmt> {
                     let b = tokenText(src, toks, pos)
                     pos = pos + 1
                     bindings.push(b)
-                    if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                    if toks[pos].kind == TokKind.Comma {
+                        pos = pos + 1
+                    }
                 }
                 pos = pos + 1
             }
             expect(toks, pos, TokKind.FatArrow)
             let body = parseBlock(src, toks, pos)
-            arms.push(MatchArm { enumName: ename, variantName: vname, bindings: bindings, body: body })
-            if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+            arms.push(MatchArm {
+                enumName: ename, variantName: vname, bindings: bindings, body: body
+            }
+            )
+            if toks[pos].kind == TokKind.Comma {
+                pos = pos + 1
+            }
         }
         expect(toks, pos, TokKind.RBrace)
         return Box(Stmt.Match(subject, arms))
@@ -568,8 +603,13 @@ fn parseParams(src: &string, toks: &Vec<Token>, pos: &mut i64, isVariadic: &mut 
         pos = pos + 1
         expect(toks, pos, TokKind.Colon)
         let ty = parseType(src, toks, pos)
-        ps.push(Param { name: name, ty: ty })
-        if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+        ps.push(Param {
+            name: name, ty: ty
+        }
+        )
+        if toks[pos].kind == TokKind.Comma {
+            pos = pos + 1
+        }
     }
     expect(toks, pos, TokKind.RParen)
     return ps
@@ -615,15 +655,24 @@ fn parseEnumDecl(src: &string, toks: &Vec<Token>, pos: &mut i64): EnumDecl {
             while toks[pos].kind != TokKind.RParen {
                 let ty = parseType(src, toks, pos)
                 payloadTypes.push(ty)
-                if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+                if toks[pos].kind == TokKind.Comma {
+                    pos = pos + 1
+                }
             }
             pos = pos + 1
         }
-        variants.push(EnumVariant { name: vname, payloadTypes: payloadTypes })
-        if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+        variants.push(EnumVariant {
+            name: vname, payloadTypes: payloadTypes
+        }
+        )
+        if toks[pos].kind == TokKind.Comma {
+            pos = pos + 1
+        }
     }
     expect(toks, pos, TokKind.RBrace)
-    return EnumDecl { name: name, variants: variants }
+    return EnumDecl {
+        name: name, variants: variants
+    }
 }
 
 fn parseStructDecl(src: &string, toks: &Vec<Token>, pos: &mut i64): StructDecl {
@@ -637,11 +686,18 @@ fn parseStructDecl(src: &string, toks: &Vec<Token>, pos: &mut i64): StructDecl {
         pos = pos + 1
         expect(toks, pos, TokKind.Colon)
         let fty = parseType(src, toks, pos)
-        fields.push(StructField { name: fname, ty: fty })
-        if toks[pos].kind == TokKind.Comma { pos = pos + 1 }
+        fields.push(StructField {
+            name: fname, ty: fty
+        }
+        )
+        if toks[pos].kind == TokKind.Comma {
+            pos = pos + 1
+        }
     }
     expect(toks, pos, TokKind.RBrace)
-    return StructDecl { name: name, fields: fields }
+    return StructDecl {
+        name: name, fields: fields
+    }
 }
 
 fn parseProgram(src: &string, toks: &Vec<Token>): Program {
@@ -667,7 +723,9 @@ fn parseProgram(src: &string, toks: &Vec<Token>): Program {
             pos = pos + 1 // skip unknown top-level
         }
     }
-    return Program { fns: fns, structs: structs, enums: enums }
+    return Program {
+        fns: fns, structs: structs, enums: enums
+    }
 }
 
 // ── Helpers ──
@@ -682,9 +740,15 @@ fn parseI64(s: string): i64 {
             while i < s.len {
                 let c = s[i]
                 var d: i64 = 0
-                if c >= 48 && c <= 57 { d = (c as i64) - 48 }
-                else if c >= 65 && c <= 70 { d = (c as i64) - 65 + 10 }
-                else if c >= 97 && c <= 102 { d = (c as i64) - 97 + 10 }
+                if c >= 48 && c <= 57 {
+                    d = (c as i64) - 48
+                } 
+                else if c >= 65 && c <= 70 {
+                    d = (c as i64) - 65 + 10
+                } 
+                else if c >= 97 && c <= 102 {
+                    d = (c as i64) - 97 + 10
+                }
                 n = n * 16 + d
                 i = i + 1
             }
@@ -700,3 +764,4 @@ fn parseI64(s: string): i64 {
     }
     return n
 }
+

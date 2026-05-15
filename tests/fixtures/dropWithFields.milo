@@ -13,7 +13,10 @@ impl Drop for Connection {
 }
 
 fn main(): i32 {
-    let c = Connection { name: "db", fd: 42 }
+    let c = Connection {
+        name: "db", fd: 42
+    }
     print("connected: fd=", c.fd)
     return 0
 }
+

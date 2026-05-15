@@ -19,31 +19,50 @@ fn open(path: string): Result<i32, IoError> {
 
 fn main(): i32 {
     match open("data.txt") {
-        Result.Ok(fd) => { print("got ", fd) }
+        Result.Ok(fd) => {
+            print("got ", fd)
+        }
         Result.Err(e) => {
             match e {
-                IoError.NotFound(p) => { print("not found: ", p) }
-                IoError.PermissionDenied(p) => { print("denied: ", p) }
+                IoError.NotFound(p) => {
+                    print("not found: ", p)
+                }
+                IoError.PermissionDenied(p) => {
+                    print("denied: ", p)
+                }
             }
         }
     }
     match open("config.toml") {
-        Result.Ok(fd) => { print("got ", fd) }
+        Result.Ok(fd) => {
+            print("got ", fd)
+        }
         Result.Err(e) => {
             match e {
-                IoError.NotFound(p) => { print("not found: ", p) }
-                IoError.PermissionDenied(p) => { print("denied: ", p) }
+                IoError.NotFound(p) => {
+                    print("not found: ", p)
+                }
+                IoError.PermissionDenied(p) => {
+                    print("denied: ", p)
+                }
             }
         }
     }
     match open("/etc/secret") {
-        Result.Ok(fd) => { print("got ", fd) }
+        Result.Ok(fd) => {
+            print("got ", fd)
+        }
         Result.Err(e) => {
             match e {
-                IoError.NotFound(p) => { print("not found: ", p) }
-                IoError.PermissionDenied(p) => { print("denied: ", p) }
+                IoError.NotFound(p) => {
+                    print("not found: ", p)
+                }
+                IoError.PermissionDenied(p) => {
+                    print("denied: ", p)
+                }
             }
         }
     }
     return 0
 }
+

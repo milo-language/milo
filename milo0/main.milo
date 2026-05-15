@@ -3,24 +3,33 @@
 
 import "codegen.milo"
 
-extern fn read(fd: i32, buf: &mut [u8; 262144], n: i64): i64
-extern fn write(fd: i32, buf: *u8, n: i64): i64
+extern
+
+fn read(fd: i32, buf: &mut [u8 ; 262144], n: i64): i64
+
+extern
+
+fn write(fd: i32, buf: * u8, n: i64): i64
 
 fn readStdin(): string {
-    var buf: [u8; 262144] = [0; 262144]
+    var buf: [u8 ; 262144] = [0 ; 262144]
     var s: string = ""
     var total: i64 = 0
     var done: bool = false
     while !done {
         let n = read(0, buf, 262144)
-        if n <= 0 { done = true }
+        if n <= 0 {
+            done = true
+        }
         var i: i64 = 0
         while i < n {
             s.push(buf[i])
             i = i + 1
         }
         total = total + n
-        if n < 262144 { done = true }
+        if n < 262144 {
+            done = true
+        }
     }
     return s
 }
@@ -43,3 +52,4 @@ fn main(): i32 {
     writeStr(cg.body)
     return 0
 }
+

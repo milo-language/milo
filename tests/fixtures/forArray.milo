@@ -1,10 +1,12 @@
 // @expect: 10
 // @expect: 20
 // @expect: 30
+
 fn main(): i32 {
-    let nums: [i32; 3] = [10, 20, 30]
+    let nums: [i32 ; 3] = [10, 20, 30]
     for n in nums {
         print(n)
     }
     return 0
 }
+

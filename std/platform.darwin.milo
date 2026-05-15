@@ -7,7 +7,7 @@ struct SockAddrIn {
     sinFamily: u8,
     sinPort: u16,
     sinAddr: u32,
-    sinZero: [u8; 8],
+    sinZero: [u8 ; 8],
 }
 
 fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
@@ -17,33 +17,72 @@ fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
             sinFamily: 2 as u8,
             sinPort: htons(port),
             sinAddr: addr,
-            sinZero: [0; 8],
+            sinZero: [0 ; 8],
         }
     }
 }
 
 fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
-        sinLen: 0, sinFamily: 0, sinPort: 0, sinAddr: 0, sinZero: [0; 8],
+        sinLen: 0, sinFamily: 0, sinPort: 0, sinAddr: 0, sinZero: [0 ; 8],
     }
 }
 
-fn solSocket(): i32 { return 65535 }
-fn soReuseaddr(): i32 { return 4 }
-fn mapPrivateAnon(): i32 { return 4098 }
-fn oWriteCreateTrunc(): i32 { return 1537 }
-fn oWriteCreateAppend(): i32 { return 521 }
-// offset of aiAddr field in struct addrinfo
-fn addrinfoAddrOffset(): i64 { return 32 }
-// struct stat layout (macOS aarch64/x8664)
-fn statModeOffset(): i64 { return 4 }
-fn statSizeOffset(): i64 { return 96 }
-fn statBufSize(): i64 { return 144 }
-// struct dirent layout
-fn direntTypeOffset(): i64 { return 20 }
-fn direntNameOffset(): i64 { return 21 }
-// errno access — macOS uses __error() to get errno pointer
-extern fn __error(): *u8
-fn getErrno(): i32 {
-    unsafe { return _loadI32(__error()) }
+fn solSocket(): i32 {
+    return 65535
 }
+
+fn soReuseaddr(): i32 {
+    return 4
+}
+
+fn mapPrivateAnon(): i32 {
+    return 4098
+}
+
+fn oWriteCreateTrunc(): i32 {
+    return 1537
+}
+
+fn oWriteCreateAppend(): i32 {
+    return 521
+}
+// offset of aiAddr field in struct addrinfo
+
+fn addrinfoAddrOffset(): i64 {
+    return 32
+}
+// struct stat layout (macOS aarch64/x8664)
+
+fn statModeOffset(): i64 {
+    return 4
+}
+
+fn statSizeOffset(): i64 {
+    return 96
+}
+
+fn statBufSize(): i64 {
+    return 144
+}
+// struct dirent layout
+
+fn direntTypeOffset(): i64 {
+    return 20
+}
+
+fn direntNameOffset(): i64 {
+    return 21
+}
+// errno access — macOS uses __error() to get errno pointer
+
+extern
+
+fn __error(): * u8
+
+fn getErrno(): i32 {
+    unsafe {
+        return _loadI32(__error())
+    }
+}
+

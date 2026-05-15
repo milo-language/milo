@@ -11,8 +11,13 @@ fn open(path: string): Result<string, IoError> {
 
 fn main(): i32 {
     match open("config.toml") {
-        Result.Ok(d) => { print(d) }
-        Result.Err(e) => { print("error: ", e) }
+        Result.Ok(d) => {
+            print(d)
+        }
+        Result.Err(e) => {
+            print("error: ", e)
+        }
     }
     return 0
 }
+

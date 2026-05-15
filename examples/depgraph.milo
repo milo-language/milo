@@ -25,7 +25,8 @@ fn addNode(g: &mut DepGraph, name: string): Handle<Node> {
         name: name,
         deps: Vec.new(),
         dependents: Vec.new(),
-    })
+    }
+    )
     g.nodes.push(h)
     return h
 }
@@ -35,22 +36,29 @@ fn addEdge(g: &mut DepGraph, src: Handle<Node>, dst: Handle<Node>) {
         var updated = n
         updated.deps.push(dst)
         return updated
-    })
+    }
+    )
     arenaModify(g.arena, dst, (n: Node) => {
         var updated = n
         updated.dependents.push(src)
         return updated
-    })
+    }
+    )
 }
 
 fn nodeName(g: &DepGraph, h: Handle<Node>): string {
     match arenaGet(g.arena, h) {
-        Option.Some(n) => { return n.name }
-        Option.None => { return "<invalid>" }
+        Option.Some(n) => {
+            return n.name
+        }
+        Option.None => {
+            return "<invalid>"
+        }
     }
 }
 
 // Kahn's algorithm
+
 fn topoSort(g: &DepGraph): Vec<string> {
     var order: Vec<string> = Vec.new()
     let n = g.nodes.len
@@ -59,8 +67,12 @@ fn topoSort(g: &DepGraph): Vec<string> {
     var i: i64 = 0
     while i < n {
         match arenaGet(g.arena, g.nodes[i]) {
-            Option.Some(node) => { inDeg.push(node.deps.len) }
-            Option.None => { inDeg.push(0) }
+            Option.Some(node) => {
+                inDeg.push(node.deps.len)
+            }
+            Option.None => {
+                inDeg.push(0)
+            }
         }
         i = i + 1
     }
@@ -68,7 +80,9 @@ fn topoSort(g: &DepGraph): Vec<string> {
     var queue: Vec<i64> = Vec.new()
     i = 0
     while i < n {
-        if inDeg[i] == 0 { queue.push(i) }
+        if inDeg[i] == 0 {
+            queue.push(i)
+        }
         i = i + 1
     }
 
@@ -86,14 +100,17 @@ fn topoSort(g: &DepGraph): Vec<string> {
                     while j < n {
                         if g.nodes[j].index == node.dependents[d].index {
                             inDeg[j] = inDeg[j] - 1
-                            if inDeg[j] == 0 { queue.push(j) }
+                            if inDeg[j] == 0 {
+                                queue.push(j)
+                            }
                         }
                         j = j + 1
                     }
                     d = d + 1
                 }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
         qi = qi + 1
     }
@@ -108,11 +125,11 @@ fn main(): i32 {
     var g = newGraph()
 
     let libc = addNode(g, "libc")
-    let net  = addNode(g, "net")
+    let net = addNode(g, "net")
     let json = addNode(g, "json")
     let http = addNode(g, "http")
-    let db   = addNode(g, "db")
-    let app  = addNode(g, "app")
+    let db = addNode(g, "db")
+    let app = addNode(g, "app")
 
     addEdge(g, net, libc)
     addEdge(g, json, libc)
@@ -132,3 +149,4 @@ fn main(): i32 {
 
     return 0
 }
+

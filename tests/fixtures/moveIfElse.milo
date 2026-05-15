@@ -1,10 +1,17 @@
 // @expect: 1
 
-struct Point { x: i32, y: i32 }
-fn consume(p: Point): i32 { return p.x }
+struct Point {
+    x: i32, y: i32
+}
+
+fn consume(p: Point): i32 {
+    return p.x
+}
 
 fn main(): i32 {
-    let p = Point { x: 1, y: 2 }
+    let p = Point {
+        x: 1, y: 2
+    }
     var result: i32 = 0
     if true {
         result = consume(p)
@@ -14,3 +21,4 @@ fn main(): i32 {
     print(result)
     return 0
 }
+

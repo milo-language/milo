@@ -15,12 +15,21 @@ fn countChars(ok: bool): Result<i32> {
 
 fn main(): i32 {
     match countChars(true) {
-        Result.Ok(n) => { print("got ", n) }
-        Result.Err(e) => { print("failed: ", e) }
+        Result.Ok(n) => {
+            print("got ", n)
+        }
+        Result.Err(e) => {
+            print("failed: ", e)
+        }
     }
     match countChars(false) {
-        Result.Ok(n) => { print("got ", n) }
-        Result.Err(e) => { print("failed: ", e) }
+        Result.Ok(n) => {
+            print("got ", n)
+        }
+        Result.Err(e) => {
+            print("failed: ", e)
+        }
     }
     return 0
 }
+

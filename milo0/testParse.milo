@@ -10,9 +10,11 @@ fn main(): i32 {
     while i < prog.fns.len {
         let f = prog.fns[i]
         var ex: i32 = 0
-        if f.isExtern { ex = 1 }
+        if f.isExtern {
+            ex = 1
+        }
         print("  fn %s -> %s (params=%lld, body=%lld stmts, extern=%d)\n",
-              f.name, f.retTy, f.params.len, f.body.len, ex)
+        f.name, f.retTy, f.params.len, f.body.len, ex)
         var j: i64 = 0
         while j < f.params.len {
             let p = f.params[j]
@@ -23,3 +25,4 @@ fn main(): i32 {
     }
     return 0
 }
+

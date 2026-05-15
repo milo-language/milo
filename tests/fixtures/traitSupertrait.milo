@@ -9,7 +9,9 @@ trait Ord: Eq {
     fn less(self: &Self, other: &Self): bool
 }
 
-struct Score { val: i32 }
+struct Score {
+    val: i32
+}
 
 impl Eq for Score {
     fn eq(self: &Self, other: &Self): bool {
@@ -24,10 +26,21 @@ impl Ord for Score {
 }
 
 fn main(): i32 {
-    let a = Score { val: 5 }
-    let b = Score { val: 5 }
-    let c = Score { val: 10 }
-    if a.eq(b) { print("equal") }
-    if a.less(c) { print("less") }
+    let a = Score {
+        val: 5
+    }
+    let b = Score {
+        val: 5
+    }
+    let c = Score {
+        val: 10
+    }
+    if a.eq(b) {
+        print("equal")
+    }
+    if a.less(c) {
+        print("less")
+    }
     return 0
 }
+

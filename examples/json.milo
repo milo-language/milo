@@ -9,7 +9,9 @@ struct User {
 
 fn main(): i32 {
     // 1. Stringify a struct → JSON string
-    let alice = User { name: "Alice", age: 30, active: true }
+    let alice = User {
+        name: "Alice", age: 30, active: true
+    }
     let json = jsonStringify(alice)
     print(json)
 
@@ -19,7 +21,9 @@ fn main(): i32 {
     print(j.i64("age")!)
 
     // 3. Array of objects
-    let bob = User { name: "Bob", age: 25, active: false }
+    let bob = User {
+        name: "Bob", age: 25, active: false
+    }
     let arr = "[" + jsonStringify(alice) + ", " + jsonStringify(bob) + "]"
     let users = jsonParse(arr)!
     for i in 0..users.len() {
@@ -40,3 +44,4 @@ fn main(): i32 {
 
     return 0
 }
+

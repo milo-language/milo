@@ -9,7 +9,9 @@ fn main(): i32 {
     }
     var content: string = ""
     match readFile(_miloArgAt(1)) {
-        Result.Ok(d) => { content = d }
+        Result.Ok(d) => {
+            content = d
+        }
         Result.Err(e) => {
             print("err: ", e)
             return 1
@@ -27,21 +29,32 @@ fn main(): i32 {
                 match items.at(i) {
                     Option.Some(item) => {
                         match item.get("price") {
-                            Option.Some(p) => { sum = sum + p.num() }
-                            Option.None => {}
+                            Option.Some(p) => {
+                                sum = sum + p.num()
+                            }
+                            Option.None => {
+                            }
                         }
                         match item.get("active") {
-                            Option.Some(a) => { if a.bool() { active = active + 1 } }
-                            Option.None => {}
+                            Option.Some(a) => {
+                                if a.bool() {
+                                    active = active + 1
+                                }
+                            }
+                            Option.None => {
+                            }
                         }
                     }
-                    Option.None => {}
+                    Option.None => {
+                    }
                 }
                 i = i + 1
             }
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
     print("items=", n, " sum=", sum, " active=", active)
     return 0
 }
+

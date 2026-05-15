@@ -1,85 +1,125 @@
 // std/string — string utility functions
 
 // Check if haystack contains needle.
+
 fn strContains(haystack: &string, needle: &string): bool {
-    if needle.len == 0 { return true }
-    if needle.len > haystack.len { return false }
+    if needle.len == 0 {
+        return true
+    }
+    if needle.len > haystack.len {
+        return false
+    }
     var i: i64 = 0
     while i <= haystack.len - needle.len {
         var j: i64 = 0
         while j < needle.len {
-            if haystack[i + j] != needle[j] { break }
+            if haystack[i + j] != needle[j] {
+                break
+            }
             j = j + 1
         }
-        if j == needle.len { return true }
+        if j == needle.len {
+            return true
+        }
         i = i + 1
     }
     return false
 }
 
 // Find first occurrence of needle in haystack. Returns -1 if not found.
+
 fn strIndexOf(haystack: &string, needle: &string): i64 {
     var notFound: i64 = 0
     notFound = notFound - 1
-    if needle.len == 0 { return 0 as i64 }
-    if needle.len > haystack.len { return notFound }
+    if needle.len == 0 {
+        return 0 as i64
+    }
+    if needle.len > haystack.len {
+        return notFound
+    }
     var i: i64 = 0
     while i <= haystack.len - needle.len {
         var j: i64 = 0
         while j < needle.len {
-            if haystack[i + j] != needle[j] { break }
+            if haystack[i + j] != needle[j] {
+                break
+            }
             j = j + 1
         }
-        if j == needle.len { return i }
+        if j == needle.len {
+            return i
+        }
         i = i + 1
     }
     return notFound
 }
 
 // Find first occurrence of needle starting at pos. Returns -1 if not found.
+
 fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64 {
     var notFound: i64 = 0
     notFound = notFound - 1
-    if needle.len == 0 { return pos }
-    if pos < 0 as i64 { return notFound }
-    if pos + needle.len > haystack.len { return notFound }
+    if needle.len == 0 {
+        return pos
+    }
+    if pos < 0 as i64 {
+        return notFound
+    }
+    if pos + needle.len > haystack.len {
+        return notFound
+    }
     var i: i64 = pos
     while i <= haystack.len - needle.len {
         var j: i64 = 0
         while j < needle.len {
-            if haystack[i + j] != needle[j] { break }
+            if haystack[i + j] != needle[j] {
+                break
+            }
             j = j + 1
         }
-        if j == needle.len { return i }
+        if j == needle.len {
+            return i
+        }
         i = i + 1
     }
     return notFound
 }
 
 // Check if string starts with prefix.
+
 fn strStartsWith(s: &string, prefix: &string): bool {
-    if prefix.len > s.len { return false }
+    if prefix.len > s.len {
+        return false
+    }
     var i: i64 = 0
     while i < prefix.len {
-        if s[i] != prefix[i] { return false }
+        if s[i] != prefix[i] {
+            return false
+        }
         i = i + 1
     }
     return true
 }
 
 // Check if string ends with suffix.
+
 fn strEndsWith(s: &string, suffix: &string): bool {
-    if suffix.len > s.len { return false }
+    if suffix.len > s.len {
+        return false
+    }
     let offset = s.len - suffix.len
     var i: i64 = 0
     while i < suffix.len {
-        if s[offset + i] != suffix[i] { return false }
+        if s[offset + i] != suffix[i] {
+            return false
+        }
         i = i + 1
     }
     return true
 }
 
 // Return new string with ASCII uppercase letters converted to lowercase.
+
 fn strToLower(s: &string): string {
     var result: string = ""
     var i: i64 = 0
@@ -96,6 +136,7 @@ fn strToLower(s: &string): string {
 }
 
 // Return new string with ASCII lowercase letters converted to uppercase.
+
 fn strToUpper(s: &string): string {
     var result: string = ""
     var i: i64 = 0
@@ -112,48 +153,66 @@ fn strToUpper(s: &string): string {
 }
 
 // Strip leading and trailing ASCII whitespace (space, tab, newline, carriage return).
+
 fn strTrim(s: &string): string {
     var start: i64 = 0
     while start < s.len {
         let ch = s[start]
-        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
+            break
+        }
         start = start + 1
     }
     var end: i64 = s.len
     while end > start {
         let ch = s[end - 1]
-        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
+            break
+        }
         end = end - 1
     }
-    if start >= end { return "" }
+    if start >= end {
+        return ""
+    }
     return s.substr(start, end)
 }
 
 // Strip leading ASCII whitespace.
+
 fn strTrimStart(s: &string): string {
     var start: i64 = 0
     while start < s.len {
         let ch = s[start]
-        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
+            break
+        }
         start = start + 1
     }
-    if start >= s.len { return "" }
+    if start >= s.len {
+        return ""
+    }
     return s.substr(start, s.len)
 }
 
 // Strip trailing ASCII whitespace.
+
 fn strTrimEnd(s: &string): string {
     var end: i64 = s.len
     while end > 0 as i64 {
         let ch = s[end - 1]
-        if ch != 32 && ch != 9 && ch != 10 && ch != 13 { break }
+        if ch != 32 && ch != 9 && ch != 10 && ch != 13 {
+            break
+        }
         end = end - 1
     }
-    if end <= 0 as i64 { return "" }
+    if end <= 0 as i64 {
+        return ""
+    }
     return s.substr(0 as i64, end)
 }
 
 // Split string by separator. Returns Vec of substrings.
+
 fn strSplit(s: &string, sep: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var notFound: i64 = 0
@@ -180,6 +239,7 @@ fn strSplit(s: &string, sep: &string): Vec<string> {
 }
 
 // Repeat a string n times.
+
 fn strRepeat(s: &string, n: i64): string {
     var result: string = ""
     var i: i64 = 0
@@ -191,8 +251,11 @@ fn strRepeat(s: &string, n: i64): string {
 }
 
 // Replace all occurrences of old with newVal.
+
 fn strReplace(s: &string, old: &string, newVal: &string): string {
-    if old.len == 0 { return s.clone() }
+    if old.len == 0 {
+        return s.clone()
+    }
     var notFound: i64 = 0
     notFound = notFound - 1
     var result: string = ""
@@ -213,21 +276,26 @@ fn strReplace(s: &string, old: &string, newVal: &string): string {
 }
 
 // Check if a byte is ASCII whitespace.
+
 fn charIsWhitespace(ch: u8): bool {
     return ch == 32 || ch == 9 || ch == 10 || ch == 13
 }
 
 // Check if a byte is an ASCII digit.
+
 fn charIsDigit(ch: u8): bool {
     return ch >= 48 && ch <= 57
 }
 
 // Check if a byte is an ASCII letter.
+
 fn charIsAlpha(ch: u8): bool {
     return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122)
 }
 
 // Check if a byte is an ASCII letter or digit.
+
 fn charIsAlphanumeric(ch: u8): bool {
     return charIsAlpha(ch) || charIsDigit(ch)
 }
+

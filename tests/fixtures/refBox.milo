@@ -7,13 +7,16 @@ enum Tree {
 }
 
 fn printBoxed(b: &Box<i32>) {
-    print("value: ", *b)
+    print("value: ", * b)
 }
 
 fn printLeaf(t: &Box<Tree>) {
-    match *t {
-        Tree.Leaf(n) => { print("leaf: ", n) }
-        Tree.Node(l, r) => { }
+    match * t {
+        Tree.Leaf(n) => {
+            print("leaf: ", n)
+        }
+        Tree.Node(l, r) => {
+        }
     }
 }
 
@@ -25,3 +28,4 @@ fn main(): i32 {
     printLeaf(t)
     return 0
 }
+

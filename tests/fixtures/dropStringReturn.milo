@@ -1,6 +1,7 @@
 // @expect: hello world
 // @expect: done
 // tests: returning string transfers ownership, callee doesn't double-free
+
 fn makeGreeting(name: string): string {
     let result = "hello " + name
     return result
@@ -12,3 +13,4 @@ fn main(): i32 {
     print("done")
     return 0
 }
+

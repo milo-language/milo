@@ -1,6 +1,7 @@
 // @expect: 1
 // @expect: 4
 // @expect: 9
+
 fn main(): i32 {
     var nums: Vec<i32> = Vec.new()
     nums.push(1)
@@ -12,3 +13,4 @@ fn main(): i32 {
     }
     return 0
 }
+

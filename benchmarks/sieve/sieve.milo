@@ -1,4 +1,5 @@
 // sieve of Eratosthenes up to 10M
+
 fn main(): i32 {
     let limit: i64 = 1000000
     var flags: Vec<u8> = Vec.new()
@@ -25,9 +26,12 @@ fn main(): i32 {
     var count: i64 = 0
     var k: i64 = 0
     while k <= limit {
-        if flags[k] == 1 as u8 { count = count + 1 }
+        if flags[k] == 1 as u8 {
+            count = count + 1
+        }
         k = k + 1
     }
     print("primes <= ", limit, ": ", count)
     return 0
 }
+

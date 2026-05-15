@@ -5,7 +5,9 @@ trait Eq {
     fn eq(self: &Self, other: &Self): bool
 }
 
-struct Point { x: i32, y: i32 }
+struct Point {
+    x: i32, y: i32
+}
 
 impl Eq for Point {
     fn eq(self: &Self, other: &Self): bool {
@@ -14,12 +16,27 @@ impl Eq for Point {
 }
 
 fn main(): i32 {
-    let a = Point { x: 1, y: 2 }
-    let b = Point { x: 1, y: 2 }
-    let c = Point { x: 3, y: 4 }
+    let a = Point {
+        x: 1, y: 2
+    }
+    let b = Point {
+        x: 1, y: 2
+    }
+    let c = Point {
+        x: 3, y: 4
+    }
     let r1 = a.eq(b)
     let r2 = a.eq(c)
-    if r1 { print("1") } else { print("0") }
-    if r2 { print("1") } else { print("0") }
+    if r1 {
+        print("1")
+    } else {
+        print("0")
+    }
+    if r2 {
+        print("1")
+    } else {
+        print("0")
+    }
     return 0
 }
+

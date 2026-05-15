@@ -9,7 +9,7 @@ struct SockAddrIn {
     sinFamily: u8,
     sinPort: u16,
     sinAddr: u32,
-    sinZero: [u8; 8],
+    sinZero: [u8 ; 8],
 }
 
 fn printAddr(a: &SockAddrIn): void {
@@ -31,3 +31,4 @@ fn main(): i32 {
     printAddr(addr)
     return 0
 }
+

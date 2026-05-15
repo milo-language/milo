@@ -4,26 +4,27 @@
 // @expect: is null
 
 fn check(val: u16?) {
-  match val {
-    Option.Some(v) => {
-      print("got ", v)
+    match val {
+        Option.Some(v) => {
+            print("got ", v)
+        }
+        Option.None => {
+            print("is null")
+        }
     }
-    Option.None => {
-      print("is null")
-    }
-  }
 }
 
 fn main(): i32 {
-  var x: u16? = null
-  check(x)
-  x = 42
-  check(x)
+    var x: u16? = null
+    check(x)
+    x = 42
+    check(x)
 
-  let y: u16? = 100
-  check(y)
+    let y: u16? = 100
+    check(y)
 
-  let z: u16? = null
-  check(z)
-  return 0
+    let z: u16? = null
+    check(z)
+    return 0
 }
+

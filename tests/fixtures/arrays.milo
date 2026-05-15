@@ -9,3 +9,4 @@ fn main(): i32 {
     print(arr[2])
     return 0
 }
+

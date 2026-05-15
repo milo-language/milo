@@ -5,3 +5,4 @@ fn main(): i32 {
     m.insert(1, 2)
     return 0
 }
+

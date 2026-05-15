@@ -11,8 +11,11 @@ fn main(): i32 {
 
             let origin = data.get("origin")
             match origin {
-                Option.Some(v) => { print("origin: ", v.str()) }
-                Option.None => {}
+                Option.Some(v) => {
+                    print("origin: ", v.str())
+                }
+                Option.None => {
+                }
             }
 
             let headers = data.get("headers")
@@ -20,21 +23,31 @@ fn main(): i32 {
                 Option.Some(h) => {
                     let host = h.get("Host")
                     match host {
-                        Option.Some(v) => { print("host: ", v.str()) }
-                        Option.None => {}
+                        Option.Some(v) => {
+                            print("host: ", v.str())
+                        }
+                        Option.None => {
+                        }
                     }
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
 
             let url = data.get("url")
             match url {
-                Option.Some(v) => { print("url: ", v.str()) }
-                Option.None => {}
+                Option.Some(v) => {
+                    print("url: ", v.str())
+                }
+                Option.None => {
+                }
             }
         }
-        Result.Err(msg) => { print("error: ", msg) }
+        Result.Err(msg) => {
+            print("error: ", msg)
+        }
     }
 
     return 0
 }
+

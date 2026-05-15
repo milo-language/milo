@@ -10,3 +10,4 @@ fn main(): i32 {
     check(m)
     return 0
 }
+

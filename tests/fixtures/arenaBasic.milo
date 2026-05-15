@@ -11,20 +11,32 @@ fn main(): i32 {
     let h2 = arenaAlloc(arena, 99)
 
     match arenaGet(arena, h1) {
-        Option.Some(v) => { print(v) }
-        Option.None => { print("none") }
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("none")
+        }
     }
 
     arenaFree(arena, h1)
 
     match arenaGet(arena, h1) {
-        Option.Some(v) => { print(v) }
-        Option.None => { print("none") }
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("none")
+        }
     }
 
     match arenaGet(arena, h2) {
-        Option.Some(v) => { print(v) }
-        Option.None => { print("none") }
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("none")
+        }
     }
 
     // alloc reuses freed slot
@@ -32,9 +44,14 @@ fn main(): i32 {
     print(arenaLen(arena))
 
     match arenaGet(arena, h3) {
-        Option.Some(v) => { print(v) }
-        Option.None => { print("none") }
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("none")
+        }
     }
 
     return 0
 }
+

@@ -15,12 +15,21 @@ fn nameLen(ok: bool): i32? {
 
 fn main(): i32 {
     match nameLen(true) {
-        Option.Some(n) => { print("got ", n) }
-        Option.None => { print("none") }
+        Option.Some(n) => {
+            print("got ", n)
+        }
+        Option.None => {
+            print("none")
+        }
     }
     match nameLen(false) {
-        Option.Some(n) => { print("got ", n) }
-        Option.None => { print("none") }
+        Option.Some(n) => {
+            print("got ", n)
+        }
+        Option.None => {
+            print("none")
+        }
     }
     return 0
 }
+

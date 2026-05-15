@@ -1,7 +1,9 @@
 // @error: for range start must be an integer
+
 fn main(): i32 {
     for i in "hello".."world" {
         print(i)
     }
     return 0
 }
+

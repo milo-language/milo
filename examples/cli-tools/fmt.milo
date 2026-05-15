@@ -118,7 +118,7 @@ impl Lexer {
             let ch = self.peek()
             if ch == 32 || ch == 9 || ch == 13 {
                 self.advance()
-            }  else {
+            } else {
                 return
             }
         }
@@ -134,7 +134,7 @@ impl Lexer {
                 if self.pos < self.src.len {
                     s.push(self.advance())
                 }
-            }  else {
+            } else {
                 s.push(ch)
             }
         }
@@ -153,7 +153,7 @@ impl Lexer {
             if self.pos < self.src.len {
                 s.push(self.advance())
             }
-        }  else if self.pos < self.src.len {
+        } else if self.pos < self.src.len {
             s.push(self.advance())
         }
         if self.pos < self.src.len && self.peek() == 39 {
@@ -481,9 +481,9 @@ impl Lexer {
     }
 }
 
-fn tokenize(src: string): Vec < Token > {
+fn tokenize(src: string): Vec<Token> {
     var lex = newLexer(src)
-    var tokens: Vec < Token > = Vec.new()
+    var tokens: Vec<Token> = Vec.new()
     while true {
         let tok = lex.nextToken()
         let done = tok.kind == TokKind.Eof
@@ -514,7 +514,65 @@ fn isValueTok(kind: TokKind): bool {
     kind == TokKind.Str || kind == TokKind.Char || kind == TokKind.Keyword
 }
 
-fn wantSpaceBefore(tokens: &Vec < Token >, i: i64): bool {
+// Is the < at position i a generic type bracket (not a comparison)?
+
+fn isGenericOpen(tokens: &Vec<Token>, i: i64): bool {
+    if i <= 0 {
+        return false
+    }
+    let prev = tokens[i - 1]
+    if prev.kind != TokKind.Ident {
+        return false
+    }
+    // Scan forward for matching > with only type-like tokens between
+    var depth: i64 = 1
+    var j = i + 1
+    while j < tokens.len && depth > 0 {
+        let t = tokens[j]
+        if t.kind == TokKind.Lt {
+            depth = depth + 1
+        } else if t.kind == TokKind.Gt {
+            depth = depth - 1
+            if depth == 0 {
+                return true
+            }
+        } else if t.kind == TokKind.Ident || t.kind == TokKind.Keyword ||
+        t.kind == TokKind.Comma || t.kind == TokKind.Amp {
+            // type-like tokens — keep scanning
+        } else {
+            return false
+        }
+        j = j + 1
+    }
+    return false
+}
+
+// Is the > at position i closing a generic bracket?
+
+fn isInsideGeneric(tokens: &Vec<Token>, i: i64): bool {
+    var depth: i64 = 0
+    var j = i
+    while j >= 0 {
+        let t = tokens[j]
+        if t.kind == TokKind.Gt {
+            depth = depth + 1
+        } else if t.kind == TokKind.Lt {
+            depth = depth - 1
+            if depth == 0 {
+                return isGenericOpen(tokens, j)
+            }
+        } else if t.kind == TokKind.LBrace || t.kind == TokKind.RBrace ||
+        t.kind == TokKind.Eq || t.kind == TokKind.EqEq ||
+        t.kind == TokKind.Neq || t.kind == TokKind.LtEq ||
+        t.kind == TokKind.GtEq {
+            return false
+        }
+        j = j - 1
+    }
+    return false
+}
+
+fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if i == 0 {
         return false
     }
@@ -535,13 +593,28 @@ fn wantSpaceBefore(tokens: &Vec < Token >, i: i64): bool {
     tk == TokKind.Colon {
         return false
     }
-    // ! — no space when postfix, space after keywords
+    // ! — space after keywords and binary ops (unary !), no space when postfix
     if tk == TokKind.Bang {
-        return pk == TokKind.Keyword
+        return pk == TokKind.Keyword || isSpacedOp(pk)
     }
     // No space around ..
     if tk == TokKind.DotDot || pk == TokKind.DotDot {
         return false
+    }
+    // Generics: no space around < > when used as type brackets
+    if tk == TokKind.Lt && isGenericOpen(tokens, i) {
+        return false
+    }
+    if pk == TokKind.Lt && isGenericOpen(tokens, i - 1) {
+        return false
+    }
+    if tk == TokKind.Gt && isInsideGeneric(tokens, i) {
+        return false
+    }
+    if pk == TokKind.Gt && isInsideGeneric(tokens, i - 1) {
+        if tk == TokKind.Comma || tk == TokKind.RParen || tk == TokKind.Gt {
+            return false
+        }
     }
     // Space around binary ops
     if isSpacedOp(tk) {
@@ -570,9 +643,9 @@ fn wantSpaceBefore(tokens: &Vec < Token >, i: i64): bool {
     tk != TokKind.Dot && tk != TokKind.Bang && tk != TokKind.Question {
         return true
     }
-    // Space after }
+    // Space after } (but not before else — format engine handles } else)
     if pk == TokKind.RBrace && tk != TokKind.Comma && tk != TokKind.RParen &&
-    tk != TokKind.Dot {
+    tk != TokKind.Dot && tk != TokKind.Keyword {
         return true
     }
     // Space between values
@@ -624,7 +697,7 @@ fn formatSource(src: string): string {
 
         // Blank line before top-level decls
         if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) {
-            if out.len > 0 &&!out.endsWith("\n\n") {
+            if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
                     out = out + "\n"
                 }
@@ -634,11 +707,11 @@ fn formatSource(src: string): string {
         }
 
         // Preserve one blank line between sections (when source had 2+ newlines)
-        if blankCount >= 2 &&!atLineStart {
+        if blankCount >= 2 && !atLineStart {
             out = out + "\n"
             atLineStart = true
         }
-        if blankCount >= 2 && atLineStart && out.len > 0 &&!out.endsWith("\n\n") {
+        if blankCount >= 2 && atLineStart && out.len > 0 && !out.endsWith("\n\n") {
             out = out + "\n"
         }
         blankCount = 0
@@ -654,7 +727,7 @@ fn formatSource(src: string): string {
                     out = out + "    "
                 }
                 atLineStart = false
-            }  else {
+            } else {
                 out = out + " "
             }
             out = out + tok.text
@@ -669,7 +742,7 @@ fn formatSource(src: string): string {
         }
 
         // New source line → new output line
-        if tok.line > lastLine &&!atLineStart && tok.kind != TokKind.RBrace {
+        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace {
             out = out + "\n"
             atLineStart = true
         }
@@ -680,7 +753,7 @@ fn formatSource(src: string): string {
                 out = out + "    "
             }
             atLineStart = false
-        }  else if wantSpaceBefore(tokens, i) {
+        } else if wantSpaceBefore(tokens, i) {
             out = out + " "
         }
 
@@ -711,7 +784,7 @@ fn formatSource(src: string): string {
             if nextKind == TokKind.Keyword && tokens[j].text == "else" {
                 out = out + " "
                 atLineStart = false
-            }  else {
+            } else {
                 out = out + "\n"
                 atLineStart = true
             }
@@ -719,7 +792,7 @@ fn formatSource(src: string): string {
     }
 
     // Ensure trailing newline
-    if out.len > 0 &&!out.endsWith("\n") {
+    if out.len > 0 && !out.endsWith("\n") {
         out = out + "\n"
     }
     return out
@@ -742,7 +815,7 @@ fn main(): i32 {
         path = args.getString("file")
         let result = readFile(path.clone())
         src = result ?? ""
-    }  else {
+    } else {
         src = readStdin()
     }
 
@@ -757,11 +830,11 @@ fn main(): i32 {
                     return 1
                 }
             }
-        }  else {
+        } else {
             eprint("cannot use -w without a file path")
             return 1
         }
-    }  else {
+    } else {
         print(formatted)
     }
     return 0

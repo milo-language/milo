@@ -7,8 +7,11 @@ struct Point {
 }
 
 fn main(): i32 {
-    let p = Point { x: 3, y: 7 }
+    let p = Point {
+        x: 3, y: 7
+    }
     print(p.x)
     print(p.y)
     return 0
 }
+

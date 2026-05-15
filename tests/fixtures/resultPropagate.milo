@@ -16,15 +16,24 @@ fn doubleValid(x: i32): Result<i32> {
 fn main(): i32 {
     let a = doubleValid(42)
     match a {
-        Result.Ok(v) => { print("got ", v) }
-        Result.Err(msg) => { print("failed: ", msg) }
+        Result.Ok(v) => {
+            print("got ", v)
+        }
+        Result.Err(msg) => {
+            print("failed: ", msg)
+        }
     }
 
-    let b = doubleValid(-1)
+    let b = doubleValid(- 1)
     match b {
-        Result.Ok(v) => { print("got ", v) }
-        Result.Err(msg) => { print("failed: ", msg) }
+        Result.Ok(v) => {
+            print("got ", v)
+        }
+        Result.Err(msg) => {
+            print("failed: ", msg)
+        }
     }
 
     return 0
 }
+

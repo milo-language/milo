@@ -47,7 +47,9 @@ fn main(): i32 {
 
     var content: string = ""
     match readFile(args.getString("file")) {
-        Result.Ok(data) => { content = data }
+        Result.Ok(data) => {
+            content = data
+        }
         Result.Err(e) => {
             print("hex: ", e)
             return 1
@@ -108,3 +110,4 @@ fn main(): i32 {
 
     return 0
 }
+

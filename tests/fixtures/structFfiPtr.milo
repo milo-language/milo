@@ -5,10 +5,11 @@ struct SockAddrIn {
     sinFamily: u8,
     sinPort: u16,
     sinAddr: u32,
-    sinZero: [u8; 8],
+    sinZero: [u8 ; 8],
 }
 
 // simulates passing struct pointer to C — printf reads from the pointer
+
 fn dump(addr: &SockAddrIn): void {
     print(addr.sinLen, " ", addr.sinFamily, " ", addr.sinPort)
 }
@@ -24,3 +25,4 @@ fn main(): i32 {
     dump(addr)
     return 0
 }
+

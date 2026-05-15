@@ -1,20 +1,26 @@
 // @expect: 3
 // @expect: 42
 // @expect: hello
+
 struct Container<T> {
     items: Vec<T>,
 }
 
 fn main(): i32 {
-    var c: Container<i32> = Container { items: Vec.new() }
+    var c: Container<i32> = Container {
+        items: Vec.new()
+    }
     c.items.push(10)
     c.items.push(20)
     c.items.push(42)
     print(c.items.len)
     print(c.items[2])
 
-    var s: Container<string> = Container { items: Vec.new() }
+    var s: Container<string> = Container {
+        items: Vec.new()
+    }
     s.items.push("hello")
     print(s.items[0])
     return 0
 }
+

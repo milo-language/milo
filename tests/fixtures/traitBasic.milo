@@ -1,6 +1,8 @@
 // @expect: 42
 
-struct Dog { age: i32 }
+struct Dog {
+    age: i32
+}
 
 impl Dog {
     fn getAge(self: &Self): i32 {
@@ -9,7 +11,10 @@ impl Dog {
 }
 
 fn main(): i32 {
-    let d = Dog { age: 42 }
+    let d = Dog {
+        age: 42
+    }
     print(d.getAge())
     return 0
 }
+

@@ -13,8 +13,13 @@ impl Drop for Resource {
 }
 
 fn main(): i32 {
-    let r1 = Resource { id: 1 }
-    let r2 = Resource { id: 2 }
+    let r1 = Resource {
+        id: 1
+    }
+    let r2 = Resource {
+        id: 2
+    }
     print("using ", r1.id, " ", r2.id)
     return 0
 }
+

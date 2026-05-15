@@ -1,7 +1,9 @@
 // @expect: 7
 import "lib/math.milo"
 import "lib/math.milo"
+
 fn main(): i32 {
     print(add(3, 4))
     return 0
 }
+

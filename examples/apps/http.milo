@@ -5,20 +5,48 @@ import "std/io"
 import "std/fs"
 
 fn statusText(code: i32): string {
-    if code == 200 { return "OK" }
-    if code == 201 { return "Created" }
-    if code == 204 { return "No Content" }
-    if code == 301 { return "Moved Permanently" }
-    if code == 302 { return "Found" }
-    if code == 304 { return "Not Modified" }
-    if code == 400 { return "Bad Request" }
-    if code == 401 { return "Unauthorized" }
-    if code == 403 { return "Forbidden" }
-    if code == 404 { return "Not Found" }
-    if code == 405 { return "Method Not Allowed" }
-    if code == 500 { return "Internal Server Error" }
-    if code == 502 { return "Bad Gateway" }
-    if code == 503 { return "Service Unavailable" }
+    if code == 200 {
+        return "OK"
+    }
+    if code == 201 {
+        return "Created"
+    }
+    if code == 204 {
+        return "No Content"
+    }
+    if code == 301 {
+        return "Moved Permanently"
+    }
+    if code == 302 {
+        return "Found"
+    }
+    if code == 304 {
+        return "Not Modified"
+    }
+    if code == 400 {
+        return "Bad Request"
+    }
+    if code == 401 {
+        return "Unauthorized"
+    }
+    if code == 403 {
+        return "Forbidden"
+    }
+    if code == 404 {
+        return "Not Found"
+    }
+    if code == 405 {
+        return "Method Not Allowed"
+    }
+    if code == 500 {
+        return "Internal Server Error"
+    }
+    if code == 502 {
+        return "Bad Gateway"
+    }
+    if code == 503 {
+        return "Service Unavailable"
+    }
     return ""
 }
 
@@ -35,6 +63,7 @@ fn looksLikeJson(s: &string): bool {
 }
 
 // indent-only JSON pretty printer (no colors)
+
 fn prettyJson(input: &string): string {
     var result: string = ""
     var pos: i64 = 0
@@ -179,3 +208,4 @@ fn main(): i32 {
 
     return 0
 }
+

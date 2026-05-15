@@ -1,17 +1,29 @@
 // @expect: bind ok
-extern fn socket(domain: i32, type: i32, protocol: i32): i32
-extern fn close(fd: i32): i32
-extern fn htons(hostshort: u16): u16
+
+extern
+
+fn socket(domain: i32, type: i32, protocol: i32): i32
+
+extern
+
+fn close(fd: i32): i32
+
+extern
+
+fn htons(hostshort: u16): u16
 
 // bind takes &SockAddrIn — auto-borrow passes the pointer, matching C ABI
-extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+
+extern
+
+fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
 struct SockAddrIn {
     sinLen: u8,
     sinFamily: u8,
     sinPort: u16,
     sinAddr: u32,
-    sinZero: [u8; 8],
+    sinZero: [u8 ; 8],
 }
 
 fn main(): i32 {
@@ -38,3 +50,4 @@ fn main(): i32 {
     }
     return 0
 }
+

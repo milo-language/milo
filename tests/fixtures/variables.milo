@@ -8,3 +8,4 @@ fn main(): i32 {
     print(x)
     return 0
 }
+

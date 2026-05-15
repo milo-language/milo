@@ -1,7 +1,9 @@
 // @expect: 99
+
 fn main(): i32 {
     var x: i64 = 0
     x = 99
     print(x)
     return 0
 }
+

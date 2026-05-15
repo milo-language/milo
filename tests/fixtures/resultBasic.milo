@@ -11,15 +11,24 @@ fn doubleIfBig(x: i32): Result<i32> {
 fn main(): i32 {
     let a = doubleIfBig(21)
     match a {
-        Result.Ok(v) => { print(v) }
-        Result.Err(msg) => { print("error: ", msg) }
+        Result.Ok(v) => {
+            print(v)
+        }
+        Result.Err(msg) => {
+            print("error: ", msg)
+        }
     }
 
     let b = doubleIfBig(5)
     match b {
-        Result.Ok(v) => { print(v) }
-        Result.Err(msg) => { print("error: ", msg) }
+        Result.Ok(v) => {
+            print(v)
+        }
+        Result.Err(msg) => {
+            print("error: ", msg)
+        }
     }
 
     return 0
 }
+

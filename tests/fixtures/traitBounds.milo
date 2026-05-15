@@ -4,7 +4,9 @@ trait HasValue {
     fn value(self: &Self): i32
 }
 
-struct Box99 { x: i32 }
+struct Box99 {
+    x: i32
+}
 
 impl HasValue for Box99 {
     fn value(self: &Self): i32 {
@@ -12,12 +14,15 @@ impl HasValue for Box99 {
     }
 }
 
-fn printValue<T: HasValue>(thing: &T) {
+fn printValue < T: HasValue > (thing: &T) {
     print(thing.value())
 }
 
 fn main(): i32 {
-    let b = Box99 { x: 0 }
+    let b = Box99 {
+        x: 0
+    }
     printValue(b)
     return 0
 }
+

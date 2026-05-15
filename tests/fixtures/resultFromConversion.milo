@@ -40,13 +40,19 @@ fn showError(e: AppError): void {
     match e {
         AppError.Io(io) => {
             match io {
-                IoError.NotFound(p) => { print("io error: not found: ", p) }
-                IoError.PermissionDenied(p) => { print("io error: denied: ", p) }
+                IoError.NotFound(p) => {
+                    print("io error: not found: ", p)
+                }
+                IoError.PermissionDenied(p) => {
+                    print("io error: denied: ", p)
+                }
             }
         }
         AppError.Parse(pe) => {
             match pe {
-                ParseError.BadFormat(m) => { print("parse error: ", m) }
+                ParseError.BadFormat(m) => {
+                    print("parse error: ", m)
+                }
             }
         }
     }
@@ -54,16 +60,29 @@ fn showError(e: AppError): void {
 
 fn main(): i32 {
     match process("data.txt") {
-        Result.Ok(n) => { print("size: ", n) }
-        Result.Err(e) => { showError(e) }
+        Result.Ok(n) => {
+            print("size: ", n)
+        }
+        Result.Err(e) => {
+            showError(e)
+        }
     }
     match process("missing.txt") {
-        Result.Ok(n) => { print("size: ", n) }
-        Result.Err(e) => { showError(e) }
+        Result.Ok(n) => {
+            print("size: ", n)
+        }
+        Result.Err(e) => {
+            showError(e)
+        }
     }
     match process("bad.txt") {
-        Result.Ok(n) => { print("size: ", n) }
-        Result.Err(e) => { showError(e) }
+        Result.Ok(n) => {
+            print("size: ", n)
+        }
+        Result.Err(e) => {
+            showError(e)
+        }
     }
     return 0
 }
+

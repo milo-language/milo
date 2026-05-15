@@ -1,4 +1,5 @@
 // @expect: hello world
+
 fn main(): i32 {
     let a = "hello "
     let b = "world"
@@ -6,3 +7,4 @@ fn main(): i32 {
     print(c)
     return 0
 }
+

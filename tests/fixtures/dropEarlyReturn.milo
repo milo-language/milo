@@ -18,11 +18,15 @@ impl Drop for Guard {
 }
 
 fn mightFail(fail: bool): i32 {
-    let g1 = Guard { id: 1 }
-    let g2 = Guard { id: 2 }
+    let g1 = Guard {
+        id: 1
+    }
+    let g2 = Guard {
+        id: 2
+    }
     if fail {
         print("failing early")
-        return -1
+        return - 1
     }
     print("success")
     return 0
@@ -35,3 +39,4 @@ fn main(): i32 {
     mightFail(false)
     return 0
 }
+

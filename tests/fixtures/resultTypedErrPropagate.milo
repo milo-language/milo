@@ -20,22 +20,35 @@ fn fileLength(path: string): Result<i32, FileError> {
 
 fn main(): i32 {
     match fileLength("data.txt") {
-        Result.Ok(n) => { print("length: ", n) }
+        Result.Ok(n) => {
+            print("length: ", n)
+        }
         Result.Err(e) => {
             match e {
-                FileError.Missing(p) => { print("missing: ", p) }
-                FileError.Locked(p) => { print("locked: ", p) }
+                FileError.Missing(p) => {
+                    print("missing: ", p)
+                }
+                FileError.Locked(p) => {
+                    print("locked: ", p)
+                }
             }
         }
     }
     match fileLength("readme.md") {
-        Result.Ok(n) => { print("length: ", n) }
+        Result.Ok(n) => {
+            print("length: ", n)
+        }
         Result.Err(e) => {
             match e {
-                FileError.Missing(p) => { print("missing: ", p) }
-                FileError.Locked(p) => { print("locked: ", p) }
+                FileError.Missing(p) => {
+                    print("missing: ", p)
+                }
+                FileError.Locked(p) => {
+                    print("locked: ", p)
+                }
             }
         }
     }
     return 0
 }
+

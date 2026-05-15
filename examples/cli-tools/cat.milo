@@ -4,6 +4,7 @@ import "std/io"
 import "std/path"
 
 // build an ANSI escape code — no \x escapes in milo, so we push ESC byte (27)
+
 fn esc(code: &string): string {
     var s: string = ""
     s.push(27 as u8)
@@ -15,7 +16,7 @@ fn parseI64(s: string): i64 {
     var result: i64 = 0
     var i: i64 = 0
     while i < s.len {
-        let d = s[i] as i64 - 48
+        let d = s[i]as i64 - 48
         if d >= 0 && d <= 9 {
             result = result * 10 + d
         }
@@ -36,7 +37,9 @@ fn padNum(n: i64, width: i64): string {
 }
 
 fn numDigits(n: i64): i64 {
-    if n == 0 { return 1 }
+    if n == 0 {
+        return 1
+    }
     var count: i64 = 0
     var v: i64 = n
     while v > 0 {
@@ -47,21 +50,51 @@ fn numDigits(n: i64): i64 {
 }
 
 fn detectLang(ext: &string): string {
-    if ext == ".ts" || ext == ".tsx" { return "typescript" }
-    if ext == ".js" || ext == ".jsx" { return "javascript" }
-    if ext == ".py" { return "python" }
-    if ext == ".rs" { return "rust" }
-    if ext == ".go" { return "go" }
-    if ext == ".c" || ext == ".h" { return "c" }
-    if ext == ".cpp" || ext == ".hpp" { return "cpp" }
-    if ext == ".java" { return "java" }
-    if ext == ".sh" || ext == ".bash" { return "shell" }
-    if ext == ".milo" { return "milo" }
-    if ext == ".json" { return "json" }
-    if ext == ".yaml" || ext == ".yml" { return "yaml" }
-    if ext == ".toml" { return "toml" }
-    if ext == ".sql" { return "sql" }
-    if ext == ".md" { return "markdown" }
+    if ext == ".ts" || ext == ".tsx" {
+        return "typescript"
+    }
+    if ext == ".js" || ext == ".jsx" {
+        return "javascript"
+    }
+    if ext == ".py" {
+        return "python"
+    }
+    if ext == ".rs" {
+        return "rust"
+    }
+    if ext == ".go" {
+        return "go"
+    }
+    if ext == ".c" || ext == ".h" {
+        return "c"
+    }
+    if ext == ".cpp" || ext == ".hpp" {
+        return "cpp"
+    }
+    if ext == ".java" {
+        return "java"
+    }
+    if ext == ".sh" || ext == ".bash" {
+        return "shell"
+    }
+    if ext == ".milo" {
+        return "milo"
+    }
+    if ext == ".json" {
+        return "json"
+    }
+    if ext == ".yaml" || ext == ".yml" {
+        return "yaml"
+    }
+    if ext == ".toml" {
+        return "toml"
+    }
+    if ext == ".sql" {
+        return "sql"
+    }
+    if ext == ".md" {
+        return "markdown"
+    }
     return "text"
 }
 
@@ -104,13 +137,16 @@ fn isAlnum(ch: u8): bool {
 fn isKeyword(word: &string, kwList: &Vec<string>): bool {
     var i: i64 = 0
     while i < kwList.len {
-        if kwList[i] == word { return true }
+        if kwList[i] == word {
+            return true
+        }
         i = i + 1
     }
     return false
 }
 
 // comment-start detection for a language
+
 fn isLineComment(lang: &string, line: &string, pos: i64): bool {
     if pos + 1 < line.len && line[pos] == 47 && line[pos + 1] == 47 {
         // "//" for c-like langs
@@ -120,7 +156,9 @@ fn isLineComment(lang: &string, line: &string, pos: i64): bool {
     }
     if line[pos] == 35 {
         // "#" for python, shell, yaml, toml
-        if lang == "python" || lang == "shell" || lang == "yaml" || lang == "toml" { return true }
+        if lang == "python" || lang == "shell" || lang == "yaml" || lang == "toml" {
+            return true
+        }
     }
     if pos + 1 < line.len && line[pos] == 45 && line[pos + 1] == 45 && lang == "sql" {
         return true
@@ -129,7 +167,9 @@ fn isLineComment(lang: &string, line: &string, pos: i64): bool {
 }
 
 fn highlightLine(line: &string, lang: &string, kwList: &Vec<string>, cReset: &string, cGray: &string, cGreen: &string, cMagenta: &string, cRed: &string, cBlue: &string, cCyan: &string): string {
-    if lang == "text" || lang == "json" || lang == "markdown" { return line.clone() }
+    if lang == "text" || lang == "json" || lang == "markdown" {
+        return line.clone()
+    }
 
     var result: string = ""
     var pos: i64 = 0
@@ -223,7 +263,9 @@ fn main(): i32 {
 
     var content: string = ""
     match readFile(filePath.clone()) {
-        Result.Ok(data) => { content = data }
+        Result.Ok(data) => {
+            content = data
+        }
         Result.Err(e) => {
             print("cat: ", e)
             return 1
@@ -249,8 +291,12 @@ fn main(): i32 {
         if colon >= 0 {
             let s1 = rangeStr.substr(0 as i64, colon)
             let s2 = rangeStr.substr(colon + 1, rangeStr.len)
-            if s1.len > 0 { startLine = parseI64(s1) }
-            if s2.len > 0 { endLine = parseI64(s2) }
+            if s1.len > 0 {
+                startLine = parseI64(s1)
+            }
+            if s2.len > 0 {
+                endLine = parseI64(s2)
+            }
         } else {
             startLine = parseI64(rangeStr.clone())
             endLine = startLine
@@ -324,3 +370,4 @@ fn main(): i32 {
 
     return 0
 }
+

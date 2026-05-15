@@ -9,7 +9,9 @@ struct Counts {
 }
 
 fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, counts: &mut Counts): void {
-    if maxLevel > 0 as i64 && depth >= maxLevel { return }
+    if maxLevel > 0 as i64 && depth >= maxLevel {
+        return
+    }
 
     let entries = readDir(dirPath.clone())
     var idx: i64 = 0
@@ -57,7 +59,9 @@ fn main(): i32 {
     let maxLevel = args.getI64("level")
 
     print(root)
-    var counts = Counts { dirs: 1, files: 0 }
+    var counts = Counts {
+        dirs: 1, files: 0
+    }
     let prefix: string = ""
     printTree(root, prefix, 0 as i64, maxLevel, counts)
 
@@ -75,3 +79,4 @@ fn main(): i32 {
 
     return 0
 }
+

@@ -1,7 +1,10 @@
 // @error: cannot return a reference
+
 fn getSlice(s: &string): &string {
     return s
 }
+
 fn main(): i32 {
     return 0
 }
+

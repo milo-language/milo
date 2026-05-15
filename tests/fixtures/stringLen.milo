@@ -5,3 +5,4 @@ fn main(): i32 {
     print(s.len)
     return 0
 }
+

@@ -1,4 +1,5 @@
 // @expect: called: 42
+
 struct Handler {
     callback: (i32) => void
 }
@@ -8,7 +9,10 @@ fn printVal(x: i32): void {
 }
 
 fn main(): i32 {
-    let h = Handler { callback: printVal }
+    let h = Handler {
+        callback: printVal
+    }
     h.callback(42)
     return 0
 }
+

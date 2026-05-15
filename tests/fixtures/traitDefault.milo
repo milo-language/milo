@@ -6,12 +6,18 @@ trait Greet {
     }
 }
 
-struct Cat { name: i32 }
+struct Cat {
+    name: i32
+}
 
-impl Greet for Cat {}
+impl Greet for Cat {
+}
 
 fn main(): i32 {
-    let c = Cat { name: 1 }
+    let c = Cat {
+        name: 1
+    }
     print(c.greet())
     return 0
 }
+

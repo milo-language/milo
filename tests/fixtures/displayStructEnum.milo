@@ -18,7 +18,9 @@ enum Color {
 }
 
 fn main(): i32 {
-    let u = User { name: "alice", age: 30, happy: true }
+    let u = User {
+        name: "alice", age: 30, happy: true
+    }
     print(u)
 
     let c1 = Color.Red
@@ -33,3 +35,4 @@ fn main(): i32 {
 
     return 0
 }
+

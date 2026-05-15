@@ -5,6 +5,7 @@ import "std/io"
 import "std/platform"
 
 // File metadata from stat().
+
 struct FileInfo {
     size: i64,
     mode: i32,
@@ -12,31 +13,37 @@ struct FileInfo {
 }
 
 // Get file metadata. Returns FileInfo with exists=false if path doesn't exist.
+
 fn fileInfo(path: string): FileInfo {
-    var buf: [u8; 144] = [0; 144]
+    var buf: [u8 ; 144] = [0 ; 144]
     unsafe {
         let r = stat(path, buf)
         if r != 0 {
-            return FileInfo { size: 0 as i64, mode: 0, exists: false }
+            return FileInfo {
+                size: 0 as i64, mode: 0, exists: false
+            }
         }
         let modeOff = statModeOffset()
         let sizeOff = statSizeOffset()
         // read u16 mode (macOS) — works for permission bits
-        let modeLo = buf[modeOff] as i32
-        let modeHi = buf[modeOff + 1] as i32
-        let mode = modeLo | (modeHi << 8)
+        let modeLo = buf[modeOff]as i32
+        let modeHi = buf[modeOff + 1]as i32
+        let mode = modeLo | (modeHi < < 8)
         // read i64 size
         var size: i64 = 0
         var i: i64 = 0
         while i < 8 {
-            size = size | ((buf[sizeOff + i] as i64) << (i * 8))
+            size = size | ((buf[sizeOff + i]as i64) < < (i * 8))
             i = i + 1
         }
-        return FileInfo { size: size, mode: mode, exists: true }
+        return FileInfo {
+            size: size, mode: mode, exists: true
+        }
     }
 }
 
 // Check if a path exists.
+
 fn pathExists(path: string): bool {
     unsafe {
         return access(path, 0) == 0
@@ -44,31 +51,41 @@ fn pathExists(path: string): bool {
 }
 
 // Check if a path is a directory.
+
 fn isDir(path: string): bool {
     let info = fileInfo(path)
-    if !info.exists { return false }
+    if !info.exists {
+        return false
+    }
     // S_IFDIR = 0x4000 = 16384, S_IFMT = 0xF000 = 61440
-    return (info.mode & 61440) == 16384
+    return (info.mode&61440) == 16384
 }
 
 // Check if a path is a regular file.
+
 fn isFile(path: string): bool {
     let info = fileInfo(path)
-    if !info.exists { return false }
+    if !info.exists {
+        return false
+    }
     // S_IFREG = 0x8000 = 32768
-    return (info.mode & 61440) == 32768
+    return (info.mode&61440) == 32768
 }
 
 // Get file size in bytes. Returns -1 if file doesn't exist.
+
 fn fileSizePath(path: string): i64 {
     let info = fileInfo(path)
     var negOne: i64 = 0
     negOne = negOne - 1
-    if !info.exists { return negOne }
+    if !info.exists {
+        return negOne
+    }
     return info.size
 }
 
 // Directory entry from readDir().
+
 struct DirEntry {
     name: string,
     isDir: bool,
@@ -76,18 +93,23 @@ struct DirEntry {
 }
 
 // List directory contents. Returns empty vec on error.
+
 fn readDir(path: string): Vec<DirEntry> {
     var entries: Vec<DirEntry> = Vec.new()
     unsafe {
         let dir = opendir(path)
-        if dir as i64 == 0 as i64 { return entries }
+        if dir as i64 == 0 as i64 {
+            return entries
+        }
         let nameOff = direntNameOffset()
         let typeOff = direntTypeOffset()
         while true {
             let ent = readdir(dir)
-            if ent as i64 == 0 as i64 { break }
-            let dType = _loadU8((ent as i64 + typeOff) as *u8)
-            let namePtr = (ent as i64 + nameOff) as *u8
+            if ent as i64 == 0 as i64 {
+                break
+            }
+            let dType = _loadU8((ent as i64 + typeOff) as * u8)
+            let namePtr = (ent as i64 + nameOff) as * u8
             let name = _cstrToString(namePtr)
 
             if name == "." || name == ".." {
@@ -98,7 +120,8 @@ fn readDir(path: string): Vec<DirEntry> {
                     name: name,
                     isDir: dType == 4,
                     isFile: dType == 8,
-                })
+                }
+                )
             }
         }
         closedir(dir)
@@ -107,7 +130,9 @@ fn readDir(path: string): Vec<DirEntry> {
 }
 
 // Write a string to a file, creating or truncating it.
+
 fn writeFile(path: string, data: &string): Result<i64, IoError> {
     let f = openWrite(path)?
     return writeAll(f, data)
 }
+

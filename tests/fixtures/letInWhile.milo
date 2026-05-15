@@ -11,3 +11,4 @@ fn main(): i32 {
     print(sum)
     return 0
 }
+

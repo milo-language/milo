@@ -4,6 +4,7 @@
 // @expect: 1,1
 // @expect: 2,0
 // @expect: 2,1
+
 fn main(): i32 {
     for i in 0..3 {
         for j in 0..2 {
@@ -12,3 +13,4 @@ fn main(): i32 {
     }
     return 0
 }
+

@@ -4,3 +4,4 @@ fn main(): i32 {
     puts("Hello, Milo!")
     return 0
 }
+

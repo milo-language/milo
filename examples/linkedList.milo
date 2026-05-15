@@ -37,7 +37,8 @@ fn pushBack(list: &mut DLList, value: i64) {
                 var updated = n
                 updated.next = Option.Some(h)
                 return updated
-            })
+            }
+            )
         }
         Option.None => {
             list.head = Option.Some(h)
@@ -62,7 +63,8 @@ fn pushFront(list: &mut DLList, value: i64) {
                 var updated = n
                 updated.prev = Option.Some(h)
                 return updated
-            })
+            }
+            )
         }
         Option.None => {
             list.tail = Option.Some(h)
@@ -83,14 +85,20 @@ fn printForward(list: &DLList) {
             Option.Some(handle) => {
                 match arenaGet(list.arena, handle) {
                     Option.Some(node) => {
-                        if result.len > 0 { result = result + " <-> " }
+                        if result.len > 0 {
+                            result = result + " <-> "
+                        }
                         result = result + node.value.toString()
                         cur = node.next
                     }
-                    Option.None => { done = true }
+                    Option.None => {
+                        done = true
+                    }
                 }
             }
-            Option.None => { done = true }
+            Option.None => {
+                done = true
+            }
         }
     }
     print(result)
@@ -106,14 +114,20 @@ fn printBackward(list: &DLList) {
             Option.Some(handle) => {
                 match arenaGet(list.arena, handle) {
                     Option.Some(node) => {
-                        if result.len > 0 { result = result + " <-> " }
+                        if result.len > 0 {
+                            result = result + " <-> "
+                        }
                         result = result + node.value.toString()
                         cur = node.prev
                     }
-                    Option.None => { done = true }
+                    Option.None => {
+                        done = true
+                    }
                 }
             }
-            Option.None => { done = true }
+            Option.None => {
+                done = true
+            }
         }
     }
     print(result)
@@ -138,3 +152,4 @@ fn main(): i32 {
 
     return 0
 }
+

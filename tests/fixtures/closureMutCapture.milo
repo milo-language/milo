@@ -6,10 +6,20 @@ fn callIt(f: () => void) {
 
 fn main(): i32 {
     var count: i32 = 0
-    callIt(() => { count = count + 1 })
-    callIt(() => { count = count + 1 })
-    callIt(() => { count = count + 1 })
+    callIt(() => {
+        count = count + 1
+    }
+    )
+    callIt(() => {
+        count = count + 1
+    }
+    )
+    callIt(() => {
+        count = count + 1
+    }
+    )
     print(count)
     return 0
 }
 // @expect: 3
+

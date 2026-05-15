@@ -1,4 +1,6 @@
-from "std/http" import { Request, Response, serve }
+from "std/http" import {
+    Request, Response, serve
+}
 
 struct ApiResponse {
     language: string,
@@ -29,3 +31,4 @@ fn main(): i32 {
     }
     return 0
 }
+

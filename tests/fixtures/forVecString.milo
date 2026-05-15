@@ -1,6 +1,7 @@
 // @expect: hello
 // @expect: world
 // @expect: 2
+
 fn main(): i32 {
     var words: Vec<string> = Vec.new()
     words.push("hello")
@@ -11,3 +12,4 @@ fn main(): i32 {
     print(words.len)
     return 0
 }
+

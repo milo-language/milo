@@ -1,10 +1,13 @@
 // @expect: {}
 
-struct Empty {}
+struct Empty {
+}
 
 fn main(): i32 {
-    let e = Empty {}
+    let e = Empty {
+    }
     let json = jsonStringify(e)
     print(json)
     return 0
 }
+

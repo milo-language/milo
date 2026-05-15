@@ -36,3 +36,4 @@ fn setFlag(x: &mut bool): bool {
     x = true
     return true
 }
+

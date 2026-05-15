@@ -1,6 +1,10 @@
 // Router-based HTTP server — demos Milo language features
-from "std/http" import { Request, Response, serve }
-from "std/argparse" import { newParser, ArgParser, ParsedArgs }
+from "std/http" import {
+    Request, Response, serve
+}
+from "std/argparse" import {
+    newParser, ArgParser, ParsedArgs
+}
 
 // ── JSON response structs ──
 
@@ -57,10 +61,14 @@ fn dispatch(routes: &Vec<Route>, req: &Request): Response {
 // ── String helpers ──
 
 fn startsWith(s: &string, prefix: &string): bool {
-    if s.len < prefix.len { return false }
+    if s.len < prefix.len {
+        return false
+    }
     var i: i64 = 0
     while i < prefix.len {
-        if s[i] != prefix[i] { return false }
+        if s[i] != prefix[i] {
+            return false
+        }
         i = i + 1
     }
     return true
@@ -80,7 +88,7 @@ fn parseI64(s: string): i64 {
     var result: i64 = 0
     var i: i64 = 0
     while i < s.len {
-        let d = s[i] as i64 - 48
+        let d = s[i]as i64 - 48
         if d >= 0 && d <= 9 {
             result = result * 10 + d
         }
@@ -90,7 +98,9 @@ fn parseI64(s: string): i64 {
 }
 
 fn intToStr(n: i64): string {
-    if n == 0 { return "0" }
+    if n == 0 {
+        return "0"
+    }
     var s: string = ""
     var x: i64 = n
     while x > 0 {
@@ -109,7 +119,9 @@ fn intToStr(n: i64): string {
 // ── Algorithms ──
 
 fn fibonacci(n: i64): i64 {
-    if n <= 1 { return n }
+    if n <= 1 {
+        return n
+    }
     var a: i64 = 0
     var b: i64 = 1
     var i: i64 = 2
@@ -123,12 +135,20 @@ fn fibonacci(n: i64): i64 {
 }
 
 fn isPrime(n: i64): bool {
-    if n < 2 { return false }
-    if n < 4 { return true }
-    if n % 2 == 0 { return false }
+    if n < 2 {
+        return false
+    }
+    if n < 4 {
+        return true
+    }
+    if n % 2 == 0 {
+        return false
+    }
     var i: i64 = 3
     while i * i <= n {
-        if n % i == 0 { return false }
+        if n % i == 0 {
+            return false
+        }
         i = i + 2
     }
     return true
@@ -147,14 +167,18 @@ fn collatzSeq(start: i64): CollatzResult {
         seq = seq + " > " + intToStr(x)
         steps = steps + 1
     }
-    return CollatzResult { start: start, steps: steps, sequence: seq }
+    return CollatzResult {
+        start: start, steps: steps, sequence: seq
+    }
 }
 
 fn fizzbuzzText(n: i64): string {
     var result: string = ""
     var i: i64 = 1
     while i <= n {
-        if i > 1 { result = result + "\n" }
+        if i > 1 {
+            result = result + "\n"
+        }
         if i % 15 == 0 {
             result = result + "FizzBuzz"
         } else if i % 3 == 0 {
@@ -180,19 +204,25 @@ fn helloHandler(req: &Request): Response {
 }
 
 fn jsonHandler(req: &Request): Response {
-    let info = MiloInfo { language: "milo", backend: "llvm", memorySafe: true }
+    let info = MiloInfo {
+        language: "milo", backend: "llvm", memorySafe: true
+    }
     return Response.Json(jsonStringify(info))
 }
 
 fn fibHandler(req: &Request): Response {
     let n = parseI64(pathAfter(req.path, 5))
-    let result = FibResult { n: n, result: fibonacci(n) }
+    let result = FibResult {
+        n: n, result: fibonacci(n)
+    }
     return Response.Json(jsonStringify(result))
 }
 
 fn primeHandler(req: &Request): Response {
     let n = parseI64(pathAfter(req.path, 7))
-    let result = PrimeResult { n: n, isPrime: isPrime(n) }
+    let result = PrimeResult {
+        n: n, isPrime: isPrime(n)
+    }
     return Response.Json(jsonStringify(result))
 }
 
@@ -215,22 +245,45 @@ fn main(): i32 {
     let args = parser.parse()
 
     let routes: Vec<Route> = [
-        Route { method: "GET", prefix: "/",          exact: true,  handler: homeHandler },
-        Route { method: "GET", prefix: "/hello",     exact: true,  handler: helloHandler },
-        Route { method: "GET", prefix: "/json",      exact: true,  handler: jsonHandler },
-        Route { method: "GET", prefix: "/fib/",      exact: false, handler: fibHandler },
-        Route { method: "GET", prefix: "/prime/",    exact: false, handler: primeHandler },
-        Route { method: "GET", prefix: "/collatz/",  exact: false, handler: collatzHandler },
-        Route { method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzzHandler },
+    Route {
+        method: "GET", prefix: "/", exact: true, handler: homeHandler
+    }
+    ,
+    Route {
+        method: "GET", prefix: "/hello", exact: true, handler: helloHandler
+    }
+    ,
+    Route {
+        method: "GET", prefix: "/json", exact: true, handler: jsonHandler
+    }
+    ,
+    Route {
+        method: "GET", prefix: "/fib/", exact: false, handler: fibHandler
+    }
+    ,
+    Route {
+        method: "GET", prefix: "/prime/", exact: false, handler: primeHandler
+    }
+    ,
+    Route {
+        method: "GET", prefix: "/collatz/", exact: false, handler: collatzHandler
+    }
+    ,
+    Route {
+        method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzzHandler
+    }
+    ,
     ]
 
     let port = args.getU16("port")
     let result = serve(port, (req: &Request) => {
         return dispatch(routes, req)
-    })
+    }
+    )
     if let Result.Err(msg) = result {
         print("server error: ", msg)
         return 1
     }
     return 0
 }
+

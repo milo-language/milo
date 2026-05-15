@@ -1,4 +1,5 @@
 // hashmap stress: 1M inserts, 1M lookups
+
 fn main(): i32 {
     let n: i64 = 50000
     var m: HashMap<i64, i64> = HashMap.new()
@@ -11,11 +12,15 @@ fn main(): i32 {
     var j: i64 = 0
     while j < n {
         match m.get(j) {
-            Option.Some(v) => { sum = sum + v }
-            Option.None => {}
+            Option.Some(v) => {
+                sum = sum + v
+            }
+            Option.None => {
+            }
         }
         j = j + 1
     }
     print("sum=", sum)
     return 0
 }
+

@@ -2,52 +2,144 @@ import "lexer.milo"
 
 fn printKind(k: TokKind): void {
     match k {
-        TokKind.Eof => { print("EOF") }
-        TokKind.Ident => { print("IDENT") }
-        TokKind.IntLit => { print("INT") }
-        TokKind.StrLit => { print("STR") }
-        TokKind.Fn => { print("FN") }
-        TokKind.Let => { print("LET") }
-        TokKind.Var => { print("VAR") }
-        TokKind.Return => { print("RETURN") }
-        TokKind.If => { print("IF") }
-        TokKind.Else => { print("ELSE") }
-        TokKind.While => { print("WHILE") }
-        TokKind.Extern => { print("EXTERN") }
-        TokKind.True => { print("TRUE") }
-        TokKind.False => { print("FALSE") }
-        TokKind.As => { print("AS") }
-        TokKind.LParen => { print("(") }
-        TokKind.RParen => { print(")") }
-        TokKind.LBrace => { print("{") }
-        TokKind.RBrace => { print("}") }
-        TokKind.LBracket => { print("[") }
-        TokKind.RBracket => { print("]") }
-        TokKind.Comma => { print(",") }
-        TokKind.Colon => { print(":") }
-        TokKind.Semi => { print(";") }
-        TokKind.Dot => { print(".") }
-        TokKind.Arrow => { print("->") }
-        TokKind.Plus => { print("+") }
-        TokKind.Minus => { print("-") }
-        TokKind.Star => { print("*") }
-        TokKind.Slash => { print("/") }
-        TokKind.Percent => { print("%%") }
-        TokKind.Eq => { print("=") }
-        TokKind.EqEq => { print("==") }
-        TokKind.NotEq => { print("!=") }
-        TokKind.Lt => { print("<") }
-        TokKind.Gt => { print(">") }
-        TokKind.LtEq => { print("<=") }
-        TokKind.GtEq => { print(">=") }
-        TokKind.Bang => { print("!") }
-        TokKind.Amp => { print("&") }
-        TokKind.Pipe => { print("|") }
-        TokKind.Caret => { print("^") }
-        TokKind.Tilde => { print("~") }
-        TokKind.AmpAmp => { print("&&") }
-        TokKind.PipePipe => { print("||") }
-        TokKind.DotDotDot => { print("...") }
+        TokKind.Eof => {
+            print("EOF")
+        }
+        TokKind.Ident => {
+            print("IDENT")
+        }
+        TokKind.IntLit => {
+            print("INT")
+        }
+        TokKind.StrLit => {
+            print("STR")
+        }
+        TokKind.Fn => {
+            print("FN")
+        }
+        TokKind.Let => {
+            print("LET")
+        }
+        TokKind.Var => {
+            print("VAR")
+        }
+        TokKind.Return => {
+            print("RETURN")
+        }
+        TokKind.If => {
+            print("IF")
+        }
+        TokKind.Else => {
+            print("ELSE")
+        }
+        TokKind.While => {
+            print("WHILE")
+        }
+        TokKind.Extern => {
+            print("EXTERN")
+        }
+        TokKind.True => {
+            print("TRUE")
+        }
+        TokKind.False => {
+            print("FALSE")
+        }
+        TokKind.As => {
+            print("AS")
+        }
+        TokKind.LParen => {
+            print("(")
+        }
+        TokKind.RParen => {
+            print(")")
+        }
+        TokKind.LBrace => {
+            print("{")
+        }
+        TokKind.RBrace => {
+            print("}")
+        }
+        TokKind.LBracket => {
+            print("[")
+        }
+        TokKind.RBracket => {
+            print("]")
+        }
+        TokKind.Comma => {
+            print(",")
+        }
+        TokKind.Colon => {
+            print(":")
+        }
+        TokKind.Semi => {
+            print(";")
+        }
+        TokKind.Dot => {
+            print(".")
+        }
+        TokKind.Arrow => {
+            print("->")
+        }
+        TokKind.Plus => {
+            print("+")
+        }
+        TokKind.Minus => {
+            print("-")
+        }
+        TokKind.Star => {
+            print("*")
+        }
+        TokKind.Slash => {
+            print("/")
+        }
+        TokKind.Percent => {
+            print("%%")
+        }
+        TokKind.Eq => {
+            print("=")
+        }
+        TokKind.EqEq => {
+            print("==")
+        }
+        TokKind.NotEq => {
+            print("!=")
+        }
+        TokKind.Lt => {
+            print("<")
+        }
+        TokKind.Gt => {
+            print(">")
+        }
+        TokKind.LtEq => {
+            print("<=")
+        }
+        TokKind.GtEq => {
+            print(">=")
+        }
+        TokKind.Bang => {
+            print("!")
+        }
+        TokKind.Amp => {
+            print("&")
+        }
+        TokKind.Pipe => {
+            print("|")
+        }
+        TokKind.Caret => {
+            print("^")
+        }
+        TokKind.Tilde => {
+            print("~")
+        }
+        TokKind.AmpAmp => {
+            print("&&")
+        }
+        TokKind.PipePipe => {
+            print("||")
+        }
+        TokKind.DotDotDot => {
+            print("...")
+        }
     }
 }
 
@@ -66,3 +158,4 @@ fn main(): i32 {
     }
     return 0
 }
+

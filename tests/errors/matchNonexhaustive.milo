@@ -1,4 +1,5 @@
 // @error: non-exhaustive match: missing variant
+
 enum Color {
     Red,
     Green,
@@ -17,3 +18,4 @@ fn main(): i32 {
     }
     return 0
 }
+

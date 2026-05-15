@@ -8,7 +8,9 @@ trait Ord: Eq {
     fn less(self: &Self, other: &Self): bool
 }
 
-struct Score { val: i32 }
+struct Score {
+    val: i32
+}
 
 impl Ord for Score {
     fn less(self: &Self, other: &Self): bool {
@@ -16,4 +18,7 @@ impl Ord for Score {
     }
 }
 
-fn main(): i32 { return 0 }
+fn main(): i32 {
+    return 0
+}
+

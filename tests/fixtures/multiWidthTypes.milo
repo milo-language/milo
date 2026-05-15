@@ -1,6 +1,7 @@
 // @expect: 100
 // @expect: 200
 // @expect: 300
+
 fn main(): i32 {
     let a: i8 = 100
     let b: i16 = 200
@@ -10,3 +11,4 @@ fn main(): i32 {
     print(c)
     return 0
 }
+

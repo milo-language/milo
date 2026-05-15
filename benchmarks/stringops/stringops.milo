@@ -1,4 +1,5 @@
 // concat 100k chunks via string +=
+
 fn main(): i32 {
     let n: i64 = 100000
     let chunk = "the quick brown fox jumps over the lazy dog"
@@ -11,3 +12,4 @@ fn main(): i32 {
     print("len=", buf.len)
     return 0
 }
+

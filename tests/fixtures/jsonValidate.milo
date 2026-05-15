@@ -31,20 +31,38 @@ fn skipWs(s: &string, pos: &mut i64) {
 
 fn parseValue(s: &string, pos: &mut i64): bool {
     skipWs(s, pos)
-    if pos >= s.len { return false }
+    if pos >= s.len {
+        return false
+    }
     let ch = s[pos]
-    if ch == '"' { return parseString(s, pos) }
-    if ch == '{' { return parseObject(s, pos) }
-    if ch == '[' { return parseArray(s, pos) }
-    if ch == 't' { return expectChars(s, pos, "true") }
-    if ch == 'f' { return expectChars(s, pos, "false") }
-    if ch == 'n' { return expectChars(s, pos, "null") }
-    if ch == '-' || isDigit(ch) { return parseNumber(s, pos) }
+    if ch == '"' {
+        return parseString(s, pos)
+    }
+    if ch == '{' {
+        return parseObject(s, pos)
+    }
+    if ch == '[' {
+        return parseArray(s, pos)
+    }
+    if ch == 't' {
+        return expectChars(s, pos, "true")
+    }
+    if ch == 'f' {
+        return expectChars(s, pos, "false")
+    }
+    if ch == 'n' {
+        return expectChars(s, pos, "null")
+    }
+    if ch == '-' || isDigit(ch) {
+        return parseNumber(s, pos)
+    }
     return false
 }
 
 fn parseString(s: &string, pos: &mut i64): bool {
-    if pos >= s.len || s[pos] != '"' { return false }
+    if pos >= s.len || s[pos] != '"' {
+        return false
+    }
     pos = pos + 1
     while pos < s.len {
         let ch = s[pos]
@@ -53,13 +71,17 @@ fn parseString(s: &string, pos: &mut i64): bool {
             return true
         } else if ch == '\\' {
             pos = pos + 1
-            if pos >= s.len { return false }
+            if pos >= s.len {
+                return false
+            }
             let esc = s[pos]
             if esc == 'u' {
                 pos = pos + 1
                 var i: i64 = 0
                 while i < 4 {
-                    if pos >= s.len || !isHex(s[pos]) { return false }
+                    if pos >= s.len || !isHex(s[pos]) {
+                        return false
+                    }
                     pos = pos + 1
                     i = i + 1
                 }
@@ -76,10 +98,14 @@ fn parseString(s: &string, pos: &mut i64): bool {
 }
 
 fn parseNumber(s: &string, pos: &mut i64): bool {
-    if pos >= s.len { return false }
+    if pos >= s.len {
+        return false
+    }
     if s[pos] == '-' {
         pos = pos + 1
-        if pos >= s.len { return false }
+        if pos >= s.len {
+            return false
+        }
     }
     if s[pos] == '0' {
         pos = pos + 1
@@ -92,16 +118,24 @@ fn parseNumber(s: &string, pos: &mut i64): bool {
     }
     if pos < s.len && s[pos] == '.' {
         pos = pos + 1
-        if pos >= s.len || !isDigit(s[pos]) { return false }
+        if pos >= s.len || !isDigit(s[pos]) {
+            return false
+        }
         while pos < s.len && isDigit(s[pos]) {
             pos = pos + 1
         }
     }
     if pos < s.len && (s[pos] == 'e' || s[pos] == 'E') {
         pos = pos + 1
-        if pos >= s.len { return false }
-        if s[pos] == '+' || s[pos] == '-' { pos = pos + 1 }
-        if pos >= s.len || !isDigit(s[pos]) { return false }
+        if pos >= s.len {
+            return false
+        }
+        if s[pos] == '+' || s[pos] == '-' {
+            pos = pos + 1
+        }
+        if pos >= s.len || !isDigit(s[pos]) {
+            return false
+        }
         while pos < s.len && isDigit(s[pos]) {
             pos = pos + 1
         }
@@ -110,14 +144,18 @@ fn parseNumber(s: &string, pos: &mut i64): bool {
 }
 
 fn parseArray(s: &string, pos: &mut i64): bool {
-    if pos >= s.len || s[pos] != '[' { return false }
+    if pos >= s.len || s[pos] != '[' {
+        return false
+    }
     pos = pos + 1
     skipWs(s, pos)
     if pos < s.len && s[pos] == ']' {
         pos = pos + 1
         return true
     }
-    if !parseValue(s, pos) { return false }
+    if !parseValue(s, pos) {
+        return false
+    }
     skipWs(s, pos)
     while pos < s.len {
         if s[pos] == ']' {
@@ -125,7 +163,9 @@ fn parseArray(s: &string, pos: &mut i64): bool {
             return true
         } else if s[pos] == ',' {
             pos = pos + 1
-            if !parseValue(s, pos) { return false }
+            if !parseValue(s, pos) {
+                return false
+            }
             skipWs(s, pos)
         } else {
             return false
@@ -135,14 +175,18 @@ fn parseArray(s: &string, pos: &mut i64): bool {
 }
 
 fn parseObject(s: &string, pos: &mut i64): bool {
-    if pos >= s.len || s[pos] != '{' { return false }
+    if pos >= s.len || s[pos] != '{' {
+        return false
+    }
     pos = pos + 1
     skipWs(s, pos)
     if pos < s.len && s[pos] == '}' {
         pos = pos + 1
         return true
     }
-    if !parseKv(s, pos) { return false }
+    if !parseKv(s, pos) {
+        return false
+    }
     skipWs(s, pos)
     while pos < s.len {
         if s[pos] == '}' {
@@ -150,7 +194,9 @@ fn parseObject(s: &string, pos: &mut i64): bool {
             return true
         } else if s[pos] == ',' {
             pos = pos + 1
-            if !parseKv(s, pos) { return false }
+            if !parseKv(s, pos) {
+                return false
+            }
             skipWs(s, pos)
         } else {
             return false
@@ -161,9 +207,13 @@ fn parseObject(s: &string, pos: &mut i64): bool {
 
 fn parseKv(s: &string, pos: &mut i64): bool {
     skipWs(s, pos)
-    if !parseString(s, pos) { return false }
+    if !parseString(s, pos) {
+        return false
+    }
     skipWs(s, pos)
-    if pos >= s.len || s[pos] != ':' { return false }
+    if pos >= s.len || s[pos] != ':' {
+        return false
+    }
     pos = pos + 1
     return parseValue(s, pos)
 }
@@ -171,7 +221,9 @@ fn parseKv(s: &string, pos: &mut i64): bool {
 fn expectChars(s: &string, pos: &mut i64, expected: &string): bool {
     var i: i64 = 0
     while i < expected.len {
-        if pos >= s.len || s[pos] != expected[i] { return false }
+        if pos >= s.len || s[pos] != expected[i] {
+            return false
+        }
         pos = pos + 1
         i = i + 1
     }
@@ -180,7 +232,9 @@ fn expectChars(s: &string, pos: &mut i64, expected: &string): bool {
 
 fn validate(json: string): bool {
     var pos: i64 = 0
-    if !parseValue(json, pos) { return false }
+    if !parseValue(json, pos) {
+        return false
+    }
     skipWs(json, pos)
     return pos == json.len
 }
@@ -188,8 +242,12 @@ fn validate(json: string): bool {
 fn check(json: string, expected: bool) {
     let result = validate(json)
     if result == expected {
-        if expected { print("valid") }
-        else { print("invalid") }
+        if expected {
+            print("valid")
+        } 
+        else {
+            print("invalid")
+        }
     } else {
         print("ERROR")
     }
@@ -210,3 +268,4 @@ fn main(): i32 {
     check("{\"a\" 1}", false)
     return 0
 }
+

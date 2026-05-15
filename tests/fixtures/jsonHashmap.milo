@@ -26,10 +26,16 @@ fn skipWs(s: &string, pos: &mut i64) {
 
 fn parseValue(s: &string, pos: &mut i64): Box<JsonValue> {
     skipWs(s, pos)
-    if pos >= s.len { return Box(JsonValue.Null) }
+    if pos >= s.len {
+        return Box(JsonValue.Null)
+    }
     let ch = s[pos]
-    if ch == '"' { return parseString(s, pos) }
-    if ch == '{' { return parseObject(s, pos) }
+    if ch == '"' {
+        return parseString(s, pos)
+    }
+    if ch == '{' {
+        return parseObject(s, pos)
+    }
     if ch == 't' {
         pos = pos + 4
         return Box(JsonValue.Bool(true))
@@ -42,7 +48,9 @@ fn parseValue(s: &string, pos: &mut i64): Box<JsonValue> {
         pos = pos + 4
         return Box(JsonValue.Null)
     }
-    if isDigit(ch) || ch == '-' { return parseNumber(s, pos) }
+    if isDigit(ch) || ch == '-' {
+        return parseNumber(s, pos)
+    }
     return Box(JsonValue.Null)
 }
 
@@ -54,10 +62,12 @@ fn parseNumber(s: &string, pos: &mut i64): Box<JsonValue> {
     }
     var n: i64 = 0
     while pos < s.len && isDigit(s[pos]) {
-        n = n * 10 + (s[pos] as i64 - '0' as i64)
+        n = n * 10 + (s[pos]as i64 - '0' as i64)
         pos = pos + 1
     }
-    if neg { n = 0 - n }
+    if neg {
+        n = 0 - n
+    }
     return Box(JsonValue.Number(n))
 }
 
@@ -111,20 +121,28 @@ fn main(): i32 {
     let input: string = "{\"name\": \"milo\", \"version\": 1, \"active\": true}"
     var pos: i64 = 0
     let result = parseValue(input, pos)
-    match *result {
+    match * result {
         JsonValue.Object(obj) => {
             let r1 = obj.get("name")
             if let Option.Some(val) = r1 {
-                match *val {
-                    JsonValue.Str(s) => { print("name=", s) }
-                    _ => { print("name=?") }
+                match * val {
+                    JsonValue.Str(s) => {
+                        print("name=", s)
+                    }
+                    _ => {
+                        print("name=?")
+                    }
                 }
             }
             let r2 = obj.get("version")
             if let Option.Some(val) = r2 {
-                match *val {
-                    JsonValue.Number(n) => { print("version=", n) }
-                    _ => { print("version=?") }
+                match * val {
+                    JsonValue.Number(n) => {
+                        print("version=", n)
+                    }
+                    _ => {
+                        print("version=?")
+                    }
                 }
             }
             let r3 = obj.get("missingKey")
@@ -134,7 +152,10 @@ fn main(): i32 {
                 print("missing=no")
             }
         }
-        _ => { print("not an object") }
+        _ => {
+            print("not an object")
+        }
     }
     return 0
 }
+

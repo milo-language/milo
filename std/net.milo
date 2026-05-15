@@ -17,6 +17,7 @@ enum NetError {
 // ── TcpStream ──
 
 // TCP connection handle. Automatically closes the fd when dropped.
+
 struct TcpStream {
     fd: i32,
 }
@@ -24,19 +25,22 @@ struct TcpStream {
 impl Drop for TcpStream {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            unsafe { close(self.fd) }
+            unsafe {
+                close(self.fd)
+            }
         }
     }
 }
 
 // Construct an IPv4 address from four octets.
 // Example: ip4(127, 0, 0, 1) for localhost.
+
 fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     let a32 = a as u32
     let b32 = b as u32
     let c32 = c as u32
     let d32 = d as u32
-    return a32 | (b32 << 8) | (c32 << 16) | (d32 << 24)
+    return a32 | (b32 < < 8) | (c32 < < 16) | (d32 < < 24)
 }
 
 fn tcpConnect(ip: u32, port: u16): Result<TcpStream, NetError> {
@@ -57,7 +61,10 @@ fn tcpConnect(ip: u32, port: u16): Result<TcpStream, NetError> {
             return Result.Err(NetError.ConnectionFailed("connect() failed"))
         }
 
-        return Result.Ok(TcpStream { fd: fd })
+        return Result.Ok(TcpStream {
+            fd: fd
+        }
+        )
     }
 }
 
@@ -73,11 +80,13 @@ fn tcpSend(s: &TcpStream, data: &string): Result<i64, NetError> {
 
 fn tcpRecv(s: &TcpStream): Result<string, NetError> {
     var result: string = ""
-    var buf: [u8; 4096] = [0; 4096]
+    var buf: [u8 ; 4096] = [0 ; 4096]
     while true {
         unsafe {
             let n = read(s.fd, buf, 4096)
-            if n <= 0 { break }
+            if n <= 0 {
+                break
+            }
             var i: i64 = 0
             while i < n {
                 result.push(buf[i])
@@ -91,6 +100,7 @@ fn tcpRecv(s: &TcpStream): Result<string, NetError> {
 // ── TLS Stream ──
 
 // TLS/SSL connection handle. Frees SSL context and closes fd on drop.
+
 struct TlsStream {
     fd: i32,
     ssl: i64,
@@ -101,10 +111,10 @@ impl Drop for TlsStream {
     fn drop(self: &mut Self): void {
         unsafe {
             if self.ssl != 0 {
-                SSL_free(self.ssl as *u8)
+                SSL_free(self.ssl as * u8)
             }
             if self.ctx != 0 {
-                SSL_CTX_free(self.ctx as *u8)
+                SSL_CTX_free(self.ctx as * u8)
             }
             if self.fd >= 0 {
                 close(self.fd)
@@ -160,13 +170,16 @@ fn tlsConnect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError
             return Result.Err(NetError.TlsError("SSL handshake failed"))
         }
 
-        return Result.Ok(TlsStream { fd: fd, ssl: sslAddr, ctx: ctxAddr })
+        return Result.Ok(TlsStream {
+            fd: fd, ssl: sslAddr, ctx: ctxAddr
+        }
+        )
     }
 }
 
 fn tlsSend(s: &TlsStream, data: &string): Result<i64, NetError> {
     unsafe {
-        let n = SSL_write(s.ssl as *u8, data, data.len as i32)
+        let n = SSL_write(s.ssl as * u8, data, data.len as i32)
         if n < 0 {
             return Result.Err(NetError.SendFailed("SSL_write failed"))
         }
@@ -176,11 +189,13 @@ fn tlsSend(s: &TlsStream, data: &string): Result<i64, NetError> {
 
 fn tlsRecv(s: &TlsStream): Result<string, NetError> {
     var result: string = ""
-    var buf: [u8; 4096] = [0; 4096]
+    var buf: [u8 ; 4096] = [0 ; 4096]
     while true {
         unsafe {
-            let n = SSL_read(s.ssl as *u8, buf as *u8, 4096)
-            if n <= 0 { break }
+            let n = SSL_read(s.ssl as * u8, buf as * u8, 4096)
+            if n <= 0 {
+                break
+            }
             var i: i64 = 0
             while i < n as i64 {
                 result.push(buf[i])
@@ -194,23 +209,23 @@ fn tlsRecv(s: &TlsStream): Result<string, NetError> {
 // ── DNS ──
 
 fn resolve(hostname: string): Result<u32, NetError> {
-    var hints: [u8; 48] = [0; 48]
+    var hints: [u8 ; 48] = [0 ; 48]
     unsafe {
-        let hintsFamily = (hints as *i32)
+        let hintsFamily = (hints as * i32)
         hintsFamily[1] = 2
         hintsFamily[2] = 1
     }
 
-    var resBuf: [u8; 8] = [0; 8]
+    var resBuf: [u8 ; 8] = [0 ; 8]
     unsafe {
-        let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
+        let err = getaddrinfo(hostname, 0 as * u8, hints as * u8, resBuf as * u8)
         if err != 0 {
             return Result.Err(NetError.DnsFailure(hostname))
         }
-        let infoPtr = *(resBuf as *i64)
-        let addrPtr = *((infoPtr + addrinfoAddrOffset()) as *i64)
-        let ip = *((addrPtr + 4) as *u32)
-        freeaddrinfo(infoPtr as *u8)
+        let infoPtr = * (resBuf as * i64)
+        let addrPtr = * ((infoPtr + addrinfoAddrOffset()) as * i64)
+        let ip = * ((addrPtr + 4) as * u32)
+        freeaddrinfo(infoPtr as * u8)
         return Result.Ok(ip)
     }
 }
@@ -218,6 +233,7 @@ fn resolve(hostname: string): Result<u32, NetError> {
 // ── HTTP Response ──
 
 // HTTP response with status code, headers, and body.
+
 struct Response {
     status: i32,
     headers: string,
@@ -254,9 +270,15 @@ fn strEqNocase(a: &string, ai: i64, b: &string, blen: i64): bool {
         var ca: u8 = a[ai + i]
         var cb: u8 = b[i]
         // lowercase ASCII
-        if ca >= 'A' && ca <= 'Z' { ca = ca + 32 }
-        if cb >= 'A' && cb <= 'Z' { cb = cb + 32 }
-        if ca != cb { return false }
+        if ca >= 'A' && ca <= 'Z' {
+            ca = ca + 32
+        }
+        if cb >= 'A' && cb <= 'Z' {
+            cb = cb + 32
+        }
+        if ca != cb {
+            return false
+        }
         i = i + 1
     }
     return true
@@ -278,7 +300,7 @@ fn findHeader(headers: &string, name: &string): string {
                 while end < headers.len && headers[end] != '\r' && headers[end] != '\n' {
                     end = end + 1
                 }
-                return headers[start .. end]
+                return headers[start..end]
             }
         }
         i = i + 1
@@ -287,30 +309,42 @@ fn findHeader(headers: &string, name: &string): string {
 }
 
 fn startsWith(s: &string, prefix: &string): bool {
-    if s.len < prefix.len { return false }
+    if s.len < prefix.len {
+        return false
+    }
     var i: i64 = 0
     while i < prefix.len {
-        if s[i] != prefix[i] { return false }
+        if s[i] != prefix[i] {
+            return false
+        }
         i = i + 1
     }
     return true
 }
 
 fn hexDigit(c: u8): i64 {
-    if c >= '0' && c <= '9' { return (c - '0') as i64 }
-    if c >= 'a' && c <= 'f' { return (c - 'a') as i64 + 10 }
-    if c >= 'A' && c <= 'F' { return (c - 'A') as i64 + 10 }
-    return -1 as i64
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a') as i64 + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A') as i64 + 10
+    }
+    return - 1 as i64
 }
 
 // ── HTTP parsing ──
 
 fn parseStatus(raw: &string): i32 {
-    if raw.len < 12 { return 0 }
+    if raw.len < 12 {
+        return 0
+    }
     var code: i32 = 0
     var i: i64 = 9
     while i < raw.len && raw[i] >= '0' && raw[i] <= '9' {
-        code = code * 10 + (raw[i] as i32 - 48)
+        code = code * 10 + (raw[i]as i32 - 48)
         i = i + 1
     }
     return code
@@ -321,9 +355,11 @@ fn parseRawHeaders(raw: &string): string {
     var i: i64 = 0
     while i + 1 < raw.len {
         if raw[i] == '\r' && raw[i + 1] == '\n' {
-            if start == 0 { start = i + 2 }
+            if start == 0 {
+                start = i + 2
+            }
             if i + 3 < raw.len && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
-                return raw[start .. i]
+                return raw[start..i]
             }
         }
         i = i + 1
@@ -335,7 +371,7 @@ fn parseBody(raw: &string): string {
     var i: i64 = 0
     while i + 3 < raw.len {
         if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
-            return raw[i + 4 .. raw.len]
+            return raw[i + 4..raw.len]
         }
         i = i + 1
     }
@@ -350,13 +386,19 @@ fn decodeChunked(rawBody: &string): string {
         var chunkSize: i64 = 0
         while i < rawBody.len {
             let d = hexDigit(rawBody[i])
-            if d < 0 { break }
+            if d < 0 {
+                break
+            }
             chunkSize = chunkSize * 16 + d
             i = i + 1
         }
         // skip \r\n after size
-        if i + 1 < rawBody.len && rawBody[i] == '\r' { i = i + 2 }
-        if chunkSize == 0 { break }
+        if i + 1 < rawBody.len && rawBody[i] == '\r' {
+            i = i + 2
+        }
+        if chunkSize == 0 {
+            break
+        }
         // copy chunk data
         var j: i64 = 0
         while j < chunkSize && i < rawBody.len {
@@ -365,7 +407,9 @@ fn decodeChunked(rawBody: &string): string {
             j = j + 1
         }
         // skip trailing \r\n
-        if i + 1 < rawBody.len && rawBody[i] == '\r' { i = i + 2 }
+        if i + 1 < rawBody.len && rawBody[i] == '\r' {
+            i = i + 2
+        }
     }
     return result
 }
@@ -380,7 +424,9 @@ fn parseResponse(raw: string): Response {
     if startsWith(te, chunked) {
         body = decodeChunked(body)
     }
-    return Response { status: status, headers: headers, body: body }
+    return Response {
+        status: status, headers: headers, body: body
+    }
 }
 
 // ── URL parsing ──
@@ -390,7 +436,9 @@ fn isHttps(url: &string): bool {
 }
 
 fn schemeOffset(url: &string): i64 {
-    if isHttps(url) { return 8 }
+    if isHttps(url) {
+        return 8
+    }
     if url.len > 7 && url[0] == 'h' && url[4] == ':' && url[5] == '/' && url[6] == '/' {
         return 7
     }
@@ -403,7 +451,7 @@ fn parseHost(url: &string): string {
     while end < url.len && url[end] != '/' && url[end] != ':' {
         end = end + 1
     }
-    return url[start .. end]
+    return url[start..end]
 }
 
 fn parsePort(url: &string): u16 {
@@ -415,12 +463,14 @@ fn parsePort(url: &string): u16 {
         i = i + 1
         var port: i32 = 0
         while i < url.len && url[i] >= '0' && url[i] <= '9' {
-            port = port * 10 + (url[i] as i32 - 48)
+            port = port * 10 + (url[i]as i32 - 48)
             i = i + 1
         }
         return port as u16
     }
-    if isHttps(url) { return 443 }
+    if isHttps(url) {
+        return 443
+    }
     return 80
 }
 
@@ -429,13 +479,16 @@ fn parsePath(url: &string): string {
     while i < url.len && url[i] != '/' {
         i = i + 1
     }
-    if i >= url.len { return "/" }
-    return url[i .. url.len]
+    if i >= url.len {
+        return "/"
+    }
+    return url[i..url.len]
 }
 
 // ── FetchOptions ──
 
 // HTTP request configuration: method, headers, and body.
+
 struct FetchOptions {
     method: string,
     headers: string,
@@ -514,7 +567,9 @@ fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
 // ── Public API ──
 
 fn fetch(url: string): Result<Response, NetError> {
-    var opts = FetchOptions { method: "GET", headers: "", body: "" }
+    var opts = FetchOptions {
+        method: "GET", headers: "", body: ""
+    }
     return doFetch(url, opts)
 }
 
@@ -541,7 +596,9 @@ fn fetchPut(url: string, body: string): Result<Response, NetError> {
 }
 
 fn fetchDelete(url: string): Result<Response, NetError> {
-    var opts = FetchOptions { method: "DELETE", headers: "", body: "" }
+    var opts = FetchOptions {
+        method: "DELETE", headers: "", body: ""
+    }
     return doFetch(url, opts)
 }
 
@@ -553,3 +610,4 @@ fn fetchPatch(url: string, body: string): Result<Response, NetError> {
     }
     return doFetch(url, opts)
 }
+

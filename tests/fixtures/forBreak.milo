@@ -2,6 +2,7 @@
 // @expect: 1
 // @expect: 2
 // @expect: done
+
 fn main(): i32 {
     for i in 0..10 {
         if i == 3 {
@@ -12,3 +13,4 @@ fn main(): i32 {
     print("done")
     return 0
 }
+
