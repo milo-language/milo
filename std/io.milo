@@ -150,6 +150,20 @@ fn readFile(path: string): Result<string, IoError> {
     return readAll(f)
 }
 
+// Write a string to stdout without a trailing newline.
+
+fn writeStr(s: &string): void {
+    unsafe { write(1, s, s.len) }
+}
+
+// Write a single byte to stdout.
+
+fn putChar(ch: u8): void {
+    var _pcBuf: [u8; 1] = [0; 1]
+    _pcBuf[0] = ch
+    unsafe { write(1, _pcBuf, 1) }
+}
+
 // Split a string into lines on newline boundaries.
 
 fn splitLines(content: &string): Vec<string> {
