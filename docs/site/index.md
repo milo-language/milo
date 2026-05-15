@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Milo
   text: "Ownership without lifetimes."
-  tagline: "A memory-safe systems language that compiles to native code via LLVM. No GC, no lifetime annotations, TypeScript-like syntax."
+  tagline: "A memory-safe systems language that compiles to native code via LLVM. No GC, no lifetime annotations. Modern syntax."
   actions:
     - theme: brand
       text: Get Started

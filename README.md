@@ -24,7 +24,7 @@ hello, world!
 | TypeScript | yes | no | no | no |
 | **Milo** | **no** | **no** | **yes** | **yes** |
 
-Native speed and memory safety without a garbage collector or lifetime annotations. TypeScript-like syntax. Binaries under 300KB with sub-millisecond startup.
+Native speed and memory safety without a garbage collector or lifetime annotations. Modern syntax. Binaries under 300KB with sub-millisecond startup.
 
 ## Learn by example
 
