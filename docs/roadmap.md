@@ -248,58 +248,52 @@ Still missing for full milo0-on-milo0:
 - [x] Closures — arrow syntax, captures, by-value and by-ref params
 - [x] Match on literals — integer, string, float, bool patterns with wildcard
 
-### Phase 3.5 — Beyond Stage-0
+### Phase 3.5 — Beyond Stage-0 (self-hosting)
 
-- [ ] Traits Phase 1.5 — operator overloading via traits (Add/Sub/Mul/Div), migrate built-in methods to trait impls, @derive(Hash, Clone)
-- [ ] String slices — substring views, split, find, starts_with
-- [ ] `toString` / format / int+float → string conversions
-- [ ] Stdlib `io` module — file read/write, stderr, args
+- [ ] Vec<T> in milo0 — 84 use sites, biggest blocker for milo0-on-milo0
+- [ ] String.push in milo0
+- [ ] Port type checker, HIR, lower, codegen to Milo
 - [ ] MIR — lower-level IR for optimization passes
 - [ ] Arena system designed based on real needs from self-hosting
-- [ ] Port type checker to Milo
-- [ ] Port HIR + lower to Milo
-- [ ] Port full codegen (enums, generics, traits, Box, Vec, HashMap) to Milo
 
 Milestone: Compiler compiles itself, bit-identical (or equivalent) IR for the full Milo source set.
 
-## Phase 3.7 — Standard Library Expansion
+## Phase 4 — Competitive Language (current focus)
 
-Goal: fill stdlib gaps exposed by writing real programs. Prioritized by how often they block real code. Items here need no language design decisions — they're pure stdlib work wrapping libc or implemented in Milo.
+Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a developer walk away without this."
 
-### Tier 1 — blocks most real programs
+### Tier 0 — dealbreakers
 
-- [x] **std/math** — abs, min, max, pow, sqrt, floor, ceil, round, log, sin, cos, tan, atan2 (wrap libm), clamp, constants (pi, e)
-- [x] **std/random** — randInt, randRange, randFloat, randBool, shuffle (arc4random)
-- [x] **std/time** — Instant/Duration structs, now(), epochMillis(), since(), elapsed(), sleepMs/sleepSecs (gettimeofday/usleep)
-- [x] **std/sort** — quicksort for i64/i32, insertion sort for strings, reverse
-- [x] **std/set** — generic HashSet<T> backed by HashMap<T, bool>
+- [ ] **Threads + channels** — `std/thread` wrapping pthreads: `Thread.spawn(fn)`, `thread.join()`, `Mutex<T>`, `Channel<T>` for message passing. Without this, can't build servers, parallel CLI tools, or anything concurrent. Design: start with OS threads + channels (like Go), defer async/await.
+- [ ] **Escaping closures** — currently stack-allocated, can't be returned or stored in structs. Need heap-allocated `Box<dyn Fn>` equivalent. Unlocks callbacks, event handlers, higher-order patterns. Requires: heap env alloc, move semantics for closure values, drop glue.
+- [ ] **Trait objects / dynamic dispatch** — `dyn Trait` for runtime polymorphism. Vtable-based. Unlocks plugin systems, heterogeneous collections (`Vec<dyn Animal>`), dependency injection.
+- [ ] **std/testing** — `assert`, `assertEqual`, `assertErr`, test discovery via annotation (`@test`), test runner CLI (`milo test`). Can't ship packages without tests.
 
-### Tier 2 — painful to work around
+### Tier 1 — significant gaps
 
-- [x] **std/fmt** — {} template formatting (fmt1-fmt4), padLeft/Right, zeroPad, join
-- [x] **std/io additions** — splitLines, readLine (byte-by-byte stdin), readLines (file→Vec<string>)
-- [x] **std/strconv** — parseInt, parseFloat, parseIntRadix, i64ToHex/Oct/Bin, formatFloat
-- [x] **std/unicode** — ASCII char classification (isDigit, isAlpha, isWhitespace, isPunctuation, isHexDigit, etc.), case conversion
-- [x] **std/base64** — encode/decode
-- [x] **std/hex** — encode/decode bytes to/from hex strings
-- [x] **std/log** — leveled logging (debug/info/warn/error) to stderr with timestamps
+- [ ] **Operator overloading** — `Add/Sub/Mul/Div/Eq/Ord` traits, `@derive(Eq, Hash, Clone)`. Makes numeric wrapper types, custom collections usable.
+- [ ] **Iterators** — iterator trait with `.map().filter().collect()` chains, lazy evaluation. Needs associated types or at minimum trait method return types.
+- [ ] **Display trait** — `print(myStruct)` via user-defined `display()`. Trait-based dispatch in builtins.
+- [ ] **Error handling improvements** — `From` trait for automatic error conversion in `?`, `anyhow`-style error boxing.
+- [ ] **Doc comments + doc generation** — `///` comments, `milo doc` to generate HTML/markdown.
 
-### Tier 3 — nice to have
+### Tier 2 — polish
 
-- [x] **std/csv** — parse and stringify with quoting/escaping
-- [x] **std/regex** — POSIX regex wrapping: regexNew, regexMatch, regexFind, regexFindAll
-- [x] **std/crypto** — SHA-256, MD5 via CommonCrypto (macOS); needs OpenSSL path for Linux
-- [ ] **std/testing** — assert helpers, test runner annotations (may need language support)
+- [ ] **Cross-compilation** — `--target aarch64-linux` etc. Infrastructure exists in target.ts, needs testing + sysroot handling.
+- [ ] **REPL / playground** — interactive exploration, web playground for demos.
+- [ ] **LSP completions** — autocomplete, rename, find references (currently: diagnostics + hover + go-to-def only).
+- [ ] **Benchmarking** — `@bench` annotations, `milo bench` runner.
 
-### Needs language design (not in scope here)
+## Phase 4.5 — Ecosystem ✅ (partial)
 
-- **Iterators / iterator trait** — map/filter/reduce chains, lazy evaluation. Needs trait method return types, possibly associated types.
-- **Async / concurrency** — threads, channels, async/await. Huge design space.
-- **Display trait for print** — `print(myStruct)` via user-defined formatting. Needs trait-based dispatch in builtins.
-- **Operator overloading** — Add/Sub/Mul traits. Already noted in Phase 3.5.
+- [x] **Package manager** — `milo-pkg` (written in Milo): init, new, add, install. Git-based global cache at `~/.milo/cache/`, lockfile with commit SHAs.
+- [x] **Formatter** — `milo-fmt` (written in Milo): context-sensitive formatting, LSP integration.
+- [ ] **Documentation / tutorials / "the book"**
+- [ ] **Example projects** — non-trivial apps showcasing the language (web server, CLI tool, game)
 
-## Phase 4 — Ecosystem
+## Standard Library — completed
 
-- [ ] Package manager (or convention)
-- [ ] Documentation, tutorials, "the book"
-- [ ] Formatter (milofmt)
+- [x] std/math, std/random, std/time, std/sort, std/set
+- [x] std/fmt, std/io, std/strconv, std/unicode, std/base64, std/hex, std/log
+- [x] std/csv, std/regex, std/crypto
+- [x] std/json, std/fs, std/net, std/http, std/process, std/argparse, std/path, std/env, std/args, std/arena
