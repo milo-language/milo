@@ -10,11 +10,25 @@ extern
 
 fn atof(str: *u8): f64
 
-// Parse a decimal integer string. Returns None on empty input.
+// Parse a decimal integer string. Returns None if not a valid integer.
 
 fn parseInt(s: string): Option<i64> {
     if s.len == 0 {
         return Option.None
+    }
+    var start: i64 = 0
+    if s[0] == 45 || s[0] == 43 {
+        start = 1
+    }
+    if start >= s.len {
+        return Option.None
+    }
+    var i = start
+    while i < s.len {
+        if s[i] < 48 || s[i] > 57 {
+            return Option.None
+        }
+        i = i + 1
     }
     unsafe {
         return Option.Some(strtol(s, 0 as *u8, 10))
@@ -32,10 +46,21 @@ fn parseIntRadix(s: string, base: i32): Option<i64> {
     }
 }
 
-// Parse a floating-point string.
+// Parse a floating-point string. Returns None if not a valid number.
 
 fn parseFloat(s: string): Option<f64> {
     if s.len == 0 {
+        return Option.None
+    }
+    var start: i64 = 0
+    if s[0] == 45 || s[0] == 43 {
+        start = 1
+    }
+    if start >= s.len {
+        return Option.None
+    }
+    // must start with digit or dot
+    if (s[start] < 48 || s[start] > 57) && s[start] != 46 {
         return Option.None
     }
     unsafe {

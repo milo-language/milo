@@ -1,0 +1,24 @@
+// @expect: 3
+// @expect: found alice
+// @expect: found bob
+
+fn main(): i32 {
+    var m: HashMap<string, i64> = HashMap.new()
+    m.insert("alice", 30)
+    m.insert("bob", 25)
+    m.insert("charlie", 35)
+
+    print(m.len)
+
+    if m.contains("alice") {
+        print("found alice")
+    }
+    if m.contains("bob") {
+        print("found bob")
+    }
+    if !m.contains("dave") {
+        // expected
+    }
+
+    return 0
+}
