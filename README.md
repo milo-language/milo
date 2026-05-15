@@ -29,7 +29,7 @@ Milo occupies the empty cell: native speed, memory safety, no GC, no lifetime an
 - **Second-class references** — `&T` only as function params; no lifetime annotations, ever
 - **Move semantics** — single owner, use-after-move is a compile error
 - **Exhaustive pattern matching** — `match` on enums/tagged unions, compiler enforces all cases
-- **Result<T> and error propagation** — `?` to propagate, `!` to unwrap, `??` for defaults
+- **Typed error handling** — `Result<T, E>` with auto-conversion between error types via `?`; no `thiserror`/`anyhow` needed
 - **Rich type system** — structs, enums, generics, traits, `Vec`, `HashMap`, `Box`, closures
 - **TypeScript-like syntax** — `let`/`var`, type annotations after names, familiar string methods
 - **Small binaries** — CLI tools compile to <300KB, sub-millisecond startup
