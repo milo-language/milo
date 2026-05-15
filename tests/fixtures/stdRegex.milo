@@ -1,0 +1,32 @@
+// @expect: match
+// @expect: no match
+// @expect: 42
+// @expect: 3
+
+import "std/regex"
+
+fn main(): i32 {
+    match regexNew("[0-9]+") {
+        Option.Some(re) => {
+            if regexMatch(re, "hello 123") {
+                print("match")
+            }
+            if !regexMatch(re, "no digits") {
+                print("no match")
+            }
+
+            match regexFind(re, "abc 42 def 99") {
+                Option.Some(m) => {
+                    let input = "abc 42 def 99"
+                    print(input[m.start..m.end])
+                }
+                Option.None => { print("none") }
+            }
+
+            let all = regexFindAll(re, "abc 42 def 99 ghi 7")
+            print(all.len.toString())
+        }
+        Option.None => { print("compile fail") }
+    }
+    return 0
+}
