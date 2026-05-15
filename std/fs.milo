@@ -58,7 +58,7 @@ fn isDir(path: string): bool {
         return false
     }
     // S_IFDIR = 0x4000 = 16384, S_IFMT = 0xF000 = 61440
-    return (info.mode&61440) == 16384
+    return (info.mode & 61440) == 16384
 }
 
 // Check if a path is a regular file.
@@ -69,7 +69,7 @@ fn isFile(path: string): bool {
         return false
     }
     // S_IFREG = 0x8000 = 32768
-    return (info.mode&61440) == 32768
+    return (info.mode & 61440) == 32768
 }
 
 // Get file size in bytes. Returns -1 if file doesn't exist.
@@ -108,8 +108,8 @@ fn readDir(path: string): Vec<DirEntry> {
             if ent as i64 == 0 as i64 {
                 break
             }
-            let dType = _loadU8((ent as i64 + typeOff) as * u8)
-            let namePtr = (ent as i64 + nameOff) as * u8
+            let dType = _loadU8((ent as i64 + typeOff) as *u8)
+            let namePtr = (ent as i64 + nameOff) as *u8
             let name = _cstrToString(namePtr)
 
             if name == "." || name == ".." {
@@ -135,4 +135,3 @@ fn writeFile(path: string, data: &string): Result<i64, IoError> {
     let f = openWrite(path)?
     return writeAll(f, data)
 }
-

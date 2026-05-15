@@ -3,18 +3,20 @@
 import "std/os"
 
 extern
+
 fn gettimeofday(tv: *u8, tz: *u8): i32
 
 extern
+
 fn usleep(usec: u32): i32
 
 // ── helpers ──
 
-fn _readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
+fn _readI64FromBuf(buf: &[u8 ; 16], off: i64): i64 {
     var val: i64 = 0
     var i: i64 = 0
     while i < 8 {
-        val = val | ((buf[off + i] as i64) << (i * 8))
+        val = val | ((buf[off + i]as i64) << (i * 8))
         i = i + 1
     }
     return val
@@ -28,21 +30,28 @@ struct Instant {
 }
 
 // Capture the current wall-clock time.
+
 fn now(): Instant {
-    var tv: [u8; 16] = [0; 16]
-    unsafe { gettimeofday(tv, 0 as *u8) }
+    var tv: [u8 ; 16] = [0 ; 16]
+    unsafe {
+        gettimeofday(tv, 0 as *u8)
+    }
     let sec = _readI64FromBuf(tv, 0)
     let usec = _readI64FromBuf(tv, 8)
-    return Instant { sec: sec, usec: usec }
+    return Instant {
+        sec: sec, usec: usec
+    }
 }
 
 // Milliseconds since Unix epoch.
+
 fn epochMillis(): i64 {
     let t = now()
     return t.sec * 1000 + t.usec / 1000
 }
 
 // Seconds since Unix epoch.
+
 fn epochSecs(): i64 {
     let t = now()
     return t.sec
@@ -55,17 +64,22 @@ struct Duration {
 }
 
 // Elapsed time between two instants.
+
 fn elapsed(start: Instant, end: Instant): Duration {
     let usec = (end.sec - start.sec) * 1000000 + (end.usec - start.usec)
-    return Duration { totalUsec: usec }
+    return Duration {
+        totalUsec: usec
+    }
 }
 
 // Elapsed time since an instant.
+
 fn since(start: Instant): Duration {
     return elapsed(start, now())
 }
 
 // Duration accessors.
+
 fn durationSecs(d: &Duration): i64 {
     return d.totalUsec / 1000000
 }
@@ -81,17 +95,25 @@ fn durationMicros(d: &Duration): i64 {
 // ── Sleep ──
 
 // Sleep for the given number of milliseconds.
+
 fn sleepMs(ms: i64): void {
-    unsafe { usleep((ms * 1000) as u32) }
+    unsafe {
+        usleep((ms * 1000) as u32)
+    }
 }
 
 // Sleep for the given number of seconds.
+
 fn sleepSecs(secs: i64): void {
     var remaining = secs
     while remaining > 0 {
         var chunk = remaining
-        if chunk > 30 { chunk = 30 }
-        unsafe { usleep((chunk * 1000000) as u32) }
+        if chunk > 30 {
+            chunk = 30
+        }
+        unsafe {
+            usleep((chunk * 1000000) as u32)
+        }
         remaining = remaining - chunk
     }
 }

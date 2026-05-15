@@ -498,7 +498,7 @@ fn tokenize(src: string): Vec<Token> {
 // ── Spacing rules ──
 
 fn isSpacedOp(kind: TokKind): bool {
-    return kind == TokKind.Plus || kind == TokKind.Minus || kind == TokKind.Star ||
+    return kind == TokKind.Plus || kind == TokKind.Minus ||
     kind == TokKind.Slash || kind == TokKind.Percent ||
     kind == TokKind.Eq || kind == TokKind.EqEq || kind == TokKind.Neq ||
     kind == TokKind.Lt || kind == TokKind.Gt ||
@@ -507,6 +507,14 @@ fn isSpacedOp(kind: TokKind): bool {
     kind == TokKind.FatArrow || kind == TokKind.Arrow ||
     kind == TokKind.Pipe || kind == TokKind.Caret ||
     kind == TokKind.QuestionQuestion
+}
+
+// Whether prev token makes the current * or & a binary operator (not unary/type prefix)
+fn isBinaryStarOrAmp(tokens: &Vec<Token>, i: i64): bool {
+    if i <= 0 { return false }
+    let pk = tokens[i - 1].kind
+    return pk == TokKind.Ident || pk == TokKind.Int || pk == TokKind.Float ||
+    pk == TokKind.RParen || pk == TokKind.RBracket
 }
 
 fn isValueTok(kind: TokKind): bool {
@@ -597,6 +605,22 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if tk == TokKind.Bang {
         return pk == TokKind.Keyword || isSpacedOp(pk)
     }
+    // * — space when binary (multiply), tight when unary/pointer type
+    if tk == TokKind.Star && pk != TokKind.Colon && pk != TokKind.Comma &&
+    pk != TokKind.Keyword {
+        return isBinaryStarOrAmp(tokens, i)
+    }
+    if pk == TokKind.Star {
+        return isBinaryStarOrAmp(tokens, i - 1)
+    }
+    // & — space when binary (bitwise AND), tight when reference type
+    if tk == TokKind.Amp && pk != TokKind.Colon && pk != TokKind.Comma &&
+    pk != TokKind.Keyword {
+        return isBinaryStarOrAmp(tokens, i)
+    }
+    if pk == TokKind.Amp {
+        return isBinaryStarOrAmp(tokens, i - 1)
+    }
     // No space around ..
     if tk == TokKind.DotDot || pk == TokKind.DotDot {
         return false
@@ -659,11 +683,6 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if isValueTok(pk) && (isValueTok(tk) || tk == TokKind.LBrace) {
         return true
     }
-    // No space after &
-    if pk == TokKind.Amp {
-        return false
-    }
-
     return false
 }
 

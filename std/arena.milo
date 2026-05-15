@@ -153,4 +153,3 @@ fn arenaModify<T> (a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
 fn arenaLen<T> (a: &Arena<T>): i64 {
     return a.live
 }
-

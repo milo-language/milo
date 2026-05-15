@@ -4,15 +4,15 @@
 
 extern
 
-fn read(fd: i32, buf: * u8, nbyte: i64): i64
+fn read(fd: i32, buf: *u8, nbyte: i64): i64
 
 extern
 
-fn write(fd: i32, buf: * u8, nbyte: i64): i64
+fn write(fd: i32, buf: *u8, nbyte: i64): i64
 
 extern
 
-fn open(path: * u8, flags: i32,...): i32
+fn open(path: *u8, flags: i32,...): i32
 
 extern
 
@@ -24,81 +24,81 @@ fn lseek(fd: i32, offset: i64, whence: i32): i64
 
 extern
 
-fn fstat(fd: i32, buf: * u8): i32
+fn fstat(fd: i32, buf: *u8): i32
 
 extern
 
-fn stat(path: * u8, buf: * u8): i32
+fn stat(path: *u8, buf: *u8): i32
 
 extern
 
-fn access(path: * u8, mode: i32): i32
+fn access(path: *u8, mode: i32): i32
 
 extern
 
-fn puts(s: * u8): i32
+fn puts(s: *u8): i32
 
 extern
 
-fn printf(fmt: * u8,...): i32
+fn printf(fmt: *u8,...): i32
 
 // ── Memory ──
 
 extern
 
-fn malloc(size: i64): * u8
+fn malloc(size: i64): *u8
 
 extern
 
-fn realloc(ptr: * u8, size: i64): * u8
+fn realloc(ptr: *u8, size: i64): *u8
 
 extern
 
-fn free(ptr: * u8): void
+fn free(ptr: *u8): void
 
 extern
 
-fn memcpy(dst: * u8, src: * u8, n: i64): * u8
+fn memcpy(dst: *u8, src: *u8, n: i64): *u8
 
 extern
 
-fn memset(dst: * u8, c: i32, n: i64): * u8
+fn memset(dst: *u8, c: i32, n: i64): *u8
 
 extern
 
-fn memmove(dst: * u8, src: * u8, n: i64): * u8
+fn memmove(dst: *u8, src: *u8, n: i64): *u8
 
 extern
 
-fn mmap(addr: * u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): * u8
+fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
 
 extern
 
-fn munmap(addr: * u8, len: i64): i32
+fn munmap(addr: *u8, len: i64): i32
 
 // ── Error ──
 
 extern
 
-fn strerror(errnum: i32): * u8
+fn strerror(errnum: i32): *u8
 
 // ── Strings ──
 
 extern
 
-fn strlen(s: * u8): i64
+fn strlen(s: *u8): i64
 
 extern
 
-fn strcmp(a: * u8, b: * u8): i32
+fn strcmp(a: *u8, b: *u8): i32
 
 extern
 
-fn strncmp(a: * u8, b: * u8, n: i64): i32
+fn strncmp(a: *u8, b: *u8, n: i64): i32
 
 extern
 
-fn snprintf(buf: * u8, size: i64, fmt: * u8,...): i32
+fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
 
 // ── Network ──
 
@@ -140,77 +140,77 @@ fn getsockname(fd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
 
 extern
 
-fn inet_pton(af: i32, src: * u8, dst: * u8): i32
+fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 
 // ── TLS (OpenSSL) ──
 
 extern
 
-fn TLS_client_method(): * u8
+fn TLS_client_method(): *u8
 
 extern
 
-fn SSL_CTX_new(method: * u8): * u8
+fn SSL_CTX_new(method: *u8): *u8
 
 extern
 
-fn SSL_CTX_free(ctx: * u8): void
+fn SSL_CTX_free(ctx: *u8): void
 
 extern
 
-fn SSL_CTX_set_default_verify_paths(ctx: * u8): i32
+fn SSL_CTX_set_default_verify_paths(ctx: *u8): i32
 
 extern
 
-fn SSL_new(ctx: * u8): * u8
+fn SSL_new(ctx: *u8): *u8
 
 extern
 
-fn SSL_set_fd(ssl: * u8, fd: i32): i32
+fn SSL_set_fd(ssl: *u8, fd: i32): i32
 
 extern
 
-fn SSL_connect(ssl: * u8): i32
+fn SSL_connect(ssl: *u8): i32
 
 extern
 
-fn SSL_read(ssl: * u8, buf: * u8, num: i32): i32
+fn SSL_read(ssl: *u8, buf: *u8, num: i32): i32
 
 extern
 
-fn SSL_write(ssl: * u8, buf: * u8, num: i32): i32
+fn SSL_write(ssl: *u8, buf: *u8, num: i32): i32
 
 extern
 
-fn SSL_free(ssl: * u8): void
+fn SSL_free(ssl: *u8): void
 
 extern
 
-fn SSL_ctrl(ssl: * u8, cmd: i32, larg: i64, parg: * u8): i64
+fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
 
 // ── DNS ──
 
 extern
 
-fn getaddrinfo(node: * u8, service: * u8, hints: * u8, res: * u8): i32
+fn getaddrinfo(node: *u8, service: *u8, hints: *u8, res: *u8): i32
 
 extern
 
-fn freeaddrinfo(res: * u8): void
+fn freeaddrinfo(res: *u8): void
 
 // ── Directory ──
 
 extern
 
-fn opendir(path: * u8): * u8
+fn opendir(path: *u8): *u8
 
 extern
 
-fn closedir(dir: * u8): i32
+fn closedir(dir: *u8): i32
 
 extern
 
-fn readdir(dir: * u8): * u8
+fn readdir(dir: *u8): *u8
 
 // ── Process ──
 
@@ -220,11 +220,11 @@ fn exit(status: i32): void
 
 extern
 
-fn getenv(name: * u8): * u8
+fn getenv(name: *u8): *u8
 
 extern
 
-fn system(cmd: * u8): i32
+fn system(cmd: *u8): i32
 
 extern
 
@@ -232,11 +232,11 @@ fn fork(): i32
 
 extern
 
-fn execl(path: * u8,...): i32
+fn execl(path: *u8,...): i32
 
 extern
 
-fn waitpid(pid: i32, status: * u8, options: i32): i32
+fn waitpid(pid: i32, status: *u8, options: i32): i32
 
 extern
 
@@ -244,9 +244,8 @@ fn dup2(oldfd: i32, newfd: i32): i32
 
 extern
 
-fn pipe(fds: * u8): i32
+fn pipe(fds: *u8): i32
 
 extern
 
 fn kill(pid: i32, sig: i32): i32
-

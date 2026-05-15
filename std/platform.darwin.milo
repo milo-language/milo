@@ -78,11 +78,10 @@ fn direntNameOffset(): i64 {
 
 extern
 
-fn __error(): * u8
+fn __error(): *u8
 
 fn getErrno(): i32 {
     unsafe {
         return _loadI32(__error())
     }
 }
-

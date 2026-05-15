@@ -3,38 +3,50 @@
 import "std/os"
 
 extern
+
 fn strtol(str: *u8, endptr: *u8, base: i32): i64
 
 extern
+
 fn atof(str: *u8): f64
 
 // Parse a decimal integer string. Returns None on empty input.
+
 fn parseInt(s: string): Option<i64> {
-    if s.len == 0 { return Option.None }
+    if s.len == 0 {
+        return Option.None
+    }
     unsafe {
         return Option.Some(strtol(s, 0 as *u8, 10))
     }
 }
 
 // Parse an integer string with a given base (2, 8, 10, 16).
+
 fn parseIntRadix(s: string, base: i32): Option<i64> {
-    if s.len == 0 { return Option.None }
+    if s.len == 0 {
+        return Option.None
+    }
     unsafe {
         return Option.Some(strtol(s, 0 as *u8, base))
     }
 }
 
 // Parse a floating-point string.
+
 fn parseFloat(s: string): Option<f64> {
-    if s.len == 0 { return Option.None }
+    if s.len == 0 {
+        return Option.None
+    }
     unsafe {
         return Option.Some(atof(s))
     }
 }
 
 // Convert i64 to hexadecimal string (lowercase).
+
 fn i64ToHex(n: i64): string {
-    var buf: [u8; 32] = [0; 32]
+    var buf: [u8 ; 32] = [0 ; 32]
     unsafe {
         snprintf(buf, 32, "%lx", n)
         return _cstrToString(buf as *u8)
@@ -42,8 +54,9 @@ fn i64ToHex(n: i64): string {
 }
 
 // Convert i64 to octal string.
+
 fn i64ToOct(n: i64): string {
-    var buf: [u8; 32] = [0; 32]
+    var buf: [u8 ; 32] = [0 ; 32]
     unsafe {
         snprintf(buf, 32, "%lo", n)
         return _cstrToString(buf as *u8)
@@ -51,8 +64,11 @@ fn i64ToOct(n: i64): string {
 }
 
 // Convert i64 to binary string.
+
 fn i64ToBin(n: i64): string {
-    if n == 0 { return "0" }
+    if n == 0 {
+        return "0"
+    }
     var result = ""
     var val = n
     while val > 0 {
@@ -67,8 +83,9 @@ fn i64ToBin(n: i64): string {
 }
 
 // Format f64 with a specific number of decimal places.
+
 fn formatFloat(n: f64, decimals: i32): string {
-    var buf: [u8; 64] = [0; 64]
+    var buf: [u8 ; 64] = [0 ; 64]
     unsafe {
         snprintf(buf, 64, "%.*f", decimals, n)
         return _cstrToString(buf as *u8)

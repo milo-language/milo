@@ -1,23 +1,42 @@
 // std/base64 — base64 encode/decode
 
 fn _b64EncodeChar(val: u8): u8 {
-    if val < 26 { return val + 65 }
-    if val < 52 { return val - 26 + 97 }
-    if val < 62 { return val - 52 + 48 }
-    if val == 62 { return 43 }
+    if val < 26 {
+        return val + 65
+    }
+    if val < 52 {
+        return val - 26 + 97
+    }
+    if val < 62 {
+        return val - 52 + 48
+    }
+    if val == 62 {
+        return 43
+    }
     return 47
 }
 
 fn _b64DecodeChar(ch: u8): u8 {
-    if ch >= 65 && ch <= 90 { return ch - 65 }
-    if ch >= 97 && ch <= 122 { return ch - 97 + 26 }
-    if ch >= 48 && ch <= 57 { return ch - 48 + 52 }
-    if ch == 43 { return 62 }
-    if ch == 47 { return 63 }
+    if ch >= 65 && ch <= 90 {
+        return ch - 65
+    }
+    if ch >= 97 && ch <= 122 {
+        return ch - 97 + 26
+    }
+    if ch >= 48 && ch <= 57 {
+        return ch - 48 + 52
+    }
+    if ch == 43 {
+        return 62
+    }
+    if ch == 47 {
+        return 63
+    }
     return 0
 }
 
 // Encode a string to base64.
+
 fn base64Encode(input: &string): string {
     var result = ""
     var i: i64 = 0
@@ -51,11 +70,14 @@ fn base64Encode(input: &string): string {
 }
 
 // Decode a base64 string.
+
 fn base64Decode(input: &string): string {
     var result = ""
     var i: i64 = 0
     while i + 3 < input.len {
-        if input[i] == 61 { break }
+        if input[i] == 61 {
+            break
+        }
         let a = _b64DecodeChar(input[i])
         let b = _b64DecodeChar(input[i + 1])
         let c = _b64DecodeChar(input[i + 2])

@@ -3,43 +3,52 @@
 import "std/os"
 
 extern
+
 fn regcomp(_preg: *u8, _regex: *u8, _cflags: i32): i32
 
 extern
+
 fn regexec(_preg: *u8, _str: *u8, _nmatch: i64, _pmatch: *u8, _eflags: i32): i32
 
 extern
+
 fn regfree(_preg: *u8): void
 
 // ── Regex handle ──
 
 struct Regex {
-    _preg: [u8; 128],
+    _preg: [u8 ; 128],
     _valid: bool,
 }
 
 // Compile a POSIX extended regular expression. Returns None on invalid pattern.
+
 fn regexNew(pattern: string): Option<Regex> {
-    var r = Regex { _preg: [0; 128], _valid: false }
+    var r = Regex {
+        _preg: [0 ; 128], _valid: false
+    }
     unsafe {
         let rc = regcomp(r._preg, pattern, 1)
-        if rc != 0 { return Option.None }
+        if rc != 0 {
+            return Option.None
+        }
     }
     r._valid = true
     return Option.Some(r)
 }
 
-fn _readMatchI64(buf: &[u8; 160], off: i64): i64 {
+fn _readMatchI64(buf: &[u8 ; 160], off: i64): i64 {
     var val: i64 = 0
     var k: i64 = 0
     while k < 8 {
-        val = val | ((buf[off + k] as i64) << (k * 8))
+        val = val | ((buf[off + k]as i64) << (k * 8))
         k = k + 1
     }
     return val
 }
 
 // Test if a string matches the pattern.
+
 fn regexMatch(re: &mut Regex, input: &string): bool {
     unsafe {
         return regexec(re._preg, input, 0, 0 as *u8, 0) == 0
@@ -47,39 +56,54 @@ fn regexMatch(re: &mut Regex, input: &string): bool {
 }
 
 // Match result: start and end byte offsets.
+
 struct RegexMatch {
     start: i64,
     end: i64,
 }
 
 // Find the first match in a string. Returns None if no match.
+
 fn regexFind(re: &mut Regex, input: &string): Option<RegexMatch> {
-    var pmatch: [u8; 160] = [0; 160]
+    var pmatch: [u8 ; 160] = [0 ; 160]
     unsafe {
         let rc = regexec(re._preg, input, 1, pmatch, 0)
-        if rc != 0 { return Option.None }
+        if rc != 0 {
+            return Option.None
+        }
     }
     let so = _readMatchI64(pmatch, 0)
     let eo = _readMatchI64(pmatch, 8)
-    return Option.Some(RegexMatch { start: so, end: eo })
+    return Option.Some(RegexMatch {
+        start: so, end: eo
+    }
+    )
 }
 
 // Find all non-overlapping matches in a string.
+
 fn regexFindAll(re: &mut Regex, input: &string): Vec<RegexMatch> {
     var matches: Vec<RegexMatch> = Vec.new()
     var offset: i64 = 0
-    var pmatch: [u8; 160] = [0; 160]
+    var pmatch: [u8 ; 160] = [0 ; 160]
     while offset < input.len {
         let tail = input[offset..input.len]
         unsafe {
             let rc = regexec(re._preg, tail, 1, pmatch, 0)
-            if rc != 0 { break }
+            if rc != 0 {
+                break
+            }
         }
         let so = _readMatchI64(pmatch, 0)
         let eo = _readMatchI64(pmatch, 8)
-        matches.push(RegexMatch { start: offset + so, end: offset + eo })
+        matches.push(RegexMatch {
+            start: offset + so, end: offset + eo
+        }
+        )
         offset = offset + eo
-        if so == eo { offset = offset + 1 }
+        if so == eo {
+            offset = offset + 1
+        }
     }
     return matches
 }

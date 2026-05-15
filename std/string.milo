@@ -298,4 +298,3 @@ fn charIsAlpha(ch: u8): bool {
 fn charIsAlphanumeric(ch: u8): bool {
     return charIsAlpha(ch) || charIsDigit(ch)
 }
-

@@ -14,7 +14,7 @@ fn run(cmd: string): Result<i32> {
             return Result.Err("system() failed")
         }
         // macOS: exit code is in bits 8-15
-        let exitCode = (status >> 8) &255
+        let exitCode = (status >> 8) & 255
         return Result.Ok(exitCode)
     }
 }
@@ -37,7 +37,7 @@ fn spawn(path: string): Result<Process> {
             return Result.Err("fork() failed")
         }
         if pid == 0 {
-            execl(path, path, 0 as * u8)
+            execl(path, path, 0 as *u8)
             exit(127)
         }
         return Result.Ok(Process {
@@ -72,4 +72,3 @@ fn signal(p: &Process, sig: i32): Result<i32> {
         return Result.Ok(0)
     }
 }
-

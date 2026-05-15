@@ -76,11 +76,10 @@ fn direntNameOffset(): i64 {
 
 extern
 
-fn __errno_location(): * u8
+fn __errno_location(): *u8
 
 fn getErrno(): i32 {
     unsafe {
         return _loadI32(__errno_location())
     }
 }
-

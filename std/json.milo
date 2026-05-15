@@ -519,4 +519,3 @@ fn jsonIntImpl(s: &string, start: i64, end: i64): i64 {
     }
     return result
 }
-

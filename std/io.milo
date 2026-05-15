@@ -151,6 +151,7 @@ fn readFile(path: string): Result<string, IoError> {
 }
 
 // Split a string into lines on newline boundaries.
+
 fn splitLines(content: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var cur = ""
@@ -174,21 +175,25 @@ fn splitLines(content: &string): Vec<string> {
 }
 
 // Read a file and return its contents as a Vec of lines.
+
 fn readLines(path: string): Result<Vec<string>, IoError> {
     let content = readFile(path)?
     return Result.Ok(splitLines(content))
 }
 
 // Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
+
 fn _readLineFd(fd: i32): Option<string> {
-    var _rlBuf: [u8; 1] = [0; 1]
+    var _rlBuf: [u8 ; 1] = [0 ; 1]
     var _rlResult = ""
     var _rlGot = false
     while true {
         unsafe {
             let n = read(fd, _rlBuf, 1)
             if n <= 0 {
-                if _rlGot { return Option.Some(_rlResult) }
+                if _rlGot {
+                    return Option.Some(_rlResult)
+                }
                 return Option.None
             }
         }
@@ -204,6 +209,7 @@ fn _readLineFd(fd: i32): Option<string> {
 }
 
 // Read a single line from stdin. Returns None at EOF.
+
 fn readLine(): Option<string> {
     return _readLineFd(0)
 }
@@ -228,4 +234,3 @@ fn readStdin(): string {
     }
     return result
 }
-

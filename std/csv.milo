@@ -3,6 +3,7 @@
 import "std/string"
 
 // Parse a CSV string into a Vec of rows, each row a Vec of fields.
+
 fn csvParse(input: &string): Vec<Vec<string>> {
     var rows: Vec<Vec<string>> = Vec.new()
     var row: Vec<string> = Vec.new()
@@ -54,6 +55,7 @@ fn csvParse(input: &string): Vec<Vec<string>> {
 }
 
 // Quote a field if it contains commas, quotes, or newlines.
+
 fn _csvQuoteField(val: &string): string {
     var needsQuote = false
     var j: i64 = 0
@@ -65,7 +67,9 @@ fn _csvQuoteField(val: &string): string {
         }
         j = j + 1
     }
-    if !needsQuote { return val.clone() }
+    if !needsQuote {
+        return val.clone()
+    }
     var quoted = "\""
     var k: i64 = 0
     while k < val.len {
@@ -82,13 +86,16 @@ fn _csvQuoteField(val: &string): string {
 }
 
 // Serialize rows to a CSV string.
+
 fn csvStringify(rows: &Vec<Vec<string>>): string {
     var output = ""
     var ri: i64 = 0
     while ri < rows.len {
         var ci: i64 = 0
         while ci < rows[ri].len {
-            if ci > 0 { output = output + "," }
+            if ci > 0 {
+                output = output + ","
+            }
             output = output + _csvQuoteField(rows[ri][ci])
             ci = ci + 1
         }

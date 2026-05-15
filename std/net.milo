@@ -111,10 +111,10 @@ impl Drop for TlsStream {
     fn drop(self: &mut Self): void {
         unsafe {
             if self.ssl != 0 {
-                SSL_free(self.ssl as * u8)
+                SSL_free(self.ssl as *u8)
             }
             if self.ctx != 0 {
-                SSL_CTX_free(self.ctx as * u8)
+                SSL_CTX_free(self.ctx as *u8)
             }
             if self.fd >= 0 {
                 close(self.fd)
@@ -179,7 +179,7 @@ fn tlsConnect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError
 
 fn tlsSend(s: &TlsStream, data: &string): Result<i64, NetError> {
     unsafe {
-        let n = SSL_write(s.ssl as * u8, data, data.len as i32)
+        let n = SSL_write(s.ssl as *u8, data, data.len as i32)
         if n < 0 {
             return Result.Err(NetError.SendFailed("SSL_write failed"))
         }
@@ -192,7 +192,7 @@ fn tlsRecv(s: &TlsStream): Result<string, NetError> {
     var buf: [u8 ; 4096] = [0 ; 4096]
     while true {
         unsafe {
-            let n = SSL_read(s.ssl as * u8, buf as * u8, 4096)
+            let n = SSL_read(s.ssl as *u8, buf as *u8, 4096)
             if n <= 0 {
                 break
             }
@@ -211,21 +211,21 @@ fn tlsRecv(s: &TlsStream): Result<string, NetError> {
 fn resolve(hostname: string): Result<u32, NetError> {
     var hints: [u8 ; 48] = [0 ; 48]
     unsafe {
-        let hintsFamily = (hints as * i32)
+        let hintsFamily = (hints as *i32)
         hintsFamily[1] = 2
         hintsFamily[2] = 1
     }
 
     var resBuf: [u8 ; 8] = [0 ; 8]
     unsafe {
-        let err = getaddrinfo(hostname, 0 as * u8, hints as * u8, resBuf as * u8)
+        let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
         if err != 0 {
             return Result.Err(NetError.DnsFailure(hostname))
         }
-        let infoPtr = * (resBuf as * i64)
-        let addrPtr = * ((infoPtr + addrinfoAddrOffset()) as * i64)
-        let ip = * ((addrPtr + 4) as * u32)
-        freeaddrinfo(infoPtr as * u8)
+        let infoPtr =*(resBuf as *i64)
+        let addrPtr =*((infoPtr + addrinfoAddrOffset()) as *i64)
+        let ip =*((addrPtr + 4) as *u32)
+        freeaddrinfo(infoPtr as *u8)
         return Result.Ok(ip)
     }
 }
@@ -610,4 +610,3 @@ fn fetchPatch(url: string, body: string): Result<Response, NetError> {
     }
     return doFetch(url, opts)
 }
-

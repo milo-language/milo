@@ -47,4 +47,3 @@ fn hasFlag(name: &string): bool {
     }
     return false
 }
-

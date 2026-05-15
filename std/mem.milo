@@ -16,7 +16,7 @@ impl Drop for MappedMemory {
     fn drop(self: &mut Self): void {
         if self.ptr != 0 {
             unsafe {
-                munmap(self.ptr as * u8, self.len)
+                munmap(self.ptr as *u8, self.len)
             }
         }
     }
@@ -28,7 +28,7 @@ fn mmapAnon(size: i64): Result<MappedMemory> {
     let PROT_RW: i32 = 3
     var addr: i64 = 0
     unsafe {
-        let p = mmap(0 as * u8, size, PROT_RW, mapPrivateAnon(), - 1, 0)
+        let p = mmap(0 as *u8, size, PROT_RW, mapPrivateAnon(), - 1, 0)
         addr = p as i64
     }
     let mapFailed: i64 = - 1 as i64
@@ -48,7 +48,7 @@ fn mmapFile(fFd: i32, size: i64): Result<MappedMemory> {
     let MAP_PRIVATE: i32 = 2
     var addr: i64 = 0
     unsafe {
-        let p = mmap(0 as * u8, size, PROT_READ, MAP_PRIVATE, fFd, 0)
+        let p = mmap(0 as *u8, size, PROT_READ, MAP_PRIVATE, fFd, 0)
         addr = p as i64
     }
     let mapFailed: i64 = - 1 as i64
@@ -76,7 +76,7 @@ impl Drop for Arena {
     fn drop(self: &mut Self): void {
         if self.base != 0 {
             unsafe {
-                free(self.base as * u8)
+                free(self.base as *u8)
             }
         }
     }
@@ -104,7 +104,7 @@ fn arenaNew(capacity: i64): Result<Arena> {
 fn arenaAlloc(a: &mut Arena, size: i64): Result<i64> {
     // align to 8 bytes
     let seven: i64 = 7
-    let aligned = (a.used + seven) &~seven
+    let aligned = (a.used + seven) & ~seven
     if aligned + size > a.cap {
         return Result.Err("arena out of memory")
     }
@@ -118,4 +118,3 @@ fn arenaAlloc(a: &mut Arena, size: i64): Result<i64> {
 fn arenaReset(a: &mut Arena): void {
     a.used = 0
 }
-

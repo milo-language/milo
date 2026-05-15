@@ -5,26 +5,33 @@ struct HashSet<T> {
 }
 
 // Create an empty HashSet.
-fn setNew<T>(): HashSet<T> {
-    return HashSet { inner: HashMap.new() }
+
+fn setNew<T> (): HashSet<T> {
+    return HashSet {
+        inner: HashMap.new()
+    }
 }
 
 // Add a value to the set.
-fn setAdd<T>(s: &mut HashSet<T>, val: T): void {
+
+fn setAdd<T> (s: &mut HashSet<T>, val: T): void {
     s.inner.insert(val, true)
 }
 
 // Check if the set contains a value.
-fn setContains<T>(s: &HashSet<T>, val: T): bool {
+
+fn setContains<T> (s: &HashSet<T>, val: T): bool {
     return s.inner.contains(val)
 }
 
 // Remove a value from the set.
-fn setRemove<T>(s: &mut HashSet<T>, val: T): void {
+
+fn setRemove<T> (s: &mut HashSet<T>, val: T): void {
     s.inner.remove(val)
 }
 
 // Number of elements in the set.
-fn setLen<T>(s: &HashSet<T>): i64 {
+
+fn setLen<T> (s: &HashSet<T>): i64 {
     return s.inner.len
 }

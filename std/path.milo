@@ -98,4 +98,3 @@ fn pathStem(path: &string): string {
     }
     return base
 }
-
