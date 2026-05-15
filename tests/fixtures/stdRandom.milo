@@ -1,0 +1,37 @@
+// @expect: range ok
+// @expect: float ok
+// @expect: 5
+// @expect: done
+
+import "std/random"
+
+fn main(): i32 {
+    var i = 0
+    while i < 10 {
+        let r = randRange(1, 6)
+        if r < 1 { print("FAIL: below range") }
+        if r > 6 { print("FAIL: above range") }
+        i = i + 1
+    }
+    print("range ok")
+
+    var j = 0
+    while j < 10 {
+        let f = randFloat()
+        if f < 0.0 { print("FAIL: negative float") }
+        if f >= 1.0 { print("FAIL: float >= 1") }
+        j = j + 1
+    }
+    print("float ok")
+
+    var v: Vec<i64> = Vec.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+    v.push(4)
+    v.push(5)
+    shuffleI64(v, v.len)
+    print(v.len.toString())
+    print("done")
+    return 0
+}
