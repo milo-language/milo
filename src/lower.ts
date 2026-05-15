@@ -344,11 +344,13 @@ class LowerCtx {
       case "Propagate": {
         const operandType = this.typeOf(expr.operand);
         const fnRetType = this.currentRetType;
+        const fromConversion = this.c.propagateConversions.get(expr);
         return {
           kind: "Propagate",
           operand: this.lowerExpr(expr.operand),
           enumName: operandType?.tag === "enum" ? operandType.name : "",
           retType: fnRetType,
+          fromConversion,
           type,
           span: expr.span,
         };

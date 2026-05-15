@@ -1,0 +1,23 @@
+// @error: ambiguous From conversion
+
+enum IoError {
+    NotFound(string),
+}
+
+enum AppError {
+    Io(IoError),
+    AlsoIo(IoError),
+}
+
+fn read_file(path: string): Result<string, IoError> {
+    return Result.Ok(path)
+}
+
+fn process(path: string): Result<string, AppError> {
+    let s = read_file(path)?
+    return Result.Ok(s)
+}
+
+fn main(): i32 {
+    return 0
+}

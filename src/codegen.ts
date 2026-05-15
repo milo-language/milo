@@ -1603,28 +1603,57 @@ export class Codegen {
     // error branch — reconstruct caller's return type with the Err payload
     lines.push(`${errLabel}:`);
     const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
-    if (retEnumName === expr.enumName) {
+    if (retEnumName === expr.enumName && !expr.fromConversion) {
       // same enum type — return as-is
       lines.push(`  ret ${retTy} ${ov}`);
     } else {
-      // different enum type (different T, same E) — rebuild with Err payload
-      const retEnumTy = `%${retEnumName}`;
+      // extract source Err payload
       const errPayloadPtr = this.nextTemp();
       lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
-      const errVariant = layout.variants.get("Err") || layout.variants.get("None");
-      const errFieldTy = errVariant && errVariant.fieldTypes.length > 0 ? errVariant.fieldTypes[0] : null;
+      const srcErrVariant = layout.variants.get("Err") || layout.variants.get("None");
+      const srcErrFieldTy = srcErrVariant && srcErrVariant.fieldTypes.length > 0 ? srcErrVariant.fieldTypes[0] : null;
+
+      let finalErrPayload: string | null = null;
+      let finalErrFieldTy: string | null = null;
+
+      if (expr.fromConversion && srcErrFieldTy) {
+        // From conversion: wrap source err in target error enum variant
+        const convLayout = this.enumLayouts.get(expr.fromConversion.targetEnumName)!;
+        const convEnumTy = `%${expr.fromConversion.targetEnumName}`;
+        const srcPayload = this.nextTemp();
+        lines.push(`  ${srcPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
+        const convAlloca = this.nextTemp();
+        lines.push(`  ${convAlloca} = alloca ${convEnumTy}`);
+        const convTagPtr = this.nextTemp();
+        lines.push(`  ${convTagPtr} = getelementptr ${convEnumTy}, ptr ${convAlloca}, i32 0, i32 0`);
+        lines.push(`  store i32 ${expr.fromConversion.wrapTag}, ptr ${convTagPtr}`);
+        const convPayloadPtr = this.nextTemp();
+        lines.push(`  ${convPayloadPtr} = getelementptr ${convEnumTy}, ptr ${convAlloca}, i32 0, i32 1`);
+        lines.push(`  store ${srcErrFieldTy} ${srcPayload}, ptr ${convPayloadPtr}`);
+        finalErrPayload = this.nextTemp();
+        lines.push(`  ${finalErrPayload} = load ${convEnumTy}, ptr ${convAlloca}`);
+        finalErrFieldTy = convEnumTy;
+      } else if (srcErrFieldTy) {
+        // same E type, different T — just copy the Err payload
+        finalErrPayload = this.nextTemp();
+        lines.push(`  ${finalErrPayload} = load ${srcErrFieldTy}, ptr ${errPayloadPtr}`);
+        finalErrFieldTy = srcErrFieldTy;
+      }
+
+      // construct caller's return Result with Err tag + payload
+      const retEnumTy = `%${retEnumName}`;
       const retAlloca = this.nextTemp();
       lines.push(`  ${retAlloca} = alloca ${retEnumTy}`);
       const retTagPtr = this.nextTemp();
       lines.push(`  ${retTagPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 0`);
-      const errTag = errVariant ? errVariant.tag : 1;
-      lines.push(`  store i32 ${errTag}, ptr ${retTagPtr}`);
-      if (errFieldTy) {
-        const errPayload = this.nextTemp();
-        lines.push(`  ${errPayload} = load ${errFieldTy}, ptr ${errPayloadPtr}`);
+      const retLayout = this.enumLayouts.get(retEnumName)!;
+      const retErrVariant = retLayout.variants.get("Err") || retLayout.variants.get("None");
+      const retErrTag = retErrVariant ? retErrVariant.tag : 1;
+      lines.push(`  store i32 ${retErrTag}, ptr ${retTagPtr}`);
+      if (finalErrPayload && finalErrFieldTy) {
         const retPayloadPtr = this.nextTemp();
         lines.push(`  ${retPayloadPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 1`);
-        lines.push(`  store ${errFieldTy} ${errPayload}, ptr ${retPayloadPtr}`);
+        lines.push(`  store ${finalErrFieldTy} ${finalErrPayload}, ptr ${retPayloadPtr}`);
       }
       const retVal = this.nextTemp();
       lines.push(`  ${retVal} = load ${retEnumTy}, ptr ${retAlloca}`);

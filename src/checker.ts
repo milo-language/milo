@@ -55,6 +55,7 @@ export interface CheckResult {
   closureCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
   fnFieldCalls: Set<Expr>;
+  propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
 }
 
 interface GenericEnumInfo {
@@ -127,6 +128,7 @@ export class TypeChecker {
   private inherentImpls = new Map<string, ImplInfo>();
   private resolvedMethods = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
+  private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
 
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
@@ -549,6 +551,7 @@ export class TypeChecker {
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
       fnFieldCalls: this.fnFieldCalls,
+      propagateConversions: this.propagateConversions,
     };
   }
 
@@ -2009,11 +2012,16 @@ export class TypeChecker {
         if (operandIsOption !== retIsOption) {
           this.error(`'?' on ${operandIsOption ? "Option" : "Result"} requires function to return ${operandIsOption ? "Option" : "Result"}, but returns ${typeName(this.currentFnRetType)}`, sp);
         } else if (!operandIsOption) {
-          // both Result-like: Err types must match
+          // both Result-like: Err types must match, or From conversion must exist
           const operandErr = this.unwrapableErr(operandType);
           const retErr = this.unwrapableErr(this.currentFnRetType);
           if (operandErr && retErr && !typeEq(operandErr, retErr)) {
-            this.error(`'?' error type mismatch: expression has ${typeName(operandErr)}, function returns ${typeName(retErr)}`, sp);
+            const conversion = this.findFromConversion(operandErr, retErr);
+            if (conversion) {
+              this.propagateConversions.set(expr, conversion);
+            } else {
+              this.error(`'?' error type mismatch: '${typeName(operandErr)}' cannot convert to '${typeName(retErr)}' (no wrapping variant found)`, sp);
+            }
           }
         }
         return this.setType(expr, inner);
@@ -2366,5 +2374,26 @@ export class TypeChecker {
     const some = info.variants.get("Some");
     const none = info.variants.get("None");
     return !!(some && none && some.fields.length === 1 && none.fields.length === 0);
+  }
+
+  // compiler-magic From: find a variant in targetErr that wraps sourceErr
+  private findFromConversion(sourceErr: TypeKind, targetErr: TypeKind): { targetEnumName: string; wrapVariant: string; wrapTag: number } | null {
+    if (targetErr.tag !== "enum") return null;
+    const info = this.enums.get(targetErr.name);
+    if (!info) return null;
+    // also allow string source → any variant with string payload
+    let matches: { name: string; tag: number }[] = [];
+    for (const [vName, vInfo] of info.variants) {
+      if (vInfo.fields.length === 1 && typeEq(vInfo.fields[0], sourceErr)) {
+        matches.push({ name: vName, tag: vInfo.tag });
+      }
+    }
+    if (matches.length === 1) {
+      return { targetEnumName: targetErr.name, wrapVariant: matches[0].name, wrapTag: matches[0].tag };
+    }
+    if (matches.length > 1) {
+      this.error(`ambiguous From conversion: '${typeName(sourceErr)}' matches multiple variants in '${typeName(targetErr)}': ${matches.map(m => m.name).join(", ")}`);
+    }
+    return null;
   }
 }
