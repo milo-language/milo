@@ -80,7 +80,7 @@ fn area(s: Shape): f64 {
 
 ### Error handling
 
-Functions return `Result<T>` (`Err` always carries a `string` message). Use `?` to propagate errors up the call stack, `!` to unwrap (panics on failure), or `??` to supply a default.
+Functions return `Result<T>` for simple string errors, or `Result<T, E>` when callers need to branch on the error cause. Use `?` to propagate errors up the call stack, `!` to unwrap (panics on failure), or `??` to supply a default.
 
 ```
 fn read_number(path: &string): Result<i64> {
@@ -115,16 +115,42 @@ fn main(): i32 {
         Result.Err(msg)  => { print("error: ", msg); return 1 }
     }
 }
+```
 
-// match — inspect the error explicitly
-fn main(): i32 {
-    match read_number("count.txt") {
-        Result.Ok(n)    => { print("count: ", n) }
-        Result.Err(msg) => { print("error: ", msg) }
-    }
-    return 0
+**Typed errors** — when you need to branch on the cause, use a custom error enum:
+
+```
+enum IoError {
+    NotFound(string),
+    PermissionDenied(string),
+}
+
+fn read_file(path: string): Result<string, IoError> { ... }
+
+// branch on cause
+match read_file("config.toml") {
+    Result.Ok(data)                    => { parse(data) }
+    Result.Err(IoError.NotFound(_))    => { use_defaults() }
+    Result.Err(IoError.PermissionDenied(p)) => { print("denied: ", p) }
 }
 ```
+
+**Cross-error-type propagation** — `?` auto-wraps errors when the caller's error enum has a matching variant. No manual conversion, no traits to implement:
+
+```
+enum AppError {
+    Io(IoError),         // ? auto-wraps IoError → AppError.Io(e)
+    Parse(ParseError),   // ? auto-wraps ParseError → AppError.Parse(e)
+}
+
+fn process(path: string): Result<i32, AppError> {
+    let text = read_file(path)?       // IoError auto-converts to AppError
+    let data = parse_json(text)?      // ParseError auto-converts to AppError
+    return Result.Ok(data.len as i32)
+}
+```
+
+In Rust, this requires the `thiserror` crate for `#[derive(Error)]` + `#[from]`, or hand-writing `impl From<IoError> for AppError`. In Milo, the compiler sees that `AppError` has an `Io(IoError)` variant and generates the conversion automatically. No macros, no crate choices, no blog posts about which error library to pick.
 
 ### Ownership and borrowing
 
