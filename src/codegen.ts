@@ -1600,9 +1600,36 @@ export class Codegen {
     lines.push(`  ${cmp} = icmp eq i32 ${tag}, 0`);
     lines.push(`  br i1 ${cmp}, label %${okLabel}, label %${errLabel}`);
 
-    // error branch — return the enum as-is (early return)
+    // error branch — reconstruct caller's return type with the Err payload
     lines.push(`${errLabel}:`);
-    lines.push(`  ret ${retTy} ${ov}`);
+    const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
+    if (retEnumName === expr.enumName) {
+      // same enum type — return as-is
+      lines.push(`  ret ${retTy} ${ov}`);
+    } else {
+      // different enum type (different T, same E) — rebuild with Err payload
+      const retEnumTy = `%${retEnumName}`;
+      const errPayloadPtr = this.nextTemp();
+      lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
+      const errVariant = layout.variants.get("Err") || layout.variants.get("None");
+      const errFieldTy = errVariant && errVariant.fieldTypes.length > 0 ? errVariant.fieldTypes[0] : null;
+      const retAlloca = this.nextTemp();
+      lines.push(`  ${retAlloca} = alloca ${retEnumTy}`);
+      const retTagPtr = this.nextTemp();
+      lines.push(`  ${retTagPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 0`);
+      const errTag = errVariant ? errVariant.tag : 1;
+      lines.push(`  store i32 ${errTag}, ptr ${retTagPtr}`);
+      if (errFieldTy) {
+        const errPayload = this.nextTemp();
+        lines.push(`  ${errPayload} = load ${errFieldTy}, ptr ${errPayloadPtr}`);
+        const retPayloadPtr = this.nextTemp();
+        lines.push(`  ${retPayloadPtr} = getelementptr ${retEnumTy}, ptr ${retAlloca}, i32 0, i32 1`);
+        lines.push(`  store ${errFieldTy} ${errPayload}, ptr ${retPayloadPtr}`);
+      }
+      const retVal = this.nextTemp();
+      lines.push(`  ${retVal} = load ${retEnumTy}, ptr ${retAlloca}`);
+      lines.push(`  ret ${retEnumTy} ${retVal}`);
+    }
 
     // ok branch — extract payload
     lines.push(`${okLabel}:`);

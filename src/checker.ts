@@ -1972,8 +1972,23 @@ export class TypeChecker {
           this.error(`'?' requires Option or Result type, got ${typeName(operandType)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
-        if (!typeEq(this.currentFnRetType, operandType)) {
-          this.error(`'?' requires function to return ${typeName(operandType)}, but returns ${typeName(this.currentFnRetType)}`, sp);
+        const retInner = this.unwrapableInner(this.currentFnRetType);
+        if (!retInner) {
+          this.error(`'?' requires function to return Option or Result, but returns ${typeName(this.currentFnRetType)}`, sp);
+          return this.setType(expr, inner);
+        }
+        // Option ? in Option fn, or Result ? in Result fn — match error side only
+        const operandIsOption = this.isOptionLike(operandType);
+        const retIsOption = this.isOptionLike(this.currentFnRetType);
+        if (operandIsOption !== retIsOption) {
+          this.error(`'?' on ${operandIsOption ? "Option" : "Result"} requires function to return ${operandIsOption ? "Option" : "Result"}, but returns ${typeName(this.currentFnRetType)}`, sp);
+        } else if (!operandIsOption) {
+          // both Result-like: Err types must match
+          const operandErr = this.unwrapableErr(operandType);
+          const retErr = this.unwrapableErr(this.currentFnRetType);
+          if (operandErr && retErr && !typeEq(operandErr, retErr)) {
+            this.error(`'?' error type mismatch: expression has ${typeName(operandErr)}, function returns ${typeName(retErr)}`, sp);
+          }
         }
         return this.setType(expr, inner);
       }
@@ -2302,5 +2317,28 @@ export class TypeChecker {
       return ok.fields[0];
     }
     return null;
+  }
+
+  // extract E from Result-like (Ok(T)/Err(E)) enums, or null for Option-like
+  private unwrapableErr(t: TypeKind): TypeKind | null {
+    if (t.tag !== "enum") return null;
+    const info = this.enums.get(t.name);
+    if (!info) return null;
+    const ok = info.variants.get("Ok");
+    const err = info.variants.get("Err");
+    if (ok && err && ok.fields.length === 1 && err.fields.length >= 1) {
+      return err.fields[0];
+    }
+    return null;
+  }
+
+  // true if enum is Option-like (Some(T)/None)
+  private isOptionLike(t: TypeKind): boolean {
+    if (t.tag !== "enum") return false;
+    const info = this.enums.get(t.name);
+    if (!info) return false;
+    const some = info.variants.get("Some");
+    const none = info.variants.get("None");
+    return !!(some && none && some.fields.length === 1 && none.fields.length === 0);
   }
 }
