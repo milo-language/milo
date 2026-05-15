@@ -1,0 +1,49 @@
+// @expect: got 42
+// @expect: not found: config.toml
+// @expect: denied: /etc/secret
+
+enum IoError {
+    NotFound(string),
+    PermissionDenied(string),
+}
+
+fn open(path: string): Result<i32, IoError> {
+    if path == "config.toml" {
+        return Result.Err(IoError.NotFound(path))
+    }
+    if path == "/etc/secret" {
+        return Result.Err(IoError.PermissionDenied(path))
+    }
+    return Result.Ok(42)
+}
+
+fn main(): i32 {
+    match open("data.txt") {
+        Result.Ok(fd) => { print("got ", fd) }
+        Result.Err(e) => {
+            match e {
+                IoError.NotFound(p) => { print("not found: ", p) }
+                IoError.PermissionDenied(p) => { print("denied: ", p) }
+            }
+        }
+    }
+    match open("config.toml") {
+        Result.Ok(fd) => { print("got ", fd) }
+        Result.Err(e) => {
+            match e {
+                IoError.NotFound(p) => { print("not found: ", p) }
+                IoError.PermissionDenied(p) => { print("denied: ", p) }
+            }
+        }
+    }
+    match open("/etc/secret") {
+        Result.Ok(fd) => { print("got ", fd) }
+        Result.Err(e) => {
+            match e {
+                IoError.NotFound(p) => { print("not found: ", p) }
+                IoError.PermissionDenied(p) => { print("denied: ", p) }
+            }
+        }
+    }
+    return 0
+}

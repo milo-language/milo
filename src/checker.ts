@@ -59,6 +59,7 @@ export interface CheckResult {
 
 interface GenericEnumInfo {
   typeParams: string[];
+  typeParamDefaults?: (TypeKind | null)[];
   variants: Map<string, { tag: number; fields: TypeKind[] }>;
   decl: import("./ast").EnumDecl;
 }
@@ -152,11 +153,23 @@ export class TypeChecker {
       } else {
         const ge = this.genericEnums.get(ty.name);
         if (ge) {
-          if (resolvedArgs.length !== ge.typeParams.length) {
-            this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${resolvedArgs.length}`);
+          let args = resolvedArgs;
+          if (args.length < ge.typeParams.length && ge.typeParamDefaults) {
+            // fill remaining type args from defaults
+            args = [...args];
+            for (let i = args.length; i < ge.typeParams.length; i++) {
+              const def = ge.typeParamDefaults[i];
+              if (!def) {
+                this.error(`'${ty.name}' requires type argument for '${ge.typeParams[i]}'`);
+                return { tag: "unknown" };
+              }
+              args.push(def);
+            }
+          } else if (args.length !== ge.typeParams.length) {
+            this.error(`'${ty.name}' expects ${ge.typeParams.length} type args, got ${args.length}`);
             return { tag: "unknown" };
           }
-          result = { tag: "enum", name: this.monomorphizeEnum(ty.name, resolvedArgs) };
+          result = { tag: "enum", name: this.monomorphizeEnum(ty.name, args) };
         } else {
           const gs = this.genericStructs.get(ty.name);
           if (gs) {
@@ -631,20 +644,24 @@ export class TypeChecker {
 
   private registerBuiltinResult() {
     if (this.genericEnums.has("Result")) return;
-    const stringType: MiloType = { name: "string", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     const decl: import("./ast").EnumDecl = {
       kind: "EnumDecl",
       name: "Result",
-      typeParams: [{ name: "T", bounds: [] }],
+      typeParams: [{ name: "T", bounds: [] }, { name: "E", bounds: [] }],
       variants: [
         { name: "Ok", fields: [{ name: "T", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
-        { name: "Err", fields: [stringType] },
+        { name: "Err", fields: [{ name: "E", isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null }] },
       ],
     };
     const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
     variants.set("Ok", { tag: 0, fields: [{ tag: "struct", name: "T" }] });
-    variants.set("Err", { tag: 1, fields: [{ tag: "string" }] });
-    this.genericEnums.set("Result", { typeParams: ["T"], variants, decl });
+    variants.set("Err", { tag: 1, fields: [{ tag: "struct", name: "E" }] });
+    this.genericEnums.set("Result", {
+      typeParams: ["T", "E"],
+      typeParamDefaults: [null, { tag: "string" }],
+      variants,
+      decl,
+    });
   }
 
   private registerBuiltinTraits() {
@@ -1929,6 +1946,15 @@ export class TypeChecker {
               this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(field)}, got ${typeName(argType)}`, expr.args[i].span);
             }
             this.tryMove(expr.args[i]);
+          }
+          // fill uninferred type params from defaults
+          if (genericInfo.typeParamDefaults) {
+            for (let i = 0; i < genericInfo.typeParams.length; i++) {
+              const p = genericInfo.typeParams[i];
+              if (!typeMap.has(p) && genericInfo.typeParamDefaults[i]) {
+                typeMap.set(p, genericInfo.typeParamDefaults[i]!);
+              }
+            }
           }
           const missing = genericInfo.typeParams.filter(p => !typeMap.has(p));
           if (missing.length > 0) {
