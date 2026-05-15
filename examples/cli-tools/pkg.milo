@@ -1,0 +1,333 @@
+// milo-pkg — package manager for Milo
+// uses git as transport, GitHub as registry, global cache at ~/.milo/cache/
+
+import "std/args"
+import "std/env"
+import "std/fs"
+import "std/io"
+import "std/json"
+import "std/process"
+import "std/string"
+
+fn getHome(): string {
+    let h = getEnv("HOME")
+    match h {
+        Option.Some(v) => {
+            return v
+        }
+        Option.None => {
+            print("error: HOME not set")
+            return ""
+        }
+    }
+}
+
+fn getCacheDir(): string {
+    let home = getHome()
+    return home + "/.milo/cache"
+}
+
+// parse "github.com/user/repo@v1.0" → host, org/repo, version
+struct PkgRef {
+    host: string,
+    path: string,
+    version: string,
+    url: string,
+}
+
+fn parsePkgUrl(raw: &string): PkgRef {
+    var version: string = "main"
+    var fullPath: string = raw.clone()
+    let atIdx = strIndexOf(raw, "@")
+    if atIdx >= 0 {
+        version = raw.substr(atIdx + 1, raw.len)
+        fullPath = raw.substr(0, atIdx)
+    }
+    // local path: starts with / or .
+    if strStartsWith(fullPath, "/") || strStartsWith(fullPath, ".") {
+        return PkgRef {
+            host: "local",
+            path: fullPath.clone(),
+            version: version,
+            url: fullPath,
+        }
+    }
+    let slashIdx = strIndexOf(fullPath, "/")
+    let host = fullPath.substr(0, slashIdx)
+    let path = fullPath.substr(slashIdx + 1, fullPath.len)
+    let url = "https://" + fullPath
+    return PkgRef {
+        host: host,
+        path: path,
+        version: version,
+        url: url,
+    }
+}
+
+fn cachePath(pkg: &PkgRef): string {
+    let base = getCacheDir()
+    if pkg.host == "local" {
+        // local paths: hash the path to avoid nested slashes
+        let safe = strReplace(pkg.path, "/", "_")
+        return base + "/local/" + safe + "/" + pkg.version
+    }
+    return base + "/" + pkg.host + "/" + pkg.path + "/" + pkg.version
+}
+
+// ── Commands ──
+
+fn cmdInit(): i32 {
+    if pathExists("milo.json") {
+        print("milo.json already exists")
+        return 1
+    }
+    let content: string = "{\n  \"name\": \"my-project\",\n  \"version\": \"0.1.0\",\n  \"deps\": {}\n}\n"
+    let r = writeFile("milo.json", content)
+    match r {
+        Result.Ok(n) => {
+            print("created milo.json")
+            return 0
+        }
+        Result.Err(e) => {
+            print("error: failed to write milo.json")
+            return 1
+        }
+    }
+}
+
+fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
+    if !pathExists("milo.json") {
+        print("error: no milo.json found (run `milo-pkg init` first)")
+        return 1
+    }
+    let raw = readFile("milo.json")
+    match raw {
+        Result.Ok(content) => {
+            let j = jsonParse(content)
+            match j {
+                Result.Ok(root) => {
+                    // rebuild json with new dep
+                    let name = root.str("name")
+                    let version = root.str("version")
+                    var out: string = "{\n"
+                    match name {
+                        Option.Some(n) => {
+                            out = out + "  \"name\": \"" + n + "\",\n"
+                        }
+                        Option.None => {}
+                    }
+                    match version {
+                        Option.Some(v) => {
+                            out = out + "  \"version\": \"" + v + "\",\n"
+                        }
+                        Option.None => {}
+                    }
+                    out = out + "  \"deps\": {\n"
+                    // copy existing deps
+                    let deps = root.get("deps")
+                    var hasPrev: bool = false
+                    match deps {
+                        Option.Some(d) => {
+                            let keys = d.keys()
+                            for key in keys {
+                                if hasPrev {
+                                    out = out + ",\n"
+                                }
+                                let val = d.str(key)
+                                match val {
+                                    Option.Some(v) => {
+                                        out = out + "    \"" + key + "\": \"" + v + "\""
+                                    }
+                                    Option.None => {}
+                                }
+                                hasPrev = true
+                            }
+                        }
+                        Option.None => {}
+                    }
+                    // add new dep
+                    if hasPrev {
+                        out = out + ",\n"
+                    }
+                    out = out + "    \"" + pkgAlias + "\": \"" + pkgUrl + "\"\n"
+                    out = out + "  }\n}\n"
+                    // install first, only write manifest on success
+                    let installCode = installPkg(pkgAlias, pkgUrl)
+                    if installCode != 0 {
+                        return installCode
+                    }
+                    let w = writeFile("milo.json", out)
+                    match w {
+                        Result.Ok(n) => {
+                            print("added ", pkgAlias, " → ", pkgUrl)
+                            return 0
+                        }
+                        Result.Err(e) => {
+                            print("error: failed to write milo.json")
+                            return 1
+                        }
+                    }
+                }
+                Result.Err(e) => {
+                    print("error: invalid milo.json: ", e)
+                    return 1
+                }
+            }
+        }
+        Result.Err(e) => {
+            print("error: cannot read milo.json")
+            return 1
+        }
+    }
+}
+
+fn installPkg(name: &string, url: &string): i32 {
+    let pkg = parsePkgUrl(url)
+    var dest: string = cachePath(pkg)
+
+    if pathExists(dest.clone()) {
+        print("  cached: ", name, " (", dest, ")")
+        return 0
+    }
+
+    let mkdirCmd = "mkdir -p " + dest.clone()
+    run(mkdirCmd)!
+
+    print("  fetch: ", pkg.url, " @ ", pkg.version)
+    var cloneCmd: string = "git clone --quiet --depth 1"
+    if pkg.version != "main" {
+        cloneCmd = cloneCmd + " --branch " + pkg.version
+    }
+    cloneCmd = cloneCmd + " " + pkg.url + " " + dest.clone() + " 2>&1"
+    let code = run(cloneCmd)!
+    if code != 0 {
+        print("  error: git clone failed for ", name)
+        return 1
+    }
+
+    let shaCmd = "git -C " + dest + " rev-parse HEAD"
+    let shaResult = capture(shaCmd)
+    match shaResult {
+        Result.Ok(sha) => {
+            let trimmedSha = trim(sha)
+            appendLock(name, url, trimmedSha)
+        }
+        Result.Err(e) => {}
+    }
+
+    print("  installed: ", name)
+    return 0
+}
+
+fn appendLock(name: &string, url: &string, sha: &string): void {
+    // simple append-based lockfile
+    var line: string = name + " " + url + " " + sha + "\n"
+    if pathExists("milo.lock") {
+        let existing = readFile("milo.lock")
+        match existing {
+            Result.Ok(content) => {
+                line = content + line
+            }
+            Result.Err(e) => {}
+        }
+    }
+    writeFile("milo.lock", line)
+}
+
+fn cmdInstall(): i32 {
+    if !pathExists("milo.json") {
+        print("error: no milo.json found (run `milo-pkg init` first)")
+        return 1
+    }
+    let raw = readFile("milo.json")
+    match raw {
+        Result.Ok(content) => {
+            let j = jsonParse(content)
+            match j {
+                Result.Ok(root) => {
+                    let deps = root.get("deps")
+                    match deps {
+                        Option.Some(d) => {
+                            let keys = d.keys()
+                            if keys.len == 0 {
+                                print("no dependencies")
+                                return 0
+                            }
+                            print("installing ", keys.len, " package(s)...")
+                            for key in keys {
+                                let val = d.str(key)
+                                match val {
+                                    Option.Some(url) => {
+                                        let code = installPkg(key, url)
+                                        if code != 0 {
+                                            return code
+                                        }
+                                    }
+                                    Option.None => {
+                                        print("  warning: skipping ", key, " (not a string)")
+                                    }
+                                }
+                            }
+                            print("done")
+                        }
+                        Option.None => {
+                            print("no dependencies")
+                        }
+                    }
+                    return 0
+                }
+                Result.Err(e) => {
+                    print("error: invalid milo.json: ", e)
+                    return 1
+                }
+            }
+        }
+        Result.Err(e) => {
+            print("error: cannot read milo.json")
+            return 1
+        }
+    }
+}
+
+fn printUsage(): void {
+    print("milo-pkg — package manager for Milo")
+    print("")
+    print("usage:")
+    print("  milo-pkg init                create milo.json")
+    print("  milo-pkg add <name> <url>    add a dependency")
+    print("  milo-pkg install             install all dependencies")
+    print("")
+    print("url format: github.com/user/repo[@version]")
+    print("cache: ~/.milo/cache/<host>/<org>/<repo>/<version>/")
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        printUsage()
+        return 0
+    }
+
+    let cmd = argv[1]
+    match cmd {
+        "init" => {
+            return cmdInit()
+        }
+        "add" => {
+            if argv.len < 4 {
+                print("usage: milo-pkg add <name> <url>")
+                print("example: milo-pkg add utils github.com/user/milo-utils@v1.0")
+                return 1
+            }
+            return cmdAdd(argv[2], argv[3])
+        }
+        "install" => {
+            return cmdInstall()
+        }
+        _ => {
+            print("unknown command: ", cmd)
+            printUsage()
+            return 1
+        }
+    }
+}
