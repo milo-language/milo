@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: Milo
-  text: "Ownership without lifetimes."
-  tagline: "A memory-safe systems language that compiles to native code via LLVM. No GC, no lifetime annotations. Modern syntax."
+  text: "Memory safety for dummies."
+  tagline: "A modern systems language that compiles to native code. No GC, no lifetime annotations, no PhD required."
   actions:
     - theme: brand
       text: Get Started
@@ -13,19 +13,17 @@ hero:
       link: /language/variables
 
 features:
-  - title: Memory Safe
-    details: Single-owner move semantics catch use-after-free at compile time. No GC pauses, no manual free(), no dangling pointers.
+  - title: You Already Know This
+    details: "let/var, arrow functions, for-in loops, generics with angle brackets. If you've written any modern language, you can read Milo on day one."
+  - title: Memory Safe. No GC.
+    details: "The compiler tracks ownership and frees memory for you. Use-after-free? Caught at compile time. No garbage collector pauses, no manual malloc/free."
   - title: No Lifetime Annotations
-    details: "References are second-class — they live in function params and local variables, but can't escape. This one restriction eliminates Rust's hardest concept entirely."
-  - title: Modern Syntax
-    details: "let/var bindings, arrow closures, for-in loops, .map/.filter/.find on collections. Reads like a scripting language, compiles like a systems one."
-  - title: Small & Fast
-    details: "Compiles via LLVM with -O2. Binaries under 300KB, sub-millisecond startup, performance within noise of C."
+    details: "Rust's biggest learning cliff, gone. References can't escape the function they're passed to — one simple rule replaces an entire chapter of the Rust book."
+  - title: Native Binaries via LLVM
+    details: "Compiles to optimized machine code. Sub-millisecond startup. Binaries under 300KB. Performance within noise of C."
 ---
 
-Milo gives you memory safety through ownership — like Rust — but without the lifetime annotations. The compiler tracks who owns what, frees memory automatically, and catches use-after-free at compile time. No garbage collector, no manual memory management, no footguns.
-
-### Ownership that gets out of the way
+### Familiar syntax, serious guarantees
 
 ```milo
 fn main(): i32 {
@@ -33,7 +31,6 @@ fn main(): i32 {
     names.push("alice")
     names.push("bob")
 
-    // Functional pipelines — callbacks borrow elements, no cloning needed
     let loud = names.map((n: &string) => n.to_upper())
     for name in loud {
         print(name)
@@ -43,43 +40,53 @@ fn main(): i32 {
 }   // names and loud are freed here — no GC, no manual free
 ```
 
-### Zero-copy string slices
+Modern syntax. Native performance. Memory safe by default.
+
+### The safety you want without the syntax you don't
 
 ```milo
 fn processLine(line: &string): void {
-    let method = line[0..3]       // &string — zero-copy view, no allocation
+    let method = line[0..3]       // zero-copy view — no allocation
     let path = line[4..line.len]
     print(method, " -> ", path)
 }
 ```
 
-`line[0..3]` doesn't allocate. It returns a `&string` that points into the original data. The compiler ensures the view can't outlive the source — no dangling pointers, no lifetime annotations.
+`&string` is a borrow. It can't outlive the data it points to. The compiler enforces this — no annotations required from you.
 
-### Enums + pattern matching
+### Real programs, not toy demos
 
 ```milo
-enum Shape {
-    Circle(f64),
-    Rect(f64, f64),
+enum JsonValue {
+    Null,
+    Bool(bool),
+    Number(i64),
+    Str(string),
+    Array(Vec<Box<JsonValue>>),
+    Object(Vec<JsonKV>),
 }
 
-fn area(s: &Shape): f64 {
-    match s {
-        Shape.Circle(r) => { return 3.14159 * r * r }
-        Shape.Rect(w, h) => { return w * h }
-    }
+fn parse_value(s: &string, pos: &mut i64): Box<JsonValue> {
+    skip_ws(s, pos)
+    let ch = s[pos]
+    if ch == '"' { return parse_string(s, pos) }
+    if ch == '{' { return parse_object(s, pos) }
+    if ch == '[' { return parse_array(s, pos) }
+    return Box(JsonValue.Null)
 }
 ```
 
-### The pitch
+Tagged unions, pattern matching, heap allocation with `Box<T>` — the tools you need for real systems code, in syntax you can actually read.
+
+### Where Milo fits
 
 <div class="comparison-table">
 
-|  | GC | Lifetimes | Ownership | Native |
-|---|---|---|---|---|
-| Go | yes | no | no | yes |
-| Rust | no | yes | yes | yes |
-| TypeScript | yes | no | no | no |
-| **Milo** | **no** | **no** | **yes** | **yes** |
+|  | GC | Lifetimes | Ownership | Native | Familiar Syntax |
+|---|---|---|---|---|---|
+| Go | yes | no | no | yes | yes |
+| Rust | no | yes | yes | yes | no |
+| TypeScript | yes | no | no | no | yes |
+| **Milo** | **no** | **no** | **yes** | **yes** | **yes** |
 
 </div>
