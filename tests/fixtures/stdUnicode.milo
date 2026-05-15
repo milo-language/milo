@@ -1,0 +1,39 @@
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: true
+// @expect: true
+// @expect: false
+// @expect: 97
+// @expect: 65
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: false
+
+import "std/unicode"
+
+fn boolStr(b: bool): string {
+    if b { return "true" }
+    return "false"
+}
+
+fn main(): i32 {
+    print(boolStr(isDigit(48)))
+    print(boolStr(isDigit(65)))
+    print(boolStr(isAlpha(65)))
+    print(boolStr(isAlpha(48)))
+    print(boolStr(isWhitespace(32)))
+    print(boolStr(isPunctuation(33)))
+    print(boolStr(isHexDigit(102)))
+    print(boolStr(isHexDigit(103)))
+    print(toLowerChar(65).toString())
+    print(toUpperChar(97).toString())
+    print(boolStr(isNumeric("12345")))
+    print(boolStr(isNumeric("123a5")))
+    print(boolStr(isAlphaStr("hello")))
+    print(boolStr(isAlphaStr("hello1")))
+    return 0
+}

@@ -1,0 +1,24 @@
+// @expect: hello
+// @expect: world
+// @expect: foo
+// @expect: 3
+// @expect: a
+// @expect: b
+// @expect: 2
+
+import "std/io"
+
+fn main(): i32 {
+    let lines = splitLines("hello\nworld\nfoo")
+    for ln in lines {
+        print(ln)
+    }
+    print(lines.len.toString())
+
+    let crlf = splitLines("a\r\nb\r\n")
+    for cl in crlf {
+        print(cl)
+    }
+    print(crlf.len.toString())
+    return 0
+}

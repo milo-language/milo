@@ -1,0 +1,55 @@
+// std/unicode — character classification and case conversion
+//
+// Currently ASCII-only. UTF-8 multi-byte codepoint support deferred.
+
+// Classify ASCII bytes.
+fn isAscii(ch: u8): bool { return ch < 128 }
+fn isDigit(ch: u8): bool { return ch >= 48 && ch <= 57 }
+fn isLower(ch: u8): bool { return ch >= 97 && ch <= 122 }
+fn isUpper(ch: u8): bool { return ch >= 65 && ch <= 90 }
+fn isAlpha(ch: u8): bool { return isLower(ch) || isUpper(ch) }
+fn isAlphanumeric(ch: u8): bool { return isAlpha(ch) || isDigit(ch) }
+fn isWhitespace(ch: u8): bool {
+    return ch == 32 || ch == 9 || ch == 10 || ch == 13 || ch == 12
+}
+fn isPunctuation(ch: u8): bool {
+    return (ch >= 33 && ch <= 47) || (ch >= 58 && ch <= 64) || (ch >= 91 && ch <= 96) || (ch >= 123 && ch <= 126)
+}
+fn isHexDigit(ch: u8): bool {
+    return isDigit(ch) || (ch >= 97 && ch <= 102) || (ch >= 65 && ch <= 70)
+}
+fn isPrintable(ch: u8): bool { return ch >= 32 && ch < 127 }
+fn isControl(ch: u8): bool { return ch < 32 || ch == 127 }
+
+// Case conversion for ASCII bytes.
+fn toLowerChar(ch: u8): u8 {
+    if isUpper(ch) { return ch + 32 }
+    return ch
+}
+
+fn toUpperChar(ch: u8): u8 {
+    if isLower(ch) { return ch - 32 }
+    return ch
+}
+
+// Check if an entire string is numeric (all digits).
+fn isNumeric(s: &string): bool {
+    if s.len == 0 { return false }
+    var i: i64 = 0
+    while i < s.len {
+        if !isDigit(s[i]) { return false }
+        i = i + 1
+    }
+    return true
+}
+
+// Check if an entire string is alphabetic.
+fn isAlphaStr(s: &string): bool {
+    if s.len == 0 { return false }
+    var i: i64 = 0
+    while i < s.len {
+        if !isAlpha(s[i]) { return false }
+        i = i + 1
+    }
+    return true
+}
