@@ -1,0 +1,180 @@
+// std/math — mathematical functions (wraps libm)
+
+import "std/os"
+
+// ── libm bindings ──
+
+extern
+fn sqrt(x: f64): f64
+
+extern
+fn pow(base: f64, exp: f64): f64
+
+extern
+fn sin(x: f64): f64
+
+extern
+fn cos(x: f64): f64
+
+extern
+fn tan(x: f64): f64
+
+extern
+fn atan2(y: f64, x: f64): f64
+
+extern
+fn floor(x: f64): f64
+
+extern
+fn ceil(x: f64): f64
+
+extern
+fn round(x: f64): f64
+
+extern
+fn fabs(x: f64): f64
+
+extern
+fn fmod(x: f64, y: f64): f64
+
+extern
+fn log(x: f64): f64
+
+extern
+fn log2(x: f64): f64
+
+extern
+fn log10(x: f64): f64
+
+extern
+fn exp(x: f64): f64
+
+// ── safe wrappers ──
+
+fn mathSqrt(x: f64): f64 {
+    unsafe { return sqrt(x) }
+}
+
+fn mathPow(base: f64, exponent: f64): f64 {
+    unsafe { return pow(base, exponent) }
+}
+
+fn mathSin(x: f64): f64 {
+    unsafe { return sin(x) }
+}
+
+fn mathCos(x: f64): f64 {
+    unsafe { return cos(x) }
+}
+
+fn mathTan(x: f64): f64 {
+    unsafe { return tan(x) }
+}
+
+fn mathAtan2(y: f64, x: f64): f64 {
+    unsafe { return atan2(y, x) }
+}
+
+fn mathFloor(x: f64): f64 {
+    unsafe { return floor(x) }
+}
+
+fn mathCeil(x: f64): f64 {
+    unsafe { return ceil(x) }
+}
+
+fn mathRound(x: f64): f64 {
+    unsafe { return round(x) }
+}
+
+fn mathAbs(x: f64): f64 {
+    unsafe { return fabs(x) }
+}
+
+fn mathMod(x: f64, y: f64): f64 {
+    unsafe { return fmod(x, y) }
+}
+
+fn mathLog(x: f64): f64 {
+    unsafe { return log(x) }
+}
+
+fn mathLog2(x: f64): f64 {
+    unsafe { return log2(x) }
+}
+
+fn mathLog10(x: f64): f64 {
+    unsafe { return log10(x) }
+}
+
+fn mathExp(x: f64): f64 {
+    unsafe { return exp(x) }
+}
+
+// ── integer helpers ──
+
+fn absI64(x: i64): i64 {
+    if x < 0 { return 0 - x }
+    return x
+}
+
+fn absI32(x: i32): i32 {
+    if x < 0 as i32 { return 0 as i32 - x }
+    return x
+}
+
+fn minI64(a: i64, b: i64): i64 {
+    if a < b { return a }
+    return b
+}
+
+fn maxI64(a: i64, b: i64): i64 {
+    if a > b { return a }
+    return b
+}
+
+fn minI32(a: i32, b: i32): i32 {
+    if a < b { return a }
+    return b
+}
+
+fn maxI32(a: i32, b: i32): i32 {
+    if a > b { return a }
+    return b
+}
+
+fn minF64(a: f64, b: f64): f64 {
+    if a < b { return a }
+    return b
+}
+
+fn maxF64(a: f64, b: f64): f64 {
+    if a > b { return a }
+    return b
+}
+
+fn clampI64(x: i64, lo: i64, hi: i64): i64 {
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+
+fn clampF64(x: f64, lo: f64, hi: f64): f64 {
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+
+// ── constants ──
+
+fn mathPi(): f64 {
+    return 3.14159265358979323846
+}
+
+fn mathE(): f64 {
+    return 2.71828182845904523536
+}
+
+fn mathInf(): f64 {
+    return 1.0 / 0.0
+}

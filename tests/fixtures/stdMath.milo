@@ -1,0 +1,29 @@
+// @expect: 3
+// @expect: 1024
+// @expect: 3
+// @expect: 4
+// @expect: 4
+// @expect: 42
+// @expect: 7
+// @expect: 3
+// @expect: 7
+// @expect: 10
+// @expect: 3.14159
+
+import "std/math"
+
+fn main(): i32 {
+    print(mathSqrt(9.0).toString())
+    print(mathPow(2.0, 10.0).toString())
+    print(mathFloor(3.7).toString())
+    print(mathCeil(3.2).toString())
+    print(mathRound(3.5).toString())
+    print(mathAbs(0.0 - 42.0).toString())
+    let n = 0 as i64 - 7 as i64
+    print(absI64(n).toString())
+    print(minI64(3, 7).toString())
+    print(maxI64(3, 7).toString())
+    print(clampI64(15, 0, 10).toString())
+    print(mathPi().toString())
+    return 0
+}

@@ -261,6 +261,42 @@ Still missing for full milo0-on-milo0:
 
 Milestone: Compiler compiles itself, bit-identical (or equivalent) IR for the full Milo source set.
 
+## Phase 3.7 — Standard Library Expansion
+
+Goal: fill stdlib gaps exposed by writing real programs. Prioritized by how often they block real code. Items here need no language design decisions — they're pure stdlib work wrapping libc or implemented in Milo.
+
+### Tier 1 — blocks most real programs
+
+- [ ] **std/math** — abs, min, max, pow, sqrt, floor, ceil, round, log, sin, cos, tan, atan2 (wrap libm)
+- [ ] **std/random** — seedable RNG, randInt(min, max), randFloat(), shuffle (wrap arc4random or /dev/urandom)
+- [ ] **std/time** — timestamps (epoch millis), monotonic clock, Duration struct, sleep, elapsed measurement (wrap clock_gettime/gettimeofday)
+- [ ] **std/sort** — sort Vec<T> with comparator closure, sortBy, sorted copy vs in-place
+- [ ] **std/set** — HashSet<T> built on HashMap<T, bool> or dedicated impl
+
+### Tier 2 — painful to work around
+
+- [ ] **std/fmt** — string interpolation / formatting (sprintf-style or template-based)
+- [ ] **std/bufio** — BufReader (line-by-line file reading), BufWriter (batched writes)
+- [ ] **std/strconv** — parseInt, parseFloat, number-to-string with radix/precision control
+- [ ] **std/unicode** — isLetter, isNumber, isPunctuation, toUpper/toLower for codepoints (beyond ASCII)
+- [ ] **std/base64** — encode/decode
+- [ ] **std/hex** — encode/decode bytes to/from hex strings
+- [ ] **std/log** — leveled logging (debug/info/warn/error) to stderr with timestamps
+
+### Tier 3 — nice to have
+
+- [ ] **std/csv** — parse/write CSV with quoting/escaping
+- [ ] **std/regex** — basic regex matching (wrap POSIX regex.h or build NFA)
+- [ ] **std/crypto** — SHA-256, MD5, HMAC (wrap libc or implement in Milo)
+- [ ] **std/testing** — assert helpers, test runner annotations (may need language support)
+
+### Needs language design (not in scope here)
+
+- **Iterators / iterator trait** — map/filter/reduce chains, lazy evaluation. Needs trait method return types, possibly associated types.
+- **Async / concurrency** — threads, channels, async/await. Huge design space.
+- **Display trait for print** — `print(myStruct)` via user-defined formatting. Needs trait-based dispatch in builtins.
+- **Operator overloading** — Add/Sub/Mul traits. Already noted in Phase 3.5.
+
 ## Phase 4 — Ecosystem
 
 - [ ] Package manager (or convention)
