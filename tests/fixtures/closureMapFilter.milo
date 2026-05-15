@@ -1,0 +1,36 @@
+// @expect: 2
+// @expect: 4
+// @expect: 6
+// @expect: 2
+// @expect: 3
+// @expect: 11
+// @expect: 12
+// @expect: 13
+
+fn main(): i32 {
+    var v: Vec<i32> = Vec.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+
+    // map with by-value closure
+    let doubled = v.map((x: i32): i32 => x * 2)
+    for d in doubled {
+        print(d)
+    }
+
+    // filter with by-ref closure
+    let big = v.filter((x: &i32): bool => x > 1)
+    for b in big {
+        print(b)
+    }
+
+    // map with capture
+    let offset: i32 = 10
+    let shifted = v.map((x: i32): i32 => x + offset)
+    for s in shifted {
+        print(s)
+    }
+
+    return 0
+}

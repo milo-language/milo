@@ -2769,8 +2769,22 @@ export class Codegen {
     lines.push(`${bodyLabel}:`);
     const elemPtr = this.nextTemp();
     lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+    // check if callback takes element by value or by ref
+    const cbType = expr.callback.type;
+    const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
+    let callArg: string;
+    let callArgTy: string;
+    if (paramIsRef) {
+      callArg = elemPtr;
+      callArgTy = "ptr";
+    } else {
+      const loadedElem = this.nextTemp();
+      lines.push(`  ${loadedElem} = load ${elemTy}, ptr ${elemPtr}`);
+      callArg = loadedElem;
+      callArgTy = elemTy;
+    }
     const result = this.nextTemp();
-    lines.push(`  ${result} = call ${resultElemTy} ${fnPtr}(ptr ${envPtr}, ptr ${elemPtr})`);
+    lines.push(`  ${result} = call ${resultElemTy} ${fnPtr}(ptr ${envPtr}, ${callArgTy} ${callArg})`);
     const destPtr = this.nextTemp();
     lines.push(`  ${destPtr} = getelementptr ${resultElemTy}, ptr ${buf}, i64 ${idx}`);
     lines.push(`  store ${resultElemTy} ${result}, ptr ${destPtr}`);
