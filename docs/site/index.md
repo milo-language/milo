@@ -66,13 +66,10 @@ struct Route {
 }
 
 fn dispatch(routes: &Vec<Route>, req: &Request): Response {
-    var i: i64 = 0
-    while i < routes.len {
-        let r = routes[i]
-        if req.method == r.method && req.path == r.prefix {
+    for r in routes {
+        if r.method == req.method && r.prefix == req.path {
             return r.handler(req)
         }
-        i = i + 1
     }
     return Response.NotFound
 }
@@ -82,12 +79,14 @@ fn main(): i32 {
         Route { method: "GET", prefix: "/",     handler: (r: &Request) => Response.Html("<h1>Hello!</h1>") },
         Route { method: "GET", prefix: "/json", handler: (r: &Request) => Response.Json("{\"ok\": true}") },
     ]
-    serve(8080, (req: &Request) => dispatch(routes, req))
+    serve(8080, (req: &Request) => {
+        return dispatch(routes, req)
+    })
     return 0
 }
 ```
 
-Structs, closures, borrows, routing — a real web server in 25 lines.
+Structs, closures, borrows, `for-in` — a routed web server in 20 lines.
 
 ### Where Milo fits
 
