@@ -1,0 +1,12 @@
+// @expect: 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+// @expect: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+// @expect: 5d41402abc4b2a76b9719d911017c592
+
+import "std/crypto"
+
+fn main(): i32 {
+    print(sha256("hello"))
+    print(sha256(""))
+    print(md5("hello"))
+    return 0
+}

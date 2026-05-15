@@ -1,0 +1,44 @@
+// std/crypto — cryptographic hash functions
+//
+// macOS: wraps CommonCrypto (CC_SHA256, CC_MD5)
+// Linux: would wrap OpenSSL (SHA256, MD5) — same signatures
+
+import "std/os"
+
+extern
+fn CC_SHA256(_data: *u8, _len: u32, _md: *u8): *u8
+
+extern
+fn CC_MD5(_data: *u8, _len: u32, _md: *u8): *u8
+
+fn _bytesToHex(buf: &[u8; 32], n: i64): string {
+    var result = ""
+    var i: i64 = 0
+    while i < n {
+        let b = buf[i]
+        let hi = b >> 4
+        let lo = b & 15
+        if hi < 10 { result.push(hi + 48) } else { result.push(hi - 10 + 97) }
+        if lo < 10 { result.push(lo + 48) } else { result.push(lo - 10 + 97) }
+        i = i + 1
+    }
+    return result
+}
+
+// Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
+fn sha256(input: &string): string {
+    var hash: [u8; 32] = [0; 32]
+    unsafe {
+        CC_SHA256(input, input.len as u32, hash)
+    }
+    return _bytesToHex(hash, 32)
+}
+
+// Compute MD5 hash of a string. Returns 32-char lowercase hex string.
+fn md5(input: &string): string {
+    var hash: [u8; 32] = [0; 32]
+    unsafe {
+        CC_MD5(input, input.len as u32, hash)
+    }
+    return _bytesToHex(hash, 16)
+}
