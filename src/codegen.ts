@@ -2419,13 +2419,25 @@ export class Codegen {
     const lines: string[] = [];
     const [objLines, objPtr, objTy] = this.genLValue(expr.object);
     lines.push(...objLines);
-    const structName = this.getStructName(objTy);
+    let finalPtr = objPtr;
+    let finalTy = objTy;
+    // genLValue returns null for rvalues (e.g. function call returns) — materialize to alloca
+    if (objPtr === "null") {
+      const [exprLines, exprVal, exprTy] = this.genExpr(expr.object);
+      lines.push(...exprLines);
+      const tmp = this.nextTemp();
+      lines.push(`  ${tmp} = alloca ${exprTy}`);
+      lines.push(`  store ${exprTy} ${exprVal}, ptr ${tmp}`);
+      finalPtr = tmp;
+      finalTy = exprTy;
+    }
+    const structName = this.getStructName(finalTy);
     if (structName) {
       const layout = this.structLayouts.get(structName)!;
       const idx = layout.fields.findIndex(f => f.name === expr.field);
       const fieldTy = layout.fields[idx].type;
       const ptr = this.nextTemp();
-      lines.push(`  ${ptr} = getelementptr %${structName}, ptr ${objPtr}, i32 0, i32 ${idx}`);
+      lines.push(`  ${ptr} = getelementptr %${structName}, ptr ${finalPtr}, i32 0, i32 ${idx}`);
       return [lines, ptr, fieldTy];
     }
     return [lines, "null", "i32"];

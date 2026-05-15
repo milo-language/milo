@@ -1,0 +1,31 @@
+// @expect: 42
+// @expect: hello
+// @expect: 99
+
+struct Pair {
+    x: i32,
+    y: i32,
+}
+
+struct Named {
+    name: string,
+    value: i64,
+}
+
+fn makePair(): Pair {
+    return Pair { x: 42, y: 99 }
+}
+
+fn makeNamed(): Named {
+    return Named { name: "hello", value: 99 }
+}
+
+fn main(): i32 {
+    let x = makePair().x
+    print(x)
+    let name = makeNamed().name
+    print(name)
+    let val = makeNamed().value
+    print(val)
+    return 0
+}
