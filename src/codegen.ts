@@ -1541,8 +1541,10 @@ export class Codegen {
     lines.push(`${panicLabel}:`);
     const span = expr.span;
     const isResult = expr.enumName.startsWith("Result_");
-    if (isResult) {
-      // extract the Err(string) payload and print it
+    const errVariant = isResult ? layout.variants.get("Err") : null;
+    const errIsString = errVariant && errVariant.fieldTypes.length === 1 && errVariant.fieldTypes[0] === "%String";
+    if (isResult && errIsString) {
+      // Err(string) — extract and print the message
       const errPayloadPtr = this.nextTemp();
       lines.push(`  ${errPayloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
       const errStr = this.nextTemp();
@@ -1554,6 +1556,13 @@ export class Codegen {
       const fmtPtr = this.nextTemp();
       lines.push(`  ${fmtPtr} = getelementptr [${fmtLen} x i8], ptr ${fmtLabel}, i32 0, i32 0`);
       lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtPtr}, ptr ${errDataPtr})`);
+    } else if (isResult) {
+      // Err(non-string) — print generic message with enum type name
+      const errMsg = `error at ${span?.line ?? 0}:${span?.col ?? 0}: unwrap called on Err`;
+      const { label: errLabel, length: errLen } = this.addString(errMsg);
+      const errPtr = this.nextTemp();
+      lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+      lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
     } else {
       const errMsg = `error at ${span?.line ?? 0}:${span?.col ?? 0}: unwrap called on None`;
       const { label: errLabel, length: errLen } = this.addString(errMsg);
