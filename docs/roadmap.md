@@ -53,6 +53,22 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 - [ ] LSP: completions, rename, find references
 - [ ] REPL / playground
 
+## Phase 2.7 — Iteration & Zero-Copy Ergonomics
+
+Goal: close the gap with Rust's expressiveness without introducing lifetimes. After studying real Rust codebases (ripgrep, deno), ~70% of lifetime usage is zero-copy views into data. Milo's second-class refs handle the rest.
+
+### What we cover (~70% of Rust lifetime patterns)
+- [x] `for` loops — ranges, Vec, array, string (by byte), HashMap (key+value)
+- [x] `break` / `continue` in for loops
+- [ ] Vec functional methods — `.map()`, `.filter()`, `.each()`, `.find()`, `.any()`, `.all()`
+- [ ] `&string` / `&[T]` slice locals — extend second-class refs to local variables (can't escape function). Enables zero-copy `content[0..5]` without allocating.
+
+### What we don't cover (~30% — and how we could)
+- **Structs with borrowed fields** (e.g. `Parser<'a>` holding `&'a str`): would need scoped-lifetime structs. Deferred — most parsers can just own their input.
+- **Iterators yielding borrowed data** (e.g. `LineIter<'b>` → `&'b [u8]`): would need iterator trait + borrowed return types. Covered by callback-based internal iteration (`.each()`) and `for` loops for now.
+- **Cow<'a, T>** (conditional borrow/own): niche optimization. Just clone when needed.
+- **Multi-lifetime generics** (e.g. `Core<'s, M: 's, S>`): deep borrow-checker territory. Not planned — design around it with ownership.
+
 ## Phase 3 — Self-Hosting
 
 Done:

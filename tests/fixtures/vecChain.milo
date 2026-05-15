@@ -1,0 +1,14 @@
+// @expect: 4
+// @expect: 16
+fn main(): i32 {
+    var nums: Vec<i32> = Vec.new()
+    nums.push(1)
+    nums.push(2)
+    nums.push(3)
+    nums.push(4)
+    let result = nums.filter((n: &i32) => n % 2 == 0).map((n: &i32) => n * n)
+    for r in result {
+        print(r)
+    }
+    return 0
+}

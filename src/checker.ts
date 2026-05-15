@@ -1149,6 +1149,29 @@ export class TypeChecker {
                 }
               }
             }
+          } else if (iterType.tag === "array") {
+            if (stmt.varName2) {
+              this.error("array for loop takes one binding, not two", sp);
+            }
+            const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
+            if (stmt.iterable.kind === "Ident") {
+              const info = this.lookup(stmt.iterable.name);
+              if (info) info.borrowed = true;
+            }
+            const preMoves = this.snapshotMoveState();
+            this.pushScope();
+            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false });
+            this.loopDepth++;
+            for (const s of stmt.body) this.checkStmt(s, fnRetType);
+            this.loopDepth--;
+            this.popScope();
+            for (const scope of this.scopes) {
+              for (const [name, info] of scope) {
+                if (preMoves.get(info) === false && info.moved) {
+                  this.error(`cannot move '${name}' out of a loop`, sp);
+                }
+              }
+            }
           } else if (iterType.tag !== "unknown") {
             this.error(`cannot iterate over type '${typeName(iterType)}'`, sp);
           }
@@ -2175,6 +2198,51 @@ export class TypeChecker {
               this.error(`cannot pop from immutable Vec`, sp, `declare with 'var' to make it mutable`);
             }
             return this.setType(expr, objType.element);
+          }
+          if (expr.method === "map") {
+            if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") { this.error(`'map' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
+            return this.setType(expr, { tag: "vec", element: cbType.ret });
+          }
+          if (expr.method === "filter") {
+            if (expr.args.length !== 1) { this.error(`'filter' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") { this.error(`'filter' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
+            return this.setType(expr, { tag: "vec", element: objType.element });
+          }
+          if (expr.method === "each") {
+            if (expr.args.length !== 1) { this.error(`'each' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "void" } };
+            this.checkExprWithHint(expr.args[0], cbHint);
+            return this.setType(expr, { tag: "void" });
+          }
+          if (expr.method === "find") {
+            if (expr.args.length !== 1) { this.error(`'find' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") { this.error(`'find' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
+            return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
+          }
+          if (expr.method === "any") {
+            if (expr.args.length !== 1) { this.error(`'any' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            this.checkExprWithHint(expr.args[0], cbHint);
+            return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "all") {
+            if (expr.args.length !== 1) { this.error(`'all' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            this.checkExprWithHint(expr.args[0], cbHint);
+            return this.setType(expr, { tag: "bool" });
           }
           this.error(`Vec has no method '${expr.method}'`, sp);
           return this.setType(expr, { tag: "unknown" });

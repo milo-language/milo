@@ -1,0 +1,14 @@
+// @expect: 2
+// @expect: 4
+fn main(): i32 {
+    var nums: Vec<i32> = Vec.new()
+    nums.push(1)
+    nums.push(2)
+    nums.push(3)
+    nums.push(4)
+    let evens = nums.filter((n: &i32) => n % 2 == 0)
+    for e in evens {
+        print(e)
+    }
+    return 0
+}

@@ -208,6 +208,9 @@ class LowerCtx {
           iterableKind = "hashmap";
           varType = { tag: "ref", inner: iterType.key, mutable: false };
           varType2 = { tag: "ref", inner: iterType.value, mutable: false };
+        } else if (iterType?.tag === "array") {
+          iterableKind = "array";
+          varType = { tag: "ref", inner: iterType.element, mutable: false };
         } else {
           iterableKind = "vec";
           varType = { tag: "unknown" };
@@ -426,6 +429,26 @@ class LowerCtx {
           }
           if (expr.method === "pop") {
             return { kind: "VecPop", vec: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+          if (expr.method === "map") {
+            const resultElem = type.tag === "vec" ? type.element : { tag: "unknown" as const };
+            return { kind: "VecMap", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, resultElementType: resultElem, type, span: expr.span };
+          }
+          if (expr.method === "filter") {
+            return { kind: "VecFilter", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
+          }
+          if (expr.method === "each") {
+            return { kind: "VecEach", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
+          }
+          if (expr.method === "find") {
+            const optionEnumName = type.tag === "enum" ? type.name : "";
+            return { kind: "VecFind", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, optionEnumName, type, span: expr.span };
+          }
+          if (expr.method === "any") {
+            return { kind: "VecAny", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
+          }
+          if (expr.method === "all") {
+            return { kind: "VecAll", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
         }
         if (objType?.tag === "hashmap") {

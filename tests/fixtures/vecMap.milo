@@ -1,0 +1,14 @@
+// @expect: 1
+// @expect: 4
+// @expect: 9
+fn main(): i32 {
+    var nums: Vec<i32> = Vec.new()
+    nums.push(1)
+    nums.push(2)
+    nums.push(3)
+    let squares = nums.map((n: &i32) => n * n)
+    for s in squares {
+        print(s)
+    }
+    return 0
+}

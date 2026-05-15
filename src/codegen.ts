@@ -822,6 +822,65 @@ export class Codegen {
       this.loopExit = prevExit;
       return [lines, false];
 
+    } else if (stmt.iterableKind === "array") {
+      const [iterLines, iterAddr, iterTy] = this.genLValue(stmt.iterable);
+      lines.push(...iterLines);
+      const match = iterTy.match(/\[(\d+) x (.+)\]/);
+      if (!match) throw new Error("expected fixed array type for for-each");
+      const arrSize = parseInt(match[1]);
+      const elemTy = match[2];
+      const elemType = stmt.varType.tag === "ref" ? stmt.varType.inner : stmt.varType;
+
+      const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${idxAddr} = alloca i32`);
+      lines.push(`  store i32 0, ptr ${idxAddr}`);
+
+      const varAddr = `%${stmt.varName}.addr`;
+      this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
+      this.locals.set(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: varAddr });
+
+      const condLabel = this.nextLabel("for.cond");
+      const bodyLabel = this.nextLabel("for.body");
+      const incrLabel = this.nextLabel("for.incr");
+      const endLabel = this.nextLabel("for.end");
+      const prevHeader = this.loopHeader;
+      const prevExit = this.loopExit;
+      this.loopHeader = incrLabel;
+      this.loopExit = endLabel;
+
+      lines.push(`  br label %${condLabel}`);
+      lines.push(`${condLabel}:`);
+      const idx = this.nextTemp();
+      lines.push(`  ${idx} = load i32, ptr ${idxAddr}`);
+      const cmp = this.nextTemp();
+      lines.push(`  ${cmp} = icmp ult i32 ${idx}, ${arrSize}`);
+      lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+      lines.push(`${bodyLabel}:`);
+      const elemPtr = this.nextTemp();
+      lines.push(`  ${elemPtr} = getelementptr ${iterTy}, ptr ${iterAddr}, i32 0, i32 ${idx}`);
+      lines.push(`  store ptr ${elemPtr}, ptr ${varAddr}`);
+
+      let bodyTerminated = false;
+      for (const s of stmt.body) {
+        const [sl, t] = this.genStmt(s);
+        lines.push(...sl);
+        if (t) { bodyTerminated = true; break; }
+      }
+      if (!bodyTerminated) lines.push(`  br label %${incrLabel}`);
+
+      lines.push(`${incrLabel}:`);
+      const curIdx = this.nextTemp();
+      const nextIdx = this.nextTemp();
+      lines.push(`  ${curIdx} = load i32, ptr ${idxAddr}`);
+      lines.push(`  ${nextIdx} = add i32 ${curIdx}, 1`);
+      lines.push(`  store i32 ${nextIdx}, ptr ${idxAddr}`);
+      lines.push(`  br label %${condLabel}`);
+
+      lines.push(`${endLabel}:`);
+      this.loopHeader = prevHeader;
+      this.loopExit = prevExit;
+      return [lines, false];
+
     } else {
       // hashmap iteration
       const [iterLines, iterAddr] = this.genLValue(stmt.iterable);
@@ -1616,6 +1675,18 @@ export class Codegen {
         lines.push(`  ${len} = extractvalue %Vec ${ov}, 1`);
         return [lines, len, "i64"];
       }
+      case "VecMap":
+        return this.genVecMap(expr, lines);
+      case "VecFilter":
+        return this.genVecFilter(expr, lines);
+      case "VecEach":
+        return this.genVecEach(expr, lines);
+      case "VecFind":
+        return this.genVecFind(expr, lines);
+      case "VecAny":
+        return this.genVecAny(expr, lines);
+      case "VecAll":
+        return this.genVecAll(expr, lines);
       case "HashMapNew":
         return this.genHashMapNew(expr, lines);
       case "HashMapInsert":
@@ -1694,11 +1765,18 @@ export class Codegen {
 
         // set up params
         for (const p of expr.params) {
-          const lt = this.llvmType(p.type);
           const isRefParam = p.type.tag === "ref";
-          closureBody.push(`  %${p.name}.addr = alloca ${lt}`);
-          closureBody.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
-          this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: isRefParam });
+          if (isRefParam && p.type.tag === "ref") {
+            const innerTy = this.llvmType(p.type.inner);
+            closureBody.push(`  %${p.name}.addr = alloca ptr`);
+            closureBody.push(`  store ptr %${p.name}, ptr %${p.name}.addr`);
+            this.locals.set(p.name, { type: innerTy, typeKind: p.type, mutable: false, isRef: true });
+          } else {
+            const lt = this.llvmType(p.type);
+            closureBody.push(`  %${p.name}.addr = alloca ${lt}`);
+            closureBody.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
+            this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
+          }
         }
 
         // generate body
@@ -2395,6 +2473,326 @@ export class Codegen {
     lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
 
     return [lines, val, elemTy];
+  }
+
+  // shared helper: extract closure fn/env and vec data/len for functional methods
+  private genVecMethodPreamble(vecExpr: HIRExpr, cbExpr: HIRExpr, elemType: TypeKind, lines: string[]): {
+    fnPtr: string; envPtr: string; data: string; len: string; elemTy: string;
+  } {
+    this.hasVecType = true;
+    const [vl, vv] = this.genExpr(vecExpr);
+    lines.push(...vl);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = extractvalue %Vec ${vv}, 0`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = extractvalue %Vec ${vv}, 1`);
+    const [cl, cv] = this.genExpr(cbExpr);
+    lines.push(...cl);
+    const fnPtr = this.nextTemp();
+    lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+    const envPtr = this.nextTemp();
+    lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+    return { fnPtr, envPtr, data, len, elemTy: this.llvmType(elemType) };
+  }
+
+  private genVecMap(expr: HIRExpr & { kind: "VecMap" }, lines: string[]): [string[], string, string] {
+    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const resultElemTy = this.llvmType(expr.resultElementType);
+    const resultElemSize = this.typeSizeOf(expr.resultElementType);
+    this.needsMalloc = true;
+
+    // allocate result buffer: malloc(len * elemSize)
+    const bufSize = this.nextTemp();
+    lines.push(`  ${bufSize} = mul i64 ${len}, ${resultElemSize}`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
+
+    const idxAddr = `%__map_idx.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+    lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+    const condLabel = this.nextLabel("map.cond");
+    const bodyLabel = this.nextLabel("map.body");
+    const endLabel = this.nextLabel("map.end");
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+    const idx = this.nextTemp();
+    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+    lines.push(`${bodyLabel}:`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = call ${resultElemTy} ${fnPtr}(ptr ${envPtr}, ptr ${elemPtr})`);
+    const destPtr = this.nextTemp();
+    lines.push(`  ${destPtr} = getelementptr ${resultElemTy}, ptr ${buf}, i64 ${idx}`);
+    lines.push(`  store ${resultElemTy} ${result}, ptr ${destPtr}`);
+    const nextIdx = this.nextTemp();
+    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${endLabel}:`);
+
+    // build result Vec { buf, len, len }
+    const v0 = this.nextTemp();
+    lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
+    const v1 = this.nextTemp();
+    lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${len}, 1`);
+    const v2 = this.nextTemp();
+    lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${len}, 2`);
+    return [lines, v2, "%Vec"];
+  }
+
+  private genVecFilter(expr: HIRExpr & { kind: "VecFilter" }, lines: string[]): [string[], string, string] {
+    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const elemSize = this.typeSizeOf(expr.elementType);
+    this.needsMalloc = true;
+
+    // allocate result buffer with capacity = source len (worst case all match)
+    const bufSize = this.nextTemp();
+    lines.push(`  ${bufSize} = mul i64 ${len}, ${elemSize}`);
+    const buf = this.nextTemp();
+    lines.push(`  ${buf} = call ptr @malloc(i64 ${bufSize})`);
+
+    const idxAddr = `%__filter_idx.${this.scopeCounter++}.addr`;
+    const outIdxAddr = `%__filter_out.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+    this.entryAllocas.push(`  ${outIdxAddr} = alloca i64`);
+    lines.push(`  store i64 0, ptr ${idxAddr}`);
+    lines.push(`  store i64 0, ptr ${outIdxAddr}`);
+
+    const condLabel = this.nextLabel("filter.cond");
+    const bodyLabel = this.nextLabel("filter.body");
+    const copyLabel = this.nextLabel("filter.copy");
+    const nextLabel = this.nextLabel("filter.next");
+    const endLabel = this.nextLabel("filter.end");
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+    const idx = this.nextTemp();
+    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+
+    lines.push(`${bodyLabel}:`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+    const keep = this.nextTemp();
+    lines.push(`  ${keep} = call i1 ${fnPtr}(ptr ${envPtr}, ptr ${elemPtr})`);
+    lines.push(`  br i1 ${keep}, label %${copyLabel}, label %${nextLabel}`);
+
+    lines.push(`${copyLabel}:`);
+    const cloned = this.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
+    const outIdx = this.nextTemp();
+    lines.push(`  ${outIdx} = load i64, ptr ${outIdxAddr}`);
+    const destPtr = this.nextTemp();
+    lines.push(`  ${destPtr} = getelementptr ${elemTy}, ptr ${buf}, i64 ${outIdx}`);
+    lines.push(`  store ${elemTy} ${cloned}, ptr ${destPtr}`);
+    const nextOut = this.nextTemp();
+    lines.push(`  ${nextOut} = add i64 ${outIdx}, 1`);
+    lines.push(`  store i64 ${nextOut}, ptr ${outIdxAddr}`);
+    lines.push(`  br label %${nextLabel}`);
+
+    lines.push(`${nextLabel}:`);
+    const nextIdx = this.nextTemp();
+    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+    lines.push(`  br label %${condLabel}`);
+
+    lines.push(`${endLabel}:`);
+    const finalLen = this.nextTemp();
+    lines.push(`  ${finalLen} = load i64, ptr ${outIdxAddr}`);
+    const v0 = this.nextTemp();
+    lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
+    const v1 = this.nextTemp();
+    lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${finalLen}, 1`);
+    const v2 = this.nextTemp();
+    lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${len}, 2`);
+    return [lines, v2, "%Vec"];
+  }
+
+  private genVecEach(expr: HIRExpr & { kind: "VecEach" }, lines: string[]): [string[], string, string] {
+    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+
+    const idxAddr = `%__each_idx.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+    lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+    const condLabel = this.nextLabel("each.cond");
+    const bodyLabel = this.nextLabel("each.body");
+    const endLabel = this.nextLabel("each.end");
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+    const idx = this.nextTemp();
+    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+    lines.push(`${bodyLabel}:`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+    lines.push(`  call void ${fnPtr}(ptr ${envPtr}, ptr ${elemPtr})`);
+    const nextIdx = this.nextTemp();
+    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${endLabel}:`);
+    return [lines, "void", "void"];
+  }
+
+  private genVecFind(expr: HIRExpr & { kind: "VecFind" }, lines: string[]): [string[], string, string] {
+    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+    const enumTy = `%${expr.optionEnumName}`;
+    const enumLayout = this.enumLayouts.get(expr.optionEnumName);
+    if (!enumLayout) throw new Error(`enum layout not found for ${expr.optionEnumName}`);
+
+    const noneVariant = enumLayout.variants.get("None");
+    const someVariant = enumLayout.variants.get("Some");
+    if (!noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
+
+    const resultAddr = `%__find_result.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
+    lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 0`);
+    lines.push(`  store i32 ${noneVariant.tag}, ptr ${tagPtr}`);
+
+    const idxAddr = `%__find_idx.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+    lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+    const condLabel = this.nextLabel("find.cond");
+    const bodyLabel = this.nextLabel("find.body");
+    const foundLabel = this.nextLabel("find.found");
+    const nextLabel = this.nextLabel("find.next");
+    const endLabel = this.nextLabel("find.end");
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+    const idx = this.nextTemp();
+    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+
+    lines.push(`${bodyLabel}:`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+    const match = this.nextTemp();
+    lines.push(`  ${match} = call i1 ${fnPtr}(ptr ${envPtr}, ptr ${elemPtr})`);
+    lines.push(`  br i1 ${match}, label %${foundLabel}, label %${nextLabel}`);
+
+    lines.push(`${foundLabel}:`);
+    const cloned = this.emitDeepCloneFromPtr(lines, elemPtr, expr.elementType);
+    lines.push(`  store i32 ${someVariant.tag}, ptr ${tagPtr}`);
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 1`);
+    lines.push(`  store ${elemTy} ${cloned}, ptr ${payloadPtr}`);
+    lines.push(`  br label %${endLabel}`);
+
+    lines.push(`${nextLabel}:`);
+    const nextIdx = this.nextTemp();
+    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+    lines.push(`  br label %${condLabel}`);
+
+    lines.push(`${endLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = load ${enumTy}, ptr ${resultAddr}`);
+    return [lines, result, enumTy];
+  }
+
+  private genVecAny(expr: HIRExpr & { kind: "VecAny" }, lines: string[]): [string[], string, string] {
+    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+
+    const resultAddr = `%__any_result.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${resultAddr} = alloca i1`);
+    lines.push(`  store i1 false, ptr ${resultAddr}`);
+
+    const idxAddr = `%__any_idx.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+    lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+    const condLabel = this.nextLabel("any.cond");
+    const bodyLabel = this.nextLabel("any.body");
+    const endLabel = this.nextLabel("any.end");
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+    const idx = this.nextTemp();
+    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+    lines.push(`${bodyLabel}:`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+    const match = this.nextTemp();
+    lines.push(`  ${match} = call i1 ${fnPtr}(ptr ${envPtr}, ptr ${elemPtr})`);
+    const foundLabel = this.nextLabel("any.found");
+    const nextLabel = this.nextLabel("any.next");
+    lines.push(`  br i1 ${match}, label %${foundLabel}, label %${nextLabel}`);
+    lines.push(`${foundLabel}:`);
+    lines.push(`  store i1 true, ptr ${resultAddr}`);
+    lines.push(`  br label %${endLabel}`);
+    lines.push(`${nextLabel}:`);
+    const nextIdx = this.nextTemp();
+    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${endLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+    return [lines, result, "i1"];
+  }
+
+  private genVecAll(expr: HIRExpr & { kind: "VecAll" }, lines: string[]): [string[], string, string] {
+    const { fnPtr, envPtr, data, len, elemTy } = this.genVecMethodPreamble(expr.vec, expr.callback, expr.elementType, lines);
+
+    const resultAddr = `%__all_result.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${resultAddr} = alloca i1`);
+    lines.push(`  store i1 true, ptr ${resultAddr}`);
+
+    const idxAddr = `%__all_idx.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
+    lines.push(`  store i64 0, ptr ${idxAddr}`);
+
+    const condLabel = this.nextLabel("all.cond");
+    const bodyLabel = this.nextLabel("all.body");
+    const endLabel = this.nextLabel("all.end");
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+    const idx = this.nextTemp();
+    lines.push(`  ${idx} = load i64, ptr ${idxAddr}`);
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp ult i64 ${idx}, ${len}`);
+    lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
+    lines.push(`${bodyLabel}:`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idx}`);
+    const match = this.nextTemp();
+    lines.push(`  ${match} = call i1 ${fnPtr}(ptr ${envPtr}, ptr ${elemPtr})`);
+    const failLabel = this.nextLabel("all.fail");
+    const nextLabel = this.nextLabel("all.next");
+    lines.push(`  br i1 ${match}, label %${nextLabel}, label %${failLabel}`);
+    lines.push(`${failLabel}:`);
+    lines.push(`  store i1 false, ptr ${resultAddr}`);
+    lines.push(`  br label %${endLabel}`);
+    lines.push(`${nextLabel}:`);
+    const nextIdx = this.nextTemp();
+    lines.push(`  ${nextIdx} = add i64 ${idx}, 1`);
+    lines.push(`  store i64 ${nextIdx}, ptr ${idxAddr}`);
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${endLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = load i1, ptr ${resultAddr}`);
+    return [lines, result, "i1"];
   }
 
   // String.push(u8) — same grow logic as Vec but element size is 1
