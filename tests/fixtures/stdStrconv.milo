@@ -1,0 +1,44 @@
+// @expect: 42
+// @expect: -7
+// @expect: 3.14
+// @expect: 255
+// @expect: 511
+// @expect: ff
+// @expect: 1000
+// @expect: 10
+// @expect: 101010
+// @expect: 3.14
+// @expect: 2.71828
+
+import "std/strconv"
+
+fn main(): i32 {
+    match parseInt("42") {
+        Option.Some(n) => { print(n) }
+        Option.None => { print("none") }
+    }
+    match parseInt("-7") {
+        Option.Some(n) => { print(n) }
+        Option.None => { print("none") }
+    }
+    match parseFloat("3.14") {
+        Option.Some(f) => { print(f.toString()) }
+        Option.None => { print("none") }
+    }
+    match parseIntRadix("ff", 16) {
+        Option.Some(n) => { print(n) }
+        Option.None => { print("none") }
+    }
+    match parseIntRadix("777", 8) {
+        Option.Some(n) => { print(n) }
+        Option.None => { print("none") }
+    }
+
+    print(i64ToHex(255))
+    print(i64ToHex(4096))
+    print(i64ToOct(8))
+    print(i64ToBin(42))
+    print(formatFloat(3.14159, 2))
+    print(formatFloat(2.71828, 5))
+    return 0
+}
