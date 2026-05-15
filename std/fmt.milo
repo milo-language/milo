@@ -1,0 +1,123 @@
+// std/fmt — string formatting with {} placeholders
+//
+// Usage: fmt2("hello {}, you are {} years old", name, age.toString())
+// Each {} is replaced left-to-right with the corresponding argument.
+
+// Replace the first {} with val.
+fn fmt1(template: &string, a: &string): string {
+    var result = ""
+    var used = false
+    var i: i64 = 0
+    while i < template.len {
+        if !used && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
+            result = result + a.clone()
+            used = true
+            i = i + 2
+        } else {
+            result.push(template[i])
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// Replace the first two {} with a and b.
+fn fmt2(template: &string, a: &string, b: &string): string {
+    var result = ""
+    var which = 0
+    var i: i64 = 0
+    while i < template.len {
+        if which < 2 && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
+            if which == 0 { result = result + a.clone() }
+            if which == 1 { result = result + b.clone() }
+            which = which + 1
+            i = i + 2
+        } else {
+            result.push(template[i])
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// Replace the first three {} with a, b, and c.
+fn fmt3(template: &string, a: &string, b: &string, c: &string): string {
+    var result = ""
+    var which = 0
+    var i: i64 = 0
+    while i < template.len {
+        if which < 3 && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
+            if which == 0 { result = result + a.clone() }
+            if which == 1 { result = result + b.clone() }
+            if which == 2 { result = result + c.clone() }
+            which = which + 1
+            i = i + 2
+        } else {
+            result.push(template[i])
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// Replace the first four {} with a, b, c, and d.
+fn fmt4(template: &string, a: &string, b: &string, c: &string, d: &string): string {
+    var result = ""
+    var which = 0
+    var i: i64 = 0
+    while i < template.len {
+        if which < 4 && template[i] == 123 && i + 1 < template.len && template[i + 1] == 125 {
+            if which == 0 { result = result + a.clone() }
+            if which == 1 { result = result + b.clone() }
+            if which == 2 { result = result + c.clone() }
+            if which == 3 { result = result + d.clone() }
+            which = which + 1
+            i = i + 2
+        } else {
+            result.push(template[i])
+            i = i + 1
+        }
+    }
+    return result
+}
+
+// Left-pad a string to a minimum width.
+fn padLeft(s: &string, width: i64, ch: u8): string {
+    var result = ""
+    var padding = width - s.len
+    while padding > 0 {
+        result.push(ch)
+        padding = padding - 1
+    }
+    result = result + s.clone()
+    return result
+}
+
+// Right-pad a string to a minimum width.
+fn padRight(s: &string, width: i64, ch: u8): string {
+    var result = s.clone()
+    var padding = width - s.len
+    while padding > 0 {
+        result.push(ch)
+        padding = padding - 1
+    }
+    return result
+}
+
+// Zero-pad an integer to a minimum width.
+fn zeroPad(n: i64, width: i64): string {
+    let s = n.toString()
+    return padLeft(s, width, 48 as u8)
+}
+
+// Join a Vec<string> with a separator.
+fn join(parts: &Vec<string>, sep: &string): string {
+    var result = ""
+    var i: i64 = 0
+    while i < parts.len {
+        if i > 0 { result = result + sep.clone() }
+        result = result + parts[i].clone()
+        i = i + 1
+    }
+    return result
+}

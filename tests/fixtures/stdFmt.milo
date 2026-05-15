@@ -1,0 +1,35 @@
+// @expect: hello world
+// @expect: 1 + 2 = 3
+// @expect: 2024/01/15
+// @expect: a b c d
+// @expect: name: Alice, age: 30
+// @expect: 000042
+// @expect: hi....
+// @expect: 007
+// @expect: a, b, c
+// @expect: a/b/c
+
+import "std/fmt"
+
+fn main(): i32 {
+    print(fmt1("hello {}", "world"))
+    print(fmt2("{} + {} = 3", "1", "2"))
+    print(fmt3("{}/{}/{}", "2024", "01", "15"))
+    print(fmt4("{} {} {} {}", "a", "b", "c", "d"))
+
+    let age = 30
+    print(fmt2("name: {}, age: {}", "Alice", age.toString()))
+
+    print(padLeft("42", 6, 48 as u8))
+    print(padRight("hi", 6, 46 as u8))
+    print(zeroPad(7, 3))
+
+    var parts: Vec<string> = Vec.new()
+    parts.push("a")
+    parts.push("b")
+    parts.push("c")
+    print(join(parts, ", "))
+    print(join(parts, "/"))
+
+    return 0
+}
