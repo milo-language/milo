@@ -1,9 +1,11 @@
-// std/json — view-based JSON parser, no allocation per navigation
+// std/json — zero-copy JSON parser with ergonomic accessors
+//
+// Quick usage:
+//   let j = jsonParse(data)!
+//   let name = j.str("name")!        // Option<string>
+//   let age = j.i64("age")!          // Option<i64>
+//   let nested = j.get("addr")!      // Option<Json>
 
-// Zero-copy JSON value — a view into the original parsed string.
-// Navigate objects with .get(key), arrays with .at(index).
-// Extract values with .str(), .num(), .int(), .bool().
-// Check types with .isStr(), .isNum(), .isArray(), .isObject(), .isNull().
 struct Json {
     raw: string,
     start: i64,
@@ -11,90 +13,123 @@ struct Json {
 }
 
 impl Json {
-    // Look up a key in a JSON object. Returns None if not found.
+    // ── Keyed accessors (object fields) ──
+
     fn get(self: &Self, key: &string): Option<Json> {
-        return jsonGet(self.raw, self.start, self.end, key)
+        return jsonGetImpl(self.raw, self.start, self.end, key)
     }
 
-    // Access a JSON array element by index. Returns None if out of bounds.
+    fn str(self: &Self, key: &string): Option<string> {
+        let v = jsonGetImpl(self.raw, self.start, self.end, key)
+        if let Option.Some(j) = v {
+            if j.isStr() { return Option.Some(jsonStrImpl(j.raw, j.start, j.end)) }
+        }
+        return Option.None
+    }
+
+    fn i64(self: &Self, key: &string): Option<i64> {
+        let v = jsonGetImpl(self.raw, self.start, self.end, key)
+        if let Option.Some(j) = v {
+            if j.isNum() { return Option.Some(jsonIntImpl(j.raw, j.start, j.end)) }
+        }
+        return Option.None
+    }
+
+    fn f64(self: &Self, key: &string): Option<f64> {
+        let v = jsonGetImpl(self.raw, self.start, self.end, key)
+        if let Option.Some(j) = v {
+            if j.isNum() { return Option.Some(jsonNumImpl(j.raw, j.start, j.end)) }
+        }
+        return Option.None
+    }
+
+    fn bool(self: &Self, key: &string): Option<bool> {
+        let v = jsonGetImpl(self.raw, self.start, self.end, key)
+        if let Option.Some(j) = v {
+            if j.isBool() { return Option.Some(j.start < j.end && j.raw[j.start] == 't') }
+        }
+        return Option.None
+    }
+
+    // ── Bare value extraction (for array elements, after .get()) ──
+
+    fn asStr(self: &Self): Option<string> {
+        if self.isStr() { return Option.Some(jsonStrImpl(self.raw, self.start, self.end)) }
+        return Option.None
+    }
+
+    fn asI64(self: &Self): Option<i64> {
+        if self.isNum() { return Option.Some(jsonIntImpl(self.raw, self.start, self.end)) }
+        return Option.None
+    }
+
+    fn asF64(self: &Self): Option<f64> {
+        if self.isNum() { return Option.Some(jsonNumImpl(self.raw, self.start, self.end)) }
+        return Option.None
+    }
+
+    fn asBool(self: &Self): Option<bool> {
+        if self.isBool() { return Option.Some(self.start < self.end && self.raw[self.start] == 't') }
+        return Option.None
+    }
+
+    // ── Array access ──
+
     fn at(self: &Self, index: i64): Option<Json> {
-        return jsonAt(self.raw, self.start, self.end, index)
+        return jsonAtImpl(self.raw, self.start, self.end, index)
     }
 
-    // Extract the string value with JSON unescaping. Returns "" if not a string.
-    fn str(self: &Self): string {
-        return jsonStr(self.raw, self.start, self.end)
-    }
+    // ── Type checks ──
 
-    // Extract a numeric value as f64.
-    fn num(self: &Self): f64 {
-        return jsonNum(self.raw, self.start, self.end)
-    }
-
-    // Extract a numeric value as i64.
-    fn int(self: &Self): i64 {
-        return jsonInt(self.raw, self.start, self.end)
-    }
-
-    // Return true if this JSON value is true.
-    fn bool(self: &Self): bool {
-        return self.start < self.end && self.raw[self.start] == 't'
-    }
-
-    // Return true if this is a JSON null.
     fn isNull(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == 'n'
     }
 
-    // Return true if this is a JSON string.
     fn isStr(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == '"'
     }
 
-    // Return true if this is a JSON number.
     fn isNum(self: &Self): bool {
         if self.start >= self.end { return false }
         let c = self.raw[self.start]
         return c == '-' || (c >= '0' && c <= '9')
     }
 
-    // Return true if this is a JSON boolean.
     fn isBool(self: &Self): bool {
         if self.start >= self.end { return false }
         let c = self.raw[self.start]
         return c == 't' || c == 'f'
     }
 
-    // Return true if this is a JSON array.
     fn isArray(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == '['
     }
 
-    // Return true if this is a JSON object.
     fn isObject(self: &Self): bool {
         return self.start < self.end && self.raw[self.start] == '{'
     }
 
-    // Return the number of elements in a JSON array or object.
     fn len(self: &Self): i64 {
-        return jsonLen(self.raw, self.start, self.end)
+        return jsonLenImpl(self.raw, self.start, self.end)
     }
 
-    // Return the raw JSON text of this value.
     fn rawStr(self: &Self): string {
-        return self.raw[self.start .. self.end]
+        return self.raw[self.start .. self.end].clone()
     }
 }
 
-// Parse a JSON string and return a Json view.
-// Example: let j = jsonParse("{\"name\": \"milo\"}")
-fn jsonParse(s: string): Json {
+fn jsonParse(s: string): Result<Json> {
+    if s.len == 0 { return Result.Err("empty input") }
     let i = skipWs(s, 0)
+    if i >= s.len { return Result.Err("empty input") }
     let e = skipValue(s, i)
-    return Json { raw: s, start: i, end: e }
+    let afterWs = skipWs(s, e)
+    if afterWs != s.len { return Result.Err("trailing content") }
+    if e == i { return Result.Err("invalid JSON") }
+    return Result.Ok(Json { raw: s, start: i, end: e })
 }
 
-// ── Whitespace ──
+// ── Internal helpers ──
 
 fn skipWs(s: &string, pos: i64): i64 {
     var i: i64 = pos
@@ -106,8 +141,6 @@ fn skipWs(s: &string, pos: i64): i64 {
     return i
 }
 
-// ── Skip a complete JSON value, return end position ──
-
 fn skipValue(s: &string, pos: i64): i64 {
     if pos >= s.len { return pos }
     let c = s[pos]
@@ -117,7 +150,6 @@ fn skipValue(s: &string, pos: i64): i64 {
     if c == 't' { return pos + 4 }
     if c == 'f' { return pos + 5 }
     if c == 'n' { return pos + 4 }
-    // number
     return skipNumber(s, pos)
 }
 
@@ -143,7 +175,6 @@ fn skipNumber(s: &string, pos: i64): i64 {
         i = i + 1
         while i < s.len && s[i] >= '0' && s[i] <= '9' { i = i + 1 }
     }
-    // exponent
     if i < s.len && (s[i] == 'e' || s[i] == 'E') {
         i = i + 1
         if i < s.len && (s[i] == '+' || s[i] == '-') { i = i + 1 }
@@ -193,10 +224,7 @@ fn skipArray(s: &string, pos: i64): i64 {
     return i
 }
 
-// ── Object key lookup ──
-
 fn keyMatches(s: &string, pos: i64, key: &string): bool {
-    // pos points at opening quote
     if pos >= s.len || s[pos] != '"' { return false }
     var i: i64 = 0
     var j: i64 = pos + 1
@@ -212,13 +240,12 @@ fn keyMatches(s: &string, pos: i64, key: &string): bool {
     return i == key.len && j < s.len && s[j] == '"'
 }
 
-fn jsonGet(s: &string, start: i64, end: i64, key: &string): Option<Json> {
+fn jsonGetImpl(s: &string, start: i64, end: i64, key: &string): Option<Json> {
     if start >= end || s[start] != '{' { return Option.None }
     var i: i64 = start + 1
     while i < end {
         i = skipWs(s, i)
         if i >= end || s[i] == '}' { return Option.None }
-        // at a key string
         let keyStart = i
         if s[i] != '"' { return Option.None }
         let keyEnd = skipString(s, i)
@@ -237,9 +264,7 @@ fn jsonGet(s: &string, start: i64, end: i64, key: &string): Option<Json> {
     return Option.None
 }
 
-// ── Array index access ──
-
-fn jsonAt(s: &string, start: i64, end: i64, index: i64): Option<Json> {
+fn jsonAtImpl(s: &string, start: i64, end: i64, index: i64): Option<Json> {
     if start >= end || s[start] != '[' { return Option.None }
     var i: i64 = start + 1
     var idx: i64 = 0
@@ -258,9 +283,7 @@ fn jsonAt(s: &string, start: i64, end: i64, index: i64): Option<Json> {
     return Option.None
 }
 
-// ── Array/object length ──
-
-fn jsonLen(s: &string, start: i64, end: i64): i64 {
+fn jsonLenImpl(s: &string, start: i64, end: i64): i64 {
     if start >= end { return 0 }
     let c = s[start]
     if c == '[' {
@@ -300,9 +323,7 @@ fn jsonLen(s: &string, start: i64, end: i64): i64 {
     return 0
 }
 
-// ── Value extraction ──
-
-fn jsonStr(s: &string, start: i64, end: i64): string {
+fn jsonStrImpl(s: &string, start: i64, end: i64): string {
     if start >= end || s[start] != '"' { return "" }
     var result: string = ""
     var i: i64 = start + 1
@@ -325,7 +346,7 @@ fn jsonStr(s: &string, start: i64, end: i64): string {
     return result
 }
 
-fn jsonNum(s: &string, start: i64, end: i64): f64 {
+fn jsonNumImpl(s: &string, start: i64, end: i64): f64 {
     var result: f64 = 0.0
     var negative: bool = false
     var i: i64 = start
@@ -350,7 +371,7 @@ fn jsonNum(s: &string, start: i64, end: i64): f64 {
     return result
 }
 
-fn jsonInt(s: &string, start: i64, end: i64): i64 {
+fn jsonIntImpl(s: &string, start: i64, end: i64): i64 {
     var result: i64 = 0
     var negative: bool = false
     var i: i64 = start

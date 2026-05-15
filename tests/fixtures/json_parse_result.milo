@@ -1,0 +1,43 @@
+// @expect: ok=true
+// @expect: empty=true
+// @expect: trailing=true
+// @expect: propagated=none
+
+import "std/json"
+
+fn tryParse(s: string): Result<string> {
+    let j = jsonParse(s)?
+    return Result.Ok(j.str("name")!)
+}
+
+fn main(): i32 {
+    // Valid parse
+    let r1 = jsonParse("{\"x\": 1}")
+    match r1 {
+        Result.Ok(j) => { print("ok=true") }
+        Result.Err(e) => { print("ok=false") }
+    }
+
+    // Empty input
+    let r2 = jsonParse("")
+    match r2 {
+        Result.Ok(j) => { print("empty=false") }
+        Result.Err(e) => { print("empty=true") }
+    }
+
+    // Trailing content
+    let r3 = jsonParse("42 abc")
+    match r3 {
+        Result.Ok(j) => { print("trailing=false") }
+        Result.Err(e) => { print("trailing=true") }
+    }
+
+    // ? propagation
+    let r4 = tryParse("not json")
+    match r4 {
+        Result.Ok(v) => { print("propagated=", v) }
+        Result.Err(e) => { print("propagated=none") }
+    }
+
+    return 0
+}

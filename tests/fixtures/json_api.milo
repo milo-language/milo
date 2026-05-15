@@ -1,0 +1,57 @@
+// @expect: name=milo
+// @expect: version=1
+// @expect: pi=3.14
+// @expect: active=true
+// @expect: missing=none
+// @expect: first=alpha
+// @expect: nested=SF
+// @expect: len=3
+// @expect: null=true
+// @expect: wrongtype=none
+// @expect: bare=hello
+
+import "std/json"
+
+fn main(): i32 {
+    let j = jsonParse("{\"name\": \"milo\", \"version\": 1, \"pi\": 3.14, \"active\": true, \"nothing\": null, \"tags\": [\"alpha\", \"beta\", \"gamma\"], \"addr\": {\"city\": \"SF\"}}")!
+
+    // Keyed accessors
+    print("name=", j.str("name")!)
+    print("version=", j.i64("version")!)
+    print("pi=", j.f64("pi")!)
+    print("active=", j.bool("active")!)
+
+    // Missing key returns None
+    if let Option.Some(v) = j.str("missing") {
+        print("missing=", v)
+    } else {
+        print("missing=none")
+    }
+
+    // Array access
+    let tags = j.get("tags")!
+    print("first=", tags.at(0)!.asStr()!)
+
+    // Nested object
+    print("nested=", j.get("addr")!.str("city")!)
+
+    // Length
+    print("len=", tags.len())
+
+    // Null check
+    let nothing = j.get("nothing")!
+    print("null=", nothing.isNull())
+
+    // Wrong type returns None
+    if let Option.Some(v) = j.i64("name") {
+        print("wrongtype=", v)
+    } else {
+        print("wrongtype=none")
+    }
+
+    // Bare value extraction
+    let raw = jsonParse("\"hello\"")!
+    print("bare=", raw.asStr()!)
+
+    return 0
+}

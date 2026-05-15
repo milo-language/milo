@@ -7,7 +7,7 @@ All modules are imported with `import "std/<name>"`.
 | Module | What it provides |
 |--------|-----------------|
 | `std/io` | `readFile`, `readStdin`, `openRead`/`openWrite`/`openAppend`, `readAll`, `writeAll`, RAII file handles |
-| `std/fs` | `readDir`, `file_info`, `is_dir`/`is_file`, `pathExists`, `writeFile` |
+| `std/fs` | `readDir`, `fileInfo`, `isDir`/`isFile`, `pathExists`, `writeFile` |
 | `std/path` | `pathJoin`, `pathBasename`, `pathDirname`, `pathExt`, `pathStem` |
 | `std/env` | `getEnv`, `getEnvOr` |
 
@@ -22,7 +22,7 @@ All modules are imported with `import "std/<name>"`.
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/json` | View-based JSON parser |
+| `std/json` | Zero-copy JSON parser — `jsonParse`, keyed accessors (`.str()`, `.i64()`, `.f64()`, `.bool()`), `jsonStringify` |
 | `std/arena` | Generational arena for cyclic/graph data with safe `Handle<T>` |
 
 ## CLI & System
@@ -30,7 +30,7 @@ All modules are imported with `import "std/<name>"`.
 | Module | What it provides |
 |--------|-----------------|
 | `std/argparse` | CLI argument parsing with typed getters and `--help` generation |
-| `std/process` | Command execution, `spawn`/`wait_for`/`signal` |
+| `std/process` | Command execution, `spawn`/`waitFor`/`signal` |
 
 ## HTTP Server Example
 
