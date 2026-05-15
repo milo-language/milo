@@ -7,6 +7,7 @@ dist
 *.tgz
 
 # compiled milo binaries
+bin/
 *.o
 *.ll
 hello

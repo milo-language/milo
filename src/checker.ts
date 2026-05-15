@@ -410,7 +410,9 @@ export class TypeChecker {
     // print/format accept any number of Display-formattable args (handled in codegen).
     // No required param — variadic-from-zero. Type-driven formatting per arg.
     this.functions.set("print", { params: [], ret: { tag: "void" }, variadic: true });
+    this.functions.set("eprint", { params: [], ret: { tag: "void" }, variadic: true });
     this.functions.set("format", { params: [], ret: { tag: "string" }, variadic: true });
+    this.functions.set("flush", { params: [], ret: { tag: "void" }, variadic: false });
     this.functions.set("exit", { params: [{ type: i32t, name: "code" }], ret: { tag: "void" }, variadic: false });
     this.functions.set("_miloArgCount", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
     this.functions.set("_miloArgAt", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });
@@ -1078,7 +1080,13 @@ export class TypeChecker {
           if (stmt.varName2) {
             this.error("range for loop takes one binding, not two", sp);
           }
-          const varType = startType.tag === "int" ? startType : endType;
+          // Widen to the larger int type so 0..vec.len() just works
+          let varType: TypeKind;
+          if (startType.tag === "int" && endType.tag === "int") {
+            varType = startType.bits >= endType.bits ? startType : endType;
+          } else {
+            varType = startType.tag === "int" ? startType : endType;
+          }
           this.setType(stmt.iterable, varType);
           const preMoves = this.snapshotMoveState();
           this.pushScope();

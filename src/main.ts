@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync, unlinkSync } from "fs";
-import { execSync } from "child_process";
+import { readFileSync, writeFileSync, unlinkSync, existsSync } from "fs";
+import { execSync, spawnSync } from "child_process";
+import { fileURLToPath } from "url";
 import { basename, resolve, dirname } from "path";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -11,6 +12,7 @@ import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { formatDiagnostic } from "./diagnostics";
 import { type TargetInfo, getHostTarget } from "./target";
+import { format, formatFile } from "./formatter";
 
 function compile(source: string, target: TargetInfo, filePath?: string): string {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
@@ -111,6 +113,7 @@ function main() {
     console.log("  run <file> [args]      compile and run (no artifacts left behind)");
     console.log("  build <file> [-o out]  compile to executable");
     console.log("  emit-ir <file>         emit LLVM IR");
+    console.log("  fmt <file...>          format source files (-w to write in place)");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
@@ -121,8 +124,32 @@ function main() {
   const cmd = args[0];
 
   if (cmd === "lsp") {
-    // Launch language server — dynamically import to avoid loading LSP code in normal compilation
     import("./lsp");
+    return;
+  }
+
+  if (cmd === "fmt") {
+    const fmtArgs = args.slice(1);
+    const write = fmtArgs.includes("-w");
+    const files = fmtArgs.filter(a => a !== "-w");
+    if (files.length === 0) { console.error("error: no files to format"); process.exit(1); }
+    const fmtBin = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "milo-fmt");
+    const useMiloFmt = existsSync(fmtBin);
+    let changed = 0;
+    for (const f of files) {
+      if (useMiloFmt) {
+        const result = spawnSync(fmtBin, write ? ["-w", f] : [f], { encoding: "utf-8", timeout: 5000 });
+        if (result.status !== 0) { console.error(result.stderr || `error formatting ${f}`); process.exit(1); }
+        if (!write) process.stdout.write(result.stdout);
+        else if (result.stdout) { console.log(result.stdout.trim()); changed++; }
+      } else if (write) {
+        const result = formatFile(f, true);
+        if (result) { console.log(result); changed++; }
+      } else {
+        process.stdout.write(format(readFileSync(f, "utf-8")));
+      }
+    }
+    if (write && changed === 0) console.log("all files already formatted");
     return;
   }
 

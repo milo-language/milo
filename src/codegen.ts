@@ -27,6 +27,8 @@ export class Codegen {
   private userDeclaredFns = new Set<string>();
   private needsBoundsCheck = false;
   private needsPrintf = false;
+  private needsDprintf = false;
+  private needsFflush = false;
   private needsPutchar = false;
   private needsExit = false;
   private needsMalloc = false;
@@ -51,7 +53,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "format", "exit", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32"]);
   private needsArgGlobals = false;
 
   constructor(target: TargetInfo) { this.target = target; }
@@ -251,6 +253,10 @@ export class Codegen {
       this.output.splice(1, 0, "declare void @exit(i32) noreturn");
     if (this.needsPutchar && !declaredExterns.has("putchar"))
       this.output.splice(1, 0, "declare i32 @putchar(i32)");
+    if (this.needsFflush && !declaredExterns.has("fflush"))
+      this.output.splice(1, 0, `declare i32 @fflush(ptr)`);
+    if (this.needsDprintf && !declaredExterns.has("dprintf"))
+      this.output.splice(1, 0, `declare i32 @dprintf(i32, ptr, ...)`);
     if (this.needsPrintf && !declaredExterns.has("printf"))
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
     if (this.needsBoundsCheck)
@@ -646,12 +652,26 @@ export class Codegen {
     this.entryAllocas.push(`  ${addrName} = alloca ${varTy}`);
     this.locals.set(stmt.varName, { type: varTy, typeKind: stmt.varType, mutable: false, isRef: false, addr: addrName });
 
-    const [startLines, startVal] = this.genExpr(stmt.start);
+    const [startLines, startVal, startLLTy] = this.genExpr(stmt.start);
     lines.push(...startLines);
-    lines.push(`  store ${varTy} ${startVal}, ptr ${addrName}`);
+    let finalStart = startVal;
+    if (startLLTy !== varTy && startLLTy !== "void") {
+      const ext = this.nextTemp();
+      const signed = stmt.varType.tag === "int" && stmt.varType.signed;
+      lines.push(`  ${ext} = ${signed ? "sext" : "zext"} ${startLLTy} ${startVal} to ${varTy}`);
+      finalStart = ext;
+    }
+    lines.push(`  store ${varTy} ${finalStart}, ptr ${addrName}`);
 
-    const [endLines, endVal] = this.genExpr(stmt.end);
+    const [endLines, endVal, endLLTy] = this.genExpr(stmt.end);
     lines.push(...endLines);
+    let finalEnd = endVal;
+    if (endLLTy !== varTy && endLLTy !== "void") {
+      const ext = this.nextTemp();
+      const signed = stmt.varType.tag === "int" && stmt.varType.signed;
+      lines.push(`  ${ext} = ${signed ? "sext" : "zext"} ${endLLTy} ${endVal} to ${varTy}`);
+      finalEnd = ext;
+    }
 
     const condLabel = this.nextLabel("for.cond");
     const bodyLabel = this.nextLabel("for.body");
@@ -669,7 +689,7 @@ export class Codegen {
     lines.push(`  ${cur} = load ${varTy}, ptr ${addrName}`);
     const cmp = this.nextTemp();
     const signed = stmt.varType.tag === "int" && stmt.varType.signed;
-    lines.push(`  ${cmp} = icmp ${signed ? "slt" : "ult"} ${varTy} ${cur}, ${endVal}`);
+    lines.push(`  ${cmp} = icmp ${signed ? "slt" : "ult"} ${varTy} ${cur}, ${finalEnd}`);
     lines.push(`  br i1 ${cmp}, label %${bodyLabel}, label %${endLabel}`);
     lines.push(`${bodyLabel}:`);
 
@@ -1162,6 +1182,29 @@ export class Codegen {
       lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtStr.label}${argsStr})`);
       lines.push(`  call i32 @putchar(i32 10)`);
       for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+      return [lines, "void", "void"];
+    }
+    if (expr.func === "eprint") {
+      this.needsDprintf = true;
+      this.needsFree = true;
+      const partFmts: string[] = [];
+      const partArgs: { val: string; type: string }[] = [];
+      const tempBufs: string[] = [];
+      for (const arg of expr.args) {
+        const [al, av, at] = this.genExpr(arg.expr);
+        lines.push(...al);
+        this.emitDisplayPart(arg.expr.type, av, at, lines, partFmts, partArgs, tempBufs);
+      }
+      const fullFmt = partFmts.join("") + "\n";
+      const fmtStr = this.addString(fullFmt);
+      const argsStr = partArgs.map(a => `, ${a.type} ${a.val}`).join("");
+      lines.push(`  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr ${fmtStr.label}${argsStr})`);
+      for (const tb of tempBufs) lines.push(`  call void @free(ptr ${tb})`);
+      return [lines, "void", "void"];
+    }
+    if (expr.func === "flush") {
+      this.needsFflush = true;
+      lines.push(`  call i32 @fflush(ptr null)`);
       return [lines, "void", "void"];
     }
     if (expr.func === "exit") {
@@ -1948,12 +1991,16 @@ export class Codegen {
     lines.push(`  call void @exit(i32 1)`);
     lines.push(`  unreachable`);
 
-    // ok branch — extract payload
+    // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
     const payloadPtr = this.nextTemp();
     lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${resultTy}, ptr ${payloadPtr}`);
+    if (this.needsDropCg(expr.type) && expr.operand.kind === "Ident") {
+      const srcAddr = this.localAddr(expr.operand.name);
+      if (srcAddr) lines.push(`  store ${enumTy} zeroinitializer, ptr ${srcAddr}`);
+    }
     return [lines, result, resultTy];
   }
 
@@ -2042,12 +2089,16 @@ export class Codegen {
       lines.push(`  ret ${retEnumTy} ${retVal}`);
     }
 
-    // ok branch — extract payload
+    // ok branch — extract payload and zero source to prevent double-free
     lines.push(`${okLabel}:`);
     const payloadPtr = this.nextTemp();
     lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
     const result = this.nextTemp();
     lines.push(`  ${result} = load ${resultTy}, ptr ${payloadPtr}`);
+    if (this.needsDropCg(expr.type) && expr.operand.kind === "Ident") {
+      const srcAddr = this.localAddr(expr.operand.name);
+      if (srcAddr) lines.push(`  store ${enumTy} zeroinitializer, ptr ${srcAddr}`);
+    }
     return [lines, result, resultTy];
   }
 
@@ -2073,12 +2124,17 @@ export class Codegen {
     lines.push(`  ${cmp} = icmp eq i32 ${tag}, 0`);
     lines.push(`  br i1 ${cmp}, label %${someLabel}, label %${noneLabel}`);
 
-    // some branch — extract payload
+    // some branch — extract payload and zero the source to prevent double-free
     lines.push(`${someLabel}:`);
     const payloadPtr = this.nextTemp();
     lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 1`);
     const someVal = this.nextTemp();
     lines.push(`  ${someVal} = load ${resultTy}, ptr ${payloadPtr}`);
+    // Zero the source variable's enum so drop glue won't free the moved payload
+    if (this.needsDropCg(expr.type) && expr.operand.kind === "Ident") {
+      const srcAddr = this.localAddr(expr.operand.name);
+      if (srcAddr) lines.push(`  store ${enumTy} zeroinitializer, ptr ${srcAddr}`);
+    }
     lines.push(`  br label %${doneLabel}`);
 
     // none branch — use default

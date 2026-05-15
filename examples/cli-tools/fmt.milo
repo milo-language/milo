@@ -1,0 +1,769 @@
+// fmt — Milo source code formatter
+// Tokenizes the input and re-emits with normalized indentation and spacing.
+import "std/io"
+import "std/fs"
+import "std/argparse"
+
+// ── Token types ──
+
+enum TokKind {
+    Ident,
+    Keyword,
+    Int,
+    Float,
+    Str,
+    Char,
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Colon,
+    ColonColon,
+    Comma,
+    Dot,
+    DotDot,
+    Arrow,
+    FatArrow,
+    Eq,
+    EqEq,
+    Neq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Amp,
+    AmpAmp,
+    PipePipe,
+    Pipe,
+    Caret,
+    Tilde,
+    Bang,
+    Question,
+    QuestionQuestion,
+    Comment,
+    Newline,
+    Eof,
+}
+
+struct Token {
+    kind: TokKind,
+    text: string,
+    line: i64,
+}
+
+// ── Keywords ──
+
+fn isKeyword(s: &string): bool {
+    return s == "fn" || s == "let" || s == "var" || s == "return" ||
+    s == "if" || s == "else" || s == "while" || s == "for" || s == "in" ||
+    s == "struct" || s == "enum" || s == "match" || s == "impl" || s == "trait" ||
+    s == "import" || s == "from" || s == "extern" || s == "unsafe" ||
+    s == "break" || s == "continue" || s == "as" || s == "mut" ||
+    s == "true" || s == "false" || s == "null"
+}
+
+fn isTopLevel(s: &string): bool {
+    return s == "fn" || s == "struct" || s == "enum" || s == "impl" ||
+    s == "trait" || s == "extern"
+}
+
+// ── Lexer ──
+
+struct Lexer {
+    src: string,
+    pos: i64,
+    line: i64,
+}
+
+fn newLexer(src: string): Lexer {
+    return Lexer {
+        src: src, pos: 0, line: 1
+    }
+}
+
+impl Lexer {
+    fn peek(self: &Self): u8 {
+        if self.pos >= self.src.len {
+            return 0
+        }
+        return self.src[self.pos]
+    }
+
+    fn peekAt(self: &Self, offset: i64): u8 {
+        let i = self.pos + offset
+        if i >= self.src.len {
+            return 0
+        }
+        return self.src[i]
+    }
+
+    fn advance(self: &mut Self): u8 {
+        let ch = self.src[self.pos]
+        self.pos = self.pos + 1
+        if ch == 10 {
+            self.line = self.line + 1
+        }
+        return ch
+    }
+
+    fn skipSpaces(self: &mut Self): void {
+        while self.pos < self.src.len {
+            let ch = self.peek()
+            if ch == 32 || ch == 9 || ch == 13 {
+                self.advance()
+            }  else {
+                return
+            }
+        }
+    }
+
+    fn lexString(self: &mut Self): string {
+        self.advance()
+        var s: string = "\""
+        while self.pos < self.src.len && self.peek() != 34 {
+            let ch = self.advance()
+            if ch == 92 {
+                s.push(ch)
+                if self.pos < self.src.len {
+                    s.push(self.advance())
+                }
+            }  else {
+                s.push(ch)
+            }
+        }
+        if self.pos < self.src.len {
+            self.advance()
+        }
+        s.push(34 as u8)
+        return s
+    }
+
+    fn lexChar(self: &mut Self): string {
+        self.advance()
+        var s: string = "'"
+        if self.pos < self.src.len && self.peek() == 92 {
+            s.push(self.advance())
+            if self.pos < self.src.len {
+                s.push(self.advance())
+            }
+        }  else if self.pos < self.src.len {
+            s.push(self.advance())
+        }
+        if self.pos < self.src.len && self.peek() == 39 {
+            s.push(self.advance())
+        }
+        return s
+    }
+
+    fn lexNumber(self: &mut Self): string {
+        var s: string = ""
+        while self.pos < self.src.len && (charIsDigit(self.peek()) || self.peek() == 95) {
+            s.push(self.advance())
+        }
+        // decimal point only if followed by a digit (not .. range)
+        if self.peek() == 46 && self.peekAt(1) != 46 && charIsDigit(self.peekAt(1)) {
+            s.push(self.advance())
+            while self.pos < self.src.len && (charIsDigit(self.peek()) || self.peek() == 95) {
+                s.push(self.advance())
+            }
+        }
+        return s
+    }
+
+    fn lexIdent(self: &mut Self): string {
+        var s: string = ""
+        while self.pos < self.src.len && (charIsAlphanumeric(self.peek()) || self.peek() == 95) {
+            s.push(self.advance())
+        }
+        return s
+    }
+
+    fn lexComment(self: &mut Self): string {
+        var s: string = ""
+        while self.pos < self.src.len && self.peek() != 10 {
+            s.push(self.advance())
+        }
+        return s
+    }
+
+    fn nextToken(self: &mut Self): Token {
+        self.skipSpaces()
+
+        if self.pos >= self.src.len {
+            return Token {
+                kind: TokKind.Eof, text: "", line: self.line
+            }
+        }
+
+        let line = self.line
+        let ch = self.peek()
+        let ch2 = self.peekAt(1)
+
+        // Newline
+        if ch == 10 {
+            self.advance()
+            return Token {
+                kind: TokKind.Newline, text: "\n", line: line
+            }
+        }
+
+        // Comment
+        if ch == 47 && ch2 == 47 {
+            let text = self.lexComment()
+            return Token {
+                kind: TokKind.Comment, text: text, line: line
+            }
+        }
+
+        // String
+        if ch == 34 {
+            let text = self.lexString()
+            return Token {
+                kind: TokKind.Str, text: text, line: line
+            }
+        }
+
+        // Char
+        if ch == 39 {
+            let text = self.lexChar()
+            return Token {
+                kind: TokKind.Char, text: text, line: line
+            }
+        }
+
+        // Number
+        if charIsDigit(ch) {
+            let text = self.lexNumber()
+            if text.contains(".") {
+                return Token {
+                    kind: TokKind.Float, text: text, line: line
+                }
+            }
+            return Token {
+                kind: TokKind.Int, text: text, line: line
+            }
+        }
+
+        // Ident / keyword
+        if charIsAlpha(ch) || ch == 95 {
+            let text = self.lexIdent()
+            if isKeyword(text) {
+                return Token {
+                    kind: TokKind.Keyword, text: text, line: line
+                }
+            }
+            return Token {
+                kind: TokKind.Ident, text: text, line: line
+            }
+        }
+
+        // Three-char operators
+        let ch3 = self.peekAt(2)
+        if ch == 46 && ch2 == 46 && ch3 == 46 {
+            self.advance()
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.DotDot, text: "...", line: line
+            }
+        }
+
+        // Two-char operators
+        if ch == 46 && ch2 == 46 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.DotDot, text: "..", line: line
+            }
+        }
+        if ch == 45 && ch2 == 62 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.Arrow, text: "->", line: line
+            }
+        }
+        if ch == 61 && ch2 == 62 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.FatArrow, text: "=>", line: line
+            }
+        }
+        if ch == 61 && ch2 == 61 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.EqEq, text: "==", line: line
+            }
+        }
+        if ch == 58 && ch2 == 58 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.ColonColon, text: "::", line: line
+            }
+        }
+        if ch == 33 && ch2 == 61 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.Neq, text: "!=", line: line
+            }
+        }
+        if ch == 60 && ch2 == 61 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.LtEq, text: "<=", line: line
+            }
+        }
+        if ch == 62 && ch2 == 61 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.GtEq, text: ">=", line: line
+            }
+        }
+        if ch == 63 && ch2 == 63 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.QuestionQuestion, text: "??", line: line
+            }
+        }
+        if ch == 38 && ch2 == 38 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.AmpAmp, text: "&&", line: line
+            }
+        }
+        if ch == 124 && ch2 == 124 {
+            self.advance()
+            self.advance()
+            return Token {
+                kind: TokKind.PipePipe, text: "||", line: line
+            }
+        }
+
+        // Single-char
+        self.advance()
+        if ch == 40 {
+            return Token {
+                kind: TokKind.LParen, text: "(", line: line
+            }
+        }
+        if ch == 41 {
+            return Token {
+                kind: TokKind.RParen, text: ")", line: line
+            }
+        }
+        if ch == 123 {
+            return Token {
+                kind: TokKind.LBrace, text: "{", line: line
+            }
+        }
+        if ch == 125 {
+            return Token {
+                kind: TokKind.RBrace, text: "}", line: line
+            }
+        }
+        if ch == 91 {
+            return Token {
+                kind: TokKind.LBracket, text: "[", line: line
+            }
+        }
+        if ch == 93 {
+            return Token {
+                kind: TokKind.RBracket, text: "]", line: line
+            }
+        }
+        if ch == 58 {
+            return Token {
+                kind: TokKind.Colon, text: ":", line: line
+            }
+        }
+        if ch == 44 {
+            return Token {
+                kind: TokKind.Comma, text: ",", line: line
+            }
+        }
+        if ch == 46 {
+            return Token {
+                kind: TokKind.Dot, text: ".", line: line
+            }
+        }
+        if ch == 43 {
+            return Token {
+                kind: TokKind.Plus, text: "+", line: line
+            }
+        }
+        if ch == 45 {
+            return Token {
+                kind: TokKind.Minus, text: "-", line: line
+            }
+        }
+        if ch == 42 {
+            return Token {
+                kind: TokKind.Star, text: "*", line: line
+            }
+        }
+        if ch == 47 {
+            return Token {
+                kind: TokKind.Slash, text: "/", line: line
+            }
+        }
+        if ch == 37 {
+            return Token {
+                kind: TokKind.Percent, text: "%", line: line
+            }
+        }
+        if ch == 38 {
+            return Token {
+                kind: TokKind.Amp, text: "&", line: line
+            }
+        }
+        if ch == 61 {
+            return Token {
+                kind: TokKind.Eq, text: "=", line: line
+            }
+        }
+        if ch == 60 {
+            return Token {
+                kind: TokKind.Lt, text: "<", line: line
+            }
+        }
+        if ch == 62 {
+            return Token {
+                kind: TokKind.Gt, text: ">", line: line
+            }
+        }
+        if ch == 33 {
+            return Token {
+                kind: TokKind.Bang, text: "!", line: line
+            }
+        }
+        if ch == 63 {
+            return Token {
+                kind: TokKind.Question, text: "?", line: line
+            }
+        }
+        if ch == 124 {
+            return Token {
+                kind: TokKind.Pipe, text: "|", line: line
+            }
+        }
+        if ch == 94 {
+            return Token {
+                kind: TokKind.Caret, text: "^", line: line
+            }
+        }
+        if ch == 126 {
+            return Token {
+                kind: TokKind.Tilde, text: "~", line: line
+            }
+        }
+
+        // Unknown char — emit as ident to preserve it
+        var s: string = ""
+        s.push(ch)
+        return Token {
+            kind: TokKind.Ident, text: s, line: line
+        }
+    }
+}
+
+fn tokenize(src: string): Vec < Token > {
+    var lex = newLexer(src)
+    var tokens: Vec < Token > = Vec.new()
+    while true {
+        let tok = lex.nextToken()
+        let done = tok.kind == TokKind.Eof
+        tokens.push(tok)
+        if done {
+            break
+        }
+    }
+    return tokens
+}
+
+// ── Spacing rules ──
+
+fn isSpacedOp(kind: TokKind): bool {
+    return kind == TokKind.Plus || kind == TokKind.Minus || kind == TokKind.Star ||
+    kind == TokKind.Slash || kind == TokKind.Percent ||
+    kind == TokKind.Eq || kind == TokKind.EqEq || kind == TokKind.Neq ||
+    kind == TokKind.Lt || kind == TokKind.Gt ||
+    kind == TokKind.LtEq || kind == TokKind.GtEq ||
+    kind == TokKind.AmpAmp || kind == TokKind.PipePipe ||
+    kind == TokKind.FatArrow || kind == TokKind.Arrow ||
+    kind == TokKind.Pipe || kind == TokKind.Caret ||
+    kind == TokKind.QuestionQuestion
+}
+
+fn isValueTok(kind: TokKind): bool {
+    return kind == TokKind.Ident || kind == TokKind.Int || kind == TokKind.Float ||
+    kind == TokKind.Str || kind == TokKind.Char || kind == TokKind.Keyword
+}
+
+fn wantSpaceBefore(tokens: &Vec < Token >, i: i64): bool {
+    if i == 0 {
+        return false
+    }
+    let tok = tokens[i]
+    let prev = tokens[i - 1]
+    let pk = prev.kind
+    let tk = tok.kind
+
+    // Never space after ( [ . ::
+    if pk == TokKind.LParen || pk == TokKind.LBracket ||
+    pk == TokKind.Dot || pk == TokKind.ColonColon {
+        return false
+    }
+    // Never space before ) ] , . :: ? :
+    if tk == TokKind.RParen || tk == TokKind.RBracket ||
+    tk == TokKind.Comma || tk == TokKind.Dot ||
+    tk == TokKind.ColonColon || tk == TokKind.Question ||
+    tk == TokKind.Colon {
+        return false
+    }
+    // ! — no space when postfix, space after keywords
+    if tk == TokKind.Bang {
+        return pk == TokKind.Keyword
+    }
+    // No space around ..
+    if tk == TokKind.DotDot || pk == TokKind.DotDot {
+        return false
+    }
+    // Space around binary ops
+    if isSpacedOp(tk) {
+        return true
+    }
+    if isSpacedOp(pk) {
+        return true
+    }
+    // Space after : and ,
+    if pk == TokKind.Colon {
+        return true
+    }
+    if pk == TokKind.Comma {
+        return true
+    }
+    // Space after keywords
+    if pk == TokKind.Keyword {
+        return true
+    }
+    // Space before {
+    if tk == TokKind.LBrace {
+        return true
+    }
+    // Space after ) unless tight punctuation
+    if pk == TokKind.RParen && tk != TokKind.Comma && tk != TokKind.RParen &&
+    tk != TokKind.Dot && tk != TokKind.Bang && tk != TokKind.Question {
+        return true
+    }
+    // Space after }
+    if pk == TokKind.RBrace && tk != TokKind.Comma && tk != TokKind.RParen &&
+    tk != TokKind.Dot {
+        return true
+    }
+    // Space between values
+    if isValueTok(pk) && (isValueTok(tk) || tk == TokKind.LBrace) {
+        return true
+    }
+    // No space after &
+    if pk == TokKind.Amp {
+        return false
+    }
+
+    return false
+}
+
+// ── Formatter ──
+
+fn formatSource(src: string): string {
+    let tokens = tokenize(src)
+    var out: string = ""
+    var depth: i64 = 0
+    var atLineStart: bool = true
+    var lastKind: TokKind = TokKind.Eof
+    var lastLine: i64 = 1
+    var blankCount: i64 = 0
+
+    for i in 0..tokens.len {
+        let tok = tokens[i]
+
+        // Skip newlines — we track line breaks via tok.line
+        if tok.kind == TokKind.Newline {
+            blankCount = blankCount + 1
+            continue
+        }
+
+        if tok.kind == TokKind.Eof {
+            break
+        }
+
+        // } decreases indent
+        if tok.kind == TokKind.RBrace {
+            if depth > 0 {
+                depth = depth - 1
+            }
+            if !atLineStart {
+                out = out + "\n"
+                atLineStart = true
+            }
+        }
+
+        // Blank line before top-level decls
+        if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) {
+            if out.len > 0 &&!out.endsWith("\n\n") {
+                if !atLineStart {
+                    out = out + "\n"
+                }
+                out = out + "\n"
+                atLineStart = true
+            }
+        }
+
+        // Preserve one blank line between sections (when source had 2+ newlines)
+        if blankCount >= 2 &&!atLineStart {
+            out = out + "\n"
+            atLineStart = true
+        }
+        if blankCount >= 2 && atLineStart && out.len > 0 &&!out.endsWith("\n\n") {
+            out = out + "\n"
+        }
+        blankCount = 0
+
+        // Comment on its own line
+        if tok.kind == TokKind.Comment {
+            if !atLineStart && tok.line > lastLine {
+                out = out + "\n"
+                atLineStart = true
+            }
+            if atLineStart {
+                for d in 0..depth {
+                    out = out + "    "
+                }
+                atLineStart = false
+            }  else {
+                out = out + " "
+            }
+            out = out + tok.text
+            // Trailing comment stays on line, leading comment gets newline
+            if atLineStart || tok.line > lastLine {
+                out = out + "\n"
+                atLineStart = true
+            }
+            lastLine = tok.line
+            lastKind = tok.kind
+            continue
+        }
+
+        // New source line → new output line
+        if tok.line > lastLine &&!atLineStart && tok.kind != TokKind.RBrace {
+            out = out + "\n"
+            atLineStart = true
+        }
+
+        // Indent at start of line
+        if atLineStart {
+            for d2 in 0..depth {
+                out = out + "    "
+            }
+            atLineStart = false
+        }  else if wantSpaceBefore(tokens, i) {
+            out = out + " "
+        }
+
+        // Emit token
+        out = out + tok.text
+        lastLine = tok.line
+        lastKind = tok.kind
+
+        // { increases indent and forces newline
+        if tok.kind == TokKind.LBrace {
+            depth = depth + 1
+            out = out + "\n"
+            atLineStart = true
+        }
+
+        // } forces newline unless next is else
+        if tok.kind == TokKind.RBrace {
+            var nextKind: TokKind = TokKind.Eof
+            // Peek ahead past newlines to find next real token
+            var j: i64 = i + 1
+            while j < tokens.len {
+                if tokens[j].kind != TokKind.Newline {
+                    nextKind = tokens[j].kind
+                    break
+                }
+                j = j + 1
+            }
+            if nextKind == TokKind.Keyword && tokens[j].text == "else" {
+                out = out + " "
+                atLineStart = false
+            }  else {
+                out = out + "\n"
+                atLineStart = true
+            }
+        }
+    }
+
+    // Ensure trailing newline
+    if out.len > 0 &&!out.endsWith("\n") {
+        out = out + "\n"
+    }
+    return out
+}
+
+// ── Entry point ──
+
+fn main(): i32 {
+    var parser = newParser("fmt", "format Milo source files")
+    parser.addBool("write", "w", "write result back to file")
+    parser.addOptionalPositional("file", "source file to format (stdin if omitted)")
+    let args = parser.parse()
+    let hasFile = args.has("file")
+    let write = args.getBool("write")
+
+    // Read from file or stdin
+    var src: string = ""
+    var path: string = ""
+    if hasFile {
+        path = args.getString("file")
+        let result = readFile(path.clone())
+        src = result ?? ""
+    }  else {
+        src = readStdin()
+    }
+
+    let formatted = formatSource(src.clone())
+
+    if write {
+        if hasFile {
+            if formatted != src {
+                let writeResult = writeFile(path.clone(), formatted)
+                if let Result.Err(e) = writeResult {
+                    eprint("error writing ", path, ": ", e)
+                    return 1
+                }
+            }
+        }  else {
+            eprint("cannot use -w without a file path")
+            return 1
+        }
+    }  else {
+        print(formatted)
+    }
+    return 0
+}
+

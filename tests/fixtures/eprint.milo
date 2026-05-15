@@ -1,0 +1,11 @@
+// @expect: hello stdout
+// @expect: done
+import "std/os"
+
+fn main(): i32 {
+    print("hello stdout")
+    eprint("this goes to stderr")
+    flush()
+    print("done")
+    return 0
+}

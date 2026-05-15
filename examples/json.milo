@@ -1,4 +1,4 @@
-// JSON in Milo — stringify structs, parse them back
+// JSON in Milo — stringify structs, parse them back, handle errors
 import "std/json"
 
 struct User {
@@ -8,26 +8,34 @@ struct User {
 }
 
 fn main(): i32 {
-    // Stringify
+    // 1. Stringify a struct → JSON string
     let alice = User { name: "Alice", age: 30, active: true }
     let json = jsonStringify(alice)
     print(json)
 
-    // Parse it back
+    // 2. Parse it back and extract fields
     let j = jsonParse(json)!
     print(j.str("name")!)
     print(j.i64("age")!)
-    print(j.bool("active")!)
 
-    // Array of objects
+    // 3. Array of objects
     let bob = User { name: "Bob", age: 25, active: false }
     let arr = "[" + jsonStringify(alice) + ", " + jsonStringify(bob) + "]"
     let users = jsonParse(arr)!
-    var i: i64 = 0
-    while i < users.len() {
+    for i in 0..users.len() {
         let u = users.at(i)!
         print(u.str("name")!, " is ", u.i64("age")!)
-        i = i + 1
+    }
+
+    // 4. Error handling — wrong type, missing key
+    if let Option.None = j.str("age") {
+        print("age is not a string")
+    }
+    if let Option.None = j.str("missing") {
+        print("key not found")
+    }
+    if let Result.Err(e) = jsonParse("not json") {
+        print("parse error: ", e)
     }
 
     return 0

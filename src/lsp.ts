@@ -12,8 +12,23 @@ import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, readFileSync } from "fs";
+import { format as tsFormat } from "./formatter";
+import { spawnSync } from "child_process";
 
 const hostTarget = getHostTarget();
+
+// ── Formatter ──
+// Use the Milo-native formatter binary when available, fall back to TS implementation.
+const fmtBinaryPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "milo-fmt");
+const hasMiloFmt = existsSync(fmtBinaryPath);
+
+function formatSource(source: string): string {
+  if (hasMiloFmt) {
+    const result = spawnSync(fmtBinaryPath, [], { input: source, encoding: "utf-8", timeout: 5000 });
+    if (result.status === 0 && result.stdout) return result.stdout;
+  }
+  return tsFormat(source);
+}
 
 // ── JSON-RPC transport ──
 
@@ -761,6 +776,7 @@ function handleRequest(id: number | string, method: string, params: any) {
           textDocumentSync: 1, // full sync
           hoverProvider: true,
           definitionProvider: true,
+          documentFormattingProvider: true,
         },
         serverInfo: { name: "milod", version: "0.1.0" },
       });
@@ -776,6 +792,22 @@ function handleRequest(id: number | string, method: string, params: any) {
       const result = handleDefinition(params.textDocument.uri, params.position.line, params.position.character);
       process.stderr.write(`milod: definition word="${word}" docs=${documents.size} result=${JSON.stringify(result)}\n`);
       sendResponse(id, result);
+      break;
+    }
+    case "textDocument/formatting": {
+      const source = documents.get(params.textDocument.uri) ?? "";
+      if (!source) { sendResponse(id, null); break; }
+      try {
+        const formatted = formatSource(source);
+        if (formatted === source) { sendResponse(id, []); break; }
+        const lines = source.split("\n");
+        sendResponse(id, [{
+          range: { start: { line: 0, character: 0 }, end: { line: lines.length, character: 0 } },
+          newText: formatted,
+        }]);
+      } catch {
+        sendResponse(id, null);
+      }
       break;
     }
     default:

@@ -19,7 +19,13 @@
       "language": "milo",
       "scopeName": "source.milo",
       "path": "./syntaxes/milo.tmLanguage.json"
-    }]
+    }],
+    "configurationDefaults": {
+      "[milo]": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "milo.milo-lang"
+      }
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
