@@ -510,8 +510,11 @@ fn isSpacedOp(kind: TokKind): bool {
 }
 
 // Whether prev token makes the current * or & a binary operator (not unary/type prefix)
+
 fn isBinaryStarOrAmp(tokens: &Vec<Token>, i: i64): bool {
-    if i <= 0 { return false }
+    if i <= 0 {
+        return false
+    }
     let pk = tokens[i - 1].kind
     return pk == TokKind.Ident || pk == TokKind.Int || pk == TokKind.Float ||
     pk == TokKind.RParen || pk == TokKind.RBracket
@@ -865,4 +868,3 @@ fn main(): i32 {
     }
     return 0
 }
-
