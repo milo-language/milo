@@ -31,7 +31,7 @@ function findManifest(startDir: string): Record<string, string> | null {
   return null;
 }
 
-// parse "github.com/user/repo@v1.0" → { host, path, version }
+// parse "github.com/user/repo@v1.0" or local path → { host, path, version }
 function parsePkgUrl(url: string): { host: string; path: string; version: string } | null {
   const atIdx = url.indexOf("@");
   let version = "main";
@@ -39,6 +39,11 @@ function parsePkgUrl(url: string): { host: string; path: string; version: string
   if (atIdx !== -1) {
     version = url.slice(atIdx + 1);
     fullPath = url.slice(0, atIdx);
+  }
+  // local paths
+  if (fullPath.startsWith("/") || fullPath.startsWith(".")) {
+    const safe = fullPath.replace(/\//g, "_");
+    return { host: "local", path: safe, version };
   }
   const slashIdx = fullPath.indexOf("/");
   if (slashIdx === -1) return null;

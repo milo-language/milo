@@ -289,11 +289,51 @@ fn cmdInstall(): i32 {
     }
 }
 
+fn cmdNew(name: &string): i32 {
+    if pathExists(name.clone()) {
+        print("error: directory '", name, "' already exists")
+        return 1
+    }
+    let mkdirCmd = "mkdir -p " + name
+    run(mkdirCmd)!
+
+    let manifest: string = "{\n  \"name\": \"" + name + "\",\n  \"version\": \"0.1.0\",\n  \"deps\": {}\n}\n"
+    let manifestPath = name.clone() + "/milo.json"
+    let w1 = writeFile(manifestPath, manifest)
+    match w1 {
+        Result.Ok(n) => {}
+        Result.Err(e) => {
+            print("error: failed to write milo.json")
+            return 1
+        }
+    }
+
+    let lib: string = "// " + name + " — a Milo package\n\nfn hello(): string {\n    return \"hello from " + name + "\"\n}\n"
+    let libPath = name.clone() + "/lib.milo"
+    let w2 = writeFile(libPath, lib)
+    match w2 {
+        Result.Ok(n) => {}
+        Result.Err(e) => {
+            print("error: failed to write lib.milo")
+            return 1
+        }
+    }
+
+    let gitCmd = "git init -q " + name
+    run(gitCmd)!
+
+    print("created package '", name, "/'")
+    print("  milo.json   — manifest")
+    print("  lib.milo    — entry point")
+    return 0
+}
+
 fn printUsage(): void {
     print("milo-pkg — package manager for Milo")
     print("")
     print("usage:")
-    print("  milo-pkg init                create milo.json")
+    print("  milo-pkg new <name>          create a new package")
+    print("  milo-pkg init                create milo.json in current dir")
     print("  milo-pkg add <name> <url>    add a dependency")
     print("  milo-pkg install             install all dependencies")
     print("")
@@ -320,6 +360,13 @@ fn main(): i32 {
                 return 1
             }
             return cmdAdd(argv[2], argv[3])
+        }
+        "new" => {
+            if argv.len < 3 {
+                print("usage: milo-pkg new <name>")
+                return 1
+            }
+            return cmdNew(argv[2])
         }
         "install" => {
             return cmdInstall()
