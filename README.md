@@ -162,6 +162,30 @@ print(s.split(", ")[0])       // "Hello"
 print(s.replace("World", "Milo"))  // "Hello, Milo!"
 ```
 
+### JSON
+
+Zero-copy parsing with typed accessors. `!` makes error handling explicit — no silent `undefined`.
+
+```
+import "std/json"
+
+let j = jsonParse("{\"name\": \"milo\", \"version\": 1}")!
+
+let name = j.str("name")!     // "milo"
+let ver = j.i64("version")!   // 1
+
+// Safe path — returns Option
+if let Option.Some(v) = j.str("missing") {
+    print(v)
+} else {
+    print("not found")
+}
+
+// Nested
+let config = jsonParse("{\"db\": {\"host\": \"localhost\"}}")!
+let host = config.get("db")!.str("host")!
+```
+
 ### C FFI
 
 Call any C library with `extern fn` and an `unsafe` block.

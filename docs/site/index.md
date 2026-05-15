@@ -88,6 +88,30 @@ fn main(): i32 {
 
 Structs, closures, borrows, `for-in` — a routed web server in 20 lines.
 
+### JSON that doesn't fight you
+
+```milo
+import "std/json"
+
+fn main(): i32 {
+    let j = jsonParse("{\"name\": \"milo\", \"version\": 1, \"fast\": true}")!
+
+    let name = j.str("name")!           // "milo"
+    let ver = j.i64("version")!         // 1
+    let fast = j.bool("fast")!          // true
+
+    // Nested access
+    let config = jsonParse("{\"db\": {\"host\": \"localhost\", \"port\": 5432}}")!
+    let host = config.get("db")!.str("host")!
+    let port = config.get("db")!.i64("port")!
+
+    print(name, " v", ver, " — ", host, ":", port)
+    return 0
+}
+```
+
+Zero-copy parsing, typed accessors, explicit error handling with `!` and `?`. No `any`, no runtime type errors, no `undefined is not an object`.
+
 ### Where Milo fits
 
 <div class="comparison-table">
