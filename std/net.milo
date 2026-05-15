@@ -40,7 +40,7 @@ fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     let b32 = b as u32
     let c32 = c as u32
     let d32 = d as u32
-    return a32 | (b32 < < 8) | (c32 < < 16) | (d32 < < 24)
+    return a32 | (b32 << 8) | (c32 << 16) | (d32 << 24)
 }
 
 fn tcpConnect(ip: u32, port: u16): Result<TcpStream, NetError> {

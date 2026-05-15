@@ -28,12 +28,12 @@ fn fileInfo(path: string): FileInfo {
         // read u16 mode (macOS) — works for permission bits
         let modeLo = buf[modeOff]as i32
         let modeHi = buf[modeOff + 1]as i32
-        let mode = modeLo | (modeHi < < 8)
+        let mode = modeLo | (modeHi << 8)
         // read i64 size
         var size: i64 = 0
         var i: i64 = 0
         while i < 8 {
-            size = size | ((buf[sizeOff + i]as i64) < < (i * 8))
+            size = size | ((buf[sizeOff + i]as i64) << (i * 8))
             i = i + 1
         }
         return FileInfo {
