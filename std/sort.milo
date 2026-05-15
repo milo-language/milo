@@ -1,0 +1,106 @@
+// std/sort — in-place sorting for Vec types
+
+// Sort Vec<i64> in ascending order.
+fn sortI64(v: &mut Vec<i64>): void {
+    _qsortI64(v, 0, v.len - 1)
+}
+
+// Sort Vec<i32> in ascending order.
+fn sortI32(v: &mut Vec<i32>): void {
+    _qsortI32(v, 0 as i32, (v.len - 1) as i32)
+}
+
+// Sort Vec<string> in lexicographic order.
+fn sortStrings(v: &mut Vec<string>): void {
+    _isortStrings(v, 0, v.len - 1)
+}
+
+// Reverse a Vec<i64> in place.
+fn reverseI64(v: &mut Vec<i64>): void {
+    var lo: i64 = 0
+    var hi = v.len - 1
+    while lo < hi {
+        let tmp = v[lo]
+        v[lo] = v[hi]
+        v[hi] = tmp
+        lo = lo + 1
+        hi = hi - 1
+    }
+}
+
+// ── quicksort i64 ──
+
+fn _qsortI64(v: &mut Vec<i64>, lo: i64, hi: i64): void {
+    if lo >= hi { return }
+    let pivot = v[hi]
+    var i = lo
+    var j = lo
+    while j < hi {
+        if v[j] <= pivot {
+            let tmp = v[i]
+            v[i] = v[j]
+            v[j] = tmp
+            i = i + 1
+        }
+        j = j + 1
+    }
+    let tmp = v[i]
+    v[i] = v[hi]
+    v[hi] = tmp
+    _qsortI64(v, lo, i - 1)
+    _qsortI64(v, i + 1, hi)
+}
+
+// ── quicksort i32 ──
+
+fn _qsortI32(v: &mut Vec<i32>, lo: i32, hi: i32): void {
+    if lo >= hi { return }
+    let pivot = v[hi]
+    var i = lo
+    var j = lo
+    while j < hi {
+        if v[j] <= pivot {
+            let tmp = v[i]
+            v[i] = v[j]
+            v[j] = tmp
+            i = i + 1 as i32
+        }
+        j = j + 1 as i32
+    }
+    let tmp = v[i]
+    v[i] = v[hi]
+    v[hi] = tmp
+    _qsortI32(v, lo, i - 1 as i32)
+    _qsortI32(v, i + 1 as i32, hi)
+}
+
+// ── insertion sort for strings (stable, good for small n) ──
+
+fn _strLessThan(a: &string, b: &string): bool {
+    var i: i64 = 0
+    while i < a.len && i < b.len {
+        if a[i] < b[i] { return true }
+        if a[i] > b[i] { return false }
+        i = i + 1
+    }
+    return a.len < b.len
+}
+
+fn _isortStrings(v: &mut Vec<string>, lo: i64, hi: i64): void {
+    if lo >= hi { return }
+    var i = lo + 1
+    while i <= hi {
+        let key = v[i].clone()
+        var j = i - 1
+        while j >= lo {
+            if _strLessThan(key, v[j]) {
+                v[j + 1] = v[j].clone()
+                j = j - 1
+            } else {
+                break
+            }
+        }
+        v[j + 1] = key
+        i = i + 1
+    }
+}

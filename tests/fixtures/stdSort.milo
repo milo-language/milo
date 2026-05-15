@@ -1,0 +1,58 @@
+// @expect: 1
+// @expect: 3
+// @expect: 4
+// @expect: 5
+// @expect: 8
+// @expect: 2
+// @expect: 7
+// @expect: 9
+// @expect: apple
+// @expect: banana
+// @expect: cherry
+// @expect: 3
+// @expect: 2
+// @expect: 1
+
+import "std/sort"
+
+fn main(): i32 {
+    var nums: Vec<i64> = Vec.new()
+    nums.push(5)
+    nums.push(3)
+    nums.push(8)
+    nums.push(1)
+    nums.push(4)
+    sortI64(nums)
+    for n in nums {
+        print(n)
+    }
+
+    var small: Vec<i32> = Vec.new()
+    small.push(9)
+    small.push(2)
+    small.push(7)
+    sortI32(small)
+    for s in small {
+        print(s)
+    }
+
+    var words: Vec<string> = Vec.new()
+    words.push("cherry")
+    words.push("apple")
+    words.push("banana")
+    sortStrings(words)
+    for w in words {
+        print(w)
+    }
+
+    var rev: Vec<i64> = Vec.new()
+    rev.push(1)
+    rev.push(2)
+    rev.push(3)
+    reverseI64(rev)
+    for r in rev {
+        print(r)
+    }
+
+    return 0
+}
