@@ -60,8 +60,8 @@ Goal: close the gap with Rust's expressiveness without introducing lifetimes. Af
 ### What we cover (~70% of Rust lifetime patterns)
 - [x] `for` loops — ranges, Vec, array, string (by byte), HashMap (key+value)
 - [x] `break` / `continue` in for loops
-- [ ] Vec functional methods — `.map()`, `.filter()`, `.each()`, `.find()`, `.any()`, `.all()`
-- [ ] `&string` / `&[T]` slice locals — extend second-class refs to local variables (can't escape function). Enables zero-copy `content[0..5]` without allocating.
+- [x] Vec functional methods — `.map()`, `.filter()`, `.each()`, `.find()`, `.any()`, `.all()`
+- [x] `&string` slice locals — extend second-class refs to local variables (can't escape function). Zero-copy `s[0..5]` via `.slice()` (non-owning `%String` with cap=0). `.substr()` still returns owned copy.
 
 ### What we don't cover (~30% — and how we could)
 - **Structs with borrowed fields** (e.g. `Parser<'a>` holding `&'a str`): would need scoped-lifetime structs. Deferred — most parsers can just own their input.
@@ -82,7 +82,7 @@ Done:
 - [x] Traits Phase 1 — trait decls, impl blocks, inherent methods, generic bounds, supertraits, @derive(Eq), Self type, monomorphized static dispatch
 - [x] String `substr(start, end)`, `parse_f64` builtins
 - [x] String `push(u8)`, concat, byte index, len, eq
-- [x] String slice sugar `s[a..b]` (desugars to `substr`)
+- [x] String slice sugar `s[a..b]` (zero-copy `&string` via `.slice()`; `.substr()` for owned copy)
 - [x] Enum equality `==` / `!=` for payload-free variants (codegen compares tag)
 - [x] Bitwise operators `& | ^ << >> ~` with C-style precedence
 - [x] Hex (`0xFF`) and binary (`0b1010`) integer literals; `_` digit separator

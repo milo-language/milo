@@ -339,7 +339,9 @@ class LowerCtx {
         };
       }
       case "FieldAccess": {
-        const objType = this.typeOf(expr.object);
+        const rawObjType = this.typeOf(expr.object);
+        // auto-deref `&T` so .len works on slices
+        const objType = rawObjType?.tag === "ref" ? rawObjType.inner : rawObjType;
         if (objType?.tag === "array" && expr.field === "len") {
           return { kind: "ArrayLen", object: this.lowerExpr(expr.object), type, span: expr.span };
         }
@@ -421,7 +423,9 @@ class LowerCtx {
           span: expr.span,
         };
       case "MethodCall": {
-        const objType = this.typeOf(expr.object);
+        const rawObjType = this.typeOf(expr.object);
+        // auto-deref `&T` so methods (.substr, .len, .clone, etc.) dispatch through slices
+        const objType = rawObjType?.tag === "ref" ? rawObjType.inner : rawObjType;
         if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "to_string") {
           return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
         }
@@ -474,6 +478,9 @@ class LowerCtx {
           }
           if (expr.method === "substr") {
             return { kind: "StringSubstr", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
+          }
+          if (expr.method === "slice") {
+            return { kind: "StringSlice", str: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), type, span: expr.span };
           }
           if (expr.method === "parse_f64") {
             return { kind: "StringParseF64", str: this.lowerExpr(expr.object), type, span: expr.span };

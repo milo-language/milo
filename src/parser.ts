@@ -667,8 +667,8 @@ export class Parser {
           this.advance();
           const end = this.parseExpr();
           this.expect(TokenKind.RBracket);
-          // s[a..b] desugars to s.substr(a, b)
-          expr = { kind: "MethodCall", object: expr, method: "substr", args: [first, end], span: expr.span };
+          // s[a..b] desugars to s.slice(a, b) — zero-copy &string
+          expr = { kind: "MethodCall", object: expr, method: "slice", args: [first, end], span: expr.span };
         } else {
           this.expect(TokenKind.RBracket);
           expr = { kind: "IndexAccess", object: expr, index: first, span: expr.span };

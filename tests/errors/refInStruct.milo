@@ -1,0 +1,7 @@
+// @error: references cannot be stored in structs
+struct MyView {
+    data: &string
+}
+fn main(): i32 {
+    return 0
+}

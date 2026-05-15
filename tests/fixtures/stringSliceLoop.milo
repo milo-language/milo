@@ -1,0 +1,16 @@
+// @expect: hel
+// @expect: lo
+// @expect: wor
+// @expect: ld
+fn main(): i32 {
+    var words: Vec<string> = Vec.new()
+    words.push("hello")
+    words.push("world")
+    for w in words {
+        let first = w[0..3]
+        let rest = w[3..w.len]
+        print(first)
+        print(rest)
+    }
+    return 0
+}

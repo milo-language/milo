@@ -946,9 +946,7 @@ export class TypeChecker {
     switch (stmt.kind) {
       case "LetDecl": {
         const hint = stmt.type ? this.resolve(stmt.type) : null;
-        if (hint?.tag === "ref") {
-          this.error(`cannot store a reference in variable '${stmt.name}'`, sp);
-        }
+        // refs in locals OK (second-class — can't escape function via return/struct/collection)
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
@@ -964,9 +962,6 @@ export class TypeChecker {
       }
       case "VarDecl": {
         const hint = stmt.type ? this.resolve(stmt.type) : null;
-        if (hint?.tag === "ref") {
-          this.error(`cannot store a reference in variable '${stmt.name}'`, sp);
-        }
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
@@ -1455,6 +1450,12 @@ export class TypeChecker {
       if (info.type.tag === "ref" && info.type.mutable) {
         this.setType(expr, info.type.inner);
         return { type: info.type.inner, mutable: true };
+      }
+      // For ref locals (e.g. `var view: &string`), reassignment replaces the
+      // slice, not the underlying data — keep the ref type intact.
+      if (info.type.tag === "ref" && info.mutable) {
+        this.setType(expr, info.type);
+        return { type: info.type, mutable: true };
       }
       const t = this.deref(info.type);
       this.setType(expr, t);
@@ -2029,7 +2030,8 @@ export class TypeChecker {
         return this.setType(expr, { tag: "array", element: elemType, size: expr.count });
       }
       case "IndexAccess": {
-        const objType = this.checkExpr(expr.object);
+        const rawObjType = this.checkExpr(expr.object);
+        const objType = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
         const idxType = this.checkExpr(expr.index);
         if (idxType.tag !== "int" && idxType.tag !== "unknown") {
           this.error(`array index must be integer, got ${typeName(idxType)}`, sp);
@@ -2223,7 +2225,9 @@ export class TypeChecker {
         return this.setType(expr, { tag: "fn", params: paramTypes, ret: inferredRet });
       }
       case "MethodCall": {
-        const objType = this.checkExpr(expr.object);
+        const rawObjType = this.checkExpr(expr.object);
+        // auto-deref `&T` for method dispatch (mutating methods still need !isRootMutable to allow)
+        const objType = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
         if ((objType.tag === "int" || objType.tag === "float") && expr.method === "to_string") {
           if (expr.args.length !== 0) { this.error(`'to_string' takes no arguments`, sp); }
           return this.setType(expr, { tag: "string" });
@@ -2365,6 +2369,21 @@ export class TypeChecker {
             if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`substr start: expected integer, got ${typeName(startType)}`, sp);
             if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`substr end: expected integer, got ${typeName(endType)}`, sp);
             return this.setType(expr, { tag: "string" });
+          }
+          if (expr.method === "slice") {
+            const refStr: TypeKind = { tag: "ref", inner: { tag: "string" }, mutable: false };
+            if (expr.args.length !== 2) { this.error(`'slice' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, refStr); }
+            const startType = this.checkExpr(expr.args[0]);
+            const endType = this.checkExpr(expr.args[1]);
+            if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`slice start: expected integer, got ${typeName(startType)}`, sp);
+            if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`slice end: expected integer, got ${typeName(endType)}`, sp);
+            // mark source as borrowed — prevents mutation/move while slice is live
+            if (expr.object.kind === "Ident") {
+              const info = this.lookup(expr.object.name);
+              if (info) info.borrowed = true;
+            }
+            this.borrowedExprs.add(expr);
+            return this.setType(expr, refStr);
           }
           if (expr.method === "parse_f64") {
             if (expr.args.length !== 0) { this.error(`'parse_f64' takes no arguments`, sp); }

@@ -388,7 +388,12 @@ export class Codegen {
       case "Let": {
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
-        const declTy = this.llvmType(stmt.type);
+        // For `&T` locals (slices), store the inner value directly. The ref-ness is
+        // a compile-time concept (enforces no-escape). At runtime it's a non-owning
+        // %String (cap=0) or similar — no pointer indirection needed.
+        const isRefLocal = stmt.type.tag === "ref";
+        const storedTypeKind = isRefLocal ? (stmt.type as Extract<TypeKind, {tag: "ref"}>).inner : stmt.type;
+        const declTy = this.llvmType(storedTypeKind);
         const addrName = this.locals.has(stmt.name) ? `%${stmt.name}.${this.scopeCounter++}.addr` : `%${stmt.name}.addr`;
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false, addr: addrName });
         this.entryAllocas.push(`  ${addrName} = alloca ${declTy}`);
@@ -406,7 +411,7 @@ export class Codegen {
         lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
         // Don't drop locals that borrow from a ref (shallow copy, data owned elsewhere)
         const isBorrowedInit = stmt.value.kind === "IndexAccess" && stmt.value.isBorrowed;
-        if (this.needsDropCg(stmt.type) && !isBorrowedInit) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
+        if (!isRefLocal && this.needsDropCg(stmt.type) && !isBorrowedInit) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
         return [lines, false];
       }
       case "Assign": {
@@ -1562,7 +1567,8 @@ export class Codegen {
         return [lines, val, arrTy];
       }
       case "IndexAccess": {
-        if (expr.object.type.tag === "string") {
+        const objTag = expr.object.type.tag === "ref" ? expr.object.type.inner.tag : expr.object.type.tag;
+        if (objTag === "string") {
           return this.genStringIndex(expr, lines);
         }
         if (expr.object.type.tag === "ptr") {
@@ -1709,6 +1715,8 @@ export class Codegen {
         return this.genStringPush(expr, lines);
       case "StringSubstr":
         return this.genStringSubstr(expr, lines);
+      case "StringSlice":
+        return this.genStringSlice(expr, lines);
       case "StringParseF64":
         return this.genStringParseF64(expr, lines);
       case "StringClone":
@@ -2945,7 +2953,7 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
-  // String.substr(start, end) — allocate new string from s[start..end]
+  // String.substr(start, end) — allocate new owned string from s[start..end]
   private genStringSubstr(expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): [string[], string, string] {
     this.hasStringType = true;
     this.needsMalloc = true;
@@ -2972,7 +2980,6 @@ export class Codegen {
     lines.push(`  ${srcOff} = getelementptr i8, ptr ${srcPtr}, i64 ${startVal}`);
     lines.push(`  call ptr @memcpy(ptr ${buf}, ptr ${srcOff}, i64 ${subLen})`);
 
-    // null-terminate
     const nullPtr = this.nextTemp();
     lines.push(`  ${nullPtr} = getelementptr i8, ptr ${buf}, i64 ${subLen}`);
     lines.push(`  store i8 0, ptr ${nullPtr}`);
@@ -2983,6 +2990,35 @@ export class Codegen {
     lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${subLen}, 1`);
     const s2 = this.nextTemp();
     lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${allocLen}, 2`);
+
+    return [lines, s2, "%String"];
+  }
+
+  // String.slice(start, end) — zero-copy view. Non-owning %String with cap=0.
+  private genStringSlice(expr: HIRExpr & { kind: "StringSlice" }, lines: string[]): [string[], string, string] {
+    this.hasStringType = true;
+
+    const [strLines, strVal] = this.genExpr(expr.str);
+    lines.push(...strLines);
+    const [startLines, startVal] = this.genExpr(expr.start);
+    lines.push(...startLines);
+    const [endLines, endVal] = this.genExpr(expr.end);
+    lines.push(...endLines);
+
+    const subLen = this.nextTemp();
+    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
+
+    const srcPtr = this.nextTemp();
+    lines.push(`  ${srcPtr} = extractvalue %String ${strVal}, 0`);
+    const slicePtr = this.nextTemp();
+    lines.push(`  ${slicePtr} = getelementptr i8, ptr ${srcPtr}, i64 ${startVal}`);
+
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %String undef, ptr ${slicePtr}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${subLen}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
 
     return [lines, s2, "%String"];
   }
