@@ -94,7 +94,7 @@ export class Codegen {
     const escaped = value
       .replace(/\\/g, "\\5C").replace(/\n/g, "\\0A").replace(/\r/g, "\\0D")
       .replace(/\t/g, "\\09").replace(/\0/g, "\\00").replace(/"/g, "\\22");
-    const length = value.length + 1;
+    const length = Buffer.byteLength(value, "utf-8") + 1;
     this.strings.push({ label, escaped, length });
     return { label, length };
   }
