@@ -1,232 +1,44 @@
-// JSON validator — recursive descent parser in Milo
-// Validates JSON syntax per RFC 8259
+// JSON parsing and access — using std/json
+import "std/json"
 
-fn isWs(ch: u8): bool {
-    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
-}
-
-fn isDigit(ch: u8): bool {
-    return ch >= '0' && ch <= '9'
-}
-
-fn isHex(ch: u8): bool {
-    return isDigit(ch) || (ch >= 'A' && ch <= 'F') || (ch >= 'a' && ch <= 'f')
-}
-
-fn skipWs(s: &string, pos: &mut i64) {
-    while pos < s.len && isWs(s[pos]) {
-        pos = pos + 1
-    }
-}
-
-fn parseValue(s: &string, pos: &mut i64): bool {
-    skipWs(s, pos)
-    if pos >= s.len { return false }
-    let ch = s[pos]
-    if ch == '"' { return parseString(s, pos) }
-    if ch == '{' { return parseObject(s, pos) }
-    if ch == '[' { return parseArray(s, pos) }
-    if ch == 't' { return expectChars(s, pos, "true") }
-    if ch == 'f' { return expectChars(s, pos, "false") }
-    if ch == 'n' { return expectChars(s, pos, "null") }
-    if ch == '-' || isDigit(ch) { return parseNumber(s, pos) }
-    return false
-}
-
-fn parseString(s: &string, pos: &mut i64): bool {
-    if pos >= s.len || s[pos] != '"' { return false }
-    pos = pos + 1
-    while pos < s.len {
-        let ch = s[pos]
-        if ch == '"' {
-            pos = pos + 1
-            return true
-        } else if ch == '\\' {
-            pos = pos + 1
-            if pos >= s.len { return false }
-            let esc = s[pos]
-            if esc == 'u' {
-                pos = pos + 1
-                var i: i64 = 0
-                while i < 4 {
-                    if pos >= s.len || !isHex(s[pos]) { return false }
-                    pos = pos + 1
-                    i = i + 1
-                }
-            } else if esc == '"' || esc == '\\' || esc == '/' || esc == 'b' || esc == 'f' || esc == 'n' || esc == 'r' || esc == 't' {
-                pos = pos + 1
-            } else {
-                return false
-            }
-        } else {
-            pos = pos + 1
-        }
-    }
-    return false
-}
-
-fn parseNumber(s: &string, pos: &mut i64): bool {
-    if pos >= s.len { return false }
-    if s[pos] == '-' {
-        pos = pos + 1
-        if pos >= s.len { return false }
-    }
-    if s[pos] == '0' {
-        pos = pos + 1
-    } else if isDigit(s[pos]) {
-        while pos < s.len && isDigit(s[pos]) {
-            pos = pos + 1
-        }
-    } else {
-        return false
-    }
-    // fractional part
-    if pos < s.len && s[pos] == '.' {
-        pos = pos + 1
-        if pos >= s.len || !isDigit(s[pos]) { return false }
-        while pos < s.len && isDigit(s[pos]) {
-            pos = pos + 1
-        }
-    }
-    // exponent
-    if pos < s.len && (s[pos] == 'e' || s[pos] == 'E') {
-        pos = pos + 1
-        if pos >= s.len { return false }
-        if s[pos] == '+' || s[pos] == '-' {
-            pos = pos + 1
-        }
-        if pos >= s.len || !isDigit(s[pos]) { return false }
-        while pos < s.len && isDigit(s[pos]) {
-            pos = pos + 1
-        }
-    }
-    return true
-}
-
-fn parseArray(s: &string, pos: &mut i64): bool {
-    if pos >= s.len || s[pos] != '[' { return false }
-    pos = pos + 1
-    skipWs(s, pos)
-    if pos < s.len && s[pos] == ']' {
-        pos = pos + 1
-        return true
-    }
-    if !parseValue(s, pos) { return false }
-    skipWs(s, pos)
-    while pos < s.len {
-        if s[pos] == ']' {
-            pos = pos + 1
-            return true
-        } else if s[pos] == ',' {
-            pos = pos + 1
-            if !parseValue(s, pos) { return false }
-            skipWs(s, pos)
-        } else {
-            return false
-        }
-    }
-    return false
-}
-
-fn parseObject(s: &string, pos: &mut i64): bool {
-    if pos >= s.len || s[pos] != '{' { return false }
-    pos = pos + 1
-    skipWs(s, pos)
-    if pos < s.len && s[pos] == '}' {
-        pos = pos + 1
-        return true
-    }
-    if !parseKv(s, pos) { return false }
-    skipWs(s, pos)
-    while pos < s.len {
-        if s[pos] == '}' {
-            pos = pos + 1
-            return true
-        } else if s[pos] == ',' {
-            pos = pos + 1
-            if !parseKv(s, pos) { return false }
-            skipWs(s, pos)
-        } else {
-            return false
-        }
-    }
-    return false
-}
-
-fn parseKv(s: &string, pos: &mut i64): bool {
-    skipWs(s, pos)
-    if !parseString(s, pos) { return false }
-    skipWs(s, pos)
-    if pos >= s.len || s[pos] != ':' { return false }
-    pos = pos + 1
-    return parseValue(s, pos)
-}
-
-fn expectChars(s: &string, pos: &mut i64, expected: &string): bool {
-    var i: i64 = 0
-    while i < expected.len {
-        if pos >= s.len || s[pos] != expected[i] { return false }
-        pos = pos + 1
-        i = i + 1
-    }
-    return true
-}
-
-fn validate(json: string): bool {
-    var pos: i64 = 0
-    if !parseValue(json, pos) { return false }
-    skipWs(json, pos)
-    return pos == json.len
-}
-
-fn test(label: string, json: string, expected: bool) {
-    let result = validate(json)
-    if result == expected {
-        print("PASS: ", label)
-    } else {
-        if expected {
-            print("FAIL: ", label, " (expected valid)")
-        } else {
-            print("FAIL: ", label, " (expected invalid)")
-        }
-    }
-}
+struct Project { name: string, stars: i64 }
 
 fn main(): i32 {
-    test("null", "null", true)
-    test("true", "true", true)
-    test("false", "false", true)
-    test("zero", "0", true)
-    test("integer", "42", true)
-    test("negative", "-17", true)
-    test("float", "3.14", true)
-    test("exponent", "1e10", true)
-    test("neg exponent", "2.5E-3", true)
-    test("empty string", "\"\"", true)
-    test("simple string", "\"hello\"", true)
-    test("escaped string", "\"a\\nb\"", true)
-    test("unicode escape", "\"\\u0041\"", true)
-    test("empty array", "[]", true)
-    test("number array", "[1, 2, 3]", true)
-    test("nested array", "[[1], [2]]", true)
-    test("empty object", "{}", true)
-    test("simple object", "{\"a\": 1}", true)
-    test("nested object", "{\"a\": {\"b\": 2}}", true)
-    test("mixed", "{\"a\": [1, true, null]}", true)
-    test("whitespace", "  { \"x\" : 42 }  ", true)
+    let data = "{\"name\": \"Milo\", \"version\": 1, \"tags\": [\"fast\", \"safe\", \"native\"], \"repo\": {\"host\": \"github.com\", \"stars\": 42}}"
 
-    test("empty", "", false)
-    test("bare word", "hello", false)
-    test("single quote", "'a'", false)
-    test("trailing comma arr", "[1,]", false)
-    test("trailing comma obj", "{\"a\":1,}", false)
-    test("no colon", "{\"a\" 1}", false)
-    test("bad escape", "\"\\q\"", false)
-    test("unclosed string", "\"abc", false)
-    test("unclosed array", "[1, 2", false)
-    test("unclosed object", "{\"a\": 1", false)
-    test("trailing garbage", "42 abc", false)
-    test("leading zero", "01", false)
+    let j = jsonParse(data)!
+
+    // Grab typed fields
+    let name = j.str("name")!
+    let version = j.i64("version")!
+    print(name, " v", version)
+
+    // Nested object
+    let host = j.get("repo")!.str("host")!
+    let stars = j.get("repo")!.i64("stars")!
+    print("repo: ", host, " (", stars, " stars)")
+
+    // Array access
+    let tags = j.get("tags")!
+    print("tags: ", tags.len())
+    print("  first: ", tags.at(0)!.asStr()!)
+    print("  last:  ", tags.at(2)!.asStr()!)
+
+    // Safe access — missing keys return None
+    if let Option.Some(desc) = j.str("description") {
+        print("desc: ", desc)
+    } else {
+        print("no description")
+    }
+
+    // Null handling
+    let withNull = jsonParse("{\"value\": null}")!
+    let v = withNull.get("value")!
+    print("is null: ", v.isNull())
+
+    // Serialization (compiler builtin)
+    let proj = Project { name: "milo", stars: 42 }
+    print(jsonStringify(proj))
 
     return 0
 }
