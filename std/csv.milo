@@ -1,0 +1,99 @@
+// std/csv — CSV parse and write with quoting/escaping
+
+import "std/string"
+
+// Parse a CSV string into a Vec of rows, each row a Vec of fields.
+fn csvParse(input: &string): Vec<Vec<string>> {
+    var rows: Vec<Vec<string>> = Vec.new()
+    var row: Vec<string> = Vec.new()
+    var field = ""
+    var inQuote = false
+    var i: i64 = 0
+    while i < input.len {
+        let ch = input[i]
+        if inQuote {
+            if ch == 34 {
+                // double quote: peek for escaped quote
+                if i + 1 < input.len && input[i + 1] == 34 {
+                    field.push(34 as u8)
+                    i = i + 2
+                    continue
+                }
+                inQuote = false
+            } else {
+                field.push(ch)
+            }
+        } else {
+            if ch == 34 {
+                inQuote = true
+            } else {
+                if ch == 44 {
+                    row.push(field)
+                    field = ""
+                } else {
+                    if ch == 10 {
+                        row.push(field)
+                        field = ""
+                        rows.push(row)
+                        row = Vec.new()
+                    } else {
+                        if ch != 13 {
+                            field.push(ch)
+                        }
+                    }
+                }
+            }
+        }
+        i = i + 1
+    }
+    if field.len > 0 || row.len > 0 {
+        row.push(field)
+        rows.push(row)
+    }
+    return rows
+}
+
+// Quote a field if it contains commas, quotes, or newlines.
+fn _csvQuoteField(val: &string): string {
+    var needsQuote = false
+    var j: i64 = 0
+    while j < val.len {
+        let ch = val[j]
+        if ch == 44 || ch == 34 || ch == 10 || ch == 13 {
+            needsQuote = true
+            break
+        }
+        j = j + 1
+    }
+    if !needsQuote { return val.clone() }
+    var quoted = "\""
+    var k: i64 = 0
+    while k < val.len {
+        let ch = val[k]
+        if ch == 34 {
+            quoted = quoted + "\"\""
+        } else {
+            quoted.push(ch)
+        }
+        k = k + 1
+    }
+    quoted = quoted + "\""
+    return quoted
+}
+
+// Serialize rows to a CSV string.
+fn csvStringify(rows: &Vec<Vec<string>>): string {
+    var output = ""
+    var ri: i64 = 0
+    while ri < rows.len {
+        var ci: i64 = 0
+        while ci < rows[ri].len {
+            if ci > 0 { output = output + "," }
+            output = output + _csvQuoteField(rows[ri][ci])
+            ci = ci + 1
+        }
+        output = output + "\n"
+        ri = ri + 1
+    }
+    return output
+}
