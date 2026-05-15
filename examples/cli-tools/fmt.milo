@@ -601,6 +601,13 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     if tk == TokKind.DotDot || pk == TokKind.DotDot {
         return false
     }
+    // Shift operators: no space between adjacent << or >>
+    if tk == TokKind.Lt && pk == TokKind.Lt && !isGenericOpen(tokens, i - 1) {
+        return false
+    }
+    if tk == TokKind.Gt && pk == TokKind.Gt && !isInsideGeneric(tokens, i - 1) {
+        return false
+    }
     // Generics: no space around < > when used as type brackets
     if tk == TokKind.Lt && isGenericOpen(tokens, i) {
         return false
