@@ -3,6 +3,29 @@
 import "std/os"
 import "std/platform"
 
+// ── IoError ──
+
+enum IoError {
+    NotFound(string),
+    PermissionDenied(string),
+    IsDirectory(string),
+    AlreadyExists(string),
+    Other(string),
+}
+
+// map errno to IoError variant with path context
+fn _io_error(path: string): IoError {
+    unsafe {
+        let e = get_errno()
+        if e == 2  { return IoError.NotFound(path) }
+        if e == 13 { return IoError.PermissionDenied(path) }
+        if e == 21 { return IoError.IsDirectory(path) }
+        if e == 17 { return IoError.AlreadyExists(path) }
+        let reason = _cstr_to_string(strerror(e))
+        return IoError.Other("'" + path + "': " + reason)
+    }
+}
+
 // Write a string to stdout without appending a newline.
 fn write_stdout(s: &string): void {
     unsafe { write(1, s, s.len) }
@@ -23,46 +46,36 @@ impl Drop for File {
     }
 }
 
-// Open a file for reading.
-// Returns Err if the file doesn't exist or can't be opened.
-fn open_read(path: string): Result<File> {
+fn open_read(path: string): Result<File, IoError> {
     unsafe {
         let fd = open(path, 0)
         if fd < 0 {
-            let reason = _cstr_to_string(strerror(get_errno()))
-            return Result.Err("'" + path + "': " + reason)
+            return Result.Err(_io_error(path))
         }
         return Result.Ok(File { fd: fd })
     }
 }
 
-// Create or truncate a file for writing.
-// Creates the file if it doesn't exist, truncates if it does.
-fn open_write(path: string): Result<File> {
+fn open_write(path: string): Result<File, IoError> {
     unsafe {
         let fd = open(path, o_write_create_trunc(), 420)
         if fd < 0 {
-            let reason = _cstr_to_string(strerror(get_errno()))
-            return Result.Err("'" + path + "': " + reason)
+            return Result.Err(_io_error(path))
         }
         return Result.Ok(File { fd: fd })
     }
 }
 
-// Open a file for appending.
-// Creates the file if it doesn't exist.
-fn open_append(path: string): Result<File> {
+fn open_append(path: string): Result<File, IoError> {
     unsafe {
         let fd = open(path, o_write_create_append(), 420)
         if fd < 0 {
-            let reason = _cstr_to_string(strerror(get_errno()))
-            return Result.Err("'" + path + "': " + reason)
+            return Result.Err(_io_error(path))
         }
         return Result.Ok(File { fd: fd })
     }
 }
 
-// Get the size of a file in bytes.
 fn file_size(f: &File): i64 {
     unsafe {
         let cur = lseek(f.fd, 0, 1)
@@ -72,11 +85,10 @@ fn file_size(f: &File): i64 {
     }
 }
 
-// Read the entire file contents as a string.
-fn read_all(f: &File): Result<string> {
+fn read_all(f: &File): Result<string, IoError> {
     let size = file_size(f)
     if size < 0 {
-        return Result.Err("failed to get file size")
+        return Result.Err(IoError.Other("failed to get file size"))
     }
     unsafe { lseek(f.fd, 0, 0) }
     var result: string = ""
@@ -95,23 +107,19 @@ fn read_all(f: &File): Result<string> {
     return Result.Ok(result)
 }
 
-// Write a string to the file. Returns the number of bytes written.
-fn write_all(f: &File, data: &string): Result<i64> {
+fn write_all(f: &File, data: &string): Result<i64, IoError> {
     unsafe {
         let n = write(f.fd, data, data.len)
         if n < 0 {
-            return Result.Err("write failed")
+            return Result.Err(IoError.Other("write failed"))
         }
         return Result.Ok(n)
     }
 }
 
-// Read an entire file into a string by path.
-fn read_file(path: string): Result<string> {
-    match open_read(path) {
-        Result.Ok(f) => { return read_all(f) }
-        Result.Err(e) => { return Result.Err(e) }
-    }
+fn read_file(path: string): Result<string, IoError> {
+    let f = open_read(path)?
+    return read_all(f)
 }
 
 // Read all available data from stdin into a string.
