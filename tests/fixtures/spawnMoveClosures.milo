@@ -1,0 +1,29 @@
+// @expect: thread 0
+// @expect: thread 1
+// @expect: thread 2
+// @expect: done
+
+import "std/thread"
+
+fn main(): i32 {
+    var threads: Vec<Thread> = Vec.new()
+
+    var i: i64 = 0
+    while i < 3 {
+        let id = i
+        let t = spawn(move (): void => {
+            print("thread ", id)
+        })!
+        threads.push(t)
+        i = i + 1
+    }
+
+    i = 0
+    while i < 3 {
+        threadJoin(threads[i])!
+        i = i + 1
+    }
+
+    print("done")
+    return 0
+}
