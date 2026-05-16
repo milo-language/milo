@@ -47,10 +47,10 @@ Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 
 ## Phase 2.5 — Developer Experience
 
-- [x] LSP server (milod) — diagnostics, hover, go-to-definition
+- [x] LSP server (milod) — diagnostics, hover, go-to-definition, completions
 - [x] VS Code extension — syntax highlighting + LSP client
-- [x] GitHub Actions CI — build + test on push/PR
-- [ ] LSP: completions, rename, find references
+- [x] GitHub Actions CI — build + test on push/PR, release pipeline with standalone binaries
+- [ ] LSP: rename, find references
 - [ ] REPL / playground
 
 ## Phase 2.7 — Iteration & Zero-Copy Ergonomics
@@ -88,7 +88,7 @@ Done:
 - [x] Hex (`0xFF`) and binary (`0b1010`) integer literals; `_` digit separator
 - [x] `.toString()` for integer and float types (via snprintf)
 
-### Phase 3.0 — Stage-0 Bootstrap (current focus)
+### Phase 3.0 — Stage-0 Bootstrap ✅
 
 Goal: a self-hosted Milo compiler (`milo0`) capable of compiling a useful subset of Milo, written entirely in Milo. Proves the loop end-to-end before tackling the full port.
 
@@ -109,8 +109,8 @@ Design:
 Bootstrap pieces (in `self-hosting/`):
 - [x] `lexer.milo` — char stream → Vec\<Token\> (40+ token kinds, line comments, keyword table)
 - [x] `parser.milo` — tokens → AST (Box-recursive enums for Expr/Stmt; FnDecl/Program/Param structs; full precedence ladder including `||` `&&` cmp add mul unary call primary)
-- [ ] `codegen.milo` — AST → LLVM IR text (no checker; trust input)
-- [ ] `main.milo` — stdin → lex → parse → codegen → stdout, wrapper script for clang invocation
+- [x] `codegen.milo` — AST → LLVM IR text (no checker; trust input)
+- [x] `main.milo` — stdin → lex → parse → codegen → stdout
 
 Compiler fixes unlocked while building `milo0/`:
 - [x] `[T; N]` → `*T` auto-decay for FFI calls (was forcing manual extern signatures with array refs)
@@ -258,7 +258,7 @@ Still missing for full milo0-on-milo0:
 
 Milestone: Compiler compiles itself, bit-identical (or equivalent) IR for the full Milo source set.
 
-## Phase 4 — Competitive Language (current focus)
+## Phase 4 — Competitive Language
 
 Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a developer walk away without this."
 
@@ -274,7 +274,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 - [x] **Operator overloading** — Add/Sub/Mul/Div/Eq traits with `impl Add for T`. `@derive(Eq)` generates field-wise equality. `==`/`!=` on structs via Eq trait.
 - [x] **String interpolation** — `$"hello {name}, you are {age}"` f-string syntax, desugars to `format()`.
 - [ ] **Iterators** — iterator trait with `.map().filter().collect()` chains, lazy evaluation. Needs associated types or at minimum trait method return types.
-- [ ] **Display trait** — `print(myStruct)` via user-defined `display()`. Trait-based dispatch in builtins.
+- [x] **Auto-display** — `print(myStruct)` auto-formats structs and enums (field-wise display). User-defined `Display` trait deferred.
 - [ ] **Error handling improvements** — `From` trait for automatic error conversion in `?`, `anyhow`-style error boxing.
 - [ ] **Doc comments + doc generation** — `///` comments, `milo doc` to generate HTML/markdown.
 
@@ -282,7 +282,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 
 - [ ] **Cross-compilation** — `--target aarch64-linux` etc. Infrastructure exists in target.ts, needs testing + sysroot handling.
 - [ ] **REPL / playground** — interactive exploration, web playground for demos.
-- [ ] **LSP completions** — autocomplete, rename, find references (currently: diagnostics + hover + go-to-def only).
+- [ ] **LSP rename + find references** (completions already implemented).
 - [ ] **Benchmarking** — `@bench` annotations, `milo bench` runner.
 
 ## Phase 4.5 — Ecosystem ✅ (partial)
@@ -290,7 +290,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 - [x] **Package manager** — `milo-pkg` (written in Milo): init, new, add, install. Git-based global cache at `~/.milo/cache/`, lockfile with commit SHAs.
 - [x] **Formatter** — `milo-fmt` (written in Milo): context-sensitive formatting, LSP integration.
 - [ ] **Documentation / tutorials / "the book"**
-- [ ] **Example projects** — non-trivial apps showcasing the language (web server, CLI tool, game)
+- [x] **Example projects** — web servers (7 apps), CLI tools (jq, grep, cat, wc, tree, calc, hex, pkg, fmt)
 
 ## Standard Library — completed
 
