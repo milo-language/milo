@@ -7,7 +7,7 @@ That's what an arena does for data. You store values, get back handles (tickets)
 This is useful when things need to reference each other — like nodes in a graph, entries in a cache, or entities in a game. Normal ownership can't model cycles (A owns B owns A?), but handles can.
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaFree, arenaSet, arenaModify, arenaValid, arenaLen }
+from "std/arena" import { Arena, Handle, arenaNew }
 ```
 
 ## Quick start
@@ -15,22 +15,22 @@ from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaFr
 Store some values, get handles, look them up:
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaFree }
+from "std/arena" import { Arena, Handle, arenaNew }
 
 fn main(): i32 {
-    var names = arenaNew<string>()
+    var names: Arena<string> = arenaNew()
 
-    let alice = arenaAlloc(&names, "Alice")   // store "Alice", get a handle back
-    let bob = arenaAlloc(&names, "Bob")
+    let alice = names.alloc("Alice")
+    let bob = names.alloc("Bob")
 
-    print(arenaGet(&names, alice)!)           // "Alice"
-    print(arenaGet(&names, bob)!)             // "Bob"
+    print(names.get(alice)!)              // "Alice"
+    print(names.get(bob)!)                // "Bob"
 
-    arenaFree(&names, alice)                  // remove Alice
+    names.free(alice)
 
-    match arenaGet(&names, alice) {
-        Option.Some(n) => print(n),
-        Option.None => print("gone"),         // prints "gone" — handle is stale
+    match names.get(alice) {
+        Option.Some(n) => { print(n) }
+        Option.None => { print("gone") } // prints "gone" — handle is stale
     }
 
     return 0
@@ -43,22 +43,22 @@ fn main(): i32 {
 
 **The lifecycle is simple:**
 
-1. **Create** — `arenaNew<T>()` makes an empty arena
-2. **Store** — `arenaAlloc(&arena, value)` puts a value in and returns a `Handle<T>`
-3. **Access** — `arenaGet(&arena, handle)` returns `Option<T>` — `Some` if alive, `None` if stale
-4. **Update** — `arenaSet` replaces a value; `arenaModify` transforms it with a function
-5. **Remove** — `arenaFree(&arena, handle)` removes the value and recycles the slot
+1. **Create** — `arenaNew()` with a type annotation: `var a: Arena<string> = arenaNew()`
+2. **Store** — `a.alloc(value)` puts a value in and returns a `Handle<T>`
+3. **Access** — `a.get(handle)` returns `Option<T>` — `Some` if alive, `None` if stale
+4. **Update** — `.set()` replaces a value; `.modify()` transforms it with a function
+5. **Remove** — `a.free(handle)` removes the value and recycles the slot
 
 **Handles are cheap.** They're two integers (slot index + generation). Copy them freely, store them in Vecs, pass them around. They don't own anything — the arena does.
 
-**Stale handles are safe.** Every slot has a generation counter that bumps on free. If you hold a handle from generation 2 but the slot is now on generation 3, `arenaGet` returns `None`. No crash, no garbage — just a clear "this is gone."
+**Stale handles are safe.** Every slot has a generation counter that bumps on free. If you hold a handle from generation 2 but the slot is now on generation 3, `.get()` returns `None`. No crash, no garbage — just a clear "this is gone."
 
 ## Example: a graph with cycles
 
 The classic case — nodes that reference each other. Impossible with plain ownership (who owns whom?), straightforward with an arena.
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaModify, arenaFree }
+from "std/arena" import { Arena, Handle, arenaNew }
 
 struct Node {
     name: string,
@@ -66,21 +66,21 @@ struct Node {
 }
 
 fn main(): i32 {
-    var graph = arenaNew<Node>()
+    var graph: Arena<Node> = arenaNew()
 
-    let a = arenaAlloc(&graph, Node { name: "A", neighbors: Vec.new() })
-    let b = arenaAlloc(&graph, Node { name: "B", neighbors: Vec.new() })
-    let c = arenaAlloc(&graph, Node { name: "C", neighbors: Vec.new() })
+    let a = graph.alloc(Node { name: "A", neighbors: Vec.new() })
+    let b = graph.alloc(Node { name: "B", neighbors: Vec.new() })
+    let c = graph.alloc(Node { name: "C", neighbors: Vec.new() })
 
     // wire up a cycle: A -> B -> C -> A
-    arenaModify(&graph, a, (node: Node): Node => { node.neighbors.push(b); node })
-    arenaModify(&graph, b, (node: Node): Node => { node.neighbors.push(c); node })
-    arenaModify(&graph, c, (node: Node): Node => { node.neighbors.push(a); node })
+    graph.modify(a, (node: Node): Node => { node.neighbors.push(b); node })
+    graph.modify(b, (node: Node): Node => { node.neighbors.push(c); node })
+    graph.modify(c, (node: Node): Node => { node.neighbors.push(a); node })
 
     // traverse: start at A, follow first neighbor twice
-    let nodeA = arenaGet(&graph, a)!
-    let nodeB = arenaGet(&graph, nodeA.neighbors[0])!
-    let nodeC = arenaGet(&graph, nodeB.neighbors[0])!
+    let nodeA = graph.get(a)!
+    let nodeB = graph.get(nodeA.neighbors[0])!
+    let nodeC = graph.get(nodeB.neighbors[0])!
     print($"{nodeA.name} -> {nodeB.name} -> {nodeC.name}")  // A -> B -> C
 
     return 0
@@ -89,14 +89,14 @@ fn main(): i32 {
 
 ## Gotchas
 
-**`arenaGet` returns a copy.** Changing the returned value doesn't update the arena. To modify in place, use `arenaModify`:
+**`.get()` returns a copy.** Changing the returned value doesn't update the arena. Use `.modify()` instead:
 
 ```milo
-let node = arenaGet(&graph, handle)!
-node.name = "changed"            // this changes your local copy, not the arena
+let node = graph.get(handle)!
+node.name = "changed"                   // changes your local copy, not the arena
 
-arenaModify(&graph, handle, (n: Node): Node => {
-    n.name = "changed"; n        // this updates the arena
+graph.modify(handle, (n: Node): Node => {
+    n.name = "changed"; n               // this updates the arena
 })
 ```
 
@@ -104,7 +104,7 @@ arenaModify(&graph, handle, (n: Node): Node => {
 
 **No iteration.** You can't walk all live values in an arena. If you need to visit everything, keep your handles in a `Vec<Handle<T>>` alongside the arena.
 
-**Memory grows, doesn't shrink.** Freed slots get recycled by the next `arenaAlloc`, but the backing storage never shrinks. Fine for most use cases — be aware if you're allocating millions and freeing most of them.
+**Memory grows, doesn't shrink.** Freed slots get recycled by the next `.alloc()`, but the backing storage never shrinks. Fine for most use cases — be aware if you're allocating millions and freeing most of them.
 
 ## Types
 
@@ -130,70 +130,68 @@ struct Arena<T> {
 }
 ```
 
-Growable container that owns all values. Freed slots go onto the free list and get recycled by the next `arenaAlloc`.
+Growable container that owns all values. Freed slots go onto the free list and get recycled by the next `.alloc()`.
 
-## Functions
+## Methods
 
-### arenaNew
-
-```milo
-fn arenaNew<T>(): Arena<T>
-```
-
-Create an empty arena.
-
-### arenaAlloc
+### .alloc
 
 ```milo
-fn arenaAlloc<T>(arena: &Arena<T>, value: T): Handle<T>
+fn alloc(self: &mut Self, value: T): Handle<T>
 ```
 
 Store a value, get a handle back. Reuses freed slots when available.
 
-### arenaGet
+### .get
 
 ```milo
-fn arenaGet<T>(arena: &Arena<T>, handle: Handle<T>): Option<T>
+fn get(self: &Self, handle: Handle<T>): Option<T>
 ```
 
 Look up a value by handle. Returns `None` if the handle is stale or out of bounds.
 
-### arenaSet
+### .set
 
 ```milo
-fn arenaSet<T>(arena: &Arena<T>, handle: Handle<T>, value: T): bool
+fn set(self: &mut Self, handle: Handle<T>, value: T): bool
 ```
 
 Replace the value at a handle. Returns `false` if the handle is invalid.
 
-### arenaModify
+### .modify
 
 ```milo
-fn arenaModify<T>(arena: &Arena<T>, handle: Handle<T>, f: (T) => T): bool
+fn modify(self: &mut Self, handle: Handle<T>, f: (T) => T): bool
 ```
 
 Transform a value in place. Returns `false` if the handle is invalid.
 
-### arenaFree
+### .free
 
 ```milo
-fn arenaFree<T>(arena: &Arena<T>, handle: Handle<T>): bool
+fn free(self: &mut Self, handle: Handle<T>): bool
 ```
 
 Remove a value and recycle the slot. Returns `false` if already freed.
 
-### arenaValid
+### .valid
 
 ```milo
-fn arenaValid<T>(arena: &Arena<T>, handle: Handle<T>): bool
+fn valid(self: &Self, handle: Handle<T>): bool
 ```
 
 Check whether a handle still points to a live value.
 
-### arenaLen
+## Free functions
 
-```milo
-fn arenaLen<T>(arena: &Arena<T>): i64
-```
+The same operations are available as free functions for backwards compatibility:
 
-Number of live values in the arena.
+| Method | Free function |
+|---|---|
+| `a.alloc(val)` | `arenaAlloc(a, val)` |
+| `a.get(h)` | `arenaGet(a, h)` |
+| `a.set(h, val)` | `arenaSet(a, h, val)` |
+| `a.modify(h, f)` | `arenaModify(a, h, f)` |
+| `a.free(h)` | `arenaFree(a, h)` |
+| `a.valid(h)` | `arenaValid(a, h)` |
+| `arenaLen(a)` | Number of live values |

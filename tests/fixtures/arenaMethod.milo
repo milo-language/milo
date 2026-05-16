@@ -1,0 +1,34 @@
+// @expect: Alice
+// @expect: Bob
+// @expect: gone
+// @expect: updated
+// @expect: valid
+from "std/arena" import { Arena, Handle, arenaNew }
+
+fn main(): i32 {
+    var names: Arena<string> = arenaNew()
+
+    let a = names.alloc("Alice")
+    let b = names.alloc("Bob")
+
+    print(names.get(a)!)
+    print(names.get(b)!)
+
+    // free + stale handle
+    names.free(a)
+    match names.get(a) {
+        Option.Some(n) => { print(n) }
+        Option.None => { print("gone") }
+    }
+
+    // set
+    names.set(b, "updated")
+    print(names.get(b)!)
+
+    // valid check
+    if names.valid(b) {
+        print("valid")
+    }
+
+    return 0
+}

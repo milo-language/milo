@@ -130,6 +130,8 @@ export class TypeChecker {
   private traits = new Map<string, TraitInfo>();
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
+  private genericImpls = new Map<string, { impl: import("./ast").ImplDecl; program: Program }[]>();
+  private _pendingImplFns: Function[] = [];
   private resolvedMethods = new Map<Expr, string>();
   private resolvedOperators = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
@@ -288,6 +290,36 @@ export class TypeChecker {
       })),
     };
     this.monomorphizedStructDecls.push(decl);
+
+    // instantiate generic impls for this concrete type
+    const genericImplTemplates = this.genericImpls.get(baseName);
+    if (genericImplTemplates) {
+      for (const { impl: gi, program: prog } of genericImplTemplates) {
+        const concreteImpl: import("./ast").ImplDecl = {
+          kind: "ImplDecl",
+          traitName: gi.traitName,
+          typeName: mangled,
+          typeParams: [],
+          methods: gi.methods.map(m => ({
+            ...m,
+            params: m.params.map(p => ({
+              name: p.name,
+              type: this.substituteSelfInMiloType(
+                this.substituteMiloType(p.type, generic.typeParams, typeArgs),
+                mangled
+              ),
+            })),
+            retType: this.substituteSelfInMiloType(
+              this.substituteMiloType(m.retType, generic.typeParams, typeArgs),
+              mangled
+            ),
+          })),
+          span: gi.span,
+        };
+        this.registerImpl(concreteImpl, prog, this._pendingImplFns);
+      }
+    }
+
     return mangled;
   }
 
@@ -549,6 +581,14 @@ export class TypeChecker {
       this.checkFunction(fn);
     }
 
+    // drain deferred impl fns from generic impl monomorphization
+    while (this._pendingImplFns.length > 0) {
+      const batch = this._pendingImplFns.splice(0);
+      for (const fn of batch) {
+        this.checkFunction(fn);
+      }
+    }
+
     return {
       diagnostics: this.diagnostics,
       exprTypes: this.exprTypes,
@@ -785,6 +825,14 @@ export class TypeChecker {
 
   private registerImpl(impl: import("./ast").ImplDecl, program: Program, implFnsToCheck: Function[]) {
     const typeName = impl.typeName;
+
+    // generic impl — store as template, instantiate per monomorphization
+    if (impl.typeParams && impl.typeParams.length > 0 && !impl.traitName) {
+      const existing = this.genericImpls.get(typeName) || [];
+      existing.push({ impl, program });
+      this.genericImpls.set(typeName, existing);
+      return;
+    }
 
     if (impl.traitName) {
       const trait = this.traits.get(impl.traitName);
@@ -2007,6 +2055,7 @@ export class TypeChecker {
         if (!sig) {
           const varInfo = this.lookup(expr.func);
           if (varInfo && varInfo.type.tag === "fn") {
+            varInfo.read = true;
             const fnType = varInfo.type;
             if (expr.args.length !== fnType.params.length) {
               this.error(`closure expects ${fnType.params.length} args, got ${expr.args.length}`, sp);

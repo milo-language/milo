@@ -153,3 +153,32 @@ fn arenaModify<T> (a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
 fn arenaLen<T> (a: &Arena<T>): i64 {
     return a.live
 }
+
+// Method API — same functionality, nicer syntax.
+
+impl Arena<T> {
+    fn alloc(self: &mut Self, val: T): Handle<T> {
+        return arenaAlloc(self, val)
+    }
+
+    fn get(self: &Self, h: Handle<T>): Option<T> {
+        return arenaGet(self, h)
+    }
+
+    fn set(self: &mut Self, h: Handle<T>, val: T): bool {
+        return arenaSet(self, h, val)
+    }
+
+    fn modify(self: &mut Self, h: Handle<T>, f: (T) => T): bool {
+        return arenaModify(self, h, f)
+    }
+
+    fn free(self: &mut Self, h: Handle<T>): bool {
+        return arenaFree(self, h)
+    }
+
+    fn valid(self: &Self, h: Handle<T>): bool {
+        return arenaValid(self, h)
+    }
+}
+
