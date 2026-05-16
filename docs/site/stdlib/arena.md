@@ -1,19 +1,50 @@
 # std/arena
 
-Sometimes data points back at itself — a graph node linking to its neighbors, a tree with parent pointers, an entity system where objects reference each other. Ownership can't model this directly because there's no single owner.
+Think of an arena like a parking garage. You drive your car in, get a ticket with a spot number. Later you hand in the ticket to get your car back. If the spot was reassigned since you parked, the garage tells you — it doesn't hand you someone else's car.
 
-An arena solves this. You put all your objects in one container and refer to them by **handle** — a lightweight ticket that says "slot 3, version 2." The arena owns the data; your code holds handles. When you free a slot and something later reuses it, stale handles don't silently return garbage — they return `None`. No dangling pointers, no use-after-free, no `unsafe`.
+That's what an arena does for data. You store values, get back handles (tickets), and use those handles to access or update your data later. The arena owns everything; your code just holds handles.
+
+This is useful when things need to reference each other — like nodes in a graph, entries in a cache, or entities in a game. Normal ownership can't model cycles (A owns B owns A?), but handles can.
 
 ```milo
 from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaFree, arenaSet, arenaModify, arenaValid, arenaLen }
 ```
 
-## Quick start: a graph with cycles
+## Quick start
 
-The classic case — nodes that point to each other. Impossible with plain ownership, trivial with an arena.
+Store some values, get handles, look them up:
 
 ```milo
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaModify }
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaFree }
+
+fn main(): i32 {
+    var names = arenaNew<string>()
+
+    let alice = arenaAlloc(&names, "Alice")   // store "Alice", get a handle back
+    let bob = arenaAlloc(&names, "Bob")
+
+    print(arenaGet(&names, alice)!)           // "Alice"
+    print(arenaGet(&names, bob)!)             // "Bob"
+
+    arenaFree(&names, alice)                  // remove Alice
+
+    match arenaGet(&names, alice) {
+        Option.Some(n) => print(n),
+        Option.None => print("gone"),         // prints "gone" — handle is stale
+    }
+
+    return 0
+}
+```
+
+Handles are just a slot number and a version counter. When a slot gets recycled, the version bumps — so old handles return `None` instead of garbage. No dangling pointers, no use-after-free, all checked at runtime.
+
+## Example: a graph with cycles
+
+The classic case — nodes that reference each other. Impossible with plain ownership (who owns whom?), straightforward with an arena.
+
+```milo
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet, arenaModify, arenaFree }
 
 struct Node {
     name: string,
@@ -38,18 +69,9 @@ fn main(): i32 {
     let nodeC = arenaGet(&graph, nodeB.neighbors[0])!
     print($"{nodeA.name} -> {nodeB.name} -> {nodeC.name}")  // A -> B -> C
 
-    // free B, then try to access it — returns None, not garbage
-    arenaFree(&graph, b)
-    match arenaGet(&graph, b) {
-        Option.Some(n) => print(n.name),
-        Option.None => print("B was freed"),  // this prints
-    }
-
     return 0
 }
 ```
-
-Handles are just integers — cheap to copy, cheap to store in a `Vec`. The generation counter is what keeps them safe.
 
 ## Types
 
