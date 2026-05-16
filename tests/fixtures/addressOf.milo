@@ -1,0 +1,12 @@
+// @expect: 42
+
+fn main(): i32 {
+    var x: i64 = 42
+    unsafe {
+        let p = (&x) as *u8
+        let q = p as *i64
+        let val = *q
+        print(val)
+    }
+    return 0
+}
