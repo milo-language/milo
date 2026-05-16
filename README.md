@@ -25,7 +25,28 @@ listening on :8080
 | Rust | no | yes | yes | yes |
 | **Milo** | **no** | **no** | **yes** | **yes** |
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cs01/milo/main/install.sh | sh
+```
+
+Or set a custom install directory:
+
+```bash
+MILO_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/cs01/milo/main/install.sh | sh
+```
+
+Requires LLVM/Clang on your system for linking.
+
 ## Quick start
+
+```bash
+milo run server.milo            # compile and run
+milo build server.milo -o server  # build a binary
+```
+
+### Development (from source)
 
 Requires: [Bun](https://bun.sh), LLVM/Clang.
 
