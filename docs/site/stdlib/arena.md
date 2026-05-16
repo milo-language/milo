@@ -87,6 +87,25 @@ fn main(): i32 {
 }
 ```
 
+## Gotchas
+
+**`arenaGet` returns a copy.** Changing the returned value doesn't update the arena. To modify in place, use `arenaModify`:
+
+```milo
+let node = arenaGet(&graph, handle)!
+node.name = "changed"            // this changes your local copy, not the arena
+
+arenaModify(&graph, handle, (n: Node): Node => {
+    n.name = "changed"; n        // this updates the arena
+})
+```
+
+**Handles aren't tied to a specific arena.** A `Handle<string>` from arena A will type-check against arena B if it's also an `Arena<string>`. You'll get `None` or the wrong value — not a compile error. Keep your arenas and handles organized.
+
+**No iteration.** You can't walk all live values in an arena. If you need to visit everything, keep your handles in a `Vec<Handle<T>>` alongside the arena.
+
+**Memory grows, doesn't shrink.** Freed slots get recycled by the next `arenaAlloc`, but the backing storage never shrinks. Fine for most use cases — be aware if you're allocating millions and freeing most of them.
+
 ## Types
 
 ### Handle\<T\>
