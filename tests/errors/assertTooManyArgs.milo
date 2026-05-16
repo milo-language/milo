@@ -1,0 +1,6 @@
+// @error: assert() expects 1-2 arguments, got 3
+
+fn main(): i32 {
+    assert(true, "msg", "extra")
+    return 0
+}

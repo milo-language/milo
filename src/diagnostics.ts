@@ -7,6 +7,12 @@ export interface Diagnostic {
   span?: Span;
   message: string;
   hint?: string;
+  code?: string;
+}
+
+export interface WarningConfig {
+  denied: Set<string>;
+  allowed: Set<string>;
 }
 
 const RESET = "\x1b[0m";

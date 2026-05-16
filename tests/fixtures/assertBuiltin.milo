@@ -1,0 +1,11 @@
+// @expect: all passed
+
+fn main(): i32 {
+    assert(true)
+    assert(1 == 1)
+    assert(2 > 1, "math works")
+    let x = 42
+    assert(x == 42, "variable check")
+    print("all passed")
+    return 0
+}

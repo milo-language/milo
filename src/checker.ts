@@ -1,13 +1,15 @@
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl } from "./ast";
 import { simpleType } from "./ast";
 import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy } from "./types";
-import type { Diagnostic } from "./diagnostics";
+import type { Diagnostic, WarningConfig } from "./diagnostics";
 
 interface VarInfo {
   type: TypeKind;
   mutable: boolean;
   moved: boolean;
   borrowed: boolean;
+  read: boolean;
+  span?: Span;
 }
 
 export interface CaptureInfo {
@@ -96,6 +98,7 @@ interface ImplInfo {
 }
 
 export class TypeChecker {
+  private warningConfig: WarningConfig;
   private diagnostics: Diagnostic[] = [];
   private functions = new Map<string, FnSig>();
   private genericFns = new Map<string, GenericFnInfo>();
@@ -132,12 +135,20 @@ export class TypeChecker {
   private fnFieldCalls = new Set<Expr>();
   private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
 
+  constructor(warningConfig?: WarningConfig) {
+    const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
+    if (!config.denied.has("unused-move")) config.allowed.add("unused-move");
+    this.warningConfig = config;
+  }
+
   private error(msg: string, span?: Span, hint?: string) {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
   }
 
-  private warn(msg: string, span?: Span, hint?: string) {
-    this.diagnostics.push({ severity: "warning", span, message: msg, hint });
+  private warn(code: string, msg: string, span?: Span, hint?: string) {
+    if (this.warningConfig.allowed.has(code)) return;
+    const severity = (this.warningConfig.denied.has(code) || this.warningConfig.denied.has("*")) ? "error" : "warning";
+    this.diagnostics.push({ severity, span, message: msg, hint, code });
   }
 
   private resolve(ty: MiloType): TypeKind {
@@ -426,6 +437,7 @@ export class TypeChecker {
     this.functions.set("_loadU8", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 8, signed: false }, variadic: false });
     this.functions.set("_loadI32", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 32, signed: true }, variadic: false });
     this.functions.set("_callClosureVoid", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "fn" }, { type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "env" }], ret: { tag: "void" }, variadic: false });
+    this.functions.set("assert", { params: [{ type: { tag: "bool" }, name: "cond" }], ret: { tag: "void" }, variadic: true });
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
@@ -954,7 +966,7 @@ export class TypeChecker {
 
     for (const p of fn.params) {
       const pType = this.resolve(p.type);
-      this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false });
+      this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false });
     }
 
     for (const stmt of fn.body) this.checkStmt(stmt, retType);
@@ -967,13 +979,21 @@ export class TypeChecker {
         if (info.type.tag === "ref") continue;
         if (isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
         if (!info.moved) {
-          this.warn(
+          this.warn("unused-move",
             `parameter '${p.name}' is never moved — consider taking '&${typeName(info.type)}' instead`,
             fn.span,
             `passing by reference avoids requiring callers to give up ownership`
           );
         }
       }
+    }
+
+    // Lint: unused variables
+    const scope = this.scopes[this.scopes.length - 1];
+    for (const [name, info] of scope) {
+      if (info.read || name.startsWith("_")) continue;
+      this.warn("unused-variable", `unused variable '${name}'`, info.span,
+        `prefix with underscore to silence: '_${name}'`);
     }
 
     this.popScope();
@@ -994,7 +1014,7 @@ export class TypeChecker {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
         }
-        this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false, borrowed: false });
+        this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false, borrowed: false, read: false, span: sp });
         this.tryMove(stmt.value);
         break;
       }
@@ -1009,7 +1029,7 @@ export class TypeChecker {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
         }
-        this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false, borrowed: false });
+        this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false, borrowed: false, read: false, span: sp });
         this.tryMove(stmt.value);
         break;
       }
@@ -1126,7 +1146,7 @@ export class TypeChecker {
           this.setType(stmt.iterable, varType);
           const preMoves = this.snapshotMoveState();
           this.pushScope();
-          this.declare(stmt.varName, { type: varType, mutable: false, moved: false, borrowed: false });
+          this.declare(stmt.varName, { type: varType, mutable: false, moved: false, borrowed: false, read: false });
           this.loopDepth++;
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
@@ -1152,7 +1172,7 @@ export class TypeChecker {
             }
             const preMoves = this.snapshotMoveState();
             this.pushScope();
-            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false });
+            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -1171,7 +1191,7 @@ export class TypeChecker {
             const byteType: TypeKind = { tag: "int", bits: 8, signed: false };
             const preMoves = this.snapshotMoveState();
             this.pushScope();
-            this.declare(stmt.varName, { type: byteType, mutable: false, moved: false, borrowed: false });
+            this.declare(stmt.varName, { type: byteType, mutable: false, moved: false, borrowed: false, read: false });
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -1193,9 +1213,9 @@ export class TypeChecker {
             }
             const preMoves = this.snapshotMoveState();
             this.pushScope();
-            this.declare(stmt.varName, { type: keyRef, mutable: false, moved: false, borrowed: false });
+            this.declare(stmt.varName, { type: keyRef, mutable: false, moved: false, borrowed: false, read: false });
             if (stmt.varName2) {
-              this.declare(stmt.varName2, { type: valRef, mutable: false, moved: false, borrowed: false });
+              this.declare(stmt.varName2, { type: valRef, mutable: false, moved: false, borrowed: false, read: false });
             }
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
@@ -1219,7 +1239,7 @@ export class TypeChecker {
             }
             const preMoves = this.snapshotMoveState();
             this.pushScope();
-            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false });
+            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -1243,9 +1263,19 @@ export class TypeChecker {
       case "ContinueStmt":
         if (this.loopDepth === 0) this.error("'continue' outside of loop", sp);
         break;
-      case "ExprStmt":
-        this.checkExpr(stmt.expr);
+      case "ExprStmt": {
+        const exprType = this.checkExpr(stmt.expr);
+        if (exprType.tag === "enum") {
+          const enumInfo = this.enums.get(exprType.name);
+          const base = enumInfo?.baseName;
+          if (base === "Result" || base === "Option") {
+            this.warn("unused-result",
+              `unused ${base} value — this may contain an error that should be handled`,
+              sp, `use 'let _ = ...' to discard explicitly`);
+          }
+        }
         break;
+      }
       case "MatchStmt": {
         const subjType = this.checkExpr(stmt.subject);
         const isEnum = subjType.tag === "enum";
@@ -1329,7 +1359,7 @@ export class TypeChecker {
               const variant = enumInfo.variants.get(arm.pattern.variant);
               if (variant) {
                 for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
-                  this.declare(arm.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false });
+                  this.declare(arm.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false, read: false });
                 }
               }
             }
@@ -1373,7 +1403,7 @@ export class TypeChecker {
           this.pushScope();
           if (variant) {
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false });
+              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false, read: false });
             }
           }
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
@@ -1740,6 +1770,7 @@ export class TypeChecker {
           }
           this.error(`undefined variable '${expr.name}'`, sp); return this.setType(expr, { tag: "unknown" });
         }
+        info.read = true;
         if (info.moved) {
           this.error(
             `use of moved variable '${expr.name}'`,
@@ -1991,6 +2022,23 @@ export class TypeChecker {
             return this.setType(expr, fnType.ret);
           }
           this.error(`undefined function '${expr.func}'`, sp); return this.setType(expr, { tag: "unknown" });
+        }
+        if (expr.func === "assert") {
+          if (expr.args.length < 1 || expr.args.length > 2) {
+            this.error(`assert() expects 1-2 arguments, got ${expr.args.length}`, sp);
+            return this.setType(expr, { tag: "void" });
+          }
+          const condType = this.checkExpr(expr.args[0]);
+          if (condType.tag !== "bool" && condType.tag !== "unknown") {
+            this.error(`assert() condition must be bool, got ${typeName(condType)}`, sp);
+          }
+          if (expr.args.length === 2) {
+            const msgType = this.checkExpr(expr.args[1]);
+            if (msgType.tag !== "string" && msgType.tag !== "unknown") {
+              this.error(`assert() message must be a string, got ${typeName(msgType)}`, sp);
+            }
+          }
+          return this.setType(expr, { tag: "void" });
         }
         if (sig.variadic) {
           if (expr.args.length < sig.params.length) this.error(`function '${expr.func}' expects at least ${sig.params.length} args, got ${expr.args.length}`, sp);
@@ -2307,7 +2355,7 @@ export class TypeChecker {
         this.closureScopeDepth = this.scopes.length - 1;
         for (const p of expr.params) {
           const pType = this.resolve(p.type);
-          this.declare(p.name, { type: pType, mutable: false, moved: false, borrowed: false });
+          this.declare(p.name, { type: pType, mutable: false, moved: false, borrowed: false, read: false });
         }
         let inferredRet: TypeKind = expr.retType ? this.resolve(expr.retType) : { tag: "unknown" };
         const savedRetType = this.currentFnRetType;

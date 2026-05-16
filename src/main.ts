@@ -10,11 +10,11 @@ import { TypeChecker } from "./checker";
 import { Codegen } from "./codegen";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
-import { formatDiagnostic } from "./diagnostics";
+import { formatDiagnostic, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget } from "./target";
 import { format, formatFile } from "./formatter";
 
-function compile(source: string, target: TargetInfo, filePath?: string): string {
+function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let tokens, program;
   try {
@@ -26,7 +26,7 @@ function compile(source: string, target: TargetInfo, filePath?: string): string 
     process.exit(1);
   }
 
-  const result = new TypeChecker().check(program);
+  const result = new TypeChecker(warningConfig).check(program);
   const errors = result.diagnostics.filter(d => d.severity === "error");
   const warnings = result.diagnostics.filter(d => d.severity !== "error");
   for (const d of warnings) console.error(formatDiagnostic(d, source, filePath));
@@ -36,12 +36,12 @@ function compile(source: string, target: TargetInfo, filePath?: string): string 
   }
 
   const hirModule = lower(program, result, sourceDir);
-  return new Codegen(target).generate(hirModule);
+  return new Codegen(target, filePath).generate(hirModule);
 }
 
-function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo) {
+function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig) {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, target, sourcePath);
+  const ir = compile(source, target, sourcePath, warningConfig);
   if (outputPath) {
     writeFileSync(outputPath, ir);
     console.log(`wrote ${outputPath}`);
@@ -65,9 +65,9 @@ function detectLibs(ir: string, target: TargetInfo): string {
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = ""): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, target, sourcePath);
+  const ir = compile(source, target, sourcePath, warningConfig);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
@@ -87,8 +87,8 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   return out;
 }
 
-function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = ""): string {
-  const ir = compile(source, target, sourcePath);
+function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
+  const ir = compile(source, target, sourcePath, warningConfig);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = join(tmpdir(), `milo_${base}_${id}`);
@@ -106,7 +106,7 @@ function compileSourceToBinary(source: string, sourcePath: string, target: Targe
   return out;
 }
 
-function runTests(testFiles: string[], target: TargetInfo, optFlag: string) {
+function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warningConfig?: WarningConfig) {
   let totalPassed = 0;
   let totalFailed = 0;
   const failures: string[] = [];
@@ -133,7 +133,7 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string) {
     const fullSource = source + mainSrc;
     let bin: string;
     try {
-      bin = compileSourceToBinary(fullSource, file, target, optFlag);
+      bin = compileSourceToBinary(fullSource, file, target, optFlag, warningConfig);
     } catch (e: any) {
       console.error(`  compile error: ${e.message}`);
       totalFailed += testFns.length;
@@ -163,8 +163,8 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string) {
   }
 }
 
-function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "") {
-  const bin = compileToBinary(sourcePath, null, target, optFlag);
+function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig) {
+  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig);
   try {
     const result = execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), {
       stdio: "inherit",
@@ -176,22 +176,29 @@ function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, op
   }
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
   const rest: string[] = [];
+  const denied = new Set<string>();
+  const allowed = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
     else if (args[i] === "--debug") { optFlag = "-O0"; }
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
+    else if (args[i] === "--deny-all") { denied.add("*"); }
+    else if (args[i].startsWith("--deny=")) { denied.add(args[i].slice(7)); }
+    else if (args[i] === "--deny" && i + 1 < args.length) { denied.add(args[++i]); }
+    else if (args[i].startsWith("--allow=")) { allowed.add(args[i].slice(8)); }
+    else if (args[i] === "--allow" && i + 1 < args.length) { allowed.add(args[++i]); }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed } };
 }
 
 function main() {
@@ -208,6 +215,9 @@ function main() {
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
     console.log("  -O<level>              clang opt level: 0,1,2,3,s,z (default: -O2)");
+    console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
+    console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
+    console.log("  --deny-all             treat all warnings as errors");
     process.exit(1);
   }
 
@@ -243,14 +253,14 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig } = parseArgs(args.slice(1));
   const target = getHostTarget();
 
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
 
   if (cmd === "test") {
     const testArgs = args.slice(1);
-    const { optFlag: testOpt } = parseArgs(testArgs);
+    const { optFlag: testOpt, warningConfig: testWc } = parseArgs(testArgs);
     let files: string[];
     const explicitFiles = testArgs.filter(a => a.endsWith(".milo"));
     if (explicitFiles.length > 0) {
@@ -260,17 +270,17 @@ function main() {
       files = readdirSync(dir).filter(f => f.endsWith("_test.milo")).map(f => join(dir, f));
     }
     if (files.length === 0) { console.error("no test files found"); process.exit(1); }
-    runTests(files, target, testOpt);
+    runTests(files, target, testOpt, testWc);
     return;
   }
 
   if (cmd === "run") {
-    runFile(source!, rest, target, optFlag);
+    runFile(source!, rest, target, optFlag, warningConfig);
   } else if (cmd === "build") {
-    const bin = compileToBinary(source!, output, target, optFlag);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig);
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
-    compileToIr(source!, output, target);
+    compileToIr(source!, output, target, warningConfig);
   } else {
     console.error(`unknown command: ${cmd}`);
     process.exit(1);

@@ -53,10 +53,12 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid"]);
   private needsArgGlobals = false;
 
-  constructor(target: TargetInfo) { this.target = target; }
+  private filePath?: string;
+
+  constructor(target: TargetInfo, filePath?: string) { this.target = target; this.filePath = filePath; }
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
@@ -1315,6 +1317,34 @@ export class Codegen {
       const [al, av] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
       lines.push(`  call void @exit(i32 ${av})`);
+      return [lines, "void", "void"];
+    }
+    if (expr.func === "assert") {
+      this.needsDprintf = true;
+      this.needsExit = true;
+      const [al, condVal] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const okLabel = this.nextLabel("assert.ok");
+      const failLabel = this.nextLabel("assert.fail");
+      lines.push(`  br i1 ${condVal}, label %${okLabel}, label %${failLabel}`);
+      lines.push(`${failLabel}:`);
+      const file = this.filePath ?? "<unknown>";
+      const line = expr.span?.line ?? 0;
+      const col = expr.span?.col ?? 0;
+      if (expr.args.length >= 2) {
+        const [al2, msgVal] = this.genExpr(expr.args[1].expr);
+        lines.push(...al2);
+        const msgPtr = this.nextTemp();
+        lines.push(`  ${msgPtr} = extractvalue %String ${msgVal}, 0`);
+        const fmtStr = this.addString(`assertion failed at ${file}:${line}:${col}: %s\n`);
+        lines.push(`  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr ${fmtStr.label}, ptr ${msgPtr})`);
+      } else {
+        const fmtStr = this.addString(`assertion failed at ${file}:${line}:${col}\n`);
+        lines.push(`  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr ${fmtStr.label})`);
+      }
+      lines.push(`  call void @exit(i32 1)`);
+      lines.push(`  unreachable`);
+      lines.push(`${okLabel}:`);
       return [lines, "void", "void"];
     }
     if (expr.func === "_miloArgCount") {

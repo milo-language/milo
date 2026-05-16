@@ -1,0 +1,6 @@
+// @error: assert() condition must be bool, got i32
+
+fn main(): i32 {
+    assert(42)
+    return 0
+}
