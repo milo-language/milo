@@ -4,7 +4,7 @@ from "std/time" import { epochSecs }
 
 fn _logMsg(tag: string, msg: string): void {
     let ts = epochSecs()
-    eprint(tag, " ", ts.toString(), " ", msg)
+    eprint($"{tag} {ts.toString()} {msg}")
 }
 
 fn logDebug(msg: string): void {

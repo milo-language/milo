@@ -54,7 +54,7 @@ fn processLine(line: &string): void {
 
 `&string` is a borrow. It can't outlive the data it points to. The compiler enforces this — no annotations required from you.
 
-### Real programs, not toy demos
+### Real programs
 
 ```milo
 from "std/http" import { Request, Response, serve }

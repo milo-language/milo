@@ -250,7 +250,7 @@ impl ArgParser {
                             }
                         } else {
                             if i + 1 >= argv.len {
-                                print("error: --", self.flags[fi2].longName, " requires a value\n\n", self.helpText())
+                                print($"error: --{self.flags[fi2].longName} requires a value\n\n{self.helpText()}")
                                 unsafe {
                                     exit(1)
                                 }
@@ -267,7 +267,7 @@ impl ArgParser {
                 }
 
                 if !matched {
-                    print("error: unknown flag '", arg, "'\n\n", self.helpText())
+                    print($"error: unknown flag '{arg}'\n\n{self.helpText()}")
                     unsafe {
                         exit(1)
                     }
@@ -293,7 +293,7 @@ impl ArgParser {
         var ri: i64 = 0
         while ri < self.flags.len {
             if self.flags[ri].required && !result.entries[ri].present {
-                print("error: --", self.flags[ri].longName, " is required\n\n", self.helpText())
+                print($"error: --{self.flags[ri].longName} is required\n\n{self.helpText()}")
                 unsafe {
                     exit(1)
                 }
@@ -307,7 +307,7 @@ impl ArgParser {
             if self.positionals[rp].required {
                 let entryIdx = self.flags.len + rp
                 if !result.entries[entryIdx].present {
-                    print("error: missing required argument <", self.positionals[rp].name, ">\n\n", self.helpText())
+                    print($"error: missing required argument <{self.positionals[rp].name}>\n\n{self.helpText()}")
                     unsafe {
                         exit(1)
                     }
@@ -382,7 +382,7 @@ impl ParsedArgs {
             if self.entries[i].name == name {
                 let val = self.entries[i].value.clone()
                 if !_argparseIsNumeric(val) {
-                    print("error: --", name, ": expected integer, got '", val, "'")
+                    print($"error: --{name}: expected integer, got '{val}'")
                     unsafe {
                         exit(1)
                     }
@@ -391,7 +391,7 @@ impl ParsedArgs {
             }
             i = i + 1
         }
-        print("error: --", name, ": unknown flag")
+        print($"error: --{name}: unknown flag")
         unsafe {
             exit(1)
         }
@@ -402,7 +402,7 @@ impl ParsedArgs {
     fn getU16(self: &Self, name: &string): u16 {
         let val = self.getI64(name)
         if val < 0 || val > 65535 {
-            print("error: --", name, ": value ", val, " out of range 0..65535")
+            print($"error: --{name}: value {val} out of range 0..65535")
             unsafe {
                 exit(1)
             }

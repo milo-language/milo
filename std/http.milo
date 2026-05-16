@@ -180,7 +180,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         getsockname(sock.fd, boundAddr, boundLen)
         let actualPort = ntohs(boundAddr.sinPort)
 
-        print("listening on http://localhost:", actualPort)
+        print($"listening on http://localhost:{actualPort}")
 
         while true {
             var clientAddr = makeZeroedSockaddr()

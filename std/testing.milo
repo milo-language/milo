@@ -15,21 +15,21 @@ fn assert(cond: bool): void {
 
 fn assertMsg(cond: bool, msg: string): void {
     if !cond {
-        eprint("  assertion failed: ", msg)
+        eprint($"  assertion failed: {msg}")
         _testFail()
     }
 }
 
 fn assertEqual(got: i32, expected: i32): void {
     if got != expected {
-        eprint("  assertEqual failed: got ", got, ", expected ", expected)
+        eprint($"  assertEqual failed: got {got}, expected {expected}")
         _testFail()
     }
 }
 
 fn assertEqual64(got: i64, expected: i64): void {
     if got != expected {
-        eprint("  assertEqual64 failed: got ", got, ", expected ", expected)
+        eprint($"  assertEqual64 failed: got {got}, expected {expected}")
         _testFail()
     }
 }

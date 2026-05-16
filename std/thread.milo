@@ -59,7 +59,7 @@ fn threadJoin(t: &Thread): Result<i32> {
 //
 //   let offset: i64 = 10
 //   let t = spawn(move (): void => {
-//       print("offset is ", offset)
+//       print($"offset is {offset}")
 //   })!
 //   threadJoin(t)!
 

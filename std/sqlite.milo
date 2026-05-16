@@ -7,7 +7,7 @@
 //   dbExec(db, "INSERT INTO users (name) VALUES ('alice')")!
 //   let stmt = dbQuery(db, "SELECT id, name FROM users")!
 //   while dbStep(stmt) {
-//       print(dbColumnInt(stmt, 0), " ", dbColumnText(stmt, 1))
+//       print($"{dbColumnInt(stmt, 0)} {dbColumnText(stmt, 1)}")
 //   }
 //   dbFinalize(stmt)
 //   dbClose(db)
