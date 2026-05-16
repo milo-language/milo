@@ -6,6 +6,66 @@ Safe concurrency with OS threads. `spawn` requires a `move` closure — captured
 from "std/thread" import { spawn, threadJoin, threadSleep }
 ```
 
+## Quick start: parallel workers with a result channel
+
+Fan out CPU work across threads, collect results through a channel — a common pattern for batch processing, parallel builds, or map-reduce style pipelines.
+
+```milo
+from "std/thread" import { spawn, threadJoin, Thread }
+from "std/sync" import { channelNew, channelSend, channelRecv, channelDestroy, Channel }
+
+fn processChunk(id: i64, start: i64, end: i64, ch: Channel): void {
+    var sum: i64 = 0
+    var i: i64 = start
+    while i < end {
+        sum = sum + i
+        i = i + 1
+    }
+    channelSend(ch, sum)!
+    print($"worker {id}: summed {start}..{end} = {sum}")
+}
+
+fn main(): i32 {
+    let numWorkers: i64 = 4
+    let total: i64 = 1000000
+    let chunkSize: i64 = total / numWorkers
+
+    let ch = channelNew(numWorkers)!
+    var threads: Vec<Thread> = Vec.new()
+
+    var i: i64 = 0
+    while i < numWorkers {
+        let id = i
+        let start = i * chunkSize
+        let end = if i == numWorkers - 1 { total } else { start + chunkSize }
+        let t = spawn(move (): void => {
+            processChunk(id, start, end, ch)
+        })!
+        threads.push(t)
+        i = i + 1
+    }
+
+    var result: i64 = 0
+    i = 0
+    while i < numWorkers {
+        result = result + channelRecv(ch)!
+        i = i + 1
+    }
+
+    i = 0
+    while i < numWorkers {
+        threadJoin(threads[i])!
+        i = i + 1
+    }
+    channelDestroy(ch)
+
+    print($"total: {result}")
+    return 0
+}
+```
+
+Each worker owns its data via `move` — the compiler won't let you accidentally share mutable state across threads. The channel is the only coordination point, and it's safe to pass between threads by design.
+
 ## Types
 
 ### Thread
