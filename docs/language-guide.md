@@ -591,8 +591,8 @@ struct Point { x: i32, y: i32 }
 
 ## Closures
 
-Arrow syntax, non-escaping. Closures can be passed as function arguments
-or stored in local variables, but cannot be returned or stored in structs.
+Arrow syntax. Closures can be passed as function arguments
+or stored in local variables.
 
 ```milo
 // Expression closure
@@ -606,7 +606,7 @@ let clamp = (x: i32): i32 => {
 }
 
 // Passed as argument
-fn apply(f: fn(i32): i32, x: i32): i32 {
+fn apply(f: (i32) => i32, x: i32): i32 {
     return f(x)
 }
 let result = apply(double, 21)   // 42
@@ -614,17 +614,50 @@ let result = apply(double, 21)   // 42
 
 ### Capturing Variables
 
-Closures capture by reference — mutations are visible outside:
+Regular closures capture by reference — mutations are visible outside:
 
 ```milo
-fn callIt(f: fn(): void) {
-    f()
+var count: i32 = 0
+let inc = () => { count = count + 1 }
+inc()
+inc()
+print(count)   // 2
+```
+
+### Move Closures
+
+`move` closures capture by value (copy into a heap-allocated environment).
+Safe to return from functions, store in structs, and send to threads.
+
+```milo
+fn makeAdder(n: i32): (i32) => i32 {
+    return move (x: i32): i32 => {
+        return x + n
+    }
 }
 
-var count: i32 = 0
-callIt(() => { count = count + 1 })
-callIt(() => { count = count + 1 })
-print("%d", count)   // 2
+let add5 = makeAdder(5)
+print(add5(3))    // 8
+print(add5(10))   // 15
+
+// Compose closures
+fn compose(f: (i32) => i32, g: (i32) => i32): (i32) => i32 {
+    return move (x: i32): i32 => { return f(g(x)) }
+}
+let add5ThenDouble = compose(makeMultiplier(2), makeAdder(5))
+```
+
+### Closures in Structs
+
+```milo
+struct Handler {
+    name: string,
+    callback: (i32) => i32,
+}
+
+let h = Handler { name: "doubler", callback: makeMultiplier(2) }
+let cb = h.callback
+print(cb(10))   // 20
 ```
 
 ---
@@ -825,6 +858,300 @@ fn main(): i32 {
     print("sum: %d", sum(tree))   // sum: 10
     return 0
 }
+```
+
+---
+
+## String Interpolation (F-Strings)
+
+Use `$"..."` for string interpolation. Expressions inside `{...}` are evaluated and converted to strings.
+
+```milo
+let name = "Milo"
+let version: i32 = 1
+let msg = $"Hello {name}, version {version}!"
+
+let x: i32 = 10
+let y: i32 = 20
+print($"{x} + {y} = {x + y}")   // 10 + 20 = 30
+```
+
+F-strings desugar to `format()` calls. The `format()` builtin is also available directly:
+
+```milo
+let msg = format("Hello ", name, ", version ", version, "!")
+```
+
+---
+
+## Operator Overloading
+
+Implement the `Add`, `Sub`, `Mul`, `Div`, or `Eq` traits to overload operators on your types.
+
+```milo
+struct Vec2 { x: i32, y: i32 }
+
+impl Add for Vec2 {
+    fn add(self: &Self, other: &Self): Self {
+        return Vec2 { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+impl Sub for Vec2 {
+    fn sub(self: &Self, other: &Self): Self {
+        return Vec2 { x: self.x - other.x, y: self.y - other.y }
+    }
+}
+
+let a = Vec2 { x: 1, y: 2 }
+let b = Vec2 { x: 3, y: 4 }
+let c = a + b   // Vec2 { x: 4, y: 6 }
+let d = a - b   // Vec2 { x: -2, y: -2 }
+```
+
+### Equality with @derive(Eq)
+
+`@derive(Eq)` generates field-wise equality, enabling `==` and `!=`:
+
+```milo
+@derive(Eq)
+struct Point { x: i32, y: i32 }
+
+let a = Point { x: 1, y: 2 }
+let b = Point { x: 1, y: 2 }
+print(a == b)   // true
+print(a != b)   // false
+```
+
+| Operator | Trait | Method |
+|----------|-------|--------|
+| `+` | `Add` | `add(self: &Self, other: &Self): Self` |
+| `-` | `Sub` | `sub(self: &Self, other: &Self): Self` |
+| `*` | `Mul` | `mul(self: &Self, other: &Self): Self` |
+| `/` | `Div` | `div(self: &Self, other: &Self): Self` |
+| `==` / `!=` | `Eq` | `eq(self: &Self, other: &Self): bool` |
+
+---
+
+## Threads and Channels
+
+### Spawning Threads
+
+Use `spawn()` with a `move` closure to run code on a new OS thread:
+
+```milo
+import "std/thread"
+
+let t = spawn(move (): void => {
+    print("hello from thread")
+})!
+threadJoin(t)!
+```
+
+Move closures are required for `spawn` — they heap-allocate captured variables so they're safe to send across threads.
+
+```milo
+import "std/thread"
+
+var threads: Vec<Thread> = Vec.new()
+var i: i64 = 0
+while i < 4 {
+    let id = i
+    let t = spawn(move (): void => {
+        print("thread ", id)
+    })!
+    threads.push(t)
+    i = i + 1
+}
+// join all threads
+i = 0
+while i < 4 {
+    threadJoin(threads[i])!
+    i = i + 1
+}
+```
+
+### Channels
+
+Bounded FIFO channels for message passing between threads. Channel is a handle type — safe to capture in move closures without `unsafe`.
+
+```milo
+import "std/thread"
+import "std/sync"
+
+let ch = channelNew(8)!
+
+let t = spawn(move (): void => {
+    channelSend(ch, 10)!
+    channelSend(ch, 20)!
+    channelSend(ch, 0)!   // sentinel
+})!
+
+while true {
+    let val = channelRecv(ch)!
+    if val == 0 { break }
+    print(val)
+}
+threadJoin(t)!
+channelDestroy(ch)
+```
+
+### Mutex
+
+```milo
+import "std/sync"
+
+let m = mutexNew()!
+mutexLock(m)!
+// critical section
+mutexUnlock(m)!
+mutexDestroy(m)
+```
+
+### Thread API
+
+| Function | Description |
+|----------|-------------|
+| `spawn(move () => {...})` | Spawn thread with move closure |
+| `threadJoin(t)` | Wait for thread to finish |
+| `threadSleep(ms)` | Sleep current thread (milliseconds) |
+| `channelNew(cap)` | Create bounded channel |
+| `channelSend(ch, val)` | Send i64 value (blocks if full) |
+| `channelRecv(ch)` | Receive i64 value (blocks if empty) |
+| `channelDestroy(ch)` | Free channel resources |
+| `mutexNew()` | Create mutex |
+| `mutexLock(m)` / `mutexUnlock(m)` | Lock/unlock |
+| `mutexDestroy(m)` | Free mutex |
+
+---
+
+## Testing
+
+### Assertions (std/testing)
+
+```milo
+import "std/testing"
+
+fn testArithmetic(): void {
+    assertEqual(2 + 2, 4)
+    assertEqual(10 * 3, 30)
+    assert(true)
+    assertMsg(1 > 0, "math is broken")
+}
+
+fn testStrings(): void {
+    let s = "hello"
+    assertStrEqual(s, "hello")
+    assertEqual64(s.len, 5)
+}
+```
+
+| Function | Description |
+|----------|-------------|
+| `assert(cond)` | Fail if false |
+| `assertMsg(cond, msg)` | Fail with message |
+| `assertEqual(got, expected)` | Compare i32 values |
+| `assertEqual64(got, expected)` | Compare i64 values |
+| `assertStrEqual(got, expected)` | Compare strings |
+| `assertBool(got, expected)` | Compare bools |
+
+### Test Runner
+
+Test files use the `*_test.milo` naming convention. Test functions start with `test`.
+
+```bash
+# Run all *_test.milo files in current directory
+milo test
+
+# Run specific test file
+milo test math_test.milo
+```
+
+Output:
+```
+math_test.milo
+  testArithmetic ... ok
+  testSubtraction ... ok
+  testMultiplication ... ok
+
+results: 3 passed, 0 failed, 3 total
+```
+
+---
+
+## SQLite Database
+
+```milo
+import "std/sqlite"
+
+let db = dbOpen("app.db")!
+
+dbExec(db, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, age INTEGER)")!
+dbExec(db, "INSERT INTO users (name, age) VALUES ('Alice', 30)")!
+dbExec(db, "INSERT INTO users (name, age) VALUES ('Bob', 25)")!
+
+let stmt = dbQuery(db, "SELECT id, name, age FROM users ORDER BY id")!
+while dbStep(stmt) {
+    let name = dbColumnText(stmt, 1)
+    let age = dbColumnInt(stmt, 2)
+    print($"{name}, age {age}")
+}
+dbFinalize(stmt)
+dbClose(db)
+```
+
+### Prepared Statements with Bindings
+
+```milo
+let stmt = dbQuery(db, "SELECT * FROM users WHERE age > ?")!
+dbBindInt(stmt, 1, 25)!
+while dbStep(stmt) {
+    print(dbColumnText(stmt, 1))
+}
+dbFinalize(stmt)
+```
+
+| Function | Description |
+|----------|-------------|
+| `dbOpen(path)` | Open/create database |
+| `dbClose(db)` | Close database |
+| `dbExec(db, sql)` | Execute non-query SQL |
+| `dbQuery(db, sql)` | Prepare query |
+| `dbStep(stmt)` | Next row (true if available) |
+| `dbColumnInt(stmt, col)` | Get i32 column |
+| `dbColumnInt64(stmt, col)` | Get i64 column |
+| `dbColumnFloat(stmt, col)` | Get f64 column |
+| `dbColumnText(stmt, col)` | Get string column |
+| `dbColumnIsNull(stmt, col)` | Check if NULL |
+| `dbBindInt(stmt, idx, val)` | Bind i32 parameter |
+| `dbBindText(stmt, idx, val)` | Bind string parameter |
+| `dbFinalize(stmt)` | Free statement |
+| `dbLastInsertId(db)` | Last inserted rowid |
+| `dbReset(stmt)` | Reset for re-execution |
+
+---
+
+## Standard Library Extras
+
+### Terminal Colors (std/color)
+
+```milo
+import "std/color"
+
+print(red("error: something failed"))
+print(green("success!"))
+print(bold(blue("important")))
+print(yellow("warning: "), dim("details"))
+```
+
+Available: `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `gray`, `bold`, `dim`, `italic`, `underline`, `strikethrough`, `bgRed`, `bgGreen`, `bgYellow`, `bgBlue`.
+
+### UUID Generation (std/uuid)
+
+```milo
+import "std/uuid"
+
+let id = uuidV4()   // "550e8400-e29b-41d4-a716-446655440000"
 ```
 
 ---
