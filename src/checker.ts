@@ -54,6 +54,7 @@ export interface CheckResult {
   closureCaptures: Map<Expr, CaptureInfo[]>;
   closureCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
+  resolvedOperators: Map<Expr, string>;
   fnFieldCalls: Set<Expr>;
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
 }
@@ -127,6 +128,7 @@ export class TypeChecker {
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
   private resolvedMethods = new Map<Expr, string>();
+  private resolvedOperators = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
   private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
 
@@ -553,6 +555,7 @@ export class TypeChecker {
       closureCaptures: this.closureCaptures,
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
+      resolvedOperators: this.resolvedOperators,
       fnFieldCalls: this.fnFieldCalls,
       propagateConversions: this.propagateConversions,
     };
@@ -712,6 +715,18 @@ export class TypeChecker {
         ["toString", { params: [{ name: "self", type: selfRef }], ret: string_t, hasDefault: false }],
       ]),
     });
+
+    // Operator traits
+    const selfType: TypeKind = { tag: "struct", name: "Self" };
+    for (const [traitName, methodName] of [["Add", "add"], ["Sub", "sub"], ["Mul", "mul"], ["Div", "div"]] as const) {
+      this.traits.set(traitName, {
+        name: traitName,
+        supertraits: [],
+        methods: new Map([
+          [methodName, { params: [{ name: "self", type: selfRef }, { name: "other", type: selfRef }], ret: selfType, hasDefault: false }],
+        ]),
+      });
+    }
 
     // Drop trait — self: &mut Self
     const selfRefMut: TypeKind = { tag: "ref", inner: { tag: "struct", name: "Self" }, mutable: true };
@@ -1741,6 +1756,19 @@ export class TypeChecker {
           return this.setType(expr, { tag: "bool" });
         }
         if (arithOps.includes(expr.op)) {
+          // operator overloading for struct types
+          if (lt.tag === "struct" && rt.tag === "struct" && typeEq(lt, rt)) {
+            const opTraitMap: Record<string, string> = { "+": "Add", "-": "Sub", "*": "Mul", "/": "Div" };
+            const traitName = opTraitMap[expr.op];
+            if (traitName && this.typeImplementsTrait(lt.name, traitName)) {
+              const methodName = traitName.toLowerCase();
+              const mangled = `${lt.name}$${traitName}$${methodName}`;
+              this.resolvedOperators.set(expr, mangled);
+              this.autoBorrowed.set(expr.left, { mutable: false });
+              this.autoBorrowed.set(expr.right, { mutable: false });
+              return this.setType(expr, lt);
+            }
+          }
           if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${typeName(lt)}`, sp);
           if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
           return this.setType(expr, lt);
@@ -1764,7 +1792,16 @@ export class TypeChecker {
                   this.error(`cannot use '${expr.op}' on enum '${lt.name}' with payload-bearing variants`, sp, `use 'match' to compare`);
                 }
               }
-            } else if (lt.tag === "struct" || lt.tag === "vec" || lt.tag === "hashmap" || lt.tag === "box" || lt.tag === "array") {
+            } else if (lt.tag === "struct") {
+              if (this.typeImplementsTrait(lt.name, "Eq")) {
+                const mangled = `${lt.name}$Eq$eq`;
+                this.resolvedOperators.set(expr, mangled);
+                this.autoBorrowed.set(expr.left, { mutable: false });
+                this.autoBorrowed.set(expr.right, { mutable: false });
+              } else {
+                this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `implement Eq trait or compare individual fields`);
+              }
+            } else if (lt.tag === "vec" || lt.tag === "hashmap" || lt.tag === "box" || lt.tag === "array") {
               this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `compare individual fields or implement an eq method`);
             }
           } else {

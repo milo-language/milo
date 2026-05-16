@@ -275,8 +275,22 @@ class LowerCtx {
         return { kind: "StringLit", value: expr.value, type, span: expr.span };
       case "Ident":
         return { kind: "Ident", name: expr.name, type, isMove: this.c.movedExprs.has(expr), span: expr.span };
-      case "BinOp":
+      case "BinOp": {
+        const resolvedOp = this.c.resolvedOperators.get(expr);
+        if (resolvedOp) {
+          const args: HIRArg[] = [expr.left, expr.right].map(a => ({
+            expr: this.lowerExpr(a),
+            passByRef: !!this.c.autoBorrowed.get(a),
+            refMut: false,
+          }));
+          const call: HIRExpr = { kind: "Call", func: resolvedOp, args, type, variadic: false, span: expr.span };
+          if (expr.op === "!=") {
+            return { kind: "UnaryOp", op: "!", operand: call, type: { tag: "bool" }, span: expr.span };
+          }
+          return call;
+        }
         return { kind: "BinOp", op: expr.op, left: this.lowerExpr(expr.left), right: this.lowerExpr(expr.right), type, span: expr.span };
+      }
       case "UnaryOp":
         if (expr.op === "*") {
           const operandType = this.c.exprTypes.get(expr.operand);

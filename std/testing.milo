@@ -1,0 +1,49 @@
+// std/testing — test assertion functions
+
+import "std/os"
+
+fn _testFail(): void {
+    unsafe { exit(1) }
+}
+
+fn assert(cond: bool): void {
+    if !cond {
+        eprint("  assertion failed")
+        _testFail()
+    }
+}
+
+fn assertMsg(cond: bool, msg: string): void {
+    if !cond {
+        eprint("  assertion failed: ", msg)
+        _testFail()
+    }
+}
+
+fn assertEqual(got: i32, expected: i32): void {
+    if got != expected {
+        eprint("  assertEqual failed: got ", got, ", expected ", expected)
+        _testFail()
+    }
+}
+
+fn assertEqual64(got: i64, expected: i64): void {
+    if got != expected {
+        eprint("  assertEqual64 failed: got ", got, ", expected ", expected)
+        _testFail()
+    }
+}
+
+fn assertStrEqual(got: &string, expected: &string): void {
+    if got != expected {
+        eprint("  assertStrEqual failed")
+        _testFail()
+    }
+}
+
+fn assertBool(got: bool, expected: bool): void {
+    if got != expected {
+        eprint("  assertBool failed")
+        _testFail()
+    }
+}

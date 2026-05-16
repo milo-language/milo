@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, unlinkSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync } from "fs";
 import { execSync, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { basename, resolve, dirname } from "path";
@@ -74,6 +74,87 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   return out;
 }
 
+function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = ""): string {
+  const ir = compile(source, target, sourcePath);
+  const base = basename(sourcePath).replace(/\.milo$/, "");
+  const id = crypto.randomUUID().slice(0, 8);
+  const out = join(tmpdir(), `milo_${base}_${id}`);
+  const tmpLl = join(tmpdir(), `milo_${id}.ll`);
+  try {
+    writeFileSync(tmpLl, ir);
+    const opt = optFlag ? ` ${optFlag}` : "";
+    let libs = "";
+    if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
+      libs = target.os === "darwin"
+        ? " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
+        : " -lssl -lcrypto";
+    }
+    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}`, { stdio: ["pipe", "pipe", "pipe"] });
+  } catch (e: any) {
+    throw new Error(`clang failed:\n${e.stderr?.toString() ?? e.message}`);
+  } finally {
+    try { unlinkSync(tmpLl); } catch {}
+  }
+  return out;
+}
+
+function runTests(testFiles: string[], target: TargetInfo, optFlag: string) {
+  let totalPassed = 0;
+  let totalFailed = 0;
+  const failures: string[] = [];
+
+  for (const file of testFiles) {
+    const source = readFileSync(file, "utf-8");
+    const testFnRegex = /^fn\s+(test\w+)\s*\(/gm;
+    const testFns: string[] = [];
+    let m;
+    while ((m = testFnRegex.exec(source)) !== null) testFns.push(m[1]);
+    if (testFns.length === 0) continue;
+
+    console.log(`\n${file}`);
+
+    // generate main that calls each test, one at a time
+    let mainSrc = "\nfn main(): i32 {\n";
+    for (const name of testFns) {
+      mainSrc += `    eprint("  ${name} ... ")\n`;
+      mainSrc += `    ${name}()\n`;
+      mainSrc += `    eprint("ok")\n`;
+    }
+    mainSrc += "    return 0\n}\n";
+
+    const fullSource = source + mainSrc;
+    let bin: string;
+    try {
+      bin = compileSourceToBinary(fullSource, file, target, optFlag);
+    } catch (e: any) {
+      console.error(`  compile error: ${e.message}`);
+      totalFailed += testFns.length;
+      continue;
+    }
+
+    try {
+      const result = spawnSync(bin, [], { encoding: "utf-8", timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+      if (result.stderr) process.stderr.write(result.stderr);
+      if (result.status === 0) {
+        totalPassed += testFns.length;
+      } else {
+        totalFailed++;
+        totalPassed += Math.max(0, testFns.length - 1);
+        failures.push(file);
+      }
+    } finally {
+      try { unlinkSync(bin); } catch {}
+    }
+  }
+
+  console.log(`\nresults: ${totalPassed} passed, ${totalFailed} failed, ${totalPassed + totalFailed} total`);
+  if (totalFailed > 0) {
+    console.log("failures:");
+    for (const f of failures) console.log(`  ${f}`);
+    process.exit(1);
+  }
+}
+
 function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "") {
   const bin = compileToBinary(sourcePath, null, target, optFlag);
   try {
@@ -112,6 +193,7 @@ function main() {
     console.log("commands:");
     console.log("  run <file> [args]      compile and run (no artifacts left behind)");
     console.log("  build <file> [-o out]  compile to executable");
+    console.log("  test [file...]         run tests (*_test.milo files)");
     console.log("  emit-ir <file>         emit LLVM IR");
     console.log("  fmt <file...>          format source files (-w to write in place)");
     console.log("options:");
@@ -157,6 +239,22 @@ function main() {
   const target = getHostTarget();
 
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
+
+  if (cmd === "test") {
+    const testArgs = args.slice(1);
+    const { optFlag: testOpt } = parseArgs(testArgs);
+    let files: string[];
+    const explicitFiles = testArgs.filter(a => a.endsWith(".milo"));
+    if (explicitFiles.length > 0) {
+      files = explicitFiles;
+    } else {
+      const dir = process.cwd();
+      files = readdirSync(dir).filter(f => f.endsWith("_test.milo")).map(f => join(dir, f));
+    }
+    if (files.length === 0) { console.error("no test files found"); process.exit(1); }
+    runTests(files, target, testOpt);
+    return;
+  }
 
   if (cmd === "run") {
     runFile(source!, rest, target, optFlag);

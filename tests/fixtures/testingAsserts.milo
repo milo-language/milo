@@ -1,0 +1,24 @@
+// @expect: all assertions passed
+
+import "std/testing"
+
+fn main(): i32 {
+    assert(true)
+    assert(1 == 1)
+    assert(3 > 2)
+
+    assertEqual(2 + 3, 5)
+    assertEqual(10 * 10, 100)
+
+    assertEqual64(1000000000 as i64 * 3 as i64, 3000000000)
+
+    let a = "hello"
+    let b = "hello"
+    assertStrEqual(a, b)
+
+    assertBool(true, true)
+    assertBool(false, false)
+
+    print("all assertions passed")
+    return 0
+}

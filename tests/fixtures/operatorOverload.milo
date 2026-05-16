@@ -1,0 +1,63 @@
+// @expect: Vec2(8, 10)
+// @expect: Vec2(2, 2)
+// @expect: Vec2(15, 24)
+// @expect: Vec2(5, 3)
+// @expect: equal: true
+// @expect: not equal: true
+
+@derive(Eq)
+struct Vec2 {
+    x: i32,
+    y: i32,
+}
+
+impl Add for Vec2 {
+    fn add(self: &Self, other: &Self): Self {
+        return Vec2 { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+impl Sub for Vec2 {
+    fn sub(self: &Self, other: &Self): Self {
+        return Vec2 { x: self.x - other.x, y: self.y - other.y }
+    }
+}
+
+impl Mul for Vec2 {
+    fn mul(self: &Self, other: &Self): Self {
+        return Vec2 { x: self.x * other.x, y: self.y * other.y }
+    }
+}
+
+impl Div for Vec2 {
+    fn div(self: &Self, other: &Self): Self {
+        return Vec2 { x: self.x / other.x, y: self.y / other.y }
+    }
+}
+
+fn main(): i32 {
+    let a = Vec2 { x: 5, y: 6 }
+    let b = Vec2 { x: 3, y: 4 }
+
+    let sum = a + b
+    print("Vec2(", sum.x, ", ", sum.y, ")")
+
+    let diff = a - b
+    print("Vec2(", diff.x, ", ", diff.y, ")")
+
+    let prod = a * b
+    print("Vec2(", prod.x, ", ", prod.y, ")")
+
+    let c = Vec2 { x: 10, y: 12 }
+    let d = Vec2 { x: 2, y: 4 }
+    let quot = c / d
+    print("Vec2(", quot.x, ", ", quot.y, ")")
+
+    let e = Vec2 { x: 1, y: 2 }
+    let f = Vec2 { x: 1, y: 2 }
+    let g = Vec2 { x: 3, y: 4 }
+    print("equal: ", e == f)
+    print("not equal: ", e != g)
+
+    return 0
+}
