@@ -208,7 +208,7 @@ fn tlsRecv(s: &TlsStream): Result<string, NetError> {
 
 // ── DNS ──
 
-fn resolve(hostname: string): Result<u32, NetError> {
+fn resolve(hostname: &string): Result<u32, NetError> {
     var hints: [u8 ; 48] = [0 ; 48]
     unsafe {
         let hintsFamily = (hints as *i32)
@@ -220,7 +220,7 @@ fn resolve(hostname: string): Result<u32, NetError> {
     unsafe {
         let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
         if err != 0 {
-            return Result.Err(NetError.DnsFailure(hostname))
+            return Result.Err(NetError.DnsFailure(hostname.clone()))
         }
         let infoPtr =*(resBuf as *i64)
         let addrPtr =*((infoPtr + addrinfoAddrOffset()) as *i64)
@@ -534,7 +534,7 @@ fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
     let host = parseHost(url)
     let port = parsePort(url)
     let path = parsePath(url)
-    let ip = resolve(host.clone())?
+    let ip = resolve(host)?
 
     var resp: Result<Response, NetError> = Result.Err(NetError.Other(""))
     if useTls {
@@ -566,47 +566,47 @@ fn doFetch(url: string, opts: FetchOptions): Result<Response, NetError> {
 
 // ── Public API ──
 
-fn fetch(url: string): Result<Response, NetError> {
+fn fetch(url: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "GET", headers: "", body: ""
     }
-    return doFetch(url, opts)
+    return doFetch(url.clone(), opts)
 }
 
-fn fetchWith(url: string, opts: FetchOptions): Result<Response, NetError> {
-    return doFetch(url, opts)
+fn fetchWith(url: &string, opts: FetchOptions): Result<Response, NetError> {
+    return doFetch(url.clone(), opts)
 }
 
-fn fetchPost(url: string, body: string): Result<Response, NetError> {
+fn fetchPost(url: &string, body: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "POST",
         headers: "Content-Type: application/json",
-        body: body,
+        body: body.clone(),
     }
-    return doFetch(url, opts)
+    return doFetch(url.clone(), opts)
 }
 
-fn fetchPut(url: string, body: string): Result<Response, NetError> {
+fn fetchPut(url: &string, body: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "PUT",
         headers: "Content-Type: application/json",
-        body: body,
+        body: body.clone(),
     }
-    return doFetch(url, opts)
+    return doFetch(url.clone(), opts)
 }
 
-fn fetchDelete(url: string): Result<Response, NetError> {
+fn fetchDelete(url: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "DELETE", headers: "", body: ""
     }
-    return doFetch(url, opts)
+    return doFetch(url.clone(), opts)
 }
 
-fn fetchPatch(url: string, body: string): Result<Response, NetError> {
+fn fetchPatch(url: &string, body: &string): Result<Response, NetError> {
     var opts = FetchOptions {
         method: "PATCH",
         headers: "Content-Type: application/json",
-        body: body,
+        body: body.clone(),
     }
     return doFetch(url, opts)
 }

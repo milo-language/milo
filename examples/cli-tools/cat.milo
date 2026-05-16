@@ -262,7 +262,7 @@ fn main(): i32 {
     let forceLang = args.getString("language")
 
     var content: string = ""
-    match readFile(filePath.clone()) {
+    match readFile(filePath) {
         Result.Ok(data) => {
             content = data
         }

@@ -69,7 +69,7 @@ fn formatSize(size: i64): string {
 }
 
 fn dirListing(dirPath: &string, urlPath: &string): string {
-    let entries = readDir(dirPath.clone())
+    let entries = readDir(dirPath)
     var html: string = "<!DOCTYPE html><html><head><title>Index of " + urlPath + "</title>"
     html = html + "<style>body{font-family:monospace;margin:2em}a{text-decoration:none;color:#0366d6}"
     html = html + "a:hover{text-decoration:underline}table{border-collapse:collapse}"
@@ -109,10 +109,10 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
 
     let filePath = root + reqPath
 
-    if isDir(filePath.clone()) {
+    if isDir(filePath) {
         // try index.html first
         let indexPath = pathJoin(filePath, "index.html")
-        if isFile(indexPath.clone()) {
+        if isFile(indexPath) {
             match readFile(indexPath) {
                 Result.Ok(content) => {
                     if !quiet {
@@ -132,14 +132,14 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
         return Response.Html(listing)
     }
 
-    if !isFile(filePath.clone()) {
+    if !isFile(filePath) {
         if !quiet {
             print("404 GET ", req.path)
         }
         return Response.NotFound
     }
 
-    match readFile(filePath.clone()) {
+    match readFile(filePath) {
         Result.Ok(content) => {
             let mime = getMime(filePath)
             if !quiet {

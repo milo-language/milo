@@ -8,7 +8,7 @@ from "std/io" import { readFile }
 // Execute a shell command and return its exit code.
 // Example: let code = run("ls -la")!
 
-fn run(cmd: string): Result<i32> {
+fn run(cmd: &string): Result<i32> {
     unsafe {
         let status = system(cmd)
         if status < 0 {
@@ -31,7 +31,7 @@ struct Process {
 // Fork and exec a program at the given path.
 // Returns a Process handle for lifecycle management.
 
-fn spawn(path: string): Result<Process> {
+fn spawn(path: &string): Result<Process> {
     unsafe {
         let pid = fork()
         if pid < 0 {
@@ -65,7 +65,7 @@ fn waitFor(p: &Process): Result<i32> {
 // Execute a shell command and return its stdout as a string.
 // Uses shell redirection to a temp file under the hood.
 
-fn capture(cmd: string): Result<string> {
+fn capture(cmd: &string): Result<string> {
     let tmpPath: string = "/tmp/.milo_capture"
     let fullCmd = cmd + " > " + tmpPath + " 2>&1"
     let code = run(fullCmd)!

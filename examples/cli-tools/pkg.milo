@@ -185,7 +185,7 @@ fn installPkg(name: &string, url: &string): i32 {
     let pkg = parsePkgUrl(url)
     var dest: string = cachePath(pkg)
 
-    if pathExists(dest.clone()) {
+    if pathExists(dest) {
         print("  cached: ", name, " (", dest, ")")
         return 0
     }
@@ -290,7 +290,7 @@ fn cmdInstall(): i32 {
 }
 
 fn cmdNew(name: &string): i32 {
-    if pathExists(name.clone()) {
+    if pathExists(name) {
         print("error: directory '", name, "' already exists")
         return 1
     }

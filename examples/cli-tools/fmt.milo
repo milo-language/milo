@@ -842,7 +842,7 @@ fn main(): i32 {
     var path: string = ""
     if hasFile {
         path = args.getString("file")
-        let result = readFile(path.clone())
+        let result = readFile(path)
         src = result ?? ""
     } else {
         src = readStdin()

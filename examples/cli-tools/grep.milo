@@ -117,7 +117,7 @@ fn printMatch(line: &string, filePath: &string, lineNum: i64, opts: &GrepOpts): 
 
 fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
     var content: string = ""
-    match readFile(filePath.clone()) {
+    match readFile(filePath) {
         Result.Ok(data) => {
             content = data
         }
@@ -169,7 +169,7 @@ fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
 }
 
 fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
-    let entries = readDir(dirPath.clone())
+    let entries = readDir(dirPath)
     var i: i64 = 0
     while i < entries.len {
         let name = entries[i].name.clone()
@@ -209,7 +209,7 @@ fn main(): i32 {
         searchPattern = pattern.toLower()
     }
 
-    let showFilename = recursive || isDir(target.clone())
+    let showFilename = recursive || isDir(target)
 
     var opts = GrepOpts {
         pattern: pattern,
@@ -227,7 +227,7 @@ fn main(): i32 {
         reset: makeColor("0"),
     }
 
-    if recursive || isDir(target.clone()) {
+    if recursive || isDir(target) {
         grepRecursive(target, opts)
     } else {
         grepFile(target, opts)

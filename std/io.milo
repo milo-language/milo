@@ -15,20 +15,20 @@ enum IoError {
 
 // map errno to IoError variant with path context
 
-fn _ioError(path: string): IoError {
+fn _ioError(path: &string): IoError {
     unsafe {
         let e = getErrno()
         if e == 2 {
-            return IoError.NotFound(path)
+            return IoError.NotFound(path.clone())
         }
         if e == 13 {
-            return IoError.PermissionDenied(path)
+            return IoError.PermissionDenied(path.clone())
         }
         if e == 21 {
-            return IoError.IsDirectory(path)
+            return IoError.IsDirectory(path.clone())
         }
         if e == 17 {
-            return IoError.AlreadyExists(path)
+            return IoError.AlreadyExists(path.clone())
         }
         let reason = _cstrToString(strerror(e))
         return IoError.Other("'" + path + "': " + reason)
@@ -61,7 +61,7 @@ impl Drop for File {
     }
 }
 
-fn openRead(path: string): Result<File, IoError> {
+fn openRead(path: &string): Result<File, IoError> {
     unsafe {
         let fd = open(path, 0)
         if fd < 0 {
@@ -74,7 +74,7 @@ fn openRead(path: string): Result<File, IoError> {
     }
 }
 
-fn openWrite(path: string): Result<File, IoError> {
+fn openWrite(path: &string): Result<File, IoError> {
     unsafe {
         let fd = open(path, oWriteCreateTrunc(), 420)
         if fd < 0 {
@@ -87,7 +87,7 @@ fn openWrite(path: string): Result<File, IoError> {
     }
 }
 
-fn openAppend(path: string): Result<File, IoError> {
+fn openAppend(path: &string): Result<File, IoError> {
     unsafe {
         let fd = open(path, oWriteCreateAppend(), 420)
         if fd < 0 {
@@ -145,7 +145,7 @@ fn writeAll(f: &File, data: &string): Result<i64, IoError> {
     }
 }
 
-fn readFile(path: string): Result<string, IoError> {
+fn readFile(path: &string): Result<string, IoError> {
     let f = openRead(path)?
     return readAll(f)
 }
@@ -190,7 +190,7 @@ fn splitLines(content: &string): Vec<string> {
 
 // Read a file and return its contents as a Vec of lines.
 
-fn readLines(path: string): Result<Vec<string>, IoError> {
+fn readLines(path: &string): Result<Vec<string>, IoError> {
     let content = readFile(path)?
     return Result.Ok(splitLines(content))
 }

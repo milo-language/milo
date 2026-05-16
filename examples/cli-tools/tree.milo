@@ -13,7 +13,7 @@ fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, count
         return
     }
 
-    let entries = readDir(dirPath.clone())
+    let entries = readDir(dirPath)
     var idx: i64 = 0
     while idx < entries.len {
         let name = entries[idx].name.clone()
