@@ -1,10 +1,14 @@
 # Ownership
 
-Milo guarantees memory safety at compile time using two mechanisms: move semantics and second-class references. No garbage collector, no reference counting, no lifetime annotations.
+In most languages, memory bugs hide until production. In Milo, the compiler catches them before your code runs — no garbage collector slowing things down, no manual `free()` to forget.
 
-## Move semantics
+The idea is simple: **every value has one owner.** When you hand a value to someone else, you don't have it anymore. That's it. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races — all at zero runtime cost.
 
-Each value has exactly one owner. Assignment transfers ownership — the old name is dead.
+Two mechanisms make this work: moves (transferring ownership) and borrows (temporary, read-only access). Let's start with moves.
+
+## Moves
+
+When you assign a value, ownership transfers — the old name is gone.
 
 ```milo
 var a = "hello"
@@ -51,9 +55,9 @@ print(a)           // still valid
 print(b)           // also valid
 ```
 
-## Second-class references
+## Borrowing — look but don't keep
 
-References (`&T`) can **only** appear as function parameters. They cannot be returned, stored in structs, or assigned to variables.
+Sometimes a function just needs to *read* a value without taking it. That's a borrow: `&T`. The key restriction — references can **only** appear as function parameters. They cannot be returned, stored in structs, or assigned to variables.
 
 ```milo
 // OK — borrow for the duration of the call
@@ -68,7 +72,7 @@ fn bad(): &string { ... }
 struct Bad { ref: &string }
 ```
 
-This one restriction eliminates lifetime annotations entirely. In Rust, storing a reference in a struct requires `<'a>` on the struct, the impl, and everything that contains it. In Milo, you own the data instead. The restriction *is* the borrow checker.
+This one restriction means you never write lifetime annotations. If you've seen Rust's `<'a>` on structs, impls, and everything they touch — that doesn't exist in Milo. You own the data instead. The restriction *is* the borrow checker, and it's simple enough to fit in one sentence.
 
 ## Mutable references
 
