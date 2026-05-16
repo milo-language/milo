@@ -1,0 +1,238 @@
+// std/sync — synchronization primitives (mutex, channel) via pthreads
+
+import "std/os"
+
+// ── Mutex ──
+// Mutual exclusion lock. Wrap shared data access with lock/unlock.
+//
+//   let m = mutexNew()!
+//   mutexLock(m)!
+//   // ... critical section ...
+//   mutexUnlock(m)!
+//   mutexDestroy(m)
+
+struct Mutex {
+    _handle: *u8,
+}
+
+fn mutexNew(): Result<Mutex> {
+    unsafe {
+        let h = malloc(64)
+        let r = pthread_mutex_init(h, 0 as *u8)
+        if r != 0 {
+            free(h)
+            return Result.Err("pthread_mutex_init failed")
+        }
+        return Result.Ok(Mutex { _handle: h })
+    }
+}
+
+fn mutexLock(m: &Mutex): Result<i32> {
+    unsafe {
+        let r = pthread_mutex_lock(m._handle)
+        if r != 0 {
+            return Result.Err("pthread_mutex_lock failed")
+        }
+        return Result.Ok(0)
+    }
+}
+
+fn mutexUnlock(m: &Mutex): Result<i32> {
+    unsafe {
+        let r = pthread_mutex_unlock(m._handle)
+        if r != 0 {
+            return Result.Err("pthread_mutex_unlock failed")
+        }
+        return Result.Ok(0)
+    }
+}
+
+fn mutexDestroy(m: &Mutex): void {
+    unsafe {
+        pthread_mutex_destroy(m._handle)
+        free(m._handle)
+    }
+}
+
+// ── Channel ──
+// Bounded FIFO channel for message passing between threads.
+// Uses a fixed-size ring buffer of i64 values.
+//
+//   let ch = channelNew(16)!       // buffer size 16
+//   channelSend(ch, 42)!           // blocks if full
+//   let val = channelRecv(ch)!     // blocks if empty
+//   channelDestroy(ch)
+
+struct Channel {
+    _mutex: *u8,
+    _condNotEmpty: *u8,
+    _condNotFull: *u8,
+    _buf: *u8,
+    _cap: i64,
+    _len: i64,
+    _head: i64,
+    _tail: i64,
+}
+
+fn channelNew(capacity: i64): Result<Channel> {
+    unsafe {
+        let mtx = malloc(64)
+        let r1 = pthread_mutex_init(mtx, 0 as *u8)
+        if r1 != 0 {
+            free(mtx)
+            return Result.Err("channel mutex init failed")
+        }
+        let cne = malloc(48)
+        let r2 = pthread_cond_init(cne, 0 as *u8)
+        if r2 != 0 {
+            free(mtx)
+            free(cne)
+            return Result.Err("channel cond init failed")
+        }
+        let cnf = malloc(48)
+        let r3 = pthread_cond_init(cnf, 0 as *u8)
+        if r3 != 0 {
+            free(mtx)
+            free(cne)
+            free(cnf)
+            return Result.Err("channel cond init failed")
+        }
+        let buf = malloc(capacity * 8)
+        return Result.Ok(Channel {
+            _mutex: mtx,
+            _condNotEmpty: cne,
+            _condNotFull: cnf,
+            _buf: buf,
+            _cap: capacity,
+            _len: 0,
+            _head: 0,
+            _tail: 0,
+        })
+    }
+}
+
+fn channelSend(ch: &mut Channel, val: i64): Result<i32> {
+    var v: i64 = val
+    unsafe {
+        pthread_mutex_lock(ch._mutex)
+        while ch._len == ch._cap {
+            pthread_cond_wait(ch._condNotFull, ch._mutex)
+        }
+        let slotPtr = (ch._buf as i64 + ch._tail * 8) as *u8
+        memcpy(slotPtr, (&v) as *u8, 8)
+        ch._tail = (ch._tail + 1) % ch._cap
+        ch._len = ch._len + 1
+        pthread_cond_signal(ch._condNotEmpty)
+        pthread_mutex_unlock(ch._mutex)
+        return Result.Ok(0)
+    }
+}
+
+fn channelRecv(ch: &mut Channel): Result<i64> {
+    var val: i64 = 0
+    unsafe {
+        pthread_mutex_lock(ch._mutex)
+        while ch._len == 0 {
+            pthread_cond_wait(ch._condNotEmpty, ch._mutex)
+        }
+        let slotPtr = (ch._buf as i64 + ch._head * 8) as *u8
+        memcpy((&val) as *u8, slotPtr, 8)
+        ch._head = (ch._head + 1) % ch._cap
+        ch._len = ch._len - 1
+        pthread_cond_signal(ch._condNotFull)
+        pthread_mutex_unlock(ch._mutex)
+        return Result.Ok(val)
+    }
+}
+
+// Send/recv via raw pointer — for use in thread callbacks that receive *u8.
+// The caller must ensure the pointer points to a valid Channel.
+
+fn channelSendPtr(chPtr: *u8, val: i64): Result<i32> {
+    unsafe {
+        // Channel layout: _mutex(ptr), _condNotEmpty(ptr), _condNotFull(ptr),
+        //                 _buf(ptr), _cap(i64), _len(i64), _head(i64), _tail(i64)
+        // Each field is 8 bytes on 64-bit. Total offset:
+        //   _mutex:0, _condNotEmpty:8, _condNotFull:16, _buf:24, _cap:32, _len:40, _head:48, _tail:56
+        let baseAddr = chPtr as i64
+        var mtx: *u8 = 0 as *u8
+        memcpy((&mtx) as *u8, chPtr, 8)
+        var condNE: *u8 = 0 as *u8
+        memcpy((&condNE) as *u8, (baseAddr + 8) as *u8, 8)
+        var condNF: *u8 = 0 as *u8
+        memcpy((&condNF) as *u8, (baseAddr + 16) as *u8, 8)
+        var buf: *u8 = 0 as *u8
+        memcpy((&buf) as *u8, (baseAddr + 24) as *u8, 8)
+        var cap: i64 = 0
+        memcpy((&cap) as *u8, (baseAddr + 32) as *u8, 8)
+        var curLen: i64 = 0
+        var tail: i64 = 0
+
+        pthread_mutex_lock(mtx)
+        // re-read len from shared memory
+        memcpy((&curLen) as *u8, (baseAddr + 40) as *u8, 8)
+        while curLen == cap {
+            pthread_cond_wait(condNF, mtx)
+            memcpy((&curLen) as *u8, (baseAddr + 40) as *u8, 8)
+        }
+        memcpy((&tail) as *u8, (baseAddr + 56) as *u8, 8)
+        var v: i64 = val
+        let slotPtr = (buf as i64 + tail * 8) as *u8
+        memcpy(slotPtr, (&v) as *u8, 8)
+        tail = (tail + 1) % cap
+        curLen = curLen + 1
+        memcpy((baseAddr + 56) as *u8, (&tail) as *u8, 8)
+        memcpy((baseAddr + 40) as *u8, (&curLen) as *u8, 8)
+        pthread_cond_signal(condNE)
+        pthread_mutex_unlock(mtx)
+        return Result.Ok(0)
+    }
+}
+
+fn channelRecvPtr(chPtr: *u8): Result<i64> {
+    var val: i64 = 0
+    unsafe {
+        let baseAddr = chPtr as i64
+        var mtx: *u8 = 0 as *u8
+        memcpy((&mtx) as *u8, chPtr, 8)
+        var condNE: *u8 = 0 as *u8
+        memcpy((&condNE) as *u8, (baseAddr + 8) as *u8, 8)
+        var condNF: *u8 = 0 as *u8
+        memcpy((&condNF) as *u8, (baseAddr + 16) as *u8, 8)
+        var buf: *u8 = 0 as *u8
+        memcpy((&buf) as *u8, (baseAddr + 24) as *u8, 8)
+        var cap: i64 = 0
+        memcpy((&cap) as *u8, (baseAddr + 32) as *u8, 8)
+        var curLen: i64 = 0
+        var head: i64 = 0
+
+        pthread_mutex_lock(mtx)
+        memcpy((&curLen) as *u8, (baseAddr + 40) as *u8, 8)
+        while curLen == 0 {
+            pthread_cond_wait(condNE, mtx)
+            memcpy((&curLen) as *u8, (baseAddr + 40) as *u8, 8)
+        }
+        memcpy((&head) as *u8, (baseAddr + 48) as *u8, 8)
+        let slotPtr = (buf as i64 + head * 8) as *u8
+        memcpy((&val) as *u8, slotPtr, 8)
+        head = (head + 1) % cap
+        curLen = curLen - 1
+        memcpy((baseAddr + 48) as *u8, (&head) as *u8, 8)
+        memcpy((baseAddr + 40) as *u8, (&curLen) as *u8, 8)
+        pthread_cond_signal(condNF)
+        pthread_mutex_unlock(mtx)
+        return Result.Ok(val)
+    }
+}
+
+fn channelDestroy(ch: &Channel): void {
+    unsafe {
+        pthread_mutex_destroy(ch._mutex)
+        pthread_cond_destroy(ch._condNotEmpty)
+        pthread_cond_destroy(ch._condNotFull)
+        free(ch._mutex)
+        free(ch._condNotEmpty)
+        free(ch._condNotFull)
+        free(ch._buf)
+    }
+}

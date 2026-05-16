@@ -1,0 +1,59 @@
+// std/thread — OS thread spawning and joining via pthreads
+
+import "std/os"
+import "std/time"
+
+// Handle to a spawned OS thread.
+
+struct Thread {
+    id: i64,
+}
+
+// Spawn a new OS thread running the given function.
+// The function receives a *u8 argument for passing data.
+// The caller must ensure the pointed-to data outlives the thread.
+//
+//   fn worker(arg: *u8): *u8 { ... }
+//   var data: i64 = 42
+//   let t = threadSpawn(worker as *u8, (&data) as *u8)!
+//   threadJoin(t)!
+
+fn threadSpawn(func: *u8, arg: *u8): Result<Thread> {
+    var tid: i64 = 0
+    unsafe {
+        let r = pthread_create((&tid) as *u8, 0 as *u8, func, arg)
+        if r != 0 {
+            return Result.Err("pthread_create failed")
+        }
+    }
+    return Result.Ok(Thread { id: tid })
+}
+
+// Spawn a thread running a no-arg function (convenience wrapper).
+//
+//   fn work(arg: *u8): *u8 { print("hi"); return 0 as *u8 }
+//   let t = threadSpawnFn(work)!
+
+fn threadSpawnFn(func: (*u8) => *u8): Result<Thread> {
+    unsafe {
+        return threadSpawn(func as *u8, 0 as *u8)
+    }
+}
+
+// Block until the thread finishes.
+
+fn threadJoin(t: &Thread): Result<i32> {
+    unsafe {
+        let r = pthread_join(t.id, 0 as *u8)
+        if r != 0 {
+            return Result.Err("pthread_join failed")
+        }
+        return Result.Ok(0)
+    }
+}
+
+// Sleep the current thread for the given number of milliseconds.
+
+fn threadSleep(ms: i64): void {
+    sleepMs(ms)
+}
