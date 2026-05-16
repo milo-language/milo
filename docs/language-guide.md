@@ -955,7 +955,7 @@ var i: i64 = 0
 while i < 4 {
     let id = i
     let t = spawn(move (): void => {
-        print("thread ", id)
+        print($"thread {id}")
     })!
     threads.push(t)
     i = i + 1

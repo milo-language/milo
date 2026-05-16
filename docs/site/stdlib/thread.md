@@ -1,6 +1,6 @@
 # std/thread
 
-OS thread spawning and management via pthreads.
+Safe concurrency with OS threads. `spawn` requires a `move` closure — captured variables transfer ownership into the thread, so there's no shared mutable state and no data races by construction. No `unsafe`, no `Arc`, no lifetime annotations. Pair with `std/sync` for channels and mutexes when threads need to communicate.
 
 ```milo
 from "std/thread" import { spawn, threadJoin, threadSleep }
@@ -71,7 +71,7 @@ fn main(): i32 {
 
     let t = spawn(move (): void => {
         print(msg)
-        print("value is ", val)
+        print($"value is {val}")
     })!
 
     threadJoin(t)!
