@@ -55,8 +55,9 @@ Work through the guide in order. Each section builds on the last.
 8. [Strings](/language/strings) — owned vs. borrowed, slicing, UTF-8
 9. [Traits](/language/traits) — interfaces, `Display`, generic constraints
 10. [Closures](/language/closures) — arrow functions, captures, `.map`/`.filter`
-11. [Modules](/language/modules) — imports, `std/` library, project structure
-12. [C FFI](/language/ffi) — calling C from Milo
+11. [Warnings & Errors](/language/warnings-and-errors) — diagnostics, lints, `--deny`/`--allow`
+12. [Modules](/language/modules) — imports, `std/` library, project structure
+13. [C FFI](/language/ffi) — calling C from Milo
 
 <div style="margin-top: 2rem;">
 

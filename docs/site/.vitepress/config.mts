@@ -53,6 +53,7 @@ export default defineConfig({
             { text: 'Strings', link: '/language/strings' },
             { text: 'Traits', link: '/language/traits' },
             { text: 'Closures', link: '/language/closures' },
+            { text: 'Warnings & Errors', link: '/language/warnings-and-errors' },
             { text: 'Modules', link: '/language/modules' },
             { text: 'C FFI', link: '/language/ffi' },
           ]

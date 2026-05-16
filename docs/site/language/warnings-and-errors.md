@@ -1,0 +1,156 @@
+# Warnings & Errors
+
+Milo's compiler catches bugs before your code runs. Errors stop compilation. Warnings flag code that compiles but is probably wrong. Both come with source locations, carets pointing at the problem, and hints telling you how to fix it.
+
+## Errors
+
+Errors are things that *will* break at runtime — the compiler won't let them through.
+
+### Use after move
+
+```milo
+let a = "hello"
+let b = a
+print(a)           // error: use of moved variable 'a'
+```
+
+```
+error: use of moved variable 'a'
+  --> example.milo:3:7
+  |
+3 |     print(a)
+  |           ^
+  hint: ownership of 'a' was transferred earlier and it can no longer
+        be used here. To keep it alive, clone it at the point of
+        transfer: 'a.clone()'.
+```
+
+### Move out of loop
+
+```milo
+let s = "hello"
+while true {
+    consume(s)     // error: cannot move 's' out of a loop
+}
+```
+
+On the first iteration `s` would be gone — the second iteration would be a use-after-move. The compiler catches this statically.
+
+### Assign to immutable
+
+```milo
+let x: i32 = 5
+x = 10             // error: cannot assign to immutable variable 'x'
+```
+
+```
+  hint: declare with 'var' instead of 'let' to make it mutable
+```
+
+### Type mismatches
+
+```milo
+let x: i32 = "hello"   // error: type mismatch: 'x' declared as i32 but got string
+```
+
+### Storing references
+
+```milo
+struct Bad {
+    ref: &string       // error: references cannot be stored in structs
+}
+```
+
+```
+  hint: references are second-class — use an owned type instead
+```
+
+### Returning references
+
+```milo
+fn bad(): &string {    // error: cannot return a reference
+    ...
+}
+```
+
+Same rule — references live only as long as the function call. Return an owned value instead.
+
+## Warnings
+
+Warnings won't stop compilation, but they usually mean something is wrong.
+
+### unused-variable
+
+```milo
+let x = compute()     // warning: unused variable 'x'
+```
+
+```
+  hint: prefix with '_' to suppress: '_x'
+```
+
+### unused-result
+
+Ignoring a `Result` or `Option` is almost always a bug — it may contain an error you should handle.
+
+```milo
+fs.readFile("data.txt")   // warning: unused Result value — this may contain an error
+```
+
+```
+  hint: use 'let _ = ...' to discard explicitly
+```
+
+### unused-move
+
+An owned parameter that's never moved might not need ownership. This is off by default.
+
+```milo
+fn process(data: string): i64 {   // warning: parameter 'data' is never moved
+    return data.len                //   hint: consider taking '&string' instead
+}
+```
+
+## Configuring warnings
+
+Use `--deny` to turn a warning into a hard error, `--allow` to suppress it, or `--deny-all` to treat every warning as an error.
+
+```bash
+# treat unused variables as errors
+milo build app.milo --deny=unused-variable
+
+# suppress unused result warnings
+milo build app.milo --allow=unused-result
+
+# strict mode: all warnings are errors
+milo build app.milo --deny-all
+```
+
+| Warning code | Default | What it catches |
+|---|---|---|
+| `unused-variable` | warn | Declared but never read |
+| `unused-result` | warn | `Result` or `Option` value silently discarded |
+| `unused-move` | allow | Owned param never moved — could be a borrow instead |
+
+## Error formatting
+
+Every diagnostic includes:
+
+- **Source location** — file, line, and column
+- **Caret** — points at the exact token
+- **Hint** — actionable fix suggestion
+
+```
+error: use of moved variable 'name'
+  --> src/main.milo:12:11
+   |
+12 |     print(name)
+   |           ^
+   hint: ownership of 'name' was transferred earlier and it can no
+         longer be used here. To keep it alive, clone it at the point
+         of transfer: 'name.clone()'.
+```
+
+Inspired by Elm and Rust's error style — clear enough that you rarely need to search for what went wrong.
+
+Next: [Collections →](./collections)
