@@ -13,7 +13,7 @@
 // @expect: true
 // @expect: false
 
-import "std/unicode"
+from "std/unicode" import { isAlpha, isAlphaStr, isDigit, isHexDigit, isNumeric, isPunctuation, isWhitespace, toLowerChar, toUpperChar }
 
 fn boolStr(b: bool): string {
     if b { return "true" }

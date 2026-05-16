@@ -3,7 +3,6 @@
 // macOS: wraps CommonCrypto (CC_SHA256, CC_MD5)
 // Linux: would wrap OpenSSL (SHA256, MD5) — same signatures
 
-import "std/os"
 
 extern
 

@@ -1,8 +1,8 @@
 // std/fs — filesystem operations
 
-import "std/os"
-import "std/io"
-import "std/platform"
+from "std/os" import { access, closedir, opendir, read, readdir, stat }
+from "std/io" import { IoError, openWrite, writeAll }
+from "std/platform" import { direntNameOffset, direntTypeOffset, statBufSize, statModeOffset, statSizeOffset }
 
 // File metadata from stat().
 

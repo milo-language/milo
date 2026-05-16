@@ -1,4 +1,4 @@
-import "parser.milo"
+from "parser.milo" import *
 
 fn main(): i32 {
     let src = "fn add(a: i32, b: i32): i32 { let r = a + b return r } fn main(): i32 { return add(1, 2) }"

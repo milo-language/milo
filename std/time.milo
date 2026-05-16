@@ -1,6 +1,5 @@
 // std/time — wall clock, monotonic timing, sleep
 
-import "std/os"
 
 extern
 

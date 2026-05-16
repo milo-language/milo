@@ -1,8 +1,8 @@
 // fmt — Milo source code formatter
 // Tokenizes the input and re-emits with normalized indentation and spacing.
-import "std/io"
-import "std/fs"
-import "std/argparse"
+from "std/io" import { readFile, readStdin }
+from "std/fs" import { writeFile }
+from "std/argparse" import { newParser }
 
 // ── Token types ──
 

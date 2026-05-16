@@ -1,8 +1,6 @@
 // std/uuid — UUID v4 generation (random, RFC 4122)
 
-import "std/os"
-import "std/random"
-import "std/hex"
+from "std/random" import { arc4random_buf }
 
 fn _byteToHex(b: u8): string {
     var s = ""

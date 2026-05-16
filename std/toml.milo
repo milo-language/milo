@@ -1,0 +1,308 @@
+// std/toml — TOML config file parser
+//
+//   let t = tomlParse(data)!
+//   let name = t.str("name")!
+//   let port = t.i64("port")!
+//   let db = t.table("database")!
+//   let host = db.str("host")!
+
+from "std/os" import { read }
+
+struct Toml {
+    raw: string,
+    start: i64,
+    end: i64,
+}
+
+impl Toml {
+    fn str(self: &Self, key: &string): Option<string> {
+        return tomlGetStr(self.raw, self.start, self.end, key)
+    }
+
+    fn i64(self: &Self, key: &string): Option<i64> {
+        return tomlGetI64(self.raw, self.start, self.end, key)
+    }
+
+    fn f64(self: &Self, key: &string): Option<f64> {
+        return tomlGetF64(self.raw, self.start, self.end, key)
+    }
+
+    fn bool(self: &Self, key: &string): Option<bool> {
+        return tomlGetBool(self.raw, self.start, self.end, key)
+    }
+
+    fn table(self: &Self, key: &string): Option<Toml> {
+        return tomlGetTable(self.raw, self.start, self.end, key)
+    }
+}
+
+fn tomlParse(s: string): Result<Toml> {
+    if s.len == 0 {
+        return Result.Err("empty input")
+    }
+    let n = s.len
+    return Result.Ok(Toml { raw: s, start: 0, end: n })
+}
+
+// ── Internal helpers ──
+
+fn _tomlSkipWs(s: &string, pos: i64, end: i64): i64 {
+    var i = pos
+    while i < end {
+        let c = s[i]
+        if c == ' ' || c == '\t' || c == '\r' {
+            i = i + 1
+        } else if c == '#' {
+            while i < end && s[i] != '\n' { i = i + 1 }
+        } else {
+            break
+        }
+    }
+    return i
+}
+
+fn _tomlSkipLine(s: &string, pos: i64, end: i64): i64 {
+    var i = pos
+    while i < end && s[i] != '\n' { i = i + 1 }
+    if i < end { i = i + 1 }
+    return i
+}
+
+fn _tomlKeyMatches(s: &string, pos: i64, end: i64, key: &string): bool {
+    var i = pos
+    var j: i64 = 0
+    // bare key
+    while i < end && j < key.len {
+        if s[i] != key[j] { return false }
+        i = i + 1
+        j = j + 1
+    }
+    if j != key.len { return false }
+    // next non-ws char must be '='
+    let after = _tomlSkipWs(s, i, end)
+    return after < end && s[after] == '='
+}
+
+fn _tomlReadValue(s: &string, pos: i64, end: i64): i64 {
+    // return end position of the value
+    var i = pos
+    if i >= end { return i }
+    let c = s[i]
+    if c == '"' {
+        // quoted string
+        i = i + 1
+        while i < end && s[i] != '"' {
+            if s[i] == '\\' { i = i + 1 }
+            i = i + 1
+        }
+        if i < end { i = i + 1 }
+        return i
+    }
+    if c == '\'' {
+        // literal string
+        i = i + 1
+        while i < end && s[i] != '\'' { i = i + 1 }
+        if i < end { i = i + 1 }
+        return i
+    }
+    if c == '[' {
+        // inline array — skip until matching ]
+        var depth: i32 = 1
+        i = i + 1
+        while i < end && depth > 0 {
+            if s[i] == '[' { depth = depth + 1 }
+            if s[i] == ']' { depth = depth - 1 }
+            if s[i] == '"' {
+                i = i + 1
+                while i < end && s[i] != '"' {
+                    if s[i] == '\\' { i = i + 1 }
+                    i = i + 1
+                }
+            }
+            i = i + 1
+        }
+        return i
+    }
+    // bare value (number, bool, date) — read until newline or comment
+    while i < end && s[i] != '\n' && s[i] != '#' {
+        i = i + 1
+    }
+    // trim trailing whitespace
+    while i > pos && (s[i - 1] == ' ' || s[i - 1] == '\t' || s[i - 1] == '\r') {
+        i = i - 1
+    }
+    return i
+}
+
+fn _tomlFindKey(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
+    var i = start
+    while i < end {
+        i = _tomlSkipWs(s, i, end)
+        if i >= end { break }
+        if s[i] == '\n' {
+            i = i + 1
+            continue
+        }
+        // table header [name] — stop scanning if we hit one
+        if s[i] == '[' { break }
+        if _tomlKeyMatches(s, i, end, key) {
+            // skip key and =
+            var j = i
+            while j < end && s[j] != '=' { j = j + 1 }
+            j = j + 1
+            j = _tomlSkipWs(s, j, end)
+            let valStart = j
+            let valEnd = _tomlReadValue(s, j, end)
+            return Option.Some(Toml { raw: s.clone(), start: valStart, end: valEnd })
+        }
+        i = _tomlSkipLine(s, i, end)
+    }
+    return Option.None
+}
+
+fn tomlGetStr(s: &string, start: i64, end: i64, key: &string): Option<string> {
+    let v = _tomlFindKey(s, start, end, key)
+    if let Option.Some(t) = v {
+        if t.start < t.end && (t.raw[t.start] == '"' || t.raw[t.start] == '\'') {
+            let quote = t.raw[t.start]
+            var result: string = ""
+            var i = t.start + 1
+            while i < t.end - 1 {
+                if t.raw[i] == '\\' && quote == '"' && i + 1 < t.end - 1 {
+                    i = i + 1
+                    let esc = t.raw[i]
+                    if esc == 'n' { result.push('\n') }
+                    else if esc == 't' { result.push('\t') }
+                    else if esc == 'r' { result.push('\r') }
+                    else if esc == '"' { result.push('"') }
+                    else if esc == '\\' { result.push('\\') }
+                    else { result.push(esc) }
+                } else {
+                    result.push(t.raw[i])
+                }
+                i = i + 1
+            }
+            return Option.Some(result)
+        }
+        // bare string
+        return Option.Some(t.raw[t.start..t.end].clone())
+    }
+    return Option.None
+}
+
+fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64> {
+    let v = _tomlFindKey(s, start, end, key)
+    if let Option.Some(t) = v {
+        var result: i64 = 0
+        var negative: bool = false
+        var i = t.start
+        if i < t.end && t.raw[i] == '-' {
+            negative = true
+            i = i + 1
+        }
+        if i < t.end && t.raw[i] == '+' { i = i + 1 }
+        while i < t.end && t.raw[i] >= '0' && t.raw[i] <= '9' {
+            result = result * 10 + (t.raw[i] as i32 - 48) as i64
+            i = i + 1
+        }
+        if negative { result = 0 - result }
+        return Option.Some(result)
+    }
+    return Option.None
+}
+
+fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64> {
+    let v = _tomlFindKey(s, start, end, key)
+    if let Option.Some(t) = v {
+        var result: f64 = 0.0
+        var negative: bool = false
+        var i = t.start
+        if i < t.end && t.raw[i] == '-' {
+            negative = true
+            i = i + 1
+        }
+        if i < t.end && t.raw[i] == '+' { i = i + 1 }
+        while i < t.end && t.raw[i] >= '0' && t.raw[i] <= '9' {
+            result = result * 10.0 + (t.raw[i] as i32 - 48) as f64
+            i = i + 1
+        }
+        if i < t.end && t.raw[i] == '.' {
+            i = i + 1
+            var frac: f64 = 0.1
+            while i < t.end && t.raw[i] >= '0' && t.raw[i] <= '9' {
+                result = result + (t.raw[i] as i32 - 48) as f64 * frac
+                frac = frac * 0.1
+                i = i + 1
+            }
+        }
+        if negative { result = 0.0 - result }
+        return Option.Some(result)
+    }
+    return Option.None
+}
+
+fn tomlGetBool(s: &string, start: i64, end: i64, key: &string): Option<bool> {
+    let v = _tomlFindKey(s, start, end, key)
+    if let Option.Some(t) = v {
+        if t.end - t.start == 4 && t.raw[t.start] == 't' {
+            return Option.Some(true)
+        }
+        if t.end - t.start == 5 && t.raw[t.start] == 'f' {
+            return Option.Some(false)
+        }
+    }
+    return Option.None
+}
+
+fn tomlGetTable(s: &string, start: i64, end: i64, key: &string): Option<Toml> {
+    // search for [key] header
+    var i = start
+    while i < end {
+        i = _tomlSkipWs(s, i, end)
+        if i >= end { break }
+        if s[i] == '\n' {
+            i = i + 1
+            continue
+        }
+        if s[i] == '[' && (i + 1 >= end || s[i + 1] != '[') {
+            let hdrStart = i + 1
+            var hdrEnd = hdrStart
+            while hdrEnd < end && s[hdrEnd] != ']' { hdrEnd = hdrEnd + 1 }
+            let hdrName = s[hdrStart..hdrEnd]
+            if _strEq(hdrName, key) {
+                // table body: from next line until next [header] or EOF
+                let bodyStart = _tomlSkipLine(s, hdrEnd + 1, end)
+                var bodyEnd = bodyStart
+                var j = bodyStart
+                while j < end {
+                    j = _tomlSkipWs(s, j, end)
+                    if j >= end { break }
+                    if s[j] == '\n' {
+                        j = j + 1
+                        continue
+                    }
+                    if s[j] == '[' {
+                        bodyEnd = j
+                        break
+                    }
+                    j = _tomlSkipLine(s, j, end)
+                    bodyEnd = j
+                }
+                if j >= end { bodyEnd = end }
+                return Option.Some(Toml { raw: s.clone(), start: bodyStart, end: bodyEnd })
+            }
+        }
+        i = _tomlSkipLine(s, i, end)
+    }
+    return Option.None
+}
+
+fn _strEq(a: &string, b: &string): bool {
+    if a.len != b.len { return false }
+    var i: i64 = 0
+    while i < a.len {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}

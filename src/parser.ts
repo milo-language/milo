@@ -79,11 +79,11 @@ export class Parser {
   }
 
   private parseImport(): ImportDecl {
-    // from "path" import { a, b, c }
     if (this.at(TokenKind.From)) {
       const tok = this.advance();
       const pathTok = this.expect(TokenKind.String);
       this.expect(TokenKind.Import);
+      // from "path" import { a, b, c }
       this.expect(TokenKind.LBrace);
       const names: string[] = [];
       while (!this.at(TokenKind.RBrace)) {
@@ -93,10 +93,13 @@ export class Parser {
       this.expect(TokenKind.RBrace);
       return { kind: "ImportDecl", path: pathTok.value, names, span: { line: tok.line, col: tok.col } };
     }
-    // import "path" (glob — backward compat)
-    const tok = this.expect(TokenKind.Import);
-    const pathTok = this.expect(TokenKind.String);
-    return { kind: "ImportDecl", path: pathTok.value, names: null, span: { line: tok.line, col: tok.col } };
+    // bare import "path" → error with hint
+    if (this.at(TokenKind.Import)) {
+      const tok = this.advance();
+      const pathTok = this.expect(TokenKind.String);
+      this.error(`use 'from "${pathTok.value}" import { ... }' or 'from "${pathTok.value}" import *'`, tok);
+    }
+    this.error("expected 'from' import declaration", this.peek());
   }
 
   // ── Types ──

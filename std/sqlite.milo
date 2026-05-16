@@ -12,7 +12,6 @@
 //   dbFinalize(stmt)
 //   dbClose(db)
 
-import "std/os"
 
 extern fn sqlite3_open(filename: *u8, db: *u8): i32
 extern fn sqlite3_close(db: *u8): i32

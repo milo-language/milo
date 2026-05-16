@@ -1,7 +1,7 @@
 // cat — file viewer with line numbers and syntax highlighting
-import "std/argparse"
-import "std/io"
-import "std/path"
+from "std/argparse" import { newParser }
+from "std/io" import { File, readFile }
+from "std/path" import { pathExt }
 
 // build an ANSI escape code — no \x escapes in milo, so we push ESC byte (27)
 

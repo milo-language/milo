@@ -1,7 +1,7 @@
 // @expect: hello from thread
 // @expect: done
 
-import "std/thread"
+from "std/thread" import { threadJoin, threadSpawn }
 
 fn worker(arg: *u8): *u8 {
     print("hello from thread")

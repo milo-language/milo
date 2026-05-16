@@ -1,9 +1,8 @@
 // calc — simple expression evaluator
 // Supports: + - * / % ** () with standard precedence, unary minus, floats
 
-import "std/io"
-import "std/argparse"
-import "std/math"
+from "std/argparse" import { newParser }
+from "std/math" import { exp, mathMod, mathPow }
 
 // Tokenizer
 

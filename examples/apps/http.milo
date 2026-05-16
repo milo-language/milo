@@ -1,8 +1,8 @@
 // http — simple HTTP client for fetching URLs
-import "std/argparse"
-import "std/net"
-import "std/io"
-import "std/fs"
+from "std/argparse" import { newParser }
+from "std/net" import { fetch }
+from "std/io" import { writeStdout }
+from "std/fs" import { writeFile }
 
 fn statusText(code: i32): string {
     if code == 200 {

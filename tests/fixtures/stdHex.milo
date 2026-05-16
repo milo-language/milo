@@ -3,7 +3,7 @@
 // @expect: 4142
 // @expect: AB
 
-import "std/hex"
+from "std/hex" import { hexDecode, hexEncode }
 
 fn main(): i32 {
     let e1 = hexEncode("Hello")

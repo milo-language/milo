@@ -3,7 +3,6 @@
 // Uses arc4random (macOS/BSD) — no seeding required, cryptographically strong.
 // For Linux compat, could fall back to /dev/urandom via std/io.
 
-import "std/os"
 
 extern
 

@@ -1,5 +1,5 @@
 // @error: cannot open
-import "nonexistent.milo"
+from "nonexistent.milo" import { foo }
 
 fn main(): i32 {
     return 0

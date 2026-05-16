@@ -1,6 +1,6 @@
 // std/testing — test assertion functions
 
-import "std/os"
+from "std/os" import { exit }
 
 fn _testFail(): void {
     unsafe { exit(1) }

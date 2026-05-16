@@ -3,7 +3,7 @@
 // @expect: 5
 // @expect: done
 
-import "std/random"
+from "std/random" import { randFloat, randRange, shuffleI64 }
 
 fn main(): i32 {
     var i = 0

@@ -2,7 +2,7 @@
 // Subset: fn / extern, let / var, return, if/else, while, binary ops, calls,
 // int / string literals, identifiers, parenthesized exprs, unary -/!.
 
-import "lexer.milo"
+from "lexer.milo" import *
 
 // ── AST ──
 

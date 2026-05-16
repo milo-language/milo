@@ -3,7 +3,7 @@
 // @expect: 42
 // @expect: 3
 
-import "std/regex"
+from "std/regex" import { regexFind, regexFindAll, regexMatch, regexNew }
 
 fn main(): i32 {
     match regexNew("[0-9]+") {

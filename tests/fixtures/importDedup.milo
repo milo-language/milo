@@ -1,6 +1,6 @@
 // @expect: 7
-import "lib/math.milo"
-import "lib/math.milo"
+from "lib/math.milo" import { add }
+from "lib/math.milo" import { add }
 
 fn main(): i32 {
     print(add(3, 4))

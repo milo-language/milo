@@ -1,6 +1,6 @@
 // std/strconv — string-to-number and number-to-string conversions
 
-import "std/os"
+from "std/os" import { snprintf }
 
 extern
 

@@ -1,0 +1,19 @@
+from "std/toml" import { tomlParse }
+
+fn main(): i32 {
+    let data = "name = \"myapp\"\nport = 8080\ndebug = true\npi = 3.14\n\n[database]\nhost = \"localhost\"\nport = 5432\n"
+    let t = tomlParse(data)!
+    print(t.str("name")!)
+    print(t.i64("port")!)
+    print(t.bool("debug")!)
+
+    let db = t.table("database")!
+    print(db.str("host")!)
+    print(db.i64("port")!)
+    return 0
+}
+// @expect: myapp
+// @expect: 8080
+// @expect: true
+// @expect: localhost
+// @expect: 5432

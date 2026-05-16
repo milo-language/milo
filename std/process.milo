@@ -1,7 +1,7 @@
 // std/process — command execution and process control
 
-import "std/os"
-import "std/io"
+from "std/os" import { execl, exit, fork, kill, read, system, waitpid }
+from "std/io" import { readFile }
 
 // ── Simple command execution ──
 

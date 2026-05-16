@@ -10,7 +10,7 @@
 // @expect: 3.14
 // @expect: 2.71828
 
-import "std/strconv"
+from "std/strconv" import { formatFloat, i64ToBin, i64ToHex, i64ToOct, parseFloat, parseInt, parseIntRadix }
 
 fn main(): i32 {
     match parseInt("42") {

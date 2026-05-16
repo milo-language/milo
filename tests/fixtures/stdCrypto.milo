@@ -2,7 +2,7 @@
 // @expect: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 // @expect: 5d41402abc4b2a76b9719d911017c592
 
-import "std/crypto"
+from "std/crypto" import { md5, sha256 }
 
 fn main(): i32 {
     print(sha256("hello"))

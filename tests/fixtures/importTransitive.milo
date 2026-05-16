@@ -1,5 +1,5 @@
 // @expect: 27
-import "lib/mathExt.milo"
+from "lib/mathExt.milo" import { cube }
 
 fn main(): i32 {
     print(cube(3))

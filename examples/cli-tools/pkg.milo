@@ -1,13 +1,13 @@
 // milo-pkg — package manager for Milo
 // uses git as transport, GitHub as registry, global cache at ~/.milo/cache/
 
-import "std/args"
-import "std/env"
-import "std/fs"
-import "std/io"
-import "std/json"
-import "std/process"
-import "std/string"
+from "std/args" import { args }
+from "std/env" import { getEnv }
+from "std/fs" import { pathExists, writeFile }
+from "std/io" import { readFile }
+from "std/json" import { jsonParse }
+from "std/process" import { capture, run }
+from "std/string" import { strIndexOf, strReplace, strStartsWith, trim }
 
 fn getHome(): string {
     let h = getEnv("HOME")

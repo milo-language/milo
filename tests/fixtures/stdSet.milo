@@ -7,7 +7,7 @@
 // @expect: has apple
 // @expect: no grape
 
-import "std/set"
+from "std/set" import { HashSet, setAdd, setContains, setLen, setNew, setRemove }
 
 fn main(): i32 {
     var s: HashSet<i32> = setNew()

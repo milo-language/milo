@@ -1,4 +1,4 @@
-import "lexer.milo"
+from "lexer.milo" import *
 
 fn printKind(k: TokKind): void {
     match k {

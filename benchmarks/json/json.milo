@@ -1,6 +1,6 @@
 // JSON parse + walk using std/json
-import "std/json"
-import "std/io"
+from "std/json" import { jsonParse }
+from "std/io" import { readFile }
 
 fn main(): i32 {
     if _miloArgCount() < 2 {

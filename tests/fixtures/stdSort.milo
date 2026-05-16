@@ -13,7 +13,7 @@
 // @expect: 2
 // @expect: 1
 
-import "std/sort"
+from "std/sort" import { reverseI64, sortI32, sortI64, sortStrings }
 
 fn main(): i32 {
     var nums: Vec<i64> = Vec.new()

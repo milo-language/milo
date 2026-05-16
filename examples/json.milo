@@ -1,5 +1,5 @@
 // JSON in Milo — stringify structs, parse them back, handle errors
-import "std/json"
+from "std/json" import { jsonParse }
 
 struct User {
     name: string,

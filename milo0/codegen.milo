@@ -3,7 +3,7 @@
 // pointers, control flow, calls (incl. variadic externs). Targets a minimal
 // useful Milo dialect: fib, fizzbuzz, simple programs using extern printf.
 
-import "parser.milo"
+from "parser.milo" import *
 
 // ── Helpers: int → string (Milo's .toString already exists for i64) ──
 

@@ -6,7 +6,7 @@
 // @expect: b
 // @expect: 2
 
-import "std/io"
+from "std/io" import { splitLines }
 
 fn main(): i32 {
     let lines = splitLines("hello\nworld\nfoo")

@@ -1,0 +1,174 @@
+// std/url — URL parsing into components
+
+
+struct Url {
+    scheme: string,
+    host: string,
+    port: i32,
+    path: string,
+    query: string,
+    fragment: string,
+    raw: string,
+}
+
+fn urlParse(s: string): Result<Url> {
+    var scheme: string = ""
+    var host: string = ""
+    var port: i32 = 0
+    var path: string = ""
+    var query: string = ""
+    var fragment: string = ""
+    var i: i64 = 0
+
+    // scheme
+    var schemeEnd: i64 = 0
+    while schemeEnd < s.len {
+        if s[schemeEnd] == ':' {
+            break
+        }
+        if s[schemeEnd] == '/' || s[schemeEnd] == '?' || s[schemeEnd] == '#' {
+            break
+        }
+        schemeEnd = schemeEnd + 1
+    }
+    if schemeEnd < s.len && s[schemeEnd] == ':' {
+        scheme = s[0..schemeEnd].clone()
+        i = schemeEnd + 1
+    }
+
+    // authority (//host:port)
+    if i + 1 < s.len && s[i] == '/' && s[i + 1] == '/' {
+        i = i + 2
+        let authStart = i
+        while i < s.len && s[i] != '/' && s[i] != '?' && s[i] != '#' {
+            i = i + 1
+        }
+        let auth = s[authStart..i]
+
+        // split host:port
+        var colonPos: i64 = - 1 as i64
+        var j: i64 = auth.len - 1
+        while j >= 0 {
+            if auth[j] == ':' {
+                colonPos = j
+                break
+            }
+            if auth[j] == ']' {
+                break
+            }
+            j = j - 1
+        }
+
+        if colonPos > 0 {
+            host = auth[0..colonPos].clone()
+            let portStr = auth[colonPos + 1..auth.len]
+            port = _parsePort(portStr)
+        } else {
+            host = auth.clone()
+        }
+    }
+
+    // path
+    let pathStart = i
+    while i < s.len && s[i] != '?' && s[i] != '#' {
+        i = i + 1
+    }
+    path = s[pathStart..i].clone()
+
+    // query
+    if i < s.len && s[i] == '?' {
+        i = i + 1
+        let qStart = i
+        while i < s.len && s[i] != '#' {
+            i = i + 1
+        }
+        query = s[qStart..i].clone()
+    }
+
+    // fragment
+    if i < s.len && s[i] == '#' {
+        i = i + 1
+        fragment = s[i..s.len].clone()
+    }
+
+    // default ports
+    if port == 0 {
+        if scheme == "http" { port = 80 }
+        if scheme == "https" { port = 443 }
+    }
+
+    return Result.Ok(Url {
+        scheme: scheme, host: host, port: port,
+        path: path, query: query, fragment: fragment,
+        raw: s.clone(),
+    })
+}
+
+fn _parsePort(s: &string): i32 {
+    var result: i32 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i]
+        if c < '0' || c > '9' { return 0 }
+        result = result * 10 + (c as i32 - 48)
+        i = i + 1
+    }
+    return result
+}
+
+fn urlQueryGet(u: &Url, key: &string): Option<string> {
+    if u.query.len == 0 { return Option.None }
+    var i: i64 = 0
+    while i < u.query.len {
+        let kStart = i
+        while i < u.query.len && u.query[i] != '=' && u.query[i] != '&' {
+            i = i + 1
+        }
+        let k = u.query[kStart..i]
+        var val: string = ""
+        if i < u.query.len && u.query[i] == '=' {
+            i = i + 1
+            let vStart = i
+            while i < u.query.len && u.query[i] != '&' {
+                i = i + 1
+            }
+            val = u.query[vStart..i].clone()
+        }
+        if _strEqUrl(k, key) {
+            return Option.Some(val)
+        }
+        if i < u.query.len && u.query[i] == '&' {
+            i = i + 1
+        }
+    }
+    return Option.None
+}
+
+fn _strEqUrl(a: &string, b: &string): bool {
+    if a.len != b.len { return false }
+    var i: i64 = 0
+    while i < a.len {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn urlString(u: &Url): string {
+    var result: string = ""
+    if u.scheme.len > 0 {
+        result = result + u.scheme + "://"
+    }
+    result = result + u.host
+    if u.port > 0 && u.port != 80 && u.port != 443 {
+        result = result + ":" + format(u.port)
+    }
+    result = result + u.path
+    if u.query.len > 0 {
+        result = result + "?" + u.query
+    }
+    if u.fragment.len > 0 {
+        result = result + "#" + u.fragment
+    }
+    return result
+}

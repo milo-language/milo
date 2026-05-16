@@ -1,6 +1,6 @@
 // platform-specific constants and helpers for Linux
 
-import "std/os"
+from "std/os" import { htons }
 
 struct SockAddrIn {
     sinFamily: u16,

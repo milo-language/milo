@@ -1,7 +1,7 @@
 // std/thread — OS thread spawning and joining via pthreads
 
-import "std/os"
-import "std/time"
+from "std/os" import { free, malloc, memcpy, pthread_create, pthread_join }
+from "std/time" import { sleepMs }
 
 // Handle to a spawned OS thread.
 

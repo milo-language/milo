@@ -1,0 +1,18 @@
+from "std/datetime" import { dateTimeFormat, dateTimeFromEpoch, monthName, weekdayName }
+
+fn main(): i32 {
+    let dt = dateTimeFromEpoch(1705318245)
+    print(dateTimeFormat(dt))
+    print(weekdayName(dt.weekday))
+    print(monthName(dt.month))
+    print(dt.year)
+    print(dt.month)
+    print(dt.day)
+    return 0
+}
+// @expect: 2024-01-15T11:30:45
+// @expect: Monday
+// @expect: January
+// @expect: 2024
+// @expect: 1
+// @expect: 15

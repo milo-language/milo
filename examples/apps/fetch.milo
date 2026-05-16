@@ -1,5 +1,5 @@
 // Fetch data from an HTTP API and parse the JSON response
-import "std/net"
+from "std/net" import { fetch }
 
 fn main(): i32 {
     let resp = fetch("https://httpbin.org/get")

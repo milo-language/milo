@@ -1,7 +1,7 @@
 // std/mem — memory management with automatic cleanup
 
-import "std/os"
-import "std/platform"
+from "std/os" import { free, malloc, mmap, munmap }
+from "std/platform" import { mapPrivateAnon }
 
 // ── MappedMemory ──
 

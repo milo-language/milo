@@ -1,0 +1,106 @@
+// std/datetime — date/time components and formatting from epoch seconds
+
+from "std/time" import { epochSecs, since }
+
+struct DateTime {
+    year: i32,
+    month: i32,
+    day: i32,
+    hour: i32,
+    minute: i32,
+    second: i32,
+    weekday: i32,
+}
+
+fn dateTimeFromEpoch(epochSec: i64): DateTime {
+    // days since 1970-01-01
+    var secs = epochSec
+    let totalDays = secs / 86400
+    let daySeconds = secs - totalDays * 86400
+
+    let hour = (daySeconds / 3600) as i32
+    let minute = ((daySeconds - (hour as i64) * 3600) / 60) as i32
+    let second = (daySeconds - (hour as i64) * 3600 - (minute as i64) * 60) as i32
+
+    // weekday: 1970-01-01 was Thursday (4)
+    var wd = ((totalDays + 4) % 7) as i32
+    if wd < 0 { wd = wd + 7 }
+
+    // civil date from day count (Hinnant algorithm)
+    var z = totalDays + 719468
+    var eraInput = z
+    if z < 0 { eraInput = z - 146096 }
+    let era = eraInput / 146097
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let y = yoe + era * 400
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let d = doy - (153 * mp + 2) / 5 + 1
+    var m = mp + 3
+    if mp >= 10 { m = mp - 9 }
+    var yr = y
+    if m <= 2 { yr = y + 1 }
+
+    return DateTime {
+        year: yr as i32, month: m as i32, day: d as i32,
+        hour: hour, minute: minute, second: second,
+        weekday: wd,
+    }
+}
+
+fn dateTimeNow(): DateTime {
+    return dateTimeFromEpoch(epochSecs())
+}
+
+fn dateTimeFormat(dt: &DateTime): string {
+    // ISO 8601: 2024-03-15T14:30:00
+    var result: string = ""
+    result = result + _padI32(dt.year, 4) + "-" + _padI32(dt.month, 2) + "-" + _padI32(dt.day, 2)
+    result = result + "T"
+    result = result + _padI32(dt.hour, 2) + ":" + _padI32(dt.minute, 2) + ":" + _padI32(dt.second, 2)
+    return result
+}
+
+fn dateTimeFormatDate(dt: &DateTime): string {
+    return _padI32(dt.year, 4) + "-" + _padI32(dt.month, 2) + "-" + _padI32(dt.day, 2)
+}
+
+fn dateTimeFormatTime(dt: &DateTime): string {
+    return _padI32(dt.hour, 2) + ":" + _padI32(dt.minute, 2) + ":" + _padI32(dt.second, 2)
+}
+
+fn weekdayName(wd: i32): string {
+    if wd == 0 { return "Sunday" }
+    if wd == 1 { return "Monday" }
+    if wd == 2 { return "Tuesday" }
+    if wd == 3 { return "Wednesday" }
+    if wd == 4 { return "Thursday" }
+    if wd == 5 { return "Friday" }
+    if wd == 6 { return "Saturday" }
+    return "Unknown"
+}
+
+fn monthName(m: i32): string {
+    if m == 1 { return "January" }
+    if m == 2 { return "February" }
+    if m == 3 { return "March" }
+    if m == 4 { return "April" }
+    if m == 5 { return "May" }
+    if m == 6 { return "June" }
+    if m == 7 { return "July" }
+    if m == 8 { return "August" }
+    if m == 9 { return "September" }
+    if m == 10 { return "October" }
+    if m == 11 { return "November" }
+    if m == 12 { return "December" }
+    return "Unknown"
+}
+
+fn _padI32(val: i32, width: i32): string {
+    var s = format(val)
+    while s.len < width as i64 {
+        s = "0" + s
+    }
+    return s
+}

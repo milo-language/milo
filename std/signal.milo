@@ -1,0 +1,33 @@
+// std/signal — OS signal handling (POSIX)
+
+
+extern fn signal(signum: i32, handler: *u8): *u8
+
+let SIGHUP: i32 = 1
+let SIGINT: i32 = 2
+let SIGQUIT: i32 = 3
+let SIGABRT: i32 = 6
+let SIGKILL: i32 = 9
+let SIGALRM: i32 = 14
+let SIGTERM: i32 = 15
+
+// Register a handler for a signal. Handler receives the signal number.
+fn onSignal(sig: i32, handler: fn(i32): void): void {
+    unsafe {
+        signal(sig, handler as *u8)
+    }
+}
+
+// Ignore a signal.
+fn ignoreSignal(sig: i32): void {
+    unsafe {
+        signal(sig, 1 as *u8)
+    }
+}
+
+// Reset a signal to default behavior.
+fn resetSignal(sig: i32): void {
+    unsafe {
+        signal(sig, 0 as *u8)
+    }
+}

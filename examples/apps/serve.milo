@@ -2,10 +2,10 @@
 from "std/http" import {
     Request, Response, serve
 }
-import "std/argparse"
-import "std/io"
-import "std/fs"
-import "std/path"
+from "std/argparse" import { newParser }
+from "std/io" import { readFile }
+from "std/fs" import { fileInfo, isDir, isFile, readDir }
+from "std/path" import { pathJoin }
 
 fn getMime(path: &string): string {
     if path.endsWith(".html") || path.endsWith(".htm") {

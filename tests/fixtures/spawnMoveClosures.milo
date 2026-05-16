@@ -2,7 +2,7 @@
 // @expect: value is 42
 // @expect: done
 
-import "std/thread"
+from "std/thread" import { spawn, threadJoin }
 
 fn main(): i32 {
     let msg = "hello from thread"

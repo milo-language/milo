@@ -6,7 +6,7 @@
 // @expect: b,c
 // @expect: d"e
 
-import "std/csv"
+from "std/csv" import { csvParse }
 
 fn main(): i32 {
     let data = "name,age,city\nAlice,30,NYC\nBob,25,SF\n"

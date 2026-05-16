@@ -1,7 +1,7 @@
 // std/io — file and directory I/O with automatic cleanup
 
-import "std/os"
-import "std/platform"
+from "std/os" import { close, lseek, open, read, strerror, write }
+from "std/platform" import { getErrno, oWriteCreateAppend, oWriteCreateTrunc }
 
 // ── IoError ──
 

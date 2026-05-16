@@ -1,5 +1,5 @@
 // @expect: hello, world!
-import "lib/greeting.milo"
+from "lib/greeting.milo" import { greet }
 
 fn main(): i32 {
     let msg = greet("world")

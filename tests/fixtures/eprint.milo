@@ -1,6 +1,5 @@
 // @expect: hello stdout
 // @expect: done
-import "std/os"
 
 fn main(): i32 {
     print("hello stdout")

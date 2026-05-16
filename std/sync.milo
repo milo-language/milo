@@ -1,6 +1,6 @@
 // std/sync — synchronization primitives (mutex, channel) via pthreads
 
-import "std/os"
+from "std/os" import { free, malloc, memcpy, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock }
 
 // ── Mutex ──
 // Mutual exclusion lock. Wrap shared data access with lock/unlock.

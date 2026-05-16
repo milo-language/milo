@@ -1,6 +1,5 @@
 // std/regex — regular expression matching (wraps POSIX regex.h)
 
-import "std/os"
 
 extern
 

@@ -1,6 +1,5 @@
 // std/path — file path manipulation
 
-import "std/string"
 
 // Get the file extension including the dot. Returns "" if none.
 

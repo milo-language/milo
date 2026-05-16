@@ -1,4 +1,4 @@
-import "std/testing"
+from "std/testing" import { assert, assertEqual }
 
 fn testAddition(): void {
     assertEqual(2 + 2, 4)

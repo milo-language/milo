@@ -1,6 +1,5 @@
 // std/math — mathematical functions (wraps libm)
 
-import "std/os"
 
 // ── libm bindings ──
 

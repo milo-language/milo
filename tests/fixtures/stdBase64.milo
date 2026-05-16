@@ -5,7 +5,7 @@
 // @expect: YQ==
 // @expect: a
 
-import "std/base64"
+from "std/base64" import { base64Decode, base64Encode }
 
 fn main(): i32 {
     let e1 = base64Encode("Hello, World!")

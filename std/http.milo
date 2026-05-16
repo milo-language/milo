@@ -1,7 +1,7 @@
 // std/http — high-level HTTP server for Milo
 
-import "std/os"
-import "std/platform"
+from "std/os" import { accept, bind, close, getsockname, listen, ntohs, read, setsockopt, socket, write }
+from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr }
 
 // ── Public types ──
 

@@ -3,7 +3,7 @@
 // @expect: 21
 // @expect: false
 // @expect: 21
-import "std/arena"
+from "std/arena" import { Arena, arenaAlloc, arenaFree, arenaGet, arenaModify, arenaNew }
 
 fn main(): i32 {
     var arena: Arena<i32> = arenaNew()

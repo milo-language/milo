@@ -1,7 +1,7 @@
 // @expect: sum 100
 
-import "std/thread"
-import "std/sync"
+from "std/thread" import { Thread, spawn, threadJoin }
+from "std/sync" import { channelDestroy, channelNew, channelRecv, channelSend }
 
 fn main(): i32 {
     let ch = channelNew(16)!

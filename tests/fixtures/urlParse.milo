@@ -1,0 +1,26 @@
+from "std/url" import { urlParse }
+
+fn main(): i32 {
+    let u = urlParse("https://example.com:8080/api/users?page=1#top")!
+    print(u.scheme)
+    print(u.host)
+    print(u.port)
+    print(u.path)
+    print(u.query)
+    print(u.fragment)
+
+    let simple = urlParse("http://localhost/index.html")!
+    print(simple.host)
+    print(simple.port)
+    print(simple.path)
+    return 0
+}
+// @expect: https
+// @expect: example.com
+// @expect: 8080
+// @expect: /api/users
+// @expect: page=1
+// @expect: top
+// @expect: localhost
+// @expect: 80
+// @expect: /index.html

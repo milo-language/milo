@@ -1,6 +1,6 @@
 // @expect: 7
 // @expect: 25
-import "lib/math.milo"
+from "lib/math.milo" import { add, square }
 
 fn main(): i32 {
     print(add(3, 4))

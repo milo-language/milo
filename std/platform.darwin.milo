@@ -1,6 +1,6 @@
 // platform-specific constants and helpers for macOS/BSD
 
-import "std/os"
+from "std/os" import { htons }
 
 struct SockAddrIn {
     sinLen: u8,

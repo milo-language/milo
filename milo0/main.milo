@@ -1,7 +1,7 @@
 // milo0 driver — read source from stdin, emit LLVM IR to stdout.
 // Usage: milo0 < source.milo > output.ll && clang output.ll -o prog
 
-import "codegen.milo"
+from "codegen.milo" import *
 
 extern
 

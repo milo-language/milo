@@ -1,4 +1,4 @@
-import "std/os"
+from "std/os" import { puts }
 
 fn main(): i32 {
     puts("Hello, Milo!")

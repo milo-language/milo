@@ -1,8 +1,8 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
-import "std/os"
-import "std/platform"
-import "std/json"
+from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_connect, SSL_ctrl, SSL_free, SSL_new, SSL_read, SSL_set_fd, SSL_write, TLS_client_method, close, connect, freeaddrinfo, getaddrinfo, read, socket, write }
+from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr }
+from "std/json" import { Json, jsonParse }
 
 // ── NetError ──
 
