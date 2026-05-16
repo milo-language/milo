@@ -495,9 +495,7 @@ export class TypeChecker {
       if (ret.tag === "ref") {
         this.error(`function '${fn.name}': cannot return a reference`, undefined, `references are second-class — return an owned value instead`);
       }
-      if (ret.tag === "fn") {
-        this.error(`function '${fn.name}': cannot return a closure`, undefined, `closures are second-class — pass them as function parameters instead`);
-      }
+      // fn return types allowed — move closures heap-allocate and are safe to escape
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern });
     }
 

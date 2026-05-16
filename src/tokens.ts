@@ -3,6 +3,7 @@ export enum TokenKind {
   Int = "INT",
   Float = "FLOAT",
   String = "STRING",
+  FString = "FSTRING",
   Char = "CHAR",
   Ident = "IDENT",
   // keywords

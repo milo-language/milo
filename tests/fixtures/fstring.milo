@@ -1,0 +1,17 @@
+// @expect: Hello Milo, version 1!
+// @expect: 10 + 20 = 30
+// @expect: plain string
+
+fn main(): i32 {
+    let name = "Milo"
+    let version: i32 = 1
+    print($"Hello {name}, version {version}!")
+
+    let x: i32 = 10
+    let y: i32 = 20
+    print($"{x} + {y} = {x + y}")
+
+    print($"plain string")
+
+    return 0
+}

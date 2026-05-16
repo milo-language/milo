@@ -1,4 +1,5 @@
 import { Token, TokenKind } from "./tokens";
+import { Lexer } from "./lexer";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
@@ -753,6 +754,10 @@ export class Parser {
       this.advance();
       return { kind: "StringLit", value: tok.value, span: s };
     }
+    if (tok.kind === TokenKind.FString) {
+      this.advance();
+      return this.parseFString(tok.value, s);
+    }
     if (tok.kind === TokenKind.Char) {
       this.advance();
       return { kind: "CharLit", value: parseInt(tok.value), span: s };
@@ -905,5 +910,35 @@ export class Parser {
       body = [{ kind: "Return" as const, value: expr, span: expr.span }];
     }
     return { kind: "Closure", params, retType, body, span };
+  }
+
+  // $"hello {name}, you are {age} years old" → format("hello ", name, ", you are ", age, " years old")
+  private parseFString(raw: string, span: Span): Expr {
+    const args: Expr[] = [];
+    let lit = "";
+    let i = 0;
+    while (i < raw.length) {
+      if (raw[i] === "{") {
+        if (lit.length > 0) { args.push({ kind: "StringLit", value: lit, span }); lit = ""; }
+        i++;
+        let depth = 1;
+        let exprStr = "";
+        while (i < raw.length && depth > 0) {
+          if (raw[i] === "{") depth++;
+          else if (raw[i] === "}") { depth--; if (depth === 0) { i++; break; } }
+          exprStr += raw[i];
+          i++;
+        }
+        const tokens = new Lexer(exprStr).tokenize();
+        const expr = new Parser(tokens).parseExpr();
+        args.push(expr);
+      } else {
+        lit += raw[i];
+        i++;
+      }
+    }
+    if (lit.length > 0) args.push({ kind: "StringLit", value: lit, span });
+    if (args.length === 1 && args[0].kind === "StringLit") return args[0];
+    return { kind: "Call", func: "format", args, span };
   }
 }

@@ -47,6 +47,21 @@ function compileToIr(sourcePath: string, outputPath: string | null, target: Targ
   }
 }
 
+function detectLibs(ir: string, target: TargetInfo): string {
+  let libs = "";
+  if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
+    libs += target.os === "darwin"
+      ? " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
+      : " -lssl -lcrypto";
+  }
+  if (ir.includes("@sqlite3_")) {
+    libs += target.os === "darwin"
+      ? " -L/opt/homebrew/opt/sqlite/lib -lsqlite3"
+      : " -lsqlite3";
+  }
+  return libs;
+}
+
 function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = ""): string {
   const source = readFileSync(sourcePath, "utf-8");
   const ir = compile(source, target, sourcePath);
@@ -58,12 +73,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   try {
     writeFileSync(tmpLl, ir);
     const opt = optFlag ? ` ${optFlag}` : "";
-    let libs = "";
-    if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
-      libs = target.os === "darwin"
-        ? " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
-        : " -lssl -lcrypto";
-    }
+    let libs = detectLibs(ir, target);
     execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     console.error(`error[link]: clang failed:\n${e.stderr?.toString() ?? e.message}`);
@@ -83,12 +93,7 @@ function compileSourceToBinary(source: string, sourcePath: string, target: Targe
   try {
     writeFileSync(tmpLl, ir);
     const opt = optFlag ? ` ${optFlag}` : "";
-    let libs = "";
-    if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
-      libs = target.os === "darwin"
-        ? " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
-        : " -lssl -lcrypto";
-    }
+    const libs = detectLibs(ir, target);
     execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     throw new Error(`clang failed:\n${e.stderr?.toString() ?? e.message}`);

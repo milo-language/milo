@@ -1,0 +1,37 @@
+// std/uuid — UUID v4 generation (random, RFC 4122)
+
+import "std/os"
+import "std/random"
+import "std/hex"
+
+fn _byteToHex(b: u8): string {
+    var s = ""
+    s.push(_hexChar(b >> 4))
+    s.push(_hexChar(b & 15 as u8))
+    return s
+}
+
+// Generate a random UUID v4 string (e.g. "550e8400-e29b-41d4-a716-446655440000").
+
+fn uuidV4(): string {
+    var buf: [u8; 16] = [0 as u8; 16]
+    unsafe { arc4random_buf(buf as *u8, 16) }
+
+    // version 4: high nibble of byte 6 = 0100
+    buf[6] = (buf[6] & 0x0f as u8) | 0x40 as u8
+    // variant 1: high bits of byte 8 = 10
+    buf[8] = (buf[8] & 0x3f as u8) | 0x80 as u8
+
+    var s = ""
+    s = s + _byteToHex(buf[0]) + _byteToHex(buf[1]) + _byteToHex(buf[2]) + _byteToHex(buf[3])
+    s = s + "-"
+    s = s + _byteToHex(buf[4]) + _byteToHex(buf[5])
+    s = s + "-"
+    s = s + _byteToHex(buf[6]) + _byteToHex(buf[7])
+    s = s + "-"
+    s = s + _byteToHex(buf[8]) + _byteToHex(buf[9])
+    s = s + "-"
+    s = s + _byteToHex(buf[10]) + _byteToHex(buf[11]) + _byteToHex(buf[12])
+    s = s + _byteToHex(buf[13]) + _byteToHex(buf[14]) + _byteToHex(buf[15])
+    return s
+}

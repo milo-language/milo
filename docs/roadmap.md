@@ -264,14 +264,15 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 
 ### Tier 0 — dealbreakers
 
-- [ ] **Threads + channels** — `std/thread` wrapping pthreads: `Thread.spawn(fn)`, `thread.join()`, `Mutex<T>`, `Channel<T>` for message passing. Without this, can't build servers, parallel CLI tools, or anything concurrent. Design: start with OS threads + channels (like Go), defer async/await.
-- [ ] **Escaping closures** — currently stack-allocated, can't be returned or stored in structs. Need heap-allocated `Box<dyn Fn>` equivalent. Unlocks callbacks, event handlers, higher-order patterns. Requires: heap env alloc, move semantics for closure values, drop glue.
+- [x] **Threads + channels** — `std/thread` (pthreads), `std/sync` (Mutex, Channel). Safe `spawn(move () => {...})` with move closures. Channel is handle-based — safe to capture in closures, no unsafe needed by users. Multi-producer, bounded FIFO.
+- [x] **Escaping closures** — move closures heap-allocate env, can be returned from functions, stored in structs, composed. Enables callbacks, event handlers, higher-order patterns.
 - [ ] **Trait objects / dynamic dispatch** — `dyn Trait` for runtime polymorphism. Vtable-based. Unlocks plugin systems, heterogeneous collections (`Vec<dyn Animal>`), dependency injection.
-- [ ] **std/testing** — `assert`, `assertEqual`, `assertErr`, test discovery via annotation (`@test`), test runner CLI (`milo test`). Can't ship packages without tests.
+- [x] **std/testing** — `assert`, `assertEqual`, `assertEqual64`, `assertStrEqual`, `assertBool`. Test discovery via `testXxx` naming convention, `milo test` CLI runner with pass/fail reporting.
 
 ### Tier 1 — significant gaps
 
-- [ ] **Operator overloading** — `Add/Sub/Mul/Div/Eq/Ord` traits, `@derive(Eq, Hash, Clone)`. Makes numeric wrapper types, custom collections usable.
+- [x] **Operator overloading** — Add/Sub/Mul/Div/Eq traits with `impl Add for T`. `@derive(Eq)` generates field-wise equality. `==`/`!=` on structs via Eq trait.
+- [x] **String interpolation** — `$"hello {name}, you are {age}"` f-string syntax, desugars to `format()`.
 - [ ] **Iterators** — iterator trait with `.map().filter().collect()` chains, lazy evaluation. Needs associated types or at minimum trait method return types.
 - [ ] **Display trait** — `print(myStruct)` via user-defined `display()`. Trait-based dispatch in builtins.
 - [ ] **Error handling improvements** — `From` trait for automatic error conversion in `?`, `anyhow`-style error boxing.
@@ -297,3 +298,4 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 - [x] std/fmt, std/io, std/strconv, std/unicode, std/base64, std/hex, std/log
 - [x] std/csv, std/regex, std/crypto
 - [x] std/json, std/fs, std/net, std/http, std/process, std/argparse, std/path, std/env, std/args, std/arena
+- [x] std/thread, std/sync, std/testing

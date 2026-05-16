@@ -74,6 +74,35 @@ export class Lexer {
     throw new Error(`error[lex]: ${line}:${col}: ${msg}`);
   }
 
+  private lexFString(line: number, col: number): Token {
+    this.advance(); // $
+    this.advance(); // opening "
+    let value = "";
+    let braceDepth = 0;
+    const escapes: Record<string, string> = { n: "\n", t: "\t", r: "\r", "\\": "\\", '"': '"', "0": "\0", "{": "{", "}": "}" };
+    while (true) {
+      if (this.pos >= this.source.length) this.error("unterminated string", line, col);
+      const ch = this.advance();
+      if (braceDepth === 0) {
+        if (ch === "\\") { const esc = this.advance(); if (esc === "x") { value += this.lexHexEscape(); } else { value += escapes[esc] ?? esc; } continue; }
+        if (ch === '"') break;
+        if (ch === '{') { braceDepth++; value += ch; continue; }
+        value += ch;
+      } else {
+        if (ch === '{') braceDepth++;
+        if (ch === '}') braceDepth--;
+        value += ch;
+      }
+    }
+    return this.token(TokenKind.FString, value, line, col);
+  }
+
+  private lexHexEscape(): string {
+    const h1 = this.advance();
+    const h2 = this.advance();
+    return String.fromCharCode(parseInt(h1 + h2, 16));
+  }
+
   private lexString(line: number, col: number): Token {
     this.advance(); // opening "
     let value = "";
@@ -83,7 +112,8 @@ export class Lexer {
       const ch = this.advance();
       if (ch === "\\") {
         const esc = this.advance();
-        value += escapes[esc] ?? esc;
+        if (esc === "x") { value += this.lexHexEscape(); }
+        else { value += escapes[esc] ?? esc; }
       } else {
         value += ch;
       }
@@ -167,6 +197,7 @@ export class Lexer {
     const col = this.col;
     const ch = this.peek();
 
+    if (ch === '$' && this.source[this.pos + 1] === '"') return this.lexFString(line, col);
     if (ch === '"') return this.lexString(line, col);
     if (ch === "'") return this.lexChar(line, col);
     if (ch >= "0" && ch <= "9") return this.lexNumber(line, col);
