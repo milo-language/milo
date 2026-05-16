@@ -48,7 +48,7 @@ export type HIRExpr =
   | { kind: "StringClone"; str: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "NumberToString"; value: HIRExpr; valueType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "JsonStringify"; value: HIRExpr; valueType: TypeKind; type: TypeKind; span?: Span }
-  | { kind: "Closure"; params: { name: string; type: TypeKind }[]; body: HIRStmt[]; captures: { name: string; type: TypeKind; mutable: boolean }[]; retType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "Closure"; params: { name: string; type: TypeKind }[]; body: HIRStmt[]; captures: { name: string; type: TypeKind; mutable: boolean }[]; retType: TypeKind; type: TypeKind; isMove?: boolean; span?: Span }
   | { kind: "ClosureCall"; callee: HIRExpr; args: HIRArg[]; type: TypeKind; span?: Span }
   | { kind: "VecMap"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; resultElementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilter"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }

@@ -568,6 +568,7 @@ class LowerCtx {
           captures,
           retType,
           type,
+          isMove: (expr as any).isMove,
           span: expr.span,
         };
       }

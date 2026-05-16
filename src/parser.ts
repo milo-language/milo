@@ -785,6 +785,15 @@ export class Parser {
     if (tok.kind === TokenKind.LBracket) {
       return this.parseArrayLit();
     }
+    if (tok.kind === TokenKind.Move) {
+      this.advance(); // consume 'move'
+      if (this.at(TokenKind.LParen) && this.isArrowClosure()) {
+        const closure = this.parseClosure(s);
+        (closure as any).isMove = true;
+        return closure;
+      }
+      throw new Error(`error[parse]: ${tok.line}:${tok.col}: 'move' must precede a closure`);
+    }
     if (tok.kind === TokenKind.LParen) {
       if (this.isArrowClosure()) {
         return this.parseClosure(s);
@@ -860,9 +869,11 @@ export class Parser {
     this.advance(); // skip (
     if (this.at(TokenKind.RParen)) {
       this.advance();
-      const isArrow = this.at(TokenKind.FatArrow);
+      if (this.at(TokenKind.FatArrow)) { this.pos = saved; return true; }
+      // (): RetType => ...
+      if (this.at(TokenKind.Colon)) { this.pos = saved; return true; }
       this.pos = saved;
-      return isArrow;
+      return false;
     }
     if (this.at(TokenKind.Ident)) {
       this.advance();

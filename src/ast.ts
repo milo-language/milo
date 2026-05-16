@@ -63,7 +63,7 @@ export interface Propagate { kind: "Propagate"; operand: Expr; span?: Span }
 export interface DefaultValue { kind: "DefaultValue"; operand: Expr; default: Expr; span?: Span }
 export interface CastExpr { kind: "CastExpr"; operand: Expr; targetType: MiloType; span?: Span }
 export interface MethodCall { kind: "MethodCall"; object: Expr; method: string; args: Expr[]; span?: Span }
-export interface ClosureExpr { kind: "Closure"; params: Param[]; retType: MiloType | null; body: Stmt[]; span?: Span }
+export interface ClosureExpr { kind: "Closure"; params: Param[]; retType: MiloType | null; body: Stmt[]; isMove?: boolean; span?: Span }
 export interface RangeExpr { kind: "RangeExpr"; start: Expr; end: Expr; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call

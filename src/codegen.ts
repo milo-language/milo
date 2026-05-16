@@ -53,7 +53,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid"]);
   private needsArgGlobals = false;
 
   constructor(target: TargetInfo) { this.target = target; }
@@ -1325,6 +1325,15 @@ export class Codegen {
       lines.push(`  ${ext} = sext i32 ${raw} to i64`);
       return [lines, ext, "i64"];
     }
+    if (expr.func === "_callClosureVoid") {
+      // _callClosureVoid(fnPtr: *u8, envPtr: *u8) — indirect call to closure function
+      const [al1, fnPtrVal] = this.genExpr(expr.args[0].expr);
+      lines.push(...al1);
+      const [al2, envPtrVal] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      lines.push(`  call void ${fnPtrVal}(ptr ${envPtrVal})`);
+      return [lines, "0", "void"];
+    }
     if (expr.func === "_loadU8") {
       const [al, pv] = this.genExpr(expr.args[0].expr);
       lines.push(...al);
@@ -1881,9 +1890,13 @@ export class Codegen {
         const captures = expr.captures;
         const retTy = this.llvmType(expr.retType);
 
-        // build env struct type: { ptr, ptr, ... } — one ptr per capture
+        const isMove = !!(expr as any).isMove;
+        // by-ref closures: env holds ptrs to original allocas
+        // move closures: env holds copies of captured values
         const envStructTy = captures.length > 0
-          ? `{ ${captures.map(() => "ptr").join(", ")} }`
+          ? (isMove
+            ? `{ ${captures.map(c => this.llvmType(c.type)).join(", ")} }`
+            : `{ ${captures.map(() => "ptr").join(", ")} }`)
           : "{}";
 
         // save codegen state
@@ -1914,12 +1927,21 @@ export class Codegen {
           const capTy = this.llvmType(cap.type);
           const gepPtr = this.nextTemp();
           closureBody.push(`  ${gepPtr} = getelementptr ${envStructTy}, ptr %env, i32 0, i32 ${i}`);
-          const loadedPtr = this.nextTemp();
-          closureBody.push(`  ${loadedPtr} = load ptr, ptr ${gepPtr}`);
-          // the capture is a pointer to the original variable's alloca
-          this.locals.set(cap.name, { type: capTy, typeKind: cap.type, mutable: cap.mutable, isRef: true, addr: `${gepPtr}.ref` });
-          closureBody.push(`  ${gepPtr}.ref = alloca ptr`);
-          closureBody.push(`  store ptr ${loadedPtr}, ptr ${gepPtr}.ref`);
+          if (isMove) {
+            // move closure: env holds the value directly — treat as local alloca
+            this.locals.set(cap.name, { type: capTy, typeKind: cap.type, mutable: cap.mutable, isRef: false });
+            closureBody.push(`  %${cap.name}.addr = alloca ${capTy}`);
+            const loaded = this.nextTemp();
+            closureBody.push(`  ${loaded} = load ${capTy}, ptr ${gepPtr}`);
+            closureBody.push(`  store ${capTy} ${loaded}, ptr %${cap.name}.addr`);
+          } else {
+            const loadedPtr = this.nextTemp();
+            closureBody.push(`  ${loadedPtr} = load ptr, ptr ${gepPtr}`);
+            // the capture is a pointer to the original variable's alloca
+            this.locals.set(cap.name, { type: capTy, typeKind: cap.type, mutable: cap.mutable, isRef: true, addr: `${gepPtr}.ref` });
+            closureBody.push(`  ${gepPtr}.ref = alloca ptr`);
+            closureBody.push(`  store ptr ${loadedPtr}, ptr ${gepPtr}.ref`);
+          }
         }
 
         // set up params
@@ -1968,14 +1990,34 @@ export class Codegen {
         // at the call site: build env struct and closure pair
         if (captures.length > 0) {
           const envAddr = this.nextTemp();
-          lines.push(`  ${envAddr} = alloca ${envStructTy}`);
+          if (isMove) {
+            // heap-allocate env for move closures (safe to send to other threads)
+            const envSize = captures.reduce((sum, c) => sum + this.typeSize(this.llvmType(c.type)), 0);
+            lines.push(`  ${envAddr} = call ptr @malloc(i64 ${Math.max(envSize, 8)})`);
+          } else {
+            lines.push(`  ${envAddr} = alloca ${envStructTy}`);
+          }
           for (let i = 0; i < captures.length; i++) {
             const cap = captures[i];
             const capAddr = this.localAddr(cap.name);
             const local = this.locals.get(cap.name);
+            const capTy = this.llvmType(cap.type);
             const gepSlot = this.nextTemp();
             lines.push(`  ${gepSlot} = getelementptr ${envStructTy}, ptr ${envAddr}, i32 0, i32 ${i}`);
-            if (local?.isRef) {
+            if (isMove) {
+              // copy the VALUE into the env
+              const loaded = this.nextTemp();
+              if (local?.isRef) {
+                const innerPtr = this.nextTemp();
+                lines.push(`  ${innerPtr} = load ptr, ptr ${capAddr}`);
+                const val = this.nextTemp();
+                lines.push(`  ${val} = load ${capTy}, ptr ${innerPtr}`);
+                lines.push(`  store ${capTy} ${val}, ptr ${gepSlot}`);
+              } else {
+                lines.push(`  ${loaded} = load ${capTy}, ptr ${capAddr}`);
+                lines.push(`  store ${capTy} ${loaded}, ptr ${gepSlot}`);
+              }
+            } else if (local?.isRef) {
               // variable is already a ref (ptr to ptr) — load the inner ptr
               const innerPtr = this.nextTemp();
               lines.push(`  ${innerPtr} = load ptr, ptr ${capAddr}`);
