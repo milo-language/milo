@@ -39,7 +39,7 @@ Remaining (priority order):
 - [x] **P5: break / continue** — loop control flow
 - [x] **P6: Char literals** — `'x'`, i8 representation
 - [x] **P7: Type casts** — `expr as Type`, checked in sema
-- [x] **P8: Integer literal coercion** — auto-coerce int literals in binary ops
+- [x] **P8: Integer literal coercion** — auto-coerce int literals in binary ops and generic type inference
 - [x] **P9: if-let** — `if let Some(n) = opt { ... }` with optional else branch
 - [ ] Array utilities (push, slice, etc. — needs runtime/heap)
 
@@ -106,7 +106,7 @@ Design:
 - Stage-0 reads source from stdin, writes IR to stdout — sidesteps argv (currently `main` takes no params, and the `MiloType` flat `isPtr` cannot express `**u8`)
 - Wrapper script `milo0-wrap.sh` bridges filename → stdin and stdout → clang
 
-Bootstrap pieces (in `milo0/`):
+Bootstrap pieces (in `self-hosting/`):
 - [x] `lexer.milo` — char stream → Vec\<Token\> (40+ token kinds, line comments, keyword table)
 - [x] `parser.milo` — tokens → AST (Box-recursive enums for Expr/Stmt; FnDecl/Program/Param structs; full precedence ladder including `||` `&&` cmp add mul unary call primary)
 - [ ] `codegen.milo` — AST → LLVM IR text (no checker; trust input)

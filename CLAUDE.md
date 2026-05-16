@@ -50,6 +50,7 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 - `let` = immutable (SSA register), `var` = mutable (alloca)
 - Move semantics: single owner, use-after-move = compile error
 - Second-class references: `&T` only in function params, never stored/returned
+- User-defined generics: `fn foo<T>`, `struct Pair<A,B>`, `enum Maybe<T>` — monomorphization with type inference
 - No GC, no RC, no pointers in safe code
 - Arenas for cyclic data (deferred)
 - Strings: owned UTF-8 byte buffers (like Rust's String)
