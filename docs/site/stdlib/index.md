@@ -6,74 +6,93 @@ Import modules with `from "std/<name>" import { symbols }`.
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/io` | `readFile`, `readStdin`, `openRead`/`openWrite`/`openAppend`, `readAll`, `writeAll`, RAII file handles |
-| `std/fs` | `readDir`, `fileInfo`, `isDir`/`isFile`, `pathExists`, `writeFile` |
-| `std/path` | `pathJoin`, `pathBasename`, `pathDirname`, `pathExt`, `pathStem` |
-| `std/env` | `getEnv`, `getEnvOr` |
+| [`std/io`](io) | `readFile`, `readStdin`, `openRead`/`openWrite`/`openAppend`, `readAll`, `writeAll`, RAII file handles |
+| [`std/fs`](fs) | `readDir`, `fileInfo`, `isDir`/`isFile`, `pathExists`, `writeFile` |
+| [`std/path`](path) | `pathJoin`, `pathBasename`, `pathDirname`, `pathExt`, `pathStem` |
+| [`std/env`](env) | `getEnv`, `getEnvOr` |
 
 ## Networking
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/net` | TCP, DNS, `fetch` with TLS |
-| `std/http` | HTTP server with routing, response types |
+| [`std/net`](net) | TCP, DNS, `fetch` with TLS |
+| [`std/http`](http) | HTTP server with routing, response types |
 
 ## Data
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/json` | Zero-copy JSON parser — `jsonParse`, keyed accessors (`.str()`, `.i64()`, `.f64()`, `.bool()`), `jsonStringify` |
-| `std/arena` | Generational arena for cyclic/graph data with safe `Handle<T>` |
+| [`std/json`](json) | Zero-copy JSON parser — `jsonParse`, keyed accessors (`.str()`, `.i64()`, `.f64()`, `.bool()`), `jsonStringify` |
+| [`std/arena`](arena) | Generational arena for cyclic/graph data with safe `Handle<T>` |
+| [`std/set`](set) | `HashSet<T>` — add, contains, remove |
 
 ## CLI & System
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/argparse` | CLI argument parsing with typed getters and `--help` generation |
-| `std/process` | Command execution, `spawn`/`waitFor`/`signal` |
-| `std/signal` | POSIX signal handling — `onSignal`, `ignoreSignal` |
+| [`std/argparse`](argparse) | CLI argument parsing with typed getters and `--help` generation |
+| [`std/args`](args) | Raw CLI arguments — `args()`, `getFlag`, `hasFlag` |
+| [`std/process`](process) | Command execution, `spawn`/`waitFor`/`signal` |
+| [`std/signal`](signal) | POSIX signal handling — `onSignal`, `ignoreSignal` |
 
 ## Data Formats
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/csv` | CSV parsing with header support |
-| `std/toml` | TOML config parsing — `tomlParse`, `.str()`, `.i64()`, `.table()` |
-| `std/base64` | Base64 encode/decode |
-| `std/hex` | Hex encode/decode |
+| [`std/csv`](csv) | CSV parsing with header support |
+| [`std/toml`](toml) | TOML config parsing — `tomlParse`, `.str()`, `.i64()`, `.table()` |
+| [`std/base64`](base64) | Base64 encode/decode |
+| [`std/hex`](hex) | Hex encode/decode |
 
 ## Date, Time & IDs
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/time` | Wall clock, monotonic timing, sleep |
-| `std/datetime` | Date/time from epoch — `dateTimeNow`, `dateTimeFormat`, `weekdayName` |
-| `std/uuid` | UUID v4 generation |
+| [`std/time`](time) | Wall clock, monotonic timing, sleep |
+| [`std/datetime`](datetime) | Date/time from epoch — `dateTimeNow`, `dateTimeFormat`, `weekdayName` |
+| [`std/uuid`](uuid) | UUID v4 generation |
 
 ## Concurrency
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/thread` | `spawn`, `threadJoin` |
-| `std/sync` | `Mutex`, `Channel` — thread-safe primitives |
+| [`std/thread`](thread) | `spawn` with move closures, `threadJoin`, `threadSleep` |
+| [`std/sync`](sync) | `Mutex`, `Channel` — thread-safe message passing and mutual exclusion |
 
 ## Database & Network
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/sqlite` | SQLite3 bindings — `dbOpen`, `dbQuery`, `dbExec`, prepared statements |
-| `std/url` | URL parsing — `urlParse`, `urlQueryGet` |
+| [`std/sqlite`](sqlite) | SQLite3 bindings — `dbOpen`, `dbQuery`, `dbExec`, prepared statements |
+| [`std/url`](url) | URL parsing — `urlParse`, `urlQueryGet` |
+
+## Strings & Formatting
+
+| Module | What it provides |
+|--------|-----------------|
+| [`std/string`](string) | `strContains`, `strSplit`, `strReplace`, `strTrim`, case conversion |
+| [`std/fmt`](fmt) | Template formatting (`fmt1`–`fmt4`), `padLeft`/`padRight`, `join` |
+| [`std/strconv`](strconv) | `parseInt`, `parseFloat`, radix conversions, `formatFloat` |
+| [`std/unicode`](unicode) | Character classification — `isDigit`, `isAlpha`, `toLowerChar` |
+
+## Math & Random
+
+| Module | What it provides |
+|--------|-----------------|
+| [`std/math`](math) | `abs`, `min`, `max`, `pow`, `sqrt`, `log`, trig functions |
+| [`std/random`](random) | `randInt`, `randFloat`, `randRange`, `shuffleI64` |
 
 ## Utilities
 
 | Module | What it provides |
 |--------|-----------------|
-| `std/color` | ANSI terminal colors — `red`, `green`, `bold`, etc. |
-| `std/math` | `abs`, `min`, `max`, `pow`, `sqrt`, `log`, trig functions |
-| `std/random` | `randomInt`, `randomFloat`, `randomRange` |
-| `std/regex` | Regular expression matching |
-| `std/sort` | Sorting for Vec — `sortI32`, `sortF64`, `sortStrings` |
-| `std/testing` | `assert`, `assertEqual`, `assertStrEqual` |
+| [`std/color`](color) | ANSI terminal colors — `red`, `green`, `bold`, etc. |
+| [`std/regex`](regex) | Regular expression matching — `regexNew`, `regexMatch`, `regexFind` |
+| [`std/sort`](sort) | Sorting for Vec — `sortI32`, `sortI64`, `sortStrings` |
+| [`std/testing`](testing) | `assert`, `assertEqual`, `assertStrEqual` |
+| [`std/log`](log) | Leveled logging to stderr — `logDebug`, `logInfo`, `logWarn`, `logError` |
+| [`std/crypto`](crypto) | `sha256`, `md5` hashing |
+| [`std/mem`](mem) | `mmapAnon`, `mmapFile`, bump-allocator arena |
 
 ## HTTP Server Example
 
