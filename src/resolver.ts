@@ -52,11 +52,11 @@ function parsePkgUrl(url: string): { host: string; path: string; version: string
 
 export function resolveImports(program: Program, sourceDir: string, target: TargetInfo): Program {
   const visited = new Set<string>();
-  const structs = [...program.structs];
-  const enums = [...program.enums];
-  const functions = [...program.functions];
-  const traits = [...program.traits];
-  const impls = [...program.impls];
+  const structs: typeof program.structs = [];
+  const enums: typeof program.enums = [];
+  const functions: typeof program.functions = [];
+  const traits: typeof program.traits = [];
+  const impls: typeof program.impls = [];
 
   const deps = findManifest(sourceDir);
 
@@ -141,22 +141,41 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     }
   }
 
-  processImports(program, sourceDir);
-
-  // auto-include std/string runtime (string methods depend on these functions)
-  const stringStdlib = resolve(STDLIB_DIR, "std/string.milo");
-  if (!visited.has(stringStdlib) && existsSync(stringStdlib)) {
-    visited.add(stringStdlib);
-    const source = readFileSync(stringStdlib, "utf-8");
-    const tokens = new Lexer(source).tokenize();
-    const imported = new Parser(tokens).parse();
-    structs.push(...imported.structs);
-    enums.push(...imported.enums);
-    functions.push(...imported.functions);
-    traits.push(...imported.traits);
-    impls.push(...imported.impls);
-    processImports(imported, dirname(stringStdlib));
+  // inject prelude before user code so user definitions override via last-wins
+  const preludePath = resolve(STDLIB_DIR, "std/prelude.milo");
+  if (!visited.has(preludePath) && existsSync(preludePath)) {
+    visited.add(preludePath);
+    const src = readFileSync(preludePath, "utf-8");
+    const prelude = new Parser(new Lexer(src).tokenize()).parse();
+    structs.push(...prelude.structs);
+    enums.push(...prelude.enums);
+    functions.push(...prelude.functions);
+    traits.push(...prelude.traits);
+    impls.push(...prelude.impls);
+    processImports(prelude, dirname(preludePath));
   }
 
-  return { structs, enums, functions, imports: [], traits, impls };
+  // user code comes after prelude
+  structs.push(...program.structs);
+  enums.push(...program.enums);
+  functions.push(...program.functions);
+  traits.push(...program.traits);
+  impls.push(...program.impls);
+
+  processImports(program, sourceDir);
+
+  // dedup: keep last occurrence of each name (user wins over prelude)
+  function dedup<T extends { name: string }>(arr: T[]): T[] {
+    const seen = new Set<string>();
+    const result: T[] = [];
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (!seen.has(arr[i].name)) {
+        seen.add(arr[i].name);
+        result.unshift(arr[i]);
+      }
+    }
+    return result;
+  }
+
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls };
 }

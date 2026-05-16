@@ -1,0 +1,9 @@
+// @expect: true
+// @expect: HELLO WORLD
+
+fn main(): i32 {
+    let s = "hello world"
+    print(s.contains("world"))
+    print(s.toUpper())
+    return 0
+}

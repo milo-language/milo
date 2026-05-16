@@ -1,0 +1,3 @@
+// std/prelude — auto-imported into every Milo program (suppress with --no-prelude)
+
+from "std/string" import { strContains, strIndexOf, strIndexOfFrom, strStartsWith, strEndsWith, strToLower, strToUpper, strTrim, strTrimStart, strTrimEnd, strSplit, strRepeat, strReplace, charIsWhitespace, charIsDigit, charIsAlpha, charIsAlphanumeric, trim }
