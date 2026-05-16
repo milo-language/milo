@@ -689,17 +689,14 @@ while i < 10 {
 ## Modules and Imports
 
 ```milo
-// Import everything from a file
-import "math.milo"
-
-// Import specific items
+// Import specific items (required — no wildcard imports)
 from "std/http" import { Request, Response, serve }
 
 // Import from a relative path
-from "lib/math" import { add }
+from "lib/math" import { add, multiply }
 ```
 
-Imports are resolved recursively and deduplicated.
+All imports must be explicit — list exactly which symbols you use. No `import *` or bare `import "path"`. The LSP provides autocomplete for both module paths and symbols.
 
 ---
 
@@ -940,7 +937,7 @@ print(a != b)   // false
 Use `spawn()` with a `move` closure to run code on a new OS thread:
 
 ```milo
-import "std/thread"
+from "std/thread" import { spawn, threadJoin, Thread }
 
 let t = spawn(move (): void => {
     print("hello from thread")
@@ -951,7 +948,7 @@ threadJoin(t)!
 Move closures are required for `spawn` — they heap-allocate captured variables so they're safe to send across threads.
 
 ```milo
-import "std/thread"
+from "std/thread" import { spawn, threadJoin, Thread }
 
 var threads: Vec<Thread> = Vec.new()
 var i: i64 = 0
@@ -976,8 +973,8 @@ while i < 4 {
 Bounded FIFO channels for message passing between threads. Channel is a handle type — safe to capture in move closures without `unsafe`.
 
 ```milo
-import "std/thread"
-import "std/sync"
+from "std/thread" import { spawn, threadJoin, Thread }
+from "std/sync" import { channelNew, channelSend, channelRecv, Channel, Mutex, mutexNew, mutexLock, mutexUnlock }
 
 let ch = channelNew(8)!
 
@@ -999,7 +996,7 @@ channelDestroy(ch)
 ### Mutex
 
 ```milo
-import "std/sync"
+from "std/sync" import { channelNew, channelSend, channelRecv, Channel, Mutex, mutexNew, mutexLock, mutexUnlock }
 
 let m = mutexNew()!
 mutexLock(m)!
@@ -1030,7 +1027,7 @@ mutexDestroy(m)
 ### Assertions (std/testing)
 
 ```milo
-import "std/testing"
+from "std/testing" import { assert, assertEqual, assertStrEqual }
 
 fn testArithmetic(): void {
     assertEqual(2 + 2, 4)
@@ -1082,7 +1079,7 @@ results: 3 passed, 0 failed, 3 total
 ## SQLite Database
 
 ```milo
-import "std/sqlite"
+from "std/sqlite" import { dbOpen, dbExec, dbQuery, dbStep, dbColumnInt, dbColumnText, dbFinalize, dbClose, dbLastInsertId }
 
 let db = dbOpen("app.db")!
 
@@ -1136,7 +1133,7 @@ dbFinalize(stmt)
 ### Terminal Colors (std/color)
 
 ```milo
-import "std/color"
+from "std/color" import { red, green, blue, bold }
 
 print(red("error: something failed"))
 print(green("success!"))
@@ -1149,7 +1146,7 @@ Available: `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, `gray`,
 ### UUID Generation (std/uuid)
 
 ```milo
-import "std/uuid"
+from "std/uuid" import { uuidV4 }
 
 let id = uuidV4()   // "550e8400-e29b-41d4-a716-446655440000"
 ```

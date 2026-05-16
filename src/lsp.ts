@@ -11,7 +11,7 @@ import { typeName as formatTypeName } from "./types";
 import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, readdirSync } from "fs";
 import { format as tsFormat } from "./formatter";
 import { spawnSync } from "child_process";
 
@@ -766,6 +766,158 @@ function findParamPos(source: string, declLine: number, name: string): { line: n
   return null;
 }
 
+// ── Completion ──
+
+function getStdlibModules(): string[] {
+  try {
+    return readdirSync(resolve(STDLIB_DIR, "std"))
+      .filter(f => f.endsWith(".milo") && !f.includes(".darwin.") && !f.includes(".linux."))
+      .map(f => "std/" + f.replace(".milo", ""));
+  } catch { return []; }
+}
+
+function getModuleExports(modulePath: string, sourceDir: string): { name: string; kind: string }[] {
+  const absPath = resolveImportPath(sourceDir, modulePath);
+  if (!absPath) return [];
+  let src: string;
+  try { src = readFileSync(absPath, "utf-8"); } catch { return []; }
+  const exports: { name: string; kind: string }[] = [];
+  for (const line of src.split("\n")) {
+    let m;
+    if ((m = line.match(/^fn\s+(\w+)\s*[<(]/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "function" });
+    else if ((m = line.match(/^struct\s+(\w+)/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "struct" });
+    else if ((m = line.match(/^enum\s+(\w+)/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "enum" });
+    else if ((m = line.match(/^trait\s+(\w+)/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "trait" });
+    else if ((m = line.match(/^let\s+(\w+)\s*:/)) && !m[1].startsWith("_")) exports.push({ name: m[1], kind: "variable" });
+  }
+  return exports;
+}
+
+function getLocalMiloFiles(sourceDir: string): string[] {
+  try {
+    return readdirSync(sourceDir)
+      .filter(f => f.endsWith(".milo"))
+      .map(f => f.replace(".milo", ""));
+  } catch { return []; }
+}
+
+// LSP CompletionItemKind values
+const CIK_FUNCTION = 3;
+const CIK_STRUCT = 22;
+const CIK_ENUM = 13;
+const CIK_VARIABLE = 6;
+const CIK_MODULE = 9;
+const CIK_INTERFACE = 8; // trait
+
+function completionKind(kind: string): number {
+  switch (kind) {
+    case "function": return CIK_FUNCTION;
+    case "struct": return CIK_STRUCT;
+    case "enum": return CIK_ENUM;
+    case "variable": return CIK_VARIABLE;
+    case "trait": return CIK_INTERFACE;
+    default: return CIK_VARIABLE;
+  }
+}
+
+function handleCompletion(uri: string, line: number, character: number): object {
+  const source = documents.get(uri) ?? "";
+  const lines = source.split("\n");
+  const lineText = lines[line] ?? "";
+  const prefix = lineText.slice(0, character);
+  const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+
+  // Context 1: from " → suggest module paths
+  const fromQuote = prefix.match(/from\s+"([^"]*)$/);
+  if (fromQuote) {
+    const partial = fromQuote[1];
+    const items: object[] = [];
+    for (const mod of getStdlibModules()) {
+      if (mod.startsWith(partial)) {
+        items.push({ label: mod, kind: CIK_MODULE, insertText: mod });
+      }
+    }
+    // local files
+    for (const f of getLocalMiloFiles(sourceDir)) {
+      const path = f + ".milo";
+      if (path.startsWith(partial)) {
+        items.push({ label: path, kind: CIK_MODULE, insertText: path });
+      }
+    }
+    return { isIncomplete: false, items };
+  }
+
+  // Context 2: from "mod" import { → suggest module exports
+  const importBrace = prefix.match(/from\s+"([^"]+)"\s+import\s+\{\s*(?:[\w,\s]*,\s*)?(\w*)$/);
+  if (importBrace) {
+    const modulePath = importBrace[1];
+    const partial = importBrace[2] ?? "";
+    const exports = getModuleExports(modulePath, sourceDir);
+    // filter out already-imported symbols
+    const alreadyImported = new Set(
+      (prefix.match(/\{\s*(.*)/)?.[1] ?? "").split(",").map(s => s.trim()).filter(s => s && s !== partial)
+    );
+    const items = exports
+      .filter(e => e.name.startsWith(partial) && !alreadyImported.has(e.name))
+      .map(e => ({ label: e.name, kind: completionKind(e.kind) }));
+    return { isIncomplete: false, items };
+  }
+
+  // Context 3: general code completion — symbols from imports + builtins
+  const wordMatch = prefix.match(/(\w+)$/);
+  const partial = wordMatch?.[1] ?? "";
+  if (partial.length < 1) return { isIncomplete: false, items: [] };
+
+  const items: object[] = [];
+  const seen = new Set<string>();
+
+  // builtins
+  for (const b of ["print", "eprint", "format", "jsonStringify", "embedFile", "flush"]) {
+    if (b.startsWith(partial) && !seen.has(b)) {
+      seen.add(b);
+      items.push({ label: b, kind: CIK_FUNCTION, detail: "builtin" });
+    }
+  }
+
+  // symbols from imported modules
+  try {
+    const tokens = new Lexer(source).tokenize();
+    const parsed = new Parser(tokens).parse();
+
+    for (const imp of parsed.imports) {
+      const exports = getModuleExports(imp.path, sourceDir);
+      for (const e of exports) {
+        if (e.name.startsWith(partial) && !seen.has(e.name)) {
+          seen.add(e.name);
+          items.push({ label: e.name, kind: completionKind(e.kind), detail: imp.path });
+        }
+      }
+    }
+
+    // local symbols
+    for (const fn of parsed.functions) {
+      if (fn.name.startsWith(partial) && !fn.isExtern && !seen.has(fn.name)) {
+        seen.add(fn.name);
+        items.push({ label: fn.name, kind: CIK_FUNCTION });
+      }
+    }
+    for (const s of parsed.structs) {
+      if (s.name.startsWith(partial) && !seen.has(s.name)) {
+        seen.add(s.name);
+        items.push({ label: s.name, kind: CIK_STRUCT });
+      }
+    }
+    for (const e of parsed.enums) {
+      if (e.name.startsWith(partial) && !seen.has(e.name)) {
+        seen.add(e.name);
+        items.push({ label: e.name, kind: CIK_ENUM });
+      }
+    }
+  } catch {}
+
+  return { isIncomplete: false, items };
+}
+
 // ── Request dispatch ──
 
 function handleRequest(id: number | string, method: string, params: any) {
@@ -777,6 +929,7 @@ function handleRequest(id: number | string, method: string, params: any) {
           hoverProvider: true,
           definitionProvider: true,
           documentFormattingProvider: true,
+          completionProvider: { triggerCharacters: ['"', "{", "."] },
         },
         serverInfo: { name: "milod", version: "0.1.0" },
       });
@@ -794,6 +947,9 @@ function handleRequest(id: number | string, method: string, params: any) {
       sendResponse(id, result);
       break;
     }
+    case "textDocument/completion":
+      sendResponse(id, handleCompletion(params.textDocument.uri, params.position.line, params.position.character));
+      break;
     case "textDocument/formatting": {
       const source = documents.get(params.textDocument.uri) ?? "";
       if (!source) { sendResponse(id, null); break; }
