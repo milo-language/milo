@@ -1538,6 +1538,11 @@ export class Codegen {
         console.error(`error[codegen]: unknown binary op '${expr.op}'`); process.exit(1);
       }
       case "UnaryOp": {
+        if (expr.op === "&") {
+          const [al, addr] = this.genLValue(expr.operand);
+          lines.push(...al);
+          return [lines, addr, "ptr"];
+        }
         const [ol, ov, ot] = this.genExpr(expr.operand);
         lines.push(...ol);
         const tmp = this.nextTemp();
@@ -2288,6 +2293,21 @@ export class Codegen {
       const [al, addr] = this.genLValue(expr.operand);
       lines.push(...al);
       return [lines, addr, toTy];
+    }
+    // fn → ptr: get raw function pointer (bypass closure trampoline for known functions)
+    if (fromKind.tag === "fn" && toKind.tag === "ptr") {
+      if (expr.operand.kind === "Ident") {
+        const fnName = (expr.operand as any).name;
+        if (this.fnSigs.has(fnName)) {
+          return [lines, `@${fnName}`, "ptr"];
+        }
+      }
+      // parameter or closure: extract fn ptr from closure tuple
+      const [ol, ov, fromTy] = this.genExpr(expr.operand);
+      lines.push(...ol);
+      const tmp = this.nextTemp();
+      lines.push(`  ${tmp} = extractvalue { ptr, ptr } ${ov}, 0`);
+      return [lines, tmp, "ptr"];
     }
     const [ol, ov, fromTy] = this.genExpr(expr.operand);
     lines.push(...ol);

@@ -669,7 +669,7 @@ export class Parser {
   }
 
   private parseUnary(): Expr {
-    if (this.peek().kind === TokenKind.Minus || this.peek().kind === TokenKind.Bang || this.peek().kind === TokenKind.Star || this.peek().kind === TokenKind.Tilde) {
+    if (this.peek().kind === TokenKind.Minus || this.peek().kind === TokenKind.Bang || this.peek().kind === TokenKind.Star || this.peek().kind === TokenKind.Tilde || this.peek().kind === TokenKind.Amp) {
       const tok = this.advance();
       const operand = this.parseUnary();
       return { kind: "UnaryOp", op: tok.value, operand, span: this.span(tok) };

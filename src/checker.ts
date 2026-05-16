@@ -1798,6 +1798,12 @@ export class TypeChecker {
           if (ot.tag !== "int" && ot.tag !== "unknown") this.error(`unary '~' requires integer type, got ${typeName(ot)}`, sp);
           return this.setType(expr, ot);
         }
+        if (expr.op === "&") {
+          if (this.unsafeDepth === 0) this.error(`address-of operator requires 'unsafe' block`, sp);
+          if (expr.operand.kind !== "Ident" && expr.operand.kind !== "FieldAccess" && expr.operand.kind !== "IndexAccess")
+            this.error(`address-of requires an lvalue (variable, field, or index)`, sp);
+          return this.setType(expr, { tag: "ptr", inner: ot });
+        }
         return this.setType(expr, { tag: "unknown" });
       }
       case "Call": {
@@ -2222,7 +2228,7 @@ export class TypeChecker {
       case "CastExpr": {
         const fromType = this.checkExpr(expr.operand);
         const toType = this.resolve(expr.targetType);
-        const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "unknown";
+        const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "fn" || fromType.tag === "unknown";
         const toOk = isNumeric(toType) || toType.tag === "ptr";
         if (!fromOk) {
           this.error(`cannot cast from ${typeName(fromType)}`, sp);
