@@ -6,6 +6,50 @@ CLI argument parsing with typed flags, positional args, and auto-generated help 
 from "std/argparse" import { ArgParser, ParsedArgs, newParser }
 ```
 
+## Quick start
+
+```milo
+from "std/argparse" import { newParser, ArgParser, ParsedArgs }
+
+fn main(): i32 {
+    var parser = newParser("greet", "A greeting tool")
+    parser.addRequired("name", "n", "Name to greet")
+    parser.addBool("loud", "l", "Shout the greeting")
+    parser.addOptionalPositional("title", "Optional title prefix")
+
+    let args = parser.parse()
+    let name = args.getString("name")
+
+    if args.getBool("loud") {
+        print($"HELLO, {name}!")
+    } else {
+        print($"Hello, {name}")
+    }
+
+    return 0
+}
+```
+
+```bash
+$ greet --name Alice --loud
+HELLO, Alice!
+
+$ greet --help
+greet - A greeting tool
+
+usage: greet [options] [title]
+
+arguments:
+  <title>                     Optional title prefix
+
+options:
+  -n, --name <value>          Name to greet (required)
+  -l, --loud                  Shout the greeting
+  -h, --help                  Show this help message
+```
+
+Define flags, call `parse()`, access typed values. `--help` is generated automatically. Missing required flags print an error with usage.
+
 ## Types
 
 ### FlagDef
@@ -168,43 +212,3 @@ fn newParser(name: string, description: string): ArgParser
 
 Create a new argument parser with the given program name and description.
 
-## Example: CLI Tool
-
-```milo
-from "std/argparse" import { newParser, ArgParser, ParsedArgs }
-from "std/io" import { print, writeStdout }
-from "std/process" import { exit }
-
-fn main(): i32 {
-    var parser = newParser("greet", "A greeting tool")
-    addRequired(&parser, "name", "n", "Name to greet")
-    addBool(&parser, "loud", "l", "Shout the greeting")
-    addOptionalPositional(&parser, "title", "Optional title prefix")
-
-    let args = osArgs()
-    match parse(&parser, args) {
-        Ok(parsed) => {
-            let name = getString(&parsed, "name")!
-            let title = getString(&parsed, "title")
-            let titleStr = match title {
-                Some(t) => t,
-                None => "",
-            }
-            let greeting = if titleStr != "" { titleStr + " " + name } else { name }
-
-            if getBool(&parsed, "loud") {
-                print("HELLO, " + greeting + "!")
-            } else {
-                print("Hello, " + greeting)
-            }
-        },
-        Err(e) => {
-            print(e)
-            print(helpText(&parser))
-            exit(1)
-        },
-    }
-
-    return 0
-}
-```
