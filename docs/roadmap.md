@@ -41,7 +41,7 @@ Remaining (priority order):
 - [x] **P7: Type casts** — `expr as Type`, checked in sema
 - [x] **P8: Integer literal coercion** — auto-coerce int literals in binary ops and generic type inference
 - [x] **P9: if-let** — `if let Some(n) = opt { ... }` with optional else branch
-- [ ] Array utilities (push, slice, etc. — needs runtime/heap)
+- [x] Array utilities — Vec<T> with push/pop/len/map/filter/each/find/any/all, bounds-checked indexing
 
 Milestone: JSON parser ✅, simple HTTP server, a toy compiler
 
