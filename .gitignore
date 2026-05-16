@@ -8,6 +8,7 @@ dist
 
 # compiled milo binaries
 bin/
+src/stdlib-bundle.ts
 *.o
 *.ll
 hello

@@ -13,6 +13,33 @@ import { Parser } from "./parser";
 const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
 const CACHE_DIR = resolve(homedir(), ".milo", "cache");
 
+// embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts)
+let STDLIB_BUNDLE: Map<string, string> | null = null;
+try {
+  STDLIB_BUNDLE = require("./stdlib-bundle").STDLIB;
+} catch {}
+
+function toStdlibKey(absPath: string): string | null {
+  return absPath.startsWith(STDLIB_DIR + "/") ? absPath.slice(STDLIB_DIR.length + 1) : null;
+}
+
+function bundleExists(absPath: string): boolean {
+  if (!STDLIB_BUNDLE) return false;
+  const key = toStdlibKey(absPath);
+  return key !== null && STDLIB_BUNDLE.has(key);
+}
+
+function readSource(absPath: string): string {
+  if (STDLIB_BUNDLE) {
+    const key = toStdlibKey(absPath);
+    if (key) {
+      const content = STDLIB_BUNDLE.get(key);
+      if (content !== undefined) return content;
+    }
+  }
+  return readFileSync(absPath, "utf-8");
+}
+
 // find milo.json by walking up from sourceDir
 function findManifest(startDir: string): Record<string, string> | null {
   let dir = startDir;
@@ -95,9 +122,9 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       // for stdlib paths, try platform-specific file first (e.g. platform.darwin.milo)
       const base = withExt.replace(/\.milo$/, "");
       const platformPath = resolve(STDLIB_DIR, `${base}.${target.os}.milo`);
-      if (existsSync(platformPath)) return platformPath;
+      if (bundleExists(platformPath) || existsSync(platformPath)) return platformPath;
       const stdPath = resolve(STDLIB_DIR, withExt);
-      if (existsSync(stdPath)) absPath = stdPath;
+      if (bundleExists(stdPath) || existsSync(stdPath)) absPath = stdPath;
     }
     return absPath;
   }
@@ -110,7 +137,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
       let source: string;
       try {
-        source = readFileSync(absPath, "utf-8");
+        source = readSource(absPath);
       } catch {
         throw new Error(`error[import]: ${imp.span?.line}:${imp.span?.col}: cannot open '${imp.path}'`);
       }
@@ -143,9 +170,9 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
 
   // inject prelude before user code so user definitions override via last-wins
   const preludePath = resolve(STDLIB_DIR, "std/prelude.milo");
-  if (!visited.has(preludePath) && existsSync(preludePath)) {
+  if (!visited.has(preludePath) && (bundleExists(preludePath) || existsSync(preludePath))) {
     visited.add(preludePath);
-    const src = readFileSync(preludePath, "utf-8");
+    const src = readSource(preludePath);
     const prelude = new Parser(new Lexer(src).tokenize()).parse();
     structs.push(...prelude.structs);
     enums.push(...prelude.enums);
