@@ -1,6 +1,6 @@
 # Standard Library
 
-All modules are imported with `import "std/<name>"`.
+Import modules with `from "std/<name>" import { symbols }`.
 
 ## I/O & Filesystem
 
@@ -31,6 +31,49 @@ All modules are imported with `import "std/<name>"`.
 |--------|-----------------|
 | `std/argparse` | CLI argument parsing with typed getters and `--help` generation |
 | `std/process` | Command execution, `spawn`/`waitFor`/`signal` |
+| `std/signal` | POSIX signal handling — `onSignal`, `ignoreSignal` |
+
+## Data Formats
+
+| Module | What it provides |
+|--------|-----------------|
+| `std/csv` | CSV parsing with header support |
+| `std/toml` | TOML config parsing — `tomlParse`, `.str()`, `.i64()`, `.table()` |
+| `std/base64` | Base64 encode/decode |
+| `std/hex` | Hex encode/decode |
+
+## Date, Time & IDs
+
+| Module | What it provides |
+|--------|-----------------|
+| `std/time` | Wall clock, monotonic timing, sleep |
+| `std/datetime` | Date/time from epoch — `dateTimeNow`, `dateTimeFormat`, `weekdayName` |
+| `std/uuid` | UUID v4 generation |
+
+## Concurrency
+
+| Module | What it provides |
+|--------|-----------------|
+| `std/thread` | `spawn`, `threadJoin` |
+| `std/sync` | `Mutex`, `Channel` — thread-safe primitives |
+
+## Database & Network
+
+| Module | What it provides |
+|--------|-----------------|
+| `std/sqlite` | SQLite3 bindings — `dbOpen`, `dbQuery`, `dbExec`, prepared statements |
+| `std/url` | URL parsing — `urlParse`, `urlQueryGet` |
+
+## Utilities
+
+| Module | What it provides |
+|--------|-----------------|
+| `std/color` | ANSI terminal colors — `red`, `green`, `bold`, etc. |
+| `std/math` | `abs`, `min`, `max`, `pow`, `sqrt`, `log`, trig functions |
+| `std/random` | `randomInt`, `randomFloat`, `randomRange` |
+| `std/regex` | Regular expression matching |
+| `std/sort` | Sorting for Vec — `sortI32`, `sortF64`, `sortStrings` |
+| `std/testing` | `assert`, `assertEqual`, `assertStrEqual` |
 
 ## HTTP Server Example
 
@@ -69,7 +112,7 @@ fn main(): i32 {
 For cyclic data (graphs, doubly-linked lists), use `std/arena`. Nodes reference each other via `Handle<T>` — typed indices — instead of pointers:
 
 ```milo
-import "std/arena"
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaModify }
 
 struct DLNode {
     value: i64,

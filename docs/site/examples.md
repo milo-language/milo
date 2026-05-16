@@ -36,8 +36,8 @@ bun run src/main.ts build examples/apps/serve.milo -o serve && ./serve
 ## A taste: grep in Milo
 
 ```milo
-import "std/argparse"
-import "std/io"
+from "std/argparse" import { newParser }
+from "std/io" import { readLines }
 
 fn main(): i32 {
     var parser = newParser("grep", "search for a string pattern in files")

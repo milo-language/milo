@@ -1,35 +1,25 @@
 # Modules & Imports
 
-## Import a file
+## Explicit imports
 
-```milo
-import "math.milo"
-```
-
-Imports everything from the file into the current scope.
-
-## Named imports
+All imports must name exactly which symbols they use:
 
 ```milo
 from "std/http" import { Request, Response, serve }
+from "std/json" import { jsonParse, Json }
+from "lib/math" import { add, multiply }
 ```
 
-## Relative imports
+No wildcard imports, no bare `import "path"`. The LSP autocompletes both module paths and symbol names.
+
+## Standard library
 
 ```milo
-from "lib/math" import { add }
+from "std/io" import { readFile, writeFile }
+from "std/fs" import { readDir, fileInfo }
+from "std/net" import { fetch }
+from "std/argparse" import { newParser }
 ```
-
-## Standard library imports
-
-```milo
-import "std/io"
-import "std/fs"
-import "std/net"
-import "std/argparse"
-```
-
-Standard library modules are auto-discovered via `import "std/<name>"`.
 
 ## How it works
 

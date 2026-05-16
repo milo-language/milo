@@ -91,7 +91,7 @@ Structs, closures, borrows, `for-in` — a routed web server in 20 lines.
 ### JSON that doesn't fight you
 
 ```milo
-import "std/json"
+from "std/json" import { jsonParse }
 
 fn main(): i32 {
     let j = jsonParse("{\"name\": \"milo\", \"version\": 1, \"fast\": true}")!

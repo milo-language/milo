@@ -21,8 +21,7 @@
 | Box | `Box(value)`, deref with `*boxed` |
 | Reference param | `fn f(x: &T)` or `fn f(x: &mut T)` |
 | Closure | `(x: i32) => x * 2` |
-| Import | `import "file.milo"` |
-| Named import | `from "path" import { A, B }` |
+| Import | `from "path" import { A, B }` |
 | FFI | `extern fn name(args): ret` |
 | Trait | `trait Name { fn method(self: &Self): T }` |
 | Impl trait | `impl Trait for Type { ... }` |
