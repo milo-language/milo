@@ -1,0 +1,34 @@
+// @expect: 99
+// @expect: 42
+// @expect: hello
+
+struct Wrapper<T> {
+    val: T,
+}
+
+fn setVal<T>(w: &mut Wrapper<T>, v: T): void {
+    w.val = v
+}
+
+fn getVal<T>(w: &Wrapper<T>): T {
+    return w.val
+}
+
+fn setAndGet<T>(val: T, w: &mut Wrapper<T>): T {
+    w.val = val
+    return w.val
+}
+
+fn main(): i32 {
+    var w: Wrapper<i64> = Wrapper { val: 0 }
+    setVal(w, 99)
+    print(getVal(w))
+
+    var w2: Wrapper<i64> = Wrapper { val: 0 }
+    print(setAndGet(42, w2))
+
+    var w3: Wrapper<string> = Wrapper { val: "" }
+    setVal(w3, "hello")
+    print(getVal(w3))
+    return 0
+}

@@ -1,0 +1,22 @@
+// @expect: found:42
+// @expect: default:-1
+
+enum Maybe<T> {
+    Just(T),
+    Nothing,
+}
+
+fn unwrapOr<T>(m: Maybe<T>, fallback: T): T {
+    match m {
+        Maybe.Just(val) => { return val }
+        Maybe.Nothing => { return fallback }
+    }
+}
+
+fn main(): i32 {
+    let a = Maybe.Just(42)
+    let b: Maybe<i64> = Maybe.Nothing
+    print("found:", unwrapOr(a, 0))
+    print("default:", unwrapOr(b, -1))
+    return 0
+}

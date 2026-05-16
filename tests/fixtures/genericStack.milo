@@ -1,0 +1,44 @@
+// @expect: len:3
+// @expect: popped:30
+// @expect: popped:20
+// @expect: len:1
+
+struct Stack<T> {
+    items: Vec<T>,
+}
+
+fn stackPush<T>(s: &mut Stack<T>, val: T): void {
+    s.items.push(val)
+}
+
+fn stackPop<T>(s: &mut Stack<T>): Option<T> {
+    if s.items.len() == 0 {
+        return Option.None
+    }
+    return Option.Some(s.items.pop())
+}
+
+fn stackLen<T>(s: &Stack<T>): i64 {
+    return s.items.len()
+}
+
+fn main(): i32 {
+    var s: Stack<i64> = Stack { items: Vec.new() }
+    stackPush(s, 10)
+    stackPush(s, 20)
+    stackPush(s, 30)
+    print("len:", stackLen(s))
+
+    match stackPop(s) {
+        Option.Some(val) => { print("popped:", val) }
+        Option.None => { print("empty") }
+    }
+
+    match stackPop(s) {
+        Option.Some(val) => { print("popped:", val) }
+        Option.None => { print("empty") }
+    }
+
+    print("len:", stackLen(s))
+    return 0
+}

@@ -1929,15 +1929,27 @@ export class TypeChecker {
           }
 
           const typeMap = new Map<string, TypeKind>();
+          const literalInferred = new Set<string>();
           for (let i = 0; i < argTypes.length; i++) {
             const paramTy = genericFn.decl.params[i].type;
+            const argIsLiteral = expr.args[i].kind === "IntLit" || expr.args[i].kind === "CharLit" || expr.args[i].kind === "FloatLit";
             // Direct match: param type IS a type param (e.g. val: T)
             if (genericFn.typeParams.includes(paramTy.name)) {
               const existing = typeMap.get(paramTy.name);
               if (existing && !typeEq(existing, argTypes[i])) {
-                this.error(`conflicting inference for type parameter '${paramTy.name}'`, sp);
-              } else {
+                // numeric literal coercion: flex the literal to match the existing inference
+                if (argIsLiteral && existing.tag === argTypes[i].tag) {
+                  this.exprTypes.set(expr.args[i], existing);
+                  argTypes[i] = existing;
+                } else if (literalInferred.has(paramTy.name) && existing.tag === argTypes[i].tag) {
+                  typeMap.set(paramTy.name, argTypes[i]);
+                  literalInferred.delete(paramTy.name);
+                } else {
+                  this.error(`conflicting inference for type parameter '${paramTy.name}'`, sp);
+                }
+              } else if (!existing) {
                 typeMap.set(paramTy.name, argTypes[i]);
+                if (argIsLiteral) literalInferred.add(paramTy.name);
               }
             }
             // Nested match: param type contains type params (e.g. &Arena<T>, Vec<T>)
@@ -1951,8 +1963,9 @@ export class TypeChecker {
                   if (gs && info.baseName === paramTy.name) {
                     for (let j = 0; j < paramTy.typeArgs.length && j < info.typeArgs.length; j++) {
                       const ta = paramTy.typeArgs[j];
-                      if (genericFn.typeParams.includes(ta.name) && !typeMap.has(ta.name)) {
+                      if (genericFn.typeParams.includes(ta.name) && (!typeMap.has(ta.name) || literalInferred.has(ta.name))) {
                         typeMap.set(ta.name, info.typeArgs[j]);
+                        literalInferred.delete(ta.name);
                       }
                     }
                   }
