@@ -27,8 +27,11 @@ function compile(source: string, target: TargetInfo, filePath?: string): string 
   }
 
   const result = new TypeChecker().check(program);
-  if (result.diagnostics.length > 0) {
-    for (const d of result.diagnostics) console.error(formatDiagnostic(d, source, filePath));
+  const errors = result.diagnostics.filter(d => d.severity === "error");
+  const warnings = result.diagnostics.filter(d => d.severity !== "error");
+  for (const d of warnings) console.error(formatDiagnostic(d, source, filePath));
+  if (errors.length > 0) {
+    for (const d of errors) console.error(formatDiagnostic(d, source, filePath));
     process.exit(1);
   }
 

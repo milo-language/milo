@@ -136,6 +136,10 @@ export class TypeChecker {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
   }
 
+  private warn(msg: string, span?: Span, hint?: string) {
+    this.diagnostics.push({ severity: "warning", span, message: msg, hint });
+  }
+
   private resolve(ty: MiloType): TypeKind {
     if (ty.isFn && ty.fnParams && ty.fnRet) {
       return { tag: "fn", params: ty.fnParams.map(p => this.resolve(p)), ret: this.resolve(ty.fnRet) };
@@ -954,6 +958,24 @@ export class TypeChecker {
     }
 
     for (const stmt of fn.body) this.checkStmt(stmt, retType);
+
+    // Lint: warn if a non-ref, non-Copy param was never moved — suggest &T
+    if (!fn.isExtern) {
+      for (const p of fn.params) {
+        const info = this.lookup(p.name);
+        if (!info) continue;
+        if (info.type.tag === "ref") continue;
+        if (isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
+        if (!info.moved) {
+          this.warn(
+            `parameter '${p.name}' is never moved — consider taking '&${typeName(info.type)}' instead`,
+            fn.span,
+            `passing by reference avoids requiring callers to give up ownership`
+          );
+        }
+      }
+    }
+
     this.popScope();
   }
 
