@@ -37,7 +37,21 @@ fn main(): i32 {
 }
 ```
 
-Handles are just a slot number and a version counter. When a slot gets recycled, the version bumps — so old handles return `None` instead of garbage. No dangling pointers, no use-after-free, all checked at runtime.
+## How it works
+
+**One arena per data type.** An `Arena<string>` holds strings. An `Arena<Node>` holds nodes. You don't mix types in a single arena.
+
+**The lifecycle is simple:**
+
+1. **Create** — `arenaNew<T>()` makes an empty arena
+2. **Store** — `arenaAlloc(&arena, value)` puts a value in and returns a `Handle<T>`
+3. **Access** — `arenaGet(&arena, handle)` returns `Option<T>` — `Some` if alive, `None` if stale
+4. **Update** — `arenaSet` replaces a value; `arenaModify` transforms it with a function
+5. **Remove** — `arenaFree(&arena, handle)` removes the value and recycles the slot
+
+**Handles are cheap.** They're two integers (slot index + generation). Copy them freely, store them in Vecs, pass them around. They don't own anything — the arena does.
+
+**Stale handles are safe.** Every slot has a generation counter that bumps on free. If you hold a handle from generation 2 but the slot is now on generation 3, `arenaGet` returns `None`. No crash, no garbage — just a clear "this is gone."
 
 ## Example: a graph with cycles
 
