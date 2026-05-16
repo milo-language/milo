@@ -105,7 +105,7 @@ fn main(): i32 {
     let host = config.get("db")!.str("host")!
     let port = config.get("db")!.i64("port")!
 
-    print(name, " v", ver, " — ", host, ":", port)
+    print($"{name} v{ver} — {host}:{port}")
     return 0
 }
 ```
