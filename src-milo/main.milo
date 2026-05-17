@@ -6,6 +6,7 @@
 
 from "std/io" import { println, eprintln }
 from "std/fs" import { readFile, writeFile }
+from "std/path" import { dirname, resolve }
 from "std/process" import { exit, args, exec }
 from "src-milo/tokens.milo" import { Token }
 from "src-milo/lexer.milo" import { Lexer, lexerNew, lex }
@@ -16,6 +17,7 @@ from "src-milo/checker/types.milo" import { TypeKind }
 from "src-milo/checker/state.milo" import { Checker, newChecker, hasErrors }
 from "src-milo/checker/stmt.milo" import { checkProgram }
 from "src-milo/codegen/emit.milo" import { buildFnTable, genProgram }
+from "src-milo/target.milo" import { getHostTarget }
 
 fn compile(path: string): string {
     let source = readFile(path)
@@ -33,7 +35,10 @@ fn compile(path: string): string {
     let program = parse(&mut parser)
 
     // Resolve imports
-    let resolved = resolveImports(program, path)
+    let target = getHostTarget()
+    let sourceDir = dirname(path.clone())
+    let stdlibDir = resolve(dirname(path.clone()), "std")
+    let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
 
     // Type check
     var checker = newChecker()
@@ -100,7 +105,10 @@ fn main() {
         let tokens = lex(&mut lexer)
         var parser = parserNew(tokens)
         let program = parse(&mut parser)
-        let resolved = resolveImports(program, source.clone())
+        let target = getHostTarget()
+        let sourceDir = dirname(source.clone())
+        let stdlibDir = resolve(dirname(source.clone()), "std")
+        let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
         var checker = newChecker()
         checkProgram(&mut checker, &resolved)
         if hasErrors(&checker) {

@@ -12,6 +12,8 @@ from "src-milo/checker/state.milo" import {
     Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, lookupMut, hasErrors,
 }
 from "src-milo/checker/expr.milo" import { checkExpr, tryMove, isRootMutable, deref }
+from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, processDerives, typeImplementsTrait, resolveMethod }
+from "src-milo/checker/mono.milo" import { MonoState, newMonoState, registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum }
 
 // -- Statement checker --
 
@@ -532,29 +534,56 @@ fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
 }
 
 fn checkProgram(ck: &mut Checker, program: &Program) {
-    // Phase 1: register all declarations
+    // Phase 0: register builtin traits and generic types
+    registerBuiltinTraits(ck)
+
+    // Phase 1: register all declarations (skip generics — they go to mono state)
+    var ms = newMonoState()
     var i: i64 = 0
     while i < program.structs.len {
-        registerStruct(ck, &program.structs[i])
+        if program.structs[i].typeParams.len > 0 {
+            registerGenericStruct(&mut ms, &program.structs[i])
+        } else {
+            registerStruct(ck, &program.structs[i])
+        }
         i = i + 1
     }
     i = 0
     while i < program.enums.len {
-        registerEnum(ck, &program.enums[i])
+        if program.enums[i].typeParams.len > 0 {
+            registerGenericEnum(&mut ms, &program.enums[i])
+        } else {
+            registerEnum(ck, &program.enums[i])
+        }
         i = i + 1
     }
     i = 0
     while i < program.functions.len {
-        registerFunction(ck, &program.functions[i])
+        if program.functions[i].typeParams.len > 0 {
+            registerGenericFn(&mut ms, &program.functions[i])
+        } else {
+            registerFunction(ck, &program.functions[i])
+        }
         i = i + 1
     }
 
-    // Phase 2: check function bodies
+    // Phase 2: register impls and derive macros
+    registerAllImpls(ck, program)
+    processDerives(ck, program)
+
+    // Phase 3: check function bodies
     i = 0
     while i < program.functions.len {
         if !program.functions[i].isExtern && program.functions[i].typeParams.len == 0 {
             checkFunction(ck, &program.functions[i])
         }
+        i = i + 1
+    }
+
+    // Phase 4: check monomorphized functions
+    i = 0
+    while i < ck.monomorphizedFns.len {
+        checkFunction(ck, &ck.monomorphizedFns[i])
         i = i + 1
     }
 }

@@ -3,8 +3,8 @@ from "std/fs" import { readFile, fileExists }
 from "std/path" import { resolve, dirname, join }
 from "std/env" import { getEnv, homeDir }
 from "src-milo/tokens.milo" import { Token }
-from "src-milo/lexer.milo" import { newLexer, tokenize }
-from "src-milo/parser.milo" import { newParser, parse }
+from "src-milo/lexer.milo" import { lexerNew, lex }
+from "src-milo/parser.milo" import { parserNew, parse }
 from "src-milo/ast.milo" import {
     Program, StructDecl, EnumDecl, Function, ImportDecl, TraitDecl, ImplDecl
 }
@@ -66,8 +66,9 @@ fn resolvePath(rs: &ResolverState, dir: &string, importPath: &string): string {
 // Parse a source file and return its Program AST.
 fn parseFile(path: &string): Program {
     let source = readFile(path)
-    let tokens = tokenize(source)
-    var p = newParser(tokens)
+    var lexer = lexerNew(source)
+    let tokens = lex(&mut lexer)
+    var p = parserNew(tokens)
     return parse(&mut p)
 }
 
