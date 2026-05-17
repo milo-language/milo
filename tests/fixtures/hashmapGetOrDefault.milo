@@ -1,0 +1,12 @@
+// @expect: 420
+// @expect: 0
+
+fn main(): i32 {
+    var m: HashMap<i32, i32> = HashMap.new()
+    m.insert(42, 420)
+    let v1 = m.getOrDefault(42, 0)
+    let v2 = m.getOrDefault(99, 0)
+    print(v1)
+    print(v2)
+    return 0
+}

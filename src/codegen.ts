@@ -1931,6 +1931,8 @@ export class Codegen {
         return this.genHashMapInsert(expr, lines);
       case "HashMapGet":
         return this.genHashMapGet(expr, lines);
+      case "HashMapGetOrDefault":
+        return this.genHashMapGetOrDefault(expr, lines);
       case "HashMapContains":
         return this.genHashMapContains(expr, lines);
       case "HashMapRemove":
@@ -4244,6 +4246,104 @@ export class Codegen {
     const result = this.nextTemp();
     lines.push(`  ${result} = phi ${optionTy} [${someVal}, %${foundLabel}], [${noneVal}, %${notFoundLabel}]`);
     return [lines, result, optionTy];
+  }
+
+  private genHashMapGetOrDefault(expr: HIRExpr & { kind: "HashMapGetOrDefault" }, lines: string[]): [string[], string, string] {
+    this.hasHashMapType = true;
+    const mapType = expr.map.type;
+    if (mapType.tag !== "hashmap") throw new Error("HashMapGetOrDefault on non-hashmap");
+    const keyType = mapType.key;
+    const valueType = mapType.value;
+    const keyTy = this.llvmType(keyType);
+    const valTy = this.llvmType(valueType);
+    const entryTy = this.hashMapEntryType(keyType, valueType);
+
+    const [mapPtrLines, mapPtr] = this.genLValue(expr.map);
+    lines.push(...mapPtrLines);
+    const [keyLines, keyVal] = this.genExpr(expr.key);
+    lines.push(...keyLines);
+    const [defaultLines, defaultVal] = this.genExpr(expr.default);
+    lines.push(...defaultLines);
+
+    const seedPtr = this.nextTemp();
+    lines.push(`  ${seedPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 3`);
+    const seed = this.nextTemp();
+    lines.push(`  ${seed} = load i64, ptr ${seedPtr}`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 2`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+    const dataFieldPtr = this.nextTemp();
+    lines.push(`  ${dataFieldPtr} = getelementptr %HashMap, ptr ${mapPtr}, i32 0, i32 0`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataFieldPtr}`);
+
+    const hash = this.emitFnvHash(lines, keyVal, keyType, seed);
+    const mask = this.nextTemp();
+    lines.push(`  ${mask} = sub i64 ${cap}, 1`);
+    const slotAddr = this.nextTemp();
+    lines.push(`  ${slotAddr} = alloca i64`);
+    const slot0 = this.nextTemp();
+    lines.push(`  ${slot0} = and i64 ${hash}, ${mask}`);
+    lines.push(`  store i64 ${slot0}, ptr ${slotAddr}`);
+
+    const probeCond = this.nextLabel("hmgd.probe");
+    const probeCheck = this.nextLabel("hmgd.check");
+    const probeOccupied = this.nextLabel("hmgd.occupied");
+    const foundLabel = this.nextLabel("hmgd.found");
+    const notFoundLabel = this.nextLabel("hmgd.notfound");
+    const probeNext = this.nextLabel("hmgd.pnext");
+    const doneLabel = this.nextLabel("hmgd.done");
+
+    lines.push(`  br label %${probeCond}`);
+    lines.push(`${probeCond}:`);
+    const slot = this.nextTemp();
+    lines.push(`  ${slot} = load i64, ptr ${slotAddr}`);
+    const entryPtr = this.nextTemp();
+    lines.push(`  ${entryPtr} = getelementptr ${entryTy}, ptr ${data}, i64 ${slot}`);
+    const state = this.nextTemp();
+    lines.push(`  ${state} = load i8, ptr ${entryPtr}`);
+    const stateIsEmpty = this.nextTemp();
+    lines.push(`  ${stateIsEmpty} = icmp eq i8 ${state}, 0`);
+    lines.push(`  br i1 ${stateIsEmpty}, label %${notFoundLabel}, label %${probeCheck}`);
+
+    lines.push(`${probeCheck}:`);
+    const stateIsOccupied = this.nextTemp();
+    lines.push(`  ${stateIsOccupied} = icmp eq i8 ${state}, 1`);
+    lines.push(`  br i1 ${stateIsOccupied}, label %${probeOccupied}, label %${probeNext}`);
+
+    lines.push(`${probeOccupied}:`);
+    const existingKeyPtr = this.nextTemp();
+    lines.push(`  ${existingKeyPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 1`);
+    const existingKey = this.nextTemp();
+    lines.push(`  ${existingKey} = load ${keyTy}, ptr ${existingKeyPtr}`);
+    const keysMatch = this.emitKeyCompare(lines, keyVal, existingKey, keyType);
+    lines.push(`  br i1 ${keysMatch}, label %${foundLabel}, label %${probeNext}`);
+
+    // found — return the value directly
+    lines.push(`${foundLabel}:`);
+    const valPtr = this.nextTemp();
+    lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
+    const foundVal = this.nextTemp();
+    lines.push(`  ${foundVal} = load ${valTy}, ptr ${valPtr}`);
+    lines.push(`  br label %${doneLabel}`);
+
+    // not found — use the default value
+    lines.push(`${notFoundLabel}:`);
+    lines.push(`  br label %${doneLabel}`);
+
+    lines.push(`${probeNext}:`);
+    const nextSlot = this.nextTemp();
+    lines.push(`  ${nextSlot} = add i64 ${slot}, 1`);
+    const wrappedSlot = this.nextTemp();
+    lines.push(`  ${wrappedSlot} = and i64 ${nextSlot}, ${mask}`);
+    lines.push(`  store i64 ${wrappedSlot}, ptr ${slotAddr}`);
+    lines.push(`  br label %${probeCond}`);
+
+    lines.push(`${doneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi ${valTy} [${foundVal}, %${foundLabel}], [${defaultVal}, %${notFoundLabel}]`);
+    return [lines, result, valTy];
   }
 
   private needsMemset = false;

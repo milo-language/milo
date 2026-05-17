@@ -514,6 +514,9 @@ class LowerCtx {
             const optionEnumName = type.tag === "enum" ? type.name : "";
             return { kind: "HashMapGet", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), optionEnumName, type, span: expr.span };
           }
+          if (expr.method === "getOrDefault") {
+            return { kind: "HashMapGetOrDefault", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), default: this.lowerExpr(expr.args[1]), type, span: expr.span };
+          }
           if (expr.method === "contains") {
             return { kind: "HashMapContains", map: this.lowerExpr(expr.object), key: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }

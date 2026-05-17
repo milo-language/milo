@@ -248,7 +248,7 @@ impl Response {
 
     // Parse the response body as JSON.
     fn json(self: &Self): Json {
-        return jsonParse(self.body.clone())
+        return jsonParse(self.body.clone())!
     }
 
     // Return true if the status code is 2xx (success).
@@ -300,7 +300,7 @@ fn findHeader(headers: &string, name: &string): string {
                 while end < headers.len && headers[end] != '\r' && headers[end] != '\n' {
                     end = end + 1
                 }
-                return headers[start..end]
+                return headers.substr(start, end)
             }
         }
         i = i + 1
@@ -359,7 +359,7 @@ fn parseRawHeaders(raw: &string): string {
                 start = i + 2
             }
             if i + 3 < raw.len && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
-                return raw[start..i]
+                return raw.substr(start, i)
             }
         }
         i = i + 1
@@ -371,7 +371,7 @@ fn parseBody(raw: &string): string {
     var i: i64 = 0
     while i + 3 < raw.len {
         if raw[i] == '\r' && raw[i + 1] == '\n' && raw[i + 2] == '\r' && raw[i + 3] == '\n' {
-            return raw[i + 4..raw.len]
+            return raw.substr(i + 4, raw.len)
         }
         i = i + 1
     }
@@ -451,7 +451,7 @@ fn parseHost(url: &string): string {
     while end < url.len && url[end] != '/' && url[end] != ':' {
         end = end + 1
     }
-    return url[start..end]
+    return url.substr(start, end)
 }
 
 fn parsePort(url: &string): u16 {
@@ -482,7 +482,7 @@ fn parsePath(url: &string): string {
     if i >= url.len {
         return "/"
     }
-    return url[i..url.len]
+    return url.substr(i, url.len)
 }
 
 // ── FetchOptions ──

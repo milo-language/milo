@@ -191,6 +191,34 @@ s.push('h')
 s.push('i')
 ```
 
+### String Methods
+
+```milo
+let s = "Hello, World!"
+
+s.toLower()         // "hello, world!"
+s.toUpper()         // "HELLO, WORLD!"
+s.trim()            // strip leading/trailing whitespace
+s.trimStart()       // strip leading whitespace
+s.trimEnd()         // strip trailing whitespace
+s.split(",")        // Vec<string>: ["Hello", " World!"]
+s.contains("World") // true
+s.startsWith("He")  // true
+s.endsWith("!")     // true
+s.indexOf("World")  // 7
+s.replace("World", "Milo")  // "Hello, Milo!"
+s.substr(0, 5)      // "Hello" (owned copy)
+```
+
+### String Utility Functions (std/string)
+
+```milo
+from "std/string" import { strSplitWords, strSplitWhitespace }
+
+let words = strSplitWords("Hello, World!")       // ["hello", "world"] (lowercased, alpha-only)
+let tokens = strSplitWhitespace("a  b\tc")       // ["a", "b", "c"]
+```
+
 Strings auto-coerce to `*u8` when passed to FFI functions.
 
 ---
@@ -416,6 +444,8 @@ let val = m.get("hello")       // returns Option<i32>
 if let Option.Some(v) = val {
     print("value: %d", v)
 }
+
+let v = m.getOrDefault("hello", 0)  // returns i32 directly (0 if missing)
 
 m.remove("hello")
 ```
@@ -893,8 +923,7 @@ fn parseValue(s: &string, pos: &mut i64): Box<JsonValue> {
 
 ```milo
 fn main(): i32 {
-    var i: i32 = 1
-    while i <= 20 {
+    for i in 1..21 {
         if i % 15 == 0 {
             print("FizzBuzz")
         } else if i % 3 == 0 {
@@ -902,9 +931,8 @@ fn main(): i32 {
         } else if i % 5 == 0 {
             print("Buzz")
         } else {
-            print(".")
+            print(i)
         }
-        i = i + 1
     }
     return 0
 }
@@ -1034,20 +1062,15 @@ Move closures are required for `spawn` — they heap-allocate captured variables
 from "std/thread" import { spawn, threadJoin, Thread }
 
 var threads: Vec<Thread> = Vec.new()
-var i: i64 = 0
-while i < 4 {
-    let id = i
+for i in 0..4 {
+    let id = i as i64
     let t = spawn(move (): void => {
         print($"thread {id}")
     })!
     threads.push(t)
-    i = i + 1
 }
-// join all threads
-i = 0
-while i < 4 {
+for i in 0..4 {
     threadJoin(threads[i])!
-    i = i + 1
 }
 ```
 

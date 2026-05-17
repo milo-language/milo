@@ -82,6 +82,32 @@ fn _qsortI32(v: &mut Vec<i32>, lo: i32, hi: i32): void {
     _qsortI32(v, i + 1 as i32, hi)
 }
 
+// Sort Vec<string> + parallel Vec<i64> by values descending, then keys ascending (for top-N).
+
+fn sortStringsByFreq(keys: &mut Vec<string>, vals: &mut Vec<i64>): void {
+    let n = keys.len
+    if n <= 1 {
+        return
+    }
+    var i: i64 = 1
+    while i < n {
+        let kk = keys[i].clone()
+        let vv = vals[i]
+        var j = i - 1
+        while j >= 0 {
+            if vals[j] > vv || (vals[j] == vv && _strLessThan(keys[j], kk)) {
+                break
+            }
+            keys[j + 1] = keys[j].clone()
+            vals[j + 1] = vals[j]
+            j = j - 1
+        }
+        keys[j + 1] = kk
+        vals[j + 1] = vv
+        i = i + 1
+    }
+}
+
 // ── insertion sort for strings (stable, good for small n) ──
 
 fn _strLessThan(a: &string, b: &string): bool {

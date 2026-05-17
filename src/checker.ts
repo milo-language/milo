@@ -2698,6 +2698,18 @@ export class TypeChecker {
             const optionType = this.resolveOptionForValue(objType.value, sp);
             return this.setType(expr, optionType);
           }
+          if (expr.method === "getOrDefault") {
+            if (expr.args.length !== 2) { this.error(`'getOrDefault' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const keyType = this.checkExprWithHint(expr.args[0], objType.key);
+            if (!typeEq(objType.key, keyType) && keyType.tag !== "unknown") {
+              this.error(`getOrDefault key: expected ${typeName(objType.key)}, got ${typeName(keyType)}`, sp);
+            }
+            const valType = this.checkExprWithHint(expr.args[1], objType.value);
+            if (!typeEq(objType.value, valType) && valType.tag !== "unknown") {
+              this.error(`getOrDefault default: expected ${typeName(objType.value)}, got ${typeName(valType)}`, sp);
+            }
+            return this.setType(expr, objType.value);
+          }
           if (expr.method === "contains") {
             if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
             const keyType = this.checkExprWithHint(expr.args[0], objType.key);

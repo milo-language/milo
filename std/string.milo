@@ -299,6 +299,58 @@ fn charIsAlphanumeric(ch: u8): bool {
     return charIsAlpha(ch) || charIsDigit(ch)
 }
 
+// Split string into words (contiguous alphabetic sequences), lowercased.
+
+fn strSplitWords(s: &string): Vec<string> {
+    var result: Vec<string> = Vec.new()
+    var word: string = ""
+    var i: i64 = 0
+    while i < s.len {
+        let ch = s[i]
+        if charIsAlpha(ch) {
+            if ch >= 65 && ch <= 90 {
+                word.push(ch + 32)
+            } else {
+                word.push(ch)
+            }
+        } else {
+            if word.len > 0 {
+                result.push(word)
+                word = ""
+            }
+        }
+        i = i + 1
+    }
+    if word.len > 0 {
+        result.push(word)
+    }
+    return result
+}
+
+// Split string on whitespace into non-empty tokens.
+
+fn strSplitWhitespace(s: &string): Vec<string> {
+    var result: Vec<string> = Vec.new()
+    var token: string = ""
+    var i: i64 = 0
+    while i < s.len {
+        let ch = s[i]
+        if charIsWhitespace(ch) {
+            if token.len > 0 {
+                result.push(token)
+                token = ""
+            }
+        } else {
+            token.push(ch)
+        }
+        i = i + 1
+    }
+    if token.len > 0 {
+        result.push(token)
+    }
+    return result
+}
+
 // Remove leading and trailing whitespace (spaces, tabs, newlines, carriage returns).
 
 fn trim(s: &string): string {
