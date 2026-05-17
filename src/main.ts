@@ -228,6 +228,41 @@ function main() {
     return;
   }
 
+  if (cmd === "lex") {
+    const file = args[1];
+    if (!file) { console.error("error: no source file"); process.exit(1); }
+    const source = readFileSync(file, "utf-8");
+    const tokens = new Lexer(source).tokenize();
+    function escapeValue(s: string): string {
+      let out = "";
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        if (c === 10) out += "\\n";
+        else if (c === 9) out += "\\t";
+        else if (c === 13) out += "\\r";
+        else if (c === 0) out += "\\0";
+        else if (c < 32 || c === 127) out += `\\x${c.toString(16).padStart(2, "0")}`;
+        else out += s[i];
+      }
+      return out;
+    }
+    for (const tok of tokens) {
+      if (tok.leadingTrivia) {
+        for (const t of tok.leadingTrivia) {
+          if (t.kind === "blank") console.log(`L_BLANK\t\t${t.line}`);
+          else console.log(`L_COMMENT\t${escapeValue(t.text)}\t${t.line}`);
+        }
+      }
+      console.log(`${tok.kind}\t${escapeValue(tok.value)}\t${tok.line}:${tok.col}`);
+      if (tok.trailingTrivia) {
+        for (const t of tok.trailingTrivia) {
+          console.log(`T_COMMENT\t${escapeValue(t.text)}\t${t.line}`);
+        }
+      }
+    }
+    return;
+  }
+
   if (cmd === "fmt") {
     const fmtArgs = args.slice(1);
     const write = fmtArgs.includes("-w");

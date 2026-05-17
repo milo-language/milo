@@ -1,0 +1,206 @@
+// Token types for the Milo lexer
+
+enum TokKind {
+    // literals
+    Int,
+    Float,
+    String,
+    FString,
+    Char,
+    Ident,
+    // keywords
+    Fn,
+    Extern,
+    Let,
+    Var,
+    Return,
+    If,
+    Else,
+    While,
+    True,
+    False,
+    Struct,
+    Enum,
+    Match,
+    Mut,
+    Import,
+    From,
+    Break,
+    Continue,
+    As,
+    Trait,
+    Impl,
+    For,
+    In,
+    Unsafe,
+    Move,
+    Null,
+    Is,
+    // symbols
+    LParen,
+    RParen,
+    LBrace,
+    RBrace,
+    LBracket,
+    RBracket,
+    Colon,
+    Semicolon,
+    Comma,
+    Dot,
+    Arrow,
+    Star,
+    Plus,
+    Minus,
+    Slash,
+    Percent,
+    Amp,
+    AmpAmp,
+    PipePipe,
+    Eq,
+    EqEq,
+    FatArrow,
+    ColonColon,
+    Neq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    Bang,
+    DotDot,
+    DotDotDot,
+    Question,
+    QuestionQuestion,
+    Pipe,
+    Caret,
+    Tilde,
+    At,
+    Eof,
+}
+
+enum TriviaKind {
+    Comment,
+    Blank,
+}
+
+struct Trivia {
+    kind: TriviaKind,
+    text: string,
+    line: i32,
+}
+
+struct Token {
+    kind: TokKind,
+    value: string,
+    line: i32,
+    col: i32,
+    leadingTrivia: Vec<Trivia>,
+    trailingTrivia: Vec<Trivia>,
+}
+
+fn keywordKind(s: &string): TokKind {
+    if s == "fn" { return TokKind.Fn }
+    if s == "extern" { return TokKind.Extern }
+    if s == "let" { return TokKind.Let }
+    if s == "var" { return TokKind.Var }
+    if s == "return" { return TokKind.Return }
+    if s == "if" { return TokKind.If }
+    if s == "else" { return TokKind.Else }
+    if s == "while" { return TokKind.While }
+    if s == "true" { return TokKind.True }
+    if s == "false" { return TokKind.False }
+    if s == "struct" { return TokKind.Struct }
+    if s == "enum" { return TokKind.Enum }
+    if s == "match" { return TokKind.Match }
+    if s == "mut" { return TokKind.Mut }
+    if s == "import" { return TokKind.Import }
+    if s == "from" { return TokKind.From }
+    if s == "break" { return TokKind.Break }
+    if s == "continue" { return TokKind.Continue }
+    if s == "as" { return TokKind.As }
+    if s == "trait" { return TokKind.Trait }
+    if s == "impl" { return TokKind.Impl }
+    if s == "for" { return TokKind.For }
+    if s == "in" { return TokKind.In }
+    if s == "unsafe" { return TokKind.Unsafe }
+    if s == "move" { return TokKind.Move }
+    if s == "null" { return TokKind.Null }
+    if s == "is" { return TokKind.Is }
+    return TokKind.Ident
+}
+
+// Token kind → canonical string (matches TS TokenKind enum values)
+fn tokKindName(k: TokKind): string {
+    match k {
+        TokKind.Int => { return "INT" }
+        TokKind.Float => { return "FLOAT" }
+        TokKind.String => { return "STRING" }
+        TokKind.FString => { return "FSTRING" }
+        TokKind.Char => { return "CHAR" }
+        TokKind.Ident => { return "IDENT" }
+        TokKind.Fn => { return "fn" }
+        TokKind.Extern => { return "extern" }
+        TokKind.Let => { return "let" }
+        TokKind.Var => { return "var" }
+        TokKind.Return => { return "return" }
+        TokKind.If => { return "if" }
+        TokKind.Else => { return "else" }
+        TokKind.While => { return "while" }
+        TokKind.True => { return "true" }
+        TokKind.False => { return "false" }
+        TokKind.Struct => { return "struct" }
+        TokKind.Enum => { return "enum" }
+        TokKind.Match => { return "match" }
+        TokKind.Mut => { return "mut" }
+        TokKind.Import => { return "import" }
+        TokKind.From => { return "from" }
+        TokKind.Break => { return "break" }
+        TokKind.Continue => { return "continue" }
+        TokKind.As => { return "as" }
+        TokKind.Trait => { return "trait" }
+        TokKind.Impl => { return "impl" }
+        TokKind.For => { return "for" }
+        TokKind.In => { return "in" }
+        TokKind.Unsafe => { return "unsafe" }
+        TokKind.Move => { return "move" }
+        TokKind.Null => { return "null" }
+        TokKind.Is => { return "is" }
+        TokKind.LParen => { return "(" }
+        TokKind.RParen => { return ")" }
+        TokKind.LBrace => { return "{" }
+        TokKind.RBrace => { return "}" }
+        TokKind.LBracket => { return "[" }
+        TokKind.RBracket => { return "]" }
+        TokKind.Colon => { return ":" }
+        TokKind.Semicolon => { return ";" }
+        TokKind.Comma => { return "," }
+        TokKind.Dot => { return "." }
+        TokKind.Arrow => { return "->" }
+        TokKind.Star => { return "*" }
+        TokKind.Plus => { return "+" }
+        TokKind.Minus => { return "-" }
+        TokKind.Slash => { return "/" }
+        TokKind.Percent => { return "%" }
+        TokKind.Amp => { return "&" }
+        TokKind.AmpAmp => { return "&&" }
+        TokKind.PipePipe => { return "||" }
+        TokKind.Eq => { return "=" }
+        TokKind.EqEq => { return "==" }
+        TokKind.FatArrow => { return "=>" }
+        TokKind.ColonColon => { return "::" }
+        TokKind.Neq => { return "!=" }
+        TokKind.Lt => { return "<" }
+        TokKind.Gt => { return ">" }
+        TokKind.LtEq => { return "<=" }
+        TokKind.GtEq => { return ">=" }
+        TokKind.Bang => { return "!" }
+        TokKind.DotDot => { return ".." }
+        TokKind.DotDotDot => { return "..." }
+        TokKind.Question => { return "?" }
+        TokKind.QuestionQuestion => { return "??" }
+        TokKind.Pipe => { return "|" }
+        TokKind.Caret => { return "^" }
+        TokKind.Tilde => { return "~" }
+        TokKind.At => { return "@" }
+        TokKind.Eof => { return "EOF" }
+    }
+}
