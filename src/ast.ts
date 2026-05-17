@@ -65,9 +65,10 @@ export interface CastExpr { kind: "CastExpr"; operand: Expr; targetType: MiloTyp
 export interface MethodCall { kind: "MethodCall"; object: Expr; method: string; args: Expr[]; span?: Span }
 export interface ClosureExpr { kind: "Closure"; params: Param[]; retType: MiloType | null; body: Stmt[]; isMove?: boolean; span?: Span }
 export interface RangeExpr { kind: "RangeExpr"; start: Expr; end: Expr; span?: Span }
+export interface IsExpr { kind: "IsExpr"; operand: Expr; pattern: Pattern; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | ArrayRepeat | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr | RangeExpr;
+  | StructLit | FieldAccess | ArrayLit | ArrayRepeat | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr | RangeExpr | IsExpr;
 
 // ── Statements ──
 

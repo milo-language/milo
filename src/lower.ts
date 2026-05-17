@@ -200,17 +200,32 @@ class LowerCtx {
         let varType2: TypeKind | null = null;
         if (iterType?.tag === "vec") {
           iterableKind = "vec";
-          varType = { tag: "ref", inner: iterType.element, mutable: false };
+          if (stmt.varName2) {
+            varType = { tag: "int", bits: 64, signed: true };
+            varType2 = { tag: "ref", inner: iterType.element, mutable: false };
+          } else {
+            varType = { tag: "ref", inner: iterType.element, mutable: false };
+          }
         } else if (iterType?.tag === "string") {
           iterableKind = "string";
-          varType = { tag: "int", bits: 8, signed: false };
+          if (stmt.varName2) {
+            varType = { tag: "int", bits: 64, signed: true };
+            varType2 = { tag: "int", bits: 8, signed: false };
+          } else {
+            varType = { tag: "int", bits: 8, signed: false };
+          }
         } else if (iterType?.tag === "hashmap") {
           iterableKind = "hashmap";
           varType = { tag: "ref", inner: iterType.key, mutable: false };
           varType2 = { tag: "ref", inner: iterType.value, mutable: false };
         } else if (iterType?.tag === "array") {
           iterableKind = "array";
-          varType = { tag: "ref", inner: iterType.element, mutable: false };
+          if (stmt.varName2) {
+            varType = { tag: "int", bits: 64, signed: true };
+            varType2 = { tag: "ref", inner: iterType.element, mutable: false };
+          } else {
+            varType = { tag: "ref", inner: iterType.element, mutable: false };
+          }
         } else {
           iterableKind = "vec";
           varType = { tag: "unknown" };
@@ -374,6 +389,10 @@ class LowerCtx {
         return { kind: "FieldAccess", object: this.lowerExpr(expr.object), field: expr.field, type, span: expr.span };
       }
       case "ArrayLit":
+        if (this.c.arrayToVecCoercions.has(expr)) {
+          const vecType: TypeKind = { tag: "vec", element: type.tag === "array" ? type.element : type };
+          return { kind: "ArrayLit", elements: expr.elements.map(e => this.lowerExpr(e)), type: vecType, span: expr.span };
+        }
         return { kind: "ArrayLit", elements: expr.elements.map(e => this.lowerExpr(e)), type, span: expr.span };
       case "ArrayRepeat":
         return { kind: "ArrayRepeat", value: this.lowerExpr(expr.value), count: expr.count, type, span: expr.span };
@@ -588,6 +607,19 @@ class LowerCtx {
       }
       case "RangeExpr":
         throw new Error("RangeExpr should not appear in lowerExprRaw — handled by ForInStmt");
+      case "IsExpr": {
+        const operand = this.lowerExpr(expr.operand);
+        const opType = this.typeOf(expr.operand);
+        let tag = -1;
+        if (expr.pattern.kind === "EnumPattern" && opType?.tag === "enum") {
+          const enumInfo = this.c.enums.get(opType.name);
+          if (enumInfo) {
+            const variant = enumInfo.variants.get(expr.pattern.variant);
+            if (variant) tag = variant.tag;
+          }
+        }
+        return { kind: "IsCheck", operand, tag, type: { tag: "bool" }, span: expr.span };
+      }
     }
   }
 

@@ -737,11 +737,17 @@ export class Codegen {
       this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
       lines.push(`  store i64 0, ptr ${idxAddr}`);
 
-      const elemType = stmt.varType.tag === "ref" ? stmt.varType.inner : stmt.varType;
+      // enumerate: varName=index, varName2=element; else varName=element
+      const elemTypeKind = stmt.varName2 ? stmt.varType2! : stmt.varType;
+      const elemName = stmt.varName2 ?? stmt.varName;
+      const elemType = elemTypeKind.tag === "ref" ? elemTypeKind.inner : elemTypeKind;
       const elemTy = this.llvmType(elemType);
-      const varAddr = this.locals.has(stmt.varName) ? `%${stmt.varName}.${this.scopeCounter++}.addr` : `%${stmt.varName}.addr`;
+      const varAddr = this.locals.has(elemName) ? `%${elemName}.${this.scopeCounter++}.addr` : `%${elemName}.addr`;
       this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
-      this.locals.set(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: varAddr });
+      this.locals.set(elemName, { type: elemTy, typeKind: elemTypeKind, mutable: false, isRef: true, addr: varAddr });
+      if (stmt.varName2) {
+        this.locals.set(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr });
+      }
 
       const condLabel = this.nextLabel("for.cond");
       const bodyLabel = this.nextLabel("for.body");
@@ -801,9 +807,13 @@ export class Codegen {
       this.entryAllocas.push(`  ${idxAddr} = alloca i64`);
       lines.push(`  store i64 0, ptr ${idxAddr}`);
 
-      const varAddr = this.locals.has(stmt.varName) ? `%${stmt.varName}.${this.scopeCounter++}.addr` : `%${stmt.varName}.addr`;
+      const elemName2 = stmt.varName2 ?? stmt.varName;
+      const varAddr = this.locals.has(elemName2) ? `%${elemName2}.${this.scopeCounter++}.addr` : `%${elemName2}.addr`;
       this.entryAllocas.push(`  ${varAddr} = alloca i8`);
-      this.locals.set(stmt.varName, { type: "i8", typeKind: { tag: "int", bits: 8, signed: false }, mutable: false, isRef: false, addr: varAddr });
+      this.locals.set(elemName2, { type: "i8", typeKind: { tag: "int", bits: 8, signed: false }, mutable: false, isRef: false, addr: varAddr });
+      if (stmt.varName2) {
+        this.locals.set(stmt.varName, { type: "i64", typeKind: { tag: "int", bits: 64, signed: true }, mutable: false, isRef: false, addr: idxAddr });
+      }
 
       const condLabel = this.nextLabel("for.cond");
       const bodyLabel = this.nextLabel("for.body");
@@ -856,15 +866,19 @@ export class Codegen {
       if (!match) throw new Error("expected fixed array type for for-each");
       const arrSize = parseInt(match[1]);
       const elemTy = match[2];
-      const elemType = stmt.varType.tag === "ref" ? stmt.varType.inner : stmt.varType;
+      const elemTypeKind3 = stmt.varName2 ? stmt.varType2! : stmt.varType;
 
       const idxAddr = `%__for_idx.${this.scopeCounter++}.addr`;
       this.entryAllocas.push(`  ${idxAddr} = alloca i32`);
       lines.push(`  store i32 0, ptr ${idxAddr}`);
 
-      const varAddr = this.locals.has(stmt.varName) ? `%${stmt.varName}.${this.scopeCounter++}.addr` : `%${stmt.varName}.addr`;
+      const elemName3 = stmt.varName2 ?? stmt.varName;
+      const varAddr = this.locals.has(elemName3) ? `%${elemName3}.${this.scopeCounter++}.addr` : `%${elemName3}.addr`;
       this.entryAllocas.push(`  ${varAddr} = alloca ptr`);
-      this.locals.set(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: true, addr: varAddr });
+      this.locals.set(elemName3, { type: elemTy, typeKind: elemTypeKind3, mutable: false, isRef: true, addr: varAddr });
+      if (stmt.varName2) {
+        this.locals.set(stmt.varName, { type: "i32", typeKind: { tag: "int", bits: 32, signed: true }, mutable: false, isRef: false, addr: idxAddr });
+      }
 
       const condLabel = this.nextLabel("for.cond");
       const bodyLabel = this.nextLabel("for.body");
@@ -1849,6 +1863,15 @@ export class Codegen {
         return this.genDefaultValue(expr, lines);
       case "Cast":
         return this.genCast(expr, lines);
+      case "IsCheck": {
+        const [ol, ov, ot] = this.genExpr(expr.operand);
+        lines.push(...ol);
+        const tagVal = this.nextTemp();
+        lines.push(`  ${tagVal} = extractvalue ${ot} ${ov}, 0`);
+        const cmp = this.nextTemp();
+        lines.push(`  ${cmp} = icmp eq i32 ${tagVal}, ${expr.tag}`);
+        return [lines, cmp, "i1"];
+      }
       case "BoxCreate": {
         this.needsMalloc = true;
         const [valLines, valVal, valTy] = this.genExpr(expr.value);

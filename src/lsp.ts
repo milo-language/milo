@@ -129,6 +129,9 @@ function collectStmtTypeInfo(stmt: Stmt, fn: Function, infos: TypeInfo[]) {
         for (const s of arm.body) collectStmtTypeInfo(s, fn, infos);
       }
       break;
+    case "ForInStmt":
+      for (const s of stmt.body) collectStmtTypeInfo(s, fn, infos);
+      break;
   }
 }
 
@@ -400,6 +403,11 @@ function findVarHover(stmts: Stmt[], word: string, exprTypes: Map<Expr, import("
         const r = findVarHover(arm.body, word, exprTypes); if (r) return r;
       }
     }
+    if (stmt.kind === "ForInStmt") {
+      if (stmt.varName === word) return `let ${stmt.varName}: (loop variable)`;
+      if (stmt.varName2 && stmt.varName2 === word) return `let ${stmt.varName2}: (loop variable)`;
+      const r = findVarHover(stmt.body, word, exprTypes); if (r) return r;
+    }
   }
   return null;
 }
@@ -424,6 +432,9 @@ function findHoverInStmt(stmt: Stmt, line: number, col: number, exprTypes: Map<E
     for (const arm of stmt.arms) {
       for (const s of arm.body) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
     }
+  }
+  if (stmt.kind === "ForInStmt") {
+    for (const s of stmt.body) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
   }
   return null;
 }
@@ -703,6 +714,10 @@ function findVarDecl(stmt: Stmt, name: string): Span | null {
       for (const s of arm.body) { const r = findVarDecl(s, name); if (r) return r; }
     }
   }
+  if (stmt.kind === "ForInStmt") {
+    if ((stmt.varName === name || stmt.varName2 === name) && stmt.span) return stmt.span;
+    for (const s of stmt.body) { const r = findVarDecl(s, name); if (r) return r; }
+  }
   if (stmt.kind === "IfLetStmt") {
     if (stmt.pattern.kind === "EnumPattern" && stmt.pattern.bindings.includes(name) && stmt.pattern.span) {
       return stmt.pattern.span;
@@ -872,7 +887,7 @@ function handleCompletion(uri: string, line: number, character: number): object 
   const seen = new Set<string>();
 
   // builtins
-  for (const b of ["print", "eprint", "format", "jsonStringify", "embedFile", "flush"]) {
+  for (const b of ["print", "eprint", "format", "jsonStringify", "embedFile", "flush", "max", "min"]) {
     if (b.startsWith(partial) && !seen.has(b)) {
       seen.add(b);
       items.push({ label: b, kind: CIK_FUNCTION, detail: "builtin" });

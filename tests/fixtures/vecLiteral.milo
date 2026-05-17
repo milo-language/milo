@@ -1,0 +1,17 @@
+// @expect: 5
+// @expect: hello
+// @expect: world
+// @expect: milo
+// @expect: extra
+
+fn main(): i32 {
+    let nums: Vec<i32> = [1, 2, 3, 4, 5]
+    print(nums.len)
+
+    var words: Vec<string> = ["hello", "world", "milo"]
+    words.push("extra")
+    for w in words {
+        print(w)
+    }
+    return 0
+}

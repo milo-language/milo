@@ -46,6 +46,7 @@ export interface CheckResult {
   movedExprs: Set<Expr>;
   borrowedExprs: Set<Expr>;
   autoWrappedOption: Map<Expr, string>;
+  arrayToVecCoercions: Set<Expr>;
   functions: Map<string, FnSig>;
   structs: Map<string, StructInfo>;
   enums: Map<string, EnumInfo>;
@@ -121,6 +122,7 @@ export class TypeChecker {
   private movedExprs = new Set<Expr>();
   private borrowedExprs = new Set<Expr>();
   private autoWrappedOption = new Map<Expr, string>();
+  private arrayToVecCoercions = new Set<Expr>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
   private closureScopeDepth: number | null = null;
@@ -617,6 +619,7 @@ export class TypeChecker {
       movedExprs: this.movedExprs,
       borrowedExprs: this.borrowedExprs,
       autoWrappedOption: this.autoWrappedOption,
+      arrayToVecCoercions: this.arrayToVecCoercions,
       functions: this.functions,
       structs: this.structs,
       enums: this.enums,
@@ -635,17 +638,44 @@ export class TypeChecker {
 
   private processDerives(program: Program): import("./ast").ImplDecl[] {
     const result: import("./ast").ImplDecl[] = [];
+    const explicitEq = new Set<string>();
     for (const s of program.structs) {
       if (!s.attributes || s.typeParams.length > 0) continue;
       for (const attr of s.attributes) {
         if (attr.name !== "derive") continue;
         for (const traitName of attr.args) {
+          if (traitName === "Eq") explicitEq.add(s.name);
           const impl = this.synthesizeDeriveImpl(s, traitName);
           if (impl) result.push(impl);
         }
       }
     }
+    // auto-derive Eq for all structs not explicitly derived and not generic
+    for (const s of program.structs) {
+      if (s.typeParams.length > 0) continue;
+      if (explicitEq.has(s.name)) continue;
+      // check if an explicit impl Eq already exists
+      if (program.impls.some(i => i.traitName === "Eq" && i.typeName === s.name)) continue;
+      // check all fields are Eq-able (primitives, strings, enums, or other auto-Eq structs)
+      let allEq = true;
+      for (const f of s.fields) {
+        const ft = this.resolve(f.type);
+        const ftName = typeName(ft);
+        if (!this.canAutoEq(ft)) { allEq = false; break; }
+      }
+      if (allEq) {
+        const impl = this.deriveEq(s, true);
+        if (impl) result.push(impl);
+      }
+    }
     return result;
+  }
+
+  private canAutoEq(t: TypeKind): boolean {
+    if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "string") return true;
+    if (t.tag === "enum") return true;
+    if (t.tag === "struct") return true;
+    return false;
   }
 
   private synthesizeDeriveImpl(s: import("./ast").StructDecl, traitName: string): import("./ast").ImplDecl | null {
@@ -654,13 +684,14 @@ export class TypeChecker {
     return null;
   }
 
-  private deriveEq(s: import("./ast").StructDecl): import("./ast").ImplDecl {
-    // verify all fields implement Eq
-    for (const f of s.fields) {
-      const ft = this.resolve(f.type);
-      const ftName = typeName(ft);
-      if (!this.typeImplementsTrait(ftName, "Eq")) {
-        this.error(`cannot derive Eq for '${s.name}': field '${f.name}' of type '${ftName}' does not implement Eq`);
+  private deriveEq(s: import("./ast").StructDecl, skipValidation = false): import("./ast").ImplDecl {
+    if (!skipValidation) {
+      for (const f of s.fields) {
+        const ft = this.resolve(f.type);
+        const ftName = typeName(ft);
+        if (!this.typeImplementsTrait(ftName, "Eq")) {
+          this.error(`cannot derive Eq for '${s.name}': field '${f.name}' of type '${ftName}' does not implement Eq`);
+        }
       }
     }
 
@@ -1076,6 +1107,8 @@ export class TypeChecker {
           const optInner = this.optionInnerType(hint);
           if (optInner && typeEq(optInner, valType)) {
             this.autoWrappedOption.set(stmt.value, hint.name);
+          } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
+            this.arrayToVecCoercions.add(stmt.value);
           } else {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
@@ -1091,6 +1124,8 @@ export class TypeChecker {
           const optInner = this.optionInnerType(hint);
           if (optInner && typeEq(optInner, valType)) {
             this.autoWrappedOption.set(stmt.value, hint.name);
+          } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
+            this.arrayToVecCoercions.add(stmt.value);
           } else {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
@@ -1235,9 +1270,6 @@ export class TypeChecker {
         } else {
           const iterType = this.checkExpr(stmt.iterable);
           if (iterType.tag === "vec") {
-            if (stmt.varName2) {
-              this.error("vec for loop takes one binding, not two", sp);
-            }
             const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
             // mark vec as borrowed to prevent mutation during iteration
             if (stmt.iterable.kind === "Ident") {
@@ -1247,7 +1279,14 @@ export class TypeChecker {
             const preMoves = this.snapshotMoveState();
             this.returnOnlyMovesStack.push(new Set());
             this.pushScope();
-            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
+            if (stmt.varName2) {
+              // enumerate: for i, val in vec
+              const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
+              this.declare(stmt.varName, { type: idxType, mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(stmt.varName2, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
+            } else {
+              this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
+            }
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -1262,14 +1301,17 @@ export class TypeChecker {
               }
             }
           } else if (iterType.tag === "string") {
-            if (stmt.varName2) {
-              this.error("string for loop takes one binding, not two", sp);
-            }
             const byteType: TypeKind = { tag: "int", bits: 8, signed: false };
             const preMoves = this.snapshotMoveState();
             this.returnOnlyMovesStack.push(new Set());
             this.pushScope();
-            this.declare(stmt.varName, { type: byteType, mutable: false, moved: false, borrowed: false, read: false });
+            if (stmt.varName2) {
+              const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
+              this.declare(stmt.varName, { type: idxType, mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(stmt.varName2, { type: byteType, mutable: false, moved: false, borrowed: false, read: false });
+            } else {
+              this.declare(stmt.varName, { type: byteType, mutable: false, moved: false, borrowed: false, read: false });
+            }
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -1312,9 +1354,6 @@ export class TypeChecker {
               }
             }
           } else if (iterType.tag === "array") {
-            if (stmt.varName2) {
-              this.error("array for loop takes one binding, not two", sp);
-            }
             const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
             if (stmt.iterable.kind === "Ident") {
               const info = this.lookup(stmt.iterable.name);
@@ -1323,7 +1362,13 @@ export class TypeChecker {
             const preMoves = this.snapshotMoveState();
             this.returnOnlyMovesStack.push(new Set());
             this.pushScope();
-            this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
+            if (stmt.varName2) {
+              const idxType: TypeKind = { tag: "int", bits: 64, signed: true };
+              this.declare(stmt.varName, { type: idxType, mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(stmt.varName2, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
+            } else {
+              this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
+            }
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
@@ -2806,6 +2851,15 @@ export class TypeChecker {
       case "RangeExpr":
         this.error("range expressions can only be used in 'for' loops", sp);
         return this.setType(expr, { tag: "unknown" });
+      case "IsExpr": {
+        const opType = this.checkExpr(expr.operand);
+        if (expr.pattern.kind === "EnumPattern") {
+          if (opType.tag !== "enum" && opType.tag !== "unknown") {
+            this.error(`'is' pattern requires an enum type, got ${typeName(opType)}`, sp);
+          }
+        }
+        return this.setType(expr, { tag: "bool" });
+      }
     }
   }
 

@@ -1,0 +1,23 @@
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: found some
+
+enum Maybe {
+    Just(i32),
+    Nothing,
+}
+
+fn main(): i32 {
+    let a = Maybe.Just(42)
+    let b = Maybe.Nothing
+    print(a is Maybe.Just)
+    print(a is Maybe.Nothing)
+    print(b is Maybe.Nothing)
+
+    let opt = Option.Some(99)
+    if opt is Option.Some {
+        print("found some")
+    }
+    return 0
+}

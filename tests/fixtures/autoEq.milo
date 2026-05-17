@@ -1,0 +1,18 @@
+// @expect: true
+// @expect: false
+// @expect: true
+
+struct Vec2 {
+    x: i32,
+    y: i32,
+}
+
+fn main(): i32 {
+    let a = Vec2 { x: 1, y: 2 }
+    let b = Vec2 { x: 1, y: 2 }
+    let c = Vec2 { x: 3, y: 4 }
+    print(a == b)
+    print(a == c)
+    print(c == c)
+    return 0
+}

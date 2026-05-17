@@ -627,6 +627,11 @@ export class Parser {
 
   private parseComparison(): Expr {
     let left = this.parseShift();
+    if (this.at(TokenKind.Is)) {
+      this.advance();
+      const pattern = this.parsePattern();
+      return { kind: "IsExpr", operand: left, pattern, span: left.span };
+    }
     while (this.peek().kind === TokenKind.EqEq || this.peek().kind === TokenKind.Neq ||
            this.peek().kind === TokenKind.LtEq || this.peek().kind === TokenKind.GtEq ||
            // single Lt/Gt only when not part of an adjacent shift pair (handled at parseShift)
