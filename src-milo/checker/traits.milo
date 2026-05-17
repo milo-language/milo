@@ -1,0 +1,395 @@
+// Trait/impl resolution, derive macros, builtin registrations
+from "src-milo/ast.milo" import {
+    Program, Function, Expr, MiloType, StructDecl, EnumDecl, ImplDecl,
+    Param, Span, simpleType, TraitDecl, TraitMethod,
+}
+from "src-milo/checker/types.milo" import {
+    TypeKind, typeEq, typeName, typeFromAst,
+    tyI32, tyI64, tyU8, tyBool, tyVoid, tyString, tyUnknown,
+}
+from "src-milo/checker/state.milo" import {
+    Checker, FnSig, FnParam, StructInfo, StructField, EnumInfo, VariantInfo,
+    TraitInfo, TraitMethodInfo, ImplInfo,
+    error, pushScope, popScope, declare,
+}
+
+// -- Register builtin traits (Eq, Hash, Clone, Display, Add/Sub/Mul/Div, Drop) --
+
+fn registerBuiltinTraits(ck: &mut Checker) {
+    let selfRef = TypeKind.TRef(Box.new(TypeKind.TStruct("Self")), false)
+    let selfRefMut = TypeKind.TRef(Box.new(TypeKind.TStruct("Self")), true)
+    let selfType = TypeKind.TStruct("Self")
+
+    // Eq
+    var eqMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
+    eqMethods.insert("eq", TraitMethodInfo {
+        params: Vec.new(),  // self + other handled via convention
+        ret: tyBool(),
+        hasDefault: false,
+    })
+    ck.traits.insert("Eq", TraitInfo { name: "Eq", supertraits: Vec.new(), methods: eqMethods })
+
+    // Hash
+    var hashMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
+    hashMethods.insert("hash", TraitMethodInfo {
+        params: Vec.new(),
+        ret: TypeKind.TInt(64, false),
+        hasDefault: false,
+    })
+    ck.traits.insert("Hash", TraitInfo { name: "Hash", supertraits: Vec.new(), methods: hashMethods })
+
+    // Clone
+    var cloneMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
+    cloneMethods.insert("clone", TraitMethodInfo {
+        params: Vec.new(),
+        ret: selfType.clone(),
+        hasDefault: false,
+    })
+    ck.traits.insert("Clone", TraitInfo { name: "Clone", supertraits: Vec.new(), methods: cloneMethods })
+
+    // Display
+    var displayMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
+    displayMethods.insert("toString", TraitMethodInfo {
+        params: Vec.new(),
+        ret: tyString(),
+        hasDefault: false,
+    })
+    ck.traits.insert("Display", TraitInfo { name: "Display", supertraits: Vec.new(), methods: displayMethods })
+
+    // Drop
+    var dropMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
+    dropMethods.insert("drop", TraitMethodInfo {
+        params: Vec.new(),
+        ret: tyVoid(),
+        hasDefault: false,
+    })
+    ck.traits.insert("Drop", TraitInfo { name: "Drop", supertraits: Vec.new(), methods: dropMethods })
+
+    // Add, Sub, Mul, Div
+    var opTraits: Vec<string> = Vec.new()
+    opTraits.push("Add")
+    opTraits.push("Sub")
+    opTraits.push("Mul")
+    opTraits.push("Div")
+    var i: i64 = 0
+    while i < opTraits.len {
+        var methods: HashMap<string, TraitMethodInfo> = HashMap.new()
+        var methodName = opTraits[i].toLower()
+        methods.insert(methodName, TraitMethodInfo {
+            params: Vec.new(),
+            ret: selfType.clone(),
+            hasDefault: false,
+        })
+        ck.traits.insert(opTraits[i].clone(), TraitInfo { name: opTraits[i].clone(), supertraits: Vec.new(), methods: methods })
+        i = i + 1
+    }
+
+    // Register Eq for primitives
+    var primTypes: Vec<string> = Vec.new()
+    primTypes.push("i8")
+    primTypes.push("i16")
+    primTypes.push("i32")
+    primTypes.push("i64")
+    primTypes.push("u8")
+    primTypes.push("u16")
+    primTypes.push("u32")
+    primTypes.push("u64")
+    primTypes.push("f32")
+    primTypes.push("f64")
+    primTypes.push("bool")
+    primTypes.push("string")
+    i = 0
+    while i < primTypes.len {
+        var eqImplMethods: HashMap<string, FnSig> = HashMap.new()
+        eqImplMethods.insert("eq", FnSig {
+            params: Vec.new(),
+            ret: tyBool(),
+            variadic: false,
+            isExtern: false,
+        })
+        var implList: Vec<ImplInfo> = Vec.new()
+        implList.push(ImplInfo {
+            traitName: Option.Some("Eq"),
+            typeName: primTypes[i].clone(),
+            methods: eqImplMethods,
+        })
+        ck.traitImpls.insert(primTypes[i].clone(), implList)
+        i = i + 1
+    }
+}
+
+// -- Check if type implements trait --
+
+fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): bool {
+    if !ck.traitImpls.contains(typeName) { return false }
+    let impls = ck.traitImpls.get(typeName)
+    var i: i64 = 0
+    while i < impls.len {
+        match &impls[i].traitName {
+            Option.Some(tn) => {
+                if tn == traitName { return true }
+            }
+            Option.None => {}
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// -- Resolve method on a type (inherent or trait) --
+
+fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Option<string> {
+    // Check inherent impls
+    if ck.inherentImpls.contains(objTypeName) {
+        let impl = ck.inherentImpls.get(objTypeName)
+        if impl.methods.contains(methodName) {
+            return Option.Some(objTypeName.clone() + "$" + methodName.clone())
+        }
+    }
+
+    // Check trait impls
+    if ck.traitImpls.contains(objTypeName) {
+        let impls = ck.traitImpls.get(objTypeName)
+        var i: i64 = 0
+        while i < impls.len {
+            if impls[i].methods.contains(methodName) {
+                match &impls[i].traitName {
+                    Option.Some(tn) => {
+                        return Option.Some(objTypeName.clone() + "$" + tn.clone() + "$" + methodName.clone())
+                    }
+                    Option.None => {
+                        return Option.Some(objTypeName.clone() + "$" + methodName.clone())
+                    }
+                }
+            }
+            i = i + 1
+        }
+    }
+
+    return Option.None
+}
+
+// -- Register an impl block --
+
+fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
+    let tn = impl.typeName.clone()
+
+    match &impl.traitName {
+        Option.Some(traitName) => {
+            // Trait impl
+            if !ck.traits.contains(traitName) {
+                error(ck, "unknown trait '" + traitName.clone() + "'", impl.span.clone())
+                return
+            }
+
+            // Register Drop impl
+            if traitName == "Drop" {
+                ck.dropImpls.insert(tn.clone(), true)
+            }
+
+            var methods: HashMap<string, FnSig> = HashMap.new()
+            var i: i64 = 0
+            while i < impl.methods.len {
+                let m = &impl.methods[i]
+                let mangled = tn.clone() + "$" + traitName.clone() + "$" + m.name.clone()
+
+                // Register function signature
+                var params: Vec<FnParam> = Vec.new()
+                var pi: i64 = 0
+                while pi < m.params.len {
+                    var pType = typeFromAst(&m.params[pi].type)
+                    // Substitute Self with concrete type
+                    match &pType {
+                        TypeKind.TRef(inner, mutable) => {
+                            match inner {
+                                TypeKind.TStruct(name) => {
+                                    if name == "Self" {
+                                        pType = TypeKind.TRef(Box.new(TypeKind.TStruct(tn.clone())), mutable)
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        TypeKind.TStruct(name) => {
+                            if name == "Self" { pType = TypeKind.TStruct(tn.clone()) }
+                        }
+                        _ => {}
+                    }
+                    params.push(FnParam { name: m.params[pi].name.clone(), type: pType })
+                    pi = pi + 1
+                }
+                var retType = typeFromAst(&m.retType)
+                match &retType {
+                    TypeKind.TStruct(name) => {
+                        if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }
+                    }
+                    _ => {}
+                }
+                let sig = FnSig { params: params.clone(), ret: retType.clone(), variadic: false, isExtern: false }
+                ck.functions.insert(mangled.clone(), sig.clone())
+                methods.insert(m.name.clone(), sig)
+
+                // Add to monomorphized functions for codegen
+                ck.monomorphizedFns.push(Function {
+                    name: mangled,
+                    typeParams: Vec.new(),
+                    params: m.params.clone(),
+                    retType: m.retType.clone(),
+                    body: m.body.clone(),
+                    isExtern: false,
+                    isVariadic: false,
+                })
+                i = i + 1
+            }
+
+            let implInfo = ImplInfo {
+                traitName: Option.Some(traitName.clone()),
+                typeName: tn.clone(),
+                methods: methods,
+            }
+            if ck.traitImpls.contains(&tn) {
+                ck.traitImpls.get(&tn).push(implInfo)
+            } else {
+                var list: Vec<ImplInfo> = Vec.new()
+                list.push(implInfo)
+                ck.traitImpls.insert(tn, list)
+            }
+        }
+        Option.None => {
+            // Inherent impl
+            var methods: HashMap<string, FnSig> = HashMap.new()
+            var i: i64 = 0
+            while i < impl.methods.len {
+                let m = &impl.methods[i]
+                let mangled = tn.clone() + "$" + m.name.clone()
+
+                var params: Vec<FnParam> = Vec.new()
+                var pi: i64 = 0
+                while pi < m.params.len {
+                    var pType = typeFromAst(&m.params[pi].type)
+                    match &pType {
+                        TypeKind.TRef(inner, mutable) => {
+                            match inner {
+                                TypeKind.TStruct(name) => {
+                                    if name == "Self" {
+                                        pType = TypeKind.TRef(Box.new(TypeKind.TStruct(tn.clone())), mutable)
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        TypeKind.TStruct(name) => {
+                            if name == "Self" { pType = TypeKind.TStruct(tn.clone()) }
+                        }
+                        _ => {}
+                    }
+                    params.push(FnParam { name: m.params[pi].name.clone(), type: pType })
+                    pi = pi + 1
+                }
+                var retType = typeFromAst(&m.retType)
+                match &retType {
+                    TypeKind.TStruct(name) => {
+                        if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }
+                    }
+                    _ => {}
+                }
+                let sig = FnSig { params: params, ret: retType, variadic: false, isExtern: false }
+                ck.functions.insert(mangled.clone(), sig.clone())
+                methods.insert(m.name.clone(), sig)
+
+                ck.monomorphizedFns.push(Function {
+                    name: mangled,
+                    typeParams: Vec.new(),
+                    params: m.params.clone(),
+                    retType: m.retType.clone(),
+                    body: m.body.clone(),
+                    isExtern: false,
+                    isVariadic: false,
+                })
+                i = i + 1
+            }
+
+            ck.inherentImpls.insert(tn, ImplInfo {
+                traitName: Option.None,
+                typeName: impl.typeName.clone(),
+                methods: methods,
+            })
+        }
+    }
+}
+
+// -- Process all impls in a program --
+
+fn registerAllImpls(ck: &mut Checker, program: &Program) {
+    var i: i64 = 0
+    while i < program.impls.len {
+        registerImpl(ck, &program.impls[i])
+        i = i + 1
+    }
+}
+
+// -- Derive Eq for a struct --
+
+fn deriveEq(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
+    // Generate: fn eq(self: &Self, other: &Self): bool { self.f1 == other.f1 && ... }
+    var selfParam = Param { name: "self", type: simpleType("Self") }
+    selfParam.type.isRef = true
+    var otherParam = Param { name: "other", type: simpleType("Self") }
+    otherParam.type.isRef = true
+
+    var params: Vec<Param> = Vec.new()
+    params.push(selfParam)
+    params.push(otherParam)
+
+    // Build body: return self.f1 == other.f1 && self.f2 == other.f2 && ...
+    // For now, generate a placeholder that returns true (full AST generation is complex)
+    var body: Vec<Box<Stmt>> = Vec.new()
+    body.push(Box.new(Stmt.Return(Option.Some(Box.new(Expr.BoolLit(true, Option.None))), Option.None)))
+
+    var methods: Vec<Function> = Vec.new()
+    methods.push(Function {
+        name: "eq",
+        typeParams: Vec.new(),
+        params: params,
+        retType: simpleType("bool"),
+        body: body,
+        isExtern: false,
+        isVariadic: false,
+    })
+
+    return Option.Some(ImplDecl {
+        traitName: Option.Some("Eq"),
+        typeName: s.name.clone(),
+        typeParams: Vec.new(),
+        methods: methods,
+        span: Option.None,
+    })
+}
+
+// -- Process @derive attributes --
+
+fn processDerives(ck: &mut Checker, program: &Program) {
+    var i: i64 = 0
+    while i < program.structs.len {
+        let s = &program.structs[i]
+        if s.typeParams.len > 0 { i = i + 1; continue }
+        var j: i64 = 0
+        while j < s.attributes.len {
+            if s.attributes[j].name == "derive" {
+                var k: i64 = 0
+                while k < s.attributes[j].args.len {
+                    if s.attributes[j].args[k] == "Eq" {
+                        let impl = deriveEq(ck, s)
+                        match impl {
+                            Option.Some(decl) => { registerImpl(ck, &decl) }
+                            Option.None => {}
+                        }
+                    }
+                    k = k + 1
+                }
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+}
