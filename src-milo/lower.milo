@@ -1,0 +1,891 @@
+// AST + Checker result → HIRModule lowering pass.
+// Attaches resolved types from checker to every HIR node.
+from "src-milo/ast.milo" import {
+    Program, Function, Stmt, Expr, Pattern, MiloType, Param, MatchArm, StructLitField, Span,
+}
+from "src-milo/checker/types.milo" import {
+    TypeKind, typeFromAst, tyVoid, tyI32, tyI64, tyU8, tyBool, tyString, tyUnknown,
+}
+from "src-milo/checker/state.milo" import {
+    Checker, FnSig, StructInfo, EnumInfo, VariantInfo,
+}
+from "src-milo/hir.milo" import {
+    HIRModule, HIRFunction, HIRStruct, HIREnum, HIRVariant, HIRField, HIRParam,
+    HIRStmt, HIRExpr, HIRArg, HIRMatchArm, HIRPattern, HIRStructField,
+    PatternBinding, ClosureParam, CaptureInfo,
+}
+
+// -- Lower a full program --
+
+fn lower(program: &Program, ck: &Checker): HIRModule {
+    var structs: Vec<HIRStruct> = Vec.new()
+    var enums: Vec<HIREnum> = Vec.new()
+    var functions: Vec<HIRFunction> = Vec.new()
+
+    // Lower structs (skip generic templates)
+    var i: i64 = 0
+    while i < program.structs.len {
+        if program.structs[i].typeParams.len == 0 {
+            let name = program.structs[i].name.clone()
+            if ck.structs.contains(&name) {
+                let info = ck.structs.get(&name)
+                var fields: Vec<HIRField> = Vec.new()
+                var j: i64 = 0
+                while j < info.fields.len {
+                    fields.push(HIRField {
+                        name: info.fields[j].name.clone(),
+                        type: info.fields[j].type.clone(),
+                    })
+                    j = j + 1
+                }
+                structs.push(HIRStruct { name: name, fields: fields })
+            }
+        }
+        i = i + 1
+    }
+
+    // Lower enums (all registered, including monomorphized)
+    for key, info in ck.enums {
+        var variants: Vec<HIRVariant> = Vec.new()
+        for vname, vinfo in info.variants {
+            variants.push(HIRVariant {
+                name: vname.clone(),
+                tag: vinfo.tag,
+                fields: vinfo.fields.clone(),
+            })
+        }
+        enums.push(HIREnum { name: key.clone(), variants: variants })
+    }
+
+    // Lower functions
+    i = 0
+    while i < program.functions.len {
+        let f = &program.functions[i]
+        if f.isExtern {
+            functions.push(lowerExtern(f, ck))
+        } else if f.typeParams.len == 0 {
+            functions.push(lowerFn(f, ck))
+        }
+        i = i + 1
+    }
+
+    // Lower monomorphized functions
+    i = 0
+    while i < ck.monomorphizedFns.len {
+        functions.push(lowerFn(&ck.monomorphizedFns[i], ck))
+        i = i + 1
+    }
+
+    return HIRModule {
+        structs: structs,
+        enums: enums,
+        functions: functions,
+        dropImpls: ck.dropImpls.clone(),
+    }
+}
+
+// -- Lower extern function --
+
+fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
+    var params: Vec<HIRParam> = Vec.new()
+    var i: i64 = 0
+    while i < f.params.len {
+        let pType = typeFromAst(&f.params[i].type)
+        let innerType = match &pType {
+            TypeKind.TRef(inner, mutable) => { inner.clone() }
+            _ => { pType.clone() }
+        }
+        params.push(HIRParam {
+            name: f.params[i].name.clone(),
+            type: innerType,
+            isRef: f.params[i].type.isRef,
+            isRefMut: f.params[i].type.isRefMut,
+        })
+        i = i + 1
+    }
+    let retType = typeFromAst(&f.retType)
+    return HIRFunction {
+        name: f.name.clone(),
+        params: params,
+        retType: retType,
+        body: Vec.new(),
+        isExtern: true,
+        isVariadic: f.isVariadic,
+    }
+}
+
+// -- Lower function with body --
+
+fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
+    var params: Vec<HIRParam> = Vec.new()
+    var i: i64 = 0
+
+    // Use checker's resolved signature if available
+    let hasSig = ck.functions.contains(&f.name)
+    while i < f.params.len {
+        var pType = typeFromAst(&f.params[i].type)
+        if hasSig {
+            let sig = ck.functions.get(&f.name)
+            if i < sig.params.len {
+                pType = sig.params[i].type.clone()
+            }
+        }
+        let innerType = match &pType {
+            TypeKind.TRef(inner, mutable) => { inner.clone() }
+            _ => { pType.clone() }
+        }
+        params.push(HIRParam {
+            name: f.params[i].name.clone(),
+            type: innerType,
+            isRef: f.params[i].type.isRef,
+            isRefMut: f.params[i].type.isRefMut,
+        })
+        i = i + 1
+    }
+
+    var retType = typeFromAst(&f.retType)
+    if hasSig {
+        retType = ck.functions.get(&f.name).ret.clone()
+    }
+
+    var body: Vec<Box<HIRStmt>> = Vec.new()
+    var j: i64 = 0
+    while j < f.body.len {
+        body.push(Box.new(lowerStmt(&*f.body[j], &retType, ck)))
+        j = j + 1
+    }
+
+    return HIRFunction {
+        name: f.name.clone(),
+        params: params,
+        retType: retType,
+        body: body,
+        isExtern: false,
+        isVariadic: f.isVariadic,
+    }
+}
+
+// -- Lower statement --
+
+fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
+    match stmt {
+        Stmt.LetDecl(name, typeAnno, value, span) => {
+            let hirVal = lowerExpr(&*value, ck)
+            let valType = match typeAnno {
+                Option.Some(ty) => { typeFromAst(ty) }
+                Option.None => { hirExprType(&hirVal) }
+            }
+            return HIRStmt.Let(name.clone(), valType, Box.new(hirVal), false, span.clone())
+        }
+        Stmt.VarDecl(name, typeAnno, value, span) => {
+            let hirVal = lowerExpr(&*value, ck)
+            let valType = match typeAnno {
+                Option.Some(ty) => { typeFromAst(ty) }
+                Option.None => { hirExprType(&hirVal) }
+            }
+            return HIRStmt.Let(name.clone(), valType, Box.new(hirVal), true, span.clone())
+        }
+        Stmt.Assign(target, value, span) => {
+            return HIRStmt.Assign(Box.new(lowerExpr(&*target, ck)), Box.new(lowerExpr(&*value, ck)), span.clone())
+        }
+        Stmt.Return(value, span) => {
+            match value {
+                Option.Some(expr) => {
+                    return HIRStmt.Return(Option.Some(Box.new(lowerExpr(&*expr, ck))), fnRetType.clone(), span.clone())
+                }
+                Option.None => {
+                    return HIRStmt.Return(Option.None, fnRetType.clone(), span.clone())
+                }
+            }
+        }
+        Stmt.IfStmt(cond, thenBody, elseBody, span) => {
+            let hirCond = lowerExpr(&*cond, ck)
+            var hirThen: Vec<Box<HIRStmt>> = Vec.new()
+            var i: i64 = 0
+            while i < thenBody.len {
+                hirThen.push(Box.new(lowerStmt(&*thenBody[i], fnRetType, ck)))
+                i = i + 1
+            }
+            var hirElse: Option<Vec<Box<HIRStmt>>> = Option.None
+            match elseBody {
+                Option.Some(body) => {
+                    var els: Vec<Box<HIRStmt>> = Vec.new()
+                    var j: i64 = 0
+                    while j < body.len {
+                        els.push(Box.new(lowerStmt(&*body[j], fnRetType, ck)))
+                        j = j + 1
+                    }
+                    hirElse = Option.Some(els)
+                }
+                Option.None => {}
+            }
+            return HIRStmt.If(Box.new(hirCond), hirThen, hirElse, span.clone())
+        }
+        Stmt.WhileStmt(cond, body, span) => {
+            let hirCond = lowerExpr(&*cond, ck)
+            var hirBody: Vec<Box<HIRStmt>> = Vec.new()
+            var i: i64 = 0
+            while i < body.len {
+                hirBody.push(Box.new(lowerStmt(&*body[i], fnRetType, ck)))
+                i = i + 1
+            }
+            return HIRStmt.While(Box.new(hirCond), hirBody, span.clone())
+        }
+        Stmt.BreakStmt(span) => { return HIRStmt.Break(span.clone()) }
+        Stmt.ContinueStmt(span) => { return HIRStmt.Continue(span.clone()) }
+        Stmt.ExprStmt(expr, span) => {
+            return HIRStmt.ExprStmt(Box.new(lowerExpr(&*expr, ck)), span.clone())
+        }
+        Stmt.MatchStmt(subject, arms, span) => {
+            let hirSubj = lowerExpr(&*subject, ck)
+            var hirArms: Vec<HIRMatchArm> = Vec.new()
+            var i: i64 = 0
+            while i < arms.len {
+                hirArms.push(lowerMatchArm(&arms[i], ck))
+                i = i + 1
+            }
+            // Determine enum name from subject type
+            var enumName = ""
+            let subjType = hirExprType(&hirSubj)
+            match &subjType {
+                TypeKind.TEnum(name) => { enumName = name.clone() }
+                _ => {}
+            }
+            return HIRStmt.Match(Box.new(hirSubj), hirArms, enumName, span.clone())
+        }
+        Stmt.UnsafeBlock(body, span) => {
+            var hirBody: Vec<Box<HIRStmt>> = Vec.new()
+            var i: i64 = 0
+            while i < body.len {
+                hirBody.push(Box.new(lowerStmt(&*body[i], fnRetType, ck)))
+                i = i + 1
+            }
+            return HIRStmt.UnsafeBlock(hirBody, span.clone())
+        }
+        Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
+            match &*iterable {
+                Expr.RangeExpr(start, end, rspan) => {
+                    let hirStart = lowerExpr(&*start, ck)
+                    let hirEnd = lowerExpr(&*end, ck)
+                    let varType = hirExprType(&hirStart)
+                    var hirBody: Vec<Box<HIRStmt>> = Vec.new()
+                    var i: i64 = 0
+                    while i < body.len {
+                        hirBody.push(Box.new(lowerStmt(&*body[i], fnRetType, ck)))
+                        i = i + 1
+                    }
+                    return HIRStmt.ForRange(varName.clone(), varType, Box.new(hirStart), Box.new(hirEnd), hirBody, span.clone())
+                }
+                _ => {
+                    let hirIter = lowerExpr(&*iterable, ck)
+                    let iterType = hirExprType(&hirIter)
+                    var iterKind = "vec"
+                    var varType = tyUnknown()
+                    var varType2: Option<TypeKind> = Option.None
+                    match &iterType {
+                        TypeKind.TVec(elem) => {
+                            iterKind = "vec"
+                            match varName2 {
+                                Option.Some(n2) => {
+                                    varType = tyI64()
+                                    varType2 = Option.Some(TypeKind.TRef(Box.new(elem.clone()), false))
+                                }
+                                Option.None => {
+                                    varType = TypeKind.TRef(Box.new(elem.clone()), false)
+                                }
+                            }
+                        }
+                        TypeKind.TString => {
+                            iterKind = "string"
+                            match varName2 {
+                                Option.Some(n2) => {
+                                    varType = tyI64()
+                                    varType2 = Option.Some(tyU8())
+                                }
+                                Option.None => {
+                                    varType = tyU8()
+                                }
+                            }
+                        }
+                        TypeKind.THashMap(key, val) => {
+                            iterKind = "hashmap"
+                            varType = TypeKind.TRef(Box.new(key.clone()), false)
+                            varType2 = Option.Some(TypeKind.TRef(Box.new(val.clone()), false))
+                        }
+                        TypeKind.TArray(elem, size) => {
+                            iterKind = "array"
+                            match varName2 {
+                                Option.Some(n2) => {
+                                    varType = tyI64()
+                                    varType2 = Option.Some(TypeKind.TRef(Box.new(elem.clone()), false))
+                                }
+                                Option.None => {
+                                    varType = TypeKind.TRef(Box.new(elem.clone()), false)
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    var hirBody: Vec<Box<HIRStmt>> = Vec.new()
+                    var i: i64 = 0
+                    while i < body.len {
+                        hirBody.push(Box.new(lowerStmt(&*body[i], fnRetType, ck)))
+                        i = i + 1
+                    }
+                    return HIRStmt.ForEach(varName.clone(), varName2.clone(), varType, varType2, Box.new(hirIter), iterKind, hirBody, span.clone())
+                }
+            }
+        }
+        Stmt.IfLetStmt(pattern, expr, thenBody, elseBody, span) => {
+            // Lower if-let as a match with two arms
+            let hirSubj = lowerExpr(&*expr, ck)
+            var enumName = ""
+            let subjType = hirExprType(&hirSubj)
+            match &subjType {
+                TypeKind.TEnum(name) => { enumName = name.clone() }
+                _ => {}
+            }
+            var arms: Vec<HIRMatchArm> = Vec.new()
+            // Then arm
+            var hirThen: Vec<Box<HIRStmt>> = Vec.new()
+            var i: i64 = 0
+            while i < thenBody.len {
+                hirThen.push(Box.new(lowerStmt(&*thenBody[i], fnRetType, ck)))
+                i = i + 1
+            }
+            arms.push(HIRMatchArm {
+                pattern: lowerPattern(pattern, ck, &enumName),
+                body: hirThen,
+            })
+            // Else arm (wildcard)
+            var hirElse: Vec<Box<HIRStmt>> = Vec.new()
+            match elseBody {
+                Option.Some(body) => {
+                    var j: i64 = 0
+                    while j < body.len {
+                        hirElse.push(Box.new(lowerStmt(&*body[j], fnRetType, ck)))
+                        j = j + 1
+                    }
+                }
+                Option.None => {}
+            }
+            arms.push(HIRMatchArm {
+                pattern: HIRPattern.WildcardPattern,
+                body: hirElse,
+            })
+            return HIRStmt.Match(Box.new(hirSubj), arms, enumName, span.clone())
+        }
+    }
+}
+
+// -- Lower match arm --
+
+fn lowerMatchArm(arm: &MatchArm, ck: &Checker): HIRMatchArm {
+    // Need to figure out enum name from context — use empty for now
+    let hirPattern = lowerPatternRaw(&arm.pattern, ck)
+    var hirBody: Vec<Box<HIRStmt>> = Vec.new()
+    var i: i64 = 0
+    while i < arm.body.len {
+        hirBody.push(Box.new(lowerStmt(&*arm.body[i], &tyVoid(), ck)))
+        i = i + 1
+    }
+    return HIRMatchArm { pattern: hirPattern, body: hirBody }
+}
+
+fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern {
+    match pattern {
+        Pattern.WildcardPattern(span) => { return HIRPattern.WildcardPattern }
+        Pattern.LiteralPattern(value, kind, span) => {
+            let kindStr = match kind {
+                LiteralKind.LitInt => { "int" }
+                LiteralKind.LitFloat => { "float" }
+                LiteralKind.LitString => { "string" }
+                LiteralKind.LitChar => { "char" }
+                LiteralKind.LitBool => { "bool" }
+            }
+            return HIRPattern.LiteralPattern(value.clone(), kindStr)
+        }
+        Pattern.EnumPattern(eName, variant, bindings, span) => {
+            var tag: i32 = 0
+            var hirBindings: Vec<PatternBinding> = Vec.new()
+            if ck.enums.contains(enumName) {
+                let enumInfo = ck.enums.get(enumName)
+                if enumInfo.variants.contains(variant) {
+                    let vinfo = enumInfo.variants.get(variant)
+                    tag = vinfo.tag
+                    var i: i64 = 0
+                    while i < bindings.len && i < vinfo.fields.len {
+                        hirBindings.push(PatternBinding {
+                            name: bindings[i].clone(),
+                            type: vinfo.fields[i].clone(),
+                        })
+                        i = i + 1
+                    }
+                }
+            }
+            return HIRPattern.EnumPattern(variant.clone(), hirBindings, tag)
+        }
+    }
+}
+
+fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
+    match pattern {
+        Pattern.WildcardPattern(span) => { return HIRPattern.WildcardPattern }
+        Pattern.LiteralPattern(value, kind, span) => {
+            let kindStr = match kind {
+                LiteralKind.LitInt => { "int" }
+                LiteralKind.LitFloat => { "float" }
+                LiteralKind.LitString => { "string" }
+                LiteralKind.LitChar => { "char" }
+                LiteralKind.LitBool => { "bool" }
+            }
+            return HIRPattern.LiteralPattern(value.clone(), kindStr)
+        }
+        Pattern.EnumPattern(eName, variant, bindings, span) => {
+            // Without context enum name, try to resolve from enum registry
+            var tag: i32 = 0
+            var hirBindings: Vec<PatternBinding> = Vec.new()
+            var i: i64 = 0
+            while i < bindings.len {
+                hirBindings.push(PatternBinding {
+                    name: bindings[i].clone(),
+                    type: tyUnknown(),
+                })
+                i = i + 1
+            }
+            return HIRPattern.EnumPattern(variant.clone(), hirBindings, tag)
+        }
+    }
+}
+
+// -- Lower expression --
+
+fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
+    match expr {
+        Expr.IntLit(value, span) => {
+            return HIRExpr.IntLit(value, tyI32(), span.clone())
+        }
+        Expr.FloatLit(value, span) => {
+            return HIRExpr.FloatLit(value, TypeKind.TFloat(64), span.clone())
+        }
+        Expr.BoolLit(value, span) => {
+            return HIRExpr.BoolLit(value, tyBool(), span.clone())
+        }
+        Expr.CharLit(value, span) => {
+            return HIRExpr.CharLit(value, tyU8(), span.clone())
+        }
+        Expr.StringLit(value, span) => {
+            return HIRExpr.StringLit(value.clone(), tyString(), span.clone())
+        }
+        Expr.Ident(name, span) => {
+            // Look up type from checker
+            var idType = tyUnknown()
+            if ck.functions.contains(name) {
+                let sig = ck.functions.get(name)
+                var paramTypes: Vec<TypeKind> = Vec.new()
+                var i: i64 = 0
+                while i < sig.params.len {
+                    paramTypes.push(sig.params[i].type.clone())
+                    i = i + 1
+                }
+                idType = TypeKind.TFn(paramTypes, Box.new(sig.ret.clone()))
+            }
+            return HIRExpr.Ident(name.clone(), idType, false, span.clone())
+        }
+        Expr.BinOp(op, left, right, span) => {
+            let hirLeft = lowerExpr(&*left, ck)
+            let hirRight = lowerExpr(&*right, ck)
+            var resultType = hirExprType(&hirLeft)
+            if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" || op == "&&" || op == "||" {
+                resultType = tyBool()
+            }
+            if op == "+" {
+                match &resultType {
+                    TypeKind.TString => {}
+                    _ => {}
+                }
+            }
+            return HIRExpr.BinOp(op.clone(), Box.new(hirLeft), Box.new(hirRight), resultType, span.clone())
+        }
+        Expr.UnaryOp(op, operand, span) => {
+            let hirOp = lowerExpr(&*operand, ck)
+            let opType = hirExprType(&hirOp)
+            if op == "*" {
+                match &opType {
+                    TypeKind.TBox(inner) => {
+                        return HIRExpr.BoxDeref(Box.new(hirOp), inner.clone(), span.clone())
+                    }
+                    TypeKind.TPtr(inner) => {
+                        return HIRExpr.PtrDeref(Box.new(hirOp), inner.clone(), span.clone())
+                    }
+                    _ => {}
+                }
+            }
+            var resultType = opType
+            if op == "!" { resultType = tyBool() }
+            return HIRExpr.UnaryOp(op.clone(), Box.new(hirOp), resultType, span.clone())
+        }
+        Expr.Call(func, args, typeArgs, span) => {
+            if func == "Box" && args.len == 1 {
+                let hirArg = lowerExpr(&*args[0], ck)
+                let inner = hirExprType(&hirArg)
+                return HIRExpr.BoxCreate(Box.new(hirArg), TypeKind.TBox(Box.new(inner)), span.clone())
+            }
+            var hirArgs: Vec<HIRArg> = Vec.new()
+            var i: i64 = 0
+            while i < args.len {
+                let hirArg = lowerExpr(&*args[i], ck)
+                hirArgs.push(HIRArg { expr: Box.new(hirArg), passByRef: false, refMut: false })
+                i = i + 1
+            }
+            var retType = tyUnknown()
+            var variadic = false
+            if ck.functions.contains(func) {
+                let sig = ck.functions.get(func)
+                retType = sig.ret.clone()
+                variadic = sig.variadic
+                // Mark ref args
+                var j: i64 = 0
+                while j < hirArgs.len && j < sig.params.len {
+                    match &sig.params[j].type {
+                        TypeKind.TRef(inner, mutable) => {
+                            hirArgs[j].passByRef = true
+                            hirArgs[j].refMut = mutable
+                        }
+                        _ => {}
+                    }
+                    j = j + 1
+                }
+            }
+            return HIRExpr.Call(func.clone(), hirArgs, retType, variadic, span.clone())
+        }
+        Expr.StructLit(name, fields, span) => {
+            var hirFields: Vec<HIRStructField> = Vec.new()
+            var i: i64 = 0
+            while i < fields.len {
+                hirFields.push(HIRStructField {
+                    name: fields[i].name.clone(),
+                    value: Box.new(lowerExpr(&*fields[i].value, ck)),
+                })
+                i = i + 1
+            }
+            return HIRExpr.StructLit(name.clone(), hirFields, TypeKind.TStruct(name.clone()), span.clone())
+        }
+        Expr.FieldAccess(obj, field, span) => {
+            let hirObj = lowerExpr(&*obj, ck)
+            var objType = hirExprType(&hirObj)
+            match &objType {
+                TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
+                _ => {}
+            }
+            // .len on built-in collections
+            if field == "len" {
+                match &objType {
+                    TypeKind.TArray(elem, size) => {
+                        return HIRExpr.ArrayLen(Box.new(hirObj), TypeKind.TInt(32, true), span.clone())
+                    }
+                    TypeKind.TString => {
+                        return HIRExpr.StringLen(Box.new(hirObj), TypeKind.TInt(64, true), span.clone())
+                    }
+                    TypeKind.TVec(elem) => {
+                        return HIRExpr.VecLen(Box.new(hirObj), TypeKind.TInt(64, true), span.clone())
+                    }
+                    TypeKind.THashMap(key, val) => {
+                        return HIRExpr.HashMapLen(Box.new(hirObj), TypeKind.TInt(64, true), span.clone())
+                    }
+                    _ => {}
+                }
+            }
+            // Struct field — look up type
+            var fieldType = tyUnknown()
+            match &objType {
+                TypeKind.TStruct(sname) => {
+                    if ck.structs.contains(sname) {
+                        let info = ck.structs.get(sname)
+                        var k: i64 = 0
+                        while k < info.fields.len {
+                            if info.fields[k].name == field {
+                                fieldType = info.fields[k].type.clone()
+                            }
+                            k = k + 1
+                        }
+                    }
+                }
+                _ => {}
+            }
+            return HIRExpr.FieldAccess(Box.new(hirObj), field.clone(), fieldType, span.clone())
+        }
+        Expr.ArrayLit(elements, span) => {
+            var hirElems: Vec<Box<HIRExpr>> = Vec.new()
+            var i: i64 = 0
+            while i < elements.len {
+                hirElems.push(Box.new(lowerExpr(&*elements[i], ck)))
+                i = i + 1
+            }
+            var elemType = tyUnknown()
+            if hirElems.len > 0 {
+                elemType = hirExprType(&*hirElems[0])
+            }
+            let arrType = TypeKind.TArray(Box.new(elemType), Option.Some(elements.len))
+            return HIRExpr.ArrayLit(hirElems, arrType, span.clone())
+        }
+        Expr.ArrayRepeat(value, count, span) => {
+            let hirVal = lowerExpr(&*value, ck)
+            let elemType = hirExprType(&hirVal)
+            let arrType = TypeKind.TArray(Box.new(elemType), Option.Some(count))
+            return HIRExpr.ArrayRepeat(Box.new(hirVal), count, arrType, span.clone())
+        }
+        Expr.IndexAccess(obj, index, span) => {
+            let hirObj = lowerExpr(&*obj, ck)
+            let hirIdx = lowerExpr(&*index, ck)
+            var objType = hirExprType(&hirObj)
+            match &objType {
+                TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
+                _ => {}
+            }
+            var elemType = tyUnknown()
+            match &objType {
+                TypeKind.TArray(elem, size) => { elemType = elem.clone() }
+                TypeKind.TVec(elem) => { elemType = elem.clone() }
+                TypeKind.TString => { elemType = tyU8() }
+                TypeKind.TPtr(inner) => { elemType = inner.clone() }
+                _ => {}
+            }
+            return HIRExpr.IndexAccess(Box.new(hirObj), Box.new(hirIdx), elemType, false, false, span.clone())
+        }
+        Expr.EnumLit(enumName, variant, args, span) => {
+            if enumName == "Vec" && variant == "new" {
+                return HIRExpr.VecNew(tyUnknown(), TypeKind.TVec(Box.new(tyUnknown())), span.clone())
+            }
+            if enumName == "HashMap" && variant == "new" {
+                return HIRExpr.HashMapNew(tyUnknown(), tyUnknown(), TypeKind.THashMap(Box.new(tyUnknown()), Box.new(tyUnknown())), span.clone())
+            }
+            var hirArgs: Vec<Box<HIRExpr>> = Vec.new()
+            var i: i64 = 0
+            while i < args.len {
+                hirArgs.push(Box.new(lowerExpr(&*args[i], ck)))
+                i = i + 1
+            }
+            return HIRExpr.EnumLit(enumName.clone(), variant.clone(), hirArgs, TypeKind.TEnum(enumName.clone()), span.clone())
+        }
+        Expr.Unwrap(operand, span) => {
+            let hirOp = lowerExpr(&*operand, ck)
+            let opType = hirExprType(&hirOp)
+            var enumName = ""
+            match &opType {
+                TypeKind.TEnum(name) => { enumName = name.clone() }
+                _ => {}
+            }
+            return HIRExpr.Unwrap(Box.new(hirOp), enumName, tyUnknown(), span.clone())
+        }
+        Expr.Propagate(operand, span) => {
+            let hirOp = lowerExpr(&*operand, ck)
+            let opType = hirExprType(&hirOp)
+            var enumName = ""
+            match &opType {
+                TypeKind.TEnum(name) => { enumName = name.clone() }
+                _ => {}
+            }
+            return HIRExpr.Propagate(Box.new(hirOp), enumName, tyVoid(), tyUnknown(), span.clone())
+        }
+        Expr.DefaultValue(operand, default, span) => {
+            let hirOp = lowerExpr(&*operand, ck)
+            let hirDef = lowerExpr(&*default, ck)
+            let opType = hirExprType(&hirOp)
+            var enumName = ""
+            match &opType {
+                TypeKind.TEnum(name) => { enumName = name.clone() }
+                _ => {}
+            }
+            let defType = hirExprType(&hirDef)
+            return HIRExpr.DefaultValue(Box.new(hirOp), Box.new(hirDef), enumName, defType, span.clone())
+        }
+        Expr.CastExpr(operand, targetType, span) => {
+            let hirOp = lowerExpr(&*operand, ck)
+            let toType = typeFromAst(targetType)
+            return HIRExpr.Cast(Box.new(hirOp), toType.clone(), toType, span.clone())
+        }
+        Expr.MethodCall(obj, method, args, span) => {
+            let hirObj = lowerExpr(&*obj, ck)
+            var objType = hirExprType(&hirObj)
+            match &objType {
+                TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
+                _ => {}
+            }
+
+            // toString on numbers
+            if (match &objType { TypeKind.TInt(b,s) => { true } TypeKind.TFloat(b) => { true } _ => { false } }) && method == "toString" {
+                return HIRExpr.NumberToString(Box.new(hirObj), objType, tyString(), span.clone())
+            }
+            // Vec methods
+            match &objType {
+                TypeKind.TVec(elem) => {
+                    if method == "push" && args.len == 1 {
+                        return HIRExpr.VecPush(Box.new(hirObj), Box.new(lowerExpr(&*args[0], ck)), tyVoid(), span.clone())
+                    }
+                    if method == "pop" {
+                        return HIRExpr.VecPop(Box.new(hirObj), elem.clone(), span.clone())
+                    }
+                    if method == "len" {
+                        return HIRExpr.VecLen(Box.new(hirObj), TypeKind.TInt(64, true), span.clone())
+                    }
+                }
+                _ => {}
+            }
+            // HashMap methods
+            match &objType {
+                TypeKind.THashMap(key, val) => {
+                    if method == "insert" && args.len == 2 {
+                        return HIRExpr.HashMapInsert(Box.new(hirObj), Box.new(lowerExpr(&*args[0], ck)), Box.new(lowerExpr(&*args[1], ck)), tyVoid(), span.clone())
+                    }
+                    if method == "get" && args.len == 1 {
+                        return HIRExpr.HashMapGet(Box.new(hirObj), Box.new(lowerExpr(&*args[0], ck)), "", val.clone(), span.clone())
+                    }
+                    if method == "contains" && args.len == 1 {
+                        return HIRExpr.HashMapContains(Box.new(hirObj), Box.new(lowerExpr(&*args[0], ck)), tyBool(), span.clone())
+                    }
+                    if method == "remove" && args.len == 1 {
+                        return HIRExpr.HashMapRemove(Box.new(hirObj), Box.new(lowerExpr(&*args[0], ck)), tyBool(), span.clone())
+                    }
+                    if method == "len" {
+                        return HIRExpr.HashMapLen(Box.new(hirObj), TypeKind.TInt(64, true), span.clone())
+                    }
+                }
+                _ => {}
+            }
+            // String methods
+            match &objType {
+                TypeKind.TString => {
+                    if method == "push" && args.len == 1 {
+                        return HIRExpr.StringPush(Box.new(hirObj), Box.new(lowerExpr(&*args[0], ck)), tyVoid(), span.clone())
+                    }
+                    if method == "clone" {
+                        return HIRExpr.StringClone(Box.new(hirObj), tyString(), span.clone())
+                    }
+                    if method == "substring" || method == "slice" {
+                        if args.len == 2 {
+                            return HIRExpr.StringSubstr(Box.new(hirObj), Box.new(lowerExpr(&*args[0], ck)), Box.new(lowerExpr(&*args[1], ck)), tyString(), span.clone())
+                        }
+                    }
+                    if method == "len" {
+                        return HIRExpr.StringLen(Box.new(hirObj), TypeKind.TInt(64, true), span.clone())
+                    }
+                }
+                _ => {}
+            }
+            // Fallback: lower as Call with self as first arg
+            var hirArgs: Vec<HIRArg> = Vec.new()
+            hirArgs.push(HIRArg { expr: Box.new(hirObj), passByRef: true, refMut: false })
+            var i: i64 = 0
+            while i < args.len {
+                hirArgs.push(HIRArg { expr: Box.new(lowerExpr(&*args[i], ck)), passByRef: false, refMut: false })
+                i = i + 1
+            }
+            return HIRExpr.Call(method.clone(), hirArgs, tyUnknown(), false, span.clone())
+        }
+        Expr.Closure(params, retType, body, isMove, span) => {
+            var hirParams: Vec<ClosureParam> = Vec.new()
+            var i: i64 = 0
+            while i < params.len {
+                hirParams.push(ClosureParam {
+                    name: params[i].name.clone(),
+                    type: typeFromAst(&params[i].type),
+                })
+                i = i + 1
+            }
+            var hirBody: Vec<Box<HIRStmt>> = Vec.new()
+            var j: i64 = 0
+            let closureRetType = match retType {
+                Option.Some(rt) => { typeFromAst(rt) }
+                Option.None => { tyVoid() }
+            }
+            while j < body.len {
+                hirBody.push(Box.new(lowerStmt(&*body[j], &closureRetType, ck)))
+                j = j + 1
+            }
+            var paramTypes: Vec<TypeKind> = Vec.new()
+            i = 0
+            while i < hirParams.len {
+                paramTypes.push(hirParams[i].type.clone())
+                i = i + 1
+            }
+            let fnType = TypeKind.TFn(paramTypes, Box.new(closureRetType.clone()))
+            var captures: Vec<CaptureInfo> = Vec.new()
+            return HIRExpr.Closure(hirParams, hirBody, captures, closureRetType, fnType, isMove, span.clone())
+        }
+        Expr.RangeExpr(start, end, span) => {
+            // Should not appear outside ForIn — lower as void
+            return HIRExpr.IntLit(0, tyI32(), span.clone())
+        }
+        Expr.IsExpr(operand, pattern, span) => {
+            let hirOp = lowerExpr(&*operand, ck)
+            var tag: i32 = -1
+            match pattern {
+                Pattern.EnumPattern(eName, variant, bindings, pspan) => {
+                    let opType = hirExprType(&hirOp)
+                    match &opType {
+                        TypeKind.TEnum(name) => {
+                            if ck.enums.contains(name) {
+                                let enumInfo = ck.enums.get(name)
+                                if enumInfo.variants.contains(variant) {
+                                    tag = enumInfo.variants.get(variant).tag
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            return HIRExpr.IsCheck(Box.new(hirOp), tag, tyBool(), span.clone())
+        }
+    }
+}
+
+// -- Extract type from HIR expression --
+
+fn hirExprType(expr: &HIRExpr): TypeKind {
+    match expr {
+        HIRExpr.IntLit(v, t, s) => { return t.clone() }
+        HIRExpr.FloatLit(v, t, s) => { return t.clone() }
+        HIRExpr.BoolLit(v, t, s) => { return t.clone() }
+        HIRExpr.CharLit(v, t, s) => { return t.clone() }
+        HIRExpr.StringLit(v, t, s) => { return t.clone() }
+        HIRExpr.Ident(n, t, m, s) => { return t.clone() }
+        HIRExpr.BinOp(op, l, r, t, s) => { return t.clone() }
+        HIRExpr.UnaryOp(op, o, t, s) => { return t.clone() }
+        HIRExpr.Call(f, a, t, v, s) => { return t.clone() }
+        HIRExpr.StructLit(n, f, t, s) => { return t.clone() }
+        HIRExpr.FieldAccess(o, f, t, s) => { return t.clone() }
+        HIRExpr.ArrayLit(e, t, s) => { return t.clone() }
+        HIRExpr.ArrayRepeat(v, c, t, s) => { return t.clone() }
+        HIRExpr.IndexAccess(o, i, t, m, b, s) => { return t.clone() }
+        HIRExpr.EnumLit(en, v, a, t, s) => { return t.clone() }
+        HIRExpr.ArrayLen(o, t, s) => { return t.clone() }
+        HIRExpr.StringLen(o, t, s) => { return t.clone() }
+        HIRExpr.Unwrap(o, n, t, s) => { return t.clone() }
+        HIRExpr.Propagate(o, n, r, t, s) => { return t.clone() }
+        HIRExpr.DefaultValue(o, d, n, t, s) => { return t.clone() }
+        HIRExpr.Cast(o, tt, t, s) => { return t.clone() }
+        HIRExpr.IsCheck(o, tag, t, s) => { return t.clone() }
+        HIRExpr.BoxCreate(v, t, s) => { return t.clone() }
+        HIRExpr.BoxDeref(o, t, s) => { return t.clone() }
+        HIRExpr.PtrDeref(o, t, s) => { return t.clone() }
+        HIRExpr.VecNew(e, t, s) => { return t.clone() }
+        HIRExpr.VecPush(v, val, t, s) => { return t.clone() }
+        HIRExpr.VecPop(v, t, s) => { return t.clone() }
+        HIRExpr.VecLen(o, t, s) => { return t.clone() }
+        HIRExpr.HashMapNew(k, v, t, s) => { return t.clone() }
+        HIRExpr.HashMapInsert(m, k, v, t, s) => { return t.clone() }
+        HIRExpr.HashMapGet(m, k, n, t, s) => { return t.clone() }
+        HIRExpr.HashMapContains(m, k, t, s) => { return t.clone() }
+        HIRExpr.HashMapRemove(m, k, t, s) => { return t.clone() }
+        HIRExpr.HashMapLen(o, t, s) => { return t.clone() }
+        HIRExpr.StringPush(s1, b, t, s) => { return t.clone() }
+        HIRExpr.StringSubstr(s1, st, en, t, s) => { return t.clone() }
+        HIRExpr.StringClone(s1, t, s) => { return t.clone() }
+        HIRExpr.NumberToString(v, vt, t, s) => { return t.clone() }
+        HIRExpr.Closure(p, b, c, r, t, m, s) => { return t.clone() }
+        HIRExpr.ClosureCall(c, a, t, s) => { return t.clone() }
+    }
+}

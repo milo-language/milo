@@ -1,0 +1,170 @@
+// Milo self-hosted compiler — main driver
+// Usage: milo build <file> [-o output]
+//        milo run <file>
+//        milo emit-ir <file>
+//        milo check <file>
+
+from "std/io" import { println, eprintln }
+from "std/fs" import { readFile, writeFile }
+from "std/process" import { exit, args, exec }
+from "src-milo/tokens.milo" import { Token }
+from "src-milo/lexer.milo" import { Lexer, lexerNew, lex }
+from "src-milo/ast.milo" import { Program }
+from "src-milo/parser.milo" import { Parser, parserNew, parse }
+from "src-milo/resolver.milo" import { resolveImports }
+from "src-milo/checker/types.milo" import { TypeKind }
+from "src-milo/checker/state.milo" import { Checker, newChecker, hasErrors }
+from "src-milo/checker/stmt.milo" import { checkProgram }
+from "src-milo/codegen/emit.milo" import { buildFnTable, genProgram }
+
+fn compile(path: string): string {
+    let source = readFile(path)
+    if source.len == 0 {
+        eprintln("error: cannot read file '" + path + "'")
+        exit(1)
+    }
+
+    // Lex
+    var lexer = lexerNew(source)
+    let tokens = lex(&mut lexer)
+
+    // Parse
+    var parser = parserNew(tokens)
+    let program = parse(&mut parser)
+
+    // Resolve imports
+    let resolved = resolveImports(program, path)
+
+    // Type check
+    var checker = newChecker()
+    checkProgram(&mut checker, &resolved)
+    if hasErrors(&checker) {
+        var i: i64 = 0
+        while i < checker.diagnostics.len {
+            let d = &checker.diagnostics[i]
+            if d.severity == "error" {
+                var loc = ""
+                match &d.span {
+                    Option.Some(s) => {
+                        loc = path.clone() + ":" + s.line.toString() + ":" + s.col.toString() + ": "
+                    }
+                    Option.None => {}
+                }
+                eprintln(loc + "error: " + d.message.clone())
+                if d.hint.len > 0 {
+                    eprintln("  hint: " + d.hint.clone())
+                }
+            }
+            i = i + 1
+        }
+        exit(1)
+    }
+
+    // Codegen
+    return genProgram(&resolved)
+}
+
+fn main() {
+    let argv = args()
+    if argv.len < 2 {
+        println("usage: milo <command> <file> [options]")
+        println("commands: build, run, emit-ir, check")
+        exit(1)
+    }
+
+    let cmd = argv[1].clone()
+    if cmd == "help" || cmd == "--help" || cmd == "-h" {
+        println("milo — self-hosted Milo compiler")
+        println("")
+        println("usage: milo <command> <file> [options]")
+        println("")
+        println("commands:")
+        println("  build <file> [-o out]  compile to executable")
+        println("  run <file>             compile and run")
+        println("  emit-ir <file>         print LLVM IR to stdout")
+        println("  check <file>           type-check only")
+        exit(0)
+    }
+
+    if argv.len < 3 {
+        eprintln("error: missing source file")
+        exit(1)
+    }
+
+    let source = argv[2].clone()
+
+    if cmd == "check" {
+        // Type-check only, no codegen
+        let src = readFile(source.clone())
+        var lexer = lexerNew(src)
+        let tokens = lex(&mut lexer)
+        var parser = parserNew(tokens)
+        let program = parse(&mut parser)
+        let resolved = resolveImports(program, source.clone())
+        var checker = newChecker()
+        checkProgram(&mut checker, &resolved)
+        if hasErrors(&checker) {
+            var i: i64 = 0
+            while i < checker.diagnostics.len {
+                let d = &checker.diagnostics[i]
+                if d.severity == "error" {
+                    eprintln("error: " + d.message.clone())
+                }
+                i = i + 1
+            }
+            exit(1)
+        }
+        println("ok — no errors")
+        exit(0)
+    }
+
+    if cmd == "emit-ir" {
+        let ir = compile(source)
+        println(ir)
+        exit(0)
+    }
+
+    if cmd == "build" {
+        let ir = compile(source.clone())
+        // Determine output name
+        var output = "a.out"
+        var i: i64 = 3
+        while i < argv.len {
+            if argv[i] == "-o" && (i + 1) < argv.len {
+                output = argv[i + 1].clone()
+                i = i + 2
+            } else {
+                i = i + 1
+            }
+        }
+        // Write IR to temp file, invoke clang
+        let irFile = "/tmp/milo_out.ll"
+        writeFile(irFile, ir)
+        let clangCmd = "clang -O2 -o " + output.clone() + " " + irFile
+        let status = exec(clangCmd)
+        if status != 0 {
+            eprintln("error: clang failed (exit " + status.toString() + ")")
+            exit(1)
+        }
+        println("compiled " + source + " -> " + output)
+        exit(0)
+    }
+
+    if cmd == "run" {
+        let ir = compile(source.clone())
+        let irFile = "/tmp/milo_out.ll"
+        writeFile(irFile, ir)
+        let binary = "/tmp/milo_run"
+        let clangCmd = "clang -O2 -o " + binary + " " + irFile
+        let status = exec(clangCmd)
+        if status != 0 {
+            eprintln("error: clang failed")
+            exit(1)
+        }
+        let runStatus = exec(binary)
+        exit(runStatus)
+    }
+
+    eprintln("error: unknown command '" + cmd + "'")
+    exit(1)
+}
