@@ -1,9 +1,9 @@
 # std/http
 
-HTTP server with routing and response types.
+HTTP server with Hono-inspired router, context, middleware, path params, query strings, and cookies.
 
 ```milo
-from "std/http" import { Request, Response, serve }
+from "std/http" import { Context, Response, Router, serveRouter }
 ```
 
 ## Types
@@ -14,10 +14,54 @@ from "std/http" import { Request, Response, serve }
 struct Request {
     method: string,
     path: string,
+    queryParams: Vec<Param>,
+    headers: Vec<Param>,
+    body: string,
 }
 ```
 
-Incoming HTTP request passed to the handler.
+### Param
+
+```milo
+struct Param {
+    name: string,
+    value: string,
+}
+```
+
+Used for path params, query params, headers, and cookies.
+
+### Context
+
+```milo
+struct Context {
+    req: Request,
+    params: Vec<Param>,
+    statusCode: i32,
+    respHeaders: Vec<Param>,
+}
+```
+
+Context is passed to route handlers and provides access to request data and response building.
+
+#### Context Methods
+
+| Method | Description |
+|--------|-------------|
+| `ctx.param("name")` | Extract path parameter (`:name` in pattern) |
+| `ctx.query("key")` | Extract query string value (`?key=value`) |
+| `ctx.header("name")` | Read request header (case-insensitive) |
+| `ctx.cookie("name")` | Read cookie value from request |
+| `ctx.req.body` | Access raw request body |
+| `ctx.setStatus(code)` | Set response status code |
+| `ctx.setHeader(name, value)` | Add response header |
+| `ctx.setCookie(name, value)` | Set response cookie |
+| `ctx.setCookieWithOptions(name, value, opts)` | Set cookie with options (`"Path=/; HttpOnly"`) |
+| `ctx.deleteCookie(name)` | Delete cookie (Max-Age=0) |
+| `ctx.text(body)` | Return text/plain response |
+| `ctx.json(body)` | Return application/json response |
+| `ctx.html(body)` | Return text/html response |
+| `ctx.redirect(url)` | Return 302 redirect |
 
 ### Response
 
@@ -31,21 +75,26 @@ enum Response {
 }
 ```
 
-- `Text` — `text/plain` 200 response
-- `Html` — `text/html` 200 response
-- `Json` — `application/json` 200 response
-- `NotFound` — 404
-- `Status(code, contentType, body)` — custom status and content type
-
-### Socket
+### Router
 
 ```milo
-struct Socket {
-    fd: i32,
+struct Router {
+    routes: Vec<Route>,
+    middleware: Vec<...>,
 }
 ```
 
-The listening socket (internal to `serve`).
+#### Router Methods
+
+| Method | Description |
+|--------|-------------|
+| `Router.new()` | Create a new router |
+| `r.get(pattern, handler)` | Register GET route |
+| `r.post(pattern, handler)` | Register POST route |
+| `r.put(pattern, handler)` | Register PUT route |
+| `r.delete(pattern, handler)` | Register DELETE route |
+| `r.all(pattern, handler)` | Register route for any method |
+| `r.use(middleware)` | Add middleware |
 
 ## Functions
 
@@ -55,26 +104,77 @@ The listening socket (internal to `serve`).
 fn serve(port: u16?, handler: (&Request) => Response): Result<void>
 ```
 
-Start an HTTP server. If `port` is omitted, defaults to `8080`. The handler is called for each request. Blocks forever.
+Simple server — takes a port and handler function. Good for static file servers or single-handler apps.
 
-## Example
+### serveRouter
 
 ```milo
-from "std/http" import { Request, Response, serve }
-from "std/json" import { jsonParse }
+fn serveRouter(port: u16?, router: &Router): Result<void>
+```
 
-fn handle(req: &Request): Response {
-    if req.path == "/" {
-        return Response.Html("<h1>Welcome</h1>")
-    }
-    if req.path == "/health" {
-        return Response.Json("{\"status\": \"ok\"}")
-    }
-    return Response.NotFound
+Start an HTTP server using a Router. Context `respHeaders` are sent on the wire.
+
+## Examples
+
+### Router with path params
+
+```milo
+from "std/http" import { Context, Response, Router, serveRouter }
+
+fn userHandler(ctx: &mut Context): Response {
+    let id = ctx.param("id")
+    return ctx.json($"\{\"userId\": \"{id}\"}")
+}
+
+fn searchHandler(ctx: &mut Context): Response {
+    let q = ctx.query("q")
+    return ctx.text($"searching for: {q}")
 }
 
 fn main(): i32 {
-    serve(3000, handle)
+    var r: Router = Router.new()
+    r.get("/users/:id", userHandler)
+    r.get("/search", searchHandler)
+    serveRouter(8080, r)
     return 0
+}
+```
+
+### Middleware
+
+```milo
+fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    print(ctx.req.method + " " + ctx.req.path)
+    let resp = next(ctx)
+    ctx.setHeader("X-Powered-By", "milo")
+    return resp
+}
+
+fn main(): i32 {
+    var r: Router = Router.new()
+    r.use(logMiddleware)
+    r.get("/", fn homeHandler(ctx: &mut Context): Response {
+        return ctx.text("hello")
+    })
+    serveRouter(3000, r)
+    return 0
+}
+```
+
+### Cookies
+
+```milo
+fn loginHandler(ctx: &mut Context): Response {
+    ctx.setCookieWithOptions("session", "abc123", "Path=/; HttpOnly")
+    return ctx.json("{\"logged_in\": true}")
+}
+
+fn profileHandler(ctx: &mut Context): Response {
+    let session = ctx.cookie("session")
+    if session.len == 0 {
+        ctx.setStatus(401)
+        return ctx.json("{\"error\": \"not authenticated\"}")
+    }
+    return ctx.json($"\{\"session\": \"{session}\"}")
 }
 ```

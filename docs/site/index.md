@@ -57,36 +57,33 @@ fn processLine(line: &string): void {
 ### Real programs
 
 ```milo
-from "std/http" import { Request, Response, serve }
+from "std/http" import { Context, Response, Router, serveRouter }
 
-struct Route {
-    method: string,
-    prefix: string,
-    handler: (&Request) => Response,
+fn homeHandler(ctx: &mut Context): Response {
+    return ctx.html("<h1>Hello!</h1>")
 }
 
-fn dispatch(routes: &Vec<Route>, req: &Request): Response {
-    for r in routes {
-        if r.method == req.method && r.prefix == req.path {
-            return r.handler(req)
-        }
-    }
-    return Response.NotFound
+fn userHandler(ctx: &mut Context): Response {
+    let id = ctx.param("id")
+    return ctx.json($"\{\"id\": \"{id}\"}")
+}
+
+fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    print(ctx.req.method + " " + ctx.req.path)
+    return next(ctx)
 }
 
 fn main(): i32 {
-    let routes: Vec<Route> = [
-        Route { method: "GET", prefix: "/",     handler: (r: &Request) => Response.Html("<h1>Hello!</h1>") },
-        Route { method: "GET", prefix: "/json", handler: (r: &Request) => Response.Json("{\"ok\": true}") },
-    ]
-    serve(8080, (req: &Request) => {
-        return dispatch(routes, req)
-    })
+    var r: Router = Router.new()
+    r.use(logMiddleware)
+    r.get("/", homeHandler)
+    r.get("/users/:id", userHandler)
+    serveRouter(8080, r)
     return 0
 }
 ```
 
-Structs, closures, borrows, `for-in` — a routed web server in 20 lines.
+Router, middleware, path params, context — a full web server in 20 lines.
 
 ### JSON that doesn't fight you
 

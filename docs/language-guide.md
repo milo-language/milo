@@ -690,7 +690,7 @@ while i < 10 {
 
 ```milo
 // Import specific items (required — no wildcard imports)
-from "std/http" import { Request, Response, serve }
+from "std/http" import { Context, Response, Router, serveRouter }
 
 // Import from a relative path
 from "lib/math" import { add, multiply }

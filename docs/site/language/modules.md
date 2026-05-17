@@ -5,7 +5,7 @@
 All imports must name exactly which symbols they use:
 
 ```milo
-from "std/http" import { Request, Response, serve }
+from "std/http" import { Context, Response, Router, serveRouter }
 from "std/json" import { jsonParse, Json }
 from "lib/math" import { add, multiply }
 ```

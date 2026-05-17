@@ -16,7 +16,7 @@ Import modules with `from "std/<name>" import { symbols }`.
 | Module | What it provides |
 |--------|-----------------|
 | [`std/net`](net) | TCP, DNS, `fetch` with TLS |
-| [`std/http`](http) | HTTP server with routing, response types |
+| [`std/http`](http) | HTTP server with Hono-style router, context, middleware |
 
 ## Data
 
@@ -97,31 +97,22 @@ Import modules with `from "std/<name>" import { symbols }`.
 ## HTTP Server Example
 
 ```milo
-from "std/http" import { Request, Response, serve }
+from "std/http" import { Context, Response, Router, serveRouter }
 
-struct Route {
-    method: string,
-    prefix: string,
-    handler: (&Request) => Response,
+fn homeHandler(ctx: &mut Context): Response {
+    return ctx.html("<h1>Hello!</h1>")
 }
 
-fn dispatch(routes: &Vec<Route>, req: &Request): Response {
-    for r in routes {
-        if r.method == req.method && r.prefix == req.path {
-            return r.handler(req)
-        }
-    }
-    return Response.NotFound
+fn jsonHandler(ctx: &mut Context): Response {
+    let name = ctx.query("name")
+    return ctx.json($"\{\"hello\": \"{name}\"}")
 }
 
 fn main(): i32 {
-    let routes: Vec<Route> = [
-        Route { method: "GET", prefix: "/",     handler: (r: &Request) => Response.Html("<h1>Hello!</h1>") },
-        Route { method: "GET", prefix: "/json", handler: (r: &Request) => Response.Json("{\"ok\": true}") },
-    ]
-    serve(8080, (req: &Request) => {
-        return dispatch(routes, req)
-    })
+    var r: Router = Router.new()
+    r.get("/", homeHandler)
+    r.get("/api", jsonHandler)
+    serveRouter(8080, r)
     return 0
 }
 ```

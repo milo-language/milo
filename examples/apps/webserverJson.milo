@@ -1,5 +1,6 @@
+// JSON API server using Router and Context
 from "std/http" import {
-    Request, Response, serve
+    Context, Response, Router, serveRouter
 }
 
 struct ApiResponse {
@@ -9,26 +10,25 @@ struct ApiResponse {
     stable: bool,
 }
 
-fn handler(req: &Request): Response {
-    if req.path == "/" {
-        let info = ApiResponse {
-            language: "milo",
-            backend: "llvm",
-            version: 1,
-            stable: true,
-        }
-        return Response.Json(jsonStringify(info))
+fn infoHandler(ctx: &mut Context): Response {
+    let info = ApiResponse {
+        language: "milo",
+        backend: "llvm",
+        version: 1,
+        stable: true,
     }
-    return Response.NotFound
+    return ctx.json(jsonStringify(info))
 }
 
 fn main(): i32 {
+    var r: Router = Router.new()
+    r.get("/", infoHandler)
+
     print("starting on :8080")
-    let result = serve(8080, handler)
+    let result = serveRouter(8080, r)
     if let Result.Err(msg) = result {
         print("server error: ", msg)
         return 1
     }
     return 0
 }
-
