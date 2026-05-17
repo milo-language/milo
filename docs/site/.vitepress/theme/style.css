@@ -73,3 +73,15 @@
   font-size: 0.82rem;
   color: var(--vp-c-text-1);
 }
+
+/* playground: fill viewport, no padding */
+.VPDoc:has(.playground) .content-container {
+  max-width: 100% !important;
+  padding: 0 !important;
+}
+.VPDoc:has(.playground) .content {
+  padding: 0 !important;
+}
+.VPDoc:has(.playground) .vp-doc {
+  padding: 0 !important;
+}

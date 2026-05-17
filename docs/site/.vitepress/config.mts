@@ -26,6 +26,7 @@ export default defineConfig({
       { text: 'Docs', link: '/getting-started/installation' },
       { text: 'Language', link: '/language/' },
       { text: 'Standard Library', link: '/stdlib/' },
+      { text: 'Playground', link: '/playground' },
       { text: 'Benchmarks', link: '/benchmarks' },
     ],
 
