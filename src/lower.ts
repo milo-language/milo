@@ -405,6 +405,16 @@ class LowerCtx {
         if (expr.enumName === "HashMap" && expr.variant === "new" && type.tag === "hashmap") {
           return { kind: "HashMapNew", keyType: type.key, valueType: type.value, type, span: expr.span };
         }
+        const staticMangled = this.c.staticCalls.get(expr);
+        if (staticMangled) {
+          return {
+            kind: "Call",
+            callee: staticMangled,
+            args: expr.args.map(a => this.lowerExpr(a)),
+            type,
+            span: expr.span,
+          };
+        }
         const enumName = this.c.rewrittenEnums.get(expr) ?? expr.enumName;
         return {
           kind: "EnumLit",

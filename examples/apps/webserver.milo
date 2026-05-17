@@ -1,120 +1,11 @@
-// Router-based HTTP server — demos Milo language features
+// Router-based HTTP server — demos Milo's std/http router, context, and middleware
 from "std/http" import {
-    Request, Response, serve
+    Context, Response, Router, serveRouter
 }
 from "std/argparse" import {
     newParser, ArgParser, ParsedArgs
 }
-
-// ── JSON response structs ──
-
-struct MiloInfo {
-    language: string,
-    backend: string,
-    memorySafe: bool,
-}
-
-struct FibResult {
-    n: i64,
-    result: i64,
-}
-
-struct PrimeResult {
-    n: i64,
-    isPrime: bool,
-}
-
-struct CollatzResult {
-    start: i64,
-    steps: i64,
-    sequence: string,
-}
-
-// ── Router ──
-
-struct Route {
-    method: string,
-    prefix: string,
-    exact: bool,
-    handler: (&Request) => Response,
-}
-
-fn dispatch(routes: &Vec<Route>, req: &Request): Response {
-    print("dispatch: routes.len=", routes.len, " method='", req.method, "' path='", req.path, "'")
-    var i: i64 = 0
-    while i < routes.len {
-        let r = routes[i]
-        print("  checking route ", i, ": '", r.method, "' '", r.prefix, "'")
-        if req.method == r.method {
-            if r.exact && req.path == r.prefix {
-                return r.handler(req)
-            }
-            if !r.exact && startsWith(req.path, r.prefix) {
-                return r.handler(req)
-            }
-        }
-        i = i + 1
-    }
-    return Response.NotFound
-}
-
-// ── String helpers ──
-
-fn startsWith(s: &string, prefix: &string): bool {
-    if s.len < prefix.len {
-        return false
-    }
-    var i: i64 = 0
-    while i < prefix.len {
-        if s[i] != prefix[i] {
-            return false
-        }
-        i = i + 1
-    }
-    return true
-}
-
-fn pathAfter(s: &string, prefixLen: i64): string {
-    var result: string = ""
-    var i: i64 = prefixLen
-    while i < s.len {
-        result.push(s[i])
-        i = i + 1
-    }
-    return result
-}
-
-fn parseI64(s: string): i64 {
-    var result: i64 = 0
-    var i: i64 = 0
-    while i < s.len {
-        let d = s[i]as i64 - 48
-        if d >= 0 && d <= 9 {
-            result = result * 10 + d
-        }
-        i = i + 1
-    }
-    return result
-}
-
-fn intToStr(n: i64): string {
-    if n == 0 {
-        return "0"
-    }
-    var s: string = ""
-    var x: i64 = n
-    while x > 0 {
-        s.push(((x % 10) + 48) as u8)
-        x = x / 10
-    }
-    var result: string = ""
-    var i: i64 = s.len - 1
-    while i >= 0 {
-        result.push(s[i])
-        i = i - 1
-    }
-    return result
-}
+from "std/strconv" import { parseInt }
 
 // ── Algorithms ──
 
@@ -154,9 +45,8 @@ fn isPrime(n: i64): bool {
     return true
 }
 
-fn collatzSeq(start: i64): CollatzResult {
+fn collatzSteps(start: i64): i64 {
     var x: i64 = start
-    var seq: string = intToStr(x)
     var steps: i64 = 0
     while x != 1 && steps < 500 {
         if x % 2 == 0 {
@@ -164,12 +54,9 @@ fn collatzSeq(start: i64): CollatzResult {
         } else {
             x = x * 3 + 1
         }
-        seq = seq + " > " + intToStr(x)
         steps = steps + 1
     }
-    return CollatzResult {
-        start: start, steps: steps, sequence: seq
-    }
+    return steps
 }
 
 fn fizzbuzzText(n: i64): string {
@@ -186,7 +73,7 @@ fn fizzbuzzText(n: i64): string {
         } else if i % 5 == 0 {
             result = result + "Buzz"
         } else {
-            result = result + intToStr(i)
+            result = result + i.toString()
         }
         i = i + 1
     }
@@ -195,45 +82,50 @@ fn fizzbuzzText(n: i64): string {
 
 // ── Route handlers ──
 
-fn homeHandler(req: &Request): Response {
-    return Response.Html(embedFile("index.html"))
+fn homeHandler(ctx: &mut Context): Response {
+    return ctx.html(embedFile("index.html"))
 }
 
-fn helloHandler(req: &Request): Response {
-    return Response.Text("Hello from Milo!")
+fn helloHandler(ctx: &mut Context): Response {
+    return ctx.text("Hello from Milo!")
 }
 
-fn jsonHandler(req: &Request): Response {
-    let info = MiloInfo {
-        language: "milo", backend: "llvm", memorySafe: true
+fn jsonHandler(ctx: &mut Context): Response {
+    return ctx.json("{\"language\": \"milo\", \"backend\": \"llvm\", \"memorySafe\": true}")
+}
+
+fn fibHandler(ctx: &mut Context): Response {
+    var n = parseInt(ctx.param("n"))!
+    return ctx.json($"\{\"n\": {n}, \"result\": {fibonacci(n)}}")
+}
+
+fn primeHandler(ctx: &mut Context): Response {
+    var n = parseInt(ctx.param("n"))!
+    return ctx.json($"\{\"n\": {n}, \"isPrime\": {isPrime(n)}}")
+}
+
+fn collatzHandler(ctx: &mut Context): Response {
+    var n = parseInt(ctx.param("n"))!
+    return ctx.json($"\{\"start\": {n}, \"steps\": {collatzSteps(n)}}")
+}
+
+fn fizzbuzzHandler(ctx: &mut Context): Response {
+    var n = parseInt(ctx.param("n"))!
+    return ctx.text(fizzbuzzText(n))
+}
+
+fn searchHandler(ctx: &mut Context): Response {
+    let q = ctx.query("q")
+    if q.len == 0 {
+        ctx.setStatus(400)
+        return ctx.json("{\"error\": \"missing ?q= parameter\"}")
     }
-    return Response.Json(jsonStringify(info))
+    return ctx.json($"\{\"query\": \"{q}\", \"results\": []}")
 }
 
-fn fibHandler(req: &Request): Response {
-    let n = parseI64(pathAfter(req.path, 5))
-    let result = FibResult {
-        n: n, result: fibonacci(n)
-    }
-    return Response.Json(jsonStringify(result))
-}
-
-fn primeHandler(req: &Request): Response {
-    let n = parseI64(pathAfter(req.path, 7))
-    let result = PrimeResult {
-        n: n, isPrime: isPrime(n)
-    }
-    return Response.Json(jsonStringify(result))
-}
-
-fn collatzHandler(req: &Request): Response {
-    let n = parseI64(pathAfter(req.path, 9))
-    return Response.Json(jsonStringify(collatzSeq(n)))
-}
-
-fn fizzbuzzHandler(req: &Request): Response {
-    let n = parseI64(pathAfter(req.path, 10))
-    return Response.Text(fizzbuzzText(n))
+fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    print(ctx.req.method + " " + ctx.req.path)
+    return next(ctx)
 }
 
 // ── Main ──
@@ -241,49 +133,25 @@ fn fizzbuzzHandler(req: &Request): Response {
 fn main(): i32 {
     var parser = newParser("webserver", "Router-based HTTP server")
     parser.addString("port", "p", "Port to listen on", "8080")
-    parser.addBool("verbose", "v", "Enable verbose logging")
     let args = parser.parse()
 
-    let routes: Vec<Route> = [
-    Route {
-        method: "GET", prefix: "/", exact: true, handler: homeHandler
-    }
-    ,
-    Route {
-        method: "GET", prefix: "/hello", exact: true, handler: helloHandler
-    }
-    ,
-    Route {
-        method: "GET", prefix: "/json", exact: true, handler: jsonHandler
-    }
-    ,
-    Route {
-        method: "GET", prefix: "/fib/", exact: false, handler: fibHandler
-    }
-    ,
-    Route {
-        method: "GET", prefix: "/prime/", exact: false, handler: primeHandler
-    }
-    ,
-    Route {
-        method: "GET", prefix: "/collatz/", exact: false, handler: collatzHandler
-    }
-    ,
-    Route {
-        method: "GET", prefix: "/fizzbuzz/", exact: false, handler: fizzbuzzHandler
-    }
-    ,
-    ]
+    var r: Router = Router.new()
+
+    r.use(logMiddleware)
+    r.get("/", homeHandler)
+    r.get("/hello", helloHandler)
+    r.get("/json", jsonHandler)
+    r.get("/fib/:n", fibHandler)
+    r.get("/prime/:n", primeHandler)
+    r.get("/collatz/:n", collatzHandler)
+    r.get("/fizzbuzz/:n", fizzbuzzHandler)
+    r.get("/search", searchHandler)
 
     let port = args.getU16("port")
-    let result = serve(port, (req: &Request) => {
-        return dispatch(routes, req)
-    }
-    )
+    let result = serveRouter(port, r)
     if let Result.Err(msg) = result {
         print("server error: ", msg)
         return 1
     }
     return 0
 }
-

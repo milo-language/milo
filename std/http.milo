@@ -5,21 +5,20 @@ from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSo
 
 // ── Public types ──
 
-// Incoming HTTP request with method and path.
-
-struct Request {
-    method: string,
-    path: string,
-}
-
-// Key-value pair for path params and response headers.
 struct Param {
     name: string,
     value: string,
 }
 
+struct Request {
+    method: string,
+    path: string,
+    queryParams: Vec<Param>,
+    headers: Vec<Param>,
+    body: string,
+}
+
 // Request context passed to route handlers.
-// Contains the matched request, extracted path params, and response state.
 struct Context {
     req: Request,
     params: Vec<Param>,
@@ -31,12 +30,39 @@ impl Context {
     fn param(self: &Self, name: &string): string {
         var i: i64 = 0
         while i < self.params.len {
-            if self.params[i].name == *name {
+            if self.params[i].name == name {
                 return self.params[i].value.clone()
             }
             i = i + 1
         }
         return ""
+    }
+
+    fn query(self: &Self, name: &string): string {
+        var i: i64 = 0
+        while i < self.req.queryParams.len {
+            if self.req.queryParams[i].name == name {
+                return self.req.queryParams[i].value.clone()
+            }
+            i = i + 1
+        }
+        return ""
+    }
+
+    fn header(self: &Self, name: &string): string {
+        var i: i64 = 0
+        while i < self.req.headers.len {
+            if eqIgnoreCase(self.req.headers[i].name, name) {
+                return self.req.headers[i].value.clone()
+            }
+            i = i + 1
+        }
+        return ""
+    }
+
+    fn cookie(self: &Self, name: &string): string {
+        let cookieHeader = self.header("Cookie")
+        return parseCookieValue(cookieHeader, name)
     }
 
     fn setStatus(self: &mut Self, code: i32): void {
@@ -45,6 +71,21 @@ impl Context {
 
     fn setHeader(self: &mut Self, name: string, value: string): void {
         self.respHeaders.push(Param { name: name, value: value })
+    }
+
+    fn setCookie(self: &mut Self, name: string, value: string): void {
+        self.respHeaders.push(Param { name: "Set-Cookie", value: name + "=" + value })
+    }
+
+    fn setCookieWithOptions(self: &mut Self, name: string, value: string, options: string): void {
+        self.respHeaders.push(Param { name: "Set-Cookie", value: name + "=" + value + "; " + options })
+    }
+
+    fn deleteCookie(self: &mut Self, name: string): void {
+        self.respHeaders.push(Param {
+            name: "Set-Cookie",
+            value: name + "=; Max-Age=0",
+        })
     }
 
     fn text(self: &Self, body: string): Response {
@@ -73,10 +114,6 @@ impl Context {
     }
 }
 
-// HTTP response type.
-// Text/Html/Json set the content-type automatically.
-// Status(code, contentType, body) for custom responses.
-
 enum Response {
     Text(string),
     Html(string),
@@ -85,7 +122,33 @@ enum Response {
     Status(i32, string, string),
 }
 
+struct HandledResponse {
+    response: Response,
+    headers: Vec<Param>,
+}
+
 // ── Internal helpers ──
+
+fn toLower(ch: u8): u8 {
+    if ch >= 'A' && ch <= 'Z' {
+        return ch + 32
+    }
+    return ch
+}
+
+fn eqIgnoreCase(a: &string, b: &string): bool {
+    if a.len != b.len {
+        return false
+    }
+    var i: i64 = 0
+    while i < a.len {
+        if toLower(a[i]) != toLower(b[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
 
 fn bufToStr(buf: &[u8 ; 8192], start: i64, end: i64): string {
     var s: string = ""
@@ -99,6 +162,8 @@ fn bufToStr(buf: &[u8 ; 8192], start: i64, end: i64): string {
 
 fn parseRequest(buf: &[u8 ; 8192], n: i64): Request {
     var i: i64 = 0
+
+    // parse method
     while i < n && buf[i] != ' ' {
         i = i + 1
     }
@@ -106,14 +171,182 @@ fn parseRequest(buf: &[u8 ; 8192], n: i64): Request {
     while i < n && buf[i] == ' ' {
         i = i + 1
     }
-    let pathStart = i
+
+    // parse URI (path?query)
+    let uriStart = i
     while i < n && buf[i] != ' ' {
         i = i + 1
     }
-    let path = bufToStr(buf, pathStart, i)
-    return Request {
-        method: method, path: path
+    let uri = bufToStr(buf, uriStart, i)
+
+    // skip to end of request line
+    while i < n && buf[i] != '\n' {
+        i = i + 1
     }
+    if i < n {
+        i = i + 1
+    }
+
+    // parse headers
+    var headers: Vec<Param> = []
+    var contentLength: i64 = 0
+    while i < n {
+        if buf[i] == '\r' && i + 1 < n && buf[i + 1] == '\n' {
+            i = i + 2
+            break
+        }
+        if buf[i] == '\n' {
+            i = i + 1
+            break
+        }
+        let headerStart = i
+        while i < n && buf[i] != ':' {
+            i = i + 1
+        }
+        let headerName = bufToStr(buf, headerStart, i)
+        if i < n {
+            i = i + 1
+        }
+        while i < n && buf[i] == ' ' {
+            i = i + 1
+        }
+        let valueStart = i
+        while i < n && buf[i] != '\r' && buf[i] != '\n' {
+            i = i + 1
+        }
+        let headerValue = bufToStr(buf, valueStart, i)
+        if eqIgnoreCase(headerName, "content-length") {
+            contentLength = parseContentLength(headerValue)
+        }
+        headers.push(Param { name: headerName, value: headerValue })
+        if i < n && buf[i] == '\r' {
+            i = i + 1
+        }
+        if i < n && buf[i] == '\n' {
+            i = i + 1
+        }
+    }
+
+    // extract body
+    var body: string = ""
+    if contentLength > 0 && i < n {
+        let bodyEnd = i + contentLength
+        var end: i64 = n
+        if bodyEnd < n {
+            end = bodyEnd
+        }
+        body = bufToStr(buf, i, end)
+    }
+
+    // split URI into path and query
+    var path: string = ""
+    var queryStr: string = ""
+    var j: i64 = 0
+    var foundQ: bool = false
+    while j < uri.len {
+        if !foundQ && uri[j] == '?' {
+            foundQ = true
+        } else if foundQ {
+            queryStr.push(uri[j])
+        } else {
+            path.push(uri[j])
+        }
+        j = j + 1
+    }
+
+    let queryParams = parseQueryString(queryStr)
+    return Request {
+        method: method,
+        path: path,
+        queryParams: queryParams,
+        headers: headers,
+        body: body,
+    }
+}
+
+fn parseContentLength(s: &string): i64 {
+    var result: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let d = s[i] as i64 - 48
+        if d >= 0 && d <= 9 {
+            result = result * 10 + d
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn parseQueryString(qs: &string): Vec<Param> {
+    var params: Vec<Param> = []
+    if qs.len == 0 {
+        return params
+    }
+    var key: string = ""
+    var value: string = ""
+    var inValue: bool = false
+    var i: i64 = 0
+    while i < qs.len {
+        if qs[i] == '&' {
+            if key.len > 0 {
+                params.push(Param { name: key, value: value })
+            }
+            key = ""
+            value = ""
+            inValue = false
+        } else if qs[i] == '=' && !inValue {
+            inValue = true
+        } else if inValue {
+            value.push(qs[i])
+        } else {
+            key.push(qs[i])
+        }
+        i = i + 1
+    }
+    if key.len > 0 {
+        params.push(Param { name: key, value: value })
+    }
+    return params
+}
+
+fn parseCookieValue(cookieHeader: string, name: &string): string {
+    if cookieHeader.len == 0 {
+        return ""
+    }
+    var i: i64 = 0
+    while i < cookieHeader.len {
+        while i < cookieHeader.len && (cookieHeader[i] == ' ' || cookieHeader[i] == ';') {
+            i = i + 1
+        }
+        let keyStart = i
+        while i < cookieHeader.len && cookieHeader[i] != '=' && cookieHeader[i] != ';' {
+            i = i + 1
+        }
+        let key = bufToStrFromString(cookieHeader, keyStart, i)
+        var val: string = ""
+        if i < cookieHeader.len && cookieHeader[i] == '=' {
+            i = i + 1
+            let valStart = i
+            while i < cookieHeader.len && cookieHeader[i] != ';' {
+                i = i + 1
+            }
+            val = bufToStrFromString(cookieHeader, valStart, i)
+        }
+        if key == name {
+            return val
+        }
+    }
+    return ""
+}
+
+fn bufToStrFromString(s: &string, start: i64, end: i64): string {
+    var result: string = ""
+    var idx: i64 = start
+    while idx < end {
+        result.push(s[idx])
+        idx = idx + 1
+    }
+    return result
 }
 
 fn statusText(status: i32): string {
@@ -129,11 +362,23 @@ fn statusText(status: i32): string {
     if status == 301 {
         return "301 Moved Permanently"
     }
+    if status == 302 {
+        return "302 Found"
+    }
     if status == 400 {
         return "400 Bad Request"
     }
+    if status == 401 {
+        return "401 Unauthorized"
+    }
+    if status == 403 {
+        return "403 Forbidden"
+    }
     if status == 404 {
         return "404 Not Found"
+    }
+    if status == 405 {
+        return "405 Method Not Allowed"
     }
     if status == 500 {
         return "500 Internal Server Error"
@@ -141,10 +386,15 @@ fn statusText(status: i32): string {
     return "200 OK"
 }
 
-fn sendRaw(fd: i32, status: i32, contentType: string, body: string): void {
+fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders: &Vec<Param>): void {
     var resp: string = "HTTP/1.1 " + statusText(status)
     resp = resp + "\r\nContent-Type: " + contentType
     resp = resp + "\r\nContent-Length: " + body.len.toString()
+    var i: i64 = 0
+    while i < extraHeaders.len {
+        resp = resp + "\r\n" + extraHeaders[i].name + ": " + extraHeaders[i].value
+        i = i + 1
+    }
     resp = resp + "\r\nConnection: close"
     resp = resp + "\r\nServer: milo"
     resp = resp + "\r\n\r\n"
@@ -154,22 +404,22 @@ fn sendRaw(fd: i32, status: i32, contentType: string, body: string): void {
     }
 }
 
-fn sendResponse(fd: i32, response: Response): void {
+fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void {
     match response {
         Response.Text(body) => {
-            sendRaw(fd, 200, "text/plain; charset=utf-8", body)
+            sendRaw(fd, 200, "text/plain; charset=utf-8", body, headers)
         }
         Response.Html(body) => {
-            sendRaw(fd, 200, "text/html; charset=utf-8", body)
+            sendRaw(fd, 200, "text/html; charset=utf-8", body, headers)
         }
         Response.Json(body) => {
-            sendRaw(fd, 200, "application/json", body)
+            sendRaw(fd, 200, "application/json", body, headers)
         }
         Response.NotFound => {
-            sendRaw(fd, 404, "text/plain; charset=utf-8", "404 Not Found")
+            sendRaw(fd, 404, "text/plain; charset=utf-8", "404 Not Found", headers)
         }
         Response.Status(code, ct, body) => {
-            sendRaw(fd, code, ct, body)
+            sendRaw(fd, code, ct, body, headers)
         }
     }
 }
@@ -192,14 +442,6 @@ impl Drop for Socket {
 
 // ── Public API ──
 
-// Start an HTTP server on the given port.
-// Pass null for port to let the OS pick an available port.
-// The handler receives a Request and returns a Response.
-// Example:
-//   serve(8080, fn(req: &Request): Response {
-//       return Response.Text("hello")
-//   })
-
 fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
@@ -207,7 +449,6 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let BUF_SIZE: i64 = 8192
     let SIZEOF_SOCKADDR_IN: u32 = 16
 
-    // port 0 tells the OS to pick a random available port
     var bindPort: u16 = 0
     if let Option.Some(p) = port {
         bindPort = p
@@ -218,9 +459,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         if rawFd < 0 {
             return Result.Err("socket() failed")
         }
-        let sock = Socket {
-            fd: rawFd
-        }
+        let sock = Socket { fd: rawFd }
 
         var one: i32 = 1
         setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
@@ -235,7 +474,6 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
             return Result.Err("listen() failed")
         }
 
-        // retrieve actual port (needed when bindPort was 0)
         var boundAddr = makeZeroedSockaddr()
         var boundLen: u32 = SIZEOF_SOCKADDR_IN
         getsockname(sock.fd, boundAddr, boundLen)
@@ -256,7 +494,8 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
             if n > 0 {
                 let req = parseRequest(buf, n)
                 let resp = handler(req)
-                sendResponse(clientFd, resp)
+                let noHeaders: Vec<Param> = []
+                sendResponse(clientFd, resp, noHeaders)
             }
             close(clientFd)
         }
@@ -320,7 +559,7 @@ impl Router {
         })
     }
 
-    fn handle(self: &Self, req: Request): Response {
+    fn handle(self: &Self, req: &Request): HandledResponse {
         var i: i64 = 0
         while i < self.routes.len {
             let route = self.routes[i]
@@ -328,13 +567,18 @@ impl Router {
                 let params = matchRoute(route.pattern, route.paramNames, req.path)
                 if let Option.Some(matched) = params {
                     var ctx = Context {
-                        req: req,
+                        req: Request {
+                            method: req.method.clone(),
+                            path: req.path.clone(),
+                            queryParams: copyParams(req.queryParams),
+                            headers: copyParams(req.headers),
+                            body: req.body.clone(),
+                        },
                         params: matched,
                         statusCode: 200,
                         respHeaders: [],
                     }
                     let handler = route.handler
-                    // wrap handler with middleware chain (innermost first)
                     var final: (&mut Context) => Response = handler
                     var m: i64 = self.middleware.len - 1
                     while m >= 0 {
@@ -345,27 +589,76 @@ impl Router {
                         }
                         m = m - 1
                     }
-                    return final(ctx)
+                    let resp = final(ctx)
+                    return HandledResponse { response: resp, headers: ctx.respHeaders }
                 }
             }
             i = i + 1
         }
-        return Response.NotFound
+        return HandledResponse { response: Response.NotFound, headers: [] }
     }
 }
 
-// Start an HTTP server using a Router.
+// Start an HTTP server using a Router (headers from Context are sent on the wire).
 fn serveRouter(port: u16?, router: &Router): Result<void> {
-    return serve(port, (req: &Request) => {
-        // clone request since router.handle takes ownership
-        let owned = Request { method: req.method.clone(), path: req.path.clone() }
-        return router.handle(owned)
-    })
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    let BACKLOG: i32 = 1024
+    let BUF_SIZE: i64 = 8192
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    var bindPort: u16 = 0
+    if let Option.Some(p) = port {
+        bindPort = p
+    }
+
+    unsafe {
+        let rawFd = socket(AF_INET, SOCK_STREAM, 0)
+        if rawFd < 0 {
+            return Result.Err("socket() failed")
+        }
+        let sock = Socket { fd: rawFd }
+
+        var one: i32 = 1
+        setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
+
+        var addr = makeSockaddr(bindPort, 0)
+        if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            return Result.Err("bind() failed")
+        }
+        if listen(sock.fd, BACKLOG) < 0 {
+            return Result.Err("listen() failed")
+        }
+
+        var boundAddr = makeZeroedSockaddr()
+        var boundLen: u32 = SIZEOF_SOCKADDR_IN
+        getsockname(sock.fd, boundAddr, boundLen)
+        let actualPort = ntohs(boundAddr.sinPort)
+        print($"listening on http://localhost:{actualPort}")
+
+        while true {
+            var clientAddr = makeZeroedSockaddr()
+            var addrlen: u32 = SIZEOF_SOCKADDR_IN
+            let clientFd = accept(sock.fd, clientAddr, addrlen)
+            if clientFd < 0 {
+                continue
+            }
+
+            var buf: [u8 ; 8192] = [0 ; 8192]
+            let n = read(clientFd, buf, BUF_SIZE)
+            if n > 0 {
+                let req = parseRequest(buf, n)
+                let handled = router.handle(req)
+                sendResponse(clientFd, handled.response, handled.headers)
+            }
+            close(clientFd)
+        }
+    }
+    return Result.Err("server exited")
 }
 
 // ── Path matching ──
 
-// Extract param names from pattern like "/user/:id/posts/:postId"
 fn extractParamNames(pattern: &string): Vec<string> {
     var names: Vec<string> = []
     var i: i64 = 0
@@ -390,13 +683,10 @@ fn extractParamNames(pattern: &string): Vec<string> {
     return names
 }
 
-// Match a request path against a route pattern.
-// Returns Some(params) on match, None on mismatch.
 fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>> {
     let patSegs = splitPath(pattern)
     let pathSegs = splitPath(path)
 
-    // wildcard: pattern ending with "*" matches any suffix
     var hasWildcard: bool = false
     if patSegs.len > 0 && patSegs[patSegs.len - 1] == "*" {
         hasWildcard = true
@@ -424,7 +714,6 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
         }
         let seg = pathSegs[i]
         if pat.len > 0 && pat[0] == ':' {
-            // param segment — capture value
             if paramIdx < paramNames.len {
                 params.push(Param { name: paramNames[paramIdx].clone(), value: seg.clone() })
                 paramIdx = paramIdx + 1
@@ -437,7 +726,16 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
     return Option.Some(params)
 }
 
-// Split path by '/' into non-empty segments
+fn copyParams(src: &Vec<Param>): Vec<Param> {
+    var out: Vec<Param> = []
+    var i: i64 = 0
+    while i < src.len {
+        out.push(Param { name: src[i].name.clone(), value: src[i].value.clone() })
+        i = i + 1
+    }
+    return out
+}
+
 fn splitPath(path: &string): Vec<string> {
     var segs: Vec<string> = []
     var current: string = ""

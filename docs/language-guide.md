@@ -750,7 +750,11 @@ let html = embedFile("index.html")
 
 ## HTTP Server (Standard Library)
 
-Milo includes an HTTP server in `std/http`:
+Milo includes a Hono-inspired HTTP server in `std/http` with a router, context object, middleware, path params, query strings, cookies, and request body access.
+
+### Basic Server
+
+For simple cases, `serve` takes a port and a handler:
 
 ```milo
 from "std/http" import { Request, Response, serve }
@@ -758,9 +762,6 @@ from "std/http" import { Request, Response, serve }
 fn handler(req: &Request): Response {
     if req.path == "/" {
         return Response.Html("<h1>Hello!</h1>")
-    }
-    if req.path == "/api" {
-        return Response.Json("{\"status\": \"ok\"}")
     }
     return Response.NotFound
 }
@@ -771,7 +772,89 @@ fn main(): i32 {
 }
 ```
 
-Response variants: `Text(string)`, `Html(string)`, `Json(string)`, `NotFound`, `Status(i32, string, string)`.
+### Router + Context
+
+For real apps, use `Router` with route handlers that receive a mutable `Context`:
+
+```milo
+from "std/http" import { Context, Response, Router, serveRouter }
+
+fn main(): i32 {
+    var r = Router.new()
+
+    r.get("/", fn(ctx: &mut Context): Response {
+        return ctx.text("Hello from Milo!")
+    })
+
+    r.get("/users/:id", fn(ctx: &mut Context): Response {
+        let id = ctx.param("id")
+        ctx.setHeader("X-User-Id", id.clone())
+        return ctx.json($"\{\"id\": \"{id}\"}")
+    })
+
+    r.get("/search", fn(ctx: &mut Context): Response {
+        let q = ctx.query("q")
+        return ctx.text($"results for: {q}")
+    })
+
+    serveRouter(8080, r)
+    return 0
+}
+```
+
+### Route Methods
+
+```milo
+r.get(pattern, handler)      // GET
+r.post(pattern, handler)     // POST
+r.put(pattern, handler)      // PUT
+r.delete(pattern, handler)   // DELETE
+r.all(pattern, handler)      // any method
+```
+
+### Context Methods
+
+| Method | Description |
+|--------|-------------|
+| `ctx.param("name")` | Extract path parameter (`:name` in pattern) |
+| `ctx.query("key")` | Extract query string value (`?key=value`) |
+| `ctx.header("name")` | Read request header (case-insensitive) |
+| `ctx.cookie("name")` | Read cookie value from request |
+| `ctx.req.body` | Access raw request body |
+| `ctx.setStatus(code)` | Set response status code |
+| `ctx.setHeader(name, value)` | Add response header |
+| `ctx.setCookie(name, value)` | Set response cookie |
+| `ctx.setCookieWithOptions(name, value, opts)` | Set cookie with options (`"Path=/; HttpOnly"`) |
+| `ctx.deleteCookie(name)` | Delete cookie (Max-Age=0) |
+| `ctx.text(body)` | Return text/plain response |
+| `ctx.json(body)` | Return application/json response |
+| `ctx.html(body)` | Return text/html response |
+| `ctx.redirect(url)` | Return 302 redirect |
+
+### Middleware
+
+Middleware wraps handlers with a next-function pattern:
+
+```milo
+r.use(fn(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    let start = clock()
+    let resp = next(ctx)
+    let elapsed = clock() - start
+    ctx.setHeader("X-Response-Time", elapsed.toString() + "ms")
+    return resp
+})
+```
+
+### Path Parameters and Wildcards
+
+```milo
+r.get("/users/:id/posts/:postId", handler)  // named params
+r.get("/static/*", handler)                  // wildcard suffix
+```
+
+### Response Variants
+
+`Text(string)`, `Html(string)`, `Json(string)`, `NotFound`, `Status(i32, string, string)`.
 
 ---
 

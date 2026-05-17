@@ -42,6 +42,7 @@ export interface CheckResult {
   autoBorrowed: Map<Expr, { mutable: boolean }>;
   rewrittenCalls: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
+  staticCalls: Map<Expr, string>;
   rewrittenStructLits: Map<Expr, string>;
   movedExprs: Set<Expr>;
   borrowedExprs: Set<Expr>;
@@ -118,6 +119,7 @@ export class TypeChecker {
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
+  private staticCalls = new Map<Expr, string>();
   private rewrittenStructLits = new Map<Expr, string>();
   private movedExprs = new Set<Expr>();
   private borrowedExprs = new Set<Expr>();
@@ -615,6 +617,7 @@ export class TypeChecker {
       autoBorrowed: this.autoBorrowed,
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
+      staticCalls: this.staticCalls,
       rewrittenStructLits: this.rewrittenStructLits,
       movedExprs: this.movedExprs,
       borrowedExprs: this.borrowedExprs,
@@ -2013,12 +2016,13 @@ export class TypeChecker {
       case "UnaryOp": {
         const ot = this.checkExpr(expr.operand);
         if (expr.op === "*") {
+          if (ot.tag === "ref") return this.setType(expr, ot.inner);
           if (ot.tag === "box") return this.setType(expr, ot.inner);
           if (ot.tag === "ptr") {
             if (this.unsafeDepth === 0) this.error(`pointer dereference requires 'unsafe' block`, sp);
             return this.setType(expr, ot.inner);
           }
-          if (ot.tag !== "unknown") this.error(`cannot dereference type '${typeName(ot)}' (expected *T or Box<T>)`, sp);
+          if (ot.tag !== "unknown") this.error(`cannot dereference type '${typeName(ot)}' (expected &T, *T or Box<T>)`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         if (expr.op === "-") {
@@ -2438,7 +2442,32 @@ export class TypeChecker {
           return this.setType(expr, { tag: "enum", name: mangled });
         }
         const info = this.enums.get(expr.enumName);
-        if (!info) { this.error(`unknown enum '${expr.enumName}'`, sp); return this.setType(expr, { tag: "unknown" }); }
+        if (!info) {
+          // static method call: Struct.method(args)
+          const inherent = this.inherentImpls.get(expr.enumName);
+          if (inherent) {
+            const sig = inherent.methods.get(expr.variant);
+            if (sig) {
+              const mangled = `${expr.enumName}$${expr.variant}`;
+              // static methods have no self param — check args directly
+              const paramOffset = (sig.params.length > 0 && sig.params[0].name === "self") ? 1 : 0;
+              const expectedParams = sig.params.slice(paramOffset);
+              if (expr.args.length !== expectedParams.length) {
+                this.error(`'${expr.enumName}.${expr.variant}' expects ${expectedParams.length} args, got ${expr.args.length}`, sp);
+              }
+              for (let i = 0; i < Math.min(expr.args.length, expectedParams.length); i++) {
+                const argType = this.checkExprWithHint(expr.args[i], expectedParams[i].type);
+                if (!typeEq(expectedParams[i].type, argType) && argType.tag !== "unknown") {
+                  this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(expectedParams[i].type)}, got ${typeName(argType)}`, expr.args[i].span);
+                }
+                this.tryMove(expr.args[i]);
+              }
+              this.staticCalls.set(expr, mangled);
+              return this.setType(expr, sig.ret);
+            }
+          }
+          this.error(`unknown enum '${expr.enumName}'`, sp); return this.setType(expr, { tag: "unknown" });
+        }
         const variant = info.variants.get(expr.variant);
         if (!variant) { this.error(`enum '${expr.enumName}' has no variant '${expr.variant}'`, sp); return this.setType(expr, { tag: "unknown" }); }
         if (expr.args.length !== variant.fields.length) {
