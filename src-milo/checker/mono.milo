@@ -1,0 +1,435 @@
+// Monomorphization — instantiate generic functions, structs, enums with concrete types
+from "src-milo/ast.milo" import {
+    Function, Stmt, Expr, MiloType, StructDecl, EnumDecl, EnumVariant,
+    Param, StructField, TypeParam, Span, StructLitField, MatchArm, Pattern,
+}
+from "src-milo/checker/types.milo" import {
+    TypeKind, typeEq, typeName, typeFromAst, typeFromName, tyUnknown,
+    isNumeric, isInteger,
+}
+from "src-milo/checker/state.milo" import {
+    Checker, FnSig, FnParam, StructInfo, StructField as CkStructField,
+    EnumInfo, VariantInfo, error,
+}
+
+// -- Generic function/struct/enum registries --
+
+struct GenericFnInfo {
+    typeParams: Vec<string>,
+    decl: Function,
+}
+
+struct GenericStructInfo {
+    typeParams: Vec<string>,
+    decl: StructDecl,
+    fields: Vec<CkStructField>,
+}
+
+struct GenericEnumInfo {
+    typeParams: Vec<string>,
+    decl: EnumDecl,
+    variants: HashMap<string, VariantInfo>,
+}
+
+struct MonoState {
+    genericFns: HashMap<string, GenericFnInfo>,
+    genericStructs: HashMap<string, GenericStructInfo>,
+    genericEnums: HashMap<string, GenericEnumInfo>,
+}
+
+fn newMonoState(): MonoState {
+    return MonoState {
+        genericFns: HashMap.new(),
+        genericStructs: HashMap.new(),
+        genericEnums: HashMap.new(),
+    }
+}
+
+// -- Type name mangling --
+
+fn mangleTypeName(t: &TypeKind): string {
+    match t {
+        TypeKind.TInt(bits, signed) => {
+            if signed { return "i" + bits.toString() }
+            else { return "u" + bits.toString() }
+        }
+        TypeKind.TFloat(bits) => { return "f" + bits.toString() }
+        TypeKind.TBool => { return "bool" }
+        TypeKind.TVoid => { return "void" }
+        TypeKind.TString => { return "string" }
+        TypeKind.TStruct(name) => { return name.clone() }
+        TypeKind.TEnum(name) => { return name.clone() }
+        TypeKind.TPtr(inner) => { return "ptr_" + mangleTypeName(&*inner) }
+        TypeKind.TBox(inner) => { return "Box_" + mangleTypeName(&*inner) }
+        TypeKind.TVec(elem) => { return "Vec_" + mangleTypeName(&*elem) }
+        TypeKind.THashMap(key, val) => {
+            return "HashMap_" + mangleTypeName(&*key) + "_" + mangleTypeName(&*val)
+        }
+        TypeKind.TArray(elem, size) => {
+            var s = "arr_" + mangleTypeName(&*elem)
+            match size {
+                Option.Some(n) => { s = s + "_" + n.toString() }
+                Option.None => {}
+            }
+            return s
+        }
+        TypeKind.TRef(inner, mutable) => { return "ref_" + mangleTypeName(&*inner) }
+        TypeKind.TFn(params, ret) => {
+            var s = "fn"
+            var i: i64 = 0
+            while i < params.len {
+                s = s + "_" + mangleTypeName(&params[i])
+                i = i + 1
+            }
+            s = s + "_ret_" + mangleTypeName(&*ret)
+            return s
+        }
+        TypeKind.TUnknown => { return "unknown" }
+    }
+}
+
+// -- Type substitution in TypeKind --
+
+fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKind {
+    match t {
+        TypeKind.TStruct(name) => {
+            if typeMap.contains(name) {
+                return typeMap.get(name).clone()
+            }
+            return t.clone()
+        }
+        TypeKind.TArray(elem, size) => {
+            return TypeKind.TArray(Box.new(substituteTypeKind(&*elem, typeMap)), size.clone())
+        }
+        TypeKind.TRef(inner, mutable) => {
+            return TypeKind.TRef(Box.new(substituteTypeKind(&*inner, typeMap)), mutable)
+        }
+        TypeKind.TPtr(inner) => {
+            return TypeKind.TPtr(Box.new(substituteTypeKind(&*inner, typeMap)))
+        }
+        TypeKind.TBox(inner) => {
+            return TypeKind.TBox(Box.new(substituteTypeKind(&*inner, typeMap)))
+        }
+        TypeKind.TVec(elem) => {
+            return TypeKind.TVec(Box.new(substituteTypeKind(&*elem, typeMap)))
+        }
+        TypeKind.THashMap(key, val) => {
+            return TypeKind.THashMap(
+                Box.new(substituteTypeKind(&*key, typeMap)),
+                Box.new(substituteTypeKind(&*val, typeMap)),
+            )
+        }
+        TypeKind.TFn(params, ret) => {
+            var newParams: Vec<TypeKind> = Vec.new()
+            var i: i64 = 0
+            while i < params.len {
+                newParams.push(substituteTypeKind(&params[i], typeMap))
+                i = i + 1
+            }
+            return TypeKind.TFn(newParams, Box.new(substituteTypeKind(&*ret, typeMap)))
+        }
+        _ => { return t.clone() }
+    }
+}
+
+// -- Type substitution in MiloType AST nodes --
+
+fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<TypeKind>): MiloType {
+    // Check if this type name is a type parameter
+    var i: i64 = 0
+    while i < typeParams.len {
+        if ty.name == typeParams[i] {
+            // Replace with the concrete type name
+            var result = ty.clone()
+            result.name = typeName(&typeArgs[i])
+            return result
+        }
+        i = i + 1
+    }
+
+    // Recurse into type args
+    if ty.typeArgs.len > 0 {
+        var result = ty.clone()
+        var j: i64 = 0
+        while j < result.typeArgs.len {
+            result.typeArgs[j] = substituteMiloType(&result.typeArgs[j], typeParams, typeArgs)
+            j = j + 1
+        }
+        return result
+    }
+
+    // Function types
+    if ty.isFn {
+        var result = ty.clone()
+        var k: i64 = 0
+        while k < result.fnParams.len {
+            result.fnParams[k] = substituteMiloType(&result.fnParams[k], typeParams, typeArgs)
+            k = k + 1
+        }
+        match &ty.fnRet {
+            Option.Some(ret) => {
+                result.fnRet = Option.Some(Box.new(substituteMiloType(&*ret, typeParams, typeArgs)))
+            }
+            Option.None => {}
+        }
+        return result
+    }
+
+    return ty.clone()
+}
+
+// -- Monomorphize a generic enum --
+
+fn monomorphizeEnum(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeArgs: &Vec<TypeKind>): string {
+    var mangled = baseName.clone() + "_"
+    var i: i64 = 0
+    while i < typeArgs.len {
+        if i > 0 { mangled = mangled + "_" }
+        mangled = mangled + mangleTypeName(&typeArgs[i])
+        i = i + 1
+    }
+
+    if ck.enums.contains(&mangled) { return mangled }
+
+    if !ms.genericEnums.contains(baseName) {
+        error(ck, "unknown generic enum '" + baseName.clone() + "'", Option.None)
+        return mangled
+    }
+
+    let generic = ms.genericEnums.get(baseName)
+
+    // Build type map
+    var typeMap: HashMap<string, TypeKind> = HashMap.new()
+    i = 0
+    while i < generic.typeParams.len && i < typeArgs.len {
+        typeMap.insert(generic.typeParams[i].clone(), typeArgs[i].clone())
+        i = i + 1
+    }
+
+    // Create concrete variants
+    var variants: HashMap<string, VariantInfo> = HashMap.new()
+    for vname, vinfo in generic.variants {
+        var fields: Vec<TypeKind> = Vec.new()
+        var j: i64 = 0
+        while j < vinfo.fields.len {
+            fields.push(substituteTypeKind(&vinfo.fields[j], &typeMap))
+            j = j + 1
+        }
+        variants.insert(vname.clone(), VariantInfo { tag: vinfo.tag, fields: fields })
+    }
+
+    ck.enums.insert(mangled.clone(), EnumInfo { baseName: baseName.clone(), variants: variants })
+
+    // Create monomorphized EnumDecl for codegen
+    var monoVariants: Vec<EnumVariant> = Vec.new()
+    var vi: i64 = 0
+    while vi < generic.decl.variants.len {
+        let v = &generic.decl.variants[vi]
+        var monoFields: Vec<MiloType> = Vec.new()
+        var fi: i64 = 0
+        while fi < v.fields.len {
+            monoFields.push(substituteMiloType(&v.fields[fi], &generic.typeParams, typeArgs))
+            fi = fi + 1
+        }
+        monoVariants.push(EnumVariant { name: v.name.clone(), fields: monoFields })
+        vi = vi + 1
+    }
+    ck.monomorphizedEnums.push(EnumDecl {
+        name: mangled.clone(),
+        typeParams: Vec.new(),
+        variants: monoVariants,
+        attributes: Vec.new(),
+    })
+
+    return mangled
+}
+
+// -- Monomorphize a generic struct --
+
+fn monomorphizeStruct(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeArgs: &Vec<TypeKind>): string {
+    var mangled = baseName.clone() + "_"
+    var i: i64 = 0
+    while i < typeArgs.len {
+        if i > 0 { mangled = mangled + "_" }
+        mangled = mangled + mangleTypeName(&typeArgs[i])
+        i = i + 1
+    }
+
+    if ck.structs.contains(&mangled) { return mangled }
+
+    if !ms.genericStructs.contains(baseName) {
+        error(ck, "unknown generic struct '" + baseName.clone() + "'", Option.None)
+        return mangled
+    }
+
+    let generic = ms.genericStructs.get(baseName)
+
+    // Build type map
+    var typeMap: HashMap<string, TypeKind> = HashMap.new()
+    i = 0
+    while i < generic.typeParams.len && i < typeArgs.len {
+        typeMap.insert(generic.typeParams[i].clone(), typeArgs[i].clone())
+        i = i + 1
+    }
+
+    // Create concrete fields
+    var fields: Vec<CkStructField> = Vec.new()
+    var fi: i64 = 0
+    while fi < generic.fields.len {
+        fields.push(CkStructField {
+            name: generic.fields[fi].name.clone(),
+            type: substituteTypeKind(&generic.fields[fi].type, &typeMap),
+        })
+        fi = fi + 1
+    }
+
+    ck.structs.insert(mangled.clone(), StructInfo { fields: fields, baseName: baseName.clone() })
+
+    // Create monomorphized StructDecl
+    var monoFields: Vec<StructField> = Vec.new()
+    var si: i64 = 0
+    while si < generic.decl.fields.len {
+        monoFields.push(StructField {
+            name: generic.decl.fields[si].name.clone(),
+            type: substituteMiloType(&generic.decl.fields[si].type, &generic.typeParams, typeArgs),
+        })
+        si = si + 1
+    }
+    ck.monomorphizedStructs.push(StructDecl {
+        name: mangled.clone(),
+        typeParams: Vec.new(),
+        fields: monoFields,
+        attributes: Vec.new(),
+    })
+
+    return mangled
+}
+
+// -- Monomorphize a generic function --
+
+fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeArgs: &Vec<TypeKind>): string {
+    var mangled = baseName.clone() + "_"
+    var i: i64 = 0
+    while i < typeArgs.len {
+        if i > 0 { mangled = mangled + "_" }
+        mangled = mangled + mangleTypeName(&typeArgs[i])
+        i = i + 1
+    }
+
+    if ck.functions.contains(&mangled) { return mangled }
+
+    if !ms.genericFns.contains(baseName) {
+        error(ck, "unknown generic function '" + baseName.clone() + "'", Option.None)
+        return mangled
+    }
+
+    let generic = ms.genericFns.get(baseName)
+
+    // Register the concrete signature first (allow recursive calls)
+    var params: Vec<FnParam> = Vec.new()
+    var pi: i64 = 0
+    while pi < generic.decl.params.len {
+        let subType = substituteMiloType(&generic.decl.params[pi].type, &generic.typeParams, typeArgs)
+        params.push(FnParam {
+            name: generic.decl.params[pi].name.clone(),
+            type: typeFromAst(&subType),
+        })
+        pi = pi + 1
+    }
+    let subRetType = substituteMiloType(&generic.decl.retType, &generic.typeParams, typeArgs)
+    let ret = typeFromAst(&subRetType)
+    ck.functions.insert(mangled.clone(), FnSig {
+        params: params,
+        ret: ret,
+        variadic: false,
+        isExtern: false,
+    })
+
+    // Create concrete function declaration
+    var monoParams: Vec<Param> = Vec.new()
+    i = 0
+    while i < generic.decl.params.len {
+        monoParams.push(Param {
+            name: generic.decl.params[i].name.clone(),
+            type: substituteMiloType(&generic.decl.params[i].type, &generic.typeParams, typeArgs),
+        })
+        i = i + 1
+    }
+
+    let concreteDecl = Function {
+        name: mangled.clone(),
+        typeParams: Vec.new(),
+        params: monoParams,
+        retType: subRetType,
+        body: generic.decl.body.clone(),
+        isExtern: false,
+        isVariadic: false,
+    }
+    ck.monomorphizedFns.push(concreteDecl)
+
+    return mangled
+}
+
+// -- Register generic declarations --
+
+fn registerGenericFn(ms: &mut MonoState, f: &Function) {
+    var typeParams: Vec<string> = Vec.new()
+    var i: i64 = 0
+    while i < f.typeParams.len {
+        typeParams.push(f.typeParams[i].name.clone())
+        i = i + 1
+    }
+    ms.genericFns.insert(f.name.clone(), GenericFnInfo {
+        typeParams: typeParams,
+        decl: f.clone(),
+    })
+}
+
+fn registerGenericStruct(ms: &mut MonoState, s: &StructDecl) {
+    var typeParams: Vec<string> = Vec.new()
+    var i: i64 = 0
+    while i < s.typeParams.len {
+        typeParams.push(s.typeParams[i].name.clone())
+        i = i + 1
+    }
+    var fields: Vec<CkStructField> = Vec.new()
+    var j: i64 = 0
+    while j < s.fields.len {
+        fields.push(CkStructField {
+            name: s.fields[j].name.clone(),
+            type: typeFromAst(&s.fields[j].type),
+        })
+        j = j + 1
+    }
+    ms.genericStructs.insert(s.name.clone(), GenericStructInfo {
+        typeParams: typeParams,
+        decl: s.clone(),
+        fields: fields,
+    })
+}
+
+fn registerGenericEnum(ms: &mut MonoState, e: &EnumDecl) {
+    var typeParams: Vec<string> = Vec.new()
+    var i: i64 = 0
+    while i < e.typeParams.len {
+        typeParams.push(e.typeParams[i].name.clone())
+        i = i + 1
+    }
+    var variants: HashMap<string, VariantInfo> = HashMap.new()
+    var vi: i64 = 0
+    while vi < e.variants.len {
+        var fields: Vec<TypeKind> = Vec.new()
+        var fi: i64 = 0
+        while fi < e.variants[vi].fields.len {
+            fields.push(typeFromAst(&e.variants[vi].fields[fi]))
+            fi = fi + 1
+        }
+        variants.insert(e.variants[vi].name.clone(), VariantInfo { tag: vi as i32, fields: fields })
+        vi = vi + 1
+    }
+    ms.genericEnums.insert(e.name.clone(), GenericEnumInfo {
+        typeParams: typeParams,
+        decl: e.clone(),
+        variants: variants,
+    })
+}
