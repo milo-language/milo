@@ -1,0 +1,73 @@
+// Elm-style diagnostic formatting with source context and carets
+from "src-milo/ast.milo" import { Span }
+from "src-milo/checker/state.milo" import { Diagnostic }
+
+let RESET = "\x1b[0m"
+let BOLD = "\x1b[1m"
+let RED = "\x1b[31m"
+let YELLOW = "\x1b[33m"
+let CYAN = "\x1b[36m"
+let DIM = "\x1b[2m"
+
+fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string {
+    var lines: Vec<string> = Vec.new()
+    var color = RED
+    if d.severity == "warning" { color = YELLOW }
+
+    match &d.span {
+        Option.Some(sp) => {
+            let loc = filePath.clone() + ":" + sp.line.toString() + ":" + sp.col.toString()
+            lines.push(BOLD + color + d.severity.clone() + RESET + BOLD + ": " + d.message.clone() + RESET)
+            lines.push("  " + DIM + "-->" + RESET + " " + loc)
+
+            let srcLines = source.split("\n")
+            let lineIdx = sp.line - 1
+            if lineIdx >= 0 && lineIdx < srcLines.len as i32 {
+                let lineNum = sp.line.toString()
+                var pad = ""
+                var k: i64 = 0
+                while k < lineNum.len {
+                    pad = pad + " "
+                    k = k + 1
+                }
+                lines.push(DIM + pad.clone() + " |" + RESET)
+                lines.push(DIM + lineNum + " |" + RESET + " " + srcLines[lineIdx as i64].clone())
+                var caretPad = ""
+                var c: i64 = 0
+                while c < (sp.col - 1) as i64 {
+                    caretPad = caretPad + " "
+                    c = c + 1
+                }
+                lines.push(DIM + pad + " |" + RESET + " " + caretPad + color + "^" + RESET)
+            }
+        }
+        Option.None => {
+            lines.push(BOLD + color + d.severity.clone() + RESET + BOLD + ": " + d.message.clone() + RESET)
+        }
+    }
+
+    if d.hint.len > 0 {
+        lines.push("  " + BOLD + CYAN + "hint" + RESET + ": " + d.hint.clone())
+    }
+
+    // Join with newlines
+    var result = ""
+    var i: i64 = 0
+    while i < lines.len {
+        if i > 0 { result = result + "\n" }
+        result = result + lines[i].clone()
+        i = i + 1
+    }
+    return result
+}
+
+fn formatDiagnosticPlain(d: &Diagnostic, filePath: &string): string {
+    match &d.span {
+        Option.Some(sp) => {
+            return d.severity.clone() + "[" + filePath.clone() + ":" + sp.line.toString() + ":" + sp.col.toString() + "]: " + d.message.clone()
+        }
+        Option.None => {
+            return d.severity.clone() + ": " + d.message.clone()
+        }
+    }
+}
