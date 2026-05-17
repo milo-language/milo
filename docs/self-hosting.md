@@ -135,14 +135,24 @@ Things that might force a detour. If we hit one, we adapt the plan rather than s
 ## Progress Tracking
 
 Started: 2026-05-16
-Current stage: **A** (Vec<T> in milo0)
+Current stage: **D** (Type Checker — expr + stmt done, generics + traits remaining)
 
 | Stage | Status | Date Started | Date Done |
 |-------|--------|-------------|-----------|
-| A — Vec in milo0 | not started | | |
-| B — Imports + multi-file | not started | | |
-| C — Lexer + Parser | not started | | |
-| D — Type Checker | not started | | |
-| E — HIR + Codegen | not started | | |
+| A — Vec in milo0 | skipped (pivoted to bottom-up port) | | |
+| B — Imports + multi-file | skipped (pivoted to bottom-up port) | | |
+| C — Lexer + Parser | done | 2026-05-16 | 2026-05-16 |
+| D — Type Checker | in progress | 2026-05-16 | |
+| E — HIR + Codegen | in progress (partial) | 2026-05-16 | |
 | F — Bootstrap | not started | | |
 | G — Retire TS | not started | | |
+
+### Module line counts (src-milo/)
+- tokens.milo: 206
+- lexer.milo: 475
+- ast.milo: 211
+- parser.milo: 1130
+- resolver.milo: 237
+- checker/ (4 files): 2055
+- codegen/ (5 files): 1416
+- **Total: 5730**

@@ -1,0 +1,560 @@
+// Statement type checking
+from "src-milo/ast.milo" import {
+    Stmt, Expr, MiloType, Span, MatchArm, Pattern, Param, Function, Program,
+}
+from "src-milo/checker/types.milo" import {
+    TypeKind, typeEq, typeName, typeFromAst, typeFromName,
+    tyI32, tyI64, tyU8, tyBool, tyVoid, tyString, tyUnknown,
+    isNumeric, isInteger, isFloat, isCopy, needsDrop,
+}
+from "src-milo/checker/state.milo" import {
+    Checker, VarInfo, FnSig, FnParam, StructInfo, EnumInfo, VariantInfo,
+    Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, lookupMut, hasErrors,
+}
+from "src-milo/checker/expr.milo" import { checkExpr, tryMove, isRootMutable, deref }
+
+// -- Statement checker --
+
+fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
+    match stmt {
+        Stmt.LetDecl(name, typeAnno, value, span) => {
+            checkLetDecl(ck, name, typeAnno, &*value, false, span)
+        }
+        Stmt.VarDecl(name, typeAnno, value, span) => {
+            checkLetDecl(ck, name, typeAnno, &*value, true, span)
+        }
+        Stmt.Assign(target, value, span) => {
+            checkAssign(ck, &*target, &*value, span)
+        }
+        Stmt.Return(value, span) => {
+            checkReturn(ck, value, fnRetType, span)
+        }
+        Stmt.IfStmt(cond, thenBody, elseBody, span) => {
+            checkIf(ck, &*cond, thenBody, elseBody, fnRetType, span)
+        }
+        Stmt.WhileStmt(cond, body, span) => {
+            checkWhile(ck, &*cond, body, fnRetType, span)
+        }
+        Stmt.ExprStmt(expr, span) => {
+            checkExpr(ck, &*expr)
+        }
+        Stmt.MatchStmt(subject, arms, span) => {
+            checkMatch(ck, &*subject, arms, fnRetType, span)
+        }
+        Stmt.BreakStmt(span) => {
+            if ck.loopDepth == 0 {
+                error(ck, "'break' outside of loop", span.clone())
+            }
+        }
+        Stmt.ContinueStmt(span) => {
+            if ck.loopDepth == 0 {
+                error(ck, "'continue' outside of loop", span.clone())
+            }
+        }
+        Stmt.IfLetStmt(pattern, expr, thenBody, elseBody, span) => {
+            checkIfLet(ck, pattern, &*expr, thenBody, elseBody, fnRetType, span)
+        }
+        Stmt.UnsafeBlock(body, span) => {
+            ck.unsafeDepth = ck.unsafeDepth + 1
+            pushScope(ck)
+            var i: i64 = 0
+            while i < body.len {
+                checkStmt(ck, &*body[i], fnRetType)
+                i = i + 1
+            }
+            popScope(ck)
+            ck.unsafeDepth = ck.unsafeDepth - 1
+        }
+        Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
+            checkForIn(ck, varName, varName2, &*iterable, body, fnRetType, span)
+        }
+    }
+}
+
+// -- Let/Var declarations --
+
+fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, value: &Expr, mutable: bool, span: &Option<Span>) {
+    var valType = checkExpr(ck, value)
+
+    match typeAnno {
+        Option.Some(ty) => {
+            let hint = typeFromAst(ty)
+            if !typeEq(&hint, &valType) && !typeEq(&valType, &tyUnknown()) {
+                error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(&hint) + " but got " + typeName(&valType), span.clone())
+            }
+            valType = hint
+        }
+        Option.None => {}
+    }
+
+    declare(ck, name.clone(), VarInfo {
+        type: valType,
+        mutable: mutable,
+        moved: false,
+        borrowed: false,
+        read: false,
+        span: span.clone(),
+    })
+    tryMove(ck, value)
+}
+
+// -- Assignment --
+
+fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span>) {
+    if !isRootMutable(ck, target) {
+        error(ck, "cannot assign to immutable variable", span.clone())
+        return
+    }
+
+    let targetType = checkExpr(ck, target)
+    let valType = checkExpr(ck, value)
+    if !typeEq(&targetType, &valType) && !typeEq(&valType, &tyUnknown()) {
+        error(ck, "type mismatch: cannot assign " + typeName(&valType) + " to " + typeName(&targetType), span.clone())
+    }
+
+    // Re-assigning un-moves the variable
+    match target {
+        Expr.Ident(name, tspan) => {
+            let info = lookupMut(ck, name)
+            match info {
+                Option.Some(v) => { v.moved = false }
+                Option.None => {}
+            }
+        }
+        _ => {}
+    }
+    tryMove(ck, value)
+}
+
+// -- Return --
+
+fn checkReturn(ck: &mut Checker, value: &Option<Box<Expr>>, fnRetType: &TypeKind, span: &Option<Span>) {
+    match value {
+        Option.Some(expr) => {
+            let valType = checkExpr(ck, &*expr)
+            if !typeEq(fnRetType, &valType) && !typeEq(&valType, &tyUnknown()) && !typeEq(fnRetType, &tyUnknown()) {
+                error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(&valType), span.clone())
+            }
+            tryMove(ck, &*expr)
+        }
+        Option.None => {
+            if !typeEq(fnRetType, &tyVoid()) {
+                error(ck, "return without value in function returning " + typeName(fnRetType), span.clone())
+            }
+        }
+    }
+}
+
+// -- If statement --
+
+fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Box<Stmt>>, elseBody: &Option<Vec<Box<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
+    let condType = checkExpr(ck, cond)
+    if !typeEq(&condType, &tyBool()) && !typeEq(&condType, &tyUnknown()) {
+        error(ck, "if condition must be bool, got " + typeName(&condType), span.clone())
+    }
+
+    pushScope(ck)
+    var i: i64 = 0
+    while i < thenBody.len {
+        checkStmt(ck, &*thenBody[i], fnRetType)
+        i = i + 1
+    }
+    popScope(ck)
+
+    match elseBody {
+        Option.Some(body) => {
+            pushScope(ck)
+            var j: i64 = 0
+            while j < body.len {
+                checkStmt(ck, &*body[j], fnRetType)
+                j = j + 1
+            }
+            popScope(ck)
+        }
+        Option.None => {}
+    }
+}
+
+// -- While statement --
+
+fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Box<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
+    let condType = checkExpr(ck, cond)
+    if !typeEq(&condType, &tyBool()) && !typeEq(&condType, &tyUnknown()) {
+        error(ck, "while condition must be bool, got " + typeName(&condType), span.clone())
+    }
+
+    pushScope(ck)
+    ck.loopDepth = ck.loopDepth + 1
+    var i: i64 = 0
+    while i < body.len {
+        checkStmt(ck, &*body[i], fnRetType)
+        i = i + 1
+    }
+    ck.loopDepth = ck.loopDepth - 1
+    popScope(ck)
+}
+
+// -- Match statement --
+
+fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType: &TypeKind, span: &Option<Span>) {
+    let subjType = checkExpr(ck, subject)
+
+    var i: i64 = 0
+    while i < arms.len {
+        checkMatchArm(ck, &arms[i], &subjType, fnRetType, span)
+        i = i + 1
+    }
+}
+
+fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetType: &TypeKind, span: &Option<Span>) {
+    pushScope(ck)
+
+    // Bind pattern variables into scope
+    match &arm.pattern {
+        Pattern.EnumPattern(enumName, variant, bindings, pspan) => {
+            match subjType {
+                TypeKind.TEnum(name) => {
+                    if ck.enums.contains(name) {
+                        let enumInfo = ck.enums.get(name)
+                        if enumInfo.variants.contains(variant) {
+                            let variantInfo = enumInfo.variants.get(variant)
+                            var k: i64 = 0
+                            while k < bindings.len && k < variantInfo.fields.len {
+                                if bindings[k] != "_" {
+                                    declare(ck, bindings[k].clone(), VarInfo {
+                                        type: variantInfo.fields[k].clone(),
+                                        mutable: false,
+                                        moved: false,
+                                        borrowed: false,
+                                        read: false,
+                                        span: pspan.clone(),
+                                    })
+                                }
+                                k = k + 1
+                            }
+                        } else {
+                            error(ck, "enum '" + name.clone() + "' has no variant '" + variant.clone() + "'", pspan.clone())
+                        }
+                    }
+                }
+                _ => {
+                    error(ck, "cannot use enum pattern when matching on " + typeName(subjType), pspan.clone())
+                }
+            }
+        }
+        Pattern.LiteralPattern(value, kind, pspan) => {}
+        Pattern.WildcardPattern(pspan) => {}
+    }
+
+    // Check arm body
+    var j: i64 = 0
+    while j < arm.body.len {
+        checkStmt(ck, &*arm.body[j], fnRetType)
+        j = j + 1
+    }
+
+    popScope(ck)
+}
+
+// -- If-let statement --
+
+fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<Box<Stmt>>, elseBody: &Option<Vec<Box<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
+    let exprType = checkExpr(ck, expr)
+
+    pushScope(ck)
+
+    // Bind pattern variables
+    match pattern {
+        Pattern.EnumPattern(enumName, variant, bindings, pspan) => {
+            match &exprType {
+                TypeKind.TEnum(name) => {
+                    if ck.enums.contains(name) {
+                        let enumInfo = ck.enums.get(name)
+                        if enumInfo.variants.contains(variant) {
+                            let variantInfo = enumInfo.variants.get(variant)
+                            var k: i64 = 0
+                            while k < bindings.len && k < variantInfo.fields.len {
+                                if bindings[k] != "_" {
+                                    declare(ck, bindings[k].clone(), VarInfo {
+                                        type: variantInfo.fields[k].clone(),
+                                        mutable: false,
+                                        moved: false,
+                                        borrowed: false,
+                                        read: false,
+                                        span: pspan.clone(),
+                                    })
+                                }
+                                k = k + 1
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    var i: i64 = 0
+    while i < thenBody.len {
+        checkStmt(ck, &*thenBody[i], fnRetType)
+        i = i + 1
+    }
+    popScope(ck)
+
+    match elseBody {
+        Option.Some(body) => {
+            pushScope(ck)
+            var j: i64 = 0
+            while j < body.len {
+                checkStmt(ck, &*body[j], fnRetType)
+                j = j + 1
+            }
+            popScope(ck)
+        }
+        Option.None => {}
+    }
+}
+
+// -- For-in statement --
+
+fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Box<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
+    // Range expression handled specially
+    match iterable {
+        Expr.RangeExpr(start, end, rspan) => {
+            let startType = checkExpr(ck, &*start)
+            let endType = checkExpr(ck, &*end)
+            if !isInteger(&startType) && !typeEq(&startType, &tyUnknown()) {
+                error(ck, "for range start must be integer, got " + typeName(&startType), span.clone())
+            }
+            if !isInteger(&endType) && !typeEq(&endType, &tyUnknown()) {
+                error(ck, "for range end must be integer, got " + typeName(&endType), span.clone())
+            }
+
+            // Use wider of start/end types
+            var varType = startType.clone()
+            match &startType {
+                TypeKind.TInt(bitsA, signedA) => {
+                    match &endType {
+                        TypeKind.TInt(bitsB, signedB) => {
+                            if bitsB > bitsA { varType = endType.clone() }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+
+            pushScope(ck)
+            declare(ck, varName.clone(), VarInfo {
+                type: varType,
+                mutable: false,
+                moved: false,
+                borrowed: false,
+                read: false,
+                span: span.clone(),
+            })
+            ck.loopDepth = ck.loopDepth + 1
+            var i: i64 = 0
+            while i < body.len {
+                checkStmt(ck, &*body[i], fnRetType)
+                i = i + 1
+            }
+            ck.loopDepth = ck.loopDepth - 1
+            popScope(ck)
+            return
+        }
+        _ => {}
+    }
+
+    let iterType = checkExpr(ck, iterable)
+
+    pushScope(ck)
+    ck.loopDepth = ck.loopDepth + 1
+
+    // Determine loop variable type based on collection type
+    match &iterType {
+        TypeKind.TVec(elem) => {
+            let elemRef = TypeKind.TRef(Box.new(elem.clone()), false)
+            match varName2 {
+                Option.Some(name2) => {
+                    declare(ck, varName.clone(), VarInfo { type: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                    declare(ck, name2.clone(), VarInfo { type: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                }
+                Option.None => {
+                    declare(ck, varName.clone(), VarInfo { type: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                }
+            }
+        }
+        TypeKind.TString => {
+            let byteType = tyU8()
+            match varName2 {
+                Option.Some(name2) => {
+                    declare(ck, varName.clone(), VarInfo { type: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                    declare(ck, name2.clone(), VarInfo { type: byteType, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                }
+                Option.None => {
+                    declare(ck, varName.clone(), VarInfo { type: byteType, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                }
+            }
+        }
+        TypeKind.THashMap(key, val) => {
+            let keyRef = TypeKind.TRef(Box.new(key.clone()), false)
+            let valRef = TypeKind.TRef(Box.new(val.clone()), false)
+            declare(ck, varName.clone(), VarInfo { type: keyRef, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+            match varName2 {
+                Option.Some(name2) => {
+                    declare(ck, name2.clone(), VarInfo { type: valRef, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                }
+                Option.None => {}
+            }
+        }
+        TypeKind.TArray(elem, size) => {
+            let elemRef = TypeKind.TRef(Box.new(elem.clone()), false)
+            match varName2 {
+                Option.Some(name2) => {
+                    declare(ck, varName.clone(), VarInfo { type: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                    declare(ck, name2.clone(), VarInfo { type: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                }
+                Option.None => {
+                    declare(ck, varName.clone(), VarInfo { type: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
+                }
+            }
+        }
+        _ => {
+            if !typeEq(&iterType, &tyUnknown()) {
+                error(ck, "cannot iterate over type '" + typeName(&iterType) + "'", span.clone())
+            }
+        }
+    }
+
+    var i: i64 = 0
+    while i < body.len {
+        checkStmt(ck, &*body[i], fnRetType)
+        i = i + 1
+    }
+
+    ck.loopDepth = ck.loopDepth - 1
+    popScope(ck)
+}
+
+// -- Top-level: check a function body --
+
+fn checkFunction(ck: &mut Checker, func: &Function) {
+    pushScope(ck)
+    let retType = typeFromAst(&func.retType)
+    ck.currentFnRetType = retType.clone()
+
+    // Declare parameters
+    var i: i64 = 0
+    while i < func.params.len {
+        let pType = typeFromAst(&func.params[i].type)
+        declare(ck, func.params[i].name.clone(), VarInfo {
+            type: pType,
+            mutable: false,
+            moved: false,
+            borrowed: false,
+            read: false,
+            span: Option.None,
+        })
+        i = i + 1
+    }
+
+    // Check body
+    var j: i64 = 0
+    while j < func.body.len {
+        checkStmt(ck, &*func.body[j], &retType)
+        j = j + 1
+    }
+
+    popScope(ck)
+}
+
+// -- Top-level: register declarations and check program --
+
+fn registerFunction(ck: &mut Checker, func: &Function) {
+    var params: Vec<FnParam> = Vec.new()
+    var i: i64 = 0
+    while i < func.params.len {
+        params.push(FnParam {
+            name: func.params[i].name.clone(),
+            type: typeFromAst(&func.params[i].type),
+        })
+        i = i + 1
+    }
+    let sig = FnSig {
+        params: params,
+        ret: typeFromAst(&func.retType),
+        variadic: func.isVariadic,
+        isExtern: func.isExtern,
+    }
+    ck.functions.insert(func.name.clone(), sig)
+}
+
+fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
+    var fields: Vec<StructField> = Vec.new()
+    var i: i64 = 0
+    while i < decl.fields.len {
+        fields.push(StructField {
+            name: decl.fields[i].name.clone(),
+            type: typeFromAst(&decl.fields[i].type),
+        })
+        i = i + 1
+    }
+    let info = StructInfo {
+        fields: fields,
+        baseName: decl.name.clone(),
+    }
+    ck.structs.insert(decl.name.clone(), info)
+}
+
+fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
+    var variants: HashMap<string, VariantInfo> = HashMap.new()
+    var i: i64 = 0
+    while i < decl.variants.len {
+        var fields: Vec<TypeKind> = Vec.new()
+        var j: i64 = 0
+        while j < decl.variants[i].fields.len {
+            fields.push(typeFromAst(&decl.variants[i].fields[j]))
+            j = j + 1
+        }
+        variants.insert(decl.variants[i].name.clone(), VariantInfo {
+            tag: i as i32,
+            fields: fields,
+        })
+        i = i + 1
+    }
+    let info = EnumInfo {
+        baseName: decl.name.clone(),
+        variants: variants,
+    }
+    ck.enums.insert(decl.name.clone(), info)
+}
+
+fn checkProgram(ck: &mut Checker, program: &Program) {
+    // Phase 1: register all declarations
+    var i: i64 = 0
+    while i < program.structs.len {
+        registerStruct(ck, &program.structs[i])
+        i = i + 1
+    }
+    i = 0
+    while i < program.enums.len {
+        registerEnum(ck, &program.enums[i])
+        i = i + 1
+    }
+    i = 0
+    while i < program.functions.len {
+        registerFunction(ck, &program.functions[i])
+        i = i + 1
+    }
+
+    // Phase 2: check function bodies
+    i = 0
+    while i < program.functions.len {
+        if !program.functions[i].isExtern && program.functions[i].typeParams.len == 0 {
+            checkFunction(ck, &program.functions[i])
+        }
+        i = i + 1
+    }
+}
