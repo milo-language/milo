@@ -8,13 +8,14 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { TypeChecker } from "./checker";
 import { Codegen } from "./codegen";
+import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { formatDiagnostic, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget } from "./target";
 import { format, formatFile } from "./formatter";
 
-function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
+function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
   let tokens, program;
   try {
@@ -35,8 +36,17 @@ function compile(source: string, target: TargetInfo, filePath?: string, warningC
     process.exit(1);
   }
 
-  const hirModule = lower(program, result, sourceDir);
+  return lower(program, result, sourceDir);
+}
+
+function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
+  const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   return new Codegen(target, filePath).generate(hirModule);
+}
+
+function compileToJS(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
+  const hirModule = frontendToHIR(source, target, filePath, warningConfig);
+  return new CodegenJS().generate(hirModule);
 }
 
 function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig) {
@@ -210,6 +220,7 @@ function main() {
     console.log("  build <file> [-o out]  compile to executable");
     console.log("  test [file...]         run tests (*_test.milo files)");
     console.log("  emit-ir <file>         emit LLVM IR");
+    console.log("  emit-js <file>         emit JavaScript (playground target)");
     console.log("  fmt <file...>          format source files (-w to write in place)");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
@@ -316,6 +327,15 @@ function main() {
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig);
+  } else if (cmd === "emit-js") {
+    const src = readFileSync(source!, "utf-8");
+    const js = compileToJS(src, target, source!, warningConfig);
+    if (output) {
+      writeFileSync(output, js);
+      console.log(`wrote ${output}`);
+    } else {
+      process.stdout.write(js);
+    }
   } else {
     console.error(`unknown command: ${cmd}`);
     process.exit(1);

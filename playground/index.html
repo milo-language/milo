@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Milo Playground</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #1e1e2e;
+  --surface: #181825;
+  --border: #313244;
+  --text: #cdd6f4;
+  --dim: #6c7086;
+  --accent: #89b4fa;
+  --green: #a6e3a1;
+  --red: #f38ba8;
+  --yellow: #f9e2af;
+  --font: 'JetBrains Mono', 'Fira Code', 'SF Mono', Consolas, monospace;
+}
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); }
+body { display: flex; flex-direction: column; }
+
+header {
+  display: flex; align-items: center; gap: 1rem;
+  padding: 0.75rem 1.5rem; border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+header h1 { font-size: 1rem; font-weight: 600; color: var(--accent); }
+header .tag { font-size: 0.7rem; color: var(--dim); padding: 0.2rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; }
+header .spacer { flex: 1; }
+button {
+  font-family: var(--font); font-size: 0.8rem; padding: 0.4rem 1rem;
+  border: 1px solid var(--border); border-radius: 4px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+  transition: all 0.15s;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+button.primary:hover { opacity: 0.9; }
+
+.container { display: flex; flex: 1; overflow: hidden; }
+.pane { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.pane + .pane { border-left: 1px solid var(--border); }
+.pane-header {
+  padding: 0.5rem 1rem; font-size: 0.75rem; color: var(--dim);
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 0.5rem;
+}
+.pane-header .dot { width: 6px; height: 6px; border-radius: 50%; }
+.pane-header .dot.ok { background: var(--green); }
+.pane-header .dot.err { background: var(--red); }
+
+#editor {
+  flex: 1; resize: none; border: none; outline: none;
+  padding: 1rem; font-family: var(--font); font-size: 0.85rem;
+  background: var(--bg); color: var(--text); line-height: 1.6;
+  tab-size: 4;
+}
+#output {
+  flex: 1; overflow: auto; padding: 1rem;
+  font-family: var(--font); font-size: 0.8rem;
+  background: var(--bg); white-space: pre-wrap; line-height: 1.5;
+}
+#output.error { color: var(--red); }
+#output.success { color: var(--text); }
+
+.examples-bar {
+  padding: 0.4rem 1rem; background: var(--surface);
+  border-bottom: 1px solid var(--border); display: flex; gap: 0.5rem; flex-wrap: wrap;
+}
+.examples-bar button { font-size: 0.7rem; padding: 0.2rem 0.6rem; }
+
+.status { font-size: 0.7rem; color: var(--dim); }
+.status.ok { color: var(--green); }
+.status.err { color: var(--red); }
+
+@media (max-width: 768px) {
+  .container { flex-direction: column; }
+  .pane + .pane { border-left: none; border-top: 1px solid var(--border); }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Milo Playground</h1>
+  <span class="tag">in-browser compiler</span>
+  <span class="spacer"></span>
+  <span class="status" id="status"></span>
+  <button class="primary" id="run-btn" title="Ctrl+Enter">Run</button>
+</header>
+
+<div class="examples-bar">
+  <button data-example="fizzbuzz">FizzBuzz</button>
+  <button data-example="structs">Structs</button>
+  <button data-example="enums">Enums</button>
+  <button data-example="closures">Closures</button>
+  <button data-example="generics">Generics</button>
+  <button data-example="vec">Vec</button>
+</div>
+
+<div class="container">
+  <div class="pane">
+    <div class="pane-header"><span class="dot ok"></span> Source</div>
+    <textarea id="editor" spellcheck="false"></textarea>
+  </div>
+  <div class="pane">
+    <div class="pane-header"><span class="dot" id="out-dot"></span> <span id="out-label">Output</span></div>
+    <div id="output"></div>
+  </div>
+</div>
+
+<script type="module">
+import "./dist/compiler.js";
+
+const examples = {
+  fizzbuzz: `fn main(): i32 {
+    var i: i32 = 1
+    while i <= 20 {
+        if i % 15 == 0 {
+            print("FizzBuzz")
+        } else if i % 3 == 0 {
+            print("Fizz")
+        } else if i % 5 == 0 {
+            print("Buzz")
+        } else {
+            print(i)
+        }
+        i = i + 1
+    }
+    return 0
+}`,
+  structs: `struct Point {
+    x: f64,
+    y: f64,
+}
+
+fn distance(a: &Point, b: &Point): f64 {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    return sqrt(dx * dx + dy * dy)
+}
+
+fn main(): i32 {
+    let p1 = Point { x: 0.0, y: 0.0 }
+    let p2 = Point { x: 3.0, y: 4.0 }
+    print("distance: ", distance(&p1, &p2))
+    return 0
+}`,
+  enums: `enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+}
+
+fn area(s: &Shape): f64 {
+    match s {
+        Shape.Circle(r) => {
+            return 3.14159 * r * r
+        }
+        Shape.Rect(w, h) => {
+            return w * h
+        }
+    }
+}
+
+fn main(): i32 {
+    let c = Shape.Circle(5.0)
+    let r = Shape.Rect(3.0, 4.0)
+    print("circle area: ", area(&c))
+    print("rect area: ", area(&r))
+    return 0
+}`,
+  closures: `fn main(): i32 {
+    var nums: Vec<i32> = Vec.new()
+    nums.push(1)
+    nums.push(2)
+    nums.push(3)
+    nums.push(4)
+    nums.push(5)
+
+    let doubled = nums.map((x: i32): i32 => x * 2)
+    let evens = nums.filter((x: &i32): bool => x % 2 == 0)
+
+    print("doubled:")
+    for d in doubled {
+        print("  ", d)
+    }
+    print("evens:")
+    for e in evens {
+        print("  ", e)
+    }
+    return 0
+}`,
+  generics: `struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+fn swap<A, B>(p: Pair<A, B>): Pair<B, A> {
+    return Pair { first: p.second, second: p.first }
+}
+
+fn main(): i32 {
+    let p = Pair { first: 42, second: "hello" }
+    print("before: ", p.first, " ", p.second)
+    let s = swap(p)
+    print("after: ", s.first, " ", s.second)
+    return 0
+}`,
+  vec: `fn main(): i32 {
+    var items: Vec<string> = Vec.new()
+    items.push("apple")
+    items.push("banana")
+    items.push("cherry")
+
+    print("count: ", items.len())
+
+    for item in items {
+        print("- ", item)
+    }
+
+    let upper = items.map((s: string): string => strToUpper(s))
+    for u in upper {
+        print("  ", u)
+    }
+    return 0
+}`,
+};
+
+const editor = document.getElementById("editor");
+const output = document.getElementById("output");
+const status = document.getElementById("status");
+const outDot = document.getElementById("out-dot");
+const outLabel = document.getElementById("out-label");
+const runBtn = document.getElementById("run-btn");
+
+editor.value = examples.fizzbuzz;
+
+function run() {
+  const src = editor.value;
+  const t0 = performance.now();
+  const result = MiloPlayground.compileAndRun(src);
+  const ms = (performance.now() - t0).toFixed(1);
+
+  if (!result.ok) {
+    output.textContent = result.error;
+    output.className = "error";
+    outDot.className = "dot err";
+    outLabel.textContent = "Error";
+    status.textContent = `failed (${ms}ms)`;
+    status.className = "status err";
+  } else if (result.error) {
+    output.textContent = (result.output || "") + "\n" + result.error;
+    output.className = "error";
+    outDot.className = "dot err";
+    outLabel.textContent = "Runtime Error";
+    status.textContent = `runtime error (${ms}ms)`;
+    status.className = "status err";
+  } else {
+    output.textContent = result.output || "(no output)";
+    output.className = "success";
+    outDot.className = "dot ok";
+    outLabel.textContent = "Output";
+    status.textContent = `ok (${ms}ms)`;
+    status.className = "status ok";
+  }
+}
+
+runBtn.addEventListener("click", run);
+editor.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); run(); }
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const start = editor.selectionStart;
+    editor.value = editor.value.substring(0, start) + "    " + editor.value.substring(editor.selectionEnd);
+    editor.selectionStart = editor.selectionEnd = start + 4;
+  }
+});
+
+for (const btn of document.querySelectorAll("[data-example]")) {
+  btn.addEventListener("click", () => {
+    editor.value = examples[btn.dataset.example];
+    run();
+  });
+}
+
+// auto-run on load
+run();
+</script>
+</body>
+</html>
