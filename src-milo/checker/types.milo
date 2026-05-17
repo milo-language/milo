@@ -1,0 +1,254 @@
+// Internal type representation — tagged union equivalent of TS TypeKind
+from "src-milo/ast.milo" import { MiloType, Span }
+
+// TypeKind — the resolved, internal type representation used by the checker.
+// Milo enums can't be recursive without Box, so complex types use string names
+// and are looked up in the checker's tables.
+enum TypeKind {
+    TInt(i32, bool),       // (bits, signed)
+    TFloat(i32),           // (bits)
+    TBool,
+    TVoid,
+    TString,
+    TPtr(Box<TypeKind>),
+    TRef(Box<TypeKind>, bool),  // (inner, mutable)
+    TStruct(string),       // mangled name
+    TEnum(string),         // mangled name
+    TBox(Box<TypeKind>),
+    TVec(Box<TypeKind>),
+    THashMap(Box<TypeKind>, Box<TypeKind>),
+    TArray(Box<TypeKind>, Option<i64>),
+    TFn(Vec<TypeKind>, Box<TypeKind>),  // (params, ret)
+    TUnknown,
+}
+
+// -- Type constructors --
+
+fn tyI32(): TypeKind { return TypeKind.TInt(32, true) }
+fn tyI64(): TypeKind { return TypeKind.TInt(64, true) }
+fn tyU8(): TypeKind { return TypeKind.TInt(8, false) }
+fn tyBool(): TypeKind { return TypeKind.TBool }
+fn tyVoid(): TypeKind { return TypeKind.TVoid }
+fn tyString(): TypeKind { return TypeKind.TString }
+fn tyUnknown(): TypeKind { return TypeKind.TUnknown }
+
+// -- Convert AST MiloType → TypeKind (non-generic base types) --
+
+fn typeFromAst(ty: &MiloType): TypeKind {
+    if ty.isFn {
+        var params: Vec<TypeKind> = Vec.new()
+        var i: i64 = 0
+        while i < ty.fnParams.len {
+            params.push(typeFromAst(&ty.fnParams[i]))
+            i = i + 1
+        }
+        var ret = TypeKind.TVoid
+        match ty.fnRet {
+            Option.Some(r) => { ret = typeFromAst(&*r) }
+            Option.None => {}
+        }
+        return TypeKind.TFn(params, Box.new(ret))
+    }
+
+    var base = typeFromName(ty.name)
+
+    if ty.isArray {
+        base = TypeKind.TArray(Box.new(base), ty.arraySize)
+    }
+    if ty.isPtr { return TypeKind.TPtr(Box.new(base)) }
+    if ty.isRef { return TypeKind.TRef(Box.new(base), false) }
+    if ty.isRefMut { return TypeKind.TRef(Box.new(base), true) }
+    return base
+}
+
+fn typeFromName(name: &string): TypeKind {
+    if name == "i8" { return TypeKind.TInt(8, true) }
+    if name == "i16" { return TypeKind.TInt(16, true) }
+    if name == "i32" { return TypeKind.TInt(32, true) }
+    if name == "int" || name == "i64" { return TypeKind.TInt(64, true) }
+    if name == "byte" || name == "u8" { return TypeKind.TInt(8, false) }
+    if name == "u16" { return TypeKind.TInt(16, false) }
+    if name == "u32" { return TypeKind.TInt(32, false) }
+    if name == "u64" { return TypeKind.TInt(64, false) }
+    if name == "f32" { return TypeKind.TFloat(32) }
+    if name == "float" || name == "f64" { return TypeKind.TFloat(64) }
+    if name == "bool" { return TypeKind.TBool }
+    if name == "void" { return TypeKind.TVoid }
+    if name == "string" { return TypeKind.TString }
+    return TypeKind.TStruct(name.clone())
+}
+
+// -- Type equality --
+
+fn typeEq(a: &TypeKind, b: &TypeKind): bool {
+    match a {
+        TypeKind.TInt(bitsA, signedA) => {
+            match b {
+                TypeKind.TInt(bitsB, signedB) => { return bitsA == bitsB && signedA == signedB }
+                _ => { return false }
+            }
+        }
+        TypeKind.TFloat(bitsA) => {
+            match b {
+                TypeKind.TFloat(bitsB) => { return bitsA == bitsB }
+                _ => { return false }
+            }
+        }
+        TypeKind.TBool => {
+            match b { TypeKind.TBool => { return true } _ => { return false } }
+        }
+        TypeKind.TVoid => {
+            match b { TypeKind.TVoid => { return true } _ => { return false } }
+        }
+        TypeKind.TString => {
+            match b { TypeKind.TString => { return true } _ => { return false } }
+        }
+        TypeKind.TUnknown => {
+            match b { TypeKind.TUnknown => { return true } _ => { return false } }
+        }
+        TypeKind.TStruct(nameA) => {
+            match b { TypeKind.TStruct(nameB) => { return nameA == nameB } _ => { return false } }
+        }
+        TypeKind.TEnum(nameA) => {
+            match b { TypeKind.TEnum(nameB) => { return nameA == nameB } _ => { return false } }
+        }
+        TypeKind.TPtr(innerA) => {
+            match b { TypeKind.TPtr(innerB) => { return typeEq(&*innerA, &*innerB) } _ => { return false } }
+        }
+        TypeKind.TBox(innerA) => {
+            match b { TypeKind.TBox(innerB) => { return typeEq(&*innerA, &*innerB) } _ => { return false } }
+        }
+        TypeKind.TVec(elemA) => {
+            match b { TypeKind.TVec(elemB) => { return typeEq(&*elemA, &*elemB) } _ => { return false } }
+        }
+        TypeKind.THashMap(keyA, valA) => {
+            match b {
+                TypeKind.THashMap(keyB, valB) => {
+                    return typeEq(&*keyA, &*keyB) && typeEq(&*valA, &*valB)
+                }
+                _ => { return false }
+            }
+        }
+        TypeKind.TRef(innerA, mutA) => {
+            match b {
+                TypeKind.TRef(innerB, mutB) => {
+                    return typeEq(&*innerA, &*innerB) && mutA == mutB
+                }
+                _ => { return false }
+            }
+        }
+        TypeKind.TArray(elemA, sizeA) => {
+            match b {
+                TypeKind.TArray(elemB, sizeB) => {
+                    return typeEq(&*elemA, &*elemB) && sizeA == sizeB
+                }
+                _ => { return false }
+            }
+        }
+        TypeKind.TFn(paramsA, retA) => {
+            match b {
+                TypeKind.TFn(paramsB, retB) => {
+                    if paramsA.len != paramsB.len { return false }
+                    var i: i64 = 0
+                    while i < paramsA.len {
+                        if !typeEq(&paramsA[i], &paramsB[i]) { return false }
+                        i = i + 1
+                    }
+                    return typeEq(&*retA, &*retB)
+                }
+                _ => { return false }
+            }
+        }
+    }
+}
+
+// -- Type name (for error messages) --
+
+fn typeName(t: &TypeKind): string {
+    match t {
+        TypeKind.TInt(bits, signed) => {
+            let prefix = if signed { "i" } else { "u" }
+            return prefix + bits.toString()
+        }
+        TypeKind.TFloat(bits) => { return "f" + bits.toString() }
+        TypeKind.TBool => { return "bool" }
+        TypeKind.TVoid => { return "void" }
+        TypeKind.TString => { return "string" }
+        TypeKind.TStruct(name) => { return name.clone() }
+        TypeKind.TEnum(name) => { return name.clone() }
+        TypeKind.TPtr(inner) => { return "*" + typeName(&*inner) }
+        TypeKind.TBox(inner) => { return "Box<" + typeName(&*inner) + ">" }
+        TypeKind.TVec(elem) => { return "Vec<" + typeName(&*elem) + ">" }
+        TypeKind.THashMap(key, val) => {
+            return "HashMap<" + typeName(&*key) + ", " + typeName(&*val) + ">"
+        }
+        TypeKind.TRef(inner, mutable) => {
+            let prefix = if mutable { "&mut " } else { "&" }
+            return prefix + typeName(&*inner)
+        }
+        TypeKind.TArray(elem, size) => {
+            match size {
+                Option.Some(n) => { return "[" + typeName(&*elem) + "; " + n.toString() + "]" }
+                Option.None => { return "[" + typeName(&*elem) + "]" }
+            }
+        }
+        TypeKind.TFn(params, ret) => {
+            var s = "("
+            var i: i64 = 0
+            while i < params.len {
+                if i > 0 { s = s + ", " }
+                s = s + typeName(&params[i])
+                i = i + 1
+            }
+            s = s + ") => " + typeName(&*ret)
+            return s
+        }
+        TypeKind.TUnknown => { return "<unknown>" }
+    }
+}
+
+// -- Type predicates --
+
+fn isNumeric(t: &TypeKind): bool {
+    match t {
+        TypeKind.TInt(bits, signed) => { return true }
+        TypeKind.TFloat(bits) => { return true }
+        _ => { return false }
+    }
+}
+
+fn isInteger(t: &TypeKind): bool {
+    match t {
+        TypeKind.TInt(bits, signed) => { return true }
+        _ => { return false }
+    }
+}
+
+fn isFloat(t: &TypeKind): bool {
+    match t {
+        TypeKind.TFloat(bits) => { return true }
+        _ => { return false }
+    }
+}
+
+fn isCopy(t: &TypeKind): bool {
+    match t {
+        TypeKind.TInt(bits, signed) => { return true }
+        TypeKind.TFloat(bits) => { return true }
+        TypeKind.TBool => { return true }
+        TypeKind.TPtr(inner) => { return true }
+        TypeKind.TFn(params, ret) => { return true }
+        TypeKind.TRef(inner, mutable) => { return true }
+        _ => { return false }
+    }
+}
+
+fn needsDrop(t: &TypeKind): bool {
+    match t {
+        TypeKind.TString => { return true }
+        TypeKind.TBox(inner) => { return true }
+        TypeKind.TVec(elem) => { return true }
+        TypeKind.THashMap(key, val) => { return true }
+        _ => { return false }
+    }
+}

@@ -1,0 +1,198 @@
+// Checker state — scopes, variable info, diagnostic tracking, type tables
+from "src-milo/ast.milo" import { Span, Function, StructDecl, EnumDecl, Program }
+from "src-milo/checker/types.milo" import { TypeKind, typeEq, typeName, tyVoid }
+
+// -- Diagnostics --
+
+struct Diagnostic {
+    severity: string,  // "error" or "warning"
+    message: string,
+    hint: string,
+    span: Option<Span>,
+}
+
+// -- Variable info in scope --
+
+struct VarInfo {
+    type: TypeKind,
+    mutable: bool,
+    moved: bool,
+    borrowed: bool,
+    read: bool,
+    span: Option<Span>,
+}
+
+// -- Function signature --
+
+struct FnSig {
+    params: Vec<FnParam>,
+    ret: TypeKind,
+    variadic: bool,
+    isExtern: bool,
+}
+
+struct FnParam {
+    name: string,
+    type: TypeKind,
+}
+
+// -- Struct info (post-resolution) --
+
+struct StructField {
+    name: string,
+    type: TypeKind,
+}
+
+struct StructInfo {
+    fields: Vec<StructField>,
+    baseName: string,
+}
+
+// -- Enum info (post-resolution) --
+
+struct VariantInfo {
+    tag: i32,
+    fields: Vec<TypeKind>,
+}
+
+struct EnumInfo {
+    baseName: string,
+    variants: HashMap<string, VariantInfo>,
+}
+
+// -- Trait info --
+
+struct TraitMethodInfo {
+    params: Vec<FnParam>,
+    ret: TypeKind,
+    hasDefault: bool,
+}
+
+struct TraitInfo {
+    name: string,
+    supertraits: Vec<string>,
+    methods: HashMap<string, TraitMethodInfo>,
+}
+
+struct ImplInfo {
+    traitName: Option<string>,
+    typeName: string,
+    methods: HashMap<string, FnSig>,
+}
+
+// -- Checker state --
+
+struct Checker {
+    diagnostics: Vec<Diagnostic>,
+    functions: HashMap<string, FnSig>,
+    structs: HashMap<string, StructInfo>,
+    enums: HashMap<string, EnumInfo>,
+    traits: HashMap<string, TraitInfo>,
+    traitImpls: HashMap<string, Vec<ImplInfo>>,
+    inherentImpls: HashMap<string, ImplInfo>,
+    scopes: Vec<HashMap<string, VarInfo>>,
+    currentFnRetType: TypeKind,
+    loopDepth: i32,
+    unsafeDepth: i32,
+    monomorphizedFns: Vec<Function>,
+    monomorphizedEnums: Vec<EnumDecl>,
+    monomorphizedStructs: Vec<StructDecl>,
+    dropImpls: HashMap<string, bool>,
+}
+
+fn newChecker(): Checker {
+    return Checker {
+        diagnostics: Vec.new(),
+        functions: HashMap.new(),
+        structs: HashMap.new(),
+        enums: HashMap.new(),
+        traits: HashMap.new(),
+        traitImpls: HashMap.new(),
+        inherentImpls: HashMap.new(),
+        scopes: Vec.new(),
+        currentFnRetType: TypeKind.TVoid,
+        loopDepth: 0,
+        unsafeDepth: 0,
+        monomorphizedFns: Vec.new(),
+        monomorphizedEnums: Vec.new(),
+        monomorphizedStructs: Vec.new(),
+        dropImpls: HashMap.new(),
+    }
+}
+
+// -- Error/warning emission --
+
+fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
+    ck.diagnostics.push(Diagnostic {
+        severity: "error",
+        message: msg,
+        hint: "",
+        span: span,
+    })
+}
+
+fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
+    ck.diagnostics.push(Diagnostic {
+        severity: "error",
+        message: msg,
+        hint: hint,
+        span: span,
+    })
+}
+
+fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
+    ck.diagnostics.push(Diagnostic {
+        severity: "warning",
+        message: msg,
+        hint: "",
+        span: span,
+    })
+}
+
+// -- Scope management --
+
+fn pushScope(ck: &mut Checker) {
+    ck.scopes.push(HashMap.new())
+}
+
+fn popScope(ck: &mut Checker) {
+    ck.scopes.pop()
+}
+
+fn declare(ck: &mut Checker, name: string, info: VarInfo) {
+    let depth = ck.scopes.len - 1
+    ck.scopes[depth].insert(name, info)
+}
+
+fn lookup(ck: &Checker, name: &string): Option<&VarInfo> {
+    var i: i64 = ck.scopes.len - 1
+    while i >= 0 {
+        if ck.scopes[i].contains(name) {
+            return Option.Some(&ck.scopes[i].get(name))
+        }
+        i = i - 1
+    }
+    return Option.None
+}
+
+fn lookupMut(ck: &mut Checker, name: &string): Option<&mut VarInfo> {
+    var i: i64 = ck.scopes.len - 1
+    while i >= 0 {
+        if ck.scopes[i].contains(name) {
+            return Option.Some(&mut ck.scopes[i].get(name))
+        }
+        i = i - 1
+    }
+    return Option.None
+}
+
+// -- Has errors check --
+
+fn hasErrors(ck: &Checker): bool {
+    var i: i64 = 0
+    while i < ck.diagnostics.len {
+        if ck.diagnostics[i].severity == "error" { return true }
+        i = i + 1
+    }
+    return false
+}

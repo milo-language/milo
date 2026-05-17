@@ -299,3 +299,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 - [x] std/csv, std/regex, std/crypto
 - [x] std/json, std/fs, std/net, std/http, std/process, std/argparse, std/path, std/env, std/args, std/arena
 - [x] std/thread, std/sync, std/testing
+
+## Standard Library — planned
+
+- [ ] **std/sqlite** — ergonomic SQLite bindings: prepared statements, row iterator, Result-based errors (extern FFI layer exists)

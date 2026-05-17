@@ -1,0 +1,237 @@
+// Import resolver — recursively parse imported files and merge into a single Program
+from "std/fs" import { readFile, fileExists }
+from "std/path" import { resolve, dirname, join }
+from "std/env" import { getEnv, homeDir }
+from "src-milo/tokens.milo" import { Token }
+from "src-milo/lexer.milo" import { newLexer, tokenize }
+from "src-milo/parser.milo" import { newParser, parse }
+from "src-milo/ast.milo" import {
+    Program, StructDecl, EnumDecl, Function, ImportDecl, TraitDecl, ImplDecl
+}
+
+struct ResolverState {
+    visited: HashMap<string, bool>,
+    structs: Vec<StructDecl>,
+    enums: Vec<EnumDecl>,
+    functions: Vec<Function>,
+    traits: Vec<TraitDecl>,
+    impls: Vec<ImplDecl>,
+    stdlibDir: string,
+    targetOs: string,
+}
+
+fn newResolver(stdlibDir: string, targetOs: string): ResolverState {
+    return ResolverState {
+        visited: HashMap.new(),
+        structs: Vec.new(),
+        enums: Vec.new(),
+        functions: Vec.new(),
+        traits: Vec.new(),
+        impls: Vec.new(),
+        stdlibDir: stdlibDir,
+        targetOs: targetOs,
+    }
+}
+
+// Resolve an import path to an absolute file path.
+// Search order: relative to source dir, then stdlib dir, then platform-specific.
+fn resolvePath(rs: &ResolverState, dir: &string, importPath: &string): string {
+    var withExt = importPath.clone()
+    if !withExt.endsWith(".milo") {
+        withExt = withExt + ".milo"
+    }
+
+    // Try relative to current file's directory
+    let absPath = resolve(dir, withExt)
+    if fileExists(absPath) {
+        return absPath
+    }
+
+    // Try platform-specific variant (e.g. platform.darwin.milo)
+    let base = withExt[0..withExt.len - 5]  // strip .milo
+    let platformPath = resolve(rs.stdlibDir, base + "." + rs.targetOs + ".milo")
+    if fileExists(platformPath) {
+        return platformPath
+    }
+
+    // Try stdlib path
+    let stdPath = resolve(rs.stdlibDir, withExt)
+    if fileExists(stdPath) {
+        return stdPath
+    }
+
+    return absPath
+}
+
+// Parse a source file and return its Program AST.
+fn parseFile(path: &string): Program {
+    let source = readFile(path)
+    let tokens = tokenize(source)
+    var p = newParser(tokens)
+    return parse(&mut p)
+}
+
+// Recursively process imports from a parsed program.
+fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
+    var i: i64 = 0
+    while i < prog.imports.len {
+        let imp = &prog.imports[i]
+        let absPath = resolvePath(rs, dir, imp.path)
+
+        if !rs.visited.contains(absPath) {
+            rs.visited.insert(absPath.clone(), true)
+            let imported = parseFile(absPath)
+
+            // Validate named imports exist
+            match imp.names {
+                Option.Some(names) => {
+                    // TODO: validate names exist in imported module
+                    // For now, merge everything (flat compilation model)
+                }
+                Option.None => {}
+            }
+
+            // Merge declarations
+            var si: i64 = 0
+            while si < imported.structs.len {
+                rs.structs.push(imported.structs[si])
+                si = si + 1
+            }
+            var ei: i64 = 0
+            while ei < imported.enums.len {
+                rs.enums.push(imported.enums[ei])
+                ei = ei + 1
+            }
+            var fi: i64 = 0
+            while fi < imported.functions.len {
+                rs.functions.push(imported.functions[fi])
+                fi = fi + 1
+            }
+            var ti: i64 = 0
+            while ti < imported.traits.len {
+                rs.traits.push(imported.traits[ti])
+                ti = ti + 1
+            }
+            var ii: i64 = 0
+            while ii < imported.impls.len {
+                rs.impls.push(imported.impls[ii])
+                ii = ii + 1
+            }
+
+            // Recurse into this module's imports
+            let importDir = dirname(absPath)
+            processImports(rs, &imported, importDir)
+        }
+        i = i + 1
+    }
+}
+
+// Dedup declarations by name (last occurrence wins — user overrides prelude).
+fn dedupStructs(arr: Vec<StructDecl>): Vec<StructDecl> {
+    var seen: HashMap<string, bool> = HashMap.new()
+    var result: Vec<StructDecl> = Vec.new()
+    var i: i64 = arr.len - 1
+    while i >= 0 {
+        if !seen.contains(arr[i].name) {
+            seen.insert(arr[i].name.clone(), true)
+            result.push(arr[i])
+        }
+        i = i - 1
+    }
+    result.reverse()
+    return result
+}
+
+fn dedupEnums(arr: Vec<EnumDecl>): Vec<EnumDecl> {
+    var seen: HashMap<string, bool> = HashMap.new()
+    var result: Vec<EnumDecl> = Vec.new()
+    var i: i64 = arr.len - 1
+    while i >= 0 {
+        if !seen.contains(arr[i].name) {
+            seen.insert(arr[i].name.clone(), true)
+            result.push(arr[i])
+        }
+        i = i - 1
+    }
+    result.reverse()
+    return result
+}
+
+fn dedupFunctions(arr: Vec<Function>): Vec<Function> {
+    var seen: HashMap<string, bool> = HashMap.new()
+    var result: Vec<Function> = Vec.new()
+    var i: i64 = arr.len - 1
+    while i >= 0 {
+        if !seen.contains(arr[i].name) {
+            seen.insert(arr[i].name.clone(), true)
+            result.push(arr[i])
+        }
+        i = i - 1
+    }
+    result.reverse()
+    return result
+}
+
+fn dedupTraits(arr: Vec<TraitDecl>): Vec<TraitDecl> {
+    var seen: HashMap<string, bool> = HashMap.new()
+    var result: Vec<TraitDecl> = Vec.new()
+    var i: i64 = arr.len - 1
+    while i >= 0 {
+        if !seen.contains(arr[i].name) {
+            seen.insert(arr[i].name.clone(), true)
+            result.push(arr[i])
+        }
+        i = i - 1
+    }
+    result.reverse()
+    return result
+}
+
+// Main entry point: resolve all imports and produce a merged Program.
+fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, targetOs: string): Program {
+    var rs = newResolver(stdlibDir, targetOs)
+
+    // Inject prelude before user code
+    let preludePath = resolve(rs.stdlibDir, "std/prelude.milo")
+    if fileExists(preludePath) && !rs.visited.contains(preludePath) {
+        rs.visited.insert(preludePath.clone(), true)
+        let prelude = parseFile(preludePath)
+        var si: i64 = 0
+        while si < prelude.structs.len { rs.structs.push(prelude.structs[si]); si = si + 1 }
+        var ei: i64 = 0
+        while ei < prelude.enums.len { rs.enums.push(prelude.enums[ei]); ei = ei + 1 }
+        var fi: i64 = 0
+        while fi < prelude.functions.len { rs.functions.push(prelude.functions[fi]); fi = fi + 1 }
+        var ti: i64 = 0
+        while ti < prelude.traits.len { rs.traits.push(prelude.traits[ti]); ti = ti + 1 }
+        var ii: i64 = 0
+        while ii < prelude.impls.len { rs.impls.push(prelude.impls[ii]); ii = ii + 1 }
+        let preludeDir = dirname(preludePath)
+        processImports(&mut rs, &prelude, preludeDir)
+    }
+
+    // User code comes after prelude (last-wins dedup means user overrides)
+    var si: i64 = 0
+    while si < program.structs.len { rs.structs.push(program.structs[si]); si = si + 1 }
+    var ei: i64 = 0
+    while ei < program.enums.len { rs.enums.push(program.enums[ei]); ei = ei + 1 }
+    var fi: i64 = 0
+    while fi < program.functions.len { rs.functions.push(program.functions[fi]); fi = fi + 1 }
+    var ti: i64 = 0
+    while ti < program.traits.len { rs.traits.push(program.traits[ti]); ti = ti + 1 }
+    var ii: i64 = 0
+    while ii < program.impls.len { rs.impls.push(program.impls[ii]); ii = ii + 1 }
+
+    // Process user program's imports
+    processImports(&mut rs, &program, sourceDir)
+
+    // Dedup and return merged program
+    return Program {
+        structs: dedupStructs(rs.structs),
+        enums: dedupEnums(rs.enums),
+        functions: dedupFunctions(rs.functions),
+        imports: Vec.new(),
+        traits: dedupTraits(rs.traits),
+        impls: rs.impls,
+    }
+}
