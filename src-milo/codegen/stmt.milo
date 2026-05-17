@@ -1,0 +1,287 @@
+// Statement codegen: let/var, assign, if, while, for, match, break/continue
+from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm }
+from "src-milo/codegen/types.milo" import {
+    Cgen, Val, Local, FnSig,
+    nextTemp, nextLabel, emit, llType, stripPercent,
+    findLocal, genLoad,
+    lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
+}
+from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
+
+// -- Assignment --
+
+fn genAssign(cg: &mut Cgen, target: Box<Expr>, value: Box<Expr>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>) {
+    match *target {
+        Expr.Ident(name, span) => {
+            let local = findLocal(locs, name)
+            let v = genExpr(cg, value, locs, sigs, local.ty.clone())
+            emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
+        }
+        Expr.FieldAccess(object, field, span) => {
+            let lv = genLvalue(cg, object, locs, sigs)
+            let rawName = stripPercent(lv.ty)
+            let idx = lookupFieldIndex(cg, rawName, field)
+            let fty = lookupFieldType(cg, rawName, idx)
+            let ftyLl = llType(fty)
+            let structTy = "%" + rawName
+            let fp = nextTemp(cg)
+            emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + lv.v + ", i32 0, i32 " + idx.toString() + "\n")
+            let v = genExpr(cg, value, locs, sigs, ftyLl)
+            emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
+        }
+        Expr.IndexAccess(obj, idx, span) => {
+            // TODO: array/vec index assignment
+        }
+        _ => {}
+    }
+}
+
+// -- While loop --
+
+fn genWhile(cg: &mut Cgen, cond: Box<Expr>, body: Vec<Box<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, retTy: &string) {
+    let condLbl = nextLabel(cg, "wcond")
+    let bodyLbl = nextLabel(cg, "wbody")
+    let endLbl = nextLabel(cg, "wend")
+    let savedBreak = cg.curBreakLbl.clone()
+    let savedCont = cg.curContLbl.clone()
+    cg.curBreakLbl = endLbl.clone()
+    cg.curContLbl = condLbl.clone()
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, condLbl + ":\n")
+    let cv = genExpr(cg, cond, locs, sigs, "bool")
+    emit(cg, "  br i1 " + cv.v + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+    emit(cg, bodyLbl + ":\n")
+    var bodyTerm = false
+    var bi: i64 = 0
+    while bi < body.len {
+        if genStmt(cg, body[bi], locs, sigs, retTy) { bodyTerm = true }
+        bi = bi + 1
+    }
+    if !bodyTerm { emit(cg, "  br label %" + condLbl + "\n") }
+    emit(cg, endLbl + ":\n")
+    cg.curBreakLbl = savedBreak
+    cg.curContLbl = savedCont
+}
+
+// -- If statement --
+
+fn genIf(cg: &mut Cgen, cond: Box<Expr>, thenBody: Vec<Box<Stmt>>, elseBody: Option<Vec<Box<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, retTy: &string): bool {
+    let cv = genExpr(cg, cond, locs, sigs, "bool")
+    let thenLbl = nextLabel(cg, "then")
+    let elseLbl = nextLabel(cg, "else")
+    let endLbl = nextLabel(cg, "endif")
+    emit(cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
+    emit(cg, thenLbl + ":\n")
+    var thenTerm = false
+    var ti: i64 = 0
+    while ti < thenBody.len {
+        if genStmt(cg, thenBody[ti], locs, sigs, retTy) { thenTerm = true }
+        ti = ti + 1
+    }
+    if !thenTerm { emit(cg, "  br label %" + endLbl + "\n") }
+    emit(cg, elseLbl + ":\n")
+    var elseTerm = false
+    match elseBody {
+        Option.Some(stmts) => {
+            var ei: i64 = 0
+            while ei < stmts.len {
+                if genStmt(cg, stmts[ei], locs, sigs, retTy) { elseTerm = true }
+                ei = ei + 1
+            }
+        }
+        Option.None => {}
+    }
+    if !elseTerm { emit(cg, "  br label %" + endLbl + "\n") }
+    emit(cg, endLbl + ":\n")
+    if thenTerm && elseTerm { emit(cg, "  unreachable\n") }
+    return thenTerm && elseTerm
+}
+
+// -- Match statement --
+
+fn genMatch(cg: &mut Cgen, subject: Box<Expr>, arms: Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, retTy: &string): bool {
+    let subjLv = genLvalue(cg, subject, locs, sigs)
+    let rawName = stripPercent(subjLv.ty)
+    let structTy = "%" + rawName
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 0\n")
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
+    let endLbl = nextLabel(cg, "match.end")
+    var switchCases = ""
+    var armLabels: Vec<string> = Vec.new()
+    var i: i64 = 0
+    while i < arms.len {
+        let armLbl = nextLabel(cg, "match.arm")
+        match arms[i].pattern {
+            Pattern.EnumPattern(enumName, variant, bindings, span) => {
+                let tg = lookupVariantTag(cg, enumName, variant)
+                switchCases = switchCases + "i32 " + tg.toString() + ", label %" + armLbl + " "
+            }
+            _ => {
+                switchCases = switchCases + "i32 " + i.toString() + ", label %" + armLbl + " "
+            }
+        }
+        armLabels.push(armLbl)
+        i = i + 1
+    }
+    let defaultLbl = nextLabel(cg, "match.default")
+    emit(cg, "  switch i32 " + tag + ", label %" + defaultLbl + " [" + switchCases + "]\n")
+    var allTerminated = true
+    var ai: i64 = 0
+    while ai < arms.len {
+        emit(cg, armLabels[ai] + ":\n")
+        let locsPreLen = locs.len
+        // Extract payload bindings
+        match arms[ai].pattern {
+            Pattern.EnumPattern(enumName, variant, bindings, span) => {
+                if bindings.len > 0 {
+                    let payloadTypes = lookupVariantPayload(cg, enumName, variant)
+                    if payloadTypes.len > 0 {
+                        let payPtr = nextTemp(cg)
+                        emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 1\n")
+                        let vstructTy = variantStructTy(payloadTypes)
+                        var bi: i64 = 0
+                        while bi < bindings.len {
+                            let ftyLl = llType(payloadTypes[bi])
+                            let fp = nextTemp(cg)
+                            emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 " + bi.toString() + "\n")
+                            let loaded = nextTemp(cg)
+                            emit(cg, "  " + loaded + " = load " + ftyLl + ", ptr " + fp + "\n")
+                            let bindAddr = nextTemp(cg)
+                            emit(cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
+                            emit(cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
+                            locs.push(Local { name: bindings[bi], ty: payloadTypes[bi], addr: bindAddr })
+                            bi = bi + 1
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        var armTerm = false
+        var si: i64 = 0
+        while si < arms[ai].body.len {
+            if genStmt(cg, arms[ai].body[si], locs, sigs, retTy) { armTerm = true }
+            si = si + 1
+        }
+        // Pop bindings
+        while locs.len > locsPreLen { locs.pop() }
+        if !armTerm {
+            emit(cg, "  br label %" + endLbl + "\n")
+            allTerminated = false
+        }
+        ai = ai + 1
+    }
+    emit(cg, defaultLbl + ":\n")
+    emit(cg, "  unreachable\n")
+    emit(cg, endLbl + ":\n")
+    if allTerminated && arms.len > 0 { emit(cg, "  unreachable\n") }
+    return allTerminated && arms.len > 0
+}
+
+// -- Main statement dispatch. Returns true if stmt terminates block. --
+
+fn genStmt(cg: &mut Cgen, s: Box<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig>, retTy: &string): bool {
+    match *s {
+        Stmt.LetDecl(name, ty, value, span) => {
+            var hintTy = ""
+            match ty {
+                Option.Some(t) => { hintTy = t.name }
+                Option.None => {}
+            }
+            let v = genExpr(cg, value, locs, sigs, hintTy)
+            let vtyLl = llType(v.ty)
+            let addr = nextTemp(cg)
+            emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
+            emit(cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
+            locs.push(Local { name: name, ty: v.ty, addr: addr })
+            return false
+        }
+        Stmt.VarDecl(name, ty, value, span) => {
+            var hintTy = ""
+            match ty {
+                Option.Some(t) => { hintTy = t.name }
+                Option.None => {}
+            }
+            let v = genExpr(cg, value, locs, sigs, hintTy)
+            let vtyLl = llType(v.ty)
+            let addr = nextTemp(cg)
+            emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
+            emit(cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
+            locs.push(Local { name: name, ty: v.ty, addr: addr })
+            return false
+        }
+        Stmt.Assign(target, value, span) => {
+            genAssign(cg, target, value, locs, sigs)
+            return false
+        }
+        Stmt.Return(value, span) => {
+            match value {
+                Option.Some(expr) => {
+                    let v = genExpr(cg, expr, locs, sigs, retTy.clone())
+                    let fnRetLl = llType(retTy)
+                    let valLl = llType(v.ty)
+                    if valLl == fnRetLl {
+                        emit(cg, "  ret " + valLl + " " + v.v + "\n")
+                    } else {
+                        let cast = nextTemp(cg)
+                        emit(cg, "  " + cast + " = trunc " + valLl + " " + v.v + " to " + fnRetLl + "\n")
+                        emit(cg, "  ret " + fnRetLl + " " + cast + "\n")
+                    }
+                }
+                Option.None => {
+                    emit(cg, "  ret void\n")
+                }
+            }
+            return true
+        }
+        Stmt.ExprStmt(e, span) => {
+            genExpr(cg, e, locs, sigs, "")
+            return false
+        }
+        Stmt.IfStmt(cond, thenBody, elseBody, span) => {
+            return genIf(cg, cond, thenBody, elseBody, locs, sigs, retTy)
+        }
+        Stmt.WhileStmt(cond, body, span) => {
+            genWhile(cg, cond, body, locs, sigs, retTy)
+            return false
+        }
+        Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
+            // TODO: for-in loop codegen (range + iterator)
+            return false
+        }
+        Stmt.MatchStmt(subject, arms, span) => {
+            return genMatch(cg, subject, arms, locs, sigs, retTy)
+        }
+        Stmt.BreakStmt(span) => {
+            if cg.curBreakLbl.len > 0 {
+                emit(cg, "  br label %" + cg.curBreakLbl + "\n")
+                let after = nextLabel(cg, "afterBreak")
+                emit(cg, after + ":\n")
+            }
+            return false
+        }
+        Stmt.ContinueStmt(span) => {
+            if cg.curContLbl.len > 0 {
+                emit(cg, "  br label %" + cg.curContLbl + "\n")
+                let after = nextLabel(cg, "afterCont")
+                emit(cg, after + ":\n")
+            }
+            return false
+        }
+        Stmt.UnsafeBlock(body, span) => {
+            var term = false
+            var i: i64 = 0
+            while i < body.len {
+                if genStmt(cg, body[i], locs, sigs, retTy) { term = true }
+                i = i + 1
+            }
+            return term
+        }
+        Stmt.IfLetStmt(pattern, subject, thenBody, elseBody, span) => {
+            // TODO: if-let codegen
+            return false
+        }
+    }
+}

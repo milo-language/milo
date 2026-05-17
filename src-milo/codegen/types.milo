@@ -1,0 +1,327 @@
+// Codegen types, state, and LLVM type mapping
+from "src-milo/tokens.milo" import { TokKind }
+from "src-milo/ast.milo" import { MiloType, StructDecl, EnumDecl, Function }
+
+// -- Value returned by expression codegen --
+
+struct Val {
+    v: string,
+    ty: string,
+}
+
+// -- Local variable in scope --
+
+struct Local {
+    name: string,
+    ty: string,
+    addr: string,
+}
+
+// -- Function signature for call-site type lookup --
+
+struct FnSig {
+    name: string,
+    retTy: string,
+    paramTys: Vec<string>,
+    isVariadic: bool,
+}
+
+// -- Struct field info --
+
+struct FieldInfo {
+    name: string,
+    ty: string,
+}
+
+// -- Enum variant info --
+
+struct VariantInfo {
+    name: string,
+    tag: i32,
+    payloadTypes: Vec<string>,
+}
+
+struct EnumInfo {
+    name: string,
+    variants: Vec<VariantInfo>,
+    payloadSlots: i64,
+}
+
+// -- Codegen state --
+
+struct Cgen {
+    body: string,
+    globals: string,
+    temp: i64,
+    label: i64,
+    strId: i64,
+    // Type lookup tables (replaces old string-encoded DBs)
+    fnRets: HashMap<string, string>,
+    structs: HashMap<string, Vec<FieldInfo>>,
+    enums: HashMap<string, EnumInfo>,
+    // Loop labels for break/continue
+    curBreakLbl: string,
+    curContLbl: string,
+    // Deduplication flags for extern declarations
+    declaredPrintf: bool,
+    declaredPutchar: bool,
+    declaredMalloc: bool,
+    declaredMemcpy: bool,
+    declaredMemcmp: bool,
+    declaredStringTy: bool,
+    declaredSnprintf: bool,
+}
+
+fn cgenNew(): Cgen {
+    return Cgen {
+        body: "",
+        globals: "",
+        temp: 0,
+        label: 0,
+        strId: 0,
+        fnRets: HashMap.new(),
+        structs: HashMap.new(),
+        enums: HashMap.new(),
+        curBreakLbl: "",
+        curContLbl: "",
+        declaredPrintf: false,
+        declaredPutchar: false,
+        declaredMalloc: false,
+        declaredMemcpy: false,
+        declaredMemcmp: false,
+        declaredStringTy: false,
+        declaredSnprintf: false,
+    }
+}
+
+// -- Helpers --
+
+fn nextTemp(cg: &mut Cgen): string {
+    let n = cg.temp
+    cg.temp = cg.temp + 1
+    return "%t" + n.toString()
+}
+
+fn nextLabel(cg: &mut Cgen, base: string): string {
+    let n = cg.label
+    cg.label = cg.label + 1
+    return base + n.toString()
+}
+
+fn emit(cg: &mut Cgen, s: &string) {
+    cg.body = cg.body + s
+}
+
+fn emitG(cg: &mut Cgen, s: &string) {
+    cg.globals = cg.globals + s
+}
+
+fn ensureStringTy(cg: &mut Cgen) {
+    if !cg.declaredStringTy {
+        emitG(cg, "%String = type { ptr, i64, i64 }\n")
+        cg.declaredStringTy = true
+    }
+}
+
+fn ensureMalloc(cg: &mut Cgen) {
+    if !cg.declaredMalloc {
+        emitG(cg, "declare ptr @malloc(i64)\n")
+        cg.declaredMalloc = true
+    }
+}
+
+fn ensureMemcpy(cg: &mut Cgen) {
+    if !cg.declaredMemcpy {
+        emitG(cg, "declare ptr @memcpy(ptr, ptr, i64)\n")
+        cg.declaredMemcpy = true
+    }
+}
+
+fn ensureMemcmp(cg: &mut Cgen) {
+    if !cg.declaredMemcmp {
+        emitG(cg, "declare i32 @memcmp(ptr, ptr, i64)\n")
+        cg.declaredMemcmp = true
+    }
+}
+
+// -- LLVM type mapping --
+
+fn llType(t: &string): string {
+    if t == "i1" { return "i1" }
+    if t == "i8" || t == "u8" { return "i8" }
+    if t == "i16" || t == "u16" { return "i16" }
+    if t == "i32" || t == "u32" { return "i32" }
+    if t == "i64" || t == "u64" || t == "int" { return "i64" }
+    if t == "f32" { return "float" }
+    if t == "f64" || t == "float" { return "double" }
+    if t == "bool" { return "i1" }
+    if t == "void" { return "void" }
+    if t == "ptr" { return "ptr" }
+    if t == "string" { return "%String" }
+    // Pointer types
+    if t.len > 0 && t[0] == 42 { return "ptr" }
+    // Box<T>, Vec<T>, etc. — all pointer-shaped
+    if t.len >= 4 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
+        return "ptr"
+    }
+    // Already an LLVM type (%Name)
+    if t.len > 0 && t[0] == 37 { return t.clone() }
+    // Uppercase = user struct
+    if t.len > 0 && t[0] >= 65 && t[0] <= 90 { return "%" + t.clone() }
+    return "i32"
+}
+
+fn isUnsigned(t: &string): bool {
+    if t.len < 1 { return false }
+    return t[0] == 117  // 'u'
+}
+
+fn llTypeBytes(ll: &string): i64 {
+    if ll == "i1" || ll == "i8" { return 1 }
+    if ll == "i16" { return 2 }
+    if ll == "i32" { return 4 }
+    if ll == "i64" || ll == "ptr" { return 8 }
+    return 8
+}
+
+fn intBits(t: &string): i64 {
+    if t == "i1" { return 1 }
+    if t == "i8" || t == "u8" { return 8 }
+    if t == "i16" || t == "u16" { return 16 }
+    if t == "i32" || t == "u32" { return 32 }
+    if t == "i64" || t == "u64" { return 64 }
+    if t == "ptr" { return 64 }
+    return 0
+}
+
+fn unwrapBox(t: &string): string {
+    if t.len >= 5 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
+        return t[4..t.len - 1]
+    }
+    return ""
+}
+
+// -- Table lookup helpers (HashMap-based) --
+
+fn lookupFnRet(cg: &Cgen, name: &string): string {
+    if cg.fnRets.contains(name) {
+        return cg.fnRets.get(name)
+    }
+    return "i32"
+}
+
+fn lookupFieldIndex(cg: &Cgen, structName: &string, fieldName: &string): i64 {
+    if !cg.structs.contains(structName) { return -1 }
+    let fields = cg.structs.get(structName)
+    var i: i64 = 0
+    while i < fields.len {
+        if fields[i].name == fieldName { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+fn lookupFieldType(cg: &Cgen, structName: &string, idx: i64): string {
+    if !cg.structs.contains(structName) { return "i32" }
+    let fields = cg.structs.get(structName)
+    if idx >= 0 && idx < fields.len {
+        return fields[idx].ty.clone()
+    }
+    return "i32"
+}
+
+fn lookupVariantTag(cg: &Cgen, enumName: &string, variantName: &string): i32 {
+    if !cg.enums.contains(enumName) { return -1 }
+    let info = cg.enums.get(enumName)
+    var i: i64 = 0
+    while i < info.variants.len {
+        if info.variants[i].name == variantName {
+            return info.variants[i].tag
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn lookupVariantPayload(cg: &Cgen, enumName: &string, variantName: &string): Vec<string> {
+    if !cg.enums.contains(enumName) { return Vec.new() }
+    let info = cg.enums.get(enumName)
+    var i: i64 = 0
+    while i < info.variants.len {
+        if info.variants[i].name == variantName {
+            return info.variants[i].payloadTypes.clone()
+        }
+        i = i + 1
+    }
+    return Vec.new()
+}
+
+fn lookupEnumPayloadSlots(cg: &Cgen, enumName: &string): i64 {
+    if !cg.enums.contains(enumName) { return 0 }
+    return cg.enums.get(enumName).payloadSlots
+}
+
+// Strip leading '%' from LLVM type to get raw struct name
+fn stripPercent(ty: &string): string {
+    if ty.len > 0 && ty[0] == 37 {
+        return ty[1..ty.len]
+    }
+    return ty.clone()
+}
+
+// -- Operator helpers --
+
+fn binOpInt(op: &string, unsigned: bool): string {
+    if op == "+" { return "add" }
+    if op == "-" { return "sub" }
+    if op == "*" { return "mul" }
+    if op == "/" { return if unsigned { "udiv" } else { "sdiv" } }
+    if op == "%" { return if unsigned { "urem" } else { "srem" } }
+    if op == "&" { return "and" }
+    if op == "|" { return "or" }
+    if op == "^" { return "xor" }
+    if op == "<<" { return "shl" }
+    if op == ">>" { return if unsigned { "lshr" } else { "ashr" } }
+    return ""
+}
+
+fn cmpOpInt(op: &string, unsigned: bool): string {
+    if op == "==" { return "eq" }
+    if op == "!=" { return "ne" }
+    if op == "<" { return if unsigned { "ult" } else { "slt" } }
+    if op == ">" { return if unsigned { "ugt" } else { "sgt" } }
+    if op == "<=" { return if unsigned { "ule" } else { "sle" } }
+    if op == ">=" { return if unsigned { "uge" } else { "sge" } }
+    return ""
+}
+
+fn isArithOp(op: &string): bool {
+    return op == "+" || op == "-" || op == "*" || op == "/" ||
+           op == "%" || op == "&" || op == "|" || op == "^" ||
+           op == "<<" || op == ">>"
+}
+
+fn isCmpOp(op: &string): bool {
+    return op == "==" || op == "!=" || op == "<" || op == ">" ||
+           op == "<=" || op == ">="
+}
+
+// -- Local variable lookup --
+
+fn findLocal(locs: &Vec<Local>, name: &string): &Local {
+    var i: i64 = locs.len - 1
+    while i >= 0 {
+        if locs[i].name == name {
+            return &locs[i]
+        }
+        i = i - 1
+    }
+    // Fallback — should not happen in valid programs
+    return &locs[0]
+}
+
+fn genLoad(cg: &mut Cgen, addr: &string, ty: &string): Val {
+    let t = nextTemp(cg)
+    emit(cg, "  " + t + " = load " + ty + ", ptr " + addr + "\n")
+    return Val { v: t, ty: ty.clone() }
+}

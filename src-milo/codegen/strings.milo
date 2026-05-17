@@ -1,0 +1,214 @@
+// String codegen: literals, concat, equality, clone, int-to-string
+from "src-milo/codegen/types.milo" import {
+    Cgen, Val, emit, emitG, nextTemp, ensureStringTy, ensureMalloc, ensureMemcpy, ensureMemcmp
+}
+
+// -- Hex encoding for string literal bytes --
+
+fn hexDigit(n: u8): u8 {
+    if n < 10 { return n + 48 }
+    return n - 10 + 65
+}
+
+fn hex2(b: u8): string {
+    var s = ""
+    s.push(hexDigit(b >> 4))
+    s.push(hexDigit(b & 15))
+    return s
+}
+
+// Emit a global constant for a string literal. Returns @.strN label.
+// Handles escape sequences: \n \t \r \\ \" \0
+fn emitStringLit(cg: &mut Cgen, raw: &string): string {
+    let id = cg.strId
+    cg.strId = cg.strId + 1
+    let label = "@.str" + id.toString()
+    var encoded = ""
+    var byteCount: i64 = 0
+    var i: i64 = 0
+    while i < raw.len {
+        let c = raw[i]
+        if c == 92 && i + 1 < raw.len {
+            let n = raw[i + 1]
+            var actual: u8 = n
+            if n == 110 { actual = 10 }       // \n
+            else if n == 116 { actual = 9 }   // \t
+            else if n == 114 { actual = 13 }  // \r
+            else if n == 48 { actual = 0 }    // \0
+            else if n == 92 { actual = 92 }   // \\
+            else if n == 34 { actual = 34 }   // \"
+            encoded = encoded + "\\" + hex2(actual)
+            i = i + 2
+        } else if c < 32 || c == 34 || c == 92 || c >= 127 {
+            encoded = encoded + "\\" + hex2(c)
+            i = i + 1
+        } else {
+            encoded.push(c)
+            i = i + 1
+        }
+        byteCount = byteCount + 1
+    }
+    encoded = encoded + "\\00"
+    let total = byteCount + 1
+    emitG(cg, label + " = private unnamed_addr constant [" + total.toString() + " x i8] c\"" + encoded + "\"\n")
+    return label
+}
+
+// Build %String aggregate { @.strN, len, 0 } for a string literal.
+fn genStringLit(cg: &mut Cgen, raw: string): Val {
+    ensureStringTy(cg)
+    let label = emitStringLit(cg, raw)
+    let len = raw.len
+    let s0 = nextTemp(cg)
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + label + ", 0\n")
+    let s1 = nextTemp(cg)
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len.toString() + ", 1\n")
+    let s2 = nextTemp(cg)
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 0, 2\n")
+    return Val { v: s2, ty: "string" }
+}
+
+// Deep copy a %String value. malloc + memcpy.
+fn genStringClone(cg: &mut Cgen, sv: &string): Val {
+    ensureStringTy(cg)
+    ensureMalloc(cg)
+    ensureMemcpy(cg)
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = extractvalue %String " + sv + ", 0\n")
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = extractvalue %String " + sv + ", 1\n")
+    let sz = nextTemp(cg)
+    emit(cg, "  " + sz + " = add i64 " + len + ", 1\n")
+    let buf = nextTemp(cg)
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + buf + ", ptr " + data + ", i64 " + len + ")\n")
+    let np = nextTemp(cg)
+    emit(cg, "  " + np + " = getelementptr i8, ptr " + buf + ", i64 " + len + "\n")
+    emit(cg, "  store i8 0, ptr " + np + "\n")
+    let s0 = nextTemp(cg)
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1 = nextTemp(cg)
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
+    return Val { v: s1, ty: "string" }
+}
+
+// String concat: malloc(a.len + b.len + 1), memcpy both halves.
+fn genStringConcat(cg: &mut Cgen, av: &string, bv: &string): Val {
+    ensureStringTy(cg)
+    ensureMalloc(cg)
+    ensureMemcpy(cg)
+    let aData = nextTemp(cg)
+    emit(cg, "  " + aData + " = extractvalue %String " + av + ", 0\n")
+    let aLen = nextTemp(cg)
+    emit(cg, "  " + aLen + " = extractvalue %String " + av + ", 1\n")
+    let bData = nextTemp(cg)
+    emit(cg, "  " + bData + " = extractvalue %String " + bv + ", 0\n")
+    let bLen = nextTemp(cg)
+    emit(cg, "  " + bLen + " = extractvalue %String " + bv + ", 1\n")
+    let total = nextTemp(cg)
+    emit(cg, "  " + total + " = add i64 " + aLen + ", " + bLen + "\n")
+    let allocSz = nextTemp(cg)
+    emit(cg, "  " + allocSz + " = add i64 " + total + ", 1\n")
+    let buf = nextTemp(cg)
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + allocSz + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + buf + ", ptr " + aData + ", i64 " + aLen + ")\n")
+    let dst = nextTemp(cg)
+    emit(cg, "  " + dst + " = getelementptr i8, ptr " + buf + ", i64 " + aLen + "\n")
+    emit(cg, "  call ptr @memcpy(ptr " + dst + ", ptr " + bData + ", i64 " + bLen + ")\n")
+    let np = nextTemp(cg)
+    emit(cg, "  " + np + " = getelementptr i8, ptr " + buf + ", i64 " + total + "\n")
+    emit(cg, "  store i8 0, ptr " + np + "\n")
+    let s0 = nextTemp(cg)
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1 = nextTemp(cg)
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + total + ", 1\n")
+    return Val { v: s1, ty: "string" }
+}
+
+// String equality via length check + memcmp. Returns i1.
+fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
+    ensureMemcmp(cg)
+    let aLen = nextTemp(cg)
+    emit(cg, "  " + aLen + " = extractvalue %String " + av + ", 1\n")
+    let bLen = nextTemp(cg)
+    emit(cg, "  " + bLen + " = extractvalue %String " + bv + ", 1\n")
+    let lenEq = nextTemp(cg)
+    emit(cg, "  " + lenEq + " = icmp eq i64 " + aLen + ", " + bLen + "\n")
+    let aData = nextTemp(cg)
+    emit(cg, "  " + aData + " = extractvalue %String " + av + ", 0\n")
+    let bData = nextTemp(cg)
+    emit(cg, "  " + bData + " = extractvalue %String " + bv + ", 0\n")
+    let mc = nextTemp(cg)
+    emit(cg, "  " + mc + " = call i32 @memcmp(ptr " + aData + ", ptr " + bData + ", i64 " + aLen + ")\n")
+    let mcZero = nextTemp(cg)
+    emit(cg, "  " + mcZero + " = icmp eq i32 " + mc + ", 0\n")
+    let combined = nextTemp(cg)
+    emit(cg, "  " + combined + " = and i1 " + lenEq + ", " + mcZero + "\n")
+    if wantEq {
+        return Val { v: combined, ty: "bool" }
+    }
+    let neg = nextTemp(cg)
+    emit(cg, "  " + neg + " = xor i1 " + combined + ", 1\n")
+    return Val { v: neg, ty: "bool" }
+}
+
+// Integer → string via snprintf (two-pass: measure then format).
+fn genIntToString(cg: &mut Cgen, val: &string): Val {
+    ensureStringTy(cg)
+    ensureMalloc(cg)
+    if !cg.declaredSnprintf {
+        emitG(cg, "declare i32 @snprintf(ptr, i64, ptr, ...)\n")
+        cg.declaredSnprintf = true
+    }
+    let fmt = emitStringLit(cg, "%lld")
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr " + fmt + ", i64 " + val + ")\n")
+    let len64 = nextTemp(cg)
+    emit(cg, "  " + len64 + " = sext i32 " + len + " to i64\n")
+    let sz = nextTemp(cg)
+    emit(cg, "  " + sz + " = add i64 " + len64 + ", 1\n")
+    let buf = nextTemp(cg)
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
+    emit(cg, "  call i32 (ptr, i64, ptr, ...) @snprintf(ptr " + buf + ", i64 " + sz + ", ptr " + fmt + ", i64 " + val + ")\n")
+    let s0 = nextTemp(cg)
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1 = nextTemp(cg)
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len64 + ", 1\n")
+    return Val { v: s1, ty: "string" }
+}
+
+// String index: s[i] → load byte
+fn genStringIndex(cg: &mut Cgen, sv: &string, idx: &string): Val {
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = extractvalue %String " + sv + ", 0\n")
+    let p = nextTemp(cg)
+    emit(cg, "  " + p + " = getelementptr i8, ptr " + data + ", i64 " + idx + "\n")
+    let v = nextTemp(cg)
+    emit(cg, "  " + v + " = load i8, ptr " + p + "\n")
+    return Val { v: v, ty: "u8" }
+}
+
+// String slice: s[a..b] → owned copy (malloc + memcpy)
+fn genStringSlice(cg: &mut Cgen, sv: &string, av: &string, bv: &string): Val {
+    ensureMalloc(cg)
+    ensureMemcpy(cg)
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = extractvalue %String " + sv + ", 0\n")
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = sub i64 " + bv + ", " + av + "\n")
+    let sz = nextTemp(cg)
+    emit(cg, "  " + sz + " = add i64 " + len + ", 1\n")
+    let buf = nextTemp(cg)
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
+    let srcP = nextTemp(cg)
+    emit(cg, "  " + srcP + " = getelementptr i8, ptr " + data + ", i64 " + av + "\n")
+    emit(cg, "  call ptr @memcpy(ptr " + buf + ", ptr " + srcP + ", i64 " + len + ")\n")
+    let np = nextTemp(cg)
+    emit(cg, "  " + np + " = getelementptr i8, ptr " + buf + ", i64 " + len + "\n")
+    emit(cg, "  store i8 0, ptr " + np + "\n")
+    let s0 = nextTemp(cg)
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1 = nextTemp(cg)
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
+    return Val { v: s1, ty: "string" }
+}

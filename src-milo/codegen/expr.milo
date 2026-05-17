@@ -1,0 +1,413 @@
+// Expression codegen: literals, binops, unary, calls, field access, enums, casts
+from "src-milo/ast.milo" import { Expr, Stmt, StructLitField }
+from "src-milo/codegen/types.milo" import {
+    Cgen, Val, Local, FnSig, FieldInfo,
+    nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
+    unwrapBox, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
+    findLocal, genLoad, ensureMalloc, ensureMemcpy,
+    lookupFnRet, lookupFieldIndex, lookupFieldType,
+    lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
+}
+from "src-milo/codegen/strings.milo" import {
+    genStringLit, genStringClone, genStringConcat, genStringEq,
+    genIntToString, genStringIndex, genStringSlice
+}
+
+// -- Struct literal --
+
+fn genStructLit(cg: &mut Cgen, name: string, fields: Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let structTy = "%" + name
+    let alloc = nextTemp(cg)
+    emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
+    var fi: i64 = 0
+    while fi < fields.len {
+        let ef = fields[fi]
+        let idx = lookupFieldIndex(cg, name, ef.name)
+        let fty = lookupFieldType(cg, name, idx)
+        let fv = genExpr(cg, ef.value, locs, sigs, fty)
+        let fp = nextTemp(cg)
+        emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 " + idx.toString() + "\n")
+        emit(cg, "  store " + llType(fv.ty) + " " + fv.v + ", ptr " + fp + "\n")
+        fi = fi + 1
+    }
+    let loaded = nextTemp(cg)
+    emit(cg, "  " + loaded + " = load " + structTy + ", ptr " + alloc + "\n")
+    return Val { v: loaded, ty: structTy }
+}
+
+// -- Field access --
+
+fn genFieldAccess(cg: &mut Cgen, object: Box<Expr>, field: string, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let lv = genLvalue(cg, object, locs, sigs)
+    let lvTyLl = llType(lv.ty)
+    // Built-in: string.len
+    if lvTyLl == "%String" && field == "len" {
+        let loaded = nextTemp(cg)
+        emit(cg, "  " + loaded + " = load %String, ptr " + lv.v + "\n")
+        let lenT = nextTemp(cg)
+        emit(cg, "  " + lenT + " = extractvalue %String " + loaded + ", 1\n")
+        return Val { v: lenT, ty: "i64" }
+    }
+    let rawName = stripPercent(lv.ty)
+    let idx = lookupFieldIndex(cg, rawName, field)
+    let fty = lookupFieldType(cg, rawName, idx)
+    let ftyLl = llType(fty)
+    let structTy = "%" + rawName
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + lv.v + ", i32 0, i32 " + idx.toString() + "\n")
+    let loaded = nextTemp(cg)
+    emit(cg, "  " + loaded + " = load " + ftyLl + ", ptr " + fp + "\n")
+    return Val { v: loaded, ty: fty }
+}
+
+// -- Enum literal --
+
+fn variantStructTy(payloadTypes: &Vec<string>): string {
+    var s = "{ "
+    var i: i64 = 0
+    while i < payloadTypes.len {
+        if i > 0 { s = s + ", " }
+        s = s + llType(payloadTypes[i])
+        i = i + 1
+    }
+    s = s + " }"
+    return s
+}
+
+fn genEnumLit(cg: &mut Cgen, enumName: string, variant: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let tag = lookupVariantTag(cg, enumName, variant)
+    let structTy = "%" + enumName
+    let alloc = nextTemp(cg)
+    emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 0\n")
+    emit(cg, "  store i32 " + tag.toString() + ", ptr " + tagPtr + "\n")
+    let payloadTypes = lookupVariantPayload(cg, enumName, variant)
+    if args.len > 0 && payloadTypes.len > 0 {
+        let payPtr = nextTemp(cg)
+        emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 1\n")
+        let vstructTy = variantStructTy(payloadTypes)
+        var fi: i64 = 0
+        while fi < args.len {
+            let ftyLl = llType(payloadTypes[fi])
+            let fp = nextTemp(cg)
+            emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 " + fi.toString() + "\n")
+            let fv = genExpr(cg, args[fi], locs, sigs, payloadTypes[fi])
+            emit(cg, "  store " + ftyLl + " " + fv.v + ", ptr " + fp + "\n")
+            fi = fi + 1
+        }
+    }
+    let loaded = nextTemp(cg)
+    emit(cg, "  " + loaded + " = load " + structTy + ", ptr " + alloc + "\n")
+    return Val { v: loaded, ty: structTy }
+}
+
+// -- Cast --
+
+fn genAsCast(cg: &mut Cgen, inner: Box<Expr>, targetTy: string, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let v = genExpr(cg, inner, locs, sigs, targetTy)
+    let fromLl = llType(v.ty)
+    let toLl = llType(targetTy)
+    if fromLl == toLl { return v }
+    let fromBits = intBits(fromLl)
+    let toBits = intBits(toLl)
+    if fromBits == 0 || toBits == 0 {
+        return Val { v: v.v, ty: toLl }
+    }
+    let t = nextTemp(cg)
+    if toBits < fromBits {
+        emit(cg, "  " + t + " = trunc " + fromLl + " " + v.v + " to " + toLl + "\n")
+    } else if toBits > fromBits {
+        let op = if isUnsigned(v.ty) { "zext" } else { "sext" }
+        emit(cg, "  " + t + " = " + op + " " + fromLl + " " + v.v + " to " + toLl + "\n")
+    } else {
+        emit(cg, "  " + t + " = bitcast " + fromLl + " " + v.v + " to " + toLl + "\n")
+    }
+    return Val { v: t, ty: toLl }
+}
+
+// -- Box deref --
+
+fn genBoxDeref(cg: &mut Cgen, inner: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let v = genExpr(cg, inner, locs, sigs, "")
+    var innerRaw = unwrapBox(v.ty)
+    if innerRaw.len == 0 { innerRaw = "i64" }
+    let innerLl = llType(innerRaw)
+    let loaded = nextTemp(cg)
+    emit(cg, "  " + loaded + " = load " + innerLl + ", ptr " + v.v + "\n")
+    return Val { v: loaded, ty: innerLl }
+}
+
+// -- Method calls --
+
+fn genMethodCall(cg: &mut Cgen, object: Box<Expr>, method: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let obj = genExpr(cg, object, locs, sigs, "")
+    let objTyLl = llType(obj.ty)
+    if objTyLl == "%String" && method == "clone" {
+        return genStringClone(cg, obj.v)
+    }
+    if objTyLl == "%String" && method == "len" {
+        let lenT = nextTemp(cg)
+        emit(cg, "  " + lenT + " = extractvalue %String " + obj.v + ", 1\n")
+        return Val { v: lenT, ty: "i64" }
+    }
+    if objTyLl == "i64" && method == "toString" {
+        return genIntToString(cg, obj.v)
+    }
+    if objTyLl == "i32" && method == "toString" {
+        let w = nextTemp(cg)
+        emit(cg, "  " + w + " = sext i32 " + obj.v + " to i64\n")
+        return genIntToString(cg, w)
+    }
+    return Val { v: "0", ty: "i64" }
+}
+
+// -- Index + Slice --
+
+fn genIndex(cg: &mut Cgen, obj: Box<Expr>, idx: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let o = genExpr(cg, obj, locs, sigs, "")
+    let i = genExpr(cg, idx, locs, sigs, "i64")
+    if llType(o.ty) == "%String" {
+        return genStringIndex(cg, o.v, i.v)
+    }
+    return Val { v: "0", ty: "i64" }
+}
+
+fn genSlice(cg: &mut Cgen, obj: Box<Expr>, a: Box<Expr>, b: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    let o = genExpr(cg, obj, locs, sigs, "")
+    let av = genExpr(cg, a, locs, sigs, "i64")
+    let bv = genExpr(cg, b, locs, sigs, "i64")
+    if llType(o.ty) == "%String" {
+        return genStringSlice(cg, o.v, av.v, bv.v)
+    }
+    return Val { v: "0", ty: "i64" }
+}
+
+// -- Function calls --
+
+fn genCall(cg: &mut Cgen, name: string, args: Vec<Box<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    // Built-in Box(expr)
+    if name == "Box" {
+        let inner = genExpr(cg, args[0], locs, sigs, "")
+        let innerLl = llType(inner.ty)
+        let szPtr = nextTemp(cg)
+        emit(cg, "  " + szPtr + " = getelementptr " + innerLl + ", ptr null, i32 1\n")
+        let szInt = nextTemp(cg)
+        emit(cg, "  " + szInt + " = ptrtoint ptr " + szPtr + " to i64\n")
+        ensureMalloc(cg)
+        let boxPtr = nextTemp(cg)
+        emit(cg, "  " + boxPtr + " = call ptr @malloc(i64 " + szInt + ")\n")
+        emit(cg, "  store " + innerLl + " " + inner.v + ", ptr " + boxPtr + "\n")
+        return Val { v: boxPtr, ty: "ptr" }
+    }
+
+    // Evaluate arguments
+    var argVals: Vec<Val> = Vec.new()
+    var i: i64 = 0
+    while i < args.len {
+        argVals.push(genExpr(cg, args[i], locs, sigs, ""))
+        i = i + 1
+    }
+
+    let isVariadicExtern = name == "printf" || name == "fprintf" ||
+                           name == "snprintf" || name == "print" || name == "println"
+
+    // Build argument string
+    var argStr = ""
+    var ai: i64 = 0
+    while ai < argVals.len {
+        if ai > 0 { argStr = argStr + ", " }
+        let elemLl = llType(argVals[ai].ty)
+        if elemLl == "%String" && isVariadicExtern {
+            let p = nextTemp(cg)
+            emit(cg, "  " + p + " = extractvalue %String " + argVals[ai].v + ", 0\n")
+            argStr = argStr + "ptr " + p
+        } else {
+            argStr = argStr + elemLl + " " + argVals[ai].v
+        }
+        ai = ai + 1
+    }
+
+    let retTy = lookupFnRet(cg, name)
+    let retLl = llType(retTy)
+    var sigStr = retLl.clone()
+
+    // Builtins: print/println → printf
+    let isPrint = name == "print"
+    let isPrintln = name == "println"
+    var emitName = name.clone()
+    if isPrint || isPrintln {
+        emitName = "printf"
+        sigStr = "i32 (ptr, ...)"
+        if !cg.declaredPrintf {
+            emitG(cg, "declare i32 @printf(ptr, ...)\n")
+            cg.declaredPrintf = true
+        }
+        if isPrintln && !cg.declaredPutchar {
+            emitG(cg, "declare i32 @putchar(i32)\n")
+            cg.declaredPutchar = true
+        }
+    }
+    if name == "printf" || name == "fprintf" || name == "snprintf" {
+        sigStr = "i32 (ptr, ...)"
+    }
+
+    let t = nextTemp(cg)
+    emit(cg, "  " + t + " = call " + sigStr + " @" + emitName + "(" + argStr + ")\n")
+    if isPrintln {
+        let tNl = nextTemp(cg)
+        emit(cg, "  " + tNl + " = call i32 @putchar(i32 10)\n")
+    }
+    return Val { v: t, ty: retLl }
+}
+
+// -- Lvalue (address-of) --
+
+fn genLvalue(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+    match *e {
+        Expr.Ident(name, span) => {
+            let local = findLocal(locs, name)
+            return Val { v: local.addr.clone(), ty: local.ty.clone() }
+        }
+        Expr.FieldAccess(object, field, span) => {
+            let inner = genLvalue(cg, object, locs, sigs)
+            let rawName = stripPercent(inner.ty)
+            let idx = lookupFieldIndex(cg, rawName, field)
+            let fty = lookupFieldType(cg, rawName, idx)
+            let structTy = "%" + rawName
+            let fp = nextTemp(cg)
+            emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + inner.v + ", i32 0, i32 " + idx.toString() + "\n")
+            return Val { v: fp, ty: fty }
+        }
+        _ => {
+            return Val { v: "0", ty: "i64" }
+        }
+    }
+}
+
+// -- Main expression dispatch --
+
+fn genExpr(cg: &mut Cgen, e: Box<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hintTy: string): Val {
+    match *e {
+        Expr.IntLit(n, span) => {
+            var ty = hintTy.clone()
+            if ty.len == 0 { ty = "i64" }
+            return Val { v: n.toString(), ty: llType(ty) }
+        }
+        Expr.FloatLit(f, span) => {
+            return Val { v: f.toString(), ty: "double" }
+        }
+        Expr.BoolLit(b, span) => {
+            let v = if b { "1" } else { "0" }
+            return Val { v: v, ty: "i1" }
+        }
+        Expr.StringLit(s, span) => {
+            return genStringLit(cg, s)
+        }
+        Expr.CharLit(c, span) => {
+            return Val { v: c.toString(), ty: "i8" }
+        }
+        Expr.Ident(name, span) => {
+            let local = findLocal(locs, name)
+            let lt = llType(local.ty)
+            let loaded = genLoad(cg, local.addr, lt)
+            return Val { v: loaded.v, ty: local.ty.clone() }
+        }
+        Expr.UnaryOp(op, inner, span) => {
+            if op == "*" {
+                return genBoxDeref(cg, inner, locs, sigs)
+            }
+            let v = genExpr(cg, inner, locs, sigs, hintTy)
+            let t = nextTemp(cg)
+            if op == "-" {
+                emit(cg, "  " + t + " = sub " + llType(v.ty) + " 0, " + v.v + "\n")
+                return Val { v: t, ty: v.ty }
+            }
+            if op == "!" {
+                emit(cg, "  " + t + " = xor i1 " + v.v + ", 1\n")
+                return Val { v: t, ty: "i1" }
+            }
+            if op == "~" {
+                emit(cg, "  " + t + " = xor " + llType(v.ty) + " " + v.v + ", -1\n")
+                return Val { v: t, ty: v.ty }
+            }
+            return v
+        }
+        Expr.BinOp(op, l, r, span) => {
+            let lv = genExpr(cg, l, locs, sigs, hintTy)
+            let rv = genExpr(cg, r, locs, sigs, lv.ty)
+            let lvLl = llType(lv.ty)
+            // String operations
+            if lvLl == "%String" {
+                if op == "+" { return genStringConcat(cg, lv.v, rv.v) }
+                if op == "==" || op == "!=" {
+                    return genStringEq(cg, lv.v, rv.v, op == "==")
+                }
+            }
+            // Enum tag compare
+            if (op == "==" || op == "!=") && lvLl.len > 1 && lvLl[0] == 37 {
+                let lt = nextTemp(cg)
+                emit(cg, "  " + lt + " = extractvalue " + lvLl + " " + lv.v + ", 0\n")
+                let rt = nextTemp(cg)
+                emit(cg, "  " + rt + " = extractvalue " + lvLl + " " + rv.v + ", 0\n")
+                let opn = if op == "==" { "eq" } else { "ne" }
+                let res = nextTemp(cg)
+                emit(cg, "  " + res + " = icmp " + opn + " i32 " + lt + ", " + rt + "\n")
+                return Val { v: res, ty: "bool" }
+            }
+            let t = nextTemp(cg)
+            let unsigned = isUnsigned(lv.ty)
+            if isArithOp(op) {
+                let opname = binOpInt(op, unsigned)
+                emit(cg, "  " + t + " = " + opname + " " + lvLl + " " + lv.v + ", " + rv.v + "\n")
+                return Val { v: t, ty: lv.ty }
+            }
+            if isCmpOp(op) {
+                let opname = cmpOpInt(op, unsigned)
+                emit(cg, "  " + t + " = icmp " + opname + " " + lvLl + " " + lv.v + ", " + rv.v + "\n")
+                return Val { v: t, ty: "bool" }
+            }
+            if op == "&&" {
+                emit(cg, "  " + t + " = and i1 " + lv.v + ", " + rv.v + "\n")
+                return Val { v: t, ty: "i1" }
+            }
+            if op == "||" {
+                emit(cg, "  " + t + " = or i1 " + lv.v + ", " + rv.v + "\n")
+                return Val { v: t, ty: "i1" }
+            }
+            return Val { v: "0", ty: "i64" }
+        }
+        Expr.Call(name, args, typeArgs, span) => {
+            return genCall(cg, name, args, locs, sigs)
+        }
+        Expr.StructLit(name, fields, span) => {
+            return genStructLit(cg, name, fields, locs, sigs)
+        }
+        Expr.FieldAccess(object, field, span) => {
+            return genFieldAccess(cg, object, field, locs, sigs)
+        }
+        Expr.EnumLit(enumName, variant, args, span) => {
+            return genEnumLit(cg, enumName, variant, args, locs, sigs)
+        }
+        Expr.CastExpr(inner, targetType, span) => {
+            return genAsCast(cg, inner, targetType.name, locs, sigs)
+        }
+        Expr.MethodCall(object, method, args, span) => {
+            return genMethodCall(cg, object, method, args, locs, sigs)
+        }
+        Expr.IndexAccess(obj, idx, span) => {
+            return genIndex(cg, obj, idx, locs, sigs)
+        }
+        Expr.Unwrap(inner, span) => {
+            // TODO: option unwrap codegen
+            return genExpr(cg, inner, locs, sigs, hintTy)
+        }
+        Expr.Propagate(inner, span) => {
+            // TODO: result propagation codegen
+            return genExpr(cg, inner, locs, sigs, hintTy)
+        }
+        _ => {
+            return Val { v: "0", ty: "i64" }
+        }
+    }
+}
