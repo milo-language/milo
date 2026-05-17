@@ -1,0 +1,1130 @@
+// Recursive descent parser — port of src/parser.ts
+from "src-milo/tokens.milo" import { TokKind, Token }
+from "src-milo/ast.milo" import {
+    MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
+    EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, TraitDecl,
+    TraitMethod, ImplDecl, Attribute, TypeParam, StructLitField, LiteralKind,
+    simpleType, ptrType
+}
+
+struct Parser {
+    tokens: Vec<Token>,
+    pos: i64,
+}
+
+fn newParser(tokens: Vec<Token>): Parser {
+    return Parser { tokens: tokens, pos: 0 }
+}
+
+// -- Navigation helpers --
+
+fn peek(p: &Parser): &Token {
+    return &p.tokens[p.pos]
+}
+
+fn peekN(p: &Parser, n: i64): &Token {
+    return &p.tokens[p.pos + n]
+}
+
+fn advance(p: &mut Parser): &Token {
+    let tok = &p.tokens[p.pos]
+    p.pos = p.pos + 1
+    return tok
+}
+
+fn span(tok: &Token): Option<Span> {
+    return Option.Some(Span { line: tok.line, col: tok.col })
+}
+
+fn at(p: &Parser, kind: TokKind): bool {
+    return peek(p).kind == kind
+}
+
+fn matchTok(p: &mut Parser, kind: TokKind): bool {
+    if at(p, kind) {
+        p.pos = p.pos + 1
+        return true
+    }
+    return false
+}
+
+fn expect(p: &mut Parser, kind: TokKind): &Token {
+    let tok = advance(p)
+    // TODO: proper error reporting — for now, panic on mismatch
+    return tok
+}
+
+// Adjacent same-kind tokens with no whitespace (for << and >>)
+fn atAdjacent(p: &Parser, kind: TokKind): bool {
+    let a = peek(p)
+    let b = peekN(p, 1)
+    return a.kind == kind && b.kind == kind && a.line == b.line && b.col == a.col + 1
+}
+
+// -- Type parsing --
+
+fn isFnType(p: &mut Parser): bool {
+    var i = p.pos + 1
+    var depth = 1
+    while depth > 0 && i < p.tokens.len {
+        if p.tokens[i].kind == TokKind.LParen { depth = depth + 1 }
+        else if p.tokens[i].kind == TokKind.RParen { depth = depth - 1 }
+        i = i + 1
+    }
+    return i < p.tokens.len && p.tokens[i].kind == TokKind.FatArrow
+}
+
+fn parseType(p: &mut Parser): MiloType {
+    // &T or &mut T
+    if matchTok(p, TokKind.Amp) {
+        let isMut = matchTok(p, TokKind.Mut)
+        var inner = parseType(p)
+        if isMut {
+            inner.isRefMut = true
+        } else {
+            inner.isRef = true
+        }
+        return inner
+    }
+    // *T
+    if matchTok(p, TokKind.Star) {
+        var inner = parseType(p)
+        inner.isPtr = true
+        return inner
+    }
+    // [T] or [T; N]
+    if matchTok(p, TokKind.LBracket) {
+        var inner = parseType(p)
+        var arraySize: Option<i64> = Option.None
+        if matchTok(p, TokKind.Semicolon) {
+            let sizeTok = expect(p, TokKind.Int)
+            arraySize = Option.Some(sizeTok.value.parseInt())
+        }
+        expect(p, TokKind.RBracket)
+        inner.isArray = true
+        inner.arraySize = arraySize
+        return inner
+    }
+    // (T1, T2) => R  — function type
+    if at(p, TokKind.LParen) && isFnType(p) {
+        advance(p)
+        var fnParams: Vec<MiloType> = Vec.new()
+        while !at(p, TokKind.RParen) {
+            fnParams.push(parseType(p))
+            if !at(p, TokKind.RParen) { expect(p, TokKind.Comma) }
+        }
+        expect(p, TokKind.RParen)
+        expect(p, TokKind.FatArrow)
+        let fnRet = parseType(p)
+        return MiloType {
+            name: "fn",
+            typeArgs: Vec.new(),
+            isPtr: false,
+            isRef: false,
+            isRefMut: false,
+            isArray: false,
+            arraySize: Option.None,
+            isFn: true,
+            fnParams: fnParams,
+            fnRet: Option.Some(Box.new(fnRet)),
+        }
+    }
+    // Named type
+    let tok = advance(p)
+    var typeArgs: Vec<MiloType> = Vec.new()
+    if matchTok(p, TokKind.Lt) {
+        typeArgs.push(parseType(p))
+        while matchTok(p, TokKind.Comma) {
+            typeArgs.push(parseType(p))
+        }
+        expect(p, TokKind.Gt)
+    }
+    var result = MiloType {
+        name: tok.value,
+        typeArgs: typeArgs,
+        isPtr: false,
+        isRef: false,
+        isRefMut: false,
+        isArray: false,
+        arraySize: Option.None,
+        isFn: false,
+        fnParams: Vec.new(),
+        fnRet: Option.None,
+    }
+    // T? desugars to Option<T>
+    if matchTok(p, TokKind.Question) {
+        var optArgs: Vec<MiloType> = Vec.new()
+        optArgs.push(result)
+        result = MiloType {
+            name: "Option",
+            typeArgs: optArgs,
+            isPtr: false,
+            isRef: false,
+            isRefMut: false,
+            isArray: false,
+            arraySize: Option.None,
+            isFn: false,
+            fnParams: Vec.new(),
+            fnRet: Option.None,
+        }
+    }
+    return result
+}
+
+// -- Type parameters --
+
+fn parseOneTypeParam(p: &mut Parser): TypeParam {
+    let name = expect(p, TokKind.Ident).value
+    var bounds: Vec<string> = Vec.new()
+    if matchTok(p, TokKind.Colon) {
+        bounds.push(expect(p, TokKind.Ident).value)
+        while matchTok(p, TokKind.Plus) {
+            bounds.push(expect(p, TokKind.Ident).value)
+        }
+    }
+    return TypeParam { name: name, bounds: bounds }
+}
+
+fn parseTypeParams(p: &mut Parser): Vec<TypeParam> {
+    var typeParams: Vec<TypeParam> = Vec.new()
+    if matchTok(p, TokKind.Lt) {
+        typeParams.push(parseOneTypeParam(p))
+        while matchTok(p, TokKind.Comma) {
+            typeParams.push(parseOneTypeParam(p))
+        }
+        expect(p, TokKind.Gt)
+    }
+    return typeParams
+}
+
+// -- Attributes --
+
+fn parseAttribute(p: &mut Parser): Attribute {
+    expect(p, TokKind.At)
+    let name = expect(p, TokKind.Ident).value
+    var args: Vec<string> = Vec.new()
+    if matchTok(p, TokKind.LParen) {
+        args.push(expect(p, TokKind.Ident).value)
+        while matchTok(p, TokKind.Comma) {
+            args.push(expect(p, TokKind.Ident).value)
+        }
+        expect(p, TokKind.RParen)
+    }
+    return Attribute { name: name, args: args }
+}
+
+// -- Import --
+
+fn parseImport(p: &mut Parser): ImportDecl {
+    if at(p, TokKind.From) {
+        let tok = advance(p)
+        let pathTok = expect(p, TokKind.String)
+        expect(p, TokKind.Import)
+        // from "path" import { a, b, c }
+        expect(p, TokKind.LBrace)
+        var names: Vec<string> = Vec.new()
+        while !at(p, TokKind.RBrace) {
+            names.push(expect(p, TokKind.Ident).value)
+            matchTok(p, TokKind.Comma)
+        }
+        expect(p, TokKind.RBrace)
+        return ImportDecl {
+            path: pathTok.value,
+            names: Option.Some(names),
+            span: span(tok),
+        }
+    }
+    // bare import "path" — error
+    let tok = advance(p)
+    let pathTok = expect(p, TokKind.String)
+    return ImportDecl { path: pathTok.value, names: Option.None, span: span(tok) }
+}
+
+// -- Struct --
+
+fn parseStruct(p: &mut Parser): StructDecl {
+    expect(p, TokKind.Struct)
+    let name = expect(p, TokKind.Ident).value
+    let typeParams = parseTypeParams(p)
+    expect(p, TokKind.LBrace)
+    var fields: Vec<StructField> = Vec.new()
+    while !at(p, TokKind.RBrace) {
+        let fieldName = expect(p, TokKind.Ident).value
+        expect(p, TokKind.Colon)
+        let fieldType = parseType(p)
+        fields.push(StructField { name: fieldName, type: fieldType })
+        matchTok(p, TokKind.Comma)
+    }
+    expect(p, TokKind.RBrace)
+    return StructDecl {
+        name: name,
+        typeParams: typeParams,
+        fields: fields,
+        attributes: Vec.new(),
+    }
+}
+
+// -- Enum --
+
+fn parseEnum(p: &mut Parser): EnumDecl {
+    expect(p, TokKind.Enum)
+    let name = expect(p, TokKind.Ident).value
+    let typeParams = parseTypeParams(p)
+    expect(p, TokKind.LBrace)
+    var variants: Vec<EnumVariant> = Vec.new()
+    while !at(p, TokKind.RBrace) {
+        let variantName = expect(p, TokKind.Ident).value
+        var fields: Vec<MiloType> = Vec.new()
+        if matchTok(p, TokKind.LParen) {
+            while !at(p, TokKind.RParen) {
+                fields.push(parseType(p))
+                matchTok(p, TokKind.Comma)
+            }
+            expect(p, TokKind.RParen)
+        }
+        variants.push(EnumVariant { name: variantName, fields: fields })
+        matchTok(p, TokKind.Comma)
+    }
+    expect(p, TokKind.RBrace)
+    return EnumDecl {
+        name: name,
+        typeParams: typeParams,
+        variants: variants,
+        attributes: Vec.new(),
+    }
+}
+
+// -- Functions --
+
+fn parseParam(p: &mut Parser): Param {
+    let name = expect(p, TokKind.Ident).value
+    expect(p, TokKind.Colon)
+    let ty = parseType(p)
+    return Param { name: name, type: ty }
+}
+
+struct ParamResult {
+    params: Vec<Param>,
+    variadic: bool,
+}
+
+fn parseParamList(p: &mut Parser): ParamResult {
+    expect(p, TokKind.LParen)
+    var params: Vec<Param> = Vec.new()
+    var variadic = false
+    while !at(p, TokKind.RParen) {
+        if at(p, TokKind.DotDotDot) {
+            advance(p)
+            variadic = true
+            break
+        }
+        params.push(parseParam(p))
+        matchTok(p, TokKind.Comma)
+    }
+    expect(p, TokKind.RParen)
+    return ParamResult { params: params, variadic: variadic }
+}
+
+fn parseReturnType(p: &mut Parser): MiloType {
+    if matchTok(p, TokKind.Colon) {
+        return parseType(p)
+    }
+    return simpleType("void")
+}
+
+fn parseExternFn(p: &mut Parser): Function {
+    expect(p, TokKind.Extern)
+    expect(p, TokKind.Fn)
+    let name = expect(p, TokKind.Ident).value
+    let pl = parseParamList(p)
+    let retType = parseReturnType(p)
+    return Function {
+        name: name,
+        typeParams: Vec.new(),
+        params: pl.params,
+        retType: retType,
+        body: Vec.new(),
+        isExtern: true,
+        isVariadic: pl.variadic,
+    }
+}
+
+fn parseFn(p: &mut Parser): Function {
+    expect(p, TokKind.Fn)
+    let name = expect(p, TokKind.Ident).value
+    let typeParams = parseTypeParams(p)
+    let pl = parseParamList(p)
+    let retType = parseReturnType(p)
+    expect(p, TokKind.LBrace)
+    let body = parseStmts(p)
+    expect(p, TokKind.RBrace)
+    return Function {
+        name: name,
+        typeParams: typeParams,
+        params: pl.params,
+        retType: retType,
+        body: body,
+        isExtern: false,
+        isVariadic: pl.variadic,
+    }
+}
+
+// -- Traits + Impls --
+
+fn parseTraitMethod(p: &mut Parser): TraitMethod {
+    let tok = expect(p, TokKind.Fn)
+    let name = expect(p, TokKind.Ident).value
+    let pl = parseParamList(p)
+    let retType = parseReturnType(p)
+    var body: Option<Vec<Box<Stmt>>> = Option.None
+    if at(p, TokKind.LBrace) {
+        advance(p)
+        body = Option.Some(parseStmts(p))
+        expect(p, TokKind.RBrace)
+    }
+    return TraitMethod {
+        name: name,
+        params: pl.params,
+        retType: retType,
+        body: body,
+        span: span(tok),
+    }
+}
+
+fn parseTraitDecl(p: &mut Parser): TraitDecl {
+    let tok = expect(p, TokKind.Trait)
+    let name = expect(p, TokKind.Ident).value
+    let typeParams = parseTypeParams(p)
+    var supertraits: Vec<string> = Vec.new()
+    if matchTok(p, TokKind.Colon) {
+        supertraits.push(expect(p, TokKind.Ident).value)
+        while matchTok(p, TokKind.Plus) {
+            supertraits.push(expect(p, TokKind.Ident).value)
+        }
+    }
+    expect(p, TokKind.LBrace)
+    var methods: Vec<TraitMethod> = Vec.new()
+    while !at(p, TokKind.RBrace) && !at(p, TokKind.Eof) {
+        methods.push(parseTraitMethod(p))
+    }
+    expect(p, TokKind.RBrace)
+    return TraitDecl {
+        name: name,
+        typeParams: typeParams,
+        supertraits: supertraits,
+        methods: methods,
+        span: span(tok),
+    }
+}
+
+fn parseImplDecl(p: &mut Parser): ImplDecl {
+    let tok = expect(p, TokKind.Impl)
+    let firstName = expect(p, TokKind.Ident).value
+    let typeParams = parseTypeParams(p)
+    var traitName: Option<string> = Option.None
+    var typeName = firstName
+    if matchTok(p, TokKind.For) {
+        traitName = Option.Some(firstName)
+        typeName = expect(p, TokKind.Ident).value
+    }
+    expect(p, TokKind.LBrace)
+    var methods: Vec<Function> = Vec.new()
+    while !at(p, TokKind.RBrace) && !at(p, TokKind.Eof) {
+        methods.push(parseFn(p))
+    }
+    expect(p, TokKind.RBrace)
+    return ImplDecl {
+        traitName: traitName,
+        typeName: typeName,
+        typeParams: typeParams,
+        methods: methods,
+        span: span(tok),
+    }
+}
+
+// -- Statements --
+
+fn parseStmts(p: &mut Parser): Vec<Box<Stmt>> {
+    var stmts: Vec<Box<Stmt>> = Vec.new()
+    while !at(p, TokKind.RBrace) && !at(p, TokKind.Eof) {
+        stmts.push(Box.new(parseStmt(p)))
+    }
+    return stmts
+}
+
+fn parseLet(p: &mut Parser): Stmt {
+    let s = span(peek(p))
+    expect(p, TokKind.Let)
+    let name = expect(p, TokKind.Ident).value
+    var ty: Option<MiloType> = Option.None
+    if matchTok(p, TokKind.Colon) {
+        ty = Option.Some(parseType(p))
+    }
+    expect(p, TokKind.Eq)
+    let value = parseExpr(p)
+    return Stmt.LetDecl(name, ty, Box.new(value), s)
+}
+
+fn parseVar(p: &mut Parser): Stmt {
+    let s = span(peek(p))
+    expect(p, TokKind.Var)
+    let name = expect(p, TokKind.Ident).value
+    var ty: Option<MiloType> = Option.None
+    if matchTok(p, TokKind.Colon) {
+        ty = Option.Some(parseType(p))
+    }
+    expect(p, TokKind.Eq)
+    let value = parseExpr(p)
+    return Stmt.VarDecl(name, ty, Box.new(value), s)
+}
+
+fn parseReturn(p: &mut Parser): Stmt {
+    let s = span(peek(p))
+    expect(p, TokKind.Return)
+    if at(p, TokKind.RBrace) {
+        return Stmt.Return(Option.None, s)
+    }
+    return Stmt.Return(Option.Some(Box.new(parseExpr(p))), s)
+}
+
+fn parseIf(p: &mut Parser): Stmt {
+    let s = span(peek(p))
+    expect(p, TokKind.If)
+    if at(p, TokKind.Let) {
+        return parseIfLet(p, s)
+    }
+    let cond = parseExpr(p)
+    expect(p, TokKind.LBrace)
+    let thenBody = parseStmts(p)
+    expect(p, TokKind.RBrace)
+    var elseBody: Option<Vec<Box<Stmt>>> = Option.None
+    if matchTok(p, TokKind.Else) {
+        if at(p, TokKind.If) {
+            var elseStmts: Vec<Box<Stmt>> = Vec.new()
+            elseStmts.push(Box.new(parseIf(p)))
+            elseBody = Option.Some(elseStmts)
+        } else {
+            expect(p, TokKind.LBrace)
+            elseBody = Option.Some(parseStmts(p))
+            expect(p, TokKind.RBrace)
+        }
+    }
+    return Stmt.IfStmt(Box.new(cond), thenBody, elseBody, s)
+}
+
+fn parseIfLet(p: &mut Parser, s: Option<Span>): Stmt {
+    expect(p, TokKind.Let)
+    let pattern = parsePattern(p)
+    expect(p, TokKind.Eq)
+    let subject = parseExpr(p)
+    expect(p, TokKind.LBrace)
+    let thenBody = parseStmts(p)
+    expect(p, TokKind.RBrace)
+    var elseBody: Option<Vec<Box<Stmt>>> = Option.None
+    if matchTok(p, TokKind.Else) {
+        expect(p, TokKind.LBrace)
+        elseBody = Option.Some(parseStmts(p))
+        expect(p, TokKind.RBrace)
+    }
+    return Stmt.IfLetStmt(Box.new(pattern), Box.new(subject), thenBody, elseBody, s)
+}
+
+fn parseWhile(p: &mut Parser): Stmt {
+    let s = span(peek(p))
+    expect(p, TokKind.While)
+    let cond = parseExpr(p)
+    expect(p, TokKind.LBrace)
+    let body = parseStmts(p)
+    expect(p, TokKind.RBrace)
+    return Stmt.WhileStmt(Box.new(cond), body, s)
+}
+
+fn parseFor(p: &mut Parser): Stmt {
+    let s = span(peek(p))
+    expect(p, TokKind.For)
+    let varName = expect(p, TokKind.Ident).value
+    var varName2: Option<string> = Option.None
+    if matchTok(p, TokKind.Comma) {
+        varName2 = Option.Some(expect(p, TokKind.Ident).value)
+    }
+    expect(p, TokKind.In)
+    let iterableOrStart = parseExpr(p)
+    var iterable: Box<Expr> = Box.new(iterableOrStart)
+    if matchTok(p, TokKind.DotDot) {
+        let end = parseExpr(p)
+        iterable = Box.new(Expr.RangeExpr(Box.new(iterableOrStart), Box.new(end), s))
+    }
+    expect(p, TokKind.LBrace)
+    let body = parseStmts(p)
+    expect(p, TokKind.RBrace)
+    return Stmt.ForInStmt(varName, varName2, iterable, body, s)
+}
+
+fn parseMatch(p: &mut Parser): Stmt {
+    let s = span(peek(p))
+    expect(p, TokKind.Match)
+    let subject = parseExpr(p)
+    expect(p, TokKind.LBrace)
+    var arms: Vec<MatchArm> = Vec.new()
+    while !at(p, TokKind.RBrace) {
+        let pattern = parsePattern(p)
+        expect(p, TokKind.FatArrow)
+        expect(p, TokKind.LBrace)
+        let body = parseStmts(p)
+        expect(p, TokKind.RBrace)
+        arms.push(MatchArm { pattern: pattern, body: body })
+    }
+    expect(p, TokKind.RBrace)
+    return Stmt.MatchStmt(Box.new(subject), arms, s)
+}
+
+fn parseStmt(p: &mut Parser): Stmt {
+    if at(p, TokKind.Let) { return parseLet(p) }
+    if at(p, TokKind.Var) { return parseVar(p) }
+    if at(p, TokKind.Return) { return parseReturn(p) }
+    if at(p, TokKind.If) { return parseIf(p) }
+    if at(p, TokKind.While) { return parseWhile(p) }
+    if at(p, TokKind.For) { return parseFor(p) }
+    if at(p, TokKind.Match) { return parseMatch(p) }
+    if at(p, TokKind.Break) {
+        let s = span(advance(p))
+        return Stmt.BreakStmt(s)
+    }
+    if at(p, TokKind.Continue) {
+        let s = span(advance(p))
+        return Stmt.ContinueStmt(s)
+    }
+    if at(p, TokKind.Unsafe) {
+        let s = span(advance(p))
+        expect(p, TokKind.LBrace)
+        let body = parseStmts(p)
+        expect(p, TokKind.RBrace)
+        return Stmt.UnsafeBlock(body, s)
+    }
+
+    let expr = parseExpr(p)
+    // assignment
+    if at(p, TokKind.Eq) {
+        advance(p)
+        let value = parseExpr(p)
+        return Stmt.Assign(Box.new(expr), Box.new(value), Option.None)
+    }
+    return Stmt.ExprStmt(Box.new(expr), Option.None)
+}
+
+// -- Patterns --
+
+fn parsePattern(p: &mut Parser): Pattern {
+    let tok = peek(p)
+    let s = span(tok)
+
+    // Wildcard _
+    if tok.kind == TokKind.Ident && tok.value == "_" {
+        advance(p)
+        return Pattern.WildcardPattern(s)
+    }
+    // Literal patterns
+    if tok.kind == TokKind.Int {
+        advance(p)
+        return Pattern.LiteralPattern(tok.value, LiteralKind.LitInt, s)
+    }
+    if tok.kind == TokKind.Float {
+        advance(p)
+        return Pattern.LiteralPattern(tok.value, LiteralKind.LitFloat, s)
+    }
+    if tok.kind == TokKind.String {
+        advance(p)
+        return Pattern.LiteralPattern(tok.value, LiteralKind.LitString, s)
+    }
+    if tok.kind == TokKind.Char {
+        advance(p)
+        return Pattern.LiteralPattern(tok.value, LiteralKind.LitChar, s)
+    }
+    if tok.kind == TokKind.True {
+        advance(p)
+        return Pattern.LiteralPattern("true", LiteralKind.LitBool, s)
+    }
+    if tok.kind == TokKind.False {
+        advance(p)
+        return Pattern.LiteralPattern("false", LiteralKind.LitBool, s)
+    }
+    // Negative numeric literal
+    if tok.kind == TokKind.Minus {
+        let next = peekN(p, 1)
+        if next.kind == TokKind.Int || next.kind == TokKind.Float {
+            advance(p)
+            let numTok = advance(p)
+            let litKind = if numTok.kind == TokKind.Int { LiteralKind.LitInt } else { LiteralKind.LitFloat }
+            return Pattern.LiteralPattern("-" + numTok.value, litKind, s)
+        }
+    }
+    // Enum pattern: Name.Variant or Name.Variant(bindings)
+    let enumName = expect(p, TokKind.Ident).value
+    expect(p, TokKind.Dot)
+    let variant = expect(p, TokKind.Ident).value
+    var bindings: Vec<string> = Vec.new()
+    if matchTok(p, TokKind.LParen) {
+        while !at(p, TokKind.RParen) {
+            bindings.push(expect(p, TokKind.Ident).value)
+            matchTok(p, TokKind.Comma)
+        }
+        expect(p, TokKind.RParen)
+    }
+    return Pattern.EnumPattern(enumName, variant, bindings, s)
+}
+
+// -- Expression parsing (precedence climbing) --
+
+fn parseExpr(p: &mut Parser): Expr {
+    var left = parseOr(p)
+    if at(p, TokKind.QuestionQuestion) {
+        advance(p)
+        let defaultExpr = parseOr(p)
+        left = Expr.DefaultValue(Box.new(left), Box.new(defaultExpr), Option.None)
+    }
+    return left
+}
+
+fn parseOr(p: &mut Parser): Expr {
+    var left = parseAnd(p)
+    while at(p, TokKind.PipePipe) {
+        advance(p)
+        let right = parseAnd(p)
+        left = Expr.BinOp("||", Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseAnd(p: &mut Parser): Expr {
+    var left = parseBitOr(p)
+    while at(p, TokKind.AmpAmp) {
+        advance(p)
+        let right = parseBitOr(p)
+        left = Expr.BinOp("&&", Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseBitOr(p: &mut Parser): Expr {
+    var left = parseBitXor(p)
+    while at(p, TokKind.Pipe) {
+        advance(p)
+        let right = parseBitXor(p)
+        left = Expr.BinOp("|", Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseBitXor(p: &mut Parser): Expr {
+    var left = parseBitAnd(p)
+    while at(p, TokKind.Caret) {
+        advance(p)
+        let right = parseBitAnd(p)
+        left = Expr.BinOp("^", Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseBitAnd(p: &mut Parser): Expr {
+    var left = parseComparison(p)
+    // single & between exprs (&& already consumed at higher level)
+    while at(p, TokKind.Amp) && peekN(p, 1).kind != TokKind.Mut {
+        advance(p)
+        let right = parseComparison(p)
+        left = Expr.BinOp("&", Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseComparison(p: &mut Parser): Expr {
+    var left = parseShift(p)
+    if at(p, TokKind.Is) {
+        advance(p)
+        let pattern = parsePattern(p)
+        return Expr.IsExpr(Box.new(left), Box.new(pattern), Option.None)
+    }
+    while peek(p).kind == TokKind.EqEq || peek(p).kind == TokKind.Neq ||
+          peek(p).kind == TokKind.LtEq || peek(p).kind == TokKind.GtEq ||
+          (peek(p).kind == TokKind.Lt && !atAdjacent(p, TokKind.Lt)) ||
+          (peek(p).kind == TokKind.Gt && !atAdjacent(p, TokKind.Gt)) {
+        let opTok = advance(p)
+        let right = parseShift(p)
+        left = Expr.BinOp(opTok.value, Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseShift(p: &mut Parser): Expr {
+    var left = parseAdditive(p)
+    while atAdjacent(p, TokKind.Lt) || atAdjacent(p, TokKind.Gt) {
+        let isLeft = peek(p).kind == TokKind.Lt
+        advance(p)
+        advance(p)
+        let right = parseAdditive(p)
+        let op = if isLeft { "<<" } else { ">>" }
+        left = Expr.BinOp(op, Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseAdditive(p: &mut Parser): Expr {
+    var left = parseMultiplicative(p)
+    while peek(p).kind == TokKind.Plus || peek(p).kind == TokKind.Minus {
+        let opTok = advance(p)
+        let right = parseMultiplicative(p)
+        left = Expr.BinOp(opTok.value, Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseMultiplicative(p: &mut Parser): Expr {
+    var left = parseUnary(p)
+    while peek(p).kind == TokKind.Star || peek(p).kind == TokKind.Slash || peek(p).kind == TokKind.Percent {
+        // * on new line = unary deref, not multiply
+        if peek(p).kind == TokKind.Star && p.pos > 0 && p.tokens[p.pos - 1].line < peek(p).line {
+            break
+        }
+        let opTok = advance(p)
+        let right = parseUnary(p)
+        left = Expr.BinOp(opTok.value, Box.new(left), Box.new(right), Option.None)
+    }
+    return left
+}
+
+fn parseUnary(p: &mut Parser): Expr {
+    if peek(p).kind == TokKind.Minus || peek(p).kind == TokKind.Bang ||
+       peek(p).kind == TokKind.Star || peek(p).kind == TokKind.Tilde ||
+       peek(p).kind == TokKind.Amp {
+        let tok = advance(p)
+        let operand = parseUnary(p)
+        return Expr.UnaryOp(tok.value, Box.new(operand), span(tok))
+    }
+    return parsePostfix(p)
+}
+
+fn parsePostfix(p: &mut Parser): Expr {
+    var expr = parsePrimary(p)
+    while true {
+        if at(p, TokKind.Dot) {
+            advance(p)
+            let field = expect(p, TokKind.Ident).value
+            if at(p, TokKind.LParen) {
+                advance(p)
+                var args: Vec<Box<Expr>> = Vec.new()
+                while !at(p, TokKind.RParen) {
+                    args.push(Box.new(parseExpr(p)))
+                    matchTok(p, TokKind.Comma)
+                }
+                expect(p, TokKind.RParen)
+                expr = Expr.MethodCall(Box.new(expr), field, args, Option.None)
+            } else {
+                expr = Expr.FieldAccess(Box.new(expr), field, Option.None)
+            }
+        } else if at(p, TokKind.LBracket) {
+            advance(p)
+            let first = parseExpr(p)
+            if at(p, TokKind.DotDot) {
+                advance(p)
+                let end = parseExpr(p)
+                expect(p, TokKind.RBracket)
+                // s[a..b] → .slice(a, b)
+                var sliceArgs: Vec<Box<Expr>> = Vec.new()
+                sliceArgs.push(Box.new(first))
+                sliceArgs.push(Box.new(end))
+                expr = Expr.MethodCall(Box.new(expr), "slice", sliceArgs, Option.None)
+            } else {
+                expect(p, TokKind.RBracket)
+                expr = Expr.IndexAccess(Box.new(expr), Box.new(first), Option.None)
+            }
+        } else if at(p, TokKind.Bang) {
+            advance(p)
+            expr = Expr.Unwrap(Box.new(expr), Option.None)
+        } else if at(p, TokKind.Question) {
+            advance(p)
+            expr = Expr.Propagate(Box.new(expr), Option.None)
+        } else if at(p, TokKind.As) {
+            advance(p)
+            let targetType = parseType(p)
+            expr = Expr.CastExpr(Box.new(expr), targetType, Option.None)
+        } else {
+            break
+        }
+    }
+    return expr
+}
+
+// Lookahead: is this ( the start of an arrow closure?
+fn isArrowClosure(p: &mut Parser): bool {
+    let saved = p.pos
+    advance(p) // skip (
+    if at(p, TokKind.RParen) {
+        advance(p)
+        if at(p, TokKind.FatArrow) { p.pos = saved; return true }
+        if at(p, TokKind.Colon) { p.pos = saved; return true }
+        p.pos = saved
+        return false
+    }
+    if at(p, TokKind.Ident) {
+        advance(p)
+        let isColon = at(p, TokKind.Colon)
+        p.pos = saved
+        return isColon
+    }
+    p.pos = saved
+    return false
+}
+
+fn parseClosure(p: &mut Parser, s: Option<Span>, isMove: bool): Expr {
+    expect(p, TokKind.LParen)
+    var params: Vec<Param> = Vec.new()
+    while !at(p, TokKind.RParen) {
+        params.push(parseParam(p))
+        if !at(p, TokKind.RParen) { expect(p, TokKind.Comma) }
+    }
+    expect(p, TokKind.RParen)
+    var retType: Option<MiloType> = Option.None
+    if at(p, TokKind.Colon) {
+        advance(p)
+        retType = Option.Some(parseType(p))
+    }
+    expect(p, TokKind.FatArrow)
+    var body: Vec<Box<Stmt>> = Vec.new()
+    if matchTok(p, TokKind.LBrace) {
+        body = parseStmts(p)
+        expect(p, TokKind.RBrace)
+    } else {
+        let expr = parseExpr(p)
+        body.push(Box.new(Stmt.Return(Option.Some(Box.new(expr)), Option.None)))
+    }
+    return Expr.Closure(params, retType, body, isMove, s)
+}
+
+fn parsePrimary(p: &mut Parser): Expr {
+    let tok = peek(p)
+    let s = span(tok)
+
+    if tok.kind == TokKind.Int {
+        advance(p)
+        return Expr.IntLit(tok.value.parseInt(), s)
+    }
+    if tok.kind == TokKind.Float {
+        advance(p)
+        return Expr.FloatLit(tok.value.parseF64(), s)
+    }
+    if tok.kind == TokKind.True {
+        advance(p)
+        return Expr.BoolLit(true, s)
+    }
+    if tok.kind == TokKind.False {
+        advance(p)
+        return Expr.BoolLit(false, s)
+    }
+    if tok.kind == TokKind.Null {
+        advance(p)
+        var emptyArgs: Vec<Box<Expr>> = Vec.new()
+        var emptyTypeArgs: Vec<MiloType> = Vec.new()
+        return Expr.EnumLit("Option", "None", emptyArgs, s)
+    }
+    if tok.kind == TokKind.String {
+        advance(p)
+        return Expr.StringLit(tok.value, s)
+    }
+    if tok.kind == TokKind.FString {
+        advance(p)
+        return parseFString(p, tok.value, s)
+    }
+    if tok.kind == TokKind.Char {
+        advance(p)
+        return Expr.CharLit(tok.value.parseInt() as i32, s)
+    }
+    if tok.kind == TokKind.Ident {
+        advance(p)
+        // Enum variant: Name.Variant
+        if at(p, TokKind.Dot) && tok.value[0] >= 65 && tok.value[0] <= 90 {
+            advance(p)
+            let variant = expect(p, TokKind.Ident).value
+            var args: Vec<Box<Expr>> = Vec.new()
+            if matchTok(p, TokKind.LParen) {
+                while !at(p, TokKind.RParen) {
+                    args.push(Box.new(parseExpr(p)))
+                    matchTok(p, TokKind.Comma)
+                }
+                expect(p, TokKind.RParen)
+            }
+            return Expr.EnumLit(tok.value, variant, args, s)
+        }
+        // Struct literal: Name { ... }
+        if at(p, TokKind.LBrace) && tok.value[0] >= 65 && tok.value[0] <= 90 {
+            return parseStructLit(p, tok.value, s)
+        }
+        // Function call: name(args) or name<T>(args)
+        if at(p, TokKind.LParen) {
+            return parseCall(p, tok.value, s)
+        }
+        return Expr.Ident(tok.value, s)
+    }
+    // Array literal: [a, b, c]
+    if tok.kind == TokKind.LBracket {
+        return parseArrayLit(p)
+    }
+    // move closure
+    if tok.kind == TokKind.Move {
+        advance(p)
+        if at(p, TokKind.LParen) && isArrowClosure(p) {
+            return parseClosure(p, s, true)
+        }
+        // error: move must precede closure
+        return Expr.Ident("error_move", s)
+    }
+    // Parenthesized expr or closure
+    if tok.kind == TokKind.LParen {
+        if isArrowClosure(p) {
+            return parseClosure(p, s, false)
+        }
+        advance(p)
+        let expr = parseExpr(p)
+        expect(p, TokKind.RParen)
+        return expr
+    }
+
+    // Fallback — should not reach here in valid input
+    advance(p)
+    return Expr.Ident("error_unexpected", s)
+}
+
+fn parseStructLit(p: &mut Parser, name: string, s: Option<Span>): Expr {
+    expect(p, TokKind.LBrace)
+    var fields: Vec<StructLitField> = Vec.new()
+    while !at(p, TokKind.RBrace) {
+        let fieldName = expect(p, TokKind.Ident).value
+        expect(p, TokKind.Colon)
+        let value = parseExpr(p)
+        fields.push(StructLitField { name: fieldName, value: Box.new(value) })
+        matchTok(p, TokKind.Comma)
+    }
+    expect(p, TokKind.RBrace)
+    return Expr.StructLit(name, fields, s)
+}
+
+fn parseCall(p: &mut Parser, name: string, s: Option<Span>): Expr {
+    expect(p, TokKind.LParen)
+    var args: Vec<Box<Expr>> = Vec.new()
+    while !at(p, TokKind.RParen) {
+        args.push(Box.new(parseExpr(p)))
+        matchTok(p, TokKind.Comma)
+    }
+    expect(p, TokKind.RParen)
+    var typeArgs: Vec<MiloType> = Vec.new()
+    return Expr.Call(name, args, typeArgs, s)
+}
+
+fn parseArrayLit(p: &mut Parser): Expr {
+    let s = span(peek(p))
+    expect(p, TokKind.LBracket)
+    var elements: Vec<Box<Expr>> = Vec.new()
+    while !at(p, TokKind.RBracket) {
+        elements.push(Box.new(parseExpr(p)))
+        // [value; count] repeat syntax
+        if elements.len == 1 && matchTok(p, TokKind.Semicolon) {
+            let countTok = expect(p, TokKind.Int)
+            expect(p, TokKind.RBracket)
+            return Expr.ArrayRepeat(elements[0], countTok.value.parseInt(), s)
+        }
+        matchTok(p, TokKind.Comma)
+    }
+    expect(p, TokKind.RBracket)
+    return Expr.ArrayLit(elements, s)
+}
+
+// F-string: $"hello {name}" → format("hello ", name)
+fn parseFString(p: &mut Parser, raw: string, s: Option<Span>): Expr {
+    var args: Vec<Box<Expr>> = Vec.new()
+    var lit = ""
+    var i: i64 = 0
+    while i < raw.len {
+        if raw[i] == 123 {  // '{'
+            if lit.len > 0 {
+                args.push(Box.new(Expr.StringLit(lit, s)))
+                lit = ""
+            }
+            i = i + 1
+            var depth = 1
+            var exprStr = ""
+            while i < raw.len && depth > 0 {
+                if raw[i] == 123 { depth = depth + 1 }
+                else if raw[i] == 125 {  // '}'
+                    depth = depth - 1
+                    if depth == 0 { i = i + 1; break }
+                }
+                exprStr = exprStr + raw[i].toString()
+                i = i + 1
+            }
+            // Re-lex and parse the embedded expression
+            let exprTokens = tokenize(exprStr)
+            var subParser = newParser(exprTokens)
+            args.push(Box.new(parseExpr(&mut subParser)))
+        } else {
+            lit = lit + raw[i].toString()
+            i = i + 1
+        }
+    }
+    if lit.len > 0 {
+        args.push(Box.new(Expr.StringLit(lit, s)))
+    }
+    if args.len == 1 {
+        return *args[0]
+    }
+    var typeArgs: Vec<MiloType> = Vec.new()
+    return Expr.Call("format", args, typeArgs, s)
+}
+
+// -- Top-level parse entry point --
+
+fn parse(p: &mut Parser): Program {
+    var structs: Vec<StructDecl> = Vec.new()
+    var enums: Vec<EnumDecl> = Vec.new()
+    var functions: Vec<Function> = Vec.new()
+    var imports: Vec<ImportDecl> = Vec.new()
+    var traits: Vec<TraitDecl> = Vec.new()
+    var impls: Vec<ImplDecl> = Vec.new()
+
+    while !at(p, TokKind.Eof) {
+        // Collect attributes
+        var attrs: Vec<Attribute> = Vec.new()
+        while at(p, TokKind.At) {
+            attrs.push(parseAttribute(p))
+        }
+
+        if at(p, TokKind.Import) || at(p, TokKind.From) {
+            imports.push(parseImport(p))
+        } else if at(p, TokKind.Struct) {
+            var s = parseStruct(p)
+            if attrs.len > 0 { s.attributes = attrs }
+            structs.push(s)
+        } else if at(p, TokKind.Enum) {
+            var e = parseEnum(p)
+            if attrs.len > 0 { e.attributes = attrs }
+            enums.push(e)
+        } else if at(p, TokKind.Extern) {
+            functions.push(parseExternFn(p))
+        } else if at(p, TokKind.Fn) {
+            functions.push(parseFn(p))
+        } else if at(p, TokKind.Trait) {
+            traits.push(parseTraitDecl(p))
+        } else if at(p, TokKind.Impl) {
+            impls.push(parseImplDecl(p))
+        } else {
+            // Skip unexpected token
+            advance(p)
+        }
+    }
+
+    return Program {
+        structs: structs,
+        enums: enums,
+        functions: functions,
+        imports: imports,
+        traits: traits,
+        impls: impls,
+    }
+}

@@ -651,21 +651,24 @@ export class TypeChecker {
       }
     }
     // auto-derive Eq for all structs not explicitly derived and not generic
-    for (const s of program.structs) {
-      if (s.typeParams.length > 0) continue;
-      if (explicitEq.has(s.name)) continue;
-      // check if an explicit impl Eq already exists
-      if (program.impls.some(i => i.traitName === "Eq" && i.typeName === s.name)) continue;
-      // check all fields are Eq-able (primitives, strings, enums, or other auto-Eq structs)
-      let allEq = true;
-      for (const f of s.fields) {
-        const ft = this.resolve(f.type);
-        const ftName = typeName(ft);
-        if (!this.canAutoEq(ft)) { allEq = false; break; }
-      }
-      if (allEq) {
-        const impl = this.deriveEq(s, true);
-        if (impl) result.push(impl);
+    // loop until fixpoint (struct A containing struct B needs B derived first)
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const s of program.structs) {
+        if (s.typeParams.length > 0) continue;
+        if (explicitEq.has(s.name)) continue;
+        if (this.traits.has(`Eq_${s.name}`)) continue;
+        if (program.impls.some(i => i.traitName === "Eq" && i.typeName === s.name)) continue;
+        let allEq = true;
+        for (const f of s.fields) {
+          const ft = this.resolve(f.type);
+          if (!this.canAutoEq(ft)) { allEq = false; break; }
+        }
+        if (allEq) {
+          const impl = this.deriveEq(s, true);
+          if (impl) { result.push(impl); changed = true; }
+        }
       }
     }
     return result;
@@ -674,7 +677,9 @@ export class TypeChecker {
   private canAutoEq(t: TypeKind): boolean {
     if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "string") return true;
     if (t.tag === "enum") return true;
-    if (t.tag === "struct") return true;
+    if (t.tag === "struct") {
+      return this.traits.has(`Eq_${t.name}`);
+    }
     return false;
   }
 

@@ -1,0 +1,211 @@
+// AST node types for the Milo compiler
+
+struct Span {
+    line: i32,
+    col: i32,
+}
+
+struct MiloType {
+    name: string,
+    typeArgs: Vec<MiloType>,
+    isPtr: bool,
+    isRef: bool,
+    isRefMut: bool,
+    isArray: bool,
+    arraySize: Option<i64>,
+    isFn: bool,
+    fnParams: Vec<MiloType>,
+    fnRet: Option<Box<MiloType>>,
+}
+
+fn simpleType(name: string): MiloType {
+    return MiloType {
+        name: name,
+        typeArgs: Vec.new(),
+        isPtr: false,
+        isRef: false,
+        isRefMut: false,
+        isArray: false,
+        arraySize: Option.None,
+        isFn: false,
+        fnParams: Vec.new(),
+        fnRet: Option.None,
+    }
+}
+
+fn ptrType(name: string): MiloType {
+    return MiloType {
+        name: name,
+        typeArgs: Vec.new(),
+        isPtr: true,
+        isRef: false,
+        isRefMut: false,
+        isArray: false,
+        arraySize: Option.None,
+        isFn: false,
+        fnParams: Vec.new(),
+        fnRet: Option.None,
+    }
+}
+
+struct Param {
+    name: string,
+    type: MiloType,
+}
+
+struct StructField {
+    name: string,
+    type: MiloType,
+}
+
+struct TypeParam {
+    name: string,
+    bounds: Vec<string>,
+}
+
+struct Attribute {
+    name: string,
+    args: Vec<string>,
+}
+
+// -- Expressions --
+
+struct StructLitField {
+    name: string,
+    value: Box<Expr>,
+}
+
+enum Expr {
+    IntLit(i64, Option<Span>),
+    FloatLit(f64, Option<Span>),
+    BoolLit(bool, Option<Span>),
+    StringLit(string, Option<Span>),
+    CharLit(i32, Option<Span>),
+    Ident(string, Option<Span>),
+    BinOp(string, Box<Expr>, Box<Expr>, Option<Span>),
+    UnaryOp(string, Box<Expr>, Option<Span>),
+    Call(string, Vec<Box<Expr>>, Vec<MiloType>, Option<Span>),
+    StructLit(string, Vec<StructLitField>, Option<Span>),
+    FieldAccess(Box<Expr>, string, Option<Span>),
+    ArrayLit(Vec<Box<Expr>>, Option<Span>),
+    ArrayRepeat(Box<Expr>, i64, Option<Span>),
+    IndexAccess(Box<Expr>, Box<Expr>, Option<Span>),
+    EnumLit(string, string, Vec<Box<Expr>>, Option<Span>),
+    Unwrap(Box<Expr>, Option<Span>),
+    Propagate(Box<Expr>, Option<Span>),
+    DefaultValue(Box<Expr>, Box<Expr>, Option<Span>),
+    CastExpr(Box<Expr>, MiloType, Option<Span>),
+    MethodCall(Box<Expr>, string, Vec<Box<Expr>>, Option<Span>),
+    Closure(Vec<Param>, Option<MiloType>, Vec<Box<Stmt>>, bool, Option<Span>),
+    RangeExpr(Box<Expr>, Box<Expr>, Option<Span>),
+    IsExpr(Box<Expr>, Box<Pattern>, Option<Span>),
+}
+
+// -- Patterns --
+
+enum LiteralKind {
+    LitInt,
+    LitFloat,
+    LitString,
+    LitChar,
+    LitBool,
+}
+
+enum Pattern {
+    EnumPattern(string, string, Vec<string>, Option<Span>),
+    LiteralPattern(string, LiteralKind, Option<Span>),
+    WildcardPattern(Option<Span>),
+}
+
+// -- Statements --
+
+struct MatchArm {
+    pattern: Pattern,
+    body: Vec<Box<Stmt>>,
+}
+
+enum Stmt {
+    LetDecl(string, Option<MiloType>, Box<Expr>, Option<Span>),
+    VarDecl(string, Option<MiloType>, Box<Expr>, Option<Span>),
+    Assign(Box<Expr>, Box<Expr>, Option<Span>),
+    Return(Option<Box<Expr>>, Option<Span>),
+    IfStmt(Box<Expr>, Vec<Box<Stmt>>, Option<Vec<Box<Stmt>>>, Option<Span>),
+    WhileStmt(Box<Expr>, Vec<Box<Stmt>>, Option<Span>),
+    ExprStmt(Box<Expr>, Option<Span>),
+    MatchStmt(Box<Expr>, Vec<MatchArm>, Option<Span>),
+    BreakStmt(Option<Span>),
+    ContinueStmt(Option<Span>),
+    IfLetStmt(Box<Pattern>, Box<Expr>, Vec<Box<Stmt>>, Option<Vec<Box<Stmt>>>, Option<Span>),
+    UnsafeBlock(Vec<Box<Stmt>>, Option<Span>),
+    ForInStmt(string, Option<string>, Box<Expr>, Vec<Box<Stmt>>, Option<Span>),
+}
+
+// -- Top-level declarations --
+
+struct StructDecl {
+    name: string,
+    typeParams: Vec<TypeParam>,
+    fields: Vec<StructField>,
+    attributes: Vec<Attribute>,
+}
+
+struct EnumVariant {
+    name: string,
+    fields: Vec<MiloType>,
+}
+
+struct EnumDecl {
+    name: string,
+    typeParams: Vec<TypeParam>,
+    variants: Vec<EnumVariant>,
+    attributes: Vec<Attribute>,
+}
+
+struct Function {
+    name: string,
+    typeParams: Vec<TypeParam>,
+    params: Vec<Param>,
+    retType: MiloType,
+    body: Vec<Box<Stmt>>,
+    isExtern: bool,
+    isVariadic: bool,
+}
+
+struct ImportDecl {
+    path: string,
+    names: Option<Vec<string>>,
+    span: Option<Span>,
+}
+
+struct TraitMethod {
+    name: string,
+    params: Vec<Param>,
+    retType: MiloType,
+    body: Option<Vec<Box<Stmt>>>,
+    span: Option<Span>,
+}
+
+struct TraitDecl {
+    name: string,
+    typeParams: Vec<TypeParam>,
+    supertraits: Vec<string>,
+    methods: Vec<TraitMethod>,
+    span: Option<Span>,
+}
+
+struct ImplDecl {
+    traitName: Option<string>,
+    typeName: string,
+    typeParams: Vec<TypeParam>,
+    methods: Vec<Function>,
+    span: Option<Span>,
+}
+
+struct Program {
+    structs: Vec<StructDecl>,
+    enums: Vec<EnumDecl>,
+    functions: Vec<Function>,
+    imports: Vec<ImportDecl>,
+    traits: Vec<TraitDecl>,
+    impls: Vec<ImplDecl>,
+}
