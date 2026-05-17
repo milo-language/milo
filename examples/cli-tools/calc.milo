@@ -85,7 +85,7 @@ fn tokenize(input: &string): Vec<CalcToken> {
             tokens.push(CalcToken { kind: CalcTok.RParen, val: 0.0 })
             i = i + 1
         } else {
-            print("error: unexpected character '", ch.toString(), "'")
+            print($"error: unexpected character '{ch.toString()}'")
             return tokens
         }
     }

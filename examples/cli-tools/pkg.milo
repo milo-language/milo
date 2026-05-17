@@ -159,7 +159,7 @@ fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
                     let w = writeFile("milo.json", out)
                     match w {
                         Result.Ok(n) => {
-                            print("added ", pkgAlias, " → ", pkgUrl)
+                            print($"added {pkgAlias} → {pkgUrl}")
                             return 0
                         }
                         Result.Err(e) => {
@@ -169,7 +169,7 @@ fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
                     }
                 }
                 Result.Err(e) => {
-                    print("error: invalid milo.json: ", e)
+                    print($"error: invalid milo.json: {e}")
                     return 1
                 }
             }
@@ -186,14 +186,14 @@ fn installPkg(name: &string, url: &string): i32 {
     var dest: string = cachePath(pkg)
 
     if pathExists(dest) {
-        print("  cached: ", name, " (", dest, ")")
+        print($"  cached: {name} ({dest})")
         return 0
     }
 
     let mkdirCmd = "mkdir -p " + dest.clone()
     run(mkdirCmd)!
 
-    print("  fetch: ", pkg.url, " @ ", pkg.version)
+    print($"  fetch: {pkg.url} @ {pkg.version}")
     var cloneCmd: string = "git clone --quiet --depth 1"
     if pkg.version != "main" {
         cloneCmd = cloneCmd + " --branch " + pkg.version
@@ -201,7 +201,7 @@ fn installPkg(name: &string, url: &string): i32 {
     cloneCmd = cloneCmd + " " + pkg.url + " " + dest.clone() + " 2>&1"
     let code = run(cloneCmd)!
     if code != 0 {
-        print("  error: git clone failed for ", name)
+        print($"  error: git clone failed for {name}")
         return 1
     }
 
@@ -215,7 +215,7 @@ fn installPkg(name: &string, url: &string): i32 {
         Result.Err(e) => {}
     }
 
-    print("  installed: ", name)
+    print($"  installed: {name}")
     return 0
 }
 
@@ -253,7 +253,7 @@ fn cmdInstall(): i32 {
                                 print("no dependencies")
                                 return 0
                             }
-                            print("installing ", keys.len, " package(s)...")
+                            print($"installing {keys.len} package(s)...")
                             for key in keys {
                                 let val = d.str(key)
                                 match val {
@@ -264,7 +264,7 @@ fn cmdInstall(): i32 {
                                         }
                                     }
                                     Option.None => {
-                                        print("  warning: skipping ", key, " (not a string)")
+                                        print($"  warning: skipping {key} (not a string)")
                                     }
                                 }
                             }
@@ -277,7 +277,7 @@ fn cmdInstall(): i32 {
                     return 0
                 }
                 Result.Err(e) => {
-                    print("error: invalid milo.json: ", e)
+                    print($"error: invalid milo.json: {e}")
                     return 1
                 }
             }
@@ -291,7 +291,7 @@ fn cmdInstall(): i32 {
 
 fn cmdNew(name: &string): i32 {
     if pathExists(name) {
-        print("error: directory '", name, "' already exists")
+        print($"error: directory '{name}' already exists")
         return 1
     }
     let mkdirCmd = "mkdir -p " + name
@@ -322,7 +322,7 @@ fn cmdNew(name: &string): i32 {
     let gitCmd = "git init -q " + name
     run(gitCmd)!
 
-    print("created package '", name, "/'")
+    print($"created package '{name}/'")
     print("  milo.json   — manifest")
     print("  lib.milo    — entry point")
     return 0
@@ -372,7 +372,7 @@ fn main(): i32 {
             return cmdInstall()
         }
         _ => {
-            print("unknown command: ", cmd)
+            print($"unknown command: {cmd}")
             printUsage()
             return 1
         }

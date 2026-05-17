@@ -36,7 +36,7 @@ fn main(): i32 {
                 content = data
             }
             Result.Err(e) => {
-                print("wc: ", e)
+                print($"wc: {e}")
                 return 1
             }
         }
@@ -77,7 +77,7 @@ fn main(): i32 {
     let chars = content.len
 
     if showAll {
-        print(pad(lines), pad(words), pad(chars), " ", label)
+        print($"{pad(lines)}{pad(words)}{pad(chars)} {label}")
     } else {
         var output: string = ""
         if showLines {
@@ -89,7 +89,7 @@ fn main(): i32 {
         if showChars {
             output = output + pad(chars)
         }
-        print(output, " ", label)
+        print($"{output} {label}")
     }
 
     return 0

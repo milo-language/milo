@@ -122,7 +122,7 @@ fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
             content = data
         }
         Result.Err(e) => {
-            print("grep: ", e)
+            print($"grep: {e}")
             return 1
         }
     }
@@ -159,7 +159,7 @@ fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
 
     if opts.countOnly && matchCount > 0 {
         if opts.showFilename {
-            print(filePath, ":", matchCount)
+            print($"{filePath}:{matchCount}")
         } else {
             print(matchCount)
         }

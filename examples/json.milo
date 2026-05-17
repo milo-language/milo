@@ -39,7 +39,7 @@ fn main(): i32 {
         print("key not found")
     }
     if let Result.Err(e) = jsonParse("not json") {
-        print("parse error: ", e)
+        print($"parse error: {e}")
     }
 
     return 0

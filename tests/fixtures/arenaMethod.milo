@@ -2,7 +2,8 @@
 // @expect: Bob
 // @expect: gone
 // @expect: updated
-// @expect: valid
+// @expect: true
+// @expect: false
 from "std/arena" import { Arena, Handle, arenaNew }
 
 fn main(): i32 {
@@ -25,10 +26,14 @@ fn main(): i32 {
     names.set(b, "updated")
     print(names.get(b)!)
 
-    // valid check
-    if names.valid(b) {
-        print("valid")
-    }
+    // handle equality via @derive(Eq)
+    var nums: Arena<i64> = arenaNew()
+    let h1 = nums.alloc(42)
+    let h2: Handle<i64> = Handle { index: h1.index, generation: h1.generation }
+    print(h1 == h2)
+
+    let h3 = nums.alloc(99)
+    print(h2 == h3)
 
     return 0
 }

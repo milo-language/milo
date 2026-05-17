@@ -73,6 +73,7 @@ fn main(): i32 {
     let c = graph.alloc(Node { name: "C", neighbors: Vec.new() })
 
     // wire up a cycle: A -> B -> C -> A
+    // modify takes a function: receive current value, return updated value
     graph.modify(a, (node: Node): Node => { node.neighbors.push(b); node })
     graph.modify(b, (node: Node): Node => { node.neighbors.push(c); node })
     graph.modify(c, (node: Node): Node => { node.neighbors.push(a); node })
@@ -89,15 +90,19 @@ fn main(): i32 {
 
 ## Gotchas
 
-**`.get()` returns a copy.** Changing the returned value doesn't update the arena. Use `.modify()` instead:
+**`.get()` returns a copy.** Changing the returned value doesn't update the arena. Use `.modify()` or get/set:
 
 ```milo
 let node = graph.get(handle)!
 node.name = "changed"                   // changes your local copy, not the arena
 
-graph.modify(handle, (n: Node): Node => {
-    n.name = "changed"; n               // this updates the arena
-})
+// option 1: modify (safe one-liner)
+graph.modify(handle, (n: Node): Node => { n.name = "changed"; n })
+
+// option 2: get, change, set (explicit)
+var node2 = graph.get(handle)!
+node2.name = "changed"
+graph.set(handle, node2)
 ```
 
 **Handles aren't tied to a specific arena.** A `Handle<string>` from arena A will type-check against arena B if it's also an `Arena<string>`. You'll get `None` or the wrong value — not a compile error. Keep your arenas and handles organized.
@@ -164,7 +169,29 @@ Replace the value at a handle. Returns `false` if the handle is invalid.
 fn modify(self: &mut Self, handle: Handle<T>, f: (T) => T): bool
 ```
 
-Transform a value in place. Returns `false` if the handle is invalid.
+Safe one-liner to update a value. The arena pulls the value out, hands it to your function, and stores back whatever you return. If the handle is stale, the function never runs and you get `false`.
+
+```milo
+// one-liner: safe even if handle is stale
+arena.modify(handle, (n: Node): Node => { n.name = "updated"; n })
+```
+
+The trailing `n` is required — your function returns the value to store back.
+
+**Why not just get/set?** You can — but you have to handle the stale case yourself:
+
+```milo
+// equivalent, but more verbose
+match arena.get(handle) {
+    Option.Some(n) => {
+        n.name = "updated"
+        arena.set(handle, n)
+    }
+    Option.None => { /* stale handle */ }
+}
+```
+
+Use `.modify()` when you want a quick update. Use get/set when you need more control over the stale-handle case.
 
 ### .free
 
@@ -182,16 +209,3 @@ fn valid(self: &Self, handle: Handle<T>): bool
 
 Check whether a handle still points to a live value.
 
-## Free functions
-
-The same operations are available as free functions for backwards compatibility:
-
-| Method | Free function |
-|---|---|
-| `a.alloc(val)` | `arenaAlloc(a, val)` |
-| `a.get(h)` | `arenaGet(a, h)` |
-| `a.set(h, val)` | `arenaSet(a, h, val)` |
-| `a.modify(h, f)` | `arenaModify(a, h, f)` |
-| `a.free(h)` | `arenaFree(a, h)` |
-| `a.valid(h)` | `arenaValid(a, h)` |
-| `arenaLen(a)` | Number of live values |

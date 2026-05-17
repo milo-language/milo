@@ -14,10 +14,13 @@ const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
 const CACHE_DIR = resolve(homedir(), ".milo", "cache");
 
 // embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts)
+// only loaded when MILO_USE_BUNDLE=1 to avoid silently serving stale code during dev
 let STDLIB_BUNDLE: Map<string, string> | null = null;
-try {
-  STDLIB_BUNDLE = require("./stdlib-bundle").STDLIB;
-} catch {}
+if (process.env.MILO_USE_BUNDLE) {
+  try {
+    STDLIB_BUNDLE = require("./stdlib-bundle").STDLIB;
+  } catch {}
+}
 
 function toStdlibKey(absPath: string): string | null {
   return absPath.startsWith(STDLIB_DIR + "/") ? absPath.slice(STDLIB_DIR.length + 1) : null;

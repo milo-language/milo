@@ -855,7 +855,7 @@ fn main(): i32 {
             if formatted != src {
                 let writeResult = writeFile(path.clone(), formatted)
                 if let Result.Err(e) = writeResult {
-                    eprint("error writing ", path, ": ", e)
+                    eprint($"error writing {path}: {e}")
                     return 1
                 }
             }

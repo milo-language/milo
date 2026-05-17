@@ -116,7 +116,7 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
             match readFile(indexPath) {
                 Result.Ok(content) => {
                     if !quiet {
-                        print("200 GET ", req.path, " -> index.html")
+                        print($"200 GET {req.path} -> index.html")
                     }
                     return Response.Status(200, "text/html", content)
                 }
@@ -127,14 +127,14 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
         // directory listing
         let listing = dirListing(filePath, req.path)
         if !quiet {
-            print("200 GET ", req.path, " (dir)")
+            print($"200 GET {req.path} (dir)")
         }
         return Response.Html(listing)
     }
 
     if !isFile(filePath) {
         if !quiet {
-            print("404 GET ", req.path)
+            print($"404 GET {req.path}")
         }
         return Response.NotFound
     }
@@ -143,13 +143,13 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
         Result.Ok(content) => {
             let mime = getMime(filePath)
             if !quiet {
-                print("200 GET ", req.path, " (", formatSize(content.len), ")")
+                print($"200 GET {req.path} ({formatSize(content.len)})")
             }
             return Response.Status(200, mime, content)
         }
         Result.Err(e) => {
             if !quiet {
-                print("500 GET ", req.path, ": ", e)
+                print($"500 GET {req.path}: {e}")
             }
             return Response.Status(500, "text/plain", "500 Internal Server Error")
         }
@@ -172,7 +172,7 @@ fn main(): i32 {
     let port = args.getU16("port")
 
     print("serve - static file server")
-    print("  serving ", root, " on port ", port)
+    print($"  serving {root} on port {port}")
     print("")
 
     let result = serve(port, (req: &Request) => {
@@ -181,7 +181,7 @@ fn main(): i32 {
     )
     match result {
         Result.Err(msg) => {
-            print("error: ", msg)
+            print($"error: {msg}")
             return 1
         }
         _ => {

@@ -127,6 +127,10 @@ export class TypeChecker {
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
   private loopDepth = 0;
+  // Track variables moved exclusively inside return stmts within loops.
+  // Stack entry per loop nesting level.
+  private returnOnlyMovesStack: Set<VarInfo>[] = [];
+  private inReturnInLoop = false;
   private traits = new Map<string, TraitInfo>();
   private traitImpls = new Map<string, ImplInfo[]>();
   private inherentImpls = new Map<string, ImplInfo>();
@@ -302,6 +306,7 @@ export class TypeChecker {
           typeParams: [],
           methods: gi.methods.map(m => ({
             ...m,
+            body: this.substituteBody(m.body, generic.typeParams, typeArgs),
             params: m.params.map(p => ({
               name: p.name,
               type: this.substituteSelfInMiloType(
@@ -317,6 +322,17 @@ export class TypeChecker {
           span: gi.span,
         };
         this.registerImpl(concreteImpl, prog, this._pendingImplFns);
+      }
+    }
+
+    // apply @derive attributes from generic struct to monomorphized type
+    if (generic.decl.attributes) {
+      for (const attr of generic.decl.attributes) {
+        if (attr.name !== "derive") continue;
+        for (const traitName of attr.args) {
+          const impl = this.synthesizeDeriveImpl(decl, traitName);
+          if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [] }, this._pendingImplFns);
+        }
       }
     }
 
@@ -470,6 +486,8 @@ export class TypeChecker {
     this.functions.set("_loadI32", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 32, signed: true }, variadic: false });
     this.functions.set("_callClosureVoid", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "fn" }, { type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "env" }], ret: { tag: "void" }, variadic: false });
     this.functions.set("assert", { params: [{ type: { tag: "bool" }, name: "cond" }], ret: { tag: "void" }, variadic: true });
+    this.functions.set("max", { params: [{ type: i32t, name: "a" }, { type: i32t, name: "b" }], ret: i32t, variadic: false });
+    this.functions.set("min", { params: [{ type: i32t, name: "a" }, { type: i32t, name: "b" }], ret: i32t, variadic: false });
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
@@ -1108,11 +1126,14 @@ export class TypeChecker {
         if (!stmt.value) {
           if (fnRetType.tag !== "void") this.error(`return without value in function returning ${typeName(fnRetType)}`, sp);
         } else {
+          const prev = this.inReturnInLoop;
+          if (this.loopDepth > 0) this.inReturnInLoop = true;
           const valType = this.checkExprWithHint(stmt.value, fnRetType);
           if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && fnRetType.tag !== "unknown") {
             this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
           }
           this.tryMove(stmt.value);
+          this.inReturnInLoop = prev;
         }
         break;
       }
@@ -1156,16 +1177,18 @@ export class TypeChecker {
           this.error(`while condition must be bool, got ${typeName(condType)}`, sp);
         }
         const preMoves = this.snapshotMoveState();
+        this.returnOnlyMovesStack.push(new Set());
         this.pushScope();
         this.loopDepth++;
         for (const s of stmt.body) this.checkStmt(s, fnRetType);
         this.loopDepth--;
         this.popScope();
-        // outer variable moved in loop body → error (would be use-after-move on next iteration)
+        const returnMoves = this.returnOnlyMovesStack.pop()!;
         for (const scope of this.scopes) {
           for (const [name, info] of scope) {
             if (preMoves.get(info) === false && info.moved) {
-              this.error(`cannot move '${name}' out of a loop`, sp);
+              if (returnMoves.has(info)) { info.moved = false; }
+              else { this.error(`cannot move '${name}' out of a loop`, sp); }
             }
           }
         }
@@ -1193,16 +1216,19 @@ export class TypeChecker {
           }
           this.setType(stmt.iterable, varType);
           const preMoves = this.snapshotMoveState();
+          this.returnOnlyMovesStack.push(new Set());
           this.pushScope();
           this.declare(stmt.varName, { type: varType, mutable: false, moved: false, borrowed: false, read: false });
           this.loopDepth++;
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
           this.popScope();
+          const returnMoves = this.returnOnlyMovesStack.pop()!;
           for (const scope of this.scopes) {
             for (const [name, info] of scope) {
               if (preMoves.get(info) === false && info.moved) {
-                this.error(`cannot move '${name}' out of a loop`, sp);
+                if (returnMoves.has(info)) { info.moved = false; }
+                else { this.error(`cannot move '${name}' out of a loop`, sp); }
               }
             }
           }
@@ -1219,16 +1245,19 @@ export class TypeChecker {
               if (info) info.borrowed = true;
             }
             const preMoves = this.snapshotMoveState();
+            this.returnOnlyMovesStack.push(new Set());
             this.pushScope();
             this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
+            const returnMoves = this.returnOnlyMovesStack.pop()!;
             for (const scope of this.scopes) {
               for (const [name, info] of scope) {
                 if (preMoves.get(info) === false && info.moved) {
-                  this.error(`cannot move '${name}' out of a loop`, sp);
+                  if (returnMoves.has(info)) { info.moved = false; }
+                  else { this.error(`cannot move '${name}' out of a loop`, sp); }
                 }
               }
             }
@@ -1238,16 +1267,19 @@ export class TypeChecker {
             }
             const byteType: TypeKind = { tag: "int", bits: 8, signed: false };
             const preMoves = this.snapshotMoveState();
+            this.returnOnlyMovesStack.push(new Set());
             this.pushScope();
             this.declare(stmt.varName, { type: byteType, mutable: false, moved: false, borrowed: false, read: false });
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
+            const returnMoves3 = this.returnOnlyMovesStack.pop()!;
             for (const scope of this.scopes) {
               for (const [name, info] of scope) {
                 if (preMoves.get(info) === false && info.moved) {
-                  this.error(`cannot move '${name}' out of a loop`, sp);
+                  if (returnMoves3.has(info)) { info.moved = false; }
+                  else { this.error(`cannot move '${name}' out of a loop`, sp); }
                 }
               }
             }
@@ -1260,6 +1292,7 @@ export class TypeChecker {
               if (info) info.borrowed = true;
             }
             const preMoves = this.snapshotMoveState();
+            this.returnOnlyMovesStack.push(new Set());
             this.pushScope();
             this.declare(stmt.varName, { type: keyRef, mutable: false, moved: false, borrowed: false, read: false });
             if (stmt.varName2) {
@@ -1269,10 +1302,12 @@ export class TypeChecker {
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
+            const returnMoves4 = this.returnOnlyMovesStack.pop()!;
             for (const scope of this.scopes) {
               for (const [name, info] of scope) {
                 if (preMoves.get(info) === false && info.moved) {
-                  this.error(`cannot move '${name}' out of a loop`, sp);
+                  if (returnMoves4.has(info)) { info.moved = false; }
+                  else { this.error(`cannot move '${name}' out of a loop`, sp); }
                 }
               }
             }
@@ -1286,16 +1321,19 @@ export class TypeChecker {
               if (info) info.borrowed = true;
             }
             const preMoves = this.snapshotMoveState();
+            this.returnOnlyMovesStack.push(new Set());
             this.pushScope();
             this.declare(stmt.varName, { type: elemRef, mutable: false, moved: false, borrowed: false, read: false });
             this.loopDepth++;
             for (const s of stmt.body) this.checkStmt(s, fnRetType);
             this.loopDepth--;
             this.popScope();
+            const returnMoves5 = this.returnOnlyMovesStack.pop()!;
             for (const scope of this.scopes) {
               for (const [name, info] of scope) {
                 if (preMoves.get(info) === false && info.moved) {
-                  this.error(`cannot move '${name}' out of a loop`, sp);
+                  if (returnMoves5.has(info)) { info.moved = false; }
+                  else { this.error(`cannot move '${name}' out of a loop`, sp); }
                 }
               }
             }
@@ -1584,6 +1622,14 @@ export class TypeChecker {
         }
         info.moved = true;
         this.movedExprs.add(expr);
+        if (this.loopDepth > 0 && this.returnOnlyMovesStack.length > 0) {
+          const cur = this.returnOnlyMovesStack[this.returnOnlyMovesStack.length - 1];
+          if (this.inReturnInLoop) {
+            cur.add(info);
+          } else {
+            cur.delete(info);
+          }
+        }
       }
     }
     // Mark `v[i]` as a move-out when consumed in a move position. Codegen uses this
@@ -2101,6 +2147,22 @@ export class TypeChecker {
             }
           }
           return this.setType(expr, { tag: "void" });
+        }
+        if (expr.func === "max" || expr.func === "min") {
+          if (expr.args.length !== 2) {
+            this.error(`${expr.func}() expects 2 arguments, got ${expr.args.length}`, sp);
+            return this.setType(expr, { tag: "unknown" });
+          }
+          const aType = this.checkExpr(expr.args[0]);
+          const bType = this.checkExpr(expr.args[1]);
+          if (aType.tag !== "int" && aType.tag !== "float" && aType.tag !== "unknown") {
+            this.error(`${expr.func}() arguments must be numeric`, sp);
+            return this.setType(expr, { tag: "unknown" });
+          }
+          if (!typeEq(aType, bType) && bType.tag !== "unknown" && aType.tag !== "unknown") {
+            this.error(`${expr.func}() arguments must be the same type, got ${typeName(aType)} and ${typeName(bType)}`, sp);
+          }
+          return this.setType(expr, aType.tag !== "unknown" ? aType : bType);
         }
         if (sig.variadic) {
           if (expr.args.length < sig.params.length) this.error(`function '${expr.func}' expects at least ${sig.params.length} args, got ${expr.args.length}`, sp);

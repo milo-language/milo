@@ -148,7 +148,7 @@ fn extractRaw(s: &string, pos: i64): string {
 fn findField(json: &string, field: &string): string {
     var pos: i64 = skipWs(json, 0 as i64)
     if pos >= json.len || json[pos] != 123 {
-        print("jq: expected object for field '.", field, "'")
+        print($"jq: expected object for field '.{field}'")
         return "null"
     }
     pos = pos + 1
@@ -348,7 +348,7 @@ fn main(): i32 {
                 content = data
             }
             Result.Err(e) => {
-                print("jq: ", e)
+                print($"jq: {e}")
                 return 1
             }
         }

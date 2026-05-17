@@ -267,7 +267,7 @@ fn main(): i32 {
             content = data
         }
         Result.Err(e) => {
-            print("cat: ", e)
+            print($"cat: {e}")
             return 1
         }
     }
@@ -329,12 +329,12 @@ fn main(): i32 {
         }
         if noColor {
             print(separator)
-            print(" File: ", filePath, langLabel)
+            print($" File: {filePath}{langLabel}")
             print(separator)
         } else {
-            print(cDim, separator, cReset)
-            print(" ", cBold, "File: ", filePath, cReset, cGray, langLabel, cReset)
-            print(cDim, separator, cReset)
+            print($"{cDim}{separator}{cReset}")
+            print($" {cBold}File: {filePath}{cReset}{cGray}{langLabel}{cReset}")
+            print($"{cDim}{separator}{cReset}")
         }
     }
 
@@ -351,9 +351,9 @@ fn main(): i32 {
                 displayLine = highlightLine(rawLine, lang, kwList, cReset, cGray, cGreen, cMagenta, cRed, cBlue, cCyan)
             }
             if noColor {
-                print(" ", padNum(idx + 1, width), " | ", displayLine)
+                print($" {padNum(idx + 1, width)} | {displayLine}")
             } else {
-                print(" ", cGray, padNum(idx + 1, width), " |", cReset, " ", displayLine)
+                print($" {cGray}{padNum(idx + 1, width)} |{cReset} {displayLine}")
             }
         }
         idx = idx + 1
@@ -364,7 +364,7 @@ fn main(): i32 {
         if noColor {
             print(separator)
         } else {
-            print(cDim, separator, cReset)
+            print($"{cDim}{separator}{cReset}")
         }
     }
 

@@ -53,7 +53,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid"]);
   private needsArgGlobals = false;
 
   private filePath?: string;
@@ -1346,6 +1346,25 @@ export class Codegen {
       lines.push(`  unreachable`);
       lines.push(`${okLabel}:`);
       return [lines, "void", "void"];
+    }
+    if (expr.func === "max" || expr.func === "min") {
+      const [al1, av1, at1] = this.genExpr(expr.args[0].expr);
+      lines.push(...al1);
+      const [al2, av2] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      const cmp = this.nextTemp();
+      const result = this.nextTemp();
+      const isFloat = at1 === "double" || at1 === "float";
+      const isUnsigned = expr.args[0].expr.type.tag === "int" && !expr.args[0].expr.type.signed;
+      if (isFloat) {
+        const pred = expr.func === "max" ? "ogt" : "olt";
+        lines.push(`  ${cmp} = fcmp ${pred} ${at1} ${av1}, ${av2}`);
+      } else {
+        const pred = expr.func === "max" ? (isUnsigned ? "ugt" : "sgt") : (isUnsigned ? "ult" : "slt");
+        lines.push(`  ${cmp} = icmp ${pred} ${at1} ${av1}, ${av2}`);
+      }
+      lines.push(`  ${result} = select i1 ${cmp}, ${at1} ${av1}, ${at1} ${av2}`);
+      return [lines, result, at1];
     }
     if (expr.func === "_miloArgCount") {
       this.needsArgGlobals = true;
