@@ -12,6 +12,67 @@ struct Request {
     path: string,
 }
 
+// Key-value pair for path params and response headers.
+struct Param {
+    name: string,
+    value: string,
+}
+
+// Request context passed to route handlers.
+// Contains the matched request, extracted path params, and response state.
+struct Context {
+    req: Request,
+    params: Vec<Param>,
+    statusCode: i32,
+    respHeaders: Vec<Param>,
+}
+
+impl Context {
+    fn param(self: &Self, name: &string): string {
+        var i: i64 = 0
+        while i < self.params.len {
+            if self.params[i].name == *name {
+                return self.params[i].value.clone()
+            }
+            i = i + 1
+        }
+        return ""
+    }
+
+    fn setStatus(self: &mut Self, code: i32): void {
+        self.statusCode = code
+    }
+
+    fn setHeader(self: &mut Self, name: string, value: string): void {
+        self.respHeaders.push(Param { name: name, value: value })
+    }
+
+    fn text(self: &Self, body: string): Response {
+        if self.statusCode != 200 {
+            return Response.Status(self.statusCode, "text/plain; charset=utf-8", body)
+        }
+        return Response.Text(body)
+    }
+
+    fn json(self: &Self, body: string): Response {
+        if self.statusCode != 200 {
+            return Response.Status(self.statusCode, "application/json", body)
+        }
+        return Response.Json(body)
+    }
+
+    fn html(self: &Self, body: string): Response {
+        if self.statusCode != 200 {
+            return Response.Status(self.statusCode, "text/html; charset=utf-8", body)
+        }
+        return Response.Html(body)
+    }
+
+    fn redirect(self: &Self, url: string): Response {
+        return Response.Status(302, "text/plain; charset=utf-8", url)
+    }
+}
+
 // HTTP response type.
 // Text/Html/Json set the content-type automatically.
 // Status(code, contentType, body) for custom responses.
@@ -201,4 +262,199 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         }
     }
     return Result.Err("server exited")
+}
+
+// ── Router ──
+
+struct Route {
+    method: string,
+    pattern: string,
+    paramNames: Vec<string>,
+    handler: (&mut Context) => Response,
+}
+
+struct Router {
+    routes: Vec<Route>,
+    middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>,
+}
+
+impl Router {
+    fn new(): Router {
+        return Router {
+            routes: [],
+            middleware: [],
+        }
+    }
+
+    fn get(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+        self.addRoute("GET", pattern, h)
+    }
+
+    fn post(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+        self.addRoute("POST", pattern, h)
+    }
+
+    fn put(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+        self.addRoute("PUT", pattern, h)
+    }
+
+    fn delete(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+        self.addRoute("DELETE", pattern, h)
+    }
+
+    fn all(self: &mut Self, pattern: string, h: (&mut Context) => Response): void {
+        self.addRoute("*", pattern, h)
+    }
+
+    fn use(self: &mut Self, mw: (&mut Context, (&mut Context) => Response) => Response): void {
+        self.middleware.push(mw)
+    }
+
+    fn addRoute(self: &mut Self, method: string, pattern: string, h: (&mut Context) => Response): void {
+        let paramNames = extractParamNames(pattern)
+        self.routes.push(Route {
+            method: method,
+            pattern: pattern,
+            paramNames: paramNames,
+            handler: h,
+        })
+    }
+
+    fn handle(self: &Self, req: Request): Response {
+        var i: i64 = 0
+        while i < self.routes.len {
+            let route = self.routes[i]
+            if route.method == "*" || route.method == req.method {
+                let params = matchRoute(route.pattern, route.paramNames, req.path)
+                if let Option.Some(matched) = params {
+                    var ctx = Context {
+                        req: req,
+                        params: matched,
+                        statusCode: 200,
+                        respHeaders: [],
+                    }
+                    let handler = route.handler
+                    // wrap handler with middleware chain (innermost first)
+                    var final: (&mut Context) => Response = handler
+                    var m: i64 = self.middleware.len - 1
+                    while m >= 0 {
+                        let mw = self.middleware[m]
+                        let next = final
+                        final = (c: &mut Context) => {
+                            return mw(c, next)
+                        }
+                        m = m - 1
+                    }
+                    return final(ctx)
+                }
+            }
+            i = i + 1
+        }
+        return Response.NotFound
+    }
+}
+
+// Start an HTTP server using a Router.
+fn serveRouter(port: u16?, router: &Router): Result<void> {
+    return serve(port, (req: &Request) => {
+        // clone request since router.handle takes ownership
+        let owned = Request { method: req.method.clone(), path: req.path.clone() }
+        return router.handle(owned)
+    })
+}
+
+// ── Path matching ──
+
+// Extract param names from pattern like "/user/:id/posts/:postId"
+fn extractParamNames(pattern: &string): Vec<string> {
+    var names: Vec<string> = []
+    var i: i64 = 0
+    while i < pattern.len {
+        if pattern[i] == ':' {
+            var j: i64 = i + 1
+            while j < pattern.len && pattern[j] != '/' {
+                j = j + 1
+            }
+            var name: string = ""
+            var k: i64 = i + 1
+            while k < j {
+                name.push(pattern[k])
+                k = k + 1
+            }
+            names.push(name)
+            i = j
+        } else {
+            i = i + 1
+        }
+    }
+    return names
+}
+
+// Match a request path against a route pattern.
+// Returns Some(params) on match, None on mismatch.
+fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option<Vec<Param>> {
+    let patSegs = splitPath(pattern)
+    let pathSegs = splitPath(path)
+
+    // wildcard: pattern ending with "*" matches any suffix
+    var hasWildcard: bool = false
+    if patSegs.len > 0 && patSegs[patSegs.len - 1] == "*" {
+        hasWildcard = true
+    }
+
+    if !hasWildcard && patSegs.len != pathSegs.len {
+        return Option.None
+    }
+    if hasWildcard && pathSegs.len < patSegs.len - 1 {
+        return Option.None
+    }
+
+    var params: Vec<Param> = []
+    var paramIdx: i64 = 0
+    var segCount: i64 = patSegs.len
+    if hasWildcard {
+        segCount = segCount - 1
+    }
+
+    var i: i64 = 0
+    while i < segCount {
+        let pat = patSegs[i]
+        if i >= pathSegs.len {
+            return Option.None
+        }
+        let seg = pathSegs[i]
+        if pat.len > 0 && pat[0] == ':' {
+            // param segment — capture value
+            if paramIdx < paramNames.len {
+                params.push(Param { name: paramNames[paramIdx].clone(), value: seg.clone() })
+                paramIdx = paramIdx + 1
+            }
+        } else if pat != seg {
+            return Option.None
+        }
+        i = i + 1
+    }
+    return Option.Some(params)
+}
+
+// Split path by '/' into non-empty segments
+fn splitPath(path: &string): Vec<string> {
+    var segs: Vec<string> = []
+    var current: string = ""
+    var i: i64 = 0
+    while i < path.len {
+        if path[i] == '/' {
+            if current.len > 0 {
+                segs.push(current)
+                current = ""
+            }
+        } else {
+            current.push(path[i])
+        }
+        i = i + 1
+    }
+    if current.len > 0 {
+        segs.push(current)
+    }
+    return segs
 }
