@@ -13,14 +13,14 @@ hero:
       link: /language/
 
 features:
-  - title: One Rule Replaces Lifetimes
-    details: "References can't escape the function they're passed to. That's the entire ownership model. No borrow checker fights, no 'a: 'b, no lifetime annotations anywhere."
-  - title: Faster Than Go, Tracks C
-    details: "Beats C on 3/9 benchmarks (binary trees, matmul, startup). Within 3-5% on the rest. Sub-millisecond startup, binaries under 300KB. LLVM backend."
-  - title: Concurrency Without async/await
-    details: "Green threads give you Go-style concurrency. Write normal blocking code — it automatically yields in a green thread. No async keyword, no Future types, no splitting your code into two worlds."
-  - title: Five Safety Guarantees
-    details: "Memory (ownership + bounds checks), null (Option<T>), races (Send/Sync), overflow (compile-time + runtime), coercion (no implicit conversions). All enforced at compile time."
+  - title: No Lifetime Annotations. Ever.
+    details: "Rust's biggest learning cliff, gone. The compiler tracks ownership and frees memory for you. If you can write Go or TypeScript, you can write Milo."
+  - title: Faster Than Go
+    details: "Compiles to native code via LLVM. Beats C on some benchmarks, within 5% on the rest. Sub-millisecond startup."
+  - title: Concurrency That Just Works
+    details: "Write normal blocking code. It automatically runs concurrently in a green thread. No async, no await, no rewiring your entire codebase."
+  - title: Safe By Default
+    details: "The compiler catches memory bugs, null errors, data races, and integer overflow — all before your code runs. Five safety guarantees, zero runtime cost."
 ---
 
 ### Familiar syntax, serious guarantees
