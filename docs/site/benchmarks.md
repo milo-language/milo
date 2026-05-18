@@ -18,7 +18,7 @@ Apple M-series, macOS. *C uses yyjson; Go and Milo use their stdlibs.
 - 4 benchmarks match or beat C; 3 more within 20%
 - Slower entries (grep, maplookup) have known hot spots — not fundamental limits
 - Go's GC overhead shows clearly in allocation-heavy benchmarks (binarytrees 3.5x slower)
-- JSON: materialized tree parser with zero-clone accessors. Beats Go; remaining gap vs C is stdlib-vs-yyjson
+- JSON: flat pool parser with source-offset strings — ~6 allocations for any document size. Beats Go; remaining gap vs C is stdlib-vs-yyjson
 
 ## Reproduce
 

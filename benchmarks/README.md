@@ -21,7 +21,7 @@ Env vars: `RUNS=5` `WARMUP=1` `CC=clang` `CFLAGS="-O2 -march=native"`.
 | sieve to 10M           | 2.1 ms  | 2.5 ms  | 3.4 ms  | 1.19x     |
 | maplookup 100k         | 3.3 ms  | 4.4 ms  | 5.0 ms  | 1.32x     |
 | grep -c 5MB            | 2.1 ms  | 5.5 ms  | 4.0 ms  | 2.56x     |
-| json parse+walk 1MB    | 1.7 ms* | 9.1 ms  | 10.1 ms | 5.35x     |
+| json parse+walk 1MB    | 1.6 ms* | 7.1 ms  | 9.7 ms  | 4.44x     |
 
 \* C uses yyjson (best-in-class C library); Go and Milo use their stdlibs.
 

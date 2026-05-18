@@ -39,7 +39,7 @@ const benchmarks = [
   { name: 'sieve to 10M', c: 2.1, milo: 2.5, go: 3.4 },
   { name: 'maplookup 100k', c: 3.3, milo: 4.4, go: 5.0 },
   { name: 'grep -c 5MB', c: 2.1, milo: 5.5, go: 4.0 },
-  { name: 'json parse+walk 1MB', c: 1.7, milo: 9.1, go: 10.1, cNote: '*' },
+  { name: 'json parse+walk 1MB', c: 1.6, milo: 7.1, go: 9.7, cNote: '*' },
 ]
 
 function pct(b, val) {
