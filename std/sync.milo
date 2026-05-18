@@ -47,6 +47,14 @@ fn mutexUnlock(m: &Mutex): Result<i32> {
     }
 }
 
+// RAII-style lock scope — locks, runs closure, unlocks even if closure returns early.
+fn withLock(m: &Mutex, f: () => void): Result<i32> {
+    mutexLock(m)?
+    f()
+    mutexUnlock(m)?
+    return Result.Ok(0)
+}
+
 fn mutexDestroy(m: &Mutex): void {
     unsafe {
         pthread_mutex_destroy(m._handle)

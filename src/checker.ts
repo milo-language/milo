@@ -2821,7 +2821,7 @@ export class TypeChecker {
         this.closureScopeDepth = this.scopes.length - 1;
         for (const p of expr.params) {
           const pType = this.resolve(p.type);
-          this.declare(p.name, { type: pType, mutable: false, moved: false, borrowed: false, read: false });
+          this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false });
         }
         let inferredRet: TypeKind = expr.retType ? this.resolve(expr.retType) : { tag: "unknown" };
         const savedRetType = this.currentFnRetType;
