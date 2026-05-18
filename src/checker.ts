@@ -161,6 +161,22 @@ export class TypeChecker {
     this.diagnostics.push({ severity, span, message: msg, hint, code });
   }
 
+  private checkConstOverflow(lv: number, rv: number, op: string, ty: TypeKind, span?: Span) {
+    if (ty.tag !== "int") return;
+    const ops: Record<string, (a: number, b: number) => number> = {
+      "+": (a, b) => a + b, "-": (a, b) => a - b, "*": (a, b) => a * b,
+    };
+    const fn = ops[op];
+    if (!fn) return;
+    const result = fn(lv, rv);
+    const { bits, signed } = ty;
+    const min = signed ? -(2 ** (bits - 1)) : 0;
+    const max = signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1;
+    if (result < min || result > max) {
+      this.error(`constant expression '${lv} ${op} ${rv}' overflows ${signed ? "i" : "u"}${bits} (result: ${result}, range ${min}..${max})`, span);
+    }
+  }
+
   private resolve(ty: MiloType): TypeKind {
     if (ty.isFn && ty.fnParams && ty.fnRet) {
       return { tag: "fn", params: ty.fnParams.map(p => this.resolve(p)), ret: this.resolve(ty.fnRet) };
@@ -1801,6 +1817,15 @@ export class TypeChecker {
       if (inner) hint = inner;
     }
     if (hint && (expr.kind === "IntLit" || expr.kind === "CharLit") && hint.tag === "int") {
+      if (expr.kind === "IntLit") {
+        const v = expr.value;
+        const { bits, signed } = hint;
+        const min = signed ? -(2 ** (bits - 1)) : 0;
+        const max = signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1;
+        if (v < min || v > max) {
+          this.error(`integer literal ${v} overflows ${signed ? "i" : "u"}${bits} (range ${min}..${max})`, expr.span);
+        }
+      }
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -1971,6 +1996,9 @@ export class TypeChecker {
           }
           if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${typeName(lt)}`, sp);
           if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
+          if (lt.tag === "int" && expr.left.kind === "IntLit" && expr.right.kind === "IntLit") {
+            this.checkConstOverflow(expr.left.value, expr.right.value, expr.op, lt, sp);
+          }
           return this.setType(expr, lt);
         }
         if (bitOps.includes(expr.op)) {
@@ -2027,6 +2055,15 @@ export class TypeChecker {
         }
         if (expr.op === "-") {
           if (!isNumeric(ot) && ot.tag !== "unknown") this.error(`unary '-' requires numeric type, got ${typeName(ot)}`, sp);
+          if (ot.tag === "int" && expr.operand.kind === "IntLit") {
+            const result = -expr.operand.value;
+            const { bits, signed } = ot;
+            const min = signed ? -(2 ** (bits - 1)) : 0;
+            const max = signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1;
+            if (result < min || result > max) {
+              this.error(`negation of ${expr.operand.value} overflows ${signed ? "i" : "u"}${bits} (range ${min}..${max})`, sp);
+            }
+          }
           return this.setType(expr, ot);
         }
         if (expr.op === "!") {

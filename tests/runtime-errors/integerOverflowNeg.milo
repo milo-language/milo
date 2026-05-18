@@ -1,0 +1,9 @@
+// @runtime-error: integer overflow
+
+fn main(): i32 {
+    let x: i32 = -2147483647
+    let y = x - 1
+    let z = -y
+    print(z)
+    return 0
+}

@@ -39,9 +39,9 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   return lower(program, result, sourceDir);
 }
 
-function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
+function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false): string {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
-  return new Codegen(target, filePath).generate(hirModule);
+  return new Codegen(target, filePath, debugOverflow).generate(hirModule);
 }
 
 function compileToJS(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
@@ -49,9 +49,9 @@ function compileToJS(source: string, target: TargetInfo, filePath?: string, warn
   return new CodegenJS().generate(hirModule);
 }
 
-function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig) {
+function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig, debugOverflow = false) {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, target, sourcePath, warningConfig);
+  const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
   if (outputPath) {
     writeFileSync(outputPath, ir);
     console.log(`wrote ${outputPath}`);
@@ -77,7 +77,8 @@ function detectLibs(ir: string, target: TargetInfo): string {
 
 function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, target, sourcePath, warningConfig);
+  const debugOverflow = optFlag === "-O0";
+  const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
@@ -326,7 +327,7 @@ function main() {
     const bin = compileToBinary(source!, output, target, optFlag, warningConfig);
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
-    compileToIr(source!, output, target, warningConfig);
+    compileToIr(source!, output, target, warningConfig, optFlag === "-O0");
   } else if (cmd === "emit-js") {
     const src = readFileSync(source!, "utf-8");
     const js = compileToJS(src, target, source!, warningConfig);

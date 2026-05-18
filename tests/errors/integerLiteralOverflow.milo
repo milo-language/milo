@@ -1,0 +1,6 @@
+// @error: integer literal 200 overflows i8
+
+fn main(): i32 {
+    let x: i8 = 200
+    return 0
+}

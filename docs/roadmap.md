@@ -275,10 +275,14 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 - [x] **String interpolation** — `$"hello {name}, you are {age}"` f-string syntax, desugars to `format()`.
 - [ ] **Iterators** — iterator trait with `.map().filter().collect()` chains, lazy evaluation. Needs associated types or at minimum trait method return types.
 - [x] **Auto-display** — `print(myStruct)` auto-formats structs and enums (field-wise display). User-defined `Display` trait deferred.
+- [ ] **Integer overflow safety** — trap on overflow in debug builds (LLVM `llvm.sadd.with.overflow` intrinsics), defined wrapping in release (`nsw`/`nuw` flags + explicit `.wrapping_add()` etc.). Closes the last silent-UB gap.
+- [ ] **Send/Sync traits (race safety)** — compile-time data-race prevention. `Send` = safe to transfer across threads, `Sync` = safe to share via `&T`. Thread `spawn` requires `Send` bound on closure env. Mutable shared state requires `Mutex<T>` (which is `Sync`). Moves Milo from convention-based thread safety to compiler-enforced.
 - [ ] **Error handling improvements** — `From` trait for automatic error conversion in `?`, `anyhow`-style error boxing.
 - [ ] **Doc comments + doc generation** — `///` comments, `milo doc` to generate HTML/markdown.
 
-### Tier 2 — polish
+### Tier 2 — polish / differentiators
+
+- [ ] **Ranged integer types** — `type Altitude = i32(0..50000)`. Compiler proves values stay in range at assignment/arithmetic boundaries. Inspired by Ada/SPARK range types. No mainstream systems language has this — would be a unique safety guarantee beyond what Rust offers. Enables compile-time proof that integer arithmetic cannot overflow within declared bounds.
 
 - [ ] **Cross-compilation** — `--target aarch64-linux` etc. Infrastructure exists in target.ts, needs testing + sysroot handling.
 - [ ] **REPL / playground** — interactive exploration, web playground for demos.

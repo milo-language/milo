@@ -5,6 +5,7 @@ import { join } from "path";
 
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 const ERRORS_DIR = join(import.meta.dir, "errors");
+const RUNTIME_ERRORS_DIR = join(import.meta.dir, "runtime-errors");
 const COMPILER = join(import.meta.dir, "..", "src", "main.ts");
 
 const binaries: string[] = [];
@@ -23,6 +24,11 @@ function parseExpected(source: string): string[] {
 function parseExpectedError(source: string): string | null {
   const line = source.split("\n").find(l => l.startsWith("// @error:"));
   return line ? line.replace("// @error:", "").trim() : null;
+}
+
+function parseExpectedRuntimeError(source: string): string | null {
+  const line = source.split("\n").find(l => l.startsWith("// @runtime-error:"));
+  return line ? line.replace("// @runtime-error:", "").trim() : null;
 }
 
 describe("fixtures (compile + run)", () => {
@@ -74,6 +80,40 @@ describe("errors (type checker rejects)", () => {
       expect(failed).toBe(true);
       if (expectedError) {
         expect(stderr).toContain(expectedError);
+      }
+    });
+  }
+});
+
+describe("runtime errors (debug mode traps)", () => {
+  let files: string[] = [];
+  try { files = readdirSync(RUNTIME_ERRORS_DIR).filter(f => f.endsWith(".milo")); } catch {}
+
+  for (const file of files) {
+    test(file.replace(".milo", ""), () => {
+      const path = join(RUNTIME_ERRORS_DIR, file);
+      const source = readFileSync(path, "utf-8");
+      const expectedError = parseExpectedRuntimeError(source);
+
+      const outBin = join(RUNTIME_ERRORS_DIR, file.replace(".milo", ""));
+      binaries.push(outBin);
+
+      execSync(`bun run ${COMPILER} build ${path} --debug -o ${outBin}`, {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let stdout = "";
+      let failed = false;
+      try {
+        stdout = execSync(outBin, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+      } catch (e: any) {
+        failed = true;
+        stdout = e.stdout?.toString() ?? "";
+      }
+
+      expect(failed).toBe(true);
+      if (expectedError) {
+        expect(stdout).toContain(expectedError);
       }
     });
   }

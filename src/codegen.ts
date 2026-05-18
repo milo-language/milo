@@ -26,6 +26,9 @@ export class Codegen {
   private enumLayouts = new Map<string, EnumLayout>();
   private userDeclaredFns = new Set<string>();
   private needsBoundsCheck = false;
+  private needsOverflowCheck = false;
+  private debugOverflow = false;
+  private usedOverflowIntrinsics = new Set<string>();
   private needsPrintf = false;
   private needsDprintf = false;
   private needsFflush = false;
@@ -58,7 +61,11 @@ export class Codegen {
 
   private filePath?: string;
 
-  constructor(target: TargetInfo, filePath?: string) { this.target = target; this.filePath = filePath; }
+  constructor(target: TargetInfo, filePath?: string, debugOverflow = false) {
+    this.target = target;
+    this.filePath = filePath;
+    this.debugOverflow = debugOverflow;
+  }
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
@@ -233,6 +240,7 @@ export class Codegen {
     // auto-declare C functions needed by built-ins and bounds checks
     const declaredExterns = new Set(externs.map(e => e.name));
     if (this.needsBoundsCheck) { this.needsPrintf = true; this.needsExit = true; }
+    if (this.needsOverflowCheck) { this.needsPrintf = true; this.needsExit = true; }
     if (this.needsSnprintf && !declaredExterns.has("snprintf"))
       this.output.splice(1, 0, "declare i32 @snprintf(ptr, i64, ptr, ...)");
     if (this.needsStrtod && !declaredExterns.has("strtod"))
@@ -263,6 +271,12 @@ export class Codegen {
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
     if (this.needsBoundsCheck)
       this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
+    if (this.needsOverflowCheck) {
+      const file = this.filePath ?? "<unknown>";
+      this.output.splice(1, 0, `@.overflow_file = private unnamed_addr constant [${file.length + 1} x i8] c"${file}\\00"`);
+      this.output.splice(1, 0, `@.overflow_err = private unnamed_addr constant [42 x i8] c"runtime error: integer overflow at %s:%d\\0A\\00"`);
+      for (const decl of this.usedOverflowIntrinsics) this.output.splice(1, 0, decl);
+    }
     if (this.hasHashMapType)
       this.output.splice(1, 0, `%HashMap = type { ptr, i64, i64, i64 }`);
     if (this.hasVecType)
@@ -589,6 +603,34 @@ export class Codegen {
     lines.push(`  call void @exit(i32 1)`);
     lines.push(`  unreachable`);
     lines.push(`${okLabel}:`);
+  }
+
+  private emitCheckedArith(lines: string[], op: string, unsigned: boolean, llType: string, lv: string, rv: string, line: number): string {
+    this.needsOverflowCheck = true;
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const prefix = unsigned ? "u" : "s";
+    const intrinsic = `@llvm.${prefix}${op}.with.overflow.${llType}`;
+    this.usedOverflowIntrinsics.add(`declare {${llType}, i1} ${intrinsic}(${llType}, ${llType})`);
+    const result = this.nextTemp();
+    const val = this.nextTemp();
+    const flag = this.nextTemp();
+    const okLabel = this.nextLabel("overflow.ok");
+    const failLabel = this.nextLabel("overflow.fail");
+    lines.push(`  ${result} = call {${llType}, i1} ${intrinsic}(${llType} ${lv}, ${llType} ${rv})`);
+    lines.push(`  ${val} = extractvalue {${llType}, i1} ${result}, 0`);
+    lines.push(`  ${flag} = extractvalue {${llType}, i1} ${result}, 1`);
+    lines.push(`  br i1 ${flag}, label %${failLabel}, label %${okLabel}`);
+    lines.push(`${failLabel}:`);
+    const fmtPtr = this.nextTemp();
+    lines.push(`  ${fmtPtr} = getelementptr [46 x i8], ptr @.overflow_err, i32 0, i32 0`);
+    const filePtr = this.nextTemp();
+    lines.push(`  ${filePtr} = getelementptr [${(this.filePath ?? "<unknown>").length + 1} x i8], ptr @.overflow_file, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtPtr}, ptr ${filePtr}, i32 ${line})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+    return val;
   }
 
   private getStructName(llvmTy: string): string | null {
@@ -1599,6 +1641,11 @@ export class Codegen {
         const floatCmps: Record<string, string> = { "==": "oeq", "!=": "one", "<": "olt", ">": "ogt", "<=": "ole", ">=": "oge" };
         if (expr.op in intOps) {
           const op = isFloat ? floatOps[expr.op] : intOps[expr.op];
+          const checkedOps: Record<string, string> = { "+": "add", "-": "sub", "*": "mul" };
+          if (this.debugOverflow && !isFloat && expr.op in checkedOps && expr.span) {
+            const val = this.emitCheckedArith(lines, checkedOps[expr.op], unsigned, llt, lv, rv, expr.span.line);
+            return [lines, val, llt];
+          }
           lines.push(`  ${tmp} = ${op} ${llt} ${lv}, ${rv}`);
           return [lines, tmp, llt];
         }
@@ -1620,7 +1667,11 @@ export class Codegen {
         const tmp = this.nextTemp();
         if (expr.op === "-") {
           if (ot === "float" || ot === "double") lines.push(`  ${tmp} = fneg ${ot} ${ov}`);
-          else lines.push(`  ${tmp} = sub ${ot} 0, ${ov}`);
+          else if (this.debugOverflow && expr.span) {
+            const unsigned = this.isUnsigned(expr.operand.type);
+            const val = this.emitCheckedArith(lines, "sub", unsigned, ot, "0", ov, expr.span.line);
+            return [lines, val, ot];
+          } else lines.push(`  ${tmp} = sub ${ot} 0, ${ov}`);
           return [lines, tmp, ot];
         }
         if (expr.op === "!") { lines.push(`  ${tmp} = xor i1 ${ov}, 1`); return [lines, tmp, "i1"]; }
