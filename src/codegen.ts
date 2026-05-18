@@ -1,7 +1,7 @@
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern } from "./hir";
 import { type TypeKind, needsDrop } from "./types";
 import type { TargetInfo } from "./target";
-import { genVecSort, genVecSortBy } from "./codegen-vec";
+import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
 
 interface StructLayout {
   name: string;
@@ -2315,6 +2315,8 @@ export class Codegen {
         return genVecSort(this, expr.object, expr.elementType, lines);
       case "VecSortBy":
         return genVecSortBy(this, expr.object, expr.callback, expr.elementType, lines);
+      case "VecSortByKey":
+        return genVecSortByKey(this, expr.object, expr.callback, expr.elementType, expr.keyType, lines);
       case "HashMapNew":
         return this.genHashMapNew(expr, lines);
       case "HashMapInsert":

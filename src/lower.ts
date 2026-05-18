@@ -565,6 +565,11 @@ class LowerCtx {
           if (expr.method === "sortBy") {
             return { kind: "VecSortBy", object: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
+          if (expr.method === "sortByKey") {
+            const cbType = this.c.exprTypes.get(expr.args[0]);
+            const keyType: TypeKind = cbType?.tag === "fn" ? cbType.ret : { tag: "unknown" };
+            return { kind: "VecSortByKey", object: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, keyType, type, span: expr.span };
+          }
           if (expr.method === "len") {
             return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }

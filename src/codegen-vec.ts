@@ -17,12 +17,8 @@ interface CodegenCtx {
   needsMemcmp: boolean;
 }
 
-export function genVecSort(
-  ctx: CodegenCtx,
-  object: any,
-  elementType: TypeKind,
-  lines: string[],
-): [string[], string, string] {
+// shared preamble: get vec data ptr, len, and set up insertion sort scaffolding
+function sortPreamble(ctx: CodegenCtx, object: any, elementType: TypeKind, lines: string[], prefix: string) {
   ctx.hasVecType = true;
   ctx.needsMemcpy = true;
   const elemSize = ctx.typeSizeOf(elementType);
@@ -40,25 +36,33 @@ export function genVecSort(
   const len = ctx.nextTemp();
   lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
 
-  // insertion sort: for i in 1..len, shift arr[i] left until sorted
-  const tmpAddr = `%__sort_tmp.${ctx.scopeCounter++}.addr`;
+  const tmpAddr = `%__${prefix}_tmp.${ctx.scopeCounter++}.addr`;
   ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
-
-  const iAddr = `%__sort_i.${ctx.scopeCounter++}.addr`;
+  const iAddr = `%__${prefix}_i.${ctx.scopeCounter++}.addr`;
   ctx.entryAllocas.push(`  ${iAddr} = alloca i64`);
   lines.push(`  store i64 1, ptr ${iAddr}`);
-
-  const jAddr = `%__sort_j.${ctx.scopeCounter++}.addr`;
+  const jAddr = `%__${prefix}_j.${ctx.scopeCounter++}.addr`;
   ctx.entryAllocas.push(`  ${jAddr} = alloca i64`);
 
-  const outerCond = ctx.nextLabel("sort.outer.cond");
-  const outerBody = ctx.nextLabel("sort.outer.body");
-  const innerCond = ctx.nextLabel("sort.inner.cond");
-  const innerBody = ctx.nextLabel("sort.inner.body");
-  const innerEnd = ctx.nextLabel("sort.inner.end");
-  const outerEnd = ctx.nextLabel("sort.outer.end");
+  return { data, len, elemTy, elemSize, tmpAddr, iAddr, jAddr };
+}
 
-  // outer loop: i = 1; i < len
+// shared insertion sort loop structure — calls emitCompare to get the gt condition
+function insertionSortLoop(
+  ctx: CodegenCtx,
+  lines: string[],
+  p: ReturnType<typeof sortPreamble>,
+  prefix: string,
+  emitCompare: (prevPtr: string, tmpAddr: string) => string,
+) {
+  const { data, len, elemTy, elemSize, tmpAddr, iAddr, jAddr } = p;
+  const outerCond = ctx.nextLabel(`${prefix}.outer.cond`);
+  const outerBody = ctx.nextLabel(`${prefix}.outer.body`);
+  const innerCond = ctx.nextLabel(`${prefix}.inner.cond`);
+  const innerBody = ctx.nextLabel(`${prefix}.inner.body`);
+  const innerEnd = ctx.nextLabel(`${prefix}.inner.end`);
+  const outerEnd = ctx.nextLabel(`${prefix}.outer.end`);
+
   lines.push(`  br label %${outerCond}`);
   lines.push(`${outerCond}:`);
   const i = ctx.nextTemp();
@@ -68,21 +72,18 @@ export function genVecSort(
   lines.push(`  br i1 ${iCmp}, label %${outerBody}, label %${outerEnd}`);
 
   lines.push(`${outerBody}:`);
-  // tmp = arr[i]
   const iPtr = ctx.nextTemp();
   lines.push(`  ${iPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
   lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${iPtr}, i64 ${elemSize}, i1 false)`);
-  // j = i
   lines.push(`  store i64 ${i}, ptr ${jAddr}`);
   lines.push(`  br label %${innerCond}`);
 
-  // inner loop: while j > 0 && arr[j-1] > tmp
   lines.push(`${innerCond}:`);
   const j = ctx.nextTemp();
   lines.push(`  ${j} = load i64, ptr ${jAddr}`);
   const jGtZero = ctx.nextTemp();
   lines.push(`  ${jGtZero} = icmp ugt i64 ${j}, 0`);
-  const checkCmp = ctx.nextLabel("sort.checkcmp");
+  const checkCmp = ctx.nextLabel(`${prefix}.checkcmp`);
   lines.push(`  br i1 ${jGtZero}, label %${checkCmp}, label %${innerEnd}`);
 
   lines.push(`${checkCmp}:`);
@@ -91,59 +92,11 @@ export function genVecSort(
   const prevPtr = ctx.nextTemp();
   lines.push(`  ${prevPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${jm1}`);
 
-  // compare arr[j-1] > tmp
-  let gtResult: string;
-  if (elementType.tag === "string") {
-    ctx.needsMemcmp = true;
-    const prevVal = ctx.nextTemp();
-    lines.push(`  ${prevVal} = load %String, ptr ${prevPtr}`);
-    const tmpVal = ctx.nextTemp();
-    lines.push(`  ${tmpVal} = load %String, ptr ${tmpAddr}`);
-    // compare lengths first, then data (lexicographic)
-    const pData = ctx.nextTemp();
-    lines.push(`  ${pData} = extractvalue %String ${prevVal}, 0`);
-    const pLen = ctx.nextTemp();
-    lines.push(`  ${pLen} = extractvalue %String ${prevVal}, 1`);
-    const tData = ctx.nextTemp();
-    lines.push(`  ${tData} = extractvalue %String ${tmpVal}, 0`);
-    const tLen = ctx.nextTemp();
-    lines.push(`  ${tLen} = extractvalue %String ${tmpVal}, 1`);
-    const minLen = ctx.nextTemp();
-    const lenCmp = ctx.nextTemp();
-    lines.push(`  ${lenCmp} = icmp ult i64 ${pLen}, ${tLen}`);
-    lines.push(`  ${minLen} = select i1 ${lenCmp}, i64 ${pLen}, i64 ${tLen}`);
-    const memcmpResult = ctx.nextTemp();
-    lines.push(`  ${memcmpResult} = call i32 @memcmp(ptr ${pData}, ptr ${tData}, i64 ${minLen})`);
-    // if memcmp != 0, use that; else compare lengths
-    const memcmpNonZero = ctx.nextTemp();
-    lines.push(`  ${memcmpNonZero} = icmp ne i32 ${memcmpResult}, 0`);
-    const cmpByData = ctx.nextTemp();
-    lines.push(`  ${cmpByData} = icmp sgt i32 ${memcmpResult}, 0`);
-    const cmpByLen = ctx.nextTemp();
-    lines.push(`  ${cmpByLen} = icmp ugt i64 ${pLen}, ${tLen}`);
-    gtResult = ctx.nextTemp();
-    lines.push(`  ${gtResult} = select i1 ${memcmpNonZero}, i1 ${cmpByData}, i1 ${cmpByLen}`);
-  } else if (elementType.tag === "float") {
-    const prevVal = ctx.nextTemp();
-    lines.push(`  ${prevVal} = load ${elemTy}, ptr ${prevPtr}`);
-    const tmpVal = ctx.nextTemp();
-    lines.push(`  ${tmpVal} = load ${elemTy}, ptr ${tmpAddr}`);
-    gtResult = ctx.nextTemp();
-    lines.push(`  ${gtResult} = fcmp ogt ${elemTy} ${prevVal}, ${tmpVal}`);
-  } else {
-    const prevVal = ctx.nextTemp();
-    lines.push(`  ${prevVal} = load ${elemTy}, ptr ${prevPtr}`);
-    const tmpVal = ctx.nextTemp();
-    lines.push(`  ${tmpVal} = load ${elemTy}, ptr ${tmpAddr}`);
-    gtResult = ctx.nextTemp();
-    const cmpOp = elementType.tag === "int" && elementType.signed ? "sgt" : "ugt";
-    lines.push(`  ${gtResult} = icmp ${cmpOp} ${elemTy} ${prevVal}, ${tmpVal}`);
-  }
+  const gtResult = emitCompare(prevPtr, tmpAddr);
 
   lines.push(`  br i1 ${gtResult}, label %${innerBody}, label %${innerEnd}`);
 
   lines.push(`${innerBody}:`);
-  // arr[j] = arr[j-1]
   const jPtr = ctx.nextTemp();
   lines.push(`  ${jPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${j}`);
   lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${jPtr}, ptr ${prevPtr}, i64 ${elemSize}, i1 false)`);
@@ -153,19 +106,75 @@ export function genVecSort(
   lines.push(`  br label %${innerCond}`);
 
   lines.push(`${innerEnd}:`);
-  // arr[j] = tmp
   const jFinal = ctx.nextTemp();
   lines.push(`  ${jFinal} = load i64, ptr ${jAddr}`);
   const destPtr = ctx.nextTemp();
   lines.push(`  ${destPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${jFinal}`);
   lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${destPtr}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
-  // i++
   const iNext = ctx.nextTemp();
   lines.push(`  ${iNext} = add i64 ${i}, 1`);
   lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
   lines.push(`  br label %${outerCond}`);
 
   lines.push(`${outerEnd}:`);
+}
+
+// built-in > comparison for a known comparable type
+function emitBuiltinGt(ctx: CodegenCtx, lines: string[], keyType: TypeKind, keyTy: string, aVal: string, bVal: string): string {
+  if (keyType.tag === "string") {
+    ctx.needsMemcmp = true;
+    const pData = ctx.nextTemp();
+    lines.push(`  ${pData} = extractvalue %String ${aVal}, 0`);
+    const pLen = ctx.nextTemp();
+    lines.push(`  ${pLen} = extractvalue %String ${aVal}, 1`);
+    const tData = ctx.nextTemp();
+    lines.push(`  ${tData} = extractvalue %String ${bVal}, 0`);
+    const tLen = ctx.nextTemp();
+    lines.push(`  ${tLen} = extractvalue %String ${bVal}, 1`);
+    const minLen = ctx.nextTemp();
+    const lenCmp = ctx.nextTemp();
+    lines.push(`  ${lenCmp} = icmp ult i64 ${pLen}, ${tLen}`);
+    lines.push(`  ${minLen} = select i1 ${lenCmp}, i64 ${pLen}, i64 ${tLen}`);
+    const memcmpResult = ctx.nextTemp();
+    lines.push(`  ${memcmpResult} = call i32 @memcmp(ptr ${pData}, ptr ${tData}, i64 ${minLen})`);
+    const memcmpNonZero = ctx.nextTemp();
+    lines.push(`  ${memcmpNonZero} = icmp ne i32 ${memcmpResult}, 0`);
+    const cmpByData = ctx.nextTemp();
+    lines.push(`  ${cmpByData} = icmp sgt i32 ${memcmpResult}, 0`);
+    const cmpByLen = ctx.nextTemp();
+    lines.push(`  ${cmpByLen} = icmp ugt i64 ${pLen}, ${tLen}`);
+    const result = ctx.nextTemp();
+    lines.push(`  ${result} = select i1 ${memcmpNonZero}, i1 ${cmpByData}, i1 ${cmpByLen}`);
+    return result;
+  } else if (keyType.tag === "float") {
+    const result = ctx.nextTemp();
+    lines.push(`  ${result} = fcmp ogt ${keyTy} ${aVal}, ${bVal}`);
+    return result;
+  } else {
+    const result = ctx.nextTemp();
+    const cmpOp = keyType.tag === "int" && keyType.signed ? "sgt" : "ugt";
+    lines.push(`  ${result} = icmp ${cmpOp} ${keyTy} ${aVal}, ${bVal}`);
+    return result;
+  }
+}
+
+export function genVecSort(
+  ctx: CodegenCtx,
+  object: any,
+  elementType: TypeKind,
+  lines: string[],
+): [string[], string, string] {
+  const p = sortPreamble(ctx, object, elementType, lines, "sort");
+  const elemTy = p.elemTy;
+
+  insertionSortLoop(ctx, lines, p, "sort", (prevPtr, tmpAddr) => {
+    const prevVal = ctx.nextTemp();
+    lines.push(`  ${prevVal} = load ${elemTy}, ptr ${prevPtr}`);
+    const tmpVal = ctx.nextTemp();
+    lines.push(`  ${tmpVal} = load ${elemTy}, ptr ${tmpAddr}`);
+    return emitBuiltinGt(ctx, lines, elementType, elemTy, prevVal, tmpVal);
+  });
+
   return [lines, "void", "void"];
 }
 
@@ -176,24 +185,8 @@ export function genVecSortBy(
   elementType: TypeKind,
   lines: string[],
 ): [string[], string, string] {
-  ctx.hasVecType = true;
-  ctx.needsMemcpy = true;
-  const elemSize = ctx.typeSizeOf(elementType);
-  const elemTy = ctx.llvmType(elementType);
+  const p = sortPreamble(ctx, object, elementType, lines, "sortby");
 
-  const [vecPtrLines, vecPtr] = ctx.genLValue(object);
-  lines.push(...vecPtrLines);
-
-  const dataPtr = ctx.nextTemp();
-  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
-  const data = ctx.nextTemp();
-  lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
-  const lenPtr = ctx.nextTemp();
-  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
-  const len = ctx.nextTemp();
-  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
-
-  // extract comparator closure
   const [cl, cv] = ctx.genExpr(callback);
   lines.push(...cl);
   const fnPtr = ctx.nextTemp();
@@ -201,22 +194,51 @@ export function genVecSortBy(
   const envPtr = ctx.nextTemp();
   lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
 
-  const tmpAddr = `%__sortby_tmp.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
+  insertionSortLoop(ctx, lines, p, "sortby", (prevPtr, tmpAddr) => {
+    const cmpResult = ctx.nextTemp();
+    lines.push(`  ${cmpResult} = call i32 ${fnPtr}(ptr ${envPtr}, ptr ${prevPtr}, ptr ${tmpAddr})`);
+    const shouldSwap = ctx.nextTemp();
+    lines.push(`  ${shouldSwap} = icmp sgt i32 ${cmpResult}, 0`);
+    return shouldSwap;
+  });
 
-  const iAddr = `%__sortby_i.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${iAddr} = alloca i64`);
-  lines.push(`  store i64 1, ptr ${iAddr}`);
+  return [lines, "void", "void"];
+}
 
-  const jAddr = `%__sortby_j.${ctx.scopeCounter++}.addr`;
-  ctx.entryAllocas.push(`  ${jAddr} = alloca i64`);
+export function genVecSortByKey(
+  ctx: CodegenCtx,
+  object: any,
+  callback: any,
+  elementType: TypeKind,
+  keyType: TypeKind,
+  lines: string[],
+): [string[], string, string] {
+  const p = sortPreamble(ctx, object, elementType, lines, "sortkey");
+  const keyTy = ctx.llvmType(keyType);
 
-  const outerCond = ctx.nextLabel("sortby.outer.cond");
-  const outerBody = ctx.nextLabel("sortby.outer.body");
-  const innerCond = ctx.nextLabel("sortby.inner.cond");
-  const innerBody = ctx.nextLabel("sortby.inner.body");
-  const innerEnd = ctx.nextLabel("sortby.inner.end");
-  const outerEnd = ctx.nextLabel("sortby.outer.end");
+  const [cl, cv] = ctx.genExpr(callback);
+  lines.push(...cl);
+  const fnPtr = ctx.nextTemp();
+  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+  const envPtr = ctx.nextTemp();
+  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+
+  // cache the key for the element being inserted so we don't re-extract each inner iteration
+  const tmpKeyAddr = `%__sortkey_tmpkey.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${tmpKeyAddr} = alloca ${keyTy}`);
+
+  // hook into the outer body to extract tmpKey after memcpy
+  const origInsertionLoop = insertionSortLoop;
+  // Instead of using the shared loop (which doesn't have a hook point after outer body setup),
+  // we need to inline the loop here to inject the key extraction.
+
+  const { data, len, elemTy, elemSize, tmpAddr, iAddr, jAddr } = p;
+  const outerCond = ctx.nextLabel("sortkey.outer.cond");
+  const outerBody = ctx.nextLabel("sortkey.outer.body");
+  const innerCond = ctx.nextLabel("sortkey.inner.cond");
+  const innerBody = ctx.nextLabel("sortkey.inner.body");
+  const innerEnd = ctx.nextLabel("sortkey.inner.end");
+  const outerEnd = ctx.nextLabel("sortkey.outer.end");
 
   lines.push(`  br label %${outerCond}`);
   lines.push(`${outerCond}:`);
@@ -230,6 +252,10 @@ export function genVecSortBy(
   const iPtr = ctx.nextTemp();
   lines.push(`  ${iPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
   lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${iPtr}, i64 ${elemSize}, i1 false)`);
+  // extract key for the element being inserted — only once per outer iteration
+  const tmpKey = ctx.nextTemp();
+  lines.push(`  ${tmpKey} = call ${keyTy} ${fnPtr}(ptr ${envPtr}, ptr ${tmpAddr})`);
+  lines.push(`  store ${keyTy} ${tmpKey}, ptr ${tmpKeyAddr}`);
   lines.push(`  store i64 ${i}, ptr ${jAddr}`);
   lines.push(`  br label %${innerCond}`);
 
@@ -238,7 +264,7 @@ export function genVecSortBy(
   lines.push(`  ${j} = load i64, ptr ${jAddr}`);
   const jGtZero = ctx.nextTemp();
   lines.push(`  ${jGtZero} = icmp ugt i64 ${j}, 0`);
-  const checkCmp = ctx.nextLabel("sortby.checkcmp");
+  const checkCmp = ctx.nextLabel("sortkey.checkcmp");
   lines.push(`  br i1 ${jGtZero}, label %${checkCmp}, label %${innerEnd}`);
 
   lines.push(`${checkCmp}:`);
@@ -246,12 +272,14 @@ export function genVecSortBy(
   lines.push(`  ${jm1} = sub i64 ${j}, 1`);
   const prevPtr = ctx.nextTemp();
   lines.push(`  ${prevPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${jm1}`);
-  // call comparator(prev, tmp) — positive means prev > tmp, so swap
-  const cmpResult = ctx.nextTemp();
-  lines.push(`  ${cmpResult} = call i32 ${fnPtr}(ptr ${envPtr}, ptr ${prevPtr}, ptr ${tmpAddr})`);
-  const shouldSwap = ctx.nextTemp();
-  lines.push(`  ${shouldSwap} = icmp sgt i32 ${cmpResult}, 0`);
-  lines.push(`  br i1 ${shouldSwap}, label %${innerBody}, label %${innerEnd}`);
+  const prevKey = ctx.nextTemp();
+  lines.push(`  ${prevKey} = call ${keyTy} ${fnPtr}(ptr ${envPtr}, ptr ${prevPtr})`);
+  const curTmpKey = ctx.nextTemp();
+  lines.push(`  ${curTmpKey} = load ${keyTy}, ptr ${tmpKeyAddr}`);
+
+  const gtResult = emitBuiltinGt(ctx, lines, keyType, keyTy, prevKey, curTmpKey);
+
+  lines.push(`  br i1 ${gtResult}, label %${innerBody}, label %${innerEnd}`);
 
   lines.push(`${innerBody}:`);
   const jPtr = ctx.nextTemp();

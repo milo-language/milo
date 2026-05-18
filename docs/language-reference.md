@@ -535,10 +535,14 @@ v.reverse()               // [3, 2, 1] — in-place
 
 // custom comparator: negative = a first, positive = b first
 var users: Vec<User> = [...]
-users.sortBy((a: &User, b: &User) => a.age - b.age)  // sort by age
+users.sortBy((a: &User, b: &User) => a.age - b.age)  // full control
+
+// key extractor: just return the field to sort on
+users.sortByKey((u: &User) => u.age)                  // simpler
+users.sortByKey((u: &User) => u.name)                 // works with strings too
 ```
 
-`sort` works on Vec of int, float, string, or bool. `sortBy` works on any type. Both require `var`.
+`sort` works on Vec of int, float, string, or bool. `sortBy` and `sortByKey` work on any type. All require `var`.
 
 ---
 

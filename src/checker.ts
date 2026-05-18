@@ -3031,6 +3031,21 @@ export class TypeChecker {
             if (cbType.tag !== "fn") { this.error(`'sortBy' argument must be a comparator function`, sp); }
             return this.setType(expr, { tag: "void" });
           }
+          if (expr.method === "sortByKey") {
+            if (expr.args.length !== 1) { this.error(`'sortByKey' expects 1 argument (key extractor)`, sp); return this.setType(expr, { tag: "unknown" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot sort immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") { this.error(`'sortByKey' argument must be a function`, sp); return this.setType(expr, { tag: "void" }); }
+            const keyType = cbType.ret;
+            if (keyType.tag !== "int" && keyType.tag !== "float" && keyType.tag !== "string" && keyType.tag !== "bool") {
+              this.error(`'sortByKey' key must be a comparable type (int, float, string, bool), got ${typeName(keyType)}`, sp);
+            }
+            return this.setType(expr, { tag: "void" });
+          }
           if (expr.method === "len") {
             if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
