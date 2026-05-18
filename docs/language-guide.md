@@ -1116,7 +1116,7 @@ print(a != b)   // false
 
 ---
 
-## Threads and Channels
+## Concurrency
 
 ### Spawning Threads
 
@@ -1345,6 +1345,149 @@ All atomic operations use sequential consistency (seq_cst). AtomicI64 and Atomic
 | `atomicI64Cas(a, exp, des)` | Compare-and-swap (returns old) |
 | `atomicBoolSwap(a, v)` | Atomic swap (returns old) |
 | `atomicI64Destroy(a)` / `atomicBoolDestroy(a)` | Free atomic |
+
+---
+
+## Green Threads
+
+Green threads are lightweight, user-space threads for high-concurrency I/O. Each green thread uses a 64KB stack (vs ~8MB for OS threads), so you can run thousands concurrently. There are no `async`/`await` keywords and no function coloring — the same code works in both OS threads and green threads.
+
+### Spawning Green Threads
+
+```milo
+from "std/runtime" import { greenSpawn }
+
+fn main(): i32 {
+    greenSpawn(move (): void => {
+        print("hello from green thread")
+    })
+    return 0
+}
+```
+
+Green threads run cooperatively. The compiler automatically injects a scheduler drain at the end of `main` that runs all spawned green threads to completion.
+
+### Cooperative Yielding
+
+Green threads yield control explicitly with `schedulerYield()`:
+
+```milo
+from "std/runtime" import { greenSpawn, schedulerYield }
+
+fn main(): i32 {
+    greenSpawn(move (): void => {
+        print("A1")
+        schedulerYield()
+        print("A2")
+    })
+    greenSpawn(move (): void => {
+        print("B1")
+        schedulerYield()
+        print("B2")
+    })
+    return 0
+}
+// Output: A1, B1, A2, B2
+```
+
+### I/O Waiting
+
+Green threads can yield until a file descriptor is ready for reading or writing. This integrates with the platform event loop (kqueue on macOS, epoll on Linux):
+
+```milo
+from "std/runtime" import { greenSpawn, schedulerWaitRead, schedulerWaitWrite }
+from "std/event" import { setNonblocking }
+
+greenSpawn(move (): void => {
+    setNonblocking(fd)
+    // ... attempt read ...
+    // if EAGAIN:
+    schedulerWaitRead(fd)    // yields until fd is readable
+    // ... retry read ...
+})
+```
+
+### Transparent Async I/O
+
+`tcpRecv` and `tcpSend` from `std/net` automatically detect when they're running inside a green thread. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
+
+```milo
+from "std/net" import { tcpConnect, tcpSend, tcpRecv }
+from "std/runtime" import { greenSpawn }
+
+greenSpawn(move (): void => {
+    let stream = tcpConnect(ip, port)!
+    tcpSend(stream, "hello")!      // yields if socket buffer full
+    let data = tcpRecv(stream)!    // yields until data arrives
+    print(data)
+})
+```
+
+The same `tcpSend`/`tcpRecv` calls work identically outside green threads — they just block normally.
+
+### Echo Server Example
+
+A concurrent echo server handling multiple clients with green threads:
+
+```milo
+from "std/os" import { socket, bind, listen, accept, read, write, close, setsockopt, getsockname, ntohs }
+from "std/platform" import { makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
+from "std/event" import { setNonblocking }
+from "std/runtime" import { greenSpawn, schedulerWaitRead }
+
+fn main(): i32 {
+    unsafe {
+        let serverFd = socket(2, 1, 0)
+        // ... bind, listen, setNonblocking(serverFd) ...
+
+        greenSpawn(move (): void => {
+            while true {
+                var clientAddr = makeZeroedSockaddr()
+                var addrlen: u32 = 16
+                let clientFd = accept(serverFd, clientAddr, addrlen)
+                if clientFd < 0 {
+                    if getErrno() == eagain() {
+                        schedulerWaitRead(serverFd)
+                        continue
+                    }
+                    continue
+                }
+                setNonblocking(clientFd)
+                let fd = clientFd
+                greenSpawn(move (): void => {
+                    var buf: [u8 ; 4096] = [0 ; 4096]
+                    // read + echo back, yielding on EAGAIN
+                    let n = read(fd, buf, 4096)
+                    if n > 0 { write(fd, buf, n) }
+                    close(fd)
+                })
+            }
+        })
+    }
+    return 0
+}
+```
+
+### Green Thread vs OS Thread
+
+| | OS Thread (`spawn`) | Green Thread (`greenSpawn`) |
+|---|---|---|
+| Stack size | ~8MB | 64KB |
+| Context switch | Kernel (microseconds) | Userspace (nanoseconds) |
+| Max concurrent | ~hundreds | 10K+ |
+| Best for | CPU-bound parallelism | I/O-bound concurrency |
+| Preemptive | Yes | No (cooperative) |
+
+### Green Thread API
+
+| Function | Description |
+|----------|-------------|
+| `greenSpawn(move () => {...})` | Spawn a green thread |
+| `schedulerYield()` | Yield to other green threads |
+| `schedulerWaitRead(fd)` | Yield until fd is readable |
+| `schedulerWaitWrite(fd)` | Yield until fd is writable |
+| `schedulerCurrent()` | Get current task pointer (null if not in green thread) |
+| `setNonblocking(fd)` | Set fd to non-blocking mode |
 
 ---
 

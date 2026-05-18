@@ -265,6 +265,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 ### Tier 0 — dealbreakers
 
 - [x] **Threads + channels** — `std/thread` (pthreads), `std/sync` (Mutex, Channel, RwLock, AtomicI64, AtomicBool). Safe `spawn(move () => {...})` with move closures. Channel is handle-based — safe to capture in closures, no unsafe needed by users. Multi-producer, bounded FIFO. Non-blocking `channelTryRecv`/`channelTrySend`/`channelLen`. `parallel` blocks for structured concurrency. `withLock`/`withReadLock`/`withWriteLock` closure helpers.
+- [x] **Green threads** — stackful coroutines via ucontext (64KB stacks, guard pages, kqueue/epoll). `greenSpawn()` for lightweight concurrency, cooperative scheduling with `schedulerYield()`, I/O waiting via `schedulerWaitRead`/`schedulerWaitWrite`. Transparent async: `tcpRecv`/`tcpSend` auto-yield on EAGAIN in green thread context. No async/await, no function coloring. 10K+ concurrent connections.
 - [x] **Escaping closures** — move closures heap-allocate env, can be returned from functions, stored in structs, composed. Enables callbacks, event handlers, higher-order patterns.
 - [ ] **Trait objects / dynamic dispatch** — `dyn Trait` for runtime polymorphism. Vtable-based. Unlocks plugin systems, heterogeneous collections (`Vec<dyn Animal>`), dependency injection.
 - [x] **std/testing** — `assert`, `assertEqual`, `assertEqual64`, `assertStrEqual`, `assertBool`. Test discovery via `testXxx` naming convention, `milo test` CLI runner with pass/fail reporting.
@@ -307,6 +308,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 - [x] std/csv, std/regex, std/crypto
 - [x] std/json, std/fs, std/net, std/http, std/process, std/argparse, std/path, std/env, std/args, std/arena
 - [x] std/thread, std/sync, std/testing
+- [x] std/runtime (green threads), std/event (kqueue/epoll)
 
 ## Standard Library — planned
 
