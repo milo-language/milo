@@ -164,7 +164,7 @@ Milo enforces five compile-time safety guardrails:
 
 ## Concurrency Model
 
-Two layers: OS threads for CPU-bound parallelism, green threads for high-concurrency I/O. No async/await, no function coloring. Blocking I/O automatically yields in green thread context.
+Two layers: OS threads for CPU-bound parallelism, green threads for high-concurrency I/O. No async/await — blocking I/O automatically yields in green thread context.
 
 ### OS Threads
 
@@ -186,7 +186,7 @@ Stackful coroutines via `ucontext` with cooperative scheduling. Each green threa
 - **Transparent async I/O** — `tcpRecv`/`tcpSend` detect green thread context, automatically set non-blocking and yield on EAGAIN. User code reads the same whether in OS thread or green thread.
 - **Implicit drain** — compiler injects `_schedulerDrain()` at end of main when program uses green threads. No manual event loop.
 
-Design: no function coloring (same `read()` call works in both contexts), no `async`/`await` keywords, no `Future` types. I/O functions check `schedulerCurrent()` at runtime to decide between blocking and yielding.
+Design: same `read()` call works in both OS threads and green threads. No `async`/`await` keywords, no `Future` types. I/O functions check `schedulerCurrent()` at runtime to decide between blocking and yielding.
 
 ## Open Questions
 

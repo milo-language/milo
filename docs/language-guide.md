@@ -1350,7 +1350,7 @@ All atomic operations use sequential consistency (seq_cst). AtomicI64 and Atomic
 
 ## Green Threads
 
-Green threads are lightweight, user-space threads for high-concurrency I/O. Each green thread uses a 64KB stack (vs ~8MB for OS threads), so you can run thousands concurrently. There are no `async`/`await` keywords and no function coloring — the same code works in both OS threads and green threads.
+Green threads are lightweight, user-space threads for high-concurrency I/O. You can run thousands concurrently with minimal memory overhead. There are no `async`/`await` keywords — the same code works in both OS threads and green threads.
 
 ### Spawning Green Threads
 

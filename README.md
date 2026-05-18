@@ -19,7 +19,7 @@ fn main(): i32 {
 
 **Faster than Go, within 5% of C.** Milo compiles to native code via LLVM. It beats C on 3 out of 9 benchmarks (binary trees, matrix multiply, startup time) and stays within 3-5% on the rest. Sub-millisecond startup. Binaries under 300KB.
 
-**10K concurrent connections without async/await.** Green threads give you Go-style concurrency — no function coloring, no `Future<T>`, no colored function problem. The same `read()` call works in both OS threads and green threads. I/O automatically yields when called from a green thread.
+**Concurrency without async/await.** Green threads give you Go-style concurrency without the runtime overhead. No `async` keyword, no `Future<T>`, no splitting your codebase into "async world" and "sync world." Write normal blocking code — when it runs in a green thread, I/O yields automatically.
 
 ```milo
 from "std/runtime" import { greenSpawn, schedulerYield }
@@ -43,7 +43,7 @@ fn main(): i32 {
 
 ## Where Milo fits
 
-|  | GC | Lifetimes | Ownership | Native | Async without coloring |
+|  | GC | Lifetimes | Ownership | Native | No async/await |
 |---|---|---|---|---|---|
 | Go | yes | no | no | yes | no (goroutines yes) |
 | Rust | no | yes | yes | yes | no |

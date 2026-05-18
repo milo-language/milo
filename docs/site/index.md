@@ -3,7 +3,7 @@ layout: home
 hero:
   name: Milo
   text: "Rust's safety. Go's simplicity."
-  tagline: "A native systems language with ownership, green threads, and zero lifetime annotations. Within 5% of C. 10K concurrent connections without async/await."
+  tagline: "A native systems language with ownership, green threads, and zero lifetime annotations. Within 5% of C. Concurrency without async/await."
   actions:
     - theme: brand
       text: Get Started
@@ -17,8 +17,8 @@ features:
     details: "References can't escape the function they're passed to. That's the entire ownership model. No borrow checker fights, no 'a: 'b, no lifetime annotations anywhere."
   - title: Faster Than Go, Tracks C
     details: "Beats C on 3/9 benchmarks (binary trees, matmul, startup). Within 3-5% on the rest. Sub-millisecond startup, binaries under 300KB. LLVM backend."
-  - title: 10K Connections, No async/await
-    details: "Green threads with 64KB stacks. I/O automatically yields in green thread context — same read() call works everywhere. No function coloring, no Future types."
+  - title: Concurrency Without async/await
+    details: "Green threads give you Go-style concurrency. Write normal blocking code — it automatically yields in a green thread. No async keyword, no Future types, no splitting your code into two worlds."
   - title: Five Safety Guarantees
     details: "Memory (ownership + bounds checks), null (Option<T>), races (Send/Sync), overflow (compile-time + runtime), coercion (no implicit conversions). All enforced at compile time."
 ---
@@ -40,13 +40,13 @@ fn main(): i32 {
 }   // names and loud freed here — no GC, no manual free
 ```
 
-### Concurrent I/O without colored functions
+### Concurrent I/O — just normal code
 
 ```milo
 from "std/runtime" import { greenSpawn, schedulerWaitRead }
 from "std/event" import { setNonblocking }
 
-// Accept loop in a green thread — yields on EAGAIN, resumes when fd is ready
+// Each client gets its own green thread (64KB stack, not 8MB)
 greenSpawn(move (): void => {
     setNonblocking(serverFd)
     while true {
@@ -56,13 +56,13 @@ greenSpawn(move (): void => {
             continue
         }
         greenSpawn(move (): void => {
-            handleClient(clientFd)        // each client in its own green thread
+            handleClient(clientFd)        // runs concurrently
         })
     }
 })
 ```
 
-No `async`, no `await`, no `Future<T>`. The same `read()` call blocks in an OS thread and yields in a green thread. Your code doesn't change.
+No `async`, no `await`, no `Future<T>`. Write blocking code — it yields automatically in a green thread.
 
 ### Real programs
 
@@ -90,7 +90,7 @@ Router, middleware, path params, string interpolation — a full web server in 1
 
 <div class="comparison-table">
 
-|  | GC | Lifetimes | Ownership | Native | Async w/o coloring |
+|  | GC | Lifetimes | Ownership | Native | No async/await |
 |---|---|---|---|---|---|
 | Go | yes | no | no | yes | no |
 | Rust | no | yes | yes | yes | no |
