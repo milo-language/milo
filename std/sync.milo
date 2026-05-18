@@ -185,6 +185,65 @@ fn channelRecv(ch: &Channel): Result<i64> {
     }
 }
 
+fn channelTrySend(ch: &Channel, val: i64): bool {
+    var v: i64 = val
+    unsafe {
+        let inner = ch._ptr as *ChannelInner
+        let mtx = (*inner).mtx
+
+        pthread_mutex_lock(mtx)
+        let curLen: i64 = (*inner).len
+        let cap = (*inner).capacity
+        if curLen == cap {
+            pthread_mutex_unlock(mtx)
+            return false
+        }
+        var tail: i64 = (*inner).tail
+        let slotPtr = ((*inner).buf as i64 + tail * 8) as *u8
+        memcpy(slotPtr, (&v) as *u8, 8)
+        (*inner).tail = (tail + 1) % cap
+        (*inner).len = curLen + 1
+        pthread_cond_signal((*inner).condNotEmpty)
+        pthread_mutex_unlock(mtx)
+        return true
+    }
+}
+
+fn channelTryRecv(ch: &Channel): Option<i64> {
+    var val: i64 = 0
+    unsafe {
+        let inner = ch._ptr as *ChannelInner
+        let mtx = (*inner).mtx
+
+        pthread_mutex_lock(mtx)
+        let curLen: i64 = (*inner).len
+        if curLen == 0 {
+            pthread_mutex_unlock(mtx)
+            return Option.None
+        }
+        let cap = (*inner).capacity
+        var head: i64 = (*inner).head
+        let slotPtr = ((*inner).buf as i64 + head * 8) as *u8
+        memcpy((&val) as *u8, slotPtr, 8)
+        (*inner).head = (head + 1) % cap
+        (*inner).len = curLen - 1
+        pthread_cond_signal((*inner).condNotFull)
+        pthread_mutex_unlock(mtx)
+        return Option.Some(val)
+    }
+}
+
+fn channelLen(ch: &Channel): i64 {
+    unsafe {
+        let inner = ch._ptr as *ChannelInner
+        let mtx = (*inner).mtx
+        pthread_mutex_lock(mtx)
+        let n: i64 = (*inner).len
+        pthread_mutex_unlock(mtx)
+        return n
+    }
+}
+
 // ── AtomicI64 ──
 // Lock-free 64-bit integer for cross-thread counters, flags, etc.
 //
