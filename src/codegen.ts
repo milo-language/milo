@@ -1,6 +1,7 @@
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern } from "./hir";
 import { type TypeKind, needsDrop } from "./types";
 import type { TargetInfo } from "./target";
+import { genVecSort } from "./codegen-vec";
 
 interface StructLayout {
   name: string;
@@ -519,7 +520,8 @@ export class Codegen {
         if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
           lines.push("  call void @_schedulerDrain()");
         }
-        lines.push(`  ret ${valTy} ${val}`);
+        if (valTy === "void") lines.push("  ret void");
+        else lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
       }
       case "If": return this.genIf(stmt);
@@ -2309,6 +2311,8 @@ export class Codegen {
         return this.genVecContains(expr, lines);
       case "VecEnumerate":
         return this.genVecEnumerate(expr, lines);
+      case "VecSort":
+        return genVecSort(this, expr.object, expr.elementType, lines);
       case "HashMapNew":
         return this.genHashMapNew(expr, lines);
       case "HashMapInsert":

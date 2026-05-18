@@ -3009,6 +3009,17 @@ export class TypeChecker {
             }
             return this.setType(expr, { tag: "void" });
           }
+          if (expr.method === "sort") {
+            if (expr.args.length !== 0) { this.error(`'sort' takes no arguments`, sp); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot sort immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            const el = objType.element;
+            if (el.tag !== "int" && el.tag !== "float" && el.tag !== "string" && el.tag !== "bool") {
+              this.error(`'sort' requires Vec of a comparable type (int, float, string, bool)`, sp);
+            }
+            return this.setType(expr, { tag: "void" });
+          }
           if (expr.method === "len") {
             if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
             return this.setType(expr, { tag: "int", bits: 64, signed: true });

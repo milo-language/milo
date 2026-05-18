@@ -285,6 +285,11 @@ s.lastIndexOf("l")      // 10
 s.replace("World", "Milo")  // "Hello, Milo!"
 s.padStart(15, " ")     // "  Hello, World!"
 s.padEnd(15, ".")       // "Hello, World!.."
+s.isEmpty()             // false
+s.charAt(0)             // "H"
+s.reverse()             // "!dlroW ,olleH"
+s.replaceFirst("l", "L") // "HeLlo, World!"
+"42".parseInt()         // 42 (i64)
 s.substr(0, 5)          // "Hello" (owned copy)
 ```
 
@@ -510,10 +515,25 @@ let evens = nums.filter((n: &i32) => n % 2 == 0)  // [2, 4]
 let hasNeg = nums.any((n: &i32) => n < 0)          // false
 let allPos = nums.all((n: &i32) => n > 0)          // true
 nums.each((n: &i32) => print("%d", n))             // side effects
+nums.enumerate((i: i64, n: &i32) => {              // index + element
+    print(i.toString() + ": " + n.toString())
+})
 
 let words: Vec<string> = ["hello", "world"]
 print(words.join(", "))                             // "hello, world"
+words.contains("hello")                             // true
+words.isEmpty()                                     // false
 ```
+
+### Mutating methods
+
+```milo
+var v: Vec<i32> = [3, 1, 2]
+v.sort()                  // [1, 2, 3] — in-place, ascending
+v.reverse()               // [3, 2, 1] — in-place
+```
+
+`sort` works on Vec of int, float, string, or bool. Requires `var`.
 
 ---
 
