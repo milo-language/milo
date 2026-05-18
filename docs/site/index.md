@@ -38,29 +38,20 @@ fn main(): i32 {
 }   // names and loud freed here — no GC, no manual free
 ```
 
-### Concurrent I/O — just normal code
+### Concurrency in 5 lines
 
 ```milo
-from "std/runtime" import { greenSpawn, schedulerWaitRead }
-from "std/event" import { setNonblocking }
+from "std/runtime" import { greenSpawn, schedulerYield }
 
-// Each client gets its own green thread (64KB stack, not 8MB)
-greenSpawn(move (): void => {
-    setNonblocking(serverFd)
-    while true {
-        let clientFd = accept(serverFd, ...)
-        if clientFd < 0 && getErrno() == eagain() {
-            schedulerWaitRead(serverFd)   // yield, not block
-            continue
-        }
-        greenSpawn(move (): void => {
-            handleClient(clientFd)        // runs concurrently
-        })
-    }
-})
+fn main(): i32 {
+    greenSpawn(move (): void => { print("task A") })
+    greenSpawn(move (): void => { print("task B") })
+    greenSpawn(move (): void => { print("task C") })
+    return 0
+}
 ```
 
-No `async`, no `await`, no `Future<T>`. Write blocking code — it yields automatically in a green thread.
+Each `greenSpawn` runs concurrently — lightweight, cooperative, no threads to manage. Scale to thousands without changing your code.
 
 ### Real programs
 
