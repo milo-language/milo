@@ -25,35 +25,20 @@ fn main(): i32 {
     }
     var sum: f64 = 0.0
     var active: i64 = 0
-    var n: i64 = 0
-    match doc.get("items") {
-        Option.Some(items) => {
-            n = items.len()
-            var i: i64 = 0
-            while i < n {
-                match items.at(i) {
-                    Option.Some(item) => {
-                        match item.f64("price") {
-                            Option.Some(p) => {
-                                sum = sum + p
-                            }
-                            Option.None => {}
-                        }
-                        match item.bool("active") {
-                            Option.Some(a) => {
-                                if a {
-                                    active = active + 1
-                                }
-                            }
-                            Option.None => {}
-                        }
-                    }
-                    Option.None => {}
-                }
-                i = i + 1
-            }
+    let n = doc.childLen("items")
+    var i: i64 = 0
+    while i < n {
+        match doc.childF64At("items", i, "price") {
+            Option.Some(p) => { sum = sum + p }
+            Option.None => {}
         }
-        Option.None => {}
+        match doc.childBoolAt("items", i, "active") {
+            Option.Some(a) => {
+                if a { active = active + 1 }
+            }
+            Option.None => {}
+        }
+        i = i + 1
     }
     print("items=", n, " sum=", sum, " active=", active)
     return 0

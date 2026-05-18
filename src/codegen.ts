@@ -3268,6 +3268,12 @@ export class Codegen {
       const [lines, ptr] = this.genFieldPtr(expr);
       return [lines, ptr];
     }
+    if (expr.kind === "IndexAccess") {
+      const lines: string[] = [];
+      const [lv, ptr] = this.genLValue(expr);
+      lines.push(...lv);
+      return [lines, ptr];
+    }
     const lines: string[] = [];
     const [el, ev, et] = this.genExpr(expr);
     lines.push(...el);

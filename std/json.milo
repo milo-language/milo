@@ -120,6 +120,95 @@ impl Json {
         return Option.Some(jsonClone(self.elems[index]))
     }
 
+    // ── Indexed accessors (navigate array[i] then field, zero cloning) ──
+
+    fn strAt(self: &Self, index: i64, key: &string): Option<string> {
+        if self.kind != 4 || index < 0 || index >= self.elems.len() { return Option.None }
+        return self.elems[index].str(key)
+    }
+
+    fn i64At(self: &Self, index: i64, key: &string): Option<i64> {
+        if self.kind != 4 || index < 0 || index >= self.elems.len() { return Option.None }
+        return self.elems[index].i64(key)
+    }
+
+    fn f64At(self: &Self, index: i64, key: &string): Option<f64> {
+        if self.kind != 4 || index < 0 || index >= self.elems.len() { return Option.None }
+        return self.elems[index].f64(key)
+    }
+
+    fn boolAt(self: &Self, index: i64, key: &string): Option<bool> {
+        if self.kind != 4 || index < 0 || index >= self.elems.len() { return Option.None }
+        return self.elems[index].bool(key)
+    }
+
+    fn getAt(self: &Self, index: i64, key: &string): Option<Json> {
+        if self.kind != 4 || index < 0 || index >= self.elems.len() { return Option.None }
+        return self.elems[index].get(key)
+    }
+
+    // ── Path accessors (navigate obj[key][i][subkey], zero cloning) ──
+
+    fn childLen(self: &Self, key: &string): i64 {
+        if self.kind != 5 { return 0 }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                return self.elems[i].elems.len()
+            }
+            i = i + 1
+        }
+        return 0
+    }
+
+    fn childF64At(self: &Self, key: &string, index: i64, subKey: &string): Option<f64> {
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                return self.elems[i].f64At(index, subKey)
+            }
+            i = i + 1
+        }
+        return Option.None
+    }
+
+    fn childBoolAt(self: &Self, key: &string, index: i64, subKey: &string): Option<bool> {
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                return self.elems[i].boolAt(index, subKey)
+            }
+            i = i + 1
+        }
+        return Option.None
+    }
+
+    fn childStrAt(self: &Self, key: &string, index: i64, subKey: &string): Option<string> {
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                return self.elems[i].strAt(index, subKey)
+            }
+            i = i + 1
+        }
+        return Option.None
+    }
+
+    fn childI64At(self: &Self, key: &string, index: i64, subKey: &string): Option<i64> {
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                return self.elems[i].i64At(index, subKey)
+            }
+            i = i + 1
+        }
+        return Option.None
+    }
+
     // ── Bare value extraction ──
 
     fn asStr(self: &Self): Option<string> {
