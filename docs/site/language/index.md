@@ -1,6 +1,6 @@
 # Welcome to Milo!
 
-Milo takes our favorite features from Rust, TypeScript, Python and more to make a fast, memory-safe language that's easy for both people and AI to read and write. It compiles to native code via LLVM, manages memory automatically through ownership tracking, and doesn't need a garbage collector, reference counting, or lifetime annotations.
+Milo is a fast, memory-safe language that compiles to native code via LLVM. It manages memory automatically through ownership tracking — no garbage collector, reference counting, or lifetime annotations needed. Its syntax and semantics draw from the best of Rust, TypeScript, and Python, making it easy for both people and AI to read and write.
 
 Milo also takes a data-driven approach to language design. We survey real code from popular libraries and codebases to find the most common patterns, then make those the default or the easiest path in Milo. The result is a language where the thing you reach for first is usually the right thing.
 
@@ -357,6 +357,42 @@ Milo has `@` annotations (similar to decorators in other languages) that can gen
 
 [Learn more](/language/traits)
 
+## Interfaces
+
+Traits are compile-time — the compiler generates specialized code for each concrete type (monomorphization). But sometimes you need runtime polymorphism: passing different types through the same function, storing mixed types in a collection, or writing plugin-style architectures where the concrete types aren't known until runtime.
+
+Milo uses Go-style interfaces for this. An interface declares a set of methods. Any type that has those methods satisfies the interface — no explicit declaration needed (structural typing). Under the hood, interface values are fat pointers carrying a data pointer and an itable (interface table) for virtual dispatch.
+
+```milo
+interface Greeter {
+    fn greet(self: &Self): string
+}
+
+struct Dog { name: string }
+impl Dog {
+    fn greet(self: &Self): string { return "woof from " + self.name }
+}
+
+struct Cat {}
+impl Cat {
+    fn greet(self: &Self): string { return "meow" }
+}
+
+fn sayHello(g: &Greeter) {
+    print(g.greet())
+}
+
+fn main(): i32 {
+    let d = Dog { name: "Rex" }
+    let c = Cat {}
+    sayHello(d)  // woof from Rex
+    sayHello(c)  // meow
+    return 0
+}
+```
+
+Both inherent methods and trait implementations count toward satisfaction. If `Dog` implements `greet` via a trait impl, it still satisfies `Greeter`.
+
 ## Concurrency
 
 Milo gives you two concurrency models depending on what you're doing:
@@ -401,12 +437,12 @@ fn main(): i32 {
 Green threads are cheap to spawn (64KB stack vs ~8MB for an OS thread) and fast to switch between (nanoseconds vs microseconds). You can run tens of thousands concurrently:
 
 ```milo
-from "std/runtime" import { GreenThread }
+from "std/runtime" import { Task }
 
 fn main(): i32 {
     for i in 0..1000 {
         let id = i as i64
-        GreenThread.spawn(move (): void => {
+        Task.spawn(move (): void => {
             print($"task {id}")
         })
     }
