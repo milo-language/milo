@@ -117,6 +117,8 @@ export class TypeChecker {
   private monomorphizedStructDecls: StructDecl[] = [];
   private monomorphizedFns: Function[] = [];
   private dropImpls = new Set<string>();
+  private sendTypes = new Set<string>();
+  private syncTypes = new Set<string>();
   private unsafeDepth = 0;
   private scopes: Map<string, VarInfo>[] = [];
   private exprTypes = new Map<Expr, TypeKind>();
@@ -598,6 +600,16 @@ export class TypeChecker {
           }
         }
         this.structs.set(s.name, { fields });
+      }
+    }
+
+    // collect @send/@sync annotations
+    for (const s of program.structs) {
+      if (s.attributes) {
+        for (const attr of s.attributes) {
+          if (attr.name === "send") this.sendTypes.add(s.name);
+          if (attr.name === "sync") this.syncTypes.add(s.name);
+        }
       }
     }
 
@@ -1166,7 +1178,7 @@ export class TypeChecker {
       case "fn":
         return true;
       case "struct": {
-        if (ty.name === "Mutex" || ty.name === "Channel" || ty.name === "AtomicI64" || ty.name === "AtomicBool") return true;
+        if (this.sendTypes.has(ty.name)) return true;
         const info = this.structs.get(ty.name);
         if (!info) return true;
         return info.fields.every(f => this.isSend(f.type));
@@ -1181,6 +1193,19 @@ export class TypeChecker {
       }
       default: return true;
     }
+  }
+
+  private whyNotSend(ty: TypeKind): string {
+    if (ty.tag === "ptr") return `raw pointer '${typeName(ty)}' is not Send`;
+    if (ty.tag === "struct") {
+      const info = this.structs.get(ty.name);
+      if (info) {
+        for (const f of info.fields) {
+          if (!this.isSend(f.type)) return `field '${f.name}' of type '${typeName(f.type)}' is not Send — add @send to '${ty.name}' if thread safety is guaranteed`;
+        }
+      }
+    }
+    return `type '${typeName(ty)}' is not Send`;
   }
 
   // Sync = safe to share via &T across threads
@@ -1203,7 +1228,7 @@ export class TypeChecker {
       case "fn":
         return true;
       case "struct": {
-        if (ty.name === "Mutex" || ty.name === "Channel" || ty.name === "AtomicI64" || ty.name === "AtomicBool") return true;
+        if (this.syncTypes.has(ty.name)) return true;
         const info = this.structs.get(ty.name);
         if (!info) return true;
         return info.fields.every(f => this.isSync(f.type));
@@ -1769,8 +1794,9 @@ export class TypeChecker {
           for (const cap of captures) {
             if (!this.isSend(cap.type)) {
               this.error(
-                `cannot send '${cap.name}' across threads in parallel block — type is not Send`,
+                `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads in parallel block — type is not Send`,
                 binding.span,
+                this.whyNotSend(cap.type),
               );
             }
           }
@@ -2517,7 +2543,7 @@ export class TypeChecker {
                 this.error(
                   `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
                   expr.args[0].span,
-                  `spawn() requires all captured variables to be safe to transfer across threads. Raw pointers (*T) are not Send.`,
+                  this.whyNotSend(cap.type),
                 );
               }
             }

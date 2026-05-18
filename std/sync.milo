@@ -11,6 +11,8 @@ from "std/os" import { free, malloc, memcpy, pthread_cond_destroy, pthread_cond_
 //   mutexUnlock(m)!
 //   mutexDestroy(m)
 
+@send
+@sync
 struct Mutex {
     _handle: *u8,
 }
@@ -86,6 +88,8 @@ struct ChannelInner {
     tail: i64,
 }
 
+@send
+@sync
 struct Channel {
     _ptr: *u8,
 }
@@ -189,6 +193,8 @@ fn channelRecv(ch: &Channel): Result<i64> {
 //   let val = atomicI64Load(&counter)
 //   atomicI64Destroy(counter)
 
+@send
+@sync
 struct AtomicI64 {
     _ptr: *u8,
 }
@@ -245,6 +251,8 @@ fn atomicI64Destroy(a: AtomicI64): void {
 //   if atomicBoolLoad(&flag) { ... }
 //   atomicBoolDestroy(flag)
 
+@send
+@sync
 struct AtomicBool {
     _ptr: *u8,
 }
