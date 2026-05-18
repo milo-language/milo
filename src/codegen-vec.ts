@@ -168,3 +168,111 @@ export function genVecSort(
   lines.push(`${outerEnd}:`);
   return [lines, "void", "void"];
 }
+
+export function genVecSortBy(
+  ctx: CodegenCtx,
+  object: any,
+  callback: any,
+  elementType: TypeKind,
+  lines: string[],
+): [string[], string, string] {
+  ctx.hasVecType = true;
+  ctx.needsMemcpy = true;
+  const elemSize = ctx.typeSizeOf(elementType);
+  const elemTy = ctx.llvmType(elementType);
+
+  const [vecPtrLines, vecPtr] = ctx.genLValue(object);
+  lines.push(...vecPtrLines);
+
+  const dataPtr = ctx.nextTemp();
+  lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+  const data = ctx.nextTemp();
+  lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+  const lenPtr = ctx.nextTemp();
+  lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+  const len = ctx.nextTemp();
+  lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+
+  // extract comparator closure
+  const [cl, cv] = ctx.genExpr(callback);
+  lines.push(...cl);
+  const fnPtr = ctx.nextTemp();
+  lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+  const envPtr = ctx.nextTemp();
+  lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+
+  const tmpAddr = `%__sortby_tmp.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
+
+  const iAddr = `%__sortby_i.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${iAddr} = alloca i64`);
+  lines.push(`  store i64 1, ptr ${iAddr}`);
+
+  const jAddr = `%__sortby_j.${ctx.scopeCounter++}.addr`;
+  ctx.entryAllocas.push(`  ${jAddr} = alloca i64`);
+
+  const outerCond = ctx.nextLabel("sortby.outer.cond");
+  const outerBody = ctx.nextLabel("sortby.outer.body");
+  const innerCond = ctx.nextLabel("sortby.inner.cond");
+  const innerBody = ctx.nextLabel("sortby.inner.body");
+  const innerEnd = ctx.nextLabel("sortby.inner.end");
+  const outerEnd = ctx.nextLabel("sortby.outer.end");
+
+  lines.push(`  br label %${outerCond}`);
+  lines.push(`${outerCond}:`);
+  const i = ctx.nextTemp();
+  lines.push(`  ${i} = load i64, ptr ${iAddr}`);
+  const iCmp = ctx.nextTemp();
+  lines.push(`  ${iCmp} = icmp ult i64 ${i}, ${len}`);
+  lines.push(`  br i1 ${iCmp}, label %${outerBody}, label %${outerEnd}`);
+
+  lines.push(`${outerBody}:`);
+  const iPtr = ctx.nextTemp();
+  lines.push(`  ${iPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${i}`);
+  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${iPtr}, i64 ${elemSize}, i1 false)`);
+  lines.push(`  store i64 ${i}, ptr ${jAddr}`);
+  lines.push(`  br label %${innerCond}`);
+
+  lines.push(`${innerCond}:`);
+  const j = ctx.nextTemp();
+  lines.push(`  ${j} = load i64, ptr ${jAddr}`);
+  const jGtZero = ctx.nextTemp();
+  lines.push(`  ${jGtZero} = icmp ugt i64 ${j}, 0`);
+  const checkCmp = ctx.nextLabel("sortby.checkcmp");
+  lines.push(`  br i1 ${jGtZero}, label %${checkCmp}, label %${innerEnd}`);
+
+  lines.push(`${checkCmp}:`);
+  const jm1 = ctx.nextTemp();
+  lines.push(`  ${jm1} = sub i64 ${j}, 1`);
+  const prevPtr = ctx.nextTemp();
+  lines.push(`  ${prevPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${jm1}`);
+  // call comparator(prev, tmp) — positive means prev > tmp, so swap
+  const cmpResult = ctx.nextTemp();
+  lines.push(`  ${cmpResult} = call i32 ${fnPtr}(ptr ${envPtr}, ptr ${prevPtr}, ptr ${tmpAddr})`);
+  const shouldSwap = ctx.nextTemp();
+  lines.push(`  ${shouldSwap} = icmp sgt i32 ${cmpResult}, 0`);
+  lines.push(`  br i1 ${shouldSwap}, label %${innerBody}, label %${innerEnd}`);
+
+  lines.push(`${innerBody}:`);
+  const jPtr = ctx.nextTemp();
+  lines.push(`  ${jPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${j}`);
+  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${jPtr}, ptr ${prevPtr}, i64 ${elemSize}, i1 false)`);
+  const jNext = ctx.nextTemp();
+  lines.push(`  ${jNext} = sub i64 ${j}, 1`);
+  lines.push(`  store i64 ${jNext}, ptr ${jAddr}`);
+  lines.push(`  br label %${innerCond}`);
+
+  lines.push(`${innerEnd}:`);
+  const jFinal = ctx.nextTemp();
+  lines.push(`  ${jFinal} = load i64, ptr ${jAddr}`);
+  const destPtr = ctx.nextTemp();
+  lines.push(`  ${destPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${jFinal}`);
+  lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${destPtr}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
+  const iNext = ctx.nextTemp();
+  lines.push(`  ${iNext} = add i64 ${i}, 1`);
+  lines.push(`  store i64 ${iNext}, ptr ${iAddr}`);
+  lines.push(`  br label %${outerCond}`);
+
+  lines.push(`${outerEnd}:`);
+  return [lines, "void", "void"];
+}

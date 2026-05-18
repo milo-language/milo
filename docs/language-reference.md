@@ -289,6 +289,7 @@ s.isEmpty()             // false
 s.charAt(0)             // "H"
 s.reverse()             // "!dlroW ,olleH"
 s.replaceFirst("l", "L") // "HeLlo, World!"
+s.repeat(3)             // "Hello, World!Hello, World!Hello, World!"
 "42".parseInt()         // 42 (i64)
 s.substr(0, 5)          // "Hello" (owned copy)
 ```
@@ -531,9 +532,13 @@ words.isEmpty()                                     // false
 var v: Vec<i32> = [3, 1, 2]
 v.sort()                  // [1, 2, 3] — in-place, ascending
 v.reverse()               // [3, 2, 1] — in-place
+
+// custom comparator: negative = a first, positive = b first
+var users: Vec<User> = [...]
+users.sortBy((a: &User, b: &User) => a.age - b.age)  // sort by age
 ```
 
-`sort` works on Vec of int, float, string, or bool. Requires `var`.
+`sort` works on Vec of int, float, string, or bool. `sortBy` works on any type. Both require `var`.
 
 ---
 
