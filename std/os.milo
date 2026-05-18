@@ -76,6 +76,10 @@ extern
 
 fn munmap(addr: *u8, len: i64): i32
 
+extern
+
+fn mprotect(addr: *u8, len: i64, prot: i32): i32
+
 // ── Error ──
 
 extern

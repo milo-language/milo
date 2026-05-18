@@ -1,0 +1,118 @@
+// std/event — cross-platform event loop (macOS/kqueue implementation)
+
+from "std/os" import { close, malloc, free, memset }
+from "std/platform" import {
+    kqueue, kevent, Kevent,
+    fcntl, fGetfl, fSetfl, oNonblock,
+    evfiltRead, evfiltWrite, evAdd, evDelete
+}
+
+fn keventSize(): i64 { return 32 }
+
+struct EventLoop {
+    kqfd: i32,
+}
+
+fn eventLoopNew(): Result<EventLoop, string> {
+    unsafe {
+        let fd = kqueue()
+        if fd < 0 {
+            return Result.Err("kqueue() failed")
+        }
+        return Result.Ok(EventLoop { kqfd: fd })
+    }
+}
+
+fn setNonblocking(fd: i32): i32 {
+    unsafe {
+        let flags = fcntl(fd, fGetfl())
+        if flags < 0 { return -1 }
+        return fcntl(fd, fSetfl(), flags | oNonblock())
+    }
+}
+
+fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
+    unsafe {
+        var ev = Kevent {
+            ident: fd as u64,
+            filter: evfiltRead(),
+            flags: evAdd(),
+            fflags: 0,
+            data: 0,
+            udata: 0 as *u8,
+        }
+        return kevent(el.kqfd, (&ev) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+    }
+}
+
+fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
+    unsafe {
+        var ev = Kevent {
+            ident: fd as u64,
+            filter: evfiltWrite(),
+            flags: evAdd(),
+            fflags: 0,
+            data: 0,
+            udata: 0 as *u8,
+        }
+        return kevent(el.kqfd, (&ev) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+    }
+}
+
+fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
+    unsafe {
+        var filter = evfiltRead()
+        if forWrite { filter = evfiltWrite() }
+        var ev = Kevent {
+            ident: fd as u64,
+            filter: filter,
+            flags: evDelete(),
+            fflags: 0,
+            data: 0,
+            udata: 0 as *u8,
+        }
+        return kevent(el.kqfd, (&ev) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+    }
+}
+
+// poll for ready events. readyFds: caller-allocated *i32 array with capacity >= maxEvents.
+// returns count of ready fds, or -1 on error.
+// timeoutMs < 0 means block indefinitely.
+fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
+    unsafe {
+        let bufSize = maxEvents as i64 * keventSize()
+        let evBuf = malloc(bufSize)
+        memset(evBuf, 0, bufSize)
+
+        // timespec: { tv_sec: i64, tv_nsec: i64 }
+        var ts: [u8 ; 16] = [0 ; 16]
+        let tsp = ts as *i64
+        tsp[0] = (timeoutMs / 1000) as i64
+        tsp[1] = ((timeoutMs % 1000) as i64) * 1000000
+
+        var tsPtr = ts as *u8
+        if timeoutMs < 0 { tsPtr = 0 as *u8 }
+        let n = kevent(el.kqfd, 0 as *u8, 0, evBuf, maxEvents, tsPtr)
+
+        if n > 0 {
+            var i = 0
+            while i < n {
+                // each kevent is 32 bytes; ident is u64 at offset 0
+                // keventSize()/8 = 4, so stride in u64 units is 4
+                let idx = i as i64 * 4
+                let ident = (evBuf as *u64)[idx]
+                readyFds[i as i64] = ident as i32
+                i = i + 1
+            }
+        }
+
+        free(evBuf)
+        return n
+    }
+}
+
+fn eventLoopClose(el: &EventLoop): void {
+    unsafe {
+        close(el.kqfd)
+    }
+}

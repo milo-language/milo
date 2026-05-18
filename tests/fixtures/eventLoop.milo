@@ -1,0 +1,37 @@
+// @expect: ready
+// @expect: 2
+// @expect: done
+
+from "std/event" import { eventLoopNew, eventLoopClose, setNonblocking, eventRegisterRead, eventPoll }
+from "std/os" import { pipe, write, read, close }
+
+fn main(): i32 {
+    var fds: [u8 ; 8] = [0 ; 8]
+    unsafe {
+        pipe(fds as *u8)
+        let readFd = (fds as *i32)[0]
+        let writeFd = (fds as *i32)[1]
+
+        let el = eventLoopNew()!
+        setNonblocking(readFd)
+        eventRegisterRead(el, readFd)
+
+        let msg = "hi"
+        write(writeFd, msg, msg.len)
+
+        var readyBuf: [u8 ; 16] = [0 ; 16]
+        let n = eventPoll(el, readyBuf as *i32, 4, 1000)
+        if n > 0 {
+            print("ready")
+            var buf: [u8 ; 64] = [0 ; 64]
+            let bytesRead = read(readFd, buf as *u8, 64)
+            print(bytesRead.toString())
+        }
+
+        eventLoopClose(el)
+        close(readFd)
+        close(writeFd)
+    }
+    print("done")
+    return 0
+}

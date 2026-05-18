@@ -85,3 +85,61 @@ fn getErrno(): i32 {
         return _loadI32(__error())
     }
 }
+
+// ── kqueue ──
+
+extern
+fn kqueue(): i32
+
+extern
+fn kevent(kq: i32, changelist: *u8, nchanges: i32, eventlist: *u8, nevents: i32, timeout: *u8): i32
+
+// kevent struct: 32 bytes on darwin arm64
+struct Kevent {
+    ident: u64,
+    filter: i16,
+    flags: u16,
+    fflags: u32,
+    data: i64,
+    udata: *u8,
+}
+
+fn evfiltRead(): i16 { return -1 as i16 }
+fn evfiltWrite(): i16 { return -2 as i16 }
+fn evAdd(): u16 { return 1 as u16 }
+fn evDelete(): u16 { return 2 as u16 }
+fn evEnable(): u16 { return 4 as u16 }
+fn evOneshot(): u16 { return 16 as u16 }
+
+// ── fcntl / non-blocking ──
+
+extern
+fn fcntl(fd: i32, cmd: i32, ...): i32
+
+fn fGetfl(): i32 { return 3 }
+fn fSetfl(): i32 { return 4 }
+fn oNonblock(): i32 { return 4 }
+fn eagain(): i32 { return 35 }
+
+// ── ucontext (stackful coroutines) ──
+
+extern
+fn getcontext(ucp: *u8): i32
+
+extern
+fn makecontext(ucp: *u8, func: *u8, argc: i32, ...): void
+
+extern
+fn swapcontext(oucp: *u8, ucp: *u8): i32
+
+fn uctxSize(): i64 { return 880 }
+fn uctxStackPtrOffset(): i64 { return 8 }
+fn uctxStackSizeOffset(): i64 { return 16 }
+
+// ── mmap constants ──
+
+fn protRead(): i32 { return 1 }
+fn protWrite(): i32 { return 2 }
+fn protNone(): i32 { return 0 }
+fn mapPrivate(): i32 { return 2 }
+fn mapAnon(): i32 { return 4096 }

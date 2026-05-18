@@ -1,0 +1,96 @@
+// std/event — cross-platform event loop (Linux/epoll implementation)
+// epoll_event struct: 12 bytes { events: u32, data: union(u64) }
+// we store fd in the data field as i32 + pad
+
+from "std/os" import { close, malloc, free, memset }
+from "std/platform" import {
+    epoll_create1, epoll_ctl, epoll_wait,
+    fcntl, fGetfl, fSetfl, oNonblock,
+    epollCtlAdd, epollCtlDel, epollIn, epollOut
+}
+
+fn epollEventSize(): i64 { return 12 }
+
+struct EventLoop {
+    epfd: i32,
+}
+
+fn eventLoopNew(): Result<EventLoop, string> {
+    unsafe {
+        let fd = epoll_create1(0)
+        if fd < 0 {
+            return Result.Err("epoll_create1() failed")
+        }
+        return Result.Ok(EventLoop { epfd: fd })
+    }
+}
+
+fn setNonblocking(fd: i32): i32 {
+    unsafe {
+        let flags = fcntl(fd, fGetfl())
+        if flags < 0 { return -1 }
+        return fcntl(fd, fSetfl(), flags | oNonblock())
+    }
+}
+
+fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
+    unsafe {
+        var ev: [u8 ; 12] = [0 ; 12]
+        let pEvents = ev as *u32
+        pEvents[0] = epollIn()
+        let pData = (ev as *i32)
+        pData[1] = fd
+        return epoll_ctl(el.epfd, epollCtlAdd(), fd, ev as *u8)
+    }
+}
+
+fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
+    unsafe {
+        var ev: [u8 ; 12] = [0 ; 12]
+        let pEvents = ev as *u32
+        pEvents[0] = epollOut()
+        let pData = (ev as *i32)
+        pData[1] = fd
+        return epoll_ctl(el.epfd, epollCtlAdd(), fd, ev as *u8)
+    }
+}
+
+fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
+    unsafe {
+        var ev: [u8 ; 12] = [0 ; 12]
+        return epoll_ctl(el.epfd, epollCtlDel(), fd, ev as *u8)
+    }
+}
+
+// poll for ready events. readyFds: caller-allocated *i32 array with capacity >= maxEvents.
+// returns count of ready fds, or -1 on error.
+// timeoutMs < 0 means block indefinitely.
+fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i32 {
+    unsafe {
+        let bufSize = maxEvents as i64 * epollEventSize()
+        let evBuf = malloc(bufSize)
+        memset(evBuf, 0, bufSize)
+
+        let n = epoll_wait(el.epfd, evBuf, maxEvents, timeoutMs)
+
+        if n > 0 {
+            var i = 0
+            let base = evBuf as i64
+            while i < n {
+                // each epoll_event is 12 bytes; fd is i32 at offset 4
+                let fdAddr = base + (i as i64 * epollEventSize()) + 4
+                readyFds[i as i64] = *(fdAddr as *i32)
+                i = i + 1
+            }
+        }
+
+        free(evBuf)
+        return n
+    }
+}
+
+fn eventLoopClose(el: &EventLoop): void {
+    unsafe {
+        close(el.epfd)
+    }
+}
