@@ -1,0 +1,39 @@
+// @expect: 0
+// @expect: 42
+// @expect: 42
+// @expect: 10
+// @expect: 7
+// @expect: false
+// @expect: true
+// @expect: false
+
+from "std/sync" import { atomicI64New, atomicI64Load, atomicI64Store, atomicI64Add, atomicI64Sub, atomicI64Cas, atomicI64Destroy, atomicBoolNew, atomicBoolLoad, atomicBoolStore, atomicBoolSwap, atomicBoolDestroy }
+
+fn main(): i32 {
+    let counter = atomicI64New(0)
+    print(atomicI64Load(counter))
+    atomicI64Store(counter, 42)
+    print(atomicI64Load(counter))
+
+    // CAS: returns old value
+    let old = atomicI64Cas(counter, 42, 99)
+    print(old)
+
+    // Add/Sub
+    atomicI64Store(counter, 5)
+    atomicI64Add(counter, 5)
+    print(atomicI64Load(counter))
+    atomicI64Sub(counter, 3)
+    print(atomicI64Load(counter))
+    atomicI64Destroy(counter)
+
+    let flag = atomicBoolNew(false)
+    print(atomicBoolLoad(flag))
+    atomicBoolStore(flag, true)
+    print(atomicBoolLoad(flag))
+    let _prev = atomicBoolSwap(flag, false)
+    print(atomicBoolLoad(flag))
+    atomicBoolDestroy(flag)
+
+    return 0
+}

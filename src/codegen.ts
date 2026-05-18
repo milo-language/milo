@@ -59,7 +59,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid", "_atomicLoadI64", "_atomicStoreI64", "_atomicAddI64", "_atomicSubI64", "_atomicCasI64", "_atomicLoadBool", "_atomicStoreBool", "_atomicSwapBool"]);
   private needsArgGlobals = false;
 
   private filePath?: string;
@@ -1683,6 +1683,85 @@ export class Codegen {
       const s3 = this.nextTemp();
       lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${cap}, 2`);
       return [lines, s3, "%String"];
+    }
+    // ── Atomic intrinsics ──
+    if (expr.func === "_atomicLoadI64") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load atomic i64, ptr ${pv} seq_cst, align 8`);
+      return [lines, val, "i64"];
+    }
+    if (expr.func === "_atomicStoreI64") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const [al2, vv] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      lines.push(`  store atomic i64 ${vv}, ptr ${pv} seq_cst, align 8`);
+      return [lines, "void", "void"];
+    }
+    if (expr.func === "_atomicAddI64") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const [al2, vv] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      const old = this.nextTemp();
+      lines.push(`  ${old} = atomicrmw add ptr ${pv}, i64 ${vv} seq_cst, align 8`);
+      return [lines, old, "i64"];
+    }
+    if (expr.func === "_atomicSubI64") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const [al2, vv] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      const old = this.nextTemp();
+      lines.push(`  ${old} = atomicrmw sub ptr ${pv}, i64 ${vv} seq_cst, align 8`);
+      return [lines, old, "i64"];
+    }
+    if (expr.func === "_atomicCasI64") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const [al2, ev] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      const [al3, dv] = this.genExpr(expr.args[2].expr);
+      lines.push(...al3);
+      const pair = this.nextTemp();
+      lines.push(`  ${pair} = cmpxchg ptr ${pv}, i64 ${ev}, i64 ${dv} seq_cst seq_cst, align 8`);
+      const old = this.nextTemp();
+      lines.push(`  ${old} = extractvalue { i64, i1 } ${pair}, 0`);
+      return [lines, old, "i64"];
+    }
+    if (expr.func === "_atomicLoadBool") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const raw = this.nextTemp();
+      lines.push(`  ${raw} = load atomic i8, ptr ${pv} seq_cst, align 1`);
+      const val = this.nextTemp();
+      lines.push(`  ${val} = trunc i8 ${raw} to i1`);
+      return [lines, val, "i1"];
+    }
+    if (expr.func === "_atomicStoreBool") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const [al2, bv] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      const ext = this.nextTemp();
+      lines.push(`  ${ext} = zext i1 ${bv} to i8`);
+      lines.push(`  store atomic i8 ${ext}, ptr ${pv} seq_cst, align 1`);
+      return [lines, "void", "void"];
+    }
+    if (expr.func === "_atomicSwapBool") {
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const [al2, bv] = this.genExpr(expr.args[1].expr);
+      lines.push(...al2);
+      const ext = this.nextTemp();
+      lines.push(`  ${ext} = zext i1 ${bv} to i8`);
+      const old = this.nextTemp();
+      lines.push(`  ${old} = atomicrmw xchg ptr ${pv}, i8 ${ext} seq_cst, align 1`);
+      const val = this.nextTemp();
+      lines.push(`  ${val} = trunc i8 ${old} to i1`);
+      return [lines, val, "i1"];
     }
     if (expr.func === "_miloArgAt") {
       this.needsArgGlobals = true;

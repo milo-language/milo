@@ -555,6 +555,16 @@ export class TypeChecker {
     this.functions.set("assert", { params: [{ type: { tag: "bool" }, name: "cond" }], ret: { tag: "void" }, variadic: true });
     this.functions.set("max", { params: [{ type: i32t, name: "a" }, { type: i32t, name: "b" }], ret: i32t, variadic: false });
     this.functions.set("min", { params: [{ type: i32t, name: "a" }, { type: i32t, name: "b" }], ret: i32t, variadic: false });
+    // Atomic intrinsics — ptr arg is *u8, codegen emits LLVM atomic instructions
+    const i64t: TypeKind = { tag: "int", bits: 64, signed: true };
+    this.functions.set("_atomicLoadI64", { params: [{ type: ptrU8, name: "ptr" }], ret: i64t, variadic: false });
+    this.functions.set("_atomicStoreI64", { params: [{ type: ptrU8, name: "ptr" }, { type: i64t, name: "val" }], ret: { tag: "void" }, variadic: false });
+    this.functions.set("_atomicAddI64", { params: [{ type: ptrU8, name: "ptr" }, { type: i64t, name: "val" }], ret: i64t, variadic: false });
+    this.functions.set("_atomicSubI64", { params: [{ type: ptrU8, name: "ptr" }, { type: i64t, name: "val" }], ret: i64t, variadic: false });
+    this.functions.set("_atomicCasI64", { params: [{ type: ptrU8, name: "ptr" }, { type: i64t, name: "expected" }, { type: i64t, name: "desired" }], ret: i64t, variadic: false });
+    this.functions.set("_atomicLoadBool", { params: [{ type: ptrU8, name: "ptr" }], ret: { tag: "bool" }, variadic: false });
+    this.functions.set("_atomicStoreBool", { params: [{ type: ptrU8, name: "ptr" }, { type: { tag: "bool" }, name: "val" }], ret: { tag: "void" }, variadic: false });
+    this.functions.set("_atomicSwapBool", { params: [{ type: ptrU8, name: "ptr" }, { type: { tag: "bool" }, name: "val" }], ret: { tag: "bool" }, variadic: false });
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();
@@ -1156,7 +1166,7 @@ export class TypeChecker {
       case "fn":
         return true;
       case "struct": {
-        if (ty.name === "Mutex" || ty.name === "Channel") return true;
+        if (ty.name === "Mutex" || ty.name === "Channel" || ty.name === "AtomicI64" || ty.name === "AtomicBool") return true;
         const info = this.structs.get(ty.name);
         if (!info) return true;
         return info.fields.every(f => this.isSend(f.type));
@@ -1193,9 +1203,7 @@ export class TypeChecker {
       case "fn":
         return true;
       case "struct": {
-        // Mutex is Sync by design — that's the whole point
-        if (ty.name === "Mutex") return true;
-        if (ty.name === "Channel") return true;
+        if (ty.name === "Mutex" || ty.name === "Channel" || ty.name === "AtomicI64" || ty.name === "AtomicBool") return true;
         const info = this.structs.get(ty.name);
         if (!info) return true;
         return info.fields.every(f => this.isSync(f.type));

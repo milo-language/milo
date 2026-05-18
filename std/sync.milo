@@ -173,6 +173,106 @@ fn channelRecv(ch: &Channel): Result<i64> {
     }
 }
 
+// ── AtomicI64 ──
+// Lock-free 64-bit integer for cross-thread counters, flags, etc.
+//
+//   let counter = atomicI64New(0)
+//   atomicI64Add(&counter, 1)
+//   let val = atomicI64Load(&counter)
+//   atomicI64Destroy(counter)
+
+struct AtomicI64 {
+    _ptr: *u8,
+}
+
+fn atomicI64New(initial: i64): AtomicI64 {
+    unsafe {
+        let p = malloc(8)
+        _atomicStoreI64(p, initial)
+        return AtomicI64 { _ptr: p }
+    }
+}
+
+fn atomicI64Load(a: &AtomicI64): i64 {
+    unsafe {
+        return _atomicLoadI64(a._ptr)
+    }
+}
+
+fn atomicI64Store(a: &AtomicI64, val: i64): void {
+    unsafe {
+        _atomicStoreI64(a._ptr, val)
+    }
+}
+
+fn atomicI64Add(a: &AtomicI64, val: i64): i64 {
+    unsafe {
+        return _atomicAddI64(a._ptr, val)
+    }
+}
+
+fn atomicI64Sub(a: &AtomicI64, val: i64): i64 {
+    unsafe {
+        return _atomicSubI64(a._ptr, val)
+    }
+}
+
+fn atomicI64Cas(a: &AtomicI64, expected: i64, desired: i64): i64 {
+    unsafe {
+        return _atomicCasI64(a._ptr, expected, desired)
+    }
+}
+
+fn atomicI64Destroy(a: AtomicI64): void {
+    unsafe {
+        free(a._ptr)
+    }
+}
+
+// ── AtomicBool ──
+// Lock-free boolean flag for cross-thread signaling.
+//
+//   let flag = atomicBoolNew(false)
+//   atomicBoolStore(&flag, true)
+//   if atomicBoolLoad(&flag) { ... }
+//   atomicBoolDestroy(flag)
+
+struct AtomicBool {
+    _ptr: *u8,
+}
+
+fn atomicBoolNew(initial: bool): AtomicBool {
+    unsafe {
+        let p = malloc(1)
+        _atomicStoreBool(p, initial)
+        return AtomicBool { _ptr: p }
+    }
+}
+
+fn atomicBoolLoad(a: &AtomicBool): bool {
+    unsafe {
+        return _atomicLoadBool(a._ptr)
+    }
+}
+
+fn atomicBoolStore(a: &AtomicBool, val: bool): void {
+    unsafe {
+        _atomicStoreBool(a._ptr, val)
+    }
+}
+
+fn atomicBoolSwap(a: &AtomicBool, val: bool): bool {
+    unsafe {
+        return _atomicSwapBool(a._ptr, val)
+    }
+}
+
+fn atomicBoolDestroy(a: AtomicBool): void {
+    unsafe {
+        free(a._ptr)
+    }
+}
+
 fn channelDestroy(ch: &Channel): void {
     unsafe {
         let inner = ch._ptr as *ChannelInner
