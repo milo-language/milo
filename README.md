@@ -1,29 +1,63 @@
 # Milo
 
-A memory-safe systems language that compiles to native code via LLVM. Ownership without lifetimes.
+Rust's safety. Go's simplicity. C's speed. No lifetime annotations.
 
 ```milo
 from "std/http" import { Request, Response, serve }
 
 fn main(): i32 {
     serve(8080, (req: &Request) => {
-        print("GET ", req.path)
         return Response.Html("<h1>hello from milo</h1>")
     })!
     return 0
 }
 ```
 
-```bash
-$ milo run server.milo
-listening on :8080
+## Why Milo
+
+**Same safety as Rust, fraction of the learning curve.** Milo's entire ownership model is one rule: references can't escape the function they're passed to. That's it. No borrow checker fights, no lifetime annotations, no `where 'a: 'b`. The compiler tracks ownership, prevents use-after-free, and frees memory automatically.
+
+**Faster than Go, within 5% of C.** Milo compiles to native code via LLVM. It beats C on 3 out of 9 benchmarks (binary trees, matrix multiply, startup time) and stays within 3-5% on the rest. Sub-millisecond startup. Binaries under 300KB.
+
+**10K concurrent connections without async/await.** Green threads give you Go-style concurrency — no function coloring, no `Future<T>`, no colored function problem. The same `read()` call works in both OS threads and green threads. I/O automatically yields when called from a green thread.
+
+```milo
+from "std/runtime" import { greenSpawn, schedulerYield }
+
+fn main(): i32 {
+    greenSpawn(move (): void => { print("hello from green thread 1") })
+    greenSpawn(move (): void => { print("hello from green thread 2") })
+    return 0
+}
 ```
 
-|  | GC | Lifetimes | Ownership | Native |
-|---|---|---|---|---|
-| Go | yes | no | no | yes |
-| Rust | no | yes | yes | yes |
-| **Milo** | **no** | **no** | **yes** | **yes** |
+**Five compile-time safety guarantees:**
+
+| Safety | How |
+|--------|-----|
+| Memory | Move semantics, bounds-checked arrays, no dangling refs |
+| Null | `Option<T>` — no null pointers in safe code |
+| Races | `Send`/`Sync` traits — compiler rejects data races |
+| Overflow | Compile-time range checks + debug-mode traps |
+| Coercion | No implicit conversions — explicit `as` casts only |
+
+## Where Milo fits
+
+|  | GC | Lifetimes | Ownership | Native | Async without coloring |
+|---|---|---|---|---|---|
+| Go | yes | no | no | yes | no (goroutines yes) |
+| Rust | no | yes | yes | yes | no |
+| Zig | no | no | no | yes | no |
+| **Milo** | **no** | **no** | **yes** | **yes** | **yes** |
+
+## At a glance
+
+- **273 tests** — fixtures, error cases, end-to-end
+- **44 stdlib modules** — http, json, net, crypto, regex, threads, green threads, fs, process, and more
+- **15 example apps** — web servers, CLI tools (grep, jq, hex, tree, calc)
+- **Self-hosting** — stage-0 compiler written in Milo compiles Milo
+- **LSP + VS Code** — diagnostics, hover, go-to-definition, completions
+- **Package manager + formatter** — both written in Milo
 
 ## Install
 
@@ -31,40 +65,27 @@ listening on :8080
 curl -fsSL https://raw.githubusercontent.com/cs01/milo/main/install.sh | sh
 ```
 
-Or set a custom install directory:
+Requires LLVM/Clang for linking.
 
 ```bash
-MILO_INSTALL_DIR=~/.local/bin curl -fsSL https://raw.githubusercontent.com/cs01/milo/main/install.sh | sh
+milo run server.milo              # compile and run
+milo build server.milo -o server  # compile to binary
+milo test tests/                  # run tests
 ```
 
-Requires LLVM/Clang on your system for linking.
-
-## Quick start
-
-```bash
-milo run server.milo            # compile and run
-milo build server.milo -o server  # build a binary
-```
-
-### Development (from source)
+## From source
 
 Requires: [Bun](https://bun.sh), LLVM/Clang.
 
 ```bash
-bun run src/main.ts run examples/hello.milo        # compile and run
-bun run src/main.ts build examples/hello.milo -o hello  # build a binary
-bun test                                            # run tests
+bun run src/main.ts run examples/hello.milo
+bun test
 ```
 
-**VS Code** — install the extension for syntax highlighting, diagnostics, hover, go-to-definition, and autocomplete:
+## Learn more
 
-```bash
-cd editors/vscode && bun install && bun run build
-ln -s "$(pwd)" ~/.vscode/extensions/milo.milo-lang-0.2.0
-```
+**[Language Guide](docs/language-guide.md)** — types, ownership, error handling, closures, concurrency, FFI, stdlib
 
-## Documentation
+**[Design Doc](docs/design.md)** — why Milo makes the tradeoffs it does
 
-**[Language Guide →](docs/language-guide.md)** — full walkthrough: types, ownership, error handling, closures, threads, FFI, and stdlib.
-
-**[Roadmap →](docs/roadmap.md)** — what's done, what's next.
+**[Roadmap](docs/roadmap.md)** — what's done, what's next
