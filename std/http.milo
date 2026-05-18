@@ -559,43 +559,47 @@ impl Router {
         })
     }
 
-    fn handle(self: &Self, req: &Request): HandledResponse {
+    fn handle(self: &Self, req: Request): HandledResponse {
+        // find matching route index + params first (borrowing req), then move req after the loop
+        var matchIdx: i64 = - 1 as i64
+        var matchedParams: Vec<Param> = []
         var i: i64 = 0
         while i < self.routes.len {
             let route = self.routes[i]
             if route.method == "*" || route.method == req.method {
                 let params = matchRoute(route.pattern, route.paramNames, req.path)
                 if let Option.Some(matched) = params {
-                    var ctx = Context {
-                        req: Request {
-                            method: req.method.clone(),
-                            path: req.path.clone(),
-                            queryParams: copyParams(req.queryParams),
-                            headers: copyParams(req.headers),
-                            body: req.body.clone(),
-                        },
-                        params: matched,
-                        statusCode: 200,
-                        respHeaders: [],
-                    }
-                    let handler = route.handler
-                    var final: (&mut Context) => Response = handler
-                    var m: i64 = self.middleware.len - 1
-                    while m >= 0 {
-                        let mw = self.middleware[m]
-                        let next = final
-                        final = (c: &mut Context) => {
-                            return mw(c, next)
-                        }
-                        m = m - 1
-                    }
-                    let resp = final(ctx)
-                    return HandledResponse { response: resp, headers: ctx.respHeaders }
+                    matchIdx = i
+                    matchedParams = matched
+                    break
                 }
             }
             i = i + 1
         }
-        return HandledResponse { response: Response.NotFound, headers: [] }
+
+        if matchIdx < 0 {
+            return HandledResponse { response: Response.NotFound, headers: [] }
+        }
+
+        var ctx = Context {
+            req: req,
+            params: matchedParams,
+            statusCode: 200,
+            respHeaders: [],
+        }
+        let handler = self.routes[matchIdx].handler
+        var final: (&mut Context) => Response = handler
+        var m: i64 = self.middleware.len - 1
+        while m >= 0 {
+            let mw = self.middleware[m]
+            let next = final
+            final = (c: &mut Context) => {
+                return mw(c, next)
+            }
+            m = m - 1
+        }
+        let resp = final(ctx)
+        return HandledResponse { response: resp, headers: ctx.respHeaders }
     }
 }
 
@@ -724,16 +728,6 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
         i = i + 1
     }
     return Option.Some(params)
-}
-
-fn copyParams(src: &Vec<Param>): Vec<Param> {
-    var out: Vec<Param> = []
-    var i: i64 = 0
-    while i < src.len {
-        out.push(Param { name: src[i].name.clone(), value: src[i].value.clone() })
-        i = i + 1
-    }
-    return out
 }
 
 fn splitPath(path: &string): Vec<string> {

@@ -117,6 +117,11 @@ export function isCopy(t: TypeKind, enumIsCopy?: (name: string) => boolean, stru
   return false;
 }
 
+// scalar types that are safe to pass across extern boundaries (no memory semantics)
+export function isScalar(t: TypeKind): boolean {
+  return t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "void";
+}
+
 // heap-owning types that need destructor calls at scope exit
 export function needsDrop(t: TypeKind): boolean {
   return t.tag === "string" || t.tag === "box" || t.tag === "vec" || t.tag === "hashmap";

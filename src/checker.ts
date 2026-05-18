@@ -1,6 +1,6 @@
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl } from "./ast";
 import { simpleType } from "./ast";
-import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy } from "./types";
+import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
 
 interface VarInfo {
@@ -1954,6 +1954,8 @@ export class TypeChecker {
     }
     if (expr.kind === "FieldAccess") return this.isRootMutable(expr.object);
     if (expr.kind === "IndexAccess") return this.isRootMutable(expr.object);
+    // raw pointer and box derefs are always mutable (unsafe required separately)
+    if (expr.kind === "UnaryOp" && (expr.op === "*")) return true;
     return false;
   }
 
@@ -2348,7 +2350,11 @@ export class TypeChecker {
 
         const sig = this.functions.get(expr.func);
         if (sig?.isExtern && this.unsafeDepth === 0) {
-          this.error(`calling extern function '${expr.func}' requires an unsafe block`, sp);
+          // extern fns with only scalar params/return are safe to call without unsafe
+          const allScalar = sig.params.every(p => isScalar(p.type)) && isScalar(sig.ret);
+          if (!allScalar) {
+            this.error(`calling extern function '${expr.func}' requires an unsafe block`, sp);
+          }
         }
         if (!sig) {
           const varInfo = this.lookup(expr.func);

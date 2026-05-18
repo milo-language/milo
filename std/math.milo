@@ -66,93 +66,63 @@ fn exp(x: f64): f64
 // ── safe wrappers ──
 
 fn mathSqrt(x: f64): f64 {
-    unsafe {
-        return sqrt(x)
-    }
+    return sqrt(x)
 }
 
 fn mathPow(base: f64, exponent: f64): f64 {
-    unsafe {
-        return pow(base, exponent)
-    }
+    return pow(base, exponent)
 }
 
 fn mathSin(x: f64): f64 {
-    unsafe {
-        return sin(x)
-    }
+    return sin(x)
 }
 
 fn mathCos(x: f64): f64 {
-    unsafe {
-        return cos(x)
-    }
+    return cos(x)
 }
 
 fn mathTan(x: f64): f64 {
-    unsafe {
-        return tan(x)
-    }
+    return tan(x)
 }
 
 fn mathAtan2(y: f64, x: f64): f64 {
-    unsafe {
-        return atan2(y, x)
-    }
+    return atan2(y, x)
 }
 
 fn mathFloor(x: f64): f64 {
-    unsafe {
-        return floor(x)
-    }
+    return floor(x)
 }
 
 fn mathCeil(x: f64): f64 {
-    unsafe {
-        return ceil(x)
-    }
+    return ceil(x)
 }
 
 fn mathRound(x: f64): f64 {
-    unsafe {
-        return round(x)
-    }
+    return round(x)
 }
 
 fn mathAbs(x: f64): f64 {
-    unsafe {
-        return fabs(x)
-    }
+    return fabs(x)
 }
 
 fn mathMod(x: f64, y: f64): f64 {
-    unsafe {
-        return fmod(x, y)
-    }
+    return fmod(x, y)
 }
 
 fn mathLog(x: f64): f64 {
-    unsafe {
-        return log(x)
-    }
+    return log(x)
 }
 
 fn mathLog2(x: f64): f64 {
-    unsafe {
-        return log2(x)
-    }
+    return log2(x)
 }
 
 fn mathLog10(x: f64): f64 {
-    unsafe {
-        return log10(x)
-    }
+    return log10(x)
 }
 
 fn mathExp(x: f64): f64 {
-    unsafe {
-        return exp(x)
-    }
+    return exp(x)
 }
 
 // ── integer helpers ──
