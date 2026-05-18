@@ -1082,6 +1082,82 @@ export class TypeChecker {
     return false;
   }
 
+  // Send = safe to transfer ownership across threads
+  private isSend(ty: TypeKind): boolean {
+    switch (ty.tag) {
+      case "int": case "float": case "bool": case "void": case "string":
+        return true;
+      case "ptr":
+        return false;
+      case "ref":
+        return ty.mutable ? this.isSend(ty.inner) : this.isSync(ty.inner);
+      case "box":
+        return this.isSend(ty.inner);
+      case "vec":
+        return this.isSend(ty.element);
+      case "hashmap":
+        return this.isSend(ty.key) && this.isSend(ty.value);
+      case "array":
+        return this.isSend(ty.element);
+      case "fn":
+        return true;
+      case "struct": {
+        if (ty.name === "Mutex" || ty.name === "Channel") return true;
+        const info = this.structs.get(ty.name);
+        if (!info) return true;
+        return info.fields.every(f => this.isSend(f.type));
+      }
+      case "enum": {
+        const info = this.enums.get(ty.name);
+        if (!info) return true;
+        for (const [, v] of info.variants) {
+          if (!v.fields.every(f => this.isSend(f))) return false;
+        }
+        return true;
+      }
+      default: return true;
+    }
+  }
+
+  // Sync = safe to share via &T across threads
+  private isSync(ty: TypeKind): boolean {
+    switch (ty.tag) {
+      case "int": case "float": case "bool": case "void": case "string":
+        return true;
+      case "ptr":
+        return false;
+      case "ref":
+        return this.isSync(ty.inner);
+      case "box":
+        return this.isSync(ty.inner);
+      case "vec":
+        return this.isSync(ty.element);
+      case "hashmap":
+        return this.isSync(ty.key) && this.isSync(ty.value);
+      case "array":
+        return this.isSync(ty.element);
+      case "fn":
+        return true;
+      case "struct": {
+        // Mutex is Sync by design — that's the whole point
+        if (ty.name === "Mutex") return true;
+        if (ty.name === "Channel") return true;
+        const info = this.structs.get(ty.name);
+        if (!info) return true;
+        return info.fields.every(f => this.isSync(f.type));
+      }
+      case "enum": {
+        const info = this.enums.get(ty.name);
+        if (!info) return true;
+        for (const [, v] of info.variants) {
+          if (!v.fields.every(f => this.isSync(f))) return false;
+        }
+        return true;
+      }
+      default: return true;
+    }
+  }
+
   private checkFunction(fn: Function) {
     this.pushScope();
     const retType = this.resolve(fn.retType);
@@ -2298,6 +2374,21 @@ export class TypeChecker {
           if (argType?.tag === "string" && paramType.tag === "ptr") continue;
           if (argType?.tag === "array" && paramType.tag === "ptr") continue;
           this.tryMove(expr.args[i]);
+        }
+        // Send enforcement: spawn() requires all closure captures to be Send
+        if (expr.func === "spawn" && expr.args.length === 1 && expr.args[0].kind === "Closure") {
+          const captures = this.closureCaptures.get(expr.args[0]);
+          if (captures) {
+            for (const cap of captures) {
+              if (!this.isSend(cap.type)) {
+                this.error(
+                  `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
+                  expr.args[0].span,
+                  `spawn() requires all captured variables to be safe to transfer across threads. Raw pointers (*T) are not Send.`,
+                );
+              }
+            }
+          }
         }
         return this.setType(expr, sig.ret);
       }

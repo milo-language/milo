@@ -1,0 +1,15 @@
+// @error: cannot send 'p' of type '*u8' across threads
+
+from "std/thread" import { spawn, threadJoin }
+
+fn main(): i32 {
+    var x: i32 = 42
+    unsafe {
+        let p = (&x) as *u8
+        let t = spawn(move (): void => {
+            print("ptr value: ", p as i64)
+        })!
+        threadJoin(t)!
+    }
+    return 0
+}
