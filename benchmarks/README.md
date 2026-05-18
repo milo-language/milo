@@ -12,14 +12,16 @@ Env vars: `RUNS=5` `WARMUP=1` `CC=clang` `CFLAGS="-O2 -march=native"`.
 
 | Benchmark              | C       | Milo    | Go      | Milo vs C |
 |------------------------|---------|---------|---------|-----------|
-| matmul 256x256         | 12.4 ms | 11.8 ms | 13.3 ms | **0.95x** |
-| binarytrees depth 15   | 2.5 ms  | 1.9 ms  | 9.7 ms  | **0.76x** |
-| startup empty main     | 1.4 ms  | 1.1 ms  | 1.8 ms  | **0.77x** |
-| sieve to 1M            | 2.1 ms  | 2.2 ms  | 3.6 ms  | 1.04x     |
-| quicksort 500k f64     | 33.5 ms | 34.5 ms | 35.4 ms | 1.03x     |
-| fib(35)                | 17.7 ms | 20.8 ms | 22.5 ms | 1.17x     |
-| maplookup 50k          | 2.1 ms  | 2.7 ms  | 2.6 ms  | 1.28x     |
-| grep -c 1MB            | 2.1 ms  | 4.7 ms  | 3.0 ms  | 2.18x     |
-| stringops 100k concat  | 4.9 ms  | 4.8 ms  | 11.7 ms | **0.97x** |
+| matmul 512×512         | 12.8 ms | 12.0 ms | 13.2 ms | **0.94x** |
+| binarytrees depth 18   | 3.9 ms  | 3.0 ms  | 10.5 ms | **0.77x** |
+| quicksort 2M f64       | 35.7 ms | 34.7 ms | 34.7 ms | **0.97x** |
+| startup empty main     | 1.2 ms  | 1.2 ms  | 1.5 ms  | **1.00x** |
+| stringops 100k concat  | 3.1 ms  | 3.2 ms  | 6.5 ms  | 1.03x     |
+| fib(42)                | 18.4 ms | 20.8 ms | 21.6 ms | 1.13x     |
+| sieve to 10M           | 2.1 ms  | 2.5 ms  | 3.4 ms  | 1.19x     |
+| maplookup 100k         | 3.3 ms  | 4.4 ms  | 5.0 ms  | 1.32x     |
+| grep -c 5MB            | 2.1 ms  | 5.5 ms  | 4.0 ms  | 2.56x     |
 
-Hot spots: grep slurps whole file; json (omitted) parser re-scans on every access.
+JSON benchmark omitted — stdlib parser uses naive re-scan (12.6s vs Go stdlib 12.5ms, yyjson 3.3ms). Parser rewrite tracked.
+
+Hot spots: grep slurps whole file then scans; hashmap needs probe optimization.

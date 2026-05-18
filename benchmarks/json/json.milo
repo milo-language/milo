@@ -1,5 +1,5 @@
 // JSON parse + walk using std/json
-from "std/json" import { jsonParse }
+from "std/json" import { jsonParse, Json }
 from "std/io" import { readFile }
 
 fn main(): i32 {
@@ -9,15 +9,20 @@ fn main(): i32 {
     }
     var content: string = ""
     match readFile(_miloArgAt(1)) {
-        Result.Ok(d) => {
-            content = d
-        }
+        Result.Ok(d) => { content = d }
         Result.Err(e) => {
             print("err: ", e)
             return 1
         }
     }
-    let doc = jsonParse(content)
+    var doc: Json = Json { raw: "", start: 0, end: 0 }
+    match jsonParse(content) {
+        Result.Ok(d) => { doc = d }
+        Result.Err(e) => {
+            print("parse error: ", e)
+            return 1
+        }
+    }
     var sum: f64 = 0.0
     var active: i64 = 0
     var n: i64 = 0
@@ -28,33 +33,28 @@ fn main(): i32 {
             while i < n {
                 match items.at(i) {
                     Option.Some(item) => {
-                        match item.get("price") {
+                        match item.f64("price") {
                             Option.Some(p) => {
-                                sum = sum + p.num()
+                                sum = sum + p
                             }
-                            Option.None => {
-                            }
+                            Option.None => {}
                         }
-                        match item.get("active") {
+                        match item.bool("active") {
                             Option.Some(a) => {
-                                if a.bool() {
+                                if a {
                                     active = active + 1
                                 }
                             }
-                            Option.None => {
-                            }
+                            Option.None => {}
                         }
                     }
-                    Option.None => {
-                    }
+                    Option.None => {}
                 }
                 i = i + 1
             }
         }
-        Option.None => {
-        }
+        Option.None => {}
     }
     print("items=", n, " sum=", sum, " active=", active)
     return 0
 }
-
