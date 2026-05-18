@@ -68,7 +68,7 @@ export interface HIRArg {
 // ── Statements ──
 
 export type HIRStmt =
-  | { kind: "Let"; name: string; type: TypeKind; value: HIRExpr; mutable: boolean; span?: Span }
+  | { kind: "Let"; name: string; type: TypeKind; value: HIRExpr; mutable: boolean; rangeCheck?: { min: number; max: number; typeName: string }; span?: Span }
   | { kind: "Assign"; target: HIRExpr; value: HIRExpr; span?: Span }
   | { kind: "Return"; value: HIRExpr | null; retType: TypeKind; span?: Span }
   | { kind: "If"; cond: HIRExpr; thenBody: HIRStmt[]; elseBody: HIRStmt[] | null; span?: Span }

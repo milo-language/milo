@@ -65,6 +65,13 @@ This means what you write is what LLVM sees — no hidden costs.
 | `float` | Alias for `f64` |
 | `byte` | Alias for `u8` |
 
+### Type Aliases
+
+```milo
+type Meters = f64
+type Altitude = i32(0..50000)     // with range constraint
+```
+
 ### Number Literals
 
 ```milo
@@ -94,6 +101,26 @@ let y = x + 1     // runtime error: integer overflow at main.milo:2
 Build with `--debug` to enable overflow traps. Default (`-O2`) and `--release` (`-O3`) builds use wrapping arithmetic for performance.
 
 Checked operations: `+`, `-`, `*`, and unary negation (`-x`) on all integer types.
+
+### Ranged Integer Types
+
+Type aliases with range constraints, inspired by Ada/SPARK. Range checks are always-on in all build modes.
+
+```milo
+type Altitude = i32(0..50000)
+type Temperature = i32(-100..100)
+
+let alt: Altitude = 30000         // ok
+let bad: Altitude = 60000         // compile error: value 60000 is out of range
+```
+
+Dynamic values are checked at runtime:
+
+```milo
+fn readSensor(): i32 { ... }
+
+let alt: Altitude = readSensor()  // runtime check: traps if value outside 0..50000
+```
 
 ### Bitwise Operators
 

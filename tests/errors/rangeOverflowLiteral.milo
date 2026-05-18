@@ -1,0 +1,7 @@
+// @error: value 60000 is out of range
+
+type Altitude = i32(0..50000)
+
+fn main() {
+    let alt: Altitude = 60000
+}

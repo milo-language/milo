@@ -61,6 +61,7 @@ export interface CheckResult {
   resolvedOperators: Map<Expr, string>;
   fnFieldCalls: Set<Expr>;
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
+  rangeCheckedExprs: Map<Expr, { min: number; max: number; typeName: string }>;
 }
 
 interface GenericEnumInfo {
@@ -108,6 +109,8 @@ export class TypeChecker {
   private enums = new Map<string, EnumInfo>();
   private genericEnums = new Map<string, GenericEnumInfo>();
   private genericStructs = new Map<string, GenericStructInfo>();
+  private typeAliases = new Map<string, TypeKind>();
+  private rangeCheckedExprs = new Map<Expr, { min: number; max: number; typeName: string }>();
   private returnHint: TypeKind | null = null;
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
   private monomorphizedStructDecls: StructDecl[] = [];
@@ -161,6 +164,13 @@ export class TypeChecker {
     this.diagnostics.push({ severity, span, message: msg, hint, code });
   }
 
+  // extract a constant integer value from an expression (handles IntLit and -IntLit)
+  private constIntValue(expr: import("./ast").Expr): number | null {
+    if (expr.kind === "IntLit") return expr.value;
+    if (expr.kind === "UnaryOp" && expr.op === "-" && expr.operand.kind === "IntLit") return -expr.operand.value;
+    return null;
+  }
+
   private checkConstOverflow(lv: number, rv: number, op: string, ty: TypeKind, span?: Span) {
     if (ty.tag !== "int") return;
     const ops: Record<string, (a: number, b: number) => number> = {
@@ -180,6 +190,11 @@ export class TypeChecker {
   private resolve(ty: MiloType): TypeKind {
     if (ty.isFn && ty.fnParams && ty.fnRet) {
       return { tag: "fn", params: ty.fnParams.map(p => this.resolve(p)), ret: this.resolve(ty.fnRet) };
+    }
+    // type alias resolution
+    const alias = this.typeAliases.get(ty.name);
+    if (alias && !ty.isPtr && !ty.isRef && !ty.isRefMut && !ty.isArray && !ty.typeArgs?.length) {
+      return alias;
     }
     const typeArgs = ty.typeArgs ?? [];
     if (typeArgs.length > 0) {
@@ -351,7 +366,7 @@ export class TypeChecker {
         if (attr.name !== "derive") continue;
         for (const traitName of attr.args) {
           const impl = this.synthesizeDeriveImpl(decl, traitName);
-          if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [] }, this._pendingImplFns);
+          if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [], typeAliases: [] }, this._pendingImplFns);
         }
       }
     }
@@ -513,6 +528,11 @@ export class TypeChecker {
     this.registerBuiltinOption();
     this.registerBuiltinResult();
 
+    // register type aliases
+    for (const ta of program.typeAliases) {
+      this.typeAliases.set(ta.name, this.resolve(ta.type));
+    }
+
     // pre-register enum names so struct fields can reference enum types
     for (const e of program.enums) {
       if (e.typeParams.length === 0) {
@@ -652,6 +672,7 @@ export class TypeChecker {
       resolvedOperators: this.resolvedOperators,
       fnFieldCalls: this.fnFieldCalls,
       propagateConversions: this.propagateConversions,
+      rangeCheckedExprs: this.rangeCheckedExprs,
     };
   }
 
@@ -1215,6 +1236,17 @@ export class TypeChecker {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
         }
+        // range checking for ranged integer types
+        if (hint?.tag === "int" && hint.min !== undefined && hint.max !== undefined) {
+          const litVal = this.constIntValue(stmt.value);
+          if (litVal !== null) {
+            if (litVal < hint.min || litVal > hint.max) {
+              this.error(`value ${litVal} is out of range for ${typeName(hint)} (${hint.min}..${hint.max})`, sp);
+            }
+          } else {
+            this.rangeCheckedExprs.set(stmt.value, { min: hint.min, max: hint.max, typeName: typeName(hint) });
+          }
+        }
         this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false, borrowed: false, read: false, span: sp });
         this.tryMove(stmt.value);
         break;
@@ -1230,6 +1262,16 @@ export class TypeChecker {
             this.arrayToVecCoercions.add(stmt.value);
           } else {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
+          }
+        }
+        if (hint?.tag === "int" && hint.min !== undefined && hint.max !== undefined) {
+          const litVal = this.constIntValue(stmt.value);
+          if (litVal !== null) {
+            if (litVal < hint.min || litVal > hint.max) {
+              this.error(`value ${litVal} is out of range for ${typeName(hint)} (${hint.min}..${hint.max})`, sp);
+            }
+          } else {
+            this.rangeCheckedExprs.set(stmt.value, { min: hint.min, max: hint.max, typeName: typeName(hint) });
           }
         }
         this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false, borrowed: false, read: false, span: sp });

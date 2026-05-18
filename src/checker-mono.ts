@@ -111,7 +111,7 @@ TypeChecker.prototype.monomorphizeStruct = function(this: TypeChecker, baseName:
       if (attr.name !== "derive") continue;
       for (const traitName of attr.args) {
         const impl = this.synthesizeDeriveImpl(decl, traitName);
-        if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [] }, this._pendingImplFns);
+        if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [], typeAliases: [] }, this._pendingImplFns);
       }
     }
   }

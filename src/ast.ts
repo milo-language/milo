@@ -11,6 +11,8 @@ export interface MiloType {
   isFn?: boolean;      // fn(T): R
   fnParams?: MiloType[];
   fnRet?: MiloType;
+  rangeMin?: number;   // i32(0..50000) — range constraint
+  rangeMax?: number;
 }
 
 export function simpleType(name: string): MiloType {
@@ -163,7 +165,14 @@ export interface ImplDecl {
   span?: Span;
 }
 
-export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl | TraitDecl | ImplDecl;
+export interface TypeAlias {
+  kind: "TypeAlias";
+  name: string;
+  type: MiloType;
+  span?: Span;
+}
+
+export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl | TraitDecl | ImplDecl | TypeAlias;
 
 export interface Program {
   structs: StructDecl[];
@@ -172,4 +181,5 @@ export interface Program {
   imports: ImportDecl[];
   traits: TraitDecl[];
   impls: ImplDecl[];
+  typeAliases: TypeAlias[];
 }

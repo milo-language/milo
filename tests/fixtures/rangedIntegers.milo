@@ -1,0 +1,20 @@
+// @expect: 30000
+// @expect: 100
+// @expect: -50
+
+type Altitude = i32(0..50000)
+type SmallUint = u8(0..200)
+type Temperature = i32(-100..100)
+
+fn main(): i32 {
+    let alt: Altitude = 30000
+    print(alt)
+
+    let s: SmallUint = 100
+    print(s)
+
+    let t: Temperature = -50
+    print(t)
+
+    return 0
+}

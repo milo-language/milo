@@ -102,12 +102,14 @@ class LowerCtx {
         const value = this.lowerExpr(stmt.value);
         // Use auto-wrapped type (Option<T>) when value was wrapped, otherwise expression type
         const valType = value.type ?? this.typeOf(stmt.value) ?? { tag: "unknown" as const };
+        const rangeCheck = this.c.rangeCheckedExprs.get(stmt.value);
         return {
           kind: "Let",
           name: stmt.name,
           type: valType,
           value,
           mutable: stmt.kind === "VarDecl",
+          ...(rangeCheck && { rangeCheck }),
           span: stmt.span,
         };
       }

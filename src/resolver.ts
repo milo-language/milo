@@ -87,6 +87,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   const functions: typeof program.functions = [];
   const traits: typeof program.traits = [];
   const impls: typeof program.impls = [];
+  const typeAliases: typeof program.typeAliases = [];
 
   const deps = findManifest(sourceDir);
 
@@ -167,6 +168,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       functions.push(...imported.functions);
       traits.push(...imported.traits);
       impls.push(...imported.impls);
+      typeAliases.push(...imported.typeAliases);
       processImports(imported, dirname(absPath));
     }
   }
@@ -182,6 +184,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     functions.push(...prelude.functions);
     traits.push(...prelude.traits);
     impls.push(...prelude.impls);
+    typeAliases.push(...prelude.typeAliases);
     processImports(prelude, dirname(preludePath));
   }
 
@@ -191,6 +194,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   functions.push(...program.functions);
   traits.push(...program.traits);
   impls.push(...program.impls);
+  typeAliases.push(...program.typeAliases);
 
   processImports(program, sourceDir);
 
@@ -207,5 +211,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     return result;
   }
 
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases) };
 }

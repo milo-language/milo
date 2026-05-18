@@ -1,5 +1,5 @@
 export type TypeKind =
-  | { tag: "int"; bits: number; signed: boolean }
+  | { tag: "int"; bits: number; signed: boolean; min?: number; max?: number }
   | { tag: "float"; bits: number }
   | { tag: "bool" }
   | { tag: "void" }
@@ -15,7 +15,7 @@ export type TypeKind =
   | { tag: "fn"; params: TypeKind[]; ret: TypeKind }
   | { tag: "unknown" };
 
-export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; fnParams?: any[]; fnRet?: any }): TypeKind {
+export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; fnParams?: any[]; fnRet?: any; rangeMin?: number; rangeMax?: number }): TypeKind {
   if (ty.isFn && ty.fnParams && ty.fnRet) {
     return { tag: "fn", params: ty.fnParams.map(typeFromAst), ret: typeFromAst(ty.fnRet) };
   }
@@ -35,6 +35,9 @@ export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; 
     case "void": base = { tag: "void" }; break;
     case "string": base = { tag: "string" }; break;
     default: base = { tag: "struct", name: ty.name }; break;
+  }
+  if (base.tag === "int" && ty.rangeMin !== undefined && ty.rangeMax !== undefined) {
+    base = { ...base, min: ty.rangeMin, max: ty.rangeMax };
   }
   let result: TypeKind = base;
   if (ty.isArray) result = { tag: "array", element: base, size: ty.arraySize };
@@ -70,7 +73,10 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
 
 export function typeName(t: TypeKind): string {
   switch (t.tag) {
-    case "int": return `${t.signed ? "i" : "u"}${t.bits}`;
+    case "int": {
+      const base = `${t.signed ? "i" : "u"}${t.bits}`;
+      return t.min !== undefined && t.max !== undefined ? `${base}(${t.min}..${t.max})` : base;
+    }
     case "float": return `f${t.bits}`;
     case "bool": return "bool";
     case "void": return "void";

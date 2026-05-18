@@ -2,7 +2,7 @@
 
 extern
 
-fn socket(domain: i32, type: i32, protocol: i32): i32
+fn socket(domain: i32, sockType: i32, protocol: i32): i32
 
 extern
 

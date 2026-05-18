@@ -27,6 +27,7 @@ export class Codegen {
   private userDeclaredFns = new Set<string>();
   private needsBoundsCheck = false;
   private needsOverflowCheck = false;
+  private needsRangeCheck = false;
   private debugOverflow = false;
   private usedOverflowIntrinsics = new Set<string>();
   private needsPrintf = false;
@@ -271,11 +272,16 @@ export class Codegen {
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
     if (this.needsBoundsCheck)
       this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
-    if (this.needsOverflowCheck) {
+    if (this.needsOverflowCheck || this.needsRangeCheck) {
       const file = this.filePath ?? "<unknown>";
       this.output.splice(1, 0, `@.overflow_file = private unnamed_addr constant [${file.length + 1} x i8] c"${file}\\00"`);
+    }
+    if (this.needsOverflowCheck) {
       this.output.splice(1, 0, `@.overflow_err = private unnamed_addr constant [42 x i8] c"runtime error: integer overflow at %s:%d\\0A\\00"`);
       for (const decl of this.usedOverflowIntrinsics) this.output.splice(1, 0, decl);
+    }
+    if (this.needsRangeCheck) {
+      this.output.splice(1, 0, `@.range_err = private unnamed_addr constant [44 x i8] c"runtime error: value out of range at %s:%d\\0A\\00"`);
     }
     if (this.hasHashMapType)
       this.output.splice(1, 0, `%HashMap = type { ptr, i64, i64, i64 }`);
@@ -431,6 +437,10 @@ export class Codegen {
           }
         }
         lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
+        if (stmt.rangeCheck) {
+          const signed = stmt.type.tag === "int" && stmt.type.signed;
+          this.emitRangeCheck(lines, val, declTy, signed, stmt.rangeCheck.min, stmt.rangeCheck.max, stmt.span?.line ?? 0);
+        }
         // Don't drop locals that borrow from a ref (shallow copy, data owned elsewhere)
         const isBorrowedInit = stmt.value.kind === "IndexAccess" && stmt.value.isBorrowed;
         if (!isRefLocal && this.needsDropCg(stmt.type) && !isBorrowedInit) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
@@ -631,6 +641,32 @@ export class Codegen {
     lines.push(`  unreachable`);
     lines.push(`${okLabel}:`);
     return val;
+  }
+
+  private emitRangeCheck(lines: string[], val: string, llType: string, signed: boolean, min: number, max: number, line: number) {
+    this.needsRangeCheck = true;
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const cmpLo = signed ? "slt" : "ult";
+    const cmpHi = signed ? "sgt" : "ugt";
+    const tooLow = this.nextTemp();
+    const tooHigh = this.nextTemp();
+    const outOfRange = this.nextTemp();
+    const failLabel = this.nextLabel("range.fail");
+    const okLabel = this.nextLabel("range.ok");
+    lines.push(`  ${tooLow} = icmp ${cmpLo} ${llType} ${val}, ${min}`);
+    lines.push(`  ${tooHigh} = icmp ${cmpHi} ${llType} ${val}, ${max}`);
+    lines.push(`  ${outOfRange} = or i1 ${tooLow}, ${tooHigh}`);
+    lines.push(`  br i1 ${outOfRange}, label %${failLabel}, label %${okLabel}`);
+    lines.push(`${failLabel}:`);
+    const fmtPtr = this.nextTemp();
+    lines.push(`  ${fmtPtr} = getelementptr [44 x i8], ptr @.range_err, i32 0, i32 0`);
+    const filePtr = this.nextTemp();
+    lines.push(`  ${filePtr} = getelementptr [${(this.filePath ?? "<unknown>").length + 1} x i8], ptr @.overflow_file, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtPtr}, ptr ${filePtr}, i32 ${line})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
   }
 
   private getStructName(llvmTy: string): string | null {

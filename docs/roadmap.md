@@ -282,7 +282,10 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 
 ### Tier 2 — polish / differentiators
 
-- [ ] **Ranged integer types** — `type Altitude = i32(0..50000)`. Compiler proves values stay in range at assignment/arithmetic boundaries. Inspired by Ada/SPARK range types. No mainstream systems language has this — would be a unique safety guarantee beyond what Rust offers. Enables compile-time proof that integer arithmetic cannot overflow within declared bounds.
+- [x] **Ranged integer types (L1)** — `type Altitude = i32(0..50000)`. Type aliases with range constraints. Compile-time rejection of out-of-range literals, runtime range checks for dynamic values (always-on, all build modes). Inspired by Ada/SPARK range types.
+- [ ] **Ranged integer types (L2)** — Range propagation through arithmetic: if `a: i32(0..100)` and `b: i32(0..100)`, then `a + b` is `i32(0..200)`. Compiler narrows ranges at branches. Eliminates most runtime checks via static proof.
+- [ ] **Safety profiles** — `--strict-ranges` (require ranged types on all integer declarations) and `--no-unwrap` (ban `!` operator — force exhaustive error handling). Aircraft-grade safety opt-in without penalizing default ergonomics.
+- [ ] **Wrapping/saturating arithmetic** — `.wrappingAdd()`, `.saturatingAdd()`, `.checkedAdd()`, `.overflowingAdd()` methods on integers for intentional wrapping in debug mode.
 
 - [ ] **Cross-compilation** — `--target aarch64-linux` etc. Infrastructure exists in target.ts, needs testing + sysroot handling.
 - [ ] **REPL / playground** — interactive exploration, web playground for demos.

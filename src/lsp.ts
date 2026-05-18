@@ -152,6 +152,9 @@ function formatMiloType(t: import("./ast").MiloType): string {
     return `(${t.fnParams.map(formatMiloType).join(", ")}) => ${formatMiloType(t.fnRet)}`;
   }
   let base = t.name;
+  if (t.rangeMin !== undefined && t.rangeMax !== undefined) {
+    base += `(${t.rangeMin}..${t.rangeMax})`;
+  }
   if (t.typeArgs?.length) {
     base += `<${t.typeArgs.map(formatMiloType).join(", ")}>`;
   }
@@ -332,6 +335,13 @@ function handleHover(uri: string, line: number, character: number): object | nul
     // Enums and variants
     const enumHover = findEnumHover(source, program, word, line, character, parsed, sourceDir);
     if (enumHover) return { contents: { kind: "markdown", value: enumHover } };
+
+    // Type aliases
+    for (const ta of program.typeAliases) {
+      if (ta.name === word) {
+        return { contents: { kind: "markdown", value: `\`\`\`milo\ntype ${ta.name} = ${formatMiloType(ta.type)}\n\`\`\`` } };
+      }
+    }
 
     // Structs
     for (const s of program.structs) {
@@ -645,6 +655,16 @@ function handleDefinition(uri: string, line: number, character: number): object 
         const eLine = findDeclLine(source, "enum", e.name);
         if (eLine >= 0) {
           return { uri, range: { start: { line: eLine, character: 0 }, end: { line: eLine, character: 0 } } };
+        }
+      }
+    }
+
+    // Find type alias definition
+    for (const ta of program.typeAliases) {
+      if (ta.name === word) {
+        const taLine = findDeclLine(source, "type", ta.name);
+        if (taLine >= 0) {
+          return { uri, range: { start: { line: taLine, character: 0 }, end: { line: taLine, character: 0 } } };
         }
       }
     }

@@ -3,7 +3,7 @@ import { Lexer } from "./lexer";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
-  TraitDecl, TraitMethod, ImplDecl, Attribute,
+  TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias,
 } from "./ast";
 
 export class Parser {
@@ -46,6 +46,7 @@ export class Parser {
     const imports: ImportDecl[] = [];
     const traits: TraitDecl[] = [];
     const impls: ImplDecl[] = [];
+    const typeAliases: TypeAlias[] = [];
     while (!this.at(TokenKind.Eof)) {
       // collect attributes before struct/enum
       let attrs: Attribute[] | undefined;
@@ -71,11 +72,13 @@ export class Parser {
         traits.push(this.parseTraitDecl());
       } else if (this.at(TokenKind.Impl)) {
         impls.push(this.parseImplDecl());
+      } else if (this.at(TokenKind.Type)) {
+        typeAliases.push(this.parseTypeAlias());
       } else {
         this.error(`expected declaration, got '${this.peek().kind}'`, this.peek());
       }
     }
-    return { structs, enums, functions, imports, traits, impls };
+    return { structs, enums, functions, imports, traits, impls, typeAliases };
   }
 
   private parseImport(): ImportDecl {
@@ -150,11 +153,40 @@ export class Parser {
       this.expect(TokenKind.Gt);
     }
     let result: MiloType = { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
+    // i32(0..50000) — range constraint on integer types
+    if (this.at(TokenKind.LParen) && !typeArgs) {
+      const isIntType = /^[iu]\d+$|^int$|^byte$/.test(tok.value);
+      if (isIntType) {
+        this.advance(); // consume (
+        let negative = false;
+        if (this.match(TokenKind.Minus)) negative = true;
+        const minTok = this.expect(TokenKind.Int);
+        const rangeMin = (negative ? -1 : 1) * parseInt(minTok.value);
+        this.expect(TokenKind.DotDot);
+        negative = false;
+        if (this.match(TokenKind.Minus)) negative = true;
+        const maxTok = this.expect(TokenKind.Int);
+        const rangeMax = (negative ? -1 : 1) * parseInt(maxTok.value);
+        this.expect(TokenKind.RParen);
+        result.rangeMin = rangeMin;
+        result.rangeMax = rangeMax;
+      }
+    }
     // T? desugars to Option<T>
     if (this.match(TokenKind.Question)) {
       result = { name: "Option", typeArgs: [result], isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
     }
     return result;
+  }
+
+  // ── Type Alias ──
+
+  private parseTypeAlias(): TypeAlias {
+    const tok = this.expect(TokenKind.Type);
+    const name = this.expect(TokenKind.Ident).value;
+    this.expect(TokenKind.Eq);
+    const type = this.parseType();
+    return { kind: "TypeAlias", name, type, span: this.span(tok) };
   }
 
   // ── Struct ──
