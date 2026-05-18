@@ -277,7 +277,7 @@ fn main(): i32 {
     // detect language
     var lang: string = ""
     if forceLang.len > 0 {
-        lang = forceLang.clone()
+        lang = forceLang
     } else {
         let ext = pathExt(filePath)
         lang = detectLang(ext)
@@ -298,7 +298,7 @@ fn main(): i32 {
                 endLine = parseI64(s2)
             }
         } else {
-            startLine = parseI64(rangeStr.clone())
+            startLine = parseI64(rangeStr)
             endLine = startLine
         }
     }

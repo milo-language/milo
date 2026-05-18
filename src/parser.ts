@@ -153,8 +153,8 @@ export class Parser {
       this.expect(TokenKind.Gt);
     }
     let result: MiloType = { name: tok.value, typeArgs, isPtr: false, isRef: false, isRefMut: false, isArray: false, arraySize: null };
-    // i32(0..50000) — range constraint on integer types
-    if (this.at(TokenKind.LParen) && !typeArgs) {
+    // i32(0..50000) — range constraint on integer types (must be on same line to avoid ambiguity)
+    if (this.at(TokenKind.LParen) && !typeArgs && this.peek().line === tok.line) {
       const isIntType = /^[iu]\d+$|^int$|^byte$/.test(tok.value);
       if (isIntType) {
         this.advance(); // consume (
@@ -723,8 +723,9 @@ export class Parser {
     while (true) {
       if (this.at(TokenKind.Dot)) {
         this.advance();
-        const field = this.expect(TokenKind.Ident).value;
-        if (this.at(TokenKind.LParen)) {
+        const fieldTok = this.expect(TokenKind.Ident);
+        const field = fieldTok.value;
+        if (this.at(TokenKind.LParen) && this.peek().line === fieldTok.line) {
           this.advance();
           const args: Expr[] = [];
           while (!this.at(TokenKind.RParen)) {
@@ -822,8 +823,8 @@ export class Parser {
       if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
         return this.parseStructLit(tok.value, s);
       }
-      // function call: name(args)
-      if (this.at(TokenKind.LParen)) return this.parseCall(tok.value, s);
+      // function call: name(args) — `(` must be on same line to avoid cross-line ambiguity
+      if (this.at(TokenKind.LParen) && this.peek().line === tok.line) return this.parseCall(tok.value, s);
       return { kind: "Ident", name: tok.value, span: s };
     }
     // array literal: [a, b, c]

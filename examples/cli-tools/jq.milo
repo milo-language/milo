@@ -239,8 +239,7 @@ fn applyFields(values: &Vec<string>, field: &string): Vec<string> {
     var next: Vec<string> = Vec.new()
     var vi: i64 = 0
     while vi < values.len {
-        let v = values[vi].clone()
-        let result = findField(v, field)
+        let result = findField(values[vi], field)
         next.push(result)
         vi = vi + 1
     }
@@ -251,9 +250,8 @@ fn applyIterate(values: &Vec<string>): Vec<string> {
     var next: Vec<string> = Vec.new()
     var vi: i64 = 0
     while vi < values.len {
-        let v = values[vi].clone()
         var items: Vec<string> = Vec.new()
-        let ok = collectArray(v, items)
+        let ok = collectArray(values[vi], items)
         var ji: i64 = 0
         while ji < items.len {
             next.push(items[ji].clone())
@@ -268,8 +266,7 @@ fn applyIndex(values: &Vec<string>, idx: i64): Vec<string> {
     var next: Vec<string> = Vec.new()
     var vi: i64 = 0
     while vi < values.len {
-        let v = values[vi].clone()
-        let result = indexArray(v, idx)
+        let result = indexArray(values[vi], idx)
         next.push(result)
         vi = vi + 1
     }
@@ -372,7 +369,7 @@ fn main(): i32 {
 
     // apply steps iteratively
     var values: Vec<string> = Vec.new()
-    values.push(input.clone())
+    values.push(input)
 
     var stepI: i64 = 0
     while stepI < steps.len {
@@ -393,8 +390,7 @@ fn main(): i32 {
 
     var ri: i64 = 0
     while ri < values.len {
-        let v = values[ri].clone()
-        outputValue(v, raw)
+        outputValue(values[ri], raw)
         ri = ri + 1
     }
 
