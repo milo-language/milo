@@ -289,6 +289,63 @@ fn main(): i32 {
 
 [Learn more](/language/collections)
 
+## Heap Allocation
+
+Most values in Milo live on the stack and get cleaned up automatically when they go out of scope. But sometimes you need to put something on the heap — when a data structure is recursive, when you need runtime polymorphism, or when a value needs to outlive the function that created it.
+
+Milo gives you two tools for this, each designed for different situations:
+
+### Heap\<T\> — single-owner heap pointer
+
+`Heap<T>` allocates one value on the heap with a single owner. When the owner goes out of scope, the memory is freed. No GC, no manual `free()`.
+
+```milo
+// recursive data structures need Heap because the type would be infinite-sized otherwise
+enum Tree {
+    Node(Heap<Tree>, Heap<Tree>),
+    Leaf(i32),
+}
+
+// runtime polymorphism — different concrete types behind one interface
+interface Shape {
+    fn area(self: &Self): f64
+}
+
+fn main(): i32 {
+    // heterogeneous collection: circles, squares, triangles all in one Vec
+    var shapes: Vec<Heap<Shape>> = Vec.new()
+    shapes.push(Heap(Circle { radius: 5.0 }))
+    shapes.push(Heap(Square { side: 4.0 }))
+    for s in shapes {
+        print(s.area())
+    }
+    return 0
+}
+```
+
+### Arena\<T\> — bulk allocation for graphs and cycles
+
+When you have many values that reference each other (graphs, trees with parent pointers, caches), `Heap<T>` doesn't work — ownership is strictly single-parent. `Arena<T>` solves this by allocating all values in a single pool and handing out copyable handles instead of owned pointers.
+
+```milo
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaGet }
+
+fn main(): i32 {
+    var nodes: Arena<i32> = arenaNew()
+    let a = arenaAlloc(nodes, 10)   // Handle<i32> — copyable, safe
+    let b = arenaAlloc(nodes, 20)
+    print(arenaGet(nodes, a))       // 10
+    return 0
+}
+```
+
+| | Heap\<T\> | Arena\<T\> |
+|---|---|---|
+| Ownership | Single owner, auto-freed on drop | Pool-based, all freed together |
+| References | Unique — can't share | Handles are copyable |
+| Use case | Recursive types, polymorphism | Graphs, caches, cyclic structures |
+| Overhead | One malloc/free per value | One allocation for the pool |
+
 ## Closures
 
 Closures are anonymous functions with a familiar arrow syntax. They can capture variables from their surrounding scope, get passed as arguments, stored in variables, and returned from functions. This is what powers `map`, `filter`, and other functional patterns on collections.

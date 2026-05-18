@@ -67,7 +67,11 @@ m.remove("hello")
 
 ## Heap\<T\>
 
-Single-owner heap pointer. Useful for recursive data structures.
+Single-owner heap pointer. Three use cases: recursive types, runtime polymorphism via interfaces, and values that need to outlive their creating scope.
+
+### Recursive data structures
+
+A struct or enum can't contain itself directly (infinite size). Wrap the recursive case in `Heap<T>` to make it pointer-sized.
 
 ```milo
 enum Tree {
@@ -91,6 +95,56 @@ let tree = Tree.Node(
 )
 print(sum(tree))   // 3
 ```
+
+### Runtime polymorphism
+
+`Heap<Interface>` lets you store different concrete types in the same collection. The heap pointer carries an itable for virtual dispatch.
+
+```milo
+interface Shape {
+    fn area(self: &Self): f64
+}
+
+struct Circle { radius: f64 }
+impl Circle {
+    fn area(self: &Self): f64 { return 3.14159 * self.radius * self.radius }
+}
+
+struct Square { side: f64 }
+impl Square {
+    fn area(self: &Self): f64 { return self.side * self.side }
+}
+
+fn main(): i32 {
+    var shapes: Vec<Heap<Shape>> = Vec.new()
+    shapes.push(Heap(Circle { radius: 5.0 }))
+    shapes.push(Heap(Square { side: 4.0 }))
+    for s in shapes {
+        print(s.area())
+    }
+    return 0
+}
+```
+
+### Dereference
+
+Use `*` to read through a heap pointer:
+
+```milo
+let h = Heap(42)
+print(*h)          // 42
+```
+
+Methods are called directly — no `*` needed:
+
+```milo
+let s: Heap<Shape> = Heap(Circle { radius: 3.0 })
+print(s.area())    // auto-derefs through Heap, then dispatches via itable
+```
+
+## Heap\<T\> vs Arena\<T\>
+
+`Heap<T>` is single-owner: one value, one pointer, freed on drop. `Arena<T>` is pool-based: many values in one allocation, referenced by copyable handles. Use Arena when you have graphs, caches, or cycles where ownership doesn't form a tree.
 
 All heap types (Vec, HashMap, Heap) auto-free when they go out of scope. No GC pauses, no `free()`, no `defer`.
 
