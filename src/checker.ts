@@ -2537,21 +2537,6 @@ export class TypeChecker {
           if (argType?.tag === "array" && paramType.tag === "ptr") continue;
           this.tryMove(expr.args[i]);
         }
-        // Send enforcement: spawn() requires all closure captures to be Send
-        if (expr.func === "spawn" && expr.args.length === 1 && expr.args[0].kind === "Closure") {
-          const captures = this.closureCaptures.get(expr.args[0]);
-          if (captures) {
-            for (const cap of captures) {
-              if (!this.isSend(cap.type)) {
-                this.error(
-                  `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
-                  expr.args[0].span,
-                  this.whyNotSend(cap.type),
-                );
-              }
-            }
-          }
-        }
         return this.setType(expr, sig.ret);
       }
       case "StructLit": {
@@ -2753,6 +2738,21 @@ export class TypeChecker {
                 this.tryMove(expr.args[i]);
               }
               this.staticCalls.set(expr, mangled);
+              // Send enforcement: Thread.spawn() requires all closure captures to be Send
+              if (expr.enumName === "Thread" && expr.variant === "spawn" && expr.args.length === 1 && expr.args[0].kind === "Closure") {
+                const captures = this.closureCaptures.get(expr.args[0]);
+                if (captures) {
+                  for (const cap of captures) {
+                    if (!this.isSend(cap.type)) {
+                      this.error(
+                        `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
+                        expr.args[0].span,
+                        this.whyNotSend(cap.type),
+                      );
+                    }
+                  }
+                }
+              }
               return this.setType(expr, sig.ret);
             }
           }
@@ -2954,6 +2954,13 @@ export class TypeChecker {
             this.checkExprWithHint(expr.args[0], cbHint);
             return this.setType(expr, { tag: "void" });
           }
+          if (expr.method === "enumerate") {
+            if (expr.args.length !== 1) { this.error(`'enumerate' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
+            const cbHint: TypeKind = { tag: "fn", params: [{ tag: "int", bits: 64, signed: true }, elemRef], ret: { tag: "void" } };
+            this.checkExprWithHint(expr.args[0], cbHint);
+            return this.setType(expr, { tag: "void" });
+          }
           if (expr.method === "find") {
             if (expr.args.length !== 1) { this.error(`'find' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
@@ -2982,6 +2989,25 @@ export class TypeChecker {
             const sepType = this.checkExpr(expr.args[0]);
             if (sepType.tag !== "string" && sepType.tag !== "unknown") { this.error(`'join' separator must be a string, got ${typeName(sepType)}`, sp); }
             return this.setType(expr, { tag: "string" });
+          }
+          if (expr.method === "isEmpty") {
+            if (expr.args.length !== 0) { this.error(`'isEmpty' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "contains") {
+            if (expr.args.length !== 1) { this.error(`'contains' expects 1 argument`, sp); return this.setType(expr, { tag: "bool" }); }
+            const argType = this.checkExprWithHint(expr.args[0], objType.element);
+            if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
+              this.error(`'contains': expected ${typeName(objType.element)}, got ${typeName(argType)}`, sp);
+            }
+            return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "reverse") {
+            if (expr.args.length !== 0) { this.error(`'reverse' takes no arguments`, sp); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot reverse immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            return this.setType(expr, { tag: "void" });
           }
           if (expr.method === "len") {
             if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
@@ -3118,11 +3144,25 @@ export class TypeChecker {
             if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'split': expected string, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "vec", element: { tag: "string" } });
           }
-          if (expr.method === "trim" || expr.method === "trimStart" || expr.method === "trimEnd" || expr.method === "toLower" || expr.method === "toUpper") {
+          if (expr.method === "isEmpty") {
+            if (expr.args.length !== 0) { this.error(`'isEmpty' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "trim" || expr.method === "trimStart" || expr.method === "trimEnd" || expr.method === "toLower" || expr.method === "toUpper" || expr.method === "reverse") {
             if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
             return this.setType(expr, { tag: "string" });
           }
-          if (expr.method === "replace") {
+          if (expr.method === "charAt") {
+            if (expr.args.length !== 1) { this.error(`'charAt' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
+            const argType = this.checkExpr(expr.args[0]);
+            if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'charAt': expected integer, got ${typeName(argType)}`, sp);
+            return this.setType(expr, { tag: "string" });
+          }
+          if (expr.method === "parseInt") {
+            if (expr.args.length !== 0) { this.error(`'parseInt' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "int", bits: 64, signed: true });
+          }
+          if (expr.method === "replace" || expr.method === "replaceFirst") {
             if (expr.args.length !== 2) { this.error(`'replace' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
             const a1 = this.checkExpr(expr.args[0]);
             const a2 = this.checkExpr(expr.args[1]);

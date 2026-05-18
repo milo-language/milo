@@ -1137,26 +1137,26 @@ print(a != b)   // false
 
 ### Spawning Threads
 
-Use `spawn()` with a `move` closure to run code on a new OS thread:
+Use `Thread.spawn()` with a **move closure** to run code on a new OS thread. A move closure takes ownership of its captured variables instead of borrowing them — this is required because the new thread may outlive the scope where the variables were defined. The `move` keyword before the closure parameters signals this transfer:
 
 ```milo
-from "std/thread" import { spawn, threadJoin, Thread }
+from "std/thread" import { Thread, threadJoin }
 
-let t = spawn(move (): void => {
+let t = Thread.spawn(move (): void => {
     print("hello from thread")
 })!
 threadJoin(t)!
 ```
 
-Move closures are required for `spawn` — they heap-allocate captured variables so they're safe to send across threads.
+Move closures heap-allocate captured variables so they're safe to send across threads.
 
 ```milo
-from "std/thread" import { spawn, threadJoin, Thread }
+from "std/thread" import { Thread, threadJoin }
 
 var threads: Vec<Thread> = Vec.new()
 for i in 0..4 {
     let id = i as i64
-    let t = spawn(move (): void => {
+    let t = Thread.spawn(move (): void => {
         print($"thread {id}")
     })!
     threads.push(t)
@@ -1168,7 +1168,7 @@ for i in 0..4 {
 
 ### Thread Safety (Send / Sync)
 
-The compiler enforces thread safety at compile time. `spawn()` requires all captured variables to implement `Send` — meaning they're safe to transfer across threads.
+The compiler enforces thread safety at compile time. `Thread.spawn()` requires all captured variables to implement `Send` — meaning they're safe to transfer across threads.
 
 **Send types** (safe to move to another thread): all primitives, `string`, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
 
@@ -1179,13 +1179,13 @@ The compiler enforces thread safety at compile time. `spawn()` requires all capt
 ```milo
 // This compiles — i64 and string are Send
 let msg = "hello"
-let t = spawn(move (): void => { print(msg) })!
+let t = Thread.spawn(move (): void => { print(msg) })!
 
 // This is a compile error — *u8 is not Send
 var x: i32 = 42
 unsafe {
     let p = (&x) as *u8
-    let t = spawn(move (): void => {    // error: cannot send 'p' of type '*u8' across threads
+    let t = Thread.spawn(move (): void => {    // error: cannot send 'p' of type '*u8' across threads
         print(p as i64)
     })!
 }
@@ -1228,12 +1228,12 @@ Each branch is implicitly a move closure — captured variables are copied/moved
 Bounded FIFO channels for message passing between threads. Channel is a handle type — safe to capture in move closures without `unsafe`.
 
 ```milo
-from "std/thread" import { spawn, threadJoin, Thread }
+from "std/thread" import { Thread, threadJoin }
 from "std/sync" import { channelNew, channelSend, channelRecv, channelDestroy }
 
 let ch = channelNew(8)!
 
-let t = spawn(move (): void => {
+let t = Thread.spawn(move (): void => {
     channelSend(ch, 10)!
     channelSend(ch, 20)!
     channelSend(ch, 0)!   // sentinel
@@ -1335,7 +1335,7 @@ All atomic operations use sequential consistency (seq_cst). AtomicI64 and Atomic
 
 | Function | Description |
 |----------|-------------|
-| `spawn(move () => {...})` | Spawn thread with move closure |
+| `Thread.spawn(move () => {...})` | Spawn thread with move closure |
 | `threadJoin(t)` | Wait for thread to finish |
 | `threadSleep(ms)` | Sleep current thread (milliseconds) |
 | `parallel { let a = ...; let b = ... }` | Run branches concurrently, join all |

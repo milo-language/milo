@@ -420,13 +420,16 @@ class LowerCtx {
         }
         const staticMangled = this.c.staticCalls.get(expr);
         if (staticMangled) {
-          return {
-            kind: "Call",
-            callee: staticMangled,
-            args: expr.args.map(a => this.lowerExpr(a)),
-            type,
-            span: expr.span,
-          };
+          const sig = this.c.functions.get(staticMangled);
+          const args: HIRArg[] = expr.args.map((arg, i) => {
+            const borrowed = this.c.autoBorrowed.get(arg);
+            return {
+              expr: this.lowerExpr(arg),
+              passByRef: !!borrowed,
+              refMut: borrowed?.mutable ?? false,
+            };
+          });
+          return { kind: "Call", func: staticMangled, args, type, variadic: sig?.variadic ?? false, span: expr.span };
         }
         const enumName = this.c.rewrittenEnums.get(expr) ?? expr.enumName;
         return {
@@ -527,6 +530,9 @@ class LowerCtx {
           if (expr.method === "each") {
             return { kind: "VecEach", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
+          if (expr.method === "enumerate") {
+            return { kind: "VecEnumerate", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
+          }
           if (expr.method === "find") {
             const optionEnumName = type.tag === "enum" ? type.name : "";
             return { kind: "VecFind", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, optionEnumName, type, span: expr.span };
@@ -543,6 +549,15 @@ class LowerCtx {
               { expr: this.lowerExpr(expr.args[0]), passByRef: true, refMut: false },
             ];
             return { kind: "Call", func: "vecJoin", args, type, variadic: false, span: expr.span };
+          }
+          if (expr.method === "isEmpty") {
+            return { kind: "VecIsEmpty", object: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+          if (expr.method === "contains") {
+            return { kind: "VecContains", vec: this.lowerExpr(expr.object), value: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
+          }
+          if (expr.method === "reverse") {
+            return { kind: "VecReverse", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
           }
           if (expr.method === "len") {
             return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
@@ -593,9 +608,10 @@ class LowerCtx {
             "contains": "strContains", "startsWith": "strStartsWith", "endsWith": "strEndsWith",
             "indexOf": "strIndexOf", "lastIndexOf": "strLastIndexOf", "split": "strSplit", "trim": "strTrim",
             "trimStart": "strTrimStart", "trimEnd": "strTrimEnd",
-            "toLower": "strToLower", "toUpper": "strToUpper",
-            "replace": "strReplace", "repeat": "strRepeat",
-            "padStart": "strPadStart", "padEnd": "strPadEnd",
+            "toLower": "strToLower", "toUpper": "strToUpper", "reverse": "strReverse",
+            "replace": "strReplace", "replaceFirst": "strReplaceFirst",
+            "repeat": "strRepeat", "padStart": "strPadStart", "padEnd": "strPadEnd",
+            "isEmpty": "strIsEmpty", "charAt": "strCharAt", "parseInt": "strParseInt",
           };
           const fnName = strMethodMap[expr.method];
           if (fnName) {
@@ -603,8 +619,8 @@ class LowerCtx {
               { expr: this.lowerExpr(expr.object), passByRef: true, refMut: false },
               ...expr.args.map(a => ({ expr: this.lowerExpr(a), passByRef: true, refMut: false })),
             ];
-            // repeat/padStart/padEnd take i64 by value, not by ref
-            if ((expr.method === "repeat" || expr.method === "padStart" || expr.method === "padEnd") && args.length > 1) {
+            // methods with i64 params: pass by value, not by ref
+            if ((expr.method === "repeat" || expr.method === "padStart" || expr.method === "padEnd" || expr.method === "charAt") && args.length > 1) {
               args[1] = { ...args[1], passByRef: false };
             }
             return { kind: "Call", func: fnName, args, type, variadic: false, span: expr.span };
