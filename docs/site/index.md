@@ -38,20 +38,17 @@ fn main(): i32 {
 }   // names and loud freed here — no GC, no manual free
 ```
 
-### Concurrency in 5 lines
+### The safety you want without the syntax you don't
 
 ```milo
-from "std/runtime" import { greenSpawn, schedulerYield }
-
-fn main(): i32 {
-    greenSpawn(move (): void => { print("task A") })
-    greenSpawn(move (): void => { print("task B") })
-    greenSpawn(move (): void => { print("task C") })
-    return 0
+fn processLine(line: &string): void {
+    let method = line[0..3]       // zero-copy — no allocation
+    let path = line[4..line.len]
+    print(method, " -> ", path)
 }
 ```
 
-Each `greenSpawn` runs concurrently — lightweight, cooperative, no threads to manage. Scale to thousands without changing your code.
+`&string` is a borrow. It can't outlive the data it points to. The compiler enforces this — no annotations needed.
 
 ### Real programs
 
