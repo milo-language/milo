@@ -3,29 +3,29 @@
 // @expect: 30
 // @expect: done
 
-from "std/thread" import { spawn, threadJoin }
-from "std/sync" import { channelDestroy, channelNew, channelRecv, channelSend }
+from "std/thread" import { Thread }
+from "std/sync" import { Channel }
 
 fn main(): i32 {
-    let ch = channelNew(8)!
+    let ch = Channel.new(8)!
 
-    let t = spawn(move (): void => {
-        channelSend(ch, 10)!
-        channelSend(ch, 20)!
-        channelSend(ch, 30)!
-        channelSend(ch, 0)!
+    let t = Thread.spawn(move (): void => {
+        ch.send(10)!
+        ch.send(20)!
+        ch.send(30)!
+        ch.send(0)!
     })!
 
     while true {
-        let val = channelRecv(ch)!
+        let val = ch.recv()!
         if val == 0 {
             break
         }
         print(val)
     }
 
-    threadJoin(t)!
-    channelDestroy(ch)
+    t.join()!
+    ch.destroy()
     print("done")
     return 0
 }

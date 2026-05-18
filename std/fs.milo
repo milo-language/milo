@@ -1,7 +1,7 @@
 // std/fs — filesystem operations
 
 from "std/os" import { access, closedir, opendir, read, readdir, stat }
-from "std/io" import { IoError, openWrite, writeAll }
+from "std/io" import { File, IoError }
 from "std/platform" import { direntNameOffset, direntTypeOffset, statBufSize, statModeOffset, statSizeOffset }
 
 // File metadata from stat().
@@ -132,6 +132,6 @@ fn readDir(path: &string): Vec<DirEntry> {
 // Write a string to a file, creating or truncating it.
 
 fn writeFile(path: &string, data: &string): Result<i64, IoError> {
-    let f = openWrite(path)?
-    return writeAll(f, data)
+    let f = File.openWrite(path)?
+    return f.writeAll(data)
 }

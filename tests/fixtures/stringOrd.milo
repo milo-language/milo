@@ -1,0 +1,31 @@
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: true
+
+fn main(): i32 {
+    // basic ordering
+    print("abc" < "abd")
+    print("abd" < "abc")
+
+    // prefix: shorter < longer
+    print("ab" < "abc")
+    print("abc" > "ab")
+
+    // equal strings
+    print("hello" < "hello")
+    print("hello" <= "hello")
+    print("hello" >= "hello")
+    print("hello" > "hello")
+
+    // empty string
+    print("" < "a")
+    print("" <= "")
+    return 0
+}

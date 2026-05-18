@@ -3,7 +3,7 @@
 File I/O, stdin/stdout, and line reading.
 
 ```milo
-from "std/io" import { readFile, writeStdout, openRead, readAll, splitLines }
+from "std/io" import { File, readFile, writeStdout, splitLines }
 ```
 
 ## Types
@@ -72,50 +72,50 @@ fn readLine(): Option<string>
 
 Read a single line from stdin. Returns `None` at EOF.
 
-### openRead
+### File.openRead
 
 ```milo
-fn openRead(path: &string): Result<File, IoError>
+fn File.openRead(path: &string): Result<File, IoError>
 ```
 
 Open a file for reading.
 
-### openWrite
+### File.openWrite
 
 ```milo
-fn openWrite(path: &string): Result<File, IoError>
+fn File.openWrite(path: &string): Result<File, IoError>
 ```
 
 Open a file for writing (creates or truncates).
 
-### openAppend
+### File.openAppend
 
 ```milo
-fn openAppend(path: &string): Result<File, IoError>
+fn File.openAppend(path: &string): Result<File, IoError>
 ```
 
 Open a file for appending (creates if missing).
 
-### fileSize
+### f.fileSize
 
 ```milo
-fn fileSize(f: &File): i64
+fn fileSize(self: &File): i64
 ```
 
 Get the size of an open file in bytes.
 
-### readAll
+### f.readAll
 
 ```milo
-fn readAll(f: &File): Result<string, IoError>
+fn readAll(self: &File): Result<string, IoError>
 ```
 
 Read the entire contents of an open file.
 
-### writeAll
+### f.writeAll
 
 ```milo
-fn writeAll(f: &File, data: &string): Result<i64, IoError>
+fn writeAll(self: &File, data: &string): Result<i64, IoError>
 ```
 
 Write a string to an open file. Returns bytes written.
@@ -126,7 +126,7 @@ Write a string to an open file. Returns bytes written.
 fn readFile(path: &string): Result<string, IoError>
 ```
 
-Read an entire file by path. Convenience wrapper around `openRead` + `readAll`.
+Read an entire file by path. Convenience wrapper around `File.openRead` + `f.readAll()`.
 
 ```milo
 let contents = readFile("config.txt")!

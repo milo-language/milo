@@ -1,29 +1,29 @@
 // @expect: 200
 
-from "std/sync" import { atomicI64New, atomicI64Load, atomicI64Add, atomicI64Destroy }
-from "std/thread" import { spawn, threadJoin }
+from "std/sync" import { AtomicI64 }
+from "std/thread" import { Thread }
 
 fn main(): i32 {
-    let counter = atomicI64New(0)
+    let counter = AtomicI64.new(0)
 
-    let t1 = spawn(move (): void => {
+    let t1 = Thread.spawn(move (): void => {
         var i: i64 = 0
         while i < 100 {
-            atomicI64Add(counter, 1)
+            counter.add(1)
             i = i + 1
         }
     })!
-    let t2 = spawn(move (): void => {
+    let t2 = Thread.spawn(move (): void => {
         var i: i64 = 0
         while i < 100 {
-            atomicI64Add(counter, 1)
+            counter.add(1)
             i = i + 1
         }
     })!
 
-    threadJoin(t1)!
-    threadJoin(t2)!
-    print(atomicI64Load(counter))
-    atomicI64Destroy(counter)
+    t1.join()!
+    t2.join()!
+    print(counter.load())
+    counter.destroy()
     return 0
 }

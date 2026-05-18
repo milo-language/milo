@@ -1,17 +1,17 @@
 // @expect: sum 100
 
-from "std/thread" import { Thread, spawn, threadJoin }
-from "std/sync" import { channelDestroy, channelNew, channelRecv, channelSend }
+from "std/thread" import { Thread }
+from "std/sync" import { Channel }
 
 fn main(): i32 {
-    let ch = channelNew(16)!
+    let ch = Channel.new(16)!
     var threads: Vec<Thread> = Vec.new()
 
     var i: i64 = 0
     while i < 4 {
         let val = (i + 1) * 10
-        let t = spawn(move (): void => {
-            channelSend(ch, val)!
+        let t = Thread.spawn(move (): void => {
+            ch.send(val)!
         })!
         threads.push(t)
         i = i + 1
@@ -20,18 +20,18 @@ fn main(): i32 {
     var sum: i64 = 0
     i = 0
     while i < 4 {
-        let v = channelRecv(ch)!
+        let v = ch.recv()!
         sum = sum + v
         i = i + 1
     }
 
     i = 0
     while i < 4 {
-        threadJoin(threads[i])!
+        threads[i].join()!
         i = i + 1
     }
 
-    channelDestroy(ch)
+    ch.destroy()
     print("sum ", sum)
     return 0
 }

@@ -1,9 +1,9 @@
 # std/thread
 
-Safe concurrency with OS threads. `spawn` requires a `move` closure — captured variables transfer ownership into the thread, so there's no shared mutable state and no data races by construction. No `unsafe`, no `Arc`, no lifetime annotations. Pair with `std/sync` for channels and mutexes when threads need to communicate.
+Safe concurrency with OS threads. `Thread.spawn()` requires a `move` closure — captured variables transfer ownership into the thread, so there's no shared mutable state and no data races by construction. No `unsafe`, no `Arc`, no lifetime annotations. Pair with `std/sync` for channels and mutexes when threads need to communicate.
 
 ```milo
-from "std/thread" import { spawn, threadJoin, threadSleep }
+from "std/thread" import { Thread }
 ```
 
 ## Quick start: parallel workers with a result channel
@@ -11,8 +11,8 @@ from "std/thread" import { spawn, threadJoin, threadSleep }
 Fan out CPU work across threads, collect results through a channel — a common pattern for batch processing, parallel builds, or map-reduce style pipelines.
 
 ```milo
-from "std/thread" import { spawn, threadJoin, Thread }
-from "std/sync" import { channelNew, channelSend, channelRecv, channelDestroy, Channel }
+from "std/thread" import { Thread }
+from "std/sync" import { Channel }
 
 fn processChunk(id: i64, start: i64, end: i64, ch: Channel): void {
     var sum: i64 = 0
@@ -21,7 +21,7 @@ fn processChunk(id: i64, start: i64, end: i64, ch: Channel): void {
         sum = sum + i
         i = i + 1
     }
-    channelSend(ch, sum)!
+    ch.send(sum)!
     print($"worker {id}: summed {start}..{end} = {sum}")
 }
 
@@ -30,7 +30,7 @@ fn main(): i32 {
     let total: i64 = 1000000
     let chunkSize: i64 = total / numWorkers
 
-    let ch = channelNew(numWorkers)!
+    let ch = Channel.new(numWorkers)!
     var threads: Vec<Thread> = Vec.new()
 
     var i: i64 = 0
@@ -38,7 +38,7 @@ fn main(): i32 {
         let id = i
         let start = i * chunkSize
         let end = if i == numWorkers - 1 { total } else { start + chunkSize }
-        let t = spawn(move (): void => {
+        let t = Thread.spawn(move (): void => {
             processChunk(id, start, end, ch)
         })!
         threads.push(t)
@@ -48,16 +48,16 @@ fn main(): i32 {
     var result: i64 = 0
     i = 0
     while i < numWorkers {
-        result = result + channelRecv(ch)!
+        result = result + ch.recv()!
         i = i + 1
     }
 
     i = 0
     while i < numWorkers {
-        threadJoin(threads[i])!
+        threads[i].join()!
         i = i + 1
     }
-    channelDestroy(ch)
+    ch.destroy()
 
     print($"total: {result}")
     return 0
@@ -78,15 +78,33 @@ struct Thread {
 
 Handle to a spawned OS thread.
 
-## Functions
+## Methods
 
-### spawn
+### Thread.spawn
 
 ```milo
-fn spawn(f: () => void): Result<Thread>
+fn Thread.spawn(f: () => void): Result<Thread>
 ```
 
 Spawn a new thread running the given closure. The closure must use `move` semantics — captured variables are heap-allocated and moved into the thread.
+
+### t.join
+
+```milo
+fn join(self: &Thread): Result<i32>
+```
+
+Block until the thread finishes.
+
+### Thread.sleep
+
+```milo
+fn Thread.sleep(ms: i64): void
+```
+
+Sleep the current thread for `ms` milliseconds.
+
+## Low-level Functions
 
 ### threadSpawn
 
@@ -104,37 +122,21 @@ fn threadSpawnFn(f: (*u8) => *u8): Result<Thread>
 
 Spawn a thread from a no-arg function pointer. Requires `unsafe`.
 
-### threadJoin
-
-```milo
-fn threadJoin(t: &Thread): Result<i32>
-```
-
-Block until the thread finishes.
-
-### threadSleep
-
-```milo
-fn threadSleep(ms: i64): void
-```
-
-Sleep the current thread for `ms` milliseconds.
-
 ## Example
 
 ```milo
-from "std/thread" import { spawn, threadJoin }
+from "std/thread" import { Thread }
 
 fn main(): i32 {
     let msg = "hello from thread"
     let val: i64 = 42
 
-    let t = spawn(move (): void => {
+    let t = Thread.spawn(move (): void => {
         print(msg)
         print($"value is {val}")
     })!
 
-    threadJoin(t)!
+    t.join()!
     print("done")
     return 0
 }

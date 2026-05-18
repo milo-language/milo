@@ -43,6 +43,7 @@ export type HIRExpr =
   | { kind: "HashMapContains"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapRemove"; map: HIRExpr; key: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HashMapLen"; object: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "StringWithCapacity"; capacity: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringPush"; str: HIRExpr; byte: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringSubstr"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringSlice"; str: HIRExpr; start: HIRExpr; end: HIRExpr; type: TypeKind; span?: Span }

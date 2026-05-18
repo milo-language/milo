@@ -623,6 +623,7 @@ class LowerCtx {
             "replace": "strReplace", "replaceFirst": "strReplaceFirst",
             "repeat": "strRepeat", "padStart": "strPadStart", "padEnd": "strPadEnd",
             "isEmpty": "strIsEmpty", "charAt": "strCharAt", "parseInt": "strParseInt",
+            "splitWords": "strSplitWords", "splitWhitespace": "strSplitWhitespace",
           };
           const fnName = strMethodMap[expr.method];
           if (fnName) {

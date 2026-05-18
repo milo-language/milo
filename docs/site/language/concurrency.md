@@ -6,38 +6,38 @@ Milo has two concurrency layers: OS threads for CPU-bound parallelism, and green
 
 ### Spawning Threads
 
-Use `spawn()` with a `move` closure to run code on a new OS thread:
+Use `Thread.spawn()` with a **move closure** to run code on a new OS thread. A move closure takes ownership of its captured variables instead of borrowing them — this is required because the new thread may outlive the scope where the variables were defined. The `move` keyword before the closure parameters signals this transfer:
 
 ```milo
-from "std/thread" import { spawn, threadJoin, Thread }
+from "std/thread" import { Thread }
 
-let t = spawn(move (): void => {
+let t = Thread.spawn(move (): void => {
     print("hello from thread")
 })!
-threadJoin(t)!
+t.join()!
 ```
 
-Move closures are required for `spawn` — they heap-allocate captured variables so they're safe to send across threads.
+Move closures heap-allocate captured variables so they're safe to send across threads.
 
 ```milo
-from "std/thread" import { spawn, threadJoin, Thread }
+from "std/thread" import { Thread }
 
 var threads: Vec<Thread> = Vec.new()
 for i in 0..4 {
     let id = i as i64
-    let t = spawn(move (): void => {
+    let t = Thread.spawn(move (): void => {
         print($"thread {id}")
     })!
     threads.push(t)
 }
 for i in 0..4 {
-    threadJoin(threads[i])!
+    threads[i].join()!
 }
 ```
 
 ### Thread Safety (Send / Sync)
 
-The compiler enforces thread safety at compile time. `spawn()` requires all captured variables to implement `Send`.
+The compiler enforces thread safety at compile time. `Thread.spawn()` requires all captured variables to implement `Send`.
 
 **Send types** (safe to move to another thread): all primitives, `string`, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
 
@@ -46,13 +46,13 @@ The compiler enforces thread safety at compile time. `spawn()` requires all capt
 ```milo
 // Compiles — i64 and string are Send
 let msg = "hello"
-let t = spawn(move (): void => { print(msg) })!
+let t = Thread.spawn(move (): void => { print(msg) })!
 
 // Compile error — *u8 is not Send
 var x: i32 = 42
 unsafe {
     let p = (&x) as *u8
-    let t = spawn(move (): void => {    // error: cannot send 'p' of type '*u8'
+    let t = Thread.spawn(move (): void => {    // error: cannot send 'p' of type '*u8'
         print(p as i64)
     })!
 }
@@ -90,34 +90,34 @@ Each branch runs on its own OS thread. Variables bound inside are available afte
 Bounded FIFO channels for message passing between threads:
 
 ```milo
-from "std/thread" import { spawn, threadJoin, Thread }
-from "std/sync" import { channelNew, channelSend, channelRecv, channelDestroy }
+from "std/thread" import { Thread }
+from "std/sync" import { Channel }
 
-let ch = channelNew(8)!
+let ch = Channel.new(8)!
 
-let t = spawn(move (): void => {
-    channelSend(ch, 10)!
-    channelSend(ch, 20)!
-    channelSend(ch, 0)!   // sentinel
+let t = Thread.spawn(move (): void => {
+    ch.send(10)!
+    ch.send(20)!
+    ch.send(0)!   // sentinel
 })!
 
 while true {
-    let val = channelRecv(ch)!
+    let val = ch.recv()!
     if val == 0 { break }
     print(val)
 }
-threadJoin(t)!
-channelDestroy(ch)
+t.join()!
+ch.destroy()
 ```
 
 Non-blocking variants:
 
 ```milo
-from "std/sync" import { channelNew, channelTrySend, channelTryRecv, channelLen }
+from "std/sync" import { Channel }
 
-let ch = channelNew(4)!
-channelTrySend(ch, 42)       // returns true if sent, false if full
-let val = channelTryRecv(ch)  // returns Option<i64>
+let ch = Channel.new(4)!
+ch.trySend(42)               // returns true if sent, false if full
+let val = ch.tryRecv()        // returns Option<i64>
 match val {
     Option.Some(v) => { print(v) }
     Option.None => { print("empty") }
@@ -127,25 +127,25 @@ match val {
 ### Mutex and RwLock
 
 ```milo
-from "std/sync" import { mutexNew, withLock, mutexDestroy }
+from "std/sync" import { Mutex }
 
-let m = mutexNew()!
+let m = Mutex.new()!
 var x: i64 = 0
-withLock(m, (): void => {
+m.withLock((): void => {
     x = 42
 })!
-mutexDestroy(m)
+m.destroy()
 ```
 
 Reader-writer lock for multiple concurrent readers OR one exclusive writer:
 
 ```milo
-from "std/sync" import { rwLockNew, withReadLock, withWriteLock, rwLockDestroy }
+from "std/sync" import { RwLock }
 
-let rw = rwLockNew()!
-withReadLock(rw, (): void => { /* read shared data */ })!
-withWriteLock(rw, (): void => { /* write shared data */ })!
-rwLockDestroy(rw)
+let rw = RwLock.new()!
+rw.withReadLock((): void => { /* read shared data */ })!
+rw.withWriteLock((): void => { /* write shared data */ })!
+rw.destroy()
 ```
 
 ### Atomics
@@ -153,12 +153,12 @@ rwLockDestroy(rw)
 Lock-free atomic types for cross-thread counters and flags:
 
 ```milo
-from "std/sync" import { atomicI64New, atomicI64Load, atomicI64Add, atomicI64Cas, atomicI64Destroy }
+from "std/sync" import { AtomicI64 }
 
-let counter = atomicI64New(0)
-atomicI64Add(counter, 1)
-print(atomicI64Load(counter))   // 1
-atomicI64Destroy(counter)
+let counter = AtomicI64.new(0)
+counter.add(1)
+print(counter.load())   // 1
+counter.destroy()
 ```
 
 All operations use sequential consistency. `AtomicI64` and `AtomicBool` are `@send` + `@sync`.
@@ -170,10 +170,10 @@ Lightweight user-space threads. Each gets a 64KB stack instead of ~8MB for an OS
 ### Spawning Green Threads
 
 ```milo
-from "std/runtime" import { greenSpawn }
+from "std/runtime" import { GreenThread }
 
 fn main(): i32 {
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("hello from green thread")
     })
     return 0
@@ -185,15 +185,15 @@ The compiler injects a scheduler drain at the end of `main` that runs all spawne
 ### Cooperative Yielding
 
 ```milo
-from "std/runtime" import { greenSpawn, schedulerYield }
+from "std/runtime" import { GreenThread, schedulerYield }
 
 fn main(): i32 {
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("A1")
         schedulerYield()
         print("A2")
     })
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("B1")
         schedulerYield()
         print("B2")
@@ -205,16 +205,16 @@ fn main(): i32 {
 
 ### Transparent Async I/O
 
-`tcpRecv` and `tcpSend` from `std/net` automatically detect green thread context. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
+`stream.recv()` and `stream.send()` from `std/net` automatically detect green thread context. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
 
 ```milo
-from "std/net" import { tcpConnect, tcpSend, tcpRecv }
-from "std/runtime" import { greenSpawn }
+from "std/net" import { TcpStream }
+from "std/runtime" import { GreenThread }
 
-greenSpawn(move (): void => {
-    let stream = tcpConnect(ip, port)!
-    tcpSend(stream, "hello")!      // yields if socket buffer full
-    let data = tcpRecv(stream)!    // yields until data arrives
+GreenThread.spawn(move (): void => {
+    let stream = TcpStream.connect(ip, port)!
+    stream.send("hello")!          // yields if socket buffer full
+    let data = stream.recv()!      // yields until data arrives
     print(data)
 })
 ```
@@ -223,7 +223,7 @@ The same calls work identically outside green threads — they just block normal
 
 ### Comparison
 
-| | OS Thread (`spawn`) | Green Thread (`greenSpawn`) |
+| | OS Thread (`Thread.spawn`) | Green Thread (`GreenThread.spawn`) |
 |---|---|---|
 | Stack size | ~8MB | 64KB |
 | Context switch | Kernel | Userspace |

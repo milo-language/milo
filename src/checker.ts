@@ -2267,8 +2267,8 @@ export class TypeChecker {
               this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `compare individual fields or implement an eq method`);
             }
           } else {
-            // ordering ops require numeric
-            if (!isNumeric(lt) && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric type, got ${typeName(lt)}`, sp);
+            // ordering ops: numeric or string
+            if (!isNumeric(lt) && lt.tag !== "string" && lt.tag !== "unknown") this.error(`operator '${expr.op}' requires numeric or string type, got ${typeName(lt)}`, sp);
           }
           return this.setType(expr, { tag: "bool" });
         }
@@ -3184,6 +3184,10 @@ export class TypeChecker {
           if (expr.method === "isEmpty") {
             if (expr.args.length !== 0) { this.error(`'isEmpty' takes no arguments`, sp); }
             return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "splitWords" || expr.method === "splitWhitespace") {
+            if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "vec", element: { tag: "string" } });
           }
           if (expr.method === "trim" || expr.method === "trimStart" || expr.method === "trimEnd" || expr.method === "toLower" || expr.method === "toUpper" || expr.method === "reverse") {
             if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }

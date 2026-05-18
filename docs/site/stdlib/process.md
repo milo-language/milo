@@ -3,7 +3,7 @@
 Command execution and child process management.
 
 ```milo
-from "std/process" import { Process, run, spawn, waitFor, capture, signal }
+from "std/process" import { Process, run, capture }
 ```
 
 ## Types
@@ -28,18 +28,18 @@ fn run(command: &string): Result<i32>
 
 Execute a shell command and wait for it to finish. Returns the exit code.
 
-### spawn
+### Process.spawn
 
 ```milo
-fn spawn(command: &string): Result<Process>
+fn Process.spawn(command: &string): Result<Process>
 ```
 
 Start a command in the background without waiting. Returns a `Process` handle.
 
-### waitFor
+### p.wait
 
 ```milo
-fn waitFor(proc: &Process): Result<i32>
+fn wait(self: &Process): Result<i32>
 ```
 
 Block until the process exits. Returns the exit code.
@@ -52,10 +52,10 @@ fn capture(command: &string): Result<string>
 
 Execute a command and return its stdout as a string.
 
-### signal
+### p.signal
 
 ```milo
-fn signal(proc: &Process, sig: i32): Result<i32>
+fn signal(self: &Process, sig: i32): Result<i32>
 ```
 
 Send a POSIX signal to the process. Returns 0 on success.
@@ -63,7 +63,7 @@ Send a POSIX signal to the process. Returns 0 on success.
 ## Example
 
 ```milo
-from "std/process" import { spawn, waitFor, capture, run }
+from "std/process" import { Process, run, capture }
 
 fn main(): i32 {
     // Run and get exit code
@@ -74,8 +74,8 @@ fn main(): i32 {
     print(output)
 
     // Spawn and wait
-    let proc = spawn("sleep 1")!
-    let exitCode = waitFor(&proc)!
+    let proc = Process.spawn("sleep 1")!
+    let exitCode = proc.wait()!
 
     return 0
 }

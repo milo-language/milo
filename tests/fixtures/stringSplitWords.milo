@@ -1,0 +1,23 @@
+// @expect: hello
+// @expect: world
+// @expect: 2
+// @expect: foo
+// @expect: bar
+// @expect: baz
+// @expect: 3
+
+fn main(): i32 {
+    let s = "  hello   world  "
+    let words = s.splitWhitespace()
+    print(words[0])
+    print(words[1])
+    print(words.len)
+
+    let s2 = "foo bar baz"
+    let words2 = s2.splitWords()
+    print(words2[0])
+    print(words2[1])
+    print(words2[2])
+    print(words2.len)
+    return 0
+}

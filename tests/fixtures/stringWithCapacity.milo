@@ -1,0 +1,16 @@
+// @expect: hello world
+// @expect: 11
+// @expect:
+// @expect: 0
+
+fn main(): i32 {
+    var s = String.withCapacity(64)
+    s = s + "hello" + " " + "world"
+    print(s)
+    print(s.len.toString())
+
+    let empty = String.withCapacity(16)
+    print(empty)
+    print(empty.len.toString())
+    return 0
+}

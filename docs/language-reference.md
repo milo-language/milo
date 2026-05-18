@@ -1169,18 +1169,18 @@ print(a != b)   // false
 Use `Thread.spawn()` with a **move closure** to run code on a new OS thread. A move closure takes ownership of its captured variables instead of borrowing them — this is required because the new thread may outlive the scope where the variables were defined. The `move` keyword before the closure parameters signals this transfer:
 
 ```milo
-from "std/thread" import { Thread, threadJoin }
+from "std/thread" import { Thread }
 
 let t = Thread.spawn(move (): void => {
     print("hello from thread")
 })!
-threadJoin(t)!
+t.join()!
 ```
 
 Move closures heap-allocate captured variables so they're safe to send across threads.
 
 ```milo
-from "std/thread" import { Thread, threadJoin }
+from "std/thread" import { Thread }
 
 var threads: Vec<Thread> = Vec.new()
 for i in 0..4 {
@@ -1191,7 +1191,7 @@ for i in 0..4 {
     threads.push(t)
 }
 for i in 0..4 {
-    threadJoin(threads[i])!
+    threads[i].join()!
 }
 ```
 
@@ -1257,62 +1257,62 @@ Each branch is implicitly a move closure — captured variables are copied/moved
 Bounded FIFO channels for message passing between threads. Channel is a handle type — safe to capture in move closures without `unsafe`.
 
 ```milo
-from "std/thread" import { Thread, threadJoin }
-from "std/sync" import { channelNew, channelSend, channelRecv, channelDestroy }
+from "std/thread" import { Thread }
+from "std/sync" import { Channel }
 
-let ch = channelNew(8)!
+let ch = Channel.new(8)!
 
 let t = Thread.spawn(move (): void => {
-    channelSend(ch, 10)!
-    channelSend(ch, 20)!
-    channelSend(ch, 0)!   // sentinel
+    ch.send(10)!
+    ch.send(20)!
+    ch.send(0)!   // sentinel
 })!
 
 while true {
-    let val = channelRecv(ch)!
+    let val = ch.recv()!
     if val == 0 { break }
     print(val)
 }
-threadJoin(t)!
-channelDestroy(ch)
+t.join()!
+ch.destroy()
 ```
 
 Non-blocking variants for polling:
 
 ```milo
-from "std/sync" import { channelNew, channelTrySend, channelTryRecv, channelLen, channelDestroy }
+from "std/sync" import { Channel }
 
-let ch = channelNew(4)!
-channelTrySend(ch, 42)       // returns true if sent, false if full
-let val = channelTryRecv(ch)  // returns Option<i64> — None if empty
+let ch = Channel.new(4)!
+ch.trySend(42)               // returns true if sent, false if full
+let val = ch.tryRecv()        // returns Option<i64> — None if empty
 match val {
     Option.Some(v) => { print(v) }
     Option.None => { print("empty") }
 }
-print(channelLen(ch))         // current number of items
+print(ch.len())               // current number of items
 ```
 
 ### Mutex
 
 ```milo
-from "std/sync" import { mutexNew, mutexLock, mutexUnlock, withLock, mutexDestroy }
+from "std/sync" import { Mutex }
 
-let m = mutexNew()!
-mutexLock(m)!
+let m = Mutex.new()!
+m.lock()!
 // critical section
-mutexUnlock(m)!
-mutexDestroy(m)
+m.unlock()!
+m.destroy()
 ```
 
 Prefer `withLock` for scoped locking — guarantees unlock:
 
 ```milo
-let m = mutexNew()!
+let m = Mutex.new()!
 var x: i64 = 0
-withLock(m, (): void => {
+m.withLock((): void => {
     x = 42
 })!
-mutexDestroy(m)
+m.destroy()
 ```
 
 ### RwLock
@@ -1320,21 +1320,21 @@ mutexDestroy(m)
 Reader-writer lock: multiple concurrent readers OR one exclusive writer.
 
 ```milo
-from "std/sync" import { rwLockNew, rwLockRead, rwLockWrite, rwLockUnlock, withReadLock, withWriteLock, rwLockDestroy }
+from "std/sync" import { RwLock }
 
-let rw = rwLockNew()!
+let rw = RwLock.new()!
 
 // Multiple readers allowed simultaneously
-withReadLock(rw, (): void => {
+rw.withReadLock((): void => {
     // read shared data
 })!
 
 // Exclusive writer
-withWriteLock(rw, (): void => {
+rw.withWriteLock((): void => {
     // write shared data
 })!
 
-rwLockDestroy(rw)
+rw.destroy()
 ```
 
 ### Atomics
@@ -1342,20 +1342,19 @@ rwLockDestroy(rw)
 Lock-free atomic types for cross-thread counters and flags. No mutex needed.
 
 ```milo
-from "std/sync" import { atomicI64New, atomicI64Load, atomicI64Store, atomicI64Add, atomicI64Sub, atomicI64Cas, atomicI64Destroy }
-from "std/sync" import { atomicBoolNew, atomicBoolLoad, atomicBoolStore, atomicBoolSwap, atomicBoolDestroy }
+from "std/sync" import { AtomicI64, AtomicBool }
 
-let counter = atomicI64New(0)
-atomicI64Add(counter, 1)        // returns old value
-print(atomicI64Load(counter))   // 1
-atomicI64Store(counter, 42)
-let old = atomicI64Cas(counter, 42, 99)  // compare-and-swap, returns old value
-atomicI64Destroy(counter)
+let counter = AtomicI64.new(0)
+counter.add(1)                  // returns old value
+print(counter.load())           // 1
+counter.store(42)
+let old = counter.cas(42, 99)   // compare-and-swap, returns old value
+counter.destroy()
 
-let flag = atomicBoolNew(false)
-atomicBoolStore(flag, true)
-let prev = atomicBoolSwap(flag, false)  // returns old value
-atomicBoolDestroy(flag)
+let flag = AtomicBool.new(false)
+flag.store(true)
+let prev = flag.swap(false)     // returns old value
+flag.destroy()
 ```
 
 All atomic operations use sequential consistency (seq_cst). AtomicI64 and AtomicBool are `@send` + `@sync` — safe to share across threads.
@@ -1365,32 +1364,32 @@ All atomic operations use sequential consistency (seq_cst). AtomicI64 and Atomic
 | Function | Description |
 |----------|-------------|
 | `Thread.spawn(move () => {...})` | Spawn thread with move closure |
-| `threadJoin(t)` | Wait for thread to finish |
-| `threadSleep(ms)` | Sleep current thread (milliseconds) |
+| `t.join()` | Wait for thread to finish |
+| `Thread.sleep(ms)` | Sleep current thread (milliseconds) |
 | `parallel { let a = ...; let b = ... }` | Run branches concurrently, join all |
-| `channelNew(cap)` | Create bounded channel |
-| `channelSend(ch, val)` | Send i64 value (blocks if full) |
-| `channelRecv(ch)` | Receive i64 value (blocks if empty) |
-| `channelTrySend(ch, val)` | Non-blocking send, returns `bool` |
-| `channelTryRecv(ch)` | Non-blocking receive, returns `Option<i64>` |
-| `channelLen(ch)` | Current items in channel |
-| `channelDestroy(ch)` | Free channel resources |
-| `mutexNew()` | Create mutex |
-| `mutexLock(m)` / `mutexUnlock(m)` | Lock/unlock |
-| `withLock(m, f)` | Scoped lock — runs closure, unlocks |
-| `mutexDestroy(m)` | Free mutex |
-| `rwLockNew()` | Create reader-writer lock |
-| `rwLockRead(rw)` / `rwLockWrite(rw)` | Acquire read/write lock |
-| `rwLockUnlock(rw)` | Release lock |
-| `withReadLock(rw, f)` / `withWriteLock(rw, f)` | Scoped read/write lock |
-| `rwLockDestroy(rw)` | Free rwlock |
-| `atomicI64New(v)` / `atomicBoolNew(v)` | Create atomic |
-| `atomicI64Load(a)` / `atomicBoolLoad(a)` | Atomic read |
-| `atomicI64Store(a, v)` / `atomicBoolStore(a, v)` | Atomic write |
-| `atomicI64Add(a, v)` / `atomicI64Sub(a, v)` | Atomic add/sub (returns old) |
-| `atomicI64Cas(a, exp, des)` | Compare-and-swap (returns old) |
-| `atomicBoolSwap(a, v)` | Atomic swap (returns old) |
-| `atomicI64Destroy(a)` / `atomicBoolDestroy(a)` | Free atomic |
+| `Channel.new(cap)` | Create bounded channel |
+| `ch.send(val)` | Send i64 value (blocks if full) |
+| `ch.recv()` | Receive i64 value (blocks if empty) |
+| `ch.trySend(val)` | Non-blocking send, returns `bool` |
+| `ch.tryRecv()` | Non-blocking receive, returns `Option<i64>` |
+| `ch.len()` | Current items in channel |
+| `ch.destroy()` | Free channel resources |
+| `Mutex.new()` | Create mutex |
+| `m.lock()` / `m.unlock()` | Lock/unlock |
+| `m.withLock(f)` | Scoped lock — runs closure, unlocks |
+| `m.destroy()` | Free mutex |
+| `RwLock.new()` | Create reader-writer lock |
+| `r.read()` / `r.write()` | Acquire read/write lock |
+| `r.unlock()` | Release lock |
+| `r.withReadLock(f)` / `r.withWriteLock(f)` | Scoped read/write lock |
+| `r.destroy()` | Free rwlock |
+| `AtomicI64.new(v)` / `AtomicBool.new(v)` | Create atomic |
+| `a.load()` | Atomic read |
+| `a.store(v)` | Atomic write |
+| `a.add(v)` / `a.sub(v)` | Atomic add/sub (returns old) |
+| `a.cas(exp, des)` | Compare-and-swap (returns old) |
+| `a.swap(v)` | Atomic swap (returns old) |
+| `a.destroy()` | Free atomic |
 
 ---
 
@@ -1401,10 +1400,10 @@ Green threads are lightweight, user-space threads for high-concurrency I/O. You 
 ### Spawning Green Threads
 
 ```milo
-from "std/runtime" import { greenSpawn }
+from "std/runtime" import { GreenThread }
 
 fn main(): i32 {
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("hello from green thread")
     })
     return 0
@@ -1418,15 +1417,15 @@ Green threads run cooperatively. The compiler automatically injects a scheduler 
 Green threads yield control explicitly with `schedulerYield()`:
 
 ```milo
-from "std/runtime" import { greenSpawn, schedulerYield }
+from "std/runtime" import { GreenThread, schedulerYield }
 
 fn main(): i32 {
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("A1")
         schedulerYield()
         print("A2")
     })
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("B1")
         schedulerYield()
         print("B2")
@@ -1441,10 +1440,10 @@ fn main(): i32 {
 Green threads can yield until a file descriptor is ready for reading or writing. This integrates with the platform event loop (kqueue on macOS, epoll on Linux):
 
 ```milo
-from "std/runtime" import { greenSpawn, schedulerWaitRead, schedulerWaitWrite }
+from "std/runtime" import { GreenThread, schedulerWaitRead, schedulerWaitWrite }
 from "std/event" import { setNonblocking }
 
-greenSpawn(move (): void => {
+GreenThread.spawn(move (): void => {
     setNonblocking(fd)
     // ... attempt read ...
     // if EAGAIN:
@@ -1455,21 +1454,21 @@ greenSpawn(move (): void => {
 
 ### Transparent Async I/O
 
-`tcpRecv` and `tcpSend` from `std/net` automatically detect when they're running inside a green thread. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
+`stream.recv()` and `stream.send()` from `std/net` automatically detect when they're running inside a green thread. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
 
 ```milo
-from "std/net" import { tcpConnect, tcpSend, tcpRecv }
-from "std/runtime" import { greenSpawn }
+from "std/net" import { TcpStream }
+from "std/runtime" import { GreenThread }
 
-greenSpawn(move (): void => {
-    let stream = tcpConnect(ip, port)!
-    tcpSend(stream, "hello")!      // yields if socket buffer full
-    let data = tcpRecv(stream)!    // yields until data arrives
+GreenThread.spawn(move (): void => {
+    let stream = TcpStream.connect(ip, port)!
+    stream.send("hello")!         // yields if socket buffer full
+    let data = stream.recv()!     // yields until data arrives
     print(data)
 })
 ```
 
-The same `tcpSend`/`tcpRecv` calls work identically outside green threads — they just block normally.
+The same `stream.send()`/`stream.recv()` calls work identically outside green threads — they just block normally.
 
 ### Echo Server Example
 
@@ -1479,14 +1478,14 @@ A concurrent echo server handling multiple clients with green threads:
 from "std/os" import { socket, bind, listen, accept, read, write, close, setsockopt, getsockname, ntohs }
 from "std/platform" import { makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
-from "std/runtime" import { greenSpawn, schedulerWaitRead }
+from "std/runtime" import { GreenThread, schedulerWaitRead }
 
 fn main(): i32 {
     unsafe {
         let serverFd = socket(2, 1, 0)
         // ... bind, listen, setNonblocking(serverFd) ...
 
-        greenSpawn(move (): void => {
+        GreenThread.spawn(move (): void => {
             while true {
                 var clientAddr = makeZeroedSockaddr()
                 var addrlen: u32 = 16
@@ -1500,7 +1499,7 @@ fn main(): i32 {
                 }
                 setNonblocking(clientFd)
                 let fd = clientFd
-                greenSpawn(move (): void => {
+                GreenThread.spawn(move (): void => {
                     var buf: [u8 ; 4096] = [0 ; 4096]
                     // read + echo back, yielding on EAGAIN
                     let n = read(fd, buf, 4096)
@@ -1516,7 +1515,7 @@ fn main(): i32 {
 
 ### Green Thread vs OS Thread
 
-| | OS Thread (`spawn`) | Green Thread (`greenSpawn`) |
+| | OS Thread (`Thread.spawn`) | Green Thread (`GreenThread.spawn`) |
 |---|---|---|
 | Stack size | ~8MB | 64KB |
 | Context switch | Kernel (microseconds) | Userspace (nanoseconds) |
@@ -1528,7 +1527,7 @@ fn main(): i32 {
 
 | Function | Description |
 |----------|-------------|
-| `greenSpawn(move () => {...})` | Spawn a green thread |
+| `GreenThread.spawn(move () => {...})` | Spawn a green thread |
 | `schedulerYield()` | Yield to other green threads |
 | `schedulerWaitRead(fd)` | Yield until fd is readable |
 | `schedulerWaitWrite(fd)` | Yield until fd is writable |

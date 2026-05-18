@@ -111,17 +111,7 @@ fn sortStringsByFreq(keys: &mut Vec<string>, vals: &mut Vec<i64>): void {
 // ── insertion sort for strings (stable, good for small n) ──
 
 fn _strLessThan(a: &string, b: &string): bool {
-    var i: i64 = 0
-    while i < a.len && i < b.len {
-        if a[i] < b[i] {
-            return true
-        }
-        if a[i] > b[i] {
-            return false
-        }
-        i = i + 1
-    }
-    return a.len < b.len
+    return a < b
 }
 
 fn _isortStrings(v: &mut Vec<string>, lo: i64, hi: i64): void {

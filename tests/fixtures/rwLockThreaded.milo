@@ -1,65 +1,65 @@
 // @expect: 600
 
-from "std/sync" import { rwLockNew, rwLockRead, rwLockWrite, rwLockUnlock, rwLockDestroy, atomicI64New, atomicI64Load, atomicI64Add, atomicI64Destroy }
-from "std/thread" import { spawn, threadJoin }
+from "std/sync" import { RwLock, AtomicI64 }
+from "std/thread" import { Thread }
 
 fn main(): i32 {
-    let rw = rwLockNew()!
-    let counter = atomicI64New(0)
-    let readCount = atomicI64New(0)
+    let rw = RwLock.new()!
+    let counter = AtomicI64.new(0)
+    let readCount = AtomicI64.new(0)
 
     // 2 writer threads, each adds 100
-    let w1 = spawn(move (): void => {
+    let w1 = Thread.spawn(move (): void => {
         var i: i64 = 0
         while i < 100 {
-            rwLockWrite(rw)!
-            atomicI64Add(counter, 1)
-            rwLockUnlock(rw)!
+            rw.write()!
+            counter.add(1)
+            rw.unlock()!
             i = i + 1
         }
     })!
-    let w2 = spawn(move (): void => {
+    let w2 = Thread.spawn(move (): void => {
         var i: i64 = 0
         while i < 100 {
-            rwLockWrite(rw)!
-            atomicI64Add(counter, 1)
-            rwLockUnlock(rw)!
+            rw.write()!
+            counter.add(1)
+            rw.unlock()!
             i = i + 1
         }
     })!
 
     // 2 reader threads, each reads 200 times
-    let r1 = spawn(move (): void => {
+    let r1 = Thread.spawn(move (): void => {
         var i: i64 = 0
         while i < 200 {
-            rwLockRead(rw)!
-            let _v = atomicI64Load(counter)
-            rwLockUnlock(rw)!
-            atomicI64Add(readCount, 1)
+            rw.read()!
+            let _v = counter.load()
+            rw.unlock()!
+            readCount.add(1)
             i = i + 1
         }
     })!
-    let r2 = spawn(move (): void => {
+    let r2 = Thread.spawn(move (): void => {
         var i: i64 = 0
         while i < 200 {
-            rwLockRead(rw)!
-            let _v = atomicI64Load(counter)
-            rwLockUnlock(rw)!
-            atomicI64Add(readCount, 1)
+            rw.read()!
+            let _v = counter.load()
+            rw.unlock()!
+            readCount.add(1)
             i = i + 1
         }
     })!
 
-    threadJoin(w1)!
-    threadJoin(w2)!
-    threadJoin(r1)!
-    threadJoin(r2)!
+    w1.join()!
+    w2.join()!
+    r1.join()!
+    r2.join()!
 
     // readCount=400 (2 readers * 200) + counter=200 (2 writers * 100)
-    print(atomicI64Load(readCount) + atomicI64Load(counter))
+    print(readCount.load() + counter.load())
 
-    atomicI64Destroy(counter)
-    atomicI64Destroy(readCount)
-    rwLockDestroy(rw)
+    counter.destroy()
+    readCount.destroy()
+    rw.destroy()
     return 0
 }

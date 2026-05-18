@@ -11,14 +11,14 @@
 // @expect: green 8
 // @expect: green 9
 
-from "std/runtime" import { greenSpawn }
+from "std/runtime" import { GreenThread }
 
 fn main(): i32 {
     print("start")
     var i = 0
     while i < 10 {
         let n = i
-        greenSpawn(move (): void => {
+        GreenThread.spawn(move (): void => {
             print("green " + n.toString())
         })
         i = i + 1

@@ -61,93 +61,86 @@ impl Drop for File {
     }
 }
 
-fn openRead(path: &string): Result<File, IoError> {
-    unsafe {
-        let fd = open(path, 0)
-        if fd < 0 {
-            return Result.Err(_ioError(path))
-        }
-        return Result.Ok(File {
-            fd: fd
-        }
-        )
-    }
-}
-
-fn openWrite(path: &string): Result<File, IoError> {
-    unsafe {
-        let fd = open(path, oWriteCreateTrunc(), 420)
-        if fd < 0 {
-            return Result.Err(_ioError(path))
-        }
-        return Result.Ok(File {
-            fd: fd
-        }
-        )
-    }
-}
-
-fn openAppend(path: &string): Result<File, IoError> {
-    unsafe {
-        let fd = open(path, oWriteCreateAppend(), 420)
-        if fd < 0 {
-            return Result.Err(_ioError(path))
-        }
-        return Result.Ok(File {
-            fd: fd
-        }
-        )
-    }
-}
-
-fn fileSize(f: &File): i64 {
-    unsafe {
-        let cur = lseek(f.fd, 0, 1)
-        let size = lseek(f.fd, 0, 2)
-        lseek(f.fd, cur, 0)
-        return size
-    }
-}
-
-fn readAll(f: &File): Result<string, IoError> {
-    let size = fileSize(f)
-    if size < 0 {
-        return Result.Err(IoError.Other("failed to get file size"))
-    }
-    unsafe {
-        lseek(f.fd, 0, 0)
-    }
-    var result: string = ""
-    var buf: [u8 ; 4096] = [0 ; 4096]
-    while true {
+impl File {
+    fn openRead(path: &string): Result<File, IoError> {
         unsafe {
-            let n = read(f.fd, buf, 4096)
-            if n <= 0 {
-                break
+            let fd = open(path, 0)
+            if fd < 0 {
+                return Result.Err(_ioError(path))
             }
-            var i: i64 = 0
-            while i < n {
-                result.push(buf[i])
-                i = i + 1
-            }
+            return Result.Ok(File { fd: fd })
         }
     }
-    return Result.Ok(result)
-}
 
-fn writeAll(f: &File, data: &string): Result<i64, IoError> {
-    unsafe {
-        let n = write(f.fd, data, data.len)
-        if n < 0 {
-            return Result.Err(IoError.Other("write failed"))
+    fn openWrite(path: &string): Result<File, IoError> {
+        unsafe {
+            let fd = open(path, oWriteCreateTrunc(), 420)
+            if fd < 0 {
+                return Result.Err(_ioError(path))
+            }
+            return Result.Ok(File { fd: fd })
         }
-        return Result.Ok(n)
+    }
+
+    fn openAppend(path: &string): Result<File, IoError> {
+        unsafe {
+            let fd = open(path, oWriteCreateAppend(), 420)
+            if fd < 0 {
+                return Result.Err(_ioError(path))
+            }
+            return Result.Ok(File { fd: fd })
+        }
+    }
+
+    fn size(self: &Self): i64 {
+        unsafe {
+            let cur = lseek(self.fd, 0, 1)
+            let size = lseek(self.fd, 0, 2)
+            lseek(self.fd, cur, 0)
+            return size
+        }
+    }
+
+    fn readAll(self: &Self): Result<string, IoError> {
+        let size = self.size()
+        if size < 0 {
+            return Result.Err(IoError.Other("failed to get file size"))
+        }
+        unsafe {
+            lseek(self.fd, 0, 0)
+        }
+        var result: string = ""
+        var buf: [u8 ; 4096] = [0 ; 4096]
+        while true {
+            unsafe {
+                let n = read(self.fd, buf, 4096)
+                if n <= 0 {
+                    break
+                }
+                var i: i64 = 0
+                while i < n {
+                    result.push(buf[i])
+                    i = i + 1
+                }
+            }
+        }
+        return Result.Ok(result)
+    }
+
+    fn writeAll(self: &Self, data: &string): Result<i64, IoError> {
+        unsafe {
+            let n = write(self.fd, data, data.len)
+            if n < 0 {
+                return Result.Err(IoError.Other("write failed"))
+            }
+            return Result.Ok(n)
+        }
     }
 }
 
 fn readFile(path: &string): Result<string, IoError> {
-    let f = openRead(path)?
-    return readAll(f)
+    let f = File.openRead(path)?
+    return f.readAll()
 }
 
 // Write a string to stdout without a trailing newline.

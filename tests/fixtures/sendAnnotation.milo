@@ -1,6 +1,6 @@
 // @expect: 42
 
-from "std/thread" import { spawn, threadJoin }
+from "std/thread" import { Thread }
 
 @send
 struct SafeHandle {
@@ -10,10 +10,10 @@ struct SafeHandle {
 fn main(): i32 {
     unsafe {
         let h = SafeHandle { _ptr: 0 as *u8 }
-        let t = spawn(move (): void => {
+        let t = Thread.spawn(move (): void => {
             let _x = h._ptr
         })!
-        threadJoin(t)!
+        t.join()!
     }
     print(42)
     return 0

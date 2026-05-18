@@ -1,0 +1,10 @@
+// @expect: dcba
+// @expect: éfac
+// @expect: olleh
+
+fn main(): i32 {
+    print("abcd".reverse())
+    print("café".reverse())
+    print("hello".reverse())
+    return 0
+}

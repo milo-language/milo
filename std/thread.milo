@@ -16,7 +16,7 @@ struct Thread {
 //   fn worker(arg: *u8): *u8 { ... }
 //   var data: i64 = 42
 //   let t = threadSpawn(worker as *u8, (&data) as *u8)!
-//   threadJoin(t)!
+//   t.join()!
 
 fn threadSpawn(func: *u8, arg: *u8): Result<Thread> {
     var tid: i64 = 0
@@ -40,29 +40,6 @@ fn threadSpawnFn(func: (*u8) => *u8): Result<Thread> {
     }
 }
 
-// Block until the thread finishes.
-
-fn threadJoin(t: &Thread): Result<i32> {
-    unsafe {
-        let r = pthread_join(t.id, 0 as *u8)
-        if r != 0 {
-            return Result.Err("pthread_join failed")
-        }
-        return Result.Ok(0)
-    }
-}
-
-// ── Safe spawn with move closures ──
-// The closure's captures are heap-allocated (by move semantics) and
-// passed to the thread via the pthread arg pointer. No unsafe needed
-// by the caller.
-//
-//   let offset: i64 = 10
-//   let t = spawn(move (): void => {
-//       print($"offset is {offset}")
-//   })!
-//   threadJoin(t)!
-
 // trampoline: receives packed { fnPtr, envPtr } via pthread arg
 fn _closureTrampoline(arg: *u8): *u8 {
     unsafe {
@@ -72,33 +49,32 @@ fn _closureTrampoline(arg: *u8): *u8 {
         memcpy((&fnPtr) as *u8, arg, 8)
         memcpy((&envPtr) as *u8, (base + 8) as *u8, 8)
         _callClosureVoid(fnPtr, envPtr)
-        // free the packed struct (closure env is freed by drop glue or leaks — acceptable for threads)
         free(arg)
         return 0 as *u8
     }
 }
 
-fn spawn(f: () => void): Result<Thread> {
-    unsafe {
-        // f is { ptr fnPtr, ptr envPtr } — pack both into a heap block for the trampoline
-        let packed = malloc(16)
-        // extract fn ptr and env ptr from closure tuple
-        // the closure is passed as two ptr args; we need the raw values
-        let fPtr = f as *u8
-        // for the env, we need the second element of the tuple
-        // _closurePairEnv is a builtin that extracts element 1
-        // ... actually, f is a { ptr, ptr } passed as a parameter.
-        // When f is a fn param, it's stored as { ptr, ptr } in an alloca.
-        // We need to extract both elements.
-        // Let's just pass f's alloca address — it already contains { fnPtr, envPtr }
-        memcpy(packed, (&f) as *u8, 16)
-        let t = threadSpawn(_closureTrampoline as *u8, packed)
-        return t
+impl Thread {
+    fn spawn(f: () => void): Result<Thread> {
+        unsafe {
+            let packed = malloc(16)
+            memcpy(packed, (&f) as *u8, 16)
+            let t = threadSpawn(_closureTrampoline as *u8, packed)
+            return t
+        }
     }
-}
 
-// Sleep the current thread for the given number of milliseconds.
+    fn join(self: &Self): Result<i32> {
+        unsafe {
+            let r = pthread_join(self.id, 0 as *u8)
+            if r != 0 {
+                return Result.Err("pthread_join failed")
+            }
+            return Result.Ok(0)
+        }
+    }
 
-fn threadSleep(ms: i64): void {
-    sleepMs(ms)
+    fn sleep(ms: i64): void {
+        sleepMs(ms)
+    }
 }

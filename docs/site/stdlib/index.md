@@ -6,7 +6,7 @@ Import modules with `from "std/<name>" import { symbols }`.
 
 | Module | What it provides |
 |--------|-----------------|
-| [`std/io`](io) | `readFile`, `readStdin`, `openRead`/`openWrite`/`openAppend`, `readAll`, `writeAll`, RAII file handles |
+| [`std/io`](io) | `readFile`, `readStdin`, `File.openRead`/`.openWrite`/`.openAppend`, `f.readAll()`, `f.writeAll()`, RAII file handles |
 | [`std/fs`](fs) | `readDir`, `fileInfo`, `isDir`/`isFile`, `pathExists`, `writeFile` |
 | [`std/path`](path) | `pathJoin`, `pathBasename`, `pathDirname`, `pathExt`, `pathStem` |
 | [`std/env`](env) | `getEnv`, `getEnvOr` |
@@ -32,7 +32,7 @@ Import modules with `from "std/<name>" import { symbols }`.
 |--------|-----------------|
 | [`std/argparse`](argparse) | CLI argument parsing with typed getters and `--help` generation |
 | [`std/args`](args) | Raw CLI arguments — `args()`, `getFlag`, `hasFlag` |
-| [`std/process`](process) | Command execution, `spawn`/`waitFor`/`signal` |
+| [`std/process`](process) | Command execution, `Process.spawn`/`.wait()`/`.signal()`, `run`, `capture` |
 | [`std/signal`](signal) | POSIX signal handling — `onSignal`, `ignoreSignal` |
 
 ## Data Formats
@@ -56,8 +56,8 @@ Import modules with `from "std/<name>" import { symbols }`.
 
 | Module | What it provides |
 |--------|-----------------|
-| [`std/thread`](thread) | `spawn` with move closures, `threadJoin`, `threadSleep` |
-| [`std/sync`](sync) | `Mutex`, `Channel` — thread-safe message passing and mutual exclusion |
+| [`std/thread`](thread) | `Thread.spawn` with move closures, `.join()`, `Thread.sleep(ms)` |
+| [`std/sync`](sync) | `Mutex`, `Channel`, `RwLock`, `AtomicI64`, `AtomicBool` — all method-based |
 
 ## Database & Network
 

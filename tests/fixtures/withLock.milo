@@ -1,14 +1,14 @@
 // @expect: 42
 
-from "std/sync" import { mutexNew, withLock, mutexDestroy }
+from "std/sync" import { Mutex }
 
 fn main(): i32 {
-    let m = mutexNew()!
+    let m = Mutex.new()!
     var x: i64 = 0
-    withLock(m, (): void => {
+    m.withLock((): void => {
         x = 42
     })!
     print(x)
-    mutexDestroy(m)
+    m.destroy()
     return 0
 }

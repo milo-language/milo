@@ -460,12 +460,21 @@ fn strCharAt(s: &string, idx: i64): string {
     return s.substr(idx, idx + 1)
 }
 
+// UTF-8 aware: scans backward past continuation bytes to reverse whole codepoints
 fn strReverse(s: &string): string {
     var result: string = ""
-    var i: i64 = s.len - 1
-    while i >= 0 as i64 {
-        result.push(s[i])
-        i = i - 1
+    var i: i64 = s.len
+    while i > 0 {
+        var start: i64 = i - 1
+        while start > 0 && (s[start] & 192) == 128 {
+            start = start - 1
+        }
+        var j: i64 = start
+        while j < i {
+            result.push(s[j])
+            j = j + 1
+        }
+        i = start
     }
     return result
 }

@@ -1934,6 +1934,7 @@ export class Codegen {
         if (llt === "%String") {
           if (expr.op === "+") return this.genStringConcat(lines, lv, rv);
           if (expr.op === "==" || expr.op === "!=") return this.genStringCmp(lines, lv, rv, expr.op === "==");
+          if (expr.op === "<" || expr.op === ">" || expr.op === "<=" || expr.op === ">=") return this.genStringOrd(lines, lv, rv, expr.op);
         }
 
         // enum equality: compare tag field only (checker rejects payload-bearing enums)
@@ -3018,6 +3019,52 @@ export class Codegen {
     return [lines, result, "i1"];
   }
 
+  // lexicographic string ordering via memcmp on common prefix, then length tiebreak
+  private genStringOrd(lines: string[], lv: string, rv: string, op: string): [string[], string, string] {
+    this.needsMemcmp = true;
+    const aLen = this.nextTemp();
+    lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
+    const bLen = this.nextTemp();
+    lines.push(`  ${bLen} = extractvalue %String ${rv}, 1`);
+    const aData = this.nextTemp();
+    lines.push(`  ${aData} = extractvalue %String ${lv}, 0`);
+    const bData = this.nextTemp();
+    lines.push(`  ${bData} = extractvalue %String ${rv}, 0`);
+
+    const aLessThanB = this.nextTemp();
+    lines.push(`  ${aLessThanB} = icmp ult i64 ${aLen}, ${bLen}`);
+    const minLen = this.nextTemp();
+    lines.push(`  ${minLen} = select i1 ${aLessThanB}, i64 ${aLen}, i64 ${bLen}`);
+    const cmpResult = this.nextTemp();
+    lines.push(`  ${cmpResult} = call i32 @memcmp(ptr ${aData}, ptr ${bData}, i64 ${minLen})`);
+
+    const isZero = this.nextTemp();
+    lines.push(`  ${isZero} = icmp eq i32 ${cmpResult}, 0`);
+    const dataCmpLabel = this.nextLabel("str.orddata");
+    const lenCmpLabel = this.nextLabel("str.ordlen");
+    const doneLabel = this.nextLabel("str.orddone");
+    lines.push(`  br i1 ${isZero}, label %${lenCmpLabel}, label %${dataCmpLabel}`);
+
+    // prefix differs — compare memcmp result against 0
+    lines.push(`${dataCmpLabel}:`);
+    const dataPred = op === "<" || op === "<=" ? "slt" : "sgt";
+    const dataResult = this.nextTemp();
+    lines.push(`  ${dataResult} = icmp ${dataPred} i32 ${cmpResult}, 0`);
+    lines.push(`  br label %${doneLabel}`);
+
+    // prefix equal — compare lengths
+    lines.push(`${lenCmpLabel}:`);
+    const lenPred = op === "<" ? "ult" : op === ">" ? "ugt" : op === "<=" ? "ule" : "uge";
+    const lenResult = this.nextTemp();
+    lines.push(`  ${lenResult} = icmp ${lenPred} i64 ${aLen}, ${bLen}`);
+    lines.push(`  br label %${doneLabel}`);
+
+    lines.push(`${doneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi i1 [${dataResult}, %${dataCmpLabel}], [${lenResult}, %${lenCmpLabel}]`);
+    return [lines, result, "i1"];
+  }
+
   private genStringIndex(expr: HIRExpr & { kind: "IndexAccess" }, lines: string[]): [string[], string, string] {
     this.hasStringType = true;
     this.needsBoundsCheck = true;
@@ -3778,8 +3825,11 @@ export class Codegen {
     const cap = this.nextTemp();
     lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
 
+    // grow when len + 1 >= cap to reserve room for null terminator
+    const lenPlus1 = this.nextTemp();
+    lines.push(`  ${lenPlus1} = add i64 ${len}, 1`);
     const needsGrow = this.nextTemp();
-    lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
+    lines.push(`  ${needsGrow} = icmp uge i64 ${lenPlus1}, ${cap}`);
     const growLabel = this.nextLabel("str.grow");
     const pushLabel = this.nextLabel("str.push");
     lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${pushLabel}`);
@@ -3838,6 +3888,10 @@ export class Codegen {
     const newLen = this.nextTemp();
     lines.push(`  ${newLen} = add i64 ${curLen}, 1`);
     lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+    // null-terminate for FFI safety
+    const nullPtr = this.nextTemp();
+    lines.push(`  ${nullPtr} = getelementptr i8, ptr ${curData}, i64 ${newLen}`);
+    lines.push(`  store i8 0, ptr ${nullPtr}`);
 
     return [lines, "void", "void"];
   }

@@ -3,13 +3,6 @@
 from "std/os" import { free, malloc, memcpy, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
 
 // ── Mutex ──
-// Mutual exclusion lock. Wrap shared data access with lock/unlock.
-//
-//   let m = mutexNew()!
-//   mutexLock(m)!
-//   // ... critical section ...
-//   mutexUnlock(m)!
-//   mutexDestroy(m)
 
 @send
 @sync
@@ -17,64 +10,55 @@ struct Mutex {
     _handle: *u8,
 }
 
-fn mutexNew(): Result<Mutex> {
-    unsafe {
-        let h = malloc(64)
-        let r = pthread_mutex_init(h, 0 as *u8)
-        if r != 0 {
-            free(h)
-            return Result.Err("pthread_mutex_init failed")
+impl Mutex {
+    fn new(): Result<Mutex> {
+        unsafe {
+            let h = malloc(64)
+            let r = pthread_mutex_init(h, 0 as *u8)
+            if r != 0 {
+                free(h)
+                return Result.Err("pthread_mutex_init failed")
+            }
+            return Result.Ok(Mutex { _handle: h })
         }
-        return Result.Ok(Mutex { _handle: h })
     }
-}
 
-fn mutexLock(m: &Mutex): Result<i32> {
-    unsafe {
-        let r = pthread_mutex_lock(m._handle)
-        if r != 0 {
-            return Result.Err("pthread_mutex_lock failed")
+    fn lock(self: &Self): Result<i32> {
+        unsafe {
+            let r = pthread_mutex_lock(self._handle)
+            if r != 0 {
+                return Result.Err("pthread_mutex_lock failed")
+            }
+            return Result.Ok(0)
         }
+    }
+
+    fn unlock(self: &Self): Result<i32> {
+        unsafe {
+            let r = pthread_mutex_unlock(self._handle)
+            if r != 0 {
+                return Result.Err("pthread_mutex_unlock failed")
+            }
+            return Result.Ok(0)
+        }
+    }
+
+    fn withLock(self: &Self, f: () => void): Result<i32> {
+        self.lock()?
+        f()
+        self.unlock()?
         return Result.Ok(0)
     }
-}
 
-fn mutexUnlock(m: &Mutex): Result<i32> {
-    unsafe {
-        let r = pthread_mutex_unlock(m._handle)
-        if r != 0 {
-            return Result.Err("pthread_mutex_unlock failed")
+    fn destroy(self: &Self): void {
+        unsafe {
+            pthread_mutex_destroy(self._handle)
+            free(self._handle)
         }
-        return Result.Ok(0)
-    }
-}
-
-// RAII-style lock scope — locks, runs closure, unlocks even if closure returns early.
-fn withLock(m: &Mutex, f: () => void): Result<i32> {
-    mutexLock(m)?
-    f()
-    mutexUnlock(m)?
-    return Result.Ok(0)
-}
-
-fn mutexDestroy(m: &Mutex): void {
-    unsafe {
-        pthread_mutex_destroy(m._handle)
-        free(m._handle)
     }
 }
 
 // ── RwLock ──
-// Reader-writer lock. Multiple concurrent readers OR one exclusive writer.
-//
-//   let rw = rwLockNew()!
-//   rwLockRead(rw)!        // shared read lock
-//   // ... read data ...
-//   rwLockUnlock(rw)!
-//   rwLockWrite(rw)!       // exclusive write lock
-//   // ... write data ...
-//   rwLockUnlock(rw)!
-//   rwLockDestroy(rw)
 
 @send
 @sync
@@ -82,81 +66,82 @@ struct RwLock {
     _handle: *u8,
 }
 
-fn rwLockNew(): Result<RwLock> {
-    unsafe {
-        let h = malloc(256)
-        let r = pthread_rwlock_init(h, 0 as *u8)
-        if r != 0 {
-            free(h)
-            return Result.Err("pthread_rwlock_init failed")
+impl RwLock {
+    fn new(): Result<RwLock> {
+        unsafe {
+            let h = malloc(256)
+            let r = pthread_rwlock_init(h, 0 as *u8)
+            if r != 0 {
+                free(h)
+                return Result.Err("pthread_rwlock_init failed")
+            }
+            return Result.Ok(RwLock { _handle: h })
         }
-        return Result.Ok(RwLock { _handle: h })
     }
-}
 
-fn rwLockRead(rw: &RwLock): Result<i32> {
-    unsafe {
-        let r = pthread_rwlock_rdlock(rw._handle)
-        if r != 0 {
-            return Result.Err("pthread_rwlock_rdlock failed")
+    fn read(self: &Self): Result<i32> {
+        unsafe {
+            let r = pthread_rwlock_rdlock(self._handle)
+            if r != 0 {
+                return Result.Err("pthread_rwlock_rdlock failed")
+            }
+            return Result.Ok(0)
         }
+    }
+
+    fn write(self: &Self): Result<i32> {
+        unsafe {
+            let r = pthread_rwlock_wrlock(self._handle)
+            if r != 0 {
+                return Result.Err("pthread_rwlock_wrlock failed")
+            }
+            return Result.Ok(0)
+        }
+    }
+
+    fn unlock(self: &Self): Result<i32> {
+        unsafe {
+            let r = pthread_rwlock_unlock(self._handle)
+            if r != 0 {
+                return Result.Err("pthread_rwlock_unlock failed")
+            }
+            return Result.Ok(0)
+        }
+    }
+
+    fn withReadLock(self: &Self, f: () => void): Result<i32> {
+        self.read()?
+        f()
+        self.unlock()?
         return Result.Ok(0)
     }
-}
 
-fn rwLockWrite(rw: &RwLock): Result<i32> {
-    unsafe {
-        let r = pthread_rwlock_wrlock(rw._handle)
-        if r != 0 {
-            return Result.Err("pthread_rwlock_wrlock failed")
-        }
+    fn withWriteLock(self: &Self, f: () => void): Result<i32> {
+        self.write()?
+        f()
+        self.unlock()?
         return Result.Ok(0)
     }
-}
 
-fn rwLockUnlock(rw: &RwLock): Result<i32> {
-    unsafe {
-        let r = pthread_rwlock_unlock(rw._handle)
-        if r != 0 {
-            return Result.Err("pthread_rwlock_unlock failed")
+    fn destroy(self: &Self): void {
+        unsafe {
+            pthread_rwlock_destroy(self._handle)
+            free(self._handle)
         }
-        return Result.Ok(0)
-    }
-}
-
-fn withReadLock(rw: &RwLock, f: () => void): Result<i32> {
-    rwLockRead(rw)?
-    f()
-    rwLockUnlock(rw)?
-    return Result.Ok(0)
-}
-
-fn withWriteLock(rw: &RwLock, f: () => void): Result<i32> {
-    rwLockWrite(rw)?
-    f()
-    rwLockUnlock(rw)?
-    return Result.Ok(0)
-}
-
-fn rwLockDestroy(rw: &RwLock): void {
-    unsafe {
-        pthread_rwlock_destroy(rw._handle)
-        free(rw._handle)
     }
 }
 
 // ── Channel ──
 // Bounded FIFO channel for safe message passing between threads.
 // Channel is a handle type — copying it shares the underlying queue.
-// Safe to capture in move closures and send across threads.
 //
-//   let ch = channelNew(16)!
-//   let t = spawn(move (): void => {
-//       channelSend(ch, 42)!
+//   let ch = Channel.new(16)!
+//   let t = Thread.spawn(move (): void => {
+//       ch.send(42)!
 //   })!
-//   let val = channelRecv(ch)!
-//   threadJoin(t)!
-//   channelDestroy(ch)
+//   let val = ch.recv()!
+//   t.join()!
+//   ch.destroy()
 
 struct ChannelInner {
     mtx: *u8,
@@ -175,163 +160,173 @@ struct Channel {
     _ptr: *u8,
 }
 
-fn channelNew(capacity: i64): Result<Channel> {
-    unsafe {
-        let raw = malloc(64)
-        let inner = raw as *ChannelInner
+impl Channel {
+    fn new(capacity: i64): Result<Channel> {
+        unsafe {
+            let raw = malloc(64)
+            let inner = raw as *ChannelInner
 
-        let mtx = malloc(64)
-        let r1 = pthread_mutex_init(mtx, 0 as *u8)
-        if r1 != 0 {
-            free(mtx)
-            free(raw)
-            return Result.Err("channel mutex init failed")
-        }
-        let cne = malloc(48)
-        let r2 = pthread_cond_init(cne, 0 as *u8)
-        if r2 != 0 {
-            free(mtx)
-            free(cne)
-            free(raw)
-            return Result.Err("channel cond init failed")
-        }
-        let cnf = malloc(48)
-        let r3 = pthread_cond_init(cnf, 0 as *u8)
-        if r3 != 0 {
-            free(mtx)
-            free(cne)
-            free(cnf)
-            free(raw)
-            return Result.Err("channel cond init failed")
-        }
+            let mtx = malloc(64)
+            let r1 = pthread_mutex_init(mtx, 0 as *u8)
+            if r1 != 0 {
+                free(mtx)
+                free(raw)
+                return Result.Err("channel mutex init failed")
+            }
+            let cne = malloc(48)
+            let r2 = pthread_cond_init(cne, 0 as *u8)
+            if r2 != 0 {
+                free(mtx)
+                free(cne)
+                free(raw)
+                return Result.Err("channel cond init failed")
+            }
+            let cnf = malloc(48)
+            let r3 = pthread_cond_init(cnf, 0 as *u8)
+            if r3 != 0 {
+                free(mtx)
+                free(cne)
+                free(cnf)
+                free(raw)
+                return Result.Err("channel cond init failed")
+            }
 
-        (*inner).mtx = mtx
-        (*inner).condNotEmpty = cne
-        (*inner).condNotFull = cnf
-        (*inner).buf = malloc(capacity * 8)
-        (*inner).capacity = capacity
-        (*inner).len = 0
-        (*inner).head = 0
-        (*inner).tail = 0
+            (*inner).mtx = mtx
+            (*inner).condNotEmpty = cne
+            (*inner).condNotFull = cnf
+            (*inner).buf = malloc(capacity * 8)
+            (*inner).capacity = capacity
+            (*inner).len = 0
+            (*inner).head = 0
+            (*inner).tail = 0
 
-        return Result.Ok(Channel { _ptr: raw })
+            return Result.Ok(Channel { _ptr: raw })
+        }
     }
-}
 
-fn channelSend(ch: &Channel, val: i64): Result<i32> {
-    var v: i64 = val
-    unsafe {
-        let inner = ch._ptr as *ChannelInner
-        let mtx = (*inner).mtx
-        let cap = (*inner).capacity
+    fn send(self: &Self, val: i64): Result<i32> {
+        var v: i64 = val
+        unsafe {
+            let inner = self._ptr as *ChannelInner
+            let mtx = (*inner).mtx
+            let cap = (*inner).capacity
 
-        pthread_mutex_lock(mtx)
-        var curLen: i64 = (*inner).len
-        while curLen == cap {
-            pthread_cond_wait((*inner).condNotFull, mtx)
-            curLen = (*inner).len
-        }
-        var tail: i64 = (*inner).tail
-        let slotPtr = ((*inner).buf as i64 + tail * 8) as *u8
-        memcpy(slotPtr, (&v) as *u8, 8)
-        (*inner).tail = (tail + 1) % cap
-        (*inner).len = curLen + 1
-        pthread_cond_signal((*inner).condNotEmpty)
-        pthread_mutex_unlock(mtx)
-        return Result.Ok(0)
-    }
-}
-
-fn channelRecv(ch: &Channel): Result<i64> {
-    var val: i64 = 0
-    unsafe {
-        let inner = ch._ptr as *ChannelInner
-        let mtx = (*inner).mtx
-        let cap = (*inner).capacity
-
-        pthread_mutex_lock(mtx)
-        var curLen: i64 = (*inner).len
-        while curLen == 0 {
-            pthread_cond_wait((*inner).condNotEmpty, mtx)
-            curLen = (*inner).len
-        }
-        var head: i64 = (*inner).head
-        let slotPtr = ((*inner).buf as i64 + head * 8) as *u8
-        memcpy((&val) as *u8, slotPtr, 8)
-        (*inner).head = (head + 1) % cap
-        (*inner).len = curLen - 1
-        pthread_cond_signal((*inner).condNotFull)
-        pthread_mutex_unlock(mtx)
-        return Result.Ok(val)
-    }
-}
-
-fn channelTrySend(ch: &Channel, val: i64): bool {
-    var v: i64 = val
-    unsafe {
-        let inner = ch._ptr as *ChannelInner
-        let mtx = (*inner).mtx
-
-        pthread_mutex_lock(mtx)
-        let curLen: i64 = (*inner).len
-        let cap = (*inner).capacity
-        if curLen == cap {
+            pthread_mutex_lock(mtx)
+            var curLen: i64 = (*inner).len
+            while curLen == cap {
+                pthread_cond_wait((*inner).condNotFull, mtx)
+                curLen = (*inner).len
+            }
+            var tail: i64 = (*inner).tail
+            let slotPtr = ((*inner).buf as i64 + tail * 8) as *u8
+            memcpy(slotPtr, (&v) as *u8, 8)
+            (*inner).tail = (tail + 1) % cap
+            (*inner).len = curLen + 1
+            pthread_cond_signal((*inner).condNotEmpty)
             pthread_mutex_unlock(mtx)
-            return false
+            return Result.Ok(0)
         }
-        var tail: i64 = (*inner).tail
-        let slotPtr = ((*inner).buf as i64 + tail * 8) as *u8
-        memcpy(slotPtr, (&v) as *u8, 8)
-        (*inner).tail = (tail + 1) % cap
-        (*inner).len = curLen + 1
-        pthread_cond_signal((*inner).condNotEmpty)
-        pthread_mutex_unlock(mtx)
-        return true
     }
-}
 
-fn channelTryRecv(ch: &Channel): Option<i64> {
-    var val: i64 = 0
-    unsafe {
-        let inner = ch._ptr as *ChannelInner
-        let mtx = (*inner).mtx
+    fn recv(self: &Self): Result<i64> {
+        var val: i64 = 0
+        unsafe {
+            let inner = self._ptr as *ChannelInner
+            let mtx = (*inner).mtx
+            let cap = (*inner).capacity
 
-        pthread_mutex_lock(mtx)
-        let curLen: i64 = (*inner).len
-        if curLen == 0 {
+            pthread_mutex_lock(mtx)
+            var curLen: i64 = (*inner).len
+            while curLen == 0 {
+                pthread_cond_wait((*inner).condNotEmpty, mtx)
+                curLen = (*inner).len
+            }
+            var head: i64 = (*inner).head
+            let slotPtr = ((*inner).buf as i64 + head * 8) as *u8
+            memcpy((&val) as *u8, slotPtr, 8)
+            (*inner).head = (head + 1) % cap
+            (*inner).len = curLen - 1
+            pthread_cond_signal((*inner).condNotFull)
             pthread_mutex_unlock(mtx)
-            return Option.None
+            return Result.Ok(val)
         }
-        let cap = (*inner).capacity
-        var head: i64 = (*inner).head
-        let slotPtr = ((*inner).buf as i64 + head * 8) as *u8
-        memcpy((&val) as *u8, slotPtr, 8)
-        (*inner).head = (head + 1) % cap
-        (*inner).len = curLen - 1
-        pthread_cond_signal((*inner).condNotFull)
-        pthread_mutex_unlock(mtx)
-        return Option.Some(val)
     }
-}
 
-fn channelLen(ch: &Channel): i64 {
-    unsafe {
-        let inner = ch._ptr as *ChannelInner
-        let mtx = (*inner).mtx
-        pthread_mutex_lock(mtx)
-        let n: i64 = (*inner).len
-        pthread_mutex_unlock(mtx)
-        return n
+    fn trySend(self: &Self, val: i64): bool {
+        var v: i64 = val
+        unsafe {
+            let inner = self._ptr as *ChannelInner
+            let mtx = (*inner).mtx
+
+            pthread_mutex_lock(mtx)
+            let curLen: i64 = (*inner).len
+            let cap = (*inner).capacity
+            if curLen == cap {
+                pthread_mutex_unlock(mtx)
+                return false
+            }
+            var tail: i64 = (*inner).tail
+            let slotPtr = ((*inner).buf as i64 + tail * 8) as *u8
+            memcpy(slotPtr, (&v) as *u8, 8)
+            (*inner).tail = (tail + 1) % cap
+            (*inner).len = curLen + 1
+            pthread_cond_signal((*inner).condNotEmpty)
+            pthread_mutex_unlock(mtx)
+            return true
+        }
+    }
+
+    fn tryRecv(self: &Self): Option<i64> {
+        var val: i64 = 0
+        unsafe {
+            let inner = self._ptr as *ChannelInner
+            let mtx = (*inner).mtx
+
+            pthread_mutex_lock(mtx)
+            let curLen: i64 = (*inner).len
+            if curLen == 0 {
+                pthread_mutex_unlock(mtx)
+                return Option.None
+            }
+            let cap = (*inner).capacity
+            var head: i64 = (*inner).head
+            let slotPtr = ((*inner).buf as i64 + head * 8) as *u8
+            memcpy((&val) as *u8, slotPtr, 8)
+            (*inner).head = (head + 1) % cap
+            (*inner).len = curLen - 1
+            pthread_cond_signal((*inner).condNotFull)
+            pthread_mutex_unlock(mtx)
+            return Option.Some(val)
+        }
+    }
+
+    fn len(self: &Self): i64 {
+        unsafe {
+            let inner = self._ptr as *ChannelInner
+            let mtx = (*inner).mtx
+            pthread_mutex_lock(mtx)
+            let n: i64 = (*inner).len
+            pthread_mutex_unlock(mtx)
+            return n
+        }
+    }
+
+    fn destroy(self: &Self): void {
+        unsafe {
+            let inner = self._ptr as *ChannelInner
+            pthread_mutex_destroy((*inner).mtx)
+            pthread_cond_destroy((*inner).condNotEmpty)
+            pthread_cond_destroy((*inner).condNotFull)
+            free((*inner).mtx)
+            free((*inner).condNotEmpty)
+            free((*inner).condNotFull)
+            free((*inner).buf)
+            free(self._ptr)
+        }
     }
 }
 
 // ── AtomicI64 ──
-// Lock-free 64-bit integer for cross-thread counters, flags, etc.
-//
-//   let counter = atomicI64New(0)
-//   atomicI64Add(&counter, 1)
-//   let val = atomicI64Load(&counter)
-//   atomicI64Destroy(counter)
 
 @send
 @sync
@@ -339,57 +334,53 @@ struct AtomicI64 {
     _ptr: *u8,
 }
 
-fn atomicI64New(initial: i64): AtomicI64 {
-    unsafe {
-        let p = malloc(8)
-        _atomicStoreI64(p, initial)
-        return AtomicI64 { _ptr: p }
+impl AtomicI64 {
+    fn new(initial: i64): AtomicI64 {
+        unsafe {
+            let p = malloc(8)
+            _atomicStoreI64(p, initial)
+            return AtomicI64 { _ptr: p }
+        }
     }
-}
 
-fn atomicI64Load(a: &AtomicI64): i64 {
-    unsafe {
-        return _atomicLoadI64(a._ptr)
+    fn load(self: &Self): i64 {
+        unsafe {
+            return _atomicLoadI64(self._ptr)
+        }
     }
-}
 
-fn atomicI64Store(a: &AtomicI64, val: i64): void {
-    unsafe {
-        _atomicStoreI64(a._ptr, val)
+    fn store(self: &Self, val: i64): void {
+        unsafe {
+            _atomicStoreI64(self._ptr, val)
+        }
     }
-}
 
-fn atomicI64Add(a: &AtomicI64, val: i64): i64 {
-    unsafe {
-        return _atomicAddI64(a._ptr, val)
+    fn add(self: &Self, val: i64): i64 {
+        unsafe {
+            return _atomicAddI64(self._ptr, val)
+        }
     }
-}
 
-fn atomicI64Sub(a: &AtomicI64, val: i64): i64 {
-    unsafe {
-        return _atomicSubI64(a._ptr, val)
+    fn sub(self: &Self, val: i64): i64 {
+        unsafe {
+            return _atomicSubI64(self._ptr, val)
+        }
     }
-}
 
-fn atomicI64Cas(a: &AtomicI64, expected: i64, desired: i64): i64 {
-    unsafe {
-        return _atomicCasI64(a._ptr, expected, desired)
+    fn cas(self: &Self, expected: i64, desired: i64): i64 {
+        unsafe {
+            return _atomicCasI64(self._ptr, expected, desired)
+        }
     }
-}
 
-fn atomicI64Destroy(a: AtomicI64): void {
-    unsafe {
-        free(a._ptr)
+    fn destroy(self: Self): void {
+        unsafe {
+            free(self._ptr)
+        }
     }
 }
 
 // ── AtomicBool ──
-// Lock-free boolean flag for cross-thread signaling.
-//
-//   let flag = atomicBoolNew(false)
-//   atomicBoolStore(&flag, true)
-//   if atomicBoolLoad(&flag) { ... }
-//   atomicBoolDestroy(flag)
 
 @send
 @sync
@@ -397,48 +388,36 @@ struct AtomicBool {
     _ptr: *u8,
 }
 
-fn atomicBoolNew(initial: bool): AtomicBool {
-    unsafe {
-        let p = malloc(1)
-        _atomicStoreBool(p, initial)
-        return AtomicBool { _ptr: p }
+impl AtomicBool {
+    fn new(initial: bool): AtomicBool {
+        unsafe {
+            let p = malloc(1)
+            _atomicStoreBool(p, initial)
+            return AtomicBool { _ptr: p }
+        }
     }
-}
 
-fn atomicBoolLoad(a: &AtomicBool): bool {
-    unsafe {
-        return _atomicLoadBool(a._ptr)
+    fn load(self: &Self): bool {
+        unsafe {
+            return _atomicLoadBool(self._ptr)
+        }
     }
-}
 
-fn atomicBoolStore(a: &AtomicBool, val: bool): void {
-    unsafe {
-        _atomicStoreBool(a._ptr, val)
+    fn store(self: &Self, val: bool): void {
+        unsafe {
+            _atomicStoreBool(self._ptr, val)
+        }
     }
-}
 
-fn atomicBoolSwap(a: &AtomicBool, val: bool): bool {
-    unsafe {
-        return _atomicSwapBool(a._ptr, val)
+    fn swap(self: &Self, val: bool): bool {
+        unsafe {
+            return _atomicSwapBool(self._ptr, val)
+        }
     }
-}
 
-fn atomicBoolDestroy(a: AtomicBool): void {
-    unsafe {
-        free(a._ptr)
-    }
-}
-
-fn channelDestroy(ch: &Channel): void {
-    unsafe {
-        let inner = ch._ptr as *ChannelInner
-        pthread_mutex_destroy((*inner).mtx)
-        pthread_cond_destroy((*inner).condNotEmpty)
-        pthread_cond_destroy((*inner).condNotFull)
-        free((*inner).mtx)
-        free((*inner).condNotEmpty)
-        free((*inner).condNotFull)
-        free((*inner).buf)
-        free(ch._ptr)
+    fn destroy(self: Self): void {
+        unsafe {
+            free(self._ptr)
+        }
     }
 }

@@ -3,32 +3,32 @@
 // @expect: 42
 // @expect: 0
 
-from "std/sync" import { channelNew, channelTrySend, channelTryRecv, channelLen, channelDestroy }
+from "std/sync" import { Channel }
 
 fn main(): i32 {
-    let ch = channelNew(2)!
+    let ch = Channel.new(2)!
 
     // tryRecv on empty channel returns None
-    let r1 = channelTryRecv(ch)
+    let r1 = ch.tryRecv()
     match r1 {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
     // trySend succeeds when not full
-    let ok = channelTrySend(ch, 42)
+    let ok = ch.trySend(42)
     print(ok)
 
     // tryRecv gets the value
-    let r2 = channelTryRecv(ch)
+    let r2 = ch.tryRecv()
     match r2 {
         Option.Some(v) => { print(v) }
         Option.None => { print("none") }
     }
 
-    // channelLen after drain
-    print(channelLen(ch))
+    // len after drain
+    print(ch.len())
 
-    channelDestroy(ch)
+    ch.destroy()
     return 0
 }

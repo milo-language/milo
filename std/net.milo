@@ -45,73 +45,72 @@ fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     return a32 | (b32 << 8) | (c32 << 16) | (d32 << 24)
 }
 
-fn tcpConnect(ip: u32, port: u16): Result<TcpStream, NetError> {
-    let AF_INET: i32 = 2
-    let SOCK_STREAM: i32 = 1
-    let SIZEOF_SOCKADDR_IN: u32 = 16
+impl TcpStream {
+    fn connect(ip: u32, port: u16): Result<TcpStream, NetError> {
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
+        let SIZEOF_SOCKADDR_IN: u32 = 16
 
-    unsafe {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
-        }
-
-        var addr = makeSockaddr(port, ip)
-
-        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-            close(fd)
-            return Result.Err(NetError.ConnectionFailed("connect() failed"))
-        }
-
-        return Result.Ok(TcpStream {
-            fd: fd
-        }
-        )
-    }
-}
-
-fn tcpSend(s: &TcpStream, data: &string): Result<i64, NetError> {
-    let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen { setNonblocking(s.fd) }
-    unsafe {
-        while true {
-            let n = write(s.fd, data, data.len)
-            if n < 0 && inGreen && getErrno() == eagain() {
-                schedulerWaitWrite(s.fd)
-                continue
-            }
-            if n < 0 {
-                return Result.Err(NetError.SendFailed("tcp send failed"))
-            }
-            return Result.Ok(n)
-        }
-    }
-    return Result.Err(NetError.SendFailed("unreachable"))
-}
-
-fn tcpRecv(s: &TcpStream): Result<string, NetError> {
-    let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen { setNonblocking(s.fd) }
-    var result: string = ""
-    var buf: [u8 ; 4096] = [0 ; 4096]
-    while true {
         unsafe {
-            let n = read(s.fd, buf, 4096)
-            if n < 0 && inGreen && getErrno() == eagain() {
-                schedulerWaitRead(s.fd)
-                continue
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
             }
-            if n <= 0 {
-                break
+
+            var addr = makeSockaddr(port, ip)
+
+            if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+                close(fd)
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
             }
-            var i: i64 = 0
-            while i < n {
-                result.push(buf[i])
-                i = i + 1
-            }
+
+            return Result.Ok(TcpStream { fd: fd })
         }
     }
-    return Result.Ok(result)
+
+    fn send(self: &Self, data: &string): Result<i64, NetError> {
+        let inGreen = schedulerCurrent() as i64 != 0
+        if inGreen { setNonblocking(self.fd) }
+        unsafe {
+            while true {
+                let n = write(self.fd, data, data.len)
+                if n < 0 && inGreen && getErrno() == eagain() {
+                    schedulerWaitWrite(self.fd)
+                    continue
+                }
+                if n < 0 {
+                    return Result.Err(NetError.SendFailed("tcp send failed"))
+                }
+                return Result.Ok(n)
+            }
+        }
+        return Result.Err(NetError.SendFailed("unreachable"))
+    }
+
+    fn recv(self: &Self): Result<string, NetError> {
+        let inGreen = schedulerCurrent() as i64 != 0
+        if inGreen { setNonblocking(self.fd) }
+        var result: string = ""
+        var buf: [u8 ; 4096] = [0 ; 4096]
+        while true {
+            unsafe {
+                let n = read(self.fd, buf, 4096)
+                if n < 0 && inGreen && getErrno() == eagain() {
+                    schedulerWaitRead(self.fd)
+                    continue
+                }
+                if n <= 0 {
+                    break
+                }
+                var i: i64 = 0
+                while i < n {
+                    result.push(buf[i])
+                    i = i + 1
+                }
+            }
+        }
+        return Result.Ok(result)
+    }
 }
 
 // ── TLS Stream ──
@@ -140,87 +139,86 @@ impl Drop for TlsStream {
     }
 }
 
-fn tlsConnect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError> {
-    let AF_INET: i32 = 2
-    let SOCK_STREAM: i32 = 1
-    let SIZEOF_SOCKADDR_IN: u32 = 16
+impl TlsStream {
+    fn connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError> {
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
+        let SIZEOF_SOCKADDR_IN: u32 = 16
 
-    unsafe {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        if fd < 0 {
-            return Result.Err(NetError.ConnectionFailed("socket() failed"))
-        }
-
-        var addr = makeSockaddr(port, ip)
-
-        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-            close(fd)
-            return Result.Err(NetError.ConnectionFailed("connect() failed"))
-        }
-
-        let method = TLS_client_method()
-        let ctx = SSL_CTX_new(method)
-        let ctxAddr = ctx as i64
-        if ctxAddr == 0 {
-            close(fd)
-            return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
-        }
-        SSL_CTX_set_default_verify_paths(ctx)
-
-        let ssl = SSL_new(ctx)
-        let sslAddr = ssl as i64
-        if sslAddr == 0 {
-            SSL_CTX_free(ctx)
-            close(fd)
-            return Result.Err(NetError.TlsError("SSL_new failed"))
-        }
-
-        // SNI hostname for certificate validation
-        SSL_ctrl(ssl, 55, 0, hostname)
-        SSL_set_fd(ssl, fd)
-
-        let r = SSL_connect(ssl)
-        if r != 1 {
-            SSL_free(ssl)
-            SSL_CTX_free(ctx)
-            close(fd)
-            return Result.Err(NetError.TlsError("SSL handshake failed"))
-        }
-
-        return Result.Ok(TlsStream {
-            fd: fd, ssl: sslAddr, ctx: ctxAddr
-        }
-        )
-    }
-}
-
-fn tlsSend(s: &TlsStream, data: &string): Result<i64, NetError> {
-    unsafe {
-        let n = SSL_write(s.ssl as *u8, data, data.len as i32)
-        if n < 0 {
-            return Result.Err(NetError.SendFailed("SSL_write failed"))
-        }
-        return Result.Ok(n as i64)
-    }
-}
-
-fn tlsRecv(s: &TlsStream): Result<string, NetError> {
-    var result: string = ""
-    var buf: [u8 ; 4096] = [0 ; 4096]
-    while true {
         unsafe {
-            let n = SSL_read(s.ssl as *u8, buf as *u8, 4096)
-            if n <= 0 {
-                break
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
             }
-            var i: i64 = 0
-            while i < n as i64 {
-                result.push(buf[i])
-                i = i + 1
+
+            var addr = makeSockaddr(port, ip)
+
+            if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+                close(fd)
+                return Result.Err(NetError.ConnectionFailed("connect() failed"))
             }
+
+            let method = TLS_client_method()
+            let ctx = SSL_CTX_new(method)
+            let ctxAddr = ctx as i64
+            if ctxAddr == 0 {
+                close(fd)
+                return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
+            }
+            SSL_CTX_set_default_verify_paths(ctx)
+
+            let ssl = SSL_new(ctx)
+            let sslAddr = ssl as i64
+            if sslAddr == 0 {
+                SSL_CTX_free(ctx)
+                close(fd)
+                return Result.Err(NetError.TlsError("SSL_new failed"))
+            }
+
+            // SNI hostname for certificate validation
+            SSL_ctrl(ssl, 55, 0, hostname)
+            SSL_set_fd(ssl, fd)
+
+            let r = SSL_connect(ssl)
+            if r != 1 {
+                SSL_free(ssl)
+                SSL_CTX_free(ctx)
+                close(fd)
+                return Result.Err(NetError.TlsError("SSL handshake failed"))
+            }
+
+            return Result.Ok(TlsStream { fd: fd, ssl: sslAddr, ctx: ctxAddr })
         }
     }
-    return Result.Ok(result)
+
+    fn send(self: &Self, data: &string): Result<i64, NetError> {
+        unsafe {
+            let n = SSL_write(self.ssl as *u8, data, data.len as i32)
+            if n < 0 {
+                return Result.Err(NetError.SendFailed("SSL_write failed"))
+            }
+            return Result.Ok(n as i64)
+        }
+    }
+
+    fn recv(self: &Self): Result<string, NetError> {
+        var result: string = ""
+        var buf: [u8 ; 4096] = [0 ; 4096]
+        while true {
+            unsafe {
+                let n = SSL_read(self.ssl as *u8, buf as *u8, 4096)
+                if n <= 0 {
+                    break
+                }
+                var i: i64 = 0
+                while i < n as i64 {
+                    result.push(buf[i])
+                    i = i + 1
+                }
+            }
+        }
+        return Result.Ok(result)
+    }
 }
 
 // ── DNS ──
@@ -515,7 +513,7 @@ struct FetchOptions {
 // ── HTTP client ──
 
 fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
-    let stream = tcpConnect(ip, port)?
+    let stream = TcpStream.connect(ip, port)?
     var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
     if opts.headers.len > 0 {
         req = req + opts.headers.clone() + "\r\n"
@@ -525,13 +523,13 @@ fn httpDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): 
     } else {
         req = req + "\r\n"
     }
-    tcpSend(stream, req)?
-    let raw = tcpRecv(stream)?
+    stream.send(req)?
+    let raw = stream.recv()?
     return Result.Ok(parseResponse(raw))
 }
 
 fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions): Result<Response, NetError> {
-    let stream = tlsConnect(ip, port, host)?
+    let stream = TlsStream.connect(ip, port, host)?
     var req: string = opts.method.clone() + " " + path + " HTTP/1.1\r\nHost: " + host + "\r\nConnection: close\r\n"
     if opts.headers.len > 0 {
         req = req + opts.headers.clone() + "\r\n"
@@ -541,8 +539,8 @@ fn httpsDo(ip: u32, port: u16, host: string, path: string, opts: &FetchOptions):
     } else {
         req = req + "\r\n"
     }
-    tlsSend(stream, req)?
-    let raw = tlsRecv(stream)?
+    stream.send(req)?
+    let raw = stream.recv()?
     return Result.Ok(parseResponse(raw))
 }
 

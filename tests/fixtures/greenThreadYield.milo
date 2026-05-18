@@ -5,20 +5,20 @@
 // @expect: B2
 // @expect: C2
 
-from "std/runtime" import { greenSpawn, schedulerYield }
+from "std/runtime" import { GreenThread, schedulerYield }
 
 fn main(): i32 {
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("A1")
         schedulerYield()
         print("A2")
     })
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("B1")
         schedulerYield()
         print("B2")
     })
-    greenSpawn(move (): void => {
+    GreenThread.spawn(move (): void => {
         print("C1")
         schedulerYield()
         print("C2")

@@ -88,7 +88,7 @@ fn _rtWritePtr(base: *u8, off: i64, val: *u8): void {
 
 // ── task handle ──
 
-struct TaskHandle {
+struct GreenThread {
     _ptr: *u8,
 }
 
@@ -140,61 +140,54 @@ fn _taskEntry(fnHi: i32, fnLo: i32, envHi: i32, envLo: i32): void {
 
 // ── public API ──
 
-fn greenSpawn(f: () => void): TaskHandle {
-    unsafe {
-        schedulerEnsureInit()
-        let sched = _getSched()
+impl GreenThread {
+    fn spawn(f: () => void): GreenThread {
+        unsafe {
+            schedulerEnsureInit()
+            let sched = _getSched()
 
-        // extract fn and env pointers from closure pair { ptr, ptr }
-        var fnPtr: *u8 = 0 as *u8
-        var envPtr: *u8 = 0 as *u8
-        memcpy((&fnPtr) as *u8, (&f) as *u8, 8)
-        memcpy((&envPtr) as *u8, ((&f) as i64 + 8) as *u8, 8)
+            var fnPtr: *u8 = 0 as *u8
+            var envPtr: *u8 = 0 as *u8
+            memcpy((&fnPtr) as *u8, (&f) as *u8, 8)
+            memcpy((&envPtr) as *u8, ((&f) as i64 + 8) as *u8, 8)
 
-        // allocate task
-        let task = malloc(taskStructSize())
-        memset(task, 0, taskStructSize())
-        _rtWriteI32(task, tWaitFd(), -1)
+            let task = malloc(taskStructSize())
+            memset(task, 0, taskStructSize())
+            _rtWriteI32(task, tWaitFd(), -1)
 
-        // allocate stack (guard page added after makecontext)
-        let total = guardPageSize() + defaultStackSize()
-        let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
-        _rtWritePtr(task, tStack(), stackMem)
-        _rtWriteI64(task, tStackSize(), total)
+            let total = guardPageSize() + defaultStackSize()
+            let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
+            _rtWritePtr(task, tStack(), stackMem)
+            _rtWriteI64(task, tStackSize(), total)
 
-        // setup ucontext — point ss_sp at full region, after makecontext we'll add guard
-        let ctx = malloc(uctxSize())
-        memset(ctx, 0, uctxSize())
-        getcontext(ctx)
+            let ctx = malloc(uctxSize())
+            memset(ctx, 0, uctxSize())
+            getcontext(ctx)
 
-        let usable = (stackMem as i64 + guardPageSize()) as *u8
-        _rtWritePtr(ctx, uctxStackPtrOffset(), usable)
-        _rtWriteI64(ctx, uctxStackSizeOffset(), defaultStackSize())
+            let usable = (stackMem as i64 + guardPageSize()) as *u8
+            _rtWritePtr(ctx, uctxStackPtrOffset(), usable)
+            _rtWriteI64(ctx, uctxStackSizeOffset(), defaultStackSize())
 
-        // set uc_link to scheduler context (fallback return point)
-        let schedCtx = _rtReadPtr(sched, sCtx())
-        _rtWritePtr(ctx, uctxLinkOffset(), schedCtx)
+            let schedCtx = _rtReadPtr(sched, sCtx())
+            _rtWritePtr(ctx, uctxLinkOffset(), schedCtx)
 
-        // split pointers for makecontext (takes int args only)
-        let fnA = fnPtr as i64
-        let envA = envPtr as i64
-        makecontext(ctx, _taskEntry as *u8, 4,
-            (fnA / 4294967296) as i32, (fnA % 4294967296) as i32,
-            (envA / 4294967296) as i32, (envA % 4294967296) as i32)
+            let fnA = fnPtr as i64
+            let envA = envPtr as i64
+            makecontext(ctx, _taskEntry as *u8, 4,
+                (fnA / 4294967296) as i32, (fnA % 4294967296) as i32,
+                (envA / 4294967296) as i32, (envA % 4294967296) as i32)
 
-        // guard page must be set AFTER makecontext (it bzeros the stack region)
-        mprotect(stackMem, guardPageSize(), protNone())
+            mprotect(stackMem, guardPageSize(), protNone())
 
-        _rtWritePtr(task, tCtx(), ctx)
+            _rtWritePtr(task, tCtx(), ctx)
 
-        // enqueue to run queue
-        _enqueueRun(sched, task)
+            _enqueueRun(sched, task)
 
-        // increment numTasks
-        let n = _rtReadI64(sched, sNumTasks()) + 1
-        _rtWriteI64(sched, sNumTasks(), n)
+            let n = _rtReadI64(sched, sNumTasks()) + 1
+            _rtWriteI64(sched, sNumTasks(), n)
 
-        return TaskHandle { _ptr: task }
+            return GreenThread { _ptr: task }
+        }
     }
 }
 

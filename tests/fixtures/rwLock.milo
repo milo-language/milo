@@ -2,34 +2,34 @@
 // @expect: 42
 // @expect: 99
 
-from "std/sync" import { rwLockNew, rwLockRead, rwLockWrite, rwLockUnlock, withReadLock, withWriteLock, rwLockDestroy, atomicI64New, atomicI64Load, atomicI64Store, atomicI64Destroy }
+from "std/sync" import { RwLock, AtomicI64 }
 
 fn main(): i32 {
-    let rw = rwLockNew()!
-    let val = atomicI64New(42)
+    let rw = RwLock.new()!
+    let val = AtomicI64.new(42)
 
     // Multiple readers can lock simultaneously
-    rwLockRead(rw)!
-    let v1 = atomicI64Load(val)
-    rwLockUnlock(rw)!
+    rw.read()!
+    let v1 = val.load()
+    rw.unlock()!
     print(v1)
 
     // withReadLock closure
-    withReadLock(rw, (): void => {
-        print(atomicI64Load(val))
+    rw.withReadLock((): void => {
+        print(val.load())
     })!
 
     // Exclusive write lock
-    withWriteLock(rw, (): void => {
-        atomicI64Store(val, 99)
+    rw.withWriteLock((): void => {
+        val.store(99)
     })!
 
     // Verify write
-    rwLockRead(rw)!
-    print(atomicI64Load(val))
-    rwLockUnlock(rw)!
+    rw.read()!
+    print(val.load())
+    rw.unlock()!
 
-    atomicI64Destroy(val)
-    rwLockDestroy(rw)
+    val.destroy()
+    rw.destroy()
     return 0
 }

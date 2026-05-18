@@ -3,7 +3,7 @@
 TCP, TLS, DNS resolution, and HTTP client.
 
 ```milo
-from "std/net" import { fetch, resolve, tcpConnect, tcpSend, tcpRecv, TcpStream, Response, NetError }
+from "std/net" import { fetch, resolve, TcpStream, TlsStream, Response, NetError }
 ```
 
 ## Types
@@ -116,50 +116,50 @@ fn resolve(hostname: &string): Result<u32, NetError>
 
 DNS lookup — resolve a hostname to an IPv4 address.
 
-### tcpConnect
+### TcpStream.connect
 
 ```milo
-fn tcpConnect(addr: u32, port: u16): Result<TcpStream, NetError>
+fn TcpStream.connect(addr: u32, port: u16): Result<TcpStream, NetError>
 ```
 
 Open a TCP connection.
 
-### tcpSend
+### stream.send
 
 ```milo
-fn tcpSend(stream: &TcpStream, data: &string): Result<i64, NetError>
+fn send(self: &TcpStream, data: &string): Result<i64, NetError>
 ```
 
 Send data over a TCP connection. Returns bytes sent.
 
-### tcpRecv
+### stream.recv
 
 ```milo
-fn tcpRecv(stream: &TcpStream): Result<string, NetError>
+fn recv(self: &TcpStream): Result<string, NetError>
 ```
 
 Receive data from a TCP connection.
 
-### tlsConnect
+### TlsStream.connect
 
 ```milo
-fn tlsConnect(addr: u32, port: u16, hostname: &string): Result<TlsStream, NetError>
+fn TlsStream.connect(addr: u32, port: u16, hostname: &string): Result<TlsStream, NetError>
 ```
 
 Open a TLS connection. The hostname is used for SNI.
 
-### tlsSend
+### stream.send (TLS)
 
 ```milo
-fn tlsSend(stream: &TlsStream, data: &string): Result<i64, NetError>
+fn send(self: &TlsStream, data: &string): Result<i64, NetError>
 ```
 
 Send data over a TLS connection.
 
-### tlsRecv
+### stream.recv (TLS)
 
 ```milo
-fn tlsRecv(stream: &TlsStream): Result<string, NetError>
+fn recv(self: &TlsStream): Result<string, NetError>
 ```
 
 Receive data from a TLS connection.

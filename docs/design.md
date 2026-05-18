@@ -180,7 +180,7 @@ Two layers: OS threads for CPU-bound parallelism, green threads for high-concurr
 
 Stackful coroutines via `ucontext` with cooperative scheduling. Each green thread gets a 64KB stack (with guard page) instead of an 8MB OS thread stack — can run 10K+ concurrently.
 
-- **`GreenThread.spawn(f)`** — spawn a green thread. Returns `TaskHandle`.
+- **`GreenThread.spawn(f)`** — spawn a green thread. Returns `GreenThread`.
 - **`schedulerYield()`** — cooperatively yield to other green threads.
 - **`schedulerWaitRead(fd)` / `schedulerWaitWrite(fd)`** — yield until fd is ready (kqueue on macOS, epoll on Linux).
 - **Transparent async I/O** — `stream.recv()`/`stream.send()` detect green thread context, automatically set non-blocking and yield on EAGAIN. User code reads the same whether in OS thread or green thread.
@@ -203,7 +203,7 @@ In [a 2023 blog post](https://graydon2.dreamwidth.org/307291.html), Graydon Hoar
 | **Move semantics as default** | Rust eventually adopted this | ✅ Default from day one |
 | **Built-in containers** (not library-defined) | Rust's Vec/HashMap are regular library code using generics + unsafe. Requires aggressive cross-crate inlining for perf, hurting compile times. | ✅ Vec, HashMap, string have direct compiler support — codegen knows their layout and emits operations without going through generic trait dispatch |
 | **Interior iteration** (no stored iterator refs) | LLVM couldn't do coroutines at the time | ✅ `for x in vec` is built-in, no iterator objects or stored references |
-| **Green threads, not async/await** | Go-style FFI issues, ripped out twice | ✅ `greenSpawn` with cooperative scheduling, no async/await |
+| **Green threads, not async/await** | Go-style FFI issues, ripped out twice | ✅ `GreenThread.spawn` with cooperative scheduling, no async/await |
 | **Second-class `&` references** | Iterators needed first-class refs to store collection pointers | ✅ References are param/local only, never stored or returned |
 | **No explicit lifetimes** | Forced by first-class references | ✅ No lifetimes, ever |
 | **Simple type inference** (local only) | Type system people won, inference grew complex | ✅ Local inference only, no unification puzzles |
