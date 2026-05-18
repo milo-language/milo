@@ -38,7 +38,7 @@ fn main(): i32 {
 
 Primitive types: `i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`. Convenience aliases: `int` = `i64`, `float` = `f64`, `byte` = `u8`.
 
-[Full details →](/language/variables)
+[Learn more](/language/variables)
 
 ## Strings
 
@@ -62,7 +62,7 @@ fn main(): i32 {
 }
 ```
 
-[Full details →](/language/strings)
+[Learn more](/language/strings)
 
 ## Functions
 
@@ -89,7 +89,7 @@ fn main(): i32 {
 
 Generics use `<T>` syntax. The compiler generates specialized versions for each type you use, so generic code runs just as fast as if you'd written it by hand. You write `identity<T>` once, and it works with `i32`, `string`, or any type.
 
-[Full details →](/language/functions)
+[Learn more](/language/functions)
 
 ## Structs
 
@@ -116,7 +116,7 @@ fn main(): i32 {
 
 Structs can be generic too — `Pair<A, B>`, `Box<T>`, etc. The standard library's `Vec<T>` and `HashMap<K, V>` are generic structs.
 
-[Full details →](/language/structs)
+[Learn more](/language/structs)
 
 ## Enums and Pattern Matching
 
@@ -146,7 +146,7 @@ fn main(): i32 {
 
 `Option<T>` and `Result<T, E>` are built-in enums — they replace null and exceptions with something the compiler can check. Forget to handle an error case? It won't compile.
 
-[Full details →](/language/enums)
+[Learn more](/language/enums)
 
 ## Ownership and Moves
 
@@ -180,11 +180,13 @@ fn main(): i32 {
 
 If you've heard scary things about Rust's borrow checker, don't worry — Milo is deliberately simpler. No lifetime annotations, ever. The tradeoff is that references can only be used as function parameters, not stored in structs or returned. In practice, this covers the vast majority of use cases and is much easier to learn.
 
-[Full details →](/language/ownership)
+[Learn more](/language/ownership)
 
 ## References
 
-References (`&T`) let functions borrow values without taking ownership. Milo's main innovation is making references *second-class* — they can only exist as function parameters and local variables, never stored in structs or returned from functions. This one restriction collapses an enormous amount of complexity: no lifetime annotations, no borrow checker rules to memorize, no fighting the compiler. Dangling references become structurally impossible, and the mental model fits in one sentence.
+References (`&T`) let functions borrow values without taking ownership. Milo makes references *second-class* — they can only exist as function parameters and local variables, never stored in structs or returned from functions. This one restriction collapses an enormous amount of complexity: no lifetime annotations, no borrow checker rules to memorize, no fighting the compiler. Dangling references become structurally impossible, and the mental model fits in one sentence.
+
+This isn't a new idea — it has deep roots. Graydon Hoare, Rust's original designer, [wanted references to work this way in Rust](https://graydon2.dreamwidth.org/307291.html), but the community needed first-class references to support iterators that store a reference to their collection. That decision is what forced Rust to introduce lifetime annotations and the full borrow checker. Researchers at the [Mutable Value Semantics](https://www.jot.fm/issues/issue_2022_02/article2.pdf) project (behind the Val/Hylo language) later formalized the approach. Milo puts it into practice: you get memory safety with a fraction of the complexity, and `for` loops work without stored references.
 
 ```milo
 fn length(s: &string): i64 {
@@ -206,7 +208,9 @@ fn main(): i32 {
 }
 ```
 
-[Full details →](/language/ownership)
+One thing to notice: the call site just says `double(n)` — there's no special syntax to indicate that `n` is being passed by mutable reference. The function's signature (`x: &mut i32`) determines how the argument is passed, not the caller. This keeps call sites clean, but it means you should check a function's signature if you want to know whether it can modify your variable. Your IDE and the LSP will show you this on hover.
+
+[Learn more](/language/ownership)
 
 ## Error Handling
 
@@ -244,7 +248,7 @@ fn main(): i32 {
 
 You can also write `T?` as shorthand for `Option<T>`, and `value ?? default` to provide a fallback when something is `None`.
 
-[Full details →](/language/error-handling)
+[Learn more](/language/error-handling)
 
 ## Collections
 
@@ -283,7 +287,7 @@ fn main(): i32 {
 }
 ```
 
-[Full details →](/language/collections)
+[Learn more](/language/collections)
 
 ## Closures
 
@@ -312,11 +316,13 @@ fn main(): i32 {
 }
 ```
 
-[Full details →](/language/closures)
+[Learn more](/language/closures)
 
 ## Traits
 
-Traits let different types share a common interface. If you've used interfaces in Go or TypeScript, this will feel familiar — but Milo traits can also have default implementations, constrain generics, and enable operator overloading (`+`, `-`, `==`, etc.).
+Milo has no classes. If you've worked with class hierarchies in other languages, you've probably run into the downsides: fragile base classes, deep inheritance chains that are hard to reason about, and the "where do I put this method?" problem when behavior doesn't fit neatly into one hierarchy. Milo takes the approach Rust pioneered — separate your data (structs) from your behavior (trait implementations). You define *what* a type can do through traits, and *how* it does it through `impl` blocks. This means you can add new behavior to existing types without modifying them, and you never have to worry about inheritance diamonds or superclass changes breaking your code.
+
+If you've used interfaces in Go or TypeScript, traits will feel familiar — but Milo traits can also have default implementations, constrain generics, and enable operator overloading (`+`, `-`, `==`, etc.).
 
 ```milo
 trait Area {
@@ -347,13 +353,22 @@ fn main(): i32 {
 }
 ```
 
-Use `@derive(Eq)` to auto-generate equality comparisons instead of writing them by hand.
+Milo has `@` annotations (similar to decorators in other languages) that can generate code for you. For example, `@derive(Eq)` placed above a struct auto-generates field-by-field equality, so you get `==` and `!=` without writing the comparison yourself. You can also implement `Add`, `Sub`, `Mul`, and `Div` traits to overload arithmetic operators on your types.
 
-[Full details →](/language/traits)
+[Learn more](/language/traits)
 
 ## Concurrency
 
-Milo makes concurrent programming safe and straightforward. Spawn OS threads for parallel computation, use channels to pass messages between them, and let the compiler verify thread safety at compile time. If you accidentally try to share mutable state across threads, it won't compile — data races are caught before your code runs.
+Milo gives you two concurrency models depending on what you're doing:
+
+- **OS threads** — real parallel execution across CPU cores. Use these for CPU-heavy work like number crunching, image processing, or anything that benefits from running on multiple cores at once. Similar to threads in Java, C++, or Rust.
+- **Green threads** — lightweight, user-space tasks that run cooperatively within a single thread. Use these for I/O-heavy work like handling thousands of network connections simultaneously. Similar to goroutines in Go or `async` tasks in other languages, but with no `async`/`await` syntax — you just write normal blocking code and the runtime handles the scheduling.
+
+Both models are compile-time safe. The compiler checks that any data you send across threads implements `Send`, so data races are caught before your code runs. No runtime surprises.
+
+### OS Threads with Channels
+
+Threads communicate through channels — typed message queues that are safe to share across threads:
 
 ```milo
 from "std/thread" import { Thread, threadJoin }
@@ -381,9 +396,27 @@ fn main(): i32 {
 }
 ```
 
-For I/O-heavy workloads, Milo also has green threads (`greenSpawn`) that run thousands of lightweight tasks concurrently, plus mutexes, rwlocks, and atomics when you need them.
+### Green Threads
 
-[Full details →](/language/concurrency)
+Green threads are cheap to spawn (64KB stack vs ~8MB for an OS thread) and fast to switch between (nanoseconds vs microseconds). You can run tens of thousands concurrently:
+
+```milo
+from "std/runtime" import { greenSpawn }
+
+fn main(): i32 {
+    for i in 0..1000 {
+        let id = i as i64
+        greenSpawn(move (): void => {
+            print($"task {id}")
+        })
+    }
+    return 0
+}
+```
+
+The standard library also includes mutexes, rwlocks, and atomics for when you need shared mutable state with fine-grained control.
+
+[Learn more](/language/concurrency)
 
 ## Modules and Packages
 
@@ -397,7 +430,7 @@ from "lib/utils" import { validate }
 
 Milo has a built-in package manager for installing and managing third-party dependencies. The standard library covers I/O, networking, HTTP, JSON, SQLite, testing, date/time, crypto, and more. [See the full stdlib →](/stdlib/)
 
-[Full details →](/language/modules)
+[Learn more](/language/modules)
 
 ## What's next
 
