@@ -132,6 +132,9 @@ function collectStmtTypeInfo(stmt: Stmt, fn: Function, infos: TypeInfo[]) {
     case "ForInStmt":
       for (const s of stmt.body) collectStmtTypeInfo(s, fn, infos);
       break;
+    case "UnsafeBlock":
+      for (const s of stmt.body) collectStmtTypeInfo(s, fn, infos);
+      break;
   }
 }
 
@@ -418,6 +421,9 @@ function findVarHover(stmts: Stmt[], word: string, exprTypes: Map<Expr, import("
       if (stmt.varName2 && stmt.varName2 === word) return `let ${stmt.varName2}: (loop variable)`;
       const r = findVarHover(stmt.body, word, exprTypes); if (r) return r;
     }
+    if (stmt.kind === "UnsafeBlock") {
+      const r = findVarHover(stmt.body, word, exprTypes); if (r) return r;
+    }
   }
   return null;
 }
@@ -444,6 +450,9 @@ function findHoverInStmt(stmt: Stmt, line: number, col: number, exprTypes: Map<E
     }
   }
   if (stmt.kind === "ForInStmt") {
+    for (const s of stmt.body) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
+  }
+  if (stmt.kind === "UnsafeBlock") {
     for (const s of stmt.body) { const r = findHoverInStmt(s, line, col, exprTypes, word); if (r) return r; }
   }
   return null;
