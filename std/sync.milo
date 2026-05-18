@@ -1,6 +1,6 @@
-// std/sync — synchronization primitives (mutex, channel) via pthreads
+// std/sync — synchronization primitives (mutex, rwlock, channel, atomics) via pthreads
 
-from "std/os" import { free, malloc, memcpy, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock }
+from "std/os" import { free, malloc, memcpy, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
 
 // ── Mutex ──
 // Mutual exclusion lock. Wrap shared data access with lock/unlock.
@@ -61,6 +61,87 @@ fn mutexDestroy(m: &Mutex): void {
     unsafe {
         pthread_mutex_destroy(m._handle)
         free(m._handle)
+    }
+}
+
+// ── RwLock ──
+// Reader-writer lock. Multiple concurrent readers OR one exclusive writer.
+//
+//   let rw = rwLockNew()!
+//   rwLockRead(rw)!        // shared read lock
+//   // ... read data ...
+//   rwLockUnlock(rw)!
+//   rwLockWrite(rw)!       // exclusive write lock
+//   // ... write data ...
+//   rwLockUnlock(rw)!
+//   rwLockDestroy(rw)
+
+@send
+@sync
+struct RwLock {
+    _handle: *u8,
+}
+
+fn rwLockNew(): Result<RwLock> {
+    unsafe {
+        let h = malloc(256)
+        let r = pthread_rwlock_init(h, 0 as *u8)
+        if r != 0 {
+            free(h)
+            return Result.Err("pthread_rwlock_init failed")
+        }
+        return Result.Ok(RwLock { _handle: h })
+    }
+}
+
+fn rwLockRead(rw: &RwLock): Result<i32> {
+    unsafe {
+        let r = pthread_rwlock_rdlock(rw._handle)
+        if r != 0 {
+            return Result.Err("pthread_rwlock_rdlock failed")
+        }
+        return Result.Ok(0)
+    }
+}
+
+fn rwLockWrite(rw: &RwLock): Result<i32> {
+    unsafe {
+        let r = pthread_rwlock_wrlock(rw._handle)
+        if r != 0 {
+            return Result.Err("pthread_rwlock_wrlock failed")
+        }
+        return Result.Ok(0)
+    }
+}
+
+fn rwLockUnlock(rw: &RwLock): Result<i32> {
+    unsafe {
+        let r = pthread_rwlock_unlock(rw._handle)
+        if r != 0 {
+            return Result.Err("pthread_rwlock_unlock failed")
+        }
+        return Result.Ok(0)
+    }
+}
+
+fn withReadLock(rw: &RwLock, f: () => void): Result<i32> {
+    rwLockRead(rw)?
+    f()
+    rwLockUnlock(rw)?
+    return Result.Ok(0)
+}
+
+fn withWriteLock(rw: &RwLock, f: () => void): Result<i32> {
+    rwLockWrite(rw)?
+    f()
+    rwLockUnlock(rw)?
+    return Result.Ok(0)
+}
+
+fn rwLockDestroy(rw: &RwLock): void {
+    unsafe {
+        pthread_rwlock_destroy(rw._handle)
+        free(rw._handle)
     }
 }
 

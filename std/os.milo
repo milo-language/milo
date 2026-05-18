@@ -295,3 +295,23 @@ fn pthread_cond_broadcast(cond: *u8): i32
 extern
 
 fn pthread_cond_destroy(cond: *u8): i32
+
+extern
+
+fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
+
+extern
+
+fn pthread_rwlock_rdlock(rwlock: *u8): i32
+
+extern
+
+fn pthread_rwlock_wrlock(rwlock: *u8): i32
+
+extern
+
+fn pthread_rwlock_unlock(rwlock: *u8): i32
+
+extern
+
+fn pthread_rwlock_destroy(rwlock: *u8): i32
