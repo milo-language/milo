@@ -28,7 +28,7 @@ error: use of moved variable 'a'
 
 No runtime cost. The compiler catches it before the program runs.
 
-Primitive types (`i32`, `bool`, `f64`, etc.) are copied, not moved. Structs, enums, strings, Vec, HashMap, and Box all move.
+Primitive types (`i32`, `bool`, `f64`, etc.) are copied, not moved. Structs, enums, strings, Vec, HashMap, and Heap all move.
 
 ## Moves through control flow
 

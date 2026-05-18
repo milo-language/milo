@@ -114,7 +114,7 @@ fn main(): i32 {
 }
 ```
 
-Structs can be generic too — `Pair<A, B>`, `Box<T>`, etc. The standard library's `Vec<T>` and `HashMap<K, V>` are generic structs.
+Structs can be generic too — `Pair<A, B>`, `Heap<T>`, etc. The standard library's `Vec<T>` and `HashMap<K, V>` are generic structs.
 
 [Learn more](/language/structs)
 
@@ -164,7 +164,7 @@ fn main(): i32 {
 
 That's it. From this one rule, the compiler can free memory automatically, prevent use-after-free bugs, and eliminate data races — all without runtime overhead.
 
-Numbers and booleans are small enough to just copy, so they don't move. Everything else — strings, structs, enums, Vec, Box — transfers ownership on assignment.
+Numbers and booleans are small enough to just copy, so they don't move. Everything else — strings, structs, enums, Vec, Heap — transfers ownership on assignment.
 
 When you need to keep the original, clone it:
 

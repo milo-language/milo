@@ -1,15 +1,15 @@
 // @expect: 42
 // @expect: 99
 
-struct Box<T> {
+struct Heap<T> {
     value: T
 }
 
 fn main(): i32 {
-    let a = Box {
+    let a = Heap {
         value: 42
     }
-    let b = Box {
+    let b = Heap {
         value: 99
     }
     print(a.value)

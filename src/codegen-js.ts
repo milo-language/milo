@@ -304,9 +304,9 @@ export class CodegenJS {
         return this.genCast(expr);
       case "IsCheck":
         return `(${this.genExpr(expr.operand)}.tag === ${expr.tag})`;
-      case "BoxCreate":
+      case "HeapCreate":
         return this.genExpr(expr.value);
-      case "BoxDeref":
+      case "HeapDeref":
       case "PtrDeref":
         return this.genExpr(expr.operand);
       case "VecNew":
@@ -469,7 +469,7 @@ export class CodegenJS {
         return `${this.genLValue(expr.object)}.${expr.field}`;
       case "IndexAccess":
         return `${this.genExpr(expr.object)}[${this.genExpr(expr.index)}]`;
-      case "BoxDeref":
+      case "HeapDeref":
       case "PtrDeref":
         return this.genLValue(expr.operand);
       default:

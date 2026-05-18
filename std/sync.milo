@@ -131,11 +131,11 @@ impl RwLock {
     }
 }
 
-// ── Channel ──
+// ── Channel<T> ──
 // Bounded FIFO channel for safe message passing between threads.
 // Channel is a handle type — copying it shares the underlying queue.
 //
-//   let ch = Channel.new(16)!
+//   let ch = Channel<i64>.new(16)!
 //   let t = Thread.spawn(move (): void => {
 //       ch.send(42)!
 //   })!
@@ -156,12 +156,12 @@ struct ChannelInner {
 
 @send
 @sync
-struct Channel {
+struct Channel<T> {
     _ptr: *u8,
 }
 
-impl Channel {
-    fn new(capacity: i64): Result<Channel> {
+impl Channel<T> {
+    fn new(capacity: i64): Result<Channel<T>> {
         unsafe {
             let raw = malloc(64)
             let inner = raw as *ChannelInner
@@ -194,7 +194,7 @@ impl Channel {
             (*inner).mtx = mtx
             (*inner).condNotEmpty = cne
             (*inner).condNotFull = cnf
-            (*inner).buf = malloc(capacity * 8)
+            (*inner).buf = malloc(capacity * sizeOf<T>())
             (*inner).capacity = capacity
             (*inner).len = 0
             (*inner).head = 0
@@ -204,8 +204,8 @@ impl Channel {
         }
     }
 
-    fn send(self: &Self, val: i64): Result<i32> {
-        var v: i64 = val
+    fn send(self: &Self, val: T): Result<i32> {
+        var v: T = val
         unsafe {
             let inner = self._ptr as *ChannelInner
             let mtx = (*inner).mtx
@@ -218,8 +218,8 @@ impl Channel {
                 curLen = (*inner).len
             }
             var tail: i64 = (*inner).tail
-            let slotPtr = ((*inner).buf as i64 + tail * 8) as *u8
-            memcpy(slotPtr, (&v) as *u8, 8)
+            let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
+            memcpy(slotPtr, (&v) as *u8, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
             pthread_cond_signal((*inner).condNotEmpty)
@@ -228,9 +228,9 @@ impl Channel {
         }
     }
 
-    fn recv(self: &Self): Result<i64> {
-        var val: i64 = 0
+    fn recv(self: &Self): Result<T> {
         unsafe {
+            var val: T = zeroed<T>()
             let inner = self._ptr as *ChannelInner
             let mtx = (*inner).mtx
             let cap = (*inner).capacity
@@ -242,8 +242,8 @@ impl Channel {
                 curLen = (*inner).len
             }
             var head: i64 = (*inner).head
-            let slotPtr = ((*inner).buf as i64 + head * 8) as *u8
-            memcpy((&val) as *u8, slotPtr, 8)
+            let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
+            memcpy((&val) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
             pthread_cond_signal((*inner).condNotFull)
@@ -252,8 +252,8 @@ impl Channel {
         }
     }
 
-    fn trySend(self: &Self, val: i64): bool {
-        var v: i64 = val
+    fn trySend(self: &Self, val: T): bool {
+        var v: T = val
         unsafe {
             let inner = self._ptr as *ChannelInner
             let mtx = (*inner).mtx
@@ -266,8 +266,8 @@ impl Channel {
                 return false
             }
             var tail: i64 = (*inner).tail
-            let slotPtr = ((*inner).buf as i64 + tail * 8) as *u8
-            memcpy(slotPtr, (&v) as *u8, 8)
+            let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
+            memcpy(slotPtr, (&v) as *u8, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
             pthread_cond_signal((*inner).condNotEmpty)
@@ -276,9 +276,9 @@ impl Channel {
         }
     }
 
-    fn tryRecv(self: &Self): Option<i64> {
-        var val: i64 = 0
+    fn tryRecv(self: &Self): Option<T> {
         unsafe {
+            var val: T = zeroed<T>()
             let inner = self._ptr as *ChannelInner
             let mtx = (*inner).mtx
 
@@ -290,8 +290,8 @@ impl Channel {
             }
             let cap = (*inner).capacity
             var head: i64 = (*inner).head
-            let slotPtr = ((*inner).buf as i64 + head * 8) as *u8
-            memcpy((&val) as *u8, slotPtr, 8)
+            let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
+            memcpy((&val) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
             pthread_cond_signal((*inner).condNotFull)

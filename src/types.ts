@@ -8,11 +8,12 @@ export type TypeKind =
   | { tag: "ref"; inner: TypeKind; mutable: boolean }
   | { tag: "struct"; name: string }
   | { tag: "enum"; name: string }
-  | { tag: "box"; inner: TypeKind }
+  | { tag: "heap"; inner: TypeKind }
   | { tag: "vec"; element: TypeKind }
   | { tag: "hashmap"; key: TypeKind; value: TypeKind }
   | { tag: "array"; element: TypeKind; size: number | null }
   | { tag: "fn"; params: TypeKind[]; ret: TypeKind }
+  | { tag: "interface"; name: string }
   | { tag: "unknown" };
 
 export function typeFromAst(ty: { name: string; isPtr: boolean; isRef: boolean; isRefMut: boolean; isArray: boolean; arraySize: number | null; isFn?: boolean; fnParams?: any[]; fnRet?: any; rangeMin?: number; rangeMax?: number }): TypeKind {
@@ -54,7 +55,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
     case "float": return (b as typeof a).bits === a.bits;
     case "bool": case "void": case "string": case "unknown": return true;
     case "ptr": return typeEq(a.inner, (b as typeof a).inner);
-    case "box": return typeEq(a.inner, (b as typeof a).inner);
+    case "heap": return typeEq(a.inner, (b as typeof a).inner);
     case "vec": return typeEq(a.element, (b as typeof a).element);
     case "hashmap": return typeEq(a.key, (b as typeof a).key) && typeEq(a.value, (b as typeof a).value);
     case "ref": return typeEq(a.inner, (b as typeof a).inner) && a.mutable === (b as typeof a).mutable;
@@ -68,6 +69,7 @@ export function typeEq(a: TypeKind, b: TypeKind): boolean {
       const bf = b as typeof a;
       return a.params.length === bf.params.length && a.params.every((p, i) => typeEq(p, bf.params[i])) && typeEq(a.ret, bf.ret);
     }
+    case "interface": return a.name === (b as typeof a).name;
   }
 }
 
@@ -82,7 +84,7 @@ export function typeName(t: TypeKind): string {
     case "void": return "void";
     case "string": return "string";
     case "ptr": return `*${typeName(t.inner)}`;
-    case "box": return `Box<${typeName(t.inner)}>`;
+    case "heap": return `Heap<${typeName(t.inner)}>`;
     case "vec": return `Vec<${typeName(t.element)}>`;
     case "hashmap": return `HashMap<${typeName(t.key)}, ${typeName(t.value)}>`;
     case "ref": return `&${t.mutable ? "mut " : ""}${typeName(t.inner)}`;
@@ -90,6 +92,7 @@ export function typeName(t: TypeKind): string {
     case "enum": return t.name;
     case "array": return t.size !== null ? `[${typeName(t.element)}; ${t.size}]` : `[${typeName(t.element)}]`;
     case "fn": return `(${t.params.map(typeName).join(", ")}) => ${typeName(t.ret)}`;
+    case "interface": return t.name;
     case "unknown": return "<unknown>";
   }
 }
@@ -124,5 +127,5 @@ export function isScalar(t: TypeKind): boolean {
 
 // heap-owning types that need destructor calls at scope exit
 export function needsDrop(t: TypeKind): boolean {
-  return t.tag === "string" || t.tag === "box" || t.tag === "vec" || t.tag === "hashmap";
+  return t.tag === "string" || t.tag === "heap" || t.tag === "vec" || t.tag === "hashmap";
 }

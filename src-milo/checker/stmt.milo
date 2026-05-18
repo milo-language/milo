@@ -130,7 +130,7 @@ fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span
 
 // -- Return --
 
-fn checkReturn(ck: &mut Checker, value: &Option<Box<Expr>>, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKind, span: &Option<Span>) {
     match value {
         Option.Some(expr) => {
             let valType = checkExpr(ck, &*expr)
@@ -149,7 +149,7 @@ fn checkReturn(ck: &mut Checker, value: &Option<Box<Expr>>, fnRetType: &TypeKind
 
 // -- If statement --
 
-fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Box<Stmt>>, elseBody: &Option<Vec<Box<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
     let condType = checkExpr(ck, cond)
     if !typeEq(&condType, &tyBool()) && !typeEq(&condType, &tyUnknown()) {
         error(ck, "if condition must be bool, got " + typeName(&condType), span.clone())
@@ -179,7 +179,7 @@ fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Box<Stmt>>, elseBody: &
 
 // -- While statement --
 
-fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Box<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
     let condType = checkExpr(ck, cond)
     if !typeEq(&condType, &tyBool()) && !typeEq(&condType, &tyUnknown()) {
         error(ck, "while condition must be bool, got " + typeName(&condType), span.clone())
@@ -260,7 +260,7 @@ fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetTyp
 
 // -- If-let statement --
 
-fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<Box<Stmt>>, elseBody: &Option<Vec<Box<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
     let exprType = checkExpr(ck, expr)
 
     pushScope(ck)
@@ -320,7 +320,7 @@ fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<B
 
 // -- For-in statement --
 
-fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Box<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: &TypeKind, span: &Option<Span>) {
     // Range expression handled specially
     match iterable {
         Expr.RangeExpr(start, end, rspan) => {
@@ -377,7 +377,7 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
     // Determine loop variable type based on collection type
     match &iterType {
         TypeKind.TVec(elem) => {
-            let elemRef = TypeKind.TRef(Box.new(elem.clone()), false)
+            let elemRef = TypeKind.TRef(Heap.new(elem.clone()), false)
             match varName2 {
                 Option.Some(name2) => {
                     declare(ck, varName.clone(), VarInfo { type: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
@@ -401,8 +401,8 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
             }
         }
         TypeKind.THashMap(key, val) => {
-            let keyRef = TypeKind.TRef(Box.new(key.clone()), false)
-            let valRef = TypeKind.TRef(Box.new(val.clone()), false)
+            let keyRef = TypeKind.TRef(Heap.new(key.clone()), false)
+            let valRef = TypeKind.TRef(Heap.new(val.clone()), false)
             declare(ck, varName.clone(), VarInfo { type: keyRef, mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })
             match varName2 {
                 Option.Some(name2) => {
@@ -412,7 +412,7 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
             }
         }
         TypeKind.TArray(elem, size) => {
-            let elemRef = TypeKind.TRef(Box.new(elem.clone()), false)
+            let elemRef = TypeKind.TRef(Heap.new(elem.clone()), false)
             match varName2 {
                 Option.Some(name2) => {
                     declare(ck, varName.clone(), VarInfo { type: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: span.clone() })

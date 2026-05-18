@@ -15,7 +15,7 @@ struct MiloType {
     arraySize: Option<i64>,
     isFn: bool,
     fnParams: Vec<MiloType>,
-    fnRet: Option<Box<MiloType>>,
+    fnRet: Option<Heap<MiloType>>,
 }
 
 fn simpleType(name: string): MiloType {
@@ -72,7 +72,7 @@ struct Attribute {
 
 struct StructLitField {
     name: string,
-    value: Box<Expr>,
+    value: Heap<Expr>,
 }
 
 enum Expr {
@@ -82,23 +82,23 @@ enum Expr {
     StringLit(string, Option<Span>),
     CharLit(i32, Option<Span>),
     Ident(string, Option<Span>),
-    BinOp(string, Box<Expr>, Box<Expr>, Option<Span>),
-    UnaryOp(string, Box<Expr>, Option<Span>),
-    Call(string, Vec<Box<Expr>>, Vec<MiloType>, Option<Span>),
+    BinOp(string, Heap<Expr>, Heap<Expr>, Option<Span>),
+    UnaryOp(string, Heap<Expr>, Option<Span>),
+    Call(string, Vec<Heap<Expr>>, Vec<MiloType>, Option<Span>),
     StructLit(string, Vec<StructLitField>, Option<Span>),
-    FieldAccess(Box<Expr>, string, Option<Span>),
-    ArrayLit(Vec<Box<Expr>>, Option<Span>),
-    ArrayRepeat(Box<Expr>, i64, Option<Span>),
-    IndexAccess(Box<Expr>, Box<Expr>, Option<Span>),
-    EnumLit(string, string, Vec<Box<Expr>>, Option<Span>),
-    Unwrap(Box<Expr>, Option<Span>),
-    Propagate(Box<Expr>, Option<Span>),
-    DefaultValue(Box<Expr>, Box<Expr>, Option<Span>),
-    CastExpr(Box<Expr>, MiloType, Option<Span>),
-    MethodCall(Box<Expr>, string, Vec<Box<Expr>>, Option<Span>),
-    Closure(Vec<Param>, Option<MiloType>, Vec<Box<Stmt>>, bool, Option<Span>),
-    RangeExpr(Box<Expr>, Box<Expr>, Option<Span>),
-    IsExpr(Box<Expr>, Box<Pattern>, Option<Span>),
+    FieldAccess(Heap<Expr>, string, Option<Span>),
+    ArrayLit(Vec<Heap<Expr>>, Option<Span>),
+    ArrayRepeat(Heap<Expr>, i64, Option<Span>),
+    IndexAccess(Heap<Expr>, Heap<Expr>, Option<Span>),
+    EnumLit(string, string, Vec<Heap<Expr>>, Option<Span>),
+    Unwrap(Heap<Expr>, Option<Span>),
+    Propagate(Heap<Expr>, Option<Span>),
+    DefaultValue(Heap<Expr>, Heap<Expr>, Option<Span>),
+    CastExpr(Heap<Expr>, MiloType, Option<Span>),
+    MethodCall(Heap<Expr>, string, Vec<Heap<Expr>>, Option<Span>),
+    Closure(Vec<Param>, Option<MiloType>, Vec<Heap<Stmt>>, bool, Option<Span>),
+    RangeExpr(Heap<Expr>, Heap<Expr>, Option<Span>),
+    IsExpr(Heap<Expr>, Heap<Pattern>, Option<Span>),
 }
 
 // -- Patterns --
@@ -121,23 +121,23 @@ enum Pattern {
 
 struct MatchArm {
     pattern: Pattern,
-    body: Vec<Box<Stmt>>,
+    body: Vec<Heap<Stmt>>,
 }
 
 enum Stmt {
-    LetDecl(string, Option<MiloType>, Box<Expr>, Option<Span>),
-    VarDecl(string, Option<MiloType>, Box<Expr>, Option<Span>),
-    Assign(Box<Expr>, Box<Expr>, Option<Span>),
-    Return(Option<Box<Expr>>, Option<Span>),
-    IfStmt(Box<Expr>, Vec<Box<Stmt>>, Option<Vec<Box<Stmt>>>, Option<Span>),
-    WhileStmt(Box<Expr>, Vec<Box<Stmt>>, Option<Span>),
-    ExprStmt(Box<Expr>, Option<Span>),
-    MatchStmt(Box<Expr>, Vec<MatchArm>, Option<Span>),
+    LetDecl(string, Option<MiloType>, Heap<Expr>, Option<Span>),
+    VarDecl(string, Option<MiloType>, Heap<Expr>, Option<Span>),
+    Assign(Heap<Expr>, Heap<Expr>, Option<Span>),
+    Return(Option<Heap<Expr>>, Option<Span>),
+    IfStmt(Heap<Expr>, Vec<Heap<Stmt>>, Option<Vec<Heap<Stmt>>>, Option<Span>),
+    WhileStmt(Heap<Expr>, Vec<Heap<Stmt>>, Option<Span>),
+    ExprStmt(Heap<Expr>, Option<Span>),
+    MatchStmt(Heap<Expr>, Vec<MatchArm>, Option<Span>),
     BreakStmt(Option<Span>),
     ContinueStmt(Option<Span>),
-    IfLetStmt(Box<Pattern>, Box<Expr>, Vec<Box<Stmt>>, Option<Vec<Box<Stmt>>>, Option<Span>),
-    UnsafeBlock(Vec<Box<Stmt>>, Option<Span>),
-    ForInStmt(string, Option<string>, Box<Expr>, Vec<Box<Stmt>>, Option<Span>),
+    IfLetStmt(Heap<Pattern>, Heap<Expr>, Vec<Heap<Stmt>>, Option<Vec<Heap<Stmt>>>, Option<Span>),
+    UnsafeBlock(Vec<Heap<Stmt>>, Option<Span>),
+    ForInStmt(string, Option<string>, Heap<Expr>, Vec<Heap<Stmt>>, Option<Span>),
 }
 
 // -- Top-level declarations --
@@ -166,7 +166,7 @@ struct Function {
     typeParams: Vec<TypeParam>,
     params: Vec<Param>,
     retType: MiloType,
-    body: Vec<Box<Stmt>>,
+    body: Vec<Heap<Stmt>>,
     isExtern: bool,
     isVariadic: bool,
 }
@@ -181,7 +181,7 @@ struct TraitMethod {
     name: string,
     params: Vec<Param>,
     retType: MiloType,
-    body: Option<Vec<Box<Stmt>>>,
+    body: Option<Vec<Heap<Stmt>>>,
     span: Option<Span>,
 }
 

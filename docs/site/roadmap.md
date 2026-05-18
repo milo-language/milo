@@ -4,7 +4,7 @@
 
 ### Core Language
 
-The foundation is complete: primitive types, let/var bindings, if/else, while/for loops, functions, structs, enums with pattern matching (exhaustiveness checked), generics with monomorphization and type inference, move semantics with use-after-move detection, second-class references (`&T`/`&mut T` in params only), closures (including escaping/move closures), traits with static dispatch and `@derive(Eq)`, operator overloading via traits, `Box<T>`, `Option<T>`, `Result<T,E>` with `!`/`?`/`??` operators, string interpolation, bitwise operators, hex/binary literals, type casts, for-in loops over ranges/Vec/array/string/HashMap, and HIR-based typed IR.
+The foundation is complete: primitive types, let/var bindings, if/else, while/for loops, functions, structs, enums with pattern matching (exhaustiveness checked), generics with monomorphization and type inference, move semantics with use-after-move detection, second-class references (`&T`/`&mut T` in params only), closures (including escaping/move closures), traits with static dispatch and `@derive(Eq)`, operator overloading via traits, `Heap<T>`, `Option<T>`, `Result<T,E>` with `!`/`?`/`??` operators, string interpolation, bitwise operators, hex/binary literals, type casts, for-in loops over ranges/Vec/array/string/HashMap, and HIR-based typed IR.
 
 ### Type System & Safety
 
@@ -53,7 +53,7 @@ Memory: mem
 
 ### Self-Hosting (Stage-0 Complete)
 
-`milo0` — a Milo compiler written in Milo — compiles a substantial subset: primitives, functions, let/var, if/else/while, structs (construct + field access + mutation), enums (payload-free + single/multi-field payloads + match), `Box<T>` with deref, strings (literals, slice, index, concat, clone, len, eq), closures, `as` casts, bitwise ops. Verified on `examples/fib.milo`, `examples/fizzbuzz.milo`, `examples/hello.milo`.
+`milo0` — a Milo compiler written in Milo — compiles a substantial subset: primitives, functions, let/var, if/else/while, structs (construct + field access + mutation), enums (payload-free + single/multi-field payloads + match), `Heap<T>` with deref, strings (literals, slice, index, concat, clone, len, eq), closures, `as` casts, bitwise ops. Verified on `examples/fib.milo`, `examples/fizzbuzz.milo`, `examples/hello.milo`.
 
 ---
 
@@ -75,7 +75,8 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Language
 
-- [ ] **Trait objects / dynamic dispatch** — `dyn Trait` with vtables. Unlocks heterogeneous collections (`Vec<dyn Animal>`), plugin systems, dependency injection.
+- [x] **Interfaces (runtime polymorphism)** — Go-style interfaces with structural typing and vtable dispatch. `interface Shape { fn area(self: &Self): f64 }` — any type with matching methods satisfies the interface. Separate from traits (which remain compile-time only).
+- [ ] **Heap\<Interface\> + heterogeneous collections** — `Vec<Heap<Shape>>` for mixed-type collections via heap-allocated interface values.
 - [ ] **Iterators** — iterator trait, `.map().filter().collect()` chains, lazy evaluation. Needs associated types.
 - [ ] **Error conversion** — `From` trait for automatic error conversion in `?`, `anyhow`-style boxing.
 - [ ] **Ranged integers L3** — branch narrowing: after `if x < 50`, x is known `(min..49)` in the then-branch.

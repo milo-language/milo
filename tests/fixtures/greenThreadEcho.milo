@@ -8,7 +8,7 @@
 from "std/os" import { socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe }
 from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
-from "std/runtime" import { GreenThread, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent }
+from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent }
 
 fn greenRead(fd: i32, buf: &[u8 ; 4096], size: i64): i64 {
     unsafe {
@@ -59,7 +59,7 @@ fn main(): i32 {
         print("server ready")
 
         // spawn server accept loop
-        GreenThread.spawn(move (): void => {
+        Task.spawn(move (): void => {
             var handled = 0
             while handled < 2 {
                 var clientAddr = makeZeroedSockaddr()
@@ -74,7 +74,7 @@ fn main(): i32 {
                 }
                 setNonblocking(clientFd)
                 let fd = clientFd
-                GreenThread.spawn(move (): void => {
+                Task.spawn(move (): void => {
                     var buf: [u8 ; 4096] = [0 ; 4096]
                     let n = greenRead(fd, buf, 4096)
                     if n > 0 {
@@ -95,7 +95,7 @@ fn main(): i32 {
         })
 
         // spawn two clients
-        GreenThread.spawn(move (): void => {
+        Task.spawn(move (): void => {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             var addr2 = makeSockaddr(port, 16777343)
             connect(fd, addr2, 16)
@@ -117,7 +117,7 @@ fn main(): i32 {
             close(fd)
         })
 
-        GreenThread.spawn(move (): void => {
+        Task.spawn(move (): void => {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
             var addr3 = makeSockaddr(port, 16777343)
             connect(fd, addr3, 16)

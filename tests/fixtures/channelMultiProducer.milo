@@ -4,7 +4,7 @@ from "std/thread" import { Thread }
 from "std/sync" import { Channel }
 
 fn main(): i32 {
-    let ch = Channel.new(16)!
+    let ch = Channel<i64>.new(16)!
     var threads: Vec<Thread> = Vec.new()
 
     var i: i64 = 0

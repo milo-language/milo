@@ -54,7 +54,37 @@ class LowerCtx {
       functions.push(this.lowerFn(fn));
     }
 
-    return { structs, enums, functions, dropImpls: this.c.dropImpls };
+    // collect itables for interface coercions
+    const itableMap = new Map<string, { concreteType: string; ifaceName: string; methods: string[] }>();
+    for (const [, coercion] of this.c.interfaceCoercions) {
+      const key = `${coercion.fromType}.${coercion.ifaceName}`;
+      if (itableMap.has(key)) continue;
+      const iface = this.c.interfaces.get(coercion.ifaceName);
+      if (!iface) continue;
+      const methods: string[] = [];
+      for (const [methodName] of iface.methods) {
+        // resolve the concrete method — inherent first, then trait impls
+        const inherent = this.c.functions.get(`${coercion.fromType}$${methodName}`);
+        if (inherent) {
+          methods.push(`${coercion.fromType}$${methodName}`);
+        } else {
+          // search trait impls for matching method
+          let found = false;
+          for (const [fnName] of this.c.functions) {
+            if (fnName.startsWith(`${coercion.fromType}$`) && fnName.endsWith(`$${methodName}`)) {
+              methods.push(fnName);
+              found = true;
+              break;
+            }
+          }
+          if (!found) methods.push(`${coercion.fromType}$${methodName}`);
+        }
+      }
+      itableMap.set(key, { concreteType: coercion.fromType, ifaceName: coercion.ifaceName, methods });
+    }
+    const itables = [...itableMap.values()];
+
+    return { structs, enums, functions, dropImpls: this.c.dropImpls, itables };
   }
 
   private lowerParam(p: { name: string; type: import("./ast").MiloType }, sig: import("./checker").FnSig | undefined, i: number) {
@@ -286,6 +316,16 @@ class LowerCtx {
       return { kind: "EnumLit", enumName: optionName, variant: "Some", args: [inner], type: optionType, span: expr.span };
     }
 
+    // concrete → interface coercion: build fat pointer { data, itable }
+    const ifaceCoercion = this.c.interfaceCoercions.get(expr);
+    if (ifaceCoercion) {
+      const inner = this.lowerExprRaw(expr, type);
+      const ifaceInner: TypeKind = { tag: "interface", name: ifaceCoercion.ifaceName };
+      // preserve Heap wrapper: Heap<T> → Heap<Interface> keeps Heap tag for drop semantics
+      const coerceType: TypeKind = type.tag === "heap" ? { tag: "heap", inner: ifaceInner } : ifaceInner;
+      return { kind: "InterfaceCoerce", value: inner, fromType: ifaceCoercion.fromType, ifaceName: ifaceCoercion.ifaceName, type: coerceType, span: expr.span };
+    }
+
     return this.lowerExprRaw(expr, type);
   }
 
@@ -323,12 +363,22 @@ class LowerCtx {
         if (expr.op === "*") {
           const operandType = this.c.exprTypes.get(expr.operand);
           if (operandType?.tag === "ptr") return { kind: "PtrDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
-          return { kind: "BoxDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
+          return { kind: "HeapDeref", operand: this.lowerExpr(expr.operand), type, span: expr.span };
         }
         return { kind: "UnaryOp", op: expr.op, operand: this.lowerExpr(expr.operand), type, span: expr.span };
       case "Call": {
-        if (expr.func === "Box") {
-          return { kind: "BoxCreate", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
+        if (expr.func === "sizeOf") {
+          const sizeType = this.c.sizeOfTypes.get(expr);
+          if (!sizeType) throw new Error("sizeOf: missing resolved type");
+          return { kind: "SizeOf", sizeType, type, span: expr.span };
+        }
+        if (expr.func === "zeroed") {
+          const zeroType = this.c.sizeOfTypes.get(expr);
+          if (!zeroType) throw new Error("zeroed: missing resolved type");
+          return { kind: "Zeroed", zeroType, type: zeroType, span: expr.span };
+        }
+        if (expr.func === "Heap") {
+          return { kind: "HeapCreate", value: this.lowerExpr(expr.args[0]), type, span: expr.span };
         }
         if (expr.func === "embedFile") {
           const path = (expr.args[0] as { value: string }).value;
@@ -412,6 +462,9 @@ class LowerCtx {
       case "IndexAccess":
         return { kind: "IndexAccess", object: this.lowerExpr(expr.object), index: this.lowerExpr(expr.index), type, isMove: this.c.movedExprs.has(expr), isBorrowed: this.c.borrowedExprs.has(expr), span: expr.span };
       case "EnumLit": {
+        if (expr.enumName === "String" && expr.variant === "withCapacity") {
+          return { kind: "StringWithCapacity", capacity: this.lowerExpr(expr.args[0]), type: { tag: "string" }, span: expr.span };
+        }
         if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
           return { kind: "VecNew", elementType: type.element, type, span: expr.span };
         }
@@ -637,6 +690,23 @@ class LowerCtx {
             }
             return { kind: "Call", func: fnName, args, type, variadic: false, span: expr.span };
           }
+        }
+        // interface virtual method call
+        const ifaceCall = this.c.interfaceMethodCalls.get(expr);
+        if (ifaceCall) {
+          const args: HIRArg[] = expr.args.map(a => {
+            const borrowed = this.c.autoBorrowed.get(a);
+            return { expr: this.lowerExpr(a), passByRef: !!borrowed, refMut: borrowed?.mutable ?? false };
+          });
+          return {
+            kind: "InterfaceMethodCall",
+            object: this.lowerExpr(expr.object),
+            ifaceName: ifaceCall.ifaceName,
+            methodIndex: ifaceCall.methodIndex,
+            args,
+            type,
+            span: expr.span,
+          };
         }
         // user-defined method (trait or inherent)
         const resolved = this.c.resolvedMethods.get(expr);

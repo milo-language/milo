@@ -29,8 +29,8 @@ export type HIRExpr =
   | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "Cast"; operand: HIRExpr; targetType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "IsCheck"; operand: HIRExpr; tag: number; type: TypeKind; span?: Span }
-  | { kind: "BoxCreate"; value: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "BoxDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "HeapCreate"; value: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "HeapDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "PtrDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecPush"; vec: HIRExpr; value: HIRExpr; type: TypeKind; span?: Span }
@@ -68,7 +68,11 @@ export type HIRExpr =
   | { kind: "VecSortByKey"; object: HIRExpr; callback: HIRExpr; elementType: TypeKind; keyType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "WrappingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "SaturatingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
-  | { kind: "CheckedArith"; op: string; left: HIRExpr; right: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span };
+  | { kind: "CheckedArith"; op: string; left: HIRExpr; right: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
+  | { kind: "SizeOf"; sizeType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "InterfaceCoerce"; value: HIRExpr; fromType: string; ifaceName: string; type: TypeKind; span?: Span }
+  | { kind: "InterfaceMethodCall"; object: HIRExpr; ifaceName: string; methodIndex: number; args: HIRArg[]; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;
@@ -129,4 +133,5 @@ export interface HIRModule {
   enums: HIREnum[];
   functions: HIRFunction[];
   dropImpls: Set<string>;
+  itables: { concreteType: string; ifaceName: string; methods: string[] }[];
 }

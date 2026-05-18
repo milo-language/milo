@@ -2,15 +2,15 @@
 // @expect: leaf: 7
 
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
+    Node(Heap<Tree>, Heap<Tree>),
     Leaf(i32)
 }
 
-fn printBoxed(b: &Box<i32>) {
+fn printHeaped(b: &Heap<i32>) {
     print("value: ", * b)
 }
 
-fn printLeaf(t: &Box<Tree>) {
+fn printLeaf(t: &Heap<Tree>) {
     match * t {
         Tree.Leaf(n) => {
             print("leaf: ", n)
@@ -21,10 +21,10 @@ fn printLeaf(t: &Box<Tree>) {
 }
 
 fn main(): i32 {
-    let b = Box(42)
-    printBoxed(b)
+    let b = Heap(42)
+    printHeaped(b)
 
-    let t = Box(Tree.Leaf(7))
+    let t = Heap(Tree.Leaf(7))
     printLeaf(t)
     return 0
 }

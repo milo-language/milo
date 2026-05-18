@@ -592,7 +592,7 @@ TypeChecker.prototype.resolveAssignTarget = function(this: TypeChecker, expr: Ex
       this.setType(expr, ot.inner);
       return { type: ot.inner, mutable: true };
     }
-    if (ot.tag === "box") {
+    if (ot.tag === "heap") {
       this.setType(expr, ot.inner);
       return { type: ot.inner, mutable: true };
     }

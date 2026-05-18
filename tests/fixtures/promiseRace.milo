@@ -1,0 +1,18 @@
+// @expect: got one
+
+from "std/runtime" import { Task, Promise }
+
+fn main(): i32 {
+    var promises: Vec<Promise<i64>> = Vec.new()
+
+    promises.push(Promise<i64>.run(move (): i64 => 10))
+    promises.push(Promise<i64>.run(move (): i64 => 20))
+    promises.push(Promise<i64>.run(move (): i64 => 30))
+
+    let first = Promise<i64>.race(promises)
+    // any of 10, 20, 30 is valid — just verify we got something
+    if first == 10 || first == 20 || first == 30 {
+        print("got one")
+    }
+    return 0
+}

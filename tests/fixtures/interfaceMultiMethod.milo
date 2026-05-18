@@ -1,0 +1,41 @@
+// @expect: circle: area=78.5
+// @expect: rect: area=24
+
+interface Shape {
+    fn area(self: &Self): f64
+    fn name(self: &Self): string
+}
+
+struct Circle { radius: f64 }
+
+impl Circle {
+    fn area(self: &Self): f64 {
+        return 3.14 * self.radius * self.radius
+    }
+    fn name(self: &Self): string {
+        return "circle"
+    }
+}
+
+struct Rect { w: f64, h: f64 }
+
+impl Rect {
+    fn area(self: &Self): f64 {
+        return self.w * self.h
+    }
+    fn name(self: &Self): string {
+        return "rect"
+    }
+}
+
+fn describe(s: &Shape) {
+    print(s.name() + ": area=" + format(s.area()))
+}
+
+fn main(): i32 {
+    let c = Circle { radius: 5.0 }
+    let r = Rect { w: 4.0, h: 6.0 }
+    describe(c)
+    describe(r)
+    return 0
+}

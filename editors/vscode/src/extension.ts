@@ -1,7 +1,7 @@
 import * as path from "path";
 import * as fs from "fs";
 import * as os from "os";
-import { workspace, ExtensionContext, window } from "vscode";
+import { workspace, ExtensionContext, window, commands } from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
 
 let client: LanguageClient;
@@ -36,6 +36,20 @@ export function activate(context: ExtensionContext) {
 
   client = new LanguageClient("milod", "Milo Language Server", serverOptions, clientOptions);
   client.start();
+
+  context.subscriptions.push(
+    commands.registerCommand("milo.runFile", (filePath: string) => {
+      const terminal = window.createTerminal("Milo Run");
+      terminal.show();
+      terminal.sendText(`${bunPath} run ${mainTs} run ${filePath}`);
+    }),
+    commands.registerCommand("milo.runTest", (filePath: string) => {
+      const name = path.basename(filePath, ".milo");
+      const terminal = window.createTerminal("Milo Test");
+      terminal.show();
+      terminal.sendText(`${bunPath} test ${path.join(miloRoot, "tests", "run.test.ts")} -t "${name}"`);
+    }),
+  );
 }
 
 export function deactivate(): Thenable<void> | undefined {

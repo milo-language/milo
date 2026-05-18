@@ -1,12 +1,12 @@
 // @expect: spawned 1000
 // @expect: all done
 
-from "std/runtime" import { GreenThread }
+from "std/runtime" import { Task }
 
 fn main(): i32 {
     var i = 0
     while i < 1000 {
-        GreenThread.spawn(move (): void => {
+        Task.spawn(move (): void => {
             let x = 1 + 1
         })
         i = i + 1

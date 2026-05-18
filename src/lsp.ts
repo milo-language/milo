@@ -376,6 +376,17 @@ function handleHover(uri: string, line: number, character: number): object | nul
       }
     }
 
+    // Interfaces
+    for (const iface of program.interfaces) {
+      if (iface.name === word) {
+        const methods = iface.methods.map(m => {
+          const params = m.params.map(p => `${p.name}: ${formatMiloType(p.type)}`).join(", ");
+          return `    fn ${m.name}(${params}): ${formatMiloType(m.retType)}`;
+        }).join("\n");
+        return { contents: { kind: "markdown", value: `\`\`\`milo\ninterface ${iface.name} {\n${methods}\n}\n\`\`\`` } };
+      }
+    }
+
     // Variable references (params and locals in enclosing function)
     const enclosing = findEnclosingFn(source, program, line);
     if (enclosing) {
@@ -962,6 +973,40 @@ function handleCompletion(uri: string, line: number, character: number): object 
   return { isIncomplete: false, items };
 }
 
+// ── CodeLens ──
+
+function handleCodeLens(uri: string): object[] {
+  const source = documents.get(uri);
+  if (!source) return [];
+
+  const lenses: object[] = [];
+  const lines = source.split("\n");
+  const filePath = uri.startsWith("file://") ? fileURLToPath(uri) : uri;
+
+  // "▶ Run" on fn main()
+  for (let i = 0; i < lines.length; i++) {
+    if (/\bfn\s+main\s*\(/.test(lines[i])) {
+      lenses.push({
+        range: { start: { line: i, character: 0 }, end: { line: i, character: 0 } },
+        command: { title: "▶ Run", command: "milo.runFile", arguments: [filePath] },
+      });
+      break;
+    }
+  }
+
+  // "▶ Run Test" on test fixtures (files with @expect: or @error: annotations)
+  const hasExpect = lines.some(l => /\/\/\s*@expect:/.test(l));
+  const hasError = lines.some(l => /\/\/\s*@error:/.test(l));
+  if (hasExpect || hasError) {
+    lenses.push({
+      range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+      command: { title: "▶ Run Test", command: "milo.runTest", arguments: [filePath] },
+    });
+  }
+
+  return lenses;
+}
+
 // ── Request dispatch ──
 
 function handleRequest(id: number | string, method: string, params: any) {
@@ -974,6 +1019,7 @@ function handleRequest(id: number | string, method: string, params: any) {
           definitionProvider: true,
           documentFormattingProvider: true,
           completionProvider: { triggerCharacters: ['"', "{", "."] },
+          codeLensProvider: { resolveProvider: false },
         },
         serverInfo: { name: "milod", version: "0.1.0" },
       });
@@ -993,6 +1039,9 @@ function handleRequest(id: number | string, method: string, params: any) {
     }
     case "textDocument/completion":
       sendResponse(id, handleCompletion(params.textDocument.uri, params.position.line, params.position.character));
+      break;
+    case "textDocument/codeLens":
+      sendResponse(id, handleCodeLens(params.textDocument.uri));
       break;
     case "textDocument/formatting": {
       const source = documents.get(params.textDocument.uri) ?? "";

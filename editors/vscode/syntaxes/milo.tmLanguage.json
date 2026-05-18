@@ -67,7 +67,7 @@
         },
         {
           "name": "keyword.declaration.milo",
-          "match": "\\b(struct|enum)\\b"
+          "match": "\\b(struct|enum|interface)\\b"
         },
         {
           "name": "keyword.operator.cast.milo",
@@ -89,7 +89,7 @@
         },
         {
           "name": "support.type.builtin.milo",
-          "match": "\\b(String|Box|Vec|HashMap|Option|Result|Some|None|Ok|Err)\\b"
+          "match": "\\b(String|Heap|Vec|HashMap|Option|Result|Some|None|Ok|Err)\\b"
         },
         {
           "name": "entity.name.type.milo",

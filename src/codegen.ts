@@ -55,6 +55,7 @@ export class Codegen {
   private dropImpls = new Set<string>();
   private structDropCache = new Map<string, boolean>();
   private generatedDropHelpers = new Set<string>();
+  private generatedStructDropHelpers = new Set<string>();
   private dropHelperBodies: string[][] = [];
   private closureBodies: string[][] = [];
   private closureCounter = 0;
@@ -64,6 +65,7 @@ export class Codegen {
   private needsArgGlobals = false;
   private usesSchedulerGlobal = false;
   private currentFnName = "";
+  private itableLayouts = new Map<string, { globalName: string; methodCount: number }>();
 
   private filePath?: string;
 
@@ -86,10 +88,15 @@ export class Codegen {
       case "void":   return "void";
       case "string": return "%String";
       case "ptr":    return "ptr";
-      case "box":    return "ptr";
+      case "heap":
+        if (t.inner.tag === "interface") return "{ ptr, ptr }";
+        return "ptr";
       case "vec":    return "%Vec";
       case "hashmap": return "%HashMap";
-      case "ref":    return "ptr";
+      case "ref":
+        if (t.inner.tag === "interface") return "{ ptr, ptr }";
+        return "ptr";
+      case "interface": return "{ ptr, ptr }";
       case "struct": return `%${t.name}`;
       case "enum":   return `%${t.name}`;
       case "fn":     return "{ ptr, ptr }";
@@ -156,7 +163,7 @@ export class Codegen {
 
   private structNeedsDrop(name: string): boolean {
     if (this.structDropCache.has(name)) return this.structDropCache.get(name)!;
-    // guard against recursion (recursive structs use Box, not direct embedding)
+    // guard against recursion (recursive structs use Heap, not direct embedding)
     this.structDropCache.set(name, false);
     let result = this.dropImpls.has(name);
     if (!result) {
@@ -280,6 +287,8 @@ export class Codegen {
       this.output.splice(1, 0, "declare ptr @malloc(i64)");
     if (this.needsExit && !declaredExterns.has("exit"))
       this.output.splice(1, 0, "declare void @exit(i32) noreturn");
+    if (this.usesSchedulerGlobal && !declaredExterns.has("_exit"))
+      this.output.splice(1, 0, "declare void @_exit(i32) noreturn");
     if (this.needsPutchar && !declaredExterns.has("putchar"))
       this.output.splice(1, 0, "declare i32 @putchar(i32)");
     if (this.needsFflush && !declaredExterns.has("fflush"))
@@ -317,6 +326,18 @@ export class Codegen {
 
     if (this.usesSchedulerGlobal) {
       this.output.splice(1, 0, "@_milo_scheduler = internal global ptr null");
+    }
+
+    // emit itable globals for interface dispatch
+    for (const itable of module.itables) {
+      const globalName = `@itable.${itable.concreteType}.${itable.ifaceName}`;
+      const ptrs = itable.methods.map(m => `ptr @${m}`).join(", ");
+      const structTy = `{ ${itable.methods.map(() => "ptr").join(", ")} }`;
+      this.output.splice(1, 0, `${globalName} = private unnamed_addr constant ${structTy} { ${ptrs} }`);
+      this.itableLayouts.set(`${itable.concreteType}.${itable.ifaceName}`, {
+        globalName,
+        methodCount: itable.methods.length,
+      });
     }
 
     // insert string constants
@@ -424,8 +445,11 @@ export class Codegen {
       this.emitDropGlue(lines);
       if (fn.name === "main" && this.usesSchedulerGlobal) {
         lines.push("  call void @_schedulerDrain()");
-      }
-      if (ret === "void") lines.push("  ret void");
+        lines.push("  call i32 @fflush(ptr null)");
+        this.needsFflush = true;
+        lines.push("  call void @_exit(i32 0)");
+        lines.push("  unreachable");
+      } else if (ret === "void") lines.push("  ret void");
       else if (ret === "i32") lines.push("  ret i32 0");
     }
 
@@ -510,8 +534,13 @@ export class Codegen {
           this.emitDropGlue(lines);
           if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
             lines.push("  call void @_schedulerDrain()");
+            lines.push("  call i32 @fflush(ptr null)");
+            this.needsFflush = true;
+            lines.push("  call void @_exit(i32 0)");
+            lines.push("  unreachable");
+          } else {
+            lines.push("  ret void");
           }
-          lines.push("  ret void");
           return [lines, true];
         }
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
@@ -519,9 +548,15 @@ export class Codegen {
         this.emitDropGlue(lines);
         if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
           lines.push("  call void @_schedulerDrain()");
+          lines.push("  call i32 @fflush(ptr null)");
+          this.needsFflush = true;
+          const exitVal = valTy === "i32" ? val : "0";
+          lines.push(`  call void @_exit(i32 ${exitVal})`);
+          lines.push("  unreachable");
+        } else {
+          if (valTy === "void") lines.push("  ret void");
+          else lines.push(`  ret ${valTy} ${val}`);
         }
-        if (valTy === "void") lines.push("  ret void");
-        else lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
       }
       case "If": return this.genIf(stmt);
@@ -603,7 +638,7 @@ export class Codegen {
       const innerTy = this.llvmType(expr.type);
       return [lines, ptrVal, innerTy];
     }
-    if (expr.kind === "BoxDeref") {
+    if (expr.kind === "HeapDeref") {
       const [ptrLines, ptrVal] = this.genExpr(expr.operand);
       lines.push(...ptrLines);
       const innerTy = this.llvmType(expr.type);
@@ -1399,10 +1434,10 @@ export class Codegen {
     const lines: string[] = [];
     let subjAddr: string;
     let subjTy: string;
-    if (stmt.subject.kind === "BoxDeref" && stmt.subject.operand.kind === "Ident") {
-      const [boxLines, boxVal] = this.genExpr(stmt.subject.operand);
-      lines.push(...boxLines);
-      subjAddr = boxVal;
+    if (stmt.subject.kind === "HeapDeref" && stmt.subject.operand.kind === "Ident") {
+      const [heapLines, heapVal] = this.genExpr(stmt.subject.operand);
+      lines.push(...heapLines);
+      subjAddr = heapVal;
       subjTy = this.llvmType(stmt.subject.type);
     } else if (stmt.subject.kind === "Ident" && this.locals.has(stmt.subject.name)) {
       const local = this.locals.get(stmt.subject.name)!;
@@ -1866,6 +1901,21 @@ export class Codegen {
         lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
         return [lines, s2, "%String"];
       }
+      case "StringWithCapacity": {
+        this.hasStringType = true;
+        this.needsMalloc = true;
+        const [capLines, capVal] = this.genExpr(expr.capacity);
+        lines.push(...capLines);
+        const buf = this.nextTemp();
+        lines.push(`  ${buf} = call ptr @malloc(i64 ${capVal})`);
+        const s0 = this.nextTemp();
+        lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
+        const s1 = this.nextTemp();
+        lines.push(`  ${s1} = insertvalue %String ${s0}, i64 0, 1`);
+        const s2 = this.nextTemp();
+        lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${capVal}, 2`);
+        return [lines, s2, "%String"];
+      }
       case "Ident": {
         const local = this.locals.get(expr.name);
         if (!local) {
@@ -2226,6 +2276,14 @@ export class Codegen {
         lines.push(`  ${val} = load ${enumTy}, ptr ${alloca}`);
         return [lines, val, enumTy];
       }
+      case "SizeOf": {
+        const size = this.typeSizeOf(expr.sizeType);
+        return [lines, `${size}`, "i64"];
+      }
+      case "Zeroed": {
+        const ty = this.llvmType(expr.zeroType);
+        return [lines, "zeroinitializer", ty];
+      }
       case "Unwrap":
         return this.genUnwrap(expr, lines);
       case "Propagate":
@@ -2243,7 +2301,7 @@ export class Codegen {
         lines.push(`  ${cmp} = icmp eq i32 ${tagVal}, ${expr.tag}`);
         return [lines, cmp, "i1"];
       }
-      case "BoxCreate": {
+      case "HeapCreate": {
         this.needsMalloc = true;
         const [valLines, valVal, valTy] = this.genExpr(expr.value);
         lines.push(...valLines);
@@ -2253,7 +2311,7 @@ export class Codegen {
         lines.push(`  store ${valTy} ${valVal}, ptr ${ptr}`);
         return [lines, ptr, "ptr"];
       }
-      case "BoxDeref":
+      case "HeapDeref":
       case "PtrDeref": {
         const [ptrLines, ptrVal] = this.genExpr(expr.operand);
         lines.push(...ptrLines);
@@ -2380,6 +2438,7 @@ export class Codegen {
         const savedLoopHeader = this.loopHeader;
         const savedLoopExit = this.loopExit;
         const savedEntryAllocas = this.entryAllocas;
+        const savedFnName = this.currentFnName;
         this.tempCounter = 0;
         this.labelCounter = 0;
         this.locals = new Map();
@@ -2387,6 +2446,7 @@ export class Codegen {
         this.entryAllocas = [];
         this.loopHeader = null;
         this.loopExit = null;
+        this.currentFnName = closureName;
 
         // generate closure function: @__closure_N(ptr %env, params...)
         const closureBody: string[] = [];
@@ -2459,6 +2519,7 @@ export class Codegen {
         this.entryAllocas = savedEntryAllocas;
         this.loopHeader = savedLoopHeader;
         this.loopExit = savedLoopExit;
+        this.currentFnName = savedFnName;
 
         // at the call site: build env struct and closure pair
         if (captures.length > 0) {
@@ -2525,6 +2586,71 @@ export class Codegen {
 
         // evaluate args
         const argVals: { val: string; type: string }[] = [{ val: envPtr, type: "ptr" }];
+        for (const arg of expr.args) {
+          if (arg.passByRef) {
+            const [al, aPtr] = this.genLValueForArg(arg.expr);
+            lines.push(...al);
+            argVals.push({ val: aPtr, type: "ptr" });
+          } else {
+            const [al, av, at] = this.genExpr(arg.expr);
+            lines.push(...al);
+            argVals.push({ val: av, type: at });
+          }
+        }
+
+        const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
+        const retTy = this.llvmType(expr.type);
+        if (retTy === "void") {
+          lines.push(`  call void ${fnPtr}(${argsStr})`);
+          return [lines, "void", "void"];
+        }
+        const result = this.nextTemp();
+        lines.push(`  ${result} = call ${retTy} ${fnPtr}(${argsStr})`);
+        return [lines, result, retTy];
+      }
+      case "InterfaceCoerce": {
+        // build fat pointer { ptr data, ptr itable }
+        const isHeapCoerce = expr.type.tag === "heap";
+        let dataPtr: string;
+        if (isHeapCoerce) {
+          // Heap<T> → Heap<Interface>: data ptr is the heap pointer value
+          const [valLines, valVal] = this.genExpr(expr.value);
+          lines.push(...valLines);
+          dataPtr = valVal;
+        } else {
+          // &T → &Interface: data ptr is address of the concrete value
+          const [addrLines, addrVal] = this.genLValueForArg(expr.value);
+          lines.push(...addrLines);
+          dataPtr = addrVal;
+        }
+        const itableKey = `${expr.fromType}.${expr.ifaceName}`;
+        const itableInfo = this.itableLayouts.get(itableKey);
+        const itableGlobal = itableInfo?.globalName ?? `@itable.${expr.fromType}.${expr.ifaceName}`;
+        const s0 = this.nextTemp();
+        lines.push(`  ${s0} = insertvalue { ptr, ptr } undef, ptr ${dataPtr}, 0`);
+        const s1 = this.nextTemp();
+        lines.push(`  ${s1} = insertvalue { ptr, ptr } ${s0}, ptr ${itableGlobal}, 1`);
+        return [lines, s1, "{ ptr, ptr }"];
+      }
+      case "InterfaceMethodCall": {
+        // object is { ptr data, ptr itable } — either directly or loaded from alloca
+        const [objLines, objVal] = this.genExpr(expr.object);
+        lines.push(...objLines);
+
+        // extract data ptr and itable ptr
+        const dataPtr = this.nextTemp();
+        lines.push(`  ${dataPtr} = extractvalue { ptr, ptr } ${objVal}, 0`);
+        const itablePtr = this.nextTemp();
+        lines.push(`  ${itablePtr} = extractvalue { ptr, ptr } ${objVal}, 1`);
+
+        // load fn ptr from itable slot — GEP with ptr element type strides by 8 bytes
+        const fnSlot = this.nextTemp();
+        lines.push(`  ${fnSlot} = getelementptr ptr, ptr ${itablePtr}, i32 ${expr.methodIndex}`);
+        const fnPtr = this.nextTemp();
+        lines.push(`  ${fnPtr} = load ptr, ptr ${fnSlot}`);
+
+        // build args: data ptr as self, then user args
+        const argVals: { val: string; type: string }[] = [{ val: dataPtr, type: "ptr" }];
         for (const arg of expr.args) {
           if (arg.passByRef) {
             const [al, aPtr] = this.genLValueForArg(arg.expr);
@@ -5422,18 +5548,18 @@ export class Codegen {
       return v2;
     }
 
-    if (typeKind.tag === "box") {
+    if (typeKind.tag === "heap") {
       this.needsMalloc = true;
       const inner = typeKind.inner;
       const innerTy = this.llvmType(inner);
       const innerSize = this.typeSizeOf(inner);
       const origPtr = this.nextTemp();
       lines.push(`  ${origPtr} = load ptr, ptr ${srcPtr}`);
-      const newBox = this.nextTemp();
-      lines.push(`  ${newBox} = call ptr @malloc(i64 ${innerSize})`);
+      const newHeap = this.nextTemp();
+      lines.push(`  ${newHeap} = call ptr @malloc(i64 ${innerSize})`);
       const clonedInner = this.emitDeepCloneFromPtr(lines, origPtr, inner);
-      lines.push(`  store ${innerTy} ${clonedInner}, ptr ${newBox}`);
-      return newBox;
+      lines.push(`  store ${innerTy} ${clonedInner}, ptr ${newHeap}`);
+      return newHeap;
     }
 
     if (typeKind.tag === "struct") {
@@ -5444,6 +5570,16 @@ export class Codegen {
         return v;
       }
       const structTy = `%${typeKind.name}`;
+      if (this.needsDropCg(typeKind)) {
+        this.ensureStructCloneHelper(typeKind.name);
+        const helperName = `milo.clone.struct.${typeKind.name}`;
+        const dstAlloca = this.nextTemp();
+        lines.push(`  ${dstAlloca} = alloca ${structTy}`);
+        lines.push(`  call void @${helperName}(ptr ${srcPtr}, ptr ${dstAlloca})`);
+        const result = this.nextTemp();
+        lines.push(`  ${result} = load ${structTy}, ptr ${dstAlloca}`);
+        return result;
+      }
       const newAlloca = this.nextTemp();
       lines.push(`  ${newAlloca} = alloca ${structTy}`);
       for (let i = 0; i < layout.fields.length; i++) {
@@ -5529,20 +5665,29 @@ export class Codegen {
       lines.push(`  br label %${skipLabel}`);
       lines.push(`${skipLabel}:`);
     }
-    if (typeKind.tag === "box") {
+    if (typeKind.tag === "heap") {
       this.needsFree = true;
-      const boxPtr = this.nextTemp();
-      lines.push(`  ${boxPtr} = load ptr, ptr ${allocaPtr}`);
+      let heapPtr: string;
+      if (typeKind.inner.tag === "interface") {
+        // Heap<Interface> is { ptr, ptr } — extract data ptr from element 0
+        const fatPtr = this.nextTemp();
+        lines.push(`  ${fatPtr} = load { ptr, ptr }, ptr ${allocaPtr}`);
+        heapPtr = this.nextTemp();
+        lines.push(`  ${heapPtr} = extractvalue { ptr, ptr } ${fatPtr}, 0`);
+      } else {
+        heapPtr = this.nextTemp();
+        lines.push(`  ${heapPtr} = load ptr, ptr ${allocaPtr}`);
+      }
       const isNull = this.nextTemp();
-      lines.push(`  ${isNull} = icmp eq ptr ${boxPtr}, null`);
-      const dropLabel = this.nextLabel("box.drop");
-      const skipLabel = this.nextLabel("box.skip");
+      lines.push(`  ${isNull} = icmp eq ptr ${heapPtr}, null`);
+      const dropLabel = this.nextLabel("heap.drop");
+      const skipLabel = this.nextLabel("heap.skip");
       lines.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
       lines.push(`${dropLabel}:`);
       if (this.needsDropCg(typeKind.inner)) {
-        this.emitDropValue(lines, boxPtr, typeKind.inner);
+        this.emitDropValue(lines, heapPtr, typeKind.inner);
       }
-      lines.push(`  call void @free(ptr ${boxPtr})`);
+      lines.push(`  call void @free(ptr ${heapPtr})`);
       lines.push(`  br label %${skipLabel}`);
       lines.push(`${skipLabel}:`);
     }
@@ -5619,34 +5764,9 @@ export class Codegen {
       lines.push(`  call void @${helperName}(ptr ${tmp})`);
     }
     if (typeKind.tag === "struct" && this.structNeedsDrop(typeKind.name)) {
-      const layout = this.structLayouts.get(typeKind.name);
-      if (layout) {
-        // guard: skip drop if struct has been zeroed (moved)
-        const probe = this.nextTemp();
-        lines.push(`  ${probe} = load i64, ptr ${allocaPtr}`);
-        const isZero = this.nextTemp();
-        lines.push(`  ${isZero} = icmp eq i64 ${probe}, 0`);
-        const skipLabel = this.nextLabel("struct.drop.skip");
-        const dropLabel = this.nextLabel("struct.drop");
-        lines.push(`  br i1 ${isZero}, label %${skipLabel}, label %${dropLabel}`);
-        lines.push(`${dropLabel}:`);
-        // call user-defined drop first (can still use fields)
-        if (this.dropImpls.has(typeKind.name)) {
-          const mangledDrop = `${typeKind.name}$Drop$drop`;
-          lines.push(`  call void @${mangledDrop}(ptr ${allocaPtr})`);
-        }
-        // then drop fields that need dropping (reverse order)
-        for (let i = layout.fields.length - 1; i >= 0; i--) {
-          const field = layout.fields[i];
-          if (this.needsDropCg(field.typeKind)) {
-            const fieldPtr = this.nextTemp();
-            lines.push(`  ${fieldPtr} = getelementptr %${typeKind.name}, ptr ${allocaPtr}, i32 0, i32 ${i}`);
-            this.emitDropValue(lines, fieldPtr, field.typeKind);
-          }
-        }
-        lines.push(`  br label %${skipLabel}`);
-        lines.push(`${skipLabel}:`);
-      }
+      this.ensureStructDropHelper(typeKind.name);
+      const helperName = `milo.drop.struct.${typeKind.name}`;
+      lines.push(`  call void @${helperName}(ptr ${allocaPtr})`);
     }
   }
 
@@ -5711,6 +5831,84 @@ export class Codegen {
     }
 
     body.push(`${doneLabel}:`);
+    body.push("  ret void");
+    body.push("}");
+
+    this.dropHelperBodies.push(body);
+    this.tempCounter = savedTemp;
+    this.labelCounter = savedLabel;
+  }
+
+  private generatedStructCloneHelpers = new Set<string>();
+
+  private ensureStructCloneHelper(structName: string) {
+    if (this.generatedStructCloneHelpers.has(structName)) return;
+    this.generatedStructCloneHelpers.add(structName);
+
+    const layout = this.structLayouts.get(structName)!;
+    const structTy = `%${structName}`;
+    const helperName = `milo.clone.struct.${structName}`;
+    const savedTemp = this.tempCounter;
+    const savedLabel = this.labelCounter;
+    this.tempCounter = 0;
+    this.labelCounter = 0;
+
+    const body: string[] = [];
+    body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
+    body.push("entry:");
+    for (let i = 0; i < layout.fields.length; i++) {
+      const f = layout.fields[i];
+      const srcFieldPtr = this.nextTemp();
+      body.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr %src, i32 0, i32 ${i}`);
+      const clonedField = this.emitDeepCloneFromPtr(body, srcFieldPtr, f.typeKind);
+      const dstFieldPtr = this.nextTemp();
+      body.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr %dst, i32 0, i32 ${i}`);
+      body.push(`  store ${f.type} ${clonedField}, ptr ${dstFieldPtr}`);
+    }
+    body.push("  ret void");
+    body.push("}");
+
+    this.dropHelperBodies.push(body);
+    this.tempCounter = savedTemp;
+    this.labelCounter = savedLabel;
+  }
+
+  private ensureStructDropHelper(structName: string) {
+    if (this.generatedStructDropHelpers.has(structName)) return;
+    this.generatedStructDropHelpers.add(structName);
+
+    const layout = this.structLayouts.get(structName)!;
+    const helperName = `milo.drop.struct.${structName}`;
+    const savedTemp = this.tempCounter;
+    const savedLabel = this.labelCounter;
+    this.tempCounter = 0;
+    this.labelCounter = 0;
+
+    const body: string[] = [];
+    body.push(`define void @${helperName}(ptr %self) {`);
+    body.push("entry:");
+    const probe = this.nextTemp();
+    body.push(`  ${probe} = load i64, ptr %self`);
+    const isZero = this.nextTemp();
+    body.push(`  ${isZero} = icmp eq i64 ${probe}, 0`);
+    const skipLabel = this.nextLabel("struct.drop.skip");
+    const dropLabel = this.nextLabel("struct.drop");
+    body.push(`  br i1 ${isZero}, label %${skipLabel}, label %${dropLabel}`);
+    body.push(`${dropLabel}:`);
+    if (this.dropImpls.has(structName)) {
+      const mangledDrop = `${structName}$Drop$drop`;
+      body.push(`  call void @${mangledDrop}(ptr %self)`);
+    }
+    for (let i = layout.fields.length - 1; i >= 0; i--) {
+      const field = layout.fields[i];
+      if (this.needsDropCg(field.typeKind)) {
+        const fieldPtr = this.nextTemp();
+        body.push(`  ${fieldPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${i}`);
+        this.emitDropValue(body, fieldPtr, field.typeKind);
+      }
+    }
+    body.push(`  br label %${skipLabel}`);
+    body.push(`${skipLabel}:`);
     body.push("  ret void");
     body.push("}");
 

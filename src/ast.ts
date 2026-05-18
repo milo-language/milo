@@ -59,7 +59,7 @@ export interface FieldAccess { kind: "FieldAccess"; object: Expr; field: string;
 export interface ArrayLit { kind: "ArrayLit"; elements: Expr[]; span?: Span }
 export interface ArrayRepeat { kind: "ArrayRepeat"; value: Expr; count: number; span?: Span }
 export interface IndexAccess { kind: "IndexAccess"; object: Expr; index: Expr; span?: Span }
-export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; args: Expr[]; span?: Span }
+export interface EnumLit { kind: "EnumLit"; enumName: string; variant: string; args: Expr[]; typeArgs?: MiloType[]; span?: Span }
 export interface Unwrap { kind: "Unwrap"; operand: Expr; span?: Span }
 export interface Propagate { kind: "Propagate"; operand: Expr; span?: Span }
 export interface DefaultValue { kind: "DefaultValue"; operand: Expr; default: Expr; span?: Span }
@@ -166,6 +166,13 @@ export interface ImplDecl {
   span?: Span;
 }
 
+export interface InterfaceDecl {
+  kind: "InterfaceDecl";
+  name: string;
+  methods: TraitMethod[];
+  span?: Span;
+}
+
 export interface TypeAlias {
   kind: "TypeAlias";
   name: string;
@@ -173,7 +180,7 @@ export interface TypeAlias {
   span?: Span;
 }
 
-export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl | TraitDecl | ImplDecl | TypeAlias;
+export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl | TraitDecl | ImplDecl | TypeAlias | InterfaceDecl;
 
 export interface Program {
   structs: StructDecl[];
@@ -183,4 +190,5 @@ export interface Program {
   traits: TraitDecl[];
   impls: ImplDecl[];
   typeAliases: TypeAlias[];
+  interfaces: InterfaceDecl[];
 }

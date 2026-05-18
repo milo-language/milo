@@ -39,7 +39,7 @@ for i in 0..4 {
 
 The compiler enforces thread safety at compile time. `Thread.spawn()` requires all captured variables to implement `Send`.
 
-**Send types** (safe to move to another thread): all primitives, `string`, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
+**Send types** (safe to move to another thread): all primitives, `string`, `Heap<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
 
 **Sync types** (safe to share via `&T` across threads): same rules, checked via `@sync`.
 
@@ -170,10 +170,10 @@ Lightweight user-space threads. Each gets a 64KB stack instead of ~8MB for an OS
 ### Spawning Green Threads
 
 ```milo
-from "std/runtime" import { GreenThread }
+from "std/runtime" import { Task }
 
 fn main(): i32 {
-    GreenThread.spawn(move (): void => {
+    Task.spawn(move (): void => {
         print("hello from green thread")
     })
     return 0
@@ -185,15 +185,15 @@ The compiler injects a scheduler drain at the end of `main` that runs all spawne
 ### Cooperative Yielding
 
 ```milo
-from "std/runtime" import { GreenThread, schedulerYield }
+from "std/runtime" import { Task, schedulerYield }
 
 fn main(): i32 {
-    GreenThread.spawn(move (): void => {
+    Task.spawn(move (): void => {
         print("A1")
         schedulerYield()
         print("A2")
     })
-    GreenThread.spawn(move (): void => {
+    Task.spawn(move (): void => {
         print("B1")
         schedulerYield()
         print("B2")
@@ -209,9 +209,9 @@ fn main(): i32 {
 
 ```milo
 from "std/net" import { TcpStream }
-from "std/runtime" import { GreenThread }
+from "std/runtime" import { Task }
 
-GreenThread.spawn(move (): void => {
+Task.spawn(move (): void => {
     let stream = TcpStream.connect(ip, port)!
     stream.send("hello")!          // yields if socket buffer full
     let data = stream.recv()!      // yields until data arrives
@@ -223,7 +223,7 @@ The same calls work identically outside green threads — they just block normal
 
 ### Comparison
 
-| | OS Thread (`Thread.spawn`) | Green Thread (`GreenThread.spawn`) |
+| | OS Thread (`Thread.spawn`) | Green Thread (`Task.spawn`) |
 |---|---|---|
 | Stack size | ~8MB | 64KB |
 | Context switch | Kernel | Userspace |

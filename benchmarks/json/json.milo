@@ -1,5 +1,5 @@
 // JSON parse + walk using std/json
-from "std/json" import { jsonParse, Json }
+from "std/json" import { jsonParse, jsonNull }
 from "std/io" import { readFile }
 
 fn main(): i32 {
@@ -15,7 +15,7 @@ fn main(): i32 {
             return 1
         }
     }
-    var doc: Json = Json { raw: "", start: 0, end: 0 }
+    var doc = jsonNull()
     match jsonParse(content) {
         Result.Ok(d) => { doc = d }
         Result.Err(e) => {

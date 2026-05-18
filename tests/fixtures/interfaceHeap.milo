@@ -1,0 +1,32 @@
+// @expect: 78.5397
+// @expect: 16
+
+interface Shape {
+    fn area(self: &Self): f64
+}
+
+struct Circle { radius: f64 }
+impl Circle {
+    fn area(self: &Self): f64 {
+        return 3.14159 * self.radius * self.radius
+    }
+}
+
+struct Square { side: f64 }
+impl Square {
+    fn area(self: &Self): f64 {
+        return self.side * self.side
+    }
+}
+
+fn printArea(s: &Shape) {
+    print(s.area())
+}
+
+fn main(): i32 {
+    let c: Heap<Shape> = Heap(Circle { radius: 5.0 })
+    let s: Heap<Shape> = Heap(Square { side: 4.0 })
+    print(c.area())
+    print(s.area())
+    return 0
+}

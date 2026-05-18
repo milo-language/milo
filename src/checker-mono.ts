@@ -12,7 +12,7 @@ TypeChecker.prototype.mangleTypeName = function(this: TypeChecker, t: TypeKind):
     case "struct": return t.name;
     case "enum": return t.name;
     case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
-    case "box": return `Box_${this.mangleTypeName(t.inner)}`;
+    case "heap": return `Heap_${this.mangleTypeName(t.inner)}`;
     case "vec": return `Vec_${this.mangleTypeName(t.element)}`;
     case "hashmap": return `HashMap_${this.mangleTypeName(t.key)}_${this.mangleTypeName(t.value)}`;
     case "array": return `arr_${this.mangleTypeName(t.element)}_${t.size}`;
@@ -87,7 +87,7 @@ TypeChecker.prototype.monomorphizeStruct = function(this: TypeChecker, baseName:
         typeParams: [],
         methods: gi.methods.map(m => ({
           ...m,
-          body: this.substituteBody(m.body, generic.typeParams, typeArgs),
+          body: this.substituteBody(m.body, generic.typeParams, typeArgs, baseName, mangled),
           params: m.params.map(p => ({
             name: p.name,
             type: this.substituteSelfInMiloType(
@@ -108,6 +108,8 @@ TypeChecker.prototype.monomorphizeStruct = function(this: TypeChecker, baseName:
 
   if (generic.decl.attributes) {
     for (const attr of generic.decl.attributes) {
+      if (attr.name === "send") this.sendTypes.add(mangled);
+      if (attr.name === "sync") this.syncTypes.add(mangled);
       if (attr.name !== "derive") continue;
       for (const traitName of attr.args) {
         const impl = this.synthesizeDeriveImpl(decl, traitName);
@@ -124,7 +126,7 @@ TypeChecker.prototype.substituteTypeKind = function(this: TypeChecker, t: TypeKi
   if (t.tag === "array") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
   if (t.tag === "ref") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
   if (t.tag === "ptr") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
-  if (t.tag === "box") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
+  if (t.tag === "heap") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
   if (t.tag === "vec") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
   if (t.tag === "hashmap") return { ...t, key: this.substituteTypeKind(t.key, typeMap), value: this.substituteTypeKind(t.value, typeMap) };
   if (t.tag === "fn") return { ...t, params: t.params.map(p => this.substituteTypeKind(p, typeMap)), ret: this.substituteTypeKind(t.ret, typeMap) };
@@ -195,11 +197,15 @@ TypeChecker.prototype.monomorphizeFn = function(this: TypeChecker, baseName: str
   return mangled;
 };
 
-TypeChecker.prototype.substituteBody = function(this: TypeChecker, stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[]): Stmt[] {
+TypeChecker.prototype.substituteBody = function(this: TypeChecker, stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[], baseName?: string, mangledName?: string): Stmt[] {
   return JSON.parse(JSON.stringify(stmts), (key, value) => {
     if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
       const idx = typeParams.indexOf(value.name);
       if (idx !== -1) return { ...value, name: typeName(typeArgs[idx]) };
+    }
+    // rewrite struct literal names: Channel { ... } → Channel_i64 { ... }
+    if (baseName && mangledName && value && typeof value === "object" && value.kind === "StructLit" && value.name === baseName) {
+      return { ...value, name: mangledName };
     }
     return value;
   });

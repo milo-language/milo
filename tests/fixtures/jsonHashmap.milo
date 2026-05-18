@@ -7,7 +7,7 @@ enum JsonValue {
     Bool(bool),
     Number(i64),
     Str(string),
-    Object(HashMap<string, Box<JsonValue>>),
+    Object(HashMap<string, Heap<JsonValue>>),
 }
 
 fn isWs(ch: u8): bool {
@@ -24,10 +24,10 @@ fn skipWs(s: &string, pos: &mut i64) {
     }
 }
 
-fn parseValue(s: &string, pos: &mut i64): Box<JsonValue> {
+fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
     skipWs(s, pos)
     if pos >= s.len {
-        return Box(JsonValue.Null)
+        return Heap(JsonValue.Null)
     }
     let ch = s[pos]
     if ch == '"' {
@@ -38,23 +38,23 @@ fn parseValue(s: &string, pos: &mut i64): Box<JsonValue> {
     }
     if ch == 't' {
         pos = pos + 4
-        return Box(JsonValue.Bool(true))
+        return Heap(JsonValue.Bool(true))
     }
     if ch == 'f' {
         pos = pos + 5
-        return Box(JsonValue.Bool(false))
+        return Heap(JsonValue.Bool(false))
     }
     if ch == 'n' {
         pos = pos + 4
-        return Box(JsonValue.Null)
+        return Heap(JsonValue.Null)
     }
     if isDigit(ch) || ch == '-' {
         return parseNumber(s, pos)
     }
-    return Box(JsonValue.Null)
+    return Heap(JsonValue.Null)
 }
 
-fn parseNumber(s: &string, pos: &mut i64): Box<JsonValue> {
+fn parseNumber(s: &string, pos: &mut i64): Heap<JsonValue> {
     var neg: bool = false
     if s[pos] == '-' {
         neg = true
@@ -68,12 +68,12 @@ fn parseNumber(s: &string, pos: &mut i64): Box<JsonValue> {
     if neg {
         n = 0 - n
     }
-    return Box(JsonValue.Number(n))
+    return Heap(JsonValue.Number(n))
 }
 
-fn parseString(s: &string, pos: &mut i64): Box<JsonValue> {
+fn parseString(s: &string, pos: &mut i64): Heap<JsonValue> {
     let value = parseStringRaw(s, pos)
-    return Box(JsonValue.Str(value))
+    return Heap(JsonValue.Str(value))
 }
 
 fn parseStringRaw(s: &string, pos: &mut i64): string {
@@ -90,9 +90,9 @@ fn parseStringRaw(s: &string, pos: &mut i64): string {
     return result
 }
 
-fn parseObject(s: &string, pos: &mut i64): Box<JsonValue> {
+fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> {
     pos = pos + 1
-    var entries: HashMap<string, Box<JsonValue>> = HashMap.new()
+    var entries: HashMap<string, Heap<JsonValue>> = HashMap.new()
     skipWs(s, pos)
     if pos < s.len && s[pos] != '}' {
         skipWs(s, pos)
@@ -114,7 +114,7 @@ fn parseObject(s: &string, pos: &mut i64): Box<JsonValue> {
         }
     }
     pos = pos + 1
-    return Box(JsonValue.Object(entries))
+    return Heap(JsonValue.Object(entries))
 }
 
 fn main(): i32 {

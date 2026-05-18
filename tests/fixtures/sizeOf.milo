@@ -1,0 +1,29 @@
+// @expect: 1
+// @expect: 4
+// @expect: 8
+// @expect: 24
+// @expect: 24
+// @expect: 0
+// @expect: 0
+
+struct Point {
+    x: i64,
+    y: i64,
+    z: i64,
+}
+
+fn main(): i32 {
+    print(sizeOf<u8>())
+    print(sizeOf<i32>())
+    print(sizeOf<i64>())
+    print(sizeOf<string>())
+    print(sizeOf<Point>())
+
+    unsafe {
+        var z: i64 = zeroed<i64>()
+        print(z)
+        var p: Point = zeroed<Point>()
+        print(p.x)
+    }
+    return 0
+}

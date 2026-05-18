@@ -63,6 +63,10 @@ export interface CheckResult {
   fnFieldCalls: Set<Expr>;
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
   rangeCheckedExprs: Map<Expr, { min: number; max: number; typeName: string }>;
+  sizeOfTypes: Map<Expr, TypeKind>;
+  interfaces: Map<string, InterfaceInfo>;
+  interfaceCoercions: Map<Expr, { fromType: string; ifaceName: string }>;
+  interfaceMethodCalls: Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>;
 }
 
 interface GenericEnumInfo {
@@ -101,6 +105,16 @@ interface ImplInfo {
   methods: Map<string, FnSig>;
 }
 
+interface InterfaceMethodInfo {
+  params: { name: string; type: TypeKind }[];
+  ret: TypeKind;
+}
+
+interface InterfaceInfo {
+  name: string;
+  methods: Map<string, InterfaceMethodInfo>;
+}
+
 export class TypeChecker {
   private warningConfig: WarningConfig;
   private diagnostics: Diagnostic[] = [];
@@ -134,6 +148,7 @@ export class TypeChecker {
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
   private parallelCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
+  private sizeOfTypes = new Map<Expr, TypeKind>();
   private closureScopeDepth: number | null = null;
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
@@ -151,6 +166,9 @@ export class TypeChecker {
   private resolvedOperators = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
   private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
+  private interfaces = new Map<string, InterfaceInfo>();
+  private interfaceCoercions = new Map<Expr, { fromType: string; ifaceName: string }>();
+  private interfaceMethodCalls = new Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>();
 
   constructor(warningConfig?: WarningConfig) {
     const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
@@ -234,9 +252,9 @@ export class TypeChecker {
     if (typeArgs.length > 0) {
       const resolvedArgs = typeArgs.map(a => this.resolve(a));
       let result: TypeKind;
-      if (ty.name === "Box") {
-        if (resolvedArgs.length !== 1) { this.error(`'Box' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
-        result = { tag: "box", inner: resolvedArgs[0] };
+      if (ty.name === "Heap") {
+        if (resolvedArgs.length !== 1) { this.error(`'Heap' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
+        result = { tag: "heap", inner: resolvedArgs[0] };
       } else if (ty.name === "Vec") {
         if (resolvedArgs.length !== 1) { this.error(`'Vec' expects 1 type argument, got ${resolvedArgs.length}`); return { tag: "unknown" }; }
         result = { tag: "vec", element: resolvedArgs[0] };
@@ -282,6 +300,13 @@ export class TypeChecker {
       if (ty.isRefMut) return { tag: "ref", inner: result, mutable: true };
       return result;
     }
+    // check if name refers to an interface
+    if (this.interfaces.has(ty.name)) {
+      let result: TypeKind = { tag: "interface", name: ty.name };
+      if (ty.isRef) return { tag: "ref", inner: result, mutable: false };
+      if (ty.isRefMut) return { tag: "ref", inner: result, mutable: true };
+      return result;
+    }
     const base = typeFromAst(ty);
     if (base.tag === "struct" && this.enums.has(base.name)) {
       return { tag: "enum", name: base.name };
@@ -299,12 +324,13 @@ export class TypeChecker {
       case "struct": return t.name;
       case "enum": return t.name;
       case "ptr": return `ptr_${this.mangleTypeName(t.inner)}`;
-      case "box": return `Box_${this.mangleTypeName(t.inner)}`;
+      case "heap": return `Heap_${this.mangleTypeName(t.inner)}`;
       case "vec": return `Vec_${this.mangleTypeName(t.element)}`;
       case "hashmap": return `HashMap_${this.mangleTypeName(t.key)}_${this.mangleTypeName(t.value)}`;
       case "array": return `arr_${this.mangleTypeName(t.element)}_${t.size}`;
       case "ref": return `ref_${this.mangleTypeName(t.inner)}`;
       case "fn": return `fn_${t.params.map(p => this.mangleTypeName(p)).join("_")}_ret_${this.mangleTypeName(t.ret)}`;
+      case "interface": return `iface_${t.name}`;
       case "unknown": return "unknown";
     }
   }
@@ -375,7 +401,7 @@ export class TypeChecker {
           typeParams: [],
           methods: gi.methods.map(m => ({
             ...m,
-            body: this.substituteBody(m.body, generic.typeParams, typeArgs),
+            body: this.substituteBody(m.body, generic.typeParams, typeArgs, baseName, mangled),
             params: m.params.map(p => ({
               name: p.name,
               type: this.substituteSelfInMiloType(
@@ -394,9 +420,11 @@ export class TypeChecker {
       }
     }
 
-    // apply @derive attributes from generic struct to monomorphized type
+    // propagate @send/@sync/@derive attributes from generic struct to monomorphized type
     if (generic.decl.attributes) {
       for (const attr of generic.decl.attributes) {
+        if (attr.name === "send") this.sendTypes.add(mangled);
+        if (attr.name === "sync") this.syncTypes.add(mangled);
         if (attr.name !== "derive") continue;
         for (const traitName of attr.args) {
           const impl = this.synthesizeDeriveImpl(decl, traitName);
@@ -413,7 +441,7 @@ export class TypeChecker {
     if (t.tag === "array") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
     if (t.tag === "ref") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "ptr") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
-    if (t.tag === "box") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
+    if (t.tag === "heap") return { ...t, inner: this.substituteTypeKind(t.inner, typeMap) };
     if (t.tag === "vec") return { ...t, element: this.substituteTypeKind(t.element, typeMap) };
     if (t.tag === "hashmap") return { ...t, key: this.substituteTypeKind(t.key, typeMap), value: this.substituteTypeKind(t.value, typeMap) };
     if (t.tag === "fn") return { ...t, params: t.params.map(p => this.substituteTypeKind(p, typeMap)), ret: this.substituteTypeKind(t.ret, typeMap) };
@@ -489,13 +517,17 @@ export class TypeChecker {
     return mangled;
   }
 
-  private substituteBody(stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[]): Stmt[] {
+  private substituteBody(stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[], baseName?: string, mangledName?: string): Stmt[] {
     // Deep clone body with type substitution in all MiloType positions.
     // MiloType objects have `name` but no `kind` (unlike AST nodes).
     return JSON.parse(JSON.stringify(stmts), (key, value) => {
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) return { ...value, name: typeName(typeArgs[idx]) };
+      }
+      // rewrite struct literal names: Channel { ... } → Channel_i64 { ... }
+      if (baseName && mangledName && value && typeof value === "object" && value.kind === "StructLit" && value.name === baseName) {
+        return { ...value, name: mangledName };
       }
       return value;
     });
@@ -630,7 +662,7 @@ export class TypeChecker {
       if (e.typeParams.length === 0) {
         // user-declared non-generic enum overrides any built-in generic of the same name
         this.genericEnums.delete(e.name);
-        // pre-register so self-referential fields (Box<Self>) resolve correctly
+        // pre-register so self-referential fields (Heap<Self>) resolve correctly
         this.enums.set(e.name, { variants: new Map() });
         const variants = new Map<string, { tag: number; fields: TypeKind[] }>();
         e.variants.forEach((v, i) => {
@@ -638,7 +670,7 @@ export class TypeChecker {
           for (const field of fields) {
             if (field.tag === "enum" && field.name === e.name) {
               this.error(`enum '${e.name}' has infinite size due to recursive field`, undefined,
-                `wrap the recursive field in Box<${e.name}> for heap allocation`);
+                `wrap the recursive field in Heap<${e.name}> for heap allocation`);
             }
           }
           variants.set(v.name, { tag: i, fields });
@@ -647,19 +679,22 @@ export class TypeChecker {
       }
     }
 
-    // register functions
-    for (const fn of program.functions) {
-      if (fn.typeParams.length > 0) {
-        this.genericFns.set(fn.name, { typeParams: fn.typeParams.map(tp => tp.name), decl: fn });
-        continue;
+    // register interfaces (before functions so &Interface params resolve correctly)
+    for (const iface of program.interfaces) {
+      const methods = new Map<string, InterfaceMethodInfo>();
+      for (const m of iface.methods) {
+        if (m.body !== null) {
+          this.error(`interface methods cannot have default bodies`, m.span);
+        }
+        const params = m.params.map(p => ({ name: p.name, type: this.resolve(p.type) }));
+        const selfParam = params[0];
+        if (!selfParam || selfParam.type.tag !== "ref") {
+          this.error(`interface method '${m.name}' must take self by reference (&Self or &mut Self)`, m.span);
+        }
+        const ret = this.resolve(m.retType);
+        methods.set(m.name, { params, ret });
       }
-      const params = fn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
-      const ret = this.resolve(fn.retType);
-      if (ret.tag === "ref") {
-        this.error(`function '${fn.name}': cannot return a reference`, undefined, `references are second-class — return an owned value instead`);
-      }
-      // fn return types allowed — move closures heap-allocate and are safe to escape
-      this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern });
+      this.interfaces.set(iface.name, { name: iface.name, methods });
     }
 
     // register traits (user-defined override built-ins)
@@ -676,6 +711,21 @@ export class TypeChecker {
         methods.set(m.name, { params, ret, hasDefault: m.body !== null });
       }
       this.traits.set(t.name, { name: t.name, supertraits: t.supertraits, methods });
+    }
+
+    // register functions
+    for (const fn of program.functions) {
+      if (fn.typeParams.length > 0) {
+        this.genericFns.set(fn.name, { typeParams: fn.typeParams.map(tp => tp.name), decl: fn });
+        continue;
+      }
+      const params = fn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+      const ret = this.resolve(fn.retType);
+      if (ret.tag === "ref") {
+        this.error(`function '${fn.name}': cannot return a reference`, undefined, `references are second-class — return an owned value instead`);
+      }
+      // fn return types allowed — move closures heap-allocate and are safe to escape
+      this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern });
     }
 
     // process @derive attributes — synthesize impl decls
@@ -731,6 +781,10 @@ export class TypeChecker {
       fnFieldCalls: this.fnFieldCalls,
       propagateConversions: this.propagateConversions,
       rangeCheckedExprs: this.rangeCheckedExprs,
+      sizeOfTypes: this.sizeOfTypes,
+      interfaces: this.interfaces,
+      interfaceCoercions: this.interfaceCoercions,
+      interfaceMethodCalls: this.interfaceMethodCalls,
     };
   }
 
@@ -1004,7 +1058,7 @@ export class TypeChecker {
 
       // Drop-specific validations
       if (impl.traitName === "Drop") {
-        const builtins = ["string", "Vec", "Box", "HashMap"];
+        const builtins = ["string", "Vec", "Heap", "HashMap"];
         if (builtins.includes(typeName)) {
           this.error(`cannot impl Drop for built-in type '${typeName}'`, impl.span);
           return;
@@ -1161,6 +1215,60 @@ export class TypeChecker {
     return false;
   }
 
+  // structural interface satisfaction: type has all methods with matching signatures
+  private typeSatisfiesInterface(tName: string, ifaceName: string): boolean {
+    const iface = this.interfaces.get(ifaceName);
+    if (!iface) return false;
+    for (const [methodName, ifaceMethod] of iface.methods) {
+      const resolved = this.resolveMethod(tName, methodName);
+      if (!resolved) return false;
+      // check param count matches (skip self — both sides have it)
+      if (resolved.sig.params.length !== ifaceMethod.params.length) return false;
+      // check non-self param types match
+      for (let i = 1; i < ifaceMethod.params.length; i++) {
+        if (!typeEq(resolved.sig.params[i].type, ifaceMethod.params[i].type)) return false;
+      }
+      // check return type matches
+      if (!typeEq(resolved.sig.ret, ifaceMethod.ret)) return false;
+    }
+    return true;
+  }
+
+  // try implicit coercion from concrete type to interface type
+  // returns true if coercion is valid and was recorded
+  private tryInterfaceCoercion(expr: Expr, sourceType: TypeKind, targetType: TypeKind): boolean {
+    // &T → &Interface
+    if (targetType.tag === "ref" && targetType.inner.tag === "interface") {
+      const ifaceName = targetType.inner.name;
+      const srcInner = sourceType.tag === "ref" ? sourceType.inner : sourceType;
+      const srcName = typeName(srcInner);
+      if (srcInner.tag === "struct" || srcInner.tag === "enum") {
+        if (this.typeSatisfiesInterface(srcName, ifaceName)) {
+          this.interfaceCoercions.set(expr, { fromType: srcName, ifaceName });
+          return true;
+        }
+        this.error(`type '${srcName}' does not satisfy interface '${ifaceName}'`, expr.span);
+      }
+      return false;
+    }
+    // Heap<T> → Heap<Interface>
+    if (targetType.tag === "heap" && targetType.inner.tag === "interface") {
+      const ifaceName = targetType.inner.name;
+      if (sourceType.tag === "heap") {
+        const srcName = typeName(sourceType.inner);
+        if (sourceType.inner.tag === "struct" || sourceType.inner.tag === "enum") {
+          if (this.typeSatisfiesInterface(srcName, ifaceName)) {
+            this.interfaceCoercions.set(expr, { fromType: srcName, ifaceName });
+            return true;
+          }
+          this.error(`type '${srcName}' does not satisfy interface '${ifaceName}'`, expr.span);
+        }
+      }
+      return false;
+    }
+    return false;
+  }
+
   // Send = safe to transfer ownership across threads
   private isSend(ty: TypeKind): boolean {
     switch (ty.tag) {
@@ -1170,7 +1278,7 @@ export class TypeChecker {
         return false;
       case "ref":
         return ty.mutable ? this.isSend(ty.inner) : this.isSync(ty.inner);
-      case "box":
+      case "heap":
         return this.isSend(ty.inner);
       case "vec":
         return this.isSend(ty.element);
@@ -1180,6 +1288,8 @@ export class TypeChecker {
         return this.isSend(ty.element);
       case "fn":
         return true;
+      case "interface":
+        return false;
       case "struct": {
         if (this.sendTypes.has(ty.name)) return true;
         const info = this.structs.get(ty.name);
@@ -1220,7 +1330,7 @@ export class TypeChecker {
         return false;
       case "ref":
         return this.isSync(ty.inner);
-      case "box":
+      case "heap":
         return this.isSync(ty.inner);
       case "vec":
         return this.isSync(ty.element);
@@ -1230,6 +1340,8 @@ export class TypeChecker {
         return this.isSync(ty.element);
       case "fn":
         return true;
+      case "interface":
+        return false;
       case "struct": {
         if (this.syncTypes.has(ty.name)) return true;
         const info = this.structs.get(ty.name);
@@ -1301,7 +1413,7 @@ export class TypeChecker {
             this.autoWrappedOption.set(stmt.value, hint.name);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
-          } else {
+          } else if (!this.tryInterfaceCoercion(stmt.value, valType, hint)) {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
         }
@@ -1332,7 +1444,7 @@ export class TypeChecker {
             this.autoWrappedOption.set(stmt.value, hint.name);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
-          } else {
+          } else if (!this.tryInterfaceCoercion(stmt.value, valType, hint)) {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
         }
@@ -2009,7 +2121,7 @@ export class TypeChecker {
         this.setType(expr, ot.inner);
         return { type: ot.inner, mutable: true };
       }
-      if (ot.tag === "box") {
+      if (ot.tag === "heap") {
         this.setType(expr, ot.inner);
         return { type: ot.inner, mutable: true };
       }
@@ -2263,7 +2375,7 @@ export class TypeChecker {
               } else {
                 this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `implement Eq trait or compare individual fields`);
               }
-            } else if (lt.tag === "vec" || lt.tag === "hashmap" || lt.tag === "box" || lt.tag === "array") {
+            } else if (lt.tag === "vec" || lt.tag === "hashmap" || lt.tag === "heap" || lt.tag === "array") {
               this.error(`cannot use '${expr.op}' on ${typeName(lt)}`, sp, `compare individual fields or implement an eq method`);
             }
           } else {
@@ -2279,12 +2391,12 @@ export class TypeChecker {
         const ot = this.checkExpr(expr.operand);
         if (expr.op === "*") {
           if (ot.tag === "ref") return this.setType(expr, ot.inner);
-          if (ot.tag === "box") return this.setType(expr, ot.inner);
+          if (ot.tag === "heap") return this.setType(expr, ot.inner);
           if (ot.tag === "ptr") {
             if (this.unsafeDepth === 0) this.error(`pointer dereference requires 'unsafe' block`, sp);
             return this.setType(expr, ot.inner);
           }
-          if (ot.tag !== "unknown") this.error(`cannot dereference type '${typeName(ot)}' (expected &T, *T or Box<T>)`, sp);
+          if (ot.tag !== "unknown") this.error(`cannot dereference type '${typeName(ot)}' (expected &T, *T or Heap<T>)`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         if (expr.op === "-") {
@@ -2317,11 +2429,26 @@ export class TypeChecker {
         return this.setType(expr, { tag: "unknown" });
       }
       case "Call": {
-        if (expr.func === "Box") {
-          if (expr.args.length !== 1) { this.error(`Box() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+        if (expr.func === "sizeOf") {
+          if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`sizeOf requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+          if (expr.args.length !== 0) { this.error(`sizeOf takes no value arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const resolved = this.resolve(expr.typeArgs[0]);
+          this.sizeOfTypes.set(expr, resolved);
+          return this.setType(expr, { tag: "int", bits: 64, signed: true });
+        }
+        if (expr.func === "zeroed") {
+          if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`zeroed requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+          if (expr.args.length !== 0) { this.error(`zeroed takes no value arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
+          if (this.unsafeDepth === 0) { this.error(`zeroed<T>() can only be used in unsafe blocks`, sp); }
+          const resolved = this.resolve(expr.typeArgs[0]);
+          this.sizeOfTypes.set(expr, resolved);
+          return this.setType(expr, resolved);
+        }
+        if (expr.func === "Heap") {
+          if (expr.args.length !== 1) { this.error(`Heap() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
           const argType = this.checkExpr(expr.args[0]);
           this.tryMove(expr.args[0]);
-          return this.setType(expr, { tag: "box", inner: argType });
+          return this.setType(expr, { tag: "heap", inner: argType });
         }
         if (expr.func === "embedFile") {
           if (expr.args.length !== 1) { this.error(`embedFile() expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -2510,7 +2637,9 @@ export class TypeChecker {
             }
             this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
             if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
-              this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+              if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
+                this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+              }
             }
           } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
             // String auto-coerces to *u8 for FFI/builtins
@@ -2523,7 +2652,9 @@ export class TypeChecker {
             if (isOptionWrap) {
               this.autoWrappedOption.set(expr.args[i], paramType.name);
             } else if (!isStringToPtr && !isArrayToPtr) {
-              this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+              if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
+                this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+              }
             }
           }
         }
@@ -2664,6 +2795,12 @@ export class TypeChecker {
         return this.setType(expr, { tag: "unknown" });
       }
       case "EnumLit": {
+        if (expr.enumName === "String" && expr.variant === "withCapacity") {
+          if (expr.args.length !== 1) { this.error(`'String.withCapacity' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const argType = this.checkExpr(expr.args[0]);
+          if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'String.withCapacity': expected integer, got ${typeName(argType)}`, sp);
+          return this.setType(expr, { tag: "string" });
+        }
         if (expr.enumName === "Vec" && expr.variant === "new") {
           if (expr.args.length !== 0) this.error(`'Vec.new' takes no arguments`, sp);
           this.error(`cannot infer Vec element type — add a type annotation: 'let v: Vec<T> = Vec.new()'`, sp);
@@ -2716,6 +2853,48 @@ export class TypeChecker {
           this.rewrittenEnums.set(expr, mangled);
           return this.setType(expr, { tag: "enum", name: mangled });
         }
+        // generic struct static call: Struct<T>.method(args) with explicit type args
+        if (expr.typeArgs && expr.typeArgs.length > 0 && this.genericStructs.has(expr.enumName)) {
+          const typeArgs = expr.typeArgs.map(ta => this.resolve(ta));
+          const mangled = this.monomorphizeStruct(expr.enumName, typeArgs);
+          // process pending impl methods that monomorphization may have generated
+          while (this._pendingImplFns.length > 0) {
+            const fn = this._pendingImplFns.shift()!;
+            this.checkFunction(fn);
+          }
+          const inherent = this.inherentImpls.get(mangled);
+          if (inherent) {
+            const sig = inherent.methods.get(expr.variant);
+            if (sig) {
+              const mangledMethod = `${mangled}$${expr.variant}`;
+              const paramOffset = (sig.params.length > 0 && sig.params[0].name === "self") ? 1 : 0;
+              const expectedParams = sig.params.slice(paramOffset);
+              if (expr.args.length !== expectedParams.length) {
+                this.error(`'${expr.enumName}.${expr.variant}' expects ${expectedParams.length} args, got ${expr.args.length}`, sp);
+              }
+              for (let i = 0; i < Math.min(expr.args.length, expectedParams.length); i++) {
+                const paramType = expectedParams[i].type;
+                const hint = paramType.tag === "ref" ? paramType.inner : paramType;
+                const argType = this.checkExprWithHint(expr.args[i], hint);
+                if (paramType.tag === "ref") {
+                  if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
+                    this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
+                    if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
+                      this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+                    }
+                  }
+                } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
+                  this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+                }
+                if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
+              }
+              this.staticCalls.set(expr, mangledMethod);
+              return this.setType(expr, sig.ret);
+            }
+          }
+          this.error(`'${expr.enumName}<...>' has no static method '${expr.variant}'`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
         const info = this.enums.get(expr.enumName);
         if (!info) {
           // static method call: Struct.method(args)
@@ -2731,11 +2910,20 @@ export class TypeChecker {
                 this.error(`'${expr.enumName}.${expr.variant}' expects ${expectedParams.length} args, got ${expr.args.length}`, sp);
               }
               for (let i = 0; i < Math.min(expr.args.length, expectedParams.length); i++) {
-                const argType = this.checkExprWithHint(expr.args[i], expectedParams[i].type);
-                if (!typeEq(expectedParams[i].type, argType) && argType.tag !== "unknown") {
-                  this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(expectedParams[i].type)}, got ${typeName(argType)}`, expr.args[i].span);
+                const paramType = expectedParams[i].type;
+                const hint = paramType.tag === "ref" ? paramType.inner : paramType;
+                const argType = this.checkExprWithHint(expr.args[i], hint);
+                if (paramType.tag === "ref") {
+                  if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
+                    this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
+                    if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
+                      this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+                    }
+                  }
+                } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
+                  this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
                 }
-                this.tryMove(expr.args[i]);
+                if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
               }
               this.staticCalls.set(expr, mangled);
               // Send enforcement: Thread.spawn() requires all closure captures to be Send
@@ -2919,7 +3107,9 @@ export class TypeChecker {
             }
             const argType = this.checkExprWithHint(expr.args[0], objType.element);
             if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {
-              this.error(`push: expected ${typeName(objType.element)}, got ${typeName(argType)}`, sp);
+              if (!this.tryInterfaceCoercion(expr.args[0], argType, objType.element)) {
+                this.error(`push: expected ${typeName(objType.element)}, got ${typeName(argType)}`, sp);
+              }
             }
             this.tryMove(expr.args[0]);
             return this.setType(expr, { tag: "void" });
@@ -3233,7 +3423,46 @@ export class TypeChecker {
         }
 
         // user-defined method resolution: inherent first, then traits
-        const bareObjType = objType.tag === "ref" ? objType.inner : objType;
+        const derefOnce = objType.tag === "ref" ? objType.inner : objType.tag === "heap" ? objType.inner : objType;
+        const bareObjType = derefOnce.tag === "ref" ? derefOnce.inner : derefOnce;
+        // interface method dispatch — virtual call through itable
+        if (bareObjType.tag === "interface") {
+          const iface = this.interfaces.get(bareObjType.name);
+          if (iface) {
+            const ifaceMethod = iface.methods.get(expr.method);
+            if (ifaceMethod) {
+              // self is always borrowed for interface calls
+              this.autoBorrowed.set(expr.object, { mutable: ifaceMethod.params[0]?.type.tag === "ref" && (ifaceMethod.params[0].type as any).mutable });
+              if (expr.args.length !== ifaceMethod.params.length - 1) {
+                this.error(`'${expr.method}' expects ${ifaceMethod.params.length - 1} argument(s), got ${expr.args.length}`, sp);
+              }
+              for (let i = 0; i < expr.args.length; i++) {
+                const expected = ifaceMethod.params[i + 1];
+                if (!expected) break;
+                const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
+                const argType = this.checkExprWithHint(expr.args[i], bare);
+                if (!typeEq(bare, argType) && argType.tag !== "unknown") {
+                  this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+                }
+                if (expected.type.tag === "ref") {
+                  this.autoBorrowed.set(expr.args[i], { mutable: expected.type.mutable });
+                } else {
+                  this.tryMove(expr.args[i]);
+                }
+              }
+              // compute method index for vtable slot
+              let methodIndex = 0;
+              for (const [name] of iface.methods) {
+                if (name === expr.method) break;
+                methodIndex++;
+              }
+              this.interfaceMethodCalls.set(expr, { ifaceName: bareObjType.name, methodName: expr.method, methodIndex });
+              return this.setType(expr, ifaceMethod.ret);
+            }
+            this.error(`interface '${bareObjType.name}' has no method '${expr.method}'`, sp);
+            return this.setType(expr, { tag: "unknown" });
+          }
+        }
         const objTName = typeName(bareObjType);
         const resolved = this.resolveMethod(objTName, expr.method);
         if (resolved) {

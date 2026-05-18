@@ -2,7 +2,7 @@
 
 Milo's compiler is written in TypeScript (~12K lines). The goal: rewrite it in Milo so the compiler compiles itself. This is the single strongest proof that a systems language works.
 
-Current state: `milo0` (in `self-hosting/`) is a subset compiler written in Milo. It handles primitives, functions, structs, enums+match, Box, strings, closures, and string methods. It compiles real programs (fib, fizzbuzz, hello) end-to-end through LLVM IR → clang → native binary.
+Current state: `milo0` (in `self-hosting/`) is a subset compiler written in Milo. It handles primitives, functions, structs, enums+match, Heap, strings, closures, and string methods. It compiles real programs (fib, fizzbuzz, hello) end-to-end through LLVM IR → clang → native binary.
 
 ## Strategy
 
@@ -68,7 +68,7 @@ Two parallel tracks:
 - [ ] E3: Port codegen core — function prologue/epilogue, basic blocks, terminators
 - [ ] E4: Port codegen expressions — arithmetic, comparisons, calls, string ops
 - [ ] E5: Port codegen statements — let/var, if, while, for, match, return
-- [ ] E6: Port codegen types — structs, enums, generics, Vec, HashMap, Box
+- [ ] E6: Port codegen types — structs, enums, generics, Vec, HashMap, Heap
 - [ ] E7: Port codegen builtins — print, format, assert, max/min, etc.
 - [ ] E8: Port codegen drop glue — scope-exit cleanup, nested drops
 
@@ -112,7 +112,7 @@ Things that might force a detour. If we hit one, we adapt the plan rather than s
 | Blocker | Workaround |
 |---------|------------|
 | HashMap too complex for milo0 | Use sorted Vec<Pair<K,V>> with binary search. 2 use sites in milo0, removable. |
-| Recursive AST types need Box everywhere | Already have Box<T>. If ergonomics hurt, add `indirect` enum variant sugar. |
+| Recursive AST types need Heap everywhere | Already have Heap<T>. If ergonomics hurt, add `indirect` enum variant sugar. |
 | String manipulation too verbose without iterators | Use `.each()` callback pattern or byte-index loops. Port iterators as a stretch goal. |
 | Drop semantics edge cases crash milo0 | Isolate the pattern (extract to helper fn). Documented workaround from Stage-0. |
 | Codegen too large for single file | Split into codegen_expr.milo, codegen_stmt.milo, codegen_type.milo. Imports handle it. |

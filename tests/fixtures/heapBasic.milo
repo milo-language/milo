@@ -2,10 +2,10 @@
 // @expect: hello
 
 fn main(): i32 {
-    let b = Box(42)
+    let b = Heap(42)
     print(* b)
 
-    let s = Box("hello")
+    let s = Heap("hello")
     print(* s)
 
     return 0

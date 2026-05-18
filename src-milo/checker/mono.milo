@@ -60,7 +60,7 @@ fn mangleTypeName(t: &TypeKind): string {
         TypeKind.TStruct(name) => { return name.clone() }
         TypeKind.TEnum(name) => { return name.clone() }
         TypeKind.TPtr(inner) => { return "ptr_" + mangleTypeName(&*inner) }
-        TypeKind.TBox(inner) => { return "Box_" + mangleTypeName(&*inner) }
+        TypeKind.THeap(inner) => { return "Heap_" + mangleTypeName(&*inner) }
         TypeKind.TVec(elem) => { return "Vec_" + mangleTypeName(&*elem) }
         TypeKind.THashMap(key, val) => {
             return "HashMap_" + mangleTypeName(&*key) + "_" + mangleTypeName(&*val)
@@ -99,24 +99,24 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
             return t.clone()
         }
         TypeKind.TArray(elem, size) => {
-            return TypeKind.TArray(Box.new(substituteTypeKind(&*elem, typeMap)), size.clone())
+            return TypeKind.TArray(Heap.new(substituteTypeKind(&*elem, typeMap)), size.clone())
         }
         TypeKind.TRef(inner, mutable) => {
-            return TypeKind.TRef(Box.new(substituteTypeKind(&*inner, typeMap)), mutable)
+            return TypeKind.TRef(Heap.new(substituteTypeKind(&*inner, typeMap)), mutable)
         }
         TypeKind.TPtr(inner) => {
-            return TypeKind.TPtr(Box.new(substituteTypeKind(&*inner, typeMap)))
+            return TypeKind.TPtr(Heap.new(substituteTypeKind(&*inner, typeMap)))
         }
-        TypeKind.TBox(inner) => {
-            return TypeKind.TBox(Box.new(substituteTypeKind(&*inner, typeMap)))
+        TypeKind.THeap(inner) => {
+            return TypeKind.THeap(Heap.new(substituteTypeKind(&*inner, typeMap)))
         }
         TypeKind.TVec(elem) => {
-            return TypeKind.TVec(Box.new(substituteTypeKind(&*elem, typeMap)))
+            return TypeKind.TVec(Heap.new(substituteTypeKind(&*elem, typeMap)))
         }
         TypeKind.THashMap(key, val) => {
             return TypeKind.THashMap(
-                Box.new(substituteTypeKind(&*key, typeMap)),
-                Box.new(substituteTypeKind(&*val, typeMap)),
+                Heap.new(substituteTypeKind(&*key, typeMap)),
+                Heap.new(substituteTypeKind(&*val, typeMap)),
             )
         }
         TypeKind.TFn(params, ret) => {
@@ -126,7 +126,7 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
                 newParams.push(substituteTypeKind(&params[i], typeMap))
                 i = i + 1
             }
-            return TypeKind.TFn(newParams, Box.new(substituteTypeKind(&*ret, typeMap)))
+            return TypeKind.TFn(newParams, Heap.new(substituteTypeKind(&*ret, typeMap)))
         }
         _ => { return t.clone() }
     }
@@ -168,7 +168,7 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
         }
         match &ty.fnRet {
             Option.Some(ret) => {
-                result.fnRet = Option.Some(Box.new(substituteMiloType(&*ret, typeParams, typeArgs)))
+                result.fnRet = Option.Some(Heap.new(substituteMiloType(&*ret, typeParams, typeArgs)))
             }
             Option.None => {}
         }

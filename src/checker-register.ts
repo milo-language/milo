@@ -258,7 +258,7 @@ TypeChecker.prototype.registerImpl = function(this: TypeChecker, impl: ImplDecl,
     }
 
     if (impl.traitName === "Drop") {
-      const builtins = ["string", "Vec", "Box", "HashMap"];
+      const builtins = ["string", "Vec", "Heap", "HashMap"];
       if (builtins.includes(tn)) {
         this.error(`cannot impl Drop for built-in type '${tn}'`, impl.span);
         return;

@@ -3,7 +3,7 @@ import { Lexer } from "./lexer";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
-  TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias,
+  TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias, InterfaceDecl,
 } from "./ast";
 
 export class Parser {
@@ -47,6 +47,7 @@ export class Parser {
     const traits: TraitDecl[] = [];
     const impls: ImplDecl[] = [];
     const typeAliases: TypeAlias[] = [];
+    const interfaces: InterfaceDecl[] = [];
     while (!this.at(TokenKind.Eof)) {
       // collect attributes before struct/enum
       let attrs: Attribute[] | undefined;
@@ -74,11 +75,13 @@ export class Parser {
         impls.push(this.parseImplDecl());
       } else if (this.at(TokenKind.Type)) {
         typeAliases.push(this.parseTypeAlias());
+      } else if (this.at(TokenKind.Interface)) {
+        interfaces.push(this.parseInterfaceDecl());
       } else {
         this.error(`expected declaration, got '${this.peek().kind}'`, this.peek());
       }
     }
-    return { structs, enums, functions, imports, traits, impls, typeAliases };
+    return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces };
   }
 
   private parseImport(): ImportDecl {
@@ -355,6 +358,18 @@ export class Parser {
       this.expect(TokenKind.RBrace);
     }
     return { name, params, retType, body, span: this.span(tok) };
+  }
+
+  private parseInterfaceDecl(): InterfaceDecl {
+    const tok = this.expect(TokenKind.Interface);
+    const name = this.expect(TokenKind.Ident).value;
+    this.expect(TokenKind.LBrace);
+    const methods: TraitMethod[] = [];
+    while (!this.at(TokenKind.RBrace) && !this.at(TokenKind.Eof)) {
+      methods.push(this.parseTraitMethod());
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "InterfaceDecl", name, methods, span: this.span(tok) };
   }
 
   private parseImplDecl(): ImplDecl {
@@ -837,9 +852,43 @@ export class Parser {
         }
         return { kind: "EnumLit", enumName: tok.value, variant, args, span: s };
       }
+      // generic static call: Name<TypeArgs>.method(args)
+      if (this.at(TokenKind.Lt) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
+        const saved = this.pos;
+        try {
+          this.advance(); // consume <
+          const typeArgs: import("./ast").MiloType[] = [this.parseType()];
+          while (this.match(TokenKind.Comma)) {
+            typeArgs.push(this.parseType());
+          }
+          this.expect(TokenKind.Gt);
+          this.expect(TokenKind.Dot);
+          const variant = this.expect(TokenKind.Ident).value;
+          const args: Expr[] = [];
+          if (this.match(TokenKind.LParen)) {
+            while (!this.at(TokenKind.RParen)) {
+              args.push(this.parseExpr());
+              this.match(TokenKind.Comma);
+            }
+            this.expect(TokenKind.RParen);
+          }
+          return { kind: "EnumLit", enumName: tok.value, variant, args, typeArgs, span: s };
+        } catch {
+          this.pos = saved;
+        }
+      }
       // struct literal: Name { field: value, ... }
       if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
         return this.parseStructLit(tok.value, s);
+      }
+      // sizeOf<Type>() / zeroed<Type>() — builtins with explicit type arg
+      if ((tok.value === "sizeOf" || tok.value === "zeroed") && this.at(TokenKind.Lt)) {
+        this.advance(); // consume <
+        const typeArg = this.parseType();
+        this.expect(TokenKind.Gt);
+        this.expect(TokenKind.LParen);
+        this.expect(TokenKind.RParen);
+        return { kind: "Call", func: tok.value, args: [], typeArgs: [typeArg], span: s };
       }
       // function call: name(args) — `(` must be on same line to avoid cross-line ambiguity
       if (this.at(TokenKind.LParen) && this.peek().line === tok.line) return this.parseCall(tok.value, s);

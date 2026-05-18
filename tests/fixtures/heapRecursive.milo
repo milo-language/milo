@@ -1,7 +1,7 @@
 // @expect: sum: 10
 
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
+    Node(Heap<Tree>, Heap<Tree>),
     Leaf(i32)
 }
 
@@ -19,8 +19,8 @@ fn sum(t: Tree): i32 {
 
 fn main(): i32 {
     let tree = Tree.Node(
-    Box(Tree.Node(Box(Tree.Leaf(1)), Box(Tree.Leaf(2)))),
-    Box(Tree.Node(Box(Tree.Leaf(3)), Box(Tree.Leaf(4))))
+    Heap(Tree.Node(Heap(Tree.Leaf(1)), Heap(Tree.Leaf(2)))),
+    Heap(Tree.Node(Heap(Tree.Leaf(3)), Heap(Tree.Leaf(4))))
     )
     print("sum: ", sum(tree))
     return 0

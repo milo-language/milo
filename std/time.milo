@@ -1,5 +1,6 @@
 // std/time — wall clock, monotonic timing, sleep
 
+from "std/runtime" import { schedulerCurrent, schedulerYield }
 
 extern
 
@@ -94,8 +95,16 @@ fn durationMicros(d: &Duration): i64 {
 // ── Sleep ──
 
 // Sleep for the given number of milliseconds.
+// Inside a green thread, yields cooperatively so other tasks keep running.
 
 fn sleepMs(ms: i64): void {
+    if schedulerCurrent() as i64 != 0 {
+        let deadline = epochMillis() + ms
+        while epochMillis() < deadline {
+            schedulerYield()
+        }
+        return
+    }
     unsafe {
         usleep((ms * 1000) as u32)
     }
@@ -104,15 +113,5 @@ fn sleepMs(ms: i64): void {
 // Sleep for the given number of seconds.
 
 fn sleepSecs(secs: i64): void {
-    var remaining = secs
-    while remaining > 0 {
-        var chunk = remaining
-        if chunk > 30 {
-            chunk = 30
-        }
-        unsafe {
-            usleep((chunk * 1000000) as u32)
-        }
-        remaining = remaining - chunk
-    }
+    sleepMs(secs * 1000)
 }

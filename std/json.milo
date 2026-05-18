@@ -1,90 +1,112 @@
-// std/json — zero-copy JSON parser with ergonomic accessors
-//
-// Quick usage:
-//   let j = jsonParse(data)!
-//   let name = j.str("name")!        // Option<string>
-//   let age = j.i64("age")!          // Option<i64>
-//   let nested = j.get("addr")!      // Option<Json>
+// std/json — materialized tree JSON parser
+// Single O(n) parse pass. Lookups are O(keys) for objects, O(1) for arrays.
 
+// kind: 0=null 1=bool 2=number 3=string 4=array 5=object
 struct Json {
-    raw: string,
-    start: i64,
-    end: i64,
+    kind: i32,
+    boolVal: bool,
+    numVal: f64,
+    strVal: string,
+    elems: Vec<Json>,
+    objKeys: Vec<string>,
+}
+
+fn jsonNull(): Json {
+    return Json {
+        kind: 0, boolVal: false, numVal: 0.0, strVal: "",
+        elems: Vec.new(), objKeys: Vec.new(),
+    }
+}
+
+fn jsonClone(src: &Json): Json {
+    var result: Json = Json {
+        kind: src.kind, boolVal: src.boolVal, numVal: src.numVal,
+        strVal: src.strVal.clone(), elems: Vec.new(), objKeys: Vec.new(),
+    }
+    var i: i64 = 0
+    while i < src.elems.len() {
+        result.elems.push(jsonClone(src.elems[i]))
+        i = i + 1
+    }
+    i = 0
+    while i < src.objKeys.len() {
+        result.objKeys.push(src.objKeys[i].clone())
+        i = i + 1
+    }
+    return result
 }
 
 impl Json {
-    // ── Keyed accessors (object fields) ──
+    // ── Object field accessors ──
 
     fn get(self: &Self, key: &string): Option<Json> {
-        return jsonGetImpl(self.raw, self.start, self.end, key)
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                return Option.Some(jsonClone(self.elems[i]))
+            }
+            i = i + 1
+        }
+        return Option.None
     }
 
     fn str(self: &Self, key: &string): Option<string> {
-        let v = jsonGetImpl(self.raw, self.start, self.end, key)
-        if let Option.Some(j) = v {
-            if j.isStr() {
-                return Option.Some(jsonStrImpl(j.raw, j.start, j.end))
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                if self.elems[i].kind == 3 {
+                    return Option.Some(self.elems[i].strVal.clone())
+                }
+                return Option.None
             }
+            i = i + 1
         }
         return Option.None
     }
 
     fn i64(self: &Self, key: &string): Option<i64> {
-        let v = jsonGetImpl(self.raw, self.start, self.end, key)
-        if let Option.Some(j) = v {
-            if j.isNum() {
-                return Option.Some(jsonIntImpl(j.raw, j.start, j.end))
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                if self.elems[i].kind == 2 {
+                    return Option.Some(self.elems[i].numVal as i64)
+                }
+                return Option.None
             }
+            i = i + 1
         }
         return Option.None
     }
 
     fn f64(self: &Self, key: &string): Option<f64> {
-        let v = jsonGetImpl(self.raw, self.start, self.end, key)
-        if let Option.Some(j) = v {
-            if j.isNum() {
-                return Option.Some(jsonNumImpl(j.raw, j.start, j.end))
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                if self.elems[i].kind == 2 {
+                    return Option.Some(self.elems[i].numVal)
+                }
+                return Option.None
             }
+            i = i + 1
         }
         return Option.None
     }
 
     fn bool(self: &Self, key: &string): Option<bool> {
-        let v = jsonGetImpl(self.raw, self.start, self.end, key)
-        if let Option.Some(j) = v {
-            if j.isBool() {
-                return Option.Some(j.start < j.end && j.raw[j.start] == 't')
+        if self.kind != 5 { return Option.None }
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            if self.objKeys[i] == key {
+                if self.elems[i].kind == 1 {
+                    return Option.Some(self.elems[i].boolVal)
+                }
+                return Option.None
             }
-        }
-        return Option.None
-    }
-
-    // ── Bare value extraction (for array elements, after .get()) ──
-
-    fn asStr(self: &Self): Option<string> {
-        if self.isStr() {
-            return Option.Some(jsonStrImpl(self.raw, self.start, self.end))
-        }
-        return Option.None
-    }
-
-    fn asI64(self: &Self): Option<i64> {
-        if self.isNum() {
-            return Option.Some(jsonIntImpl(self.raw, self.start, self.end))
-        }
-        return Option.None
-    }
-
-    fn asF64(self: &Self): Option<f64> {
-        if self.isNum() {
-            return Option.Some(jsonNumImpl(self.raw, self.start, self.end))
-        }
-        return Option.None
-    }
-
-    fn asBool(self: &Self): Option<bool> {
-        if self.isBool() {
-            return Option.Some(self.start < self.end && self.raw[self.start] == 't')
+            i = i + 1
         }
         return Option.None
     }
@@ -92,467 +114,294 @@ impl Json {
     // ── Array access ──
 
     fn at(self: &Self, index: i64): Option<Json> {
-        return jsonAtImpl(self.raw, self.start, self.end, index)
+        if self.kind != 4 || index < 0 || index >= self.elems.len() {
+            return Option.None
+        }
+        return Option.Some(jsonClone(self.elems[index]))
+    }
+
+    // ── Bare value extraction ──
+
+    fn asStr(self: &Self): Option<string> {
+        if self.kind == 3 { return Option.Some(self.strVal.clone()) }
+        return Option.None
+    }
+
+    fn asI64(self: &Self): Option<i64> {
+        if self.kind == 2 { return Option.Some(self.numVal as i64) }
+        return Option.None
+    }
+
+    fn asF64(self: &Self): Option<f64> {
+        if self.kind == 2 { return Option.Some(self.numVal) }
+        return Option.None
+    }
+
+    fn asBool(self: &Self): Option<bool> {
+        if self.kind == 1 { return Option.Some(self.boolVal) }
+        return Option.None
     }
 
     // ── Type checks ──
 
-    fn isNull(self: &Self): bool {
-        return self.start < self.end && self.raw[self.start] == 'n'
-    }
-
-    fn isStr(self: &Self): bool {
-        return self.start < self.end && self.raw[self.start] == '"'
-    }
-
-    fn isNum(self: &Self): bool {
-        if self.start >= self.end {
-            return false
-        }
-        let c = self.raw[self.start]
-        return c == '-' || (c >= '0' && c <= '9')
-    }
-
-    fn isBool(self: &Self): bool {
-        if self.start >= self.end {
-            return false
-        }
-        let c = self.raw[self.start]
-        return c == 't' || c == 'f'
-    }
-
-    fn isArray(self: &Self): bool {
-        return self.start < self.end && self.raw[self.start] == '['
-    }
-
-    fn isObject(self: &Self): bool {
-        return self.start < self.end && self.raw[self.start] == '{'
-    }
+    fn isNull(self: &Self): bool { return self.kind == 0 }
+    fn isStr(self: &Self): bool { return self.kind == 3 }
+    fn isNum(self: &Self): bool { return self.kind == 2 }
+    fn isBool(self: &Self): bool { return self.kind == 1 }
+    fn isArray(self: &Self): bool { return self.kind == 4 }
+    fn isObject(self: &Self): bool { return self.kind == 5 }
 
     fn len(self: &Self): i64 {
-        return jsonLenImpl(self.raw, self.start, self.end)
+        return self.elems.len()
     }
 
     fn rawStr(self: &Self): string {
-        return self.raw[self.start..self.end].clone()
-    }
-
-    // Return all keys of a JSON object.
-    fn keys(self: &Self): Vec<string> {
-        return jsonKeysImpl(self.raw, self.start, self.end)
-    }
-}
-
-fn jsonParse(s: string): Result<Json> {
-    if s.len == 0 {
-        return Result.Err("empty input")
-    }
-    let i = skipWs(s, 0)
-    if i >= s.len {
-        return Result.Err("empty input")
-    }
-    let e = skipValue(s, i)
-    let afterWs = skipWs(s, e)
-    if afterWs != s.len {
-        return Result.Err("trailing content")
-    }
-    if e == i {
-        return Result.Err("invalid JSON")
-    }
-    return Result.Ok(Json {
-        raw: s, start: i, end: e
-    }
-    )
-}
-
-// ── Internal helpers ──
-
-fn skipWs(s: &string, pos: i64): i64 {
-    var i: i64 = pos
-    while i < s.len {
-        let c = s[i]
-        if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
-            break
+        if self.kind == 0 { return "null" }
+        if self.kind == 1 {
+            if self.boolVal { return "true" }
+            return "false"
         }
-        i = i + 1
-    }
-    return i
-}
-
-fn skipValue(s: &string, pos: i64): i64 {
-    if pos >= s.len {
-        return pos
-    }
-    let c = s[pos]
-    if c == '"' {
-        return skipString(s, pos)
-    }
-    if c == '{' {
-        return skipObject(s, pos)
-    }
-    if c == '[' {
-        return skipArray(s, pos)
-    }
-    if c == 't' {
-        return pos + 4
-    }
-    if c == 'f' {
-        return pos + 5
-    }
-    if c == 'n' {
-        return pos + 4
-    }
-    return skipNumber(s, pos)
-}
-
-fn skipString(s: &string, pos: i64): i64 {
-    var i: i64 = pos + 1
-    while i < s.len {
-        if s[i] == '\\' {
-            i = i + 2
-        } else if s[i] == '"' {
-            return i + 1
-        } else {
-            i = i + 1
-        }
-    }
-    return i
-}
-
-fn skipNumber(s: &string, pos: i64): i64 {
-    var i: i64 = pos
-    if i < s.len && s[i] == '-' {
-        i = i + 1
-    }
-    while i < s.len && s[i] >= '0' && s[i] <= '9' {
-        i = i + 1
-    }
-    if i < s.len && s[i] == '.' {
-        i = i + 1
-        while i < s.len && s[i] >= '0' && s[i] <= '9' {
-            i = i + 1
-        }
-    }
-    if i < s.len && (s[i] == 'e' || s[i] == 'E') {
-        i = i + 1
-        if i < s.len && (s[i] == '+' || s[i] == '-') {
-            i = i + 1
-        }
-        while i < s.len && s[i] >= '0' && s[i] <= '9' {
-            i = i + 1
-        }
-    }
-    return i
-}
-
-fn skipObject(s: &string, pos: i64): i64 {
-    var i: i64 = pos + 1
-    i = skipWs(s, i)
-    if i < s.len && s[i] == '}' {
-        return i + 1
-    }
-    while i < s.len {
-        i = skipWs(s, i)
-        if i >= s.len || s[i] != '"' {
-            break
-        }
-        i = skipString(s, i)
-        i = skipWs(s, i)
-        if i < s.len && s[i] == ':' {
-            i = i + 1
-        }
-        i = skipWs(s, i)
-        i = skipValue(s, i)
-        i = skipWs(s, i)
-        if i < s.len && s[i] == ',' {
-            i = i + 1
-        } else {
-            break
-        }
-    }
-    if i < s.len && s[i] == '}' {
-        i = i + 1
-    }
-    return i
-}
-
-fn skipArray(s: &string, pos: i64): i64 {
-    var i: i64 = pos + 1
-    i = skipWs(s, i)
-    if i < s.len && s[i] == ']' {
-        return i + 1
-    }
-    while i < s.len {
-        i = skipWs(s, i)
-        i = skipValue(s, i)
-        i = skipWs(s, i)
-        if i < s.len && s[i] == ',' {
-            i = i + 1
-        } else {
-            break
-        }
-    }
-    if i < s.len && s[i] == ']' {
-        i = i + 1
-    }
-    return i
-}
-
-fn keyMatches(s: &string, pos: i64, key: &string): bool {
-    if pos >= s.len || s[pos] != '"' {
-        return false
-    }
-    var i: i64 = 0
-    var j: i64 = pos + 1
-    while i < key.len && j < s.len {
-        if s[j] == '\\' {
-            j = j + 1
-            if j >= s.len {
-                return false
-            }
-        }
-        if s[j] != key[i] {
-            return false
-        }
-        i = i + 1
-        j = j + 1
-    }
-    return i == key.len && j < s.len && s[j] == '"'
-}
-
-fn jsonGetImpl(s: &string, start: i64, end: i64, key: &string): Option<Json> {
-    if start >= end || s[start] != '{' {
-        return Option.None
-    }
-    var i: i64 = start + 1
-    while i < end {
-        i = skipWs(s, i)
-        if i >= end || s[i] == '}' {
-            return Option.None
-        }
-        let keyStart = i
-        if s[i] != '"' {
-            return Option.None
-        }
-        let keyEnd = skipString(s, i)
-        let matched = keyMatches(s, keyStart, key)
-        i = skipWs(s, keyEnd)
-        if i < end && s[i] == ':' {
-            i = i + 1
-        }
-        i = skipWs(s, i)
-        let valStart = i
-        let valEnd = skipValue(s, i)
-        if matched {
-            return Option.Some(Json {
-                raw: s.clone(), start: valStart, end: valEnd
-            }
-            )
-        }
-        i = skipWs(s, valEnd)
-        if i < end && s[i] == ',' {
-            i = i + 1
-        }
-    }
-    return Option.None
-}
-
-fn jsonAtImpl(s: &string, start: i64, end: i64, index: i64): Option<Json> {
-    if start >= end || s[start] != '[' {
-        return Option.None
-    }
-    var i: i64 = start + 1
-    var idx: i64 = 0
-    while i < end {
-        i = skipWs(s, i)
-        if i >= end || s[i] == ']' {
-            return Option.None
-        }
-        let valStart = i
-        let valEnd = skipValue(s, i)
-        if idx == index {
-            return Option.Some(Json {
-                raw: s.clone(), start: valStart, end: valEnd
-            }
-            )
-        }
-        idx = idx + 1
-        i = skipWs(s, valEnd)
-        if i < end && s[i] == ',' {
-            i = i + 1
-        }
-    }
-    return Option.None
-}
-
-fn jsonLenImpl(s: &string, start: i64, end: i64): i64 {
-    if start >= end {
-        return 0
-    }
-    let c = s[start]
-    if c == '[' {
-        var i: i64 = start + 1
-        i = skipWs(s, i)
-        if i < end && s[i] == ']' {
-            return 0
-        }
-        var count: i64 = 0
-        while i < end {
-            i = skipWs(s, i)
-            if i >= end || s[i] == ']' {
-                break
-            }
-            i = skipValue(s, i)
-            count = count + 1
-            i = skipWs(s, i)
-            if i < end && s[i] == ',' {
+        if self.kind == 2 { return $"{self.numVal}" }
+        if self.kind == 3 { return "\"" + jsonEscapeStr(self.strVal) + "\"" }
+        if self.kind == 4 {
+            var s: string = "["
+            var i: i64 = 0
+            while i < self.elems.len() {
+                if i > 0 { s = s + "," }
+                s = s + self.elems[i].rawStr()
                 i = i + 1
             }
+            return s + "]"
         }
-        return count
-    }
-    if c == '{' {
-        var i: i64 = start + 1
-        i = skipWs(s, i)
-        if i < end && s[i] == '}' {
-            return 0
-        }
-        var count: i64 = 0
-        while i < end {
-            i = skipWs(s, i)
-            if i >= end || s[i] == '}' {
-                break
-            }
-            i = skipString(s, i)
-            i = skipWs(s, i)
-            if i < end && s[i] == ':' {
+        if self.kind == 5 {
+            var s: string = "{"
+            var i: i64 = 0
+            while i < self.objKeys.len() {
+                if i > 0 { s = s + "," }
+                s = s + "\"" + jsonEscapeStr(self.objKeys[i]) + "\":" + self.elems[i].rawStr()
                 i = i + 1
             }
-            i = skipWs(s, i)
-            i = skipValue(s, i)
-            count = count + 1
-            i = skipWs(s, i)
-            if i < end && s[i] == ',' {
-                i = i + 1
-            }
+            return s + "}"
         }
-        return count
-    }
-    return 0
-}
-
-fn jsonStrImpl(s: &string, start: i64, end: i64): string {
-    if start >= end || s[start] != '"' {
         return ""
     }
-    var result: string = ""
-    var i: i64 = start + 1
-    while i < end && s[i] != '"' {
-        if s[i] == '\\' && i + 1 < end {
-            i = i + 1
-            let esc = s[i]
-            if esc == 'n' {
-                result.push('\n')
-            } 
-            else if esc == 't' {
-                result.push('\t')
-            } 
-            else if esc == 'r' {
-                result.push('\r')
-            } 
-            else if esc == '"' {
-                result.push('"')
-            } 
-            else if esc == '\\' {
-                result.push('\\')
-            } 
-            else if esc == '/' {
-                result.push('/')
-            } 
-            else {
-                result.push(esc)
-            }
-        } else {
-            result.push(s[i])
-        }
-        i = i + 1
-    }
-    return result
-}
 
-fn jsonNumImpl(s: &string, start: i64, end: i64): f64 {
-    var result: f64 = 0.0
-    var negative: bool = false
-    var i: i64 = start
-    if i < end && s[i] == '-' {
-        negative = true
-        i = i + 1
-    }
-    while i < end && s[i] >= '0' && s[i] <= '9' {
-        result = result * 10.0 + (s[i]as i32 - 48) as f64
-        i = i + 1
-    }
-    if i < end && s[i] == '.' {
-        i = i + 1
-        var frac: f64 = 0.1
-        while i < end && s[i] >= '0' && s[i] <= '9' {
-            result = result + (s[i]as i32 - 48) as f64 * frac
-            frac = frac * 0.1
+    fn keys(self: &Self): Vec<string> {
+        var result: Vec<string> = Vec.new()
+        var i: i64 = 0
+        while i < self.objKeys.len() {
+            result.push(self.objKeys[i].clone())
             i = i + 1
         }
-    }
-    if negative {
-        result = 0.0 - result
-    }
-    return result
-}
-
-fn jsonIntImpl(s: &string, start: i64, end: i64): i64 {
-    var result: i64 = 0
-    var negative: bool = false
-    var i: i64 = start
-    if i < end && s[i] == '-' {
-        negative = true
-        i = i + 1
-    }
-    while i < end && s[i] >= '0' && s[i] <= '9' {
-        result = result * 10 + (s[i]as i32 - 48) as i64
-        i = i + 1
-    }
-    if negative {
-        result = 0 - result
-    }
-    return result
-}
-
-fn jsonKeysImpl(s: &string, start: i64, end: i64): Vec<string> {
-    var result: Vec<string> = Vec.new()
-    if start >= end || s[start] != '{' {
         return result
     }
-    var i: i64 = start + 1
-    while i < end {
-        i = skipWs(s, i)
-        if i >= end || s[i] == '}' {
+}
+
+// ── Parser ──
+
+fn jsonParse(s: string): Result<Json> {
+    if s.len == 0 { return Result.Err("empty input") }
+    var pos: i64 = 0
+    jsonSkipWs(s, pos)
+    if pos >= s.len { return Result.Err("empty input") }
+    let result = jsonParseValue(s, pos)
+    jsonSkipWs(s, pos)
+    if pos != s.len { return Result.Err("trailing content") }
+    return Result.Ok(result)
+}
+
+fn jsonSkipWs(s: &string, pos: &mut i64) {
+    while pos < s.len {
+        let c = s[pos]
+        if c != ' ' && c != '\t' && c != '\n' && c != '\r' { break }
+        pos = pos + 1
+    }
+}
+
+fn jsonParseValue(s: &string, pos: &mut i64): Json {
+    jsonSkipWs(s, pos)
+    if pos >= s.len { return jsonNull() }
+    let c = s[pos]
+    if c == '"' { return jsonParseString(s, pos) }
+    if c == '{' { return jsonParseObject(s, pos) }
+    if c == '[' { return jsonParseArray(s, pos) }
+    if c == 't' {
+        pos = pos + 4
+        return Json {
+            kind: 1, boolVal: true, numVal: 0.0, strVal: "",
+            elems: Vec.new(), objKeys: Vec.new(),
+        }
+    }
+    if c == 'f' {
+        pos = pos + 5
+        return Json {
+            kind: 1, boolVal: false, numVal: 0.0, strVal: "",
+            elems: Vec.new(), objKeys: Vec.new(),
+        }
+    }
+    if c == 'n' {
+        pos = pos + 4
+        return jsonNull()
+    }
+    return jsonParseNumber(s, pos)
+}
+
+fn jsonParseString(s: &string, pos: &mut i64): Json {
+    let val = jsonParseStringRaw(s, pos)
+    return Json {
+        kind: 3, boolVal: false, numVal: 0.0, strVal: val,
+        elems: Vec.new(), objKeys: Vec.new(),
+    }
+}
+
+fn jsonParseStringRaw(s: &string, pos: &mut i64): string {
+    pos = pos + 1
+    var result: string = ""
+    while pos < s.len && s[pos] != '"' {
+        if s[pos] == '\\' && pos + 1 < s.len {
+            pos = pos + 1
+            let esc = s[pos]
+            if esc == 'n' { result.push('\n') }
+            else if esc == 't' { result.push('\t') }
+            else if esc == 'r' { result.push('\r') }
+            else if esc == '"' { result.push('"') }
+            else if esc == '\\' { result.push('\\') }
+            else if esc == '/' { result.push('/') }
+            else { result.push(esc) }
+        } else {
+            result.push(s[pos])
+        }
+        pos = pos + 1
+    }
+    if pos < s.len { pos = pos + 1 }
+    return result
+}
+
+fn jsonParseNumber(s: &string, pos: &mut i64): Json {
+    var result: f64 = 0.0
+    var negative: bool = false
+    if pos < s.len && s[pos] == '-' {
+        negative = true
+        pos = pos + 1
+    }
+    while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+        result = result * 10.0 + (s[pos] as i32 - 48) as f64
+        pos = pos + 1
+    }
+    if pos < s.len && s[pos] == '.' {
+        pos = pos + 1
+        var frac: f64 = 0.1
+        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+            result = result + (s[pos] as i32 - 48) as f64 * frac
+            frac = frac * 0.1
+            pos = pos + 1
+        }
+    }
+    if pos < s.len && (s[pos] == 'e' || s[pos] == 'E') {
+        pos = pos + 1
+        var expNeg: bool = false
+        if pos < s.len && s[pos] == '-' {
+            expNeg = true
+            pos = pos + 1
+        } else if pos < s.len && s[pos] == '+' {
+            pos = pos + 1
+        }
+        var exp: i64 = 0
+        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+            exp = exp * 10 + (s[pos] as i32 - 48) as i64
+            pos = pos + 1
+        }
+        var factor: f64 = 1.0
+        var e: i64 = 0
+        while e < exp {
+            factor = factor * 10.0
+            e = e + 1
+        }
+        if expNeg { result = result / factor }
+        else { result = result * factor }
+    }
+    if negative { result = 0.0 - result }
+    return Json {
+        kind: 2, boolVal: false, numVal: result, strVal: "",
+        elems: Vec.new(), objKeys: Vec.new(),
+    }
+}
+
+fn jsonParseArray(s: &string, pos: &mut i64): Json {
+    pos = pos + 1
+    var elems: Vec<Json> = Vec.new()
+    jsonSkipWs(s, pos)
+    if pos < s.len && s[pos] == ']' {
+        pos = pos + 1
+        return Json {
+            kind: 4, boolVal: false, numVal: 0.0, strVal: "",
+            elems: elems, objKeys: Vec.new(),
+        }
+    }
+    while pos < s.len {
+        let val = jsonParseValue(s, pos)
+        elems.push(val)
+        jsonSkipWs(s, pos)
+        if pos < s.len && s[pos] == ',' {
+            pos = pos + 1
+        } else {
             break
         }
-        if s[i] != '"' {
+    }
+    if pos < s.len && s[pos] == ']' { pos = pos + 1 }
+    return Json {
+        kind: 4, boolVal: false, numVal: 0.0, strVal: "",
+        elems: elems, objKeys: Vec.new(),
+    }
+}
+
+fn jsonParseObject(s: &string, pos: &mut i64): Json {
+    pos = pos + 1
+    var elems: Vec<Json> = Vec.new()
+    var keys: Vec<string> = Vec.new()
+    jsonSkipWs(s, pos)
+    if pos < s.len && s[pos] == '}' {
+        pos = pos + 1
+        return Json {
+            kind: 5, boolVal: false, numVal: 0.0, strVal: "",
+            elems: elems, objKeys: keys,
+        }
+    }
+    while pos < s.len {
+        jsonSkipWs(s, pos)
+        if pos >= s.len || s[pos] != '"' { break }
+        let key = jsonParseStringRaw(s, pos)
+        keys.push(key)
+        jsonSkipWs(s, pos)
+        if pos < s.len && s[pos] == ':' { pos = pos + 1 }
+        let val = jsonParseValue(s, pos)
+        elems.push(val)
+        jsonSkipWs(s, pos)
+        if pos < s.len && s[pos] == ',' {
+            pos = pos + 1
+        } else {
             break
         }
-        let keyStart = i
-        let keyEnd = skipString(s, i)
-        let key = jsonStrImpl(s, keyStart, keyEnd)
-        result.push(key)
-        i = skipWs(s, keyEnd)
-        if i < end && s[i] == ':' {
-            i = i + 1
-        }
-        i = skipWs(s, i)
-        i = skipValue(s, i)
-        i = skipWs(s, i)
-        if i < end && s[i] == ',' {
-            i = i + 1
-        }
+    }
+    if pos < s.len && s[pos] == '}' { pos = pos + 1 }
+    return Json {
+        kind: 5, boolVal: false, numVal: 0.0, strVal: "",
+        elems: elems, objKeys: keys,
+    }
+}
+
+fn jsonEscapeStr(s: &string): string {
+    var result: string = ""
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i]
+        if c == '"' { result = result + "\\\"" }
+        else if c == '\\' { result = result + "\\\\" }
+        else if c == '\n' { result = result + "\\n" }
+        else if c == '\t' { result = result + "\\t" }
+        else if c == '\r' { result = result + "\\r" }
+        else { result.push(c) }
+        i = i + 1
     }
     return result
 }

@@ -1,0 +1,34 @@
+// @expect: hello from Dog
+// @expect: hello from Cat
+
+interface Greeter {
+    fn greet(self: &Self): string
+}
+
+struct Dog {}
+
+impl Dog {
+    fn greet(self: &Self): string {
+        return "hello from Dog"
+    }
+}
+
+struct Cat {}
+
+impl Cat {
+    fn greet(self: &Self): string {
+        return "hello from Cat"
+    }
+}
+
+fn sayHello(g: &Greeter) {
+    print(g.greet())
+}
+
+fn main(): i32 {
+    let d = Dog {}
+    let c = Cat {}
+    sayHello(d)
+    sayHello(c)
+    return 0
+}

@@ -160,8 +160,8 @@ fn llType(t: &string): string {
     if t == "string" { return "%String" }
     // Pointer types
     if t.len > 0 && t[0] == 42 { return "ptr" }
-    // Box<T>, Vec<T>, etc. — all pointer-shaped
-    if t.len >= 4 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
+    // Heap<T>, Vec<T>, etc. — all pointer-shaped
+    if t.len >= 5 && t[0] == 72 && t[1] == 101 && t[2] == 97 && t[3] == 112 && t[4] == 60 {
         return "ptr"
     }
     // Already an LLVM type (%Name)
@@ -194,9 +194,9 @@ fn intBits(t: &string): i64 {
     return 0
 }
 
-fn unwrapBox(t: &string): string {
-    if t.len >= 5 && t[0] == 66 && t[1] == 111 && t[2] == 120 && t[3] == 60 {
-        return t[4..t.len - 1]
+fn unwrapHeap(t: &string): string {
+    if t.len >= 6 && t[0] == 72 && t[1] == 101 && t[2] == 97 && t[3] == 112 && t[4] == 60 {
+        return t[5..t.len - 1]
     }
     return ""
 }

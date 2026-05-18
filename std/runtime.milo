@@ -1,9 +1,9 @@
 // std/runtime — green thread scheduler using ucontext for stackful coroutines
 //
-// Task layout (48 bytes, 8-byte aligned):
+// Task layout (64 bytes, 8-byte aligned):
 //   0: context (*u8)      8: stack (*u8)       16: totalStackSize (i64)
 //  24: state (i32)        28: waitFd (i32)      32: waitWrite (u8) + 7 pad
-//  40: next (*u8)
+//  40: next (*u8)         48: closureFn (*u8)   56: closureEnv (*u8)
 //
 // Scheduler layout (48 bytes):
 //   0: context (*u8)       8: runHead (*u8)     16: runTail (*u8)
@@ -16,6 +16,7 @@ from "std/platform" import {
     protRead, protWrite, protNone, mapPrivate, mapAnon
 }
 from "std/event" import { EventLoop, eventLoopNew, eventPoll, eventRegisterRead, eventRegisterWrite, eventDeregister, eventLoopClose }
+from "std/sync" import { Channel }
 
 // ── constants ──
 
@@ -25,7 +26,7 @@ fn taskWaitingIo(): i32 { return 2 }
 fn taskDone(): i32 { return 3 }
 fn defaultStackSize(): i64 { return 65536 }
 fn guardPageSize(): i64 { return 4096 }
-fn taskStructSize(): i64 { return 48 }
+fn taskStructSize(): i64 { return 64 }
 fn schedStructSize(): i64 { return 48 }
 
 // task field offsets
@@ -36,6 +37,8 @@ fn tState(): i64 { return 24 }
 fn tWaitFd(): i64 { return 28 }
 fn tWaitWrite(): i64 { return 32 }
 fn tNext(): i64 { return 40 }
+fn tClosureFn(): i64 { return 48 }
+fn tClosureEnv(): i64 { return 56 }
 
 // scheduler field offsets
 fn sCtx(): i64 { return 0 }
@@ -88,7 +91,7 @@ fn _rtWritePtr(base: *u8, off: i64, val: *u8): void {
 
 // ── task handle ──
 
-struct GreenThread {
+struct Task {
     _ptr: *u8,
 }
 
@@ -123,16 +126,14 @@ fn schedulerEnsureInit(): void {
 
 // ── task entry trampoline ──
 
-fn _taskEntry(fnHi: i32, fnLo: i32, envHi: i32, envLo: i32): void {
+fn _taskEntry(): void {
     unsafe {
-        // reassemble 64-bit pointers from hi/lo 32-bit halves
-        let fnAddr = ((fnHi as i64) * 4294967296) + (fnLo as i64)
-        let envAddr = ((envHi as i64) * 4294967296) + (envLo as i64)
-        _callClosureVoid(fnAddr as *u8, envAddr as *u8)
-
-        // mark task done and return to scheduler
         let sched = _getSched()
         let task = _rtReadPtr(sched, sCurrent())
+        let fnPtr = _rtReadPtr(task, tClosureFn())
+        let envPtr = _rtReadPtr(task, tClosureEnv())
+        _callClosureVoid(fnPtr, envPtr)
+
         _rtWriteI32(task, tState(), taskDone())
         swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
     }
@@ -140,8 +141,8 @@ fn _taskEntry(fnHi: i32, fnLo: i32, envHi: i32, envLo: i32): void {
 
 // ── public API ──
 
-impl GreenThread {
-    fn spawn(f: () => void): GreenThread {
+impl Task {
+    fn spawn(f: () => void): Task {
         unsafe {
             schedulerEnsureInit()
             let sched = _getSched()
@@ -154,6 +155,8 @@ impl GreenThread {
             let task = malloc(taskStructSize())
             memset(task, 0, taskStructSize())
             _rtWriteI32(task, tWaitFd(), -1)
+            _rtWritePtr(task, tClosureFn(), fnPtr)
+            _rtWritePtr(task, tClosureEnv(), envPtr)
 
             let total = guardPageSize() + defaultStackSize()
             let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
@@ -171,11 +174,7 @@ impl GreenThread {
             let schedCtx = _rtReadPtr(sched, sCtx())
             _rtWritePtr(ctx, uctxLinkOffset(), schedCtx)
 
-            let fnA = fnPtr as i64
-            let envA = envPtr as i64
-            makecontext(ctx, _taskEntry as *u8, 4,
-                (fnA / 4294967296) as i32, (fnA % 4294967296) as i32,
-                (envA / 4294967296) as i32, (envA % 4294967296) as i32)
+            makecontext(ctx, _taskEntry as *u8, 0)
 
             mprotect(stackMem, guardPageSize(), protNone())
 
@@ -186,8 +185,90 @@ impl GreenThread {
             let n = _rtReadI64(sched, sNumTasks()) + 1
             _rtWriteI64(sched, sNumTasks(), n)
 
-            return GreenThread { _ptr: task }
+            return Task { _ptr: task }
         }
+    }
+}
+
+// ── Promise<T> — a task that returns a value ──
+
+@send
+@sync
+struct Promise<T> {
+    _ch: Channel<T>,
+}
+
+impl Promise<T> {
+    fn run(f: () => T): Promise<T> {
+        let ch = Channel<T>.new(1)!
+        Task.spawn(move (): void => {
+            let result: T = f()
+            ch.send(result)!
+        })
+        return Promise { _ch: ch }
+    }
+
+    fn await(self: &Self): Result<T> {
+        // if inside a green thread, yield-poll so scheduler keeps running
+        // if in main, drive scheduler ticks until result arrives
+        while true {
+            let maybe = self._ch.tryRecv()
+            match maybe {
+                Option.Some(val) => {
+                    self._ch.destroy()
+                    return Result.Ok(val)
+                }
+                Option.None => {
+                    if schedulerCurrent() as i64 != 0 {
+                        schedulerYield()
+                    } else {
+                        _schedulerTick()
+                    }
+                }
+            }
+        }
+        // unreachable
+        unsafe { return Result.Ok(zeroed<T>()) }
+    }
+
+    fn all(promises: Vec<Promise<T>>): Vec<T> {
+        var results: Vec<T> = Vec.new()
+        var i: i64 = 0
+        while i < promises.len {
+            let val = promises[i].await()!
+            results.push(val)
+            i = i + 1
+        }
+        return results
+    }
+
+    fn race(promises: Vec<Promise<T>>): T {
+        while true {
+            var i: i64 = 0
+            while i < promises.len {
+                let maybe = promises[i]._ch.tryRecv()
+                match maybe {
+                    Option.Some(val) => {
+                        // destroy all channels
+                        var j: i64 = 0
+                        while j < promises.len {
+                            promises[j]._ch.destroy()
+                            j = j + 1
+                        }
+                        return val
+                    }
+                    Option.None => {}
+                }
+                i = i + 1
+            }
+            if schedulerCurrent() as i64 != 0 {
+                schedulerYield()
+            } else {
+                _schedulerTick()
+            }
+        }
+        // unreachable
+        unsafe { return zeroed<T>() }
     }
 }
 
@@ -336,6 +417,47 @@ fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
             }
 
             cur = next
+        }
+    }
+}
+
+// run one batch of ready tasks + poll events, return to caller
+fn _schedulerTick(): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+        if _rtReadI64(sched, sNumTasks()) == 0 { return }
+
+        var task = _dequeueRun(sched)
+        while task as i64 != 0 {
+            _rtWriteI32(task, tState(), taskRunning())
+            _rtWritePtr(sched, sCurrent(), task)
+
+            swapcontext(_rtReadPtr(sched, sCtx()), _rtReadPtr(task, tCtx()))
+
+            let state = _rtReadI32(task, tState())
+            if state == taskDone() {
+                munmap(_rtReadPtr(task, tStack()), _rtReadI64(task, tStackSize()))
+                free(_rtReadPtr(task, tCtx()))
+                free(task)
+                _rtWriteI64(sched, sNumTasks(), _rtReadI64(sched, sNumTasks()) - 1)
+            } else if state == taskReady() {
+                _enqueueRun(sched, task)
+            }
+
+            task = _dequeueRun(sched)
+        }
+
+        _rtWritePtr(sched, sCurrent(), 0 as *u8)
+
+        // poll event loop
+        if _rtReadI64(sched, sNumTasks()) > 0 {
+            var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+            var readyBuf: [u8 ; 256] = [0 ; 256]
+            let n = eventPoll(el, readyBuf as *i32, 64, 100)
+            if n > 0 {
+                _wakeReadyTasks(sched, readyBuf as *i32, n)
+            }
         }
     }
 }

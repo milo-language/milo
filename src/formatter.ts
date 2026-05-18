@@ -20,7 +20,7 @@ function isKeyword(kind: TokenKind): boolean {
     TokenKind.Import, TokenKind.From, TokenKind.Break, TokenKind.Continue,
     TokenKind.As, TokenKind.Trait, TokenKind.Impl, TokenKind.For, TokenKind.In,
     TokenKind.Unsafe, TokenKind.Parallel, TokenKind.Null, TokenKind.True, TokenKind.False,
-    TokenKind.Is,
+    TokenKind.Is, TokenKind.Interface,
   ].includes(kind);
 }
 
@@ -106,7 +106,7 @@ function spaceBefore(tokens: Token[], pos: number): boolean {
 
 // Known generic type names — could be expanded but covers stdlib + common patterns
 const GENERIC_TYPES = new Set([
-  "Vec", "HashMap", "Box", "Option", "Result", "Arena", "Weak",
+  "Vec", "HashMap", "Heap", "Option", "Result", "Arena", "Weak",
 ]);
 
 // Is the < at `pos` a generic open bracket?
@@ -157,7 +157,8 @@ function isInsideGeneric(tokens: Token[], pos: number): boolean {
 function isTopLevel(kind: TokenKind): boolean {
   return kind === TokenKind.Fn || kind === TokenKind.Struct ||
     kind === TokenKind.Enum || kind === TokenKind.Impl ||
-    kind === TokenKind.Trait || kind === TokenKind.Extern;
+    kind === TokenKind.Trait || kind === TokenKind.Extern ||
+    kind === TokenKind.Interface;
 }
 
 export function format(source: string): string {

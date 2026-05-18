@@ -1,0 +1,26 @@
+// @expect: 42
+// @expect: 99
+
+fn apply(f: () => i64): i64 {
+    return f()
+}
+
+fn wrap(f: () => i64): () => void {
+    return move (): void => {
+        let result = f()
+        print(result)
+    }
+}
+
+fn main(): i32 {
+    let val: i64 = 42
+    let f = move (): i64 => val
+    let result = apply(f)
+    print(result)
+
+    let g = move (): i64 => 99
+    let wrapped = wrap(g)
+    wrapped()
+
+    return 0
+}

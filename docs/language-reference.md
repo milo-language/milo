@@ -573,14 +573,14 @@ m.remove("hello")
 
 ---
 
-## Box\<T\> — Heap Allocation
+## Heap\<T\> — Heap Allocation
 
-`Box<T>` is a single-owner heap pointer. Useful for recursive data structures.
+`Heap<T>` is a single-owner heap pointer. Useful for recursive data structures.
 
 ```milo
-// Recursive enum — must box the recursive case
+// Recursive enum — must heap-allocate the recursive case
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
+    Node(Heap<Tree>, Heap<Tree>),
     Leaf(i32),
 }
 
@@ -595,13 +595,13 @@ fn sum(t: Tree): i32 {
 }
 
 let tree = Tree.Node(
-    Box(Tree.Leaf(1)),
-    Box(Tree.Leaf(2))
+    Heap(Tree.Leaf(1)),
+    Heap(Tree.Leaf(2))
 )
 print("%d", sum(tree))   // 3
 ```
 
-Box auto-frees when it goes out of scope.
+Heap auto-frees when it goes out of scope.
 
 ---
 
@@ -616,7 +616,7 @@ let b = a          // a is moved into b
 print(b)         // fine
 ```
 
-This applies to structs, enums, strings, Vec, HashMap, and Box.
+This applies to structs, enums, strings, Vec, HashMap, and Heap.
 Primitive types (`i32`, `bool`, `f64`, etc.) are copied, not moved.
 
 ### Move in Branches
@@ -737,6 +737,68 @@ Auto-generate trait implementations:
 @derive(Eq)
 struct Point { x: i32, y: i32 }
 ```
+
+---
+
+## Interfaces (Runtime Polymorphism)
+
+Interfaces enable dynamic dispatch via structural typing. Any type with matching methods satisfies an interface — no explicit declaration needed.
+
+```milo
+interface Greeter {
+    fn greet(self: &Self): string
+}
+
+struct Dog { name: string }
+impl Dog {
+    fn greet(self: &Self): string {
+        return "woof from " + self.name
+    }
+}
+
+struct Cat {}
+impl Cat {
+    fn greet(self: &Self): string {
+        return "meow"
+    }
+}
+
+fn sayHello(g: &Greeter) {
+    print(g.greet())
+}
+
+fn main(): i32 {
+    let d = Dog { name: "Rex" }
+    let c = Cat {}
+    sayHello(d)  // woof from Rex
+    sayHello(c)  // meow
+    return 0
+}
+```
+
+### How It Works
+
+- Interface values are fat pointers: `{ data_ptr, itable_ptr }`
+- The compiler generates an itable (interface table) for each concrete type / interface pair
+- Method dispatch is an indirect call through the itable — like Go, unlike C++ vtables embedded in objects
+- Structural satisfaction: if a type has all required methods with matching signatures, it satisfies the interface
+
+### Interfaces vs Traits
+
+| | Traits | Interfaces |
+|---|---|---|
+| Dispatch | Static (monomorphization) | Dynamic (vtable/itable) |
+| Typing | Nominal (`impl Trait for Type`) | Structural (methods match → satisfies) |
+| Use case | Generic bounds, operator overloading, `@derive` | Runtime polymorphism, heterogeneous collections |
+
+Both inherent methods (`impl Type`) and trait methods (`impl Trait for Type`) count toward interface satisfaction.
+
+### Restrictions (v1)
+
+- Interface methods must take `self: &Self` (by reference, not by value)
+- No generic parameters on interfaces
+- No interface inheritance
+- No downcasting from `&Interface` to `&ConcreteType`
 
 ---
 
@@ -1011,12 +1073,12 @@ r.get("/static/*", handler)                  // wildcard suffix
 
 ## Complete Example: JSON Parser
 
-This example exercises enums with complex payloads, Box, Vec, structs, recursion, and string operations. See [`examples/json_parser.milo`](../examples/json_parser.milo) for the full source.
+This example exercises enums with complex payloads, Heap, Vec, structs, recursion, and string operations. See [`examples/json_parser.milo`](../examples/json_parser.milo) for the full source.
 
 ```milo
 struct JsonKV {
     key: string,
-    value: Box<JsonValue>,
+    value: Heap<JsonValue>,
 }
 
 enum JsonValue {
@@ -1024,11 +1086,11 @@ enum JsonValue {
     Bool(bool),
     Number(i64),
     Str(string),
-    Array(Vec<Box<JsonValue>>),
+    Array(Vec<Heap<JsonValue>>),
     Object(Vec<JsonKV>),
 }
 
-fn parseValue(s: &string, pos: &mut i64): Box<JsonValue> {
+fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
     skipWs(s, pos)
     let ch = s[pos]
     if ch == '"' { return parseString(s, pos) }
@@ -1065,7 +1127,7 @@ fn main(): i32 {
 
 ```milo
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
+    Node(Heap<Tree>, Heap<Tree>),
     Leaf(i32),
 }
 
@@ -1081,8 +1143,8 @@ fn sum(t: Tree): i32 {
 
 fn main(): i32 {
     let tree = Tree.Node(
-        Box(Tree.Node(Box(Tree.Leaf(1)), Box(Tree.Leaf(2)))),
-        Box(Tree.Node(Box(Tree.Leaf(3)), Box(Tree.Leaf(4))))
+        Heap(Tree.Node(Heap(Tree.Leaf(1)), Heap(Tree.Leaf(2)))),
+        Heap(Tree.Node(Heap(Tree.Leaf(3)), Heap(Tree.Leaf(4))))
     )
     print("sum: %d", sum(tree))   // sum: 10
     return 0
@@ -1199,7 +1261,7 @@ for i in 0..4 {
 
 The compiler enforces thread safety at compile time. `Thread.spawn()` requires all captured variables to implement `Send` — meaning they're safe to transfer across threads.
 
-**Send types** (safe to move to another thread): all primitives, `string`, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
+**Send types** (safe to move to another thread): all primitives, `string`, `Heap<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
 
 **Sync types** (safe to share via `&T` across threads): same rules, checked via `@sync`.
 
@@ -1400,10 +1462,10 @@ Green threads are lightweight, user-space threads for high-concurrency I/O. You 
 ### Spawning Green Threads
 
 ```milo
-from "std/runtime" import { GreenThread }
+from "std/runtime" import { Task }
 
 fn main(): i32 {
-    GreenThread.spawn(move (): void => {
+    Task.spawn(move (): void => {
         print("hello from green thread")
     })
     return 0
@@ -1417,15 +1479,15 @@ Green threads run cooperatively. The compiler automatically injects a scheduler 
 Green threads yield control explicitly with `schedulerYield()`:
 
 ```milo
-from "std/runtime" import { GreenThread, schedulerYield }
+from "std/runtime" import { Task, schedulerYield }
 
 fn main(): i32 {
-    GreenThread.spawn(move (): void => {
+    Task.spawn(move (): void => {
         print("A1")
         schedulerYield()
         print("A2")
     })
-    GreenThread.spawn(move (): void => {
+    Task.spawn(move (): void => {
         print("B1")
         schedulerYield()
         print("B2")
@@ -1440,10 +1502,10 @@ fn main(): i32 {
 Green threads can yield until a file descriptor is ready for reading or writing. This integrates with the platform event loop (kqueue on macOS, epoll on Linux):
 
 ```milo
-from "std/runtime" import { GreenThread, schedulerWaitRead, schedulerWaitWrite }
+from "std/runtime" import { Task, schedulerWaitRead, schedulerWaitWrite }
 from "std/event" import { setNonblocking }
 
-GreenThread.spawn(move (): void => {
+Task.spawn(move (): void => {
     setNonblocking(fd)
     // ... attempt read ...
     // if EAGAIN:
@@ -1458,9 +1520,9 @@ GreenThread.spawn(move (): void => {
 
 ```milo
 from "std/net" import { TcpStream }
-from "std/runtime" import { GreenThread }
+from "std/runtime" import { Task }
 
-GreenThread.spawn(move (): void => {
+Task.spawn(move (): void => {
     let stream = TcpStream.connect(ip, port)!
     stream.send("hello")!         // yields if socket buffer full
     let data = stream.recv()!     // yields until data arrives
@@ -1478,14 +1540,14 @@ A concurrent echo server handling multiple clients with green threads:
 from "std/os" import { socket, bind, listen, accept, read, write, close, setsockopt, getsockname, ntohs }
 from "std/platform" import { makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
-from "std/runtime" import { GreenThread, schedulerWaitRead }
+from "std/runtime" import { Task, schedulerWaitRead }
 
 fn main(): i32 {
     unsafe {
         let serverFd = socket(2, 1, 0)
         // ... bind, listen, setNonblocking(serverFd) ...
 
-        GreenThread.spawn(move (): void => {
+        Task.spawn(move (): void => {
             while true {
                 var clientAddr = makeZeroedSockaddr()
                 var addrlen: u32 = 16
@@ -1499,7 +1561,7 @@ fn main(): i32 {
                 }
                 setNonblocking(clientFd)
                 let fd = clientFd
-                GreenThread.spawn(move (): void => {
+                Task.spawn(move (): void => {
                     var buf: [u8 ; 4096] = [0 ; 4096]
                     // read + echo back, yielding on EAGAIN
                     let n = read(fd, buf, 4096)
@@ -1515,7 +1577,7 @@ fn main(): i32 {
 
 ### Green Thread vs OS Thread
 
-| | OS Thread (`Thread.spawn`) | Green Thread (`GreenThread.spawn`) |
+| | OS Thread (`Thread.spawn`) | Green Thread (`Task.spawn`) |
 |---|---|---|
 | Stack size | ~8MB | 64KB |
 | Context switch | Kernel (microseconds) | Userspace (nanoseconds) |
@@ -1527,7 +1589,7 @@ fn main(): i32 {
 
 | Function | Description |
 |----------|-------------|
-| `GreenThread.spawn(move () => {...})` | Spawn a green thread |
+| `Task.spawn(move () => {...})` | Spawn a green thread |
 | `schedulerYield()` | Yield to other green threads |
 | `schedulerWaitRead(fd)` | Yield until fd is readable |
 | `schedulerWaitWrite(fd)` | Yield until fd is writable |
@@ -1687,7 +1749,7 @@ let id = uuidV4()   // "550e8400-e29b-41d4-a716-446655440000"
 | Array | `[1, 2, 3]` or `[0; 100]` |
 | Vec | `var v: Vec<i32> = Vec.new()` |
 | HashMap | `var m: HashMap<K, V> = HashMap.new()` |
-| Box | `Box(value)`, deref with `*boxed` |
+| Heap | `Heap(value)`, deref with `*heaped` |
 | Reference param | `fn f(x: &T)` or `fn f(x: &mut T)` |
 | Closure | `(x: i32) => x * 2` |
 | Import | `import "file.milo"` |

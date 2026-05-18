@@ -2,7 +2,7 @@
 from "src-milo/ast.milo" import { MiloType, Span }
 
 // TypeKind — the resolved, internal type representation used by the checker.
-// Milo enums can't be recursive without Box, so complex types use string names
+// Milo enums can't be recursive without Heap, so complex types use string names
 // and are looked up in the checker's tables.
 enum TypeKind {
     TInt(i32, bool),       // (bits, signed)
@@ -10,15 +10,15 @@ enum TypeKind {
     TBool,
     TVoid,
     TString,
-    TPtr(Box<TypeKind>),
-    TRef(Box<TypeKind>, bool),  // (inner, mutable)
+    TPtr(Heap<TypeKind>),
+    TRef(Heap<TypeKind>, bool),  // (inner, mutable)
     TStruct(string),       // mangled name
     TEnum(string),         // mangled name
-    TBox(Box<TypeKind>),
-    TVec(Box<TypeKind>),
-    THashMap(Box<TypeKind>, Box<TypeKind>),
-    TArray(Box<TypeKind>, Option<i64>),
-    TFn(Vec<TypeKind>, Box<TypeKind>),  // (params, ret)
+    THeap(Heap<TypeKind>),
+    TVec(Heap<TypeKind>),
+    THashMap(Heap<TypeKind>, Heap<TypeKind>),
+    TArray(Heap<TypeKind>, Option<i64>),
+    TFn(Vec<TypeKind>, Heap<TypeKind>),  // (params, ret)
     TUnknown,
 }
 
@@ -47,17 +47,17 @@ fn typeFromAst(ty: &MiloType): TypeKind {
             Option.Some(r) => { ret = typeFromAst(&*r) }
             Option.None => {}
         }
-        return TypeKind.TFn(params, Box.new(ret))
+        return TypeKind.TFn(params, Heap.new(ret))
     }
 
     var base = typeFromName(ty.name)
 
     if ty.isArray {
-        base = TypeKind.TArray(Box.new(base), ty.arraySize)
+        base = TypeKind.TArray(Heap.new(base), ty.arraySize)
     }
-    if ty.isPtr { return TypeKind.TPtr(Box.new(base)) }
-    if ty.isRef { return TypeKind.TRef(Box.new(base), false) }
-    if ty.isRefMut { return TypeKind.TRef(Box.new(base), true) }
+    if ty.isPtr { return TypeKind.TPtr(Heap.new(base)) }
+    if ty.isRef { return TypeKind.TRef(Heap.new(base), false) }
+    if ty.isRefMut { return TypeKind.TRef(Heap.new(base), true) }
     return base
 }
 
@@ -115,8 +115,8 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
         TypeKind.TPtr(innerA) => {
             match b { TypeKind.TPtr(innerB) => { return typeEq(&*innerA, &*innerB) } _ => { return false } }
         }
-        TypeKind.TBox(innerA) => {
-            match b { TypeKind.TBox(innerB) => { return typeEq(&*innerA, &*innerB) } _ => { return false } }
+        TypeKind.THeap(innerA) => {
+            match b { TypeKind.THeap(innerB) => { return typeEq(&*innerA, &*innerB) } _ => { return false } }
         }
         TypeKind.TVec(elemA) => {
             match b { TypeKind.TVec(elemB) => { return typeEq(&*elemA, &*elemB) } _ => { return false } }
@@ -177,7 +177,7 @@ fn typeName(t: &TypeKind): string {
         TypeKind.TStruct(name) => { return name.clone() }
         TypeKind.TEnum(name) => { return name.clone() }
         TypeKind.TPtr(inner) => { return "*" + typeName(&*inner) }
-        TypeKind.TBox(inner) => { return "Box<" + typeName(&*inner) + ">" }
+        TypeKind.THeap(inner) => { return "Heap<" + typeName(&*inner) + ">" }
         TypeKind.TVec(elem) => { return "Vec<" + typeName(&*elem) + ">" }
         TypeKind.THashMap(key, val) => {
             return "HashMap<" + typeName(&*key) + ", " + typeName(&*val) + ">"
@@ -246,7 +246,7 @@ fn isCopy(t: &TypeKind): bool {
 fn needsDrop(t: &TypeKind): bool {
     match t {
         TypeKind.TString => { return true }
-        TypeKind.TBox(inner) => { return true }
+        TypeKind.THeap(inner) => { return true }
         TypeKind.TVec(elem) => { return true }
         TypeKind.THashMap(key, val) => { return true }
         _ => { return false }

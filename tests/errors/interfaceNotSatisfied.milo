@@ -1,0 +1,17 @@
+// @error: does not satisfy interface
+
+interface Drawable {
+    fn draw(self: &Self): string
+}
+
+struct Empty {}
+
+fn render(d: &Drawable) {
+    print(d.draw())
+}
+
+fn main(): i32 {
+    let e = Empty {}
+    render(e)
+    return 0
+}

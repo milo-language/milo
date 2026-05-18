@@ -65,13 +65,13 @@ if let Option.Some(v) = val {
 m.remove("hello")
 ```
 
-## Box\<T\>
+## Heap\<T\>
 
 Single-owner heap pointer. Useful for recursive data structures.
 
 ```milo
 enum Tree {
-    Node(Box<Tree>, Box<Tree>),
+    Node(Heap<Tree>, Heap<Tree>),
     Leaf(i32),
 }
 
@@ -86,12 +86,12 @@ fn sum(t: Tree): i32 {
 }
 
 let tree = Tree.Node(
-    Box(Tree.Leaf(1)),
-    Box(Tree.Leaf(2))
+    Heap(Tree.Leaf(1)),
+    Heap(Tree.Leaf(2))
 )
 print(sum(tree))   // 3
 ```
 
-All heap types (Vec, HashMap, Box) auto-free when they go out of scope. No GC pauses, no `free()`, no `defer`.
+All heap types (Vec, HashMap, Heap) auto-free when they go out of scope. No GC pauses, no `free()`, no `defer`.
 
 Next: [Strings →](./strings)

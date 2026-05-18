@@ -18,7 +18,7 @@
 | Array | `[1, 2, 3]` or `[0; 100]` |
 | Vec | `var v: Vec<i32> = Vec.new()` |
 | HashMap | `var m: HashMap<K, V> = HashMap.new()` |
-| Box | `Box(value)`, deref with `*boxed` |
+| Heap | `Heap(value)`, deref with `*heaped` |
 | Reference param | `fn f(x: &T)` or `fn f(x: &mut T)` |
 | Closure | `(x: i32) => x * 2` |
 | Import | `from "path" import { A, B }` |

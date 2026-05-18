@@ -1,0 +1,34 @@
+// @expect: sleeping!
+// @expect: sleeping!
+// @expect: sleeping!
+// @expect: done!
+// @expect: done!
+// @expect: done!
+// @expect: sum 120
+
+from "std/runtime" import { Task, Promise }
+from "std/time" import {}
+
+fn main(): i32 {
+    var promises: Vec<Promise<i64>> = Vec.new()
+
+    var i: i64 = 1
+    while i <= 3 {
+        let val = i * 20
+        promises.push(Promise<i64>.run(move (): i64 => {
+            print("sleeping!")
+            sleepMs(100)
+            print("done!")
+            return val
+        }))
+        i = i + 1
+    }
+
+    let results = Promise<i64>.all(promises)
+    var sum: i64 = 0
+    for r in results {
+        sum = sum + r
+    }
+    print("sum ", sum)
+    return 0
+}

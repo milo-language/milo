@@ -95,7 +95,7 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
         }
         Expr.ArrayRepeat(value, count, span) => {
             let elemType = checkExpr(ck, &*value)
-            return TypeKind.TArray(Box.new(elemType), Option.Some(count))
+            return TypeKind.TArray(Heap.new(elemType), Option.Some(count))
         }
         Expr.IndexAccess(obj, index, span) => {
             return checkIndexAccess(ck, &*obj, &*index, span)
@@ -159,7 +159,7 @@ fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
                     params.push(sig.params[i].type.clone())
                     i = i + 1
                 }
-                return TypeKind.TFn(params, Box.new(sig.ret.clone()))
+                return TypeKind.TFn(params, Heap.new(sig.ret.clone()))
             }
             error(ck, "undefined variable '" + name.clone() + "'", span.clone())
             return tyUnknown()
@@ -241,7 +241,7 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
 
     if op == "*" {
         match &ot {
-            TypeKind.TBox(inner) => { return inner.clone() }
+            TypeKind.THeap(inner) => { return inner.clone() }
             TypeKind.TPtr(inner) => {
                 if ck.unsafeDepth == 0 {
                     error(ck, "pointer dereference requires 'unsafe' block", span.clone())
@@ -276,23 +276,23 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
         if ck.unsafeDepth == 0 {
             error(ck, "address-of operator requires 'unsafe' block", span.clone())
         }
-        return TypeKind.TPtr(Box.new(ot))
+        return TypeKind.TPtr(Heap.new(ot))
     }
     return tyUnknown()
 }
 
 // -- Function calls --
 
-fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
-    // Box constructor
-    if func == "Box" {
+fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+    // Heap constructor
+    if func == "Heap" {
         if args.len != 1 {
-            error(ck, "Box() expects 1 argument, got " + args.len.toString(), span.clone())
+            error(ck, "Heap() expects 1 argument, got " + args.len.toString(), span.clone())
             return tyUnknown()
         }
         let argType = checkExpr(ck, &*args[0])
         tryMove(ck, &*args[0])
-        return TypeKind.TBox(Box.new(argType))
+        return TypeKind.THeap(Heap.new(argType))
     }
 
     // assert builtin
@@ -509,7 +509,7 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
 
 // -- Array literals --
 
-fn checkArrayLit(ck: &mut Checker, elements: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
+fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if elements.len == 0 {
         error(ck, "cannot infer type of empty array literal", span.clone())
         return tyUnknown()
@@ -523,7 +523,7 @@ fn checkArrayLit(ck: &mut Checker, elements: &Vec<Box<Expr>>, span: &Option<Span
         }
         i = i + 1
     }
-    return TypeKind.TArray(Box.new(elemType), Option.Some(elements.len))
+    return TypeKind.TArray(Heap.new(elemType), Option.Some(elements.len))
 }
 
 // -- Index access --
@@ -558,7 +558,7 @@ fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Sp
 
 // -- Enum literals --
 
-fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
+fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     // Vec.new() / HashMap.new() without type annotation
     if enumName == "Vec" && variant == "new" {
         if args.len != 0 { error(ck, "'Vec.new' takes no arguments", span.clone()) }
@@ -719,7 +719,7 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
 
 // -- Method calls --
 
-fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
+fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
     // auto-deref references
     match &objType {
@@ -771,7 +771,7 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Box
 
 // -- Vec methods --
 
-fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string, args: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
+fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if method == "push" {
         if args.len != 1 {
             error(ck, "'push' expects 1 argument, got " + args.len.toString(), span.clone())
@@ -796,7 +796,7 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
     }
     if method == "clone" {
         if args.len != 0 { error(ck, "'clone' takes no arguments", span.clone()) }
-        return TypeKind.TVec(Box.new(elem.clone()))
+        return TypeKind.TVec(Heap.new(elem.clone()))
     }
     if method == "contains" {
         if args.len != 1 { error(ck, "'contains' expects 1 argument", span.clone()) }
@@ -825,7 +825,7 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
 
 // -- HashMap methods --
 
-fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKind, method: &string, args: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
+fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if method == "insert" {
         if args.len != 2 {
             error(ck, "'insert' expects 2 arguments (key, value)", span.clone())
@@ -866,7 +866,7 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
     }
     if method == "clone" {
         if args.len != 0 { error(ck, "'clone' takes no arguments", span.clone()) }
-        return TypeKind.THashMap(Box.new(key.clone()), Box.new(val.clone()))
+        return TypeKind.THashMap(Heap.new(key.clone()), Heap.new(val.clone()))
     }
     error(ck, "no method '" + method.clone() + "' on HashMap", span.clone())
     return tyUnknown()
@@ -874,7 +874,7 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
 
 // -- String methods --
 
-fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
+fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if method == "clone" {
         if args.len != 0 { error(ck, "'clone' takes no arguments", span.clone()) }
         return tyString()
@@ -892,7 +892,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<B
     if method == "split" {
         if args.len != 1 { error(ck, "'split' expects 1 argument", span.clone()) }
         if args.len >= 1 { checkExpr(ck, &*args[0]) }
-        return TypeKind.TVec(Box.new(tyString()))
+        return TypeKind.TVec(Heap.new(tyString()))
     }
     if method == "trim" || method == "trimStart" || method == "trimEnd" ||
        method == "toLower" || method == "toUpper" {
@@ -931,7 +931,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<B
         return TypeKind.TFloat(64)
     }
     if method == "chars" || method == "bytes" {
-        return TypeKind.TVec(Box.new(tyU8()))
+        return TypeKind.TVec(Heap.new(tyU8()))
     }
     error(ck, "no method '" + method.clone() + "' on string", span.clone())
     return tyUnknown()
@@ -939,7 +939,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<B
 
 // -- Struct/trait method calls --
 
-fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: &string, args: &Vec<Box<Expr>>, span: &Option<Span>): TypeKind {
+fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     // Look up inherent impl method
     if ck.inherentImpls.contains(structName) {
         let impl = ck.inherentImpls.get(structName)
@@ -1007,7 +1007,7 @@ fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: 
 
 // -- Closures --
 
-fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Box<Stmt>>, span: &Option<Span>): TypeKind {
+fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, span: &Option<Span>): TypeKind {
     pushScope(ck)
 
     var paramTypes: Vec<TypeKind> = Vec.new()
@@ -1039,5 +1039,5 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
     ck.currentFnRetType = savedRetType
 
     popScope(ck)
-    return TypeKind.TFn(paramTypes, Box.new(inferredRet))
+    return TypeKind.TFn(paramTypes, Heap.new(inferredRet))
 }

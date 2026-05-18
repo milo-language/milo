@@ -16,8 +16,8 @@ from "src-milo/checker/state.milo" import {
 // -- Register builtin traits (Eq, Hash, Clone, Display, Add/Sub/Mul/Div, Drop) --
 
 fn registerBuiltinTraits(ck: &mut Checker) {
-    let selfRef = TypeKind.TRef(Box.new(TypeKind.TStruct("Self")), false)
-    let selfRefMut = TypeKind.TRef(Box.new(TypeKind.TStruct("Self")), true)
+    let selfRef = TypeKind.TRef(Heap.new(TypeKind.TStruct("Self")), false)
+    let selfRefMut = TypeKind.TRef(Heap.new(TypeKind.TStruct("Self")), true)
     let selfType = TypeKind.TStruct("Self")
 
     // Eq
@@ -204,7 +204,7 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
                             match inner {
                                 TypeKind.TStruct(name) => {
                                     if name == "Self" {
-                                        pType = TypeKind.TRef(Box.new(TypeKind.TStruct(tn.clone())), mutable)
+                                        pType = TypeKind.TRef(Heap.new(TypeKind.TStruct(tn.clone())), mutable)
                                     }
                                 }
                                 _ => {}
@@ -272,7 +272,7 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
                             match inner {
                                 TypeKind.TStruct(name) => {
                                     if name == "Self" {
-                                        pType = TypeKind.TRef(Box.new(TypeKind.TStruct(tn.clone())), mutable)
+                                        pType = TypeKind.TRef(Heap.new(TypeKind.TStruct(tn.clone())), mutable)
                                     }
                                 }
                                 _ => {}
@@ -343,8 +343,8 @@ fn deriveEq(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
 
     // Build body: return self.f1 == other.f1 && self.f2 == other.f2 && ...
     // For now, generate a placeholder that returns true (full AST generation is complex)
-    var body: Vec<Box<Stmt>> = Vec.new()
-    body.push(Box.new(Stmt.Return(Option.Some(Box.new(Expr.BoolLit(true, Option.None))), Option.None)))
+    var body: Vec<Heap<Stmt>> = Vec.new()
+    body.push(Heap.new(Stmt.Return(Option.Some(Heap.new(Expr.BoolLit(true, Option.None))), Option.None)))
 
     var methods: Vec<Function> = Vec.new()
     methods.push(Function {
