@@ -56,6 +56,7 @@ export interface CheckResult {
   monomorphizedEnums: import("./ast").EnumDecl[];
   monomorphizedStructs: StructDecl[];
   closureCaptures: Map<Expr, CaptureInfo[]>;
+  parallelCaptures: Map<Expr, CaptureInfo[]>;
   closureCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
   resolvedOperators: Map<Expr, string>;
@@ -129,6 +130,7 @@ export class TypeChecker {
   private autoWrappedOption = new Map<Expr, string>();
   private arrayToVecCoercions = new Set<Expr>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
+  private parallelCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
   private closureScopeDepth: number | null = null;
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
@@ -697,6 +699,7 @@ export class TypeChecker {
       monomorphizedEnums: this.monomorphizedDecls,
       monomorphizedStructs: this.monomorphizedStructDecls,
       closureCaptures: this.closureCaptures,
+      parallelCaptures: this.parallelCaptures,
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
       resolvedOperators: this.resolvedOperators,
@@ -1738,6 +1741,39 @@ export class TypeChecker {
         for (const s of stmt.body) this.checkStmt(s, fnRetType);
         this.popScope();
         this.unsafeDepth--;
+        break;
+      }
+      case "ParallelBlock": {
+        const bindingTypes: { name: string; type: TypeKind }[] = [];
+        for (const binding of stmt.bindings) {
+          const savedDepth = this.closureScopeDepth;
+          const savedCaptures = this.currentClosureCaptures;
+          this.currentClosureCaptures = new Map();
+          this.pushScope();
+          this.closureScopeDepth = this.scopes.length - 1;
+
+          this.checkExpr(binding.value, null);
+          const branchType = this.exprTypes.get(binding.value) ?? { tag: "void" as const };
+          bindingTypes.push({ name: binding.name, type: branchType });
+
+          const captures = Array.from(this.currentClosureCaptures.values());
+          this.parallelCaptures.set(binding.value, captures);
+          for (const cap of captures) {
+            if (!this.isSend(cap.type)) {
+              this.error(
+                `cannot send '${cap.name}' across threads in parallel block — type is not Send`,
+                binding.span,
+              );
+            }
+          }
+
+          this.popScope();
+          this.closureScopeDepth = savedDepth;
+          this.currentClosureCaptures = savedCaptures;
+        }
+        for (const bt of bindingTypes) {
+          this.declare(bt.name, { type: bt.type, mutable: false, moved: false, borrowed: false, read: false });
+        }
         break;
       }
     }

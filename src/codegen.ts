@@ -40,6 +40,8 @@ export class Codegen {
   private needsMemcpy = false;
   private needsStrlen = false;
   private needsMemcmp = false;
+  private needsPthread = false;
+  private parallelCounter = 0;
   private hasStringType = false;
   private hasVecType = false;
   private hasHashMapType = false;
@@ -250,6 +252,14 @@ export class Codegen {
       this.output.splice(1, 0, "declare ptr @memset(ptr, i32, i64)");
     if (this.needsGetentropy && !declaredExterns.has("getentropy"))
       this.output.splice(1, 0, "declare i32 @getentropy(ptr, i64)");
+    if (this.needsPthread) {
+      if (!declaredExterns.has("pthread_join"))
+        this.output.splice(1, 0, "declare i32 @pthread_join(i64, ptr)");
+      if (!declaredExterns.has("pthread_create"))
+        this.output.splice(1, 0, "declare i32 @pthread_create(ptr, ptr, ptr, ptr)");
+      this.needsMalloc = true;
+      this.needsFree = true;
+    }
     if (this.needsMemcmp && !declaredExterns.has("memcmp"))
       this.output.splice(1, 0, "declare i32 @memcmp(ptr, ptr, i64)");
     if (this.needsStrlen && !declaredExterns.has("strlen"))
@@ -519,6 +529,8 @@ export class Codegen {
         return this.genForRange(stmt);
       case "ForEach":
         return this.genForEach(stmt);
+      case "Parallel":
+        return this.genParallel(stmt);
     }
   }
 
@@ -725,6 +737,159 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
+    return [lines, false];
+  }
+
+  private genParallel(stmt: HIRStmt & { kind: "Parallel" }): [string[], boolean] {
+    this.needsPthread = true;
+    const lines: string[] = [];
+    const N = stmt.branches.length;
+    const parId = this.parallelCounter++;
+
+    const slotAddrs: string[] = [];
+    const tidAddrs: string[] = [];
+    const branchNames: string[] = [];
+
+    for (let i = 0; i < N; i++) {
+      const branch = stmt.branches[i];
+      const resultTy = this.llvmType(branch.type);
+      const captures = branch.captures;
+      const branchFnName = `__parallel_${parId}_${i}`;
+      branchNames.push(branchFnName);
+
+      // env struct: { ptr result_slot, ...capture types... }
+      const envFields = ["ptr", ...captures.map(c => this.llvmType(c.type))];
+      const envStructTy = `{ ${envFields.join(", ")} }`;
+      const envSize = envFields.reduce((sum, f) => sum + this.typeSize(f), 0);
+
+      // allocate result slot on caller's stack
+      const slotAddr = `%__par_slot_${parId}_${i}`;
+      this.entryAllocas.push(`  ${slotAddr} = alloca ${resultTy}`);
+      slotAddrs.push(slotAddr);
+
+      // allocate tid on caller's stack
+      const tidAddr = `%__par_tid_${parId}_${i}`;
+      this.entryAllocas.push(`  ${tidAddr} = alloca i64`);
+      tidAddrs.push(tidAddr);
+
+      // ── emit branch function ──
+      const savedTemp = this.tempCounter;
+      const savedLabel = this.labelCounter;
+      const savedLocals = this.locals;
+      const savedDroppable = this.droppableLocals;
+      const savedLoopHeader = this.loopHeader;
+      const savedLoopExit = this.loopExit;
+      const savedEntryAllocas = this.entryAllocas;
+      this.tempCounter = 0;
+      this.labelCounter = 0;
+      this.locals = new Map();
+      this.droppableLocals = [];
+      this.entryAllocas = [];
+      this.loopHeader = null;
+      this.loopExit = null;
+
+      const body: string[] = [];
+      body.push(`define ptr @${branchFnName}(ptr %env) {`);
+      body.push("entry:");
+
+      // load result slot pointer from env[0]
+      const slotGep = this.nextTemp();
+      body.push(`  ${slotGep} = getelementptr ${envStructTy}, ptr %env, i32 0, i32 0`);
+      const slotPtr = this.nextTemp();
+      body.push(`  ${slotPtr} = load ptr, ptr ${slotGep}`);
+
+      // load captures from env[1..N]
+      for (let j = 0; j < captures.length; j++) {
+        const cap = captures[j];
+        const capTy = this.llvmType(cap.type);
+        const gepPtr = this.nextTemp();
+        body.push(`  ${gepPtr} = getelementptr ${envStructTy}, ptr %env, i32 0, i32 ${j + 1}`);
+        this.locals.set(cap.name, { type: capTy, typeKind: cap.type, mutable: cap.mutable, isRef: false });
+        body.push(`  %${cap.name}.addr = alloca ${capTy}`);
+        const loaded = this.nextTemp();
+        body.push(`  ${loaded} = load ${capTy}, ptr ${gepPtr}`);
+        body.push(`  store ${capTy} ${loaded}, ptr %${cap.name}.addr`);
+      }
+
+      // evaluate branch expression
+      const allocaInsertPt = body.length;
+      const [exprLines, exprVal, exprTy] = this.genExpr(branch.expr);
+      body.push(...exprLines);
+
+      // store result into slot
+      body.push(`  store ${exprTy} ${exprVal}, ptr ${slotPtr}`);
+
+      // free env and return
+      body.push(`  call void @free(ptr %env)`);
+      body.push(`  ret ptr null`);
+      if (this.entryAllocas.length > 0) {
+        body.splice(allocaInsertPt, 0, ...this.entryAllocas);
+      }
+      body.push("}");
+      this.closureBodies.push(body);
+
+      // restore codegen state
+      this.tempCounter = savedTemp;
+      this.labelCounter = savedLabel;
+      this.locals = savedLocals;
+      this.droppableLocals = savedDroppable;
+      this.entryAllocas = savedEntryAllocas;
+      this.loopHeader = savedLoopHeader;
+      this.loopExit = savedLoopExit;
+
+      // ── build env and spawn ──
+      const envAddr = this.nextTemp();
+      lines.push(`  ${envAddr} = call ptr @malloc(i64 ${Math.max(envSize, 8)})`);
+
+      // store result slot pointer as env[0]
+      const slotFieldGep = this.nextTemp();
+      lines.push(`  ${slotFieldGep} = getelementptr ${envStructTy}, ptr ${envAddr}, i32 0, i32 0`);
+      lines.push(`  store ptr ${slotAddr}, ptr ${slotFieldGep}`);
+
+      // store captures as env[1..N]
+      for (let j = 0; j < captures.length; j++) {
+        const cap = captures[j];
+        const capAddr = this.localAddr(cap.name);
+        const local = this.locals.get(cap.name);
+        const capTy = this.llvmType(cap.type);
+        const gepSlot = this.nextTemp();
+        lines.push(`  ${gepSlot} = getelementptr ${envStructTy}, ptr ${envAddr}, i32 0, i32 ${j + 1}`);
+        if (local?.isRef) {
+          const innerPtr = this.nextTemp();
+          lines.push(`  ${innerPtr} = load ptr, ptr ${capAddr}`);
+          const val = this.nextTemp();
+          lines.push(`  ${val} = load ${capTy}, ptr ${innerPtr}`);
+          lines.push(`  store ${capTy} ${val}, ptr ${gepSlot}`);
+        } else {
+          const loaded = this.nextTemp();
+          lines.push(`  ${loaded} = load ${capTy}, ptr ${capAddr}`);
+          lines.push(`  store ${capTy} ${loaded}, ptr ${gepSlot}`);
+        }
+      }
+
+      // pthread_create
+      lines.push(`  call i32 @pthread_create(ptr ${tidAddr}, ptr null, ptr @${branchFnName}, ptr ${envAddr})`);
+    }
+
+    // join all threads
+    for (let i = 0; i < N; i++) {
+      const tid = this.nextTemp();
+      lines.push(`  ${tid} = load i64, ptr ${tidAddrs[i]}`);
+      lines.push(`  call i32 @pthread_join(i64 ${tid}, ptr null)`);
+    }
+
+    // load results into local variables
+    for (let i = 0; i < N; i++) {
+      const branch = stmt.branches[i];
+      const resultTy = this.llvmType(branch.type);
+      const varAddr = `%${branch.name}.addr`;
+      this.entryAllocas.push(`  ${varAddr} = alloca ${resultTy}`);
+      const loaded = this.nextTemp();
+      lines.push(`  ${loaded} = load ${resultTy}, ptr ${slotAddrs[i]}`);
+      lines.push(`  store ${resultTy} ${loaded}, ptr ${varAddr}`);
+      this.locals.set(branch.name, { type: resultTy, typeKind: branch.type, mutable: false, isRef: false });
+    }
+
     return [lines, false];
   }
 
