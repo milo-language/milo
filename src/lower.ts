@@ -477,6 +477,28 @@ class LowerCtx {
         if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "toString") {
           return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
         }
+        if (objType?.tag === "int") {
+          const opMap: Record<string, string> = {
+            wrappingAdd: "add", wrappingSub: "sub", wrappingMul: "mul",
+            saturatingAdd: "add", saturatingSub: "sub", saturatingMul: "mul",
+            checkedAdd: "add", checkedSub: "sub", checkedMul: "mul",
+          };
+          const op = opMap[expr.method];
+          if (op) {
+            const left = this.lowerExpr(expr.object);
+            const right = this.lowerExpr(expr.args[0]);
+            if (expr.method.startsWith("wrapping")) {
+              return { kind: "WrappingArith", op, left, right, type, span: expr.span };
+            }
+            if (expr.method.startsWith("saturating")) {
+              return { kind: "SaturatingArith", op, left, right, type, span: expr.span };
+            }
+            if (expr.method.startsWith("checked")) {
+              const optName = type.tag === "enum" ? type.name : "Option_" + (objType.signed ? "i" : "u") + objType.bits;
+              return { kind: "CheckedArith", op, left, right, optionEnumName: optName, type, span: expr.span };
+            }
+          }
+        }
         if (objType?.tag === "vec") {
           if (expr.method === "push") {
             return { kind: "VecPush", vec: this.lowerExpr(expr.object), value: this.lowerExpr(expr.args[0]), type, span: expr.span };

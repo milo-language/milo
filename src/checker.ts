@@ -2769,6 +2769,28 @@ export class TypeChecker {
           if (expr.args.length !== 0) { this.error(`'toString' takes no arguments`, sp); }
           return this.setType(expr, { tag: "string" });
         }
+        // wrapping/saturating/checked arithmetic methods on integers
+        if (objType.tag === "int") {
+          const wrappingMethods = ["wrappingAdd", "wrappingSub", "wrappingMul"];
+          const saturatingMethods = ["saturatingAdd", "saturatingSub", "saturatingMul"];
+          const checkedMethods = ["checkedAdd", "checkedSub", "checkedMul"];
+          if (wrappingMethods.includes(expr.method) || saturatingMethods.includes(expr.method)) {
+            if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); }
+            const argType = this.checkExprWithHint(expr.args[0], objType);
+            if (!typeEq(objType, argType) && argType.tag !== "unknown") {
+              this.error(`'${expr.method}': expected ${typeName(objType)}, got ${typeName(argType)}`, sp);
+            }
+            return this.setType(expr, objType);
+          }
+          if (checkedMethods.includes(expr.method)) {
+            if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); }
+            const argType = this.checkExprWithHint(expr.args[0], objType);
+            if (!typeEq(objType, argType) && argType.tag !== "unknown") {
+              this.error(`'${expr.method}': expected ${typeName(objType)}, got ${typeName(argType)}`, sp);
+            }
+            return this.setType(expr, this.resolveOptionForValue(objType, sp));
+          }
+        }
         if (objType.tag === "vec") {
           if (expr.method === "push") {
             if (expr.args.length !== 1) { this.error(`'push' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }

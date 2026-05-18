@@ -1,0 +1,23 @@
+// @expect: 255
+// @expect: 0
+// @expect: 200
+
+fn main(): i32 {
+    let a: u8 = 200
+    let b: u8 = 100
+
+    let sum = a.saturatingAdd(b)
+    print(sum)
+
+    let c: u8 = 10
+    let d: u8 = 20
+    let diff = c.saturatingSub(d)
+    print(diff)
+
+    let e: i32 = 100
+    let f: i32 = 2
+    let prod = e.saturatingMul(f)
+    print(prod)
+
+    return 0
+}

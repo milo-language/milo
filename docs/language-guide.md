@@ -102,6 +102,17 @@ Build with `--debug` to enable overflow traps. Default (`-O2`) and `--release` (
 
 Checked operations: `+`, `-`, `*`, and unary negation (`-x`) on all integer types.
 
+**Explicit overflow control** — methods for when you need specific overflow behavior:
+
+```milo
+let a: u8 = 255
+a.wrappingAdd(1)     // 0 — wraps, even in debug builds
+a.saturatingAdd(1)   // 255 — clamps to max
+let r = a.checkedAdd(1)  // Option.None — returns None on overflow
+```
+
+Available: `wrappingAdd/Sub/Mul`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul`.
+
 ### Ranged Integer Types
 
 Type aliases with range constraints, inspired by Ada/SPARK. Range checks are always-on in all build modes.

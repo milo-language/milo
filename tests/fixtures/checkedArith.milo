@@ -1,0 +1,31 @@
+// @expect: 200
+// @expect: overflow
+
+fn main(): i32 {
+    let a: u8 = 100
+    let b: u8 = 100
+
+    let sum = a.checkedAdd(b)
+    match sum {
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("overflow")
+        }
+    }
+
+    let c: u8 = 255
+    let d: u8 = 1
+    let overflow = c.checkedAdd(d)
+    match overflow {
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("overflow")
+        }
+    }
+
+    return 0
+}

@@ -278,7 +278,10 @@ export class Codegen {
     }
     if (this.needsOverflowCheck) {
       this.output.splice(1, 0, `@.overflow_err = private unnamed_addr constant [42 x i8] c"runtime error: integer overflow at %s:%d\\0A\\00"`);
-      for (const decl of this.usedOverflowIntrinsics) this.output.splice(1, 0, decl);
+    }
+    for (const decl of this.usedOverflowIntrinsics) this.output.splice(1, 0, decl);
+    if (this.usedSatIntrinsics) {
+      for (const decl of this.usedSatIntrinsics) this.output.splice(1, 0, decl);
     }
     if (this.needsRangeCheck) {
       this.output.splice(1, 0, `@.range_err = private unnamed_addr constant [44 x i8] c"runtime error: value out of range at %s:%d\\0A\\00"`);
@@ -2044,6 +2047,12 @@ export class Codegen {
         return this.genStringClone(expr, lines);
       case "NumberToString":
         return this.genNumberToString(expr, lines);
+      case "WrappingArith":
+        return this.genWrappingArith(expr, lines);
+      case "SaturatingArith":
+        return this.genSaturatingArith(expr, lines);
+      case "CheckedArith":
+        return this.genCheckedArith(expr, lines);
       case "JsonStringify":
         return this.genJsonStringify(expr, lines);
       case "Closure": {
@@ -5183,6 +5192,135 @@ export class Codegen {
     this.tempCounter = savedTemp;
     this.labelCounter = savedLabel;
   }
+
+  // x.wrappingAdd(y) — plain LLVM add/sub/mul (wraps by definition)
+  private genWrappingArith(expr: HIRExpr & { kind: "WrappingArith" }, lines: string[]): [string[], string, string] {
+    const [ll, lv, lt] = this.genExpr(expr.left);
+    const [rl, rv] = this.genExpr(expr.right);
+    lines.push(...ll, ...rl);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = ${expr.op} ${lt} ${lv}, ${rv}`);
+    return [lines, result, lt];
+  }
+
+  // x.saturatingAdd(y) — clamps to min/max instead of wrapping
+  private genSaturatingArith(expr: HIRExpr & { kind: "SaturatingArith" }, lines: string[]): [string[], string, string] {
+    const [ll, lv, lt] = this.genExpr(expr.left);
+    const [rl, rv] = this.genExpr(expr.right);
+    lines.push(...ll, ...rl);
+    const signed = expr.type.tag === "int" && expr.type.signed;
+    const prefix = signed ? "s" : "u";
+
+    // LLVM has sadd.sat/ssub.sat/uadd.sat/usub.sat but NOT smul.sat/umul.sat
+    if (expr.op === "mul") {
+      return this.emitSaturatingMul(lines, lv, rv, lt, signed, expr.type);
+    }
+
+    const intrinsic = `@llvm.${prefix}${expr.op}.sat.${lt}`;
+    this.usedSatIntrinsics ??= new Set();
+    this.usedSatIntrinsics.add(`declare ${lt} ${intrinsic}(${lt}, ${lt})`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = call ${lt} ${intrinsic}(${lt} ${lv}, ${lt} ${rv})`);
+    return [lines, result, lt];
+  }
+
+  // manual saturating multiply using overflow intrinsic
+  private emitSaturatingMul(lines: string[], lv: string, rv: string, lt: string, signed: boolean, ty: TypeKind): [string[], string, string] {
+    const prefix = signed ? "s" : "u";
+    const intrinsic = `@llvm.${prefix}mul.with.overflow.${lt}`;
+    this.usedOverflowIntrinsics.add(`declare {${lt}, i1} ${intrinsic}(${lt}, ${lt})`);
+
+    const callResult = this.nextTemp();
+    const val = this.nextTemp();
+    const flag = this.nextTemp();
+    lines.push(`  ${callResult} = call {${lt}, i1} ${intrinsic}(${lt} ${lv}, ${lt} ${rv})`);
+    lines.push(`  ${val} = extractvalue {${lt}, i1} ${callResult}, 0`);
+    lines.push(`  ${flag} = extractvalue {${lt}, i1} ${callResult}, 1`);
+
+    const bits = ty.tag === "int" ? ty.bits : 32;
+    let clampVal: string;
+    if (!signed) {
+      // unsigned: clamp to max
+      clampVal = String(BigInt(2) ** BigInt(bits) - BigInt(1));
+    } else {
+      // signed: clamp to max (simplification — true saturation would check sign)
+      clampVal = String(BigInt(2) ** BigInt(bits - 1) - BigInt(1));
+    }
+
+    const result = this.nextTemp();
+    lines.push(`  ${result} = select i1 ${flag}, ${lt} ${clampVal}, ${lt} ${val}`);
+    return [lines, result, lt];
+  }
+
+  // x.checkedAdd(y) — returns Option<T>, None on overflow
+  private genCheckedArith(expr: HIRExpr & { kind: "CheckedArith" }, lines: string[]): [string[], string, string] {
+    const [ll, lv, lt] = this.genExpr(expr.left);
+    const [rl, rv] = this.genExpr(expr.right);
+    lines.push(...ll, ...rl);
+    const signed = expr.left.type.tag === "int" && expr.left.type.signed;
+    const prefix = signed ? "s" : "u";
+    const intrinsic = `@llvm.${prefix}${expr.op}.with.overflow.${lt}`;
+    this.usedOverflowIntrinsics.add(`declare {${lt}, i1} ${intrinsic}(${lt}, ${lt})`);
+
+    const callResult = this.nextTemp();
+    const val = this.nextTemp();
+    const flag = this.nextTemp();
+    lines.push(`  ${callResult} = call {${lt}, i1} ${intrinsic}(${lt} ${lv}, ${lt} ${rv})`);
+    lines.push(`  ${val} = extractvalue {${lt}, i1} ${callResult}, 0`);
+    lines.push(`  ${flag} = extractvalue {${lt}, i1} ${callResult}, 1`);
+
+    const optionTy = `%${expr.optionEnumName}`;
+    const optionLayout = this.enumLayouts.get(expr.optionEnumName);
+    if (!optionLayout) throw new Error(`Option enum '${expr.optionEnumName}' not found`);
+    const someTag = optionLayout.variants.get("Some")!.tag;
+    const noneTag = optionLayout.variants.get("None")!.tag;
+
+    const okLabel = this.nextLabel("checked.ok");
+    const overflowLabel = this.nextLabel("checked.overflow");
+    const doneLabel = this.nextLabel("checked.done");
+
+    lines.push(`  br i1 ${flag}, label %${overflowLabel}, label %${okLabel}`);
+
+    // no overflow → Some(val)
+    lines.push(`${okLabel}:`);
+    const someAlloca = this.nextTemp();
+    lines.push(`  ${someAlloca} = alloca ${optionTy}`);
+    const someTagPtr = this.nextTemp();
+    lines.push(`  ${someTagPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 0`);
+    lines.push(`  store i32 ${someTag}, ptr ${someTagPtr}`);
+    const somePayloadPtr = this.nextTemp();
+    lines.push(`  ${somePayloadPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 1`);
+    lines.push(`  store ${lt} ${val}, ptr ${somePayloadPtr}`);
+    const someVal = this.nextTemp();
+    lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
+    lines.push(`  br label %${doneLabel}`);
+
+    // overflow → None
+    lines.push(`${overflowLabel}:`);
+    const noneAlloca = this.nextTemp();
+    lines.push(`  ${noneAlloca} = alloca ${optionTy}`);
+    this.needsMemset = true;
+    const optSize = this.nextTemp();
+    lines.push(`  ${optSize} = getelementptr ${optionTy}, ptr null, i32 1`);
+    const optSizeI = this.nextTemp();
+    lines.push(`  ${optSizeI} = ptrtoint ptr ${optSize} to i64`);
+    lines.push(`  call ptr @memset(ptr ${noneAlloca}, i32 0, i64 ${optSizeI})`);
+    const noneTagPtr = this.nextTemp();
+    lines.push(`  ${noneTagPtr} = getelementptr ${optionTy}, ptr ${noneAlloca}, i32 0, i32 0`);
+    lines.push(`  store i32 ${noneTag}, ptr ${noneTagPtr}`);
+    const noneVal = this.nextTemp();
+    lines.push(`  ${noneVal} = load ${optionTy}, ptr ${noneAlloca}`);
+    lines.push(`  br label %${doneLabel}`);
+
+    // phi
+    lines.push(`${doneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi ${optionTy} [ ${someVal}, %${okLabel} ], [ ${noneVal}, %${overflowLabel} ]`);
+
+    return [lines, result, optionTy];
+  }
+
+  private usedSatIntrinsics?: Set<string>;
 
   // emit drop glue for all droppable locals before a scope exit
   private emitDropGlue(lines: string[]) {

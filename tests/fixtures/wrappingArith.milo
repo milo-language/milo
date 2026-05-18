@@ -1,0 +1,19 @@
+// @expect: 0
+// @expect: 255
+// @expect: 0
+
+fn main(): i32 {
+    let a: u8 = 255
+    let b: u8 = 1
+
+    let sum = a.wrappingAdd(b)
+    print(sum)
+
+    let diff = a.wrappingSub(0)
+    print(diff)
+
+    let prod = a.wrappingMul(0)
+    print(prod)
+
+    return 0
+}
