@@ -244,6 +244,14 @@
   text-decoration: none;
 }
 
+.bench-footnote {
+  max-width: 720px;
+  margin: -0.5rem auto 2rem;
+  font-size: 0.82rem;
+  color: var(--vp-c-text-3);
+  text-align: center;
+}
+
 /* playground: fill viewport, no padding */
 .VPDoc:has(.playground) .content-container {
   max-width: 100% !important;
