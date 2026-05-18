@@ -15,8 +15,9 @@ Milo compiles via LLVM with `-O2` — the same backend as C and Rust. On most wo
 | sieve to 10M | 2.1ms | 2.5ms | 3.4ms | 1.19x |
 | maplookup 100k | 3.3ms | 4.4ms | 5.0ms | 1.32x |
 | grep -c 5MB | 2.1ms | 5.5ms | 4.0ms | 2.56x |
+| json parse+walk 1MB | 1.2ms* | 25.1ms | 10.2ms | 20.9x |
 
-Apple M-series, macOS.
+Apple M-series, macOS. *C uses yyjson; Go and Milo use their stdlibs.
 
 ## Notes
 
@@ -24,7 +25,7 @@ Apple M-series, macOS.
 - 4 benchmarks match or beat C; 3 more within 20%
 - Slower entries (grep, maplookup) have known hot spots — not fundamental limits
 - Go's GC overhead shows clearly in allocation-heavy benchmarks (binarytrees 3.5x slower)
-- JSON benchmark omitted — stdlib parser uses naive re-scan and needs a rewrite
+- JSON: stdlib parser rewrites from O(n²) re-scan to materialized tree — 503x faster than before. Remaining gap vs Go is from deep-cloning sub-values (ownership cost without Rc)
 
 ## Reproduce
 

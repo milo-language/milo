@@ -21,7 +21,8 @@ Env vars: `RUNS=5` `WARMUP=1` `CC=clang` `CFLAGS="-O2 -march=native"`.
 | sieve to 10M           | 2.1 ms  | 2.5 ms  | 3.4 ms  | 1.19x     |
 | maplookup 100k         | 3.3 ms  | 4.4 ms  | 5.0 ms  | 1.32x     |
 | grep -c 5MB            | 2.1 ms  | 5.5 ms  | 4.0 ms  | 2.56x     |
+| json parse+walk 1MB    | 1.2 ms* | 25.1 ms | 10.2 ms | 20.9x     |
 
-JSON benchmark omitted — stdlib parser uses naive re-scan (12.6s vs Go stdlib 12.5ms, yyjson 3.3ms). Parser rewrite tracked.
+\* C uses yyjson (best-in-class C library); Go and Milo use their stdlibs.
 
-Hot spots: grep slurps whole file then scans; hashmap needs probe optimization.
+Hot spots: grep slurps whole file then scans; json deep-clones sub-values due to ownership model (no Rc yet); hashmap needs probe optimization.
