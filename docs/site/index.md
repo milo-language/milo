@@ -27,9 +27,7 @@ features:
 
 ```milo
 fn main(): i32 {
-    var names: Vec<string> = Vec.new()
-    names.push("alice")
-    names.push("bob")
+    let names: Vec<string> = ["alice", "bob"]
 
     let loud = names.map((n: &string) => n.toUpper())
     for name in loud {
