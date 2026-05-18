@@ -283,7 +283,8 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 ### Tier 2 — polish / differentiators
 
 - [x] **Ranged integer types (L1)** — `type Altitude = i32(0..50000)`. Type aliases with range constraints. Compile-time rejection of out-of-range literals, runtime range checks for dynamic values (always-on, all build modes). Inspired by Ada/SPARK range types.
-- [ ] **Ranged integer types (L2)** — Range propagation through arithmetic: if `a: i32(0..100)` and `b: i32(0..100)`, then `a + b` is `i32(0..200)`. Compiler narrows ranges at branches. Eliminates most runtime checks via static proof.
+- [x] **Ranged integer types (L2)** — Range propagation through arithmetic: `a(0..100) + b(0..100)` → `(0..200)`. Compiler eliminates runtime range checks when it can prove the result fits. Supports `+`, `-`, `*`, `/`.
+- [ ] **Ranged integer types (L3)** — Branch narrowing: after `if x < 50`, x is known to be in `(min..49)` in the then-branch. Dataflow-based range elimination.
 - [ ] **Safety profiles** — `--strict-ranges` (require ranged types on all integer declarations) and `--no-unwrap` (ban `!` operator — force exhaustive error handling). Aircraft-grade safety opt-in without penalizing default ergonomics.
 - [x] **Wrapping/saturating/checked arithmetic** — `.wrappingAdd()`, `.saturatingAdd()`, `.checkedAdd()` (+ Sub/Mul variants) on all integer types. Wrapping always wraps, saturating clamps to min/max, checked returns `Option<T>`.
 

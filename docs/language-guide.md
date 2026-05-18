@@ -133,6 +133,17 @@ fn readSensor(): i32 { ... }
 let alt: Altitude = readSensor()  // runtime check: traps if value outside 0..50000
 ```
 
+**Range propagation** — the compiler tracks ranges through arithmetic and eliminates runtime checks when it can prove the result fits:
+
+```milo
+type SmallInt = i32(0..100)
+type MediumInt = i32(0..200)
+
+let a: SmallInt = 50
+let b: SmallInt = 100
+let sum: MediumInt = a + b   // no runtime check — compiler proves (0..100)+(0..100) ⊆ (0..200)
+```
+
 ### Bitwise Operators
 
 Integer-only. C-style precedence: `~` (unary) > `<<` `>>` > `&` > `^` > `|`.

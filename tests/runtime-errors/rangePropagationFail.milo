@@ -1,0 +1,14 @@
+// @runtime-error: value out of range
+
+type SmallInt = i32(0..100)
+type TinyInt = i32(0..50)
+
+fn main(): i32 {
+    let a: SmallInt = 30
+    let b: SmallInt = 40
+
+    // a(0..100) + b(0..100) = (0..200) does NOT fit in TinyInt(0..50) — needs runtime check
+    let sum: TinyInt = a + b
+    print(sum)
+    return 0
+}

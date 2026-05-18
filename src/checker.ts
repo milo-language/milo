@@ -164,6 +164,36 @@ export class TypeChecker {
     this.diagnostics.push({ severity, span, message: msg, hint, code });
   }
 
+  // compute the output range of an arithmetic operation on two ranged integers
+  private propagateRange(lt: TypeKind & { tag: "int" }, rt: TypeKind & { tag: "int" }, op: string): TypeKind | null {
+    const lmin = lt.min!, lmax = lt.max!, rmin = rt.min!, rmax = rt.max!;
+    let outMin: number, outMax: number;
+    switch (op) {
+      case "+": outMin = lmin + rmin; outMax = lmax + rmax; break;
+      case "-": outMin = lmin - rmax; outMax = lmax - rmin; break;
+      case "*": {
+        const products = [lmin * rmin, lmin * rmax, lmax * rmin, lmax * rmax];
+        outMin = Math.min(...products);
+        outMax = Math.max(...products);
+        break;
+      }
+      case "/": {
+        if (rmin <= 0 && rmax >= 0) return null; // divisor range includes zero
+        const quotients = [lmin / rmin, lmin / rmax, lmax / rmin, lmax / rmax];
+        outMin = Math.floor(Math.min(...quotients));
+        outMax = Math.floor(Math.max(...quotients));
+        break;
+      }
+      default: return null;
+    }
+    // clamp to the underlying type's representable range
+    const typMin = lt.signed ? -(2 ** (lt.bits - 1)) : 0;
+    const typMax = lt.signed ? 2 ** (lt.bits - 1) - 1 : 2 ** lt.bits - 1;
+    outMin = Math.max(outMin, typMin);
+    outMax = Math.min(outMax, typMax);
+    return { tag: "int", bits: lt.bits, signed: lt.signed, min: outMin, max: outMax };
+  }
+
   // extract a constant integer value from an expression (handles IntLit and -IntLit)
   private constIntValue(expr: import("./ast").Expr): number | null {
     if (expr.kind === "IntLit") return expr.value;
@@ -1243,6 +1273,9 @@ export class TypeChecker {
             if (litVal < hint.min || litVal > hint.max) {
               this.error(`value ${litVal} is out of range for ${typeName(hint)} (${hint.min}..${hint.max})`, sp);
             }
+          } else if (valType.tag === "int" && valType.min !== undefined && valType.max !== undefined &&
+                     valType.min >= hint.min && valType.max <= hint.max) {
+            // range propagation proved value fits — no runtime check needed
           } else {
             this.rangeCheckedExprs.set(stmt.value, { min: hint.min, max: hint.max, typeName: typeName(hint) });
           }
@@ -1270,6 +1303,9 @@ export class TypeChecker {
             if (litVal < hint.min || litVal > hint.max) {
               this.error(`value ${litVal} is out of range for ${typeName(hint)} (${hint.min}..${hint.max})`, sp);
             }
+          } else if (valType.tag === "int" && valType.min !== undefined && valType.max !== undefined &&
+                     valType.min >= hint.min && valType.max <= hint.max) {
+            // range propagation proved value fits — no runtime check needed
           } else {
             this.rangeCheckedExprs.set(stmt.value, { min: hint.min, max: hint.max, typeName: typeName(hint) });
           }
@@ -2116,6 +2152,11 @@ export class TypeChecker {
           if (!typeEq(lt, rt) && lt.tag !== "unknown" && rt.tag !== "unknown") this.error(`type mismatch in '${expr.op}': ${typeName(lt)} vs ${typeName(rt)}`, sp);
           if (lt.tag === "int" && expr.left.kind === "IntLit" && expr.right.kind === "IntLit") {
             this.checkConstOverflow(expr.left.value, expr.right.value, expr.op, lt, sp);
+          }
+          // range propagation: compute output range from operand ranges
+          if (lt.tag === "int" && rt.tag === "int" && lt.min !== undefined && lt.max !== undefined && rt.min !== undefined && rt.max !== undefined) {
+            const propagated = this.propagateRange(lt, rt, expr.op);
+            if (propagated) return this.setType(expr, propagated);
           }
           return this.setType(expr, lt);
         }

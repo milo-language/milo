@@ -1,0 +1,27 @@
+// @expect: 150
+// @expect: -50
+// @expect: 5000
+
+type SmallInt = i32(0..100)
+type MediumInt = i32(0..200)
+type WideInt = i32(-100..200)
+type BigInt = i32(0..10000)
+
+fn main(): i32 {
+    let a: SmallInt = 50
+    let b: SmallInt = 100
+
+    // a(0..100) + b(0..100) = (0..200) fits in MediumInt(0..200), no runtime check
+    let sum: MediumInt = a + b
+    print(sum)
+
+    // a(0..100) - b(0..100) = (-100..100) fits in WideInt(-100..200), no runtime check
+    let diff: WideInt = a - b
+    print(diff)
+
+    // a(0..100) * b(0..100) = (0..10000) fits in BigInt(0..10000), no runtime check
+    let prod: BigInt = a * b
+    print(prod)
+
+    return 0
+}
