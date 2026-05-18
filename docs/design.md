@@ -162,9 +162,22 @@ Milo enforces five compile-time safety guardrails:
 - **Overflow safe** — compile-time literal/const checks, debug-mode runtime traps via LLVM intrinsics
 - **Coercion safe** — no implicit type coercions, explicit `as` casts only
 
+## Concurrency Model
+
+OS threads + structured concurrency. No async/await, no function coloring.
+
+- **`spawn()`** — OS thread with move closure. Compiler enforces Send on all captures.
+- **`parallel { let a = ...; let b = ... }`** — structured concurrency block. Runs N expressions on N threads, joins all before continuing. Bindings scoped to parent.
+- **Channels** — bounded FIFO (`channelSend`/`channelRecv`), plus non-blocking `channelTrySend`/`channelTryRecv`.
+- **Mutex** — pthread-based, with `withLock` closure helper.
+- **RwLock** — multiple readers OR one writer, with `withReadLock`/`withWriteLock`.
+- **Atomics** — `AtomicI64`, `AtomicBool` backed by LLVM `atomicrmw`/`cmpxchg`/`load atomic`/`store atomic` (seq_cst).
+- **`@send`/`@sync`** — annotations for user types wrapping unsafe internals. Replaces hardcoded whitelist.
+
+Green threads (ucontext-based, Go-style) planned as opt-in runtime layer.
+
 ## Open Questions
 
-- FFI safety boundary: opaque handles? unsafe blocks?
 - Arena API shape (deferred until self-hosting reveals real needs)
 
 ## Prior Art

@@ -51,7 +51,7 @@
       "patterns": [
         {
           "name": "keyword.control.milo",
-          "match": "\\b(if|else|while|for|match|return|break|continue|in)\\b"
+          "match": "\\b(if|else|while|for|match|return|break|continue|in|parallel|unsafe)\\b"
         },
         {
           "name": "keyword.control.import.milo",

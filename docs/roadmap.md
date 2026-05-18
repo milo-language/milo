@@ -264,7 +264,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 
 ### Tier 0 — dealbreakers
 
-- [x] **Threads + channels** — `std/thread` (pthreads), `std/sync` (Mutex, Channel). Safe `spawn(move () => {...})` with move closures. Channel is handle-based — safe to capture in closures, no unsafe needed by users. Multi-producer, bounded FIFO.
+- [x] **Threads + channels** — `std/thread` (pthreads), `std/sync` (Mutex, Channel, RwLock, AtomicI64, AtomicBool). Safe `spawn(move () => {...})` with move closures. Channel is handle-based — safe to capture in closures, no unsafe needed by users. Multi-producer, bounded FIFO. Non-blocking `channelTryRecv`/`channelTrySend`/`channelLen`. `parallel` blocks for structured concurrency. `withLock`/`withReadLock`/`withWriteLock` closure helpers.
 - [x] **Escaping closures** — move closures heap-allocate env, can be returned from functions, stored in structs, composed. Enables callbacks, event handlers, higher-order patterns.
 - [ ] **Trait objects / dynamic dispatch** — `dyn Trait` for runtime polymorphism. Vtable-based. Unlocks plugin systems, heterogeneous collections (`Vec<dyn Animal>`), dependency injection.
 - [x] **std/testing** — `assert`, `assertEqual`, `assertEqual64`, `assertStrEqual`, `assertBool`. Test discovery via `testXxx` naming convention, `milo test` CLI runner with pass/fail reporting.
@@ -276,7 +276,7 @@ Goal: close the gap with Rust/Go for real-world adoption. Ordered by "would a de
 - [ ] **Iterators** — iterator trait with `.map().filter().collect()` chains, lazy evaluation. Needs associated types or at minimum trait method return types.
 - [x] **Auto-display** — `print(myStruct)` auto-formats structs and enums (field-wise display). User-defined `Display` trait deferred.
 - [x] **Integer overflow safety** — compile-time literal/const-expression range checking; debug-mode runtime traps via LLVM overflow intrinsics (`llvm.sadd.with.overflow` etc.); release wraps silently. Covers +, -, *, unary negation on all integer types.
-- [x] **Send/Sync traits (race safety)** — compile-time data-race prevention. `Send` = safe to transfer across threads, `Sync` = safe to share via `&T`. `spawn()` requires all closure captures to be `Send`. Structural auto-derivation: primitives/string/Box/Vec/HashMap are Send+Sync if contents are; raw pointers are neither. `Mutex`/`Channel` are always Send+Sync.
+- [x] **Send/Sync traits (race safety)** — compile-time data-race prevention. `Send` = safe to transfer across threads, `Sync` = safe to share via `&T`. `spawn()` requires all closure captures to be `Send`. Structural auto-derivation: primitives/string/Box/Vec/HashMap are Send+Sync if contents are; raw pointers are neither. User types opt in with `@send`/`@sync` annotations. Error messages pinpoint which field breaks Send.
 - [ ] **Error handling improvements** — `From` trait for automatic error conversion in `?`, `anyhow`-style error boxing.
 - [ ] **Doc comments + doc generation** — `///` comments, `milo doc` to generate HTML/markdown.
 

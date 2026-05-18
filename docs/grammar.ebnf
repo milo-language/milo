@@ -23,7 +23,7 @@ type_name   = "i8" | "i16" | "i32" | "i64"
 block       = "{" { statement } "}" ;
 
 statement   = let_decl | var_decl | assign_stmt | return_stmt
-            | if_stmt | while_stmt | expr_stmt ;
+            | if_stmt | while_stmt | parallel_block | expr_stmt ;
 
 let_decl    = "let" IDENT [ ":" type ] "=" expr ;
 var_decl    = "var" IDENT [ ":" type ] "=" expr ;
@@ -31,6 +31,7 @@ assign_stmt = IDENT "=" expr ;
 return_stmt = "return" [ expr ] ;
 if_stmt     = "if" expr block [ "else" ( if_stmt | block ) ] ;
 while_stmt  = "while" expr block ;
+parallel_block = "parallel" "{" { "let" IDENT "=" expr } "}" ;
 expr_stmt   = expr ;
 
 (* Expressions — precedence low to high *)

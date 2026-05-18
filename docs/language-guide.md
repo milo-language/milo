@@ -1153,9 +1153,11 @@ for i in 0..4 {
 
 The compiler enforces thread safety at compile time. `spawn()` requires all captured variables to implement `Send` — meaning they're safe to transfer across threads.
 
-**Send types** (safe to move to another thread): all primitives, `string`, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, `Mutex`, `Channel`.
+**Send types** (safe to move to another thread): all primitives, `string`, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
 
-**Non-Send types**: raw pointers (`*T`), structs containing raw pointers.
+**Sync types** (safe to share via `&T` across threads): same rules, checked via `@sync`.
+
+**Non-Send types**: raw pointers (`*T`), structs containing raw pointers (unless annotated).
 
 ```milo
 // This compiles — i64 and string are Send
@@ -1172,7 +1174,37 @@ unsafe {
 }
 ```
 
+Use `@send` and `@sync` annotations to mark types with unsafe internals as thread-safe:
+
+```milo
+@send
+@sync
+struct MyHandle {
+    _ptr: *u8,   // raw pointer, but we guarantee thread safety
+}
+```
+
+The compiler error message tells you exactly which field breaks Send and suggests adding the annotation.
+
 This prevents data races at compile time — if you can't send a raw pointer to another thread, you can't have unsynchronized shared mutable state.
+
+### Parallel Blocks
+
+Run multiple expressions concurrently and collect all results. Each branch runs on its own OS thread; the block completes when all branches finish.
+
+```milo
+fn expensiveA(): i64 { return 42 }
+fn expensiveB(): i64 { return 99 }
+
+parallel {
+    let a = expensiveA()
+    let b = expensiveB()
+}
+// a and b are in scope here
+print(a + b)   // 141
+```
+
+Each branch is implicitly a move closure — captured variables are copied/moved into each branch. Variables bound in the `parallel` block are available in the enclosing scope after the block. Requires at least 2 bindings.
 
 ### Channels
 
@@ -1180,7 +1212,7 @@ Bounded FIFO channels for message passing between threads. Channel is a handle t
 
 ```milo
 from "std/thread" import { spawn, threadJoin, Thread }
-from "std/sync" import { channelNew, channelSend, channelRecv, Channel, Mutex, mutexNew, mutexLock, mutexUnlock }
+from "std/sync" import { channelNew, channelSend, channelRecv, channelDestroy }
 
 let ch = channelNew(8)!
 
@@ -1199,10 +1231,25 @@ threadJoin(t)!
 channelDestroy(ch)
 ```
 
+Non-blocking variants for polling:
+
+```milo
+from "std/sync" import { channelNew, channelTrySend, channelTryRecv, channelLen, channelDestroy }
+
+let ch = channelNew(4)!
+channelTrySend(ch, 42)       // returns true if sent, false if full
+let val = channelTryRecv(ch)  // returns Option<i64> — None if empty
+match val {
+    Option.Some(v) => { print(v) }
+    Option.None => { print("empty") }
+}
+print(channelLen(ch))         // current number of items
+```
+
 ### Mutex
 
 ```milo
-from "std/sync" import { channelNew, channelSend, channelRecv, Channel, Mutex, mutexNew, mutexLock, mutexUnlock }
+from "std/sync" import { mutexNew, mutexLock, mutexUnlock, withLock, mutexDestroy }
 
 let m = mutexNew()!
 mutexLock(m)!
@@ -1211,6 +1258,62 @@ mutexUnlock(m)!
 mutexDestroy(m)
 ```
 
+Prefer `withLock` for scoped locking — guarantees unlock:
+
+```milo
+let m = mutexNew()!
+var x: i64 = 0
+withLock(m, (): void => {
+    x = 42
+})!
+mutexDestroy(m)
+```
+
+### RwLock
+
+Reader-writer lock: multiple concurrent readers OR one exclusive writer.
+
+```milo
+from "std/sync" import { rwLockNew, rwLockRead, rwLockWrite, rwLockUnlock, withReadLock, withWriteLock, rwLockDestroy }
+
+let rw = rwLockNew()!
+
+// Multiple readers allowed simultaneously
+withReadLock(rw, (): void => {
+    // read shared data
+})!
+
+// Exclusive writer
+withWriteLock(rw, (): void => {
+    // write shared data
+})!
+
+rwLockDestroy(rw)
+```
+
+### Atomics
+
+Lock-free atomic types for cross-thread counters and flags. No mutex needed.
+
+```milo
+from "std/sync" import { atomicI64New, atomicI64Load, atomicI64Store, atomicI64Add, atomicI64Sub, atomicI64Cas, atomicI64Destroy }
+from "std/sync" import { atomicBoolNew, atomicBoolLoad, atomicBoolStore, atomicBoolSwap, atomicBoolDestroy }
+
+let counter = atomicI64New(0)
+atomicI64Add(counter, 1)        // returns old value
+print(atomicI64Load(counter))   // 1
+atomicI64Store(counter, 42)
+let old = atomicI64Cas(counter, 42, 99)  // compare-and-swap, returns old value
+atomicI64Destroy(counter)
+
+let flag = atomicBoolNew(false)
+atomicBoolStore(flag, true)
+let prev = atomicBoolSwap(flag, false)  // returns old value
+atomicBoolDestroy(flag)
+```
+
+All atomic operations use sequential consistency (seq_cst). AtomicI64 and AtomicBool are `@send` + `@sync` — safe to share across threads.
+
 ### Thread API
 
 | Function | Description |
@@ -1218,13 +1321,30 @@ mutexDestroy(m)
 | `spawn(move () => {...})` | Spawn thread with move closure |
 | `threadJoin(t)` | Wait for thread to finish |
 | `threadSleep(ms)` | Sleep current thread (milliseconds) |
+| `parallel { let a = ...; let b = ... }` | Run branches concurrently, join all |
 | `channelNew(cap)` | Create bounded channel |
 | `channelSend(ch, val)` | Send i64 value (blocks if full) |
 | `channelRecv(ch)` | Receive i64 value (blocks if empty) |
+| `channelTrySend(ch, val)` | Non-blocking send, returns `bool` |
+| `channelTryRecv(ch)` | Non-blocking receive, returns `Option<i64>` |
+| `channelLen(ch)` | Current items in channel |
 | `channelDestroy(ch)` | Free channel resources |
 | `mutexNew()` | Create mutex |
 | `mutexLock(m)` / `mutexUnlock(m)` | Lock/unlock |
+| `withLock(m, f)` | Scoped lock — runs closure, unlocks |
 | `mutexDestroy(m)` | Free mutex |
+| `rwLockNew()` | Create reader-writer lock |
+| `rwLockRead(rw)` / `rwLockWrite(rw)` | Acquire read/write lock |
+| `rwLockUnlock(rw)` | Release lock |
+| `withReadLock(rw, f)` / `withWriteLock(rw, f)` | Scoped read/write lock |
+| `rwLockDestroy(rw)` | Free rwlock |
+| `atomicI64New(v)` / `atomicBoolNew(v)` | Create atomic |
+| `atomicI64Load(a)` / `atomicBoolLoad(a)` | Atomic read |
+| `atomicI64Store(a, v)` / `atomicBoolStore(a, v)` | Atomic write |
+| `atomicI64Add(a, v)` / `atomicI64Sub(a, v)` | Atomic add/sub (returns old) |
+| `atomicI64Cas(a, exp, des)` | Compare-and-swap (returns old) |
+| `atomicBoolSwap(a, v)` | Atomic swap (returns old) |
+| `atomicI64Destroy(a)` / `atomicBoolDestroy(a)` | Free atomic |
 
 ---
 
