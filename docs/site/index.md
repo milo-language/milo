@@ -60,20 +60,17 @@ from "std/http" import { Context, Response, Router, serveRouter }
 
 fn main(): i32 {
     var r: Router = Router.new()
-    r.use((ctx: &mut Context, next: (&mut Context) => Response) => {
-        print(ctx.req.method + " " + ctx.req.path)
-        return next(ctx)
-    })
     r.get("/", (ctx: &mut Context) => ctx.html("<h1>Hello!</h1>"))
     r.get("/users/:id", (ctx: &mut Context) => {
-        return ctx.json($"\{\"id\": \"{ctx.param(\"id\")}\"}")
+        let id = ctx.param("id")
+        return ctx.json($"\{\"id\": \"{id}\"}")
     })
     serveRouter(8080, r)
     return 0
 }
 ```
 
-Router, middleware, path params, string interpolation — a full web server in 15 lines.
+Router, path params, string interpolation — a web server in 10 lines. No framework, no dependencies. This is the standard library.
 
 ### Where Milo fits
 
