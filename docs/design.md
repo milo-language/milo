@@ -137,6 +137,10 @@ Frontend: TypeScript (Bun). Backend: LLVM toolchain.
 | | Milo | Rust | C | Zig |
 |---|---|---|---|---|
 | Memory safety | Yes (moves + second-class refs) | Yes (lifetimes + borrow checker) | No | Partial |
+| Null safety | Yes (Option\<T\>) | Yes (Option\<T\>) | No | No |
+| Race safety | Yes (Send/Sync, compile-time) | Yes (Send/Sync, compile-time) | No | No |
+| Overflow safety | Yes (compile-time + debug traps) | Yes (compile-time + debug panics) | No (UB) | Yes (always trap) |
+| Coercion safety | Yes (no implicit coercions) | Yes | No | Yes |
 | Cyclic data | Index-based or arenas | Painful | Easy (unsafe) | Manual |
 | Lifetime annotations | None | Required | N/A | None |
 | Learning curve | Low (goal) | High | Medium then deadly | Medium |
@@ -149,10 +153,18 @@ Frontend: TypeScript (Bun). Backend: LLVM toolchain.
 - **String type** — owned UTF-8 `{ ptr, len, cap }`, heap-allocated. `s[a..b]` returns zero-copy `&string` slice (cap=0). `.substr(a, b)` for owned copy. `clone`, `push`, `+`, `==`, byte indexing, functional methods on Vec.
 - **Module/import system** — `import "path.milo"` and `from "path" import { names }`, recursive resolution, dedup.
 
+## Resolved Safety Model
+
+Milo enforces five compile-time safety guardrails:
+- **Memory safe** — move semantics, use-after-move errors, bounds-checked arrays, no dangling pointers
+- **Null safe** — no null; `Option<T>` with exhaustive matching
+- **Race safe** — Send/Sync traits, `spawn()` rejects non-Send captures at compile time
+- **Overflow safe** — compile-time literal/const checks, debug-mode runtime traps via LLVM intrinsics
+- **Coercion safe** — no implicit type coercions, explicit `as` casts only
+
 ## Open Questions
 
 - FFI safety boundary: opaque handles? unsafe blocks?
-- Concurrency model: structured concurrency + channels, or async/await?
 - Arena API shape (deferred until self-hosting reveals real needs)
 
 ## Prior Art

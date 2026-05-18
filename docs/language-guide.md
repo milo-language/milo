@@ -4,6 +4,10 @@ Milo is a memory-safe systems language that compiles to native binaries via LLVM
 It uses move semantics and second-class references to guarantee safety at compile time —
 no garbage collector, no reference counting, no lifetime annotations.
 
+Milo enforces five safety guardrails: memory safety (move semantics, bounds checking),
+null safety (Option\<T\>), race safety (Send/Sync traits), overflow safety (compile-time
+checks + debug-mode traps), and coercion safety (no implicit type conversions).
+
 The syntax is designed to be readable on first contact — no surprising sigils or ceremony.
 
 ## Getting Started
@@ -68,6 +72,28 @@ let dec: i32 = 1_000_000      // decimal with underscores for readability
 let hex: i32 = 0xFF            // hexadecimal
 let bin: i32 = 0b1010_1010     // binary
 ```
+
+### Integer Overflow Safety
+
+Milo prevents silent integer overflow at multiple levels:
+
+**Compile-time** — literals and constant expressions are range-checked:
+
+```milo
+let x: i8 = 200              // error: integer literal 200 overflows i8 (range -128..127)
+let y: i32 = 2147483647 + 1  // error: constant expression overflows i32
+```
+
+**Runtime (debug builds)** — arithmetic traps on overflow with source location:
+
+```milo
+let x: i32 = 2147483647
+let y = x + 1     // runtime error: integer overflow at main.milo:2
+```
+
+Build with `--debug` to enable overflow traps. Default (`-O2`) and `--release` (`-O3`) builds use wrapping arithmetic for performance.
+
+Checked operations: `+`, `-`, `*`, and unary negation (`-x`) on all integer types.
 
 ### Bitwise Operators
 
@@ -1073,6 +1099,31 @@ for i in 0..4 {
     threadJoin(threads[i])!
 }
 ```
+
+### Thread Safety (Send / Sync)
+
+The compiler enforces thread safety at compile time. `spawn()` requires all captured variables to implement `Send` — meaning they're safe to transfer across threads.
+
+**Send types** (safe to move to another thread): all primitives, `string`, `Box<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, `Mutex`, `Channel`.
+
+**Non-Send types**: raw pointers (`*T`), structs containing raw pointers.
+
+```milo
+// This compiles — i64 and string are Send
+let msg = "hello"
+let t = spawn(move (): void => { print(msg) })!
+
+// This is a compile error — *u8 is not Send
+var x: i32 = 42
+unsafe {
+    let p = (&x) as *u8
+    let t = spawn(move (): void => {    // error: cannot send 'p' of type '*u8' across threads
+        print(p as i64)
+    })!
+}
+```
+
+This prevents data races at compile time — if you can't send a raw pointer to another thread, you can't have unsynchronized shared mutable state.
 
 ### Channels
 
