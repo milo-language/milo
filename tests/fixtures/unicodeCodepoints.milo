@@ -1,0 +1,27 @@
+// @expect: 5
+// @expect: 4
+// @expect: 99
+// @expect: 233
+// @expect: 3
+// @expect: 1
+
+from "std/unicode" import { codepoints, codepointCount }
+
+fn main(): i32 {
+    let s = "café"
+    let cps = codepoints(s)
+
+    // "café" is 5 bytes but 4 codepoints
+    print(s.len)
+    print(cps.len)
+
+    // first codepoint: 'c' = 99
+    print(cps[0])
+    // last codepoint: 'é' = 233
+    print(cps[3])
+
+    // codepointCount without allocating
+    print(codepointCount("abc"))
+    print(codepointCount("é"))
+    return 0
+}
