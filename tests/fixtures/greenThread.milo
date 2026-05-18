@@ -1,0 +1,28 @@
+// @expect: start
+// @expect: spawned
+// @expect: green 0
+// @expect: green 1
+// @expect: green 2
+// @expect: green 3
+// @expect: green 4
+// @expect: green 5
+// @expect: green 6
+// @expect: green 7
+// @expect: green 8
+// @expect: green 9
+
+from "std/runtime" import { greenSpawn }
+
+fn main(): i32 {
+    print("start")
+    var i = 0
+    while i < 10 {
+        let n = i
+        greenSpawn(move (): void => {
+            print("green " + n.toString())
+        })
+        i = i + 1
+    }
+    print("spawned")
+    return 0
+}

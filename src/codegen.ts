@@ -59,8 +59,10 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid", "_atomicLoadI64", "_atomicStoreI64", "_atomicAddI64", "_atomicSubI64", "_atomicCasI64", "_atomicLoadBool", "_atomicStoreBool", "_atomicSwapBool"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid", "_atomicLoadI64", "_atomicStoreI64", "_atomicAddI64", "_atomicSubI64", "_atomicCasI64", "_atomicLoadBool", "_atomicStoreBool", "_atomicSwapBool", "_schedulerGet", "_schedulerSet"]);
   private needsArgGlobals = false;
+  private usesSchedulerGlobal = false;
+  private currentFnName = "";
 
   private filePath?: string;
 
@@ -236,6 +238,11 @@ export class Codegen {
     const externs = module.functions.filter(f => f.isExtern);
     const functions = module.functions.filter(f => !f.isExtern);
 
+    // detect scheduler usage: if _schedulerDrain is defined, the program uses green threads
+    if (functions.some(f => f.name === "_schedulerDrain")) {
+      this.usesSchedulerGlobal = true;
+    }
+
     // generate function bodies first (collects string constants, sets needsBoundsCheck)
     const fnBodies: string[][] = [];
     for (const fn of functions) fnBodies.push(this.genFunction(fn));
@@ -307,6 +314,10 @@ export class Codegen {
     this.output.splice(1, 0, "@_milo_argv_global = internal global ptr null");
     this.output.splice(1, 0, "@_milo_argc_global = internal global i32 0");
 
+    if (this.usesSchedulerGlobal) {
+      this.output.splice(1, 0, "@_milo_scheduler = internal global ptr null");
+    }
+
     // insert string constants
     for (let i = this.strings.length - 1; i >= 0; i--) {
       const { label, escaped, length } = this.strings[i];
@@ -364,6 +375,7 @@ export class Codegen {
     this.locals.clear();
     this.droppableLocals = [];
     this.entryAllocas = [];
+    this.currentFnName = fn.name;
     const lines: string[] = [];
 
     const params = fn.params.map(p => {
@@ -409,6 +421,9 @@ export class Codegen {
 
     if (!hasTerminator) {
       this.emitDropGlue(lines);
+      if (fn.name === "main" && this.usesSchedulerGlobal) {
+        lines.push("  call void @_schedulerDrain()");
+      }
       if (ret === "void") lines.push("  ret void");
       else if (ret === "i32") lines.push("  ret i32 0");
     }
@@ -492,12 +507,18 @@ export class Codegen {
       case "Return": {
         if (!stmt.value) {
           this.emitDropGlue(lines);
+          if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
+            lines.push("  call void @_schedulerDrain()");
+          }
           lines.push("  ret void");
           return [lines, true];
         }
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
         this.emitDropGlue(lines);
+        if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
+          lines.push("  call void @_schedulerDrain()");
+        }
         lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
       }
@@ -1641,6 +1662,19 @@ export class Codegen {
       const [al2, envPtrVal] = this.genExpr(expr.args[1].expr);
       lines.push(...al2);
       lines.push(`  call void ${fnPtrVal}(ptr ${envPtrVal})`);
+      return [lines, "0", "void"];
+    }
+    if (expr.func === "_schedulerGet") {
+      this.usesSchedulerGlobal = true;
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load ptr, ptr @_milo_scheduler`);
+      return [lines, val, "ptr"];
+    }
+    if (expr.func === "_schedulerSet") {
+      this.usesSchedulerGlobal = true;
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      lines.push(`  store ptr ${pv}, ptr @_milo_scheduler`);
       return [lines, "0", "void"];
     }
     if (expr.func === "_loadU8") {

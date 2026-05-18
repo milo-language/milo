@@ -1,0 +1,27 @@
+// @expect: A1
+// @expect: B1
+// @expect: C1
+// @expect: A2
+// @expect: B2
+// @expect: C2
+
+from "std/runtime" import { greenSpawn, schedulerYield }
+
+fn main(): i32 {
+    greenSpawn(move (): void => {
+        print("A1")
+        schedulerYield()
+        print("A2")
+    })
+    greenSpawn(move (): void => {
+        print("B1")
+        schedulerYield()
+        print("B2")
+    })
+    greenSpawn(move (): void => {
+        print("C1")
+        schedulerYield()
+        print("C2")
+    })
+    return 0
+}

@@ -567,6 +567,9 @@ export class TypeChecker {
     this.functions.set("_atomicLoadBool", { params: [{ type: ptrU8, name: "ptr" }], ret: { tag: "bool" }, variadic: false });
     this.functions.set("_atomicStoreBool", { params: [{ type: ptrU8, name: "ptr" }, { type: { tag: "bool" }, name: "val" }], ret: { tag: "void" }, variadic: false });
     this.functions.set("_atomicSwapBool", { params: [{ type: ptrU8, name: "ptr" }, { type: { tag: "bool" }, name: "val" }], ret: { tag: "bool" }, variadic: false });
+    // Scheduler global access — green thread runtime
+    this.functions.set("_schedulerGet", { params: [], ret: ptrU8, variadic: false });
+    this.functions.set("_schedulerSet", { params: [{ type: ptrU8, name: "ptr" }], ret: { tag: "void" }, variadic: false });
 
     this.registerBuiltinTraits();
     this.registerBuiltinOption();

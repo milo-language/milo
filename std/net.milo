@@ -1,8 +1,10 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
 from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_connect, SSL_ctrl, SSL_free, SSL_new, SSL_read, SSL_set_fd, SSL_write, TLS_client_method, close, connect, freeaddrinfo, getaddrinfo, read, socket, write }
-from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr }
+from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, getErrno, eagain }
 from "std/json" import { Json, jsonParse }
+from "std/event" import { setNonblocking }
+from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
 
 // ── NetError ──
 
@@ -69,21 +71,36 @@ fn tcpConnect(ip: u32, port: u16): Result<TcpStream, NetError> {
 }
 
 fn tcpSend(s: &TcpStream, data: &string): Result<i64, NetError> {
+    let inGreen = schedulerCurrent() as i64 != 0
+    if inGreen { setNonblocking(s.fd) }
     unsafe {
-        let n = write(s.fd, data, data.len)
-        if n < 0 {
-            return Result.Err(NetError.SendFailed("tcp send failed"))
+        while true {
+            let n = write(s.fd, data, data.len)
+            if n < 0 && inGreen && getErrno() == eagain() {
+                schedulerWaitWrite(s.fd)
+                continue
+            }
+            if n < 0 {
+                return Result.Err(NetError.SendFailed("tcp send failed"))
+            }
+            return Result.Ok(n)
         }
-        return Result.Ok(n)
     }
+    return Result.Err(NetError.SendFailed("unreachable"))
 }
 
 fn tcpRecv(s: &TcpStream): Result<string, NetError> {
+    let inGreen = schedulerCurrent() as i64 != 0
+    if inGreen { setNonblocking(s.fd) }
     var result: string = ""
     var buf: [u8 ; 4096] = [0 ; 4096]
     while true {
         unsafe {
             let n = read(s.fd, buf, 4096)
+            if n < 0 && inGreen && getErrno() == eagain() {
+                schedulerWaitRead(s.fd)
+                continue
+            }
             if n <= 0 {
                 break
             }

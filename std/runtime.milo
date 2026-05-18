@@ -1,0 +1,402 @@
+// std/runtime — green thread scheduler using ucontext for stackful coroutines
+//
+// Task layout (48 bytes, 8-byte aligned):
+//   0: context (*u8)      8: stack (*u8)       16: totalStackSize (i64)
+//  24: state (i32)        28: waitFd (i32)      32: waitWrite (u8) + 7 pad
+//  40: next (*u8)
+//
+// Scheduler layout (48 bytes):
+//   0: context (*u8)       8: runHead (*u8)     16: runTail (*u8)
+//  24: current (*u8)      32: numTasks (i64)    40: eventLoopFd (i32) + pad
+
+from "std/os" import { malloc, free, memcpy, memset, mmap, munmap, mprotect }
+from "std/platform" import {
+    getcontext, makecontext, swapcontext,
+    uctxSize, uctxStackPtrOffset, uctxStackSizeOffset, uctxLinkOffset,
+    protRead, protWrite, protNone, mapPrivate, mapAnon
+}
+from "std/event" import { EventLoop, eventLoopNew, eventPoll, eventRegisterRead, eventRegisterWrite, eventDeregister, eventLoopClose }
+
+// ── constants ──
+
+fn taskReady(): i32 { return 0 }
+fn taskRunning(): i32 { return 1 }
+fn taskWaitingIo(): i32 { return 2 }
+fn taskDone(): i32 { return 3 }
+fn defaultStackSize(): i64 { return 65536 }
+fn guardPageSize(): i64 { return 4096 }
+fn taskStructSize(): i64 { return 48 }
+fn schedStructSize(): i64 { return 48 }
+
+// task field offsets
+fn tCtx(): i64 { return 0 }
+fn tStack(): i64 { return 8 }
+fn tStackSize(): i64 { return 16 }
+fn tState(): i64 { return 24 }
+fn tWaitFd(): i64 { return 28 }
+fn tWaitWrite(): i64 { return 32 }
+fn tNext(): i64 { return 40 }
+
+// scheduler field offsets
+fn sCtx(): i64 { return 0 }
+fn sRunHead(): i64 { return 8 }
+fn sRunTail(): i64 { return 16 }
+fn sCurrent(): i64 { return 24 }
+fn sNumTasks(): i64 { return 32 }
+fn sElFd(): i64 { return 40 }
+// waiting list head (tasks blocked on I/O)
+fn sWaitHead(): i64 { return 48 }
+
+// scheduler total: 56 bytes
+//  40: eventLoopFd (i32)  44: pad(4)  48: waitHead (*u8)
+
+// ── helpers to read/write i64, i32, ptr at offset ──
+
+fn _rtReadI64(base: *u8, off: i64): i64 {
+    unsafe {
+        let addr = (base as i64 + off) as *i64
+        return *addr
+    }
+}
+
+fn _rtWriteI64(base: *u8, off: i64, val: i64): void {
+    unsafe { memcpy((base as i64 + off) as *u8, (&val) as *u8, 8) }
+}
+
+fn _rtReadI32(base: *u8, off: i64): i32 {
+    unsafe {
+        let addr = (base as i64 + off) as *i32
+        return *addr
+    }
+}
+
+fn _rtWriteI32(base: *u8, off: i64, val: i32): void {
+    unsafe { memcpy((base as i64 + off) as *u8, (&val) as *u8, 4) }
+}
+
+fn _rtReadPtr(base: *u8, off: i64): *u8 {
+    unsafe {
+        let addr = (base as i64 + off) as *i64
+        let val = *addr
+        return val as *u8
+    }
+}
+
+fn _rtWritePtr(base: *u8, off: i64, val: *u8): void {
+    unsafe { memcpy((base as i64 + off) as *u8, (&val) as *u8, 8) }
+}
+
+// ── task handle ──
+
+struct TaskHandle {
+    _ptr: *u8,
+}
+
+// ── scheduler access ──
+
+fn _getSched(): *u8 {
+    unsafe { return _schedulerGet() }
+}
+
+fn _setSched(s: *u8): void {
+    unsafe { _schedulerSet(s) }
+}
+
+fn schedulerEnsureInit(): void {
+    unsafe {
+        if _getSched() as i64 != 0 { return }
+
+        let sched = malloc(56)
+        memset(sched, 0, 56)
+
+        let ctx = malloc(uctxSize())
+        memset(ctx, 0, uctxSize())
+        getcontext(ctx)
+        _rtWritePtr(sched, sCtx(), ctx)
+
+        let el = eventLoopNew()!
+        _rtWriteI32(sched, sElFd(), el.kqfd)
+
+        _setSched(sched)
+    }
+}
+
+// ── task entry trampoline ──
+
+fn _taskEntry(fnHi: i32, fnLo: i32, envHi: i32, envLo: i32): void {
+    unsafe {
+        // reassemble 64-bit pointers from hi/lo 32-bit halves
+        let fnAddr = ((fnHi as i64) * 4294967296) + (fnLo as i64)
+        let envAddr = ((envHi as i64) * 4294967296) + (envLo as i64)
+        _callClosureVoid(fnAddr as *u8, envAddr as *u8)
+
+        // mark task done and return to scheduler
+        let sched = _getSched()
+        let task = _rtReadPtr(sched, sCurrent())
+        _rtWriteI32(task, tState(), taskDone())
+        swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    }
+}
+
+// ── public API ──
+
+fn greenSpawn(f: () => void): TaskHandle {
+    unsafe {
+        schedulerEnsureInit()
+        let sched = _getSched()
+
+        // extract fn and env pointers from closure pair { ptr, ptr }
+        var fnPtr: *u8 = 0 as *u8
+        var envPtr: *u8 = 0 as *u8
+        memcpy((&fnPtr) as *u8, (&f) as *u8, 8)
+        memcpy((&envPtr) as *u8, ((&f) as i64 + 8) as *u8, 8)
+
+        // allocate task
+        let task = malloc(taskStructSize())
+        memset(task, 0, taskStructSize())
+        _rtWriteI32(task, tWaitFd(), -1)
+
+        // allocate stack (guard page added after makecontext)
+        let total = guardPageSize() + defaultStackSize()
+        let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
+        _rtWritePtr(task, tStack(), stackMem)
+        _rtWriteI64(task, tStackSize(), total)
+
+        // setup ucontext — point ss_sp at full region, after makecontext we'll add guard
+        let ctx = malloc(uctxSize())
+        memset(ctx, 0, uctxSize())
+        getcontext(ctx)
+
+        let usable = (stackMem as i64 + guardPageSize()) as *u8
+        _rtWritePtr(ctx, uctxStackPtrOffset(), usable)
+        _rtWriteI64(ctx, uctxStackSizeOffset(), defaultStackSize())
+
+        // set uc_link to scheduler context (fallback return point)
+        let schedCtx = _rtReadPtr(sched, sCtx())
+        _rtWritePtr(ctx, uctxLinkOffset(), schedCtx)
+
+        // split pointers for makecontext (takes int args only)
+        let fnA = fnPtr as i64
+        let envA = envPtr as i64
+        makecontext(ctx, _taskEntry as *u8, 4,
+            (fnA / 4294967296) as i32, (fnA % 4294967296) as i32,
+            (envA / 4294967296) as i32, (envA % 4294967296) as i32)
+
+        // guard page must be set AFTER makecontext (it bzeros the stack region)
+        mprotect(stackMem, guardPageSize(), protNone())
+
+        _rtWritePtr(task, tCtx(), ctx)
+
+        // enqueue to run queue
+        _enqueueRun(sched, task)
+
+        // increment numTasks
+        let n = _rtReadI64(sched, sNumTasks()) + 1
+        _rtWriteI64(sched, sNumTasks(), n)
+
+        return TaskHandle { _ptr: task }
+    }
+}
+
+fn schedulerYield(): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+        let task = _rtReadPtr(sched, sCurrent())
+        if task as i64 == 0 { return }
+        _rtWriteI32(task, tState(), taskReady())
+        swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    }
+}
+
+fn schedulerWaitRead(fd: i32): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+        let task = _rtReadPtr(sched, sCurrent())
+        if task as i64 == 0 { return }
+
+        _rtWriteI32(task, tState(), taskWaitingIo())
+        _rtWriteI32(task, tWaitFd(), fd)
+
+        // register with event loop
+        var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+        eventRegisterRead(el, fd)
+
+        // move task to waiting list
+        _enqueueWait(sched, task)
+
+        swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    }
+}
+
+fn schedulerWaitWrite(fd: i32): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+        let task = _rtReadPtr(sched, sCurrent())
+        if task as i64 == 0 { return }
+
+        _rtWriteI32(task, tState(), taskWaitingIo())
+        _rtWriteI32(task, tWaitFd(), fd)
+        // mark as write-wait so deregister uses correct filter
+        var one: u8 = 1
+        unsafe { memcpy((task as i64 + tWaitWrite()) as *u8, (&one) as *u8, 1) }
+
+        var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+        eventRegisterWrite(el, fd)
+        _enqueueWait(sched, task)
+
+        swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    }
+}
+
+fn schedulerCurrent(): *u8 {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return 0 as *u8 }
+        return _rtReadPtr(sched, sCurrent())
+    }
+}
+
+// ── internal queue ops ──
+
+fn _enqueueRun(sched: *u8, task: *u8): void {
+    unsafe {
+        _rtWritePtr(task, tNext(), 0 as *u8)
+        let head = _rtReadPtr(sched, sRunHead())
+        if head as i64 == 0 {
+            _rtWritePtr(sched, sRunHead(), task)
+            _rtWritePtr(sched, sRunTail(), task)
+        } else {
+            let tail = _rtReadPtr(sched, sRunTail())
+            _rtWritePtr(tail, tNext(), task)
+            _rtWritePtr(sched, sRunTail(), task)
+        }
+    }
+}
+
+fn _dequeueRun(sched: *u8): *u8 {
+    unsafe {
+        let head = _rtReadPtr(sched, sRunHead())
+        if head as i64 == 0 { return 0 as *u8 }
+        let next = _rtReadPtr(head, tNext())
+        _rtWritePtr(sched, sRunHead(), next)
+        if next as i64 == 0 {
+            _rtWritePtr(sched, sRunTail(), 0 as *u8)
+        }
+        _rtWritePtr(head, tNext(), 0 as *u8)
+        return head
+    }
+}
+
+fn _enqueueWait(sched: *u8, task: *u8): void {
+    unsafe {
+        let head = _rtReadPtr(sched, sWaitHead())
+        _rtWritePtr(task, tNext(), head)
+        _rtWritePtr(sched, sWaitHead(), task)
+    }
+}
+
+// wake waiting tasks whose fd is in the ready set
+fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
+    unsafe {
+        var prev: *u8 = 0 as *u8
+        var cur = _rtReadPtr(sched, sWaitHead())
+
+        while cur as i64 != 0 {
+            let next = _rtReadPtr(cur, tNext())
+            let waitFd = _rtReadI32(cur, tWaitFd())
+
+            var woken = false
+            var i = 0
+            while i < count {
+                if readyFds[i as i64] == waitFd {
+                    woken = true
+                }
+                i = i + 1
+            }
+
+            if woken {
+                // deregister from event loop using correct filter
+                var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+                var isWrite: u8 = 0
+                memcpy((&isWrite) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
+                eventDeregister(el, waitFd, isWrite != 0)
+                // reset waitWrite flag
+                var zero: u8 = 0
+                memcpy((cur as i64 + tWaitWrite()) as *u8, (&zero) as *u8, 1)
+
+                // remove from waiting list
+                if prev as i64 == 0 {
+                    _rtWritePtr(sched, sWaitHead(), next)
+                } else {
+                    _rtWritePtr(prev, tNext(), next)
+                }
+
+                // move to run queue
+                _rtWriteI32(cur, tState(), taskReady())
+                _rtWriteI32(cur, tWaitFd(), -1)
+                _enqueueRun(sched, cur)
+            } else {
+                prev = cur
+            }
+
+            cur = next
+        }
+    }
+}
+
+// ── scheduler drain — called at end of main ──
+
+fn _schedulerDrain(): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+
+        while _rtReadI64(sched, sNumTasks()) > 0 {
+            // run all ready tasks
+            var task = _dequeueRun(sched)
+            while task as i64 != 0 {
+                _rtWriteI32(task, tState(), taskRunning())
+                _rtWritePtr(sched, sCurrent(), task)
+
+                swapcontext(_rtReadPtr(sched, sCtx()), _rtReadPtr(task, tCtx()))
+
+                // back from task
+                let state = _rtReadI32(task, tState())
+                if state == taskDone() {
+                    munmap(_rtReadPtr(task, tStack()), _rtReadI64(task, tStackSize()))
+                    free(_rtReadPtr(task, tCtx()))
+                    free(task)
+                    _rtWriteI64(sched, sNumTasks(), _rtReadI64(sched, sNumTasks()) - 1)
+                } else if state == taskReady() {
+                    _enqueueRun(sched, task)
+                }
+                // WAITING_IO tasks are on the wait list already
+
+                task = _dequeueRun(sched)
+            }
+
+            // clear current
+            _rtWritePtr(sched, sCurrent(), 0 as *u8)
+
+            if _rtReadI64(sched, sNumTasks()) == 0 { break }
+
+            // poll event loop
+            var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+            var readyBuf: [u8 ; 256] = [0 ; 256]
+            let n = eventPoll(el, readyBuf as *i32, 64, 100)
+            if n > 0 {
+                _wakeReadyTasks(sched, readyBuf as *i32, n)
+            }
+        }
+
+        // cleanup
+        free(_rtReadPtr(sched, sCtx()))
+        var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+        eventLoopClose(el)
+        free(sched)
+        _setSched(0 as *u8)
+    }
+}

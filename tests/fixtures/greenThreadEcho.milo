@@ -1,0 +1,145 @@
+// @expect: server ready
+// @expect: done
+// @expect: client 1 connected
+// @expect: client 2 connected
+// @expect: echo: hello from 1
+// @expect: echo: hello from 2
+
+from "std/os" import { socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe }
+from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
+from "std/event" import { setNonblocking }
+from "std/runtime" import { greenSpawn, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent }
+
+fn greenRead(fd: i32, buf: &[u8 ; 4096], size: i64): i64 {
+    unsafe {
+        while true {
+            let n = read(fd, buf, size)
+            if n < 0 && getErrno() == eagain() {
+                schedulerWaitRead(fd)
+                continue
+            }
+            return n
+        }
+    }
+    return -1 as i64
+}
+
+fn greenWrite(fd: i32, data: &string): i64 {
+    unsafe {
+        while true {
+            let n = write(fd, data, data.len)
+            if n < 0 && getErrno() == eagain() {
+                schedulerWaitWrite(fd)
+                continue
+            }
+            return n
+        }
+    }
+    return -1 as i64
+}
+
+fn main(): i32 {
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+
+    unsafe {
+        let serverFd = socket(AF_INET, SOCK_STREAM, 0)
+        var one: i32 = 1
+        setsockopt(serverFd, solSocket(), soReuseaddr(), one, 4)
+        var addr = makeSockaddr(0 as u16, 0)
+        bind(serverFd, addr, 16)
+        listen(serverFd, 128)
+
+        var boundAddr = makeZeroedSockaddr()
+        var boundLen: u32 = 16
+        getsockname(serverFd, boundAddr, boundLen)
+        let port = ntohs(boundAddr.sinPort)
+
+        setNonblocking(serverFd)
+        print("server ready")
+
+        // spawn server accept loop
+        greenSpawn(move (): void => {
+            var handled = 0
+            while handled < 2 {
+                var clientAddr = makeZeroedSockaddr()
+                var addrlen: u32 = 16
+                let clientFd = accept(serverFd, clientAddr, addrlen)
+                if clientFd < 0 {
+                    if getErrno() == eagain() {
+                        schedulerWaitRead(serverFd)
+                        continue
+                    }
+                    continue
+                }
+                setNonblocking(clientFd)
+                let fd = clientFd
+                greenSpawn(move (): void => {
+                    var buf: [u8 ; 4096] = [0 ; 4096]
+                    let n = greenRead(fd, buf, 4096)
+                    if n > 0 {
+                        var msg: string = ""
+                        var i: i64 = 0
+                        while i < n {
+                            msg.push(buf[i])
+                            i = i + 1
+                        }
+                        let resp = "echo: " + msg
+                        greenWrite(fd, resp)
+                    }
+                    close(fd)
+                })
+                handled = handled + 1
+            }
+            close(serverFd)
+        })
+
+        // spawn two clients
+        greenSpawn(move (): void => {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            var addr2 = makeSockaddr(port, 16777343)
+            connect(fd, addr2, 16)
+            setNonblocking(fd)
+            print("client 1 connected")
+            let msg: string = "hello from 1"
+            greenWrite(fd, msg)
+            var buf: [u8 ; 4096] = [0 ; 4096]
+            let n = greenRead(fd, buf, 4096)
+            if n > 0 {
+                var resp: string = ""
+                var i: i64 = 0
+                while i < n {
+                    resp.push(buf[i])
+                    i = i + 1
+                }
+                print(resp)
+            }
+            close(fd)
+        })
+
+        greenSpawn(move (): void => {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            var addr3 = makeSockaddr(port, 16777343)
+            connect(fd, addr3, 16)
+            setNonblocking(fd)
+            print("client 2 connected")
+            let msg: string = "hello from 2"
+            greenWrite(fd, msg)
+            var buf: [u8 ; 4096] = [0 ; 4096]
+            let n = greenRead(fd, buf, 4096)
+            if n > 0 {
+                var resp: string = ""
+                var i: i64 = 0
+                while i < n {
+                    resp.push(buf[i])
+                    i = i + 1
+                }
+                print(resp)
+            }
+            close(fd)
+        })
+    }
+
+    print("done")
+    return 0
+}

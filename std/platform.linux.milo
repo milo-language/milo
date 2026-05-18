@@ -136,6 +136,7 @@ fn swapcontext(oucp: *u8, ucp: *u8): i32
 fn uctxSize(): i64 { return 936 }
 fn uctxStackPtrOffset(): i64 { return 296 }
 fn uctxStackSizeOffset(): i64 { return 304 }
+fn uctxLinkOffset(): i64 { return 8 }
 
 // ── mmap constants ──
 
