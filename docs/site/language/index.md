@@ -371,27 +371,27 @@ Both models are compile-time safe. The compiler checks that any data you send ac
 Threads communicate through channels — typed message queues that are safe to share across threads:
 
 ```milo
-from "std/thread" import { Thread, threadJoin }
-from "std/sync" import { channelNew, channelSend, channelRecv, channelDestroy }
+from "std/thread" import { Thread }
+from "std/sync" import { Channel }
 
 fn main(): i32 {
-    let ch = channelNew(8)!
+    let ch = Channel.new(8)!
 
     let producer = Thread.spawn(move (): void => {
         for i in 1..6 {
-            channelSend(ch, i as i64)!
+            ch.send(i as i64)!
         }
-        channelSend(ch, 0)!
+        ch.send(0)!
     })!
 
     while true {
-        let val = channelRecv(ch)!
+        let val = ch.recv()!
         if val == 0 { break }
         print($"received: {val}")
     }
 
-    threadJoin(producer)!
-    channelDestroy(ch)
+    producer.join()!
+    ch.destroy()
     return 0
 }
 ```
@@ -401,12 +401,12 @@ fn main(): i32 {
 Green threads are cheap to spawn (64KB stack vs ~8MB for an OS thread) and fast to switch between (nanoseconds vs microseconds). You can run tens of thousands concurrently:
 
 ```milo
-from "std/runtime" import { greenSpawn }
+from "std/runtime" import { GreenThread }
 
 fn main(): i32 {
     for i in 0..1000 {
         let id = i as i64
-        greenSpawn(move (): void => {
+        GreenThread.spawn(move (): void => {
             print($"task {id}")
         })
     }

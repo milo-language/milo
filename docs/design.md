@@ -170,7 +170,7 @@ Two layers: OS threads for CPU-bound parallelism, green threads for high-concurr
 
 - **`spawn()`** — OS thread with move closure. Compiler enforces Send on all captures.
 - **`parallel { let a = ...; let b = ... }`** — structured concurrency block. Runs N expressions on N threads, joins all before continuing. Bindings scoped to parent.
-- **Channels** — bounded FIFO (`channelSend`/`channelRecv`), plus non-blocking `channelTrySend`/`channelTryRecv`.
+- **Channels** — bounded FIFO (`ch.send()`/`ch.recv()`), plus non-blocking `ch.trySend()`/`ch.tryRecv()`.
 - **Mutex** — pthread-based, with `withLock` closure helper.
 - **RwLock** — multiple readers OR one writer, with `withReadLock`/`withWriteLock`.
 - **Atomics** — `AtomicI64`, `AtomicBool` backed by LLVM `atomicrmw`/`cmpxchg`/`load atomic`/`store atomic` (seq_cst).
@@ -180,10 +180,10 @@ Two layers: OS threads for CPU-bound parallelism, green threads for high-concurr
 
 Stackful coroutines via `ucontext` with cooperative scheduling. Each green thread gets a 64KB stack (with guard page) instead of an 8MB OS thread stack — can run 10K+ concurrently.
 
-- **`greenSpawn(f)`** — spawn a green thread. Returns `TaskHandle`.
+- **`GreenThread.spawn(f)`** — spawn a green thread. Returns `TaskHandle`.
 - **`schedulerYield()`** — cooperatively yield to other green threads.
 - **`schedulerWaitRead(fd)` / `schedulerWaitWrite(fd)`** — yield until fd is ready (kqueue on macOS, epoll on Linux).
-- **Transparent async I/O** — `tcpRecv`/`tcpSend` detect green thread context, automatically set non-blocking and yield on EAGAIN. User code reads the same whether in OS thread or green thread.
+- **Transparent async I/O** — `stream.recv()`/`stream.send()` detect green thread context, automatically set non-blocking and yield on EAGAIN. User code reads the same whether in OS thread or green thread.
 - **Implicit drain** — compiler injects `_schedulerDrain()` at end of main when program uses green threads. No manual event loop.
 
 Design: same `read()` call works in both OS threads and green threads. No `async`/`await` keywords, no `Future` types. I/O functions check `schedulerCurrent()` at runtime to decide between blocking and yielding.
