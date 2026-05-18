@@ -537,6 +537,13 @@ class LowerCtx {
           if (expr.method === "all") {
             return { kind: "VecAll", vec: this.lowerExpr(expr.object), callback: this.lowerExpr(expr.args[0]), elementType: objType.element, type, span: expr.span };
           }
+          if (expr.method === "join") {
+            const args: HIRArg[] = [
+              { expr: this.lowerExpr(expr.object), passByRef: true, refMut: false },
+              { expr: this.lowerExpr(expr.args[0]), passByRef: true, refMut: false },
+            ];
+            return { kind: "Call", func: "vecJoin", args, type, variadic: false, span: expr.span };
+          }
           if (expr.method === "len") {
             return { kind: "VecLen", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
@@ -584,7 +591,7 @@ class LowerCtx {
           // methods delegated to std/string runtime functions
           const strMethodMap: Record<string, string> = {
             "contains": "strContains", "startsWith": "strStartsWith", "endsWith": "strEndsWith",
-            "indexOf": "strIndexOf", "split": "strSplit", "trim": "strTrim",
+            "indexOf": "strIndexOf", "lastIndexOf": "strLastIndexOf", "split": "strSplit", "trim": "strTrim",
             "trimStart": "strTrimStart", "trimEnd": "strTrimEnd",
             "toLower": "strToLower", "toUpper": "strToUpper",
             "replace": "strReplace", "repeat": "strRepeat",

@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: Milo
-  text: "Rust's safety. Go's simplicity."
-  tagline: "A native systems language with ownership, green threads, and zero lifetime annotations. Within 5% of C. Concurrency without async/await."
+  text: "Memory-safe. Native. Simple."
+  tagline: "A compiled systems language with automatic memory management and no lifetime annotations."
   actions:
     - theme: brand
       text: Get Started
@@ -11,40 +11,48 @@ hero:
     - theme: alt
       text: Learn the Language
       link: /language/
-
-features:
-  - title: No Lifetime Annotations. Ever.
-    details: "Rust's biggest learning cliff, gone. The compiler tracks ownership and frees memory for you. If you can write Go or TypeScript, you can write Milo."
-  - title: Faster Than Go
-    details: "Compiles to native code via LLVM. Beats C on some benchmarks, within 5% on the rest. Sub-millisecond startup."
-  - title: Concurrency That Just Works
-    details: "Write normal blocking code. It automatically runs concurrently in a green thread. No async, no await, no rewiring your entire codebase."
-  - title: Safe By Default
-    details: "The compiler catches memory bugs, null errors, data races, and integer overflow — all before your code runs. Five safety guarantees, zero runtime cost."
 ---
 
-### Familiar syntax, serious guarantees
+<div class="pillars-colored">
+  <div class="color-item">
+    <h2 class="ch-blue">100% memory-safe. Proven at compile time.</h2>
+    <p>No null pointers. No dangling references. No data races. No buffer overflows. All caught before your code ever runs.</p>
+  </div>
+  <div class="color-item">
+    <h2 class="ch-green">No lifetime annotations. Ever.</h2>
+    <p>One ownership rule: references can't escape the function they're passed to. That's it.</p>
+  </div>
+  <div class="color-item">
+    <h2 class="ch-purple">Native speed. Tiny binaries.</h2>
+    <p>Compiles to native code via LLVM. Sub-millisecond startup. Binaries under 300KB.</p>
+  </div>
+  <div class="color-item">
+    <h2 class="ch-orange">Learn it in a weekend.</h2>
+    <p>If you've written any typed language, you already know most of Milo. And so does your AI.</p>
+  </div>
+</div>
+
+<div class="section-break"></div>
+
+### If you know Go or TypeScript, you know Milo
 
 ```milo
 fn main(): i32 {
     let names: Vec<string> = ["alice", "bob"]
-
     let loud = names.map((n: &string) => n.toUpper())
-    for name in loud {
-        print(name)
-    }
-
+    print(loud.join(", "))
     return 0
-}   // names and loud freed here — no GC, no manual free
+}
 ```
 
-### The safety you want without the syntax you don't
+No garbage collector. No manual memory management. The compiler tracks ownership and frees everything automatically.
+
+### Simple syntax, guaranteed memory safety
 
 ```milo
-fn processLine(line: &string): void {
-    let method = line[0..3]       // zero-copy — no allocation
-    let path = line[4..line.len]
-    print(method, " -> ", path)
+fn printExtension(filename: &string): void {
+    let dot = filename.lastIndexOf(".")
+    print(filename[dot + 1..filename.len])   // zero-copy slice
 }
 ```
 
@@ -53,31 +61,19 @@ fn processLine(line: &string): void {
 ### Real programs
 
 ```milo
-from "std/http" import { Context, Response, Router, serveRouter }
+from "std/http" import { Context, Router, serveRouter }
 
 fn main(): i32 {
     var r: Router = Router.new()
     r.get("/", (ctx: &mut Context) => ctx.html("<h1>Hello!</h1>"))
     r.get("/users/:id", (ctx: &mut Context) => {
         let id = ctx.param("id")
-        return ctx.json($"\{\"id\": \"{id}\"}")
+        return ctx.text(id)
     })
     serveRouter(8080, r)
     return 0
 }
 ```
 
-Router, path params, string interpolation — a web server in 10 lines. No framework, no dependencies. This is the standard library.
+Router, path params, green threads — a web server in 10 lines. No framework, no dependencies. This is the standard library.
 
-### Where Milo fits
-
-<div class="comparison-table">
-
-|  | GC | Lifetimes | Ownership | Native | No async/await |
-|---|---|---|---|---|---|
-| Go | yes | no | no | yes | no |
-| Rust | no | yes | yes | yes | no |
-| Zig | no | no | no | yes | no |
-| **Milo** | **no** | **no** | **yes** | **yes** | **yes** |
-
-</div>

@@ -85,6 +85,34 @@ fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64 {
     return notFound
 }
 
+// Find last occurrence of needle. Returns -1 if not found.
+
+fn strLastIndexOf(haystack: &string, needle: &string): i64 {
+    var notFound: i64 = 0
+    notFound = notFound - 1
+    if needle.len == 0 {
+        return haystack.len
+    }
+    if needle.len > haystack.len {
+        return notFound
+    }
+    var i: i64 = haystack.len - needle.len
+    while i >= 0 as i64 {
+        var j: i64 = 0
+        while j < needle.len {
+            if haystack[i + j] != needle[j] {
+                break
+            }
+            j = j + 1
+        }
+        if j == needle.len {
+            return i
+        }
+        i = i - 1
+    }
+    return notFound
+}
+
 // Check if string starts with prefix.
 
 fn strStartsWith(s: &string, prefix: &string): bool {
@@ -371,4 +399,17 @@ fn trim(s: &string): string {
         end = end - 1
     }
     return s.substr(start, end)
+}
+
+fn vecJoin(parts: &Vec<string>, sep: &string): string {
+    var result: string = ""
+    var i: i64 = 0
+    while i < parts.len {
+        if i > 0 {
+            result = result + sep
+        }
+        result = result + parts[i]
+        i = i + 1
+    }
+    return result
 }

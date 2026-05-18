@@ -280,7 +280,8 @@ s.split(",")        // Vec<string>: ["Hello", " World!"]
 s.contains("World") // true
 s.startsWith("He")  // true
 s.endsWith("!")     // true
-s.indexOf("World")  // 7
+s.indexOf("World")      // 7
+s.lastIndexOf("l")      // 10
 s.replace("World", "Milo")  // "Hello, Milo!"
 s.substr(0, 5)      // "Hello" (owned copy)
 ```
@@ -496,6 +497,20 @@ var names: Vec<string> = Vec.new()
 names.push("Alice")
 names.push("Bob")
 print(names[0])
+```
+
+### Functional methods
+
+```milo
+let nums: Vec<i32> = [1, 2, 3, 4, 5]
+let doubled = nums.map((n: &i32) => n * 2)       // [2, 4, 6, 8, 10]
+let evens = nums.filter((n: &i32) => n % 2 == 0)  // [2, 4]
+let hasNeg = nums.any((n: &i32) => n < 0)          // false
+let allPos = nums.all((n: &i32) => n > 0)          // true
+nums.each((n: &i32) => print("%d", n))             // side effects
+
+let words: Vec<string> = ["hello", "world"]
+print(words.join(", "))                             // "hello, world"
 ```
 
 ---

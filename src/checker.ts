@@ -2976,6 +2976,13 @@ export class TypeChecker {
             this.checkExprWithHint(expr.args[0], cbHint);
             return this.setType(expr, { tag: "bool" });
           }
+          if (expr.method === "join") {
+            if (expr.args.length !== 1) { this.error(`'join' expects 1 argument (separator)`, sp); return this.setType(expr, { tag: "unknown" }); }
+            if (objType.element.tag !== "string") { this.error(`'join' is only available on Vec<string>`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const sepType = this.checkExpr(expr.args[0]);
+            if (sepType.tag !== "string" && sepType.tag !== "unknown") { this.error(`'join' separator must be a string, got ${typeName(sepType)}`, sp); }
+            return this.setType(expr, { tag: "string" });
+          }
           if (expr.method === "len") {
             if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
@@ -3099,10 +3106,10 @@ export class TypeChecker {
             if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "bool" });
           }
-          if (expr.method === "indexOf") {
-            if (expr.args.length !== 1) { this.error(`'indexOf' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "int", bits: 64, signed: true }); }
+          if (expr.method === "indexOf" || expr.method === "lastIndexOf") {
+            if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "int", bits: 64, signed: true }); }
             const argType = this.checkExpr(expr.args[0]);
-            if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'indexOf': expected string, got ${typeName(argType)}`, sp);
+            if (argType.tag !== "string" && argType.tag !== "unknown") this.error(`'${expr.method}': expected string, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
           }
           if (expr.method === "split") {
