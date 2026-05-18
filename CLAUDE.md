@@ -67,5 +67,5 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 
 - `std/` — Milo-language standard library (`.milo` files: io, fs, net, http, json, argparse, arena, …). Auto-discovered via `import "std/<name>"`.
 - `examples/cli-tools/` and `examples/apps/` — runnable Milo programs; treat as integration smoke tests for stdlib changes.
-- `docs/language-guide.md`, `docs/grammar.ebnf`, `docs/design.md`, `docs/roadmap.md` — authoritative refs. Check `roadmap.md` before proposing new language features.
+- `docs/language-reference.md`, `docs/grammar.ebnf`, `docs/design.md`, `docs/roadmap.md` — authoritative refs. Check `roadmap.md` before proposing new language features.
 - `editors/vscode/` — LSP client; server entry is `src/lsp.ts` invoked via `bun run src/main.ts lsp`.

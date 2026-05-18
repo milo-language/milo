@@ -43,7 +43,7 @@ export default defineConfig({
         {
           text: 'Language',
           items: [
-            { text: 'Overview', link: '/language/' },
+            { text: 'Language Overview', link: '/language/' },
             { text: 'Variables & Types', link: '/language/variables' },
             { text: 'Functions', link: '/language/functions' },
             { text: 'Structs', link: '/language/structs' },

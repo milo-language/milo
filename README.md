@@ -84,7 +84,7 @@ bun test
 
 ## Learn more
 
-**[Language Guide](docs/language-guide.md)** — types, ownership, error handling, closures, concurrency, FFI, stdlib
+**[Language Reference](docs/language-reference.md)** — types, ownership, error handling, closures, concurrency, FFI, stdlib
 
 **[Design Doc](docs/design.md)** — why Milo makes the tradeoffs it does
 

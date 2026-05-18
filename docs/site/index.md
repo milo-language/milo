@@ -9,7 +9,7 @@ hero:
       text: Get Started
       link: /getting-started/installation
     - theme: alt
-      text: Learn the Language
+      text: Language Overview
       link: /language/
 ---
 
@@ -75,5 +75,5 @@ fn main(): i32 {
 }
 ```
 
-Router, path params, green threads — a web server in 10 lines. No framework, no dependencies. This is the standard library.
+Router, path params, closures — a web server in 10 lines. No framework, no dependencies. This is the standard library.
 
