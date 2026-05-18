@@ -283,7 +283,9 @@ s.endsWith("!")     // true
 s.indexOf("World")      // 7
 s.lastIndexOf("l")      // 10
 s.replace("World", "Milo")  // "Hello, Milo!"
-s.substr(0, 5)      // "Hello" (owned copy)
+s.padStart(15, " ")     // "  Hello, World!"
+s.padEnd(15, ".")       // "Hello, World!.."
+s.substr(0, 5)          // "Hello" (owned copy)
 ```
 
 ### String Utility Functions (std/string)

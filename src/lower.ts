@@ -595,6 +595,7 @@ class LowerCtx {
             "trimStart": "strTrimStart", "trimEnd": "strTrimEnd",
             "toLower": "strToLower", "toUpper": "strToUpper",
             "replace": "strReplace", "repeat": "strRepeat",
+            "padStart": "strPadStart", "padEnd": "strPadEnd",
           };
           const fnName = strMethodMap[expr.method];
           if (fnName) {
@@ -602,8 +603,8 @@ class LowerCtx {
               { expr: this.lowerExpr(expr.object), passByRef: true, refMut: false },
               ...expr.args.map(a => ({ expr: this.lowerExpr(a), passByRef: true, refMut: false })),
             ];
-            // repeat takes i64 by value, not by ref
-            if (expr.method === "repeat" && args.length > 1) {
+            // repeat/padStart/padEnd take i64 by value, not by ref
+            if ((expr.method === "repeat" || expr.method === "padStart" || expr.method === "padEnd") && args.length > 1) {
               args[1] = { ...args[1], passByRef: false };
             }
             return { kind: "Call", func: fnName, args, type, variadic: false, span: expr.span };

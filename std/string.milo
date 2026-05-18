@@ -278,6 +278,44 @@ fn strRepeat(s: &string, n: i64): string {
     return result
 }
 
+// Pad start of string to targetLen using padStr (cycles if shorter than needed).
+
+fn strPadStart(s: &string, targetLen: i64, padStr: &string): string {
+    if s.len >= targetLen || padStr.len == 0 {
+        return s.clone()
+    }
+    var padding: string = ""
+    var needed: i64 = targetLen - s.len
+    while padding.len < needed {
+        var i: i64 = 0
+        while i < padStr.len && padding.len < needed {
+            padding.push(padStr[i])
+            i = i + 1
+        }
+    }
+    return padding + s
+}
+
+// Pad end of string to targetLen using padStr (cycles if shorter than needed).
+
+fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string {
+    if s.len >= targetLen || padStr.len == 0 {
+        return s.clone()
+    }
+    var result: string = s.clone()
+    var needed: i64 = targetLen - s.len
+    var added: i64 = 0
+    while added < needed {
+        var i: i64 = 0
+        while i < padStr.len && added < needed {
+            result.push(padStr[i])
+            i = i + 1
+            added = added + 1
+        }
+    }
+    return result
+}
+
 // Replace all occurrences of old with newVal.
 
 fn strReplace(s: &string, old: &string, newVal: &string): string {

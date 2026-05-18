@@ -3136,6 +3136,14 @@ export class TypeChecker {
             if (argType.tag !== "int" && argType.tag !== "unknown") this.error(`'repeat': expected integer, got ${typeName(argType)}`, sp);
             return this.setType(expr, { tag: "string" });
           }
+          if (expr.method === "padStart" || expr.method === "padEnd") {
+            if (expr.args.length !== 2) { this.error(`'${expr.method}' expects 2 arguments (targetLen, padStr), got ${expr.args.length}`, sp); return this.setType(expr, { tag: "string" }); }
+            const lenType = this.checkExpr(expr.args[0]);
+            const padType = this.checkExpr(expr.args[1]);
+            if (lenType.tag !== "int" && lenType.tag !== "unknown") this.error(`'${expr.method}' arg 1: expected integer, got ${typeName(lenType)}`, sp);
+            if (padType.tag !== "string" && padType.tag !== "unknown") this.error(`'${expr.method}' arg 2: expected string, got ${typeName(padType)}`, sp);
+            return this.setType(expr, { tag: "string" });
+          }
           if (expr.method === "len") {
             if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
