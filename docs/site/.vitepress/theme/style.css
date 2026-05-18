@@ -189,6 +189,61 @@
   border-top: 1px solid var(--vp-c-divider);
 }
 
+/* CTA section */
+.cta-section {
+  max-width: 720px;
+  margin: 0 auto 2rem;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.cta-section h3 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+}
+
+.cta-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.cta-primary {
+  display: inline-block;
+  padding: 0.75rem 2rem;
+  background: var(--vp-c-brand-1);
+  color: #fff !important;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 1rem;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.cta-primary:hover {
+  background: var(--vp-c-brand-3);
+  text-decoration: none;
+}
+
+.cta-secondary {
+  display: inline-block;
+  padding: 0.75rem 2rem;
+  border: 1px solid var(--vp-c-divider);
+  color: var(--vp-c-text-1) !important;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 1rem;
+  text-decoration: none;
+  transition: border-color 0.2s;
+}
+
+.cta-secondary:hover {
+  border-color: var(--vp-c-brand-1);
+  text-decoration: none;
+}
+
 /* playground: fill viewport, no padding */
 .VPDoc:has(.playground) .content-container {
   max-width: 100% !important;

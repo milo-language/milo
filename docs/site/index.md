@@ -77,3 +77,17 @@ fn main(): i32 {
 
 Router, path params, closures — a web server in 10 lines. No framework, no dependencies. This is the standard library.
 
+<div class="section-break"></div>
+
+<div class="cta-section">
+
+### Ready to try Milo?
+
+<div class="cta-buttons">
+  <a class="cta-primary" href="/milo/getting-started/installation">Get Started</a>
+  <a class="cta-secondary" href="/milo/roadmap">Roadmap</a>
+  <a class="cta-secondary" href="https://github.com/cs01/milo">GitHub</a>
+</div>
+
+</div>
+

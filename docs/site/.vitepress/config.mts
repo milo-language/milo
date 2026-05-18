@@ -28,6 +28,7 @@ export default defineConfig({
       { text: 'Standard Library', link: '/stdlib/' },
       { text: 'Playground', link: '/playground' },
       { text: 'Benchmarks', link: '/benchmarks' },
+      { text: 'Roadmap', link: '/roadmap' },
     ],
 
     sidebar: {
@@ -178,6 +179,7 @@ export default defineConfig({
             { text: 'Examples', link: '/examples' },
             { text: 'Benchmarks', link: '/benchmarks' },
             { text: 'Quick Reference', link: '/reference' },
+            { text: 'Roadmap', link: '/roadmap' },
           ]
         },
       ],
