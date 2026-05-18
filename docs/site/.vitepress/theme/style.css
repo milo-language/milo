@@ -74,6 +74,121 @@
   color: var(--vp-c-text-1);
 }
 
+/* OPTION 1: Big numbers */
+.pillars-numbers {
+  max-width: 800px;
+  margin: 0 auto 3rem;
+  padding: 0 24px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2rem;
+}
+
+.num-card {
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.num {
+  font-family: var(--vp-font-family-mono);
+  font-size: 4rem;
+  font-weight: 800;
+  line-height: 1;
+  margin-bottom: 0.5rem;
+}
+
+.num.blue { color: #4a7fff; }
+.num.green { color: #34d058; }
+.num.purple { color: #a855f7; }
+.num.orange { color: #f59e0b; }
+
+.num-label {
+  font-size: 1.1rem;
+  color: var(--vp-c-text-2);
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .pillars-numbers {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* OPTION 2: Colored headings */
+.pillars-colored {
+  max-width: 720px;
+  margin: 0 auto 3rem;
+  padding: 0 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 2.5rem;
+}
+
+.color-item h2 {
+  margin: 0 0 0.4rem;
+  padding: 0;
+  border: none;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.color-item p {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--vp-c-text-2);
+  line-height: 1.6;
+}
+
+.ch-blue { color: #4a7fff; }
+.ch-green { color: #34d058; }
+.ch-purple { color: #a855f7; }
+.ch-orange { color: #f59e0b; }
+
+/* OPTION 3: Full-width bands */
+.pillars-bands {
+  margin: 0 auto 3rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.band {
+  padding: 2.5rem 24px;
+  max-width: 100vw;
+}
+
+.band h2 {
+  max-width: 720px;
+  margin: 0 auto 0.5rem;
+  padding: 0;
+  border: none;
+  font-size: 1.8rem;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.3;
+}
+
+.band p {
+  max-width: 720px;
+  margin: 0 auto;
+  font-size: 1.05rem;
+  color: rgba(255,255,255,0.75);
+  line-height: 1.6;
+}
+
+.band-blue { background: linear-gradient(135deg, rgba(74,127,255,0.15) 0%, rgba(74,127,255,0.05) 100%); }
+.band-green { background: linear-gradient(135deg, rgba(52,208,88,0.15) 0%, rgba(52,208,88,0.05) 100%); }
+.band-purple { background: linear-gradient(135deg, rgba(168,85,247,0.15) 0%, rgba(168,85,247,0.05) 100%); }
+.band-orange { background: linear-gradient(135deg, rgba(245,158,11,0.15) 0%, rgba(245,158,11,0.05) 100%); }
+
+.section-break {
+  max-width: 720px;
+  margin: 0 auto 2rem;
+  padding: 0 24px;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
 /* playground: fill viewport, no padding */
 .VPDoc:has(.playground) .content-container {
   max-width: 100% !important;

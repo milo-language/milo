@@ -54,6 +54,7 @@ export default defineConfig({
             { text: 'Strings', link: '/language/strings' },
             { text: 'Traits', link: '/language/traits' },
             { text: 'Closures', link: '/language/closures' },
+            { text: 'Concurrency', link: '/language/concurrency' },
             { text: 'Warnings & Errors', link: '/language/warnings-and-errors' },
             { text: 'Modules', link: '/language/modules' },
             { text: 'C FFI', link: '/language/ffi' },
@@ -126,6 +127,8 @@ export default defineConfig({
               items: [
                 { text: 'std/thread', link: '/stdlib/thread' },
                 { text: 'std/sync', link: '/stdlib/sync' },
+                { text: 'std/runtime', link: '/stdlib/runtime' },
+                { text: 'std/event', link: '/stdlib/event' },
               ]
             },
             {
