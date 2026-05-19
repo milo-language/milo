@@ -1,0 +1,352 @@
+// rg — ripgrep-lite: regex-powered recursive search
+
+from "std/argparse" import { newParser }
+from "std/io" import { readFile }
+from "std/fs" import { isDir, isFile, readDir }
+from "std/path" import { pathJoin, pathExt }
+from "std/regex" import { Regex, RegexMatch, regexNewFlags, regexFindAll }
+from "std/color" import { red, green, magenta, bold }
+
+// ── helpers ──
+
+fn shouldSkipDir(name: &string): bool {
+    if name == ".git" { return true }
+    if name == ".hg" { return true }
+    if name == ".svn" { return true }
+    if name == "node_modules" { return true }
+    if name == "target" { return true }
+    if name == "build" { return true }
+    if name == "dist" { return true }
+    if name == "__pycache__" { return true }
+    if name == ".cache" { return true }
+    return false
+}
+
+fn matchesType(path: &string, fileType: &string): bool {
+    if fileType.len == 0 { return true }
+    let ext = pathExt(path)
+    if ext.len == 0 { return false }
+    return ext == "." + fileType
+}
+
+fn isWordChar(ch: u8): bool {
+    return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90) || (ch >= 48 && ch <= 57) || ch == 95
+}
+
+// ── options ──
+
+struct RgOpts {
+    countOnly: bool,
+    filesOnly: bool,
+    invert: bool,
+    wordBound: bool,
+    noColor: bool,
+    noLineNum: bool,
+    noHeading: bool,
+    searchHidden: bool,
+    maxCount: i64,
+    afterCtx: i64,
+    beforeCtx: i64,
+    fileType: string,
+    totalMatches: i64,
+    needsSeparator: bool,
+}
+
+// ── match helpers ──
+
+fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
+    var result: Vec<RegexMatch> = Vec.new()
+    var i: i64 = 0
+    while i < matches.len {
+        var ok = true
+        if matches[i].start > 0 {
+            if isWordChar(line[matches[i].start - 1]) {
+                ok = false
+            }
+        }
+        if ok && matches[i].end < line.len {
+            if isWordChar(line[matches[i].end]) {
+                ok = false
+            }
+        }
+        if ok {
+            result.push(RegexMatch { start: matches[i].start, end: matches[i].end })
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn getMatches(re: &mut Regex, line: &string, wordBound: bool): Vec<RegexMatch> {
+    if wordBound {
+        return filterWordBounds(line, regexFindAll(re, line))
+    }
+    return regexFindAll(re, line)
+}
+
+fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): string {
+    if noColor || matches.len == 0 {
+        return line.clone()
+    }
+    var result: string = ""
+    var pos: i64 = 0
+    var i: i64 = 0
+    while i < matches.len {
+        if matches[i].start > pos {
+            result = result + line.substr(pos, matches[i].start)
+        }
+        let m = line.substr(matches[i].start, matches[i].end)
+        result = result + bold(red(m))
+        pos = matches[i].end
+        i = i + 1
+    }
+    if pos < line.len {
+        result = result + line.substr(pos, line.len)
+    }
+    return result
+}
+
+// ── output formatting ──
+
+fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &string,
+              multiFile: bool, opts: &RgOpts): string {
+    var out: string = ""
+    if multiFile && opts.noHeading {
+        if opts.noColor {
+            out = out + filePath
+        } else {
+            out = out + magenta(filePath)
+        }
+        out = out + ":"
+    }
+    if !opts.noLineNum {
+        let num = (lineNum + 1).toString()
+        if opts.noColor {
+            out = out + num
+        } else {
+            out = out + green(num)
+        }
+        if isMatch {
+            out = out + ":"
+        } else {
+            out = out + "-"
+        }
+    }
+    out = out + content
+    return out
+}
+
+// ── file search ──
+
+fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: bool): void {
+    if !matchesType(filePath, opts.fileType) {
+        return
+    }
+
+    var content: string = ""
+    match readFile(filePath) {
+        Result.Ok(data) => { content = data }
+        Result.Err(_) => { return }
+    }
+
+    let lines = content.split("\n")
+    var numLines = lines.len
+    if numLines > 0 && lines[numLines - 1].len == 0 {
+        numLines = numLines - 1
+    }
+
+    var matchCount: i64 = 0
+    var lastPrinted: i64 = -1 as i64
+    var afterRemaining: i64 = 0
+    var headerPrinted: bool = false
+
+    var i: i64 = 0
+    while i < numLines {
+        let matches = getMatches(re, lines[i], opts.wordBound)
+        var isMatch = matches.len > 0
+        if opts.invert {
+            isMatch = matches.len == 0
+        }
+
+        if isMatch {
+            matchCount = matchCount + 1
+
+            if !opts.countOnly && !opts.filesOnly {
+                // file header for grouped output
+                if !headerPrinted && multiFile && !opts.noHeading {
+                    if opts.needsSeparator {
+                        print("")
+                    }
+                    if opts.noColor {
+                        print(filePath)
+                    } else {
+                        print(magenta(filePath))
+                    }
+                    headerPrinted = true
+                    opts.needsSeparator = true
+                }
+
+                // before-context lines
+                var ctxStart: i64 = i - opts.beforeCtx
+                if ctxStart < 0 { ctxStart = 0 }
+                if ctxStart <= lastPrinted { ctxStart = lastPrinted + 1 }
+
+                if lastPrinted >= 0 && ctxStart > lastPrinted + 1 {
+                    print("--")
+                }
+
+                var j: i64 = ctxStart
+                while j < i {
+                    print(formatLine(lines[j], j, false, filePath, multiFile, opts))
+                    j = j + 1
+                }
+
+                // match line with highlighting
+                let hl = highlightLine(lines[i], matches, opts.noColor || opts.invert)
+                print(formatLine(hl, i, true, filePath, multiFile, opts))
+                lastPrinted = i
+                afterRemaining = opts.afterCtx
+            }
+
+            if opts.maxCount > 0 && matchCount >= opts.maxCount {
+                break
+            }
+        } else if afterRemaining > 0 {
+            print(formatLine(lines[i], i, false, filePath, multiFile, opts))
+            lastPrinted = i
+            afterRemaining = afterRemaining - 1
+        }
+
+        i = i + 1
+    }
+
+    if opts.countOnly && matchCount > 0 {
+        if multiFile {
+            print($"{filePath}:{matchCount}")
+        } else {
+            print(matchCount)
+        }
+    }
+
+    if opts.filesOnly && matchCount > 0 {
+        print(filePath)
+    }
+
+    opts.totalMatches = opts.totalMatches + matchCount
+}
+
+// ── directory search ──
+
+fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): void {
+    let entries = readDir(dirPath)
+    var i: i64 = 0
+    while i < entries.len {
+        let name = entries[i].name.clone()
+        let entryIsDir = entries[i].isDir
+        let entryIsFile = entries[i].isFile
+
+        if !opts.searchHidden && name.len > 0 && name[0] == 46 {
+            i = i + 1
+            continue
+        }
+
+        let fullPath = pathJoin(dirPath, name)
+        if entryIsDir {
+            if !shouldSkipDir(name) {
+                searchDir(fullPath, re, opts)
+            }
+        } else if entryIsFile {
+            searchFile(fullPath, re, opts, true)
+        }
+        i = i + 1
+    }
+}
+
+fn searchPath(path: &string, re: &mut Regex, opts: &mut RgOpts): void {
+    if isDir(path) {
+        searchDir(path, re, opts)
+    } else if isFile(path) {
+        searchFile(path, re, opts, false)
+    } else {
+        print($"rg: {path}: no such file or directory")
+    }
+}
+
+// ── main ──
+
+fn main(): i32 {
+    var parser = newParser("rg", "ripgrep-lite: regex-powered recursive search")
+    parser.addPositional("pattern", "regex pattern to search for")
+    parser.addOptionalPositional("path", "file or directory (default: .)")
+    parser.addBool("ignore-case", "i", "case-insensitive search")
+    parser.addBool("count", "c", "only print count of matches per file")
+    parser.addBool("files-with-matches", "l", "only print filenames that match")
+    parser.addBool("invert-match", "v", "select non-matching lines")
+    parser.addBool("word-regexp", "w", "match whole words only")
+    parser.addBool("no-color", "p", "disable colored output")
+    parser.addBool("no-line-number", "N", "hide line numbers")
+    parser.addBool("no-heading", "g", "grep-style output (no file grouping)")
+    parser.addBool("hidden", "H", "search hidden files and directories")
+    parser.addString("after-context", "A", "lines to show after match", "0")
+    parser.addString("before-context", "B", "lines to show before match", "0")
+    parser.addString("context", "C", "lines to show before and after match", "0")
+    parser.addString("max-count", "m", "max matches per file", "0")
+    parser.addString("type", "t", "filter by file extension (e.g. milo)", "")
+    let args = parser.parse()
+
+    let pattern = args.getString("pattern")
+    let ignoreCase = args.getBool("ignore-case")
+
+    // REG_EXTENDED=1, REG_ICASE=2
+    var flags: i32 = 1
+    if ignoreCase {
+        flags = 3
+    }
+
+    var re = Regex { _preg: [0 ; 128], _valid: false }
+    match regexNewFlags(pattern.clone(), flags) {
+        Option.Some(r) => { re = r }
+        Option.None => {
+            print($"rg: invalid regex: {pattern}")
+            return 2
+        }
+    }
+
+    // -C sets both; -A/-B override if non-zero
+    let ctxVal = args.getI64("context")
+    let afterVal = args.getI64("after-context")
+    let beforeVal = args.getI64("before-context")
+    var afterCtx: i64 = ctxVal
+    var beforeCtx: i64 = ctxVal
+    if afterVal > 0 { afterCtx = afterVal }
+    if beforeVal > 0 { beforeCtx = beforeVal }
+
+    var opts = RgOpts {
+        countOnly: args.getBool("count"),
+        filesOnly: args.getBool("files-with-matches"),
+        invert: args.getBool("invert-match"),
+        wordBound: args.getBool("word-regexp"),
+        noColor: args.getBool("no-color"),
+        noLineNum: args.getBool("no-line-number"),
+        noHeading: args.getBool("no-heading"),
+        searchHidden: args.getBool("hidden"),
+        maxCount: args.getI64("max-count"),
+        afterCtx: afterCtx,
+        beforeCtx: beforeCtx,
+        fileType: args.getString("type"),
+        totalMatches: 0,
+        needsSeparator: false,
+    }
+
+    var target = args.getString("path")
+    if target.len == 0 {
+        target = "."
+    }
+
+    searchPath(target, re, opts)
+
+    if opts.totalMatches == 0 {
+        return 1
+    }
+    return 0
+}

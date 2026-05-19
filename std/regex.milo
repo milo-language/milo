@@ -20,20 +20,26 @@ struct Regex {
     _valid: bool,
 }
 
-// Compile a POSIX extended regular expression. Returns None on invalid pattern.
+// Compile a POSIX extended regex with explicit cflags. REG_EXTENDED=1, REG_ICASE=2.
 
-fn regexNew(pattern: string): Option<Regex> {
+fn regexNewFlags(pattern: string, cflags: i32): Option<Regex> {
     var r = Regex {
         _preg: [0 ; 128], _valid: false
     }
     unsafe {
-        let rc = regcomp(r._preg, pattern, 1)
+        let rc = regcomp(r._preg, pattern, cflags)
         if rc != 0 {
             return Option.None
         }
     }
     r._valid = true
     return Option.Some(r)
+}
+
+// Compile a POSIX extended regular expression. Returns None on invalid pattern.
+
+fn regexNew(pattern: string): Option<Regex> {
+    return regexNewFlags(pattern, 1)
 }
 
 fn _readMatchI64(buf: &[u8 ; 160], off: i64): i64 {
