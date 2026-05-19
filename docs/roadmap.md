@@ -84,6 +84,8 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 Runtime pressure from `node-milo` changes the order here: binary data and FFI safety land before more expressive abstractions.
 
+- [ ] **CStr / fromCStr** — safe wrapper for NUL-terminated C strings (`*u8`). `CStr.from(ptr): CStr` + `.toString(): String` + safe indexed access with bounds checking against the NUL terminator. Eliminates raw pointer arithmetic in FFI code — currently every `node-milo` binding uses `unsafe` just to read C strings (e.g. `_isDotEntry` byte checks, `env.milo` manual copy loops).
+- [ ] **Unused import warnings** — compiler should warn (or error) on imported symbols that are never used in the module. Currently `main.milo` imports all binding symbols just so they link, but ideally re-exports or `pub` declarations in binding modules would handle this without polluting the import list.
 - [ ] **Borrowed slices / byte views** — `&[T]` / `&mut [T]`, with slicing generalized beyond `string`. Unblocks offset/length I/O, `Buffer`/`ArrayBuffer` interop, and zero-copy protocol parsing.
 - [ ] **Opaque foreign handle types** — `extern type sqlite3`, `extern type SSL`, `extern type NmRuntime` instead of raw `*u8`. Keeps FFI zero-cost while preventing handle mixups.
 - [ ] **C ABI / layout control** — `repr(c)`, packed structs, `sizeof`, `offsetof`, `extern struct`. Needed for `epoll_event`, `kevent`, `stat`, `addrinfo`, V8 glue, and other platform/FFI structs.
