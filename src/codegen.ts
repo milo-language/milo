@@ -86,13 +86,13 @@ export class Codegen {
       case "float":  return t.bits === 32 ? "float" : "double";
       case "bool":   return "i1";
       case "void":   return "void";
-      case "string": return "%String";
+      case "string": this.hasStringType = true; return "%String";
       case "ptr":    return "ptr";
       case "heap":
         if (t.inner.tag === "interface") return "{ ptr, ptr }";
         return "ptr";
-      case "vec":    return "%Vec";
-      case "hashmap": return "%HashMap";
+      case "vec":    this.hasVecType = true; return "%Vec";
+      case "hashmap": this.hasHashMapType = true; return "%HashMap";
       case "ref":
         if (t.inner.tag === "interface") return "{ ptr, ptr }";
         return "ptr";
@@ -2318,6 +2318,11 @@ export class Codegen {
         const innerTy = this.llvmType(expr.type);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${innerTy}, ptr ${ptrVal}`);
+        // Zero the heap slot after loading to prevent double-free: the loaded
+        // value now owns any inner heap pointers, so the source must not drop them.
+        if (expr.kind === "HeapDeref" && this.needsDropCg(expr.type)) {
+          lines.push(`  store ${innerTy} zeroinitializer, ptr ${ptrVal}`);
+        }
         return [lines, val, innerTy];
       }
       case "VecNew": {
