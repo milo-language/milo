@@ -60,12 +60,52 @@ function compileToIr(sourcePath: string, outputPath: string | null, target: Targ
   }
 }
 
+// detect whether clang is available; if not, fall back to llc+cc two-step pipeline
+type Toolchain = { kind: "clang" } | { kind: "llc+cc" };
+let cachedToolchain: Toolchain | null = null;
+function detectToolchain(): Toolchain {
+  if (cachedToolchain) return cachedToolchain;
+  try {
+    execSync("clang --version", { stdio: ["pipe", "pipe", "pipe"] });
+    cachedToolchain = { kind: "clang" };
+  } catch {
+    try {
+      execSync("llc --version", { stdio: ["pipe", "pipe", "pipe"] });
+      execSync("cc --version", { stdio: ["pipe", "pipe", "pipe"] });
+      cachedToolchain = { kind: "llc+cc" };
+    } catch {
+      throw new Error("no C compiler found: need either 'clang' or 'llc'+'cc' on PATH");
+    }
+  }
+  return cachedToolchain;
+}
+
+function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "") {
+  const tc = detectToolchain();
+  if (tc.kind === "clang") {
+    const opt = optFlag ? ` ${optFlag}` : "";
+    execSync(`clang${opt} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+  } else {
+    const tmpObj = llFile.replace(/\.ll$/, ".o");
+    const opt = optFlag || "-O2";
+    try {
+      execSync(`llc -filetype=obj ${opt} ${llFile} -o ${tmpObj}`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`cc ${tmpObj} -o ${outFile}${libs}${extra} -lm`, { stdio: ["pipe", "pipe", "pipe"] });
+    } finally {
+      try { unlinkSync(tmpObj); } catch {}
+    }
+  }
+}
+
 function detectLibs(ir: string, target: TargetInfo): string {
   let libs = "";
   if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
     libs += target.os === "darwin"
       ? " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
       : " -lssl -lcrypto";
+  }
+  if (!libs.includes("-lcrypto") && (ir.includes("@SHA256") || ir.includes("@MD5"))) {
+    libs += " -lcrypto";
   }
   if (ir.includes("@sqlite3_")) {
     libs += target.os === "darwin"
@@ -86,12 +126,11 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 
   try {
     writeFileSync(tmpLl, ir);
-    const opt = optFlag ? ` ${optFlag}` : "";
-    let libs = detectLibs(ir, target);
+    const libs = detectLibs(ir, target);
     const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
-    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+    linkIR(tmpLl, out, optFlag, libs, extra);
   } catch (e: any) {
-    console.error(`error[link]: clang failed:\n${e.stderr?.toString() ?? e.message}`);
+    console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
   } finally {
     try { unlinkSync(tmpLl); } catch {}
@@ -107,11 +146,10 @@ function compileSourceToBinary(source: string, sourcePath: string, target: Targe
   const tmpLl = join(tmpdir(), `milo_${id}.ll`);
   try {
     writeFileSync(tmpLl, ir);
-    const opt = optFlag ? ` ${optFlag}` : "";
     const libs = detectLibs(ir, target);
-    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}`, { stdio: ["pipe", "pipe", "pipe"] });
+    linkIR(tmpLl, out, optFlag, libs);
   } catch (e: any) {
-    throw new Error(`clang failed:\n${e.stderr?.toString() ?? e.message}`);
+    throw new Error(`compilation failed:\n${e.stderr?.toString() ?? e.message}`);
   } finally {
     try { unlinkSync(tmpLl); } catch {}
   }

@@ -111,6 +111,14 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
     }
 }
 
+fn eventLoopFromFd(fd: i32): EventLoop {
+    return EventLoop { kqfd: fd }
+}
+
+fn eventLoopFd(el: &EventLoop): i32 {
+    return el.kqfd
+}
+
 fn eventLoopClose(el: &EventLoop): void {
     unsafe {
         close(el.kqfd)

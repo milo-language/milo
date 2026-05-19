@@ -15,7 +15,7 @@ from "std/platform" import {
     uctxSize, uctxStackPtrOffset, uctxStackSizeOffset, uctxLinkOffset,
     protRead, protWrite, protNone, mapPrivate, mapAnon
 }
-from "std/event" import { EventLoop, eventLoopNew, eventPoll, eventRegisterRead, eventRegisterWrite, eventDeregister, eventLoopClose }
+from "std/event" import { EventLoop, eventLoopNew, eventLoopFromFd, eventLoopFd, eventPoll, eventRegisterRead, eventRegisterWrite, eventDeregister, eventLoopClose }
 from "std/sync" import { Channel }
 
 // ── constants ──
@@ -118,7 +118,7 @@ fn schedulerEnsureInit(): void {
         _rtWritePtr(sched, sCtx(), ctx)
 
         let el = eventLoopNew()!
-        _rtWriteI32(sched, sElFd(), el.kqfd)
+        _rtWriteI32(sched, sElFd(), eventLoopFd(el))
 
         _setSched(sched)
     }
@@ -294,7 +294,7 @@ fn schedulerWaitRead(fd: i32): void {
         _rtWriteI32(task, tWaitFd(), fd)
 
         // register with event loop
-        var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+        var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
         eventRegisterRead(el, fd)
 
         // move task to waiting list
@@ -317,7 +317,7 @@ fn schedulerWaitWrite(fd: i32): void {
         var one: u8 = 1
         unsafe { memcpy((task as i64 + tWaitWrite()) as *u8, (&one) as *u8, 1) }
 
-        var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+        var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
         eventRegisterWrite(el, fd)
         _enqueueWait(sched, task)
 
@@ -393,7 +393,7 @@ fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
 
             if woken {
                 // deregister from event loop using correct filter
-                var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+                var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
                 var isWrite: u8 = 0
                 memcpy((&isWrite) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
                 eventDeregister(el, waitFd, isWrite != 0)
@@ -452,7 +452,7 @@ fn _schedulerTick(): void {
 
         // poll event loop
         if _rtReadI64(sched, sNumTasks()) > 0 {
-            var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+            var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
             var readyBuf: [u8 ; 256] = [0 ; 256]
             let n = eventPoll(el, readyBuf as *i32, 64, 100)
             if n > 0 {
@@ -499,7 +499,7 @@ fn _schedulerDrain(): void {
             if _rtReadI64(sched, sNumTasks()) == 0 { break }
 
             // poll event loop
-            var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+            var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
             var readyBuf: [u8 ; 256] = [0 ; 256]
             let n = eventPoll(el, readyBuf as *i32, 64, 100)
             if n > 0 {
@@ -509,7 +509,7 @@ fn _schedulerDrain(): void {
 
         // cleanup
         free(_rtReadPtr(sched, sCtx()))
-        var el = EventLoop { kqfd: _rtReadI32(sched, sElFd()) }
+        var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
         eventLoopClose(el)
         free(sched)
         _setSched(0 as *u8)

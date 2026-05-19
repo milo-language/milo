@@ -1,5 +1,7 @@
 // @expect: bind ok
 
+from "std/platform" import { SockAddrIn, makeSockaddr }
+
 extern
 
 fn socket(domain: i32, sockType: i32, protocol: i32): i32
@@ -8,23 +10,11 @@ extern
 
 fn close(fd: i32): i32
 
-extern
-
-fn htons(hostshort: u16): u16
-
 // bind takes &SockAddrIn — auto-borrow passes the pointer, matching C ABI
 
 extern
 
 fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
-
-struct SockAddrIn {
-    sinLen: u8,
-    sinFamily: u8,
-    sinPort: u16,
-    sinAddr: u32,
-    sinZero: [u8 ; 8],
-}
 
 fn main(): i32 {
     unsafe {
@@ -33,13 +23,7 @@ fn main(): i32 {
             print("socket failed")
             return 1
         }
-        var addr = SockAddrIn {
-            sinLen: 16,
-            sinFamily: 2,
-            sinPort: htons(0),
-            sinAddr: 0,
-            sinZero: [0, 0, 0, 0, 0, 0, 0, 0],
-        }
+        var addr = makeSockaddr(0, 0)
         let result = bind(fd, addr, 16)
         if result == 0 {
             print("bind ok")
@@ -50,4 +34,3 @@ fn main(): i32 {
     }
     return 0
 }
-

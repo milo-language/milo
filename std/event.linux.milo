@@ -55,7 +55,7 @@ fn eventRegisterWrite(el: &EventLoop, fd: i32): i32 {
     }
 }
 
-fn eventDeregister(el: &EventLoop, fd: i32, forWrite: bool): i32 {
+fn eventDeregister(el: &EventLoop, fd: i32, _forWrite: bool): i32 {
     unsafe {
         var ev: [u8 ; 12] = [0 ; 12]
         return epoll_ctl(el.epfd, epollCtlDel(), fd, ev as *u8)
@@ -87,6 +87,14 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
         free(evBuf)
         return n
     }
+}
+
+fn eventLoopFromFd(fd: i32): EventLoop {
+    return EventLoop { epfd: fd }
+}
+
+fn eventLoopFd(el: &EventLoop): i32 {
+    return el.epfd
 }
 
 fn eventLoopClose(el: &EventLoop): void {

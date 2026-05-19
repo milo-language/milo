@@ -1,8 +1,8 @@
 // @expect: server ready
 // @expect: done
 // @expect: client 1 connected
-// @expect: client 2 connected
 // @expect: echo: hello from 1
+// @expect: client 2 connected
 // @expect: echo: hello from 2
 
 from "std/os" import { socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe }
@@ -36,6 +36,32 @@ fn greenWrite(fd: i32, data: &string): i64 {
         }
     }
     return -1 as i64
+}
+
+fn doClient(port: u16, id: i32): void {
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    unsafe {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        var addr2 = makeSockaddr(port, 16777343)
+        connect(fd, addr2, 16)
+        setNonblocking(fd)
+        print("client ", id, " connected")
+        let msg = format("hello from ", id)
+        greenWrite(fd, msg)
+        var buf: [u8 ; 4096] = [0 ; 4096]
+        let n = greenRead(fd, buf, 4096)
+        if n > 0 {
+            var resp: string = ""
+            var i: i64 = 0
+            while i < n {
+                resp.push(buf[i])
+                i = i + 1
+            }
+            print(resp)
+        }
+        close(fd)
+    }
 }
 
 fn main(): i32 {
@@ -94,49 +120,10 @@ fn main(): i32 {
             close(serverFd)
         })
 
-        // spawn two clients
+        // run clients sequentially so output order is deterministic
         Task.spawn(move (): void => {
-            let fd = socket(AF_INET, SOCK_STREAM, 0)
-            var addr2 = makeSockaddr(port, 16777343)
-            connect(fd, addr2, 16)
-            setNonblocking(fd)
-            print("client 1 connected")
-            let msg: string = "hello from 1"
-            greenWrite(fd, msg)
-            var buf: [u8 ; 4096] = [0 ; 4096]
-            let n = greenRead(fd, buf, 4096)
-            if n > 0 {
-                var resp: string = ""
-                var i: i64 = 0
-                while i < n {
-                    resp.push(buf[i])
-                    i = i + 1
-                }
-                print(resp)
-            }
-            close(fd)
-        })
-
-        Task.spawn(move (): void => {
-            let fd = socket(AF_INET, SOCK_STREAM, 0)
-            var addr3 = makeSockaddr(port, 16777343)
-            connect(fd, addr3, 16)
-            setNonblocking(fd)
-            print("client 2 connected")
-            let msg: string = "hello from 2"
-            greenWrite(fd, msg)
-            var buf: [u8 ; 4096] = [0 ; 4096]
-            let n = greenRead(fd, buf, 4096)
-            if n > 0 {
-                var resp: string = ""
-                var i: i64 = 0
-                while i < n {
-                    resp.push(buf[i])
-                    i = i + 1
-                }
-                print(resp)
-            }
-            close(fd)
+            doClient(port, 1)
+            doClient(port, 2)
         })
     }
 
