@@ -75,7 +75,7 @@ function detectLibs(ir: string, target: TargetInfo): string {
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = []): string {
   const source = readFileSync(sourcePath, "utf-8");
   const debugOverflow = optFlag === "-O0";
   const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
@@ -88,7 +88,8 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     writeFileSync(tmpLl, ir);
     const opt = optFlag ? ` ${optFlag}` : "";
     let libs = detectLibs(ir, target);
-    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}`, { stdio: ["pipe", "pipe", "pipe"] });
+    const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
+    execSync(`clang${opt} ${tmpLl} -o ${out} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
   } catch (e: any) {
     console.error(`error[link]: clang failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
@@ -324,7 +325,7 @@ function main() {
   if (cmd === "run") {
     runFile(source!, rest, target, optFlag, warningConfig);
   } else if (cmd === "build") {
-    const bin = compileToBinary(source!, output, target, optFlag, warningConfig);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest);
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig, optFlag === "-O0");
