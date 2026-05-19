@@ -1,0 +1,242 @@
+// timeout — run a command with a time limit (GNU timeout for macOS)
+from "std/os" import { fork, waitpid, kill, exit, system }
+from "std/time" import { sleepMs, epochMillis }
+from "std/args" import { args }
+
+fn printHelp(): void {
+    print("Usage: timeout [OPTION] DURATION COMMAND [ARG]...")
+    print("Start COMMAND, and kill it if still running after DURATION.")
+    print("")
+    print("  -s, --signal SIG       signal to send on timeout (default: TERM)")
+    print("  -k, --kill-after DUR   also send KILL after DUR if still running")
+    print("      --preserve-status  exit with same status as COMMAND, even on timeout")
+    print("      --foreground       allow COMMAND to read from TTY and get TTY signals")
+    print("  -v, --verbose          diagnose to stderr any signal sent")
+    print("  -h, --help             display this help and exit")
+    print("      --version          output version information and exit")
+    print("")
+    print("DURATION is a number with optional suffix:")
+    print("'s' for seconds (default), 'm' for minutes, 'h' for hours.")
+    print("")
+    print("Exit status:")
+    print("  124  COMMAND timed out, and --preserve-status is not specified")
+    print("  125  timeout itself failed")
+    print("  126  COMMAND found but could not be invoked")
+    print("  127  COMMAND not found")
+}
+
+fn parseDuration(s: &string): i64 {
+    var num: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let ch = s[i]
+        if ch >= 48 && ch <= 57 {
+            num = num * 10 + (ch as i64 - 48)
+            i = i + 1
+        } else {
+            if ch == 115 { return num }
+            if ch == 109 { return num * 60 }
+            if ch == 104 { return num * 3600 }
+            return num
+        }
+    }
+    return num
+}
+
+fn parseSignal(s: &string): i32 {
+    if s == "TERM" || s == "SIGTERM" || s == "15" { return 15 }
+    if s == "KILL" || s == "SIGKILL" || s == "9" { return 9 }
+    if s == "INT" || s == "SIGINT" || s == "2" { return 2 }
+    if s == "HUP" || s == "SIGHUP" || s == "1" { return 1 }
+    if s == "QUIT" || s == "SIGQUIT" || s == "3" { return 3 }
+    if s == "ABRT" || s == "SIGABRT" || s == "6" { return 6 }
+    if s == "ALRM" || s == "SIGALRM" || s == "14" { return 14 }
+    if s == "USR1" || s == "SIGUSR1" { return 30 }
+    if s == "USR2" || s == "SIGUSR2" { return 31 }
+    var num: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let ch = s[i]
+        if ch >= 48 && ch <= 57 {
+            num = num * 10 + (ch as i64 - 48)
+            i = i + 1
+        } else {
+            return -1
+        }
+    }
+    if num > 0 && num < 32 { return num as i32 }
+    return -1
+}
+
+struct TimeoutOpts {
+    signal: i32,
+    killAfterMs: i64,
+    hasKillAfter: bool,
+    preserveStatus: bool,
+    verbose: bool,
+    cmdStart: i64,
+}
+
+// flag parsing in its own function to avoid codegen bug:
+// string clone + break in while loop + fork() in same function = SIGTRAP
+fn parseFlags(argv: &Vec<string>): TimeoutOpts {
+    var opts = TimeoutOpts {
+        signal: 15,
+        killAfterMs: 0,
+        hasKillAfter: false,
+        preserveStatus: false,
+        verbose: false,
+        cmdStart: 1,
+    }
+
+    while opts.cmdStart < argv.len {
+        let arg = argv[opts.cmdStart].clone()
+
+        if arg == "-h" || arg == "--help" {
+            printHelp()
+            unsafe { exit(0) }
+        }
+        if arg == "--version" {
+            print("timeout (milo) 1.0.0")
+            unsafe { exit(0) }
+        }
+        if arg == "-s" || arg == "--signal" {
+            opts.cmdStart = opts.cmdStart + 1
+            if opts.cmdStart >= argv.len {
+                print("error: --signal requires a value")
+                unsafe { exit(125) }
+            }
+            let sigStr = argv[opts.cmdStart].clone()
+            opts.signal = parseSignal(sigStr)
+            if opts.signal < 0 {
+                print($"error: unknown signal '{sigStr}'")
+                unsafe { exit(125) }
+            }
+            opts.cmdStart = opts.cmdStart + 1
+            continue
+        }
+        if arg == "-k" || arg == "--kill-after" {
+            opts.cmdStart = opts.cmdStart + 1
+            if opts.cmdStart >= argv.len {
+                print("error: --kill-after requires a value")
+                unsafe { exit(125) }
+            }
+            let kaStr = argv[opts.cmdStart].clone()
+            opts.killAfterMs = parseDuration(kaStr) * 1000
+            opts.hasKillAfter = true
+            opts.cmdStart = opts.cmdStart + 1
+            continue
+        }
+        if arg == "--preserve-status" {
+            opts.preserveStatus = true
+            opts.cmdStart = opts.cmdStart + 1
+            continue
+        }
+        if arg == "--foreground" {
+            opts.cmdStart = opts.cmdStart + 1
+            continue
+        }
+        if arg == "-v" || arg == "--verbose" {
+            opts.verbose = true
+            opts.cmdStart = opts.cmdStart + 1
+            continue
+        }
+        break
+    }
+
+    return opts
+}
+
+fn main(): i32 {
+    let argv = args()
+    let opts = parseFlags(argv)
+    let cmdStart = opts.cmdStart
+
+    if cmdStart + 1 >= argv.len {
+        printHelp()
+        return 125
+    }
+
+    let durStr = argv[cmdStart].clone()
+    let secs = parseDuration(durStr)
+    if secs <= 0 {
+        print("error: duration must be positive")
+        return 125
+    }
+    let cmdIdx = cmdStart + 1
+
+    var cmd: string = ""
+    var i: i64 = cmdIdx
+    while i < argv.len {
+        if i > cmdIdx { cmd = cmd + " " }
+        let arg = argv[i].clone()
+        cmd = cmd + "'"
+        var j: i64 = 0
+        while j < arg.len {
+            if arg[j] == 39 {
+                cmd = cmd + "'\\''"
+            } else {
+                var ch: string = ""
+                ch.push(arg[j])
+                cmd = cmd + ch
+            }
+            j = j + 1
+        }
+        cmd = cmd + "'"
+        i = i + 1
+    }
+
+    let deadlineMs = epochMillis() + secs * 1000
+
+    unsafe {
+        let pid = fork()
+        if pid < 0 {
+            print("error: fork failed")
+            return 125
+        }
+        if pid == 0 {
+            let code = system(cmd)
+            exit((code >> 8) & 255)
+        }
+
+        var status: [u8 ; 4] = [0 ; 4]
+        while epochMillis() < deadlineMs {
+            let r = waitpid(pid, status, 1)
+            if r > 0 {
+                let sig = status[0] as i32 & 127
+                if sig == 0 {
+                    return status[1] as i32
+                }
+                return 128 + sig
+            }
+            if r < 0 { return 125 }
+            sleepMs(50)
+        }
+
+        // timed out
+        if opts.verbose {
+            print($"timeout: sending signal {opts.signal} to pid {pid}")
+        }
+        kill(pid, opts.signal)
+
+        if opts.hasKillAfter {
+            sleepMs(opts.killAfterMs)
+            let r = waitpid(pid, status, 1)
+            if r == 0 {
+                if opts.verbose {
+                    print($"timeout: sending KILL to pid {pid}")
+                }
+                kill(pid, 9)
+                waitpid(pid, status, 0)
+            }
+        } else {
+            sleepMs(100)
+            waitpid(pid, status, 1)
+        }
+    }
+
+    if opts.preserveStatus {
+        return 128 + opts.signal
+    }
+    return 124
+}
