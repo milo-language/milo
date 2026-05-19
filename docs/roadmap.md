@@ -47,7 +47,7 @@ Memory: mem
 - **Formatter** (`milo-fmt`): context-sensitive formatting, LSP integration (written in Milo)
 - **Package manager** (`milo-pkg`): init, new, add, install, git-based cache with lockfile (written in Milo)
 - **Test framework**: `@expect:`/`@error:` annotations, `milo test` runner
-- **Example apps**: web servers (7), CLI tools (jq, grep, cat, wc, tree, calc, hex)
+- **Example apps**: web servers (7), CLI tools (jq, grep, rg, cat, wc, tree, calc, hex, timeout, fmt)
 - **GitHub Actions CI**: build + test on push/PR, release pipeline
 - **Playground**: browser-based compiler via JS backend (in progress)
 
@@ -81,6 +81,15 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 - [ ] Track success by Node compat %, shrinking C++ glue, and keeping `unsafe` contained to binding seams
 - [ ] **V8 C API wrapper — eliminate bridge/*.cpp entirely**. Currently `bridge/core.cpp`, `bridge/fs.cpp`, `bridge/timers.cpp` (1235 lines of C++) exist solely because V8 has no C API — every binding must extract V8 args and return V8 values through C++ types (`FunctionCallbackInfo<Value>&`, `HandleScope`, etc.). The fix: write a single `v8_c_api.cpp` that wraps V8's C++ API in `extern "C"` functions (`v8c_get_string_arg`, `v8c_return_int`, `v8c_throw_error`, etc.), then `declare` those in Milo and move all binding orchestration into `.milo` files. This collapses the three-layer architecture (JS → C++ glue → Milo) into two layers (JS → Milo via V8 C wrapper). For reference, even bun (which uses JSC's C API from Zig/Rust) still has 153K lines of C++ — our 1.2K line bridge is already thin, but eliminating it makes the codebase purely Milo + one mechanical C wrapper.
 
+### Safety Hardening
+
+See **[docs/safety-roadmap.md](safety-roadmap.md)** for the full plan. Summary:
+
+1. `unsafe` blocks — quarantine FFI and low-level code behind a grep target
+2. Flow-sensitive invalidation tracking — catch aliased mutation at compile time (ref-while-frozen, use-after-invalidate, arena scope tainting)
+3. Interprocedural exclusivity — reject aliasing `&var` + `&` at call sites, purity inference, arena lifetime scoping
+4. Dynamic fallback — debug ref counting and sanitizer mode for patterns static analysis can't reach
+5. Safety profiles — `default`, `strict` (aircraft-grade), `performance`
 ### Language
 
 Runtime pressure from `node-milo` changes the order here: binary data and FFI safety land before more expressive abstractions.
@@ -97,7 +106,6 @@ Runtime pressure from `node-milo` changes the order here: binary data and FFI sa
 - [ ] **Iterators** — iterator trait, `.map().filter().collect()` chains, lazy evaluation. Needs associated types.
 - [ ] **Error conversion** — `From` trait for automatic error conversion in `?`, `anyhow`-style boxing.
 - [ ] **Ranged integers L3** — branch narrowing: after `if x < 50`, x is known `(min..49)` in the then-branch.
-- [ ] **Safety profiles** — `--strict-ranges` (require ranged types on all integers), `--no-unwrap` (ban `!` — force exhaustive error handling). Aircraft-grade opt-in.
 - [ ] **MIR** — lower-level IR for optimization passes (post self-hosting)
 
 ### Tooling
@@ -107,3 +115,17 @@ Runtime pressure from `node-milo` changes the order here: binary data and FFI sa
 - [ ] **Cross-compilation** — `--target aarch64-linux` etc. (infrastructure exists in target.ts, needs CLI flag + sysroot handling)
 - [ ] **Benchmarking** — `@bench` annotations, `milo bench` runner
 - [ ] **Documentation / tutorials / "the book"**
+
+---
+
+## Known Bugs
+
+- [ ] **Codegen: `break` skips drop cleanup for loop-local owned values** — `codegen.ts:564`: `Break` emits a bare `br label %loopExit` with no drop glue for locals allocated inside the loop body (compare `Return` which calls `emitDropGlue`). Owned values (strings, vecs) allocated before `break` are never freed, corrupting the stack. Observable as SIGTRAP after `fork()` in the same function. `continue` (line 568) has the same issue. Workaround: move loop+break into a separate function. Repro: `while cond { let s = vec[i].clone(); break }` then `fork()` in same fn.
+- [ ] **Module-level `let` not supported outside std/** — `let X: i32 = 5` at module scope works in `std/*.milo` but produces "expected declaration" parse error in user code. Blocks defining constants without functions.
+- [ ] **No `string` → `*u8` cast** — `"literal" as *u8` and `myString as *u8` fail type checking. Implicit coercion works when passing `&string` to extern fns expecting `*u8`, but explicit casts are rejected. Matters for inline extern calls.
+
+## Missing Stdlib Bindings
+
+- [ ] **`execvp`** — needed for tools that exec subcommands with argument arrays (timeout, xargs, env). Currently must route through `system()` which double-forks through `/bin/sh`.
+- [ ] **`alarm` / `setitimer`** — enables signal-based timeouts without polling loops
+- [ ] **`setpgid` / `killpg`** — process group control for proper job management in tools like timeout

@@ -1,0 +1,188 @@
+# Safety Roadmap: Closing the Gaps
+
+Goal: match Rust's compile-time safety guarantees without Rust's complexity. Static analysis first — reject bad programs at compile time. Dynamic checks only as fallback for patterns static analysis genuinely can't reach. No lifetime annotations. No borrow checker. No annotation burden.
+
+Current state: Milo enforces memory safety (moves), null safety (Option), race safety (Send/Sync), overflow safety (compile-time + debug traps), coercion safety (no implicit casts). The gaps are aliased mutation, arena use-after-free, and no unsafe boundary.
+
+## Phase 1: `unsafe` Blocks
+
+**Status:** Not started
+**Complexity:** Low — keyword + scope rule
+**Impact:** High — auditability, not expressiveness
+
+Add `unsafe { }` blocks. The compiler enforces nothing extra inside — it's a grep target and code-review signal. FFI `extern` calls and raw arena internals must live inside `unsafe`.
+
+Rules:
+- `extern fn` declarations are implicitly unsafe — calling them requires `unsafe { }`
+- Functions can be marked `unsafe fn` — callers must wrap in `unsafe { }`
+- Lint: warn on `unsafe` outside `std/` (configurable)
+- `unsafe` blocks are visible in LSP (code lens, hover)
+- `--deny-unsafe` flag rejects any `unsafe` in user code (aircraft-grade opt-in)
+
+This is the single highest-leverage change. Quarantines danger behind a clear marker.
+
+## Phase 2: Flow-Sensitive Invalidation Tracking
+
+**Status:** Not started
+**Complexity:** Medium — extends existing move checker
+**Impact:** High — catches most aliasing bugs without annotations
+
+### 2a: Ref-While-Frozen
+
+If a `&T` or `&var` ref exists into a collection, the collection is frozen — mutation is a compile error until the ref goes out of scope.
+
+```
+var items: Vec<string> = Vec.new()
+items.push("hello")
+let r: &string = &items[0]
+items.push("world")   // COMPILE ERROR: items is frozen while r is live
+print(r)
+```
+
+Scope: intraprocedural (single function body). Same dataflow framework as the move checker. Track which variables are "borrowed from" and reject mutation of those variables while borrows are live.
+
+### 2b: Use-After-Invalidate
+
+Detect use of a ref/index after the source was potentially modified. Covers `.clear()`, `.push()` (may realloc), reassignment, and any method marked `@invalidates_refs`.
+
+```
+var items: Vec<string> = Vec.new()
+let r: &string = &items[0]
+items.clear()          // invalidates all refs into items
+print(r)               // COMPILE ERROR: r invalidated by items.clear()
+```
+
+This reuses the move checker's "tainted variable" infrastructure. A ref becomes tainted when its source is mutated, same way a variable becomes tainted after a move.
+
+### 2c: Arena Scope Tainting
+
+After `arena.clear()` or `arena.destroy()`, any handle derived from that arena is tainted on that control-flow path.
+
+```
+var a: Arena<Node> = Arena.new()
+let handle = a.alloc(Node { value: 42 })
+a.clear()              // invalidates all handles from a
+a.get(handle)          // COMPILE ERROR: handle invalidated by a.clear()
+```
+
+Same dataflow machinery. Handles are tracked like refs — the arena is the "source."
+
+### Phase 2 scope decisions
+
+- Intraprocedural only (single function body) — no interprocedural alias analysis
+- Method annotations (`@invalidates_refs`, `@borrows_from(self)`) mark which operations invalidate which refs
+- Standard library annotated first; user types opt in
+- False negatives are acceptable (dynamic checks catch the rest); false positives are not (don't reject correct code)
+
+## Phase 3: Interprocedural Static Analysis
+
+**Status:** Not started
+**Complexity:** High — requires call graph analysis
+**Impact:** Closes the remaining static gaps without annotations
+
+### 3a: Exclusivity at Call Sites
+
+When a function receives both `&T` (read ref) and `&var T` (write ref) that alias the same source, reject at compile time. No annotation needed — the compiler sees both arguments at the call site.
+
+```
+fn update(items: &var Vec<string>, first: &string) {
+    items.push("boom")   // would invalidate first
+}
+
+var items = Vec.new()
+items.push("hello")
+update(&var items, &items[0])  // COMPILE ERROR: items passed as both &var and & source
+```
+
+Rule: at any call site, a variable cannot appear as both a `&var` argument and the source of a `&` argument. Simple check — no interprocedural dataflow needed, just argument origin tracking at the call site.
+
+### 3b: Purity Inference for Safe Overlap
+
+Phase 3a is conservative — it rejects `fn read(items: &Vec<string>, first: &string)` even though `read` can't mutate. Purity inference relaxes this: if a function only takes `&T` params (no `&var`), it's provably safe to pass overlapping refs.
+
+For `&var` params, infer whether the function actually mutates the collection (vs just reading through it). If proven non-mutating, allow the overlap.
+
+### 3c: Arena Lifetime Scoping
+
+Static rule: an arena handle cannot outlive the scope in which the arena is accessible. If the arena is passed to a function that could `.clear()` it, handles from before the call are invalidated.
+
+```
+fn resetArena(a: &var Arena<Node>) {
+    a.clear()
+}
+
+var a = Arena.new()
+let h = a.alloc(Node { value: 42 })
+resetArena(&var a)     // a passed as &var — could mutate
+a.get(h)               // COMPILE ERROR: h invalidated (a passed as &var after h created)
+```
+
+Conservative rule: any `&var Arena<T>` call invalidates all handles derived from that arena before the call. Sound, no annotations, some false positives (the function might not clear). Users can restructure to create handles after the call.
+
+## Phase 4: Dynamic Safety (Fallback Layer)
+
+**Status:** Partially done (generational indices exist for arenas)
+**Complexity:** Medium — codegen changes, zero-cost in release
+**Impact:** Catches the long tail that static analysis can't reach
+
+Dynamic checks are the fallback, not the strategy. They exist for patterns where static analysis would need annotations to prove safety (callbacks, trait objects, deeply indirect mutation). The goal is to shrink this category over time via better static analysis.
+
+### 4a: Debug Ref Counting
+
+When a `&T` is live, bump a refcount on the source. If the source mutates while refcount > 0, panic with a clear diagnostic. Strip entirely in release builds.
+
+```
+// Aliasing through a trait object — static analysis can't see the concrete type
+fn processAny(handler: &dyn Handler, items: &var Vec<string>) {
+    handler.handle(items)   // does handle() read items? mutate? static can't know
+}
+
+var items = Vec.new()
+let r = &items[0]
+processAny(handler, &var items)  // DEBUG PANIC if handler mutates while r is live
+```
+
+Implementation: codegen emits refcount inc/dec around ref creation/destruction. Source objects get a hidden `_borrow_count: u32` field in debug builds. Mutation paths check `_borrow_count == 0`.
+
+### 4b: Generational Index Hardening
+
+Already implemented for arenas. Ensure:
+- Always-on (debug and release) — this is a safety check, not a debug aid
+- Clear panic messages: "use-after-free: handle generation 3, slot generation 5 (freed 2 generations ago)"
+- Generational checks are cheap (one integer comparison) — no reason to strip them
+
+### 4c: Sanitizer Mode
+
+`milo build --sanitize` inserts additional checks at IR level:
+- Bounds checks on all array/vec access (even in release)
+- Use-after-free detection via poisoned memory patterns
+- Stack buffer overflow detection via guard pages
+
+Since Milo controls codegen, these can be more targeted than ASan — check only Milo-allocated memory, not the entire address space.
+
+## Phase 5: Safety Profiles (Stretch)
+
+Combine phases 1-4 into named profiles:
+
+| Profile | Static checks | Dynamic checks | Use case |
+|---------|--------------|----------------|----------|
+| `default` | Moves + invalidation tracking | Debug refcounts + gen indices | Most programs |
+| `strict` | + `--deny-unsafe` + `--strict-ranges` + `--no-unwrap` | + sanitizer always-on | Safety-critical (GNC, medical, financial) |
+| `performance` | Moves + invalidation tracking | None (all checks stripped) | Hot paths, benchmarks |
+
+Configured via `milo build --profile strict` or per-module annotation.
+
+## Design Principles
+
+1. **Static first** — reject bad programs at compile time. Dynamic checks are the fallback for patterns that genuinely need annotations to prove statically. Shrink the dynamic category over time.
+2. **No annotations** — if it requires the user to write something Rust doesn't require, reject the design. The compiler should infer what Rust makes you spell out.
+3. **Conservative is OK** — a static check that rejects some correct programs is acceptable if the workaround is simple (2-3 lines of restructuring). Better to reject and restructure than to silently allow a bug.
+4. **Incremental adoption** — each phase ships independently and improves safety on its own
+5. **Match guarantees, not mechanisms** — the goal is the same compile-time guarantee Rust provides, achieved through different (simpler) analysis. Where the analysis can't reach, dynamic checks fill in — but that's a gap to close, not a permanent design choice.
+
+## Open Questions
+
+- How far should invalidation tracking go? Intraprocedural is the starting point, but some patterns (passing a ref and the source to the same function) need at least call-site analysis. Is "ref + source can't be passed to the same function" too restrictive?
+- Should `@invalidates_refs` be inferred for standard library types, or always explicit?
+- Debug ref counting adds overhead to every ref creation. Is there a cheaper scheme that catches 90% of bugs? (e.g., only track refs into heap-allocated data, not stack locals)
+- Should `unsafe` propagate? (i.e., calling an `unsafe fn` from a non-unsafe context — error? warning? nothing?) Rust requires `unsafe` at the call site. Simpler option: just require `unsafe` blocks around `extern` calls and let `unsafe fn` be advisory.
