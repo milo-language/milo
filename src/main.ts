@@ -97,6 +97,62 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
   }
 }
 
+function compileToObj(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, noEntry = false): string {
+  const source = readFileSync(sourcePath, "utf-8");
+  const ir = compile(source, target, sourcePath, warningConfig);
+
+  const base = basename(sourcePath).replace(/\.milo$/, "");
+  const out = outputPath ?? base + ".o";
+  const id = crypto.randomUUID().slice(0, 8);
+  const tmpLl = join(tmpdir(), `milo_${id}.ll`);
+
+  let irText = ir;
+  if (noEntry) {
+    // Remove main function definition — keep only non-main functions
+    // Replace `define ... @main(...)` with internal linkage so it doesn't conflict
+    irText = irText.replace(
+      /^define (.*) @main\(/m,
+      "define internal $1 @_milo_unused_main("
+    );
+  }
+
+  try {
+    writeFileSync(tmpLl, irText);
+    const tc = detectToolchain();
+    const opt = optFlag || "-O2";
+    if (tc.kind === "clang") {
+      execSync(`clang -c ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+    } else {
+      execSync(`llc -filetype=obj ${opt} ${tmpLl} -o ${out}`, { stdio: ["pipe", "pipe", "pipe"] });
+    }
+  } catch (e: any) {
+    console.error(`error[emit-obj]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
+    process.exit(1);
+  } finally {
+    try { unlinkSync(tmpLl); } catch {}
+  }
+  return out;
+}
+
+function buildLib(sourcePaths: string[], outputPath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig) {
+  const objFiles: string[] = [];
+  try {
+    for (const src of sourcePaths) {
+      const id = crypto.randomUUID().slice(0, 8);
+      const tmpObj = join(tmpdir(), `milo_${id}.o`);
+      compileToObj(src, tmpObj, target, optFlag, warningConfig, true);
+      objFiles.push(tmpObj);
+    }
+    const objs = objFiles.map(f => `"${f}"`).join(" ");
+    execSync(`ar rcs "${outputPath}" ${objs}`, { stdio: ["pipe", "pipe", "pipe"] });
+  } catch (e: any) {
+    console.error(`error[build-lib]: ${e.stderr?.toString() ?? e.message}`);
+    process.exit(1);
+  } finally {
+    for (const f of objFiles) { try { unlinkSync(f); } catch {} }
+  }
+}
+
 function detectLibs(ir: string, target: TargetInfo): string {
   let libs = "";
   if (ir.includes("@SSL_") || ir.includes("@TLS_client_method")) {
@@ -226,10 +282,11 @@ function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, op
   }
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
+  let noEntry = false;
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
@@ -237,6 +294,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
     else if (args[i] === "--debug") { optFlag = "-O0"; }
+    else if (args[i] === "--no-entry") { noEntry = true; }
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--deny-all") { denied.add("*"); }
@@ -248,7 +306,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed } };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry };
 }
 
 function main() {
@@ -260,6 +318,8 @@ function main() {
     console.log("  build <file> [-o out]  compile to executable");
     console.log("  test [file...]         run tests (*_test.milo files)");
     console.log("  emit-ir <file>         emit LLVM IR");
+    console.log("  emit-obj <file>        compile to object file (.o)");
+    console.log("  build-lib <files...>   compile to static library (.a)");
     console.log("  emit-js <file>         emit JavaScript (playground target)");
     console.log("  fmt <file...>          format source files (-w to write in place)");
     console.log("options:");
@@ -339,8 +399,18 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry } = parseArgs(args.slice(1));
   const target = getHostTarget();
+
+  if (cmd === "build-lib") {
+    const libArgs = args.slice(1);
+    const sources = libArgs.filter(a => a.endsWith(".milo"));
+    const libOutput = output ?? "lib.a";
+    if (sources.length === 0) { console.error("error: no .milo source files"); process.exit(1); }
+    buildLib(sources, libOutput, target, optFlag, warningConfig);
+    console.log(`compiled ${sources.length} file(s) -> ${libOutput}`);
+    return;
+  }
 
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
 
@@ -367,6 +437,9 @@ function main() {
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig, optFlag === "-O0");
+  } else if (cmd === "emit-obj") {
+    const obj = compileToObj(source!, output, target, optFlag, warningConfig, noEntry);
+    console.log(`compiled ${source} -> ${obj}`);
   } else if (cmd === "emit-js") {
     const src = readFileSync(source!, "utf-8");
     const js = compileToJS(src, target, source!, warningConfig);
