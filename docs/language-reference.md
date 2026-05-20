@@ -1729,6 +1729,56 @@ let id = uuidV4()   // "550e8400-e29b-41d4-a716-446655440000"
 
 ---
 
+## Argument Parsing
+
+The `std/argparse` module provides a declarative CLI argument parser with auto-generated help.
+
+```milo
+from "std/argparse" import { newParser }
+
+fn main(): i32 {
+    var parser = newParser("mytool", "a helpful description")
+    parser.addPositional("file", "input file to process")
+    parser.addOptionalPositional("output", "output path")
+    parser.addString("format", "f", "output format", "json")
+    parser.addBool("verbose", "v", "enable verbose output")
+    parser.addI64("count", "n", "number of items", 10)
+    parser.addRequired("token", "t", "API token")
+    let args = parser.parse()
+
+    let file = args.getString("file")
+    let fmt = args.getString("format")
+    let verbose = args.getBool("verbose")
+    let count = args.getI64("count")
+    if args.has("output") {
+        let out = args.getString("output")
+    }
+    return 0
+}
+```
+
+**Builder methods** (on `&mut ArgParser`):
+- `addString(long, short, help, default)` — optional string flag
+- `addRequired(long, short, help)` — required string flag (exits if missing)
+- `addBool(long, short, help)` — boolean flag (present = true)
+- `addI64(long, short, help, default)` — integer flag with validation
+- `addPositional(name, help)` — required positional argument
+- `addOptionalPositional(name, help)` — optional positional
+- `enableTrailingArgs()` — collect remaining args after first positional
+
+**Parsing**:
+- `parse()` — parse from process arguments (auto `--help`, exits on error)
+- `parseFrom(argv: Vec<string>)` — parse from a provided arg list (argv[0] = program name, skipped)
+
+**Query methods** (on `&ParsedArgs`):
+- `getString(name)`, `getI64(name)`, `getU16(name)`, `getBool(name)` — get typed values
+- `has(name)` — check if flag/positional was provided
+- `.positional` — `Vec<string>` of remaining positional args
+
+The parser auto-handles `--help`/`-h` and validates required args, integer formats, and unknown flags.
+
+---
+
 ## Quick Reference
 
 | Concept | Syntax |

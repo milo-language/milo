@@ -309,6 +309,396 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry };
 }
 
+const SKILL_TEXT = `# Milo Language Guide
+
+Milo is a memory-safe systems language that compiles to native binaries via LLVM.
+It uses move semantics and second-class references — no GC, no RC, no lifetime annotations.
+
+## Compile & Run
+
+\`\`\`bash
+bun run src/main.ts run file.milo              # compile + run (no artifacts)
+bun run src/main.ts build file.milo -o myapp   # compile to binary
+bun run src/main.ts emit-ir file.milo          # emit LLVM IR
+bun run src/main.ts build file.milo --release  # -O3 optimized
+\`\`\`
+
+## Language Basics
+
+\`\`\`milo
+fn main(): i32 {
+    print("hello")
+    return 0
+}
+\`\`\`
+
+### Variables
+- \`let x = 42\` — immutable binding (cannot reassign)
+- \`var x = 42\` — mutable binding
+- Type inference works: \`let name = "milo"\` infers \`string\`
+
+### Types
+- Integers: \`i8\`, \`i16\`, \`i32\`, \`i64\`, \`u8\`, \`u16\`, \`u32\`, \`u64\`
+- Float: \`f64\`
+- \`bool\`, \`string\`, \`void\`
+- \`Vec<T>\`, \`HashMap<K, V>\`, \`Array<T, N>\`
+- \`Option<T>\` (shorthand: \`T?\`), \`Result<T, E>\`
+
+### Functions
+\`\`\`milo
+fn add(a: i32, b: i32): i32 {
+    return a + b
+}
+
+fn greet(name: &string): void {    // & = immutable reference (borrow)
+    print($"hello, {name}!")
+}
+
+fn increment(x: &mut i64): void {  // &mut = mutable reference
+    x = x + 1
+}
+
+// generics
+fn first<T>(items: &Vec<T>): &T {
+    return items[0]
+}
+\`\`\`
+
+### Structs & Impl
+\`\`\`milo
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+impl Point {
+    fn new(x: f64, y: f64): Point {
+        return Point { x: x, y: y }
+    }
+
+    fn distance(self: &Self, other: &Point): f64 {
+        let dx = self.x - other.x
+        let dy = self.y - other.y
+        return sqrt(dx * dx + dy * dy)
+    }
+}
+\`\`\`
+
+### Enums & Match
+\`\`\`milo
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Empty,
+}
+
+fn area(s: &Shape): f64 {
+    match s {
+        Shape.Circle(r) => return 3.14159 * r * r
+        Shape.Rect(w, h) => return w * h
+        Shape.Empty => return 0.0
+    }
+}
+\`\`\`
+
+### Option & Result
+\`\`\`milo
+fn find(items: &Vec<string>, target: &string): string? {
+    var i: i64 = 0
+    while i < items.len {
+        if items[i] == target {
+            return Option.Some(items[i].clone())
+        }
+        i = i + 1
+    }
+    return null   // sugar for Option.None
+}
+
+// unwrap: expr!   propagate: expr?   default: expr ?? fallback
+let val = find(items, "key") ?? "default"
+\`\`\`
+
+### Closures
+\`\`\`milo
+let double = (x: i32) => x * 2
+let result = double(21)
+
+var items: Vec<i32> = Vec.new()
+items.push(3)
+items.push(1)
+items.push(2)
+items.sort((a: &i32, b: &i32) => a - b)
+\`\`\`
+
+### Traits
+\`\`\`milo
+trait Display {
+    fn display(self: &Self): string
+}
+
+impl Display for Point {
+    fn display(self: &Self): string {
+        return $"({self.x}, {self.y})"
+    }
+}
+
+@derive(Eq)    // auto-derive equality
+struct Id { value: i64 }
+\`\`\`
+
+### Imports
+\`\`\`milo
+from "std/io" import { readFile, writeFile }
+from "std/json" import { jsonParse, jsonStringify }
+from "std/fs" import { isFile, isDir, readDir }
+import "other_file.milo"
+\`\`\`
+
+### Key Rules
+- Move semantics: values have a single owner. After \`let y = x\`, using \`x\` is a compile error. Use \`.clone()\` for explicit copies.
+- References (\`&T\`, \`&mut T\`) are second-class: only allowed in function parameters, never stored in structs or returned.
+- No null — use \`Option<T>\` (\`T?\`).
+- No exceptions — use \`Result<T, E>\` for fallible operations.
+- No implicit conversions — use \`expr as Type\` for casts.
+- Strings are owned UTF-8 buffers. Pass as \`&string\` to borrow.
+- \`unsafe { ... }\` required for FFI calls, raw memory, and exit().
+- String interpolation: \`$"hello {name}, count={count}"\`
+- No semicolons (statements are newline-delimited).
+- camelCase for functions/variables, PascalCase for types.
+
+## Standard Library
+
+Import with \`from "std/<name>" import { ... }\`. Key modules:
+
+| Module | Purpose | Key Exports |
+|--------|---------|-------------|
+| \`std/io\` | File & stream I/O | \`readFile\`, \`writeFile\`, \`readStdin\`, \`writeStdout\`, \`appendFile\` |
+| \`std/fs\` | Filesystem ops | \`isFile\`, \`isDir\`, \`readDir\`, \`mkdir\`, \`remove\`, \`rename\`, \`chmod\`, \`symlink\` |
+| \`std/path\` | Path manipulation | \`pathJoin\`, \`pathDir\`, \`pathBase\`, \`pathExt\`, \`pathResolve\` |
+| \`std/args\` | Raw CLI arguments | \`args()\` → \`Vec<string>\`, \`getFlag(name)\`, \`hasFlag(name)\` |
+| \`std/argparse\` | Declarative arg parser | \`newParser\`, \`ArgParser\`, \`ParsedArgs\` (see detailed section below) |
+| \`std/env\` | Environment vars | \`getEnv\`, \`setEnv\`, \`allEnv\` |
+| \`std/json\` | JSON parse/serialize | \`jsonParse\`, \`jsonStringify\`, \`JsonValue\` |
+| \`std/toml\` | TOML parser | \`tomlParse\`, \`TomlValue\` |
+| \`std/csv\` | CSV parser | \`csvParse\`, \`csvStringify\` |
+| \`std/http\` | HTTP client | \`httpGet\`, \`httpPost\`, \`httpRequest\`, \`HttpResponse\` |
+| \`std/net\` | TCP networking | \`tcpConnect\`, \`tcpListen\`, \`TcpStream\`, \`TcpListener\` |
+| \`std/crypto\` | Cryptographic hashes | \`sha256\`, \`md5\` |
+| \`std/base64\` | Base64 encoding | \`base64Encode\`, \`base64Decode\` |
+| \`std/hex\` | Hex encoding | \`hexEncode\`, \`hexDecode\` |
+| \`std/regex\` | Regular expressions | \`regexMatch\`, \`regexFind\`, \`regexReplace\` |
+| \`std/datetime\` | Date and time | \`now\`, \`formatTime\`, \`DateTime\` |
+| \`std/time\` | Timing | \`sleep\`, \`clockMs\` |
+| \`std/random\` | Random numbers | \`randomI64\`, \`randomF64\`, \`randomRange\` |
+| \`std/uuid\` | UUID generation | \`uuidV4\` |
+| \`std/math\` | Math functions | \`sqrt\`, \`abs\`, \`min\`, \`max\`, \`pow\`, \`floor\`, \`ceil\` |
+| \`std/string\` | String utilities | \`split\`, \`join\`, \`trim\`, \`padLeft\`, \`padRight\`, \`repeat\` |
+| \`std/strconv\` | String conversions | \`parseInt\`, \`parseFloat\` |
+| \`std/fmt\` | String formatting | \`fmt\`, \`fmtFloat\` |
+| \`std/color\` | Terminal colors | \`red\`, \`green\`, \`blue\`, \`bold\`, \`dim\`, \`reset\` |
+| \`std/sort\` | Sorting | \`sort\` for Vec with comparator |
+| \`std/set\` | Hash set | \`Set<T>\` |
+| \`std/url\` | URL parsing | \`parseUrl\`, \`Url\` |
+| \`std/log\` | Logging | \`logInfo\`, \`logWarn\`, \`logError\`, \`logDebug\` |
+| \`std/signal\` | OS signal handling | \`onSignal\` |
+| \`std/process\` | Process management | \`exec\`, \`spawn\`, \`ProcessResult\` |
+| \`std/thread\` | Threading | \`spawn\` (thread), \`Thread\` |
+| \`std/sync\` | Concurrency primitives | \`Mutex\`, \`Channel\`, \`WaitGroup\` |
+| \`std/arena\` | Arena allocator | \`Arena\`, \`ArenaRef\` |
+| \`std/mem\` | Memory utilities | \`sizeOf\`, \`alignOf\` |
+| \`std/cstr\` | C string interop | \`toCStr\`, \`fromCStr\` |
+| \`std/sqlite\` | SQLite database | \`sqliteOpen\`, \`sqliteExec\`, \`sqliteQuery\` |
+| \`std/unicode\` | Unicode utilities | \`isAlpha\`, \`isDigit\`, \`toUpper\`, \`toLower\` |
+| \`std/os\` | OS information | \`platform\`, \`arch\`, \`hostname\` |
+| \`std/runtime\` | Runtime internals | (internal use) |
+| \`std/testing\` | Test assertions | \`assert\`, \`assertEqual\`, \`assertNe\` |
+| \`std/prelude\` | Auto-imported types | \`Vec\`, \`HashMap\`, \`Option\`, \`Result\`, \`Heap\`, \`print\`, \`eprint\` |
+| \`std/event\` | Event loop (kqueue/epoll) | \`EventLoop\`, \`EventHandler\` |
+| \`std/platform\` | Platform detection | \`platform\`, \`arch\` |
+
+Prelude types (\`Vec\`, \`HashMap\`, \`Option\`, \`Result\`, \`Heap\`, \`print\`, \`eprint\`) are available without import.
+
+## Argument Parsing (std/argparse)
+
+This is the recommended way to build CLI tools. Full working example:
+
+\`\`\`milo
+from "std/argparse" import { newParser }
+from "std/io" import { readFile }
+
+fn main(): i32 {
+    // 1. Create parser
+    var parser = newParser("mytool", "process text files")
+
+    // 2. Define arguments
+    parser.addPositional("file", "input file to process")
+    parser.addOptionalPositional("output", "output path (default: stdout)")
+    parser.addString("format", "f", "output format", "text")   // flag with default
+    parser.addBool("verbose", "v", "enable verbose output")     // boolean flag
+    parser.addI64("count", "n", "max items to process", 100)   // integer flag
+    parser.addRequired("token", "t", "API token")              // required flag
+
+    // 3. Parse (auto-handles --help, exits on error)
+    let args = parser.parse()
+
+    // 4. Read values
+    let file = args.getString("file")       // positional or flag by name
+    let fmt = args.getString("format")      // "text" if not provided
+    let verbose = args.getBool("verbose")   // false if not provided
+    let count = args.getI64("count")        // 100 if not provided
+    let token = args.getString("token")     // guaranteed present (required)
+
+    if args.has("output") {
+        let out = args.getString("output")
+        // write to file...
+    }
+
+    match readFile(file) {
+        Result.Ok(content) => {
+            if verbose {
+                print($"processing {file} ({content.len} bytes)")
+            }
+            print(content)
+        }
+        Result.Err(e) => {
+            print($"error: {e}")
+            return 1
+        }
+    }
+    return 0
+}
+\`\`\`
+
+Running this program:
+\`\`\`bash
+mytool input.txt --format json -v --token abc123
+mytool --help    # prints auto-generated usage
+\`\`\`
+
+### ArgParser Builder Methods
+- \`addString(long, short, help, default)\` — optional string flag
+- \`addRequired(long, short, help)\` — required string flag (exits if missing)
+- \`addBool(long, short, help)\` — boolean flag (present = true)
+- \`addI64(long, short, help, default)\` — integer flag, validated at parse time
+- \`addPositional(name, help)\` — required positional argument
+- \`addOptionalPositional(name, help)\` — optional positional
+- \`enableTrailingArgs()\` — stop flag parsing after first positional, collect rest as-is
+
+### Parsing Methods
+- \`parse()\` — parse from process arguments
+- \`parseFrom(argv: Vec<string>)\` — parse from a provided arg list (argv[0] = program name, skipped)
+
+### ParsedArgs Query Methods
+- \`getString(name)\` — get string value by long name
+- \`getI64(name)\` — get integer value
+- \`getU16(name)\` — get u16 value (validated 0..65535)
+- \`getBool(name)\` — check boolean flag
+- \`has(name)\` — check if flag/positional was provided
+- \`.positional\` — \`Vec<string>\` of remaining positional args
+
+### Trailing Args and -- Separator
+\`\`\`milo
+parser.enableTrailingArgs()
+// mytool build -- --extra-flag    →  args.positional contains ["--extra-flag"]
+\`\`\`
+
+## Common Patterns
+
+### Error Handling with Result
+\`\`\`milo
+from "std/io" import { readFile }
+
+fn processFile(path: &string): Result<string, string> {
+    let content = readFile(path)?   // ? propagates error
+    // process content...
+    return Result.Ok(content)
+}
+
+fn main(): i32 {
+    match processFile("data.txt") {
+        Result.Ok(data) => print(data)
+        Result.Err(e) => {
+            print($"error: {e}")
+            return 1
+        }
+    }
+    return 0
+}
+\`\`\`
+
+### Vec Operations
+\`\`\`milo
+var items: Vec<string> = Vec.new()
+items.push("one")
+items.push("two")
+items.push("three")
+print($"count: {items.len}")   // 3
+let first = items[0]           // "one"
+items.sort((a: &string, b: &string) => a.len - b.len)
+\`\`\`
+
+### HashMap
+\`\`\`milo
+var counts: HashMap<string, i64> = HashMap.new()
+counts.set("apples", 5)
+counts.set("oranges", 3)
+if counts.has("apples") {
+    let n = counts.get("apples")!
+    print($"apples: {n}")
+}
+\`\`\`
+
+### String Interpolation
+\`\`\`milo
+let name = "world"
+let count = 42
+print($"hello {name}, count={count}")
+print($"hex: {count}")
+print($"result: {1 + 2}")
+\`\`\`
+
+### Threads and Channels
+\`\`\`milo
+from "std/thread" import { greenSpawn }
+from "std/sync" import { newChannel }
+
+fn main(): i32 {
+    var ch = newChannel<i64>()
+    greenSpawn(() => {
+        ch.send(42)
+    })
+    let val = ch.recv()
+    print($"got: {val}")
+    return 0
+}
+\`\`\`
+
+### JSON
+\`\`\`milo
+from "std/json" import { jsonParse, jsonStringify }
+
+struct Config {
+    name: string,
+    port: i64,
+    debug: bool,
+}
+
+let config = Config { name: "app", port: 8080, debug: false }
+let json = jsonStringify(config)
+print(json)   // {"name":"app","port":8080,"debug":false}
+\`\`\`
+
+## What NOT to Do
+- No garbage collector or reference counting — values are moved or cloned explicitly.
+- No storing references in structs — \`&T\` is only valid in function params.
+- No raw pointers in safe code — use \`unsafe { ... }\` for FFI.
+- No implicit type conversions — cast with \`as\`.
+- No exceptions or try/catch — use \`Result<T, E>\` and \`?\` propagation.
+- No null — use \`Option<T>\` (\`T?\`) and pattern match or \`??\` for defaults.
+- No semicolons — statements are newline-separated.
+- No class inheritance — use traits and composition.
+`;
+
 function main() {
   const args = process.argv.slice(2);
   if (args.length < 1) {
@@ -322,6 +712,7 @@ function main() {
     console.log("  build-lib <files...>   compile to static library (.a)");
     console.log("  emit-js <file>         emit JavaScript (playground target)");
     console.log("  fmt <file...>          format source files (-w to write in place)");
+    console.log("  skill                  print language guide for LLMs");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
@@ -333,6 +724,11 @@ function main() {
   }
 
   const cmd = args[0];
+
+  if (cmd === "skill") {
+    process.stdout.write(SKILL_TEXT);
+    return;
+  }
 
   if (cmd === "lsp") {
     import("./lsp");

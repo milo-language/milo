@@ -211,7 +211,13 @@ impl ArgParser {
     // Parse command-line arguments and return ParsedArgs.
     // Automatically handles --help. Exits on invalid input.
     fn parse(self: &Self): ParsedArgs {
-        let argv = args()
+        return self.parseFrom(args())
+    }
+
+    // Parse from a provided argument list instead of process args.
+    // argv[0] is treated as the program name (skipped during parsing).
+    // Like Python's parse_args(args=[...]).
+    fn parseFrom(self: &Self, argv: Vec<string>): ParsedArgs {
         var result = ParsedArgs {
             prog: self.name.clone(),
             entries: Vec.new(),
