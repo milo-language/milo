@@ -613,14 +613,14 @@ fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>): i64 {
     return idx
 }
 
-fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, slen: &mut i64) {
+fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64) {
     pos = pos + 1
     start = pos
     while pos < s.len && s[pos] != '"' {
         if s[pos] == '\\' { pos = pos + 1 }
         pos = pos + 1
     }
-    slen = pos - start
+    _slen = pos - start
     if pos < s.len { pos = pos + 1 }
 }
 

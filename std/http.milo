@@ -110,6 +110,9 @@ impl Context {
     }
 
     fn redirect(self: &Self, url: string): Response {
+        if self.statusCode != 200 {
+            return Response.Status(self.statusCode, "text/plain; charset=utf-8", url)
+        }
         return Response.Status(302, "text/plain; charset=utf-8", url)
     }
 }

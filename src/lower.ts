@@ -551,6 +551,9 @@ class LowerCtx {
         if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "toString") {
           return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
         }
+        if (objType?.tag === "bool" && expr.method === "toString") {
+          return { kind: "BoolToString", value: this.lowerExpr(expr.object), type, span: expr.span };
+        }
         if (objType?.tag === "int") {
           const opMap: Record<string, string> = {
             wrappingAdd: "add", wrappingSub: "sub", wrappingMul: "mul",

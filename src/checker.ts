@@ -3098,7 +3098,7 @@ export class TypeChecker {
         const rawObjType = this.checkExpr(expr.object);
         // auto-deref `&T` for method dispatch (mutating methods still need !isRootMutable to allow)
         const objType = rawObjType.tag === "ref" ? rawObjType.inner : rawObjType;
-        if ((objType.tag === "int" || objType.tag === "float") && expr.method === "toString") {
+        if ((objType.tag === "int" || objType.tag === "float" || objType.tag === "bool") && expr.method === "toString") {
           if (expr.args.length !== 0) { this.error(`'toString' takes no arguments`, sp); }
           return this.setType(expr, { tag: "string" });
         }

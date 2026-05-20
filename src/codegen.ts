@@ -2435,6 +2435,8 @@ export class Codegen {
         return this.genStringClone(expr, lines);
       case "NumberToString":
         return this.genNumberToString(expr, lines);
+      case "BoolToString":
+        return this.genBoolToString(expr, lines);
       case "WrappingArith":
         return this.genWrappingArith(expr, lines);
       case "SaturatingArith":
@@ -4186,6 +4188,25 @@ export class Codegen {
     lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len64}, 1`);
     const s2 = this.nextTemp();
     lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
+    return [lines, s2, "%String"];
+  }
+
+  private genBoolToString(expr: HIRExpr & { kind: "BoolToString" }, lines: string[]): [string[], string, string] {
+    this.hasStringType = true;
+    const [vLines, vVal] = this.genExpr(expr.value);
+    lines.push(...vLines);
+    const trueStr = this.addString("true");
+    const falseStr = this.addString("false");
+    const ptr = this.nextTemp();
+    lines.push(`  ${ptr} = select i1 ${vVal}, ptr ${trueStr.label}, ptr ${falseStr.label}`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = select i1 ${vVal}, i64 4, i64 5`);
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %String undef, ptr ${ptr}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %String ${s0}, i64 ${len}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
     return [lines, s2, "%String"];
   }
 

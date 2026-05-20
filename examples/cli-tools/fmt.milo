@@ -696,7 +696,7 @@ fn formatSource(src: string): string {
     var out: string = ""
     var depth: i64 = 0
     var atLineStart: bool = true
-    var lastKind: TokKind = TokKind.Eof
+
     var lastLine: i64 = 1
     var blankCount: i64 = 0
 
@@ -766,7 +766,6 @@ fn formatSource(src: string): string {
                 atLineStart = true
             }
             lastLine = tok.line
-            lastKind = tok.kind
             continue
         }
 
@@ -789,7 +788,6 @@ fn formatSource(src: string): string {
         // Emit token
         out = out + tok.text
         lastLine = tok.line
-        lastKind = tok.kind
 
         // { increases indent and forces newline
         if tok.kind == TokKind.LBrace {
