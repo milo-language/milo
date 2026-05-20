@@ -1,0 +1,49 @@
+// std/cstr — safe wrapper for NUL-terminated C strings (*u8).
+// Non-owning view: does not free the pointer on drop.
+
+from "std/os" import { strlen, strncmp }
+
+struct CStr {
+    _ptr: *u8,
+    _len: i64,
+}
+
+impl CStr {
+    fn wrap(ptr: *u8): Option<CStr> {
+        unsafe {
+            if ptr as i64 == 0 as i64 {
+                return Option.None
+            }
+            return Option.Some(CStr { _ptr: ptr, _len: strlen(ptr) })
+        }
+    }
+
+    fn toString(self: &Self): string {
+        unsafe {
+            return _cstrToString(self._ptr)
+        }
+    }
+
+    fn len(self: &Self): i64 {
+        return self._len
+    }
+
+    fn ptr(self: &Self): *u8 {
+        return self._ptr
+    }
+
+    // Bounds-checked byte access. Panics if i >= len.
+    fn byte(self: &Self, i: i64): u8 {
+        assert(i >= 0 && i < self._len)
+        unsafe {
+            return _loadU8((self._ptr as i64 + i) as *u8)
+        }
+    }
+
+    fn eq(self: &Self, other: CStr): bool {
+        if self._len != other._len { return false }
+        unsafe {
+            return strncmp(self._ptr, other._ptr, self._len) == 0
+        }
+    }
+}

@@ -34,8 +34,8 @@ fn isPrintable(b: u8): bool {
 fn main(): i32 {
     var parser = newParser("hex", "hex dump viewer")
     parser.addPositional("file", "file to dump")
-    parser.addString("length", "n", "number of bytes to display", "0")
-    parser.addString("skip", "s", "skip N bytes from start", "0")
+    parser.addI64("length", "n", "number of bytes to display", 0)
+    parser.addI64("skip", "s", "skip N bytes from start", 0)
     parser.addBool("plain", "p", "no ASCII column, just hex")
     let args = parser.parse()
 

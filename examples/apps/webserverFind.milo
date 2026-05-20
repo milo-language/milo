@@ -16,6 +16,6 @@ fn main(): i32 {
     r.get("/", homeHandler)
     r.get("/json", jsonHandler)
 
-    serveRouter(8080, r)
+    let _ = serveRouter(8080, r)
     return 0
 }

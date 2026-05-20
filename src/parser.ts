@@ -66,7 +66,15 @@ export class Parser {
         if (attrs) e.attributes = attrs;
         enums.push(e);
       } else if (this.at(TokenKind.Extern)) {
-        functions.push(this.parseExternFn());
+        // peek ahead: extern fn or extern struct?
+        const nextTok = this.tokens[this.pos + 1];
+        if (nextTok && nextTok.kind === TokenKind.Struct) {
+          const s = this.parseExternStruct();
+          if (attrs) s.attributes = attrs;
+          structs.push(s);
+        } else {
+          functions.push(this.parseExternFn());
+        }
       } else if (this.at(TokenKind.Fn)) {
         functions.push(this.parseFn());
       } else if (this.at(TokenKind.Trait)) {
@@ -274,6 +282,25 @@ export class Parser {
     const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
     return { kind: "Function", name, typeParams: [], params, retType, body: [], isExtern: true, isVariadic: variadic };
+  }
+
+  private parseExternStruct(): StructDecl {
+    this.expect(TokenKind.Extern);
+    this.expect(TokenKind.Struct);
+    const name = this.expect(TokenKind.Ident).value;
+    const typeParams = this.parseTypeParams();
+    if (typeParams.length > 0) this.error(`extern structs cannot have type parameters`, this.peek());
+    this.expect(TokenKind.LBrace);
+    const fields: StructField[] = [];
+    while (!this.at(TokenKind.RBrace)) {
+      const fieldName = this.expect(TokenKind.Ident).value;
+      this.expect(TokenKind.Colon);
+      const fieldType = this.parseType();
+      fields.push({ name: fieldName, type: fieldType });
+      this.match(TokenKind.Comma);
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "StructDecl", name, typeParams: [], fields, isExtern: true };
   }
 
   private parseFn(): Function {
@@ -881,14 +908,18 @@ export class Parser {
       if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
         return this.parseStructLit(tok.value, s);
       }
-      // sizeOf<Type>() / zeroed<Type>() — builtins with explicit type arg
-      if ((tok.value === "sizeOf" || tok.value === "zeroed") && this.at(TokenKind.Lt)) {
+      // sizeOf<Type>() / zeroed<Type>() / offsetOf<Type>("field") — builtins with explicit type arg
+      if ((tok.value === "sizeOf" || tok.value === "zeroed" || tok.value === "offsetOf") && this.at(TokenKind.Lt)) {
         this.advance(); // consume <
         const typeArg = this.parseType();
         this.expect(TokenKind.Gt);
         this.expect(TokenKind.LParen);
+        const args: Expr[] = [];
+        if (!this.at(TokenKind.RParen)) {
+          args.push(this.parseExpr());
+        }
         this.expect(TokenKind.RParen);
-        return { kind: "Call", func: tok.value, args: [], typeArgs: [typeArg], span: s };
+        return { kind: "Call", func: tok.value, args, typeArgs: [typeArg], span: s };
       }
       // function call: name(args) — `(` must be on same line to avoid cross-line ambiguity
       if (this.at(TokenKind.LParen) && this.peek().line === tok.line) return this.parseCall(tok.value, s);

@@ -49,6 +49,7 @@ fn _closureTrampoline(arg: *u8): *u8 {
         memcpy((&fnPtr) as *u8, arg, 8)
         memcpy((&envPtr) as *u8, (base + 8) as *u8, 8)
         _callClosureVoid(fnPtr, envPtr)
+        free(envPtr)
         free(arg)
         return 0 as *u8
     }

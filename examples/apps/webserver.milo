@@ -95,22 +95,22 @@ fn jsonHandler(ctx: &mut Context): Response {
 }
 
 fn fibHandler(ctx: &mut Context): Response {
-    var n = parseInt(ctx.param("n"))!
+    let n = parseInt(ctx.param("n"))!
     return ctx.json($"\{\"n\": {n}, \"result\": {fibonacci(n)}}")
 }
 
 fn primeHandler(ctx: &mut Context): Response {
-    var n = parseInt(ctx.param("n"))!
+    let n = parseInt(ctx.param("n"))!
     return ctx.json($"\{\"n\": {n}, \"isPrime\": {isPrime(n)}}")
 }
 
 fn collatzHandler(ctx: &mut Context): Response {
-    var n = parseInt(ctx.param("n"))!
+    let n = parseInt(ctx.param("n"))!
     return ctx.json($"\{\"start\": {n}, \"steps\": {collatzSteps(n)}}")
 }
 
 fn fizzbuzzHandler(ctx: &mut Context): Response {
-    var n = parseInt(ctx.param("n"))!
+    let n = parseInt(ctx.param("n"))!
     return ctx.text(fizzbuzzText(n))
 }
 
@@ -132,7 +132,7 @@ fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response 
 
 fn main(): i32 {
     var parser = newParser("webserver", "Router-based HTTP server")
-    parser.addString("port", "p", "Port to listen on", "8080")
+    parser.addI64("port", "p", "Port to listen on", 8080)
     let args = parser.parse()
 
     var r: Router = Router.new()

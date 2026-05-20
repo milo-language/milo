@@ -29,6 +29,7 @@ export interface StructInfo {
   fields: { name: string; type: TypeKind }[];
   baseName?: string;
   typeArgs?: TypeKind[];
+  isExtern?: boolean;
 }
 
 export interface EnumInfo {
@@ -64,6 +65,7 @@ export interface CheckResult {
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
   rangeCheckedExprs: Map<Expr, { min: number; max: number; typeName: string }>;
   sizeOfTypes: Map<Expr, TypeKind>;
+  offsetOfFields: Map<Expr, string>;
   interfaces: Map<string, InterfaceInfo>;
   interfaceCoercions: Map<Expr, { fromType: string; ifaceName: string }>;
   interfaceMethodCalls: Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>;
@@ -149,6 +151,7 @@ export class TypeChecker {
   private parallelCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
   private sizeOfTypes = new Map<Expr, TypeKind>();
+  private offsetOfFields = new Map<Expr, string>();
   private closureScopeDepth: number | null = null;
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
@@ -634,7 +637,7 @@ export class TypeChecker {
             this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
           }
         }
-        this.structs.set(s.name, { fields });
+        this.structs.set(s.name, { fields, isExtern: s.isExtern });
       }
     }
 
@@ -782,6 +785,7 @@ export class TypeChecker {
       propagateConversions: this.propagateConversions,
       rangeCheckedExprs: this.rangeCheckedExprs,
       sizeOfTypes: this.sizeOfTypes,
+      offsetOfFields: this.offsetOfFields,
       interfaces: this.interfaces,
       interfaceCoercions: this.interfaceCoercions,
       interfaceMethodCalls: this.interfaceMethodCalls,
@@ -829,7 +833,14 @@ export class TypeChecker {
 
   private canAutoEq(t: TypeKind): boolean {
     if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "string") return true;
-    if (t.tag === "enum") return true;
+    if (t.tag === "enum") {
+      const info = this.enums.get(t.name);
+      if (!info) return false;
+      for (const [, v] of info.variants) {
+        if (v.fields.length > 0) return false;
+      }
+      return true;
+    }
     if (t.tag === "struct") {
       const impls = this.traitImpls.get(t.name);
       return !!impls?.some(i => i.traitName === "Eq");
@@ -2434,6 +2445,20 @@ export class TypeChecker {
           if (expr.args.length !== 0) { this.error(`sizeOf takes no value arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
           const resolved = this.resolve(expr.typeArgs[0]);
           this.sizeOfTypes.set(expr, resolved);
+          return this.setType(expr, { tag: "int", bits: 64, signed: true });
+        }
+        if (expr.func === "offsetOf") {
+          if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`offsetOf requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+          if (expr.args.length !== 1 || expr.args[0].kind !== "StringLit") { this.error(`offsetOf requires one string argument (field name)`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const resolved = this.resolve(expr.typeArgs[0]);
+          if (resolved.tag !== "struct") { this.error(`offsetOf requires a struct type`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const info = this.structs.get(resolved.name);
+          const fieldName = (expr.args[0] as import("./ast").StringLit).value;
+          if (info && !info.fields.find(f => f.name === fieldName)) {
+            this.error(`struct '${resolved.name}' has no field '${fieldName}'`, sp);
+          }
+          this.sizeOfTypes.set(expr, resolved);
+          this.offsetOfFields.set(expr, fieldName);
           return this.setType(expr, { tag: "int", bits: 64, signed: true });
         }
         if (expr.func === "zeroed") {

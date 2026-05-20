@@ -70,6 +70,7 @@ export type HIRExpr =
   | { kind: "SaturatingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "CheckedArith"; op: string; left: HIRExpr; right: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "SizeOf"; sizeType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "InterfaceCoerce"; value: HIRExpr; fromType: string; ifaceName: string; type: TypeKind; span?: Span }
   | { kind: "InterfaceMethodCall"; object: HIRExpr; ifaceName: string; methodIndex: number; args: HIRArg[]; type: TypeKind; span?: Span };
@@ -121,6 +122,7 @@ export interface HIRFunction {
 export interface HIRStruct {
   name: string;
   fields: { name: string; type: TypeKind }[];
+  isExtern?: boolean;
 }
 
 export interface HIREnum {

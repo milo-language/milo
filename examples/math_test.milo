@@ -22,3 +22,12 @@ fn testAssert(): void {
     assert(2 > 1)
     assert(10 != 20)
 }
+
+fn main(): i32 {
+    testAddition()
+    testSubtraction()
+    testMultiplication()
+    testAssert()
+    print("all tests passed")
+    return 0
+}

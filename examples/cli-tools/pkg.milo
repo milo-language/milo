@@ -231,7 +231,7 @@ fn appendLock(name: &string, url: &string, sha: &string): void {
             Result.Err(e) => {}
         }
     }
-    writeFile("milo.lock", line)
+    let _ = writeFile("milo.lock", line)
 }
 
 fn cmdInstall(): i32 {

@@ -159,7 +159,7 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
 fn main(): i32 {
     var parser = newParser("serve", "static file server")
     parser.addOptionalPositional("dir", "directory to serve (default: .)")
-    parser.addString("port", "p", "port to listen on", "8080")
+    parser.addI64("port", "p", "port to listen on", 8080)
     parser.addBool("quiet", "q", "suppress request logging")
     let args = parser.parse()
 

@@ -24,12 +24,12 @@ class LowerCtx {
       if (s.typeParams.length > 0) continue;
       const info = this.c.structs.get(s.name);
       if (!info) continue;
-      structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })) });
+      structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })), isExtern: info.isExtern });
     }
     for (const s of this.c.monomorphizedStructs) {
       const info = this.c.structs.get(s.name);
       if (!info) continue;
-      structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })) });
+      structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })), isExtern: info.isExtern });
     }
 
     const enums: HIREnum[] = [];
@@ -371,6 +371,13 @@ class LowerCtx {
           const sizeType = this.c.sizeOfTypes.get(expr);
           if (!sizeType) throw new Error("sizeOf: missing resolved type");
           return { kind: "SizeOf", sizeType, type, span: expr.span };
+        }
+        if (expr.func === "offsetOf") {
+          const sizeType = this.c.sizeOfTypes.get(expr);
+          if (!sizeType) throw new Error("offsetOf: missing resolved type");
+          const fieldName = this.c.offsetOfFields.get(expr);
+          if (!fieldName) throw new Error("offsetOf: missing field name");
+          return { kind: "OffsetOf", sizeType, fieldName, type, span: expr.span };
         }
         if (expr.func === "zeroed") {
           const zeroType = this.c.sizeOfTypes.get(expr);

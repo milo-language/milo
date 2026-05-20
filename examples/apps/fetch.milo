@@ -12,7 +12,10 @@ fn main(): i32 {
             let origin = data.get("origin")
             match origin {
                 Option.Some(v) => {
-                    print("origin: ", v.str())
+                    match v.asStr() {
+                        Option.Some(s) => { print("origin: ", s) }
+                        Option.None => {}
+                    }
                 }
                 Option.None => {
                 }
@@ -24,7 +27,10 @@ fn main(): i32 {
                     let host = h.get("Host")
                     match host {
                         Option.Some(v) => {
-                            print("host: ", v.str())
+                            match v.asStr() {
+                                Option.Some(s) => { print("host: ", s) }
+                                Option.None => {}
+                            }
                         }
                         Option.None => {
                         }
@@ -37,7 +43,10 @@ fn main(): i32 {
             let url = data.get("url")
             match url {
                 Option.Some(v) => {
-                    print("url: ", v.str())
+                    match v.asStr() {
+                        Option.Some(s) => { print("url: ", s) }
+                        Option.None => {}
+                    }
                 }
                 Option.None => {
                 }

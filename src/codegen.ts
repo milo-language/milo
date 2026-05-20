@@ -189,6 +189,18 @@ export class Codegen {
     return Math.ceil(offset / maxAlign) * maxAlign;
   }
 
+  private structFieldOffset(fieldTypes: string[], fieldIdx: number): number {
+    let offset = 0;
+    for (let i = 0; i <= fieldIdx; i++) {
+      const size = this.typeSize(fieldTypes[i]);
+      const align = Math.min(size, 8);
+      offset = Math.ceil(offset / align) * align;
+      if (i === fieldIdx) return offset;
+      offset += size;
+    }
+    return offset;
+  }
+
   generate(module: HIRModule): string {
     // register struct layouts
     for (const s of module.structs) {
@@ -2280,6 +2292,16 @@ export class Codegen {
         const size = this.typeSizeOf(expr.sizeType);
         return [lines, `${size}`, "i64"];
       }
+      case "OffsetOf": {
+        const structName = expr.sizeType.tag === "struct" ? expr.sizeType.name : null;
+        if (!structName) return [lines, "0", "i64"];
+        const layout = this.structLayouts.get(structName);
+        if (!layout) return [lines, "0", "i64"];
+        const idx = layout.fields.findIndex(f => f.name === expr.fieldName);
+        if (idx < 0) return [lines, "0", "i64"];
+        const offset = this.structFieldOffset(layout.fields.map(f => f.type), idx);
+        return [lines, `${offset}`, "i64"];
+      }
       case "Zeroed": {
         const ty = this.llvmType(expr.zeroType);
         return [lines, "zeroinitializer", ty];
@@ -2555,6 +2577,10 @@ export class Codegen {
               } else {
                 lines.push(`  ${loaded} = load ${capTy}, ptr ${capAddr}`);
                 lines.push(`  store ${capTy} ${loaded}, ptr ${gepSlot}`);
+                // zero source so parent's drop glue won't free moved data
+                if (this.needsDropCg(cap.type)) {
+                  lines.push(`  store ${capTy} zeroinitializer, ptr ${capAddr}`);
+                }
               }
             } else if (local?.isRef) {
               // variable is already a ref (ptr to ptr) — load the inner ptr

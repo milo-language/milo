@@ -107,6 +107,7 @@ export interface StructDecl {
   typeParams: TypeParam[];
   fields: StructField[];
   attributes?: Attribute[];
+  isExtern?: boolean;
 }
 
 export interface EnumVariant {

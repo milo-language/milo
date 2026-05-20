@@ -1,7 +1,4 @@
-from "std/os" import { puts }
-
 fn main(): i32 {
-    puts("Hello, Milo!")
+    print("Hello, Milo!")
     return 0
 }
-

@@ -48,7 +48,7 @@ fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, count
 fn main(): i32 {
     var parser = newParser("tree", "display directory tree")
     parser.addOptionalPositional("dir", "directory to display (default: .)")
-    parser.addString("level", "L", "max display depth", "0")
+    parser.addI64("level", "L", "max display depth", 0)
     let args = parser.parse()
 
     var root: string = "."
