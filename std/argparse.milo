@@ -9,6 +9,7 @@ struct FlagDef {
     help: string,
     defaultVal: string,
     isBool: bool,
+    isI64: bool,
     required: bool,
 }
 
@@ -28,6 +29,7 @@ struct ArgParser {
     usage: string,
     flags: Vec<FlagDef>,
     positionals: Vec<PositionalDef>,
+    trailingArgs: bool,
 }
 
 // Parsed command-line arguments.
@@ -55,6 +57,7 @@ fn newParser(name: string, description: string): ArgParser {
         usage: "",
         flags: Vec.new(),
         positionals: Vec.new(),
+        trailingArgs: false,
     }
 }
 
@@ -68,6 +71,7 @@ impl ArgParser {
             help: help,
             defaultVal: defaultVal,
             isBool: false,
+            isI64: false,
             required: false,
         }
         )
@@ -81,6 +85,7 @@ impl ArgParser {
             help: help,
             defaultVal: "",
             isBool: false,
+            isI64: false,
             required: true,
         }
         )
@@ -94,6 +99,21 @@ impl ArgParser {
             help: help,
             defaultVal: "",
             isBool: true,
+            isI64: false,
+            required: false,
+        }
+        )
+    }
+
+    // Add an integer flag with a default value. Validated as numeric at parse time.
+    fn addI64(self: &mut Self, long: string, short: string, help: string, defaultVal: i64): void {
+        self.flags.push(FlagDef {
+            longName: long,
+            shortName: short,
+            help: help,
+            defaultVal: defaultVal.toString(),
+            isBool: false,
+            isI64: true,
             required: false,
         }
         )
@@ -113,6 +133,12 @@ impl ArgParser {
             name: name, help: help, required: false
         }
         )
+    }
+
+    // Stop flag parsing after the first positional arg.
+    // Remaining args collected as positionals without interpretation.
+    fn enableTrailingArgs(self: &mut Self): void {
+        self.trailingArgs = true
     }
 
     // Generate formatted help text for all registered flags.
@@ -159,7 +185,11 @@ impl ArgParser {
             }
             fline = fline + "--" + self.flags[i].longName
             if !self.flags[i].isBool {
-                fline = fline + " <value>"
+                if self.flags[i].isI64 {
+                    fline = fline + " <int>"
+                } else {
+                    fline = fline + " <value>"
+                }
             }
             while fline.len < 30 {
                 fline = fline + " "
@@ -224,7 +254,22 @@ impl ArgParser {
                 }
             }
 
-            if arg.len >= 2 && arg[0] == 45 {
+            if arg == "--" {
+                i = i + 1
+                while i < argv.len {
+                    result.positional.push(argv[i].clone())
+                    if posIdx < self.positionals.len {
+                        let entryIdx = self.flags.len + posIdx
+                        result.entries[entryIdx] = ArgEntry {
+                            name: self.positionals[posIdx].name.clone(),
+                            value: argv[i].clone(),
+                            present: true,
+                        }
+                        posIdx = posIdx + 1
+                    }
+                    i = i + 1
+                }
+            } else if arg.len >= 2 && arg[0] == 45 {
                 var matched: bool = false
                 var fi2: i64 = 0
                 while fi2 < self.flags.len {
@@ -256,6 +301,12 @@ impl ArgParser {
                                 }
                             }
                             i = i + 1
+                            if self.flags[fi2].isI64 && !_argparseIsNumeric(argv[i]) {
+                                print($"error: --{self.flags[fi2].longName}: expected integer, got '{argv[i]}'\n\n{self.helpText()}")
+                                unsafe {
+                                    exit(1)
+                                }
+                            }
                             result.entries[fi2] = ArgEntry {
                                 name: self.flags[fi2].longName.clone(),
                                 value: argv[i].clone(),
@@ -274,7 +325,6 @@ impl ArgParser {
                 }
             } else {
                 result.positional.push(arg.clone())
-                // map to named positional entry
                 if posIdx < self.positionals.len {
                     let entryIdx = self.flags.len + posIdx
                     result.entries[entryIdx] = ArgEntry {
@@ -283,6 +333,13 @@ impl ArgParser {
                         present: true,
                     }
                     posIdx = posIdx + 1
+                }
+                if self.trailingArgs {
+                    i = i + 1
+                    while i < argv.len {
+                        result.positional.push(argv[i].clone())
+                        i = i + 1
+                    }
                 }
             }
 

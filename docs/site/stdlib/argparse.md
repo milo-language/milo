@@ -61,6 +61,7 @@ struct FlagDef {
     description: string,
     required: bool,
     isBool: bool,
+    isI64: bool,
 }
 ```
 
@@ -120,6 +121,14 @@ fn addBool(parser: &ArgParser, long: string, short: string, description: string)
 
 Register a boolean flag. Present = true, absent = false.
 
+### addI64
+
+```milo
+fn addI64(parser: &ArgParser, long: string, short: string, description: string, defaultVal: i64)
+```
+
+Register an integer flag with a default value. The value is validated as numeric at parse time.
+
 ### addPositional
 
 ```milo
@@ -135,6 +144,25 @@ fn addOptionalPositional(parser: &ArgParser, name: string, description: string)
 ```
 
 Register an optional positional argument.
+
+### enableTrailingArgs
+
+```milo
+fn enableTrailingArgs(parser: &mut ArgParser)
+```
+
+Stop flag parsing after the first positional argument. All remaining arguments are collected as positionals without interpretation. Useful for runtimes and wrappers where flags before the command are yours, and everything after belongs to the child process.
+
+The `--` separator is always supported regardless of this setting — arguments after `--` are never parsed as flags.
+
+```milo
+var parser = newParser("node-milo", "JS runtime")
+parser.addBool("version", "v", "Print version")
+parser.addOptionalPositional("script", "Script to run")
+parser.enableTrailingArgs()
+let args = parser.parse()
+// node-milo script.js --foo  →  --foo lands in args.positional, not parsed as a flag
+```
 
 ### helpText
 
