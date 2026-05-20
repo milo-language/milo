@@ -69,6 +69,8 @@ export interface CheckResult {
   interfaces: Map<string, InterfaceInfo>;
   interfaceCoercions: Map<Expr, { fromType: string; ifaceName: string }>;
   interfaceMethodCalls: Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>;
+  autoJsonStringify: Map<Expr, TypeKind>;
+  anonStructs: { name: string; fields: { name: string; type: TypeKind }[] }[];
 }
 
 interface GenericEnumInfo {
@@ -172,6 +174,9 @@ export class TypeChecker {
   private interfaces = new Map<string, InterfaceInfo>();
   private interfaceCoercions = new Map<Expr, { fromType: string; ifaceName: string }>();
   private interfaceMethodCalls = new Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>();
+  private autoJsonStringify = new Map<Expr, TypeKind>();
+  private anonStructCounter = 0;
+  private anonStructs: { name: string; fields: { name: string; type: TypeKind }[] }[] = [];
 
   constructor(warningConfig?: WarningConfig) {
     const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
@@ -586,6 +591,7 @@ export class TypeChecker {
     this.functions.set("_miloArgCount", { params: [], ret: { tag: "int", bits: 64, signed: true }, variadic: false });
     this.functions.set("_miloArgAt", { params: [{ type: { tag: "int", bits: 64, signed: true }, name: "index" }], ret: { tag: "string" }, variadic: false });
     this.functions.set("_cstrToString", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "string" }, variadic: false });
+    this.functions.set("_strDataPtr", { params: [{ type: { tag: "ref", inner: { tag: "string" }, mutable: false }, name: "s" }], ret: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, variadic: false });
     this.functions.set("_loadU8", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 8, signed: false }, variadic: false });
     this.functions.set("_loadI32", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "ptr" }], ret: { tag: "int", bits: 32, signed: true }, variadic: false });
     this.functions.set("_callClosureVoid", { params: [{ type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "fn" }, { type: { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, name: "env" }], ret: { tag: "void" }, variadic: false });
@@ -789,6 +795,8 @@ export class TypeChecker {
       interfaces: this.interfaces,
       interfaceCoercions: this.interfaceCoercions,
       interfaceMethodCalls: this.interfaceMethodCalls,
+      autoJsonStringify: this.autoJsonStringify,
+      anonStructs: this.anonStructs,
     };
   }
 
@@ -2696,6 +2704,21 @@ export class TypeChecker {
         return this.setType(expr, sig.ret);
       }
       case "StructLit": {
+        // anonymous struct literal: { field: value, ... }
+        if (expr.name === "") {
+          if (expr.fields.length === 0) { this.error(`anonymous struct literal must have at least one field`, sp); return this.setType(expr, { tag: "unknown" }); }
+          const fields: { name: string; type: TypeKind }[] = [];
+          for (const f of expr.fields) {
+            const valType = this.checkExpr(f.value);
+            fields.push({ name: f.name, type: valType });
+            this.tryMove(f.value);
+          }
+          const anonName = `__Anon${this.anonStructCounter++}`;
+          this.structs.set(anonName, { fields });
+          this.anonStructs.push({ name: anonName, fields });
+          this.rewrittenStructLits.set(expr, anonName);
+          return this.setType(expr, { tag: "struct", name: anonName });
+        }
         const genericInfo = this.genericStructs.get(expr.name);
         if (genericInfo) {
           const typeMap = new Map<string, TypeKind>();
@@ -3511,7 +3534,11 @@ export class TypeChecker {
             const argType = this.checkExprWithHint(expr.args[i], expected.type.tag === "ref" ? expected.type.inner : expected.type);
             const bare = expected.type.tag === "ref" ? expected.type.inner : expected.type;
             if (!typeEq(bare, argType) && argType.tag !== "unknown") {
-              this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+              if (expr.method === "json" && bare.tag === "string" && (argType.tag === "struct" || argType.tag === "bool" || argType.tag === "int" || argType.tag === "float")) {
+                this.autoJsonStringify.set(expr.args[i], argType);
+              } else {
+                this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
+              }
             }
             if (expected.type.tag === "ref") {
               this.autoBorrowed.set(expr.args[i], { mutable: expected.type.mutable });

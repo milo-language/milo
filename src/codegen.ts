@@ -61,7 +61,7 @@ export class Codegen {
   private closureCounter = 0;
   private scopeCounter = 0;
   private entryAllocas: string[] = [];
-  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_loadU8", "_loadI32", "_callClosureVoid", "_atomicLoadI64", "_atomicStoreI64", "_atomicAddI64", "_atomicSubI64", "_atomicCasI64", "_atomicLoadBool", "_atomicStoreBool", "_atomicSwapBool", "_schedulerGet", "_schedulerSet"]);
+  private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_strDataPtr", "_loadU8", "_loadI32", "_callClosureVoid", "_atomicLoadI64", "_atomicStoreI64", "_atomicAddI64", "_atomicSubI64", "_atomicCasI64", "_atomicLoadBool", "_atomicStoreBool", "_atomicSwapBool", "_schedulerGet", "_schedulerSet"]);
   private needsArgGlobals = false;
   private usesSchedulerGlobal = false;
   private currentFnName = "";
@@ -1766,6 +1766,16 @@ export class Codegen {
       const s3 = this.nextTemp();
       lines.push(`  ${s3} = insertvalue %String ${s2}, i64 ${cap}, 2`);
       return [lines, s3, "%String"];
+    }
+    if (expr.func === "_strDataPtr") {
+      // extract the data pointer (field 0) from a &string
+      const [al, pv] = this.genExpr(expr.args[0].expr);
+      lines.push(...al);
+      const dataGep = this.nextTemp();
+      lines.push(`  ${dataGep} = getelementptr %String, ptr ${pv}, i32 0, i32 0`);
+      const dataPtr = this.nextTemp();
+      lines.push(`  ${dataPtr} = load ptr, ptr ${dataGep}`);
+      return [lines, dataPtr, "ptr"];
     }
     // ── Atomic intrinsics ──
     if (expr.func === "_atomicLoadI64") {
