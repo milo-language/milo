@@ -202,6 +202,92 @@ extern
 
 fn freeaddrinfo(res: *u8): void
 
+// ── Filesystem ──
+
+extern
+
+fn lstat(path: *u8, buf: *u8): i32
+
+extern
+
+fn link(existing: *u8, new_path: *u8): i32
+
+extern
+
+fn unlink(path: *u8): i32
+
+extern
+
+fn symlink(target: *u8, path: *u8): i32
+
+extern
+
+fn readlink(path: *u8, buf: *u8, bufsize: i64): i64
+
+extern
+
+fn realpath(path: *u8, resolved: *u8): *u8
+
+extern
+
+fn rename(old_path: *u8, new_path: *u8): i32
+
+extern
+
+fn mkdir(path: *u8, mode: u32): i32
+
+extern
+
+fn rmdir(path: *u8): i32
+
+extern
+
+fn chmod(path: *u8, mode: u32): i32
+
+extern
+
+fn fchmod(fd: i32, mode: u32): i32
+
+extern
+
+fn chown(path: *u8, uid: u32, gid: u32): i32
+
+extern
+
+fn fchown(fd: i32, uid: u32, gid: u32): i32
+
+extern
+
+fn lchown(path: *u8, uid: u32, gid: u32): i32
+
+extern
+
+fn truncate(path: *u8, length: i64): i32
+
+extern
+
+fn ftruncate(fd: i32, length: i64): i32
+
+extern
+
+fn fsync(fd: i32): i32
+
+extern
+
+fn fdatasync(fd: i32): i32
+
+extern
+
+fn mkdtemp(template: *u8): *u8
+
+extern
+
+fn getcwd(buf: *u8, size: i64): *u8
+
+extern
+
+fn chdir(path: *u8): i32
+
 // ── Directory ──
 
 extern

@@ -1,8 +1,13 @@
 // std/fs — filesystem operations
 
-from "std/os" import { access, closedir, opendir, read, readdir, stat }
-from "std/io" import { File, IoError }
-from "std/platform" import { direntNameOffset, direntTypeOffset, statBufSize, statModeOffset, statSizeOffset }
+from "std/os" import {
+    access, chdir, chmod, chown, closedir, fchmod, fchown, fdatasync,
+    fsync, ftruncate, getcwd, lchown, link, lstat, mkdir,
+    mkdtemp, opendir, read, readdir, readlink, realpath,
+    rename, rmdir, stat, strerror, strlen, symlink, truncate, unlink
+}
+from "std/io" import { File, IoError, _ioError }
+from "std/platform" import { direntNameOffset, direntTypeOffset, getErrno, statBufSize, statModeOffset, statSizeOffset }
 
 // File metadata from stat().
 
@@ -134,4 +139,205 @@ fn readDir(path: &string): Vec<DirEntry> {
 fn writeFile(path: &string, data: &string): Result<i64, IoError> {
     let f = File.openWrite(path)?
     return f.writeAll(data)
+}
+
+// ── Safe wrappers around POSIX fs operations ──
+// Return Result<bool, IoError> for operations with no meaningful return value.
+
+fn _ok(): Result<bool, IoError> {
+    return Result.Ok(true)
+}
+
+fn _errPath(path: &string): Result<bool, IoError> {
+    return Result.Err(_ioError(path))
+}
+
+fn _errFd(msg: &string): Result<bool, IoError> {
+    return Result.Err(IoError.Other(msg.clone()))
+}
+
+fn removeFile(path: &string): Result<bool, IoError> {
+    unsafe {
+        if unlink(path) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn makeDir(path: &string, mode: i32): Result<bool, IoError> {
+    unsafe {
+        if mkdir(path, mode as u32) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn removeDir(path: &string): Result<bool, IoError> {
+    unsafe {
+        if rmdir(path) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn renameFile(oldPath: &string, newPath: &string): Result<bool, IoError> {
+    unsafe {
+        if rename(oldPath, newPath) != 0 { return _errPath(oldPath) }
+        return _ok()
+    }
+}
+
+fn hardLink(existing: &string, newPath: &string): Result<bool, IoError> {
+    unsafe {
+        if link(existing, newPath) != 0 { return _errPath(existing) }
+        return _ok()
+    }
+}
+
+fn softLink(target: &string, path: &string): Result<bool, IoError> {
+    unsafe {
+        if symlink(target, path) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn readLink(path: &string): Result<string, IoError> {
+    var buf: [u8; 4096] = [0; 4096]
+    unsafe {
+        let n = readlink(path, buf as *u8, 4096)
+        if n < 0 { return Result.Err(_ioError(path)) }
+        buf[n] = 0
+        return Result.Ok(_cstrToString(buf as *u8))
+    }
+}
+
+fn realPath(path: &string): Result<string, IoError> {
+    var buf: [u8; 4096] = [0; 4096]
+    unsafe {
+        let r = realpath(path, buf as *u8)
+        if r as i64 == 0 as i64 { return Result.Err(_ioError(path)) }
+        return Result.Ok(_cstrToString(buf as *u8))
+    }
+}
+
+fn setMode(path: &string, mode: i32): Result<bool, IoError> {
+    unsafe {
+        if chmod(path, mode as u32) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn setFdMode(fd: i32, mode: i32): Result<bool, IoError> {
+    unsafe {
+        if fchmod(fd, mode as u32) != 0 { return _errFd("fchmod failed") }
+        return _ok()
+    }
+}
+
+fn setOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError> {
+    unsafe {
+        if chown(path, uid, gid) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn setFdOwner(fd: i32, uid: u32, gid: u32): Result<bool, IoError> {
+    unsafe {
+        if fchown(fd, uid, gid) != 0 { return _errFd("fchown failed") }
+        return _ok()
+    }
+}
+
+fn setLinkOwner(path: &string, uid: u32, gid: u32): Result<bool, IoError> {
+    unsafe {
+        if lchown(path, uid, gid) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn truncateFile(path: &string, length: i64): Result<bool, IoError> {
+    unsafe {
+        if truncate(path, length) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn truncateFd(fd: i32, length: i64): Result<bool, IoError> {
+    unsafe {
+        if ftruncate(fd, length) != 0 { return _errFd("ftruncate failed") }
+        return _ok()
+    }
+}
+
+fn syncFd(fd: i32): Result<bool, IoError> {
+    unsafe {
+        if fsync(fd) != 0 { return _errFd("fsync failed") }
+        return _ok()
+    }
+}
+
+fn dataSyncFd(fd: i32): Result<bool, IoError> {
+    unsafe {
+        if fdatasync(fd) != 0 { return _errFd("fdatasync failed") }
+        return _ok()
+    }
+}
+
+fn makeTempDir(prefix: &string): Result<string, IoError> {
+    // mkdtemp modifies template in place — copy into mutable buffer
+    var buf: [u8; 4096] = [0; 4096]
+    let tmpl = prefix + "XXXXXX"
+    unsafe {
+        var i: i64 = 0
+        while i < tmpl.len {
+            buf[i] = tmpl[i]
+            i = i + 1
+        }
+        buf[tmpl.len] = 0
+        let r = mkdtemp(buf as *u8)
+        if r as i64 == 0 as i64 { return Result.Err(_ioError(prefix)) }
+        return Result.Ok(_cstrToString(r))
+    }
+}
+
+fn currentDir(): Result<string, IoError> {
+    var buf: [u8; 4096] = [0; 4096]
+    unsafe {
+        let r = getcwd(buf as *u8, 4096)
+        if r as i64 == 0 as i64 { return Result.Err(IoError.Other("getcwd failed")) }
+        return Result.Ok(_cstrToString(buf as *u8))
+    }
+}
+
+fn changeDir(path: &string): Result<bool, IoError> {
+    unsafe {
+        if chdir(path) != 0 { return _errPath(path) }
+        return _ok()
+    }
+}
+
+fn lstatInfo(path: &string): FileInfo {
+    var buf: [u8; 144] = [0; 144]
+    unsafe {
+        let r = lstat(path, buf)
+        if r != 0 {
+            return FileInfo { size: 0 as i64, mode: 0, exists: false }
+        }
+        let modeOff = statModeOffset()
+        let sizeOff = statSizeOffset()
+        let modeLo = buf[modeOff] as i32
+        let modeHi = buf[modeOff + 1] as i32
+        let mode = modeLo | (modeHi << 8)
+        var size: i64 = 0
+        var i: i64 = 0
+        while i < 8 {
+            size = size | ((buf[sizeOff + i] as i64) << (i * 8))
+            i = i + 1
+        }
+        return FileInfo { size: size, mode: mode, exists: true }
+    }
+}
+
+fn isSymlink(path: &string): bool {
+    let info = lstatInfo(path)
+    if !info.exists { return false }
+    // S_IFLNK = 0xA000 = 40960
+    return (info.mode & 61440) == 40960
 }
