@@ -50,6 +50,8 @@ export class Codegen {
   private needsStrtod = false;
   private loopHeader: string | null = null;
   private loopExit: string | null = null;
+  private loopDropStart: number = 0;
+  private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
   private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
   private droppableEnums = new Set<string>();
   private dropImpls = new Set<string>();
@@ -263,6 +265,12 @@ export class Codegen {
       this.usesSchedulerGlobal = true;
     }
 
+    // register globals before function generation so they're visible during codegen
+    for (const g of module.globals) {
+      const ty = this.llvmType(g.type);
+      this.globalVars.set(g.name, { type: ty, typeKind: g.type });
+    }
+
     // generate function bodies first (collects string constants, sets needsBoundsCheck)
     const fnBodies: string[][] = [];
     for (const fn of functions) fnBodies.push(this.genFunction(fn));
@@ -338,6 +346,13 @@ export class Codegen {
 
     if (this.usesSchedulerGlobal) {
       this.output.splice(1, 0, "@_milo_scheduler = internal global ptr null");
+    }
+
+    // emit module-level globals
+    for (const g of module.globals) {
+      const ty = this.llvmType(g.type);
+      const initVal = this.getConstantInitializer(g);
+      this.output.splice(1, 0, `@${g.name} = internal global ${ty} ${initVal}`);
     }
 
     // emit itable globals for interface dispatch
@@ -421,7 +436,7 @@ export class Codegen {
       const mainParams = params ? `i32 %_milo_argc, ptr %_milo_argv, ${params}` : "i32 %_milo_argc, ptr %_milo_argv";
       lines.push(`define ${ret} @${fn.name}(${mainParams}) {`);
     } else {
-      lines.push(`define ${ret} @${fn.name}(${params}) {`);
+      lines.push(`define linkonce_odr ${ret} @${fn.name}(${params}) {`);
     }
     lines.push("entry:");
     if (fn.name === "main") {
@@ -574,10 +589,16 @@ export class Codegen {
       case "If": return this.genIf(stmt);
       case "While": return this.genWhile(stmt);
       case "Break":
-        if (this.loopExit) lines.push(`  br label %${this.loopExit}`);
+        if (this.loopExit) {
+          this.emitLoopDropGlue(lines);
+          lines.push(`  br label %${this.loopExit}`);
+        }
         return [lines, true];
       case "Continue":
-        if (this.loopHeader) lines.push(`  br label %${this.loopHeader}`);
+        if (this.loopHeader) {
+          this.emitLoopDropGlue(lines);
+          lines.push(`  br label %${this.loopHeader}`);
+        }
         return [lines, true];
       case "ExprStmt": {
         const [exprLines] = this.genExpr(stmt.expr);
@@ -608,6 +629,10 @@ export class Codegen {
     const lines: string[] = [];
     if (expr.kind === "Ident") {
       const local = this.locals.get(expr.name);
+      if (!local) {
+        const globalInfo = this.globalVars.get(expr.name);
+        if (globalInfo) return [lines, `@${expr.name}`, globalInfo.type];
+      }
       if (local?.isRef) {
         const tmp = this.nextTemp();
         lines.push(`  ${tmp} = load ptr, ptr ${this.localAddr(expr.name)}`);
@@ -789,8 +814,10 @@ export class Codegen {
     const endLabel = this.nextLabel("while.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
+    const prevDropStart = this.loopDropStart;
     this.loopHeader = condLabel;
     this.loopExit = endLabel;
+    this.loopDropStart = this.droppableLocals.length;
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
     const [condLines, condVal] = this.genExpr(stmt.cond);
@@ -807,6 +834,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
+    this.loopDropStart = prevDropStart;
     return [lines, false];
   }
 
@@ -997,9 +1025,11 @@ export class Codegen {
     const endLabel = this.nextLabel("for.end");
     const prevHeader = this.loopHeader;
     const prevExit = this.loopExit;
+    const prevDropStart = this.loopDropStart;
     // continue goes to increment, not condition
     this.loopHeader = incrLabel;
     this.loopExit = endLabel;
+    this.loopDropStart = this.droppableLocals.length;
 
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
@@ -1030,6 +1060,7 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     this.loopHeader = prevHeader;
     this.loopExit = prevExit;
+    this.loopDropStart = prevDropStart;
     return [lines, false];
   }
 
@@ -1071,8 +1102,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
+      const prevDropStart = this.loopDropStart;
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
+      this.loopDropStart = this.droppableLocals.length;
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
@@ -1105,6 +1138,7 @@ export class Codegen {
       lines.push(`${endLabel}:`);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
+      this.loopDropStart = prevDropStart;
       return [lines, false];
 
     } else if (stmt.iterableKind === "string") {
@@ -1137,8 +1171,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
+      const prevDropStart = this.loopDropStart;
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
+      this.loopDropStart = this.droppableLocals.length;
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
@@ -1173,6 +1209,7 @@ export class Codegen {
       lines.push(`${endLabel}:`);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
+      this.loopDropStart = prevDropStart;
       return [lines, false];
 
     } else if (stmt.iterableKind === "array") {
@@ -1202,8 +1239,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
+      const prevDropStart = this.loopDropStart;
       this.loopHeader = incrLabel;
       this.loopExit = endLabel;
+      this.loopDropStart = this.droppableLocals.length;
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
@@ -1236,6 +1275,7 @@ export class Codegen {
       lines.push(`${endLabel}:`);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
+      this.loopDropStart = prevDropStart;
       return [lines, false];
 
     } else {
@@ -1278,8 +1318,10 @@ export class Codegen {
       const endLabel = this.nextLabel("for.end");
       const prevHeader = this.loopHeader;
       const prevExit = this.loopExit;
+      const prevDropStart = this.loopDropStart;
       this.loopHeader = nextLabel;
       this.loopExit = endLabel;
+      this.loopDropStart = this.droppableLocals.length;
 
       lines.push(`  br label %${condLabel}`);
       lines.push(`${condLabel}:`);
@@ -1329,6 +1371,7 @@ export class Codegen {
       lines.push(`${endLabel}:`);
       this.loopHeader = prevHeader;
       this.loopExit = prevExit;
+      this.loopDropStart = prevDropStart;
       return [lines, false];
     }
   }
@@ -1974,6 +2017,12 @@ export class Codegen {
             const val = this.nextTemp();
             lines.push(`  ${val} = load { ptr, ptr }, ptr ${alloca}`);
             return [lines, val, "{ ptr, ptr }"];
+          }
+          const globalInfo = this.globalVars.get(expr.name);
+          if (globalInfo) {
+            const val = this.nextTemp();
+            lines.push(`  ${val} = load ${globalInfo.type}, ptr @${expr.name}`);
+            return [lines, val, globalInfo.type];
           }
           console.error(`error[codegen]: undefined variable '${expr.name}'`); process.exit(1);
         }
@@ -2978,6 +3027,20 @@ export class Codegen {
       lines.push(...al);
       return [lines, addr, toTy];
     }
+    // string → ptr: extract data pointer from String struct
+    if (fromKind.tag === "string" && toKind.tag === "ptr") {
+      this.hasStringType = true;
+      const [ol, ov] = this.genExpr(expr.operand);
+      lines.push(...ol);
+      const addr = this.nextTemp();
+      lines.push(`  ${addr} = alloca %String`);
+      lines.push(`  store %String ${ov}, ptr ${addr}`);
+      const gep = this.nextTemp();
+      lines.push(`  ${gep} = getelementptr %String, ptr ${addr}, i32 0, i32 0`);
+      const dataPtr = this.nextTemp();
+      lines.push(`  ${dataPtr} = load ptr, ptr ${gep}`);
+      return [lines, dataPtr, "ptr"];
+    }
     // fn → ptr: get raw function pointer (bypass closure trampoline for known functions)
     if (fromKind.tag === "fn" && toKind.tag === "ptr") {
       if (expr.operand.kind === "Ident") {
@@ -2992,6 +3055,12 @@ export class Codegen {
       const tmp = this.nextTemp();
       lines.push(`  ${tmp} = extractvalue { ptr, ptr } ${ov}, 0`);
       return [lines, tmp, "ptr"];
+    }
+    // aggregate types (arrays, structs) can't participate in scalar casts
+    if (fromKind.tag === "array" || fromKind.tag === "struct") {
+      const [ol, ov, fromTy] = this.genExpr(expr.operand);
+      lines.push(...ol);
+      return [lines, ov, fromTy];
     }
     const [ol, ov, fromTy] = this.genExpr(expr.operand);
     lines.push(...ol);
@@ -6114,9 +6183,30 @@ export class Codegen {
 
   private usedSatIntrinsics?: Set<string>;
 
+  private getConstantInitializer(g: import("./hir").HIRGlobal): string {
+    if (g.value.kind === "IntLit") return g.value.value.toString();
+    if (g.value.kind === "FloatLit") {
+      const hex = g.value.value.toString();
+      const buf = new ArrayBuffer(8);
+      new Float64Array(buf)[0] = g.value.value;
+      const bits = new BigUint64Array(buf)[0];
+      return `0x${bits.toString(16).toUpperCase().padStart(16, "0")}`;
+    }
+    if (g.value.kind === "BoolLit") return g.value.value ? "1" : "0";
+    return "0";
+  }
+
   // emit drop glue for all droppable locals before a scope exit
   private emitDropGlue(lines: string[]) {
     for (const local of this.droppableLocals) {
+      this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
+    }
+  }
+
+  // emit drop glue only for locals allocated inside the current loop body
+  private emitLoopDropGlue(lines: string[]) {
+    for (let i = this.loopDropStart; i < this.droppableLocals.length; i++) {
+      const local = this.droppableLocals[i];
       this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
     }
   }

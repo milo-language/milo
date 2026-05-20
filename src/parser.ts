@@ -3,7 +3,7 @@ import { Lexer } from "./lexer";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
-  TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias, InterfaceDecl,
+  TraitDecl, TraitMethod, ImplDecl, Attribute, TypeAlias, InterfaceDecl, GlobalDecl,
 } from "./ast";
 
 export class Parser {
@@ -48,6 +48,7 @@ export class Parser {
     const impls: ImplDecl[] = [];
     const typeAliases: TypeAlias[] = [];
     const interfaces: InterfaceDecl[] = [];
+    const globals: GlobalDecl[] = [];
     while (!this.at(TokenKind.Eof)) {
       // collect attributes before struct/enum
       let attrs: Attribute[] | undefined;
@@ -85,11 +86,13 @@ export class Parser {
         typeAliases.push(this.parseTypeAlias());
       } else if (this.at(TokenKind.Interface)) {
         interfaces.push(this.parseInterfaceDecl());
+      } else if (this.at(TokenKind.Let) || this.at(TokenKind.Var)) {
+        globals.push(this.parseGlobalDecl());
       } else {
         this.error(`expected declaration, got '${this.peek().kind}'`, this.peek());
       }
     }
-    return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces };
+    return { structs, enums, functions, imports, traits, impls, typeAliases, interfaces, globals };
   }
 
   private parseImport(): ImportDecl {
@@ -474,6 +477,18 @@ export class Parser {
       return { kind: "Assign", target: expr, value, span: expr.span };
     }
     return { kind: "ExprStmt", expr, span: expr.span };
+  }
+
+  private parseGlobalDecl(): GlobalDecl {
+    const s = this.span(this.peek());
+    const mutable = this.at(TokenKind.Var);
+    this.advance();
+    const name = this.expect(TokenKind.Ident).value;
+    let type: MiloType | null = null;
+    if (this.match(TokenKind.Colon)) type = this.parseType();
+    this.expect(TokenKind.Eq);
+    const value = this.parseExpr();
+    return { kind: "GlobalDecl", name, type, value, mutable, span: s };
   }
 
   private parseLet(): Stmt {
@@ -946,6 +961,11 @@ export class Parser {
       const expr = this.parseExpr();
       this.expect(TokenKind.RParen);
       return expr;
+    }
+
+    // anonymous struct literal: { field: value, ... }
+    if (tok.kind === TokenKind.LBrace && this.peekN(1).kind === TokenKind.Ident && this.peekN(2).kind === TokenKind.Colon) {
+      return this.parseStructLit("", s);
     }
 
     this.error(`unexpected token '${tok.kind}'`, tok);

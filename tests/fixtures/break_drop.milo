@@ -1,0 +1,16 @@
+fn main(): i32 {
+  var i: i32 = 0
+  while i < 5 {
+    let _s = "iteration"
+    if i == 2 {
+      break
+    }
+    i = i + 1
+  }
+  print("after loop")
+  print(i)
+  return 0
+}
+
+// @expect: after loop
+// @expect: 2

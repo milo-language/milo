@@ -183,6 +183,15 @@ export interface TypeAlias {
 
 export type TopLevel = StructDecl | EnumDecl | Function | ImportDecl | TraitDecl | ImplDecl | TypeAlias | InterfaceDecl;
 
+export interface GlobalDecl {
+  kind: "GlobalDecl";
+  name: string;
+  type: MiloType | null;
+  value: Expr;
+  mutable: boolean;
+  span?: Span;
+}
+
 export interface Program {
   structs: StructDecl[];
   enums: EnumDecl[];
@@ -192,4 +201,5 @@ export interface Program {
   impls: ImplDecl[];
   typeAliases: TypeAlias[];
   interfaces: InterfaceDecl[];
+  globals: GlobalDecl[];
 }

@@ -120,9 +120,14 @@ Runtime pressure from `node-milo` changes the order here: binary data and FFI sa
 
 ## Known Bugs
 
-- [ ] **Codegen: `break` skips drop cleanup for loop-local owned values** — `codegen.ts:564`: `Break` emits a bare `br label %loopExit` with no drop glue for locals allocated inside the loop body (compare `Return` which calls `emitDropGlue`). Owned values (strings, vecs) allocated before `break` are never freed, corrupting the stack. Observable as SIGTRAP after `fork()` in the same function. `continue` (line 568) has the same issue. Workaround: move loop+break into a separate function. Repro: `while cond { let s = vec[i].clone(); break }` then `fork()` in same fn.
-- [ ] **Module-level `let` not supported outside std/** — `let X: i32 = 5` at module scope works in `std/*.milo` but produces "expected declaration" parse error in user code. Blocks defining constants without functions.
-- [ ] **No `string` → `*u8` cast** — `"literal" as *u8` and `myString as *u8` fail type checking. Implicit coercion works when passing `&string` to extern fns expecting `*u8`, but explicit casts are rejected. Matters for inline extern calls.
+- [x] ~~**Missing `linkonce_odr` linkage**~~ — fixed: all non-main functions now emit `define linkonce_odr`, eliminating duplicate symbol errors when the same monomorphized generic or prelude function appears in multiple compilation units.
+- [x] ~~**Duplicate symbol errors from prelude**~~ — resolved by `linkonce_odr` fix above.
+- [x] ~~**No module-level state**~~ — fixed: `let` and `var` at module scope now work everywhere. Parser, checker, lower, and codegen all handle `GlobalDecl` nodes. Emitted as LLVM `internal global`. Supports int/float/bool literal initializers.
+- [x] ~~**Large array codegen crash (>=65536 bytes)**~~ — fixed: aggregate types (arrays, structs) no longer fall through to the scalar trunc/ext cast path in genCast.
+- [x] ~~**Codegen: `break`/`continue` skip drop cleanup**~~ — fixed: break and continue now emit `emitLoopDropGlue()` for loop-local owned values before branching. All 6 loop variants (while, for-range, for-each vec/string/array/hashmap) track `loopDropStart`.
+- [x] ~~**No `string` → `*u8` cast**~~ — fixed: `"literal" as *u8` and `myString as *u8` now work in unsafe blocks. Codegen extracts the data pointer from the String struct.
+- [x] ~~**`string` not coercing to `*u8` in all positions**~~ — fixed: string→`*u8` coercion now works in let/var declarations, assignments, and return statements, in addition to function call arguments.
+- ~~**Variadic ABI corruption on ARM64**~~ — investigated: variadic support already implemented (parser, AST, codegen all handle `...`). Not a bug.
 
 ## Missing Stdlib Bindings
 

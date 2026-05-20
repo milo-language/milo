@@ -1,0 +1,25 @@
+let MAX_SIZE: i32 = 100
+let PI: f64 = 3.14159
+var counter: i32 = 0
+
+fn increment() {
+  counter = counter + 1
+}
+
+fn main(): i32 {
+  print(MAX_SIZE)
+  print(PI)
+  print(counter)
+  increment()
+  print(counter)
+  increment()
+  increment()
+  print(counter)
+  return 0
+}
+
+// @expect: 100
+// @expect: 3.14159
+// @expect: 0
+// @expect: 1
+// @expect: 3

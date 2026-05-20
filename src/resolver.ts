@@ -89,6 +89,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   const impls: typeof program.impls = [];
   const typeAliases: typeof program.typeAliases = [];
   const interfaces: typeof program.interfaces = [];
+  const globals: typeof program.globals = [];
 
   const deps = findManifest(sourceDir);
 
@@ -158,6 +159,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         for (const f of imported.functions) available.add(f.name);
         for (const t of imported.traits) available.add(t.name);
         for (const i of imported.interfaces) available.add(i.name);
+        for (const g of imported.globals) available.add(g.name);
         for (const name of imp.names) {
           if (!available.has(name)) {
             throw new Error(`error[import]: ${imp.span?.line}:${imp.span?.col}: '${name}' not found in '${imp.path}'`);
@@ -172,6 +174,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       impls.push(...imported.impls);
       typeAliases.push(...imported.typeAliases);
       interfaces.push(...imported.interfaces);
+      globals.push(...imported.globals);
       processImports(imported, dirname(absPath));
     }
   }
@@ -189,6 +192,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     impls.push(...prelude.impls);
     typeAliases.push(...prelude.typeAliases);
     interfaces.push(...prelude.interfaces);
+    globals.push(...prelude.globals);
     processImports(prelude, dirname(preludePath));
   }
 
@@ -200,6 +204,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   impls.push(...program.impls);
   typeAliases.push(...program.typeAliases);
   interfaces.push(...program.interfaces);
+  globals.push(...program.globals);
 
   processImports(program, sourceDir);
 
@@ -216,5 +221,5 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     return result;
   }
 
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces) };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals) };
 }

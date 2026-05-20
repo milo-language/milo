@@ -3,7 +3,7 @@
 
 import type { Program, Function as AstFn, Stmt, Expr, Pattern } from "./ast";
 import type { CheckResult, FnSig, EnumInfo } from "./checker";
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal } from "./hir";
 import type { TypeKind } from "./types";
 import { typeFromAst } from "./types";
 import { readFileSync, existsSync } from "fs";
@@ -30,6 +30,9 @@ class LowerCtx {
       const info = this.c.structs.get(s.name);
       if (!info) continue;
       structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })), isExtern: info.isExtern });
+    }
+    for (const s of this.c.anonStructs) {
+      structs.push({ name: s.name, fields: s.fields.map(f => ({ name: f.name, type: f.type })) });
     }
 
     const enums: HIREnum[] = [];
@@ -84,7 +87,18 @@ class LowerCtx {
     }
     const itables = [...itableMap.values()];
 
-    return { structs, enums, functions, dropImpls: this.c.dropImpls, itables };
+    const globals: HIRGlobal[] = [];
+    for (const g of program.globals) {
+      const type = g.type ? this.c.globalTypes?.get(g.name) ?? typeFromAst(g.type) : this.c.globalTypes?.get(g.name) ?? { tag: "unknown" as const };
+      globals.push({
+        name: g.name,
+        type,
+        value: this.lowerExpr(g.value),
+        mutable: g.mutable,
+      });
+    }
+
+    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables };
   }
 
   private lowerParam(p: { name: string; type: import("./ast").MiloType }, sig: import("./checker").FnSig | undefined, i: number) {
@@ -725,8 +739,13 @@ class LowerCtx {
           const allExprs = [expr.object, ...expr.args];
           const args: HIRArg[] = allExprs.map((a, i) => {
             const borrowed = this.c.autoBorrowed.get(a);
+            const jsonType = this.c.autoJsonStringify.get(a);
+            let lowered = this.lowerExpr(a);
+            if (jsonType) {
+              lowered = { kind: "JsonStringify", value: lowered, valueType: jsonType, type: { tag: "string" }, span: a.span };
+            }
             return {
-              expr: this.lowerExpr(a),
+              expr: lowered,
               passByRef: !!borrowed,
               refMut: borrowed?.mutable ?? false,
             };

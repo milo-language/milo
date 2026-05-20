@@ -71,6 +71,7 @@ export interface CheckResult {
   interfaceMethodCalls: Map<Expr, { ifaceName: string; methodName: string; methodIndex: number }>;
   autoJsonStringify: Map<Expr, TypeKind>;
   anonStructs: { name: string; fields: { name: string; type: TypeKind }[] }[];
+  globalTypes?: Map<string, TypeKind>;
 }
 
 interface GenericEnumInfo {
@@ -122,6 +123,7 @@ interface InterfaceInfo {
 export class TypeChecker {
   private warningConfig: WarningConfig;
   private diagnostics: Diagnostic[] = [];
+  private _globalTypes = new Map<string, TypeKind>();
   private functions = new Map<string, FnSig>();
   private genericFns = new Map<string, GenericFnInfo>();
   private structs = new Map<string, StructInfo>();
@@ -746,6 +748,21 @@ export class TypeChecker {
       this.registerImpl(impl, program, implFnsToCheck);
     }
 
+    // type-check module-level globals — push a module scope so declare() works
+    this.pushScope();
+    const globalTypes = new Map<string, TypeKind>();
+    for (const g of program.globals) {
+      const hint = g.type ? this.resolve(g.type) : null;
+      const valType = this.checkExprWithHint(g.value, hint);
+      const finalType = hint ?? valType;
+      if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
+        this.error(`global '${g.name}': type mismatch: expected ${typeName(hint)}, got ${typeName(valType)}`, g.span);
+      }
+      globalTypes.set(g.name, finalType);
+      this.declare(g.name, { type: finalType, mutable: g.mutable, moved: false, borrowed: false, read: true, span: g.span });
+    }
+    this._globalTypes = globalTypes;
+
     for (const fn of program.functions) {
       if (!fn.isExtern && fn.typeParams.length === 0) this.checkFunction(fn);
     }
@@ -797,6 +814,7 @@ export class TypeChecker {
       interfaceMethodCalls: this.interfaceMethodCalls,
       autoJsonStringify: this.autoJsonStringify,
       anonStructs: this.anonStructs,
+      globalTypes: this._globalTypes,
     };
   }
 
@@ -1428,11 +1446,12 @@ export class TypeChecker {
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
+          const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
           if (optInner && typeEq(optInner, valType)) {
             this.autoWrappedOption.set(stmt.value, hint.name);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
-          } else if (!this.tryInterfaceCoercion(stmt.value, valType, hint)) {
+          } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
         }
@@ -1459,11 +1478,12 @@ export class TypeChecker {
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
+          const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
           if (optInner && typeEq(optInner, valType)) {
             this.autoWrappedOption.set(stmt.value, hint.name);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
-          } else if (!this.tryInterfaceCoercion(stmt.value, valType, hint)) {
+          } else if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, hint)) {
             this.error(`type mismatch: '${stmt.name}' declared as ${typeName(hint)} but got ${typeName(valType)}`, sp);
           }
         }
@@ -1494,9 +1514,10 @@ export class TypeChecker {
         const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
         if (!typeEq(targetInfo.type, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(targetInfo.type);
+          const isStringToPtr = valType.tag === "string" && targetInfo.type.tag === "ptr" && targetInfo.type.inner.tag === "int" && targetInfo.type.inner.bits === 8;
           if (optInner && typeEq(optInner, valType)) {
             this.autoWrappedOption.set(stmt.value, targetInfo.type.name);
-          } else {
+          } else if (!isStringToPtr) {
             this.error(`type mismatch: cannot assign ${typeName(valType)} to ${typeName(targetInfo.type)}`, sp);
           }
         }
@@ -1515,7 +1536,10 @@ export class TypeChecker {
           if (this.loopDepth > 0) this.inReturnInLoop = true;
           const valType = this.checkExprWithHint(stmt.value, fnRetType);
           if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && fnRetType.tag !== "unknown") {
-            this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
+            const isStringToPtr = valType.tag === "string" && fnRetType.tag === "ptr" && fnRetType.inner.tag === "int" && fnRetType.inner.bits === 8;
+            if (!isStringToPtr) {
+              this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
+            }
           }
           this.tryMove(stmt.value);
           this.inReturnInLoop = prev;
@@ -3065,7 +3089,7 @@ export class TypeChecker {
       case "CastExpr": {
         const fromType = this.checkExpr(expr.operand);
         const toType = this.resolve(expr.targetType);
-        const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "fn" || fromType.tag === "unknown";
+        const fromOk = isNumeric(fromType) || fromType.tag === "bool" || fromType.tag === "ptr" || fromType.tag === "array" || fromType.tag === "fn" || fromType.tag === "string" || fromType.tag === "unknown";
         const toOk = isNumeric(toType) || toType.tag === "ptr";
         if (!fromOk) {
           this.error(`cannot cast from ${typeName(fromType)}`, sp);

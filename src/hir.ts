@@ -131,10 +131,18 @@ export interface HIREnum {
   variants: { name: string; tag: number; fields: TypeKind[] }[];
 }
 
+export interface HIRGlobal {
+  name: string;
+  type: TypeKind;
+  value: HIRExpr;
+  mutable: boolean;
+}
+
 export interface HIRModule {
   structs: HIRStruct[];
   enums: HIREnum[];
   functions: HIRFunction[];
+  globals: HIRGlobal[];
   dropImpls: Set<string>;
   itables: { concreteType: string; ifaceName: string; methods: string[] }[];
 }
