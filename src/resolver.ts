@@ -221,5 +221,6 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     return result;
   }
 
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals) };
+  const userFnNames = new Set(program.functions.map(f => f.name));
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames };
 }

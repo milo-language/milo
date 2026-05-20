@@ -145,4 +145,5 @@ export interface HIRModule {
   globals: HIRGlobal[];
   dropImpls: Set<string>;
   itables: { concreteType: string; ifaceName: string; methods: string[] }[];
+  userFnNames?: Set<string>;
 }

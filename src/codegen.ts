@@ -52,6 +52,7 @@ export class Codegen {
   private loopExit: string | null = null;
   private loopDropStart: number = 0;
   private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
+  private userFnNames = new Set<string>();
   private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
   private droppableEnums = new Set<string>();
   private dropImpls = new Set<string>();
@@ -259,6 +260,7 @@ export class Codegen {
 
     const externs = module.functions.filter(f => f.isExtern);
     const functions = module.functions.filter(f => !f.isExtern);
+    if (module.userFnNames) this.userFnNames = module.userFnNames;
 
     // detect scheduler usage: if _schedulerDrain is defined, the program uses green threads
     if (functions.some(f => f.name === "_schedulerDrain")) {
@@ -436,7 +438,8 @@ export class Codegen {
       const mainParams = params ? `i32 %_milo_argc, ptr %_milo_argv, ${params}` : "i32 %_milo_argc, ptr %_milo_argv";
       lines.push(`define ${ret} @${fn.name}(${mainParams}) {`);
     } else {
-      lines.push(`define linkonce_odr ${ret} @${fn.name}(${params}) {`);
+      const linkage = this.userFnNames.has(fn.name) ? "" : "linkonce_odr ";
+      lines.push(`define ${linkage}${ret} @${fn.name}(${params}) {`);
     }
     lines.push("entry:");
     if (fn.name === "main") {

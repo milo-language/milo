@@ -98,7 +98,7 @@ class LowerCtx {
       });
     }
 
-    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables };
+    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: program.userFnNames };
   }
 
   private lowerParam(p: { name: string; type: import("./ast").MiloType }, sig: import("./checker").FnSig | undefined, i: number) {

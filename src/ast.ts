@@ -202,4 +202,5 @@ export interface Program {
   typeAliases: TypeAlias[];
   interfaces: InterfaceDecl[];
   globals: GlobalDecl[];
+  userFnNames?: Set<string>;
 }
