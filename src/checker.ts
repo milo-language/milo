@@ -3097,7 +3097,8 @@ export class TypeChecker {
         if (!toOk) {
           this.error(`cannot cast to ${typeName(toType)}`, sp);
         }
-        if (toType.tag === "ptr" && this.unsafeDepth === 0) {
+        const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0;
+        if (toType.tag === "ptr" && this.unsafeDepth === 0 && !isNullPtrConst) {
           this.error(`cast to pointer type requires 'unsafe' block`, sp);
         }
         return this.setType(expr, toType);
