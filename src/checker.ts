@@ -30,6 +30,7 @@ export interface StructInfo {
   baseName?: string;
   typeArgs?: TypeKind[];
   isExtern?: boolean;
+  isOpaque?: boolean;
 }
 
 export interface EnumInfo {
@@ -72,6 +73,7 @@ export interface CheckResult {
   autoJsonStringify: Map<Expr, TypeKind>;
   anonStructs: { name: string; fields: { name: string; type: TypeKind }[] }[];
   globalTypes?: Map<string, TypeKind>;
+  iteratorForIns: Map<Stmt, { nextMethod: string; elemType: TypeKind; optionEnumName: string }>;
 }
 
 interface GenericEnumInfo {
@@ -170,6 +172,7 @@ export class TypeChecker {
   private genericImpls = new Map<string, { impl: import("./ast").ImplDecl; program: Program }[]>();
   private _pendingImplFns: Function[] = [];
   private resolvedMethods = new Map<Expr, string>();
+  private iteratorForIns = new Map<Stmt, { nextMethod: string; elemType: TypeKind; optionEnumName: string }>();
   private resolvedOperators = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
   private propagateConversions = new Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>();
@@ -320,6 +323,14 @@ export class TypeChecker {
     const base = typeFromAst(ty);
     if (base.tag === "struct" && this.enums.has(base.name)) {
       return { tag: "enum", name: base.name };
+    }
+    // opaque extern types can only appear behind *T
+    const opaqueCheck = base.tag === "struct" ? base.name
+      : (base.tag === "ref" && base.inner.tag === "struct") ? base.inner.name
+      : (base.tag === "array" && base.element.tag === "struct") ? base.element.name
+      : null;
+    if (opaqueCheck && this.structs.get(opaqueCheck)?.isOpaque) {
+      this.error(`extern type '${opaqueCheck}' can only be used as a pointer (*${opaqueCheck})`);
     }
     return base;
   }
@@ -645,7 +656,7 @@ export class TypeChecker {
             this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
           }
         }
-        this.structs.set(s.name, { fields, isExtern: s.isExtern });
+        this.structs.set(s.name, { fields, isExtern: s.isExtern, isOpaque: s.isOpaque });
       }
     }
 
@@ -815,6 +826,7 @@ export class TypeChecker {
       autoJsonStringify: this.autoJsonStringify,
       anonStructs: this.anonStructs,
       globalTypes: this._globalTypes,
+      iteratorForIns: this.iteratorForIns,
     };
   }
 
@@ -840,6 +852,7 @@ export class TypeChecker {
       changed = false;
       for (const s of program.structs) {
         if (s.typeParams.length > 0) continue;
+        if (s.isOpaque) continue;
         if (explicitEq.has(s.name)) continue;
         if (derived.has(s.name)) continue;
         if (program.impls.some(i => i.traitName === "Eq" && i.typeName === s.name)) continue;
@@ -1756,6 +1769,59 @@ export class TypeChecker {
                 }
               }
             }
+          } else if (iterType.tag === "struct" || iterType.tag === "enum") {
+            // iterator protocol: type has next(&mut Self): Option<T>
+            const resolved = this.resolveMethod(iterType.name, "next");
+            if (!resolved) {
+              this.error(`cannot iterate over type '${typeName(iterType)}': no 'next' method found`, sp);
+            } else {
+              const retType = resolved.sig.ret;
+              let elemType: TypeKind | null = null;
+              let optionEnumName = "";
+              if (retType.tag === "enum") {
+                const enumInfo = this.enums.get(retType.name);
+                if (enumInfo && enumInfo.baseName === "Option") {
+                  const someVariant = enumInfo.variants.get("Some");
+                  if (someVariant && someVariant.fields.length === 1) {
+                    elemType = someVariant.fields[0];
+                    optionEnumName = retType.name;
+                  }
+                }
+              }
+              if (!elemType) {
+                this.error(`iterator 'next' method must return Option<T>, got ${typeName(retType)}`, sp);
+              } else {
+                // require iterable to be mutable (next takes &mut Self)
+                if (stmt.iterable.kind === "Ident") {
+                  const info = this.lookup(stmt.iterable.name);
+                  if (info && !info.mutable) {
+                    this.error(`cannot iterate: '${stmt.iterable.name}' must be 'var' (iterator mutates via next())`, sp);
+                  }
+                  if (info) info.borrowed = true;
+                }
+                if (stmt.varName2) {
+                  this.error("iterator for loop takes one binding, not two", sp);
+                }
+                this.iteratorForIns.set(stmt, { nextMethod: resolved.mangled, elemType, optionEnumName });
+                const preMoves = this.snapshotMoveState();
+                this.returnOnlyMovesStack.push(new Set());
+                this.pushScope();
+                this.declare(stmt.varName, { type: elemType, mutable: false, moved: false, borrowed: false, read: false });
+                this.loopDepth++;
+                for (const s of stmt.body) this.checkStmt(s, fnRetType);
+                this.loopDepth--;
+                this.popScope();
+                const returnMovesIter = this.returnOnlyMovesStack.pop()!;
+                for (const scope of this.scopes) {
+                  for (const [name, info] of scope) {
+                    if (preMoves.get(info) === false && info.moved) {
+                      if (returnMovesIter.has(info)) { info.moved = false; }
+                      else { this.error(`cannot move '${name}' out of a loop`, sp); }
+                    }
+                  }
+                }
+              }
+            }
           } else if (iterType.tag !== "unknown") {
             this.error(`cannot iterate over type '${typeName(iterType)}'`, sp);
           }
@@ -2125,15 +2191,21 @@ export class TypeChecker {
       return { type: t, mutable: info.mutable };
     }
     if (expr.kind === "FieldAccess") {
-      const objType = this.checkExpr(expr.object);
+      let objType = this.checkExpr(expr.object);
+      // auto-deref *Struct for field assignment (always mutable through ptr)
+      let throughPtr = false;
+      if (objType.tag === "ptr" && objType.inner.tag === "struct") {
+        objType = objType.inner;
+        throughPtr = true;
+      }
       if (objType.tag === "struct") {
         const info = this.structs.get(objType.name);
         if (!info) { this.error(`unknown struct '${objType.name}'`, sp); return null; }
         const field = info.fields.find(f => f.name === expr.field);
         if (!field) { this.error(`struct '${objType.name}' has no field '${expr.field}'`, sp); return null; }
         this.setType(expr, field.type);
-        const rootMut = this.isRootMutable(expr.object);
-        return { type: field.type, mutable: rootMut };
+        const mutable = throughPtr ? true : this.isRootMutable(expr.object);
+        return { type: field.type, mutable };
       }
       this.error(`cannot access field on non-struct type ${typeName(objType)}`, sp);
       return null;
@@ -2606,13 +2678,6 @@ export class TypeChecker {
         }
 
         const sig = this.functions.get(expr.func);
-        if (sig?.isExtern && this.unsafeDepth === 0) {
-          // extern fns with only scalar params/return are safe to call without unsafe
-          const allScalar = sig.params.every(p => isScalar(p.type)) && isScalar(sig.ret);
-          if (!allScalar) {
-            this.error(`calling extern function '${expr.func}' requires an unsafe block`, sp);
-          }
-        }
         if (!sig) {
           const varInfo = this.lookup(expr.func);
           if (varInfo && varInfo.type.tag === "fn") {
@@ -2725,6 +2790,32 @@ export class TypeChecker {
           if (argType?.tag === "array" && paramType.tag === "ptr") continue;
           this.tryMove(expr.args[i]);
         }
+        // safe extern call: no unsafe needed if all args are safe-passable and return is scalar/void
+        if (sig.isExtern && this.unsafeDepth === 0) {
+          const retSafe = isScalar(sig.ret);
+          let argsSafe = retSafe;
+          if (argsSafe) {
+            for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
+              const paramType = sig.params[i].type;
+              const argType = this.exprTypes.get(expr.args[i]);
+              if (isScalar(paramType)) continue;
+              if (paramType.tag === "ref") continue;
+              // fn param with matching fn arg — safe (caller provides valid function)
+              if (paramType.tag === "fn" && argType?.tag === "fn") continue;
+              // *T param with matching *T, string, or [T;N] arg
+              if (paramType.tag === "ptr" && argType) {
+                if (argType.tag === "ptr" && typeEq(argType.inner, paramType.inner)) continue;
+                if (argType.tag === "string" && paramType.inner.tag === "int" && paramType.inner.bits === 8) continue;
+                if (argType.tag === "array" && typeEq(argType.element, paramType.inner)) continue;
+              }
+              argsSafe = false;
+              break;
+            }
+          }
+          if (!argsSafe) {
+            this.error(`calling extern function '${expr.func}' requires an unsafe block`, sp);
+          }
+        }
         return this.setType(expr, sig.ret);
       }
       case "StructLit": {
@@ -2805,6 +2896,11 @@ export class TypeChecker {
         let objType = this.checkExpr(expr.object);
         // auto-deref through references for field access
         if (objType.tag === "ref") objType = objType.inner;
+        // auto-deref through pointers for field access (requires unsafe)
+        if (objType.tag === "ptr" && objType.inner.tag === "struct") {
+          if (this.unsafeDepth === 0) this.error(`pointer field access requires 'unsafe' block`, sp);
+          objType = objType.inner;
+        }
         if (objType.tag === "struct") {
           const info = this.structs.get(objType.name);
           if (!info) { this.error(`unknown struct '${objType.name}'`, sp); return this.setType(expr, { tag: "unknown" }); }
@@ -3491,6 +3587,10 @@ export class TypeChecker {
           if (expr.method === "len") {
             if (expr.args.length !== 0) { this.error(`'len' takes no arguments`, sp); }
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
+          }
+          if (expr.method === "cstr") {
+            if (expr.args.length !== 0) { this.error(`'cstr' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } });
           }
           // fall through to trait/inherent lookup for String
         }

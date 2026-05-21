@@ -67,12 +67,13 @@ export class Parser {
         if (attrs) e.attributes = attrs;
         enums.push(e);
       } else if (this.at(TokenKind.Extern)) {
-        // peek ahead: extern fn or extern struct?
         const nextTok = this.tokens[this.pos + 1];
         if (nextTok && nextTok.kind === TokenKind.Struct) {
           const s = this.parseExternStruct();
           if (attrs) s.attributes = attrs;
           structs.push(s);
+        } else if (nextTok && nextTok.kind === TokenKind.Type) {
+          structs.push(this.parseExternType());
         } else {
           functions.push(this.parseExternFn());
         }
@@ -285,6 +286,13 @@ export class Parser {
     const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
     return { kind: "Function", name, typeParams: [], params, retType, body: [], isExtern: true, isVariadic: variadic };
+  }
+
+  private parseExternType(): StructDecl {
+    this.expect(TokenKind.Extern);
+    this.expect(TokenKind.Type);
+    const name = this.expect(TokenKind.Ident).value;
+    return { kind: "StructDecl", name, typeParams: [], fields: [], isExtern: true, isOpaque: true };
   }
 
   private parseExternStruct(): StructDecl {

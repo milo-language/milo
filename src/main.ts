@@ -60,22 +60,25 @@ function compileToIr(sourcePath: string, outputPath: string | null, target: Targ
   }
 }
 
-// detect whether clang is available; if not, fall back to llc+cc two-step pipeline
-type Toolchain = { kind: "clang" } | { kind: "llc+cc" };
+// detect clang: prefer /usr/bin/clang (Apple) which is more stable, then PATH clang, then llc+cc
+type Toolchain = { kind: "clang"; path: string } | { kind: "llc+cc" };
 let cachedToolchain: Toolchain | null = null;
 function detectToolchain(): Toolchain {
   if (cachedToolchain) return cachedToolchain;
-  try {
-    execSync("clang --version", { stdio: ["pipe", "pipe", "pipe"] });
-    cachedToolchain = { kind: "clang" };
-  } catch {
+  const candidates = ["/usr/bin/clang", "clang"];
+  for (const cc of candidates) {
     try {
-      execSync("llc --version", { stdio: ["pipe", "pipe", "pipe"] });
-      execSync("cc --version", { stdio: ["pipe", "pipe", "pipe"] });
-      cachedToolchain = { kind: "llc+cc" };
-    } catch {
-      throw new Error("no C compiler found: need either 'clang' or 'llc'+'cc' on PATH");
-    }
+      execSync(`${cc} --version`, { stdio: ["pipe", "pipe", "pipe"], timeout: 5000 });
+      cachedToolchain = { kind: "clang", path: cc };
+      return cachedToolchain;
+    } catch {}
+  }
+  try {
+    execSync("llc --version", { stdio: ["pipe", "pipe", "pipe"] });
+    execSync("cc --version", { stdio: ["pipe", "pipe", "pipe"] });
+    cachedToolchain = { kind: "llc+cc" };
+  } catch {
+    throw new Error("no C compiler found: need either 'clang' or 'llc'+'cc' on PATH");
   }
   return cachedToolchain;
 }
@@ -84,7 +87,7 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
   const tc = detectToolchain();
   if (tc.kind === "clang") {
     const opt = optFlag ? ` ${optFlag}` : "";
-    execSync(`clang${opt} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+    execSync(`${tc.path}${opt} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
   } else {
     const tmpObj = llFile.replace(/\.ll$/, ".o");
     const opt = optFlag || "-O2";
@@ -121,7 +124,7 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
     const tc = detectToolchain();
     const opt = optFlag || "-O2";
     if (tc.kind === "clang") {
-      execSync(`clang -c ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`${tc.path} -c ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
     } else {
       execSync(`llc -filetype=obj ${opt} ${tmpLl} -o ${out}`, { stdio: ["pipe", "pipe", "pipe"] });
     }

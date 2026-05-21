@@ -915,21 +915,132 @@ All imports must be explicit — list exactly which symbols you use. No `import 
 
 ## C FFI
 
+### Extern Functions
+
 Declare external C functions with `extern`:
 
 ```milo
 extern fn puts(s: *u8): i32
 extern fn printf(fmt: *u8, ...): i32
 extern fn malloc(size: u64): *u8
+```
+
+### Safe vs Unsafe Extern Calls
+
+The compiler determines whether an extern call needs `unsafe` based on the argument types and return type.
+
+**Safe** (no `unsafe` needed) when:
+- All pointer params receive auto-coerced args: `string`→`*u8`, `[T;N]`→`*T`, matching `*T`→`*T`
+- Function-typed params receive a matching Milo function
+- Return type is scalar or `void`
+
+**Unsafe** when:
+- Return type is a pointer (`*T`) — unknown provenance
+- A param takes a raw `*T` that isn't from auto-coercion
+
+```milo
+extern fn puts(s: *u8): i32
+extern fn write(fd: i32, buf: *u8, len: i64): i64
+extern fn malloc(size: u64): *u8
 
 fn main(): i32 {
-    puts("Hello from C!")
-    printf("number: %d\n", 42)
+    puts("Hello from C!")             // safe — string auto-coerces, returns i32
+    write(1, "output", 6)             // safe — string auto-coerces, returns i64
+    unsafe { let p = malloc(64) }     // unsafe — returns *u8
     return 0
 }
 ```
 
-Strings auto-coerce to `*u8` when passed to extern functions.
+### Unsafe Blocks
+
+`unsafe { }` is required for operations the compiler can't verify:
+
+```milo
+unsafe {
+    let p = malloc(64)        // extern returning pointer
+    p[0] = 42 as u8           // pointer indexing
+    let val = *p              // pointer deref
+    let q = (&x) as *u8      // address-of cast
+}
+```
+
+Exception: `0 as *T` (null pointer literal) does not require `unsafe`.
+
+### string.cstr()
+
+Returns the string's `*u8` data pointer without `unsafe`. The string remains alive in the caller's scope, so the pointer is valid.
+
+```milo
+let msg = "hello"
+let ptr = msg.cstr()               // *u8, no unsafe needed
+extern fn strlen(s: *u8): i64
+let len = strlen(ptr)              // safe — *u8 arg matches *u8 param
+```
+
+### Opaque Foreign Types
+
+`extern type` declares a type with no known size or layout. It can only exist behind a pointer:
+
+```milo
+extern type sqlite3
+extern type sqlite3_stmt
+
+extern fn sqlite3_open(path: *u8, db: **sqlite3): i32
+extern fn sqlite3_close(db: *sqlite3): i32
+```
+
+The compiler rejects using an opaque type by value — only `*sqlite3` is valid. `*sqlite3` is a distinct type from `*sqlite3_stmt` and `*u8`, preventing handle mixups at compile time.
+
+```milo
+// null pointer to opaque type — always safe
+let db: *sqlite3 = 0 as *sqlite3
+```
+
+### Extern Structs
+
+`extern struct` declares a C-layout struct. The compiler knows field offsets and generates GEP instructions for field access:
+
+```milo
+extern struct SockAddrIn {
+    sin_family: u16,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
+}
+```
+
+Field access through a pointer auto-derefs (requires `unsafe` for the pointer deref):
+
+```milo
+unsafe {
+    let addr: *SockAddrIn = malloc(16) as *SockAddrIn
+    addr.sin_family = 2       // GEP + store, no byte arithmetic
+    addr.sin_port = htons(80)
+    let family = addr.sin_family
+}
+```
+
+### Typed Function Pointers in Extern Decls
+
+Extern functions can declare function-typed parameters. Passing a matching Milo function requires no cast:
+
+```milo
+extern fn qsort(base: *u8, num: i64, size: i64, cmp: (*u8, *u8) => i32): void
+
+fn cmpI32(a: *u8, b: *u8): i32 {
+    unsafe {
+        let va = *(a as *i32)
+        let vb = *(b as *i32)
+        return va - vb
+    }
+}
+
+fn main(): i32 {
+    var arr: [i32; 5] = [50, 10, 99, 30, 70]
+    unsafe { qsort((&arr[0]) as *u8, 5, 4, cmpI32) }   // cmpI32 passed directly
+    return 0
+}
+```
 
 ---
 
@@ -1805,6 +1916,9 @@ The parser auto-handles `--help`/`-h` and validates required args, integer forma
 | Import | `import "file.milo"` |
 | Named import | `from "path" import { A, B }` |
 | FFI | `extern fn name(args): ret` |
+| Opaque foreign type | `extern type Name` |
+| Extern struct | `extern struct Name { field: Type }` |
+| String to C ptr | `s.cstr()` returns `*u8` |
 | Trait | `trait Name { fn method(self: &Self): T }` |
 | Impl trait | `impl Trait for Type { ... }` |
 | Impl methods | `impl Type { ... }` |

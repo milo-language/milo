@@ -250,8 +250,13 @@ export class Codegen {
     for (const fn of module.functions) {
       this.userDeclaredFns.add(fn.name);
       this.fnSigs.set(fn.name, {
-        paramTypes: fn.params.map(p => p.isRef || p.isRefMut ? "ptr" : this.llvmType(p.type)),
-        retType: this.llvmType(fn.retType),
+        paramTypes: fn.params.map(p => {
+          if (p.isRef || p.isRefMut) return "ptr";
+          // extern fn params: fn types are raw function pointers, not closure tuples
+          if (fn.isExtern && p.type.tag === "fn") return "ptr";
+          return this.llvmType(p.type);
+        }),
+        retType: fn.isExtern && fn.retType.tag === "fn" ? "ptr" : this.llvmType(fn.retType),
         variadic: fn.isVariadic,
       });
     }
@@ -624,6 +629,8 @@ export class Codegen {
         return this.genForRange(stmt);
       case "ForEach":
         return this.genForEach(stmt);
+      case "ForIterator":
+        return this.genForIterator(stmt);
       case "Parallel":
         return this.genParallel(stmt);
     }
@@ -645,6 +652,18 @@ export class Codegen {
       return [lines, this.localAddr(expr.name), local?.type ?? "i32"];
     }
     if (expr.kind === "FieldAccess") {
+      // pointer-to-struct: load ptr, GEP into pointed-to struct
+      if (expr.object.type.tag === "ptr" && expr.object.type.inner.tag === "struct") {
+        const [objLines, objVal] = this.genExpr(expr.object);
+        lines.push(...objLines);
+        const structName = expr.object.type.inner.name;
+        const layout = this.structLayouts.get(structName)!;
+        const idx = layout.fields.findIndex(f => f.name === expr.field);
+        const fieldTy = layout.fields[idx].type;
+        const tmp = this.nextTemp();
+        lines.push(`  ${tmp} = getelementptr %${structName}, ptr ${objVal}, i32 0, i32 ${idx}`);
+        return [lines, tmp, fieldTy];
+      }
       const [objLines, objPtr, objTy] = this.genLValue(expr.object);
       lines.push(...objLines);
       const structName = this.getStructName(objTy);
@@ -1378,6 +1397,80 @@ export class Codegen {
       this.loopDropStart = prevDropStart;
       return [lines, false];
     }
+  }
+
+  private genForIterator(stmt: HIRStmt & { kind: "ForIterator" }): [string[], boolean] {
+    const lines: string[] = [];
+    const [iterLines, iterAddr] = this.genLValue(stmt.iterable);
+    lines.push(...iterLines);
+
+    const sig = this.fnSigs.get(stmt.nextMethod);
+    const retTy = sig?.retType ?? `%${stmt.optionEnumName}`;
+    const layout = this.enumLayouts.get(stmt.optionEnumName);
+    if (!layout) throw new Error(`enum layout not found for ${stmt.optionEnumName}`);
+
+    const someVariant = layout.variants.get("Some")!;
+    const noneVariant = layout.variants.get("None")!;
+    const elemTy = this.llvmType(stmt.varType);
+
+    const varAddr = this.locals.has(stmt.varName)
+      ? `%${stmt.varName}.${this.scopeCounter++}.addr`
+      : `%${stmt.varName}.addr`;
+    this.entryAllocas.push(`  ${varAddr} = alloca ${elemTy}`);
+    this.locals.set(stmt.varName, { type: elemTy, typeKind: stmt.varType, mutable: false, isRef: false, addr: varAddr });
+
+    const condLabel = this.nextLabel("iter.cond");
+    const bodyLabel = this.nextLabel("iter.body");
+    const endLabel = this.nextLabel("iter.end");
+    const prevHeader = this.loopHeader;
+    const prevExit = this.loopExit;
+    const prevDropStart = this.loopDropStart;
+    this.loopHeader = condLabel;
+    this.loopExit = endLabel;
+    this.loopDropStart = this.droppableLocals.length;
+
+    lines.push(`  br label %${condLabel}`);
+    lines.push(`${condLabel}:`);
+
+    // call next(&mut self)
+    const result = this.nextTemp();
+    lines.push(`  ${result} = call ${retTy} @${stmt.nextMethod}(ptr ${iterAddr})`);
+
+    // stage enum to extract tag
+    const stagePtr = this.nextTemp();
+    this.entryAllocas.push(`  ${stagePtr} = alloca ${retTy}`);
+    lines.push(`  store ${retTy} ${result}, ptr ${stagePtr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${retTy}, ptr ${stagePtr}, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    // branch: Some → body, None → end
+    const cmp = this.nextTemp();
+    lines.push(`  ${cmp} = icmp eq i32 ${tag}, ${noneVariant.tag}`);
+    lines.push(`  br i1 ${cmp}, label %${endLabel}, label %${bodyLabel}`);
+
+    lines.push(`${bodyLabel}:`);
+    // extract payload from Some variant
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${retTy}, ptr ${stagePtr}, i32 0, i32 1`);
+    const val = this.nextTemp();
+    lines.push(`  ${val} = load ${elemTy}, ptr ${payloadPtr}`);
+    lines.push(`  store ${elemTy} ${val}, ptr ${varAddr}`);
+
+    let bodyTerminated = false;
+    for (const s of stmt.body) {
+      const [sl, t] = this.genStmt(s);
+      lines.push(...sl);
+      if (t) { bodyTerminated = true; break; }
+    }
+    if (!bodyTerminated) lines.push(`  br label %${condLabel}`);
+
+    lines.push(`${endLabel}:`);
+    this.loopHeader = prevHeader;
+    this.loopExit = prevExit;
+    this.loopDropStart = prevDropStart;
+    return [lines, false];
   }
 
   private genMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
@@ -2145,6 +2238,11 @@ export class Codegen {
               argVals.push({ val: aPtr, type: "ptr" });
               continue;
             }
+            // fn → ptr coercion: bare function name passed to extern fn ptr param
+            if (argTk.tag === "fn" && paramExpectsPtr && arg.expr.kind === "Ident" && this.fnSigs.has(arg.expr.name)) {
+              argVals.push({ val: `@${arg.expr.name}`, type: "ptr" });
+              continue;
+            }
             const [al, av, at] = this.genExpr(arg.expr);
             lines.push(...al);
             // String → ptr coercion for extern/FFI calls (including variadic args)
@@ -2152,6 +2250,11 @@ export class Codegen {
               const dataPtr = this.nextTemp();
               lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
               argVals.push({ val: dataPtr, type: "ptr" });
+            // fn closure → ptr coercion: extract fn ptr from closure tuple for extern calls
+            } else if (at === "{ ptr, ptr }" && paramExpectsPtr) {
+              const fnPtr = this.nextTemp();
+              lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${av}, 0`);
+              argVals.push({ val: fnPtr, type: "ptr" });
             } else {
               argVals.push({ val: av, type: at });
             }
@@ -2210,6 +2313,13 @@ export class Codegen {
         const len = this.nextTemp();
         lines.push(`  ${len} = extractvalue %String ${ov}, 1`);
         return [lines, len, "i64"];
+      }
+      case "StringCstr": {
+        const [ol, ov] = this.genExpr(expr.object);
+        lines.push(...ol);
+        const dataPtr = this.nextTemp();
+        lines.push(`  ${dataPtr} = extractvalue %String ${ov}, 0`);
+        return [lines, dataPtr, "ptr"];
       }
       case "ArrayLit": {
         // Vec literal: `[a, b, c]` with Vec<T> type hint. Emit malloc + N stores, build %Vec struct.
@@ -3357,6 +3467,18 @@ export class Codegen {
 
   private genFieldPtr(expr: HIRExpr & { kind: "FieldAccess" }): [string[], string, string] {
     const lines: string[] = [];
+    // pointer-to-struct: load the ptr value, GEP into the pointed-to struct
+    if (expr.object.type.tag === "ptr" && expr.object.type.inner.tag === "struct") {
+      const [objLines, objVal] = this.genExpr(expr.object);
+      lines.push(...objLines);
+      const structName = expr.object.type.inner.name;
+      const layout = this.structLayouts.get(structName)!;
+      const idx = layout.fields.findIndex(f => f.name === expr.field);
+      const fieldTy = layout.fields[idx].type;
+      const ptr = this.nextTemp();
+      lines.push(`  ${ptr} = getelementptr %${structName}, ptr ${objVal}, i32 0, i32 ${idx}`);
+      return [lines, ptr, fieldTy];
+    }
     const [objLines, objPtr, objTy] = this.genLValue(expr.object);
     lines.push(...objLines);
     let finalPtr = objPtr;

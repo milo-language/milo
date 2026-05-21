@@ -1,0 +1,8 @@
+extern type Opaque
+
+fn main(): i32 {
+  var x: Opaque = 0
+  return 0
+}
+
+// @error: can only be used as a pointer

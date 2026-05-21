@@ -4,22 +4,40 @@ Goal: match Rust's compile-time safety guarantees without Rust's complexity. Sta
 
 Current state: Milo enforces memory safety (moves), null safety (Option), race safety (Send/Sync), overflow safety (compile-time + debug traps), coercion safety (no implicit casts). The gaps are aliased mutation, arena use-after-free, and no unsafe boundary.
 
-## Phase 1: `unsafe` Blocks
+## Phase 1: `unsafe` Blocks + Safe FFI Surface
 
-**Status:** Not started
-**Complexity:** Low — keyword + scope rule
-**Impact:** High — auditability, not expressiveness
+**Status:** Complete
+**Complexity:** Low–Medium
+**Impact:** High — auditability + dramatically reduced unsafe surface
 
-Add `unsafe { }` blocks. The compiler enforces nothing extra inside — it's a grep target and code-review signal. FFI `extern` calls and raw arena internals must live inside `unsafe`.
+`unsafe { }` blocks are implemented. The compiler requires `unsafe` for pointer deref, pointer indexing, address-of, casting to pointer types, and extern calls with unsafe signatures.
 
-Rules:
-- `extern fn` declarations are implicitly unsafe — calling them requires `unsafe { }`
-- Functions can be marked `unsafe fn` — callers must wrap in `unsafe { }`
+### What's implemented
+
+**`unsafe` blocks** — quarantine for dangerous operations:
+- Pointer deref (`*ptr`), pointer indexing (`ptr[i]`), address-of (`&var x`)
+- Casting to pointer type (`x as *T`) — except `0 as *T` (null literal)
+- `zeroed<T>()`
+
+**Safe extern call expansion** — extern calls do NOT need `unsafe` when:
+- All pointer params receive auto-coerced args: `string`→`*u8`, `[T;N]`→`*T`, matching `*T`→`*T`
+- Function params match: `fn` type arg → `fn` type param
+- Return type is scalar or `void`
+- If return is `*T` → still requires `unsafe` (unknown provenance)
+
+**`string.cstr()` builtin** — returns `*u8` data pointer without `unsafe`. Non-owning borrow; string stays alive in caller scope.
+
+**`extern type`** — opaque foreign handle types (`extern type sqlite3`). Can only exist behind `*T`. Prevents handle mixups between different FFI types.
+
+**Pointer-to-struct field access** — `ptr.field` auto-derefs `*Struct` for field access (requires `unsafe`). Eliminates manual byte-offset pointer arithmetic.
+
+**Typed function pointers in extern decls** — extern fns accept `(*u8, *u8) => i32` params directly. Passing a matching Milo function needs no cast.
+
+### Remaining Phase 1 items
+- `unsafe fn` declarations — callers must wrap in `unsafe { }`
 - Lint: warn on `unsafe` outside `std/` (configurable)
-- `unsafe` blocks are visible in LSP (code lens, hover)
-- `--deny-unsafe` flag rejects any `unsafe` in user code (aircraft-grade opt-in)
-
-This is the single highest-leverage change. Quarantines danger behind a clear marker.
+- `unsafe` visible in LSP (code lens, hover)
+- `--deny-unsafe` flag for user code (aircraft-grade opt-in)
 
 ## Phase 2: Flow-Sensitive Invalidation Tracking
 

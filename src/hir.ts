@@ -24,6 +24,7 @@ export type HIRExpr =
   | { kind: "EnumLit"; enumName: string; variant: string; args: HIRExpr[]; type: TypeKind; span?: Span }
   | { kind: "ArrayLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringLen"; object: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "StringCstr"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "Unwrap"; operand: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "Propagate"; operand: HIRExpr; enumName: string; retType: TypeKind; fromConversion?: { targetEnumName: string; wrapVariant: string; wrapTag: number }; type: TypeKind; span?: Span }
   | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span }
@@ -97,6 +98,7 @@ export type HIRStmt =
   | { kind: "UnsafeBlock"; body: HIRStmt[]; span?: Span }
   | { kind: "ForRange"; varName: string; varType: TypeKind; start: HIRExpr; end: HIRExpr; body: HIRStmt[]; span?: Span }
   | { kind: "ForEach"; varName: string; varName2: string | null; varType: TypeKind; varType2: TypeKind | null; iterable: HIRExpr; iterableKind: "vec" | "string" | "hashmap" | "array"; body: HIRStmt[]; span?: Span }
+  | { kind: "ForIterator"; varName: string; varType: TypeKind; iterable: HIRExpr; nextMethod: string; optionEnumName: string; body: HIRStmt[]; span?: Span }
   | { kind: "Parallel"; branches: { name: string; expr: HIRExpr; type: TypeKind; captures: { name: string; type: TypeKind; mutable: boolean }[] }[]; span?: Span };
 
 export interface HIRMatchArm {

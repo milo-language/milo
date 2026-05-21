@@ -108,6 +108,7 @@ export interface StructDecl {
   fields: StructField[];
   attributes?: Attribute[];
   isExtern?: boolean;
+  isOpaque?: boolean;
 }
 
 export interface EnumVariant {

@@ -1,0 +1,25 @@
+extern fn puts(s: *u8): i32
+extern fn malloc(size: i64): *u8
+
+extern struct Point {
+  x: i32,
+  y: i32,
+}
+
+fn main(): i32 {
+  unsafe {
+    let p = malloc(8) as *Point
+
+    // write through pointer
+    p.x = 10
+    p.y = 20
+
+    // read through pointer
+    if p.x == 10 && p.y == 20 {
+      puts("ptr field access ok")
+    }
+  }
+  return 0
+}
+
+// @expect: ptr field access ok

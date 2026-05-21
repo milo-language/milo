@@ -1,0 +1,26 @@
+// typed function pointer in extern decl — no cast needed
+extern fn qsort(base: *u8, num: i64, size: i64, cmp: (*u8, *u8) => i32): void
+
+fn cmpI32(a: *u8, b: *u8): i32 {
+    unsafe {
+        let va = *(a as *i32)
+        let vb = *(b as *i32)
+        return va - vb
+    }
+}
+
+fn main(): i32 {
+    var arr: [i32; 5] = [0; 5]
+    arr[0] = 50
+    arr[1] = 10
+    arr[2] = 99
+    arr[3] = 30
+    arr[4] = 70
+    unsafe {
+        qsort((&arr[0]) as *u8, 5, 4, cmpI32)
+    }
+    print(arr[4])
+    return 0
+}
+
+// @expect: 99

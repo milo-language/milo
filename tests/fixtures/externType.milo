@@ -1,0 +1,20 @@
+extern type MyHandle
+
+extern fn puts(s: *u8): i32
+
+fn takeHandle(h: *MyHandle): void {
+  // just pass it around
+}
+
+fn main(): i32 {
+  // null pointer to opaque type — no unsafe needed
+  let h = 0 as *MyHandle
+
+  takeHandle(h)
+
+  // different opaque types are distinct
+  puts("extern type ok")
+  return 0
+}
+
+// @expect: extern type ok

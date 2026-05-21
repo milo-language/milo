@@ -94,11 +94,15 @@ See **[docs/safety-roadmap.md](safety-roadmap.md)** for the full plan. Summary:
 
 Runtime pressure from `node-milo` changes the order here: binary data and FFI safety land before more expressive abstractions.
 
-- [ ] **CStr / fromCStr** — safe wrapper for NUL-terminated C strings (`*u8`). `CStr.from(ptr): CStr` + `.toString(): String` + safe indexed access with bounds checking against the NUL terminator. Eliminates raw pointer arithmetic in FFI code — currently every `node-milo` binding uses `unsafe` just to read C strings (e.g. `_isDotEntry` byte checks, `env.milo` manual copy loops).
+- [x] ~~**Safe extern call expansion**~~ — extern calls no longer need `unsafe` when all args are safely coerced (string→`*u8`, array→`*T`, `*T`→`*T`, `fn`→fn ptr) and return is scalar/void. Dramatically reduces `unsafe` in FFI code.
+- [x] ~~**`string.cstr()` builtin**~~ — returns `*u8` data pointer without `unsafe`. Replaces `_strDataPtr` intrinsic for ergonomic C string interop.
+- [x] ~~**Opaque foreign handle types**~~ — `extern type sqlite3`, `extern type SSL` — opaque types that can only exist behind `*T`. Prevents handle mixups between different FFI types. No LLVM layout emitted.
+- [x] ~~**Pointer-to-struct field access**~~ — `ptr.field` auto-derefs `*Struct` for field access (requires `unsafe`). Eliminates manual byte-offset pointer arithmetic for C struct access.
+- [x] ~~**Typed function pointers in extern decls**~~ — extern fns accept `(*u8, *u8) => i32` params directly. Passing a Milo function no longer needs `as *u8` cast.
+- [x] ~~**CStr stdlib**~~ — `std/cstr.milo` provides `CStr.wrap(ptr)`, `.toString()`, `.byte(i)`, `.eq()` for safe NUL-terminated C string access.
 - [ ] **Unused import warnings** — compiler should warn (or error) on imported symbols that are never used in the module. Currently `main.milo` imports all binding symbols just so they link, but ideally re-exports or `pub` declarations in binding modules would handle this without polluting the import list.
 - [ ] **Borrowed slices / byte views** — `&[T]` / `&mut [T]`, with slicing generalized beyond `string`. Unblocks offset/length I/O, `Buffer`/`ArrayBuffer` interop, and zero-copy protocol parsing.
-- [ ] **Opaque foreign handle types** — `extern type sqlite3`, `extern type SSL`, `extern type NmRuntime` instead of raw `*u8`. Keeps FFI zero-cost while preventing handle mixups.
-- [ ] **C ABI / layout control** — `repr(c)`, packed structs, `sizeof`, `offsetof`, `extern struct`. Needed for `epoll_event`, `kevent`, `stat`, `addrinfo`, V8 glue, and other platform/FFI structs.
+- [ ] **C ABI / layout control** — packed structs, alignment control. `extern struct` and `sizeOf`/`offsetOf` already work.
 - [ ] **Structured OS / syscall errors** — `OsError`/`SysError` carrying `errno`/code plus syscall/path context. Needed for runtime bindings, better diagnostics, and Node-compatible error surfacing.
 
 - [x] **Interfaces (runtime polymorphism)** — Go-style interfaces with structural typing and vtable dispatch. `interface Shape { fn area(self: &Self): f64 }` — any type with matching methods satisfies the interface. Separate from traits (which remain compile-time only).

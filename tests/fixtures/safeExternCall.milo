@@ -1,0 +1,20 @@
+extern fn puts(s: *u8): i32
+extern fn write(fd: i32, buf: *u8, len: i64): i64
+
+fn main(): i32 {
+  // array arg to *T param — safe, auto-decays
+  var buf: [u8; 3] = [104, 105, 10]
+  write(1, buf, 3)
+
+  // string arg to *u8 param — safe, auto-coerces
+  puts("hello safe extern")
+
+  let msg = "from variable"
+  puts(msg)
+
+  return 0
+}
+
+// @expect: hi
+// @expect: hello safe extern
+// @expect: from variable

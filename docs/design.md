@@ -115,14 +115,61 @@ What works fine WITHOUT arenas: CLI tools, parsers, compilers, HTTP servers, fil
 
 ## FFI Strategy
 
-C interop from day one via LLVM IR call declarations:
+C interop from day one via LLVM IR call declarations. The goal: keep `unsafe` at the thinnest possible seam.
 
 ```
-extern fn puts(s: *u8) -> i32
-extern fn malloc(size: u64) -> RawPtr
+extern fn puts(s: *u8): i32
+extern fn malloc(size: u64): *u8
 ```
 
-FFI is the escape hatch for anything the language can't do yet.
+### Safe extern calls
+
+An extern call is safe (no `unsafe` needed) when:
+- All pointer params receive auto-coerced args (`string`→`*u8`, `[T;N]`→`*T`, matching `*T`)
+- Function-typed params receive matching Milo functions
+- Return is scalar or `void`
+
+Calls returning `*T` still require `unsafe` — unknown provenance.
+
+```
+// Safe — string auto-coerces, return is i32
+puts("hello")
+
+// Unsafe — malloc returns *u8
+unsafe { let p = malloc(64) }
+```
+
+### Opaque foreign types
+
+`extern type` declares a type with no known layout — can only exist behind `*T`:
+
+```
+extern type sqlite3
+extern fn sqlite3_open(path: *u8, db: **sqlite3): i32
+```
+
+`*sqlite3` is distinct from `*u8` and other `*ExternType` — prevents handle mixups at compile time.
+
+### Extern structs
+
+`extern struct` declares a C-layout struct. Field access through `*ExternStruct` uses GEP (requires `unsafe` for the deref):
+
+```
+extern struct SockAddrIn { sin_family: u16, sin_port: u16, sin_addr: u32 }
+```
+
+### string.cstr()
+
+Returns `*u8` data pointer without `unsafe`. Non-owning borrow — the string stays alive in the caller's scope.
+
+### Typed function pointers
+
+Extern declarations accept function-typed params directly. No `as *u8` cast needed:
+
+```
+extern fn qsort(base: *u8, num: i64, size: i64, cmp: (*u8, *u8) => i32): void
+qsort(arr.cstr(), 5, 4, myCmpFn)   // myCmpFn passed directly
+```
 
 ## Compiler Pipeline
 

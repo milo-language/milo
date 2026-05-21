@@ -1,0 +1,8 @@
+extern fn malloc(size: i64): *u8
+
+fn main(): i32 {
+  let p = malloc(64)
+  return 0
+}
+
+// @error: requires an unsafe block

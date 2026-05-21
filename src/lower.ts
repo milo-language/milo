@@ -23,7 +23,7 @@ class LowerCtx {
     for (const s of program.structs) {
       if (s.typeParams.length > 0) continue;
       const info = this.c.structs.get(s.name);
-      if (!info) continue;
+      if (!info || info.isOpaque) continue;
       structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })), isExtern: info.isExtern });
     }
     for (const s of this.c.monomorphizedStructs) {
@@ -236,6 +236,19 @@ class LowerCtx {
             varType: rangeType,
             start: this.lowerExpr(stmt.iterable.start),
             end: this.lowerExpr(stmt.iterable.end),
+            body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
+            span: stmt.span,
+          };
+        }
+        const iterInfo = this.c.iteratorForIns?.get(stmt);
+        if (iterInfo) {
+          return {
+            kind: "ForIterator",
+            varName: stmt.varName,
+            varType: iterInfo.elemType,
+            iterable: this.lowerExpr(stmt.iterable),
+            nextMethod: iterInfo.nextMethod,
+            optionEnumName: iterInfo.optionEnumName,
             body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
             span: stmt.span,
           };
@@ -690,6 +703,9 @@ class LowerCtx {
           }
           if (expr.method === "len") {
             return { kind: "StringLen", object: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+          if (expr.method === "cstr") {
+            return { kind: "StringCstr", object: this.lowerExpr(expr.object), type, span: expr.span };
           }
           // methods delegated to std/string runtime functions
           const strMethodMap: Record<string, string> = {
