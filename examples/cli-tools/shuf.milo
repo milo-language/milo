@@ -7,9 +7,7 @@ fn shuffleLines(lines: &mut Vec<string>): void {
     var i = lines.len - 1
     while i > 0 {
         let j = randRange(0, i)
-        let tmp = lines[i]
-        lines[i] = lines[j]
-        lines[j] = tmp
+        lines.swap(i, j)
         i = i - 1
     }
 }

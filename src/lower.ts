@@ -649,6 +649,9 @@ class LowerCtx {
           if (expr.method === "reverse") {
             return { kind: "VecReverse", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
           }
+          if (expr.method === "swap") {
+            return { kind: "VecSwap", object: this.lowerExpr(expr.object), indexA: this.lowerExpr(expr.args[0]), indexB: this.lowerExpr(expr.args[1]), elementType: objType.element, type, span: expr.span };
+          }
           if (expr.method === "sort") {
             return { kind: "VecSort", object: this.lowerExpr(expr.object), elementType: objType.element, type, span: expr.span };
           }

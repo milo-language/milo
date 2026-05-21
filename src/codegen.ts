@@ -2580,6 +2580,8 @@ export class Codegen {
       }
       case "VecReverse":
         return this.genVecReverse(expr, lines);
+      case "VecSwap":
+        return this.genVecSwap(expr, lines);
       case "VecContains":
         return this.genVecContains(expr, lines);
       case "VecEnumerate":
@@ -4080,6 +4082,40 @@ export class Codegen {
     lines.push(`  br label %${condLabel}`);
 
     lines.push(`${endLabel}:`);
+    return [lines, "void", "void"];
+  }
+
+  private genVecSwap(expr: HIRExpr & { kind: "VecSwap" }, lines: string[]): [string[], string, string] {
+    this.hasVecType = true;
+    this.needsMemcpy = true;
+    const elemType = expr.elementType;
+    const elemSize = this.typeSizeOf(elemType);
+    const elemTy = this.llvmType(elemType);
+
+    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
+    lines.push(...vecPtrLines);
+
+    const [aLines, aVal] = this.genExpr(expr.indexA);
+    lines.push(...aLines);
+    const [bLines, bVal] = this.genExpr(expr.indexB);
+    lines.push(...bLines);
+
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+
+    const ptrA = this.nextTemp();
+    lines.push(`  ${ptrA} = getelementptr ${elemTy}, ptr ${data}, i64 ${aVal}`);
+    const ptrB = this.nextTemp();
+    lines.push(`  ${ptrB} = getelementptr ${elemTy}, ptr ${data}, i64 ${bVal}`);
+
+    const tmpAddr = `%__swap_tmp.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${tmpAddr} = alloca ${elemTy}`);
+    lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${tmpAddr}, ptr ${ptrA}, i64 ${elemSize}, i1 false)`);
+    lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${ptrA}, ptr ${ptrB}, i64 ${elemSize}, i1 false)`);
+    lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${ptrB}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
+
     return [lines, "void", "void"];
   }
 

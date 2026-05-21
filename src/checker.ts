@@ -3368,6 +3368,17 @@ export class TypeChecker {
             }
             return this.setType(expr, { tag: "void" });
           }
+          if (expr.method === "swap") {
+            if (expr.args.length !== 2) { this.error(`'swap' expects 2 arguments (index a, index b)`, sp); return this.setType(expr, { tag: "void" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot swap on immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            const aType = this.checkExpr(expr.args[0]);
+            const bType = this.checkExpr(expr.args[1]);
+            if (aType.tag !== "int" && aType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${typeName(aType)}`, sp); }
+            if (bType.tag !== "int" && bType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${typeName(bType)}`, sp); }
+            return this.setType(expr, { tag: "void" });
+          }
           if (expr.method === "sort") {
             if (expr.args.length !== 0) { this.error(`'sort' takes no arguments`, sp); }
             if (!this.isRootMutable(expr.object)) {
