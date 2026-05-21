@@ -1,0 +1,66 @@
+// shuf — shuffle lines from stdin or a file
+from "std/argparse" import { newParser }
+from "std/io" import { readFile, readStdin, writeStdout }
+from "std/random" import { randRange }
+
+fn shuffleLines(lines: &mut Vec<string>): void {
+    var i = lines.len - 1
+    while i > 0 {
+        let j = randRange(0, i)
+        let tmp = lines[i]
+        lines[i] = lines[j]
+        lines[j] = tmp
+        i = i - 1
+    }
+}
+
+fn main(): i32 {
+    var parser = newParser("shuf", "shuffle lines of input")
+    parser.addOptionalPositional("file", "file to shuffle (default: stdin)")
+    parser.addI64("head", "n", "output only the first N lines", 0)
+    parser.addBool("zero-terminated", "z", "use NUL as line delimiter instead of newline")
+    let args = parser.parse()
+
+    var content: string = ""
+    if args.has("file") {
+        match readFile(args.getString("file")) {
+            Result.Ok(data) => { content = data }
+            Result.Err(e) => {
+                print($"shuf: {e}")
+                return 1
+            }
+        }
+    } else {
+        content = readStdin()
+    }
+
+    var delim: string = "\n"
+    if args.getBool("zero-terminated") {
+        delim = "\0"
+    }
+    var lines = content.split(delim)
+
+    // drop trailing empty element from final newline
+    if lines.len > 0 && lines[lines.len - 1].len == 0 {
+        lines.pop()
+    }
+
+    if lines.len == 0 {
+        return 0
+    }
+
+    shuffleLines(lines)
+
+    var count = lines.len
+    let head = args.getI64("head")
+    if head > 0 && head < count {
+        count = head
+    }
+
+    for i in 0..count {
+        writeStdout(lines[i])
+        writeStdout(delim)
+    }
+
+    return 0
+}

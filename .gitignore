@@ -80,3 +80,5 @@ benchmarks/json/json_go
 benchmarks/results-*.md
 docs/site/.vitepress/cache/
 .claude/
+lib.a
+tmp/
