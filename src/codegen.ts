@@ -161,6 +161,7 @@ export class Codegen {
     if (needsDrop(t)) return true;
     if (t.tag === "enum") return this.droppableEnums.has(t.name);
     if (t.tag === "struct") return this.structNeedsDrop(t.name);
+    if (t.tag === "array" && t.size !== null) return this.needsDropCg(t.element);
     return false;
   }
 
@@ -2266,7 +2267,8 @@ export class Codegen {
         return [lines, val, arrTy];
       }
       case "ArrayRepeat": {
-        const elemTy = this.llvmType(expr.type.tag === "array" ? expr.type.element : { tag: "int", bits: 32, signed: true });
+        const elemKind = expr.type.tag === "array" ? expr.type.element : { tag: "int" as const, bits: 32, signed: true };
+        const elemTy = this.llvmType(elemKind);
         const arrTy = `[${expr.count} x ${elemTy}]`;
         const [vl, vv] = this.genExpr(expr.value);
         lines.push(...vl);
@@ -2275,10 +2277,23 @@ export class Codegen {
         }
         const alloca = this.nextTemp();
         lines.push(`  ${alloca} = alloca ${arrTy}`);
-        for (let i = 0; i < expr.count; i++) {
-          const pi = this.nextTemp();
-          lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
-          lines.push(`  store ${elemTy} ${vv}, ptr ${pi}`);
+        if (this.needsDropCg(elemKind)) {
+          // Non-Copy types: deep-clone each element so they own independent heap data
+          const srcPtr = this.nextTemp();
+          lines.push(`  ${srcPtr} = alloca ${elemTy}`);
+          lines.push(`  store ${elemTy} ${vv}, ptr ${srcPtr}`);
+          for (let i = 0; i < expr.count; i++) {
+            const pi = this.nextTemp();
+            lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
+            const cloned = this.emitDeepCloneFromPtr(lines, srcPtr, elemKind);
+            lines.push(`  store ${elemTy} ${cloned}, ptr ${pi}`);
+          }
+        } else {
+          for (let i = 0; i < expr.count; i++) {
+            const pi = this.nextTemp();
+            lines.push(`  ${pi} = getelementptr ${arrTy}, ptr ${alloca}, i32 0, i32 ${i}`);
+            lines.push(`  store ${elemTy} ${vv}, ptr ${pi}`);
+          }
         }
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${arrTy}, ptr ${alloca}`);
@@ -5903,6 +5918,15 @@ export class Codegen {
       lines.push(`  store %${typeKind.name} ${val}, ptr ${tmp}`);
       lines.push(`  call void @${helperName}(ptr ${tmp})`);
     }
+    if (typeKind.tag === "array" && typeKind.size !== null && this.needsDropCg(typeKind.element)) {
+      const elemTy = this.llvmType(typeKind.element);
+      for (let i = 0; i < typeKind.size; i++) {
+        const arrTy = `[${typeKind.size} x ${elemTy}]`;
+        const elemPtr = this.nextTemp();
+        lines.push(`  ${elemPtr} = getelementptr ${arrTy}, ptr ${allocaPtr}, i32 0, i32 ${i}`);
+        this.emitDropValue(lines, elemPtr, typeKind.element);
+      }
+    }
     if (typeKind.tag === "struct" && this.structNeedsDrop(typeKind.name)) {
       this.ensureStructDropHelper(typeKind.name);
       const helperName = `milo.drop.struct.${typeKind.name}`;
@@ -6189,13 +6213,14 @@ export class Codegen {
   private getConstantInitializer(g: import("./hir").HIRGlobal): string {
     if (g.value.kind === "IntLit") return g.value.value.toString();
     if (g.value.kind === "FloatLit") {
-      const hex = g.value.value.toString();
       const buf = new ArrayBuffer(8);
       new Float64Array(buf)[0] = g.value.value;
       const bits = new BigUint64Array(buf)[0];
       return `0x${bits.toString(16).toUpperCase().padStart(16, "0")}`;
     }
     if (g.value.kind === "BoolLit") return g.value.value ? "1" : "0";
+    if (g.value.kind === "Cast" && g.type.tag === "ptr") return "null";
+    if (g.type.tag === "ptr") return "null";
     return "0";
   }
 
