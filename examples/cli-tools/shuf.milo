@@ -49,11 +49,8 @@ fn main(): i32 {
 
     shuffleLines(lines)
 
-    var count = lines.len
     let head = args.getI64("head")
-    if head > 0 && head < count {
-        count = head
-    }
+    let count = if head > 0 && head < lines.len { head } else { lines.len }
 
     for i in 0..count {
         writeStdout(lines[i])

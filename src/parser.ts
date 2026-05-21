@@ -551,6 +551,25 @@ export class Parser {
     return { kind: "IfStmt", cond, thenBody, elseBody, span: s };
   }
 
+  private parseIfExpr(s: Span): Expr {
+    this.expect(TokenKind.If);
+    const cond = this.parseExpr();
+    this.expect(TokenKind.LBrace);
+    const thenBody = this.parseStmts();
+    this.expect(TokenKind.RBrace);
+    this.expect(TokenKind.Else);
+    let elseBody: Stmt[];
+    if (this.at(TokenKind.If)) {
+      const innerSpan = this.span(this.peek());
+      elseBody = [{ kind: "ExprStmt" as const, expr: this.parseIfExpr(innerSpan), span: innerSpan }];
+    } else {
+      this.expect(TokenKind.LBrace);
+      elseBody = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+    }
+    return { kind: "IfExpr", cond, thenBody, elseBody, span: s };
+  }
+
   private parseIfLet(s: Span): Stmt {
     this.expect(TokenKind.Let);
     const pattern = this.parsePattern();
@@ -974,6 +993,10 @@ export class Parser {
     // anonymous struct literal: { field: value, ... }
     if (tok.kind === TokenKind.LBrace && this.peekN(1).kind === TokenKind.Ident && this.peekN(2).kind === TokenKind.Colon) {
       return this.parseStructLit("", s);
+    }
+
+    if (tok.kind === TokenKind.If) {
+      return this.parseIfExpr(s);
     }
 
     this.error(`unexpected token '${tok.kind}'`, tok);

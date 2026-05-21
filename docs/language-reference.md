@@ -887,6 +887,12 @@ if x > 0 {
     print("negative")
 }
 
+// if-else expression — both branches must have same type
+let label = if x > 0 { "positive" } else { "negative" }
+
+// else-if chains work too
+let size = if n < 10 { "small" } else if n < 100 { "medium" } else { "big" }
+
 // while
 var i: i32 = 0
 while i < 10 {

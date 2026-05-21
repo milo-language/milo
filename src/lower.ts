@@ -822,6 +822,17 @@ class LowerCtx {
         }
         return { kind: "IsCheck", operand, tag, type: { tag: "bool" }, span: expr.span };
       }
+      case "IfExpr": {
+        const fnRetType = this.currentRetType;
+        return {
+          kind: "IfExpr",
+          cond: this.lowerExpr(expr.cond),
+          thenBody: expr.thenBody.map(s => this.lowerStmt(s, fnRetType)),
+          elseBody: expr.elseBody.map(s => this.lowerStmt(s, fnRetType)),
+          type,
+          span: expr.span,
+        };
+      }
     }
   }
 

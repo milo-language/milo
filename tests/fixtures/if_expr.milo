@@ -1,0 +1,48 @@
+// @expect: 10
+// @expect: 20
+// @expect: hello
+// @expect: medium
+// @expect: big
+// @expect: small
+
+fn main(): i32 {
+    let x = if true { 10 } else { 20 }
+    print(x)
+
+    let y = if false { 10 } else { 20 }
+    print(y)
+
+    let s = if true { "hello" } else { "world" }
+    print(s)
+
+    let n = 5
+    let label = if n < 3 {
+        "small"
+    } else if n < 7 {
+        "medium"
+    } else {
+        "big"
+    }
+    print(label)
+
+    let a = 50
+    let label2 = if a < 3 {
+        "small"
+    } else if a < 7 {
+        "medium"
+    } else {
+        "big"
+    }
+    print(label2)
+
+    let b = 1
+    let label3 = if b < 3 {
+        "small"
+    } else if b < 7 {
+        "medium"
+    } else {
+        "big"
+    }
+    print(label3)
+    return 0
+}

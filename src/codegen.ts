@@ -2854,6 +2854,70 @@ export class Codegen {
         lines.push(`  ${s1} = insertvalue { ptr, ptr } ${s0}, ptr ${itableGlobal}, 1`);
         return [lines, s1, "{ ptr, ptr }"];
       }
+      case "IfExpr": {
+        const resultTy = this.llvmType(expr.type);
+        const resultAddr = `%__ifexpr.${this.scopeCounter++}.addr`;
+        this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
+
+        const [condLines, condVal] = this.genExpr(expr.cond);
+        lines.push(...condLines);
+
+        const thenLabel = this.nextLabel("ife.then");
+        const elseLabel = this.nextLabel("ife.else");
+        const endLabel = this.nextLabel("ife.end");
+        lines.push(`  br i1 ${condVal}, label %${thenLabel}, label %${elseLabel}`);
+
+        lines.push(`${thenLabel}:`);
+        let thenTerminated = false;
+        for (let i = 0; i < expr.thenBody.length - 1; i++) {
+          const [sl, t] = this.genStmt(expr.thenBody[i]);
+          lines.push(...sl);
+          if (t) { thenTerminated = true; break; }
+        }
+        if (!thenTerminated && expr.thenBody.length > 0) {
+          const last = expr.thenBody[expr.thenBody.length - 1];
+          if (last.kind === "ExprStmt") {
+            const [vl, vv] = this.genExpr(last.expr);
+            lines.push(...vl);
+            if (vv !== "void") lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
+          } else {
+            const [sl, t] = this.genStmt(last);
+            lines.push(...sl);
+            if (t) thenTerminated = true;
+          }
+        }
+        if (!thenTerminated) lines.push(`  br label %${endLabel}`);
+
+        lines.push(`${elseLabel}:`);
+        let elseTerminated = false;
+        for (let i = 0; i < expr.elseBody.length - 1; i++) {
+          const [sl, t] = this.genStmt(expr.elseBody[i]);
+          lines.push(...sl);
+          if (t) { elseTerminated = true; break; }
+        }
+        if (!elseTerminated && expr.elseBody.length > 0) {
+          const last = expr.elseBody[expr.elseBody.length - 1];
+          if (last.kind === "ExprStmt") {
+            const [vl, vv] = this.genExpr(last.expr);
+            lines.push(...vl);
+            if (vv !== "void") lines.push(`  store ${resultTy} ${vv}, ptr ${resultAddr}`);
+          } else {
+            const [sl, t] = this.genStmt(last);
+            lines.push(...sl);
+            if (t) elseTerminated = true;
+          }
+        }
+        if (!elseTerminated) lines.push(`  br label %${endLabel}`);
+
+        lines.push(`${endLabel}:`);
+        if (thenTerminated && elseTerminated) {
+          lines.push(`  unreachable`);
+          return [lines, "void", "void"];
+        }
+        const result = this.nextTemp();
+        lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
+        return [lines, result, resultTy];
+      }
       case "InterfaceMethodCall": {
         // object is { ptr data, ptr itable } — either directly or loaded from alloca
         const [objLines, objVal] = this.genExpr(expr.object);

@@ -1,0 +1,6 @@
+// @error: mismatched types
+
+fn main(): i32 {
+    let x = if true { 10 } else { "hello" }
+    return 0
+}

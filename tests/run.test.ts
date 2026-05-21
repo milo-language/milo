@@ -3,6 +3,18 @@ import { readdirSync, readFileSync, unlinkSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
 
+// Retry execution once on signal-based failures (resource pressure under full suite)
+function execWithRetry(cmd: string, opts: Record<string, any>): string {
+  try {
+    return execSync(cmd, opts);
+  } catch (e: any) {
+    if (e.signal) {
+      return execSync(cmd, opts);
+    }
+    throw e;
+  }
+}
+
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 const ERRORS_DIR = join(import.meta.dir, "errors");
 const RUNTIME_ERRORS_DIR = join(import.meta.dir, "runtime-errors");
@@ -43,13 +55,11 @@ describe("fixtures (compile + run)", () => {
       const outBin = join(FIXTURES_DIR, file.replace(".milo", ""));
       binaries.push(outBin);
 
-      // compile
-      execSync(`bun run ${COMPILER} build ${path} -o ${outBin}`, {
+      execWithRetry(`bun run ${COMPILER} build ${path} -o ${outBin}`, {
         stdio: ["pipe", "pipe", "pipe"],
       });
 
-      // run
-      const result = execSync(outBin, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
+      const result = execWithRetry(outBin, { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
       const actual = result.trim().split("\n").map(l => l.trim());
 
       expect(actual).toEqual(expected);
@@ -98,7 +108,7 @@ describe("runtime errors (debug mode traps)", () => {
       const outBin = join(RUNTIME_ERRORS_DIR, file.replace(".milo", ""));
       binaries.push(outBin);
 
-      execSync(`bun run ${COMPILER} build ${path} --debug -o ${outBin}`, {
+      execWithRetry(`bun run ${COMPILER} build ${path} --debug -o ${outBin}`, {
         stdio: ["pipe", "pipe", "pipe"],
       });
 

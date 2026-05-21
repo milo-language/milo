@@ -3733,7 +3733,45 @@ export class TypeChecker {
         }
         return this.setType(expr, { tag: "bool" });
       }
+      case "IfExpr": {
+        const condType = this.checkExpr(expr.cond);
+        if (condType.tag !== "bool" && condType.tag !== "unknown") {
+          this.error(`if condition must be bool, got ${typeName(condType)}`, sp);
+        }
+        const fnRetType = this.currentFnRetType;
+        const preMoves = this.snapshotMoveState();
+
+        this.pushScope();
+        for (const s of expr.thenBody) this.checkStmt(s, fnRetType);
+        this.popScope();
+        const thenType = this.blockExprType(expr.thenBody);
+
+        const afterThen = this.snapshotMoveState();
+        this.restoreMoveState(preMoves);
+
+        this.pushScope();
+        for (const s of expr.elseBody) this.checkStmt(s, fnRetType);
+        this.popScope();
+        const elseType = this.blockExprType(expr.elseBody);
+
+        const afterElse = this.snapshotMoveState();
+        this.restoreMoveState(preMoves);
+        for (const [info, m] of afterThen) { if (m) info.moved = true; }
+        for (const [info, m] of afterElse) { if (m) info.moved = true; }
+
+        if (thenType.tag !== "unknown" && elseType.tag !== "unknown" && !typeEq(thenType, elseType)) {
+          this.error(`if-else branches have mismatched types: '${typeName(thenType)}' vs '${typeName(elseType)}'`, sp);
+        }
+        return this.setType(expr, thenType.tag !== "unknown" ? thenType : elseType);
+      }
     }
+  }
+
+  private blockExprType(body: Stmt[]): TypeKind {
+    if (body.length === 0) return { tag: "void" };
+    const last = body[body.length - 1];
+    if (last.kind === "ExprStmt") return this.exprTypes.get(last.expr) ?? { tag: "void" };
+    return { tag: "void" };
   }
 
   private validateHashableKey(t: TypeKind, span?: Span) {

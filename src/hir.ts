@@ -76,7 +76,8 @@ export type HIRExpr =
   | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "InterfaceCoerce"; value: HIRExpr; fromType: string; ifaceName: string; type: TypeKind; span?: Span }
-  | { kind: "InterfaceMethodCall"; object: HIRExpr; ifaceName: string; methodIndex: number; args: HIRArg[]; type: TypeKind; span?: Span };
+  | { kind: "InterfaceMethodCall"; object: HIRExpr; ifaceName: string; methodIndex: number; args: HIRArg[]; type: TypeKind; span?: Span }
+  | { kind: "IfExpr"; cond: HIRExpr; thenBody: HIRStmt[]; elseBody: HIRStmt[]; type: TypeKind; span?: Span };
 
 export interface HIRArg {
   expr: HIRExpr;
