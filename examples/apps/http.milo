@@ -51,13 +51,10 @@ fn statusText(code: i32): string {
 }
 
 fn looksLikeJson(s: &string): bool {
-    var i: i64 = 0
-    while i < s.len {
-        let c = s[i]
-        if c != ' ' && c != '\n' && c != '\r' && c != '\t' {
-            return c == '{' || c == '['
+    for ch in s {
+        if ch != ' ' && ch != '\n' && ch != '\r' && ch != '\t' {
+            return ch == '{' || ch == '['
         }
-        i = i + 1
     }
     return false
 }
@@ -99,10 +96,8 @@ fn prettyJson(input: &string): string {
             result.push(ch)
             result.push('\n')
             indent = indent + 1
-            var sp: i64 = 0
-            while sp < indent * 2 {
+            for sp in 0..indent * 2 {
                 result.push(' ')
-                sp = sp + 1
             }
             pos = pos + 1
             continue
@@ -112,10 +107,8 @@ fn prettyJson(input: &string): string {
         if ch == '}' || ch == ']' {
             result.push('\n')
             indent = indent - 1
-            var sp: i64 = 0
-            while sp < indent * 2 {
+            for sp in 0..indent * 2 {
                 result.push(' ')
-                sp = sp + 1
             }
             result.push(ch)
             pos = pos + 1
@@ -126,10 +119,8 @@ fn prettyJson(input: &string): string {
         if ch == ',' {
             result.push(',')
             result.push('\n')
-            var sp: i64 = 0
-            while sp < indent * 2 {
+            for sp in 0..indent * 2 {
                 result.push(' ')
-                sp = sp + 1
             }
             pos = pos + 1
             continue

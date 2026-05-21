@@ -119,12 +119,10 @@ fn strStartsWith(s: &string, prefix: &string): bool {
     if prefix.len > s.len {
         return false
     }
-    var i: i64 = 0
-    while i < prefix.len {
+    for i in 0..prefix.len {
         if s[i] != prefix[i] {
             return false
         }
-        i = i + 1
     }
     return true
 }
@@ -136,12 +134,10 @@ fn strEndsWith(s: &string, suffix: &string): bool {
         return false
     }
     let offset = s.len - suffix.len
-    var i: i64 = 0
-    while i < suffix.len {
+    for i in 0..suffix.len {
         if s[offset + i] != suffix[i] {
             return false
         }
-        i = i + 1
     }
     return true
 }
@@ -150,15 +146,13 @@ fn strEndsWith(s: &string, suffix: &string): bool {
 
 fn strToLower(s: &string): string {
     var result: string = ""
-    var i: i64 = 0
-    while i < s.len {
+    for i in 0..s.len {
         let ch = s[i]
         if ch >= 65 && ch <= 90 {
             result.push(ch + 32)
         } else {
             result.push(ch)
         }
-        i = i + 1
     }
     return result
 }
@@ -167,15 +161,13 @@ fn strToLower(s: &string): string {
 
 fn strToUpper(s: &string): string {
     var result: string = ""
-    var i: i64 = 0
-    while i < s.len {
+    for i in 0..s.len {
         let ch = s[i]
         if ch >= 97 && ch <= 122 {
             result.push(ch - 32)
         } else {
             result.push(ch)
         }
-        i = i + 1
     }
     return result
 }
@@ -246,10 +238,8 @@ fn strSplit(s: &string, sep: &string): Vec<string> {
     var notFound: i64 = 0
     notFound = notFound - 1
     if sep.len == 0 {
-        var i: i64 = 0
-        while i < s.len {
+        for i in 0..s.len {
             result.push(s.substr(i, i + 1))
-            i = i + 1
         }
         return result
     }
@@ -270,10 +260,8 @@ fn strSplit(s: &string, sep: &string): Vec<string> {
 
 fn strRepeat(s: &string, n: i64): string {
     var result: string = ""
-    var i: i64 = 0
-    while i < n {
+    for i in 0..n {
         result = result + s
-        i = i + 1
     }
     return result
 }
@@ -370,8 +358,7 @@ fn charIsAlphanumeric(ch: u8): bool {
 fn strSplitWords(s: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var word: string = ""
-    var i: i64 = 0
-    while i < s.len {
+    for i in 0..s.len {
         let ch = s[i]
         if charIsAlpha(ch) {
             if ch >= 65 && ch <= 90 {
@@ -385,7 +372,6 @@ fn strSplitWords(s: &string): Vec<string> {
                 word = ""
             }
         }
-        i = i + 1
     }
     if word.len > 0 {
         result.push(word)
@@ -398,8 +384,7 @@ fn strSplitWords(s: &string): Vec<string> {
 fn strSplitWhitespace(s: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var token: string = ""
-    var i: i64 = 0
-    while i < s.len {
+    for i in 0..s.len {
         let ch = s[i]
         if charIsWhitespace(ch) {
             if token.len > 0 {
@@ -409,7 +394,6 @@ fn strSplitWhitespace(s: &string): Vec<string> {
         } else {
             token.push(ch)
         }
-        i = i + 1
     }
     if token.len > 0 {
         result.push(token)
@@ -441,13 +425,11 @@ fn trim(s: &string): string {
 
 fn vecJoin(parts: &Vec<string>, sep: &string): string {
     var result: string = ""
-    var i: i64 = 0
-    while i < parts.len {
+    for i in 0..parts.len {
         if i > 0 {
             result = result + sep
         }
         result = result + parts[i]
-        i = i + 1
     }
     return result
 }

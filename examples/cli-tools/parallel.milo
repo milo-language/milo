@@ -25,12 +25,10 @@ fn main(): i32 {
     let input = readStdin()
     let allLines = input.split("\n")
     var lines: Vec<string> = Vec.new()
-    var li: i64 = 0
-    while li < allLines.len {
-        if allLines[li].len > 0 {
-            lines.push(allLines[li].clone())
+    for line in allLines {
+        if line.len > 0 {
+            lines.push(line.clone())
         }
-        li = li + 1
     }
 
     if lines.len == 0 {
@@ -39,10 +37,8 @@ fn main(): i32 {
     }
 
     if dryRun {
-        var di: i64 = 0
-        while di < lines.len {
-            print(substitute(template, lines[di]))
-            di = di + 1
+        for line in lines {
+            print(substitute(template, line))
         }
         return 0
     }
@@ -58,10 +54,8 @@ fn main(): i32 {
 
     // pids of active children (-1 = slot free)
     var pids: Vec<i64> = Vec.new()
-    var pi: i64 = 0
-    while pi < jobs {
+    for pi in 0..jobs {
         pids.push(-1 as i64)
-        pi = pi + 1
     }
 
     while completed < lines.len {
@@ -106,12 +100,10 @@ fn main(): i32 {
                 }
                 completed = completed + 1
                 // free the slot
-                var fi: i64 = 0
-                while fi < jobs {
+                for fi in 0..jobs {
                     if pids[fi] == pid as i64 {
                         pids[fi] = -1 as i64
                     }
-                    fi = fi + 1
                 }
             }
         }

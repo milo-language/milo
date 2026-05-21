@@ -16,13 +16,11 @@ fn offsetToHex(n: i64): string {
     let hex = "0123456789abcdef"
     var result: string = ""
     var val: i64 = n
-    var i: i32 = 0
-    while i < 8 {
+    for i in 0..8 {
         var chBuf: string = ""
         chBuf.push(hex[val % 16])
         result = chBuf + result
         val = val / 16
-        i = i + 1
     }
     return result
 }

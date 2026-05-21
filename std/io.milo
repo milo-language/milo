@@ -117,10 +117,8 @@ impl File {
                 if n <= 0 {
                     break
                 }
-                var i: i64 = 0
-                while i < n {
+                for i in 0..n {
                     result.push(buf[i])
-                    i = i + 1
                 }
             }
         }
@@ -162,9 +160,7 @@ fn putChar(ch: u8): void {
 fn splitLines(content: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var cur = ""
-    var idx: i64 = 0
-    while idx < content.len {
-        let byte = content[idx]
+    for byte in content {
         if byte == 10 {
             result.push(cur)
             cur = ""
@@ -173,7 +169,6 @@ fn splitLines(content: &string): Vec<string> {
                 cur.push(byte)
             }
         }
-        idx = idx + 1
     }
     if cur.len > 0 {
         result.push(cur)
@@ -232,10 +227,8 @@ fn readStdin(): string {
             if n <= 0 {
                 break
             }
-            var i: i64 = 0
-            while i < n {
+            for i in 0..n {
                 result.push(buf[i])
-                i = i + 1
             }
         }
     }

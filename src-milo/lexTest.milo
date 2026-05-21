@@ -6,8 +6,7 @@ from "std/args" import { args }
 
 fn escapeValue(s: &string): string {
     var out: string = ""
-    var i: i64 = 0
-    while i < s.len {
+    for i in 0..s.len {
         let c = s[i]
         if c == 10 { out = out + "\\n" }
         else if c == 9 { out = out + "\\t" }
@@ -23,21 +22,18 @@ fn escapeValue(s: &string): string {
             out = out + hex
         }
         else { out.push(c) }
-        i = i + 1
     }
     return out
 }
 
 fn printTrivia(trivia: &Vec<Trivia>, prefix: &string) {
-    var i: i64 = 0
-    while i < trivia.len {
+    for i in 0..trivia.len {
         let t = trivia[i]
         if t.kind is TriviaKind.Blank {
             print($"L_BLANK\t\t{t.line}")
         } else {
             print($"{prefix}\t{escapeValue(t.text)}\t{t.line}")
         }
-        i = i + 1
     }
 }
 
@@ -49,15 +45,13 @@ fn main(): i32 {
     }
     let src = readFile(argv[1])!
     let tokens = tokenize(src)
-    var i: i64 = 0
-    while i < tokens.len {
+    for i in 0..tokens.len {
         let tok = tokens[i]
         printTrivia(tok.leadingTrivia, "L_COMMENT")
         let name = tokKindName(tok.kind)
         let escaped = escapeValue(tok.value)
         print($"{name}\t{escaped}\t{tok.line}:{tok.col}")
         printTrivia(tok.trailingTrivia, "T_COMMENT")
-        i = i + 1
     }
     return 0
 }

@@ -64,8 +64,7 @@ fn topoSort(g: &DepGraph): Vec<string> {
     let n = g.nodes.len
 
     var inDeg: Vec<i64> = Vec.new()
-    var i: i64 = 0
-    while i < n {
+    for i in 0..n {
         match arenaGet(g.arena, g.nodes[i]) {
             Option.Some(node) => {
                 inDeg.push(node.deps.len)
@@ -74,16 +73,13 @@ fn topoSort(g: &DepGraph): Vec<string> {
                 inDeg.push(0)
             }
         }
-        i = i + 1
     }
 
     var queue: Vec<i64> = Vec.new()
-    i = 0
-    while i < n {
+    for i in 0..n {
         if inDeg[i] == 0 {
             queue.push(i)
         }
-        i = i + 1
     }
 
     var qi: i64 = 0
@@ -94,19 +90,15 @@ fn topoSort(g: &DepGraph): Vec<string> {
 
         match arenaGet(g.arena, h) {
             Option.Some(node) => {
-                var d: i64 = 0
-                while d < node.dependents.len {
-                    var j: i64 = 0
-                    while j < n {
+                for d in 0..node.dependents.len {
+                    for j in 0..n {
                         if g.nodes[j].index == node.dependents[d].index {
                             inDeg[j] = inDeg[j] - 1
                             if inDeg[j] == 0 {
                                 queue.push(j)
                             }
                         }
-                        j = j + 1
                     }
-                    d = d + 1
                 }
             }
             Option.None => {
@@ -141,10 +133,8 @@ fn main(): i32 {
 
     print("build order:")
     let order = topoSort(g)
-    var i: i64 = 0
-    while i < order.len {
-        print("  ", order[i])
-        i = i + 1
+    for item in order {
+        print("  ", item)
     }
 
     return 0

@@ -213,10 +213,8 @@ fn lookupFnRet(cg: &Cgen, name: &string): string {
 fn lookupFieldIndex(cg: &Cgen, structName: &string, fieldName: &string): i64 {
     if !cg.structs.contains(structName) { return -1 }
     let fields = cg.structs.get(structName)
-    var i: i64 = 0
-    while i < fields.len {
+    for i in 0..fields.len {
         if fields[i].name == fieldName { return i }
-        i = i + 1
     }
     return -1
 }
@@ -233,12 +231,10 @@ fn lookupFieldType(cg: &Cgen, structName: &string, idx: i64): string {
 fn lookupVariantTag(cg: &Cgen, enumName: &string, variantName: &string): i32 {
     if !cg.enums.contains(enumName) { return -1 }
     let info = cg.enums.get(enumName)
-    var i: i64 = 0
-    while i < info.variants.len {
+    for i in 0..info.variants.len {
         if info.variants[i].name == variantName {
             return info.variants[i].tag
         }
-        i = i + 1
     }
     return -1
 }
@@ -246,12 +242,10 @@ fn lookupVariantTag(cg: &Cgen, enumName: &string, variantName: &string): i32 {
 fn lookupVariantPayload(cg: &Cgen, enumName: &string, variantName: &string): Vec<string> {
     if !cg.enums.contains(enumName) { return Vec.new() }
     let info = cg.enums.get(enumName)
-    var i: i64 = 0
-    while i < info.variants.len {
+    for i in 0..info.variants.len {
         if info.variants[i].name == variantName {
             return info.variants[i].payloadTypes.clone()
         }
-        i = i + 1
     }
     return Vec.new()
 }

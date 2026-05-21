@@ -139,13 +139,11 @@ fn zeroPad(n: i64, width: i64): string {
 
 fn join(parts: &Vec<string>, sep: &string): string {
     var result = ""
-    var i: i64 = 0
-    while i < parts.len {
+    for i in 0..parts.len {
         if i > 0 {
             result = result + sep.clone()
         }
         result = result + parts[i].clone()
-        i = i + 1
     }
     return result
 }

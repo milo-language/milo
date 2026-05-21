@@ -10,8 +10,7 @@ fn MD5(_data: *u8, _len: u64, _md: *u8): *u8
 
 fn _bytesToHex(buf: &[u8 ; 32], n: i64): string {
     var result = ""
-    var i: i64 = 0
-    while i < n {
+    for i in 0..n {
         let b = buf[i]
         let hi = b >> 4
         let lo = b & 15
@@ -25,7 +24,6 @@ fn _bytesToHex(buf: &[u8 ; 32], n: i64): string {
         } else {
             result.push(lo - 10 + 97)
         }
-        i = i + 1
     }
     return result
 }

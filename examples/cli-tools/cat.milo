@@ -6,13 +6,11 @@ from "std/color" import { red, green, blue, magenta, cyan, gray, bold, dim }
 
 fn parseI64(s: string): i64 {
     var result: i64 = 0
-    var i: i64 = 0
-    while i < s.len {
+    for i in 0..s.len {
         let d = s[i]as i64 - 48
         if d >= 0 && d <= 9 {
             result = result * 10 + d
         }
-        i = i + 1
     }
     return result
 }
@@ -20,10 +18,8 @@ fn parseI64(s: string): i64 {
 fn padNum(n: i64, width: i64): string {
     let s = n.toString()
     var result: string = ""
-    var p: i64 = 0
-    while p < width - s.len {
+    for p in 0..width - s.len {
         result = result + " "
-        p = p + 1
     }
     return result + s
 }
@@ -127,12 +123,10 @@ fn isAlnum(ch: u8): bool {
 }
 
 fn isKeyword(word: &string, kwList: &Vec<string>): bool {
-    var i: i64 = 0
-    while i < kwList.len {
-        if kwList[i] == word {
+    for kw in kwList {
+        if kw == word {
             return true
         }
-        i = i + 1
     }
     return false
 }

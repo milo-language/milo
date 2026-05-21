@@ -233,11 +233,9 @@ impl Promise<T> {
 
     fn all(promises: Vec<Promise<T>>): Vec<T> {
         var results: Vec<T> = Vec.new()
-        var i: i64 = 0
-        while i < promises.len {
+        for i in 0..promises.len {
             let val = promises[i].await()!
             results.push(val)
-            i = i + 1
         }
         return results
     }
@@ -250,10 +248,8 @@ impl Promise<T> {
                 match maybe {
                     Option.Some(val) => {
                         // destroy all channels
-                        var j: i64 = 0
-                        while j < promises.len {
+                        for j in 0..promises.len {
                             promises[j]._ch.destroy()
-                            j = j + 1
                         }
                         return val
                     }

@@ -24,12 +24,9 @@ fn _hexVal(ch: u8): u8 {
 
 fn hexEncode(input: &string): string {
     var result = ""
-    var i: i64 = 0
-    while i < input.len {
-        let b = input[i]
+    for b in input {
         result.push(_hexChar(b >> 4))
         result.push(_hexChar(b & 15))
-        i = i + 1
     }
     return result
 }

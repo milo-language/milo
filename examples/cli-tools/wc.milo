@@ -5,10 +5,8 @@ from "std/io" import { readFile, readStdin }
 fn pad(n: i64): string {
     let s = n.toString()
     var result: string = ""
-    var p: i64 = 0
-    while p < 8 - s.len {
+    for p in 0..8 - s.len {
         result = result + " "
-        p = p + 1
     }
     return result + s
 }
@@ -46,20 +44,16 @@ fn main(): i32 {
 
     // count lines
     var lines: i64 = 0
-    var i: i64 = 0
-    while i < content.len {
-        if content[i] == 10 {
+    for ch in content {
+        if ch == 10 {
             lines = lines + 1
         }
-        i = i + 1
     }
 
     // count words
     var words: i64 = 0
     var inWord: bool = false
-    i = 0
-    while i < content.len {
-        let ch = content[i]
+    for ch in content {
         if ch == 32 || ch == 10 || ch == 9 || ch == 13 {
             if inWord {
                 words = words + 1
@@ -68,7 +62,6 @@ fn main(): i32 {
         } else {
             inWord = true
         }
-        i = i + 1
     }
     if inWord {
         words = words + 1

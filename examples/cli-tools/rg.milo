@@ -56,8 +56,7 @@ struct RgOpts {
 
 fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
     var result: Vec<RegexMatch> = Vec.new()
-    var i: i64 = 0
-    while i < matches.len {
+    for i in 0..matches.len {
         var ok = true
         if matches[i].start > 0 {
             if isWordChar(line[matches[i].start - 1]) {
@@ -72,7 +71,6 @@ fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
         if ok {
             result.push(RegexMatch { start: matches[i].start, end: matches[i].end })
         }
-        i = i + 1
     }
     return result
 }
@@ -90,15 +88,13 @@ fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): strin
     }
     var result: string = ""
     var pos: i64 = 0
-    var i: i64 = 0
-    while i < matches.len {
+    for i in 0..matches.len {
         if matches[i].start > pos {
             result = result + line.substr(pos, matches[i].start)
         }
         let m = line.substr(matches[i].start, matches[i].end)
         result = result + bold(red(m))
         pos = matches[i].end
-        i = i + 1
     }
     if pos < line.len {
         result = result + line.substr(pos, line.len)
@@ -160,8 +156,7 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
     var afterRemaining: i64 = 0
     var headerPrinted: bool = false
 
-    var i: i64 = 0
-    while i < numLines {
+    for i in 0..numLines {
         let matches = getMatches(re, lines[i], opts.wordBound)
         var isMatch = matches.len > 0
         if opts.invert {
@@ -195,10 +190,8 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
                     print("--")
                 }
 
-                var j: i64 = ctxStart
-                while j < i {
+                for j in ctxStart..i {
                     print(formatLine(lines[j], j, false, filePath, multiFile, opts))
-                    j = j + 1
                 }
 
                 // match line with highlighting
@@ -216,8 +209,6 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
             lastPrinted = i
             afterRemaining = afterRemaining - 1
         }
-
-        i = i + 1
     }
 
     if opts.countOnly && matchCount > 0 {
@@ -239,14 +230,12 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
 
 fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): void {
     let entries = readDir(dirPath)
-    var i: i64 = 0
-    while i < entries.len {
+    for i in 0..entries.len {
         let name = entries[i].name.clone()
         let entryIsDir = entries[i].isDir
         let entryIsFile = entries[i].isFile
 
         if !opts.searchHidden && name.len > 0 && name[0] == 46 {
-            i = i + 1
             continue
         }
 
@@ -258,7 +247,6 @@ fn searchDir(dirPath: &string, re: &mut Regex, opts: &mut RgOpts): void {
         } else if entryIsFile {
             searchFile(fullPath, re, opts, true)
         }
-        i = i + 1
     }
 }
 

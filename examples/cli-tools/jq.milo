@@ -237,38 +237,30 @@ fn indexArray(json: &string, idx: i64): string {
 
 fn applyFields(values: &Vec<string>, field: &string): Vec<string> {
     var next: Vec<string> = Vec.new()
-    var vi: i64 = 0
-    while vi < values.len {
+    for vi in 0..values.len {
         let result = findField(values[vi], field)
         next.push(result)
-        vi = vi + 1
     }
     return next
 }
 
 fn applyIterate(values: &Vec<string>): Vec<string> {
     var next: Vec<string> = Vec.new()
-    var vi: i64 = 0
-    while vi < values.len {
+    for vi in 0..values.len {
         var items: Vec<string> = Vec.new()
         let ok = collectArray(values[vi], items)
-        var ji: i64 = 0
-        while ji < items.len {
-            next.push(items[ji].clone())
-            ji = ji + 1
+        for item in items {
+            next.push(item.clone())
         }
-        vi = vi + 1
     }
     return next
 }
 
 fn applyIndex(values: &Vec<string>, idx: i64): Vec<string> {
     var next: Vec<string> = Vec.new()
-    var vi: i64 = 0
-    while vi < values.len {
+    for vi in 0..values.len {
         let result = indexArray(values[vi], idx)
         next.push(result)
-        vi = vi + 1
     }
     return next
 }
@@ -371,10 +363,7 @@ fn main(): i32 {
     var values: Vec<string> = Vec.new()
     values.push(input)
 
-    var stepI: i64 = 0
-    while stepI < steps.len {
-        let step = steps[stepI].clone()
-
+    for step in steps {
         if step == "[]" {
             values = applyIterate(values)
         } else if step[0] == 91 {
@@ -384,14 +373,10 @@ fn main(): i32 {
         } else {
             values = applyFields(values, step)
         }
-
-        stepI = stepI + 1
     }
 
-    var ri: i64 = 0
-    while ri < values.len {
-        outputValue(values[ri], raw)
-        ri = ri + 1
+    for val in values {
+        outputValue(val, raw)
     }
 
     return 0

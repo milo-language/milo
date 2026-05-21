@@ -14,8 +14,7 @@ fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, count
     }
 
     let entries = readDir(dirPath)
-    var idx: i64 = 0
-    while idx < entries.len {
+    for idx in 0..entries.len {
         let name = entries[idx].name.clone()
         let entryIsDir = entries[idx].isDir
         let isLast = idx == entries.len - 1
@@ -41,7 +40,6 @@ fn printTree(dirPath: &string, prefix: &string, depth: i64, maxLevel: i64, count
         } else {
             counts.files = counts.files + 1
         }
-        idx = idx + 1
     }
 }
 

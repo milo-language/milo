@@ -170,8 +170,7 @@ fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
 
 fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
     let entries = readDir(dirPath)
-    var i: i64 = 0
-    while i < entries.len {
+    for i in 0..entries.len {
         let name = entries[i].name.clone()
         let entryIsDir = entries[i].isDir
         let entryIsFile = entries[i].isFile
@@ -183,7 +182,6 @@ fn grepRecursive(dirPath: &string, opts: &mut GrepOpts): void {
                 grepFile(fullPath, opts)
             }
         }
-        i = i + 1
     }
 }
 

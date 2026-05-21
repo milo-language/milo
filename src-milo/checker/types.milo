@@ -37,10 +37,8 @@ fn tyUnknown(): TypeKind { return TypeKind.TUnknown }
 fn typeFromAst(ty: &MiloType): TypeKind {
     if ty.isFn {
         var params: Vec<TypeKind> = Vec.new()
-        var i: i64 = 0
-        while i < ty.fnParams.len {
+        for i in 0..ty.fnParams.len {
             params.push(typeFromAst(&ty.fnParams[i]))
-            i = i + 1
         }
         var ret = TypeKind.TVoid
         match ty.fnRet {
@@ -149,10 +147,8 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
             match b {
                 TypeKind.TFn(paramsB, retB) => {
                     if paramsA.len != paramsB.len { return false }
-                    var i: i64 = 0
-                    while i < paramsA.len {
+                    for i in 0..paramsA.len {
                         if !typeEq(&paramsA[i], &paramsB[i]) { return false }
-                        i = i + 1
                     }
                     return typeEq(&*retA, &*retB)
                 }
@@ -194,11 +190,9 @@ fn typeName(t: &TypeKind): string {
         }
         TypeKind.TFn(params, ret) => {
             var s = "("
-            var i: i64 = 0
-            while i < params.len {
+            for i in 0..params.len {
                 if i > 0 { s = s + ", " }
                 s = s + typeName(&params[i])
-                i = i + 1
             }
             s = s + ") => " + typeName(&*ret)
             return s

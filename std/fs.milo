@@ -36,10 +36,8 @@ fn fileInfo(path: &string): FileInfo {
         let mode = modeLo | (modeHi << 8)
         // read i64 size
         var size: i64 = 0
-        var i: i64 = 0
-        while i < 8 {
+        for i in 0..8 {
             size = size | ((buf[sizeOff + i]as i64) << (i * 8))
-            i = i + 1
         }
         return FileInfo {
             size: size, mode: mode, exists: true
@@ -285,10 +283,8 @@ fn makeTempDir(prefix: &string): Result<string, IoError> {
     var buf: [u8; 4096] = [0; 4096]
     let tmpl = prefix + "XXXXXX"
     unsafe {
-        var i: i64 = 0
-        while i < tmpl.len {
+        for i in 0..tmpl.len {
             buf[i] = tmpl[i]
-            i = i + 1
         }
         buf[tmpl.len] = 0
         let r = mkdtemp(buf as *u8)
@@ -326,10 +322,8 @@ fn lstatInfo(path: &string): FileInfo {
         let modeHi = buf[modeOff + 1] as i32
         let mode = modeLo | (modeHi << 8)
         var size: i64 = 0
-        var i: i64 = 0
-        while i < 8 {
+        for i in 0..8 {
             size = size | ((buf[sizeOff + i] as i64) << (i * 8))
-            i = i + 1
         }
         return FileInfo { size: size, mode: mode, exists: true }
     }

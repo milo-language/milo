@@ -6,10 +6,8 @@
 fn args(): Vec<string> {
     var result: Vec<string> = Vec.new()
     let n = _miloArgCount()
-    var i: i64 = 0
-    while i < n {
+    for i in 0..n {
         result.push(_miloArgAt(i))
-        i = i + 1
     }
     return result
 }
@@ -21,14 +19,12 @@ fn args(): Vec<string> {
 fn getFlag(name: &string): string? {
     let all = args()
     let flag = "--" + name
-    var i: i64 = 0
-    while i < all.len {
+    for i in 0..all.len {
         if all[i] == flag {
             if i + 1 < all.len {
                 return Option.Some(all[i + 1])
             }
         }
-        i = i + 1
     }
     return null
 }
@@ -38,12 +34,10 @@ fn getFlag(name: &string): string? {
 fn hasFlag(name: &string): bool {
     let all = args()
     let flag = "--" + name
-    var i: i64 = 0
-    while i < all.len {
-        if all[i] == flag {
+    for item in all {
+        if item == flag {
             return true
         }
-        i = i + 1
     }
     return false
 }

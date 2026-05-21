@@ -102,10 +102,8 @@ impl TcpStream {
                 if n <= 0 {
                     break
                 }
-                var i: i64 = 0
-                while i < n {
+                for i in 0..n {
                     result.push(buf[i])
-                    i = i + 1
                 }
             }
         }
@@ -210,10 +208,8 @@ impl TlsStream {
                 if n <= 0 {
                     break
                 }
-                var i: i64 = 0
-                while i < n as i64 {
+                for i in 0..n as i64 {
                     result.push(buf[i])
-                    i = i + 1
                 }
             }
         }

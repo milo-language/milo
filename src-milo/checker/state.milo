@@ -189,10 +189,8 @@ fn lookupMut(ck: &mut Checker, name: &string): Option<&mut VarInfo> {
 // -- Has errors check --
 
 fn hasErrors(ck: &Checker): bool {
-    var i: i64 = 0
-    while i < ck.diagnostics.len {
+    for i in 0..ck.diagnostics.len {
         if ck.diagnostics[i].severity == "error" { return true }
-        i = i + 1
     }
     return false
 }

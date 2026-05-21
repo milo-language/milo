@@ -30,13 +30,11 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
             if ck.structs.contains(&name) {
                 let info = ck.structs.get(&name)
                 var fields: Vec<HIRField> = Vec.new()
-                var j: i64 = 0
-                while j < info.fields.len {
+                for j in 0..info.fields.len {
                     fields.push(HIRField {
                         name: info.fields[j].name.clone(),
                         type: info.fields[j].type.clone(),
                     })
-                    j = j + 1
                 }
                 structs.push(HIRStruct { name: name, fields: fields })
             }
@@ -70,10 +68,8 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
     }
 
     // Lower monomorphized functions
-    i = 0
-    while i < ck.monomorphizedFns.len {
+    for i in 0..ck.monomorphizedFns.len {
         functions.push(lowerFn(&ck.monomorphizedFns[i], ck))
-        i = i + 1
     }
 
     return HIRModule {
@@ -88,8 +84,7 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
 
 fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
     var params: Vec<HIRParam> = Vec.new()
-    var i: i64 = 0
-    while i < f.params.len {
+    for i in 0..f.params.len {
         let pType = typeFromAst(&f.params[i].type)
         let innerType = match &pType {
             TypeKind.TRef(inner, mutable) => { inner.clone() }
@@ -101,7 +96,6 @@ fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
             isRef: f.params[i].type.isRef,
             isRefMut: f.params[i].type.isRefMut,
         })
-        i = i + 1
     }
     let retType = typeFromAst(&f.retType)
     return HIRFunction {
@@ -118,11 +112,10 @@ fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
 
 fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
     var params: Vec<HIRParam> = Vec.new()
-    var i: i64 = 0
 
     // Use checker's resolved signature if available
     let hasSig = ck.functions.contains(&f.name)
-    while i < f.params.len {
+    for i in 0..f.params.len {
         var pType = typeFromAst(&f.params[i].type)
         if hasSig {
             let sig = ck.functions.get(&f.name)
@@ -140,7 +133,6 @@ fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
             isRef: f.params[i].type.isRef,
             isRefMut: f.params[i].type.isRefMut,
         })
-        i = i + 1
     }
 
     var retType = typeFromAst(&f.retType)
@@ -149,10 +141,8 @@ fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
     }
 
     var body: Vec<Heap<HIRStmt>> = Vec.new()
-    var j: i64 = 0
-    while j < f.body.len {
+    for j in 0..f.body.len {
         body.push(Heap.new(lowerStmt(&*f.body[j], &retType, ck)))
-        j = j + 1
     }
 
     return HIRFunction {
@@ -201,19 +191,15 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
         Stmt.IfStmt(cond, thenBody, elseBody, span) => {
             let hirCond = lowerExpr(&*cond, ck)
             var hirThen: Vec<Heap<HIRStmt>> = Vec.new()
-            var i: i64 = 0
-            while i < thenBody.len {
+            for i in 0..thenBody.len {
                 hirThen.push(Heap.new(lowerStmt(&*thenBody[i], fnRetType, ck)))
-                i = i + 1
             }
             var hirElse: Option<Vec<Heap<HIRStmt>>> = Option.None
             match elseBody {
                 Option.Some(body) => {
                     var els: Vec<Heap<HIRStmt>> = Vec.new()
-                    var j: i64 = 0
-                    while j < body.len {
+                    for j in 0..body.len {
                         els.push(Heap.new(lowerStmt(&*body[j], fnRetType, ck)))
-                        j = j + 1
                     }
                     hirElse = Option.Some(els)
                 }
@@ -224,10 +210,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
         Stmt.WhileStmt(cond, body, span) => {
             let hirCond = lowerExpr(&*cond, ck)
             var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
-            var i: i64 = 0
-            while i < body.len {
+            for i in 0..body.len {
                 hirBody.push(Heap.new(lowerStmt(&*body[i], fnRetType, ck)))
-                i = i + 1
             }
             return HIRStmt.While(Heap.new(hirCond), hirBody, span.clone())
         }
@@ -239,10 +223,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
         Stmt.MatchStmt(subject, arms, span) => {
             let hirSubj = lowerExpr(&*subject, ck)
             var hirArms: Vec<HIRMatchArm> = Vec.new()
-            var i: i64 = 0
-            while i < arms.len {
+            for i in 0..arms.len {
                 hirArms.push(lowerMatchArm(&arms[i], ck))
-                i = i + 1
             }
             // Determine enum name from subject type
             var enumName = ""
@@ -255,10 +237,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
         }
         Stmt.UnsafeBlock(body, span) => {
             var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
-            var i: i64 = 0
-            while i < body.len {
+            for i in 0..body.len {
                 hirBody.push(Heap.new(lowerStmt(&*body[i], fnRetType, ck)))
-                i = i + 1
             }
             return HIRStmt.UnsafeBlock(hirBody, span.clone())
         }
@@ -269,10 +249,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                     let hirEnd = lowerExpr(&*end, ck)
                     let varType = hirExprType(&hirStart)
                     var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
-                    var i: i64 = 0
-                    while i < body.len {
+                    for i in 0..body.len {
                         hirBody.push(Heap.new(lowerStmt(&*body[i], fnRetType, ck)))
-                        i = i + 1
                     }
                     return HIRStmt.ForRange(varName.clone(), varType, Heap.new(hirStart), Heap.new(hirEnd), hirBody, span.clone())
                 }
@@ -327,10 +305,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                         _ => {}
                     }
                     var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
-                    var i: i64 = 0
-                    while i < body.len {
+                    for i in 0..body.len {
                         hirBody.push(Heap.new(lowerStmt(&*body[i], fnRetType, ck)))
-                        i = i + 1
                     }
                     return HIRStmt.ForEach(varName.clone(), varName2.clone(), varType, varType2, Heap.new(hirIter), iterKind, hirBody, span.clone())
                 }
@@ -348,10 +324,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             var arms: Vec<HIRMatchArm> = Vec.new()
             // Then arm
             var hirThen: Vec<Heap<HIRStmt>> = Vec.new()
-            var i: i64 = 0
-            while i < thenBody.len {
+            for i in 0..thenBody.len {
                 hirThen.push(Heap.new(lowerStmt(&*thenBody[i], fnRetType, ck)))
-                i = i + 1
             }
             arms.push(HIRMatchArm {
                 pattern: lowerPattern(pattern, ck, &enumName),
@@ -361,10 +335,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             var hirElse: Vec<Heap<HIRStmt>> = Vec.new()
             match elseBody {
                 Option.Some(body) => {
-                    var j: i64 = 0
-                    while j < body.len {
+                    for j in 0..body.len {
                         hirElse.push(Heap.new(lowerStmt(&*body[j], fnRetType, ck)))
-                        j = j + 1
                     }
                 }
                 Option.None => {}
@@ -384,10 +356,8 @@ fn lowerMatchArm(arm: &MatchArm, ck: &Checker): HIRMatchArm {
     // Need to figure out enum name from context — use empty for now
     let hirPattern = lowerPatternRaw(&arm.pattern, ck)
     var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
-    var i: i64 = 0
-    while i < arm.body.len {
+    for i in 0..arm.body.len {
         hirBody.push(Heap.new(lowerStmt(&*arm.body[i], &tyVoid(), ck)))
-        i = i + 1
     }
     return HIRMatchArm { pattern: hirPattern, body: hirBody }
 }
@@ -445,13 +415,11 @@ fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
             // Without context enum name, try to resolve from enum registry
             var tag: i32 = 0
             var hirBindings: Vec<PatternBinding> = Vec.new()
-            var i: i64 = 0
-            while i < bindings.len {
+            for i in 0..bindings.len {
                 hirBindings.push(PatternBinding {
                     name: bindings[i].clone(),
                     type: tyUnknown(),
                 })
-                i = i + 1
             }
             return HIRPattern.EnumPattern(variant.clone(), hirBindings, tag)
         }
@@ -483,10 +451,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             if ck.functions.contains(name) {
                 let sig = ck.functions.get(name)
                 var paramTypes: Vec<TypeKind> = Vec.new()
-                var i: i64 = 0
-                while i < sig.params.len {
+                for i in 0..sig.params.len {
                     paramTypes.push(sig.params[i].type.clone())
-                    i = i + 1
                 }
                 idType = TypeKind.TFn(paramTypes, Heap.new(sig.ret.clone()))
             }
@@ -532,11 +498,9 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 return HIRExpr.HeapCreate(Heap.new(hirArg), TypeKind.THeap(Heap.new(inner)), span.clone())
             }
             var hirArgs: Vec<HIRArg> = Vec.new()
-            var i: i64 = 0
-            while i < args.len {
+            for i in 0..args.len {
                 let hirArg = lowerExpr(&*args[i], ck)
                 hirArgs.push(HIRArg { expr: Heap.new(hirArg), passByRef: false, refMut: false })
-                i = i + 1
             }
             var retType = tyUnknown()
             var variadic = false
@@ -561,13 +525,11 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
         }
         Expr.StructLit(name, fields, span) => {
             var hirFields: Vec<HIRStructField> = Vec.new()
-            var i: i64 = 0
-            while i < fields.len {
+            for i in 0..fields.len {
                 hirFields.push(HIRStructField {
                     name: fields[i].name.clone(),
                     value: Heap.new(lowerExpr(&*fields[i].value, ck)),
                 })
-                i = i + 1
             }
             return HIRExpr.StructLit(name.clone(), hirFields, TypeKind.TStruct(name.clone()), span.clone())
         }
@@ -602,12 +564,10 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 TypeKind.TStruct(sname) => {
                     if ck.structs.contains(sname) {
                         let info = ck.structs.get(sname)
-                        var k: i64 = 0
-                        while k < info.fields.len {
+                        for k in 0..info.fields.len {
                             if info.fields[k].name == field {
                                 fieldType = info.fields[k].type.clone()
                             }
-                            k = k + 1
                         }
                     }
                 }
@@ -617,10 +577,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
         }
         Expr.ArrayLit(elements, span) => {
             var hirElems: Vec<Heap<HIRExpr>> = Vec.new()
-            var i: i64 = 0
-            while i < elements.len {
+            for i in 0..elements.len {
                 hirElems.push(Heap.new(lowerExpr(&*elements[i], ck)))
-                i = i + 1
             }
             var elemType = tyUnknown()
             if hirElems.len > 0 {
@@ -661,10 +619,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 return HIRExpr.HashMapNew(tyUnknown(), tyUnknown(), TypeKind.THashMap(Heap.new(tyUnknown()), Heap.new(tyUnknown())), span.clone())
             }
             var hirArgs: Vec<Heap<HIRExpr>> = Vec.new()
-            var i: i64 = 0
-            while i < args.len {
+            for i in 0..args.len {
                 hirArgs.push(Heap.new(lowerExpr(&*args[i], ck)))
-                i = i + 1
             }
             return HIRExpr.EnumLit(enumName.clone(), variant.clone(), hirArgs, TypeKind.TEnum(enumName.clone()), span.clone())
         }
@@ -776,10 +732,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             // Fallback: lower as Call with self as first arg
             var hirArgs: Vec<HIRArg> = Vec.new()
             hirArgs.push(HIRArg { expr: Heap.new(hirObj), passByRef: true, refMut: false })
-            var i: i64 = 0
-            while i < args.len {
+            for i in 0..args.len {
                 hirArgs.push(HIRArg { expr: Heap.new(lowerExpr(&*args[i], ck)), passByRef: false, refMut: false })
-                i = i + 1
             }
             return HIRExpr.Call(method.clone(), hirArgs, tyUnknown(), false, span.clone())
         }
@@ -794,20 +748,16 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 i = i + 1
             }
             var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
-            var j: i64 = 0
             let closureRetType = match retType {
                 Option.Some(rt) => { typeFromAst(rt) }
                 Option.None => { tyVoid() }
             }
-            while j < body.len {
+            for j in 0..body.len {
                 hirBody.push(Heap.new(lowerStmt(&*body[j], &closureRetType, ck)))
-                j = j + 1
             }
             var paramTypes: Vec<TypeKind> = Vec.new()
-            i = 0
-            while i < hirParams.len {
+            for i in 0..hirParams.len {
                 paramTypes.push(hirParams[i].type.clone())
-                i = i + 1
             }
             let fnType = TypeKind.TFn(paramTypes, Heap.new(closureRetType.clone()))
             var captures: Vec<CaptureInfo> = Vec.new()

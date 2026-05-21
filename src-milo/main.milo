@@ -44,8 +44,7 @@ fn compile(path: string): string {
     var checker = newChecker()
     checkProgram(&mut checker, &resolved)
     if hasErrors(&checker) {
-        var i: i64 = 0
-        while i < checker.diagnostics.len {
+        for i in 0..checker.diagnostics.len {
             let d = &checker.diagnostics[i]
             if d.severity == "error" {
                 var loc = ""
@@ -60,7 +59,6 @@ fn compile(path: string): string {
                     eprintln("  hint: " + d.hint.clone())
                 }
             }
-            i = i + 1
         }
         exit(1)
     }
@@ -112,13 +110,11 @@ fn main() {
         var checker = newChecker()
         checkProgram(&mut checker, &resolved)
         if hasErrors(&checker) {
-            var i: i64 = 0
-            while i < checker.diagnostics.len {
+            for i in 0..checker.diagnostics.len {
                 let d = &checker.diagnostics[i]
                 if d.severity == "error" {
                     eprintln("error: " + d.message.clone())
                 }
-                i = i + 1
             }
             exit(1)
         }

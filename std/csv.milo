@@ -57,28 +57,22 @@ fn csvParse(input: &string): Vec<Vec<string>> {
 
 fn _csvQuoteField(val: &string): string {
     var needsQuote = false
-    var j: i64 = 0
-    while j < val.len {
-        let ch = val[j]
+    for ch in val {
         if ch == 44 || ch == 34 || ch == 10 || ch == 13 {
             needsQuote = true
             break
         }
-        j = j + 1
     }
     if !needsQuote {
         return val.clone()
     }
     var quoted = "\""
-    var k: i64 = 0
-    while k < val.len {
-        let ch = val[k]
+    for ch in val {
         if ch == 34 {
             quoted = quoted + "\"\""
         } else {
             quoted.push(ch)
         }
-        k = k + 1
     }
     quoted = quoted + "\""
     return quoted
@@ -88,18 +82,14 @@ fn _csvQuoteField(val: &string): string {
 
 fn csvStringify(rows: &Vec<Vec<string>>): string {
     var output = ""
-    var ri: i64 = 0
-    while ri < rows.len {
-        var ci: i64 = 0
-        while ci < rows[ri].len {
+    for ri in 0..rows.len {
+        for ci in 0..rows[ri].len {
             if ci > 0 {
                 output = output + ","
             }
             output = output + _csvQuoteField(rows[ri][ci])
-            ci = ci + 1
         }
         output = output + "\n"
-        ri = ri + 1
     }
     return output
 }

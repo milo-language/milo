@@ -32,25 +32,19 @@ fn jsonNull(): Json {
 
 fn jsonClone(src: &Json): Json {
     var nodes: Vec<JsonNode> = Vec.new()
-    var i: i64 = 0
-    while i < src.nodes.len() {
+    for i in 0..src.nodes.len() {
         let n = src.nodes[i]
         nodes.push(JsonNode { kind: n.kind, boolVal: n.boolVal, numVal: n.numVal, strStart: n.strStart, strLen: n.strLen, childStart: n.childStart, childCount: n.childCount, keyStart: n.keyStart })
-        i = i + 1
     }
     var ci: Vec<i64> = Vec.new()
-    i = 0
-    while i < src.childIdx.len() {
+    for i in 0..src.childIdx.len() {
         ci.push(src.childIdx[i])
-        i = i + 1
     }
     var ko: Vec<i64> = Vec.new()
     var kl: Vec<i64> = Vec.new()
-    i = 0
-    while i < src.keyOffsets.len() {
+    for i in 0..src.keyOffsets.len() {
         ko.push(src.keyOffsets[i])
         kl.push(src.keyLens[i])
-        i = i + 1
     }
     return Json { source: src.source.clone(), nodes: nodes, childIdx: ci, keyOffsets: ko, keyLens: kl, root: src.root }
 }
@@ -59,10 +53,8 @@ fn jsonClone(src: &Json): Json {
 
 fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
     if klen != target.len { return false }
-    var i: i64 = 0
-    while i < klen {
+    for i in 0..klen {
         if source[off + i] != target[i] { return false }
-        i = i + 1
     }
     return true
 }
@@ -115,13 +107,11 @@ impl Json {
     fn get(self: &Self, key: &string): Option<Json> {
         let node = self.nodes[self.root]
         if node.kind != 5 { return Option.None }
-        var i: i64 = 0
-        while i < node.childCount {
+        for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let childNodeIdx = self.childIdx[node.childStart + i]
                 return Option.Some(jsonExtractSubtree(self, childNodeIdx))
             }
-            i = i + 1
         }
         return Option.None
     }
@@ -129,8 +119,7 @@ impl Json {
     fn str(self: &Self, key: &string): Option<string> {
         let node = self.nodes[self.root]
         if node.kind != 5 { return Option.None }
-        var i: i64 = 0
-        while i < node.childCount {
+        for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
                 if child.kind == 3 {
@@ -138,7 +127,6 @@ impl Json {
                 }
                 return Option.None
             }
-            i = i + 1
         }
         return Option.None
     }
@@ -146,14 +134,12 @@ impl Json {
     fn i64(self: &Self, key: &string): Option<i64> {
         let node = self.nodes[self.root]
         if node.kind != 5 { return Option.None }
-        var i: i64 = 0
-        while i < node.childCount {
+        for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
                 if child.kind == 2 { return Option.Some(child.numVal as i64) }
                 return Option.None
             }
-            i = i + 1
         }
         return Option.None
     }
@@ -161,14 +147,12 @@ impl Json {
     fn f64(self: &Self, key: &string): Option<f64> {
         let node = self.nodes[self.root]
         if node.kind != 5 { return Option.None }
-        var i: i64 = 0
-        while i < node.childCount {
+        for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
                 if child.kind == 2 { return Option.Some(child.numVal) }
                 return Option.None
             }
-            i = i + 1
         }
         return Option.None
     }
@@ -176,14 +160,12 @@ impl Json {
     fn bool(self: &Self, key: &string): Option<bool> {
         let node = self.nodes[self.root]
         if node.kind != 5 { return Option.None }
-        var i: i64 = 0
-        while i < node.childCount {
+        for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
                 if child.kind == 1 { return Option.Some(child.boolVal) }
                 return Option.None
             }
-            i = i + 1
         }
         return Option.None
     }

@@ -25,18 +25,14 @@ fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string 
             if lineIdx >= 0 && lineIdx < srcLines.len as i32 {
                 let lineNum = sp.line.toString()
                 var pad = ""
-                var k: i64 = 0
-                while k < lineNum.len {
+                for k in 0..lineNum.len {
                     pad = pad + " "
-                    k = k + 1
                 }
                 lines.push(DIM + pad.clone() + " |" + RESET)
                 lines.push(DIM + lineNum + " |" + RESET + " " + srcLines[lineIdx as i64].clone())
                 var caretPad = ""
-                var c: i64 = 0
-                while c < (sp.col - 1) as i64 {
+                for c in 0..(sp.col - 1) as i64 {
                     caretPad = caretPad + " "
-                    c = c + 1
                 }
                 lines.push(DIM + pad + " |" + RESET + " " + caretPad + color + "^" + RESET)
             }
@@ -52,11 +48,9 @@ fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string 
 
     // Join with newlines
     var result = ""
-    var i: i64 = 0
-    while i < lines.len {
+    for i in 0..lines.len {
         if i > 0 { result = result + "\n" }
         result = result + lines[i].clone()
-        i = i + 1
     }
     return result
 }

@@ -52,10 +52,8 @@ fn genWhile(cg: &mut Cgen, cond: Heap<Expr>, body: Vec<Heap<Stmt>>, locs: &mut V
     emit(cg, "  br i1 " + cv.v + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
     emit(cg, bodyLbl + ":\n")
     var bodyTerm = false
-    var bi: i64 = 0
-    while bi < body.len {
+    for bi in 0..body.len {
         if genStmt(cg, body[bi], locs, sigs, retTy) { bodyTerm = true }
-        bi = bi + 1
     }
     if !bodyTerm { emit(cg, "  br label %" + condLbl + "\n") }
     emit(cg, endLbl + ":\n")
@@ -73,20 +71,16 @@ fn genIf(cg: &mut Cgen, cond: Heap<Expr>, thenBody: Vec<Heap<Stmt>>, elseBody: O
     emit(cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
     emit(cg, thenLbl + ":\n")
     var thenTerm = false
-    var ti: i64 = 0
-    while ti < thenBody.len {
+    for ti in 0..thenBody.len {
         if genStmt(cg, thenBody[ti], locs, sigs, retTy) { thenTerm = true }
-        ti = ti + 1
     }
     if !thenTerm { emit(cg, "  br label %" + endLbl + "\n") }
     emit(cg, elseLbl + ":\n")
     var elseTerm = false
     match elseBody {
         Option.Some(stmts) => {
-            var ei: i64 = 0
-            while ei < stmts.len {
+            for ei in 0..stmts.len {
                 if genStmt(cg, stmts[ei], locs, sigs, retTy) { elseTerm = true }
-                ei = ei + 1
             }
         }
         Option.None => {}
@@ -110,8 +104,7 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
     let endLbl = nextLabel(cg, "match.end")
     var switchCases = ""
     var armLabels: Vec<string> = Vec.new()
-    var i: i64 = 0
-    while i < arms.len {
+    for i in 0..arms.len {
         let armLbl = nextLabel(cg, "match.arm")
         match arms[i].pattern {
             Pattern.EnumPattern(enumName, variant, bindings, span) => {
@@ -123,13 +116,11 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
             }
         }
         armLabels.push(armLbl)
-        i = i + 1
     }
     let defaultLbl = nextLabel(cg, "match.default")
     emit(cg, "  switch i32 " + tag + ", label %" + defaultLbl + " [" + switchCases + "]\n")
     var allTerminated = true
-    var ai: i64 = 0
-    while ai < arms.len {
+    for ai in 0..arms.len {
         emit(cg, armLabels[ai] + ":\n")
         let locsPreLen = locs.len
         // Extract payload bindings
@@ -141,8 +132,7 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
                         let payPtr = nextTemp(cg)
                         emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 1\n")
                         let vstructTy = variantStructTy(payloadTypes)
-                        var bi: i64 = 0
-                        while bi < bindings.len {
+                        for bi in 0..bindings.len {
                             let ftyLl = llType(payloadTypes[bi])
                             let fp = nextTemp(cg)
                             emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 " + bi.toString() + "\n")
@@ -152,7 +142,6 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
                             emit(cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
                             emit(cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
                             locs.push(Local { name: bindings[bi], ty: payloadTypes[bi], addr: bindAddr })
-                            bi = bi + 1
                         }
                     }
                 }
@@ -160,10 +149,8 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
             _ => {}
         }
         var armTerm = false
-        var si: i64 = 0
-        while si < arms[ai].body.len {
+        for si in 0..arms[ai].body.len {
             if genStmt(cg, arms[ai].body[si], locs, sigs, retTy) { armTerm = true }
-            si = si + 1
         }
         // Pop bindings
         while locs.len > locsPreLen { locs.pop() }
@@ -171,7 +158,6 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
             emit(cg, "  br label %" + endLbl + "\n")
             allTerminated = false
         }
-        ai = ai + 1
     }
     emit(cg, defaultLbl + ":\n")
     emit(cg, "  unreachable\n")
@@ -272,10 +258,8 @@ fn genStmt(cg: &mut Cgen, s: Heap<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<FnSig
         }
         Stmt.UnsafeBlock(body, span) => {
             var term = false
-            var i: i64 = 0
-            while i < body.len {
+            for i in 0..body.len {
                 if genStmt(cg, body[i], locs, sigs, retTy) { term = true }
-                i = i + 1
             }
             return term
         }

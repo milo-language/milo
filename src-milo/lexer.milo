@@ -239,20 +239,16 @@ fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
 
 fn hexToDecStr(raw: &string): string {
     var val: i64 = 0
-    var i: i64 = 0
-    while i < raw.len {
+    for i in 0..raw.len {
         val = val * 16 + hexVal(raw[i])
-        i = i + 1
     }
     return val.toString()
 }
 
 fn binToDecStr(raw: &string): string {
     var val: i64 = 0
-    var i: i64 = 0
-    while i < raw.len {
+    for i in 0..raw.len {
         val = val * 2 + (raw[i] - 48) as i64
-        i = i + 1
     }
     return val.toString()
 }

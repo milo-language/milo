@@ -154,10 +154,8 @@ fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
             if ck.functions.contains(name) {
                 let sig = ck.functions.get(name)
                 var params: Vec<TypeKind> = Vec.new()
-                var i: i64 = 0
-                while i < sig.params.len {
+                for i in 0..sig.params.len {
                     params.push(sig.params[i].type.clone())
-                    i = i + 1
                 }
                 return TypeKind.TFn(params, Heap.new(sig.ret.clone()))
             }
@@ -410,11 +408,9 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
     }
 
     let info = ck.structs.get(name)
-    var i: i64 = 0
-    while i < fields.len {
+    for i in 0..fields.len {
         var found = false
-        var j: i64 = 0
-        while j < info.fields.len {
+        for j in 0..info.fields.len {
             if info.fields[j].name == fields[i].name {
                 found = true
                 let valType = checkExpr(ck, &*fields[i].value)
@@ -423,27 +419,21 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
                 }
                 tryMove(ck, &*fields[i].value)
             }
-            j = j + 1
         }
         if !found {
             error(ck, "struct '" + name.clone() + "' has no field '" + fields[i].name.clone() + "'", span.clone())
         }
-        i = i + 1
     }
 
     // Check all required fields present
-    var k: i64 = 0
-    while k < info.fields.len {
+    for k in 0..info.fields.len {
         var present = false
-        var m: i64 = 0
-        while m < fields.len {
+        for m in 0..fields.len {
             if fields[m].name == info.fields[k].name { present = true }
-            m = m + 1
         }
         if !present {
             error(ck, "missing field '" + info.fields[k].name.clone() + "' in struct '" + name.clone() + "'", span.clone())
         }
-        k = k + 1
     }
 
     return TypeKind.TStruct(name.clone())
@@ -466,12 +456,10 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
                 return tyUnknown()
             }
             let info = ck.structs.get(name)
-            var i: i64 = 0
-            while i < info.fields.len {
+            for i in 0..info.fields.len {
                 if info.fields[i].name == field {
                     return info.fields[i].type.clone()
                 }
-                i = i + 1
             }
             error(ck, "struct '" + name.clone() + "' has no field '" + field.clone() + "'", span.clone())
             return tyUnknown()
@@ -515,13 +503,11 @@ fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Spa
         return tyUnknown()
     }
     let elemType = checkExpr(ck, &*elements[0])
-    var i: i64 = 1
-    while i < elements.len {
+    for i in 1..elements.len {
         let t = checkExpr(ck, &*elements[i])
         if !typeEq(&elemType, &t) && !typeEq(&t, &tyUnknown()) {
             error(ck, "array element " + i.toString() + ": expected " + typeName(&elemType) + ", got " + typeName(&t), span.clone())
         }
-        i = i + 1
     }
     return TypeKind.TArray(Heap.new(elemType), Option.Some(elements.len))
 }
@@ -587,15 +573,13 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
         error(ck, "variant '" + enumName.clone() + "." + variant.clone() + "' expects " + variantInfo.fields.len.toString() + " args, got " + args.len.toString(), span.clone())
     }
 
-    var i: i64 = 0
     let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
-    while i < limit {
+    for i in 0..limit {
         let argType = checkExpr(ck, &*args[i])
         if !typeEq(&variantInfo.fields[i], &argType) && !typeEq(&argType, &tyUnknown()) {
             error(ck, "argument " + (i + 1).toString() + " of '" + enumName.clone() + "." + variant.clone() + "': expected " + typeName(&variantInfo.fields[i]) + ", got " + typeName(&argType), span.clone())
         }
         tryMove(ck, &*args[i])
-        i = i + 1
     }
 
     return TypeKind.TEnum(enumName.clone())
@@ -976,8 +960,7 @@ fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: 
     // Look up trait methods
     if ck.traitImpls.contains(structName) {
         let impls = ck.traitImpls.get(structName)
-        var i: i64 = 0
-        while i < impls.len {
+        for i in 0..impls.len {
             if impls[i].methods.contains(method) {
                 let sig = impls[i].methods.get(method)
                 let userParams = sig.params.len - 1
@@ -991,7 +974,6 @@ fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: 
                 }
                 return sig.ret.clone()
             }
-            i = i + 1
         }
     }
 
@@ -1011,8 +993,7 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
     pushScope(ck)
 
     var paramTypes: Vec<TypeKind> = Vec.new()
-    var i: i64 = 0
-    while i < params.len {
+    for i in 0..params.len {
         let pType = typeFromAst(&params[i].type)
         declare(ck, params[i].name.clone(), VarInfo {
             type: pType.clone(),
@@ -1023,7 +1004,6 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
             span: Option.None,
         })
         paramTypes.push(pType)
-        i = i + 1
     }
 
     var inferredRet = match retType {

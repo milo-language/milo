@@ -59,10 +59,8 @@ fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
         Stmt.UnsafeBlock(body, span) => {
             ck.unsafeDepth = ck.unsafeDepth + 1
             pushScope(ck)
-            var i: i64 = 0
-            while i < body.len {
+            for i in 0..body.len {
                 checkStmt(ck, &*body[i], fnRetType)
-                i = i + 1
             }
             popScope(ck)
             ck.unsafeDepth = ck.unsafeDepth - 1
@@ -156,20 +154,16 @@ fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: 
     }
 
     pushScope(ck)
-    var i: i64 = 0
-    while i < thenBody.len {
+    for i in 0..thenBody.len {
         checkStmt(ck, &*thenBody[i], fnRetType)
-        i = i + 1
     }
     popScope(ck)
 
     match elseBody {
         Option.Some(body) => {
             pushScope(ck)
-            var j: i64 = 0
-            while j < body.len {
+            for j in 0..body.len {
                 checkStmt(ck, &*body[j], fnRetType)
-                j = j + 1
             }
             popScope(ck)
         }
@@ -187,10 +181,8 @@ fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: 
 
     pushScope(ck)
     ck.loopDepth = ck.loopDepth + 1
-    var i: i64 = 0
-    while i < body.len {
+    for i in 0..body.len {
         checkStmt(ck, &*body[i], fnRetType)
-        i = i + 1
     }
     ck.loopDepth = ck.loopDepth - 1
     popScope(ck)
@@ -201,10 +193,8 @@ fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: 
 fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType: &TypeKind, span: &Option<Span>) {
     let subjType = checkExpr(ck, subject)
 
-    var i: i64 = 0
-    while i < arms.len {
+    for i in 0..arms.len {
         checkMatchArm(ck, &arms[i], &subjType, fnRetType, span)
-        i = i + 1
     }
 }
 
@@ -249,10 +239,8 @@ fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetTyp
     }
 
     // Check arm body
-    var j: i64 = 0
-    while j < arm.body.len {
+    for j in 0..arm.body.len {
         checkStmt(ck, &*arm.body[j], fnRetType)
-        j = j + 1
     }
 
     popScope(ck)

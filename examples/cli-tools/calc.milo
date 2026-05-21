@@ -41,9 +41,7 @@ fn tokenize(input: &string): Vec<CalcToken> {
             var frac: f64 = 0.0
             var fracDiv: f64 = 1.0
             var inFrac: bool = false
-            var j: i64 = 0
-            while j < numStr.len {
-                let d = numStr[j]
+            for d in numStr {
                 if d == 46 {
                     inFrac = true
                 } else {
@@ -55,7 +53,6 @@ fn tokenize(input: &string): Vec<CalcToken> {
                         val = val * 10.0 + digit
                     }
                 }
-                j = j + 1
             }
             tokens.push(CalcToken { kind: CalcTok.Num, val: val + frac })
         } else if ch == 43 {
@@ -198,13 +195,11 @@ fn formatResult(n: f64): string {
     let wholePart = val as i64
     result = result + wholePart.toString() + "."
     var frac = val - wholePart as f64
-    var digits: i64 = 0
-    while digits < 6 {
+    for digits in 0..6 {
         frac = frac * 10.0
         let d = frac as i64
         result = result + d.toString()
         frac = frac - d as f64
-        digits = digits + 1
     }
     // trim trailing zeros
     while result.len > 0 && result[result.len - 1] == 48 {

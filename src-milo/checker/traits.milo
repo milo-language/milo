@@ -98,8 +98,7 @@ fn registerBuiltinTraits(ck: &mut Checker) {
     primTypes.push("f64")
     primTypes.push("bool")
     primTypes.push("string")
-    i = 0
-    while i < primTypes.len {
+    for i in 0..primTypes.len {
         var eqImplMethods: HashMap<string, FnSig> = HashMap.new()
         eqImplMethods.insert("eq", FnSig {
             params: Vec.new(),
@@ -114,7 +113,6 @@ fn registerBuiltinTraits(ck: &mut Checker) {
             methods: eqImplMethods,
         })
         ck.traitImpls.insert(primTypes[i].clone(), implList)
-        i = i + 1
     }
 }
 
@@ -123,15 +121,13 @@ fn registerBuiltinTraits(ck: &mut Checker) {
 fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): bool {
     if !ck.traitImpls.contains(typeName) { return false }
     let impls = ck.traitImpls.get(typeName)
-    var i: i64 = 0
-    while i < impls.len {
+    for i in 0..impls.len {
         match &impls[i].traitName {
             Option.Some(tn) => {
                 if tn == traitName { return true }
             }
             Option.None => {}
         }
-        i = i + 1
     }
     return false
 }
@@ -150,8 +146,7 @@ fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Optio
     // Check trait impls
     if ck.traitImpls.contains(objTypeName) {
         let impls = ck.traitImpls.get(objTypeName)
-        var i: i64 = 0
-        while i < impls.len {
+        for i in 0..impls.len {
             if impls[i].methods.contains(methodName) {
                 match &impls[i].traitName {
                     Option.Some(tn) => {
@@ -162,7 +157,6 @@ fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Optio
                     }
                 }
             }
-            i = i + 1
         }
     }
 
@@ -188,15 +182,13 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
             }
 
             var methods: HashMap<string, FnSig> = HashMap.new()
-            var i: i64 = 0
-            while i < impl.methods.len {
+            for i in 0..impl.methods.len {
                 let m = &impl.methods[i]
                 let mangled = tn.clone() + "$" + traitName.clone() + "$" + m.name.clone()
 
                 // Register function signature
                 var params: Vec<FnParam> = Vec.new()
-                var pi: i64 = 0
-                while pi < m.params.len {
+                for pi in 0..m.params.len {
                     var pType = typeFromAst(&m.params[pi].type)
                     // Substitute Self with concrete type
                     match &pType {
@@ -216,7 +208,6 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
                         _ => {}
                     }
                     params.push(FnParam { name: m.params[pi].name.clone(), type: pType })
-                    pi = pi + 1
                 }
                 var retType = typeFromAst(&m.retType)
                 match &retType {
@@ -239,7 +230,6 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
                     isExtern: false,
                     isVariadic: false,
                 })
-                i = i + 1
             }
 
             let implInfo = ImplInfo {
@@ -258,14 +248,12 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
         Option.None => {
             // Inherent impl
             var methods: HashMap<string, FnSig> = HashMap.new()
-            var i: i64 = 0
-            while i < impl.methods.len {
+            for i in 0..impl.methods.len {
                 let m = &impl.methods[i]
                 let mangled = tn.clone() + "$" + m.name.clone()
 
                 var params: Vec<FnParam> = Vec.new()
-                var pi: i64 = 0
-                while pi < m.params.len {
+                for pi in 0..m.params.len {
                     var pType = typeFromAst(&m.params[pi].type)
                     match &pType {
                         TypeKind.TRef(inner, mutable) => {
@@ -284,7 +272,6 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
                         _ => {}
                     }
                     params.push(FnParam { name: m.params[pi].name.clone(), type: pType })
-                    pi = pi + 1
                 }
                 var retType = typeFromAst(&m.retType)
                 match &retType {
@@ -306,7 +293,6 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
                     isExtern: false,
                     isVariadic: false,
                 })
-                i = i + 1
             }
 
             ck.inherentImpls.insert(tn, ImplInfo {
@@ -321,10 +307,8 @@ fn registerImpl(ck: &mut Checker, impl: &ImplDecl) {
 // -- Process all impls in a program --
 
 fn registerAllImpls(ck: &mut Checker, program: &Program) {
-    var i: i64 = 0
-    while i < program.impls.len {
+    for i in 0..program.impls.len {
         registerImpl(ck, &program.impls[i])
-        i = i + 1
     }
 }
 
@@ -373,11 +357,9 @@ fn processDerives(ck: &mut Checker, program: &Program) {
     while i < program.structs.len {
         let s = &program.structs[i]
         if s.typeParams.len > 0 { i = i + 1; continue }
-        var j: i64 = 0
-        while j < s.attributes.len {
+        for j in 0..s.attributes.len {
             if s.attributes[j].name == "derive" {
-                var k: i64 = 0
-                while k < s.attributes[j].args.len {
+                for k in 0..s.attributes[j].args.len {
                     if s.attributes[j].args[k] == "Eq" {
                         let impl = deriveEq(ck, s)
                         match impl {
@@ -385,10 +367,8 @@ fn processDerives(ck: &mut Checker, program: &Program) {
                             Option.None => {}
                         }
                     }
-                    k = k + 1
                 }
             }
-            j = j + 1
         }
         i = i + 1
     }

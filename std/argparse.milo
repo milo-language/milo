@@ -148,35 +148,30 @@ impl ArgParser {
             text = text + "usage: " + self.usage + "\n\n"
         } else {
             var usageLine: string = "usage: " + self.name + " [options]"
-            var pi: i64 = 0
-            while pi < self.positionals.len {
+            for pi in 0..self.positionals.len {
                 if self.positionals[pi].required {
                     usageLine = usageLine + " <" + self.positionals[pi].name + ">"
                 } else {
                     usageLine = usageLine + " [" + self.positionals[pi].name + "]"
                 }
-                pi = pi + 1
             }
             text = text + usageLine + "\n\n"
         }
         if self.positionals.len > 0 {
             text = text + "arguments:\n"
-            var pi2: i64 = 0
-            while pi2 < self.positionals.len {
+            for pi2 in 0..self.positionals.len {
                 var pline: string = "  <" + self.positionals[pi2].name + ">"
                 while pline.len < 30 {
                     pline = pline + " "
                 }
                 pline = pline + self.positionals[pi2].help
                 text = text + pline + "\n"
-                pi2 = pi2 + 1
             }
             text = text + "\n"
         }
 
         text = text + "options:\n"
-        var i: i64 = 0
-        while i < self.flags.len {
+        for i in 0..self.flags.len {
             var fline: string = "  "
             if self.flags[i].shortName.len > 0 {
                 fline = fline + "-" + self.flags[i].shortName + ", "
@@ -202,7 +197,6 @@ impl ArgParser {
                 fline = fline + " (required)"
             }
             text = text + fline + "\n"
-            i = i + 1
         }
         text = text + "  -h, --help                  Show this help message\n"
         return text
@@ -225,27 +219,23 @@ impl ArgParser {
         }
 
         // initialize flag entries with defaults
-        var fi: i64 = 0
-        while fi < self.flags.len {
+        for fi in 0..self.flags.len {
             result.entries.push(ArgEntry {
                 name: self.flags[fi].longName.clone(),
                 value: self.flags[fi].defaultVal.clone(),
                 present: false,
             }
             )
-            fi = fi + 1
         }
 
         // initialize positional entries
-        var pi: i64 = 0
-        while pi < self.positionals.len {
+        for pi in 0..self.positionals.len {
             result.entries.push(ArgEntry {
                 name: self.positionals[pi].name.clone(),
                 value: "",
                 present: false,
             }
             )
-            pi = pi + 1
         }
 
         var posIdx: i64 = 0
@@ -353,20 +343,17 @@ impl ArgParser {
         }
 
         // validate required flags
-        var ri: i64 = 0
-        while ri < self.flags.len {
+        for ri in 0..self.flags.len {
             if self.flags[ri].required && !result.entries[ri].present {
                 print($"error: --{self.flags[ri].longName} is required\n\n{self.helpText()}")
                 unsafe {
                     exit(1)
                 }
             }
-            ri = ri + 1
         }
 
         // validate required positionals
-        var rp: i64 = 0
-        while rp < self.positionals.len {
+        for rp in 0..self.positionals.len {
             if self.positionals[rp].required {
                 let entryIdx = self.flags.len + rp
                 if !result.entries[entryIdx].present {
@@ -376,7 +363,6 @@ impl ArgParser {
                     }
                 }
             }
-            rp = rp + 1
         }
 
         return result

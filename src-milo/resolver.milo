@@ -74,8 +74,7 @@ fn parseFile(path: &string): Program {
 
 // Recursively process imports from a parsed program.
 fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
-    var i: i64 = 0
-    while i < prog.imports.len {
+    for i in 0..prog.imports.len {
         let imp = &prog.imports[i]
         let absPath = resolvePath(rs, dir, imp.path)
 
@@ -93,37 +92,26 @@ fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
             }
 
             // Merge declarations
-            var si: i64 = 0
-            while si < imported.structs.len {
+            for si in 0..imported.structs.len {
                 rs.structs.push(imported.structs[si])
-                si = si + 1
             }
-            var ei: i64 = 0
-            while ei < imported.enums.len {
+            for ei in 0..imported.enums.len {
                 rs.enums.push(imported.enums[ei])
-                ei = ei + 1
             }
-            var fi: i64 = 0
-            while fi < imported.functions.len {
+            for fi in 0..imported.functions.len {
                 rs.functions.push(imported.functions[fi])
-                fi = fi + 1
             }
-            var ti: i64 = 0
-            while ti < imported.traits.len {
+            for ti in 0..imported.traits.len {
                 rs.traits.push(imported.traits[ti])
-                ti = ti + 1
             }
-            var ii: i64 = 0
-            while ii < imported.impls.len {
+            for ii in 0..imported.impls.len {
                 rs.impls.push(imported.impls[ii])
-                ii = ii + 1
             }
 
             // Recurse into this module's imports
             let importDir = dirname(absPath)
             processImports(rs, &imported, importDir)
         }
-        i = i + 1
     }
 }
 
@@ -197,31 +185,21 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
     if fileExists(preludePath) && !rs.visited.contains(preludePath) {
         rs.visited.insert(preludePath.clone(), true)
         let prelude = parseFile(preludePath)
-        var si: i64 = 0
-        while si < prelude.structs.len { rs.structs.push(prelude.structs[si]); si = si + 1 }
-        var ei: i64 = 0
-        while ei < prelude.enums.len { rs.enums.push(prelude.enums[ei]); ei = ei + 1 }
-        var fi: i64 = 0
-        while fi < prelude.functions.len { rs.functions.push(prelude.functions[fi]); fi = fi + 1 }
-        var ti: i64 = 0
-        while ti < prelude.traits.len { rs.traits.push(prelude.traits[ti]); ti = ti + 1 }
-        var ii: i64 = 0
-        while ii < prelude.impls.len { rs.impls.push(prelude.impls[ii]); ii = ii + 1 }
+        for si in 0..prelude.structs.len { rs.structs.push(prelude.structs[si]) }
+        for ei in 0..prelude.enums.len { rs.enums.push(prelude.enums[ei]) }
+        for fi in 0..prelude.functions.len { rs.functions.push(prelude.functions[fi]) }
+        for ti in 0..prelude.traits.len { rs.traits.push(prelude.traits[ti]) }
+        for ii in 0..prelude.impls.len { rs.impls.push(prelude.impls[ii]) }
         let preludeDir = dirname(preludePath)
         processImports(&mut rs, &prelude, preludeDir)
     }
 
     // User code comes after prelude (last-wins dedup means user overrides)
-    var si: i64 = 0
-    while si < program.structs.len { rs.structs.push(program.structs[si]); si = si + 1 }
-    var ei: i64 = 0
-    while ei < program.enums.len { rs.enums.push(program.enums[ei]); ei = ei + 1 }
-    var fi: i64 = 0
-    while fi < program.functions.len { rs.functions.push(program.functions[fi]); fi = fi + 1 }
-    var ti: i64 = 0
-    while ti < program.traits.len { rs.traits.push(program.traits[ti]); ti = ti + 1 }
-    var ii: i64 = 0
-    while ii < program.impls.len { rs.impls.push(program.impls[ii]); ii = ii + 1 }
+    for si in 0..program.structs.len { rs.structs.push(program.structs[si]) }
+    for ei in 0..program.enums.len { rs.enums.push(program.enums[ei]) }
+    for fi in 0..program.functions.len { rs.functions.push(program.functions[fi]) }
+    for ti in 0..program.traits.len { rs.traits.push(program.traits[ti]) }
+    for ii in 0..program.impls.len { rs.impls.push(program.impls[ii]) }
 
     // Process user program's imports
     processImports(&mut rs, &program, sourceDir)

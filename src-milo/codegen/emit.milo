@@ -9,14 +9,11 @@ from "src-milo/codegen/stmt.milo" import { genStmt }
 // Build function signature table from program declarations.
 fn buildFnTable(prog: &Program): Vec<FnSig> {
     var sigs: Vec<FnSig> = Vec.new()
-    var i: i64 = 0
-    while i < prog.functions.len {
+    for i in 0..prog.functions.len {
         let f = &prog.functions[i]
         var pts: Vec<string> = Vec.new()
-        var j: i64 = 0
-        while j < f.params.len {
+        for j in 0..f.params.len {
             pts.push(f.params[j].type.name.clone())
-            j = j + 1
         }
         sigs.push(FnSig {
             name: f.name.clone(),
@@ -24,7 +21,6 @@ fn buildFnTable(prog: &Program): Vec<FnSig> {
             paramTys: pts,
             isVariadic: f.isVariadic,
         })
-        i = i + 1
     }
     return sigs
 }
@@ -33,11 +29,9 @@ fn buildFnTable(prog: &Program): Vec<FnSig> {
 fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<FnSig>) {
     if f.isExtern {
         var ps = ""
-        var i: i64 = 0
-        while i < f.params.len {
+        for i in 0..f.params.len {
             if i > 0 { ps = ps + ", " }
             ps = ps + llType(f.params[i].type.name)
-            i = i + 1
         }
         if f.isVariadic {
             if f.params.len > 0 { ps = ps + ", " }
@@ -52,35 +46,29 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<FnSig>) {
     var locs: Vec<Local> = Vec.new()
     let retLl = llType(f.retType.name)
     var hdr = "define " + retLl + " @" + f.name + "("
-    var pi: i64 = 0
-    while pi < f.params.len {
+    for pi in 0..f.params.len {
         if pi > 0 { hdr = hdr + ", " }
         hdr = hdr + llType(f.params[pi].type.name) + " %" + f.params[pi].name
-        pi = pi + 1
     }
     hdr = hdr + ") {\n"
     emit(cg, hdr)
     emit(cg, "entry:\n")
 
     // Spill parameters to allocas
-    var pj: i64 = 0
-    while pj < f.params.len {
+    for pj in 0..f.params.len {
         let p = &f.params[pj]
         let llt = llType(p.type.name)
         let addr = "%" + p.name + "_addr"
         emit(cg, "  " + addr + " = alloca " + llt + "\n")
         emit(cg, "  store " + llt + " %" + p.name + ", ptr " + addr + "\n")
         locs.push(Local { name: p.name.clone(), ty: p.type.name.clone(), addr: addr })
-        pj = pj + 1
     }
 
     var terminated = false
-    var si: i64 = 0
-    while si < f.body.len {
+    for si in 0..f.body.len {
         if genStmt(cg, f.body[si], &mut locs, sigs, f.retType.name) {
             terminated = true
         }
-        si = si + 1
     }
     if !terminated {
         if retLl == "void" {
@@ -97,29 +85,23 @@ fn genProgram(prog: Program): string {
     var cg = cgenNew()
 
     // Register function return types
-    var i: i64 = 0
-    while i < prog.functions.len {
+    for i in 0..prog.functions.len {
         cg.fnRets.insert(prog.functions[i].name.clone(), prog.functions[i].retType.name.clone())
-        i = i + 1
     }
 
     // Register enums and emit %Name type declarations
-    var ei: i64 = 0
-    while ei < prog.enums.len {
+    for ei in 0..prog.enums.len {
         let e = &prog.enums[ei]
         var variants: Vec<VariantInfo> = Vec.new()
         var maxBytes: i64 = 0
-        var vi: i64 = 0
-        while vi < e.variants.len {
+        for vi in 0..e.variants.len {
             let v = &e.variants[vi]
             var payloadTypes: Vec<string> = Vec.new()
             var vBytes: i64 = 0
-            var fi: i64 = 0
-            while fi < v.fields.len {
+            for fi in 0..v.fields.len {
                 let pt = v.fields[fi].name.clone()
                 payloadTypes.push(pt.clone())
                 vBytes = vBytes + llTypeBytes(llType(pt))
-                fi = fi + 1
             }
             if vBytes > maxBytes { maxBytes = vBytes }
             variants.push(VariantInfo {
@@ -127,7 +109,6 @@ fn genProgram(prog: Program): string {
                 tag: vi as i32,
                 payloadTypes: payloadTypes,
             })
-            vi = vi + 1
         }
         let slots = (maxBytes + 7) / 8
         cg.enums.insert(e.name.clone(), EnumInfo {
@@ -140,35 +121,28 @@ fn genProgram(prog: Program): string {
         } else {
             emitG(&mut cg, "%" + e.name + " = type { i32 }\n")
         }
-        ei = ei + 1
     }
 
     // Register structs and emit %Name type declarations
-    var si: i64 = 0
-    while si < prog.structs.len {
+    for si in 0..prog.structs.len {
         let s = &prog.structs[si]
         var fields: Vec<FieldInfo> = Vec.new()
         var llStruct = "{ "
-        var fi: i64 = 0
-        while fi < s.fields.len {
+        for fi in 0..s.fields.len {
             let f = &s.fields[fi]
             if fi > 0 { llStruct = llStruct + ", " }
             llStruct = llStruct + llType(f.type.name)
             fields.push(FieldInfo { name: f.name.clone(), ty: f.type.name.clone() })
-            fi = fi + 1
         }
         llStruct = llStruct + " }"
         emitG(&mut cg, "%" + s.name + " = type " + llStruct + "\n")
         cg.structs.insert(s.name.clone(), fields)
-        si = si + 1
     }
 
     // Emit all functions
     let sigs = buildFnTable(&prog)
-    var j: i64 = 0
-    while j < prog.functions.len {
+    for j in 0..prog.functions.len {
         genFn(&mut cg, &prog.functions[j], &sigs)
-        j = j + 1
     }
 
     return cg.globals + "\n" + cg.body

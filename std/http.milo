@@ -28,34 +28,28 @@ struct Context {
 
 impl Context {
     fn param(self: &Self, name: &string): string {
-        var i: i64 = 0
-        while i < self.params.len {
+        for i in 0..self.params.len {
             if self.params[i].name == name {
                 return self.params[i].value.clone()
             }
-            i = i + 1
         }
         return ""
     }
 
     fn query(self: &Self, name: &string): string {
-        var i: i64 = 0
-        while i < self.req.queryParams.len {
+        for i in 0..self.req.queryParams.len {
             if self.req.queryParams[i].name == name {
                 return self.req.queryParams[i].value.clone()
             }
-            i = i + 1
         }
         return ""
     }
 
     fn header(self: &Self, name: &string): string {
-        var i: i64 = 0
-        while i < self.req.headers.len {
+        for i in 0..self.req.headers.len {
             if eqIgnoreCase(self.req.headers[i].name, name) {
                 return self.req.headers[i].value.clone()
             }
-            i = i + 1
         }
         return ""
     }
@@ -143,12 +137,10 @@ fn eqIgnoreCase(a: &string, b: &string): bool {
     if a.len != b.len {
         return false
     }
-    var i: i64 = 0
-    while i < a.len {
+    for i in 0..a.len {
         if toLower(a[i]) != toLower(b[i]) {
             return false
         }
-        i = i + 1
     }
     return true
 }
@@ -244,17 +236,15 @@ fn parseRequest(buf: &[u8 ; 8192], n: i64): Request {
     // split URI into path and query
     var path: string = ""
     var queryStr: string = ""
-    var j: i64 = 0
     var foundQ: bool = false
-    while j < uri.len {
-        if !foundQ && uri[j] == '?' {
+    for ch in uri {
+        if !foundQ && ch == '?' {
             foundQ = true
         } else if foundQ {
-            queryStr.push(uri[j])
+            queryStr.push(ch)
         } else {
-            path.push(uri[j])
+            path.push(ch)
         }
-        j = j + 1
     }
 
     let queryParams = parseQueryString(queryStr)
@@ -269,13 +259,11 @@ fn parseRequest(buf: &[u8 ; 8192], n: i64): Request {
 
 fn parseContentLength(s: &string): i64 {
     var result: i64 = 0
-    var i: i64 = 0
-    while i < s.len {
-        let d = s[i] as i64 - 48
+    for ch in s {
+        let d = ch as i64 - 48
         if d >= 0 && d <= 9 {
             result = result * 10 + d
         }
-        i = i + 1
     }
     return result
 }
@@ -288,23 +276,21 @@ fn parseQueryString(qs: &string): Vec<Param> {
     var key: string = ""
     var value: string = ""
     var inValue: bool = false
-    var i: i64 = 0
-    while i < qs.len {
-        if qs[i] == '&' {
+    for ch in qs {
+        if ch == '&' {
             if key.len > 0 {
                 params.push(Param { name: key, value: value })
             }
             key = ""
             value = ""
             inValue = false
-        } else if qs[i] == '=' && !inValue {
+        } else if ch == '=' && !inValue {
             inValue = true
         } else if inValue {
-            value.push(qs[i])
+            value.push(ch)
         } else {
-            key.push(qs[i])
+            key.push(ch)
         }
-        i = i + 1
     }
     if key.len > 0 {
         params.push(Param { name: key, value: value })
@@ -393,10 +379,8 @@ fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders
     var resp: string = "HTTP/1.1 " + statusText(status)
     resp = resp + "\r\nContent-Type: " + contentType
     resp = resp + "\r\nContent-Length: " + body.len.toString()
-    var i: i64 = 0
-    while i < extraHeaders.len {
+    for i in 0..extraHeaders.len {
         resp = resp + "\r\n" + extraHeaders[i].name + ": " + extraHeaders[i].value
-        i = i + 1
     }
     resp = resp + "\r\nConnection: close"
     resp = resp + "\r\nServer: milo"
@@ -566,8 +550,7 @@ impl Router {
         // find matching route index + params first (borrowing req), then move req after the loop
         var matchIdx: i64 = - 1 as i64
         var matchedParams: Vec<Param> = []
-        var i: i64 = 0
-        while i < self.routes.len {
+        for i in 0..self.routes.len {
             let route = self.routes[i]
             if route.method == "*" || route.method == req.method {
                 let params = matchRoute(route.pattern, route.paramNames, req.path)
@@ -577,7 +560,6 @@ impl Router {
                     break
                 }
             }
-            i = i + 1
         }
 
         if matchIdx < 0 {
@@ -713,8 +695,7 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
         segCount = segCount - 1
     }
 
-    var i: i64 = 0
-    while i < segCount {
+    for i in 0..segCount {
         let pat = patSegs[i]
         if i >= pathSegs.len {
             return Option.None
@@ -728,7 +709,6 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
         } else if pat != seg {
             return Option.None
         }
-        i = i + 1
     }
     return Option.Some(params)
 }
@@ -736,17 +716,15 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
 fn splitPath(path: &string): Vec<string> {
     var segs: Vec<string> = []
     var current: string = ""
-    var i: i64 = 0
-    while i < path.len {
-        if path[i] == '/' {
+    for ch in path {
+        if ch == '/' {
             if current.len > 0 {
                 segs.push(current)
                 current = ""
             }
         } else {
-            current.push(path[i])
+            current.push(ch)
         }
-        i = i + 1
     }
     if current.len > 0 {
         segs.push(current)

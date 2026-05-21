@@ -19,8 +19,7 @@ fn genStructLit(cg: &mut Cgen, name: string, fields: Vec<StructLitField>, locs: 
     let structTy = "%" + name
     let alloc = nextTemp(cg)
     emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
-    var fi: i64 = 0
-    while fi < fields.len {
+    for fi in 0..fields.len {
         let ef = fields[fi]
         let idx = lookupFieldIndex(cg, name, ef.name)
         let fty = lookupFieldType(cg, name, idx)
@@ -28,7 +27,6 @@ fn genStructLit(cg: &mut Cgen, name: string, fields: Vec<StructLitField>, locs: 
         let fp = nextTemp(cg)
         emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 " + idx.toString() + "\n")
         emit(cg, "  store " + llType(fv.ty) + " " + fv.v + ", ptr " + fp + "\n")
-        fi = fi + 1
     }
     let loaded = nextTemp(cg)
     emit(cg, "  " + loaded + " = load " + structTy + ", ptr " + alloc + "\n")
@@ -64,11 +62,9 @@ fn genFieldAccess(cg: &mut Cgen, object: Heap<Expr>, field: string, locs: &Vec<L
 
 fn variantStructTy(payloadTypes: &Vec<string>): string {
     var s = "{ "
-    var i: i64 = 0
-    while i < payloadTypes.len {
+    for i in 0..payloadTypes.len {
         if i > 0 { s = s + ", " }
         s = s + llType(payloadTypes[i])
-        i = i + 1
     }
     s = s + " }"
     return s
@@ -87,14 +83,12 @@ fn genEnumLit(cg: &mut Cgen, enumName: string, variant: string, args: Vec<Heap<E
         let payPtr = nextTemp(cg)
         emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 1\n")
         let vstructTy = variantStructTy(payloadTypes)
-        var fi: i64 = 0
-        while fi < args.len {
+        for fi in 0..args.len {
             let ftyLl = llType(payloadTypes[fi])
             let fp = nextTemp(cg)
             emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 " + fi.toString() + "\n")
             let fv = genExpr(cg, args[fi], locs, sigs, payloadTypes[fi])
             emit(cg, "  store " + ftyLl + " " + fv.v + ", ptr " + fp + "\n")
-            fi = fi + 1
         }
     }
     let loaded = nextTemp(cg)
@@ -203,10 +197,8 @@ fn genCall(cg: &mut Cgen, name: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>
 
     // Evaluate arguments
     var argVals: Vec<Val> = Vec.new()
-    var i: i64 = 0
-    while i < args.len {
+    for i in 0..args.len {
         argVals.push(genExpr(cg, args[i], locs, sigs, ""))
-        i = i + 1
     }
 
     let isVariadicExtern = name == "printf" || name == "fprintf" ||
@@ -214,8 +206,7 @@ fn genCall(cg: &mut Cgen, name: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>
 
     // Build argument string
     var argStr = ""
-    var ai: i64 = 0
-    while ai < argVals.len {
+    for ai in 0..argVals.len {
         if ai > 0 { argStr = argStr + ", " }
         let elemLl = llType(argVals[ai].ty)
         if elemLl == "%String" && isVariadicExtern {
@@ -225,7 +216,6 @@ fn genCall(cg: &mut Cgen, name: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>
         } else {
             argStr = argStr + elemLl + " " + argVals[ai].v
         }
-        ai = ai + 1
     }
 
     let retTy = lookupFnRet(cg, name)

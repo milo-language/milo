@@ -76,10 +76,8 @@ fn mangleTypeName(t: &TypeKind): string {
         TypeKind.TRef(inner, mutable) => { return "ref_" + mangleTypeName(&*inner) }
         TypeKind.TFn(params, ret) => {
             var s = "fn"
-            var i: i64 = 0
-            while i < params.len {
+            for i in 0..params.len {
                 s = s + "_" + mangleTypeName(&params[i])
-                i = i + 1
             }
             s = s + "_ret_" + mangleTypeName(&*ret)
             return s
@@ -121,10 +119,8 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
         }
         TypeKind.TFn(params, ret) => {
             var newParams: Vec<TypeKind> = Vec.new()
-            var i: i64 = 0
-            while i < params.len {
+            for i in 0..params.len {
                 newParams.push(substituteTypeKind(&params[i], typeMap))
-                i = i + 1
             }
             return TypeKind.TFn(newParams, Heap.new(substituteTypeKind(&*ret, typeMap)))
         }
@@ -136,24 +132,20 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
 
 fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<TypeKind>): MiloType {
     // Check if this type name is a type parameter
-    var i: i64 = 0
-    while i < typeParams.len {
+    for i in 0..typeParams.len {
         if ty.name == typeParams[i] {
             // Replace with the concrete type name
             var result = ty.clone()
             result.name = typeName(&typeArgs[i])
             return result
         }
-        i = i + 1
     }
 
     // Recurse into type args
     if ty.typeArgs.len > 0 {
         var result = ty.clone()
-        var j: i64 = 0
-        while j < result.typeArgs.len {
+        for j in 0..result.typeArgs.len {
             result.typeArgs[j] = substituteMiloType(&result.typeArgs[j], typeParams, typeArgs)
-            j = j + 1
         }
         return result
     }
@@ -161,10 +153,8 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
     // Function types
     if ty.isFn {
         var result = ty.clone()
-        var k: i64 = 0
-        while k < result.fnParams.len {
+        for k in 0..result.fnParams.len {
             result.fnParams[k] = substituteMiloType(&result.fnParams[k], typeParams, typeArgs)
-            k = k + 1
         }
         match &ty.fnRet {
             Option.Some(ret) => {
@@ -210,10 +200,8 @@ fn monomorphizeEnum(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typ
     var variants: HashMap<string, VariantInfo> = HashMap.new()
     for vname, vinfo in generic.variants {
         var fields: Vec<TypeKind> = Vec.new()
-        var j: i64 = 0
-        while j < vinfo.fields.len {
+        for j in 0..vinfo.fields.len {
             fields.push(substituteTypeKind(&vinfo.fields[j], &typeMap))
-            j = j + 1
         }
         variants.insert(vname.clone(), VariantInfo { tag: vinfo.tag, fields: fields })
     }
@@ -222,17 +210,13 @@ fn monomorphizeEnum(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typ
 
     // Create monomorphized EnumDecl for codegen
     var monoVariants: Vec<EnumVariant> = Vec.new()
-    var vi: i64 = 0
-    while vi < generic.decl.variants.len {
+    for vi in 0..generic.decl.variants.len {
         let v = &generic.decl.variants[vi]
         var monoFields: Vec<MiloType> = Vec.new()
-        var fi: i64 = 0
-        while fi < v.fields.len {
+        for fi in 0..v.fields.len {
             monoFields.push(substituteMiloType(&v.fields[fi], &generic.typeParams, typeArgs))
-            fi = fi + 1
         }
         monoVariants.push(EnumVariant { name: v.name.clone(), fields: monoFields })
-        vi = vi + 1
     }
     ck.monomorphizedEnums.push(EnumDecl {
         name: mangled.clone(),
@@ -274,26 +258,22 @@ fn monomorphizeStruct(ck: &mut Checker, ms: &mut MonoState, baseName: &string, t
 
     // Create concrete fields
     var fields: Vec<CkStructField> = Vec.new()
-    var fi: i64 = 0
-    while fi < generic.fields.len {
+    for fi in 0..generic.fields.len {
         fields.push(CkStructField {
             name: generic.fields[fi].name.clone(),
             type: substituteTypeKind(&generic.fields[fi].type, &typeMap),
         })
-        fi = fi + 1
     }
 
     ck.structs.insert(mangled.clone(), StructInfo { fields: fields, baseName: baseName.clone() })
 
     // Create monomorphized StructDecl
     var monoFields: Vec<StructField> = Vec.new()
-    var si: i64 = 0
-    while si < generic.decl.fields.len {
+    for si in 0..generic.decl.fields.len {
         monoFields.push(StructField {
             name: generic.decl.fields[si].name.clone(),
             type: substituteMiloType(&generic.decl.fields[si].type, &generic.typeParams, typeArgs),
         })
-        si = si + 1
     }
     ck.monomorphizedStructs.push(StructDecl {
         name: mangled.clone(),
@@ -327,14 +307,12 @@ fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeA
 
     // Register the concrete signature first (allow recursive calls)
     var params: Vec<FnParam> = Vec.new()
-    var pi: i64 = 0
-    while pi < generic.decl.params.len {
+    for pi in 0..generic.decl.params.len {
         let subType = substituteMiloType(&generic.decl.params[pi].type, &generic.typeParams, typeArgs)
         params.push(FnParam {
             name: generic.decl.params[pi].name.clone(),
             type: typeFromAst(&subType),
         })
-        pi = pi + 1
     }
     let subRetType = substituteMiloType(&generic.decl.retType, &generic.typeParams, typeArgs)
     let ret = typeFromAst(&subRetType)
@@ -347,13 +325,11 @@ fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeA
 
     // Create concrete function declaration
     var monoParams: Vec<Param> = Vec.new()
-    i = 0
-    while i < generic.decl.params.len {
+    for i in 0..generic.decl.params.len {
         monoParams.push(Param {
             name: generic.decl.params[i].name.clone(),
             type: substituteMiloType(&generic.decl.params[i].type, &generic.typeParams, typeArgs),
         })
-        i = i + 1
     }
 
     let concreteDecl = Function {
@@ -374,10 +350,8 @@ fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeA
 
 fn registerGenericFn(ms: &mut MonoState, f: &Function) {
     var typeParams: Vec<string> = Vec.new()
-    var i: i64 = 0
-    while i < f.typeParams.len {
+    for i in 0..f.typeParams.len {
         typeParams.push(f.typeParams[i].name.clone())
-        i = i + 1
     }
     ms.genericFns.insert(f.name.clone(), GenericFnInfo {
         typeParams: typeParams,
@@ -387,19 +361,15 @@ fn registerGenericFn(ms: &mut MonoState, f: &Function) {
 
 fn registerGenericStruct(ms: &mut MonoState, s: &StructDecl) {
     var typeParams: Vec<string> = Vec.new()
-    var i: i64 = 0
-    while i < s.typeParams.len {
+    for i in 0..s.typeParams.len {
         typeParams.push(s.typeParams[i].name.clone())
-        i = i + 1
     }
     var fields: Vec<CkStructField> = Vec.new()
-    var j: i64 = 0
-    while j < s.fields.len {
+    for j in 0..s.fields.len {
         fields.push(CkStructField {
             name: s.fields[j].name.clone(),
             type: typeFromAst(&s.fields[j].type),
         })
-        j = j + 1
     }
     ms.genericStructs.insert(s.name.clone(), GenericStructInfo {
         typeParams: typeParams,
@@ -410,22 +380,16 @@ fn registerGenericStruct(ms: &mut MonoState, s: &StructDecl) {
 
 fn registerGenericEnum(ms: &mut MonoState, e: &EnumDecl) {
     var typeParams: Vec<string> = Vec.new()
-    var i: i64 = 0
-    while i < e.typeParams.len {
+    for i in 0..e.typeParams.len {
         typeParams.push(e.typeParams[i].name.clone())
-        i = i + 1
     }
     var variants: HashMap<string, VariantInfo> = HashMap.new()
-    var vi: i64 = 0
-    while vi < e.variants.len {
+    for vi in 0..e.variants.len {
         var fields: Vec<TypeKind> = Vec.new()
-        var fi: i64 = 0
-        while fi < e.variants[vi].fields.len {
+        for fi in 0..e.variants[vi].fields.len {
             fields.push(typeFromAst(&e.variants[vi].fields[fi]))
-            fi = fi + 1
         }
         variants.insert(e.variants[vi].name.clone(), VariantInfo { tag: vi as i32, fields: fields })
-        vi = vi + 1
     }
     ms.genericEnums.insert(e.name.clone(), GenericEnumInfo {
         typeParams: typeParams,

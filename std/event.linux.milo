@@ -74,13 +74,11 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
         let n = epoll_wait(el.epfd, evBuf, maxEvents, timeoutMs)
 
         if n > 0 {
-            var i = 0
             let base = evBuf as i64
-            while i < n {
+            for i in 0..n {
                 // each epoll_event is 12 bytes; fd is i32 at offset 4
                 let fdAddr = base + (i as i64 * epollEventSize()) + 4
                 readyFds[i as i64] = *(fdAddr as *i32)
-                i = i + 1
             }
         }
 
