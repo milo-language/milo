@@ -6221,6 +6221,10 @@ export class Codegen {
     if (g.value.kind === "BoolLit") return g.value.value ? "1" : "0";
     if (g.value.kind === "Cast" && g.type.tag === "ptr") return "null";
     if (g.type.tag === "ptr") return "null";
+    const tag = g.type.tag;
+    if (tag === "struct" || tag === "array" || tag === "enum" || tag === "string" || tag === "vec" || tag === "hashmap" || tag === "tuple") {
+      return "zeroinitializer";
+    }
     return "0";
   }
 
