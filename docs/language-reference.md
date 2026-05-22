@@ -272,8 +272,8 @@ s.split(",")        // Vec<string>: ["Hello", " World!"]
 s.contains("World") // true
 s.startsWith("He")  // true
 s.endsWith("!")     // true
-s.indexOf("World")      // 7
-s.lastIndexOf("l")      // 10
+s.indexOf("World")      // 7 (-1 if not found)
+s.lastIndexOf("l")      // 10 (-1 if not found)
 s.replace("World", "Milo")  // "Hello, Milo!"
 s.padStart(15, " ")     // "  Hello, World!"
 s.padEnd(15, ".")       // "Hello, World!.."
@@ -419,10 +419,17 @@ fn find(id: i32): i32? {
 
 ### Unwrap, Propagate, Default
 
+Every fallible call site must be explicitly handled — `!`, `?`, or `??`. This makes error paths visible in source code, unlike languages where exceptions can silently propagate.
+
 ```milo
 let val = opt!          // unwrap — panic if None (with source location)
 let val = opt?          // propagate — return None from current function if None
 let val = opt ?? 0      // default — use 0 if None
+```
+
+On panic, `!` prints the source location and error message, then exits:
+```
+error at 12:38: connection refused
 ```
 
 These also work with `Result`:
