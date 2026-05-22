@@ -30,6 +30,7 @@ struct ArgParser {
     flags: Vec<FlagDef>,
     positionals: Vec<PositionalDef>,
     trailingArgs: bool,
+    ignoreUnknown: bool,
 }
 
 // Parsed command-line arguments.
@@ -58,6 +59,7 @@ fn newParser(name: string, description: string): ArgParser {
         flags: Vec.new(),
         positionals: Vec.new(),
         trailingArgs: false,
+        ignoreUnknown: false,
     }
 }
 
@@ -139,6 +141,11 @@ impl ArgParser {
     // Remaining args collected as positionals without interpretation.
     fn enableTrailingArgs(self: &mut Self): void {
         self.trailingArgs = true
+    }
+
+    // Silently skip unrecognized flags instead of exiting with an error.
+    fn enableIgnoreUnknown(self: &mut Self): void {
+        self.ignoreUnknown = true
     }
 
     // Generate formatted help text for all registered flags.
@@ -314,9 +321,13 @@ impl ArgParser {
                 }
 
                 if !matched {
-                    print($"error: unknown flag '{arg}'\n\n{self.helpText()}")
-                    unsafe {
-                        exit(1)
+                    if self.ignoreUnknown {
+                        // skip unknown flag only — can't tell if next arg is its value or a positional
+                    } else {
+                        print($"error: unknown flag '{arg}'\n\n{self.helpText()}")
+                        unsafe {
+                            exit(1)
+                        }
                     }
                 }
             } else {
