@@ -1,6 +1,6 @@
 // std/sync — synchronization primitives (mutex, rwlock, channel, atomics) via pthreads
 
-from "std/os" import { free, malloc, memcpy, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
+from "std/os" import { free, malloc, memcpy, pthread_cond_broadcast, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
 
 // ── Mutex ──
 
@@ -152,6 +152,7 @@ struct ChannelInner {
     len: i64,
     head: i64,
     tail: i64,
+    closed: i64,
 }
 
 @send
@@ -163,7 +164,7 @@ struct Channel<T> {
 impl Channel<T> {
     fn new(capacity: i64): Result<Channel<T>> {
         unsafe {
-            let raw = malloc(64)
+            let raw = malloc(72)
             let inner = raw as *ChannelInner
 
             let mtx = malloc(64)
@@ -199,6 +200,7 @@ impl Channel<T> {
             (*inner).len = 0
             (*inner).head = 0
             (*inner).tail = 0
+            (*inner).closed = 0
 
             return Result.Ok(Channel { _ptr: raw })
         }
@@ -212,6 +214,10 @@ impl Channel<T> {
             let cap = (*inner).capacity
 
             pthread_mutex_lock(mtx)
+            if (*inner).closed == 1 {
+                pthread_mutex_unlock(mtx)
+                return Result.Err("channel closed")
+            }
             var curLen: i64 = (*inner).len
             while curLen == cap {
                 pthread_cond_wait((*inner).condNotFull, mtx)
@@ -238,6 +244,10 @@ impl Channel<T> {
             pthread_mutex_lock(mtx)
             var curLen: i64 = (*inner).len
             while curLen == 0 {
+                if (*inner).closed == 1 {
+                    pthread_mutex_unlock(mtx)
+                    return Result.Err("channel closed")
+                }
                 pthread_cond_wait((*inner).condNotEmpty, mtx)
                 curLen = (*inner).len
             }
@@ -308,6 +318,26 @@ impl Channel<T> {
             let n: i64 = (*inner).len
             pthread_mutex_unlock(mtx)
             return n
+        }
+    }
+
+    // Signal no more values will be sent. Pending items are still delivered.
+    fn close(self: &Self): void {
+        unsafe {
+            let inner = self._ptr as *ChannelInner
+            let mtx = (*inner).mtx
+            pthread_mutex_lock(mtx)
+            (*inner).closed = 1
+            pthread_cond_broadcast((*inner).condNotEmpty)
+            pthread_mutex_unlock(mtx)
+        }
+    }
+
+    // Iterator protocol — enables `for val in channel { ... }`
+    fn next(self: &mut Self): Option<T> {
+        match self.recv() {
+            Result.Ok(val) => { return Option.Some(val) }
+            Result.Err(_) => { return Option.None }
         }
     }
 

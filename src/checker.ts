@@ -2708,10 +2708,40 @@ export class TypeChecker {
             }
             for (let i = 0; i < Math.min(expr.args.length, fnType.params.length); i++) {
               if (fnType.params[i].tag === "ref") continue;
+              if (expr.args[i].kind === "Closure" && fnType.params[i].tag === "fn" && !(expr.args[i] as any).isMove) {
+                const caps = this.closureCaptures.get(expr.args[i]);
+                if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
+              }
               this.tryMove(expr.args[i]);
             }
             this.closureCalls.set(expr, fnType);
             return this.setType(expr, fnType.ret);
+          }
+          // Promise(fn) → Promise<T>.run(fn) with T inferred from closure return type
+          if (expr.func === "Promise" && this.genericStructs.has("Promise") && expr.args.length === 1) {
+            const argType = this.checkExprWithHint(expr.args[0], { tag: "fn", params: [], ret: { tag: "unknown" } });
+            if (argType.tag !== "fn") {
+              this.error(`Promise() argument must be a function`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            const mangled = this.monomorphizeStruct("Promise", [argType.ret]);
+            while (this._pendingImplFns.length > 0) {
+              const fn = this._pendingImplFns.shift()!;
+              this.checkFunction(fn);
+            }
+            const inherent = this.inherentImpls.get(mangled);
+            const runSig = inherent?.methods.get("run");
+            if (!runSig) {
+              this.error(`'${mangled}' has no 'run' method`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            if (expr.args[0].kind === "Closure" && !(expr.args[0] as any).isMove) {
+              const caps = this.closureCaptures.get(expr.args[0]);
+              if (!caps?.some(c => c.mutable)) (expr.args[0] as any).isMove = true;
+            }
+            this.tryMove(expr.args[0]);
+            this.rewrittenCalls.set(expr, `${mangled}$run`);
+            return this.setType(expr, runSig.ret);
           }
           this.error(`undefined function '${expr.func}'`, sp); return this.setType(expr, { tag: "unknown" });
         }
@@ -2792,6 +2822,11 @@ export class TypeChecker {
           const paramType = sig.params[i].type;
           if (argType?.tag === "string" && paramType.tag === "ptr") continue;
           if (argType?.tag === "array" && paramType.tag === "ptr") continue;
+          // auto-move: closure literal passed to owned fn param (skip if closure mutates captures)
+          if (expr.args[i].kind === "Closure" && paramType.tag === "fn" && !(expr.args[i] as any).isMove) {
+            const caps = this.closureCaptures.get(expr.args[i]);
+            if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
+          }
           this.tryMove(expr.args[i]);
         }
         // safe extern call: no unsafe needed if all args are safe-passable and return is scalar/void
@@ -3058,6 +3093,10 @@ export class TypeChecker {
                 } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
                   this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
                 }
+                if (expr.args[i].kind === "Closure" && paramType.tag === "fn" && !(expr.args[i] as any).isMove) {
+                  const caps = this.closureCaptures.get(expr.args[i]);
+                  if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
+                }
                 if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
               }
               this.staticCalls.set(expr, mangledMethod);
@@ -3094,6 +3133,10 @@ export class TypeChecker {
                   }
                 } else if (!typeEq(paramType, argType) && argType.tag !== "unknown") {
                   this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
+                }
+                if (expr.args[i].kind === "Closure" && paramType.tag === "fn" && !(expr.args[i] as any).isMove) {
+                  const caps = this.closureCaptures.get(expr.args[i]);
+                  if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
                 }
                 if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
               }

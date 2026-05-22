@@ -58,6 +58,37 @@ fn printExtension(filename: &string): void {
 
 `&string` is a borrow. It can't outlive the data it points to. The compiler enforces this — no annotations needed.
 
+### Concurrency that looks like JavaScript, runs like Go
+
+```milo
+from "std/net" import { fetch }
+from "std/runtime" import { Promise }
+
+fn main(): i32 {
+    let page = Promise(() => fetch("https://example.com")!)
+    print(page.await()!.body)
+    return 0
+}
+```
+
+```milo
+from "std/net" import { fetch }
+from "std/runtime" import { Promise }
+
+fn main(): i32 {
+    let urls = ["https://api.dev/users", "https://api.dev/posts", "https://api.dev/tags"]
+    let results = Promise.all(urls.map((url: &string) => {
+        Promise(() => fetch(url.clone())!)
+    }))
+    for r in results {
+        print(r.status, " ", r.body.len, " bytes")
+    }
+    return 0
+}
+```
+
+No async/await coloring. No event loop. Under the hood, each Promise spawns a green thread — stackful coroutines with cooperative scheduling. Blocking I/O automatically yields to other tasks. All the ergonomics of Promises, all the performance of goroutines.
+
 ### Real programs
 
 ```milo

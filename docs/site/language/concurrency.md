@@ -6,18 +6,18 @@ Milo has two concurrency layers: OS threads for CPU-bound parallelism, and green
 
 ### Spawning Threads
 
-Use `Thread.spawn()` with a **move closure** to run code on a new OS thread. A move closure takes ownership of its captured variables instead of borrowing them — this is required because the new thread may outlive the scope where the variables were defined. The `move` keyword before the closure parameters signals this transfer:
+Use `Thread.spawn()` with a closure to run code on a new OS thread. The compiler automatically infers `move` — the closure takes ownership of captured variables so they're safe to send across threads:
 
 ```milo
 from "std/thread" import { Thread }
 
-let t = Thread.spawn(move (): void => {
+let t = Thread.spawn((): void => {
     print("hello from thread")
 })!
 t.join()!
 ```
 
-Move closures heap-allocate captured variables so they're safe to send across threads.
+Move closures heap-allocate captured variables so they're safe to send across threads. You can write `move` explicitly, but it's inferred when the function takes an owned closure.
 
 ```milo
 from "std/thread" import { Thread }
@@ -25,7 +25,7 @@ from "std/thread" import { Thread }
 var threads: Vec<Thread> = Vec.new()
 for i in 0..4 {
     let id = i as i64
-    let t = Thread.spawn(move (): void => {
+    let t = Thread.spawn((): void => {
         print($"thread {id}")
     })!
     threads.push(t)
@@ -46,13 +46,13 @@ The compiler enforces thread safety at compile time. `Thread.spawn()` requires a
 ```milo
 // Compiles — i64 and string are Send
 let msg = "hello"
-let t = Thread.spawn(move (): void => { print(msg) })!
+let t = Thread.spawn((): void => { print(msg) })!
 
 // Compile error — *u8 is not Send
 var x: i32 = 42
 unsafe {
     let p = (&x) as *u8
-    let t = Thread.spawn(move (): void => {    // error: cannot send 'p' of type '*u8'
+    let t = Thread.spawn((): void => {    // error: cannot send 'p' of type '*u8'
         print(p as i64)
     })!
 }
@@ -85,43 +85,61 @@ print(a + b)   // 141
 
 Each branch runs on its own OS thread. Variables bound inside are available after the block.
 
+### Promises
+
+For most concurrent work, reach for `Promise<T>` — it runs a function on a green thread and returns the result:
+
+```milo
+from "std/runtime" import { Promise }
+
+let p = Promise((): i64 => {
+    return expensiveComputation()
+})
+let result = p.await()!
+```
+
+`Promise(fn)` is shorthand for `Promise<T>.run(fn)` — the type parameter is inferred from the closure's return type.
+
+`Promise.all()` runs multiple tasks and collects results. `Promise.race()` returns the first to finish:
+
+```milo
+from "std/runtime" import { Promise }
+
+var tasks: Vec<Promise<i64>> = Vec.new()
+tasks.push(Promise((): i64 => { return fetchA() }))
+tasks.push(Promise((): i64 => { return fetchB() }))
+
+let results = Promise.all(tasks)   // [resultA, resultB]
+```
+
 ### Channels
 
-Bounded FIFO channels for message passing between threads:
+Bounded FIFO channels for streaming values between threads. Use channels when a producer sends many values over time — for one-shot results, prefer Promise.
 
 ```milo
 from "std/thread" import { Thread }
 from "std/sync" import { Channel }
 
-let ch = Channel.new(8)!
+var ch = Channel<i64>.new(8)!
 
 let t = Thread.spawn(move (): void => {
     ch.send(10)!
     ch.send(20)!
-    ch.send(0)!   // sentinel
+    ch.close()
 })!
 
-while true {
-    let val = ch.recv()!
-    if val == 0 { break }
+for val in ch {
     print(val)
 }
 t.join()!
 ch.destroy()
 ```
 
-Non-blocking variants:
+Call `close()` to signal no more values — remaining items are delivered before iteration ends. Non-blocking variants are also available:
 
 ```milo
-from "std/sync" import { Channel }
-
-let ch = Channel.new(4)!
-ch.trySend(42)               // returns true if sent, false if full
-let val = ch.tryRecv()        // returns Option<i64>
-match val {
-    Option.Some(v) => { print(v) }
-    Option.None => { print("empty") }
-}
+ch.trySend(42)       // returns true if sent, false if full
+ch.tryRecv()         // returns Option<T> — None if empty
 ```
 
 ### Mutex and RwLock
@@ -173,7 +191,7 @@ Lightweight user-space threads. Each gets a 64KB stack instead of ~8MB for an OS
 from "std/runtime" import { Task }
 
 fn main(): i32 {
-    Task.spawn(move (): void => {
+    Task.spawn((): void => {
         print("hello from green thread")
     })
     return 0
@@ -188,12 +206,12 @@ The compiler injects a scheduler drain at the end of `main` that runs all spawne
 from "std/runtime" import { Task, schedulerYield }
 
 fn main(): i32 {
-    Task.spawn(move (): void => {
+    Task.spawn((): void => {
         print("A1")
         schedulerYield()
         print("A2")
     })
-    Task.spawn(move (): void => {
+    Task.spawn((): void => {
         print("B1")
         schedulerYield()
         print("B2")
@@ -211,7 +229,7 @@ fn main(): i32 {
 from "std/net" import { TcpStream }
 from "std/runtime" import { Task }
 
-Task.spawn(move (): void => {
+Task.spawn((): void => {
     let stream = TcpStream.connect(ip, port)!
     stream.send("hello")!          // yields if socket buffer full
     let data = stream.recv()!      // yields until data arrives
@@ -229,3 +247,15 @@ The same calls work identically outside green threads — they just block normal
 | Context switch | Kernel | Userspace |
 | Max concurrent | ~hundreds | thousands |
 | Best for | CPU-bound parallelism | I/O-bound concurrency |
+
+## Which to Use
+
+| Need | Reach for |
+|------|-----------|
+| Run something and get a result back | `Promise<T>` |
+| Run N things concurrently, collect results | `Promise.all()` |
+| Stream many values between threads | `Channel<T>` with `close()` + `for val in ch` |
+| CPU-heavy work on a dedicated OS thread | `Thread.spawn()` |
+| Shared mutable state | `Mutex` or `RwLock` |
+
+Start with `Promise`. Drop to channels or threads when you need streaming or OS-level control.

@@ -1,0 +1,25 @@
+// auto-move: closure passed to owned fn param infers move
+
+// @expect: 42
+// @expect: hello world
+// @expect: done
+
+from "std/runtime" import { Task, Promise }
+
+fn main(): i32 {
+    // auto-move inferred — no explicit `move` keyword needed
+    let a = Promise<i64>.run((): i64 => {
+        return 42
+    })
+    let msg = "hello world"
+    let b = Promise<string>.run((): string => {
+        return msg
+    })
+
+    let valA = a.await()!
+    let valB = b.await()!
+    print(valA)
+    print(valB)
+    print("done")
+    return 0
+}

@@ -834,6 +834,8 @@ print(count)   // 2
 `move` closures capture by value (copy into a heap-allocated environment).
 Safe to return from functions, store in structs, and send to threads.
 
+When a closure is passed to a function that takes an owned `Fn` parameter (not `&Fn`), the compiler automatically infers `move` — no keyword needed. Explicit `move` is still supported for clarity or when needed (e.g., returning a closure from a function).
+
 ```milo
 fn makeAdder(n: i32): (i32) => i32 {
     return move (x: i32): i32 => {
@@ -1337,18 +1339,16 @@ print(a != b)   // false
 
 ### Spawning Threads
 
-Use `Thread.spawn()` with a **move closure** to run code on a new OS thread. A move closure takes ownership of its captured variables instead of borrowing them — this is required because the new thread may outlive the scope where the variables were defined. The `move` keyword before the closure parameters signals this transfer:
+Use `Thread.spawn()` to run code on a new OS thread. The compiler automatically infers `move` for the closure — captured variables are copied into a heap-allocated environment so they're safe to send across threads:
 
 ```milo
 from "std/thread" import { Thread }
 
-let t = Thread.spawn(move (): void => {
+let t = Thread.spawn((): void => {
     print("hello from thread")
 })!
 t.join()!
 ```
-
-Move closures heap-allocate captured variables so they're safe to send across threads.
 
 ```milo
 from "std/thread" import { Thread }
@@ -1356,7 +1356,7 @@ from "std/thread" import { Thread }
 var threads: Vec<Thread> = Vec.new()
 for i in 0..4 {
     let id = i as i64
-    let t = Thread.spawn(move (): void => {
+    let t = Thread.spawn((): void => {
         print($"thread {id}")
     })!
     threads.push(t)
@@ -1379,13 +1379,13 @@ The compiler enforces thread safety at compile time. `Thread.spawn()` requires a
 ```milo
 // This compiles — i64 and string are Send
 let msg = "hello"
-let t = Thread.spawn(move (): void => { print(msg) })!
+let t = Thread.spawn((): void => { print(msg) })!
 
 // This is a compile error — *u8 is not Send
 var x: i32 = 42
 unsafe {
     let p = (&x) as *u8
-    let t = Thread.spawn(move (): void => {    // error: cannot send 'p' of type '*u8' across threads
+    let t = Thread.spawn((): void => {    // error: cannot send 'p' of type '*u8' across threads
         print(p as i64)
     })!
 }
@@ -1423,30 +1423,59 @@ print(a + b)   // 141
 
 Each branch is implicitly a move closure — captured variables are copied/moved into each branch. Variables bound in the `parallel` block are available in the enclosing scope after the block. Requires at least 2 bindings.
 
+### Promises
+
+For most concurrent work, reach for `Promise<T>`. It runs a function on a green thread and returns the result. `Promise(fn)` is shorthand for `Promise<T>.run(fn)` with the type inferred from the closure's return type:
+
+```milo
+from "std/runtime" import { Promise }
+
+let p = Promise((): i64 => {
+    return expensiveComputation()
+})
+let result = p.await()!
+```
+
+`Promise.all()` runs multiple tasks and collects all results. `Promise.race()` returns whichever finishes first:
+
+```milo
+from "std/runtime" import { Promise }
+
+var tasks: Vec<Promise<i64>> = Vec.new()
+tasks.push(Promise((): i64 => { return fetchA() }))
+tasks.push(Promise((): i64 => { return fetchB() }))
+
+let results = Promise.all(tasks)   // [resultA, resultB]
+```
+
+Promises run on green threads with cooperative scheduling — no async/await coloring, no event loop. Blocking I/O automatically yields to other tasks.
+
 ### Channels
 
-Bounded FIFO channels for message passing between threads. Channel is a handle type — safe to capture in move closures without `unsafe`.
+Bounded FIFO channels for streaming values between threads. Use channels when a producer sends many values over time — for one-shot results, prefer Promise.
+
+Channel is a handle type — safe to capture in move closures without `unsafe`.
 
 ```milo
 from "std/thread" import { Thread }
 from "std/sync" import { Channel }
 
-let ch = Channel.new(8)!
+var ch = Channel<i64>.new(8)!
 
 let t = Thread.spawn(move (): void => {
     ch.send(10)!
     ch.send(20)!
-    ch.send(0)!   // sentinel
+    ch.close()
 })!
 
-while true {
-    let val = ch.recv()!
-    if val == 0 { break }
+for val in ch {
     print(val)
 }
 t.join()!
 ch.destroy()
 ```
+
+Call `close()` to signal no more values will be sent. Remaining items are delivered before iteration ends. `send()` on a closed channel returns `Result.Err`.
 
 Non-blocking variants for polling:
 
