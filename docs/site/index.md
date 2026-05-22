@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: Milo
-  text: "Memory-safe. Native. Simple."
-  tagline: "A compiled systems language with automatic memory management and no lifetime annotations."
+  text: "Memory Safe. Simple. Native."
+  tagline: "A memory-safe systems language with simple syntax inspired by TypeScript, Python, and Rust. Compiles to native code via LLVM."
   actions:
     - theme: brand
       text: Get Started

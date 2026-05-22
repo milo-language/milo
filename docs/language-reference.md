@@ -1,14 +1,6 @@
 # The Milo Language Guide
 
-Milo is a memory-safe systems language that compiles to native binaries via LLVM.
-It uses move semantics and second-class references to guarantee safety at compile time —
-no garbage collector, no reference counting, no lifetime annotations.
-
-Milo enforces five safety guardrails: memory safety (move semantics, bounds checking),
-null safety (Option\<T\>), race safety (Send/Sync traits), overflow safety (compile-time
-checks + debug-mode traps), and coercion safety (no implicit type conversions).
-
-The syntax is designed to be readable on first contact — no surprising sigils or ceremony.
+A memory-safe systems language with simple syntax inspired by TypeScript, Python, and Rust. Compiles to native code via LLVM.
 
 ## Getting Started
 
