@@ -9,7 +9,7 @@ fn main(): i32 {
     promises.push(Promise<i64>.run(move (): i64 => 20))
     promises.push(Promise<i64>.run(move (): i64 => 30))
 
-    let first = Promise<i64>.race(promises)
+    let first = Promise.race(promises).await()!
     // any of 10, 20, 30 is valid — just verify we got something
     if first == 10 || first == 20 || first == 30 {
         print("got one")

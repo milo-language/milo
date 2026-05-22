@@ -505,6 +505,19 @@ class LowerCtx {
         if (expr.enumName === "HashMap" && expr.variant === "new" && type.tag === "hashmap") {
           return { kind: "HashMapNew", keyType: type.key, valueType: type.value, type, span: expr.span };
         }
+        const rewrittenCall = this.c.rewrittenCalls.get(expr as any);
+        if (rewrittenCall) {
+          const sig = this.c.functions.get(rewrittenCall);
+          const args: HIRArg[] = expr.args.map((arg, i) => {
+            const borrowed = this.c.autoBorrowed.get(arg);
+            return {
+              expr: this.lowerExpr(arg),
+              passByRef: !!borrowed,
+              refMut: borrowed?.mutable ?? false,
+            };
+          });
+          return { kind: "Call", func: rewrittenCall, args, type, variadic: sig?.variadic ?? false, span: expr.span };
+        }
         const staticMangled = this.c.staticCalls.get(expr);
         if (staticMangled) {
           const sig = this.c.functions.get(staticMangled);

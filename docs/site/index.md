@@ -19,10 +19,6 @@ hero:
     <p>No null pointers. No dangling references. No data races. No buffer overflows. All caught before your code ever runs.</p>
   </div>
   <div class="color-item">
-    <h2 class="ch-green">No lifetime annotations. Ever.</h2>
-    <p>One ownership rule: references can't escape the function they're passed to. That's it.</p>
-  </div>
-  <div class="color-item">
     <h2 class="ch-purple">Native speed. Tiny binaries.</h2>
     <p>Compiles to native code via LLVM. Sub-millisecond startup. Binaries under 300KB.</p>
   </div>
@@ -49,16 +45,20 @@ No garbage collector. No manual memory management. The compiler tracks ownership
 
 ### Simple syntax, guaranteed memory safety
 
+`&string` is a borrow — temporary, read-only access. It can't outlive the data it points to. The compiler enforces this without annotations.
+
 ```milo
 fn printExtension(filename: &string): void {
     let dot = filename.lastIndexOf(".")
-    print(filename[dot + 1..filename.len])   // zero-copy slice
+    if dot >= 0 {
+        print(filename[dot + 1..filename.len])   // zero-copy slice
+    }
 }
 ```
 
-`&string` is a borrow. It can't outlive the data it points to. The compiler enforces this — no annotations needed.
+### Lightweight concurrency, native performance
 
-### Concurrency that looks like JavaScript, runs like Go
+Promises run on green threads — no async/await coloring, no event loop. Write blocking code that runs concurrently.
 
 ```milo
 from "std/net" import { fetch }
@@ -71,6 +71,8 @@ fn main(): i32 {
 }
 ```
 
+Fan out with `Promise.all` to run tasks in parallel and collect results:
+
 ```milo
 from "std/net" import { fetch }
 from "std/runtime" import { Promise }
@@ -79,7 +81,7 @@ fn main(): i32 {
     let urls = ["https://api.dev/users", "https://api.dev/posts", "https://api.dev/tags"]
     let results = Promise.all(urls.map((url: &string) => {
         Promise(() => fetch(url.clone())!)
-    }))
+    })).await()!
     for r in results {
         print(r.status, " ", r.body.len, " bytes")
     }
@@ -87,9 +89,9 @@ fn main(): i32 {
 }
 ```
 
-No async/await coloring. No event loop. Under the hood, each Promise spawns a green thread — stackful coroutines with cooperative scheduling. Blocking I/O automatically yields to other tasks. All the ergonomics of Promises, all the performance of goroutines.
-
 ### Real programs
+
+A web server with routing, path params, and closures — all from the standard library.
 
 ```milo
 from "std/http" import { Context, Router, serveRouter }
@@ -101,12 +103,15 @@ fn main(): i32 {
         let id = ctx.param("id")
         return ctx.text(id)
     })
-    serveRouter(8080, r)
-    return 0
+    match serveRouter(8080, r) {
+        Result.Ok(_) => { return 0 }
+        Result.Err(e) => {
+            print("error: ", e)
+            return 1
+        }
+    }
 }
 ```
-
-Router, path params, closures — a web server in 10 lines. No framework, no dependencies. This is the standard library.
 
 <div class="section-break"></div>
 

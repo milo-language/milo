@@ -199,6 +199,10 @@ struct Promise<T> {
 }
 
 impl Promise<T> {
+    fn _fromChannel(ch: Channel<T>): Promise<T> {
+        return Promise { _ch: ch }
+    }
+
     fn run(f: () => T): Promise<T> {
         let ch = Channel<T>.new(1)!
         Task.spawn(move (): void => {
@@ -231,27 +235,36 @@ impl Promise<T> {
         unsafe { return Result.Ok(zeroed<T>()) }
     }
 
-    fn all(promises: Vec<Promise<T>>): Vec<T> {
+}
+
+// standalone generic functions to avoid recursive struct monomorphization
+fn promiseAll<T>(promises: Vec<Promise<T>>): Promise<Vec<T>> {
+    let ch = Channel<Vec<T>>.new(1)!
+    Task.spawn(move (): void => {
         var results: Vec<T> = Vec.new()
         for i in 0..promises.len {
             let val = promises[i].await()!
             results.push(val)
         }
-        return results
-    }
+        ch.send(results)!
+    })
+    return Promise<Vec<T>>._fromChannel(ch)
+}
 
-    fn race(promises: Vec<Promise<T>>): T {
+fn promiseRace<T>(promises: Vec<Promise<T>>): Promise<T> {
+    let ch = Channel<T>.new(1)!
+    Task.spawn(move (): void => {
         while true {
             var i: i64 = 0
             while i < promises.len {
                 let maybe = promises[i]._ch.tryRecv()
                 match maybe {
                     Option.Some(val) => {
-                        // destroy all channels
                         for j in 0..promises.len {
                             promises[j]._ch.destroy()
                         }
-                        return val
+                        ch.send(val)!
+                        return
                     }
                     Option.None => {}
                 }
@@ -263,9 +276,8 @@ impl Promise<T> {
                 _schedulerTick()
             }
         }
-        // unreachable
-        unsafe { return zeroed<T>() }
-    }
+    })
+    return Promise<T>._fromChannel(ch)
 }
 
 fn schedulerYield(): void {

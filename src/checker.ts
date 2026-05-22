@@ -470,10 +470,20 @@ export class TypeChecker {
     return t;
   }
 
+  private typeKindToMiloType(t: TypeKind): MiloType {
+    switch (t.tag) {
+      case "vec": return { name: "Vec", typeArgs: [this.typeKindToMiloType(t.element)] };
+      case "heap": return { name: "Heap", typeArgs: [this.typeKindToMiloType(t.inner)] };
+      case "ref": return { name: typeName(t.inner), isRef: !t.mutable, isRefMut: t.mutable };
+      case "fn": return { name: "", isFn: true, fnParams: t.params.map(p => this.typeKindToMiloType(p)), fnRet: this.typeKindToMiloType(t.ret) };
+      default: return { name: typeName(t) };
+    }
+  }
+
   private substituteMiloType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType {
     const idx = typeParams.indexOf(ty.name);
     if (idx !== -1) {
-      return { ...ty, name: typeName(typeArgs[idx]) };
+      return this.typeKindToMiloType(typeArgs[idx]);
     }
     if (ty.isFn && ty.fnParams && ty.fnRet) {
       return {
@@ -545,7 +555,10 @@ export class TypeChecker {
     return JSON.parse(JSON.stringify(stmts), (key, value) => {
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
-        if (idx !== -1) return { ...value, name: typeName(typeArgs[idx]) };
+        if (idx !== -1) {
+          const replaced = this.typeKindToMiloType(typeArgs[idx]);
+          return { ...value, ...replaced };
+        }
       }
       // rewrite struct literal names: Channel { ... } → Channel_i64 { ... }
       if (baseName && mangledName && value && typeof value === "object" && value.kind === "StructLit" && value.name === baseName) {
@@ -3002,6 +3015,41 @@ export class TypeChecker {
         return this.setType(expr, { tag: "unknown" });
       }
       case "EnumLit": {
+        // Promise.all(args) / Promise.race(args) → promiseAll(args) / promiseRace(args)
+        if (expr.enumName === "Promise" && (expr.variant === "all" || expr.variant === "race")) {
+          const fnName = expr.variant === "all" ? "promiseAll" : "promiseRace";
+          const genericFn = this.genericFns.get(fnName);
+          if (genericFn && expr.args.length === 1) {
+            const argType = this.checkExpr(expr.args[0]);
+            const typeMap = new Map<string, TypeKind>();
+            const literalInferred = new Set<string>();
+            for (let i = 0; i < Math.min(1, genericFn.decl.params.length); i++) {
+              const paramTy = genericFn.decl.params[i].type;
+              if (paramTy.typeArgs) {
+                let argResolved = argType;
+                if (argResolved.tag === "ref") argResolved = argResolved.inner;
+                if (argResolved.tag === "vec" && argResolved.element.tag === "struct") {
+                  const info = this.structs.get(argResolved.element.name);
+                  if (info?.typeArgs && info.typeArgs.length > 0) {
+                    typeMap.set(genericFn.typeParams[0], info.typeArgs[0]);
+                  }
+                }
+              }
+            }
+            if (typeMap.size > 0) {
+              const typeArgs = genericFn.typeParams.map(p => typeMap.get(p)!);
+              const mangled = this.monomorphizeFn(fnName, typeArgs);
+              this.rewrittenCalls.set(expr as any, mangled);
+              const concreteSig = this.functions.get(mangled)!;
+              if (concreteSig.params[0]?.type.tag === "ref") {
+                this.autoBorrowed.set(expr.args[0], { mutable: false });
+              } else {
+                this.tryMove(expr.args[0]);
+              }
+              return this.setType(expr, concreteSig.ret);
+            }
+          }
+        }
         if (expr.enumName === "String" && expr.variant === "withCapacity") {
           if (expr.args.length !== 1) { this.error(`'String.withCapacity' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "unknown" }); }
           const argType = this.checkExpr(expr.args[0]);

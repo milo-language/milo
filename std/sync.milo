@@ -1,6 +1,6 @@
 // std/sync — synchronization primitives (mutex, rwlock, channel, atomics) via pthreads
 
-from "std/os" import { free, malloc, memcpy, pthread_cond_broadcast, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
+from "std/os" import { free, malloc, memcpy, memset, pthread_cond_broadcast, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
 
 // ── Mutex ──
 
@@ -226,6 +226,8 @@ impl Channel<T> {
             var tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
             memcpy(slotPtr, (&v) as *u8, sizeOf<T>())
+            // ownership transferred to channel buffer; zero without drop
+            memset((&v) as *u8, 0, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
             pthread_cond_signal((*inner).condNotEmpty)
@@ -278,6 +280,7 @@ impl Channel<T> {
             var tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
             memcpy(slotPtr, (&v) as *u8, sizeOf<T>())
+            memset((&v) as *u8, 0, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
             pthread_cond_signal((*inner).condNotEmpty)

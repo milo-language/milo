@@ -54,13 +54,10 @@ fn main(): i32 {
     let content = readFile(filePath)!
     let lines = content.split("\n")
 
-    var lineNum: i64 = 0
-    while lineNum < lines.len {
-        let line = lines[lineNum]
+    for line in lines {
         if line.contains(pattern) {
             print(line)
         }
-        lineNum = lineNum + 1
     }
     return 0
 }

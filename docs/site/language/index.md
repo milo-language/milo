@@ -64,6 +64,8 @@ fn main(): i32 {
 
 ## Functions
 
+Functions are declared with `fn`, with explicit parameter and return types. They can be generic with `<T>` — the compiler generates specialized versions for each type used, so generic code is zero-cost.
+
 ```milo
 fn add(a: i32, b: i32): i32 {
     return a + b
@@ -84,8 +86,6 @@ fn main(): i32 {
     return 0
 }
 ```
-
-Generics use `<T>` syntax. The compiler generates specialized versions for each type you use, so generic code runs just as fast as if you'd written it by hand. You write `identity<T>` once, and it works with `i32`, `string`, or any type.
 
 [Learn more](/language/functions)
 
@@ -182,31 +182,37 @@ If you've heard scary things about Rust's borrow checker, don't worry — Milo i
 
 ## References
 
-References (`&T`) let functions borrow values without taking ownership. Milo makes references *second-class* — they can only exist as function parameters and local variables, never stored in structs or returned from functions. This one restriction collapses an enormous amount of complexity: no lifetime annotations, no borrow checker rules to memorize, no fighting the compiler. Dangling references become structurally impossible, and the mental model fits in one sentence.
+References let functions borrow values without taking ownership. `&T` is read-only, `&mut T` allows mutation. They can only exist as function parameters — never stored in structs or returned. This means no lifetime annotations, ever.
 
-This isn't a new idea — it has deep roots. Graydon Hoare, Rust's original designer, [wanted references to work this way in Rust](https://graydon2.dreamwidth.org/307291.html), but the community needed first-class references to support iterators that store a reference to their collection. That decision is what forced Rust to introduce lifetime annotations and the full borrow checker. Researchers at the [Mutable Value Semantics](https://www.jot.fm/issues/issue_2022_02/article2.pdf) project (behind the Val/Hylo language) later formalized the approach. Milo puts it into practice: you get memory safety with a fraction of the complexity, and `for` loops work without stored references.
+`&string` borrows for the duration of the call — the original stays valid:
 
 ```milo
 fn length(s: &string): i64 {
     return s.len
 }
 
+fn main(): i32 {
+    let s = "hello"
+    print(length(s))    // 5 — s is borrowed, not moved
+    print(s)            // still valid
+    return 0
+}
+```
+
+`&mut T` lets a function mutate the caller's value. The call site looks the same — the function signature determines how the argument is passed:
+
+```milo
 fn double(x: &mut i32) {
     x = x * 2
 }
 
 fn main(): i32 {
-    let s = "hello"
-    print(length(s))    // 5 — s is borrowed, not moved
-
     var n: i32 = 21
     double(n)            // n is now 42
     print(n)
     return 0
 }
 ```
-
-One thing to notice: the call site just says `double(n)` — there's no special syntax to indicate that `n` is being passed by mutable reference. The function's signature (`x: &mut i32`) determines how the argument is passed, not the caller. This keeps call sites clean, but it means you should check a function's signature if you want to know whether it can modify your variable. Your IDE and the LSP will show you this on hover.
 
 [Learn more](/language/ownership)
 
@@ -408,9 +414,22 @@ fn main(): i32 {
 }
 ```
 
-Milo has `@` annotations (similar to decorators in other languages) that can generate code for you. For example, `@derive(Eq)` placed above a struct auto-generates field-by-field equality, so you get `==` and `!=` without writing the comparison yourself. You can also implement `Add`, `Sub`, `Mul`, and `Div` traits to overload arithmetic operators on your types.
-
 [Learn more](/language/traits)
+
+## Annotations
+
+`@` annotations tell the compiler to generate code for you. Place them above a struct or function definition:
+
+```milo
+@derive(Eq)
+struct Point { x: i32, y: i32 }
+
+let a = Point { x: 1, y: 2 }
+let b = Point { x: 1, y: 2 }
+print(a == b)   // true — generated field-by-field comparison
+```
+
+`@derive(Eq)` auto-generates `==` and `!=`. You can also implement `Add`, `Sub`, `Mul`, and `Div` traits to overload arithmetic operators on your types.
 
 ## Interfaces
 
@@ -450,62 +469,69 @@ Both inherent methods and trait implementations count toward satisfaction. If `D
 
 ## Concurrency
 
-Milo gives you two concurrency models depending on what you're doing:
+No `async`/`await`. Write blocking code, and the runtime runs it concurrently on green threads. For most concurrent work, use `Promise<T>` — it runs a function and delivers the result.
 
-- **OS threads** — real parallel execution across CPU cores. Use these for CPU-heavy work like number crunching, image processing, or anything that benefits from running on multiple cores at once. Similar to threads in Java, C++, or Rust.
-- **Green threads** — lightweight, user-space tasks that run cooperatively within a single thread. Use these for I/O-heavy work like handling thousands of network connections simultaneously. Similar to goroutines in Go or `async` tasks in other languages, but with no `async`/`await` syntax — you just write normal blocking code and the runtime handles the scheduling.
+### Promises
 
-Both models are compile-time safe. The compiler checks that any data you send across threads implements `Send`, so data races are caught before your code runs. No runtime surprises.
+`Promise(fn)` runs a closure on a green thread. Call `.await()!` to get the result:
 
-### OS Threads with Channels
+```milo
+from "std/runtime" import { Promise }
 
-Threads communicate through channels — typed message queues that are safe to share across threads:
+fn main(): i32 {
+    let p = Promise((): i64 => { return expensiveComputation() })
+    let result = p.await()!
+    print(result)
+    return 0
+}
+```
+
+Fan out with `Promise.all` to run tasks in parallel:
+
+```milo
+from "std/runtime" import { Promise }
+
+fn main(): i32 {
+    var tasks: Vec<Promise<i64>> = Vec.new()
+    tasks.push(Promise((): i64 => { return fetchA() }))
+    tasks.push(Promise((): i64 => { return fetchB() }))
+
+    let results = Promise.all(tasks).await()!
+    for r in results {
+        print(r)
+    }
+    return 0
+}
+```
+
+### Threads and Channels
+
+For CPU-bound parallelism, use OS threads. They communicate through typed channels:
 
 ```milo
 from "std/thread" import { Thread }
 from "std/sync" import { Channel }
 
 fn main(): i32 {
-    let ch = Channel.new(8)!
+    var ch = Channel<i64>.new(8)!
 
     let producer = Thread.spawn(move (): void => {
         for i in 1..6 {
             ch.send(i as i64)!
         }
-        ch.send(0)!
+        ch.close()
     })!
 
-    while true {
-        let val = ch.recv()!
-        if val == 0 { break }
+    for val in ch {
         print($"received: {val}")
     }
-
     producer.join()!
     ch.destroy()
     return 0
 }
 ```
 
-### Green Threads
-
-Green threads are cheap to spawn (64KB stack vs ~8MB for an OS thread) and fast to switch between (nanoseconds vs microseconds). You can run tens of thousands concurrently:
-
-```milo
-from "std/runtime" import { Task }
-
-fn main(): i32 {
-    for i in 0..1000 {
-        let id = i as i64
-        Task.spawn(move (): void => {
-            print($"task {id}")
-        })
-    }
-    return 0
-}
-```
-
-The standard library also includes mutexes, rwlocks, and atomics for when you need shared mutable state with fine-grained control.
+The compiler enforces thread safety — data sent across threads must implement `Send`. The standard library also includes mutexes, rwlocks, and atomics for shared mutable state.
 
 [Learn more](/language/concurrency)
 

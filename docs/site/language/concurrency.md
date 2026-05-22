@@ -1,12 +1,239 @@
 # Concurrency
 
-Milo has two concurrency layers: OS threads for CPU-bound parallelism, and green threads for high-concurrency I/O. No `async`/`await` — blocking code runs concurrently in green threads automatically.
+Milo gives you two concurrency layers: **green threads** (lightweight cooperative tasks) and **OS threads** (real parallelism). There is no `async`/`await` — you write blocking code, and the runtime runs it concurrently.
+
+For most concurrent work, reach for `Promise<T>`. Drop to green threads, OS threads, or channels when you need more control.
+
+## Promises
+
+A `Promise<T>` runs a function on a green thread and delivers the result. It's the simplest way to do work concurrently.
+
+### Basic Promise
+
+```milo
+from "std/runtime" import { Promise }
+
+let p = Promise((): i64 => {
+    return expensiveComputation()
+})
+let result = p.await()!
+```
+
+`Promise(fn)` is shorthand for `Promise<T>.run(fn)` — the return type is inferred from the closure. Call `.await()!` to block until the result is ready.
+
+### Captured Variables and Auto-Move
+
+When a closure captures variables, the compiler automatically infers `move` — captured values are moved into the promise so they're safe to use on another green thread:
+
+```milo
+from "std/runtime" import { Promise }
+
+let msg = "hello world"
+let p = Promise((): string => {
+    return msg    // msg is auto-moved into the closure
+})
+print(p.await()!)   // hello world
+```
+
+You can write `move` explicitly, but it's inferred for `Promise(fn)` and `Thread.spawn()`.
+
+### Promise.all — Run N Tasks, Collect All Results
+
+`Promise.all()` takes a vector of promises and returns a single promise that resolves to a vector of all results, preserving order:
+
+```milo
+from "std/runtime" import { Promise }
+
+fn compute(n: i64): i64 {
+    return n * 10
+}
+
+fn main(): i32 {
+    var promises: Vec<Promise<i64>> = Vec.new()
+    promises.push(Promise((): i64 => { return compute(10) }))
+    promises.push(Promise((): i64 => { return compute(20) }))
+
+    let results = Promise.all(promises).await()!
+    for r in results {
+        print(r)    // 100, 200
+    }
+    return 0
+}
+```
+
+### Promise.race — First Result Wins
+
+`Promise.race()` returns the first promise to complete and discards the rest:
+
+```milo
+from "std/runtime" import { Promise }
+
+var promises: Vec<Promise<i64>> = Vec.new()
+promises.push(Promise((): i64 => 10))
+promises.push(Promise((): i64 => 20))
+promises.push(Promise((): i64 => 30))
+
+let first = Promise.race(promises).await()!
+print(first)    // whichever finishes first
+```
+
+### Practical: Parallel HTTP Fetches
+
+Fetch multiple URLs concurrently and collect all responses:
+
+```milo
+from "std/runtime" import { Promise }
+from "std/net" import { TcpStream }
+
+fn fetchUrl(host: string, path: string): string {
+    let stream = TcpStream.connect(host, 80)!
+    stream.send($"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n")!
+    return stream.recv()!
+}
+
+fn main(): i32 {
+    var promises: Vec<Promise<string>> = Vec.new()
+    promises.push(Promise((): string => { return fetchUrl("example.com", "/api/users") }))
+    promises.push(Promise((): string => { return fetchUrl("example.com", "/api/posts") }))
+    promises.push(Promise((): string => { return fetchUrl("example.com", "/api/comments") }))
+
+    let responses = Promise.all(promises).await()!
+    for resp in responses {
+        print(resp)
+    }
+    return 0
+}
+```
+
+Each fetch runs on its own green thread. The runtime handles non-blocking I/O transparently — `TcpStream` yields on EAGAIN and resumes when data arrives.
+
+### Practical: Timeout Pattern
+
+Use `Promise.race()` to add a timeout to any operation:
+
+```milo
+from "std/runtime" import { Promise }
+from "std/time" import { sleepMs }
+
+fn slowOperation(): string {
+    sleepMs(5000)
+    return "done"
+}
+
+fn main(): i32 {
+    var promises: Vec<Promise<string>> = Vec.new()
+    promises.push(Promise((): string => { return slowOperation() }))
+    promises.push(Promise((): string => {
+        sleepMs(1000)
+        return "timeout"
+    }))
+
+    let result = Promise.race(promises).await()!
+    if result == "timeout" {
+        print("operation timed out")
+    } else {
+        print(result)
+    }
+    return 0
+}
+```
+
+### Practical: Fan-Out / Fan-In
+
+Spawn N workers, each processing a chunk of work, then combine results:
+
+```milo
+from "std/runtime" import { Promise }
+from "std/time" import { sleepMs }
+
+fn processChunk(id: i64, data: i64): i64 {
+    sleepMs(100)    // simulate work
+    return data * 2
+}
+
+fn main(): i32 {
+    var promises: Vec<Promise<i64>> = Vec.new()
+
+    var i: i64 = 1
+    while i <= 3 {
+        let val = i * 20
+        promises.push(Promise((): i64 => {
+            return processChunk(i, val)
+        }))
+        i = i + 1
+    }
+
+    let results = Promise.all(promises).await()!
+    var sum: i64 = 0
+    for r in results {
+        sum += r
+    }
+    print("total: ", sum)   // total: 240
+    return 0
+}
+```
+
+## Green Threads
+
+For fire-and-forget work that doesn't return a value, use `Task.spawn()`. Green threads use 64KB stacks (vs ~8MB for OS threads), so you can run thousands concurrently.
+
+```milo
+from "std/runtime" import { Task }
+
+fn main(): i32 {
+    Task.spawn((): void => {
+        print("hello from green thread")
+    })
+    return 0
+}
+```
+
+The compiler injects a scheduler drain at the end of `main` that runs all spawned tasks to completion.
+
+### Cooperative Yielding
+
+Green threads yield cooperatively. Use `schedulerYield()` to give other tasks a chance to run:
+
+```milo
+from "std/runtime" import { Task, schedulerYield }
+
+fn main(): i32 {
+    Task.spawn((): void => {
+        print("A1")
+        schedulerYield()
+        print("A2")
+    })
+    Task.spawn((): void => {
+        print("B1")
+        schedulerYield()
+        print("B2")
+    })
+    return 0
+}
+// Output: A1, B1, A2, B2
+```
+
+### Transparent Async I/O
+
+`TcpStream` operations automatically detect green thread context. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
+
+```milo
+from "std/net" import { TcpStream }
+from "std/runtime" import { Task }
+
+Task.spawn((): void => {
+    let stream = TcpStream.connect(ip, port)!
+    stream.send("hello")!          // yields if socket buffer full
+    let data = stream.recv()!      // yields until data arrives
+    print(data)
+})
+```
+
+The same calls work identically outside green threads — they just block normally.
 
 ## OS Threads
 
-### Spawning Threads
-
-Use `Thread.spawn()` with a closure to run code on a new OS thread. The compiler automatically infers `move` — the closure takes ownership of captured variables so they're safe to send across threads:
+For CPU-bound parallelism that benefits from multiple cores, use `Thread.spawn()`. The compiler automatically infers `move` for thread closures:
 
 ```milo
 from "std/thread" import { Thread }
@@ -17,7 +244,7 @@ let t = Thread.spawn((): void => {
 t.join()!
 ```
 
-Move closures heap-allocate captured variables so they're safe to send across threads. You can write `move` explicitly, but it's inferred when the function takes an owned closure.
+Spawn multiple threads and join them:
 
 ```milo
 from "std/thread" import { Thread }
@@ -37,7 +264,7 @@ for i in 0..4 {
 
 ### Thread Safety (Send / Sync)
 
-The compiler enforces thread safety at compile time. `Thread.spawn()` requires all captured variables to implement `Send`.
+`Thread.spawn()` requires all captured variables to implement `Send`. The compiler enforces this at compile time.
 
 **Send types** (safe to move to another thread): all primitives, `string`, `Heap<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
 
@@ -58,63 +285,9 @@ unsafe {
 }
 ```
 
-Use `@send` and `@sync` annotations for types with unsafe internals:
+## Channels
 
-```milo
-@send
-@sync
-struct MyHandle {
-    _ptr: *u8,
-}
-```
-
-### Parallel Blocks
-
-Run multiple expressions concurrently and collect all results:
-
-```milo
-fn expensiveA(): i64 { return 42 }
-fn expensiveB(): i64 { return 99 }
-
-parallel {
-    let a = expensiveA()
-    let b = expensiveB()
-}
-print(a + b)   // 141
-```
-
-Each branch runs on its own OS thread. Variables bound inside are available after the block.
-
-### Promises
-
-For most concurrent work, reach for `Promise<T>` — it runs a function on a green thread and returns the result:
-
-```milo
-from "std/runtime" import { Promise }
-
-let p = Promise((): i64 => {
-    return expensiveComputation()
-})
-let result = p.await()!
-```
-
-`Promise(fn)` is shorthand for `Promise<T>.run(fn)` — the type parameter is inferred from the closure's return type.
-
-`Promise.all()` runs multiple tasks and collects results. `Promise.race()` returns the first to finish:
-
-```milo
-from "std/runtime" import { Promise }
-
-var tasks: Vec<Promise<i64>> = Vec.new()
-tasks.push(Promise((): i64 => { return fetchA() }))
-tasks.push(Promise((): i64 => { return fetchB() }))
-
-let results = Promise.all(tasks)   // [resultA, resultB]
-```
-
-### Channels
-
-Bounded FIFO channels for streaming values between threads. Use channels when a producer sends many values over time — for one-shot results, prefer Promise.
+Bounded FIFO channels for streaming values between threads. Use channels when a producer sends many values over time — for one-shot results, prefer `Promise`.
 
 ```milo
 from "std/thread" import { Thread }
@@ -142,7 +315,9 @@ ch.trySend(42)       // returns true if sent, false if full
 ch.tryRecv()         // returns Option<T> — None if empty
 ```
 
-### Mutex and RwLock
+## Shared State
+
+### Mutex
 
 ```milo
 from "std/sync" import { Mutex }
@@ -155,7 +330,9 @@ m.withLock((): void => {
 m.destroy()
 ```
 
-Reader-writer lock for multiple concurrent readers OR one exclusive writer:
+### RwLock
+
+Multiple concurrent readers OR one exclusive writer:
 
 ```milo
 from "std/sync" import { RwLock }
@@ -168,7 +345,7 @@ rw.destroy()
 
 ### Atomics
 
-Lock-free atomic types for cross-thread counters and flags:
+Lock-free atomic types for cross-thread counters and flags. All operations use sequential consistency.
 
 ```milo
 from "std/sync" import { AtomicI64 }
@@ -179,83 +356,19 @@ print(counter.load())   // 1
 counter.destroy()
 ```
 
-All operations use sequential consistency. `AtomicI64` and `AtomicBool` are `@send` + `@sync`.
-
-## Green Threads
-
-Lightweight user-space threads. Each gets a 64KB stack instead of ~8MB for an OS thread — run thousands concurrently.
-
-### Spawning Green Threads
-
-```milo
-from "std/runtime" import { Task }
-
-fn main(): i32 {
-    Task.spawn((): void => {
-        print("hello from green thread")
-    })
-    return 0
-}
-```
-
-The compiler injects a scheduler drain at the end of `main` that runs all spawned green threads to completion.
-
-### Cooperative Yielding
-
-```milo
-from "std/runtime" import { Task, schedulerYield }
-
-fn main(): i32 {
-    Task.spawn((): void => {
-        print("A1")
-        schedulerYield()
-        print("A2")
-    })
-    Task.spawn((): void => {
-        print("B1")
-        schedulerYield()
-        print("B2")
-    })
-    return 0
-}
-// Output: A1, B1, A2, B2
-```
-
-### Transparent Async I/O
-
-`stream.recv()` and `stream.send()` from `std/net` automatically detect green thread context. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
-
-```milo
-from "std/net" import { TcpStream }
-from "std/runtime" import { Task }
-
-Task.spawn((): void => {
-    let stream = TcpStream.connect(ip, port)!
-    stream.send("hello")!          // yields if socket buffer full
-    let data = stream.recv()!      // yields until data arrives
-    print(data)
-})
-```
-
-The same calls work identically outside green threads — they just block normally.
-
-### Comparison
-
-| | OS Thread (`Thread.spawn`) | Green Thread (`Task.spawn`) |
-|---|---|---|
-| Stack size | ~8MB | 64KB |
-| Context switch | Kernel | Userspace |
-| Max concurrent | ~hundreds | thousands |
-| Best for | CPU-bound parallelism | I/O-bound concurrency |
+`AtomicI64` and `AtomicBool` are `@send` + `@sync`.
 
 ## Which to Use
 
 | Need | Reach for |
 |------|-----------|
-| Run something and get a result back | `Promise<T>` |
-| Run N things concurrently, collect results | `Promise.all()` |
+| Run something and get a result back | `Promise(fn)` |
+| Run N things, collect all results | `Promise.all()` |
+| First-to-finish wins, or timeout | `Promise.race()` |
+| Fire-and-forget background work | `Task.spawn()` |
 | Stream many values between threads | `Channel<T>` with `close()` + `for val in ch` |
-| CPU-heavy work on a dedicated OS thread | `Thread.spawn()` |
+| CPU-heavy work on dedicated OS threads | `Thread.spawn()` |
 | Shared mutable state | `Mutex` or `RwLock` |
+| Lock-free counters / flags | `AtomicI64`, `AtomicBool` |
 
 Start with `Promise`. Drop to channels or threads when you need streaming or OS-level control.

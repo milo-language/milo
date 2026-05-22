@@ -1445,7 +1445,7 @@ var tasks: Vec<Promise<i64>> = Vec.new()
 tasks.push(Promise((): i64 => { return fetchA() }))
 tasks.push(Promise((): i64 => { return fetchB() }))
 
-let results = Promise.all(tasks)   // [resultA, resultB]
+let results = Promise.all(tasks).await()!   // [resultA, resultB]
 ```
 
 Promises run on green threads with cooperative scheduling — no async/await coloring, no event loop. Blocking I/O automatically yields to other tasks.

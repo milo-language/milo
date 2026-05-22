@@ -25,7 +25,7 @@ fn main(): i32 {
     var promises: Vec<Promise<i64>> = Vec.new()
     promises.push(Promise((): i64 => { return compute(10) }))
     promises.push(Promise((): i64 => { return compute(20) }))
-    let results = Promise<i64>.all(promises)
+    let results = Promise.all(promises).await()!
     for r in results {
         print(r)
     }

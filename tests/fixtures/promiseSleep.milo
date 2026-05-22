@@ -24,7 +24,7 @@ fn main(): i32 {
         i = i + 1
     }
 
-    let results = Promise<i64>.all(promises)
+    let results = Promise.all(promises).await()!
     var sum: i64 = 0
     for r in results {
         sum = sum + r
