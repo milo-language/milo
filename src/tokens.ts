@@ -75,6 +75,11 @@ export enum TokenKind {
   Caret = "^",
   Tilde = "~",
   At = "@",
+  PlusEq = "+=",
+  MinusEq = "-=",
+  StarEq = "*=",
+  SlashEq = "/=",
+  PercentEq = "%=",
   Eof = "EOF",
 }
 

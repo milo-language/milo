@@ -25,7 +25,7 @@ export function ptrType(name: string): MiloType {
 
 export interface Param {
   name: string;
-  type: MiloType;
+  type: MiloType | null;
 }
 
 export interface StructField {

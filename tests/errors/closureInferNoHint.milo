@@ -1,0 +1,5 @@
+// @error: cannot infer type for parameter 'x'
+
+fn main() {
+    let f = (x) => x + 1
+}

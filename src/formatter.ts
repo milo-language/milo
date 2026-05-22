@@ -10,6 +10,7 @@ const SPACED_OPS = new Set([
   TokenKind.LtEq, TokenKind.GtEq, TokenKind.AmpAmp, TokenKind.PipePipe,
   TokenKind.FatArrow, TokenKind.Arrow, TokenKind.Pipe,
   TokenKind.Caret, TokenKind.QuestionQuestion,
+  TokenKind.PlusEq, TokenKind.MinusEq, TokenKind.StarEq, TokenKind.SlashEq, TokenKind.PercentEq,
 ]);
 
 function isKeyword(kind: TokenKind): boolean {

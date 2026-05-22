@@ -11,6 +11,7 @@ export class Parser {
 
   constructor(private tokens: Token[]) {}
 
+  private cloneExpr(e: Expr): Expr { return structuredClone(e); }
   private peek(): Token { return this.tokens[this.pos]; }
   private peekN(n: number): Token { return this.tokens[this.pos + n]; }
   // adjacent same-kind tokens with no intervening whitespace — used for << and >>
@@ -482,6 +483,18 @@ export class Parser {
     if (this.at(TokenKind.Eq)) {
       this.advance();
       const value = this.parseExpr();
+      return { kind: "Assign", target: expr, value, span: expr.span };
+    }
+    // compound assignment: x += ..., x -= ..., etc.
+    const compoundOps: Record<string, string> = {
+      [TokenKind.PlusEq]: "+", [TokenKind.MinusEq]: "-",
+      [TokenKind.StarEq]: "*", [TokenKind.SlashEq]: "/", [TokenKind.PercentEq]: "%",
+    };
+    const op = compoundOps[this.peek().kind];
+    if (op) {
+      this.advance();
+      const rhs = this.parseExpr();
+      const value: Expr = { kind: "BinOp", op, left: this.cloneExpr(expr), right: rhs, span: expr.span };
       return { kind: "Assign", target: expr, value, span: expr.span };
     }
     return { kind: "ExprStmt", expr, span: expr.span };
@@ -1065,16 +1078,24 @@ export class Parser {
     if (this.at(TokenKind.RParen)) {
       this.advance();
       if (this.at(TokenKind.FatArrow)) { this.pos = saved; return true; }
-      // (): RetType => ...
       if (this.at(TokenKind.Colon)) { this.pos = saved; return true; }
       this.pos = saved;
       return false;
     }
     if (this.at(TokenKind.Ident)) {
       this.advance();
-      const isColon = this.at(TokenKind.Colon);
-      this.pos = saved;
-      return isColon;
+      if (this.at(TokenKind.Colon)) { this.pos = saved; return true; }
+      // untyped params: (x) => ..., (x, y) => ...
+      if (this.at(TokenKind.Comma) || this.at(TokenKind.RParen)) {
+        while (!this.at(TokenKind.RParen) && !this.at(TokenKind.Eof)) this.advance();
+        if (this.at(TokenKind.RParen)) {
+          this.advance();
+          if (this.at(TokenKind.FatArrow) || this.at(TokenKind.Colon)) {
+            this.pos = saved;
+            return true;
+          }
+        }
+      }
     }
     this.pos = saved;
     return false;
@@ -1085,7 +1106,9 @@ export class Parser {
     this.expect(TokenKind.LParen);
     const params: Param[] = [];
     while (!this.at(TokenKind.RParen)) {
-      params.push(this.parseParam());
+      const name = this.expect(TokenKind.Ident).value;
+      const type = this.at(TokenKind.Colon) ? (this.advance(), this.parseType()) : null;
+      params.push({ name, type });
       if (!this.at(TokenKind.RParen)) this.expect(TokenKind.Comma);
     }
     this.expect(TokenKind.RParen);

@@ -1,0 +1,26 @@
+// @expect: 2
+// @expect: 4
+// @expect: 6
+// @expect: 2
+// @expect: 3
+
+fn main(): i32 {
+    var v: Vec<i32> = Vec.new()
+    v.push(1)
+    v.push(2)
+    v.push(3)
+
+    // inferred param type from map hint
+    let doubled = v.map((x) => x * 2)
+    for d in doubled {
+        print(d)
+    }
+
+    // inferred param type from filter hint
+    let big = v.filter((x) => x > 1)
+    for b in big {
+        print(b)
+    }
+
+    return 0
+}

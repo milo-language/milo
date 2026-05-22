@@ -210,6 +210,11 @@ export class Lexer {
     if (ch === "." && next === ".") { this.advance(); this.advance(); return this.token(TokenKind.DotDot, "..", line, col); }
 
     // two-char operators
+    if (ch === "+" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.PlusEq, "+=", line, col); }
+    if (ch === "-" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.MinusEq, "-=", line, col); }
+    if (ch === "*" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.StarEq, "*=", line, col); }
+    if (ch === "/" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.SlashEq, "/=", line, col); }
+    if (ch === "%" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.PercentEq, "%=", line, col); }
     if (ch === "-" && next === ">") { this.advance(); this.advance(); return this.token(TokenKind.Arrow, "->", line, col); }
     if (ch === "=" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.EqEq, "==", line, col); }
     if (ch === "=" && next === ">") { this.advance(); this.advance(); return this.token(TokenKind.FatArrow, "=>", line, col); }

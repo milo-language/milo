@@ -1,0 +1,24 @@
+// @expect: 15
+// @expect: 5
+// @expect: 50
+// @expect: 10
+// @expect: 1
+// @expect: hello world
+
+fn main() {
+    var x = 10
+    x += 5
+    print(x)
+    x -= 10
+    print(x)
+    x *= 10
+    print(x)
+    x /= 5
+    print(x)
+    x %= 3
+    print(x)
+
+    var s = "hello"
+    s += " world"
+    print(s)
+}

@@ -160,6 +160,7 @@ export class TypeChecker {
   private offsetOfFields = new Map<Expr, string>();
   private closureScopeDepth: number | null = null;
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
+  private closureParamHints: TypeKind[] | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
   private loopDepth = 0;
   // Track variables moved exclusively inside return stmts within loops.
@@ -2364,6 +2365,9 @@ export class TypeChecker {
         return this.setType(expr, hint);
       }
     }
+    if (hint && expr.kind === "Closure" && hint.tag === "fn") {
+      this.closureParamHints = hint.params;
+    }
     const prevHint = this.returnHint;
     this.returnHint = hint;
     const result = this.checkExpr(expr);
@@ -3200,13 +3204,26 @@ export class TypeChecker {
         return this.setType(expr, toType);
       }
       case "Closure": {
+        const paramHints = this.closureParamHints;
+        this.closureParamHints = null;
         const savedClosureScopeDepth = this.closureScopeDepth;
         const savedClosureCaptures = this.currentClosureCaptures;
         this.currentClosureCaptures = new Map();
         this.pushScope();
         this.closureScopeDepth = this.scopes.length - 1;
-        for (const p of expr.params) {
-          const pType = this.resolve(p.type);
+        const paramTypes: TypeKind[] = [];
+        for (let i = 0; i < expr.params.length; i++) {
+          const p = expr.params[i];
+          let pType: TypeKind;
+          if (p.type) {
+            pType = this.resolve(p.type);
+          } else if (paramHints && i < paramHints.length) {
+            pType = paramHints[i];
+          } else {
+            this.error(`cannot infer type for parameter '${p.name}'; add a type annotation`, sp);
+            pType = { tag: "unknown" };
+          }
+          paramTypes.push(pType);
           this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false });
         }
         let inferredRet: TypeKind = expr.retType ? this.resolve(expr.retType) : { tag: "unknown" };
@@ -3235,7 +3252,6 @@ export class TypeChecker {
         }
         this.closureScopeDepth = savedClosureScopeDepth;
         this.currentClosureCaptures = savedClosureCaptures;
-        const paramTypes = expr.params.map(p => this.resolve(p.type));
         return this.setType(expr, { tag: "fn", params: paramTypes, ret: inferredRet });
       }
       case "MethodCall": {
