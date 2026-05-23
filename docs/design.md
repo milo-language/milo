@@ -193,6 +193,163 @@ Frontend: TypeScript (Bun). Backend: LLVM toolchain.
 | Learning curve | Low (goal) | High | Medium then deadly | Medium |
 | GC | No | No | No | No |
 
+## AI-Assisted Development ("Vibe Coding")
+
+LLMs generate plausible code fast but reason poorly about implicit rules, undefined behavior, and cross-cutting invariants. Languages with narrow, explicit semantics produce better AI-generated code because the compiler catches what the LLM misses. Milo is designed so that **wrong code fails to compile, not fails silently at runtime**.
+
+### C++ Pitfalls LLMs Hit Constantly
+
+**1. Implicit conversions and type coercion**
+
+C++ `char` is simultaneously a character and an integer. `bool` promotes to `int`. Signed/unsigned comparison is legal but wrong. LLMs mix these freely.
+
+```cpp
+// C++ — compiles, wrong at runtime
+char c = 200;           // implementation-defined: signed overflow on most platforms
+if (c > 128) { ... }    // may be false — c could be -56
+
+bool done = true;
+int count = done + done; // count == 2. why not.
+
+unsigned u = 0;
+if (u - 1 > 0) { ... }  // true — wraps to 4294967295
+```
+
+```milo
+// Milo — all three are compile errors
+let c: u8 = 200         // fine — u8 is unsigned, explicit
+let x: i32 = c          // ERROR: no implicit coercion, use `c as i32`
+
+let done = true
+let count = done + done  // ERROR: no bool arithmetic
+
+let u: u32 = 0
+let x = u - 1            // ERROR: unsigned underflow detected at compile time
+```
+
+**2. Use-after-move / use-after-free**
+
+C++ moved-from objects are "valid but unspecified" — the most dangerous state possible. LLMs don't track move invalidation.
+
+```cpp
+// C++ — compiles, UB
+std::vector<int> v = {1, 2, 3};
+auto v2 = std::move(v);
+v.push_back(4);          // UB: v is in "valid but unspecified" state
+                          // might segfault, might silently corrupt memory
+```
+
+```milo
+// Milo — compile error
+var v = Vec.new()
+v.push(1); v.push(2); v.push(3)
+let v2 = v               // v moved to v2
+v.push(4)                 // ERROR: use of moved value `v`
+```
+
+**3. Dangling references**
+
+The most common C++ CVE pattern. LLMs routinely return references to locals or temporaries.
+
+```cpp
+// C++ — compiles with no warnings
+std::string_view getName() {
+    std::string s = "hello";
+    return s;               // dangling — s destroyed at end of scope
+}
+// caller reads freed memory, might work in debug, segfault in release
+```
+
+```milo
+// Milo — impossible by construction
+fn getName(): &string {     // ERROR: cannot return a reference
+    let s = "hello"
+    return s
+}
+// second-class refs can't escape function scope. no lifetime annotations needed.
+```
+
+**4. Null pointer dereference**
+
+LLMs forget null checks constantly. C++ has no mechanism to enforce them.
+
+```cpp
+// C++ — compiles, crashes
+Widget* w = findWidget(id);
+w->render();                // if findWidget returned nullptr, segfault
+```
+
+```milo
+// Milo — must handle None
+let w = findWidget(id)      // returns Option<Widget>
+match w {
+    Some(widget) => widget.render(),
+    None => print("not found"),
+}
+// or: w!.render() — explicit crash if None, but intentional
+```
+
+**5. Data races**
+
+C++ has no compile-time race prevention. LLMs share mutable state across threads without synchronization.
+
+```cpp
+// C++ — compiles, data race (UB per C++ standard)
+int counter = 0;
+std::thread t1([&]{ counter++; });
+std::thread t2([&]{ counter++; });
+// undefined behavior — compiler may optimize assuming no races
+```
+
+```milo
+// Milo — compile error
+var counter = 0
+Thread.spawn(() => { counter += 1 })  // ERROR: `counter` is not Send
+                                       // captured mutable reference can't cross thread boundary
+
+// correct version:
+let counter = AtomicI64.new(0)
+Thread.spawn(move () => { counter.add(1) })  // OK — AtomicI64 is Send
+```
+
+**6. Integer overflow**
+
+Signed overflow is UB in C++. LLMs write arithmetic without considering bounds.
+
+```cpp
+// C++ — UB, compiler may delete the overflow check entirely
+int x = INT_MAX;
+if (x + 1 > x) { ... }   // compiler assumes true (overflow is UB)
+x = x + 1;                // "can't happen" — compiler optimizes based on this
+```
+
+```milo
+// Milo — compile-time error for literals, runtime trap in debug
+let x: i32 = 2147483647
+let y = x + 1              // runtime trap in debug: arithmetic overflow
+                            // use x.wrappingAdd(1) or x.saturatingAdd(1) for explicit semantics
+```
+
+### Why This Matters for AI Code Generation
+
+| Property | C++ | Milo | Impact on LLM-generated code |
+|---|---|---|---|
+| Implicit conversions | ~15 built-in | Zero | LLMs can't introduce silent type bugs |
+| Undefined behavior | 200+ categories | None in safe code | Wrong code crashes loud, not silent |
+| Null | Raw pointers, everywhere | `Option<T>`, exhaustive match | Compiler forces null handling |
+| Memory safety | Manual (RAII helps, doesn't enforce) | Compile-time moves + second-class refs | Use-after-free/move = compile error |
+| Thread safety | Nothing enforced | Send/Sync at compile time | Data races can't compile |
+| Error handling | Exceptions (invisible control flow) | `Result<T,E>` + `?` (visible) | Error paths can't be accidentally ignored |
+| Build complexity | Headers, includes, ODR, templates | Single files, simple imports | Less surface area for LLM confusion |
+
+### The Precision Floor
+
+Every language has a **precision floor** — the minimum level of detail a programmer must get right for correct code. C++ has the highest precision floor of any mainstream language: you must reason about move semantics, lifetime rules, implicit conversions, undefined behavior, template instantiation, header inclusion order, and more — simultaneously.
+
+LLMs operate above the precision floor for Python and TypeScript. They operate **below** it for C++. Milo is designed to keep the precision floor as low as possible for a systems language: if you get the types and ownership right, the compiler handles the rest. No implicit conversions, no UB, no lifetime annotations, no header files.
+
+The result: LLM-generated Milo code either compiles and is correct, or fails with a clear error message. There is no middle ground where code compiles, appears to work, and has a latent memory safety bug. That middle ground is where C++ CVEs live.
+
 ## Resolved Design Decisions
 
 - **Traits** — nominal traits with monomorphized static dispatch, `impl Trait for Type`, inherent `impl Type`, generic bounds, supertraits, `@derive`.

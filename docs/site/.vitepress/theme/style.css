@@ -244,6 +244,27 @@
   text-decoration: none;
 }
 
+/* Side-by-side code comparison */
+.compare-grid {
+  max-width: 720px;
+  margin: 1.5rem auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.compare-col strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 640px) {
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .bench-footnote {
   max-width: 720px;
   margin: -0.5rem auto 2rem;

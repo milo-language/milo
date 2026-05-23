@@ -29,6 +29,7 @@ export default defineConfig({
       { text: 'Playground', link: '/playground' },
       { text: 'Benchmarks', link: '/benchmarks' },
       { text: 'Roadmap', link: '/roadmap' },
+      { text: 'AI Coding', link: '/ai-coding' },
     ],
 
     sidebar: {
@@ -179,6 +180,7 @@ export default defineConfig({
             { text: 'Examples', link: '/examples' },
             { text: 'Benchmarks', link: '/benchmarks' },
             { text: 'Quick Reference', link: '/reference' },
+            { text: 'AI Coding', link: '/ai-coding' },
             { text: 'Roadmap', link: '/roadmap' },
           ]
         },

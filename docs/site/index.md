@@ -23,8 +23,8 @@ hero:
     <p>Compiles to native code via LLVM. Sub-millisecond startup. Binaries under 300KB.</p>
   </div>
   <div class="color-item">
-    <h2 class="ch-orange">Learn it in a weekend.</h2>
-    <p>If you've written any typed language, you already know most of Milo. And so does your AI.</p>
+    <h2 class="ch-orange">Learn it in a weekend. So does your AI.</h2>
+    <p>If you've written any typed language, you already know most of Milo. Simple rules + loud errors = <a href="/milo/ai-coding">LLMs write correct Milo on the first try</a>.</p>
   </div>
 </div>
 
@@ -112,6 +112,42 @@ fn main(): i32 {
     }
 }
 ```
+
+### Built for AI coding
+
+C++ has ~200 categories of undefined behavior. Rust has lifetime annotations that trip up LLMs. Milo has neither — wrong code fails to compile with a clear error, not silently at runtime. Simple rules and loud errors mean LLMs write correct systems code on the first try.
+
+<div class="compare-grid">
+
+<div class="compare-col">
+
+**C++ — compiles, crashes**
+
+```cpp
+std::string_view getName() {
+    std::string s = "hello";
+    return s;  // dangling reference, UB
+}
+```
+
+</div>
+<div class="compare-col">
+
+**Milo — compile error**
+
+```milo
+fn getName(): &string {  // ERROR: can't return ref
+    let s = "hello"
+    return s
+}
+```
+
+</div>
+</div>
+
+Milo also ships `milo skill` — a machine-readable language guide that gives any LLM full knowledge of the language, standard library, and idioms in a single command.
+
+<a href="/milo/ai-coding">See the full comparison vs. C++ and Rust →</a>
 
 <div class="section-break"></div>
 

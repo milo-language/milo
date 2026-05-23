@@ -15,4 +15,6 @@ fn main(): i32 {
 }
 ```
 
+**Memory safe. Simple. Native. [Vibe-codeable](docs/design.md#ai-assisted-development-vibe-coding).**
+
 **[Docs & Playground](https://cs01.github.io/milo/)**
