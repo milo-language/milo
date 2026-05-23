@@ -4,6 +4,56 @@ Milo has built-in support for **design-by-contract** annotations and **safety pr
 
 Contracts have zero runtime cost — they are checked for well-formedness at compile time but are not inserted into the generated binary. To verify that contracts actually hold, use `milo verify` to generate SMT-LIB2 output and pipe it to an external theorem prover.
 
+## Why this matters
+
+Most languages bolt safety analysis on after the fact with expensive third-party tools (LDRA, Polyspace, Coverity). Milo integrates these concerns into the language:
+
+- **Contracts are code, not comments.** They're type-checked and versioned alongside the implementation — use `milo verify` + an SMT solver to prove they hold.
+- **SMT-LIB2 export from the same source file.** No separate annotation language — one command generates verification conditions from your contracts.
+- **Standards compliance as a compiler flag.** Safety profiles check structural coding constraints (recursion, allocation, complexity) at compile time, no proprietary tool licenses.
+- **WCET-ready by construction.** Code that passes a safety profile satisfies the structural prerequisites for worst-case execution time analysis.
+- **Zero runtime cost.** Contracts are not inserted into the binary.
+
+Combined with Milo's existing ownership system (no use-after-free, no data races, no null pointer dereferences), contracts provide a path toward catching *logic errors* — the class of bugs that memory safety alone can't prevent.
+
+## Why an SMT solver?
+
+The compiler checks that contracts are **well-typed** — every `requires`, `ensures`, and `invariant` must be a valid `bool` expression using in-scope variables. That's a syntactic and type-level check, similar to how the compiler rejects `let x: i64 = "hello"`.
+
+But type-checking a contract doesn't tell you whether it *holds*. Consider:
+
+```milo
+fn clamp(value: i64, lo: i64, hi: i64): i64
+  requires lo <= hi
+  ensures result >= lo && result <= hi
+{ ... }
+```
+
+The compiler confirms `lo <= hi` is a valid boolean expression over `i64` parameters. It does **not** analyze callers to verify they always pass `lo <= hi`, nor does it trace the function body to prove the postcondition. Those are *semantic* properties that require reasoning about values, paths, and arithmetic — exactly what SMT solvers are designed for.
+
+`milo verify` bridges the gap: it translates your contracts into SMT-LIB2 formulas that encode the question "can this contract be violated?" If Z3 answers `unsat`, no violation is possible. If it answers `sat`, there's a concrete counterexample. This is the same architecture used by SPARK/Ada and Dafny — contracts live in the source, proofs run externally.
+
+**In short:** the compiler catches *ill-formed* contracts (type errors, unknown variables). The SMT solver catches *violated* contracts (logic errors, missed edge cases). Both are needed.
+
+## WCET analysis
+
+Worst-Case Execution Time (WCET) analysis determines the maximum time a function can take to execute — a hard requirement for real-time systems like flight controllers, ABS brakes, and pacemakers. Missing a deadline in these systems is as bad as computing the wrong answer.
+
+WCET analysis tools need to bound every execution path, which means the code must satisfy structural constraints: no unbounded loops, no recursion, no dynamic allocation (which has unpredictable latency), and bounded complexity. These are exactly the constraints that Milo's safety profiles enforce.
+
+When you compile with `--safety=do178c-a` or `--safety=iec61508-4`:
+
+- **No recursion** → call graph is a DAG, so execution time is statically bounded
+- **Bounded loops** → every `while` loop has an `invariant`, providing the foundation for iteration bounds
+- **No dynamic allocation** → no heap allocator jitter, no GC pauses
+- **Complexity limits** → functions stay small enough for path enumeration
+
+This means code that passes `milo safety` is structurally ready for WCET analysis by tools like [aiT](https://www.absint.com/ait/) or [Bound-T](https://www.bound-t.com/). Without these constraints, WCET tools must either reject the code or produce pessimistic bounds that overestimate timing by orders of magnitude.
+
+Contracts add further value: a `requires` clause like `requires n <= 1000` gives WCET tools an explicit bound on input ranges, tightening the analysis. Combined with the safety profile's structural guarantees, you get a codebase that is both *provably correct* (via SMT) and *provably timely* (via WCET).
+
+---
+
 ## Contracts
 
 Three keywords: `requires` (precondition), `ensures` (postcondition), and `invariant` (loop invariant). Each takes a boolean expression.
@@ -168,14 +218,3 @@ milo safety src/controller.milo --safety=do178c-a || exit 1
 ```
 
 The command exits with code 1 if any errors are found, making it suitable for CI gates.
-
-## Why this matters
-
-Most languages bolt safety analysis on after the fact with expensive third-party tools (LDRA, Polyspace, Coverity). Milo integrates these concerns into the language:
-
-- **Contracts are code, not comments.** They're type-checked and versioned alongside the implementation. (Note: the compiler checks that contracts are well-typed, not that they hold — use `milo verify` + an SMT solver for that.)
-- **SMT-LIB2 export from the same source file.** No separate annotation language — one command generates verification conditions from your contracts.
-- **Standards compliance as a compiler flag.** Safety profiles check structural coding constraints (recursion, allocation, complexity) at compile time, no proprietary tool licenses.
-- **Zero runtime cost.** Contracts are not inserted into the binary.
-
-Combined with Milo's existing ownership system (no use-after-free, no data races, no null pointer dereferences), contracts provide a path toward catching *logic errors* — the class of bugs that memory safety alone can't prevent.

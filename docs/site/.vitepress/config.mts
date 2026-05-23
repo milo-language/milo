@@ -46,6 +46,7 @@ export default defineConfig({
           text: 'Language',
           items: [
             { text: 'Language Overview', link: '/language/' },
+            { text: 'Contracts & Safety', link: '/language/safety' },
             { text: 'Variables & Types', link: '/language/variables' },
             { text: 'Functions', link: '/language/functions' },
             { text: 'Structs', link: '/language/structs' },
@@ -59,7 +60,6 @@ export default defineConfig({
             { text: 'Concurrency', link: '/language/concurrency' },
             { text: 'Warnings & Errors', link: '/language/warnings-and-errors' },
             { text: 'Modules', link: '/language/modules' },
-            { text: 'Contracts & Safety', link: '/language/safety' },
             { text: 'C FFI', link: '/language/ffi' },
           ]
         },

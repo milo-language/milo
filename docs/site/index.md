@@ -110,7 +110,7 @@ fn clamp(value: i64, lo: i64, hi: i64): i64
 }
 ```
 
-No lifetime annotations to trip up LLMs. No undefined behavior to hide bugs. Wrong code fails with a clear compile error — or gets formally disproved. `milo safety --safety=do178c-a` checks against avionics, automotive, and medical device coding standards with no third-party tools.
+No lifetime annotations to trip up LLMs. No undefined behavior to hide bugs. Wrong code fails with a clear compile error — or gets formally disproved. `milo safety --safety=do178c-a` checks against avionics, automotive, and medical device coding standards with no third-party tools. Code that passes a safety profile is structurally ready for WCET analysis — no recursion, bounded loops, no dynamic allocation.
 
 Milo also ships `milo skill` — a machine-readable language guide that gives any LLM full knowledge of the language, standard library, and idioms in a single command.
 
