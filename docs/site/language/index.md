@@ -531,6 +531,25 @@ Milo has a built-in package manager for installing and managing third-party depe
 
 [Learn more](/language/modules)
 
+## Contracts and Safety Profiles
+
+Functions can declare preconditions and postconditions that the compiler type-checks. Loop invariants document what stays true across iterations. These are compile-time only — zero runtime cost.
+
+```milo
+fn clamp(value: i64, lo: i64, hi: i64): i64
+  requires lo <= hi
+  ensures result >= lo && result <= hi
+{
+    if value < lo { return lo }
+    if value > hi { return hi }
+    return value
+}
+```
+
+Use `milo verify` to generate formal verification conditions (SMT-LIB2) for theorem provers like Z3. Use `milo safety --safety=do178c-a` to check your code against avionics, automotive, spacecraft, industrial, or medical device coding standards — all at compile time.
+
+[Learn more](/language/safety)
+
 ## What's next
 
 You've seen the core of Milo. To go deeper:

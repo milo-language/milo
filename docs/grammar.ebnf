@@ -8,7 +8,9 @@ function_decl
 
 extern_fn   = "extern" "fn" IDENT "(" [ param_list ] ")" [ "->" type ] ;
 
-fn_def      = "fn" IDENT "(" [ param_list ] ")" [ "->" type ] block ;
+fn_def      = "fn" IDENT [ type_params ] "(" [ param_list ] ")" [ "->" type ] { contract } block ;
+
+contract    = ( "requires" | "ensures" | "invariant" ) expr ;
 
 param_list  = param { "," param } ;
 param       = [ "&" [ "mut" ] ] IDENT ":" type ;
@@ -30,7 +32,7 @@ var_decl    = "var" IDENT [ ":" type ] "=" expr ;
 assign_stmt = IDENT "=" expr ;
 return_stmt = "return" [ expr ] ;
 if_stmt     = "if" expr block [ "else" ( if_stmt | block ) ] ;
-while_stmt  = "while" expr block ;
+while_stmt  = "while" expr { "invariant" expr } block ;
 parallel_block = "parallel" "{" { "let" IDENT "=" expr } "}" ;
 expr_stmt   = expr ;
 

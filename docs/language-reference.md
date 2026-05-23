@@ -215,6 +215,35 @@ let s = identity("hello")  // T inferred as string
 | `jsonStringify(val)` | Serialize a struct to JSON string |
 | `embedFile(path)` | Embed file contents as string at compile time |
 
+### Contracts
+
+Functions can declare preconditions (`requires`), postconditions (`ensures`), and loop invariants (`invariant`). These are type-checked at compile time — each clause must be a `bool` expression. In `ensures` clauses, `result` refers to the return value.
+
+```milo
+fn clamp(value: i64, lo: i64, hi: i64): i64
+  requires lo <= hi
+  ensures result >= lo && result <= hi
+{
+    if value < lo { return lo }
+    if value > hi { return hi }
+    return value
+}
+```
+
+Loop invariants go between the `while` condition and the loop body:
+
+```milo
+while i <= n
+  invariant total >= 0
+  invariant i >= 1
+{
+    total = total + i
+    i = i + 1
+}
+```
+
+Use `milo verify file.milo` to generate SMT-LIB2 verification conditions for Z3/CVC5. Use `milo safety file.milo --safety=do178c-a` to check against domain-specific safety profiles (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304).
+
 ---
 
 ## Strings

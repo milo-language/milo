@@ -131,6 +131,25 @@ Milo also ships `milo skill` — a machine-readable language guide that gives an
 
 <a href="/milo/ai-coding">See the full comparison vs. C++ and Rust →</a>
 
+### Built-in formal verification and safety profiles
+
+Annotate functions with contracts — the compiler proves them correct at compile time, with zero runtime cost.
+
+```milo
+fn clamp(value: i64, lo: i64, hi: i64): i64
+  requires lo <= hi
+  ensures result >= lo && result <= hi
+{
+    if value < lo { return lo }
+    if value > hi { return hi }
+    return value
+}
+```
+
+`milo verify` exports SMT-LIB2 for theorem provers like Z3. `milo safety --safety=do178c-a` checks your code against avionics, automotive, spacecraft, industrial, and medical device coding standards. No third-party tools, no proprietary licenses — it's built into the compiler.
+
+<a href="/milo/language/safety">Learn about contracts and safety profiles →</a>
+
 <div class="section-break"></div>
 
 <div class="cta-section">

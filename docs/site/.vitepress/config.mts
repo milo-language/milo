@@ -59,6 +59,7 @@ export default defineConfig({
             { text: 'Concurrency', link: '/language/concurrency' },
             { text: 'Warnings & Errors', link: '/language/warnings-and-errors' },
             { text: 'Modules', link: '/language/modules' },
+            { text: 'Contracts & Safety', link: '/language/safety' },
             { text: 'C FFI', link: '/language/ffi' },
           ]
         },
