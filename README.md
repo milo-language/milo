@@ -1,8 +1,8 @@
 # Milo
 
-**Memory Safe. Simple. Native.**
+**Memory Safe. Formally Verifiable. Native.**
 
-A memory-safe systems language with simple syntax inspired by TypeScript, Python, and Rust. Compiles to native code via LLVM.
+A memory-safe systems language with built-in contracts, safety profiles, and simple syntax. Compiles to native code via LLVM.
 
 ```milo
 from "std/http" import { Request, Response, serve }
@@ -15,6 +15,6 @@ fn main(): i32 {
 }
 ```
 
-**Memory safe. Simple. Native. [Vibe-codeable](docs/design.md#ai-assisted-development-vibe-coding).**
+**Memory safe. Formally verifiable. Native. [Vibe-codeable](docs/design.md#ai-assisted-development-vibe-coding).**
 
 **[Docs & Playground](https://cs01.github.io/milo/)**

@@ -2,8 +2,8 @@
 layout: home
 hero:
   name: Milo
-  text: "Memory Safe. Simple. Native."
-  tagline: "A memory-safe systems language with simple syntax inspired by TypeScript, Python, and Rust. Compiles to native code via LLVM."
+  text: "Memory Safe. Formally Verifiable. Native."
+  tagline: "A memory-safe systems language with built-in contracts, safety profiles, and simple syntax. Compiles to native code via LLVM."
   actions:
     - theme: brand
       text: Get Started
@@ -23,14 +23,14 @@ hero:
     <p>Compiles to native code via LLVM. Sub-millisecond startup. Binaries under 300KB.</p>
   </div>
   <div class="color-item">
-    <h2 class="ch-orange">Learn it in a weekend. So does your AI.</h2>
-    <p>If you've written any typed language, you already know most of Milo. Simple rules + loud errors = <a href="/milo/ai-coding">LLMs catch mistakes at compile time, not in production</a>.</p>
+    <h2 class="ch-orange">Formally verifiable. Built for AI.</h2>
+    <p>Built-in contracts and safety profiles let you prove code correct with theorem provers. Simple rules + loud errors = <a href="/milo/ai-coding">LLMs catch mistakes at compile time, not in production</a>.</p>
   </div>
 </div>
 
 <div class="section-break"></div>
 
-### If you know TypeScript or Python, you know Milo
+### If you know TypeScript, you know Milo
 
 ```milo
 fn main(): i32 {
@@ -95,45 +95,9 @@ fn main(): i32 {
 }
 ```
 
-### Built for AI coding
+### Built for AI coding — formally verifiable
 
-C++ has ~200 categories of undefined behavior. Rust has lifetime annotations that trip up LLMs. Milo has neither — wrong code fails to compile with a clear error, not silently at runtime. Simple rules and loud errors mean LLMs spend less time fighting the compiler and more time shipping features.
-
-<div class="compare-grid">
-
-<div class="compare-col">
-
-**C++ — compiles, crashes**
-
-```cpp
-std::string_view getName() {
-    std::string s = "hello";
-    return s;  // dangling reference, UB
-}
-```
-
-</div>
-<div class="compare-col">
-
-**Milo — compile error**
-
-```milo
-fn getName(): &string {  // ERROR: can't return ref
-    let s = "hello"
-    return s
-}
-```
-
-</div>
-</div>
-
-Milo also ships `milo skill` — a machine-readable language guide that gives any LLM full knowledge of the language, standard library, and idioms in a single command.
-
-<a href="/milo/ai-coding">See the full comparison vs. C++ and Rust →</a>
-
-### Built-in contracts and safety profiles
-
-Annotate functions with contracts — the compiler type-checks them, and `milo verify` exports SMT-LIB2 verification conditions for theorem provers like Z3.
+AI-generated code needs more than type checks. Milo has built-in contracts — `requires`, `ensures`, `invariant` — that the compiler type-checks and `milo verify` exports as SMT-LIB2 for theorem provers like Z3. AI writes the code, the prover proves it correct.
 
 ```milo
 fn clamp(value: i64, lo: i64, hi: i64): i64
@@ -146,9 +110,11 @@ fn clamp(value: i64, lo: i64, hi: i64): i64
 }
 ```
 
-`milo safety --safety=do178c-a` checks your code against avionics, automotive, spacecraft, industrial, and medical device coding standards — recursion bans, complexity limits, allocation restrictions, and more. Safety profiles are built into the compiler with no third-party tools required.
+No lifetime annotations to trip up LLMs. No undefined behavior to hide bugs. Wrong code fails with a clear compile error — or gets formally disproved. `milo safety --safety=do178c-a` checks against avionics, automotive, and medical device coding standards with no third-party tools.
 
-<a href="/milo/language/safety">Learn about contracts and safety profiles →</a>
+Milo also ships `milo skill` — a machine-readable language guide that gives any LLM full knowledge of the language, standard library, and idioms in a single command.
+
+<a href="/milo/ai-coding">See the full comparison vs. C++ and Rust →</a> · <a href="/milo/language/safety">Contracts and safety profiles →</a>
 
 <div class="section-break"></div>
 
