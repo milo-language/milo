@@ -186,6 +186,7 @@ TypeChecker.prototype.monomorphizeFn = function(this: TypeChecker, baseName: str
       type: this.substituteMiloType(p.type, generic.typeParams, typeArgs),
     })),
     retType: this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs),
+    contracts: generic.decl.contracts ?? [],
     body: this.substituteBody(generic.decl.body, generic.typeParams, typeArgs),
     isExtern: false,
     isVariadic: false,

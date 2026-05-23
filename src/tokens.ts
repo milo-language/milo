@@ -37,6 +37,9 @@ export enum TokenKind {
   Type = "type",
   Parallel = "parallel",
   Interface = "interface",
+  Requires = "requires",
+  Ensures = "ensures",
+  Invariant = "invariant",
   // symbols
   LParen = "(",
   RParen = ")",
@@ -102,4 +105,5 @@ export const KEYWORDS = new Set([
   "fn", "extern", "let", "var", "return", "if", "else", "while",
   "true", "false", "struct", "enum", "match", "mut", "import", "from",
   "break", "continue", "as", "trait", "impl", "for", "in", "unsafe", "move", "null", "is", "type", "parallel", "interface",
+  "requires", "ensures", "invariant",
 ]);

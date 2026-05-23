@@ -80,7 +80,7 @@ export interface VarDecl { kind: "VarDecl"; name: string; type: MiloType | null;
 export interface Assign { kind: "Assign"; target: Expr; value: Expr; span?: Span }
 export interface Return { kind: "Return"; value: Expr | null; span?: Span }
 export interface IfStmt { kind: "IfStmt"; cond: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
-export interface WhileStmt { kind: "WhileStmt"; cond: Expr; body: Stmt[]; span?: Span }
+export interface WhileStmt { kind: "WhileStmt"; cond: Expr; invariants: Contract[]; body: Stmt[]; span?: Span }
 export interface ExprStmt { kind: "ExprStmt"; expr: Expr; span?: Span }
 export interface BreakStmt { kind: "BreakStmt"; span?: Span }
 export interface ContinueStmt { kind: "ContinueStmt"; span?: Span }
@@ -125,12 +125,19 @@ export interface EnumDecl {
   attributes?: Attribute[];
 }
 
+export interface Contract {
+  kind: "requires" | "ensures" | "invariant";
+  expr: Expr;
+  span?: Span;
+}
+
 export interface Function {
   kind: "Function";
   name: string;
   typeParams: TypeParam[];
   params: Param[];
   retType: MiloType;
+  contracts: Contract[];
   body: Stmt[];
   isExtern: boolean;
   isVariadic: boolean;

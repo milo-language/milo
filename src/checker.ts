@@ -537,6 +537,7 @@ export class TypeChecker {
         type: this.substituteMiloType(p.type, generic.typeParams, typeArgs),
       })),
       retType: this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs),
+      contracts: generic.decl.contracts ?? [],
       body: this.substituteBody(generic.decl.body, generic.typeParams, typeArgs),
       isExtern: false,
       isVariadic: false,
@@ -946,6 +947,7 @@ export class TypeChecker {
       typeParams: [],
       params: [selfParam, otherParam],
       retType: simpleType("bool"),
+      contracts: [],
       body: [{ kind: "Return" as const, value: body }],
       isExtern: false,
       isVariadic: false,
@@ -1184,6 +1186,7 @@ export class TypeChecker {
             typeParams: [],
             params: traitMethod.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
             retType: this.substituteSelfInMiloType(traitMethod.retType, typeName),
+            contracts: [],
             body: traitMethod.body!,
             isExtern: false,
             isVariadic: false,
@@ -1434,6 +1437,19 @@ export class TypeChecker {
       this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false });
     }
 
+    // `ensures` clauses can reference `result` — inject it with the return type
+    const hasEnsures = (fn.contracts ?? []).some(c => c.kind === "ensures");
+    if (hasEnsures && retType.tag !== "void") {
+      this.declare("result", { type: retType, mutable: false, moved: false, borrowed: false, read: true });
+    }
+
+    for (const c of fn.contracts ?? []) {
+      const cType = this.checkExpr(c.expr);
+      if (cType.tag !== "bool" && cType.tag !== "unknown") {
+        this.error(`${c.kind} clause must be bool, got ${typeName(cType)}`, c.span);
+      }
+    }
+
     for (const stmt of fn.body) this.checkStmt(stmt, retType);
 
     // Lint: warn if a non-ref, non-Copy param was never moved — suggest &T
@@ -1611,6 +1627,12 @@ export class TypeChecker {
         const condType = this.checkExpr(stmt.cond);
         if (condType.tag !== "bool" && condType.tag !== "unknown") {
           this.error(`while condition must be bool, got ${typeName(condType)}`, sp);
+        }
+        for (const inv of stmt.invariants ?? []) {
+          const invType = this.checkExpr(inv.expr);
+          if (invType.tag !== "bool" && invType.tag !== "unknown") {
+            this.error(`loop invariant must be bool, got ${typeName(invType)}`, inv.span);
+          }
         }
         const preMoves = this.snapshotMoveState();
         this.returnOnlyMovesStack.push(new Set());

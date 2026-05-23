@@ -14,6 +14,8 @@ import { resolveImports } from "./resolver";
 import { formatDiagnostic, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget } from "./target";
 import { format, formatFile } from "./formatter";
+import { generateVerificationConditions, formatVerifyReport } from "./verify";
+import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
 
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
@@ -285,11 +287,12 @@ function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, op
   }
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
   let noEntry = false;
+  let safetyLevel: string | null = null;
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
@@ -305,11 +308,13 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--deny" && i + 1 < args.length) { denied.add(args[++i]); }
     else if (args[i].startsWith("--allow=")) { allowed.add(args[i].slice(8)); }
     else if (args[i] === "--allow" && i + 1 < args.length) { allowed.add(args[++i]); }
+    else if (args[i].startsWith("--safety=")) { safetyLevel = args[i].slice(9); }
+    else if (args[i] === "--safety" && i + 1 < args.length) { safetyLevel = args[++i]; }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -715,6 +720,9 @@ function main() {
     console.log("  build-lib <files...>   compile to static library (.a)");
     console.log("  emit-js <file>         emit JavaScript (playground target)");
     console.log("  fmt <file...>          format source files (-w to write in place)");
+    console.log("  verify <file>          generate SMT-LIB2 verification conditions");
+    console.log("  safety <file>          check safety profile compliance");
+    console.log("  safety --list          list available safety profiles");
     console.log("  skill                  print language guide for LLMs");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
@@ -723,6 +731,7 @@ function main() {
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
     console.log("  --deny-all             treat all warnings as errors");
+    console.log("  --safety=<level>       enforce safety profile (e.g. --safety=do178c-a)");
     process.exit(1);
   }
 
@@ -798,7 +807,7 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel } = parseArgs(args.slice(1));
   const target = getHostTarget();
 
   if (cmd === "build-lib") {
@@ -811,7 +820,43 @@ function main() {
     return;
   }
 
+  if (cmd === "safety" && args.slice(1).includes("--list")) {
+    console.log(listSafetyLevels());
+    return;
+  }
+
   if (!source && cmd !== "--help") { console.error("error: no source file"); process.exit(1); }
+
+  if (cmd === "verify") {
+    const src = readFileSync(source!, "utf-8");
+    const sourceDir = dirname(resolve(source!));
+    const tokens = new Lexer(src).tokenize();
+    let program = new Parser(tokens, src).parse();
+    program = resolveImports(program, sourceDir, target);
+    new TypeChecker(warningConfig).check(program);
+    const result = generateVerificationConditions(program);
+    console.log(formatVerifyReport(result));
+    return;
+  }
+
+  if (cmd === "safety") {
+    const level = parseSafetyLevel(safetyLevel ?? args[2] ?? "");
+    if (!level) {
+      console.error(`unknown safety level: ${safetyLevel ?? args[2] ?? "(none)"}`);
+      console.error("use 'milo safety --list' to see available profiles");
+      process.exit(1);
+    }
+    const src = readFileSync(source!, "utf-8");
+    const sourceDir = dirname(resolve(source!));
+    const tokens = new Lexer(src).tokenize();
+    let program = new Parser(tokens, src).parse();
+    program = resolveImports(program, sourceDir, target);
+    new TypeChecker(warningConfig).check(program);
+    const violations = checkSafetyCompliance(program, level);
+    console.log(formatSafetyReport(violations, level));
+    if (violations.some(v => v.severity === "error")) process.exit(1);
+    return;
+  }
 
   if (cmd === "test") {
     const testArgs = args.slice(1);

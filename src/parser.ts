@@ -286,7 +286,7 @@ export class Parser {
     const name = this.expect(TokenKind.Ident).value;
     const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
-    return { kind: "Function", name, typeParams: [], params, retType, body: [], isExtern: true, isVariadic: variadic };
+    return { kind: "Function", name, typeParams: [], params, retType, contracts: [], body: [], isExtern: true, isVariadic: variadic };
   }
 
   private parseExternType(): StructDecl {
@@ -321,10 +321,22 @@ export class Parser {
     const typeParams = this.parseTypeParams();
     const { params, variadic } = this.parseParamList();
     const retType = this.parseReturnType();
+    const contracts = this.parseContracts();
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
-    return { kind: "Function", name, typeParams, params, retType, body, isExtern: false, isVariadic: variadic };
+    return { kind: "Function", name, typeParams, params, retType, contracts, body, isExtern: false, isVariadic: variadic };
+  }
+
+  private parseContracts(): import("./ast").Contract[] {
+    const contracts: import("./ast").Contract[] = [];
+    while (this.at(TokenKind.Requires) || this.at(TokenKind.Ensures) || this.at(TokenKind.Invariant)) {
+      const s = this.span(this.peek());
+      const kind = this.advance().value as "requires" | "ensures" | "invariant";
+      const expr = this.parseExpr();
+      contracts.push({ kind, expr, span: s });
+    }
+    return contracts;
   }
 
   private parseTypeParams(): import("./ast").TypeParam[] {
@@ -604,10 +616,11 @@ export class Parser {
     const s = this.span(this.peek());
     this.expect(TokenKind.While);
     const cond = this.parseExpr();
+    const invariants = this.parseContracts().filter(c => c.kind === "invariant");
     this.expect(TokenKind.LBrace);
     const body = this.parseStmts();
     this.expect(TokenKind.RBrace);
-    return { kind: "WhileStmt", cond, body, span: s };
+    return { kind: "WhileStmt", cond, invariants, body, span: s };
   }
 
   private parseFor(): Stmt {
