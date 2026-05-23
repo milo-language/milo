@@ -9,7 +9,7 @@ hero:
       text: Get Started
       link: /getting-started/installation
     - theme: alt
-      text: Language Overview
+      text: Learn More
       link: /language/
 ---
 
@@ -24,13 +24,13 @@ hero:
   </div>
   <div class="color-item">
     <h2 class="ch-orange">Learn it in a weekend. So does your AI.</h2>
-    <p>If you've written any typed language, you already know most of Milo. Simple rules + loud errors = <a href="/milo/ai-coding">LLMs write correct Milo on the first try</a>.</p>
+    <p>If you've written any typed language, you already know most of Milo. Simple rules + loud errors = <a href="/milo/ai-coding">LLMs catch mistakes at compile time, not in production</a>.</p>
   </div>
 </div>
 
 <div class="section-break"></div>
 
-### If you know Go or TypeScript, you know Milo
+### If you know TypeScript or Python, you know Milo
 
 ```milo
 fn main(): i32 {
@@ -71,25 +71,7 @@ fn main(): i32 {
 }
 ```
 
-Fan out with `Promise.all` to run tasks in parallel and collect results:
-
-```milo
-from "std/net" import { fetch }
-from "std/runtime" import { Promise }
-
-fn main(): i32 {
-    let urls = ["https://api.dev/users", "https://api.dev/posts", "https://api.dev/tags"]
-    let results = Promise.all(urls.map((url: &string) => {
-        Promise(() => fetch(url.clone())!)
-    })).await()!
-    for r in results {
-        print(r.status, " ", r.body.len, " bytes")
-    }
-    return 0
-}
-```
-
-### Real programs
+### Batteries included
 
 A web server with routing, path params, and closures — all from the standard library.
 
@@ -115,7 +97,7 @@ fn main(): i32 {
 
 ### Built for AI coding
 
-C++ has ~200 categories of undefined behavior. Rust has lifetime annotations that trip up LLMs. Milo has neither — wrong code fails to compile with a clear error, not silently at runtime. Simple rules and loud errors mean LLMs write correct systems code on the first try.
+C++ has ~200 categories of undefined behavior. Rust has lifetime annotations that trip up LLMs. Milo has neither — wrong code fails to compile with a clear error, not silently at runtime. Simple rules and loud errors mean LLMs spend less time fighting the compiler and more time shipping features.
 
 <div class="compare-grid">
 
@@ -157,6 +139,7 @@ Milo also ships `milo skill` — a machine-readable language guide that gives an
 
 <div class="cta-buttons">
   <a class="cta-primary" href="/milo/getting-started/installation">Get Started</a>
+  <a class="cta-secondary" href="/milo/language/">Learn More</a>
   <a class="cta-secondary" href="/milo/roadmap">Roadmap</a>
   <a class="cta-secondary" href="https://github.com/cs01/milo">GitHub</a>
 </div>

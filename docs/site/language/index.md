@@ -486,24 +486,6 @@ fn main(): i32 {
 }
 ```
 
-Fan out with `Promise.all` to run tasks in parallel:
-
-```milo
-from "std/runtime" import { Promise }
-
-fn main(): i32 {
-    var tasks: Vec<Promise<i64>> = Vec.new()
-    tasks.push(Promise((): i64 => { return fetchA() }))
-    tasks.push(Promise((): i64 => { return fetchB() }))
-
-    let results = Promise.all(tasks).await()!
-    for r in results {
-        print(r)
-    }
-    return 0
-}
-```
-
 ### Threads and Channels
 
 For CPU-bound parallelism, use OS threads. They communicate through typed channels:

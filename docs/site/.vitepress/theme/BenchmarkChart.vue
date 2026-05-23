@@ -1,24 +1,27 @@
 <template>
   <div class="bench-chart">
     <div class="bench-legend">
-      <span class="legend-item"><span class="legend-dot" style="background: #4a7fff"></span>Milo</span>
-      <span class="legend-item"><span class="legend-dot" style="background: #8b949e"></span>C</span>
-      <span class="legend-item"><span class="legend-dot" style="background: #36bcb8"></span>Go</span>
+      <span class="legend-item"><span class="legend-dot" style="background: #5b8def"></span>Milo</span>
+      <span class="legend-item"><span class="legend-dot" style="background: #e8873b"></span>C</span>
+      <span class="legend-item"><span class="legend-dot" style="background: #59c98d"></span>Go</span>
     </div>
     <div v-for="b in benchmarks" :key="b.name" class="bench-group">
       <div class="bench-label">{{ b.name }}</div>
       <div class="bench-bars">
         <div class="bench-row">
+          <span class="bar-lang">Milo</span>
           <div class="bar bar-milo" :style="{ width: pct(b, b.milo) + '%' }">
             <span class="bar-value">{{ b.milo }}ms</span>
           </div>
         </div>
         <div class="bench-row">
+          <span class="bar-lang">C</span>
           <div class="bar bar-c" :style="{ width: pct(b, b.c) + '%' }">
             <span class="bar-value">{{ b.c }}ms{{ b.cNote || '' }}</span>
           </div>
         </div>
         <div class="bench-row">
+          <span class="bar-lang">Go</span>
           <div class="bar bar-go" :style="{ width: pct(b, b.go) + '%' }">
             <span class="bar-value">{{ b.go }}ms</span>
           </div>
@@ -99,6 +102,17 @@ function pct(b, val) {
   align-items: center;
 }
 
+.bar-lang {
+  width: 32px;
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--vp-c-text-2);
+  font-family: var(--vp-font-family-mono);
+  text-align: right;
+  padding-right: 8px;
+}
+
 .bar {
   height: 100%;
   border-radius: 4px;
@@ -110,9 +124,9 @@ function pct(b, val) {
   transition: width 0.4s ease;
 }
 
-.bar-milo { background: #4a7fff; }
-.bar-c { background: #8b949e; }
-.bar-go { background: #36bcb8; }
+.bar-milo { background: #5b8def; }
+.bar-c { background: #e8873b; }
+.bar-go { background: #59c98d; }
 
 .bar-value {
   font-size: 0.72rem;

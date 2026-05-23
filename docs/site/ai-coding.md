@@ -1,6 +1,6 @@
 # AI-Assisted Development
 
-Milo is designed so that **wrong code fails to compile, not fails silently at runtime**. This makes it uniquely suited for AI-assisted development — LLM-generated code either compiles and is correct, or fails with a clear error message. There is no middle ground where code compiles, appears to work, and has a latent memory safety bug.
+Milo is designed so that **wrong code fails to compile, not fails silently at runtime**. This makes it well-suited for AI-assisted development — when LLM-generated code has a bug, the compiler catches it with a clear error message rather than letting it slip through to production. There is no middle ground where code compiles, appears to work, and has a latent memory safety bug.
 
 ## The precision floor
 
@@ -19,7 +19,7 @@ Milo ships a machine-readable language guide for LLMs:
 milo skill    # prints a complete language guide optimized for LLM context windows
 ```
 
-Pipe it into any AI tool as system context. The guide covers syntax, standard library, common patterns, and key rules — everything an LLM needs to generate correct Milo code on the first try.
+Pipe it into any AI tool as system context. The guide covers syntax, standard library, common patterns, and key rules — everything an LLM needs to generate idiomatic Milo with minimal iteration.
 
 ## vs. C++: silent bugs
 
@@ -231,4 +231,4 @@ Rust catches more bugs at compile time. But the cost is a higher precision floor
 | Thread safety | Nothing enforced | Send/Sync | Send/Sync | Data races can't compile (both) |
 | Error handling | Exceptions (invisible) | `Result<T,E>` + `?` | `Result<T,E>` + `?` | Error paths can't be ignored (both) |
 | Build complexity | Headers, includes, ODR | Cargo (good) | Single files, simple imports | Less surface area for confusion |
-| Precision floor | Very high | High (lifetimes) | Low | LLMs write correct code on first try |
+| Precision floor | Very high | High (lifetimes) | Low (for a systems lang) | Fewer iteration loops between LLM and compiler |
