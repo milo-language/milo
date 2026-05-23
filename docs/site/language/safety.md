@@ -1,8 +1,8 @@
 # Contracts & Safety
 
-Milo has built-in support for **design-by-contract** annotations and **safety profile checking**. Contracts let you state what a function expects and guarantees. The compiler type-checks them, and can export them as formal verification conditions for SMT solvers like Z3. Safety profiles enforce domain-specific coding standards (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304) at compile time.
+Milo has built-in support for **design-by-contract** annotations and **safety profile checking**. Contracts let you state what a function expects and guarantees — the compiler type-checks contract expressions and can export them as SMT-LIB2 verification conditions for external solvers like Z3. Safety profiles enforce domain-specific coding standards (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304) at compile time.
 
-This is compile-time only — no runtime assertions, no overhead. The compiler proves your code is correct or rejects it.
+Contracts have zero runtime cost — they are checked for well-formedness at compile time but are not inserted into the generated binary. To verify that contracts actually hold, use `milo verify` to generate SMT-LIB2 output and pipe it to an external theorem prover.
 
 ## Contracts
 
@@ -72,7 +72,7 @@ fn sumTo(n: i64): i64
 
 ### What the compiler checks
 
-Contracts are type-checked — every `requires`, `ensures`, and `invariant` expression must be `bool`. The compiler rejects non-boolean contract expressions at compile time:
+The compiler type-checks contract expressions — every `requires`, `ensures`, and `invariant` must evaluate to `bool`. Non-boolean expressions are rejected at compile time:
 
 ```
 error: requires clause must be bool, got i64
@@ -82,7 +82,9 @@ error: requires clause must be bool, got i64
   |            ^^^^^
 ```
 
-## Formal verification — `milo verify`
+Note: the compiler does **not** verify that contracts hold — it only checks that they are well-typed. To prove correctness, export verification conditions with `milo verify` and check them with an SMT solver (see below).
+
+## Verification condition export — `milo verify`
 
 The `verify` command translates contracts into [SMT-LIB2](https://smtlib.cs.uiowa.edu/) format — the standard input language for theorem provers like [Z3](https://github.com/Z3Prover/z3) and [CVC5](https://cvc5.github.io/).
 
@@ -104,9 +106,11 @@ precondition of clamp: (<= lo hi)
 ; sat = precondition can be violated, unsat = always holds
 ```
 
-If Z3 returns `unsat`, the condition always holds — your contract is mathematically proven. If it returns `sat`, there exists a counterexample where the contract can be violated.
+If Z3 returns `unsat`, the condition always holds. If it returns `sat`, there exists a counterexample where the contract can be violated.
 
-This is the same approach used in SPARK/Ada (the only other systems language with built-in formal verification) and Dafny. The difference: Milo doesn't require a separate toolchain or annotation language. Contracts are part of the language.
+**Current limitations:** Verification condition generation currently covers preconditions and loop invariants. Postcondition verification requires modeling the function body (weakest-precondition analysis), which is not yet implemented — postcondition VCs are exported but do not model the relationship between inputs and return values. This is an active area of development.
+
+This approach — contracts as source-level annotations with SMT export — is similar to SPARK/Ada and Dafny. Unlike SPARK, Milo does not bundle a solver or run verification automatically; you need Z3 or CVC5 installed separately. The advantage over external annotation languages is that contracts use Milo syntax and are type-checked alongside your code.
 
 ## Safety profiles — `milo safety`
 
@@ -167,11 +171,11 @@ The command exits with code 1 if any errors are found, making it suitable for CI
 
 ## Why this matters
 
-Most languages bolt safety analysis on after the fact with expensive third-party tools (LDRA, Polyspace, Coverity). In Milo, it's part of the compiler:
+Most languages bolt safety analysis on after the fact with expensive third-party tools (LDRA, Polyspace, Coverity). Milo integrates these concerns into the language:
 
-- **Contracts are code, not comments.** They're type-checked, versioned, and can't drift from the implementation.
-- **Formal verification without a separate toolchain.** One command generates SMT-LIB2 from the same source file.
-- **Standards compliance as a compiler flag.** No separate static analysis pass, no proprietary tool licenses.
-- **Zero runtime cost.** Everything is checked at compile time. Your binary is just as fast with contracts as without.
+- **Contracts are code, not comments.** They're type-checked and versioned alongside the implementation. (Note: the compiler checks that contracts are well-typed, not that they hold — use `milo verify` + an SMT solver for that.)
+- **SMT-LIB2 export from the same source file.** No separate annotation language — one command generates verification conditions from your contracts.
+- **Standards compliance as a compiler flag.** Safety profiles check structural coding constraints (recursion, allocation, complexity) at compile time, no proprietary tool licenses.
+- **Zero runtime cost.** Contracts are not inserted into the binary.
 
-Combined with Milo's existing ownership system (no use-after-free, no data races, no null pointer dereferences), contracts close the gap on *logic errors* — the class of bugs that memory safety alone can't catch.
+Combined with Milo's existing ownership system (no use-after-free, no data races, no null pointer dereferences), contracts provide a path toward catching *logic errors* — the class of bugs that memory safety alone can't prevent.

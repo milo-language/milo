@@ -131,9 +131,9 @@ Milo also ships `milo skill` — a machine-readable language guide that gives an
 
 <a href="/milo/ai-coding">See the full comparison vs. C++ and Rust →</a>
 
-### Built-in formal verification and safety profiles
+### Built-in contracts and safety profiles
 
-Annotate functions with contracts — the compiler proves them correct at compile time, with zero runtime cost.
+Annotate functions with contracts — the compiler type-checks them, and `milo verify` exports SMT-LIB2 verification conditions for theorem provers like Z3.
 
 ```milo
 fn clamp(value: i64, lo: i64, hi: i64): i64
@@ -146,7 +146,7 @@ fn clamp(value: i64, lo: i64, hi: i64): i64
 }
 ```
 
-`milo verify` exports SMT-LIB2 for theorem provers like Z3. `milo safety --safety=do178c-a` checks your code against avionics, automotive, spacecraft, industrial, and medical device coding standards. No third-party tools, no proprietary licenses — it's built into the compiler.
+`milo safety --safety=do178c-a` checks your code against avionics, automotive, spacecraft, industrial, and medical device coding standards — recursion bans, complexity limits, allocation restrictions, and more. Safety profiles are built into the compiler with no third-party tools required.
 
 <a href="/milo/language/safety">Learn about contracts and safety profiles →</a>
 
