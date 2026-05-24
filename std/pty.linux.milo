@@ -2,7 +2,7 @@
 
 from "std/os" import {
     close, dup2, execvp, fork, free, grantpt, ioctl, isatty, malloc,
-    memcpy, open, posix_openpt, ptsname, read, setsid, unlockpt,
+    memcpy, memset, open, posix_openpt, ptsname, read, setsid, unlockpt,
     waitpid, write
 }
 
@@ -68,13 +68,21 @@ impl Pty {
             let argc = args.len + 2
             let argv = malloc(argc * 8)
 
-            var progPtr = program as *u8
-            memcpy(argv, (&progPtr) as *u8, 8)
+            // strdup program into argv[0]
+            let plen = program.len
+            let pcopy = malloc(plen + 1)
+            memcpy(pcopy, program as *u8, plen)
+            memset((pcopy as i64 + plen) as *u8, 0, 1)
+            memcpy(argv, (&pcopy) as *u8, 8)
 
+            // strdup each arg into argv[1..n]
             for i in 0..args.len {
                 let arg = args[i]
-                var argPtr = arg as *u8
-                memcpy((argv as i64 + (i + 1) * 8) as *u8, (&argPtr) as *u8, 8)
+                let alen = arg.len
+                let acopy = malloc(alen + 1)
+                memcpy(acopy, arg as *u8, alen)
+                memset((acopy as i64 + alen) as *u8, 0, 1)
+                memcpy((argv as i64 + (i + 1) * 8) as *u8, (&acopy) as *u8, 8)
             }
 
             var nullPtr: *u8 = 0 as *u8
@@ -82,7 +90,7 @@ impl Pty {
 
             let pid = fork()
             if pid < 0 {
-                free(argv)
+                _freeArgv(argv, argc)
                 return Result.Err("fork failed")
             }
 
@@ -96,11 +104,11 @@ impl Pty {
                 dup2(slave, 2)
                 if slave > 2 { close(slave) }
                 close(self.masterFd)
-                execvp(program, argv)
+                execvp(pcopy, argv)
                 exit(127)
             }
 
-            free(argv)
+            _freeArgv(argv, argc)
             self.childPid = pid
             return Result.Ok(pid)
         }
@@ -154,4 +162,15 @@ fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
     var pty = Pty.open()?
     pty.spawn(program, args)?
     return Result.Ok(pty)
+}
+
+fn _freeArgv(argv: *u8, argc: i64): void {
+    unsafe {
+        for i in 0..(argc - 1) {
+            var p: *u8 = 0 as *u8
+            memcpy((&p) as *u8, (argv as i64 + i * 8) as *u8, 8)
+            if p as i64 != 0 { free(p) }
+        }
+        free(argv)
+    }
 }
