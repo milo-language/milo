@@ -1,20 +1,55 @@
 # Contracts & Safety
 
-Milo has built-in support for **design-by-contract** annotations and **safety profile checking**. Contracts let you state what a function expects and guarantees — the compiler type-checks contract expressions and can export them as SMT-LIB2 verification conditions for external solvers like Z3. Safety profiles enforce domain-specific coding standards (DO-178C, ISO 26262, NASA, IEC 61508, IEC 62304) at compile time.
+Milo lets you write down what your functions promise — and then prove it.
 
-Contracts have zero runtime cost — they are checked for well-formedness at compile time but are not inserted into the generated binary. To verify that contracts actually hold, use `milo verify` to generate SMT-LIB2 output and pipe it to an external theorem prover.
+- **Contracts** (`requires`, `ensures`, `invariant`) are annotations that say what a function expects, what it guarantees, and what stays true inside loops. The compiler type-checks them alongside your code — no separate annotation language, no external tool needed just to write them.
+- **Safety profiles** enforce coding standards from domains like avionics (DO-178C), automotive (ISO 26262), and medical devices (IEC 62304) — as compiler flags, not expensive third-party tools.
 
-## Why this matters
+A few things worth knowing up front:
 
-Most languages bolt safety analysis on after the fact with expensive third-party tools (LDRA, Polyspace, Coverity). Milo integrates these concerns into the language:
+- **Zero runtime cost.** Contracts are checked for well-formedness at compile time but never inserted into the binary.
+- **Proving is separate.** The compiler catches ill-formed contracts (type errors, bad references). To verify contracts actually *hold*, run `milo verify` to export SMT-LIB2 and pipe it to a solver like [Z3](https://github.com/Z3Prover/z3). This is the same architecture used by SPARK/Ada and Dafny.
+- **Ownership already covers memory safety.** Contracts extend that to *logic errors* — the class of bugs that use-after-free protection can't catch.
 
-- **Contracts are code, not comments.** They're type-checked and versioned alongside the implementation — use `milo verify` + an SMT solver to prove they hold.
-- **SMT-LIB2 export from the same source file.** No separate annotation language — one command generates verification conditions from your contracts.
-- **Standards compliance as a compiler flag.** Safety profiles check structural coding constraints (recursion, allocation, complexity) at compile time, no proprietary tool licenses.
-- **WCET-ready by construction.** Code that passes a safety profile satisfies the structural prerequisites for worst-case execution time analysis.
-- **Zero runtime cost.** Contracts are not inserted into the binary.
+## Why types aren't enough
 
-Combined with Milo's existing ownership system (no use-after-free, no data races, no null pointer dereferences), contracts provide a path toward catching *logic errors* — the class of bugs that memory safety alone can't prevent.
+Types catch a lot — you can't pass a `String` where an `i64` is expected. But they can't express *value* constraints. Consider a square root function:
+
+```milo
+fn sqrt(n: f64): f64 {
+    // ...
+}
+```
+
+The type system says `n` is an `f64`. It doesn't say `n` must be non-negative — so a caller can pass `-1.0` and get garbage (or a panic) at runtime. That's a logic error hiding behind a perfectly valid type signature.
+
+With a contract, the constraint is explicit and compiler-checked:
+
+```milo
+fn sqrt(n: f64): f64
+  requires n >= 0.0
+  ensures result >= 0.0
+{
+    // ...
+}
+```
+
+`result` is a special keyword in `ensures` clauses — it refers to the return value of the function.
+
+Now anyone reading this function knows exactly what it needs and what it promises.
+
+But wait — what about runtime values? If `n` comes from a sensor reading, nobody can prove it's non-negative at compile time. That's not what verification does. What `milo verify` + Z3 actually checks is the *chain of proof obligations*: if you call `sqrt(sensorValue)` without first checking `sensorValue >= 0.0`, the verifier flags it. You still write a runtime check at the boundary where unknown data enters — the proof just guarantees you never forgot one.
+
+```milo
+fn processSensor(raw: f64): f64 {
+    if raw < 0.0 {
+        return 0.0           // handle the bad case
+    }
+    return sqrt(raw)          // verifier knows raw >= 0.0 here
+}
+```
+
+This is the gap contracts fill: **types describe the shape of data, contracts describe the rules about values.** Milo's ownership system prevents memory bugs (use-after-free, data races, null dereferences). Contracts extend that to logic errors — the bugs that memory safety alone can't catch, and that runtime checks alone can't guarantee you remembered everywhere.
 
 ## Why an SMT solver?
 
