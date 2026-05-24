@@ -12,11 +12,21 @@
 // Verify safety compliance:
 //   milo safety examples/apps/flightController.milo --safety=do178
 
-from "std/math" import { clampF64, fabs }
-from "std/io" import { writeStdout }
-from "std/time" import { sleepMs }
-from "std/strconv" import { formatFloat }
-from "std/term" import { enableRawMode, restoreTerminal, readKey, KEY_UP, KEY_DOWN, KEY_QUIT }
+from "std/math" import {
+    clampF64, fabs
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs
+}
+from "std/strconv" import {
+    formatFloat
+}
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey, KEY_UP, KEY_DOWN, KEY_QUIT
+}
 
 // ── PID controller ──
 
@@ -31,10 +41,10 @@ struct Pid {
 }
 
 fn pidNew(kp: f64, ki: f64, kd: f64, outMin: f64, outMax: f64): Pid
-  requires kp >= 0.0
-  requires ki >= 0.0
-  requires kd >= 0.0
-  requires outMin < outMax
+requires kp >= 0.0
+requires ki >= 0.0
+requires kd >= 0.0
+requires outMin < outMax
 {
     return Pid {
         kp: kp,
@@ -48,8 +58,8 @@ fn pidNew(kp: f64, ki: f64, kd: f64, outMin: f64, outMax: f64): Pid
 }
 
 fn pidUpdate(pid: &mut Pid, error: f64, dt: f64): f64
-  requires dt > 0.0
-  ensures result >= pid.outMin && result <= pid.outMax
+requires dt > 0.0
+ensures result >= pid.outMin && result <= pid.outMax
 {
     pid.integral = pid.integral + error * dt
     let derivative = (error - pid.prevError) / dt
@@ -66,8 +76,8 @@ struct AltState {
 }
 
 fn physicsTick(state: &mut AltState, thrust: f64, dt: f64): void
-  requires dt > 0.0
-  requires thrust >= 0.0 && thrust <= 1.0
+requires dt > 0.0
+requires thrust >= 0.0 && thrust <= 1.0
 {
     let maxThrust = 20.0
     let mass = 1.5
@@ -91,14 +101,14 @@ fn physicsTick(state: &mut AltState, thrust: f64, dt: f64): void
 // pure ASCII + ANSI background colors only — no box-drawing or unicode
 
 fn cl(s: &string): void
-  requires s.len >= 0
+requires s.len >= 0
 {
     writeStdout(s)
     writeStdout("\x1b[K\n")
 }
 
 fn renderFrame(alt: f64, vel: f64, target: f64, thrust: f64, tick: i64): void
-  requires tick >= 0
+requires tick >= 0
 {
     writeStdout("\x1b[H")
 
@@ -190,7 +200,7 @@ fn main(): i32 {
     }
 
     var target = 15.0
-    var pid = pidNew(0.6, 0.08, 0.4, -0.5, 0.5)
+    var pid = pidNew(0.6, 0.15, 0.4, -0.5, 0.5)
 
     let dt = 0.02
 
@@ -225,3 +235,4 @@ fn main(): i32 {
 
     return 0
 }
+

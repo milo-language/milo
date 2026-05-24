@@ -13,7 +13,7 @@ extern fn sysconf(name: i32): i64
 extern fn getloadavg(loadavg: *f64, nelem: i32): i32
 extern fn sysctlbyname(name: *u8, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
 extern fn sysctl(name: *i32, namelen: u32, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
-extern fn gettimeofday(tv: *i64, tz: *u8): i32
+extern fn gettimeofday(tv: *u8, tz: *u8): i32
 
 // Mach
 extern fn mach_host_self(): u32
@@ -80,14 +80,17 @@ fn totalMem(): i64 {
 }
 
 fn freeMem(): i64 {
-    // HOST_VM_INFO64 = 4, count = 38, free_count at offset 0
+    // HOST_VM_INFO64 = 4, count = 38
+    // Include inactive + purgeable pages as available (matches Activity Monitor)
     var stats: [u8; 512] = [0; 512]
     var count: [u32; 1] = [38]
     unsafe {
         if host_statistics64(mach_host_self(), 4, stats, count as *u32) == 0 {
             let freePages = (stats as *u32)[0] as i64
+            let inactivePages = (stats as *u32)[2] as i64
+            let purgeablePages = (stats as *u32)[22] as i64
             let pageSize = sysconf(29)
-            return freePages * pageSize
+            return (freePages + inactivePages + purgeablePages) * pageSize
         }
     }
     return 0
@@ -102,9 +105,14 @@ fn uptime(): i64 {
         if sysctl(mib as *i32, 2, boottime as *u8, len as *i64, 0 as *u8, 0) != 0 {
             return 0
         }
-        var now: [i64; 2] = [0, 0]
-        gettimeofday(now as *i64, 0 as *u8)
-        return now[0] - boottime[0]
+        var tvbuf: [u8; 16] = [0; 16]
+        gettimeofday(tvbuf, 0 as *u8)
+        // seconds at offset 0 (little-endian i64)
+        var nowSec: i64 = 0
+        for i in 0..8 {
+            nowSec = nowSec | ((tvbuf[i] as i64) << (i as i64 * 8))
+        }
+        return nowSec - boottime[0]
     }
 }
 

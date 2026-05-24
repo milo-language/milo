@@ -1,0 +1,75 @@
+// std/term — terminal raw mode and keyboard input (macOS)
+
+from "std/os" import { read, tcgetattr, tcsetattr }
+
+let KEY_NONE: i32 = 0
+let KEY_UP: i32 = 1
+let KEY_DOWN: i32 = 2
+let KEY_LEFT: i32 = 3
+let KEY_RIGHT: i32 = 4
+let KEY_QUIT: i32 = 5
+
+// macOS arm64: termios is 72 bytes, padded to 80
+struct TermState {
+    saved: [u8; 80],
+}
+
+fn enableRawMode(): TermState {
+    var state = TermState {
+        saved: [0; 80],
+    }
+
+    unsafe {
+        tcgetattr(0, state.saved as *u8)
+
+        var raw: [u8; 80] = [0; 80]
+        for i in 0..80 {
+            raw[i] = state.saved[i]
+        }
+
+        // c_lflag at offset 24: clear ECHO (bit 3) and ICANON (bit 8)
+        let b0 = raw[24] as i32
+        raw[24] = (b0 & 0xF7) as u8
+        let b1 = raw[25] as i32
+        raw[25] = (b1 & 0xFE) as u8
+
+        // VMIN=0, VTIME=0 — non-blocking reads without O_NONBLOCK
+        // (O_NONBLOCK on stdin would also affect stdout via shared pty fd)
+        raw[48] = 0
+        raw[49] = 0
+
+        tcsetattr(0, 0, raw as *u8)
+    }
+
+    return state
+}
+
+fn restoreTerminal(state: &TermState): void {
+    unsafe {
+        tcsetattr(0, 0, state.saved as *u8)
+    }
+}
+
+// read a keypress without blocking; returns KEY_* constant
+fn readKey(): i32 {
+    var buf: [u8; 3] = [0; 3]
+    unsafe {
+        let n = read(0, buf, 1)
+        if n <= 0 {
+            return KEY_NONE
+        }
+        if buf[0] == 113 {
+            return KEY_QUIT
+        }
+        if buf[0] == 27 {
+            let n2 = read(0, buf, 2)
+            if n2 == 2 && buf[0] == 91 {
+                if buf[1] == 65 { return KEY_UP }
+                if buf[1] == 66 { return KEY_DOWN }
+                if buf[1] == 68 { return KEY_LEFT }
+                if buf[1] == 67 { return KEY_RIGHT }
+            }
+        }
+        return KEY_NONE
+    }
+}
