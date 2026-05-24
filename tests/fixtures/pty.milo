@@ -1,0 +1,21 @@
+// @expect: pty opened
+// @expect: slave path starts with /dev/
+
+from "std/pty" import { Pty }
+
+fn main(): void {
+    match Pty.open() {
+        Result.Ok(pty) => {
+            print("pty opened")
+            if pty.slavePath.startsWith("/dev/") {
+                print("slave path starts with /dev/")
+            } else {
+                print($"unexpected path: {pty.slavePath}")
+            }
+            pty.close()
+        }
+        Result.Err(msg) => {
+            print($"error: {msg}")
+        }
+    }
+}

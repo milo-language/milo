@@ -1,0 +1,37 @@
+// @expect: pty opened
+// @expect: child spawned
+// @expect: child exited 0
+
+from "std/pty" import { Pty }
+
+fn main(): i32 {
+    match Pty.open() {
+        Result.Ok(pty) => {
+            print("pty opened")
+
+            var args: Vec<string> = Vec.new()
+            args.push("hello from pty")
+
+            match pty.spawn("echo", args) {
+                Result.Ok(_pid) => {
+                    print("child spawned")
+
+                    var buf: [u8; 256] = [0; 256]
+                    unsafe { let _n = pty.read(buf as *u8, 255) }
+
+                    let status = pty.wait()
+                    print($"child exited {status}")
+                }
+                Result.Err(msg) => {
+                    print($"spawn error: {msg}")
+                }
+            }
+
+            pty.close()
+        }
+        Result.Err(msg) => {
+            print($"openPty error: {msg}")
+        }
+    }
+    return 0
+}

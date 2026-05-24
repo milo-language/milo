@@ -316,6 +316,10 @@ extern
 
 fn ioctl(fd: i32, request: i64, ...): i32
 
+extern
+
+fn isatty(fd: i32): i32
+
 // ── PTY ──
 
 extern

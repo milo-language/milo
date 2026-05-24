@@ -1,0 +1,157 @@
+// std/pty — pseudoterminal support (Linux)
+
+from "std/os" import {
+    close, dup2, execvp, fork, free, grantpt, ioctl, isatty, malloc,
+    memcpy, open, posix_openpt, ptsname, read, setsid, unlockpt,
+    waitpid, write
+}
+
+fn tiocgwinsz(): i64 { return 21523 }
+fn tiocswinsz(): i64 { return 21524 }
+fn tiocsctty(): i64 { return 21518 }
+
+struct WinSize {
+    rows: u16,
+    cols: u16,
+    xpixel: u16,
+    ypixel: u16,
+}
+
+struct Pty {
+    masterFd: i32,
+    slavePath: string,
+    childPid: i32,
+}
+
+// Returns true if fd is connected to a terminal.
+fn fdIsTerminal(fd: i32): bool {
+    unsafe { return isatty(fd) == 1 }
+}
+
+// Returns true if stdin is a terminal (process is interactive).
+fn isInteractive(): bool {
+    return fdIsTerminal(0)
+}
+
+impl Pty {
+    fn open(): Result<Pty, string> {
+        unsafe {
+            // O_RDWR=2 | O_NOCTTY=0x100
+            let master = posix_openpt(258)
+            if master < 0 { return Result.Err("posix_openpt failed") }
+
+            if grantpt(master) != 0 {
+                close(master)
+                return Result.Err("grantpt failed")
+            }
+            if unlockpt(master) != 0 {
+                close(master)
+                return Result.Err("unlockpt failed")
+            }
+
+            let namePtr = ptsname(master)
+            if namePtr as i64 == 0 {
+                close(master)
+                return Result.Err("ptsname failed")
+            }
+
+            let name = _cstrToString(namePtr)
+            return Result.Ok(Pty { masterFd: master, slavePath: name, childPid: -1 })
+        }
+    }
+
+    // Spawn child connected to PTY.
+    fn spawn(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string>
+      requires self.masterFd >= 0
+    {
+        unsafe {
+            let argc = args.len + 2
+            let argv = malloc(argc * 8)
+
+            var progPtr = program as *u8
+            memcpy(argv, (&progPtr) as *u8, 8)
+
+            for i in 0..args.len {
+                let arg = args[i]
+                var argPtr = arg as *u8
+                memcpy((argv as i64 + (i + 1) * 8) as *u8, (&argPtr) as *u8, 8)
+            }
+
+            var nullPtr: *u8 = 0 as *u8
+            memcpy((argv as i64 + (argc - 1) * 8) as *u8, (&nullPtr) as *u8, 8)
+
+            let pid = fork()
+            if pid < 0 {
+                free(argv)
+                return Result.Err("fork failed")
+            }
+
+            if pid == 0 {
+                setsid()
+                let slave = open(self.slavePath, 2)
+                if slave < 0 { exit(1) }
+                ioctl(slave, tiocsctty(), 0)
+                dup2(slave, 0)
+                dup2(slave, 1)
+                dup2(slave, 2)
+                if slave > 2 { close(slave) }
+                close(self.masterFd)
+                execvp(program, argv)
+                exit(127)
+            }
+
+            free(argv)
+            self.childPid = pid
+            return Result.Ok(pid)
+        }
+    }
+
+    fn read(self: &Self, buf: *u8, len: i64): i64
+      requires len > 0
+    {
+        unsafe { return read(self.masterFd, buf, len) }
+    }
+
+    fn write(self: &Self, buf: *u8, len: i64): i64
+      requires len > 0
+    {
+        unsafe { return write(self.masterFd, buf, len) }
+    }
+
+    fn writeStr(self: &Self, s: &string): i64 {
+        unsafe { return write(self.masterFd, s as *u8, s.len) }
+    }
+
+    fn resize(self: &Self, rows: u16, cols: u16): i32 {
+        var ws = WinSize { rows: rows, cols: cols, xpixel: 0, ypixel: 0 }
+        unsafe { return ioctl(self.masterFd, tiocswinsz(), (&ws) as *u8) }
+    }
+
+    fn winSize(self: &Self): WinSize {
+        var ws = WinSize { rows: 0, cols: 0, xpixel: 0, ypixel: 0 }
+        unsafe { ioctl(self.masterFd, tiocgwinsz(), (&ws) as *u8) }
+        return ws
+    }
+
+    // Wait for child to exit. Returns exit status.
+    fn wait(self: &Self): i32
+      requires self.childPid > 0
+    {
+        var status: [u8; 4] = [0; 4]
+        unsafe {
+            waitpid(self.childPid, status, 0)
+            return status[1] as i32
+        }
+    }
+
+    fn close(self: &Self): void {
+        unsafe { close(self.masterFd) }
+    }
+}
+
+// Convenience: open + spawn in one call
+fn openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string> {
+    var pty = Pty.open()?
+    pty.spawn(program, args)?
+    return Result.Ok(pty)
+}
