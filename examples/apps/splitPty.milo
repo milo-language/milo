@@ -127,14 +127,17 @@ fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void {
     }
 }
 
-fn drainPty(pty: &Pty, output: &mut string): void {
+// Returns true if new data was read
+fn drainPty(pty: &Pty, output: &mut string): bool {
     var buf: [u8; 4096] = [0; 4096]
     unsafe {
         let n = pty.read(buf as *u8, 4095)
         if n > 0 {
             for i in 0..n { output.push(buf[i]) }
+            return true
         }
     }
+    return false
 }
 
 fn main(): void {
@@ -155,9 +158,6 @@ fn main(): void {
                     if half < 20 { half = 20 }
                     if paneRows < 5 { paneRows = 5 }
 
-                    pty1.resize(paneRows as u16, (half - 1) as u16)
-                    pty2.resize(paneRows as u16, (half - 1) as u16)
-
                     var args1: Vec<string> = Vec.new()
                     args1.push("-c")
                     args1.push("echo 'PTY proves isatty()=true'; echo; ls -G /; echo; echo '(without a PTY, ls strips color)'")
@@ -170,6 +170,10 @@ fn main(): void {
                         Result.Ok(_) => {
                             match pty2.spawn("/bin/sh", args2) {
                                 Result.Ok(_) => {
+                                    // resize after spawn so child sees correct dimensions
+                                    pty1.resize(paneRows as u16, (half - 1) as u16)
+                                    pty2.resize(paneRows as u16, (half - 1) as u16)
+
                                     drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
 
                                     unsafe {
@@ -182,6 +186,7 @@ fn main(): void {
                                     var out1 = ""
                                     var out2 = ""
                                     var done = false
+                                    var dirty = false
 
                                     while !done {
                                         // check for terminal resize
@@ -193,12 +198,17 @@ fn main(): void {
                                             if half < 20 { half = 20 }
                                             if paneRows < 5 { paneRows = 5 }
                                             drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
+                                            dirty = true
                                         }
 
-                                        drainPty(pty1, out1)
-                                        drainPty(pty2, out2)
-                                        renderPane(out1, 2, half, paneRows)
-                                        renderPane(out2, half + 3, half, paneRows)
+                                        let got1 = drainPty(pty1, out1)
+                                        let got2 = drainPty(pty2, out2)
+
+                                        if got1 || got2 || dirty {
+                                            renderPane(out1, 2, half, paneRows)
+                                            renderPane(out2, half + 3, half, paneRows)
+                                            dirty = false
+                                        }
 
                                         let key = readKey()
                                         if key == KEY_QUIT { done = true }
