@@ -1,0 +1,16 @@
+// \xNN produces raw bytes — \xe2\x94\x80 = UTF-8 for ─ (U+2500)
+
+fn main(): i32 {
+    let tab = "\x09"
+    print($"tab:[{tab}]")
+
+    let box = "\xe2\x94\x80"
+    print($"box:[{box}]")
+
+    let mixed = "A\xe2\x94\x80Z"
+    print($"mixed:[{mixed}]")
+    return 0
+}
+// @expect: tab:[	]
+// @expect: box:[─]
+// @expect: mixed:[A─Z]

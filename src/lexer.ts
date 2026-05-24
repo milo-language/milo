@@ -100,7 +100,10 @@ export class Lexer {
   private lexHexEscape(): string {
     const h1 = this.advance();
     const h2 = this.advance();
-    return String.fromCharCode(parseInt(h1 + h2, 16));
+    const byte = parseInt(h1 + h2, 16);
+    if (byte <= 0x7f) return String.fromCharCode(byte);
+    // PUA sentinel: codegen emits as raw byte, not UTF-8 codepoint
+    return String.fromCharCode(0xF700 + byte);
   }
 
   private lexString(line: number, col: number): Token {

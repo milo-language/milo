@@ -116,12 +116,30 @@ export class Codegen {
 
   private addString(value: string): { label: string; length: number } {
     const label = `@.str.${this.strCounter++}`;
-    const escaped = value
-      .replace(/\\/g, "\\5C").replace(/\n/g, "\\0A").replace(/\r/g, "\\0D")
-      .replace(/\t/g, "\\09").replace(/\0/g, "\\00").replace(/"/g, "\\22");
-    const length = Buffer.byteLength(value, "utf-8") + 1;
-    this.strings.push({ label, escaped, length });
-    return { label, length };
+    let escaped = "";
+    let byteLen = 0;
+    for (const ch of value) {
+      const code = ch.codePointAt(0)!;
+      if (code >= 0xF780 && code <= 0xF7FF) {
+        // PUA sentinel from \xNN escape — emit as raw single byte
+        const byte = code - 0xF700;
+        escaped += `\\${byte.toString(16).toUpperCase().padStart(2, "0")}`;
+        byteLen += 1;
+      } else {
+        switch (code) {
+          case 0x5C: escaped += "\\5C"; byteLen += 1; break;
+          case 0x0A: escaped += "\\0A"; byteLen += 1; break;
+          case 0x0D: escaped += "\\0D"; byteLen += 1; break;
+          case 0x09: escaped += "\\09"; byteLen += 1; break;
+          case 0x00: escaped += "\\00"; byteLen += 1; break;
+          case 0x22: escaped += "\\22"; byteLen += 1; break;
+          default: escaped += ch; byteLen += Buffer.byteLength(ch, "utf-8");
+        }
+      }
+    }
+    byteLen += 1; // null terminator
+    this.strings.push({ label, escaped, length: byteLen });
+    return { label, length: byteLen };
   }
 
   private typeSize(ty: string): number {
