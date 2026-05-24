@@ -231,8 +231,10 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
   const constraints = PROFILES[level];
   const violations: SafetyViolation[] = [];
 
+  const userFns = program.userFnNames;
   for (const fn of program.functions) {
     if (fn.isExtern) continue;
+    if (userFns && !userFns.has(fn.name)) continue;
 
     if (constraints.requireContracts && fn.contracts.length === 0 && fn.name !== "main") {
       violations.push({

@@ -1,0 +1,213 @@
+// Quadrotor flight controller — PID attitude + altitude control
+// Demonstrates contracts and DO-178C DAL B safety profile compliance.
+//
+//   milo run examples/apps/flightController.milo
+//   milo safety examples/apps/flightController.milo --safety=do178c-b
+
+from "std/math" import { mathSqrt, mathAtan2, mathPi, clampF64, fabs }
+
+// ── Sensor & state types ──
+
+struct Imu {
+    ax: f64,
+    ay: f64,
+    az: f64,
+    gx: f64,
+    gy: f64,
+    gz: f64,
+}
+
+struct State {
+    roll: f64,
+    pitch: f64,
+    yaw: f64,
+    altitude: f64,
+    verticalSpeed: f64,
+}
+
+struct Setpoint {
+    roll: f64,
+    pitch: f64,
+    yaw: f64,
+    altitude: f64,
+}
+
+struct Motors {
+    m1: f64,
+    m2: f64,
+    m3: f64,
+    m4: f64,
+}
+
+// ── PID controller ──
+
+struct Pid {
+    kp: f64,
+    ki: f64,
+    kd: f64,
+    integral: f64,
+    prevError: f64,
+    outMin: f64,
+    outMax: f64,
+}
+
+fn pidNew(kp: f64, ki: f64, kd: f64, outMin: f64, outMax: f64): Pid
+  requires kp >= 0.0
+  requires ki >= 0.0
+  requires kd >= 0.0
+  requires outMin < outMax
+{
+    return Pid {
+        kp: kp,
+        ki: ki,
+        kd: kd,
+        integral: 0.0,
+        prevError: 0.0,
+        outMin: outMin,
+        outMax: outMax,
+    }
+}
+
+fn pidUpdate(pid: &mut Pid, error: f64, dt: f64): f64
+  requires dt > 0.0
+  ensures result >= pid.outMin && result <= pid.outMax
+{
+    pid.integral = pid.integral + error * dt
+    let derivative = (error - pid.prevError) / dt
+    pid.prevError = error
+    let output = pid.kp * error + pid.ki * pid.integral + pid.kd * derivative
+    return clampF64(output, pid.outMin, pid.outMax)
+}
+
+// ── Sensor fusion: complementary filter ──
+
+fn complementaryFilter(state: &mut State, imu: &Imu, alpha: f64, dt: f64): void
+  requires dt > 0.0
+  requires alpha >= 0.0 && alpha <= 1.0
+{
+    let accelRoll = mathAtan2(imu.ay, imu.az) * 180.0 / mathPi()
+    let accelPitch = mathAtan2(0.0 - imu.ax, imu.az) * 180.0 / mathPi()
+
+    // blend gyro integration (fast, drifts) with accelerometer (slow, noisy)
+    state.roll = alpha * (state.roll + imu.gx * dt) + (1.0 - alpha) * accelRoll
+    state.pitch = alpha * (state.pitch + imu.gy * dt) + (1.0 - alpha) * accelPitch
+    state.yaw = state.yaw + imu.gz * dt
+}
+
+// ── Motor mixing (quad X configuration) ──
+//
+//   m1(CW)  ╲   ╱  m2(CCW)
+//             ╲ ╱
+//             ╱ ╲
+//   m3(CCW) ╱   ╲  m4(CW)
+
+fn mixMotors(throttle: f64, pitchCmd: f64, rollCmd: f64, yawCmd: f64): Motors
+  requires throttle >= 0.0 && throttle <= 1.0
+{
+    let m1 = clampF64(throttle + pitchCmd + rollCmd - yawCmd, 0.0, 1.0)
+    let m2 = clampF64(throttle + pitchCmd - rollCmd + yawCmd, 0.0, 1.0)
+    let m3 = clampF64(throttle - pitchCmd + rollCmd + yawCmd, 0.0, 1.0)
+    let m4 = clampF64(throttle - pitchCmd - rollCmd - yawCmd, 0.0, 1.0)
+    return Motors { m1: m1, m2: m2, m3: m3, m4: m4 }
+}
+
+// ── Control tick: one iteration of the control loop ──
+
+fn controlTick(
+    state: &mut State,
+    setpoint: &Setpoint,
+    imu: &Imu,
+    pidRoll: &mut Pid,
+    pidPitch: &mut Pid,
+    pidYaw: &mut Pid,
+    pidAlt: &mut Pid,
+    dt: f64,
+): Motors
+  requires dt > 0.0
+{
+    // fuse sensors
+    complementaryFilter(state, imu, 0.98, dt)
+
+    // altitude update from vertical acceleration
+    let vertAccel = imu.az - 9.81
+    state.verticalSpeed = state.verticalSpeed + vertAccel * dt
+    state.altitude = state.altitude + state.verticalSpeed * dt
+
+    // compute errors
+    let rollError = setpoint.roll - state.roll
+    let pitchError = setpoint.pitch - state.pitch
+    let yawError = setpoint.yaw - state.yaw
+    let altError = setpoint.altitude - state.altitude
+
+    // PID updates
+    let rollCmd = pidUpdate(pidRoll, rollError, dt)
+    let pitchCmd = pidUpdate(pidPitch, pitchError, dt)
+    let yawCmd = pidUpdate(pidYaw, yawError, dt)
+    let throttle = clampF64(0.5 + pidUpdate(pidAlt, altError, dt), 0.0, 1.0)
+
+    return mixMotors(throttle, pitchCmd, rollCmd, yawCmd)
+}
+
+// ── Demo: single control tick ──
+
+fn main(): i32 {
+    // initial state: hovering at 10m, level attitude
+    var state = State {
+        roll: 0.0,
+        pitch: 0.0,
+        yaw: 0.0,
+        altitude: 10.0,
+        verticalSpeed: 0.0,
+    }
+
+    // target: hold altitude at 12m, slight roll for lateral movement
+    let setpoint = Setpoint {
+        roll: 5.0,
+        pitch: 0.0,
+        yaw: 0.0,
+        altitude: 12.0,
+    }
+
+    // simulated IMU: slight tilt, gravity on z
+    let imu = Imu {
+        ax: 0.1,
+        ay: 0.3,
+        az: 9.81,
+        gx: 0.01,
+        gy: 0.0,
+        gz: 0.0,
+    }
+
+    // PID gains (attitude: P-heavy, altitude: balanced)
+    var pidRoll = pidNew(4.0, 0.02, 1.5, -0.5, 0.5)
+    var pidPitch = pidNew(4.0, 0.02, 1.5, -0.5, 0.5)
+    var pidYaw = pidNew(2.0, 0.01, 0.5, -0.3, 0.3)
+    var pidAlt = pidNew(0.5, 0.1, 0.2, -0.5, 0.5)
+
+    let dt = 0.01
+
+    let motors = controlTick(
+        state,
+        setpoint,
+        imu,
+        pidRoll,
+        pidPitch,
+        pidYaw,
+        pidAlt,
+        dt,
+    )
+
+    // telemetry output
+    print("── flight controller tick ──")
+    print("state:")
+    print("  roll:     ", state.roll)
+    print("  pitch:    ", state.pitch)
+    print("  altitude: ", state.altitude)
+    print("motors:")
+    print("  m1: ", motors.m1)
+    print("  m2: ", motors.m2)
+    print("  m3: ", motors.m3)
+    print("  m4: ", motors.m4)
+
+    return 0
+}
