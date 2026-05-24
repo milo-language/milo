@@ -1437,17 +1437,20 @@ export class TypeChecker {
       this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false });
     }
 
-    // `ensures` clauses can reference `result` — inject it with the return type
-    const hasEnsures = (fn.contracts ?? []).some(c => c.kind === "ensures");
-    if (hasEnsures && retType.tag !== "void") {
-      this.declare("result", { type: retType, mutable: false, moved: false, borrowed: false, read: true });
-    }
-
-    for (const c of fn.contracts ?? []) {
-      const cType = this.checkExpr(c.expr);
-      if (cType.tag !== "bool" && cType.tag !== "unknown") {
-        this.error(`${c.kind} clause must be bool, got ${typeName(cType)}`, c.span);
+    // Check contracts in a nested scope so `result` doesn't shadow body locals
+    if (fn.contracts && fn.contracts.length > 0) {
+      this.pushScope();
+      const hasEnsures = fn.contracts.some(c => c.kind === "ensures");
+      if (hasEnsures && retType.tag !== "void") {
+        this.declare("result", { type: retType, mutable: false, moved: false, borrowed: false, read: true });
       }
+      for (const c of fn.contracts) {
+        const cType = this.checkExpr(c.expr);
+        if (cType.tag !== "bool" && cType.tag !== "unknown") {
+          this.error(`${c.kind} clause must be bool, got ${typeName(cType)}`, c.span);
+        }
+      }
+      this.popScope();
     }
 
     for (const stmt of fn.body) this.checkStmt(stmt, retType);

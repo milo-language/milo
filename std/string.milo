@@ -56,7 +56,9 @@ fn strIndexOf(haystack: &string, needle: &string): i64 {
 
 // Find first occurrence of needle starting at pos. Returns -1 if not found.
 
-fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64 {
+fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64
+  requires pos >= 0
+{
     var notFound: i64 = 0
     notFound = notFound - 1
     if needle.len == 0 {
@@ -144,7 +146,9 @@ fn strEndsWith(s: &string, suffix: &string): bool {
 
 // Return new string with ASCII uppercase letters converted to lowercase.
 
-fn strToLower(s: &string): string {
+fn strToLower(s: &string): string
+  ensures result.len == s.len
+{
     var result: string = ""
     for i in 0..s.len {
         let ch = s[i]
@@ -159,7 +163,9 @@ fn strToLower(s: &string): string {
 
 // Return new string with ASCII lowercase letters converted to uppercase.
 
-fn strToUpper(s: &string): string {
+fn strToUpper(s: &string): string
+  ensures result.len == s.len
+{
     var result: string = ""
     for i in 0..s.len {
         let ch = s[i]
@@ -258,7 +264,9 @@ fn strSplit(s: &string, sep: &string): Vec<string> {
 
 // Repeat a string n times.
 
-fn strRepeat(s: &string, n: i64): string {
+fn strRepeat(s: &string, n: i64): string
+  requires n >= 0
+{
     var result: string = ""
     for i in 0..n {
         result = result + s
@@ -268,7 +276,9 @@ fn strRepeat(s: &string, n: i64): string {
 
 // Pad start of string to targetLen using padStr (cycles if shorter than needed).
 
-fn strPadStart(s: &string, targetLen: i64, padStr: &string): string {
+fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
+  requires targetLen >= 0
+{
     if s.len >= targetLen || padStr.len == 0 {
         return s.clone()
     }
@@ -286,7 +296,9 @@ fn strPadStart(s: &string, targetLen: i64, padStr: &string): string {
 
 // Pad end of string to targetLen using padStr (cycles if shorter than needed).
 
-fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string {
+fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string
+  requires targetLen >= 0
+{
     if s.len >= targetLen || padStr.len == 0 {
         return s.clone()
     }
@@ -438,12 +450,16 @@ fn strIsEmpty(s: &string): bool {
     return s.len == 0
 }
 
-fn strCharAt(s: &string, idx: i64): string {
+fn strCharAt(s: &string, idx: i64): string
+  requires idx >= 0 && idx < s.len
+{
     return s.substr(idx, idx + 1)
 }
 
 // UTF-8 aware: scans backward past continuation bytes to reverse whole codepoints
-fn strReverse(s: &string): string {
+fn strReverse(s: &string): string
+  ensures result.len == s.len
+{
     var result: string = ""
     var i: i64 = s.len
     while i > 0 {

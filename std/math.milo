@@ -65,7 +65,10 @@ fn exp(x: f64): f64
 
 // ── safe wrappers ──
 
-fn mathSqrt(x: f64): f64 {
+fn mathSqrt(x: f64): f64
+  requires x >= 0.0
+  ensures result >= 0.0
+{
     return sqrt(x)
 }
 
@@ -105,19 +108,27 @@ fn mathAbs(x: f64): f64 {
     return fabs(x)
 }
 
-fn mathMod(x: f64, y: f64): f64 {
+fn mathMod(x: f64, y: f64): f64
+  requires y != 0.0
+{
     return fmod(x, y)
 }
 
-fn mathLog(x: f64): f64 {
+fn mathLog(x: f64): f64
+  requires x > 0.0
+{
     return log(x)
 }
 
-fn mathLog2(x: f64): f64 {
+fn mathLog2(x: f64): f64
+  requires x > 0.0
+{
     return log2(x)
 }
 
-fn mathLog10(x: f64): f64 {
+fn mathLog10(x: f64): f64
+  requires x > 0.0
+{
     return log10(x)
 }
 
@@ -127,14 +138,18 @@ fn mathExp(x: f64): f64 {
 
 // ── integer helpers ──
 
-fn absI64(x: i64): i64 {
+fn absI64(x: i64): i64
+  ensures result >= 0
+{
     if x < 0 {
         return 0 - x
     }
     return x
 }
 
-fn absI32(x: i32): i32 {
+fn absI32(x: i32): i32
+  ensures result >= 0 as i32
+{
     if x < 0 as i32 {
         return 0 as i32 - x
     }
@@ -183,7 +198,10 @@ fn maxF64(a: f64, b: f64): f64 {
     return b
 }
 
-fn clampI64(x: i64, lo: i64, hi: i64): i64 {
+fn clampI64(x: i64, lo: i64, hi: i64): i64
+  requires lo <= hi
+  ensures result >= lo && result <= hi
+{
     if x < lo {
         return lo
     }
@@ -193,7 +211,10 @@ fn clampI64(x: i64, lo: i64, hi: i64): i64 {
     return x
 }
 
-fn clampF64(x: f64, lo: f64, hi: f64): f64 {
+fn clampF64(x: f64, lo: f64, hi: f64): f64
+  requires lo <= hi
+  ensures result >= lo && result <= hi
+{
     if x < lo {
         return lo
     }

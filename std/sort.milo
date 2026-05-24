@@ -34,7 +34,9 @@ fn reverseI64(v: &mut Vec<i64>): void {
 
 // ── quicksort i64 ──
 
-fn _qsortI64(v: &mut Vec<i64>, lo: i64, hi: i64): void {
+fn _qsortI64(v: &mut Vec<i64>, lo: i64, hi: i64): void
+  requires lo >= 0
+{
     if lo >= hi {
         return
     }
@@ -59,7 +61,9 @@ fn _qsortI64(v: &mut Vec<i64>, lo: i64, hi: i64): void {
 
 // ── quicksort i32 ──
 
-fn _qsortI32(v: &mut Vec<i32>, lo: i32, hi: i32): void {
+fn _qsortI32(v: &mut Vec<i32>, lo: i32, hi: i32): void
+  requires lo >= 0 as i32
+{
     if lo >= hi {
         return
     }

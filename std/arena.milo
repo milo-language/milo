@@ -151,7 +151,9 @@ fn arenaModify<T> (a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
 
 // Number of live entries.
 
-fn arenaLen<T> (a: &Arena<T>): i64 {
+fn arenaLen<T> (a: &Arena<T>): i64
+  ensures result >= 0
+{
     return a.live
 }
 
