@@ -1,85 +1,101 @@
-// Split-screen PTY demo — two pseudoterminals side-by-side.
-// Left pane: `ls --color=always` (colors only appear because the child sees a TTY)
-// Right pane: `top` in batch-like mode (only renders because it detects a terminal)
-//
-// This demo exists because these programs behave differently when piped vs PTY.
-// Without a PTY, `ls` strips color and `top` refuses to run.
+// Split-screen PTY demo — runs two commands side-by-side like a mini tmux.
+// Left pane: colored `ls` (colors prove the child sees a real TTY, not a pipe)
+// Right pane: PTY device info (tty name, dimensions, processes)
 //
 // Build and run:
 //   milo build examples/apps/splitPty.milo -o splitpty
 //   ./splitpty
 
-from "std/pty" import { Pty, isInteractive }
+from "std/pty" import { Pty, WinSize, isInteractive }
 from "std/io" import { writeStdout }
 from "std/time" import { sleepMs }
 from "std/term" import { enableRawMode, restoreTerminal, readKey, KEY_QUIT }
 from "std/platform" import { fcntl, fGetfl, fSetfl, oNonblock }
+from "std/os" import { ioctl }
 
-let HALF: i64 = 39
-
-fn clearScreen(): void { writeStdout("\x1b[2J\x1b[H") }
-fn hideCursor(): void { writeStdout("\x1b[?25l") }
-fn showCursor(): void { writeStdout("\x1b[?25h") }
+// query host terminal size via ioctl on stdout
+fn termSize(): WinSize {
+    var ws = WinSize { rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16 }
+    unsafe {
+        // TIOCGWINSZ on macOS
+        ioctl(1, 1074295912, (&ws) as *u8)
+    }
+    return ws
+}
 
 fn moveTo(row: i64, col: i64): void {
     writeStdout($"\x1b[{row};{col}H")
 }
 
-fn drawBorder(leftTitle: &string, rightTitle: &string): void {
-    clearScreen()
-    hideCursor()
+fn drawBorder(leftTitle: &string, rightTitle: &string, half: i64, paneRows: i64): void {
+    writeStdout("\x1b[2J\x1b[H\x1b[?25l")
 
+    // top
     moveTo(1, 1)
     writeStdout("\x1b[36m\xe2\x94\x8c")
-    for i in 0..HALF { writeStdout("\xe2\x94\x80") }
+    for i in 0..half { writeStdout("\xe2\x94\x80") }
     writeStdout("\xe2\x94\xac")
-    for i in 0..HALF { writeStdout("\xe2\x94\x80") }
+    for i in 0..half { writeStdout("\xe2\x94\x80") }
     writeStdout("\xe2\x94\x90\x1b[0m")
 
+    // titles
     moveTo(2, 1)
-    writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
-    writeStdout($"\x1b[1;33m {leftTitle}\x1b[0m")
-    for i in 0..(HALF - leftTitle.len - 1) { writeStdout(" ") }
-    writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
-    writeStdout($"\x1b[1;33m {rightTitle}\x1b[0m")
-    for i in 0..(HALF - rightTitle.len - 1) { writeStdout(" ") }
+    writeStdout("\x1b[36m\xe2\x94\x82\x1b[1;33m ")
+    writeStdout(leftTitle)
+    let lpad = half - leftTitle.len - 1
+    if lpad > 0 { for i in 0..lpad { writeStdout(" ") } }
+    writeStdout("\x1b[36m\xe2\x94\x82\x1b[1;33m ")
+    writeStdout(rightTitle)
+    let rpad = half - rightTitle.len - 1
+    if rpad > 0 { for i in 0..rpad { writeStdout(" ") } }
     writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
 
+    // title separator
     moveTo(3, 1)
     writeStdout("\x1b[36m\xe2\x94\x9c")
-    for i in 0..HALF { writeStdout("\xe2\x94\x80") }
+    for i in 0..half { writeStdout("\xe2\x94\x80") }
     writeStdout("\xe2\x94\xbc")
-    for i in 0..HALF { writeStdout("\xe2\x94\x80") }
+    for i in 0..half { writeStdout("\xe2\x94\x80") }
     writeStdout("\xe2\x94\xa4\x1b[0m")
 
-    for row in 4..22 {
-        moveTo(row as i64, 1)
+    // empty content rows
+    for row in 0..paneRows {
+        moveTo(4 + row as i64, 1)
         writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
-        for i in 0..HALF { writeStdout(" ") }
+        for i in 0..half { writeStdout(" ") }
         writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
-        for i in 0..HALF { writeStdout(" ") }
+        for i in 0..half { writeStdout(" ") }
         writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
     }
 
-    moveTo(22, 1)
+    // bottom
+    moveTo(4 + paneRows, 1)
     writeStdout("\x1b[36m\xe2\x94\x94")
-    for i in 0..HALF { writeStdout("\xe2\x94\x80") }
+    for i in 0..half { writeStdout("\xe2\x94\x80") }
     writeStdout("\xe2\x94\xb4")
-    for i in 0..HALF { writeStdout("\xe2\x94\x80") }
+    for i in 0..half { writeStdout("\xe2\x94\x80") }
     writeStdout("\xe2\x94\x98\x1b[0m")
 
-    moveTo(23, 1)
+    moveTo(5 + paneRows, 1)
     writeStdout("\x1b[7m q: quit \x1b[0m \x1b[90msplit-pty \xe2\x80\x94 powered by milo\x1b[0m")
 }
 
-// Render raw PTY output into a pane, passing through ANSI color sequences
-fn renderPane(text: &string, startCol: i64): void {
+fn clearPane(startCol: i64, half: i64, paneRows: i64): void {
+    for row in 0..paneRows {
+        moveTo(4 + row as i64, startCol)
+        for i in 0..(half - 1) { writeStdout(" ") }
+    }
+}
+
+fn renderPane(text: &string, startCol: i64, half: i64, paneRows: i64): void {
+    clearPane(startCol, half, paneRows)
+    let maxCol = half - 1
+
     var row: i64 = 4
     var col: i64 = 0
     var i: i64 = 0
 
-    while i < text.len {
-        if row >= 22 { return }
+    while i < text.len && row < 4 + paneRows {
         let ch = text[i]
 
         if ch == 10 {
@@ -87,27 +103,18 @@ fn renderPane(text: &string, startCol: i64): void {
             col = 0
             i = i + 1
         } else if ch == 13 {
-            col = 0
             i = i + 1
         } else if ch == 27 {
-            // pass through ANSI escape sequences for color rendering
-            moveTo(row, startCol + col)
-            var seq = ""
-            while i < text.len {
-                seq.push(text[i])
-                // ESC [ ... letter terminates CSI sequence
-                if text[i] >= 64 && text[i] <= 126 && seq.len > 2 {
-                    break
-                }
-                // short sequences (ESC followed by single char)
-                if seq.len == 2 && text[i] != 91 {
-                    break
-                }
+            // skip ANSI escape sequences
+            i = i + 1
+            if i < text.len && text[i] == 91 {
+                i = i + 1
+                while i < text.len && text[i] < 64 { i = i + 1 }
+                if i < text.len { i = i + 1 }
+            } else if i < text.len {
                 i = i + 1
             }
-            writeStdout(seq)
-            i = i + 1
-        } else if ch >= 32 && col < HALF - 1 {
+        } else if ch >= 32 && col < maxCol {
             moveTo(row, startCol + col)
             var s = ""
             s.push(ch)
@@ -132,7 +139,7 @@ fn drainPty(pty: &Pty, output: &mut string): void {
 
 fn main(): void {
     if !isInteractive() {
-        print("error: splitpty requires a terminal (try running directly, not piped)")
+        print("error: splitpty needs a terminal")
         return
     }
 
@@ -142,25 +149,28 @@ fn main(): void {
         Result.Ok(pty1) => {
             match Pty.open() {
                 Result.Ok(pty2) => {
-                    // resize PTYs so children know their pane dimensions
-                    pty1.resize(18 as u16, 38 as u16)
-                    pty2.resize(18 as u16, 38 as u16)
+                    var ws = termSize()
+                    var half = (ws.cols as i64 - 2) / 2
+                    var paneRows = ws.rows as i64 - 6
+                    if half < 20 { half = 20 }
+                    if paneRows < 5 { paneRows = 5 }
 
-                    // left: colored ls (only colorizes because child's stdout is a PTY)
+                    pty1.resize(paneRows as u16, (half - 1) as u16)
+                    pty2.resize(paneRows as u16, (half - 1) as u16)
+
                     var args1: Vec<string> = Vec.new()
                     args1.push("-c")
-                    args1.push("echo '  PTY proves isatty()=true:'; echo; ls -G /; echo; echo '  (colors only appear via PTY,'; echo '   piped ls would be plain)'")
+                    args1.push("echo 'PTY proves isatty()=true'; echo; ls -G /; echo; echo '(without a PTY, ls strips color)'")
 
-                    // right: env vars + tty device name (PTY-only info)
                     var args2: Vec<string> = Vec.new()
                     args2.push("-c")
-                    args2.push("echo '  Terminal device:'; tty; echo; echo '  TERM=$TERM'; echo '  Rows x Cols:'; stty size; echo; echo '  Processes on this PTY:'; ps -t $(tty | sed s@/dev/@@) 2>/dev/null | head -8")
+                    args2.push("echo 'Terminal device:'; tty; echo; echo \"TERM=$TERM\"; echo; echo 'Window size:'; stty size; echo; echo 'Processes on this PTY:'; ps -t $(basename $(tty)) -o pid,tty,time,comm 2>/dev/null | head -6")
 
                     match pty1.spawn("/bin/sh", args1) {
-                        Result.Ok(_pid1) => {
+                        Result.Ok(_) => {
                             match pty2.spawn("/bin/sh", args2) {
-                                Result.Ok(_pid2) => {
-                                    drawBorder("ls -G (colored)", "PTY device info")
+                                Result.Ok(_) => {
+                                    drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
 
                                     unsafe {
                                         let f1 = fcntl(pty1.masterFd, fGetfl())
@@ -171,18 +181,28 @@ fn main(): void {
 
                                     var out1 = ""
                                     var out2 = ""
-
-                                    // render loop: drain PTYs, display, wait for q
                                     var done = false
+
                                     while !done {
+                                        // check for terminal resize
+                                        let newWs = termSize()
+                                        if newWs.cols != ws.cols || newWs.rows != ws.rows {
+                                            ws = newWs
+                                            half = (ws.cols as i64 - 2) / 2
+                                            paneRows = ws.rows as i64 - 6
+                                            if half < 20 { half = 20 }
+                                            if paneRows < 5 { paneRows = 5 }
+                                            drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
+                                        }
+
                                         drainPty(pty1, out1)
                                         drainPty(pty2, out2)
-                                        renderPane(out1, 2)
-                                        renderPane(out2, HALF + 3)
+                                        renderPane(out1, 2, half, paneRows)
+                                        renderPane(out2, half + 3, half, paneRows)
 
                                         let key = readKey()
                                         if key == KEY_QUIT { done = true }
-                                        sleepMs(25)
+                                        sleepMs(50)
                                     }
 
                                     pty2.wait()
@@ -203,7 +223,7 @@ fn main(): void {
         Result.Err(msg) => { print($"error: {msg}") }
     }
 
-    showCursor()
-    clearScreen()
+    writeStdout("\x1b[?25h\x1b[2J\x1b[H\x1b[0m")
     restoreTerminal(termState)
+    print("splitpty exited.")
 }
