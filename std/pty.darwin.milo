@@ -21,6 +21,8 @@ struct Pty {
     masterFd: i32,
     slavePath: string,
     childPid: i32,
+    _rows: u16,
+    _cols: u16,
 }
 
 // Returns true if fd is connected to a terminal.
@@ -56,7 +58,7 @@ impl Pty {
             }
 
             let name = _cstrToString(namePtr)
-            return Result.Ok(Pty { masterFd: master, slavePath: name, childPid: -1 })
+            return Result.Ok(Pty { masterFd: master, slavePath: name, childPid: -1, _rows: 24 as u16, _cols: 80 as u16 })
         }
     }
 
@@ -101,6 +103,9 @@ impl Pty {
                 let slave = open(self.slavePath, 2)
                 if slave < 0 { exit(1) }
                 ioctl(slave, tiocsctty(), 0)
+                // set winsize on slave so child sees correct dimensions
+                var childWs = WinSize { rows: self._rows, cols: self._cols, xpixel: 0 as u16, ypixel: 0 as u16 }
+                ioctl(slave, tiocswinsz(), (&childWs) as *u8)
                 dup2(slave, 0)
                 dup2(slave, 1)
                 dup2(slave, 2)
@@ -132,7 +137,9 @@ impl Pty {
         unsafe { return write(self.masterFd, s as *u8, s.len) }
     }
 
-    fn resize(self: &Self, rows: u16, cols: u16): i32 {
+    fn resize(self: &mut Self, rows: u16, cols: u16): i32 {
+        self._rows = rows
+        self._cols = cols
         var ws = WinSize { rows: rows, cols: cols, xpixel: 0, ypixel: 0 }
         unsafe { return ioctl(self.masterFd, tiocswinsz(), (&ws) as *u8) }
     }

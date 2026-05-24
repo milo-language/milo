@@ -166,14 +166,14 @@ fn main(): void {
                     args2.push("-c")
                     args2.push("echo 'Terminal device:'; tty; echo; echo \"TERM=$TERM\"; echo; echo 'Window size:'; stty size; echo; echo 'Processes on this PTY:'; ps -t $(basename $(tty)) -o pid,tty,time,comm 2>/dev/null | head -6")
 
+                    // resize before spawn — child inherits winsize via slave fd
+                    pty1.resize(paneRows as u16, (half - 1) as u16)
+                    pty2.resize(paneRows as u16, (half - 1) as u16)
+
                     match pty1.spawn("/bin/sh", args1) {
                         Result.Ok(_) => {
                             match pty2.spawn("/bin/sh", args2) {
                                 Result.Ok(_) => {
-                                    // resize after spawn so child sees correct dimensions
-                                    pty1.resize(paneRows as u16, (half - 1) as u16)
-                                    pty2.resize(paneRows as u16, (half - 1) as u16)
-
                                     drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
 
                                     unsafe {
@@ -233,7 +233,9 @@ fn main(): void {
         Result.Err(msg) => { print($"error: {msg}") }
     }
 
-    writeStdout("\x1b[?25h\x1b[2J\x1b[H\x1b[0m")
+    // restore terminal before clearing so output flushes in cooked mode
     restoreTerminal(termState)
+    writeStdout("\x1b[?25h\x1b[2J\x1b[H\x1b[0m")
+    flush()
     print("splitpty exited.")
 }
