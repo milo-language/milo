@@ -1,0 +1,13 @@
+// @expect: 3
+// @expect: 5
+// @expect: 2
+
+from "std/math" import { mathSqrt, clampI64, absI64 }
+
+fn main(): i32 {
+    let r = mathSqrt(9.0)
+    print(r as i64)
+    print(clampI64(10, 0, 5))
+    print(absI64(0 as i64 - 2))
+    return 0
+}

@@ -127,6 +127,7 @@ export class TypeChecker {
   private diagnostics: Diagnostic[] = [];
   private _globalTypes = new Map<string, TypeKind>();
   private functions = new Map<string, FnSig>();
+  private fnDecls = new Map<string, Function>();
   private genericFns = new Map<string, GenericFnInfo>();
   private structs = new Map<string, StructInfo>();
   private enums = new Map<string, EnumInfo>();
@@ -235,6 +236,115 @@ export class TypeChecker {
     if (expr.kind === "IntLit") return expr.value;
     if (expr.kind === "UnaryOp" && expr.op === "-" && expr.operand.kind === "IntLit") return -expr.operand.value;
     return null;
+  }
+
+  private constFloatValue(expr: import("./ast").Expr): number | null {
+    if (expr.kind === "FloatLit") return expr.value;
+    if (expr.kind === "UnaryOp" && expr.op === "-" && expr.operand.kind === "FloatLit") return -expr.operand.value;
+    return null;
+  }
+
+  private constNumericValue(expr: import("./ast").Expr): number | null {
+    return this.constIntValue(expr) ?? this.constFloatValue(expr);
+  }
+
+  // Evaluate a contract expression with argument substitutions. Returns true/false/null.
+  private tryEvalContractExpr(expr: import("./ast").Expr, subs: Map<string, import("./ast").Expr>): boolean | null {
+    if (expr.kind === "BoolLit") return expr.value;
+
+    if (expr.kind === "IntLit" || expr.kind === "FloatLit") return null;
+
+    if (expr.kind === "Ident") {
+      const sub = subs.get(expr.name);
+      if (sub) return this.tryEvalContractExpr(sub, new Map());
+      return null;
+    }
+
+    if (expr.kind === "UnaryOp" && expr.op === "!") {
+      const inner = this.tryEvalContractExpr(expr.operand, subs);
+      return inner !== null ? !inner : null;
+    }
+
+    if (expr.kind === "BinOp") {
+      // short-circuit logic
+      if (expr.op === "&&") {
+        const l = this.tryEvalContractExpr(expr.left, subs);
+        if (l === false) return false;
+        const r = this.tryEvalContractExpr(expr.right, subs);
+        if (r === false) return false;
+        if (l === true && r === true) return true;
+        return null;
+      }
+      if (expr.op === "||") {
+        const l = this.tryEvalContractExpr(expr.left, subs);
+        if (l === true) return true;
+        const r = this.tryEvalContractExpr(expr.right, subs);
+        if (r === true) return true;
+        if (l === false && r === false) return false;
+        return null;
+      }
+
+      // numeric comparisons — resolve through substitutions
+      const lVal = this.resolveNumericValue(expr.left, subs);
+      const rVal = this.resolveNumericValue(expr.right, subs);
+      if (lVal === null || rVal === null) return null;
+
+      switch (expr.op) {
+        case ">=": return lVal >= rVal;
+        case "<=": return lVal <= rVal;
+        case ">":  return lVal > rVal;
+        case "<":  return lVal < rVal;
+        case "==": return lVal === rVal;
+        case "!=": return lVal !== rVal;
+        default: return null;
+      }
+    }
+
+    return null;
+  }
+
+  // Resolve an expression to a numeric value, substituting parameter names with call arguments
+  private resolveNumericValue(expr: import("./ast").Expr, subs: Map<string, import("./ast").Expr>): number | null {
+    if (expr.kind === "Ident") {
+      const sub = subs.get(expr.name);
+      if (sub) return this.constNumericValue(sub);
+      return null;
+    }
+    if (expr.kind === "FieldAccess" && expr.field === "len" && expr.object.kind === "Ident") {
+      const sub = subs.get(expr.object.name);
+      if (sub?.kind === "StringLit") return sub.value.length;
+      return null;
+    }
+    return this.constNumericValue(expr);
+  }
+
+  private checkCallSiteContracts(fnDecl: import("./ast").Function, args: import("./ast").Expr[], callSpan?: import("./ast").Span) {
+    if (!fnDecl.contracts || fnDecl.contracts.length === 0) return;
+    const subs = new Map<string, import("./ast").Expr>();
+    for (let i = 0; i < Math.min(fnDecl.params.length, args.length); i++) {
+      subs.set(fnDecl.params[i].name, args[i]);
+    }
+    for (const c of fnDecl.contracts) {
+      if (c.kind !== "requires") continue;
+      const result = this.tryEvalContractExpr(c.expr, subs);
+      if (result === false) {
+        const contractSrc = this.contractExprToString(c.expr);
+        this.error(`requires clause '${contractSrc}' violated`, callSpan);
+      }
+    }
+  }
+
+  // Reconstruct a readable string from a contract expression
+  private contractExprToString(expr: import("./ast").Expr): string {
+    if (expr.kind === "Ident") return expr.name;
+    if (expr.kind === "IntLit") return String(expr.value);
+    if (expr.kind === "FloatLit") return expr.value % 1 === 0 ? expr.value.toFixed(1) : String(expr.value);
+    if (expr.kind === "BoolLit") return String(expr.value);
+    if (expr.kind === "FieldAccess") return `${this.contractExprToString(expr.object)}.${expr.field}`;
+    if (expr.kind === "UnaryOp") return `${expr.op}${this.contractExprToString(expr.operand)}`;
+    if (expr.kind === "BinOp") return `${this.contractExprToString(expr.left)} ${expr.op} ${this.contractExprToString(expr.right)}`;
+    if (expr.kind === "CastExpr") return `${this.contractExprToString(expr.expr)} as ${expr.type.name}`;
+    return "...";
   }
 
   private checkConstOverflow(lv: number, rv: number, op: string, ty: TypeKind, span?: Span) {
@@ -763,6 +873,7 @@ export class TypeChecker {
       }
       // fn return types allowed — move closures heap-allocate and are safe to escape
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern });
+      if (fn.contracts && fn.contracts.length > 0) this.fnDecls.set(fn.name, fn);
     }
 
     // process @derive attributes — synthesize impl decls
@@ -2716,6 +2827,9 @@ export class TypeChecker {
             }
             this.tryMove(expr.args[i]);
           }
+          // check requires contracts at call site (generic fn)
+          if (genericFn.decl) this.checkCallSiteContracts(genericFn.decl, expr.args, sp);
+
           return this.setType(expr, this.functions.get(mangled)!.ret);
         }
 
@@ -2893,6 +3007,10 @@ export class TypeChecker {
             this.error(`calling extern function '${expr.func}' requires an unsafe block`, sp);
           }
         }
+        // check requires contracts at call site
+        const fnDecl = this.fnDecls.get(expr.func);
+        if (fnDecl) this.checkCallSiteContracts(fnDecl, expr.args, sp);
+
         return this.setType(expr, sig.ret);
       }
       case "StructLit": {

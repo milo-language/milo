@@ -1,0 +1,8 @@
+// @error: requires clause 'lo <= hi' violated
+
+from "std/math" import { clampI64 }
+
+fn main(): i32 {
+    let x = clampI64(5, 10, 3)
+    return 0
+}
