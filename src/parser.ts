@@ -973,7 +973,10 @@ export class Parser {
         }
       }
       // struct literal: Name { field: value, ... }
-      if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
+      // disambiguate from control-flow braces via lookahead: empty `{}` or `{ IDENT :`
+      if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z"
+          && (this.peekN(1).kind === TokenKind.RBrace
+              || (this.peekN(1).kind === TokenKind.Ident && this.peekN(2).kind === TokenKind.Colon))) {
         return this.parseStructLit(tok.value, s);
       }
       // sizeOf<Type>() / zeroed<Type>() / offsetOf<Type>("field") — builtins with explicit type arg

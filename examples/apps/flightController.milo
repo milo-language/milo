@@ -1,43 +1,22 @@
-// Quadrotor flight controller — PID attitude + altitude control
-// Demonstrates contracts and DO-178C DAL B safety profile compliance.
+// Altitude controller — single-axis PID with interactive TUI
+// Press up/down to change target altitude, watch the controller converge.
 //
-//   milo run examples/apps/flightController.milo
-//   milo safety examples/apps/flightController.milo --safety=do178c-b
+// The PID controller and physics tick are DO-178 DAL B compliant:
+// no recursion, no unbounded loops, no unsafe, no dynamic allocation,
+// all functions have contracts.
+//
+// Build and run:
+//   milo build examples/apps/flightController.milo -o flightctl
+//   ./flightctl
+//
+// Verify safety compliance:
+//   milo safety examples/apps/flightController.milo --safety=do178
 
-from "std/math" import { mathSqrt, mathAtan2, mathPi, clampF64, fabs }
-
-// ── Sensor & state types ──
-
-struct Imu {
-    ax: f64,
-    ay: f64,
-    az: f64,
-    gx: f64,
-    gy: f64,
-    gz: f64,
-}
-
-struct State {
-    roll: f64,
-    pitch: f64,
-    yaw: f64,
-    altitude: f64,
-    verticalSpeed: f64,
-}
-
-struct Setpoint {
-    roll: f64,
-    pitch: f64,
-    yaw: f64,
-    altitude: f64,
-}
-
-struct Motors {
-    m1: f64,
-    m2: f64,
-    m3: f64,
-    m4: f64,
-}
+from "std/math" import { clampF64, fabs }
+from "std/io" import { writeStdout }
+from "std/time" import { sleepMs }
+from "std/strconv" import { formatFloat }
+from "std/term" import { enableRawMode, restoreTerminal, readKey, KEY_UP, KEY_DOWN, KEY_QUIT }
 
 // ── PID controller ──
 
@@ -79,135 +58,170 @@ fn pidUpdate(pid: &mut Pid, error: f64, dt: f64): f64
     return clampF64(output, pid.outMin, pid.outMax)
 }
 
-// ── Sensor fusion: complementary filter ──
+// ── 1D altitude physics ──
 
-fn complementaryFilter(state: &mut State, imu: &Imu, alpha: f64, dt: f64): void
+struct AltState {
+    altitude: f64,
+    velocity: f64,
+}
+
+fn physicsTick(state: &mut AltState, thrust: f64, dt: f64): void
   requires dt > 0.0
-  requires alpha >= 0.0 && alpha <= 1.0
+  requires thrust >= 0.0 && thrust <= 1.0
 {
-    let accelRoll = mathAtan2(imu.ay, imu.az) * 180.0 / mathPi()
-    let accelPitch = mathAtan2(0.0 - imu.ax, imu.az) * 180.0 / mathPi()
+    let maxThrust = 20.0
+    let mass = 1.5
+    let gravity = 9.81
 
-    // blend gyro integration (fast, drifts) with accelerometer (slow, noisy)
-    state.roll = alpha * (state.roll + imu.gx * dt) + (1.0 - alpha) * accelRoll
-    state.pitch = alpha * (state.pitch + imu.gy * dt) + (1.0 - alpha) * accelPitch
-    state.yaw = state.yaw + imu.gz * dt
+    let force = thrust * maxThrust - mass * gravity
+    let accel = force / mass
+    state.velocity = state.velocity + accel * dt
+    state.velocity = state.velocity * 0.999
+    state.altitude = state.altitude + state.velocity * dt
+
+    if state.altitude < 0.0 {
+        state.altitude = 0.0
+        if state.velocity < 0.0 {
+            state.velocity = 0.0
+        }
+    }
 }
 
-// ── Motor mixing (quad X configuration) ──
-//
-//   m1(CW)  ╲   ╱  m2(CCW)
-//             ╲ ╱
-//             ╱ ╲
-//   m3(CCW) ╱   ╲  m4(CW)
+// ── TUI rendering ──
+// pure ASCII + ANSI background colors only — no box-drawing or unicode
 
-fn mixMotors(throttle: f64, pitchCmd: f64, rollCmd: f64, yawCmd: f64): Motors
-  requires throttle >= 0.0 && throttle <= 1.0
+fn cl(s: &string): void
+  requires s.len >= 0
 {
-    let m1 = clampF64(throttle + pitchCmd + rollCmd - yawCmd, 0.0, 1.0)
-    let m2 = clampF64(throttle + pitchCmd - rollCmd + yawCmd, 0.0, 1.0)
-    let m3 = clampF64(throttle - pitchCmd + rollCmd + yawCmd, 0.0, 1.0)
-    let m4 = clampF64(throttle - pitchCmd - rollCmd - yawCmd, 0.0, 1.0)
-    return Motors { m1: m1, m2: m2, m3: m3, m4: m4 }
+    writeStdout(s)
+    writeStdout("\x1b[K\n")
 }
 
-// ── Control tick: one iteration of the control loop ──
-
-fn controlTick(
-    state: &mut State,
-    setpoint: &Setpoint,
-    imu: &Imu,
-    pidRoll: &mut Pid,
-    pidPitch: &mut Pid,
-    pidYaw: &mut Pid,
-    pidAlt: &mut Pid,
-    dt: f64,
-): Motors
-  requires dt > 0.0
+fn renderFrame(alt: f64, vel: f64, target: f64, thrust: f64, tick: i64): void
+  requires tick >= 0
 {
-    // fuse sensors
-    complementaryFilter(state, imu, 0.98, dt)
+    writeStdout("\x1b[H")
 
-    // altitude update from vertical acceleration
-    let vertAccel = imu.az - 9.81
-    state.verticalSpeed = state.verticalSpeed + vertAccel * dt
-    state.altitude = state.altitude + state.verticalSpeed * dt
+    let altStr = formatFloat(alt, 1)
+    let targetStr = formatFloat(target, 1)
+    let velStr = formatFloat(vel, 2)
+    let thrustPct = formatFloat(thrust * 100.0, 0)
 
-    // compute errors
-    let rollError = setpoint.roll - state.roll
-    let pitchError = setpoint.pitch - state.pitch
-    let yawError = setpoint.yaw - state.yaw
-    let altError = setpoint.altitude - state.altitude
+    cl("")
+    cl("  \x1b[1;36mALTITUDE CONTROLLER\x1b[0m")
+    cl("  \x1b[90mup/dn = target    q = quit\x1b[0m")
+    cl("")
 
-    // PID updates
-    let rollCmd = pidUpdate(pidRoll, rollError, dt)
-    let pitchCmd = pidUpdate(pidPitch, pitchError, dt)
-    let yawCmd = pidUpdate(pidYaw, yawError, dt)
-    let throttle = clampF64(0.5 + pidUpdate(pidAlt, altError, dt), 0.0, 1.0)
+    // 16-row vertical gauge: row 0 = 30m, row 15 = 0m
+    let maxAlt = 30.0
+    let rows = 16
+    let currentRow = clampF64((maxAlt - alt) / 2.0, 0.0, 15.0) as i32
+    let targetRow = clampF64((maxAlt - target) / 2.0, 0.0, 15.0) as i32
 
-    return mixMotors(throttle, pitchCmd, rollCmd, yawCmd)
+    for row in 0..rows {
+        let rowAlt = 30 - row * 2
+        let r = row as i32
+
+        // left label at 0, 10, 20, 30
+        if rowAlt == 30 || rowAlt == 20 || rowAlt == 10 || rowAlt == 0 {
+            if rowAlt < 10 {
+                writeStdout("   ")
+            } else {
+                writeStdout("  ")
+            }
+            writeStdout(formatFloat(rowAlt as f64, 0))
+            writeStdout("  ")
+        } else {
+            writeStdout("      ")
+        }
+
+        // gauge block — 5 chars wide with ANSI bg color
+        if r == currentRow && r == targetRow {
+            writeStdout("\x1b[42m     \x1b[0m")
+            writeStdout("  < " + altStr + "m (at target)")
+        } else {
+            if r == currentRow {
+                writeStdout("\x1b[42m     \x1b[0m")
+                writeStdout("  < " + altStr + "m")
+            } else {
+                if r == targetRow {
+                    writeStdout("\x1b[43m     \x1b[0m")
+                    writeStdout("  < target " + targetStr + "m")
+                } else {
+                    writeStdout("\x1b[48;5;236m     \x1b[0m")
+                }
+            }
+        }
+
+        // right-side info on first few rows
+        if row == 0 {
+            writeStdout("     \x1b[90mvspeed " + velStr + " m/s\x1b[0m")
+        }
+
+        cl("")
+    }
+
+    cl("")
+
+    // thrust bar
+    writeStdout("  thrust  ")
+    let filled = clampF64(thrust * 30.0, 0.0, 30.0) as i32
+    for i in 0..30 {
+        if i < filled {
+            writeStdout("\x1b[42m \x1b[0m")
+        } else {
+            writeStdout("\x1b[48;5;236m \x1b[0m")
+        }
+    }
+    cl("  " + thrustPct + "%")
+
+    cl("")
+    cl("  \x1b[42m  \x1b[0m = current    \x1b[43m  \x1b[0m = target       \x1b[90mtick " + formatFloat(tick as f64, 0) + "\x1b[0m")
+
+    writeStdout("\x1b[J")
 }
 
-// ── Demo: single control tick ──
+// ── Main: interactive simulation loop ──
 
 fn main(): i32 {
-    // initial state: hovering at 10m, level attitude
-    var state = State {
-        roll: 0.0,
-        pitch: 0.0,
-        yaw: 0.0,
-        altitude: 10.0,
-        verticalSpeed: 0.0,
+    var state = AltState {
+        altitude: 0.0,
+        velocity: 0.0,
     }
 
-    // target: hold altitude at 12m, slight roll for lateral movement
-    let setpoint = Setpoint {
-        roll: 5.0,
-        pitch: 0.0,
-        yaw: 0.0,
-        altitude: 12.0,
+    var target = 15.0
+    var pid = pidNew(0.6, 0.08, 0.4, -0.5, 0.5)
+
+    let dt = 0.02
+
+    var termState = enableRawMode()
+    writeStdout("\x1b[?25l\x1b[2J")
+
+    var thrust = 0.5
+
+    for tick in 0..30000 {
+        let key = readKey()
+        if key == KEY_QUIT {
+            break
+        }
+        if key == KEY_UP {
+            target = clampF64(target + 1.0, 0.0, 30.0)
+        }
+        if key == KEY_DOWN {
+            target = clampF64(target - 1.0, 0.0, 30.0)
+        }
+
+        let error = target - state.altitude
+        thrust = clampF64(0.5 + pidUpdate(pid, error, dt), 0.0, 1.0)
+        physicsTick(state, thrust, dt)
+
+        renderFrame(state.altitude, state.velocity, target, thrust, tick as i64)
+        sleepMs(20)
     }
 
-    // simulated IMU: slight tilt, gravity on z
-    let imu = Imu {
-        ax: 0.1,
-        ay: 0.3,
-        az: 9.81,
-        gx: 0.01,
-        gy: 0.0,
-        gz: 0.0,
-    }
-
-    // PID gains (attitude: P-heavy, altitude: balanced)
-    var pidRoll = pidNew(4.0, 0.02, 1.5, -0.5, 0.5)
-    var pidPitch = pidNew(4.0, 0.02, 1.5, -0.5, 0.5)
-    var pidYaw = pidNew(2.0, 0.01, 0.5, -0.3, 0.3)
-    var pidAlt = pidNew(0.5, 0.1, 0.2, -0.5, 0.5)
-
-    let dt = 0.01
-
-    let motors = controlTick(
-        state,
-        setpoint,
-        imu,
-        pidRoll,
-        pidPitch,
-        pidYaw,
-        pidAlt,
-        dt,
-    )
-
-    // telemetry output
-    print("── flight controller tick ──")
-    print("state:")
-    print("  roll:     ", state.roll)
-    print("  pitch:    ", state.pitch)
-    print("  altitude: ", state.altitude)
-    print("motors:")
-    print("  m1: ", motors.m1)
-    print("  m2: ", motors.m2)
-    print("  m3: ", motors.m3)
-    print("  m4: ", motors.m4)
+    writeStdout("\x1b[?25h")
+    restoreTerminal(termState)
+    print("\ncontroller terminated.")
 
     return 0
 }

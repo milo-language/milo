@@ -219,8 +219,14 @@ export interface SafetyViolation {
   severity: "error" | "warning";
 }
 
+const ALIASES: Record<string, SafetyLevel> = {
+  "do178": "do178c-b",
+};
+
 export function parseSafetyLevel(s: string): SafetyLevel | null {
-  return s in PROFILES ? s as SafetyLevel : null;
+  if (s in PROFILES) return s as SafetyLevel;
+  if (s in ALIASES) return ALIASES[s];
+  return null;
 }
 
 export function getSafetyConstraints(level: SafetyLevel): SafetyConstraints {
@@ -440,7 +446,8 @@ export function listSafetyLevels(): string {
     "  avionics (DO-178C):",
     "    do178c-a    DAL A — catastrophic (fly-by-wire, primary flight control)",
     "    do178c-b    DAL B — hazardous (autopilot, TCAS)",
-    "    do178c-c    DAL C — major (FMS, weather radar)\n",
+    "    do178c-c    DAL C — major (FMS, weather radar)",
+    "    do178       alias for do178c-b (DAL B)\n",
     "  automotive (ISO 26262):",
     "    iso26262-a  ASIL A — lowest automotive",
     "    iso26262-b  ASIL B",

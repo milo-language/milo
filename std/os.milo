@@ -302,6 +302,38 @@ extern
 
 fn readdir(dir: *u8): *u8
 
+// ── Terminal ──
+
+extern
+
+fn tcgetattr(fd: i32, termios: *u8): i32
+
+extern
+
+fn tcsetattr(fd: i32, actions: i32, termios: *u8): i32
+
+extern
+
+fn ioctl(fd: i32, request: i64, ...): i32
+
+// ── PTY ──
+
+extern
+
+fn posix_openpt(flags: i32): i32
+
+extern
+
+fn grantpt(fd: i32): i32
+
+extern
+
+fn unlockpt(fd: i32): i32
+
+extern
+
+fn ptsname(fd: i32): *u8
+
 // ── Process ──
 
 extern
@@ -339,6 +371,14 @@ fn pipe(fds: *u8): i32
 extern
 
 fn kill(pid: i32, sig: i32): i32
+
+extern
+
+fn setsid(): i32
+
+extern
+
+fn execvp(file: *u8, argv: *u8): i32
 
 // ── pthreads ──
 
