@@ -1,0 +1,24 @@
+// @expect: accept: ZwF8MXFJWFom1LmqnOz4w+qjI2s=
+// @expect: is upgrade: true
+// @expect: not upgrade: false
+// @expect: key: dGhlIHNhbXBsZSBub25jZQ==
+// @expect: WS_TEXT: 1
+
+from "std/ws" import { isWsUpgrade, extractWsKey, WS_TEXT, _computeAcceptKey }
+
+fn main(): i32 {
+    // RFC 6455 Section 4.2.2 example: known accept key for this test vector
+    let testKey = "dGhlIHNhbXBsZSBub25jZQ=="
+    let acceptKey = _computeAcceptKey(testKey)
+    print($"accept: {acceptKey}")
+
+    let wsReq = "GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+    let httpReq = "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+
+    print($"is upgrade: {isWsUpgrade(wsReq)}")
+    print($"not upgrade: {isWsUpgrade(httpReq)}")
+    print($"key: {extractWsKey(wsReq)}")
+    print($"WS_TEXT: {WS_TEXT()}")
+
+    return 0
+}

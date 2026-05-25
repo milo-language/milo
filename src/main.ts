@@ -14,7 +14,7 @@ import { resolveImports } from "./resolver";
 import { formatDiagnostic, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget } from "./target";
 import { format, formatFile } from "./formatter";
-import { generateVerificationConditions, formatVerifyReport } from "./verify";
+import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
 
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
@@ -721,6 +721,7 @@ function main() {
     console.log("  emit-js <file>         emit JavaScript (playground target)");
     console.log("  fmt <file...>          format source files (-w to write in place)");
     console.log("  verify <file>          generate SMT-LIB2 verification conditions");
+    console.log("  prove <file>           verify contracts via z3 solver");
     console.log("  safety <file>          check safety profile compliance");
     console.log("  safety --list          list available safety profiles");
     console.log("  skill                  print language guide for LLMs");
@@ -836,6 +837,20 @@ function main() {
     new TypeChecker(warningConfig).check(program);
     const result = generateVerificationConditions(program);
     console.log(formatVerifyReport(result));
+    return;
+  }
+
+  if (cmd === "prove") {
+    const src = readFileSync(source!, "utf-8");
+    const sourceDir = dirname(resolve(source!));
+    const tokens = new Lexer(src).tokenize();
+    let program = new Parser(tokens, src).parse();
+    program = resolveImports(program, sourceDir, target);
+    new TypeChecker(warningConfig).check(program);
+    const vcs = generateVerificationConditions(program);
+    const pr = proveWithZ3(vcs);
+    console.log(formatProveReport(pr));
+    if (pr.failed > 0) process.exit(1);
     return;
   }
 

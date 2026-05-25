@@ -1,0 +1,20 @@
+// @expect: 1024
+// @expect: true
+// @expect: 1024
+
+from "std/mem" import { Arena, arenaNew, arenaAlloc, arenaReset, arenaRemaining }
+
+fn main(): i32 {
+    var arena = arenaNew(1024)!
+
+    let remaining = arenaRemaining(arena)
+    print(remaining)
+
+    let ptr = arenaAlloc(arena, 64)!
+    print(ptr > 0)
+
+    arenaReset(arena)
+    print(arenaRemaining(arena))
+
+    return 0
+}

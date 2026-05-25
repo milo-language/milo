@@ -1,0 +1,357 @@
+// std/ws — WebSocket server protocol (RFC 6455)
+
+from "std/os" import { close, read, write, htons, malloc, free, memcpy }
+from "std/crypto" import { sha1Bytes }
+from "std/base64" import { base64Encode }
+
+// ── Frame opcodes ──
+
+fn WS_CONTINUATION(): u8 { return 0 }
+fn WS_TEXT(): u8 { return 1 }
+fn WS_BINARY(): u8 { return 2 }
+fn WS_CLOSE(): u8 { return 8 }
+fn WS_PING(): u8 { return 9 }
+fn WS_PONG(): u8 { return 10 }
+
+// ── Types ──
+
+struct WsMessage {
+    opcode: u8,
+    payload: string,
+}
+
+struct WsConn {
+    fd: i32,
+    _closed: bool,
+}
+
+impl Drop for WsConn {
+    fn drop(self: &mut Self): void {
+        if !self._closed && self.fd >= 0 {
+            unsafe { close(self.fd) }
+        }
+    }
+}
+
+// ── WebSocket handshake ──
+
+// RFC 6455 magic GUID
+fn _wsMagic(): string {
+    return "258EAFA5-E914-47DA-95CA-5AB5DC587E35"
+}
+
+fn _computeAcceptKey(clientKey: &string): string {
+    let combined = clientKey.clone() + _wsMagic()
+    let hash = sha1Bytes(combined)
+    return base64Encode(hash)
+}
+
+// Check if raw HTTP request bytes contain a WebSocket upgrade request.
+
+fn isWsUpgrade(raw: &string): bool {
+    return _headerContains(raw, "Upgrade", "websocket")
+}
+
+// Extract Sec-WebSocket-Key from raw HTTP request.
+
+fn extractWsKey(raw: &string): string {
+    return _findHeaderValue(raw, "Sec-WebSocket-Key")
+}
+
+// Accept a WebSocket upgrade on an already-accepted TCP fd.
+// Pass the raw HTTP request bytes so the handshake can be completed.
+
+fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
+    if !isWsUpgrade(rawRequest) {
+        return Result.Err("not a WebSocket upgrade request")
+    }
+
+    let clientKey = extractWsKey(rawRequest)
+    if clientKey.len == 0 {
+        return Result.Err("missing Sec-WebSocket-Key")
+    }
+
+    let acceptKey = _computeAcceptKey(clientKey)
+
+    var resp: string = "HTTP/1.1 101 Switching Protocols\r\n"
+    resp = resp + "Upgrade: websocket\r\n"
+    resp = resp + "Connection: Upgrade\r\n"
+    resp = resp + "Sec-WebSocket-Accept: " + acceptKey + "\r\n"
+    resp = resp + "\r\n"
+
+    unsafe {
+        let n = write(fd, resp, resp.len)
+        if n < 0 {
+            return Result.Err("failed to send handshake response")
+        }
+    }
+
+    return Result.Ok(WsConn { fd: fd, _closed: false })
+}
+
+// ── Frame reading ──
+
+fn _readExact(fd: i32, buf: *u8, needed: i64): bool {
+    var got: i64 = 0
+    while got < needed {
+        unsafe {
+            let n = read(fd, (buf as i64 + got) as *u8, needed - got)
+            if n <= 0 {
+                return false
+            }
+            got = got + n
+        }
+    }
+    return true
+}
+
+impl WsConn {
+    // Read next WebSocket message. Handles fragmentation, responds to ping automatically.
+
+    fn recv(self: &mut Self): Result<WsMessage, string> {
+        var resultPayload: string = ""
+        var resultOpcode: u8 = 0
+
+        while true {
+            var header: [u8 ; 2] = [0 ; 2]
+            if !_readExact(self.fd, header, 2) {
+                return Result.Err("connection closed")
+            }
+
+            let fin = (header[0] & 128) != 0
+            let opcode = header[0] & 15
+            let masked = (header[1] & 128) != 0
+            var payloadLen: i64 = (header[1] & 127) as i64
+
+            if payloadLen == 126 {
+                var extLen: [u8 ; 2] = [0 ; 2]
+                if !_readExact(self.fd, extLen, 2) {
+                    return Result.Err("connection closed reading length")
+                }
+                let hi = extLen[0] as i64
+                let lo = extLen[1] as i64
+                payloadLen = (hi << 8) | lo
+            } else if payloadLen == 127 {
+                var extLen: [u8 ; 8] = [0 ; 8]
+                if !_readExact(self.fd, extLen, 8) {
+                    return Result.Err("connection closed reading length")
+                }
+                payloadLen = 0
+                for i in 0..8 {
+                    payloadLen = (payloadLen << 8) | extLen[i] as i64
+                }
+            }
+
+            var maskKey: [u8 ; 4] = [0 ; 4]
+            if masked {
+                if !_readExact(self.fd, maskKey, 4) {
+                    return Result.Err("connection closed reading mask")
+                }
+            }
+
+            // read payload
+            var payload: string = ""
+            if payloadLen > 0 {
+                unsafe {
+                    let buf = malloc(payloadLen)
+                    if !_readExact(self.fd, buf, payloadLen) {
+                        free(buf)
+                        return Result.Err("connection closed reading payload")
+                    }
+                    if masked {
+                        for i in 0..payloadLen {
+                            let p = (buf as i64 + i) as *u8
+                            *p = *p ^ maskKey[i % 4]
+                        }
+                    }
+                    for i in 0..payloadLen {
+                        payload.push(*((buf as i64 + i) as *u8))
+                    }
+                    free(buf)
+                }
+            }
+
+            // handle control frames inline
+            if opcode == WS_PING() {
+                let _ = self._sendFrame(WS_PONG(), payload, true)
+                continue
+            }
+            if opcode == WS_PONG() {
+                continue
+            }
+            if opcode == WS_CLOSE() {
+                self._closed = true
+                let _ = self._sendFrame(WS_CLOSE(), "", true)
+                return Result.Err("close")
+            }
+
+            // data frame
+            if opcode != WS_CONTINUATION() {
+                resultOpcode = opcode
+                resultPayload = payload
+            } else {
+                resultPayload = resultPayload + payload
+            }
+
+            if fin {
+                return Result.Ok(WsMessage { opcode: resultOpcode, payload: resultPayload })
+            }
+        }
+
+        return Result.Err("unreachable")
+    }
+
+    // Send a text message.
+
+    fn sendText(self: &Self, msg: &string): Result<i32, string> {
+        return self._sendFrame(WS_TEXT(), msg, true)
+    }
+
+    // Send a binary message.
+
+    fn sendBinary(self: &Self, data: &string): Result<i32, string> {
+        return self._sendFrame(WS_BINARY(), data, true)
+    }
+
+    // Send a ping.
+
+    fn ping(self: &Self): Result<i32, string> {
+        return self._sendFrame(WS_PING(), "", true)
+    }
+
+    // Send close frame and mark connection closed.
+
+    fn close(self: &mut Self): void {
+        if !self._closed {
+            let _ = self._sendFrame(WS_CLOSE(), "", true)
+            self._closed = true
+            unsafe { close(self.fd) }
+        }
+    }
+
+    fn _sendFrame(self: &Self, opcode: u8, payload: &string, fin: bool): Result<i32, string> {
+        // max header: 1 (fin+op) + 1 (len7) + 8 (ext len) = 10
+        var headerLen: i64 = 2
+        if payload.len >= 126 && payload.len < 65536 {
+            headerLen = 4
+        } else if payload.len >= 65536 {
+            headerLen = 10
+        }
+
+        let total = headerLen + payload.len
+        unsafe {
+            let frame = malloc(total)
+            var pos: i64 = 0
+
+            // byte 0: FIN + opcode
+            var b0: u8 = opcode
+            if fin { b0 = b0 | 128 }
+            *((frame as i64 + pos) as *u8) = b0
+            pos = pos + 1
+
+            // byte 1+: payload length (server frames are never masked)
+            if payload.len < 126 {
+                *((frame as i64 + pos) as *u8) = payload.len as u8
+                pos = pos + 1
+            } else if payload.len < 65536 {
+                *((frame as i64 + pos) as *u8) = 126
+                pos = pos + 1
+                *((frame as i64 + pos) as *u8) = (payload.len >> 8) as u8
+                pos = pos + 1
+                *((frame as i64 + pos) as *u8) = (payload.len & 255) as u8
+                pos = pos + 1
+            } else {
+                *((frame as i64 + pos) as *u8) = 127
+                pos = pos + 1
+                for i in 0..8 {
+                    let shift = ((7 - i) * 8) as i64
+                    *((frame as i64 + pos) as *u8) = (payload.len >> shift) as u8
+                    pos = pos + 1
+                }
+            }
+
+            // payload
+            if payload.len > 0 {
+                memcpy((frame as i64 + pos) as *u8, payload as *u8, payload.len)
+            }
+
+            var sent: i64 = 0
+            while sent < total {
+                let n = write(self.fd, (frame as i64 + sent) as *u8, total - sent)
+                if n < 0 {
+                    free(frame)
+                    return Result.Err("write failed")
+                }
+                sent = sent + n
+            }
+            free(frame)
+        }
+        return Result.Ok(0)
+    }
+}
+
+// ── Header parsing helpers ──
+
+fn _toLower(ch: u8): u8 {
+    if ch >= 'A' && ch <= 'Z' {
+        return ch + 32
+    }
+    return ch
+}
+
+fn _findHeaderValue(raw: &string, name: &string): string {
+    var i: i64 = 0
+    while i < raw.len {
+        // find start of line
+        if i == 0 || (i > 0 && raw[i - 1] == '\n') {
+            var found: bool = true
+            if i + name.len >= raw.len {
+                found = false
+            } else {
+                for j in 0..name.len {
+                    if _toLower(raw[i + j]) != _toLower(name[j]) {
+                        found = false
+                        break
+                    }
+                }
+            }
+            if found && i + name.len < raw.len && raw[i + name.len] == ':' {
+                var start: i64 = i + name.len + 1
+                while start < raw.len && raw[start] == ' ' {
+                    start = start + 1
+                }
+                var end: i64 = start
+                while end < raw.len && raw[end] != '\r' && raw[end] != '\n' {
+                    end = end + 1
+                }
+                return raw.substr(start, end)
+            }
+        }
+        i = i + 1
+    }
+    return ""
+}
+
+fn _headerContains(raw: &string, name: &string, value: &string): bool {
+    let hdr = _findHeaderValue(raw, name)
+    if hdr.len == 0 {
+        return false
+    }
+    // case-insensitive substring check
+    if value.len > hdr.len {
+        return false
+    }
+    for i in 0..(hdr.len - value.len + 1) {
+        var found: bool = true
+        for j in 0..value.len {
+            if _toLower(hdr[i + j]) != _toLower(value[j]) {
+                found = false
+                break
+            }
+        }
+        if found {
+            return true
+        }
+    }
+    return false
+}

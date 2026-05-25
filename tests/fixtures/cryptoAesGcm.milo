@@ -1,0 +1,34 @@
+// @expect: encrypted 11 bytes
+// @expect: decrypted: hello world
+// @expect: roundtrip ok
+
+from "std/crypto" import { aesGcmEncrypt, aesGcmDecrypt }
+
+fn main(): i32 {
+    // 32-byte key, 12-byte IV
+    let key = "01234567890123456789012345678901"
+    let iv = "abcdefghijkl"
+    let plaintext = "hello world"
+    let aad = ""
+
+    match aesGcmEncrypt(key, iv, plaintext, aad) {
+        Result.Ok(result) => {
+            print($"encrypted {result.ciphertext.len} bytes")
+
+            match aesGcmDecrypt(key, iv, result.ciphertext, result.tag, aad) {
+                Result.Ok(decrypted) => {
+                    print($"decrypted: {decrypted}")
+                    if decrypted == plaintext {
+                        print("roundtrip ok")
+                    } else {
+                        print("roundtrip FAILED")
+                    }
+                }
+                Result.Err(e) => { print($"decrypt error: {e}") }
+            }
+        }
+        Result.Err(e) => { print($"encrypt error: {e}") }
+    }
+
+    return 0
+}
