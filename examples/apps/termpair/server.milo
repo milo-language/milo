@@ -1,0 +1,587 @@
+// termpair server — WebSocket relay for terminal sharing
+//
+// Accepts terminal connections (WS) and browser connections (WS).
+// Terminal output is broadcast to all connected browsers.
+// Serves the static frontend SPA.
+
+from "std/os" import {
+    accept, bind, close, getsockname, listen, ntohs, read, write,
+    setsockopt, socket, malloc, free, memcpy
+}
+from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr }
+from "std/ws" import { WsConn, WsMessage, wsAccept, isWsUpgrade, WS_TEXT, WS_CLOSE }
+from "std/sync" import { Channel, AtomicI64 }
+from "std/runtime" import { Task }
+from "std/io" import { readFile }
+from "std/argparse" import { newParser }
+from "std/json" import { jsonParse, Json }
+from "std/time" import { sleepMs }
+from "std/base64" import { base64Encode }
+
+from "./protocol" import {
+    jsonMsg, jsonMsgStr, jsonMsgI64,
+    makeTerminalInfo, makePublicSession, makeStartBroadcast,
+    makeResizeMsg, makeNumClients, parseEvent, parsePayloadI64
+}
+
+// ── Session state ──
+
+struct Session {
+    terminalId: string,
+    command: string,
+    startTime: string,
+    isPublic: bool,
+    displayName: string,
+    rows: i64,
+    cols: i64,
+    browserCount: i64,
+    alive: bool,
+}
+
+// channels stored in parallel vecs (global Vec<struct-with-generics> has codegen issues)
+var sessions: Vec<Session> = []
+var toTerminalChans: Vec<Channel<string>> = []
+var broadcastChans: Vec<Channel<string>> = []
+var nextId: i64 = 1
+
+// ── Helpers ──
+
+fn generateId(): string {
+    let id = nextId
+    nextId = nextId + 1
+    return "t" + id.toString()
+}
+
+fn findSession(terminalId: &string): i64 {
+    for i in 0..sessions.len {
+        if sessions[i].terminalId == terminalId {
+            return i
+        }
+    }
+    return -1 as i64
+}
+
+// ── MIME types ──
+
+fn getMime(path: &string): string {
+    if path.endsWith(".html") {
+        return "text/html; charset=utf-8"
+    }
+    if path.endsWith(".js") {
+        return "application/javascript"
+    }
+    if path.endsWith(".css") {
+        return "text/css"
+    }
+    return "application/octet-stream"
+}
+
+// ── HTTP response helpers ──
+
+fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
+    var statusText: string = "200 OK"
+    if status == 404 {
+        statusText = "404 Not Found"
+    }
+    if status == 400 {
+        statusText = "400 Bad Request"
+    }
+
+    var resp: string = "HTTP/1.1 " + statusText + "\r\n"
+    resp = resp + "Content-Type: " + contentType + "\r\n"
+    resp = resp + "Content-Length: " + body.len.toString() + "\r\n"
+    resp = resp + "Access-Control-Allow-Origin: *\r\n"
+    resp = resp + "Connection: close\r\n"
+    resp = resp + "\r\n"
+    resp = resp + body
+    unsafe { write(fd, resp, resp.len) }
+}
+
+// ── Parse raw request ──
+
+struct RequestLine {
+    method: string,
+    path: string,
+    query: string,
+}
+
+fn parseRequestLine(raw: &string): RequestLine {
+    var i: i64 = 0
+    while i < raw.len && raw[i] != ' ' {
+        i = i + 1
+    }
+    let method = raw.substr(0, i)
+    while i < raw.len && raw[i] == ' ' {
+        i = i + 1
+    }
+    let uriStart = i
+    while i < raw.len && raw[i] != ' ' {
+        i = i + 1
+    }
+    let uri = raw.substr(uriStart, i)
+
+    var path: string = ""
+    var query: string = ""
+    var foundQ: bool = false
+    for ch in uri {
+        if !foundQ && ch == '?' {
+            foundQ = true
+        } else if foundQ {
+            query.push(ch)
+        } else {
+            path.push(ch)
+        }
+    }
+
+    return RequestLine { method: method, path: path, query: query }
+}
+
+fn queryParam(query: &string, name: &string): string {
+    var i: i64 = 0
+    while i < query.len {
+        let keyStart = i
+        while i < query.len && query[i] != '=' && query[i] != '&' {
+            i = i + 1
+        }
+        let key = query.substr(keyStart, i)
+        var value: string = ""
+        if i < query.len && query[i] == '=' {
+            i = i + 1
+            let valStart = i
+            while i < query.len && query[i] != '&' {
+                i = i + 1
+            }
+            value = query.substr(valStart, i)
+        }
+        if key == name {
+            return value
+        }
+        if i < query.len && query[i] == '&' {
+            i = i + 1
+        }
+    }
+    return ""
+}
+
+// ── Embedded static files ──
+
+let indexHtml = embedFile("static/index.html")
+let appJs = embedFile("static/app.js")
+let styleCss = embedFile("static/style.css")
+let xtermJs = embedFile("static/xterm.min.js")
+let xtermCss = embedFile("static/xterm.min.css")
+
+// ── Handle terminal WebSocket connection ──
+
+fn handleTerminalWs(ws: WsConn): void {
+    // first message must be init data
+    var conn = ws
+    var initMsg = WsMessage { opcode: 0, payload: "" }
+    match conn.recv() {
+        Result.Ok(msg) => { initMsg = msg }
+        Result.Err(e) => {
+            conn.close()
+            return
+        }
+    }
+
+    let j = jsonParse(initMsg.payload.clone())!
+    let rows = j.i64("rows") ?? 24
+    let cols = j.i64("cols") ?? 80
+    let command = j.str("command") ?? "bash"
+    let startTime = j.str("broadcast_start_time_iso") ?? ""
+    let isPublic = j.bool("is_public") ?? false
+
+    let terminalId = generateId()
+
+    // create broadcast channel — browsers subscribe to this
+    let broadcast = Channel<string>.new(256)!
+    // channel for browser→terminal messages
+    let toTerminal = Channel<string>.new(256)!
+
+    let displayName = if isPublic { "milo-terminal" } else { "" }
+
+    let session = Session {
+        terminalId: terminalId.clone(),
+        command: command.clone(),
+        startTime: startTime.clone(),
+        isPublic: isPublic,
+        displayName: displayName,
+        rows: rows,
+        cols: cols,
+        toTerminal: toTerminal,
+        broadcast: broadcast,
+        browserCount: AtomicI64.new(0),
+        alive: AtomicI64.new(1),
+    }
+
+    sessions.push(session)
+
+    // send start_broadcast with terminal_id
+    let startResp = makeStartBroadcast(terminalId)
+    conn.sendText(startResp)
+
+    print($"terminal connected: {terminalId} (command: {command})")
+
+    // spawn task to forward browser→terminal messages
+    let tid = terminalId.clone()
+    Task.spawn(move (): void => {
+        while true {
+            let idx = findSession(tid)
+            if idx < 0 { break }
+            if sessions[idx].alive.load() == 0 { break }
+
+            let maybe = sessions[idx].toTerminal.tryRecv()
+            match maybe {
+                Option.Some(msg) => {
+                    conn.sendText(msg)
+                }
+                Option.None => {
+                    sleepMs(10)
+                }
+            }
+        }
+    })
+
+    // main loop: read from terminal, broadcast to browsers
+    let tid2 = terminalId.clone()
+    while true {
+        let result = conn.recv()
+        match result {
+            Result.Ok(msg) => {
+                let raw = msg.payload
+                let event = parseEvent(raw)
+
+                if event == "resize" {
+                    let newRows = parsePayloadI64(raw, "rows")
+                    let newCols = parsePayloadI64(raw, "cols")
+
+                    let idx = findSession(tid2)
+                    if idx >= 0 {
+                        sessions[idx].rows = newRows
+                        sessions[idx].cols = newCols
+                        sessions[idx].broadcast.trySend(raw.clone())
+                    }
+                } else if event == "new_output" || event == "aes_keys" || event == "aes_key_rotation" {
+                    let idx = findSession(tid2)
+                    if idx >= 0 {
+                        sessions[idx].broadcast.trySend(raw.clone())
+                    }
+                }
+            }
+            Result.Err(e) => {
+                break
+            }
+        }
+    }
+
+    // cleanup
+    print($"terminal disconnected: {terminalId}")
+    let idx = findSession(terminalId)
+    if idx >= 0 {
+        sessions[idx].alive.store(0)
+        sessions[idx].broadcast.close()
+        sessions[idx].toTerminal.close()
+        var newSessions: Vec<Session> = []
+        for i in 0..sessions.len {
+            if sessions[i].terminalId != terminalId {
+                newSessions.push(sessions[i])
+            }
+        }
+        sessions = newSessions
+    }
+}
+
+// ── Handle browser WebSocket connection ──
+
+fn handleBrowserWs(ws: WsConn, terminalId: string): void {
+    var conn = ws
+    let idx = findSession(terminalId)
+    if idx < 0 {
+        conn.close()
+        return
+    }
+
+    // increment browser count
+    let count = sessions[idx].browserCount.add(1)
+    let numMsg = makeNumClients(count)
+    sessions[idx].broadcast.trySend(numMsg)
+
+    // send current dimensions
+    let rows = sessions[idx].rows
+    let cols = sessions[idx].cols
+    let resizeMsg = makeResizeMsg(rows, cols)
+    conn.sendText(resizeMsg)
+
+    // notify terminal that a new browser connected
+    let notify = "{\"event\":\"new_browser_connected\",\"payload\":{}}"
+    sessions[idx].toTerminal.trySend(notify)
+
+    print($"browser connected to {terminalId} (viewers: {count})")
+
+    let tid = terminalId.clone()
+
+    // spawn task to forward broadcast → this browser
+    let tid2 = terminalId.clone()
+    Task.spawn(move (): void => {
+        while true {
+            let bidx = findSession(tid2)
+            if bidx < 0 { break }
+            if sessions[bidx].alive.load() == 0 {
+                conn.sendText("{\"event\":\"fatal_error\",\"payload\":\"session ended\"}")
+                conn.close()
+                break
+            }
+
+            let maybe = sessions[bidx].broadcast.tryRecv()
+            match maybe {
+                Option.Some(msg) => {
+                    let sendResult = conn.sendText(msg)
+                    if let Result.Err(_) = sendResult { break }
+                }
+                Option.None => {
+                    sleepMs(10)
+                }
+            }
+        }
+    })
+
+    // read loop: browser → terminal
+    while true {
+        let result = conn.recv()
+        match result {
+            Result.Ok(msg) => {
+                let raw = msg.payload
+                let event = parseEvent(raw)
+
+                if event == "command" {
+                    let bidx = findSession(tid)
+                    if bidx >= 0 {
+                        sessions[bidx].toTerminal.trySend(raw.clone())
+                    }
+                } else if event == "chat" {
+                    let bidx = findSession(tid)
+                    if bidx >= 0 {
+                        sessions[bidx].broadcast.trySend(raw.clone())
+                    }
+                } else if event == "request_terminal_dimensions" {
+                    let bidx = findSession(tid)
+                    if bidx >= 0 {
+                        let r = sessions[bidx].rows
+                        let c = sessions[bidx].cols
+                        conn.sendText(makeResizeMsg(r, c))
+                    }
+                } else if event == "new_browser_connected" {
+                    let bidx = findSession(tid)
+                    if bidx >= 0 {
+                        sessions[bidx].toTerminal.trySend(raw.clone())
+                    }
+                }
+            }
+            Result.Err(e) => {
+                break
+            }
+        }
+    }
+
+    // decrement browser count
+    let didx = findSession(terminalId)
+    if didx >= 0 {
+        let newCount = sessions[didx].browserCount.sub(1)
+        let countMsg = makeNumClients(newCount)
+        sessions[didx].broadcast.trySend(countMsg)
+        print($"browser disconnected from {terminalId} (viewers: {newCount})")
+    }
+}
+
+// ── Handle API: GET /api/sessions ──
+
+fn handleGetSessions(): string {
+    var result: string = "["
+    var first: bool = true
+    for i in 0..sessions.len {
+        if sessions[i].isPublic && sessions[i].alive.load() == 1 {
+            if !first {
+                result = result + ","
+            }
+            first = false
+            result = result + makePublicSession(
+                sessions[i].terminalId,
+                sessions[i].displayName,
+                sessions[i].command,
+                sessions[i].rows,
+                sessions[i].cols,
+                sessions[i].startTime,
+                sessions[i].browserCount.load()
+            )
+        }
+    }
+    result = result + "]"
+    return result
+}
+
+// ── Handle API: GET /terminal/:id ──
+
+fn handleGetTerminal(terminalId: &string): string {
+    let idx = findSession(terminalId)
+    if idx < 0 {
+        return ""
+    }
+    return makeTerminalInfo(
+        sessions[idx].terminalId,
+        sessions[idx].rows,
+        sessions[idx].cols,
+        sessions[idx].command,
+        sessions[idx].startTime,
+        sessions[idx].isPublic,
+        sessions[idx].displayName
+    )
+}
+
+// ── Main server loop ──
+
+fn main(): i32 {
+    var parser = newParser("termpair-server", "terminal sharing server")
+    parser.addI64("port", "p", "port to listen on", 8000)
+    let args = parser.parse()
+    let port = args.getU16("port")
+
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    let BACKLOG: i32 = 1024
+    let BUF_SIZE: i64 = 8192
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    unsafe {
+        let rawFd = socket(AF_INET, SOCK_STREAM, 0)
+        if rawFd < 0 {
+            print("error: socket() failed")
+            return 1
+        }
+
+        var one: i32 = 1
+        setsockopt(rawFd, solSocket(), soReuseaddr(), one, 4)
+
+        var addr = makeSockaddr(port, 0)
+        if bind(rawFd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            print("error: bind() failed")
+            return 1
+        }
+        if listen(rawFd, BACKLOG) < 0 {
+            print("error: listen() failed")
+            return 1
+        }
+
+        var boundAddr = makeZeroedSockaddr()
+        var boundLen: u32 = SIZEOF_SOCKADDR_IN
+        getsockname(rawFd, boundAddr, boundLen)
+        let actualPort = ntohs(boundAddr.sinPort)
+
+        print($"termpair server listening on http://localhost:{actualPort}")
+
+        while true {
+            var clientAddr = makeZeroedSockaddr()
+            var addrlen: u32 = SIZEOF_SOCKADDR_IN
+            let clientFd = accept(rawFd, clientAddr, addrlen)
+            if clientFd < 0 {
+                continue
+            }
+
+            // read HTTP request
+            var buf: [u8 ; 8192] = [0 ; 8192]
+            let n = read(clientFd, buf, BUF_SIZE)
+            if n <= 0 {
+                close(clientFd)
+                continue
+            }
+
+            // convert to string
+            var raw: string = ""
+            for i in 0..n {
+                raw.push(buf[i])
+            }
+
+            let rl = parseRequestLine(raw)
+            let method = rl.method
+            let path = rl.path
+            let query = rl.query
+
+            // WebSocket upgrade?
+            if isWsUpgrade(raw) {
+                if path == "/connect_to_terminal" {
+                    let wsResult = wsAccept(clientFd, raw)
+                    match wsResult {
+                        Result.Ok(ws) => {
+                            Task.spawn(move (): void => {
+                                handleTerminalWs(ws)
+                            })
+                        }
+                        Result.Err(e) => {
+                            close(clientFd)
+                        }
+                    }
+                } else if path == "/connect_browser_to_terminal" {
+                    let terminalId = queryParam(query, "terminal_id")
+                    if terminalId.len == 0 {
+                        sendHttp(clientFd, 400, "text/plain", "missing terminal_id")
+                        close(clientFd)
+                    } else {
+                        let wsResult = wsAccept(clientFd, raw)
+                        match wsResult {
+                            Result.Ok(ws) => {
+                                Task.spawn(move (): void => {
+                                    handleBrowserWs(ws, terminalId)
+                                })
+                            }
+                            Result.Err(e) => {
+                                close(clientFd)
+                            }
+                        }
+                    }
+                } else {
+                    close(clientFd)
+                }
+                continue
+            }
+
+            // HTTP routes
+            if method == "GET" {
+                if path == "/" || path == "/index.html" {
+                    sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
+                } else if path == "/app.js" {
+                    sendHttp(clientFd, 200, "application/javascript", appJs)
+                } else if path == "/style.css" {
+                    sendHttp(clientFd, 200, "text/css", styleCss)
+                } else if path == "/xterm.min.js" {
+                    sendHttp(clientFd, 200, "application/javascript", xtermJs)
+                } else if path == "/xterm.min.css" {
+                    sendHttp(clientFd, 200, "text/css", xtermCss)
+                } else if path == "/ping" {
+                    sendHttp(clientFd, 200, "application/json", "\"pong\"")
+                } else if path == "/api/sessions" {
+                    let body = handleGetSessions()
+                    sendHttp(clientFd, 200, "application/json", body)
+                } else if path.startsWith("/terminal/") {
+                    let tid = path.substr(10, path.len)
+                    let body = handleGetTerminal(tid)
+                    if body.len == 0 {
+                        sendHttp(clientFd, 404, "text/plain", "not found")
+                    } else {
+                        sendHttp(clientFd, 200, "application/json", body)
+                    }
+                } else if path.startsWith("/s/") {
+                    // share link — serve index.html (SPA handles routing)
+                    sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
+                } else {
+                    sendHttp(clientFd, 404, "text/plain", "not found")
+                }
+            } else {
+                sendHttp(clientFd, 404, "text/plain", "not found")
+            }
+
+            close(clientFd)
+        }
+    }
+
+    return 0
+}

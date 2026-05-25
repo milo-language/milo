@@ -1,0 +1,243 @@
+// termpair client — share your terminal via WebSocket
+//
+// Opens a PTY, spawns your shell, connects to the termpair server,
+// and relays I/O bidirectionally.
+
+from "std/pty" import { Pty, WinSize, openAndSpawn }
+from "std/ws" import { WsConn, WsMessage, wsConnect, WS_TEXT }
+from "std/net" import { resolve }
+from "std/term" import { enableRawMode, restoreTerminal, readKey }
+from "std/os" import { ioctl, read, write }
+from "std/io" import { writeStdout, readStdin }
+from "std/sync" import { AtomicBool }
+from "std/runtime" import { Task }
+from "std/time" import { epochSecs, sleepMs }
+from "std/argparse" import { newParser }
+from "std/base64" import { base64Encode }
+
+from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent }
+
+// ── Terminal size query ──
+
+struct TermSize {
+    rows: i64,
+    cols: i64,
+}
+
+fn termSize(): TermSize {
+    var ws = WinSize { rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16 }
+    unsafe {
+        // TIOCGWINSZ on macOS
+        ioctl(1, 1074295912, (&ws) as *u8)
+    }
+    return TermSize { rows: ws.rows as i64, cols: ws.cols as i64 }
+}
+
+// ── Simple ISO timestamp ──
+
+fn isoTimestamp(): string {
+    let secs = epochSecs()
+    // approximate — good enough for display
+    let secsInDay: i64 = 86400
+    let days = secs / secsInDay
+    let timeOfDay = secs % secsInDay
+    let hours = timeOfDay / 3600
+    let minutes = (timeOfDay % 3600) / 60
+    let seconds = timeOfDay % 60
+
+    // days since epoch → year/month/day (simplified)
+    var y: i64 = 1970
+    var remaining = days
+    while true {
+        var daysInYear: i64 = 365
+        if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+            daysInYear = 366
+        }
+        if remaining < daysInYear {
+            break
+        }
+        remaining = remaining - daysInYear
+        y = y + 1
+    }
+
+    let isLeap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+    let monthDays: [i64 ; 12] = [31, if isLeap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    var m: i64 = 0
+    while m < 12 && remaining >= monthDays[m] {
+        remaining = remaining - monthDays[m]
+        m = m + 1
+    }
+    let d = remaining + 1
+    m = m + 1
+
+    fn pad(n: i64): string {
+        if n < 10 { return "0" + n.toString() }
+        return n.toString()
+    }
+
+    return y.toString() + "-" + pad(m) + "-" + pad(d) + "T" + pad(hours) + ":" + pad(minutes) + ":" + pad(seconds) + "Z"
+}
+
+// ── Main ──
+
+fn main(): i32 {
+    var parser = newParser("termpair", "share your terminal")
+    parser.addString("host", "h", "server host", "localhost")
+    parser.addI64("port", "p", "server port", 8000)
+    parser.addBool("public", "", "public session (no encryption)")
+    let args = parser.parse()
+
+    let host = args.getString("host")
+    let port = args.getU16("port")
+    let isPublic = args.getBool("public")
+
+    // resolve server address
+    let ipResult = resolve(host)
+    if let Result.Err(e) = ipResult {
+        print($"error: could not resolve host '{host}'")
+        return 1
+    }
+    let ip = ipResult!
+
+    // get terminal size
+    let ts = termSize()
+    let rows = ts.rows
+    let cols = ts.cols
+
+    // open PTY and spawn shell
+    let shell = "/bin/bash"
+    var shellArgs: Vec<string> = []
+    let ptyResult = openAndSpawn(shell, shellArgs)
+    if let Result.Err(e) = ptyResult {
+        print($"error: {e}")
+        return 1
+    }
+    var pty = ptyResult!
+
+    // resize PTY to match terminal (minus 1 row for status)
+    let ptyRows = if rows > 1 { rows - 1 } else { rows }
+    pty.resize(ptyRows as u16, cols as u16)
+
+    // connect to server via WebSocket
+    let wsResult = wsConnect(ip, port, "/connect_to_terminal")
+    if let Result.Err(e) = wsResult {
+        print($"error: could not connect to server: {e}")
+        return 1
+    }
+    var ws = wsResult!
+
+    // send init message
+    let startTime = isoTimestamp()
+    let initMsg = makeInitMessage(ptyRows, cols, shell, startTime, isPublic)
+    let sendResult = ws.sendText(initMsg)
+    if let Result.Err(e) = sendResult {
+        print($"error: failed to send init: {e}")
+        return 1
+    }
+
+    // read start_broadcast response
+    let startResult = ws.recv()
+    if let Result.Err(e) = startResult {
+        print($"error: no start_broadcast from server: {e}")
+        return 1
+    }
+
+    let startMsg = startResult!
+    // extract terminal_id from response
+    let event = parseEvent(startMsg.payload)
+    if event != "start_broadcast" {
+        print($"error: expected start_broadcast, got {event}")
+        return 1
+    }
+
+    // print share URL
+    if isPublic {
+        print($"termpair — sharing terminal (public mode)")
+    } else {
+        print($"termpair — sharing terminal")
+    }
+    print($"open in browser: http://{host}:{port}/s/t1")
+    print("press ctrl-d to stop sharing")
+    print("")
+
+    let termState = enableRawMode()
+
+    var done = AtomicBool.new(false)
+
+    // task 1: PTY output → WebSocket (terminal → server → browsers)
+    Task.spawn(move (): void => {
+        var buf: [u8 ; 4096] = [0 ; 4096]
+        while !done.load() {
+            unsafe {
+                let n = pty.read(buf as *u8, 4095)
+                if n <= 0 {
+                    done.store(true)
+                    break
+                }
+
+                // write to local terminal
+                write(1, buf as *u8, n)
+
+                // base64 encode and send as new_output
+                var rawOutput: string = ""
+                for i in 0..n {
+                    rawOutput.push(buf[i])
+                }
+                let b64 = base64Encode(rawOutput)
+                // wrap in the expected JSON envelope
+                let payload = base64Encode("{\"pty_output\":\"" + b64 + "\"}")
+                let msg = makeNewOutput(payload)
+                let _ = ws.sendText(msg)
+            }
+        }
+    })
+
+    // task 2: stdin → PTY (local keyboard input → shell)
+    Task.spawn(move (): void => {
+        var buf: [u8 ; 256] = [0 ; 256]
+        while !done.load() {
+            unsafe {
+                let n = read(0, buf as *u8, 256)
+                if n <= 0 {
+                    done.store(true)
+                    break
+                }
+                pty.write(buf as *u8, n)
+            }
+        }
+    })
+
+    // task 3: WebSocket → PTY (browser input → shell)
+    Task.spawn(move (): void => {
+        while !done.load() {
+            let result = ws.recv()
+            match result {
+                Result.Ok(msg) => {
+                    let raw = msg.payload
+                    let ev = parseEvent(raw)
+                    if ev == "command" {
+                        // in public mode, commands come as plain text payload
+                        // (encryption not implemented yet)
+                    } else if ev == "resize" {
+                        // browser requested resize
+                    }
+                }
+                Result.Err(e) => {
+                    done.store(true)
+                    break
+                }
+            }
+        }
+    })
+
+    // wait for PTY child to exit
+    let exitCode = pty.wait()
+
+    done.store(true)
+    restoreTerminal(termState)
+
+    print("")
+    print("termpair session ended")
+
+    return 0
+}

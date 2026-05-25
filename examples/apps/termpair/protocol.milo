@@ -1,0 +1,120 @@
+// protocol — termpair message types and JSON serialization
+
+from "std/json" import { Json, jsonParse }
+
+// ── JSON message builder ──
+
+fn jsonMsg(event: &string, payload: &string): string {
+    return "{\"event\":\"" + event + "\",\"payload\":" + payload + "}"
+}
+
+fn jsonMsgStr(event: &string, payload: &string): string {
+    return "{\"event\":\"" + event + "\",\"payload\":\"" + payload + "\"}"
+}
+
+fn jsonMsgI64(event: &string, payload: i64): string {
+    return "{\"event\":\"" + event + "\",\"payload\":" + payload.toString() + "}"
+}
+
+// ── init message from terminal → server ──
+
+fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool): string {
+    var msg: string = "{"
+    msg = msg + "\"rows\":" + rows.toString()
+    msg = msg + ",\"cols\":" + cols.toString()
+    msg = msg + ",\"allow_browser_control\":false"
+    msg = msg + ",\"command\":\"" + command + "\""
+    msg = msg + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
+    msg = msg + ",\"subprotocol_version\":\"4\""
+    if isPublic {
+        msg = msg + ",\"is_public\":true"
+    } else {
+        msg = msg + ",\"is_public\":false"
+    }
+    msg = msg + "}"
+    return msg
+}
+
+// ── terminal info (GET /terminal/:id response) ──
+
+fn makeTerminalInfo(
+    terminalId: &string,
+    rows: i64, cols: i64,
+    command: &string,
+    startTime: &string,
+    isPublic: bool,
+    displayName: &string
+): string {
+    var j: string = "{"
+    j = j + "\"terminal_id\":\"" + terminalId + "\""
+    j = j + ",\"cols\":" + cols.toString()
+    j = j + ",\"rows\":" + rows.toString()
+    j = j + ",\"allow_browser_control\":false"
+    j = j + ",\"command\":\"" + command + "\""
+    j = j + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
+    j = j + ",\"termpair_version\":\"0.1.0\""
+    j = j + ",\"is_public\":" + (if isPublic { "true" } else { "false" })
+    j = j + ",\"display_name\":\"" + displayName + "\""
+    j = j + "}"
+    return j
+}
+
+// ── public sessions list (GET /api/sessions response) ──
+
+fn makePublicSession(
+    terminalId: &string,
+    displayName: &string,
+    command: &string,
+    rows: i64, cols: i64,
+    startTime: &string,
+    viewerCount: i64
+): string {
+    var j: string = "{"
+    j = j + "\"terminal_id\":\"" + terminalId + "\""
+    j = j + ",\"display_name\":\"" + displayName + "\""
+    j = j + ",\"command\":\"" + command + "\""
+    j = j + ",\"cols\":" + cols.toString()
+    j = j + ",\"rows\":" + rows.toString()
+    j = j + ",\"allow_browser_control\":false"
+    j = j + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
+    j = j + ",\"viewer_count\":" + viewerCount.toString()
+    j = j + "}"
+    return j
+}
+
+// ── resize payload ──
+
+fn makeResizeMsg(rows: i64, cols: i64): string {
+    return jsonMsg("resize", "{\"rows\":" + rows.toString() + ",\"cols\":" + cols.toString() + "}")
+}
+
+// ── start_broadcast response ──
+
+fn makeStartBroadcast(terminalId: &string): string {
+    return jsonMsg("start_broadcast", "{\"terminal_id\":\"" + terminalId + "\"}")
+}
+
+// ── new_output — wraps base64-encoded pty output ──
+
+fn makeNewOutput(b64Data: &string): string {
+    return jsonMsgStr("new_output", b64Data)
+}
+
+// ── num_clients ──
+
+fn makeNumClients(n: i64): string {
+    return jsonMsgI64("num_clients", n)
+}
+
+// ── parse helpers ──
+
+fn parseEvent(raw: &string): string {
+    let j = jsonParse(raw.clone())!
+    return j.str("event") ?? ""
+}
+
+fn parsePayloadI64(raw: &string, field: &string): i64 {
+    let j = jsonParse(raw.clone())!
+    let payload = j.get("payload")!
+    return payload.i64(field) ?? 0
+}

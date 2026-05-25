@@ -773,6 +773,16 @@ export class TypeChecker {
         this.genericStructs.set(s.name, { typeParams: s.typeParams.map(tp => tp.name), fields, decl: s });
       }
     }
+
+    // pre-register generic impls so struct fields like Channel<string> trigger full monomorphization
+    for (const impl of program.impls) {
+      if (impl.typeParams && impl.typeParams.length > 0 && !impl.traitName) {
+        const existing = this.genericImpls.get(impl.typeName) || [];
+        existing.push({ impl, program });
+        this.genericImpls.set(impl.typeName, existing);
+      }
+    }
+
     for (const s of program.structs) {
       if (s.typeParams.length === 0) {
         const fields = s.fields.map(f => ({ name: f.name, type: this.resolve(f.type) }));
@@ -1214,8 +1224,10 @@ export class TypeChecker {
     // generic impl — store as template, instantiate per monomorphization
     if (impl.typeParams && impl.typeParams.length > 0 && !impl.traitName) {
       const existing = this.genericImpls.get(typeName) || [];
-      existing.push({ impl, program });
-      this.genericImpls.set(typeName, existing);
+      if (!existing.some(e => e.impl === impl)) {
+        existing.push({ impl, program });
+        this.genericImpls.set(typeName, existing);
+      }
       return;
     }
 

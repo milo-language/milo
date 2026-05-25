@@ -1,8 +1,9 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
-from "std/os" import { close, read, write, htons, malloc, free, memcpy }
+from "std/os" import { close, read, write, htons, malloc, free, memcpy, socket, connect }
 from "std/crypto" import { sha1Bytes }
 from "std/base64" import { base64Encode }
+from "std/platform" import { SockAddrIn, makeSockaddr }
 
 // ── Frame opcodes ──
 
@@ -287,6 +288,75 @@ impl WsConn {
             free(frame)
         }
         return Result.Ok(0)
+    }
+}
+
+// ── WebSocket client connect ──
+
+// Connect to a WebSocket server. Performs TCP connect + HTTP upgrade handshake.
+// Returns a WsConn on successful 101 response.
+
+fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    unsafe {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 {
+            return Result.Err("socket() failed")
+        }
+
+        var addr = makeSockaddr(port, ip)
+        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            close(fd)
+            return Result.Err("connect() failed")
+        }
+
+        // generate a 16-byte base64 key (use a fixed key — sufficient for non-encrypted sessions)
+        let clientKey = "dGVybXBhaXItbWlsbw=="
+
+        var req: string = "GET " + path + " HTTP/1.1\r\n"
+        req = req + "Host: localhost\r\n"
+        req = req + "Upgrade: websocket\r\n"
+        req = req + "Connection: Upgrade\r\n"
+        req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
+        req = req + "Sec-WebSocket-Version: 13\r\n"
+        req = req + "\r\n"
+
+        let n = write(fd, req, req.len)
+        if n < 0 {
+            close(fd)
+            return Result.Err("failed to send upgrade request")
+        }
+
+        // read response — expect "HTTP/1.1 101"
+        var buf: [u8 ; 4096] = [0 ; 4096]
+        let respLen = read(fd, buf, 4096)
+        if respLen <= 0 {
+            close(fd)
+            return Result.Err("no response from server")
+        }
+
+        var resp: string = ""
+        for i in 0..respLen {
+            resp.push(buf[i])
+        }
+
+        if !resp.startsWith("HTTP/1.1 101") {
+            close(fd)
+            return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
+        }
+
+        // validate Sec-WebSocket-Accept
+        let expectedAccept = _computeAcceptKey(clientKey)
+        let actualAccept = _findHeaderValue(resp, "Sec-WebSocket-Accept")
+        if actualAccept != expectedAccept {
+            close(fd)
+            return Result.Err("invalid Sec-WebSocket-Accept")
+        }
+
+        return Result.Ok(WsConn { fd: fd, _closed: false })
     }
 }
 
