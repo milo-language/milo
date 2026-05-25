@@ -2375,7 +2375,8 @@ export class Codegen {
           return [lines, v2, "%Vec"];
         }
         if (expr.elements.length === 0) return [lines, "zeroinitializer", "[0 x i32]"];
-        const [firstLines, firstVal, elemTy] = this.genExpr(expr.elements[0]);
+        const elemTy = expr.type.tag === "array" ? this.llvmType(expr.type.element) : "i32";
+        const [firstLines, firstVal] = this.genExpr(expr.elements[0]);
         lines.push(...firstLines);
         const arrTy = `[${expr.elements.length} x ${elemTy}]`;
         const alloca = this.nextTemp();

@@ -66,7 +66,8 @@ fn isoTimestamp(): string {
     }
 
     let isLeap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-    let monthDays: [i64 ; 12] = [31, if isLeap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    let febDays: i64 = if isLeap { 29 as i64 } else { 28 as i64 }
+    let monthDays: [i64 ; 12] = [31, febDays, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     var m: i64 = 0
     while m < 12 && remaining >= monthDays[m] {
         remaining = remaining - monthDays[m]
@@ -92,12 +93,14 @@ fn main(): i32 {
     let isPublic = args.getBool("public")
 
     // resolve server address
-    let ipResult = resolve(host)
-    if let Result.Err(e) = ipResult {
-        print($"error: could not resolve host '{host}'")
-        return 1
+    var ip: u32 = 0
+    match resolve(host) {
+        Result.Ok(v) => { ip = v }
+        Result.Err(e) => {
+            print($"error: could not resolve host '{host}'")
+            return 1
+        }
     }
-    let ip = ipResult!
 
     // get terminal size
     let ts = termSize()
@@ -107,44 +110,51 @@ fn main(): i32 {
     // open PTY and spawn shell
     let shell = "/bin/bash"
     var shellArgs: Vec<string> = []
-    let ptyResult = openAndSpawn(shell, shellArgs)
-    if let Result.Err(e) = ptyResult {
-        print($"error: {e}")
-        return 1
+    var pty: Pty = Pty { masterFd: -1, slavePath: "", childPid: -1, _rows: 0 as u16, _cols: 0 as u16 }
+    match openAndSpawn(shell, shellArgs) {
+        Result.Ok(v) => { pty = v }
+        Result.Err(e) => {
+            print($"error: {e}")
+            return 1
+        }
     }
-    var pty = ptyResult!
 
     // resize PTY to match terminal (minus 1 row for status)
     let ptyRows = if rows > 1 { rows - 1 } else { rows }
     pty.resize(ptyRows as u16, cols as u16)
 
     // connect to server via WebSocket
-    let wsResult = wsConnect(ip, port, "/connect_to_terminal")
-    if let Result.Err(e) = wsResult {
-        print($"error: could not connect to server: {e}")
-        return 1
+    var ws: WsConn = WsConn { fd: -1, _closed: true }
+    match wsConnect(ip, port, "/connect_to_terminal") {
+        Result.Ok(v) => { ws = v }
+        Result.Err(e) => {
+            print($"error: could not connect to server: {e}")
+            return 1
+        }
     }
-    var ws = wsResult!
 
     // send init message
     let startTime = isoTimestamp()
     let initMsg = makeInitMessage(ptyRows, cols, shell, startTime, isPublic)
-    let sendResult = ws.sendText(initMsg)
-    if let Result.Err(e) = sendResult {
-        print($"error: failed to send init: {e}")
-        return 1
+    match ws.sendText(initMsg) {
+        Result.Ok(_) => {}
+        Result.Err(e) => {
+            print($"error: failed to send init: {e}")
+            return 1
+        }
     }
 
     // read start_broadcast response
-    let startResult = ws.recv()
-    if let Result.Err(e) = startResult {
-        print($"error: no start_broadcast from server: {e}")
-        return 1
+    var startPayload: string = ""
+    match ws.recv() {
+        Result.Ok(msg) => { startPayload = msg.payload }
+        Result.Err(e) => {
+            print($"error: no start_broadcast from server: {e}")
+            return 1
+        }
     }
 
-    let startMsg = startResult!
-    // extract terminal_id from response
-    let event = parseEvent(startMsg.payload)
+    let event = parseEvent(startPayload)
     if event != "start_broadcast" {
         print($"error: expected start_broadcast, got {event}")
         return 1
@@ -231,7 +241,7 @@ fn main(): i32 {
     })
 
     // wait for PTY child to exit
-    let exitCode = pty.wait()
+    pty.wait()
 
     done.store(true)
     restoreTerminal(termState)
