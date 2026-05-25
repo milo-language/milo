@@ -705,7 +705,8 @@ export class TypeChecker {
       const info = this.scopes[i].get(name);
       if (info) {
         if (this.closureScopeDepth !== null && i < this.closureScopeDepth && this.currentClosureCaptures) {
-          if (!this.currentClosureCaptures.has(name)) {
+          // globals are accessible directly in closures — don't capture them
+          if (!this._globalTypes.has(name) && !this.currentClosureCaptures.has(name)) {
             this.currentClosureCaptures.set(name, { name, type: info.type, mutable: info.mutable });
           }
         }

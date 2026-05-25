@@ -35,6 +35,11 @@ fn termSize(): TermSize {
 
 // ── Simple ISO timestamp ──
 
+fn pad2(n: i64): string {
+    if n < 10 { return "0" + n.toString() }
+    return n.toString()
+}
+
 fn isoTimestamp(): string {
     let secs = epochSecs()
     // approximate — good enough for display
@@ -70,12 +75,7 @@ fn isoTimestamp(): string {
     let d = remaining + 1
     m = m + 1
 
-    fn pad(n: i64): string {
-        if n < 10 { return "0" + n.toString() }
-        return n.toString()
-    }
-
-    return y.toString() + "-" + pad(m) + "-" + pad(d) + "T" + pad(hours) + ":" + pad(minutes) + ":" + pad(seconds) + "Z"
+    return y.toString() + "-" + pad2(m) + "-" + pad2(d) + "T" + pad2(hours) + ":" + pad2(minutes) + ":" + pad2(seconds) + "Z"
 }
 
 // ── Main ──

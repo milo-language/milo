@@ -80,7 +80,7 @@ export class Codegen {
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
-  private localAddr(name: string): string { return this.locals.get(name)?.addr ?? `%${name}.addr`; }
+  private localAddr(name: string): string { return this.locals.get(name)?.addr ?? (this.globalVars.has(name) ? `@${name}` : `%${name}.addr`); }
   private emit(line: string) { this.output.push(line); }
 
   private llvmType(t: TypeKind): string {
