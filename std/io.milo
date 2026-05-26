@@ -1,7 +1,9 @@
 // std/io — file and directory I/O with automatic cleanup
 
 from "std/os" import { close, lseek, open, read, strerror, write }
-from "std/platform" import { getErrno, oWriteCreateAppend, oWriteCreateTrunc }
+from "std/platform" import { getErrno, oWriteCreateAppend, oWriteCreateTrunc, eagain }
+from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
+from "std/event" import { setNonblocking }
 
 // ── IoError ──
 
@@ -233,4 +235,44 @@ fn readStdin(): string {
         }
     }
     return result
+}
+
+// Scheduler-aware read. In a green thread, automatically sets fd non-blocking
+// and yields to the scheduler on EAGAIN instead of busy-waiting.
+
+fn ioRead(fd: i32, buf: *u8, len: i64): i64 {
+    let inGreen = schedulerCurrent() as i64 != 0
+    if inGreen { setNonblocking(fd) }
+    unsafe {
+        while true {
+            let n = read(fd, buf, len)
+            if n < 0 && inGreen && getErrno() == eagain() {
+                schedulerWaitRead(fd)
+                continue
+            }
+            return n
+        }
+    }
+    return -1 as i64
+}
+
+// Scheduler-aware write. In a green thread, automatically sets fd non-blocking
+// and yields to the scheduler on EAGAIN instead of busy-waiting.
+
+fn ioWrite(fd: i32, buf: *u8, len: i64): i64 {
+    let inGreen = schedulerCurrent() as i64 != 0
+    if inGreen { setNonblocking(fd) }
+    unsafe {
+        var sent: i64 = 0
+        while sent < len {
+            let n = write(fd, (buf as i64 + sent) as *u8, len - sent)
+            if n < 0 && inGreen && getErrno() == eagain() {
+                schedulerWaitWrite(fd)
+                continue
+            }
+            if n < 0 { return n }
+            sent = sent + n
+        }
+        return sent
+    }
 }

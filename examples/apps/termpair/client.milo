@@ -10,7 +10,9 @@ from "std/term" import { enableRawMode, restoreTerminal, readKey }
 from "std/os" import { ioctl, read, write }
 from "std/io" import { writeStdout, readStdin }
 from "std/sync" import { AtomicBool }
-from "std/runtime" import { Task, schedulerYield, _schedulerTick }
+from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, _schedulerTick }
+from "std/event" import { setNonblocking }
+from "std/platform" import { getErrno, eagain }
 from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
 from "std/base64" import { base64Encode }
@@ -174,19 +176,32 @@ fn main(): i32 {
 
     var done = AtomicBool.new(false)
 
-    // extract raw fds/pids so closures don't move the structs
-    let ptyFd = pty.masterFd
-    let wsFd = ws.fd
+    // extract raw values so each move-closure gets its own copy
+    // (move zeroes the source — can't move the same var into multiple closures)
+    let ptyFd1 = pty.masterFd
+    let ptyFd2 = pty.masterFd
+    let wsFd1 = ws.fd
+    let wsFd3 = ws.fd
+    let done1 = AtomicBool { _ptr: done._ptr }
+    let done2 = AtomicBool { _ptr: done._ptr }
+    let done3 = AtomicBool { _ptr: done._ptr }
+
+    // set fds non-blocking before spawning green threads
+    setNonblocking(ptyFd1)
+    setNonblocking(wsFd1)
+    setNonblocking(0)
 
     // task 1: PTY output → WebSocket (terminal → server → browsers)
     Task.spawn(move (): void => {
-        var sendWs = WsConn { fd: wsFd, _closed: true }
+        var sendWs = WsConn { fd: wsFd1, _closed: true }
         var buf: [u8 ; 4096] = [0 ; 4096]
-        while !done.load() {
+        while !done1.load() {
             unsafe {
-                let n = read(ptyFd, buf as *u8, 4095)
+                schedulerWaitRead(ptyFd1)
+                let n = read(ptyFd1, buf as *u8, 4095)
+                if n < 0 && getErrno() == eagain() { continue }
                 if n <= 0 {
-                    done.store(true)
+                    done1.store(true)
                     break
                 }
 
@@ -201,7 +216,7 @@ fn main(): i32 {
                 let msg = makeNewOutput(payload)
                 match sendWs.sendText(msg) {
                     Result.Err(_) => {
-                        done.store(true)
+                        done1.store(true)
                         break
                     }
                     _ => {}
@@ -213,22 +228,24 @@ fn main(): i32 {
     // task 2: stdin → PTY (local keyboard input → shell)
     Task.spawn(move (): void => {
         var buf: [u8 ; 256] = [0 ; 256]
-        while !done.load() {
+        while !done2.load() {
             unsafe {
+                schedulerWaitRead(0)
                 let n = read(0, buf as *u8, 256)
+                if n < 0 && getErrno() == eagain() { continue }
                 if n <= 0 {
-                    done.store(true)
+                    done2.store(true)
                     break
                 }
-                write(ptyFd, buf as *u8, n)
+                write(ptyFd2, buf as *u8, n)
             }
         }
     })
 
     // task 3: WebSocket → PTY (browser input → shell)
     Task.spawn(move (): void => {
-        var recvWs = WsConn { fd: wsFd, _closed: true }
-        while !done.load() {
+        var recvWs = WsConn { fd: wsFd3, _closed: true }
+        while !done3.load() {
             match recvWs.recv() {
                 Result.Ok(msg) => {
                     let raw = msg.payload
@@ -238,7 +255,7 @@ fn main(): i32 {
                     }
                 }
                 Result.Err(e) => {
-                    done.store(true)
+                    done3.store(true)
                     break
                 }
             }

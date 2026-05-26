@@ -24,7 +24,7 @@ fn taskReady(): i32 { return 0 }
 fn taskRunning(): i32 { return 1 }
 fn taskWaitingIo(): i32 { return 2 }
 fn taskDone(): i32 { return 3 }
-fn defaultStackSize(): i64 { return 65536 }
+fn defaultStackSize(): i64 { return 131072 }
 fn guardPageSize(): i64 { return 4096 }
 fn taskStructSize(): i64 { return 64 }
 fn schedStructSize(): i64 { return 48 }

@@ -910,7 +910,7 @@ export class Codegen {
       // env struct: { ptr result_slot, ...capture types... }
       const envFields = ["ptr", ...captures.map(c => this.llvmType(c.type))];
       const envStructTy = `{ ${envFields.join(", ")} }`;
-      const envSize = envFields.reduce((sum, f) => sum + this.typeSize(f), 0);
+      const envSize = this.structPayloadSize(envFields);
 
       // allocate result slot on caller's stack
       const slotAddr = `%__par_slot_${parId}_${i}`;
@@ -2776,7 +2776,7 @@ export class Codegen {
           const envAddr = this.nextTemp();
           if (isMove) {
             // heap-allocate env for move closures (safe to send to other threads)
-            const envSize = captures.reduce((sum, c) => sum + this.typeSize(this.llvmType(c.type)), 0);
+            const envSize = this.structPayloadSize(captures.map(c => this.llvmType(c.type)));
             lines.push(`  ${envAddr} = call ptr @malloc(i64 ${Math.max(envSize, 8)})`);
           } else {
             lines.push(`  ${envAddr} = alloca ${envStructTy}`);
