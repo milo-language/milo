@@ -4,13 +4,13 @@ from "std/os" import {
     accept, bind, close, getsockname, listen, ntohs, read, write,
     setsockopt, socket, malloc, free, memcpy
 }
-from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr }
+from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
+from "std/event" import { setNonblocking }
+from "std/runtime" import { Task, schedulerCurrent, schedulerWaitRead, schedulerYield }
 from "std/ws" import { WsConn, WsMessage, wsAccept, isWsUpgrade, WS_TEXT, WS_CLOSE }
 from "std/sync" import { Channel, AtomicI64 }
-from "std/runtime" import { Task }
 from "std/argparse" import { newParser }
 from "std/json" import { jsonParse }
-from "std/time" import { sleepMs }
 
 from "./protocol" import {
     makeTerminalInfo, makePublicSession, makeStartBroadcast,
@@ -156,12 +156,19 @@ fn handleTerminalWs(ws: WsConn): void {
     toTermChans.push(toTerminal)
     bcastChans.push(broadcast)
 
-    conn.sendText(makeStartBroadcast(terminalId))
+    match conn.sendText(makeStartBroadcast(terminalId)) {
+        Result.Err(_) => { conn.close()
+            return }
+        _ => {}
+    }
     print($"terminal connected: {terminalId} (command: {command})")
+    flush()
 
-    // forward browser→terminal messages
+    // forward browser→terminal messages via a non-owning fd copy
     let tid = terminalId.clone()
+    let sendFd = conn.fd
     Task.spawn(move (): void => {
+        var sendWs = WsConn { fd: sendFd, _closed: true }
         while true {
             let idx = findSession(tid)
             if idx < 0 { break }
@@ -169,8 +176,8 @@ fn handleTerminalWs(ws: WsConn): void {
 
             let maybe = toTermChans[idx].tryRecv()
             match maybe {
-                Option.Some(msg) => { conn.sendText(msg) }
-                Option.None => { sleepMs(10) }
+                Option.Some(msg) => { let _ = sendWs.sendText(msg) }
+                Option.None => { schedulerYield() }
             }
         }
     })
@@ -235,33 +242,38 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
     let count = sessions[idx].browserCount
     bcastChans[idx].trySend(makeNumClients(count))
 
-    conn.sendText(makeResizeMsg(sessions[idx].rows, sessions[idx].cols))
+    match conn.sendText(makeResizeMsg(sessions[idx].rows, sessions[idx].cols)) {
+        Result.Err(_) => { conn.close()
+            return }
+        _ => {}
+    }
     toTermChans[idx].trySend("{\"event\":\"new_browser_connected\",\"payload\":{}}")
 
     print($"browser connected to {terminalId} (viewers: {count})")
 
     let tid = terminalId.clone()
 
-    // forward broadcast → browser
+    // forward broadcast → browser via non-owning fd copy
     let tid2 = terminalId.clone()
+    let bcastFd = conn.fd
     Task.spawn(move (): void => {
+        var sendWs = WsConn { fd: bcastFd, _closed: true }
         while true {
             let bidx = findSession(tid2)
             if bidx < 0 { break }
             if !sessions[bidx].alive {
-                conn.sendText("{\"event\":\"fatal_error\",\"payload\":\"session ended\"}")
-                conn.close()
+                let _ = sendWs.sendText("{\"event\":\"fatal_error\",\"payload\":\"session ended\"}")
                 break
             }
             let maybe = bcastChans[bidx].tryRecv()
             match maybe {
                 Option.Some(msg) => {
-                    match conn.sendText(msg) {
+                    match sendWs.sendText(msg) {
                         Result.Err(_) => { break }
                         _ => {}
                     }
                 }
-                Option.None => { sleepMs(10) }
+                Option.None => { schedulerYield() }
             }
         }
     })
@@ -280,7 +292,10 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
                 } else if event == "chat" {
                     bcastChans[bidx].trySend(raw.clone())
                 } else if event == "request_terminal_dimensions" {
-                    conn.sendText(makeResizeMsg(sessions[bidx].rows, sessions[bidx].cols))
+                    match conn.sendText(makeResizeMsg(sessions[bidx].rows, sessions[bidx].cols)) {
+                        Result.Err(_) => { break }
+                        _ => {}
+                    }
                 }
             }
             Result.Err(e) => { break }
@@ -327,6 +342,95 @@ fn handleGetTerminal(terminalId: &string): string {
 
 // ── Main ──
 
+// Accept loop — blocks on kqueue until a connection is ready
+fn acceptLoop(rawFd: i32): void {
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+    setNonblocking(rawFd)
+
+    while true {
+        schedulerWaitRead(rawFd)
+        while true {
+            var clientAddr = makeZeroedSockaddr()
+            var addrlen: u32 = SIZEOF_SOCKADDR_IN
+            unsafe {
+                let clientFd = accept(rawFd, clientAddr, addrlen)
+                if clientFd < 0 { break }
+                setNonblocking(clientFd)
+                Task.spawn(move (): void => { handleConnection(clientFd) })
+            }
+        }
+    }
+}
+
+// Handle a single connection in its own green thread
+fn handleConnection(clientFd: i32): void {
+    var buf: [u8 ; 8192] = [0 ; 8192]
+    unsafe {
+        schedulerWaitRead(clientFd)
+        let n = read(clientFd, buf as *u8, 8192)
+        if n <= 0 {
+            close(clientFd)
+            return
+        }
+
+        var raw: string = ""
+        for i in 0..n { raw.push(buf[i]) }
+
+        let rl = parseRequestLine(raw)
+
+        if isWsUpgrade(raw) {
+            if rl.path == "/connect_to_terminal" {
+                match wsAccept(clientFd, raw) {
+                    Result.Ok(ws) => { handleTerminalWs(ws) }
+                    Result.Err(e) => { close(clientFd) }
+                }
+            } else if rl.path == "/connect_browser_to_terminal" {
+                let tid = queryParam(rl.query, "terminal_id")
+                if tid.len == 0 {
+                    sendHttp(clientFd, 400, "text/plain", "missing terminal_id")
+                    close(clientFd)
+                } else {
+                    match wsAccept(clientFd, raw) {
+                        Result.Ok(ws) => { handleBrowserWs(ws, tid) }
+                        Result.Err(e) => { close(clientFd) }
+                    }
+                }
+            } else { close(clientFd) }
+            return
+        }
+
+        if rl.method == "GET" {
+            if rl.path == "/" || rl.path == "/index.html" {
+                sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
+            } else if rl.path == "/app.js" {
+                sendHttp(clientFd, 200, "application/javascript", appJs)
+            } else if rl.path == "/style.css" {
+                sendHttp(clientFd, 200, "text/css", styleCss)
+            } else if rl.path == "/xterm.min.js" {
+                sendHttp(clientFd, 200, "application/javascript", xtermJs)
+            } else if rl.path == "/xterm.min.css" {
+                sendHttp(clientFd, 200, "text/css", xtermCss)
+            } else if rl.path == "/ping" {
+                sendHttp(clientFd, 200, "application/json", "\"pong\"")
+            } else if rl.path == "/api/sessions" {
+                sendHttp(clientFd, 200, "application/json", handleGetSessions())
+            } else if rl.path.startsWith("/terminal/") {
+                let body = handleGetTerminal(rl.path.substr(10, rl.path.len))
+                if body.len == 0 { sendHttp(clientFd, 404, "text/plain", "not found") }
+                else { sendHttp(clientFd, 200, "application/json", body) }
+            } else if rl.path.startsWith("/s/") {
+                sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
+            } else {
+                sendHttp(clientFd, 404, "text/plain", "not found")
+            }
+        } else {
+            sendHttp(clientFd, 404, "text/plain", "not found")
+        }
+
+        close(clientFd)
+    }
+}
+
 fn main(): i32 {
     var parser = newParser("termpair-server", "terminal sharing server")
     parser.addI64("port", "p", "port to listen on", 8000)
@@ -363,80 +467,10 @@ fn main(): i32 {
         let actualPort = ntohs(boundAddr.sinPort)
 
         print($"termpair server listening on http://localhost:{actualPort}")
+        flush()
 
-        while true {
-            var clientAddr = makeZeroedSockaddr()
-            var addrlen: u32 = SIZEOF_SOCKADDR_IN
-            let clientFd = accept(rawFd, clientAddr, addrlen)
-            if clientFd < 0 { continue }
-
-            var buf: [u8 ; 8192] = [0 ; 8192]
-            let n = read(clientFd, buf, 8192)
-            if n <= 0 {
-                close(clientFd)
-                continue
-            }
-
-            var raw: string = ""
-            for i in 0..n { raw.push(buf[i]) }
-
-            let rl = parseRequestLine(raw)
-
-            if isWsUpgrade(raw) {
-                if rl.path == "/connect_to_terminal" {
-                    match wsAccept(clientFd, raw) {
-                        Result.Ok(ws) => {
-                            Task.spawn(move (): void => { handleTerminalWs(ws) })
-                        }
-                        Result.Err(e) => { close(clientFd) }
-                    }
-                } else if rl.path == "/connect_browser_to_terminal" {
-                    let tid = queryParam(rl.query, "terminal_id")
-                    if tid.len == 0 {
-                        sendHttp(clientFd, 400, "text/plain", "missing terminal_id")
-                        close(clientFd)
-                    } else {
-                        match wsAccept(clientFd, raw) {
-                            Result.Ok(ws) => {
-                                Task.spawn(move (): void => { handleBrowserWs(ws, tid) })
-                            }
-                            Result.Err(e) => { close(clientFd) }
-                        }
-                    }
-                } else { close(clientFd) }
-                continue
-            }
-
-            if rl.method == "GET" {
-                if rl.path == "/" || rl.path == "/index.html" {
-                    sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
-                } else if rl.path == "/app.js" {
-                    sendHttp(clientFd, 200, "application/javascript", appJs)
-                } else if rl.path == "/style.css" {
-                    sendHttp(clientFd, 200, "text/css", styleCss)
-                } else if rl.path == "/xterm.min.js" {
-                    sendHttp(clientFd, 200, "application/javascript", xtermJs)
-                } else if rl.path == "/xterm.min.css" {
-                    sendHttp(clientFd, 200, "text/css", xtermCss)
-                } else if rl.path == "/ping" {
-                    sendHttp(clientFd, 200, "application/json", "\"pong\"")
-                } else if rl.path == "/api/sessions" {
-                    sendHttp(clientFd, 200, "application/json", handleGetSessions())
-                } else if rl.path.startsWith("/terminal/") {
-                    let body = handleGetTerminal(rl.path.substr(10, rl.path.len))
-                    if body.len == 0 { sendHttp(clientFd, 404, "text/plain", "not found") }
-                    else { sendHttp(clientFd, 200, "application/json", body) }
-                } else if rl.path.startsWith("/s/") {
-                    sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
-                } else {
-                    sendHttp(clientFd, 404, "text/plain", "not found")
-                }
-            } else {
-                sendHttp(clientFd, 404, "text/plain", "not found")
-            }
-
-            close(clientFd)
-        }
+        // run accept loop in a green thread so spawned handlers can execute
+        Task.spawn(move (): void => { acceptLoop(rawFd) })
     }
     return 0
 }

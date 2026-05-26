@@ -1,0 +1,11 @@
+// @error: use of moved variable 's'
+from "std/runtime" import { Task }
+
+fn main(): i32 {
+    let s = "hello"
+    Task.spawn(move (): void => {
+        print(s)
+    })
+    print(s)
+    return 0
+}

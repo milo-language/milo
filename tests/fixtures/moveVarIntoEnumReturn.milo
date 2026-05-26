@@ -1,0 +1,26 @@
+// @expect: got: hello
+// @expect: done
+// @expect: drop: hello
+// tests: var assigned + returned via enum variant drops exactly once
+
+struct Wrapper {
+    value: string,
+}
+
+impl Drop for Wrapper {
+    fn drop(self: &mut Self): void {
+        print("drop: ", self.value)
+    }
+}
+
+fn tryMake(): Wrapper {
+    var conn = Wrapper { value: "hello" }
+    return conn
+}
+
+fn main(): i32 {
+    let val = tryMake()
+    print("got: ", val.value)
+    print("done")
+    return 0
+}

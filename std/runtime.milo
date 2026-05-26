@@ -436,8 +436,14 @@ fn _schedulerTick(): void {
         if sched as i64 == 0 { return }
         if _rtReadI64(sched, sNumTasks()) == 0 { return }
 
+        // run a bounded batch of ready tasks before polling I/O
+        var batch: i64 = 0
         var task = _dequeueRun(sched)
         while task as i64 != 0 {
+            if batch >= 32 {
+                _enqueueRun(sched, task)
+                break
+            }
             _rtWriteI32(task, tState(), taskRunning())
             _rtWritePtr(sched, sCurrent(), task)
 
@@ -453,6 +459,7 @@ fn _schedulerTick(): void {
                 _enqueueRun(sched, task)
             }
 
+            batch = batch + 1
             task = _dequeueRun(sched)
         }
 
@@ -478,9 +485,14 @@ fn _schedulerDrain(): void {
         if sched as i64 == 0 { return }
 
         while _rtReadI64(sched, sNumTasks()) > 0 {
-            // run all ready tasks
+            // run a bounded batch of ready tasks before polling I/O
+            var batch: i64 = 0
             var task = _dequeueRun(sched)
             while task as i64 != 0 {
+                if batch >= 32 {
+                    _enqueueRun(sched, task)
+                    break
+                }
                 _rtWriteI32(task, tState(), taskRunning())
                 _rtWritePtr(sched, sCurrent(), task)
 
@@ -496,8 +508,8 @@ fn _schedulerDrain(): void {
                 } else if state == taskReady() {
                     _enqueueRun(sched, task)
                 }
-                // WAITING_IO tasks are on the wait list already
 
+                batch = batch + 1
                 task = _dequeueRun(sched)
             }
 

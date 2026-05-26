@@ -3,7 +3,9 @@
 from "std/os" import { close, read, write, htons, malloc, free, memcpy, socket, connect }
 from "std/crypto" import { sha1Bytes }
 from "std/base64" import { base64Encode }
-from "std/platform" import { SockAddrIn, makeSockaddr }
+from "std/platform" import { SockAddrIn, makeSockaddr, getErrno, eagain }
+from "std/event" import { setNonblocking }
+from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
 
 // ── Frame opcodes ──
 
@@ -87,16 +89,24 @@ fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
         }
     }
 
+    if schedulerCurrent() as i64 != 0 {
+        setNonblocking(fd)
+    }
     return Result.Ok(WsConn { fd: fd, _closed: false })
 }
 
 // ── Frame reading ──
 
 fn _readExact(fd: i32, buf: *u8, needed: i64): bool {
+    let inGreen = schedulerCurrent() as i64 != 0
     var got: i64 = 0
     while got < needed {
         unsafe {
             let n = read(fd, (buf as i64 + got) as *u8, needed - got)
+            if n < 0 && inGreen && getErrno() == eagain() {
+                schedulerWaitRead(fd)
+                continue
+            }
             if n <= 0 {
                 return false
             }
@@ -276,9 +286,14 @@ impl WsConn {
                 memcpy((frame as i64 + pos) as *u8, payload as *u8, payload.len)
             }
 
+            let inGreen = schedulerCurrent() as i64 != 0
             var sent: i64 = 0
             while sent < total {
                 let n = write(self.fd, (frame as i64 + sent) as *u8, total - sent)
+                if n < 0 && inGreen && getErrno() == eagain() {
+                    schedulerWaitWrite(self.fd)
+                    continue
+                }
                 if n < 0 {
                     free(frame)
                     return Result.Err("write failed")
@@ -356,6 +371,9 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
             return Result.Err("invalid Sec-WebSocket-Accept")
         }
 
+        if schedulerCurrent() as i64 != 0 {
+            setNonblocking(fd)
+        }
         return Result.Ok(WsConn { fd: fd, _closed: false })
     }
 }

@@ -53,7 +53,7 @@ export class Codegen {
   private loopDropStart: number = 0;
   private globalVars = new Map<string, { type: string; typeKind: TypeKind }>();
   private userFnNames = new Set<string>();
-  private droppableLocals: { name: string; typeKind: TypeKind }[] = [];
+  private droppableLocals: { name: string; typeKind: TypeKind; aliveFlag: string }[] = [];
   private droppableEnums = new Set<string>();
   private dropImpls = new Set<string>();
   private structDropCache = new Map<string, boolean>();
@@ -482,7 +482,12 @@ export class Codegen {
         lines.push(`  %${p.name}.addr = alloca ${lt}`);
         lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
         this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
-        if (this.needsDropCg(p.type)) this.droppableLocals.push({ name: p.name, typeKind: p.type });
+        if (this.needsDropCg(p.type)) {
+          const aliveFlag = `%${p.name}.alive`;
+          lines.push(`  ${aliveFlag} = alloca i1`);
+          lines.push(`  store i1 1, ptr ${aliveFlag}`);
+          this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag });
+        }
       }
     }
 
@@ -550,7 +555,13 @@ export class Codegen {
         }
         // Don't drop locals that borrow from a ref (shallow copy, data owned elsewhere)
         const isBorrowedInit = stmt.value.kind === "IndexAccess" && stmt.value.isBorrowed;
-        if (!isRefLocal && this.needsDropCg(stmt.type) && !isBorrowedInit) this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type });
+        if (!isRefLocal && this.needsDropCg(stmt.type) && !isBorrowedInit) {
+          const aliveFlag = `${addrName}.alive`;
+          this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
+          this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+          lines.push(`  store i1 1, ptr ${aliveFlag}`);
+          this.droppableLocals.push({ name: stmt.name, typeKind: stmt.type, aliveFlag });
+        }
         return [lines, false];
       }
       case "Assign": {
@@ -2153,6 +2164,8 @@ export class Codegen {
         lines.push(`  ${tmp} = load ${local.type}, ptr ${addr}`);
         if (expr.isMove && this.needsDropCg(local.typeKind)) {
           lines.push(`  store ${local.type} zeroinitializer, ptr ${addr}`);
+          const dl = this.droppableLocals.find(d => this.localAddr(d.name) === addr);
+          if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
         }
         return [lines, tmp, local.type];
       }
@@ -2790,6 +2803,8 @@ export class Codegen {
                 // zero source so parent's drop glue won't free moved data
                 if (this.needsDropCg(cap.type)) {
                   lines.push(`  store ${capTy} zeroinitializer, ptr ${capAddr}`);
+                  const dl = this.droppableLocals.find(d => this.localAddr(d.name) === capAddr);
+                  if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
                 }
               }
             } else if (local?.isRef) {
@@ -6292,13 +6307,23 @@ export class Codegen {
     const body: string[] = [];
     body.push(`define void @${helperName}(ptr %self) {`);
     body.push("entry:");
-    const probe = this.nextTemp();
-    body.push(`  ${probe} = load i64, ptr %self`);
-    const isZero = this.nextTemp();
-    body.push(`  ${isZero} = icmp eq i64 ${probe}, 0`);
     const skipLabel = this.nextLabel("struct.drop.skip");
     const dropLabel = this.nextLabel("struct.drop");
-    body.push(`  br i1 ${isZero}, label %${skipLabel}, label %${dropLabel}`);
+    // Find a droppable field to use as sentinel — heap types (string, vec, hashmap)
+    // have non-null data pointers when alive, so null check is a reliable "was zeroed" test.
+    const sentinelIdx = layout.fields.findIndex(f =>
+      f.typeKind.tag === "string" || f.typeKind.tag === "vec" || f.typeKind.tag === "hashmap" || f.typeKind.tag === "heap");
+    if (sentinelIdx >= 0) {
+      const sentinelPtr = this.nextTemp();
+      body.push(`  ${sentinelPtr} = getelementptr %${structName}, ptr %self, i32 0, i32 ${sentinelIdx}`);
+      const probe = this.nextTemp();
+      body.push(`  ${probe} = load ptr, ptr ${sentinelPtr}`);
+      const isNull = this.nextTemp();
+      body.push(`  ${isNull} = icmp eq ptr ${probe}, null`);
+      body.push(`  br i1 ${isNull}, label %${skipLabel}, label %${dropLabel}`);
+    } else {
+      body.push(`  br label %${dropLabel}`);
+    }
     body.push(`${dropLabel}:`);
     if (this.dropImpls.has(structName)) {
       const mangledDrop = `${structName}$Drop$drop`;
@@ -6469,18 +6494,27 @@ export class Codegen {
     return "0";
   }
 
-  // emit drop glue for all droppable locals before a scope exit
   private emitDropGlue(lines: string[]) {
     for (const local of this.droppableLocals) {
-      this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
+      this.emitGuardedDrop(lines, local);
     }
   }
 
-  // emit drop glue only for locals allocated inside the current loop body
   private emitLoopDropGlue(lines: string[]) {
     for (let i = this.loopDropStart; i < this.droppableLocals.length; i++) {
-      const local = this.droppableLocals[i];
-      this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
+      this.emitGuardedDrop(lines, this.droppableLocals[i]);
     }
+  }
+
+  private emitGuardedDrop(lines: string[], local: { name: string; typeKind: TypeKind; aliveFlag: string }) {
+    const check = this.nextTemp();
+    lines.push(`  ${check} = load i1, ptr ${local.aliveFlag}`);
+    const dropLabel = this.nextLabel("drop.alive");
+    const skipLabel = this.nextLabel("drop.skip");
+    lines.push(`  br i1 ${check}, label %${dropLabel}, label %${skipLabel}`);
+    lines.push(`${dropLabel}:`);
+    this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
+    lines.push(`  br label %${skipLabel}`);
+    lines.push(`${skipLabel}:`);
   }
 }

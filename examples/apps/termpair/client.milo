@@ -7,7 +7,7 @@ from "std/pty" import { Pty, WinSize, openAndSpawn }
 from "std/ws" import { WsConn, WsMessage, wsConnect, WS_TEXT }
 from "std/net" import { resolve }
 from "std/term" import { enableRawMode, restoreTerminal, readKey }
-from "std/os" import { ioctl, read, write }
+from "std/os" import { ioctl, read, write, waitpid }
 from "std/io" import { writeStdout, readStdin }
 from "std/sync" import { AtomicBool }
 from "std/runtime" import { Task }
@@ -174,30 +174,39 @@ fn main(): i32 {
 
     var done = AtomicBool.new(false)
 
+    // extract raw fds/pids so closures don't move the structs
+    let ptyFd = pty.masterFd
+    let ptyPid = pty.childPid
+    let wsFd = ws.fd
+
     // task 1: PTY output → WebSocket (terminal → server → browsers)
     Task.spawn(move (): void => {
+        var sendWs = WsConn { fd: wsFd, _closed: true }
         var buf: [u8 ; 4096] = [0 ; 4096]
         while !done.load() {
             unsafe {
-                let n = pty.read(buf as *u8, 4095)
+                let n = read(ptyFd, buf as *u8, 4095)
                 if n <= 0 {
                     done.store(true)
                     break
                 }
 
-                // write to local terminal
                 write(1, buf as *u8, n)
 
-                // base64 encode and send as new_output
                 var rawOutput: string = ""
                 for i in 0..n {
                     rawOutput.push(buf[i])
                 }
                 let b64 = base64Encode(rawOutput)
-                // wrap in the expected JSON envelope
                 let payload = base64Encode("{\"pty_output\":\"" + b64 + "\"}")
                 let msg = makeNewOutput(payload)
-                let _ = ws.sendText(msg)
+                match sendWs.sendText(msg) {
+                    Result.Err(_) => {
+                        done.store(true)
+                        break
+                    }
+                    _ => {}
+                }
             }
         }
     })
@@ -212,24 +221,21 @@ fn main(): i32 {
                     done.store(true)
                     break
                 }
-                pty.write(buf as *u8, n)
+                write(ptyFd, buf as *u8, n)
             }
         }
     })
 
     // task 3: WebSocket → PTY (browser input → shell)
     Task.spawn(move (): void => {
+        var recvWs = WsConn { fd: wsFd, _closed: true }
         while !done.load() {
-            let result = ws.recv()
-            match result {
+            match recvWs.recv() {
                 Result.Ok(msg) => {
                     let raw = msg.payload
                     let ev = parseEvent(raw)
                     if ev == "command" {
-                        // in public mode, commands come as plain text payload
-                        // (encryption not implemented yet)
                     } else if ev == "resize" {
-                        // browser requested resize
                     }
                 }
                 Result.Err(e) => {
@@ -241,7 +247,8 @@ fn main(): i32 {
     })
 
     // wait for PTY child to exit
-    pty.wait()
+    var status: [u8 ; 4] = [0 ; 4]
+    unsafe { waitpid(ptyPid, status, 0) }
 
     done.store(true)
     restoreTerminal(termState)

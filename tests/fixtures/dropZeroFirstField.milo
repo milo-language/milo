@@ -1,0 +1,20 @@
+// @expect: count: 0
+// @expect: dropping count=0
+// tests: custom Drop fires even when struct's first field is zero
+
+struct Counter {
+    count: i64,
+    data: string,
+}
+
+impl Drop for Counter {
+    fn drop(self: &mut Self): void {
+        print("dropping count=", self.count)
+    }
+}
+
+fn main(): i32 {
+    let c = Counter { count: 0, data: "hello" }
+    print("count: ", c.count)
+    return 0
+}

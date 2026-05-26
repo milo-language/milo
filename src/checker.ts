@@ -2314,6 +2314,20 @@ export class TypeChecker {
         }
       }
     }
+    // Move closure: captures are moved out of the enclosing scope
+    if (expr.kind === "Closure" && (expr as any).isMove) {
+      const caps = this.closureCaptures.get(expr);
+      if (caps) {
+        for (const cap of caps) {
+          if (isCopy(cap.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) continue;
+          const info = this.lookup(cap.name);
+          if (info) {
+            info.moved = true;
+            info.borrowed = false;
+          }
+        }
+      }
+    }
     // Mark `v[i]` as a move-out when consumed in a move position. Codegen uses this
     // flag to zero the Vec slot so the slot's drop doesn't double-free.
     // But don't move out of borrowed Vecs — mark as borrowed instead.
