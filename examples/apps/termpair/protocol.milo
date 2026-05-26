@@ -113,6 +113,12 @@ fn parseEvent(raw: &string): string {
     return j.str("event") ?? ""
 }
 
+fn parsePayloadStr(raw: &string, field: &string): string {
+    let j = jsonParse(raw.clone())!
+    let payload = j.get("payload")!
+    return payload.str(field) ?? ""
+}
+
 fn parsePayloadI64(raw: &string, field: &string): i64 {
     let j = jsonParse(raw.clone())!
     let payload = j.get("payload")!

@@ -17,7 +17,7 @@ from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
 from "std/base64" import { base64Encode }
 
-from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent }
+from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr }
 
 // ── Terminal size query ──
 
@@ -162,13 +162,15 @@ fn main(): i32 {
         return 1
     }
 
+    let terminalId = parsePayloadStr(startPayload, "terminal_id")
+
     // print share URL
     if isPublic {
         print($"termpair — sharing terminal (public mode)")
     } else {
         print($"termpair — sharing terminal")
     }
-    print($"open in browser: http://{host}:{port}/s/t1")
+    print($"open in browser: http://{host}:{port}/s/{terminalId}")
     print("press ctrl-d to stop sharing")
     print("")
 
@@ -233,11 +235,14 @@ fn main(): i32 {
                 schedulerWaitRead(0)
                 let n = read(0, buf as *u8, 256)
                 if n < 0 && getErrno() == eagain() { continue }
-                if n <= 0 {
+                // n == 0 from non-blocking terminal is not EOF, just no data yet
+                if n < 0 {
                     done2.store(true)
                     break
                 }
-                write(ptyFd2, buf as *u8, n)
+                if n > 0 {
+                    write(ptyFd2, buf as *u8, n)
+                }
             }
         }
     })
