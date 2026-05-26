@@ -109,13 +109,13 @@ fn queryParam(qs: &string, name: &string): string {
     return ""
 }
 
-// ── Embedded static files ──
+// ── Embedded static files (initialized in main — global string init is NYI) ──
 
-let indexHtml = embedFile("static/index.html")
-let appJs = embedFile("static/app.js")
-let styleCss = embedFile("static/style.css")
-let xtermJs = embedFile("static/xterm.min.js")
-let xtermCss = embedFile("static/xterm.min.css")
+var indexHtml: string = ""
+var appJs: string = ""
+var styleCss: string = ""
+var xtermJs: string = ""
+var xtermCss: string = ""
 
 // ── Handle terminal WebSocket ──
 
@@ -432,6 +432,12 @@ fn handleConnection(clientFd: i32): void {
 }
 
 fn main(): i32 {
+    indexHtml = embedFile("static/index.html")
+    appJs = embedFile("static/app.js")
+    styleCss = embedFile("static/style.css")
+    xtermJs = embedFile("static/xterm.min.js")
+    xtermCss = embedFile("static/xterm.min.css")
+
     var parser = newParser("termpair-server", "terminal sharing server")
     parser.addI64("port", "p", "port to listen on", 8000)
     let args = parser.parse()

@@ -7,10 +7,10 @@ from "std/pty" import { Pty, WinSize, openAndSpawn }
 from "std/ws" import { WsConn, WsMessage, wsConnect, WS_TEXT }
 from "std/net" import { resolve }
 from "std/term" import { enableRawMode, restoreTerminal, readKey }
-from "std/os" import { ioctl, read, write, waitpid }
+from "std/os" import { ioctl, read, write }
 from "std/io" import { writeStdout, readStdin }
 from "std/sync" import { AtomicBool }
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerYield, _schedulerTick }
 from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
 from "std/base64" import { base64Encode }
@@ -176,7 +176,6 @@ fn main(): i32 {
 
     // extract raw fds/pids so closures don't move the structs
     let ptyFd = pty.masterFd
-    let ptyPid = pty.childPid
     let wsFd = ws.fd
 
     // task 1: PTY output → WebSocket (terminal → server → browsers)
@@ -246,11 +245,11 @@ fn main(): i32 {
         }
     })
 
-    // wait for PTY child to exit
-    var status: [u8 ; 4] = [0 ; 4]
-    unsafe { waitpid(ptyPid, status, 0) }
+    // drive scheduler from main thread until a task signals done
+    while !done.load() {
+        _schedulerTick()
+    }
 
-    done.store(true)
     restoreTerminal(termState)
 
     print("")
