@@ -1,0 +1,36 @@
+struct Point {
+  x: i32,
+  y: i32,
+}
+
+struct Config {
+  width: i32,
+  height: i32,
+  scale: f64,
+  enabled: bool,
+}
+
+var origin: Point = Point { x: 10, y: 20 }
+let config: Config = Config { width: 1920, height: 1080, scale: 2.5, enabled: true }
+
+fn main(): i32 {
+  print(origin.x)
+  print(origin.y)
+  print(config.width)
+  print(config.height)
+  print(config.scale)
+  print(config.enabled)
+
+  origin.x = 99
+  print(origin.x)
+
+  return 0
+}
+
+// @expect: 10
+// @expect: 20
+// @expect: 1920
+// @expect: 1080
+// @expect: 2.5
+// @expect: true
+// @expect: 99

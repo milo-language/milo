@@ -1,0 +1,31 @@
+var scores: [i32; 5] = [10, 20, 30, 40, 50]
+var flags: [bool; 3] = [true, false, true]
+let repeatedF64: [f64; 3] = [3.14; 3]
+
+fn main(): i32 {
+  print(scores[0])
+  print(scores[2])
+  print(scores[4])
+
+  scores[2] = 999
+  print(scores[2])
+
+  print(flags[0])
+  print(flags[1])
+  print(flags[2])
+
+  print(repeatedF64[0])
+  print(repeatedF64[2])
+
+  return 0
+}
+
+// @expect: 10
+// @expect: 30
+// @expect: 50
+// @expect: 999
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: 3.14
+// @expect: 3.14

@@ -6476,16 +6476,60 @@ export class Codegen {
 
   private usedSatIntrinsics?: Set<string>;
 
-  private getConstantInitializer(g: import("./hir").HIRGlobal): string {
-    if (g.value.kind === "IntLit") return g.value.value.toString();
-    if (g.value.kind === "FloatLit") {
-      const buf = new ArrayBuffer(8);
-      new Float64Array(buf)[0] = g.value.value;
-      const bits = new BigUint64Array(buf)[0];
-      return `0x${bits.toString(16).toUpperCase().padStart(16, "0")}`;
+  private tryConstantExpr(expr: import("./hir").HIRExpr): string | null {
+    switch (expr.kind) {
+      case "IntLit": return expr.value.toString();
+      case "FloatLit": {
+        const buf = new ArrayBuffer(8);
+        new Float64Array(buf)[0] = expr.value;
+        const bits = new BigUint64Array(buf)[0];
+        return `0x${bits.toString(16).toUpperCase().padStart(16, "0")}`;
+      }
+      case "BoolLit": return expr.value ? "1" : "0";
+      case "Cast":
+        if (expr.type.tag === "ptr") return "null";
+        return null;
+      case "StructLit": {
+        const layout = this.structLayouts.get(expr.name);
+        if (!layout) return null;
+        const fieldVals: string[] = [];
+        for (const lf of layout.fields) {
+          const ef = expr.fields.find(f => f.name === lf.name);
+          if (!ef) return null;
+          const val = this.tryConstantExpr(ef.value);
+          if (val === null) return null;
+          fieldVals.push(`${lf.type} ${val}`);
+        }
+        return `{ ${fieldVals.join(", ")} }`;
+      }
+      case "ArrayLit": {
+        if (expr.type.tag !== "array" || expr.type.size === null) return null;
+        const elemTy = this.llvmType(expr.type.element);
+        const elemVals: string[] = [];
+        for (const elem of expr.elements) {
+          const val = this.tryConstantExpr(elem);
+          if (val === null) return null;
+          elemVals.push(`${elemTy} ${val}`);
+        }
+        return `[${elemVals.join(", ")}]`;
+      }
+      case "ArrayRepeat": {
+        const elemKind = expr.type.tag === "array" ? expr.type.element : { tag: "int" as const, bits: 32, signed: true };
+        const elemTy = this.llvmType(elemKind);
+        const val = this.tryConstantExpr(expr.value);
+        if (val === null) return null;
+        if (val === "0" || val === "zeroinitializer") return "zeroinitializer";
+        const elems = Array(expr.count).fill(`${elemTy} ${val}`);
+        return `[${elems.join(", ")}]`;
+      }
+      default:
+        return null;
     }
-    if (g.value.kind === "BoolLit") return g.value.value ? "1" : "0";
-    if (g.value.kind === "Cast" && g.type.tag === "ptr") return "null";
+  }
+
+  private getConstantInitializer(g: import("./hir").HIRGlobal): string {
+    const constVal = this.tryConstantExpr(g.value);
+    if (constVal !== null) return constVal;
     if (g.type.tag === "ptr") return "null";
     const tag = g.type.tag;
     if (tag === "struct" || tag === "array" || tag === "enum" || tag === "string" || tag === "vec" || tag === "hashmap" || tag === "tuple") {
