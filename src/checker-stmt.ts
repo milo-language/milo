@@ -84,6 +84,15 @@ TypeChecker.prototype.checkStmt = function(this: TypeChecker, stmt: Stmt, fnRetT
         this.error(`cannot assign to immutable variable '${this.describeExpr(stmt.target)}'`, sp, `declare with 'var' instead of 'let' to make it mutable`);
         break;
       }
+      // reject reassignment while a borrow (slice, iteration ref) is live
+      if (stmt.target.kind === "Ident") {
+        const info = this.lookup(stmt.target.name);
+        if (info?.borrowed) {
+          this.error(`cannot assign to '${stmt.target.name}' because it is borrowed`, sp,
+            `a reference or slice into this variable is still live — the assignment would invalidate it`);
+          break;
+        }
+      }
       const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
       if (!typeEq(targetInfo.type, valType) && valType.tag !== "unknown") {
         const optInner = this.optionInnerType(targetInfo.type);
@@ -209,9 +218,10 @@ TypeChecker.prototype.checkStmt = function(this: TypeChecker, stmt: Stmt, fnRetT
         const iterType = this.checkExpr(stmt.iterable);
         if (iterType.tag === "vec") {
           const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
+          let vecBorrowInfo: import("./checker").VarInfo | null = null;
           if (stmt.iterable.kind === "Ident") {
             const info = this.lookup(stmt.iterable.name);
-            if (info) info.borrowed = true;
+            if (info) { vecBorrowInfo = info; info.borrowed = true; }
           }
           const preMoves = this.snapshotMoveState();
           this.returnOnlyMovesStack.push(new Set());
@@ -227,6 +237,7 @@ TypeChecker.prototype.checkStmt = function(this: TypeChecker, stmt: Stmt, fnRetT
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
           this.popScope();
+          if (vecBorrowInfo) vecBorrowInfo.borrowed = false;
           const returnMoves = this.returnOnlyMovesStack.pop()!;
           for (const scope of this.scopes) {
             for (const [name, info] of scope) {
@@ -264,9 +275,10 @@ TypeChecker.prototype.checkStmt = function(this: TypeChecker, stmt: Stmt, fnRetT
         } else if (iterType.tag === "hashmap") {
           const keyRef: TypeKind = { tag: "ref", inner: iterType.key, mutable: false };
           const valRef: TypeKind = { tag: "ref", inner: iterType.value, mutable: false };
+          let mapBorrowInfo: import("./checker").VarInfo | null = null;
           if (stmt.iterable.kind === "Ident") {
             const info = this.lookup(stmt.iterable.name);
-            if (info) info.borrowed = true;
+            if (info) { mapBorrowInfo = info; info.borrowed = true; }
           }
           const preMoves = this.snapshotMoveState();
           this.returnOnlyMovesStack.push(new Set());
@@ -279,6 +291,7 @@ TypeChecker.prototype.checkStmt = function(this: TypeChecker, stmt: Stmt, fnRetT
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
           this.popScope();
+          if (mapBorrowInfo) mapBorrowInfo.borrowed = false;
           const returnMoves4 = this.returnOnlyMovesStack.pop()!;
           for (const scope of this.scopes) {
             for (const [name, info] of scope) {
@@ -290,9 +303,10 @@ TypeChecker.prototype.checkStmt = function(this: TypeChecker, stmt: Stmt, fnRetT
           }
         } else if (iterType.tag === "array") {
           const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
+          let arrBorrowInfo: import("./checker").VarInfo | null = null;
           if (stmt.iterable.kind === "Ident") {
             const info = this.lookup(stmt.iterable.name);
-            if (info) info.borrowed = true;
+            if (info) { arrBorrowInfo = info; info.borrowed = true; }
           }
           const preMoves = this.snapshotMoveState();
           this.returnOnlyMovesStack.push(new Set());
@@ -308,6 +322,7 @@ TypeChecker.prototype.checkStmt = function(this: TypeChecker, stmt: Stmt, fnRetT
           for (const s of stmt.body) this.checkStmt(s, fnRetType);
           this.loopDepth--;
           this.popScope();
+          if (arrBorrowInfo) arrBorrowInfo.borrowed = false;
           const returnMoves5 = this.returnOnlyMovesStack.pop()!;
           for (const scope of this.scopes) {
             for (const [name, info] of scope) {

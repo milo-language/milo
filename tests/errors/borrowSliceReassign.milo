@@ -1,0 +1,17 @@
+// reassigning a var while a slice borrows it is a compile error
+fn makeString(): string {
+    var s: string = ""
+    for i in 0..50 {
+        s = s + "A"
+    }
+    return s
+}
+
+fn main(): i32 {
+    var s = makeString()
+    let slice = s[0..5]
+    s = makeString()
+    print(slice)
+    return 0
+}
+// @error: cannot assign to 's' because it is borrowed

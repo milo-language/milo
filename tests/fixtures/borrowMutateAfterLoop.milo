@@ -1,0 +1,15 @@
+// valid: mutation after for-in loop (borrow ends when loop exits)
+fn main(): i32 {
+    var items: Vec<i32> = Vec.new()
+    items.push(1)
+    items.push(2)
+    for x in items {
+        print(x)
+    }
+    items.push(3)
+    print(items[2])
+    return 0
+}
+// @expect: 1
+// @expect: 2
+// @expect: 3

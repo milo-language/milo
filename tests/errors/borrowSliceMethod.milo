@@ -1,0 +1,9 @@
+// calling .slice() borrows the source — reassignment is rejected
+fn main(): i32 {
+    var s = "hello world"
+    let view = s.slice(0, 5)
+    s = "goodbye"
+    print(view)
+    return 0
+}
+// @error: cannot assign to 's' because it is borrowed

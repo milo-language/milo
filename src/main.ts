@@ -85,12 +85,17 @@ function detectToolchain(): Toolchain {
   return cachedToolchain;
 }
 
-function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "") {
+function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false) {
   const tc = detectToolchain();
+  const san = sanitize ? " -fsanitize=address" : "";
   if (tc.kind === "clang") {
     const opt = optFlag ? ` ${optFlag}` : "";
-    execSync(`${tc.path}${opt} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+    execSync(`${tc.path}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
   } else {
+    if (sanitize) {
+      console.error("error: --sanitize requires clang (not llc+cc)");
+      process.exit(1);
+    }
     const tmpObj = llFile.replace(/\.ll$/, ".o");
     const opt = optFlag || "-O2";
     try {
@@ -176,7 +181,7 @@ function detectLibs(ir: string, target: TargetInfo): string {
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = []): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false): string {
   const source = readFileSync(sourcePath, "utf-8");
   const debugOverflow = optFlag === "-O0";
   const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
@@ -189,7 +194,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     writeFileSync(tmpLl, ir);
     const libs = detectLibs(ir, target);
     const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
-    linkIR(tmpLl, out, optFlag, libs, extra);
+    linkIR(tmpLl, out, optFlag, libs, extra, sanitize);
   } catch (e: any) {
     console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
@@ -274,8 +279,8 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warn
   }
 }
 
-function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig) {
-  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig);
+function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false) {
+  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize);
   try {
     const result = execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), {
       stdio: "inherit",
@@ -287,12 +292,13 @@ function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, op
   }
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
   let noEntry = false;
   let safetyLevel: string | null = null;
+  let sanitize = false;
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
@@ -301,6 +307,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--release") { optFlag = "-O3"; }
     else if (args[i] === "--debug") { optFlag = "-O0"; }
     else if (args[i] === "--no-entry") { noEntry = true; }
+    else if (args[i] === "--sanitize") { sanitize = true; }
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--deny-all") { denied.add("*"); }
@@ -314,7 +321,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -808,7 +815,7 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize } = parseArgs(args.slice(1));
   const target = getHostTarget();
 
   if (cmd === "build-lib") {
@@ -890,9 +897,9 @@ function main() {
   }
 
   if (cmd === "run") {
-    runFile(source!, rest, target, optFlag, warningConfig);
+    runFile(source!, rest, target, optFlag, warningConfig, sanitize);
   } else if (cmd === "build") {
-    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize);
     console.log(`compiled ${source} -> ${bin}`);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig, optFlag === "-O0");
