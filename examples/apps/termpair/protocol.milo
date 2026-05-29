@@ -18,11 +18,11 @@ fn jsonMsgI64(event: &string, payload: i64): string {
 
 // ── init message from terminal → server ──
 
-fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool): string {
+fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool, allowControl: bool): string {
     var msg: string = "{"
     msg = msg + "\"rows\":" + rows.toString()
     msg = msg + ",\"cols\":" + cols.toString()
-    msg = msg + ",\"allow_browser_control\":false"
+    msg = msg + ",\"allow_browser_control\":" + (if allowControl { "true" } else { "false" })
     msg = msg + ",\"command\":\"" + command + "\""
     msg = msg + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
     msg = msg + ",\"subprotocol_version\":\"4\""
@@ -111,6 +111,12 @@ fn makeNumClients(n: i64): string {
 fn parseEvent(raw: &string): string {
     let j = jsonParse(raw.clone())!
     return j.str("event") ?? ""
+}
+
+// Read a top-level string field (decrypted command payload is {"data":..,"salt":..}).
+fn parseField(raw: &string, field: &string): string {
+    let j = jsonParse(raw.clone())!
+    return j.str(field) ?? ""
 }
 
 fn parsePayloadStr(raw: &string, field: &string): string {

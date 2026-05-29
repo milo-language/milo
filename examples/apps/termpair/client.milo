@@ -5,7 +5,9 @@
 // output is encrypted with AES-128-GCM (unix key); the key needed to decrypt it
 // lives only in the URL fragment, so the server never sees plaintext.
 //
-// Read-only: browser→shell input (the `command` event) is intentionally ignored.
+// Browser→shell input (the encrypted `command` event) is accepted by default;
+// pass --read-only to disable it. Mirrors termpair-rs: control is allowed only
+// for private (encrypted) sessions, never public ones.
 
 from "std/pty" import { Pty, WinSize, openAndSpawn }
 from "std/ws" import { WsConn, wsConnect, wsConnectTls }
@@ -21,8 +23,8 @@ from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
 from "std/base64" import { base64Encode, base64UrlEncode }
 
-from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr }
-from "./encryption" import { genKey, encryptWithKey, aesKeysMessage }
+from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr, parseField }
+from "./encryption" import { genKey, encryptWithKey, decryptWithKey, aesKeysMessage }
 
 // ── Terminal size query ──
 
@@ -100,6 +102,7 @@ fn main(): i32 {
     parser.addString("base", "", "server URL path prefix", "/termpair")
     parser.addString("shell", "s", "shell to spawn", "/bin/bash")
     parser.addBool("public", "", "public session (no encryption)")
+    parser.addBool("read-only", "", "disable browser→shell input")
     parser.addBool("plain", "", "use plain ws:// instead of wss:// (local servers)")
     let args = parser.parse()
 
@@ -108,6 +111,8 @@ fn main(): i32 {
     let base = args.getString("base")
     let shell = args.getString("shell")
     let isPublic = args.getBool("public")
+    // Control only ever allowed on encrypted (private) sessions — same rule as termpair-rs.
+    let allowControl = !isPublic && !args.getBool("read-only")
     // wss:// unless explicitly forced plain (e.g. a local milo server on :8000).
     let useTls = !args.getBool("plain")
 
@@ -171,7 +176,7 @@ fn main(): i32 {
 
     // send init message
     let startTime = isoTimestamp()
-    let initMsg = makeInitMessage(ptyRows, cols, shell, startTime, isPublic)
+    let initMsg = makeInitMessage(ptyRows, cols, shell, startTime, isPublic, allowControl)
     match ws.sendText(initMsg) {
         Result.Ok(_) => {}
         Result.Err(e) => {
@@ -218,6 +223,7 @@ fn main(): i32 {
     // (move zeroes the source — can't move the same var into multiple closures)
     let ptyFd1 = pty.masterFd
     let ptyFd2 = pty.masterFd
+    let ptyFd3 = pty.masterFd
     let wsFd1 = ws.fd
     let wsFd3 = ws.fd
     let wsSsl1 = ws.ssl
@@ -233,6 +239,7 @@ fn main(): i32 {
     let browserKeyB = browserKey.clone()
     let isPublicA = isPublic
     let isPublicB = isPublic
+    let allowControlB = allowControl
 
     // set fds non-blocking before spawning green threads
     setNonblocking(ptyFd1)
@@ -338,12 +345,34 @@ fn main(): i32 {
                                 let _ = recvWs.sendText(km)
                             }
                         }
+                    } else if ev == "command" {
+                        // Browser→shell input: payload is base64(IV‖ct‖tag) under the
+                        // browser key, wrapping {"data":"<keys>","salt":..}. Decrypt,
+                        // pull `data`, feed it to the PTY. Server only relays these when
+                        // allow_browser_control is set, but re-check defensively.
+                        if allowControlB {
+                            let enc = parseField(raw, "payload")
+                            match decryptWithKey(browserKeyB, enc) {
+                                Result.Ok(plain) => {
+                                    let data = parseField(plain, "data")
+                                    // Cap at MAX_COMMAND_INPUT_BYTES (4096) — matches termpair-rs.
+                                    var dlen = data.len
+                                    if dlen > 4096 { dlen = 4096 }
+                                    if dlen > 0 {
+                                        var wbuf: [u8 ; 4096] = [0 ; 4096]
+                                        for i in 0..dlen { wbuf[i] = data[i] }
+                                        unsafe { write(ptyFd3, wbuf as *u8, dlen) }
+                                    }
+                                }
+                                Result.Err(_) => {}
+                            }
+                        }
                     } else if ev == "request_terminal_dimensions" {
                         let ts2 = termSize()
                         let r2 = if ts2.rows > 1 { ts2.rows - 1 } else { ts2.rows }
                         let _ = recvWs.sendText(makeResizeMsg(r2, ts2.cols))
                     }
-                    // `command` (browser input) and `request_key_rotation` ignored: read-only.
+                    // `request_key_rotation` ignored: keys are fixed for the session.
                 }
                 Result.Err(e) => {
                     done3.store(true)

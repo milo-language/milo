@@ -13,9 +13,9 @@
 // lets the two relay green threads each own their counter and a clone of the
 // keys they need, with no shared mutable state (no rotation in read-only mode).
 
-from "std/crypto" import { aesGcm128Encrypt }
+from "std/crypto" import { aesGcm128Encrypt, aesGcm128Decrypt }
 from "std/random" import { randBytes }
-from "std/base64" import { base64Encode }
+from "std/base64" import { base64Encode, base64Decode }
 
 // 2^20; matches ROTATION_THRESHOLD in termpair-common.
 fn rotationThreshold(): i64 { return 1048576 }
@@ -52,6 +52,25 @@ fn encryptWithKey(key: &string, count: i64, plaintext: &string): Result<string, 
     let r = aesGcm128Encrypt(key, iv, plaintext, "")!
     let wire = iv + r.ciphertext + r.tag
     return Result.Ok(base64Encode(wire))
+}
+
+// Decrypt a base64( IV(12) ‖ ciphertext ‖ tag(16) ) wire payload under `key`.
+// The IV is embedded in the payload (low 8 bytes = LE counter), so no counter
+// state is tracked here — mirrors aes_keys.decrypt() on the termpair-rs side.
+fn decryptWithKey(key: &string, wireB64: &string): Result<string, string> {
+    let wire = base64Decode(wireB64)
+    // 12-byte IV + 16-byte GCM tag is the minimum; reject anything shorter.
+    if wire.len < 28 {
+        return Result.Err("ciphertext too short")
+    }
+    let ctEnd = wire.len - 16
+    var iv: string = ""
+    for i in 0..12 { iv.push(wire[i]) }
+    var ct: string = ""
+    for i in 12..ctEnd { ct.push(wire[i]) }
+    var tag: string = ""
+    for i in ctEnd..wire.len { tag.push(wire[i]) }
+    return aesGcm128Decrypt(key, iv, ct, tag, "")
 }
 
 // Build the `aes_keys` handshake for a newly connected browser. `encUnix` and
