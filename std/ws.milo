@@ -1,11 +1,16 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
-from "std/os" import { close, read, write, htons, malloc, free, memcpy, socket, connect }
+from "std/os" import { close, read, write, htons, malloc, free, memcpy, socket, connect, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_new, SSL_set_fd, SSL_connect, SSL_read, SSL_write, SSL_free, SSL_ctrl, SSL_get_error }
 from "std/crypto" import { sha1Bytes }
 from "std/base64" import { base64Encode }
 from "std/platform" import { SockAddrIn, makeSockaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
 from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
+from "std/random" import { randBytes }
+
+// SSL_get_error return codes
+fn _SSL_ERROR_WANT_READ(): i32 { return 2 }
+fn _SSL_ERROR_WANT_WRITE(): i32 { return 3 }
 
 // ── Frame opcodes ──
 
@@ -25,13 +30,30 @@ struct WsMessage {
 
 struct WsConn {
     fd: i32,
+    // TLS handle (0 = plain TCP). When set, all frame IO routes through SSL_read/SSL_write.
+    ssl: i64,
+    // SSL_CTX owned by this conn (0 = none/borrowed). Only the owner frees ssl+ctx on drop.
+    _ctx: i64,
     _closed: bool,
+    // Client conns must mask outgoing frames (RFC 6455); server conns must not.
+    _isClient: bool,
 }
 
 impl Drop for WsConn {
     fn drop(self: &mut Self): void {
-        if !self._closed && self.fd >= 0 {
-            unsafe { close(self.fd) }
+        // _closed also marks borrowed copies (shared fd/ssl across green threads) — skip teardown.
+        if !self._closed {
+            unsafe {
+                if self.ssl != 0 {
+                    SSL_free(self.ssl as *u8)
+                }
+                if self._ctx != 0 {
+                    SSL_CTX_free(self._ctx as *u8)
+                }
+                if self.fd >= 0 {
+                    close(self.fd)
+                }
+            }
         }
     }
 }
@@ -40,7 +62,7 @@ impl Drop for WsConn {
 
 // RFC 6455 magic GUID
 fn _wsMagic(): string {
-    return "258EAFA5-E914-47DA-95CA-5AB5DC587E35"
+    return "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 }
 
 fn _computeAcceptKey(clientKey: &string): string {
@@ -92,21 +114,52 @@ fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
     if schedulerCurrent() as i64 != 0 {
         setNonblocking(fd)
     }
-    return Result.Ok(WsConn { fd: fd, _closed: false })
+    return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false })
 }
 
 // ── Frame reading ──
 
-fn _readExact(fd: i32, buf: *u8, needed: i64): bool {
+// Read up to `len` bytes from a plain fd or TLS handle. Yields to the green
+// scheduler on would-block. Returns bytes read (>0), 0 on clean close, <0 on error.
+fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64, inGreen: bool): i64 {
+    unsafe {
+        while true {
+            if ssl != 0 {
+                let n = SSL_read(ssl as *u8, buf, len as i32)
+                if n > 0 {
+                    return n as i64
+                }
+                if inGreen {
+                    let e = SSL_get_error(ssl as *u8, n)
+                    if e == _SSL_ERROR_WANT_READ() {
+                        schedulerWaitRead(fd)
+                        continue
+                    }
+                    if e == _SSL_ERROR_WANT_WRITE() {
+                        schedulerWaitWrite(fd)
+                        continue
+                    }
+                }
+                return -1 as i64
+            } else {
+                let n = read(fd, buf, len)
+                if n < 0 && inGreen && getErrno() == eagain() {
+                    schedulerWaitRead(fd)
+                    continue
+                }
+                return n
+            }
+        }
+    }
+    return -1 as i64
+}
+
+fn _readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
     let inGreen = schedulerCurrent() as i64 != 0
     var got: i64 = 0
-    while got < needed {
-        unsafe {
-            let n = read(fd, (buf as i64 + got) as *u8, needed - got)
-            if n < 0 && inGreen && getErrno() == eagain() {
-                schedulerWaitRead(fd)
-                continue
-            }
+    unsafe {
+        while got < needed {
+            let n = _readSome(fd, ssl, (buf as i64 + got) as *u8, needed - got, inGreen)
             if n <= 0 {
                 return false
             }
@@ -125,7 +178,7 @@ impl WsConn {
 
         while true {
             var header: [u8 ; 2] = [0 ; 2]
-            if !_readExact(self.fd, header, 2) {
+            if !_readExact(self.fd, self.ssl, header, 2) {
                 return Result.Err("connection closed")
             }
 
@@ -136,7 +189,7 @@ impl WsConn {
 
             if payloadLen == 126 {
                 var extLen: [u8 ; 2] = [0 ; 2]
-                if !_readExact(self.fd, extLen, 2) {
+                if !_readExact(self.fd, self.ssl, extLen, 2) {
                     return Result.Err("connection closed reading length")
                 }
                 let hi = extLen[0] as i64
@@ -144,7 +197,7 @@ impl WsConn {
                 payloadLen = (hi << 8) | lo
             } else if payloadLen == 127 {
                 var extLen: [u8 ; 8] = [0 ; 8]
-                if !_readExact(self.fd, extLen, 8) {
+                if !_readExact(self.fd, self.ssl, extLen, 8) {
                     return Result.Err("connection closed reading length")
                 }
                 payloadLen = 0
@@ -155,7 +208,7 @@ impl WsConn {
 
             var maskKey: [u8 ; 4] = [0 ; 4]
             if masked {
-                if !_readExact(self.fd, maskKey, 4) {
+                if !_readExact(self.fd, self.ssl, maskKey, 4) {
                     return Result.Err("connection closed reading mask")
                 }
             }
@@ -165,7 +218,7 @@ impl WsConn {
             if payloadLen > 0 {
                 unsafe {
                     let buf = malloc(payloadLen)
-                    if !_readExact(self.fd, buf, payloadLen) {
+                    if !_readExact(self.fd, self.ssl, buf, payloadLen) {
                         free(buf)
                         return Result.Err("connection closed reading payload")
                     }
@@ -241,15 +294,22 @@ impl WsConn {
     }
 
     fn _sendFrame(self: &Self, opcode: u8, payload: &string, fin: bool): Result<i32, string> {
-        // max header: 1 (fin+op) + 1 (len7) + 8 (ext len) = 10
+        // header: 1 (fin+op) + 1..9 (len) + 4 (mask key, client only)
         var headerLen: i64 = 2
         if payload.len >= 126 && payload.len < 65536 {
             headerLen = 4
         } else if payload.len >= 65536 {
             headerLen = 10
         }
+        // RFC 6455: client→server frames MUST be masked; server frames MUST NOT be.
+        let maskBytes: i64 = if self._isClient { 4 as i64 } else { 0 as i64 }
 
-        let total = headerLen + payload.len
+        var mask: [u8 ; 4] = [0 ; 4]
+        if self._isClient {
+            unsafe { randBytes(mask as *u8, 4) }
+        }
+
+        let total = headerLen + maskBytes + payload.len
         unsafe {
             let frame = malloc(total)
             var pos: i64 = 0
@@ -260,19 +320,20 @@ impl WsConn {
             *((frame as i64 + pos) as *u8) = b0
             pos = pos + 1
 
-            // byte 1+: payload length (server frames are never masked)
+            // byte 1+: mask bit + payload length
+            let maskBit: u8 = if self._isClient { 128 as u8 } else { 0 as u8 }
             if payload.len < 126 {
-                *((frame as i64 + pos) as *u8) = payload.len as u8
+                *((frame as i64 + pos) as *u8) = maskBit | (payload.len as u8)
                 pos = pos + 1
             } else if payload.len < 65536 {
-                *((frame as i64 + pos) as *u8) = 126
+                *((frame as i64 + pos) as *u8) = maskBit | 126
                 pos = pos + 1
                 *((frame as i64 + pos) as *u8) = (payload.len >> 8) as u8
                 pos = pos + 1
                 *((frame as i64 + pos) as *u8) = (payload.len & 255) as u8
                 pos = pos + 1
             } else {
-                *((frame as i64 + pos) as *u8) = 127
+                *((frame as i64 + pos) as *u8) = maskBit | 127
                 pos = pos + 1
                 for i in 0..8 {
                     let shift = ((7 - i) * 8) as i64
@@ -281,22 +342,57 @@ impl WsConn {
                 }
             }
 
-            // payload
+            // mask key (client only)
+            if self._isClient {
+                for i in 0..4 {
+                    *((frame as i64 + pos) as *u8) = mask[i]
+                    pos = pos + 1
+                }
+            }
+
+            // payload (XOR-masked for client frames)
             if payload.len > 0 {
-                memcpy((frame as i64 + pos) as *u8, payload as *u8, payload.len)
+                if self._isClient {
+                    for i in 0..payload.len {
+                        *((frame as i64 + pos + i) as *u8) = payload[i] ^ mask[i % 4]
+                    }
+                } else {
+                    memcpy((frame as i64 + pos) as *u8, payload as *u8, payload.len)
+                }
             }
 
             let inGreen = schedulerCurrent() as i64 != 0
             var sent: i64 = 0
             while sent < total {
-                let n = write(self.fd, (frame as i64 + sent) as *u8, total - sent)
-                if n < 0 && inGreen && getErrno() == eagain() {
-                    schedulerWaitWrite(self.fd)
-                    continue
-                }
-                if n < 0 {
-                    free(frame)
-                    return Result.Err("write failed")
+                var n: i64 = 0
+                if self.ssl != 0 {
+                    let r = SSL_write(self.ssl as *u8, (frame as i64 + sent) as *u8, (total - sent) as i32)
+                    if r <= 0 {
+                        if inGreen {
+                            let e = SSL_get_error(self.ssl as *u8, r)
+                            if e == _SSL_ERROR_WANT_READ() {
+                                schedulerWaitRead(self.fd)
+                                continue
+                            }
+                            if e == _SSL_ERROR_WANT_WRITE() {
+                                schedulerWaitWrite(self.fd)
+                                continue
+                            }
+                        }
+                        free(frame)
+                        return Result.Err("SSL_write failed")
+                    }
+                    n = r as i64
+                } else {
+                    n = write(self.fd, (frame as i64 + sent) as *u8, total - sent)
+                    if n < 0 && inGreen && getErrno() == eagain() {
+                        schedulerWaitWrite(self.fd)
+                        continue
+                    }
+                    if n < 0 {
+                        free(frame)
+                        return Result.Err("write failed")
+                    }
                 }
                 sent = sent + n
             }
@@ -374,7 +470,113 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
         if schedulerCurrent() as i64 != 0 {
             setNonblocking(fd)
         }
-        return Result.Ok(WsConn { fd: fd, _closed: false })
+        return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true })
+    }
+}
+
+// Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS
+// handshake (blocking — call before setting fds nonblocking), then the HTTP
+// upgrade handshake over the encrypted channel. `hostname` is used for SNI,
+// certificate validation, and the Host header.
+
+fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string> {
+    let AF_INET: i32 = 2
+    let SOCK_STREAM: i32 = 1
+    let SIZEOF_SOCKADDR_IN: u32 = 16
+
+    unsafe {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 {
+            return Result.Err("socket() failed")
+        }
+
+        var addr = makeSockaddr(port, ip)
+        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            close(fd)
+            return Result.Err("connect() failed")
+        }
+
+        let method = TLS_client_method()
+        let ctx = SSL_CTX_new(method)
+        if ctx as i64 == 0 {
+            close(fd)
+            return Result.Err("SSL_CTX_new failed")
+        }
+        SSL_CTX_set_default_verify_paths(ctx)
+
+        let ssl = SSL_new(ctx)
+        if ssl as i64 == 0 {
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("SSL_new failed")
+        }
+
+        // SSL_ctrl(SSL_CTRL_SET_TLSEXT_HOSTNAME=55) sets SNI hostname.
+        SSL_ctrl(ssl, 55, 0, hostname)
+        SSL_set_fd(ssl, fd)
+
+        if SSL_connect(ssl) != 1 {
+            SSL_free(ssl)
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("TLS handshake failed")
+        }
+
+        let sslAddr = ssl as i64
+        let ctxAddr = ctx as i64
+
+        let clientKey = "dGVybXBhaXItbWlsbw=="
+
+        var req: string = "GET " + path + " HTTP/1.1\r\n"
+        req = req + "Host: " + hostname + "\r\n"
+        req = req + "Upgrade: websocket\r\n"
+        req = req + "Connection: Upgrade\r\n"
+        req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
+        req = req + "Sec-WebSocket-Version: 13\r\n"
+        req = req + "\r\n"
+
+        if SSL_write(ssl, req, req.len as i32) <= 0 {
+            SSL_free(ssl)
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("failed to send upgrade request")
+        }
+
+        // read response — expect "HTTP/1.1 101". Handshake is still blocking here.
+        var buf: [u8 ; 4096] = [0 ; 4096]
+        let respLen = SSL_read(ssl, buf as *u8, 4096)
+        if respLen <= 0 {
+            SSL_free(ssl)
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("no response from server")
+        }
+
+        var resp: string = ""
+        for i in 0..respLen as i64 {
+            resp.push(buf[i])
+        }
+
+        if !resp.startsWith("HTTP/1.1 101") {
+            SSL_free(ssl)
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
+        }
+
+        let expectedAccept = _computeAcceptKey(clientKey)
+        let actualAccept = _findHeaderValue(resp, "Sec-WebSocket-Accept")
+        if actualAccept != expectedAccept {
+            SSL_free(ssl)
+            SSL_CTX_free(ctx)
+            close(fd)
+            return Result.Err("invalid Sec-WebSocket-Accept")
+        }
+
+        if schedulerCurrent() as i64 != 0 {
+            setNonblocking(fd)
+        }
+        return Result.Ok(WsConn { fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true })
     }
 }
 

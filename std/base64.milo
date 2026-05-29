@@ -69,6 +69,25 @@ fn base64Encode(input: &string): string {
     return result
 }
 
+// URL-safe base64, no padding (RFC 4648 §5): '+' → '-', '/' → '_', drop '='.
+// Used for embedding binary data in URL fragments.
+
+fn base64UrlEncode(input: &string): string {
+    let std = base64Encode(input)
+    var result = ""
+    for i in 0..std.len {
+        let c = std[i]
+        if c == '+' {
+            result.push('-')
+        } else if c == '/' {
+            result.push('_')
+        } else if c != 61 {  // 61 == '='
+            result.push(c)
+        }
+    }
+    return result
+}
+
 // Decode a base64 string.
 
 fn base64Decode(input: &string): string {

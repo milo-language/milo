@@ -1,10 +1,14 @@
-// termpair client — share your terminal via WebSocket
+// termpair client — share your terminal via an encrypted WebSocket.
 //
-// Opens a PTY, spawns your shell, connects to the termpair server,
-// and relays I/O bidirectionally.
+// Drop-in for the termpair-rs share client. Opens a PTY, spawns your shell,
+// connects to a termpair server (wss:// by default), and relays I/O. Terminal
+// output is encrypted with AES-128-GCM (unix key); the key needed to decrypt it
+// lives only in the URL fragment, so the server never sees plaintext.
+//
+// Read-only: browser→shell input (the `command` event) is intentionally ignored.
 
 from "std/pty" import { Pty, WinSize, openAndSpawn }
-from "std/ws" import { WsConn, WsMessage, wsConnect, WS_TEXT }
+from "std/ws" import { WsConn, wsConnect, wsConnectTls }
 from "std/net" import { resolve }
 from "std/term" import { enableRawMode, restoreTerminal, readKey }
 from "std/os" import { ioctl, read, write }
@@ -15,9 +19,10 @@ from "std/event" import { setNonblocking }
 from "std/platform" import { getErrno, eagain }
 from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
-from "std/base64" import { base64Encode }
+from "std/base64" import { base64Encode, base64UrlEncode }
 
 from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr }
+from "./encryption" import { genKey, encryptWithKey, aesKeysMessage }
 
 // ── Terminal size query ──
 
@@ -81,18 +86,33 @@ fn isoTimestamp(): string {
     return y.toString() + "-" + pad2(m) + "-" + pad2(d) + "T" + pad2(hours) + ":" + pad2(minutes) + ":" + pad2(seconds) + "Z"
 }
 
+// Build the plaintext new_output JSON: {"pty_output":"<base64 raw bytes>"}.
+fn ptyOutputJson(raw: &string): string {
+    return "{\"pty_output\":\"" + base64Encode(raw) + "\"}"
+}
+
 // ── Main ──
 
 fn main(): i32 {
     var parser = newParser("termpair", "share your terminal")
-    parser.addString("host", "h", "server host", "localhost")
-    parser.addI64("port", "p", "server port", 8000)
+    parser.addString("host", "h", "server host", "chadsmith.dev")
+    parser.addI64("port", "p", "server port", 443)
+    parser.addString("base", "", "server URL path prefix", "/termpair")
+    parser.addString("shell", "s", "shell to spawn", "/bin/bash")
     parser.addBool("public", "", "public session (no encryption)")
+    parser.addBool("plain", "", "use plain ws:// instead of wss:// (local servers)")
     let args = parser.parse()
 
     let host = args.getString("host")
     let port = args.getU16("port")
+    let base = args.getString("base")
+    let shell = args.getString("shell")
     let isPublic = args.getBool("public")
+    // wss:// unless explicitly forced plain (e.g. a local milo server on :8000).
+    let useTls = !args.getBool("plain")
+
+    let connectPath = base + "/connect_to_terminal"
+    let scheme = if useTls { "https" } else { "http" }
 
     // resolve server address
     var ip: u32 = 0
@@ -110,7 +130,6 @@ fn main(): i32 {
     let cols = ts.cols
 
     // open PTY and spawn shell
-    let shell = "/bin/bash"
     var shellArgs: Vec<string> = []
     var pty: Pty = Pty { masterFd: -1, slavePath: "", childPid: -1, _rows: 0 as u16, _cols: 0 as u16 }
     match openAndSpawn(shell, shellArgs) {
@@ -125,15 +144,30 @@ fn main(): i32 {
     let ptyRows = if rows > 1 { rows - 1 } else { rows }
     pty.resize(ptyRows as u16, cols as u16)
 
-    // connect to server via WebSocket
-    var ws: WsConn = WsConn { fd: -1, _closed: true }
-    match wsConnect(ip, port, "/connect_to_terminal") {
-        Result.Ok(v) => { ws = v }
-        Result.Err(e) => {
-            print($"error: could not connect to server: {e}")
-            return 1
+    // connect to server
+    var ws: WsConn = WsConn { fd: -1, ssl: 0, _ctx: 0, _closed: true, _isClient: true }
+    if useTls {
+        match wsConnectTls(ip, port, host, connectPath) {
+            Result.Ok(v) => { ws = v }
+            Result.Err(e) => {
+                print($"error: could not connect to server: {e}")
+                return 1
+            }
+        }
+    } else {
+        match wsConnect(ip, port, connectPath) {
+            Result.Ok(v) => { ws = v }
+            Result.Err(e) => {
+                print($"error: could not connect to server: {e}")
+                return 1
+            }
         }
     }
+
+    // generate session keys (private mode); the bootstrap key goes in the URL fragment
+    let bootstrapKey = genKey()
+    let unixKey = genKey()
+    let browserKey = genKey()
 
     // send init message
     let startTime = isoTimestamp()
@@ -167,10 +201,12 @@ fn main(): i32 {
     // print share URL
     if isPublic {
         print($"termpair — sharing terminal (public mode)")
+        print($"open in browser: {scheme}://{host}{base}/s/{terminalId}")
     } else {
-        print($"termpair — sharing terminal")
+        let keyFragment = base64UrlEncode(bootstrapKey)
+        print($"termpair — sharing terminal (AES-128-GCM, key in URL fragment)")
+        print($"open in browser: {scheme}://{host}{base}/s/{terminalId}#{keyFragment}")
     }
-    print($"open in browser: http://{host}:{port}/s/{terminalId}")
     print("press ctrl-d to stop sharing")
     print("")
 
@@ -184,9 +220,19 @@ fn main(): i32 {
     let ptyFd2 = pty.masterFd
     let wsFd1 = ws.fd
     let wsFd3 = ws.fd
+    let wsSsl1 = ws.ssl
+    let wsSsl3 = ws.ssl
     let done1 = AtomicBool { _ptr: done._ptr }
     let done2 = AtomicBool { _ptr: done._ptr }
     let done3 = AtomicBool { _ptr: done._ptr }
+
+    // per-thread key clones — no shared mutable crypto state (read-only, no rotation)
+    let unixKeyA = unixKey.clone()
+    let bootKeyB = bootstrapKey.clone()
+    let unixKeyB = unixKey.clone()
+    let browserKeyB = browserKey.clone()
+    let isPublicA = isPublic
+    let isPublicB = isPublic
 
     // set fds non-blocking before spawning green threads
     setNonblocking(ptyFd1)
@@ -195,8 +241,9 @@ fn main(): i32 {
 
     // task 1: PTY output → WebSocket (terminal → server → browsers)
     Task.spawn(move (): void => {
-        var sendWs = WsConn { fd: wsFd1, _closed: true }
+        var sendWs = WsConn { fd: wsFd1, ssl: wsSsl1, _ctx: 0, _closed: true, _isClient: true }
         var buf: [u8 ; 4096] = [0 ; 4096]
+        var msgCount: i64 = 0
         while !done1.load() {
             unsafe {
                 schedulerWaitRead(ptyFd1)
@@ -213,8 +260,19 @@ fn main(): i32 {
                 for i in 0..n {
                     rawOutput.push(buf[i])
                 }
-                let b64 = base64Encode(rawOutput)
-                let payload = base64Encode("{\"pty_output\":\"" + b64 + "\"}")
+                let plaintext = ptyOutputJson(rawOutput)
+
+                var payload: string = ""
+                if isPublicA {
+                    payload = base64Encode(plaintext)
+                } else {
+                    msgCount = msgCount + 1
+                    match encryptWithKey(unixKeyA, msgCount, plaintext) {
+                        Result.Ok(v) => { payload = v }
+                        Result.Err(_) => { continue }
+                    }
+                }
+
                 let msg = makeNewOutput(payload)
                 match sendWs.sendText(msg) {
                     Result.Err(_) => {
@@ -247,17 +305,45 @@ fn main(): i32 {
         }
     })
 
-    // task 3: WebSocket → PTY (browser input → shell)
+    // task 3: WebSocket → control handling (browser joins, resize requests)
     Task.spawn(move (): void => {
-        var recvWs = WsConn { fd: wsFd3, _closed: true }
+        var recvWs = WsConn { fd: wsFd3, ssl: wsSsl3, _ctx: 0, _closed: true, _isClient: true }
+        var bootstrapCount: i64 = 0
+        var browserCount: i64 = 0
         while !done3.load() {
             match recvWs.recv() {
                 Result.Ok(msg) => {
                     let raw = msg.payload
                     let ev = parseEvent(raw)
-                    if ev == "command" {
-                    } else if ev == "resize" {
+                    if ev == "new_browser_connected" {
+                        if !isPublicB {
+                            // hand the unix/browser keys to the new browser, wrapped
+                            // under the bootstrap key it derived from the URL fragment.
+                            browserCount = browserCount + 1
+                            let c1 = bootstrapCount + 1
+                            let c2 = bootstrapCount + 2
+                            bootstrapCount = bootstrapCount + 2
+                            var eu: string = ""
+                            var eb: string = ""
+                            match encryptWithKey(bootKeyB, c1, unixKeyB) {
+                                Result.Ok(v) => { eu = v }
+                                Result.Err(_) => {}
+                            }
+                            match encryptWithKey(bootKeyB, c2, browserKeyB) {
+                                Result.Ok(v) => { eb = v }
+                                Result.Err(_) => {}
+                            }
+                            if eu.len > 0 && eb.len > 0 {
+                                let km = aesKeysMessage(eu, eb, browserCount)
+                                let _ = recvWs.sendText(km)
+                            }
+                        }
+                    } else if ev == "request_terminal_dimensions" {
+                        let ts2 = termSize()
+                        let r2 = if ts2.rows > 1 { ts2.rows - 1 } else { ts2.rows }
+                        let _ = recvWs.sendText(makeResizeMsg(r2, ts2.cols))
                     }
+                    // `command` (browser input) and `request_key_rotation` ignored: read-only.
                 }
                 Result.Err(e) => {
                     done3.store(true)

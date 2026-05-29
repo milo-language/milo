@@ -192,6 +192,10 @@ extern
 
 fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
 
+extern
+
+fn SSL_get_error(ssl: *u8, ret: i32): i32
+
 // ── DNS ──
 
 extern

@@ -28,6 +28,10 @@ fn EVP_aes_256_gcm(): *u8
 
 extern
 
+fn EVP_aes_128_gcm(): *u8
+
+extern
+
 fn EVP_EncryptInit_ex(_ctx: *u8, _type: *u8, _impl: *u8, _key: *u8, _iv: *u8): i32
 
 extern
@@ -244,6 +248,146 @@ fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, a
         }
 
         // set expected tag before final
+        if EVP_CIPHER_CTX_ctrl(ctx, _evpCtrlGcmSetTag(), 16, tag as *u8) != 1 {
+            if ciphertext.len > 0 { free(ptBuf) }
+            EVP_CIPHER_CTX_free(ctx)
+            return Result.Err("failed to set GCM tag")
+        }
+
+        var finalLen: i32 = 0
+        let finalPtr = if ciphertext.len > 0 { (ptBuf as i64 + outLen as i64) as *u8 } else { 0 as *u8 }
+        if EVP_DecryptFinal_ex(ctx, finalPtr, (&finalLen) as *i32) != 1 {
+            if ciphertext.len > 0 { free(ptBuf) }
+            EVP_CIPHER_CTX_free(ctx)
+            return Result.Err("AES-GCM decrypt failed: authentication error")
+        }
+
+        EVP_CIPHER_CTX_free(ctx)
+
+        var plaintext: string = ""
+        let totalLen = outLen + finalLen
+        for i in 0..totalLen as i64 {
+            plaintext.push(*((ptBuf as i64 + i) as *u8))
+        }
+        if ciphertext.len > 0 { free(ptBuf) }
+        return Result.Ok(plaintext)
+    }
+}
+
+// Encrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes. (termpair uses AES-128.)
+
+fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
+  requires key.len == 16
+  requires iv.len == 12
+{
+    unsafe {
+        let ctx = EVP_CIPHER_CTX_new()
+        if ctx as i64 == 0 {
+            return Result.Err("EVP_CIPHER_CTX_new failed")
+        }
+
+        let cipher = EVP_aes_128_gcm()
+        if EVP_EncryptInit_ex(ctx, cipher, 0 as *u8, key, iv) != 1 {
+            EVP_CIPHER_CTX_free(ctx)
+            return Result.Err("EVP_EncryptInit_ex failed")
+        }
+
+        var aadOutLen: i32 = 0
+        if aad.len > 0 {
+            if EVP_EncryptUpdate(ctx, 0 as *u8, (&aadOutLen) as *i32, aad, aad.len as i32) != 1 {
+                EVP_CIPHER_CTX_free(ctx)
+                return Result.Err("EVP_EncryptUpdate (AAD) failed")
+            }
+        }
+
+        var ctBuf: *u8 = 0 as *u8
+        if plaintext.len > 0 {
+            ctBuf = malloc(plaintext.len + 16)
+        }
+        var outLen: i32 = 0
+
+        if plaintext.len > 0 {
+            if EVP_EncryptUpdate(ctx, ctBuf, (&outLen) as *i32, plaintext, plaintext.len as i32) != 1 {
+                free(ctBuf)
+                EVP_CIPHER_CTX_free(ctx)
+                return Result.Err("EVP_EncryptUpdate failed")
+            }
+        }
+
+        var finalLen: i32 = 0
+        let finalPtr = if plaintext.len > 0 { (ctBuf as i64 + outLen as i64) as *u8 } else { 0 as *u8 }
+        if EVP_EncryptFinal_ex(ctx, finalPtr, (&finalLen) as *i32) != 1 {
+            if plaintext.len > 0 { free(ctBuf) }
+            EVP_CIPHER_CTX_free(ctx)
+            return Result.Err("EVP_EncryptFinal_ex failed")
+        }
+
+        var tag: [u8 ; 16] = [0 ; 16]
+        if EVP_CIPHER_CTX_ctrl(ctx, _evpCtrlGcmGetTag(), 16, tag) != 1 {
+            if plaintext.len > 0 { free(ctBuf) }
+            EVP_CIPHER_CTX_free(ctx)
+            return Result.Err("failed to get GCM tag")
+        }
+
+        EVP_CIPHER_CTX_free(ctx)
+
+        var ciphertext: string = ""
+        let totalLen = outLen + finalLen
+        for i in 0..totalLen as i64 {
+            ciphertext.push(*((ctBuf as i64 + i) as *u8))
+        }
+        if plaintext.len > 0 { free(ctBuf) }
+
+        var tagStr: string = ""
+        for i in 0..16 {
+            tagStr.push(tag[i])
+        }
+
+        return Result.Ok(AesGcmResult { ciphertext: ciphertext, tag: tagStr })
+    }
+}
+
+// Decrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes, tag 16 bytes.
+
+fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
+  requires key.len == 16
+  requires iv.len == 12
+  requires tag.len == 16
+{
+    unsafe {
+        let ctx = EVP_CIPHER_CTX_new()
+        if ctx as i64 == 0 {
+            return Result.Err("EVP_CIPHER_CTX_new failed")
+        }
+
+        let cipher = EVP_aes_128_gcm()
+        if EVP_DecryptInit_ex(ctx, cipher, 0 as *u8, key, iv) != 1 {
+            EVP_CIPHER_CTX_free(ctx)
+            return Result.Err("EVP_DecryptInit_ex failed")
+        }
+
+        var aadOutLen: i32 = 0
+        if aad.len > 0 {
+            if EVP_DecryptUpdate(ctx, 0 as *u8, (&aadOutLen) as *i32, aad, aad.len as i32) != 1 {
+                EVP_CIPHER_CTX_free(ctx)
+                return Result.Err("EVP_DecryptUpdate (AAD) failed")
+            }
+        }
+
+        var ptBuf: *u8 = 0 as *u8
+        if ciphertext.len > 0 {
+            ptBuf = malloc(ciphertext.len + 16)
+        }
+        var outLen: i32 = 0
+
+        if ciphertext.len > 0 {
+            if EVP_DecryptUpdate(ctx, ptBuf, (&outLen) as *i32, ciphertext, ciphertext.len as i32) != 1 {
+                free(ptBuf)
+                EVP_CIPHER_CTX_free(ctx)
+                return Result.Err("EVP_DecryptUpdate failed")
+            }
+        }
+
         if EVP_CIPHER_CTX_ctrl(ctx, _evpCtrlGcmSetTag(), 16, tag as *u8) != 1 {
             if ciphertext.len > 0 { free(ptBuf) }
             EVP_CIPHER_CTX_free(ctx)

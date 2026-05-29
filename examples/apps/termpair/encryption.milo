@@ -1,0 +1,72 @@
+// encryption — termpair AES-128-GCM helpers (mirrors termpair-rs aes_keys.rs).
+//
+// Three 16-byte keys per session:
+//   bootstrap — the browser derives it from the URL fragment; wraps the unix/
+//               browser keys in the `aes_keys` handshake.
+//   unix      — encrypts terminal output (new_output) sent to browsers.
+//   browser   — encrypts browser→terminal input. Unused in read-only mode.
+//
+// Encrypted wire payload: base64( IV(12) ‖ ciphertext ‖ tag(16) ), where IV is
+// the little-endian u64 message counter in the low 8 bytes (rest zero).
+//
+// All functions are stateless: the message counters live in the caller. This
+// lets the two relay green threads each own their counter and a clone of the
+// keys they need, with no shared mutable state (no rotation in read-only mode).
+
+from "std/crypto" import { aesGcm128Encrypt }
+from "std/random" import { randBytes }
+from "std/base64" import { base64Encode }
+
+// 2^20; matches ROTATION_THRESHOLD in termpair-common.
+fn rotationThreshold(): i64 { return 1048576 }
+// floor(0.1 * 2^20) — the browser-side rotation safety buffer.
+fn rotationBuffer(): i64 { return 104857 }
+
+fn genKey(): string {
+    var buf: [u8 ; 16] = [0 ; 16]
+    unsafe { randBytes(buf as *u8, 16) }
+    var s: string = ""
+    for i in 0..16 {
+        s.push(buf[i])
+    }
+    return s
+}
+
+fn ivFromCount(count: i64): string {
+    var s: string = ""
+    var c = count
+    for i in 0..8 {
+        s.push((c & 255) as u8)
+        c = c >> 8
+    }
+    for i in 0..4 {
+        s.push(0 as u8)
+    }
+    return s
+}
+
+// Encrypt `plaintext` under `key` with the IV derived from `count`.
+// Returns base64( IV ‖ ciphertext ‖ tag ).
+fn encryptWithKey(key: &string, count: i64, plaintext: &string): Result<string, string> {
+    let iv = ivFromCount(count)
+    let r = aesGcm128Encrypt(key, iv, plaintext, "")!
+    let wire = iv + r.ciphertext + r.tag
+    return Result.Ok(base64Encode(wire))
+}
+
+// Build the `aes_keys` handshake for a newly connected browser. `encUnix` and
+// `encBrowser` are the bootstrap-wrapped unix/browser keys (already base64).
+// `browserNumber` is 1-based and selects the browser's IV window.
+fn aesKeysMessage(encUnix: &string, encBrowser: &string, browserNumber: i64): string {
+    let n = if browserNumber < 1 { 1 as i64 } else { browserNumber }
+    let ivCount = (n - 1) * rotationThreshold()
+    let maxIv = ivCount + rotationThreshold() - rotationBuffer()
+
+    var p: string = "{"
+    p = p + "\"b64_bootstrap_unix_aes_key\":\"" + encUnix + "\""
+    p = p + ",\"b64_bootstrap_browser_aes_key\":\"" + encBrowser + "\""
+    p = p + ",\"iv_count\":" + ivCount.toString()
+    p = p + ",\"max_iv_count\":" + maxIv.toString()
+    p = p + "}"
+    return "{\"event\":\"aes_keys\",\"payload\":" + p + "}"
+}

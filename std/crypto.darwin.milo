@@ -172,3 +172,82 @@ fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, a
         return Result.Ok(plaintext)
     }
 }
+
+// Encrypt with AES-128-GCM. Key must be 16 bytes, IV 12 bytes. (termpair uses AES-128.)
+
+fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
+  requires key.len == 16
+  requires iv.len == 12
+{
+    var tag: [u8 ; 16] = [0 ; 16]
+
+    unsafe {
+        let aadPtr = if aad.len > 0 { aad as *u8 } else { 0 as *u8 }
+        let ptPtr = if plaintext.len > 0 { plaintext as *u8 } else { 0 as *u8 }
+
+        var ctBuf: *u8 = 0 as *u8
+        if plaintext.len > 0 {
+            ctBuf = malloc(plaintext.len)
+        }
+
+        let ret = CCCryptorGCMOneshotEncrypt(
+            0, key, 16, iv, 12,
+            aadPtr, aad.len,
+            ptPtr, plaintext.len,
+            ctBuf, tag, 16
+        )
+        if ret != 0 {
+            if plaintext.len > 0 { free(ctBuf) }
+            return Result.Err("AES-128-GCM encrypt failed")
+        }
+
+        var ciphertext: string = ""
+        for i in 0..plaintext.len {
+            ciphertext.push(*((ctBuf as i64 + i) as *u8))
+        }
+        if plaintext.len > 0 { free(ctBuf) }
+
+        var tagStr: string = ""
+        for i in 0..16 {
+            tagStr.push(tag[i])
+        }
+
+        return Result.Ok(AesGcmResult { ciphertext: ciphertext, tag: tagStr })
+    }
+}
+
+// Decrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes, tag 16 bytes.
+
+fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
+  requires key.len == 16
+  requires iv.len == 12
+  requires tag.len == 16
+{
+    unsafe {
+        let aadPtr = if aad.len > 0 { aad as *u8 } else { 0 as *u8 }
+        let ctPtr = if ciphertext.len > 0 { ciphertext as *u8 } else { 0 as *u8 }
+
+        var ptBuf: *u8 = 0 as *u8
+        if ciphertext.len > 0 {
+            ptBuf = malloc(ciphertext.len)
+        }
+
+        let ret = CCCryptorGCMOneshotDecrypt(
+            0, key, 16, iv, 12,
+            aadPtr, aad.len,
+            ctPtr, ciphertext.len,
+            ptBuf, tag, 16
+        )
+        if ret != 0 {
+            if ciphertext.len > 0 { free(ptBuf) }
+            return Result.Err("AES-128-GCM decrypt failed: authentication error")
+        }
+
+        var plaintext: string = ""
+        for i in 0..ciphertext.len {
+            plaintext.push(*((ptBuf as i64 + i) as *u8))
+        }
+        if ciphertext.len > 0 { free(ptBuf) }
+        return Result.Ok(plaintext)
+    }
+}
