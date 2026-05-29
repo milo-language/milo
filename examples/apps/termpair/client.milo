@@ -23,6 +23,7 @@ from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
 from "std/base64" import { base64Encode, base64UrlEncode }
 from "std/signal" import { ignoreSignal, SIGPIPE }
+from "std/env" import { getEnvOr }
 
 from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr, parseField }
 from "./encryption" import { genKey, encryptWithKey, decryptWithKey, aesKeysMessage }
@@ -105,7 +106,8 @@ fn main(): i32 {
     parser.addString("host", "h", "server host", "chadsmith.dev")
     parser.addI64("port", "p", "server port", 443)
     parser.addString("base", "", "server URL path prefix", "/termpair")
-    parser.addString("shell", "s", "shell to spawn", "/bin/bash")
+    // Default to the user's login shell, not /bin/bash — matches what they expect.
+    parser.addString("shell", "s", "shell to spawn", getEnvOr("SHELL", "/bin/bash"))
     parser.addBool("public", "", "public session (no encryption)")
     parser.addBool("read-only", "", "disable browser→shell input")
     parser.addBool("plain", "", "use plain ws:// instead of wss:// (local servers)")
@@ -213,17 +215,26 @@ fn main(): i32 {
 
     let terminalId = parsePayloadStr(startPayload, "terminal_id")
 
-    // print share URL
+    // print share URL — ANSI-styled banner so the prelude is visually distinct
+    // from the live shell session that follows the separator rule below.
+    let cReset = "\x1b[0m"
+    let cBold = "\x1b[1m"
+    let cDim = "\x1b[2m"
+    let cCyan = "\x1b[36m"
+    let cGreen = "\x1b[32m"
+    let cUnderline = "\x1b[4m"
     if isPublic {
-        print($"termpair — sharing terminal (public mode)")
-        print($"open in browser: {scheme}://{authority}{base}/s/{terminalId}")
+        print($"{cBold}{cCyan}termpair{cReset}{cBold} — sharing terminal {cReset}{cDim}(public mode){cReset}")
+        print($"{cDim}open in browser:{cReset} {cUnderline}{cGreen}{scheme}://{authority}{base}/s/{terminalId}{cReset}")
     } else {
         let keyFragment = base64UrlEncode(bootstrapKey)
-        print($"termpair — sharing terminal (AES-128-GCM, key in URL fragment)")
-        print($"open in browser: {scheme}://{authority}{base}/s/{terminalId}#{keyFragment}")
+        print($"{cBold}{cCyan}termpair{cReset}{cBold} — sharing terminal {cReset}{cDim}(AES-128-GCM, key in URL fragment){cReset}")
+        print($"{cDim}open in browser:{cReset} {cUnderline}{cGreen}{scheme}://{authority}{base}/s/{terminalId}#{keyFragment}{cReset}")
     }
-    print("press ctrl-d to stop sharing")
-    print("")
+    print($"{cDim}press ctrl-d to stop sharing{cReset}")
+    // Separator rule marks the boundary: everything above is termpair's prelude,
+    // everything below is the spawned shell's own output.
+    print($"{cDim}────────────────────────────────────────{cReset}")
 
     let termState = enableRawMode()
 
