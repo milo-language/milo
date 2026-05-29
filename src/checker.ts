@@ -2363,6 +2363,23 @@ export class TypeChecker {
         }
       }
     }
+    // Mark `s.field` as a move-out when a non-Copy field is consumed in a move
+    // position. Codegen zeroes the source field so the struct's own drop glue
+    // doesn't free a buffer now owned by the moved value (double-free). Don't
+    // move out of a struct held behind a `&T` ref.
+    if (expr.kind === "FieldAccess") {
+      const fieldType = this.exprTypes.get(expr);
+      if (fieldType && !isCopy(fieldType, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+        let objectIsRef = false;
+        if (expr.object.kind === "Ident") {
+          const info = this.lookup(expr.object.name);
+          if (info && info.type.tag === "ref") objectIsRef = true;
+        }
+        if (!objectIsRef) {
+          this.movedExprs.add(expr);
+        }
+      }
+    }
   }
 
   private resolveAssignTarget(expr: Expr): { type: TypeKind; mutable: boolean } | null {

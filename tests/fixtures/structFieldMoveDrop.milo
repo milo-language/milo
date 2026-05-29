@@ -1,0 +1,11 @@
+// Moving a non-Copy field out of a struct must not double-free when the struct drops.
+// @expect: heap-7-payload-data
+struct Box { s: string }
+
+fn main(): i32 {
+    let n: i64 = 7
+    let b = Box { s: "heap-" + n.toString() + "-payload-data" }
+    let taken = b.s
+    print(taken)
+    return 0
+}

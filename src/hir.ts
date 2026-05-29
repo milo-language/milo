@@ -17,7 +17,7 @@ export type HIRExpr =
   | { kind: "UnaryOp"; op: string; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "Call"; func: string; args: HIRArg[]; type: TypeKind; variadic: boolean; span?: Span }
   | { kind: "StructLit"; name: string; fields: { name: string; value: HIRExpr }[]; type: TypeKind; span?: Span }
-  | { kind: "FieldAccess"; object: HIRExpr; field: string; type: TypeKind; span?: Span }
+  | { kind: "FieldAccess"; object: HIRExpr; field: string; type: TypeKind; isMove?: boolean; span?: Span }
   | { kind: "ArrayLit"; elements: HIRExpr[]; type: TypeKind; span?: Span }
   | { kind: "ArrayRepeat"; value: HIRExpr; count: number; type: TypeKind; span?: Span }
   | { kind: "IndexAccess"; object: HIRExpr; index: HIRExpr; type: TypeKind; isMove?: boolean; isBorrowed?: boolean; span?: Span }

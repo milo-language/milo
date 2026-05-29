@@ -2329,6 +2329,12 @@ export class Codegen {
         lines.push(...ptrLines);
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${fieldTy}, ptr ${ptr}`);
+        // Moving a non-Copy field out of a struct: zero the source field so the
+        // struct's own drop glue skips it (a zeroed %String/Vec has cap=0/null).
+        // Otherwise both the moved value and the struct free the same buffer.
+        if (expr.isMove && this.needsDropCg(expr.type)) {
+          lines.push(`  store ${fieldTy} zeroinitializer, ptr ${ptr}`);
+        }
         return [lines, val, fieldTy];
       }
       case "ArrayLen": {
@@ -6558,6 +6564,13 @@ export class Codegen {
     lines.push(`  br i1 ${check}, label %${dropLabel}, label %${skipLabel}`);
     lines.push(`${dropLabel}:`);
     this.emitDropValue(lines, this.localAddr(local.name), local.typeKind);
+    // Make the guarded drop idempotent: clear the alive-flag and zero the slot.
+    // A loop `break`/`continue` drops loop-scoped locals via emitLoopDropGlue;
+    // without this, the function epilogue (after break) or the next iteration's
+    // overwrite-drop (after continue) would free the same buffer again.
+    lines.push(`  store i1 0, ptr ${local.aliveFlag}`);
+    const slotTy = this.llvmType(local.typeKind);
+    lines.push(`  store ${slotTy} zeroinitializer, ptr ${this.localAddr(local.name)}`);
     lines.push(`  br label %${skipLabel}`);
     lines.push(`${skipLabel}:`);
   }

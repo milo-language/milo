@@ -483,7 +483,7 @@ class LowerCtx {
         if (objType?.tag === "hashmap" && expr.field === "len") {
           return { kind: "HashMapLen", object: this.lowerExpr(expr.object), type, span: expr.span };
         }
-        return { kind: "FieldAccess", object: this.lowerExpr(expr.object), field: expr.field, type, span: expr.span };
+        return { kind: "FieldAccess", object: this.lowerExpr(expr.object), field: expr.field, type, isMove: this.c.movedExprs.has(expr), span: expr.span };
       }
       case "ArrayLit":
         if (this.c.arrayToVecCoercions.has(expr)) {
