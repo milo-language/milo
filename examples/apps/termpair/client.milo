@@ -123,6 +123,11 @@ fn main(): i32 {
 
     let connectPath = base + "/connect_to_terminal"
     let scheme = if useTls { "https" } else { "http" }
+    // Authority for the share URL: include the port unless it's the scheme default
+    // (443 for https, 80 for http). Omitting it broke local servers — a browser sent
+    // to http://127.0.0.1/... hits port 80, not the actual --port.
+    let defaultPort: i64 = if useTls { 443 as i64 } else { 80 as i64 }
+    let authority = if (port as i64) == defaultPort { host } else { host + ":" + (port as i64).toString() }
 
     // resolve server address
     var ip: u32 = 0
@@ -211,11 +216,11 @@ fn main(): i32 {
     // print share URL
     if isPublic {
         print($"termpair — sharing terminal (public mode)")
-        print($"open in browser: {scheme}://{host}{base}/s/{terminalId}")
+        print($"open in browser: {scheme}://{authority}{base}/s/{terminalId}")
     } else {
         let keyFragment = base64UrlEncode(bootstrapKey)
         print($"termpair — sharing terminal (AES-128-GCM, key in URL fragment)")
-        print($"open in browser: {scheme}://{host}{base}/s/{terminalId}#{keyFragment}")
+        print($"open in browser: {scheme}://{authority}{base}/s/{terminalId}#{keyFragment}")
     }
     print("press ctrl-d to stop sharing")
     print("")
