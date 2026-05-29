@@ -90,6 +90,8 @@ export class Parser {
         interfaces.push(this.parseInterfaceDecl());
       } else if (this.at(TokenKind.Let) || this.at(TokenKind.Var)) {
         globals.push(this.parseGlobalDecl());
+      } else if (this.at(TokenKind.Ident) && this.peek().value === "thread_local") {
+        globals.push(this.parseGlobalDecl());
       } else {
         this.error(`expected declaration, got '${this.peek().kind}'`, this.peek());
       }
@@ -514,6 +516,12 @@ export class Parser {
 
   private parseGlobalDecl(): GlobalDecl {
     const s = this.span(this.peek());
+    // optional `thread_local` modifier (contextual keyword) → per-thread storage
+    let threadLocal = false;
+    if (this.at(TokenKind.Ident) && this.peek().value === "thread_local") {
+      threadLocal = true;
+      this.advance();
+    }
     const mutable = this.at(TokenKind.Var);
     this.advance();
     const name = this.expect(TokenKind.Ident).value;
@@ -521,7 +529,7 @@ export class Parser {
     if (this.match(TokenKind.Colon)) type = this.parseType();
     this.expect(TokenKind.Eq);
     const value = this.parseExpr();
-    return { kind: "GlobalDecl", name, type, value, mutable, span: s };
+    return { kind: "GlobalDecl", name, type, value, mutable, threadLocal, span: s };
   }
 
   private parseLet(): Stmt {

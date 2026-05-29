@@ -140,6 +140,7 @@ export interface HIRGlobal {
   type: TypeKind;
   value: HIRExpr;
   mutable: boolean;
+  threadLocal?: boolean;
 }
 
 export interface HIRModule {

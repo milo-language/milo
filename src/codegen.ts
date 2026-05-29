@@ -378,7 +378,8 @@ export class Codegen {
     for (const g of module.globals) {
       const ty = this.llvmType(g.type);
       const initVal = this.getConstantInitializer(g);
-      this.output.splice(1, 0, `@${g.name} = internal global ${ty} ${initVal}`);
+      const tls = g.threadLocal ? "thread_local " : "";
+      this.output.splice(1, 0, `@${g.name} = internal ${tls}global ${ty} ${initVal}`);
     }
 
     // emit itable globals for interface dispatch

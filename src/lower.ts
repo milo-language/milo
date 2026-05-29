@@ -95,6 +95,7 @@ class LowerCtx {
         type,
         value: this.lowerExpr(g.value),
         mutable: g.mutable,
+        threadLocal: g.threadLocal,
       });
     }
 

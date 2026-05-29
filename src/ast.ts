@@ -198,6 +198,7 @@ export interface GlobalDecl {
   type: MiloType | null;
   value: Expr;
   mutable: boolean;
+  threadLocal?: boolean;
   span?: Span;
 }
 
