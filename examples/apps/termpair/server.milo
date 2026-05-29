@@ -92,6 +92,14 @@ fn parseRequestLine(raw: &string): RequestLine {
     return RequestLine { method: method, path: path, query: query }
 }
 
+// True if `path` is exactly `suffix` or ends with it (e.g. "/app.js" matches
+// both "/app.js" and "/s/app.js"). index.html references assets relatively, so
+// when the page is served at /s/<id> the browser requests /s/app.js etc.
+fn pathEndsWith(path: &string, suffix: &string): bool {
+    if path.len < suffix.len { return false }
+    return path.substr(path.len - suffix.len, path.len) == suffix
+}
+
 fn queryParam(qs: &string, name: &string): string {
     var i: i64 = 0
     while i < qs.len {
@@ -398,13 +406,13 @@ fn handleConnection(clientFd: i32): void {
         if rl.method == "GET" {
             if rl.path == "/" || rl.path == "/index.html" {
                 sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
-            } else if rl.path == "/app.js" {
+            } else if pathEndsWith(rl.path, "/app.js") {
                 sendHttp(clientFd, 200, "application/javascript", appJs)
-            } else if rl.path == "/style.css" {
+            } else if pathEndsWith(rl.path, "/style.css") {
                 sendHttp(clientFd, 200, "text/css", styleCss)
-            } else if rl.path == "/xterm.min.js" {
+            } else if pathEndsWith(rl.path, "/xterm.min.js") {
                 sendHttp(clientFd, 200, "application/javascript", xtermJs)
-            } else if rl.path == "/xterm.min.css" {
+            } else if pathEndsWith(rl.path, "/xterm.min.css") {
                 sendHttp(clientFd, 200, "text/css", xtermCss)
             } else if rl.path == "/ping" {
                 sendHttp(clientFd, 200, "application/json", "\"pong\"")
