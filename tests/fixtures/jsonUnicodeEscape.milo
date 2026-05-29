@@ -1,0 +1,18 @@
+// JSON \uXXXX escapes decode to UTF-8 bytes (ctrl chars + multibyte).
+// @expect: 65
+// @expect: 3
+// @expect: 195
+// @expect: 169
+// @expect: 4
+from "std/json" import { jsonParse }
+
+fn main(): i32 {
+    let j = jsonParse("{\"d\":\"\\u0041\\u0003\\u00e9\"}")!
+    let s = j.str("d") ?? ""
+    print((s[0] as i64).toString())   // 'A'
+    print((s[1] as i64).toString())   // ctrl-c (0x03)
+    print((s[2] as i64).toString())   // é byte 1 (0xC3)
+    print((s[3] as i64).toString())   // é byte 2 (0xA9)
+    print(s.len.toString())           // 1 + 1 + 2
+    return 0
+}

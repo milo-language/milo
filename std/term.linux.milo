@@ -27,9 +27,14 @@ fn enableRawMode(): TermState {
             raw[i] = state.saved[i]
         }
 
-        // c_lflag at offset 12: clear ECHO (bit 3) and ICANON (bit 1)
+        // c_lflag at offset 12: clear ISIG (0x01), ICANON (0x02), ECHO (0x08) in
+        // byte 0, and IEXTEN (0x8000) in byte 1. Clearing ISIG is what makes
+        // ctrl-c/ctrl-z pass through as raw bytes to the PTY instead of signalling
+        // this process — without it, ctrl-c kills the client itself.
         let b0 = raw[12] as i32
-        raw[12] = (b0 & 0xF5) as u8
+        raw[12] = (b0 & 0xF4) as u8
+        let b1 = raw[13] as i32
+        raw[13] = (b1 & 0x7F) as u8
 
         // VMIN=0, VTIME=0 — non-blocking reads without O_NONBLOCK
         // (O_NONBLOCK on stdin would also affect stdout via shared pty fd)
