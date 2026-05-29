@@ -13,11 +13,11 @@ from "std/pty" import { Pty, WinSize, openAndSpawn }
 from "std/ws" import { WsConn, wsConnect, wsConnectTls }
 from "std/net" import { resolve }
 from "std/term" import { enableRawMode, restoreTerminal, readKey }
-from "std/os" import { ioctl, read, write }
+from "std/os" import { ioctl, read, write, exit }
 from "std/io" import { writeStdout, readStdin }
 from "std/sync" import { AtomicBool }
 from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, _schedulerTick }
-from "std/event" import { setNonblocking }
+from "std/event" import { setNonblocking, clearNonblocking }
 from "std/platform" import { getErrno, eagain }
 from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
@@ -397,10 +397,17 @@ fn main(): i32 {
         _schedulerTick()
     }
 
+    // clear O_NONBLOCK we set on stdin — fd 0 is shared with the parent shell,
+    // and leaving it non-blocking makes the shell's reads return EAGAIN (hang).
+    clearNonblocking(0)
     restoreTerminal(termState)
 
     print("")
     print("termpair session ended")
 
+    // Force exit: task2 (stdin) and task3 (websocket) are still parked on I/O that
+    // will never wake, so the runtime's end-of-main _schedulerDrain would spin
+    // forever (it loops while numTasks > 0). Exit directly to return to the shell.
+    exit(0)
     return 0
 }

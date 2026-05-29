@@ -33,6 +33,17 @@ fn setNonblocking(fd: i32): i32 {
     }
 }
 
+// Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
+// shell, so a non-blocking flag left set here leaks out and makes the shell's
+// reads return EAGAIN after we exit. Restore blocking mode before exiting.
+fn clearNonblocking(fd: i32): i32 {
+    unsafe {
+        let flags = fcntl(fd, fGetfl())
+        if flags < 0 { return -1 }
+        return fcntl(fd, fSetfl(), flags & ~oNonblock())
+    }
+}
+
 fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
     unsafe {
         var ev: [u8 ; 12] = [0 ; 12]
