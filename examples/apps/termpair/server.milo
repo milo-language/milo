@@ -207,27 +207,18 @@ fn handleTerminalWs(ws: WsConn): void {
         }
     }
 
-    // cleanup
+    // cleanup — mark the session dead and close its channels, but DO NOT rebuild
+    // the parallel Vecs. Rebuilding moves the Channel structs (each owns a heap
+    // buffer) into new Vecs while the old Vecs are dropped, double-freeing those
+    // buffers — and relay green threads may still hold the slot index. Leaving a
+    // tombstone (alive=false) is safe: every lookup already gates on `alive`, and
+    // generateId never reuses an id. Slots leak slowly; acceptable for this relay.
     print($"terminal disconnected: {terminalId}")
     let idx = findSession(terminalId)
     if idx >= 0 {
         sessions[idx].alive = false
         bcastChans[idx].close()
         toTermChans[idx].close()
-
-        var newS: Vec<Session> = []
-        var newT: Vec<Channel<string>> = []
-        var newB: Vec<Channel<string>> = []
-        for i in 0..sessions.len {
-            if i != idx {
-                newS.push(sessions[i])
-                newT.push(toTermChans[i])
-                newB.push(bcastChans[i])
-            }
-        }
-        sessions = newS
-        toTermChans = newT
-        bcastChans = newB
     }
 }
 
