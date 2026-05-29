@@ -22,6 +22,7 @@ from "std/platform" import { getErrno, eagain }
 from "std/time" import { epochSecs, sleepMs }
 from "std/argparse" import { newParser }
 from "std/base64" import { base64Encode, base64UrlEncode }
+from "std/signal" import { ignoreSignal, SIGPIPE }
 
 from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr, parseField }
 from "./encryption" import { genKey, encryptWithKey, decryptWithKey, aesKeysMessage }
@@ -96,6 +97,10 @@ fn ptyOutputJson(raw: &string): string {
 // ── Main ──
 
 fn main(): i32 {
+    // Don't die with SIGPIPE if the server/PTY closes mid-write; the I/O loops
+    // already handle the resulting error and shut down cleanly.
+    ignoreSignal(SIGPIPE)
+
     var parser = newParser("termpair", "share your terminal")
     parser.addString("host", "h", "server host", "chadsmith.dev")
     parser.addI64("port", "p", "server port", 443)

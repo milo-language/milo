@@ -11,6 +11,7 @@ from "std/ws" import { WsConn, WsMessage, wsAccept, isWsUpgrade, WS_TEXT, WS_CLO
 from "std/sync" import { Channel, AtomicI64 }
 from "std/argparse" import { newParser }
 from "std/json" import { jsonParse }
+from "std/signal" import { ignoreSignal, SIGPIPE }
 
 from "./protocol" import {
     makeTerminalInfo, makePublicSession, makeStartBroadcast,
@@ -427,6 +428,10 @@ fn handleConnection(clientFd: i32): void {
 }
 
 fn main(): i32 {
+    // A viewer/terminal disconnecting mid-write must not kill the server with SIGPIPE;
+    // writes to the dead socket return an error the relay loop already handles.
+    ignoreSignal(SIGPIPE)
+
     indexHtml = embedFile("static/index.html")
     appJs = embedFile("static/app.js")
     styleCss = embedFile("static/style.css")

@@ -8,11 +8,12 @@ let SIGINT: i32 = 2
 let SIGQUIT: i32 = 3
 let SIGABRT: i32 = 6
 let SIGKILL: i32 = 9
+let SIGPIPE: i32 = 13
 let SIGALRM: i32 = 14
 let SIGTERM: i32 = 15
 
 // Register a handler for a signal. Handler receives the signal number.
-fn onSignal(sig: i32, handler: fn(i32): void): void {
+fn onSignal(sig: i32, handler: (i32) => void): void {
     unsafe {
         signal(sig, handler as *u8)
     }
