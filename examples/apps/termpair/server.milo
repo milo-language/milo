@@ -24,6 +24,7 @@ struct Session {
     command: string,
     startTime: string,
     isPublic: bool,
+    allowControl: bool,
     displayName: string,
     rows: i64,
     cols: i64,
@@ -136,6 +137,7 @@ fn handleTerminalWs(ws: WsConn): void {
     let command = j.str("command") ?? "bash"
     let startTime = j.str("broadcast_start_time_iso") ?? ""
     let isPublic = j.bool("is_public") ?? false
+    let allowControl = j.bool("allow_browser_control") ?? false
 
     let terminalId = generateId()
     let displayName = if isPublic { "milo-terminal" } else { "" }
@@ -148,6 +150,7 @@ fn handleTerminalWs(ws: WsConn): void {
         command: command.clone(),
         startTime: startTime.clone(),
         isPublic: isPublic,
+        allowControl: allowControl,
         displayName: displayName,
         rows: rows, cols: cols,
         browserCount: 0,
@@ -336,7 +339,8 @@ fn handleGetTerminal(terminalId: &string): string {
     return makeTerminalInfo(
         sessions[idx].terminalId, sessions[idx].rows, sessions[idx].cols,
         sessions[idx].command, sessions[idx].startTime,
-        sessions[idx].isPublic, sessions[idx].displayName
+        sessions[idx].isPublic, sessions[idx].displayName,
+        sessions[idx].allowControl
     )
 }
 

@@ -43,13 +43,14 @@ fn makeTerminalInfo(
     command: &string,
     startTime: &string,
     isPublic: bool,
-    displayName: &string
+    displayName: &string,
+    allowControl: bool
 ): string {
     var j: string = "{"
     j = j + "\"terminal_id\":\"" + terminalId + "\""
     j = j + ",\"cols\":" + cols.toString()
     j = j + ",\"rows\":" + rows.toString()
-    j = j + ",\"allow_browser_control\":false"
+    j = j + ",\"allow_browser_control\":" + (if allowControl { "true" } else { "false" })
     j = j + ",\"command\":\"" + command + "\""
     j = j + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
     j = j + ",\"termpair_version\":\"0.1.0\""
