@@ -57,11 +57,19 @@ test("unknown target exits non-zero and lists available targets", () => {
   expect(r.err).toContain("cortex-m3");
 });
 
-test("build to a binary is rejected for bare-metal targets", () => {
-  const bin = join(tmpdir(), "milo_embed_bin");
+test("build --target=cortex-m3 links a bare-metal ARM ELF executable", () => {
+  const bin = join(tmpdir(), "milo_embed_bin.elf");
   if (existsSync(bin)) unlinkSync(bin);
   const r = milo(`build ${SRC} --target=cortex-m3 -o ${bin}`);
-  expect(r.code).not.toBe(0);
-  expect(r.err).toContain("not yet supported for bare-metal");
-  expect(existsSync(bin)).toBe(false); // must not leave a bogus binary
+  expect(r.code).toBe(0);
+  expect(existsSync(bin)).toBe(true);
+  // statically-linked freestanding executable (no libc), not a relocatable .o
+  expect(fileType(bin)).toMatch(/ELF 32-bit.*ARM.*executable/);
+  unlinkSync(bin);
+});
+
+test("bare-metal runtime files (startup + linker script) are present", () => {
+  const ed = join(import.meta.dir, "..", "embedded", "cortex-m");
+  expect(existsSync(join(ed, "startup.c"))).toBe(true);
+  expect(existsSync(join(ed, "mps2.ld"))).toBe(true);
 });

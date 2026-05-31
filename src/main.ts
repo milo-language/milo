@@ -97,6 +97,39 @@ function clangTargetFlags(target: TargetInfo): string {
   return f;
 }
 
+// Directory holding the bare-metal runtime (startup + linker scripts), resolved
+// relative to this file so it works regardless of the caller's cwd.
+function embeddedDir(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "embedded", "cortex-m");
+}
+
+// Link a bare-metal Cortex-M executable: the Milo program's IR + the freestanding
+// startup (vector table, .data/.bss init, semihosting exit) against the board's
+// linker script. Uses lld (-fuse-ld=lld) and -nostdlib — there is no libc/crt0.
+// Produces a statically-linked ELF runnable under QEMU (-semihosting).
+function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optFlag: string) {
+  const tc = detectToolchain();
+  if (tc.kind !== "clang") {
+    console.error(`error: cross-compiling to ${target.triple} requires clang (not llc+cc)`);
+    process.exit(1);
+  }
+  const ed = embeddedDir();
+  const startup = join(ed, "startup.c");
+  const ldScript = join(ed, "mps2.ld");
+  if (!existsSync(startup) || !existsSync(ldScript)) {
+    console.error(`error: bare-metal runtime not found in ${ed} (need startup.c + mps2.ld)`);
+    process.exit(1);
+  }
+  const opt = optFlag || "-O2";
+  const tgt = clangTargetFlags(target);
+  // -nostdlib: no libc/crt0. -Wl,-T,<script>: use our memory map. startup.c is
+  // compiled and linked alongside the program IR in a single clang invocation.
+  execSync(
+    `${tc.path}${tgt} ${opt} -nostdlib -fuse-ld=lld -Wl,-T,"${ldScript}" "${startup}" "${llFile}" -o "${outFile}" -Wno-override-module`,
+    { stdio: ["pipe", "pipe", "pipe"] }
+  );
+}
+
 function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false) {
   const tc = detectToolchain();
   const san = sanitize ? " -fsanitize=address" : "";
