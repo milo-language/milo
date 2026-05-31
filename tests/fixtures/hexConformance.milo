@@ -1,0 +1,21 @@
+// RFC 4648 §8 base16 vectors. Note: milo's hexEncode emits lowercase (the near-universal
+// convention; the RFC's nominal uppercase is widely ignored), and hexDecode is case-insensitive
+// — both "666f.." and "666F.." round-trip. The fixture locks that behavior.
+// @expect: empty=[]
+// @expect: f=66
+// @expect: fo=666f
+// @expect: foobar=666f6f626172
+// @expect: rtLower=foobar
+// @expect: rtUpper=foobar
+
+from "std/hex" import { hexEncode, hexDecode }
+
+fn main(): i32 {
+    print("empty=[", hexEncode(""), "]")
+    print("f=", hexEncode("f"))
+    print("fo=", hexEncode("fo"))
+    print("foobar=", hexEncode("foobar"))
+    print("rtLower=", hexDecode("666f6f626172"))
+    print("rtUpper=", hexDecode("666F6F626172"))
+    return 0
+}
