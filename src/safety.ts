@@ -1,5 +1,5 @@
 // Compiler-enforced safety profiles for domain-specific certification standards
-import type { Program, Function, Stmt } from "./ast";
+import type { Program, Function, Stmt, Expr, MiloType } from "./ast";
 import type { Span } from "./ast";
 
 export type SafetyLevel =
@@ -282,7 +282,24 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
         });
       }
     }
+
+    if (constraints.noFloatingPoint) {
+      checkNoFloat(fn, violations, level);
+    }
   }
+
+  // Whole-program checks (need cross-function / cross-type visibility).
+  if (constraints.maxCallDepth !== null) {
+    checkCallDepth(program, constraints.maxCallDepth, violations, level);
+  }
+
+  if (constraints.noRecursiveTypes) {
+    checkRecursiveTypes(program, violations, level);
+  }
+
+  // Note: requireFullMatchCoverage is already enforced by the type checker's
+  // exhaustiveness pass (non-exhaustive matches fail type-checking before we
+  // ever reach the safety check), so no separate enforcement is needed here.
 
   return violations;
 }
@@ -424,6 +441,192 @@ function computeCyclomaticComplexity(stmts: Stmt[]): number {
     }
   }
   return complexity;
+}
+
+// ── noFloatingPoint ──
+
+const FLOAT_TYPE_NAMES = new Set(["f32", "f64", "float"]);
+
+function typeIsFloat(t: MiloType | null | undefined): boolean {
+  if (!t) return false;
+  if (FLOAT_TYPE_NAMES.has(t.name)) return true;
+  if (t.typeArgs?.some(typeIsFloat)) return true;
+  if (t.fnRet && typeIsFloat(t.fnRet)) return true;
+  if (t.fnParams?.some(typeIsFloat)) return true;
+  return false;
+}
+
+function checkNoFloat(fn: Function, violations: SafetyViolation[], level: SafetyLevel) {
+  const flag = (span?: Span) => violations.push({
+    rule: "no-floating-point",
+    message: `[${level}] function '${fn.name}' uses floating-point arithmetic (integer-only required at this safety level)`,
+    span,
+    severity: "error",
+  });
+  // Signature: parameter and return types.
+  for (const p of fn.params) if (typeIsFloat(p.type)) { flag(); break; }
+  if (typeIsFloat(fn.retType)) flag();
+  // Body: float literals, float-typed locals, and casts to float.
+  walkExprs(fn.body, (e) => {
+    if (e.kind === "FloatLit") flag(e.span);
+    else if (e.kind === "CastExpr" && typeIsFloat(e.targetType)) flag(e.span);
+  }, (s) => {
+    if ((s.kind === "LetDecl" || s.kind === "VarDecl") && typeIsFloat(s.type)) flag(s.span);
+  });
+}
+
+// ── maxCallDepth ──
+// Recursion is banned at every level that sets maxCallDepth, so the user call
+// graph is a DAG and longest-path is well-defined. We still guard against cycles
+// (in case noRecursion is somehow disabled) by tracking the active DFS stack.
+
+function checkCallDepth(program: Program, maxDepth: number, violations: SafetyViolation[], level: SafetyLevel) {
+  const userFns = program.userFnNames;
+  const fnByName = new Map<string, Function>();
+  for (const fn of program.functions) {
+    if (fn.isExtern) continue;
+    if (userFns && !userFns.has(fn.name)) continue;
+    fnByName.set(fn.name, fn);
+  }
+
+  const callees = (fn: Function): string[] => {
+    const out = new Set<string>();
+    walkExprs(fn.body, (e) => {
+      if (e.kind === "Call" && fnByName.has(e.func)) out.add(e.func);
+    });
+    return [...out];
+  };
+
+  const memo = new Map<string, number>();
+  const onStack = new Set<string>();
+  const depth = (name: string): number => {
+    if (memo.has(name)) return memo.get(name)!;
+    if (onStack.has(name)) return Infinity; // cycle — treat as unbounded
+    onStack.add(name);
+    let max = 0;
+    for (const c of callees(fnByName.get(name)!)) max = Math.max(max, depth(c));
+    onStack.delete(name);
+    const d = 1 + max;
+    memo.set(name, d);
+    return d;
+  };
+
+  let deepest = 0, deepestFn = "";
+  for (const name of fnByName.keys()) {
+    const d = depth(name);
+    if (d > deepest) { deepest = d; deepestFn = name; }
+  }
+  if (deepest > maxDepth) {
+    violations.push({
+      rule: "max-call-depth",
+      message: `[${level}] static call depth ${deepest === Infinity ? "(unbounded)" : deepest} starting at '${deepestFn}' exceeds max ${maxDepth}`,
+      severity: "error",
+    });
+  }
+}
+
+// ── noRecursiveTypes ──
+// Stricter than the checker's infinite-size rule: even Heap<Self>-style indirect
+// recursion (which the checker permits) is banned, because a heap-linked list /
+// tree has no compile-time bound on traversal depth — fatal for WCET.
+
+function checkRecursiveTypes(program: Program, violations: SafetyViolation[], level: SafetyLevel) {
+  const typeNames = new Set<string>([
+    ...program.structs.map(s => s.name),
+    ...program.enums.map(e => e.name),
+  ]);
+
+  // Referenced user-defined type names within a type, including through generic
+  // args like Heap<T> / Vec<T> so indirect recursion is caught.
+  const refs = (t: MiloType): string[] => {
+    const out: string[] = [];
+    if (typeNames.has(t.name)) out.push(t.name);
+    for (const a of t.typeArgs ?? []) out.push(...refs(a));
+    return out;
+  };
+
+  const edges = new Map<string, Set<string>>();
+  for (const s of program.structs) {
+    const set = new Set<string>();
+    for (const f of s.fields) for (const r of refs(f.type)) set.add(r);
+    edges.set(s.name, set);
+  }
+  for (const e of program.enums) {
+    const set = new Set<string>();
+    for (const v of e.variants) for (const ft of v.fields) for (const r of refs(ft)) set.add(r);
+    edges.set(e.name, set);
+  }
+
+  const onStack = new Set<string>();
+  const done = new Set<string>();
+  const reported = new Set<string>();
+  const dfs = (name: string) => {
+    onStack.add(name);
+    for (const next of edges.get(name) ?? []) {
+      if (onStack.has(next)) {
+        if (!reported.has(next)) {
+          reported.add(next);
+          violations.push({
+            rule: "no-recursive-types",
+            message: `[${level}] type '${next}' is recursive (banned at this safety level — recursive data has unbounded traversal depth)`,
+            severity: "error",
+          });
+        }
+      } else if (!done.has(next)) {
+        dfs(next);
+      }
+    }
+    onStack.delete(name);
+    done.add(name);
+  };
+  for (const name of edges.keys()) if (!done.has(name)) dfs(name);
+}
+
+// Generic AST walker: visits every expr (and optionally every stmt) reachable
+// from a statement list. Used by the float check and call-graph extraction.
+function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s: Stmt) => void) {
+  const ex = (e: Expr | null | undefined) => {
+    if (!e) return;
+    onExpr(e);
+    switch (e.kind) {
+      case "BinOp": ex(e.left); ex(e.right); break;
+      case "UnaryOp": ex(e.operand); break;
+      case "Call": e.args.forEach(ex); break;
+      case "MethodCall": ex(e.object); e.args.forEach(ex); break;
+      case "FieldAccess": ex(e.object); break;
+      case "IndexAccess": ex(e.object); ex(e.index); break;
+      case "StructLit": e.fields.forEach(f => ex(f.value)); break;
+      case "ArrayLit": e.elements.forEach(ex); break;
+      case "ArrayRepeat": ex(e.value); break;
+      case "EnumLit": e.args.forEach(ex); break;
+      case "Unwrap": case "Propagate": ex(e.operand); break;
+      case "DefaultValue": ex(e.operand); ex(e.default); break;
+      case "CastExpr": ex(e.operand); break;
+      case "Closure": st(e.body); break;
+      case "RangeExpr": ex(e.start); ex(e.end); break;
+      case "IsExpr": ex(e.expr); break;
+      case "IfExpr": ex(e.cond); ex(e.thenBranch); ex(e.elseBranch); break;
+    }
+  };
+  const st = (list: Stmt[]) => {
+    for (const s of list) {
+      onStmt?.(s);
+      switch (s.kind) {
+        case "LetDecl": case "VarDecl": ex(s.value); break;
+        case "Assign": ex(s.target); ex(s.value); break;
+        case "Return": ex(s.value); break;
+        case "ExprStmt": ex(s.expr); break;
+        case "IfStmt": ex(s.cond); st(s.thenBody); if (s.elseBody) st(s.elseBody); break;
+        case "WhileStmt": ex(s.cond); st(s.body); break;
+        case "ForInStmt": ex(s.iterable); st(s.body); break;
+        case "MatchStmt": ex(s.subject); s.arms.forEach(a => st(a.body)); break;
+        case "IfLetStmt": ex(s.subject); st(s.thenBody); if (s.elseBody) st(s.elseBody); break;
+        case "UnsafeBlock": st(s.body); break;
+        case "ParallelBlock": s.bindings.forEach(b => ex(b.value)); break;
+      }
+    }
+  };
+  st(stmts);
 }
 
 export function formatSafetyReport(violations: SafetyViolation[], level: SafetyLevel): string {

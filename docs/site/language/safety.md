@@ -229,10 +229,12 @@ Each profile is a combination of constraints, tuned to the standard's requiremen
 | Bounded loops | `while` loops must have `invariant` clauses | DO-178C A, NASA A |
 | No dynamic allocation | No Vec, String, HashMap construction | IEC 61508 SIL 4 |
 | Require contracts | All functions need `requires`/`ensures` | DO-178C A, NASA A |
-| No floating point | Integer-only arithmetic | IEC 61508 SIL 4 |
+| No floating point | Integer-only arithmetic (no `f32`/`f64` in signatures, locals, casts, or literals) | IEC 61508 SIL 4 |
+| No recursive types | Self-referential types banned even through `Heap<T>` — recursive data has unbounded traversal depth | DO-178C A, IEC 61508 SIL 4 |
+| Max call depth | Longest static call chain bounded (call graph is a DAG since recursion is banned) | IEC 61508 SIL 4 (max 20) |
 | Complexity limit | Cyclomatic complexity cap per function | IEC 61508 SIL 4 (max 15) |
 | No unsafe blocks | `unsafe { }` banned entirely | All profiles |
-| Full match coverage | All `match` arms required | Most profiles |
+| Full match coverage | All `match` arms required (enforced by the type checker's exhaustiveness pass) | Most profiles |
 
 Example output when violations are found:
 
