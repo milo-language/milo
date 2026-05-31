@@ -1,6 +1,6 @@
 // Cross-compilation tests for bare-metal Cortex-M targets. These can't use the
 // fixture run-driver (a thumb binary won't execute on the host), so they assert
-// on the emitted object's architecture and on the CLI's target/error handling.
+// on the emitted object/executable architecture and on CLI target/error handling.
 import { test, expect } from "bun:test";
 import { execSync } from "child_process";
 import { writeFileSync, unlinkSync, existsSync } from "fs";
@@ -64,7 +64,16 @@ test("build --target=cortex-m3 links a bare-metal ARM ELF executable", () => {
   expect(r.code).toBe(0);
   expect(existsSync(bin)).toBe(true);
   // statically-linked freestanding executable (no libc), not a relocatable .o
-  expect(fileType(bin)).toMatch(/ELF 32-bit.*ARM.*executable/);
+  expect(fileType(bin)).toMatch(/ELF 32-bit.*executable.*ARM/);
+  unlinkSync(bin);
+});
+
+test("build --target=stm32f4 (chip alias) links an ARM ELF executable", () => {
+  const bin = join(tmpdir(), "milo_embed_f4.elf");
+  if (existsSync(bin)) unlinkSync(bin);
+  const r = milo(`build ${SRC} --target=stm32f4 -o ${bin}`);
+  expect(r.code).toBe(0);
+  expect(fileType(bin)).toMatch(/ELF 32-bit.*executable.*ARM/);
   unlinkSync(bin);
 });
 

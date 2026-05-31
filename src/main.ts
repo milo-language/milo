@@ -232,14 +232,6 @@ function detectLibs(ir: string, target: TargetInfo): string {
 }
 
 function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false): string {
-  // Bare-metal targets can't be linked to a runnable binary without a startup
-  // vector table + linker script (memory map). That's the freestanding-runtime
-  // stage; until then, cross-compile to an object with `emit-obj --target=...`.
-  if (target.bareMetal) {
-    console.error(`error: 'build' to a binary is not yet supported for bare-metal target ${target.triple}`);
-    console.error(`       use 'emit-obj --target=${target.mcpu ?? target.triple}' to cross-compile to an object file`);
-    process.exit(1);
-  }
   const source = readFileSync(sourcePath, "utf-8");
   const debugOverflow = optFlag === "-O0";
   const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
@@ -250,9 +242,14 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 
   try {
     writeFileSync(tmpLl, ir);
-    const libs = detectLibs(ir, target);
-    const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
-    linkIR(tmpLl, out, optFlag, libs, extra, sanitize);
+    if (target.bareMetal) {
+      // Freestanding link: program IR + startup runtime + linker script → ELF.
+      linkBareMetal(tmpLl, out, target, optFlag);
+    } else {
+      const libs = detectLibs(ir, target);
+      const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
+      linkIR(tmpLl, out, optFlag, libs, extra, sanitize);
+    }
   } catch (e: any) {
     console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
