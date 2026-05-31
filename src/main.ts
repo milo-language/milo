@@ -12,7 +12,7 @@ import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { formatDiagnostic, type WarningConfig } from "./diagnostics";
-import { type TargetInfo, getHostTarget } from "./target";
+import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
 import { format, formatFile } from "./formatter";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
@@ -85,6 +85,18 @@ function detectToolchain(): Toolchain {
   return cachedToolchain;
 }
 
+// clang codegen flags for a cross-compilation target. Empty for the host
+// (clang defaults to the host triple). Bare-metal targets get the thumb triple,
+// core selection, float ABI, and -ffreestanding (no hosted libc assumptions).
+function clangTargetFlags(target: TargetInfo): string {
+  if (!target.bareMetal) return "";
+  let f = ` --target=${target.triple}`;
+  if (target.mcpu) f += ` -mcpu=${target.mcpu}`;
+  if (target.floatAbi) f += ` -mfloat-abi=${target.floatAbi}`;
+  f += " -ffreestanding";
+  return f;
+}
+
 function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false) {
   const tc = detectToolchain();
   const san = sanitize ? " -fsanitize=address" : "";
@@ -130,9 +142,14 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
     writeFileSync(tmpLl, irText);
     const tc = detectToolchain();
     const opt = optFlag || "-O2";
+    const tgt = clangTargetFlags(target);
     if (tc.kind === "clang") {
-      execSync(`${tc.path} -c ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`${tc.path} -c${tgt} ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
     } else {
+      if (tgt) {
+        console.error(`error: cross-compiling to ${target.triple} requires clang (not llc+cc)`);
+        process.exit(1);
+      }
       execSync(`llc -filetype=obj ${opt} ${tmpLl} -o ${out}`, { stdio: ["pipe", "pipe", "pipe"] });
     }
   } catch (e: any) {
@@ -182,6 +199,14 @@ function detectLibs(ir: string, target: TargetInfo): string {
 }
 
 function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false): string {
+  // Bare-metal targets can't be linked to a runnable binary without a startup
+  // vector table + linker script (memory map). That's the freestanding-runtime
+  // stage; until then, cross-compile to an object with `emit-obj --target=...`.
+  if (target.bareMetal) {
+    console.error(`error: 'build' to a binary is not yet supported for bare-metal target ${target.triple}`);
+    console.error(`       use 'emit-obj --target=${target.mcpu ?? target.triple}' to cross-compile to an object file`);
+    process.exit(1);
+  }
   const source = readFileSync(sourcePath, "utf-8");
   const debugOverflow = optFlag === "-O0";
   const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
@@ -299,6 +324,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let noEntry = false;
   let safetyLevel: string | null = null;
   let sanitize = false;
+  let targetName: string | null = null;
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
@@ -317,11 +343,13 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--allow" && i + 1 < args.length) { allowed.add(args[++i]); }
     else if (args[i].startsWith("--safety=")) { safetyLevel = args[i].slice(9); }
     else if (args[i] === "--safety" && i + 1 < args.length) { safetyLevel = args[++i]; }
+    else if (args[i].startsWith("--target=")) { targetName = args[i].slice(9); }
+    else if (args[i] === "--target" && i + 1 < args.length) { targetName = args[++i]; }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -815,8 +843,17 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize } = parseArgs(args.slice(1));
-  const target = getHostTarget();
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName } = parseArgs(args.slice(1));
+  let target = getHostTarget();
+  if (targetName) {
+    const resolved = resolveTarget(targetName);
+    if (!resolved) {
+      console.error(`unknown target: ${targetName}`);
+      console.error(`available targets: ${listTargets().join(", ")}`);
+      process.exit(1);
+    }
+    target = resolved;
+  }
 
   if (cmd === "build-lib") {
     const libArgs = args.slice(1);
