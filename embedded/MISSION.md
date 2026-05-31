@@ -10,48 +10,24 @@ worktree only. Per `feedback_iteration_speed`: targeted tests, never full
 `bun test` in the loop. Loop = CronCreate job `796e7664` (~20 min).
 
 ## Stages
-- (A) cross-compile to Cortex-M — triples in src/target.ts + clang -mcpu/-mfloat-abi.  **DONE**
-- (B) freestanding runtime — startup vector table + linker script + semihosting + **libc shim**.  **IN PROGRESS**
-- (C) functional verify on QEMU `mps2-an385 -semihosting`.  **BLOCKED: no qemu, no arm-none-eabi installed**
+- (A) cross-compile to Cortex-M — triples in src/target.ts + clang -mcpu/-mfloat-abi.  **DONE** (eff5dfc)
+- (B) freestanding runtime — startup vector table + linker script + semihosting + libc shim; `build --target` links runnable ARM ELF.  **DONE** (749f1fa)
+- (C) functional verify on QEMU `mps2-an385 -semihosting`.  **NEXT — needs `brew install qemu`**
 - (D) WCET — emit loop-bound flow facts from safety pass for OTAWA.  not started
 
 ## Commits so far (newest first)
-- `df9c82f` embedded freestanding runtime — **BROKEN, must fix** (see below)
-- `eff5dfc` --target flag; emit-obj → thumb objects (good, 13 tests pass)
+- `749f1fa` embedded freestanding libc shim + wire bare-metal build (15 tests pass, GOOD)
+- `eff5dfc` --target flag; emit-obj → thumb objects (good)
 - `2c23f2b` cortex-m triples + resolveTarget (good)
 - `757922d` safety gap-#4 (on MAIN, good)
 
-## CURRENT PROBLEM (fix next)
-1. `df9c82f` committed in a broken state:
-   - `linkBareMetal()` helper was added to src/main.ts (good)
-   - BUT the edit to call it from `compileToBinary()` FAILED (string drift) — the
-     old guard `if (target.bareMetal) { error "not yet supported"; exit(1) }` is
-     STILL there at ~line 201-209. So `build --target` still errors.
-   - tests/embedded.test.ts has a test expecting `build` to SUCCEED → it FAILS.
-   - => committed a failing test. Must fix to leave tree green.
-2. Root blocker for Stage B: Milo IR references libc symbols `printf exit malloc
-   free memcpy` (+ likely memset) even for trivial programs, because std runtime
-   funcs (strContains, strToLower, strIndexOf, strToUpper…) are always emitted as
-   external `define`s and reference them. `-nostdlib` link → undefined symbols.
-
-## FIX PLAN (this iteration)
-1. Add a freestanding libc shim to embedded/cortex-m/startup.c:
-   - `memcpy`, `memset` (trivial loops)
-   - `malloc` = bump allocator over a static .bss buffer (e.g. 64KB); `free` = no-op
-   - `exit(int)` = semihosting SYS_EXIT (already have sys_exit — rename/expose)
-   - `printf` = minimal: stub returning 0, OR semihosting SYS_WRITE0 of a fixed
-     string. Stub is fine for first link (compute-only programs don't print).
-   Note in comments: malloc/printf are for LINK COMPLETENESS; WCET-grade programs
-   pass `--safety` (noDynamicAllocation) so they never call malloc at runtime.
-2. Re-read exact current text of compileToBinary guard (lines ~201-217), replace
-   the guard + the linkIR call with: if (target.bareMetal) linkBareMetal(...) else linkIR(...).
-   (linkBareMetal already exists in the file — verify with: grep -n linkBareMetal src/main.ts)
-3. Verify manually:
-   `bun run src/main.ts build /tmp/blink.milo --target=cortex-m3 -o /tmp/x.elf`
-   then `file /tmp/x.elf` must say `ELF 32-bit ... ARM ... executable`.
-   blink.milo = `fn add(a:i32,b:i32):i32{return a+b}` + `fn main():i32{return add(2,3)}`
-4. Run targeted: `bun test tests/embedded.test.ts tests/safety.test.ts` — must be all-pass.
-5. Commit (new commit, lowercase one-line, no claude attribution). Tree clean.
+## VERIFIED WORKING
+- `milo build blink.milo --target=cortex-m3 -o x.elf` → `ELF 32-bit LSB
+  executable, ARM, EABI5, statically linked`. Same for `--target=stm32f4`.
+- Host build/run unaffected. 15/15 targeted tests pass (embedded + safety).
+- libc shim in startup.c provides memcpy/memset/malloc(bump)/free(noop)/exit
+  (semihosting)/printf(stub) so `-nostdlib` link resolves the symbols Milo IR
+  emits via std string helpers.
 
 ## Key facts / gotchas
 - Apple `/usr/bin/clang` cross-compiles thumb fine; `ld.lld` at /opt/homebrew/bin (lld 22).
