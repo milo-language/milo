@@ -1,0 +1,28 @@
+// RFC 4648 §10 base64 test vectors — the canonical conformance set.
+// Standard encode (with padding), decode round-trip, and base64url (- _ , no padding).
+// @expect: empty=[]
+// @expect: f=Zg==
+// @expect: fo=Zm8=
+// @expect: foo=Zm9v
+// @expect: foob=Zm9vYg==
+// @expect: fooba=Zm9vYmE=
+// @expect: foobar=Zm9vYmFy
+// @expect: rt=foobar
+// @expect: url_foob=Zm9vYg
+// @expect: url_fo=Zm8
+
+from "std/base64" import { base64Encode, base64Decode, base64UrlEncode }
+
+fn main(): i32 {
+    print("empty=[", base64Encode(""), "]")
+    print("f=", base64Encode("f"))
+    print("fo=", base64Encode("fo"))
+    print("foo=", base64Encode("foo"))
+    print("foob=", base64Encode("foob"))
+    print("fooba=", base64Encode("fooba"))
+    print("foobar=", base64Encode("foobar"))
+    print("rt=", base64Decode("Zm9vYmFy"))
+    print("url_foob=", base64UrlEncode("foob"))
+    print("url_fo=", base64UrlEncode("fo"))
+    return 0
+}
