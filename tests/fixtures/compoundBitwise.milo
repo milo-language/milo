@@ -1,0 +1,20 @@
+// @expect: 12
+// @expect: 6
+// @expect: 14
+// @expect: 9
+
+fn main(): i32 {
+    var flags = 0b1100
+    flags &= 0b1110   // clear bits not in mask -> 0b1100 = 12
+    print(flags)
+    flags ^= 0b1010   // toggle -> 0b0110 = 6
+    print(flags)
+    flags |= 0b1000   // set bit -> 0b1110 = 14
+    print(flags)
+
+    var x = 3          // 0b0011
+    x |= 8             // | 0b1000 -> 0b1011
+    x &= 0b1101        // & 0b1101 -> 0b1001 = 9
+    print(x)
+    return 0
+}

@@ -228,6 +228,12 @@ export class Lexer {
     if (ch === "?" && next === "?") { this.advance(); this.advance(); return this.token(TokenKind.QuestionQuestion, "??", line, col); }
     if (ch === "&" && next === "&") { this.advance(); this.advance(); return this.token(TokenKind.AmpAmp, "&&", line, col); }
     if (ch === "|" && next === "|") { this.advance(); this.advance(); return this.token(TokenKind.PipePipe, "||", line, col); }
+    // compound bitwise assignment — must precede the single-char & | ^ below.
+    // Shift-assign (<<= >>=) is intentionally absent: << / >> are not lexer tokens (they are
+    // synthesized from adjacent < / > so nested generics like Vec<Vec<T>> parse), so <<= can't be lexed here.
+    if (ch === "&" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.AmpEq, "&=", line, col); }
+    if (ch === "|" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.PipeEq, "|=", line, col); }
+    if (ch === "^" && next === "=") { this.advance(); this.advance(); return this.token(TokenKind.CaretEq, "^=", line, col); }
 
     // single-char
     const singles: Record<string, TokenKind> = {

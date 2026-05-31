@@ -1,0 +1,29 @@
+// @expect: name=milo
+// @expect: port=8080
+// @expect: count=3
+// @expect: strictRejectsComments=true
+// @expect: urlIntact=http://x.io//path
+
+from "std/json" import { jsonParse, jsonParseJsonc }
+
+fn main(): i32 {
+    // line comments, a block comment, and trailing commas in both object and array
+    let src = "{\n  // the app name\n  \"name\": \"milo\",\n  \"port\": 8080, /* default */\n  \"tags\": [\"a\", \"b\", \"c\",],\n  \"url\": \"http://x.io//path\",\n}"
+
+    let j = jsonParseJsonc(src.clone())!
+    print("name=", j.str("name")!)
+    print("port=", j.i64("port")!)
+    print("count=", j.get("tags")!.len())
+
+    // strict parser must still reject comments
+    var rejected: bool = false
+    match jsonParse(src) {
+        Result.Ok(x) => { rejected = false }
+        Result.Err(e) => { rejected = true }
+    }
+    print("strictRejectsComments=", rejected)
+
+    // // and /* inside a string must survive the comment stripper
+    print("urlIntact=", j.str("url")!)
+    return 0
+}
