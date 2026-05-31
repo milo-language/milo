@@ -1,0 +1,8 @@
+// A void main (no return type) ending in print(<int>) must exit 0, not leak a garbage
+// exit code from main's return register. Regression test for the void-@main codegen fix.
+// @expect: 42
+
+fn main() {
+    let answer = 42
+    print(answer)
+}

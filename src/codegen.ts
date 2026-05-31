@@ -458,7 +458,10 @@ export class Codegen {
       const lt = p.isRef || p.isRefMut ? "ptr" : this.llvmType(p.type);
       return `${lt} %${p.name}`;
     }).join(", ");
-    const ret = this.llvmType(fn.retType);
+    // main is the process entry point: the OS reads its return register as the exit code, so it
+    // must always be i32 even when the Milo signature is void (`fn main()`). A `void @main` leaves
+    // garbage in the return register → nonzero exit on a program that should succeed.
+    const ret = fn.name === "main" ? "i32" : this.llvmType(fn.retType);
     if (fn.name === "main") {
       const mainParams = params ? `i32 %_milo_argc, ptr %_milo_argv, ${params}` : "i32 %_milo_argc, ptr %_milo_argv";
       lines.push(`define ${ret} @${fn.name}(${mainParams}) {`);
@@ -604,6 +607,9 @@ export class Codegen {
             this.needsFflush = true;
             lines.push("  call void @_exit(i32 0)");
             lines.push("  unreachable");
+          } else if (this.currentFnName === "main") {
+            // main is forced to i32 (see genFn); a bare `return` must still yield a 0 exit code.
+            lines.push("  ret i32 0");
           } else {
             lines.push("  ret void");
           }
