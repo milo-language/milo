@@ -503,6 +503,7 @@ export class Parser {
     const compoundOps: Record<string, string> = {
       [TokenKind.PlusEq]: "+", [TokenKind.MinusEq]: "-",
       [TokenKind.StarEq]: "*", [TokenKind.SlashEq]: "/", [TokenKind.PercentEq]: "%",
+      [TokenKind.AmpEq]: "&", [TokenKind.PipeEq]: "|", [TokenKind.CaretEq]: "^",
     };
     const op = compoundOps[this.peek().kind];
     if (op) {

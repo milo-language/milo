@@ -83,6 +83,9 @@ export enum TokenKind {
   StarEq = "*=",
   SlashEq = "/=",
   PercentEq = "%=",
+  AmpEq = "&=",
+  PipeEq = "|=",
+  CaretEq = "^=",
   Eof = "EOF",
 }
 

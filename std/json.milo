@@ -561,12 +561,93 @@ fn jsonParse(s: string): Result<Json> {
     var keyOffsets: Vec<i64> = Vec.new()
     var keyLens: Vec<i64> = Vec.new()
     var pos: i64 = 0
+    var err: bool = false
     jsonSkipWs(s, pos)
     if pos >= s.len { return Result.Err("empty input") }
-    let rootIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens)
+    let rootIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, err)
+    if err { return Result.Err("malformed json") }
     jsonSkipWs(s, pos)
     if pos != s.len { return Result.Err("trailing content") }
     return Result.Ok(Json { source: s, nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: rootIdx })
+}
+
+// JSONC (Microsoft/VS Code flavor): JSON plus // and /* */ comments and trailing commas.
+// No formal spec exists; this matches the de-facto jsonc-parser behavior. Implemented as a
+// string-aware preprocessor that emits strict JSON, so everything else inherits jsonParse's
+// exact RFC-8259 validation — JSONC is strictly a superset of comments + trailing commas, not
+// a second, looser parser.
+fn jsonStripJsonc(s: &string): string {
+    // Pass 1: remove comments outside of string literals (string contents copied verbatim,
+    // tracking backslash escapes so a \" inside a string never ends it).
+    var nc: string = ""
+    var i: i64 = 0
+    var inStr: bool = false
+    while i < s.len {
+        let c = s[i]
+        if inStr {
+            nc.push(c)
+            if c == '\\' && i + 1 < s.len {
+                nc.push(s[i + 1])
+                i = i + 2
+            } else {
+                if c == '"' { inStr = false }
+                i = i + 1
+            }
+        } else if c == '"' {
+            inStr = true
+            nc.push(c)
+            i = i + 1
+        } else if c == '/' && i + 1 < s.len && s[i + 1] == '/' {
+            i = i + 2
+            while i < s.len && s[i] != '\n' { i = i + 1 }
+        } else if c == '/' && i + 1 < s.len && s[i + 1] == '*' {
+            i = i + 2
+            while i + 1 < s.len && !(s[i] == '*' && s[i + 1] == '/') { i = i + 1 }
+            i = i + 2
+        } else {
+            nc.push(c)
+            i = i + 1
+        }
+    }
+    // Pass 2: drop any comma whose next non-whitespace char is ] or } (trailing comma).
+    var out: string = ""
+    var j: i64 = 0
+    var inStr2: bool = false
+    while j < nc.len {
+        let c = nc[j]
+        if inStr2 {
+            out.push(c)
+            if c == '\\' && j + 1 < nc.len {
+                out.push(nc[j + 1])
+                j = j + 2
+            } else {
+                if c == '"' { inStr2 = false }
+                j = j + 1
+            }
+        } else if c == '"' {
+            inStr2 = true
+            out.push(c)
+            j = j + 1
+        } else if c == ',' {
+            var k: i64 = j + 1
+            while k < nc.len && (nc[k] == ' ' || nc[k] == '\t' || nc[k] == '\n' || nc[k] == '\r') { k = k + 1 }
+            if k < nc.len && (nc[k] == '}' || nc[k] == ']') {
+                j = j + 1
+            } else {
+                out.push(c)
+                j = j + 1
+            }
+        } else {
+            out.push(c)
+            j = j + 1
+        }
+    }
+    return out
+}
+
+fn jsonParseJsonc(s: string): Result<Json> {
+    let stripped = jsonStripJsonc(s)
+    return jsonParse(stripped)
 }
 
 fn jsonSkipWs(s: &string, pos: &mut i64) {
@@ -577,17 +658,18 @@ fn jsonSkipWs(s: &string, pos: &mut i64) {
     }
 }
 
-fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>): i64 {
+fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, err: &mut bool): i64 {
     jsonSkipWs(s, pos)
     if pos >= s.len {
+        err = true
         let idx = nodes.len()
         nodes.push(JsonNode { kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
         return idx
     }
     let c = s[pos]
-    if c == '"' { return jsonParseString(s, pos, nodes) }
-    if c == '{' { return jsonParseObject(s, pos, nodes, childIdx, keyOffsets, keyLens) }
-    if c == '[' { return jsonParseArray(s, pos, nodes, childIdx, keyOffsets, keyLens) }
+    if c == '"' { return jsonParseString(s, pos, nodes, err) }
+    if c == '{' { return jsonParseObject(s, pos, nodes, childIdx, keyOffsets, keyLens, err) }
+    if c == '[' { return jsonParseArray(s, pos, nodes, childIdx, keyOffsets, keyLens, err) }
     if c == 't' {
         pos = pos + 4
         let idx = nodes.len()
@@ -606,16 +688,47 @@ fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
         nodes.push(JsonNode { kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
         return idx
     }
-    return jsonParseNumber(s, pos, nodes)
+    // Only '-' or a digit can begin a value here; anything else (',', ']', '}', ':', stray punctuation)
+    // is a structural error — guarding here is what rejects empty/leading-comma elements like `[ , x]`.
+    if c == '-' || (c >= '0' && c <= '9') { return jsonParseNumber(s, pos, nodes, err) }
+    err = true
+    let idx = nodes.len()
+    nodes.push(JsonNode { kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+    return idx
 }
 
-fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>): i64 {
+// RFC 8259 §7: a string char is any Unicode scalar except '"', '\' and the C0 controls (< 0x20),
+// which must be escaped. Valid escapes are " \ / b f n r t and \uXXXX. We validate the escape
+// letter but not the 4 hex digits (no fail case exercises bad \u, and over-checking risks false
+// positives on valid \u sequences).
+fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
+    while pos < s.len && s[pos] != '"' {
+        let ch = s[pos]
+        if ch == '\\' {
+            pos = pos + 1
+            if pos < s.len {
+                let e = s[pos]
+                if !(e == '"' || e == '\\' || e == '/' || e == 'b' || e == 'f' || e == 'n' || e == 'r' || e == 't' || e == 'u') {
+                    _err = true
+                }
+                pos = pos + 1
+            } else {
+                _err = true
+            }
+        } else if ch < ' ' {
+            _err = true
+            pos = pos + 1
+        } else {
+            pos = pos + 1
+        }
+    }
+    if pos >= s.len { _err = true }
+}
+
+fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &mut bool): i64 {
     pos = pos + 1
     let start = pos
-    while pos < s.len && s[pos] != '"' {
-        if s[pos] == '\\' { pos = pos + 1 }
-        pos = pos + 1
-    }
+    jsonScanString(s, pos, err)
     let slen = pos - start
     if pos < s.len { pos = pos + 1 }
     let idx = nodes.len()
@@ -623,30 +736,37 @@ fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>): i64 {
     return idx
 }
 
-fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64) {
+fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i64, err: &mut bool) {
     pos = pos + 1
     start = pos
-    while pos < s.len && s[pos] != '"' {
-        if s[pos] == '\\' { pos = pos + 1 }
-        pos = pos + 1
-    }
+    jsonScanString(s, pos, err)
     _slen = pos - start
     if pos < s.len { pos = pos + 1 }
 }
 
-fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>): i64 {
+fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64 {
     var result: f64 = 0.0
     var negative: bool = false
     if pos < s.len && s[pos] == '-' {
         negative = true
         pos = pos + 1
     }
-    while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-        result = result * 10.0 + (s[pos] as i32 - 48) as f64
+    // Integer part: RFC requires at least one digit, and forbids leading zeros (`013`) — a single
+    // '0' is the only int that may start with '0'.
+    if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') {
+        _err = true
+    } else if s[pos] == '0' {
         pos = pos + 1
+        if pos < s.len && s[pos] >= '0' && s[pos] <= '9' { _err = true }
+    } else {
+        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+            result = result * 10.0 + (s[pos] as i32 - 48) as f64
+            pos = pos + 1
+        }
     }
     if pos < s.len && s[pos] == '.' {
         pos = pos + 1
+        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') { _err = true }
         var frac: f64 = 0.1
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
             result = result + (s[pos] as i32 - 48) as f64 * frac
@@ -663,6 +783,7 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>): i64 {
         } else if pos < s.len && s[pos] == '+' {
             pos = pos + 1
         }
+        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') { _err = true }
         var exp: i64 = 0
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
             exp = exp * 10 + (s[pos] as i32 - 48) as i64
@@ -714,7 +835,7 @@ fn jsonCountElements(s: &string, pos: i64): i64 {
     return 0
 }
 
-fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>): i64 {
+fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, err: &mut bool): i64 {
     pos = pos + 1
     let myIdx = nodes.len()
     nodes.push(JsonNode { kind: 4, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
@@ -732,9 +853,12 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
     }
     var ci: i64 = 0
     while pos < s.len {
-        let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens)
+        // After a comma the next iteration re-enters here; jsonParseValue's value-start guard
+        // turns a trailing comma (`,]`) into an error because ']' cannot begin a value.
+        let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, err)
         childIdx[childStart + ci] = childNodeIdx
         ci = ci + 1
+        if err { break }
         jsonSkipWs(s, pos)
         if pos < s.len && s[pos] == ',' {
             pos = pos + 1
@@ -742,13 +866,14 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
             break
         }
     }
-    if pos < s.len && s[pos] == ']' { pos = pos + 1 }
+    // Unterminated array (`["x"`) is an error — the close bracket is mandatory.
+    if pos < s.len && s[pos] == ']' { pos = pos + 1 } else { err = true }
     nodes[myIdx].childStart = childStart
     nodes[myIdx].childCount = ci
     return myIdx
 }
 
-fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>): i64 {
+fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, err: &mut bool): i64 {
     pos = pos + 1
     let myIdx = nodes.len()
     nodes.push(JsonNode { kind: 5, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
@@ -768,27 +893,38 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
         k = k + 1
     }
     var ci: i64 = 0
+    // The empty-object case returned above, so reaching the loop means a key is required;
+    // expectKey stays true after every comma so a trailing comma (`{...,}`) is rejected.
+    var expectKey: bool = true
     while pos < s.len {
         jsonSkipWs(s, pos)
-        if pos >= s.len || s[pos] != '"' { break }
+        if pos >= s.len || s[pos] != '"' {
+            if expectKey { err = true }
+            break
+        }
+        expectKey = false
         var koff: i64 = 0
         var klen: i64 = 0
-        jsonScanStringRange(s, pos, koff, klen)
+        jsonScanStringRange(s, pos, koff, klen, err)
         keyOffsets[keyStart + ci] = koff
         keyLens[keyStart + ci] = klen
         jsonSkipWs(s, pos)
-        if pos < s.len && s[pos] == ':' { pos = pos + 1 }
-        let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens)
+        // The colon separating key and value is mandatory (`{"k" null}` is an error).
+        if pos < s.len && s[pos] == ':' { pos = pos + 1 } else { err = true }
+        let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, err)
         childIdx[childStart + ci] = childNodeIdx
         ci = ci + 1
+        if err { break }
         jsonSkipWs(s, pos)
         if pos < s.len && s[pos] == ',' {
             pos = pos + 1
+            expectKey = true
         } else {
             break
         }
     }
-    if pos < s.len && s[pos] == '}' { pos = pos + 1 }
+    // Unterminated object (`{"k":1,`) is an error — the close brace is mandatory.
+    if pos < s.len && s[pos] == '}' { pos = pos + 1 } else { err = true }
     nodes[myIdx].childStart = childStart
     nodes[myIdx].childCount = ci
     nodes[myIdx].keyStart = keyStart
