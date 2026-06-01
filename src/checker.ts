@@ -2657,7 +2657,12 @@ export class TypeChecker {
           this.error(`variant '${expr.enumName}.${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
         }
         for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
-          const argType = this.checkExpr(expr.args[i]);
+          let argType = this.checkExprWithHint(expr.args[i], variant.fields[i]);
+          // Coerce a constant-int operand to the field's int width, as fn args do.
+          if (variant.fields[i].tag === "int" && argType.tag === "int" && !typeEq(variant.fields[i], argType) && this.isConstIntExpr(expr.args[i])) {
+            this.retypeConstInt(expr.args[i], variant.fields[i]);
+            argType = variant.fields[i];
+          }
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
             this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, sp);
           }
@@ -3440,8 +3445,12 @@ export class TypeChecker {
           }
           const typeMap = new Map<string, TypeKind>();
           for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
-            const argType = this.checkExpr(expr.args[i]);
             const field = variant.fields[i];
+            let argType = this.checkExpr(expr.args[i]);
+            if (field.tag === "int" && argType.tag === "int" && !typeEq(field, argType) && this.isConstIntExpr(expr.args[i])) {
+              this.retypeConstInt(expr.args[i], field);
+              argType = field;
+            }
             if (field.tag === "struct" && genericInfo.typeParams.includes(field.name)) {
               const existing = typeMap.get(field.name);
               if (existing && !typeEq(existing, argType)) {
@@ -3580,7 +3589,11 @@ export class TypeChecker {
           this.error(`variant '${expr.enumName}.${expr.variant}' expects ${variant.fields.length} args, got ${expr.args.length}`, sp);
         }
         for (let i = 0; i < Math.min(expr.args.length, variant.fields.length); i++) {
-          const argType = this.checkExpr(expr.args[i]);
+          let argType = this.checkExprWithHint(expr.args[i], variant.fields[i]);
+          if (variant.fields[i].tag === "int" && argType.tag === "int" && !typeEq(variant.fields[i], argType) && this.isConstIntExpr(expr.args[i])) {
+            this.retypeConstInt(expr.args[i], variant.fields[i]);
+            argType = variant.fields[i];
+          }
           if (!typeEq(variant.fields[i], argType) && argType.tag !== "unknown") {
             this.error(`argument ${i + 1} of '${expr.enumName}.${expr.variant}': expected ${typeName(variant.fields[i])}, got ${typeName(argType)}`, expr.args[i].span);
           }
