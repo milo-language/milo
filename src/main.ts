@@ -16,6 +16,7 @@ import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./ta
 import { format, formatFile } from "./formatter";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
+import { extractFlowFacts, formatFlowFacts } from "./wcet";
 
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
@@ -822,6 +823,7 @@ function main() {
     console.log("  prove <file>           verify contracts via z3 solver");
     console.log("  safety <file>          check safety profile compliance");
     console.log("  safety --list          list available safety profiles");
+    console.log("  wcet <file>            emit OTAWA flow facts (loop bounds) for WCET analysis");
     console.log("  skill                  print language guide for LLMs");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
@@ -944,6 +946,25 @@ function main() {
     new TypeChecker(warningConfig).check(program);
     const result = generateVerificationConditions(program);
     console.log(formatVerifyReport(result));
+    return;
+  }
+
+  if (cmd === "wcet") {
+    // Emit OTAWA flow facts (loop iteration bounds) for WCET analysis. Output
+    // goes to -o <file> or stdout. Use after `milo safety` confirms bounded loops.
+    const src = readFileSync(source!, "utf-8");
+    const sourceDir = dirname(resolve(source!));
+    const tokens = new Lexer(src).tokenize();
+    let program = new Parser(tokens, src).parse();
+    program = resolveImports(program, sourceDir, target);
+    new TypeChecker(warningConfig).check(program);
+    const ff = formatFlowFacts(extractFlowFacts(program, source!));
+    if (output) {
+      writeFileSync(output, ff);
+      console.log(`wrote flow facts -> ${output}`);
+    } else {
+      process.stdout.write(ff);
+    }
     return;
   }
 
