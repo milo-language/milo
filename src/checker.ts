@@ -809,6 +809,15 @@ export class TypeChecker {
       }
     }
 
+    // Pre-register interface names so struct fields (e.g. `Heap<Shape>`) resolve
+    // their inner to an interface rather than defaulting to a struct. Full method
+    // registration happens later and overwrites these placeholders.
+    for (const iface of program.interfaces) {
+      if (!this.interfaces.has(iface.name)) {
+        this.interfaces.set(iface.name, { name: iface.name, methods: new Map() });
+      }
+    }
+
     // register structs — two passes so generic structs are available when resolving fields
     for (const s of program.structs) {
       if (s.typeParams.length > 0) {
@@ -2690,7 +2699,7 @@ export class TypeChecker {
             this.retypeConstInt(f.value, fieldDef.type);
             valType = fieldDef.type;
           }
-          if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
+          if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
             this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
           }
           this.tryMove(f.value);
@@ -3313,7 +3322,7 @@ export class TypeChecker {
             this.retypeConstInt(f.value, fieldDef.type);
             valType = fieldDef.type;
           }
-          if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
+          if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown" && !this.tryInterfaceCoercion(f.value, valType, fieldDef.type)) {
             this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
           }
           this.tryMove(f.value);

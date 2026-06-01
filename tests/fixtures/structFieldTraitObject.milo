@@ -1,0 +1,16 @@
+// @expect: 7
+// A boxed trait object stored in a struct field: the initializer coerces the
+// concrete to the interface, and dynamic dispatch through the field works.
+// (Both broke before interface names were pre-registered so `Heap<Counter>`
+// field types resolved their inner to an interface, not a default struct.)
+interface Counter { fn value(self: &Self): i64 }
+struct K { n: i64 }
+impl K {
+    fn value(self: &Self): i64 { return self.n }
+}
+struct Wrap { c: Heap<Counter> }
+fn main(): i32 {
+    let w = Wrap { c: Heap(K { n: 7 }) }
+    print(w.c.value())
+    return 0
+}
