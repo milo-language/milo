@@ -50,7 +50,7 @@ Port the html5ever tokenizer state machine (`tokenizer/mod.rs` + `states.rs` + `
 
 ## Probe 2: tree-walking interpreter (`examples/apps/minilang.milo`)
 
-The next rewrite probe — the "interpreter env holding an AST + values" lifetime pattern (a tiny `let`/`if`/arithmetic language). AST in a generational arena (recursive via `Handle`), environment a scope stack of `(name, Value)`, recursive `evalExpr`. **Works, zero unsafe** — `let x=6 in let y=7 in x*y` → 42; `if 3<5 then 100 else 200` → 100. The model carries an interpreter, not just a data structure.
+The next rewrite probe — the "interpreter env holding an AST + values" lifetime pattern. Now a **complete source-to-value interpreter**: lexer → recursive-descent parser (precedence) → AST in a generational arena (recursive payload enums via `Handle`) → recursive `evalExpr` over a scope-stack environment. **Works, zero unsafe** — `1 + 2 * 3 - 4` → 3, `(2+3)*(4+1)` → 25, `let n=10 in if n>5 then n*n else 0` → 100. The lexer/parser/eval all compiled first-try once `match &enum` and the const-int coercions landed — the model carries a real interpreter, not just a data structure.
 
 **New finding: `match` on a borrowed enum (`&enum`) is unsupported.** Reading a payload-bearing enum *out of* an arena or collection forces it — the read closure receives `&Expr`, and `match e { ... }` on that `&Expr` is rejected ("match subject must be an enum…, got Value/Expr" — it's behind a ref). The DOM dodged this (its `Node` was a struct with a payload-free `NodeKind`); the interpreter's `Expr`/`Value` are payload enums, so it hits the wall.
 
