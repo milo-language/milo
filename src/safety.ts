@@ -420,23 +420,68 @@ function checkUnsafeBlocks(fnName: string, stmts: Stmt[], violations: SafetyViol
   }
 }
 
+// Each `&&`/`||` is a decision point in McCabe complexity (it short-circuits,
+// creating a branch). Count them wherever they appear, not just in conditions.
+function countShortCircuit(e: Expr | null | undefined): number {
+  if (!e) return 0;
+  switch (e.kind) {
+    case "BinOp":
+      return (e.op === "&&" || e.op === "||" ? 1 : 0) + countShortCircuit(e.left) + countShortCircuit(e.right);
+    case "UnaryOp":
+      return countShortCircuit(e.operand);
+    case "Call":
+      return e.args.reduce((n, a) => n + countShortCircuit(a), 0);
+    case "MethodCall":
+      return countShortCircuit(e.object) + e.args.reduce((n, a) => n + countShortCircuit(a), 0);
+    case "FieldAccess":
+      return countShortCircuit(e.object);
+    case "IndexAccess":
+      return countShortCircuit(e.object) + countShortCircuit(e.index);
+    case "IfExpr":
+      return countShortCircuit(e.cond);
+    default:
+      return 0;
+  }
+}
+
 function computeCyclomaticComplexity(stmts: Stmt[]): number {
   let complexity = 1;
   for (const stmt of stmts) {
     switch (stmt.kind) {
       case "IfStmt":
-        complexity += 1;
+        complexity += 1 + countShortCircuit(stmt.cond);
+        complexity += computeCyclomaticComplexity(stmt.thenBody) - 1;
+        if (stmt.elseBody) complexity += computeCyclomaticComplexity(stmt.elseBody) - 1;
+        break;
+      case "IfLetStmt":
+        complexity += 1 + countShortCircuit(stmt.subject);
         complexity += computeCyclomaticComplexity(stmt.thenBody) - 1;
         if (stmt.elseBody) complexity += computeCyclomaticComplexity(stmt.elseBody) - 1;
         break;
       case "WhileStmt":
+        complexity += 1 + countShortCircuit(stmt.cond);
+        complexity += computeCyclomaticComplexity(stmt.body) - 1;
+        break;
       case "ForInStmt":
-        complexity += 1;
+        complexity += 1 + countShortCircuit(stmt.iterable);
         complexity += computeCyclomaticComplexity(stmt.body) - 1;
         break;
       case "MatchStmt":
-        complexity += stmt.arms.length - 1;
+        complexity += (stmt.arms.length - 1) + countShortCircuit(stmt.subject);
         for (const arm of stmt.arms) complexity += computeCyclomaticComplexity(arm.body) - 1;
+        break;
+      case "Return":
+        complexity += countShortCircuit(stmt.value);
+        break;
+      case "LetDecl":
+      case "VarDecl":
+        complexity += countShortCircuit(stmt.value);
+        break;
+      case "Assign":
+        complexity += countShortCircuit(stmt.value);
+        break;
+      case "ExprStmt":
+        complexity += countShortCircuit(stmt.expr);
         break;
     }
   }

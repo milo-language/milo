@@ -76,3 +76,18 @@ test("maxCallDepth flags a chain exceeding the limit", () => {
   // depth 32 (f0..f31) + main = exceeds do178c-a's 30
   expect(rules(chain(32), "do178c-a")).toContain("max-call-depth");
 });
+
+// ── cyclomatic complexity counts && / || (McCabe decision points) ──
+
+test("complexity counts && / || short-circuits over the bound", () => {
+  const conds = Array.from({ length: 20 }, (_, i) => `a${i} > 0`).join(" && ");
+  const params = Array.from({ length: 20 }, (_, i) => `a${i}: i32`).join(", ");
+  const src = `fn classify(${params}): i32 { if ${conds} { return 1 } return 0 }`;
+  // 20 '&&' + base 1 = complexity 21, over do178c-a's max of 20
+  expect(rules(src, "do178c-a")).toContain("max-complexity");
+});
+
+test("complexity stays under bound for a simple boolean function", () => {
+  const src = `fn simple(a: i32, b: i32): i32 { if a > 0 && b > 0 { return 1 } return 0 }`;
+  expect(rules(src, "do178c-a")).not.toContain("max-complexity");
+});
