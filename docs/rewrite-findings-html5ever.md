@@ -64,3 +64,15 @@ Three pre-existing bugs surfaced and fixed in the process:
 - **`std/net.milo` `fetchPatch` was missing the `.clone()`** its sibling fetch functions all have — a real latent double-free, caught by the new check.
 
 The interpreter can now use real payload enums for `Expr`/`Value` instead of tag-structs (exhaustiveness + payload ergonomics restored). `minilang.milo` keeps the tag-struct form as a record of the pre-feature idiom.
+
+## Probe 3: trait system (dynamic dispatch)
+
+Stress-tested traits/interfaces beyond the basic fixtures (the survey flagged the trait system as untested at depth). Two real bugs found + fixed, two minor gaps noted.
+
+**Fixed:**
+- **`Vec<Heap<Interface>>` dynamic dispatch crashed** (`for i in 0..xs.len() { xs[i].method() }`). Root: Vec-index auto-deep-clones non-Copy elements, but a boxed trait object can't be cloned — `emitDeepCloneFromPtr` treated the `{ptr,ptr}` fat pointer as a thin `Heap` (`load ptr` of half the pointer) → bad IR. Fixed: interface dispatch borrows the fat pointer straight from the slot (dispatch only reads data+itable). Fixture: `tests/fixtures/traitObjectVec.milo`.
+- **Concrete→interface coercion didn't fire at return position** (`fn mk(): Heap<Shape> { return Heap(Circle{}) }`) though it did at let-bindings and call args. Fixed: `tryInterfaceCoercion` now runs on return values too. Fixture: `tests/fixtures/returnInterfaceCoerce.milo`.
+
+**Noted (not yet fixed):**
+- `Heap<Interface>` doesn't auto-borrow to `&Interface` at a call site (`fn f(s: &Shape); f(vec[0])` where `vec[0]: Heap<Shape>`) — same fat-pointer layout, so an auto-borrow is feasible; ergonomic gap.
+- `interface` methods can't have default bodies (clear error). Whether `trait` supports it is a separate question.
