@@ -17,6 +17,7 @@ import { format, formatFile } from "./formatter";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
+import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
 
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
@@ -958,7 +959,29 @@ function main() {
     let program = new Parser(tokens, src).parse();
     program = resolveImports(program, sourceDir, target);
     new TypeChecker(warningConfig).check(program);
-    const ff = formatFlowFacts(extractFlowFacts(program, source!));
+    const facts = extractFlowFacts(program, source!);
+    // --cycles: go past flow facts to an actual Cortex-M3 cycle bound by
+    // disassembling the linked ELF and applying the core timing model.
+    if (rest.includes("--cycles")) {
+      if (!target.bareMetal) {
+        console.error("error: --cycles requires a bare-metal target (e.g. --target=cortex-m3)");
+        process.exit(1);
+      }
+      const elf = compileToBinary(source!, null, target, optFlag, warningConfig, [], false);
+      try {
+        let any = false;
+        for (const b of facts.bounds) {
+          if (b.kind === "unresolved" || b.count === null) continue;
+          const est = estimateLoopCycles(elf, b.fn, b.count);
+          if (est) { console.log(formatCycleEstimate(est, target.triple)); any = true; }
+        }
+        if (!any) console.log("no bounded loops with a resolvable cycle estimate");
+      } finally {
+        try { unlinkSync(elf); } catch {}
+      }
+      return;
+    }
+    const ff = formatFlowFacts(facts);
     if (output) {
       writeFileSync(output, ff);
       console.log(`wrote flow facts -> ${output}`);
