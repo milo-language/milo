@@ -65,6 +65,8 @@ export type HIRExpr =
   | { kind: "VecEnumerate"; vec: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecReverse"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecSwap"; object: HIRExpr; indexA: HIRExpr; indexB: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "VecInsert"; object: HIRExpr; index: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
+  | { kind: "VecRemove"; object: HIRExpr; index: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecContains"; vec: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecSort"; object: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecSortBy"; object: HIRExpr; callback: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }

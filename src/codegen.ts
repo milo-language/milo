@@ -2627,6 +2627,10 @@ export class Codegen {
         return this.genVecReverse(expr, lines);
       case "VecSwap":
         return this.genVecSwap(expr, lines);
+      case "VecInsert":
+        return this.genVecInsert(expr, lines);
+      case "VecRemove":
+        return this.genVecRemove(expr, lines);
       case "VecContains":
         return this.genVecContains(expr, lines);
       case "VecEnumerate":
@@ -4228,6 +4232,178 @@ export class Codegen {
     lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${ptrB}, ptr ${tmpAddr}, i64 ${elemSize}, i1 false)`);
 
     return [lines, "void", "void"];
+  }
+
+  private genVecInsert(expr: HIRExpr & { kind: "VecInsert" }, lines: string[]): [string[], string, string] {
+    this.hasVecType = true;
+    this.needsMalloc = true;
+    this.needsFree = true;
+    this.needsMemcpy = true;
+    this.needsPrintf = true;
+    this.needsExit = true;
+    this.needsPutchar = true;
+
+    const elemSize = this.typeSizeOf(expr.elementType);
+    const elemTy = this.llvmType(expr.elementType);
+
+    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
+    lines.push(...vecPtrLines);
+    const [idxLines, idxVal] = this.genExpr(expr.index);
+    lines.push(...idxLines);
+    const [valLines, valVal, valTy] = this.genExpr(expr.value);
+    lines.push(...valLines);
+
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+    const capPtr = this.nextTemp();
+    lines.push(`  ${capPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 2`);
+    const cap = this.nextTemp();
+    lines.push(`  ${cap} = load i64, ptr ${capPtr}`);
+
+    // bounds: index must be <= len (== len means append)
+    const oob = this.nextTemp();
+    lines.push(`  ${oob} = icmp ugt i64 ${idxVal}, ${len}`);
+    const panicLabel = this.nextLabel("vec.insert.panic");
+    const growCheck = this.nextLabel("vec.insert.growcheck");
+    lines.push(`  br i1 ${oob}, label %${panicLabel}, label %${growCheck}`);
+
+    lines.push(`${panicLabel}:`);
+    const span = expr.span;
+    const { label: errLabel, length: errLen } = this.addString(`insert index out of bounds at ${span?.line ?? 0}:${span?.col ?? 0}`);
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    lines.push(`  call i32 @putchar(i32 10)`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+
+    // grow if len >= cap (we are adding one element) — identical policy to push
+    lines.push(`${growCheck}:`);
+    const needsGrow = this.nextTemp();
+    lines.push(`  ${needsGrow} = icmp uge i64 ${len}, ${cap}`);
+    const growLabel = this.nextLabel("vec.insert.grow");
+    const shiftLabel = this.nextLabel("vec.insert.shift");
+    lines.push(`  br i1 ${needsGrow}, label %${growLabel}, label %${shiftLabel}`);
+
+    lines.push(`${growLabel}:`);
+    const isZero = this.nextTemp();
+    lines.push(`  ${isZero} = icmp eq i64 ${cap}, 0`);
+    const doubled = this.nextTemp();
+    lines.push(`  ${doubled} = mul i64 ${cap}, 2`);
+    const newCap = this.nextTemp();
+    lines.push(`  ${newCap} = select i1 ${isZero}, i64 8, i64 ${doubled}`);
+    const newBytes = this.nextTemp();
+    lines.push(`  ${newBytes} = mul i64 ${newCap}, ${elemSize}`);
+    const newBuf = this.nextTemp();
+    lines.push(`  ${newBuf} = call ptr @malloc(i64 ${newBytes})`);
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const oldBuf = this.nextTemp();
+    lines.push(`  ${oldBuf} = load ptr, ptr ${dataPtr}`);
+    const hasData = this.nextTemp();
+    lines.push(`  ${hasData} = icmp ne ptr ${oldBuf}, null`);
+    const copyLabel = this.nextLabel("vec.insert.copy");
+    const storeLabel = this.nextLabel("vec.insert.store");
+    lines.push(`  br i1 ${hasData}, label %${copyLabel}, label %${storeLabel}`);
+    lines.push(`${copyLabel}:`);
+    const copyBytes = this.nextTemp();
+    lines.push(`  ${copyBytes} = mul i64 ${len}, ${elemSize}`);
+    lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${oldBuf}, i64 ${copyBytes})`);
+    lines.push(`  call void @free(ptr ${oldBuf})`);
+    lines.push(`  br label %${storeLabel}`);
+    lines.push(`${storeLabel}:`);
+    lines.push(`  store ptr ${newBuf}, ptr ${dataPtr}`);
+    lines.push(`  store i64 ${newCap}, ptr ${capPtr}`);
+    lines.push(`  br label %${shiftLabel}`);
+
+    // shift [index, len) right by one, then store value at index, len++
+    lines.push(`${shiftLabel}:`);
+    const curDataPtr = this.nextTemp();
+    lines.push(`  ${curDataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const curData = this.nextTemp();
+    lines.push(`  ${curData} = load ptr, ptr ${curDataPtr}`);
+    const srcPtr = this.nextTemp();
+    lines.push(`  ${srcPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${idxVal}`);
+    const idxPlus1 = this.nextTemp();
+    lines.push(`  ${idxPlus1} = add i64 ${idxVal}, 1`);
+    const dstPtr = this.nextTemp();
+    lines.push(`  ${dstPtr} = getelementptr ${elemTy}, ptr ${curData}, i64 ${idxPlus1}`);
+    const tailCount = this.nextTemp();
+    lines.push(`  ${tailCount} = sub i64 ${len}, ${idxVal}`);
+    const tailBytes = this.nextTemp();
+    lines.push(`  ${tailBytes} = mul i64 ${tailCount}, ${elemSize}`);
+    lines.push(`  call void @llvm.memmove.p0.p0.i64(ptr ${dstPtr}, ptr ${srcPtr}, i64 ${tailBytes}, i1 false)`);
+    lines.push(`  store ${valTy} ${valVal}, ptr ${srcPtr}`);
+    const newLen = this.nextTemp();
+    lines.push(`  ${newLen} = add i64 ${len}, 1`);
+    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+
+    return [lines, "void", "void"];
+  }
+
+  private genVecRemove(expr: HIRExpr & { kind: "VecRemove" }, lines: string[]): [string[], string, string] {
+    this.hasVecType = true;
+    this.needsPrintf = true;
+    this.needsExit = true;
+    this.needsPutchar = true;
+
+    const elemSize = this.typeSizeOf(expr.elementType);
+    const elemTy = this.llvmType(expr.elementType);
+
+    const [vecPtrLines, vecPtr] = this.genLValue(expr.object);
+    lines.push(...vecPtrLines);
+    const [idxLines, idxVal] = this.genExpr(expr.index);
+    lines.push(...idxLines);
+
+    const lenPtr = this.nextTemp();
+    lines.push(`  ${lenPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 1`);
+    const len = this.nextTemp();
+    lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
+
+    // bounds: index must be < len
+    const oob = this.nextTemp();
+    lines.push(`  ${oob} = icmp uge i64 ${idxVal}, ${len}`);
+    const panicLabel = this.nextLabel("vec.remove.panic");
+    const okLabel = this.nextLabel("vec.remove.ok");
+    lines.push(`  br i1 ${oob}, label %${panicLabel}, label %${okLabel}`);
+
+    lines.push(`${panicLabel}:`);
+    const span = expr.span;
+    const { label: errLabel, length: errLen } = this.addString(`remove index out of bounds at ${span?.line ?? 0}:${span?.col ?? 0}`);
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
+    lines.push(`  call i32 @putchar(i32 10)`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+
+    lines.push(`${okLabel}:`);
+    const dataPtr = this.nextTemp();
+    lines.push(`  ${dataPtr} = getelementptr %Vec, ptr ${vecPtr}, i32 0, i32 0`);
+    const data = this.nextTemp();
+    lines.push(`  ${data} = load ptr, ptr ${dataPtr}`);
+    const elemPtr = this.nextTemp();
+    lines.push(`  ${elemPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idxVal}`);
+    const val = this.nextTemp();
+    lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
+
+    // shift [index+1, len) left by one
+    const idxPlus1 = this.nextTemp();
+    lines.push(`  ${idxPlus1} = add i64 ${idxVal}, 1`);
+    const srcPtr = this.nextTemp();
+    lines.push(`  ${srcPtr} = getelementptr ${elemTy}, ptr ${data}, i64 ${idxPlus1}`);
+    const tailCount = this.nextTemp();
+    lines.push(`  ${tailCount} = sub i64 ${len}, ${idxPlus1}`);
+    const tailBytes = this.nextTemp();
+    lines.push(`  ${tailBytes} = mul i64 ${tailCount}, ${elemSize}`);
+    lines.push(`  call void @llvm.memmove.p0.p0.i64(ptr ${elemPtr}, ptr ${srcPtr}, i64 ${tailBytes}, i1 false)`);
+    const newLen = this.nextTemp();
+    lines.push(`  ${newLen} = sub i64 ${len}, 1`);
+    lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
+
+    return [lines, val, elemTy];
   }
 
   private genVecContains(expr: HIRExpr & { kind: "VecContains" }, lines: string[]): [string[], string, string] {

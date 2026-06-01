@@ -3747,6 +3747,29 @@ export class TypeChecker {
             if (bType.tag !== "int" && bType.tag !== "unknown") { this.error(`'swap' index must be an integer, got ${typeName(bType)}`, sp); }
             return this.setType(expr, { tag: "void" });
           }
+          if (expr.method === "insert") {
+            if (expr.args.length !== 2) { this.error(`'insert' expects 2 arguments (index, value)`, sp); return this.setType(expr, { tag: "void" }); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot insert into immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            const idxType = this.checkExpr(expr.args[0]);
+            if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'insert' index must be an integer, got ${typeName(idxType)}`, sp); }
+            const valType = this.checkExprWithHint(expr.args[1], objType.element);
+            if (!typeEq(objType.element, valType) && valType.tag !== "unknown") {
+              this.error(`'insert' value: expected ${typeName(objType.element)}, got ${typeName(valType)}`, sp);
+            }
+            this.tryMove(expr.args[1]);
+            return this.setType(expr, { tag: "void" });
+          }
+          if (expr.method === "remove") {
+            if (expr.args.length !== 1) { this.error(`'remove' expects 1 argument (index)`, sp); return this.setType(expr, objType.element); }
+            if (!this.isRootMutable(expr.object)) {
+              this.error(`cannot remove from immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            const idxType = this.checkExpr(expr.args[0]);
+            if (idxType.tag !== "int" && idxType.tag !== "unknown") { this.error(`'remove' index must be an integer, got ${typeName(idxType)}`, sp); }
+            return this.setType(expr, objType.element);
+          }
           if (expr.method === "sort") {
             if (expr.args.length !== 0) { this.error(`'sort' takes no arguments`, sp); }
             if (!this.isRootMutable(expr.object)) {

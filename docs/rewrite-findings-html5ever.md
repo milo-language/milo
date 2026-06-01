@@ -20,7 +20,7 @@ All the scary `unsafe` in html5ever lives in **tendril** (157 — the zero-copy 
 
 | # | Finding | Status |
 |---|---------|--------|
-| 1 | **`Vec` has no `insert(i)` / `remove(i)`** — only push/pop/swap/filter. Ordered child insert+remove must rebuild the whole child Vec in a loop. | **Open** — stdlib gap; bites any ordered list. |
+| 1 | **`Vec` has no `insert(i)` / `remove(i)`** — only push/pop/swap/filter. Ordered child insert+remove had to rebuild the whole child Vec in a loop. | **Fixed** — added `Vec.insert(i, v)` (shift right, grow) and `Vec.remove(i)` (shift left, returns the element) via `@llvm.memmove`. `domArena` uses them directly now. |
 | 2 | **Read-by-copy** — `arenaGet` returns `Option<T>` by value, deep-copying the whole node (strings + child Vec) on every read. Traversal would copy every node. | **Fixed** — added `arenaWith(a, h, |&T| …)`: borrow-read, no copy. Reads only the field(s) you name. |
 | 3 | **Closure params bind immutable** — `arenaModify`'s `(T)=>T` forced a `var m = n` rebind plus full copy-in/copy-out per single-field write. | **Fixed** — added `arenaModifyMut(a, h, |&mut T| …)`: in-place mutation, no copy. |
 | 4 | **Closures capture non-Copy values by move** — a string used in a closure *and* after it needs `.clone()` (flow-insensitive, even when the closure branch returns). Copy-able handles/scalars are unaffected. | **By design** — documented in the scaffold. Minor. |

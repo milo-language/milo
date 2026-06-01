@@ -167,18 +167,21 @@ fn sameNode(a: Handle<Node>, b: Handle<Node>): bool {
     return a == b
 }
 
-// No Vec.remove(i) in the stdlib, so ordered removal rebuilds the child list.
 fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
     match nodeParent(dom, child) {
         Option.Some(p) => {
             arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
-                var out: Vec<Handle<Node>> = Vec.new()
+                var found = false
+                var idx: i64 = 0
                 for i in 0..n.children.len() {
-                    if !(n.children[i] == child) {
-                        out.push(n.children[i])
+                    if !found && n.children[i] == child {
+                        idx = i
+                        found = true
                     }
                 }
-                n.children = out
+                if found {
+                    n.children.remove(idx)
+                }
             })
             setParent(dom, child, Option.None)
         }
@@ -186,19 +189,21 @@ fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
     }
 }
 
-// No Vec.insert(i, v) either — rebuild inserting newNode before `sibling`.
 fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Node>) {
     match nodeParent(dom, sibling) {
         Option.Some(p) => {
             arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
-                var out: Vec<Handle<Node>> = Vec.new()
+                var found = false
+                var idx: i64 = 0
                 for i in 0..n.children.len() {
-                    if n.children[i] == sibling {
-                        out.push(newNode)
+                    if !found && n.children[i] == sibling {
+                        idx = i
+                        found = true
                     }
-                    out.push(n.children[i])
                 }
-                n.children = out
+                if found {
+                    n.children.insert(idx, newNode)
+                }
             })
             setParent(dom, newNode, Option.Some(p))
         }
