@@ -530,6 +530,64 @@ fn skipTo(src: &string, pos: i64, n: i64, target: u8): i64 {
     return i
 }
 
+// Raw-text elements: content is consumed literally (no tags), entities not
+// decoded. RCDATA elements are literal-tags but entities ARE decoded.
+fn isRawText(name: &string): bool {
+    return name == "script" || name == "style"
+}
+
+fn isRcData(name: &string): bool {
+    return name == "textarea" || name == "title"
+}
+
+// Does src at `pos` spell out `</tag` followed by a tag terminator?
+fn matchesCloseTag(src: &string, pos: i64, n: i64, tag: &string): bool {
+    let tl = tag.len()
+    if pos + tl > n {
+        return false
+    }
+    var ok = true
+    for k in 0..tl {
+        if lower(src[pos + k]) != tag[k] {
+            ok = false
+        }
+    }
+    if !ok {
+        return false
+    }
+    let after = pos + tl
+    if after >= n {
+        return true
+    }
+    let c = src[after]
+    return isSpace(c) || c == '>' || c == '/'
+}
+
+// Consume raw/rcdata content until the matching close tag; the open element is
+// the top of the stack. Emits the content as text and pops the element.
+fn consumeRaw(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: i64, n: i64, decode: bool): i64 {
+    let tag = nodeName(dom, topOf(stack))
+    let here = topOf(stack)
+    var out = String.withCapacity(32)
+    var i = pos
+    var done = false
+    while i < n && !done {
+        if src[i] == '<' && i + 1 < n && src[i + 1] == '/' && matchesCloseTag(src, i + 2, n, tag) {
+            done = true
+        } else if decode && src[i] == '&' {
+            i = decodeEntity(src, i, n, out)
+        } else {
+            out.push(src[i])
+            i = i + 1
+        }
+    }
+    appendText(dom, here, out)
+    if done {
+        i = parseEndTag(dom, stack, src, i + 2, n)
+    }
+    return i
+}
+
 fn parseHtml(dom: &mut Dom, src: &string) {
     let n = src.len()
     var stack: Vec<Handle<Node>> = Vec.new()
@@ -546,6 +604,16 @@ fn parseHtml(dom: &mut Dom, src: &string) {
                 pos = parseEndTag(dom, stack, src, pos + 2, n)
             } else if pos + 1 < n && isAlpha(src[pos + 1]) {
                 pos = parseStartTag(dom, stack, src, pos + 1, n)
+                // raw-text (script/style) and rcdata (textarea/title) elements
+                // swallow their content literally until the matching close tag.
+                if stack.len() > 1 {
+                    let openName = nodeName(dom, topOf(stack))
+                    if isRawText(openName) {
+                        pos = consumeRaw(dom, stack, src, pos, n, false)
+                    } else if isRcData(openName) {
+                        pos = consumeRaw(dom, stack, src, pos, n, true)
+                    }
+                }
             } else {
                 // stray '<' — treat as text
                 pos = parseText(dom, topOf(stack), src, pos + 1, n)
