@@ -12,10 +12,12 @@ import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { formatDiagnostic, type WarningConfig } from "./diagnostics";
-import { type TargetInfo, getHostTarget } from "./target";
+import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
 import { format, formatFile } from "./formatter";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
+import { extractFlowFacts, formatFlowFacts } from "./wcet";
+import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
 
 function frontendToHIR(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig) {
   const sourceDir = filePath ? dirname(resolve(filePath)) : process.cwd();
@@ -85,6 +87,51 @@ function detectToolchain(): Toolchain {
   return cachedToolchain;
 }
 
+// clang codegen flags for a cross-compilation target. Empty for the host
+// (clang defaults to the host triple). Bare-metal targets get the thumb triple,
+// core selection, float ABI, and -ffreestanding (no hosted libc assumptions).
+function clangTargetFlags(target: TargetInfo): string {
+  if (!target.bareMetal) return "";
+  let f = ` --target=${target.triple}`;
+  if (target.mcpu) f += ` -mcpu=${target.mcpu}`;
+  if (target.floatAbi) f += ` -mfloat-abi=${target.floatAbi}`;
+  f += " -ffreestanding";
+  return f;
+}
+
+// Directory holding the bare-metal runtime (startup + linker scripts), resolved
+// relative to this file so it works regardless of the caller's cwd.
+function embeddedDir(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "..", "embedded", "cortex-m");
+}
+
+// Link a bare-metal Cortex-M executable: the Milo program's IR + the freestanding
+// startup (vector table, .data/.bss init, semihosting exit) against the board's
+// linker script. Uses lld (-fuse-ld=lld) and -nostdlib — there is no libc/crt0.
+// Produces a statically-linked ELF runnable under QEMU (-semihosting).
+function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optFlag: string) {
+  const tc = detectToolchain();
+  if (tc.kind !== "clang") {
+    console.error(`error: cross-compiling to ${target.triple} requires clang (not llc+cc)`);
+    process.exit(1);
+  }
+  const ed = embeddedDir();
+  const startup = join(ed, "startup.c");
+  const ldScript = join(ed, "mps2.ld");
+  if (!existsSync(startup) || !existsSync(ldScript)) {
+    console.error(`error: bare-metal runtime not found in ${ed} (need startup.c + mps2.ld)`);
+    process.exit(1);
+  }
+  const opt = optFlag || "-O2";
+  const tgt = clangTargetFlags(target);
+  // -nostdlib: no libc/crt0. -Wl,-T,<script>: use our memory map. startup.c is
+  // compiled and linked alongside the program IR in a single clang invocation.
+  execSync(
+    `${tc.path}${tgt} ${opt} -nostdlib -fuse-ld=lld -Wl,-T,"${ldScript}" "${startup}" "${llFile}" -o "${outFile}" -Wno-override-module`,
+    { stdio: ["pipe", "pipe", "pipe"] }
+  );
+}
+
 function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false) {
   const tc = detectToolchain();
   const san = sanitize ? " -fsanitize=address" : "";
@@ -130,9 +177,14 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
     writeFileSync(tmpLl, irText);
     const tc = detectToolchain();
     const opt = optFlag || "-O2";
+    const tgt = clangTargetFlags(target);
     if (tc.kind === "clang") {
-      execSync(`${tc.path} -c ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`${tc.path} -c${tgt} ${opt} ${tmpLl} -o ${out} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
     } else {
+      if (tgt) {
+        console.error(`error: cross-compiling to ${target.triple} requires clang (not llc+cc)`);
+        process.exit(1);
+      }
       execSync(`llc -filetype=obj ${opt} ${tmpLl} -o ${out}`, { stdio: ["pipe", "pipe", "pipe"] });
     }
   } catch (e: any) {
@@ -192,9 +244,14 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 
   try {
     writeFileSync(tmpLl, ir);
-    const libs = detectLibs(ir, target);
-    const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
-    linkIR(tmpLl, out, optFlag, libs, extra, sanitize);
+    if (target.bareMetal) {
+      // Freestanding link: program IR + startup runtime + linker script → ELF.
+      linkBareMetal(tmpLl, out, target, optFlag);
+    } else {
+      const libs = detectLibs(ir, target);
+      const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
+      linkIR(tmpLl, out, optFlag, libs, extra, sanitize);
+    }
   } catch (e: any) {
     console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
     process.exit(1);
@@ -282,14 +339,47 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warn
 function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false) {
   const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize);
   try {
-    const result = execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), {
-      stdio: "inherit",
-    });
+    if (target.bareMetal) {
+      runBareMetalQemu(bin, target);
+      return;
+    }
+    execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), { stdio: "inherit" });
   } catch (e: any) {
     process.exit(e.status ?? 1);
   } finally {
     try { unlinkSync(bin); } catch {}
   }
+}
+
+// Run a bare-metal ELF under QEMU with semihosting. The program's stdout/exit
+// arrive on the semihosting console (startup.c prints "exit=<n>"); QEMU's own
+// process exit is always 1 for legacy SYS_EXIT, so we don't propagate it.
+function runBareMetalQemu(bin: string, target: TargetInfo) {
+  const machine = target.qemuMachine;
+  if (!machine) {
+    console.error(`error: no QEMU machine configured for ${target.triple}`);
+    process.exit(1);
+  }
+  const qemu = "qemu-system-arm";
+  try {
+    execSync(`${qemu} --version`, { stdio: ["pipe", "pipe", "pipe"] });
+  } catch {
+    console.error(`error: ${qemu} not found on PATH — install QEMU to run bare-metal targets (brew install qemu)`);
+    process.exit(1);
+  }
+  // -semihosting routes the program's bkpt 0xAB I/O to this console; -nographic
+  // keeps it headless. mcpu pins the core so the AN board models the right one.
+  // QEMU always exits 1 on legacy SYS_EXIT regardless of the program's status,
+  // so we capture+forward the console output and treat a clean run as success;
+  // the program's actual result is the "exit=<n>" line startup.c prints.
+  const r = spawnSync(qemu, ["-machine", machine, "-cpu", target.mcpu!, "-semihosting", "-nographic", "-kernel", bin], {
+    encoding: "utf-8", timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (r.error) { console.error(`error: failed to run ${qemu}: ${r.error.message}`); process.exit(1); }
+  // QEMU emits semihosting console output on its stderr; that's the Milo
+  // program's stdout, so forward it there (not to our stderr).
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stdout.write(r.stderr);
 }
 
 function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean } {
@@ -299,6 +389,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let noEntry = false;
   let safetyLevel: string | null = null;
   let sanitize = false;
+  let targetName: string | null = null;
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
@@ -317,11 +408,13 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--allow" && i + 1 < args.length) { allowed.add(args[++i]); }
     else if (args[i].startsWith("--safety=")) { safetyLevel = args[i].slice(9); }
     else if (args[i] === "--safety" && i + 1 < args.length) { safetyLevel = args[++i]; }
+    else if (args[i].startsWith("--target=")) { targetName = args[i].slice(9); }
+    else if (args[i] === "--target" && i + 1 < args.length) { targetName = args[++i]; }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -731,6 +824,7 @@ function main() {
     console.log("  prove <file>           verify contracts via z3 solver");
     console.log("  safety <file>          check safety profile compliance");
     console.log("  safety --list          list available safety profiles");
+    console.log("  wcet <file>            emit OTAWA flow facts (loop bounds) for WCET analysis");
     console.log("  skill                  print language guide for LLMs");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
@@ -815,8 +909,17 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize } = parseArgs(args.slice(1));
-  const target = getHostTarget();
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName } = parseArgs(args.slice(1));
+  let target = getHostTarget();
+  if (targetName) {
+    const resolved = resolveTarget(targetName);
+    if (!resolved) {
+      console.error(`unknown target: ${targetName}`);
+      console.error(`available targets: ${listTargets().join(", ")}`);
+      process.exit(1);
+    }
+    target = resolved;
+  }
 
   if (cmd === "build-lib") {
     const libArgs = args.slice(1);
@@ -844,6 +947,47 @@ function main() {
     new TypeChecker(warningConfig).check(program);
     const result = generateVerificationConditions(program);
     console.log(formatVerifyReport(result));
+    return;
+  }
+
+  if (cmd === "wcet") {
+    // Emit OTAWA flow facts (loop iteration bounds) for WCET analysis. Output
+    // goes to -o <file> or stdout. Use after `milo safety` confirms bounded loops.
+    const src = readFileSync(source!, "utf-8");
+    const sourceDir = dirname(resolve(source!));
+    const tokens = new Lexer(src).tokenize();
+    let program = new Parser(tokens, src).parse();
+    program = resolveImports(program, sourceDir, target);
+    new TypeChecker(warningConfig).check(program);
+    const facts = extractFlowFacts(program, source!);
+    // --cycles: go past flow facts to an actual Cortex-M3 cycle bound by
+    // disassembling the linked ELF and applying the core timing model.
+    if (rest.includes("--cycles")) {
+      if (!target.bareMetal) {
+        console.error("error: --cycles requires a bare-metal target (e.g. --target=cortex-m3)");
+        process.exit(1);
+      }
+      const elf = compileToBinary(source!, null, target, optFlag, warningConfig, [], false);
+      try {
+        let any = false;
+        for (const b of facts.bounds) {
+          if (b.kind === "unresolved" || b.count === null) continue;
+          const est = estimateLoopCycles(elf, b.fn, b.count);
+          if (est) { console.log(formatCycleEstimate(est, target.triple)); any = true; }
+        }
+        if (!any) console.log("no bounded loops with a resolvable cycle estimate");
+      } finally {
+        try { unlinkSync(elf); } catch {}
+      }
+      return;
+    }
+    const ff = formatFlowFacts(facts);
+    if (output) {
+      writeFileSync(output, ff);
+      console.log(`wrote flow facts -> ${output}`);
+    } else {
+      process.stdout.write(ff);
+    }
     return;
   }
 

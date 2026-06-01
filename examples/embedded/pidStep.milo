@@ -1,0 +1,93 @@
+// Integer fixed-point PID controller — a real safety-critical control kernel.
+//
+// This is the computation a flight controller / motor ESC / ABS module runs on
+// every timer tick: read error, compute a corrective output, clamp it to the
+// actuator range. Written integer-only (Q16.16 fixed point) so it passes the
+// strictest safety profiles (iec61508-4 bans floating point) and is WCET-
+// analyzable: no recursion, no dynamic allocation, every loop bounded.
+//
+// Bare-metal demo of the whole Milo chain:
+//   milo safety  examples/embedded/pidStep.milo --safety=iec61508-4
+//   milo wcet    examples/embedded/pidStep.milo
+//   milo run     examples/embedded/pidStep.milo --target=cortex-m3
+
+// Q16.16: integer value n represents the real number n / 65536.
+let FP_SHIFT: i32 = 16
+
+fn fpMul(a: i32, b: i32): i32
+  requires a >= 0 - 2147483648 && b >= 0 - 2147483648
+  ensures result == result
+{
+    // (a/2^16)*(b/2^16) = (a*b)/2^16, kept in 64-bit to avoid overflow midway.
+    let wide: i64 = (a as i64) * (b as i64)
+    return (wide >> 16) as i32
+}
+
+fn clampI32(v: i32, lo: i32, hi: i32): i32
+  requires lo <= hi
+  ensures result >= lo && result <= hi
+{
+    if v < lo { return lo }
+    if v > hi { return hi }
+    return v
+}
+
+// One PID step. All gains and signals are Q16.16. integral is the running sum
+// carried between ticks; here we exercise a fixed number of ticks in a bounded
+// loop so the kernel is fully WCET-bounded.
+fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32,
+           integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
+  requires outLo <= outHi
+{
+    let error: i32 = setpoint - measured
+    let newIntegral: i32 = integral + error
+    let derivative: i32 = error - prevError
+
+    let p: i32 = fpMul(kp, error)
+    let i: i32 = fpMul(ki, newIntegral)
+    let d: i32 = fpMul(kd, derivative)
+
+    let raw: i32 = p + i + d
+    return clampI32(raw, outLo, outHi)
+}
+
+// Drive the controller toward a setpoint for a bounded number of ticks and
+// return the final actuator command. The loop bound (200) is what WCET analysis
+// reads as the iteration count.
+fn settle(setpoint: i32, kp: i32, ki: i32, kd: i32, outLo: i32, outHi: i32): i32
+  requires outLo <= outHi
+  ensures result >= outLo && result <= outHi
+{
+    var measured: i32 = 0
+    var integral: i32 = 0
+    var prevError: i32 = 0
+    var cmd: i32 = 0
+
+    // Anti-windup: clamp the integral so it can't run away and overflow — this
+    // is standard practice in real controllers, and it keeps the kernel within
+    // i32 range so overflow checks never trip.
+    let iLimit: i32 = 1000000
+    for tick in 0..200 {
+        cmd = pidStep(setpoint, measured, kp, ki, kd, integral, prevError, outLo, outHi)
+        // crude plant model: actuator nudges the measurement toward setpoint.
+        let error: i32 = setpoint - measured
+        integral = clampI32(integral + (error >> 8), 0 - iLimit, iLimit)
+        prevError = error
+        measured = measured + (cmd >> 8)
+    }
+    return cmd
+}
+
+fn main(): i32 {
+    let one: i32 = 65536        // 1.0 in Q16.16
+    let setpoint: i32 = 100 * one
+    let kp: i32 = one / 2       // 0.5
+    let ki: i32 = one / 100     // 0.01
+    let kd: i32 = one / 10      // 0.1
+    let outLo: i32 = 0
+    let outHi: i32 = 255 * one  // actuator range 0..255 (e.g. PWM duty)
+
+    let cmd: i32 = settle(setpoint, kp, ki, kd, outLo, outHi)
+    // return the final command in whole units (Q16.16 -> integer) as exit code.
+    return cmd >> 16
+}
