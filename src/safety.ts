@@ -250,15 +250,6 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
       });
     }
 
-    if (constraints.noRecursion) {
-      if (bodyCallsSelf(fn.name, fn.body)) {
-        violations.push({
-          rule: "no-recursion",
-          message: `[${level}] function '${fn.name}' contains recursion (banned at this safety level)`,
-          severity: "error",
-        });
-      }
-    }
 
     if (constraints.requireBoundedLoops) {
       checkUnboundedLoops(fn.name, fn.body, violations, level);
@@ -289,6 +280,10 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
   }
 
   // Whole-program checks (need cross-function / cross-type visibility).
+  if (constraints.noRecursion) {
+    checkRecursionCycles(program, violations, level);
+  }
+
   if (constraints.maxCallDepth !== null) {
     checkCallDepth(program, constraints.maxCallDepth, violations, level);
   }
@@ -302,51 +297,6 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
   // ever reach the safety check), so no separate enforcement is needed here.
 
   return violations;
-}
-
-function bodyCallsSelf(fnName: string, stmts: Stmt[]): boolean {
-  for (const stmt of stmts) {
-    if (stmtCallsSelf(fnName, stmt)) return true;
-  }
-  return false;
-}
-
-function stmtCallsSelf(fnName: string, stmt: Stmt): boolean {
-  switch (stmt.kind) {
-    case "ExprStmt":
-      return exprCallsSelf(fnName, stmt.expr);
-    case "LetDecl":
-    case "VarDecl":
-      return exprCallsSelf(fnName, stmt.value);
-    case "Assign":
-      return exprCallsSelf(fnName, stmt.value) || exprCallsSelf(fnName, stmt.target);
-    case "Return":
-      return stmt.value ? exprCallsSelf(fnName, stmt.value) : false;
-    case "IfStmt":
-      return exprCallsSelf(fnName, stmt.cond)
-        || bodyCallsSelf(fnName, stmt.thenBody)
-        || (stmt.elseBody ? bodyCallsSelf(fnName, stmt.elseBody) : false);
-    case "WhileStmt":
-      return exprCallsSelf(fnName, stmt.cond) || bodyCallsSelf(fnName, stmt.body);
-    case "ForInStmt":
-      return exprCallsSelf(fnName, stmt.iterable) || bodyCallsSelf(fnName, stmt.body);
-    case "MatchStmt":
-      return exprCallsSelf(fnName, stmt.subject) || stmt.arms.some(a => bodyCallsSelf(fnName, a.body));
-    default:
-      return false;
-  }
-}
-
-function exprCallsSelf(fnName: string, expr: import("./ast").Expr): boolean {
-  switch (expr.kind) {
-    case "Call": return expr.func === fnName || expr.args.some(a => exprCallsSelf(fnName, a));
-    case "BinOp": return exprCallsSelf(fnName, expr.left) || exprCallsSelf(fnName, expr.right);
-    case "UnaryOp": return exprCallsSelf(fnName, expr.operand);
-    case "MethodCall": return exprCallsSelf(fnName, expr.object) || expr.args.some(a => exprCallsSelf(fnName, a));
-    case "FieldAccess": return exprCallsSelf(fnName, expr.object);
-    case "IndexAccess": return exprCallsSelf(fnName, expr.object) || exprCallsSelf(fnName, expr.index);
-    default: return false;
-  }
 }
 
 function checkUnboundedLoops(fnName: string, stmts: Stmt[], violations: SafetyViolation[], level: SafetyLevel) {
@@ -518,6 +468,58 @@ function checkNoFloat(fn: Function, violations: SafetyViolation[], level: Safety
   }, (s) => {
     if ((s.kind === "LetDecl" || s.kind === "VarDecl") && typeIsFloat(s.type)) flag(s.span);
   });
+}
+
+// ── noRecursion ──
+// Catches ANY recursion in the user call graph — direct (f→f) and mutual
+// (f→g→f, a→b→c→a). A back-edge to a function on the active DFS stack closes a
+// cycle. Whole-program because mutual recursion is invisible per-function, and
+// some profiles set noRecursion without a maxCallDepth bound (e.g. DO-178C C),
+// so the call-depth pass can't be relied on to catch it.
+
+function checkRecursionCycles(program: Program, violations: SafetyViolation[], level: SafetyLevel) {
+  const userFns = program.userFnNames;
+  const fnByName = new Map<string, Function>();
+  for (const fn of program.functions) {
+    if (fn.isExtern) continue;
+    if (userFns && !userFns.has(fn.name)) continue;
+    fnByName.set(fn.name, fn);
+  }
+  const callees = (fn: Function): string[] => {
+    const out = new Set<string>();
+    walkExprs(fn.body, (e) => { if (e.kind === "Call" && fnByName.has(e.func)) out.add(e.func); });
+    return [...out];
+  };
+
+  const WHITE = 0, GRAY = 1, BLACK = 2;
+  const color = new Map<string, number>();
+  const stack: string[] = [];
+  const reported = new Set<string>();
+  const dfs = (name: string) => {
+    color.set(name, GRAY);
+    stack.push(name);
+    for (const c of callees(fnByName.get(name)!)) {
+      if (color.get(c) === GRAY) {
+        const cycle = stack.slice(stack.indexOf(c)).concat(c);
+        const key = [...new Set(cycle)].sort().join(",");
+        if (!reported.has(key)) {
+          reported.add(key);
+          violations.push({
+            rule: "no-recursion",
+            message: `[${level}] recursion detected: ${cycle.join(" -> ")} (banned at this safety level)`,
+            severity: "error",
+          });
+        }
+      } else if ((color.get(c) ?? WHITE) === WHITE) {
+        dfs(c);
+      }
+    }
+    stack.pop();
+    color.set(name, BLACK);
+  };
+  for (const name of fnByName.keys()) {
+    if ((color.get(name) ?? WHITE) === WHITE) dfs(name);
+  }
 }
 
 // ── maxCallDepth ──

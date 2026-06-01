@@ -91,3 +91,25 @@ test("complexity stays under bound for a simple boolean function", () => {
   const src = `fn simple(a: i32, b: i32): i32 { if a > 0 && b > 0 { return 1 } return 0 }`;
   expect(rules(src, "do178c-a")).not.toContain("max-complexity");
 });
+
+// ── noRecursion: direct AND mutual recursion (call-graph cycles) ──
+
+test("noRecursion flags direct recursion", () => {
+  const src = `fn fact(n: i32): i32 requires n >= 0 ensures result >= 0 { if n <= 1 { return 1 } return n * fact(n - 1) }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-c")).toContain("no-recursion");
+});
+
+test("noRecursion flags mutual recursion under a profile with no call-depth bound (do178c-c)", () => {
+  const src = `fn isEven(n: i32): bool requires n >= 0 ensures true { if n == 0 { return true } return isOdd(n - 1) }
+fn isOdd(n: i32): bool requires n >= 0 ensures true { if n == 0 { return false } return isEven(n - 1) }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-c")).toContain("no-recursion");
+});
+
+test("noRecursion allows a non-recursive call graph", () => {
+  const src = `fn add(a: i32, b: i32): i32 requires true ensures true { return a + b }
+fn use(): i32 requires true ensures true { return add(1, 2) }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-c")).not.toContain("no-recursion");
+});
