@@ -76,3 +76,8 @@ Stress-tested traits/interfaces beyond the basic fixtures (the survey flagged th
 **Noted (not yet fixed):**
 - `Heap<Interface>` doesn't auto-borrow to `&Interface` at a call site (`fn f(s: &Shape); f(vec[0])` where `vec[0]: Heap<Shape>`) — same fat-pointer layout, so an auto-borrow is feasible; ergonomic gap.
 - `interface` methods can't have default bodies (clear error). Whether `trait` supports it is a separate question.
+
+### Probe 3 (cont.): struct-field trait objects + the trait/interface split
+
+- **Fixed: `Heap<Interface>` as a struct field** (`struct W { shape: Heap<Shape> }`) — both the initializer coercion (`Heap(Sq{})`→`Heap<Shape>`) and dispatch through the field (`w.shape.area()`) failed. Root: interfaces were registered *after* non-generic struct fields were resolved, so `Heap<Shape>` field types tagged their inner as a default `struct` instead of `interface`. Fixed by pre-registering interface names before struct-field resolution. Fixture: `tests/fixtures/structFieldTraitObject.milo`.
+- **Clarified (by design, not a bug):** `interface` and `trait` are separate. `interface` is for dynamic dispatch (`&Shape`, `Heap<Shape>`, implicit impl via `impl Sq { fn area }`); `trait` is for generic bounds (`trait T`, `impl T for S`, `fn f<X: T>`). Using an `interface` as a generic bound errors ("does not implement trait"); use a `trait`. A clearer diagnostic ("Shape is an interface, not a trait — interfaces can't be used as generic bounds") would help, but the split is intentional.
