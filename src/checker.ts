@@ -1769,7 +1769,10 @@ export class TypeChecker {
           const valType = this.checkExprWithHint(stmt.value, fnRetType);
           if (!typeEq(fnRetType, valType) && valType.tag !== "unknown" && fnRetType.tag !== "unknown") {
             const isStringToPtr = valType.tag === "string" && fnRetType.tag === "ptr" && fnRetType.inner.tag === "int" && fnRetType.inner.bits === 8;
-            if (!isStringToPtr) {
+            // Coerce a concrete type to an interface at return position
+            // (`return Heap(Circle{})` where the fn returns Heap<Shape>), as
+            // let-bindings and call args already do.
+            if (!isStringToPtr && !this.tryInterfaceCoercion(stmt.value, valType, fnRetType)) {
               this.error(`return type mismatch: expected ${typeName(fnRetType)}, got ${typeName(valType)}`, sp);
             }
           }
