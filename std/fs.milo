@@ -37,7 +37,8 @@ fn fileInfo(path: &string): FileInfo {
         // read i64 size
         var size: i64 = 0
         for i in 0..8 {
-            size = size | ((buf[sizeOff + i]as i64) << (i * 8))
+            let off = i as i64
+            size = size | ((buf[sizeOff + off] as i64) << (off * 8))
         }
         return FileInfo {
             size: size, mode: mode, exists: true
@@ -323,7 +324,8 @@ fn lstatInfo(path: &string): FileInfo {
         let mode = modeLo | (modeHi << 8)
         var size: i64 = 0
         for i in 0..8 {
-            size = size | ((buf[sizeOff + i] as i64) << (i * 8))
+            let off = i as i64
+            size = size | ((buf[sizeOff + off] as i64) << (off * 8))
         }
         return FileInfo { size: size, mode: mode, exists: true }
     }

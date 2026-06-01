@@ -1,0 +1,12 @@
+// @expect: 7
+// @expect: 11
+// A constant-int subexpression (not a bare literal) adopts the other operand's
+// int width: `i64 + 1 * 2` and `i64 << 1 | (1 + 0)` type-check without `as i64`.
+fn main(): i32 {
+    let h: i64 = 5
+    let a = h + 1 * 2
+    print(a)
+    let b = (h << 1) | (1 + 0)
+    print(b)
+    return 0
+}

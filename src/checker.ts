@@ -2508,6 +2508,23 @@ export class TypeChecker {
     }
   }
 
+  // An integer expression composed entirely of literals (and arithmetic on
+  // them) — its width is unconstrained and can adopt a context type.
+  private isConstIntExpr(e: Expr): boolean {
+    if (e.kind === "IntLit" || e.kind === "CharLit") return true;
+    if (e.kind === "BinOp") return this.isConstIntExpr(e.left) && this.isConstIntExpr(e.right);
+    if (e.kind === "UnaryOp") return this.isConstIntExpr(e.operand);
+    return false;
+  }
+
+  // Retype a constant-int subtree to `t`. Leaves go through checkExprWithHint
+  // so per-literal range/overflow checks still fire against the target type.
+  private retypeConstInt(e: Expr, t: TypeKind) {
+    if (e.kind === "IntLit" || e.kind === "CharLit") { this.checkExprWithHint(e, t); return; }
+    if (e.kind === "BinOp") { this.retypeConstInt(e.left, t); this.retypeConstInt(e.right, t); this.exprTypes.set(e, t); return; }
+    if (e.kind === "UnaryOp") { this.retypeConstInt(e.operand, t); this.exprTypes.set(e, t); return; }
+  }
+
   private isRootMutable(expr: Expr): boolean {
     this.markCaptureMutated(expr);
     if (expr.kind === "Ident") {
@@ -2686,11 +2703,18 @@ export class TypeChecker {
         }
         let lt = this.checkExpr(expr.left);
         let rt = this.checkExpr(expr.right);
-        // Integer literal coercion: widen IntLit to match the other operand's int type
-        if (lt.tag === "int" && (expr.right.kind === "IntLit" || expr.right.kind === "CharLit") && !typeEq(lt, rt)) {
-          rt = this.checkExprWithHint(expr.right, lt);
-        } else if (rt.tag === "int" && (expr.left.kind === "IntLit" || expr.left.kind === "CharLit") && !typeEq(lt, rt)) {
-          lt = this.checkExprWithHint(expr.left, rt);
+        // Integer constant coercion: a constant-int operand (a literal, or an
+        // all-literal subexpression like `1 << 5` or `(a + 1)`) defaults to i32
+        // but should adopt the other operand's int width. Retype the constant
+        // subtree to match, so `i64var + 1 * 2` type-checks without an `as i64`.
+        if (lt.tag === "int" && rt.tag === "int" && !typeEq(lt, rt)) {
+          if (this.isConstIntExpr(expr.right)) {
+            this.retypeConstInt(expr.right, lt);
+            rt = lt;
+          } else if (this.isConstIntExpr(expr.left)) {
+            this.retypeConstInt(expr.left, rt);
+            lt = rt;
+          }
         }
         const arithOps = ["+", "-", "*", "/", "%"];
         const cmpOps = ["==", "!=", "<", ">", "<=", ">="];
