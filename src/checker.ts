@@ -2586,6 +2586,35 @@ export class TypeChecker {
     if (e.kind === "UnaryOp") { this.retypeConstInt(e.operand, t); this.exprTypes.set(e, t); return; }
   }
 
+  private rootVarOf(e: Expr): string | null {
+    let cur = e;
+    while (cur.kind === "FieldAccess" || cur.kind === "IndexAccess") cur = cur.object;
+    return cur.kind === "Ident" ? cur.name : null;
+  }
+
+  // Phase 3a (call-site exclusivity): a variable must not appear at one call as
+  // both a `&var`/`&mut` argument and the root of a `&` argument. A mutation
+  // through the mutable borrow could invalidate the shared reference (e.g.
+  // `push` reallocates), leaving it dangling. Pure argument-origin check.
+  private checkCallSiteExclusivity(args: Expr[], sp: Span) {
+    const mutRoots = new Map<string, Span>();
+    const sharedRoots = new Set<string>();
+    for (const arg of args) {
+      const ab = this.autoBorrowed.get(arg);
+      if (!ab) continue;
+      const root = this.rootVarOf(arg);
+      if (!root) continue;
+      if (ab.mutable) mutRoots.set(root, arg.span ?? sp);
+      else sharedRoots.add(root);
+    }
+    for (const [root, span] of mutRoots) {
+      if (sharedRoots.has(root)) {
+        this.error(`'${root}' is borrowed mutably and shared in the same call`, span,
+          `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${root}' — pass a copy or split the call`);
+      }
+    }
+  }
+
   private isRootMutable(expr: Expr): boolean {
     this.markCaptureMutated(expr);
     if (expr.kind === "Ident") {
@@ -3222,6 +3251,7 @@ export class TypeChecker {
           }
           this.tryMove(expr.args[i]);
         }
+        this.checkCallSiteExclusivity(expr.args, sp);
         // safe extern call: no unsafe needed if all args are safe-passable and return is scalar/void.
         // Compute safety unconditionally (not just at depth 0) so an unsafe-requiring extern call
         // marks its enclosing block used, while a safe one leaves the block flagged unused.

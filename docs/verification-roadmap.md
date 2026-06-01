@@ -18,6 +18,8 @@ Order of operations:
 2. **Phase 2b — use-after-invalidate.** `.push()` (may realloc), `.clear()`, reassignment taint live refs. Stdlib methods annotated `@invalidates_refs`.
 3. **Phase 3a — call-site exclusivity.** A variable cannot appear as both a `&var` argument and the source of a `&` argument at one call site. Pure argument-origin check — no interprocedural dataflow.
 
+**Status (done):** 2a (ref-while-frozen) already held — reassigning a frozen var errors. 2b (use-after-invalidate) is largely N/A today: the only into-collection borrows are string slices (Vec has no slice API), and reassign-while-sliced is already caught. 3a (call-site exclusivity) was the one real hole — `f(&mut v, &v[0])` compiled and silently corrupted after a reallocating `push`; now rejected (`checker.ts checkCallSiteExclusivity`, fixture `tests/errors/callSiteExclusivity.milo`). The sealed contract is sound for the patterns expressible today.
+
 Payoff: the *existing* contract becomes genuinely sound. Highest ROI verification work available. No reason to leap to custom proofs before this lands.
 
 ## Part B: User-Asserted Properties

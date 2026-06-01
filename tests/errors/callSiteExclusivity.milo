@@ -1,0 +1,12 @@
+// Passing a variable as both a mutable borrow and the source of a shared borrow
+// in one call is rejected: a mutation through &var could invalidate the & arg
+// (e.g. push reallocates the Vec, leaving &v[0] dangling).
+fn grow(a: &mut Vec<i64>, b: &i64) {
+    a.push(b)
+}
+fn main(): i32 {
+    var v: Vec<i64> = [7]
+    grow(v, v[0])
+    return 0
+}
+// @error: borrowed mutably and shared in the same call
