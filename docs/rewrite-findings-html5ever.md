@@ -47,3 +47,13 @@ The rewrite surfaced **two real compiler bugs** — exactly the "does it reintro
 ## Next
 
 Port the html5ever tokenizer state machine (`tokenizer/mod.rs` + `states.rs` + `char_ref/`) and tree-builder insertion modes against this DOM, `Node`-small variant, and measure. That closes the loop on "does it survive a *big* program."
+
+## Probe 2: tree-walking interpreter (`examples/apps/minilang.milo`)
+
+The next rewrite probe — the "interpreter env holding an AST + values" lifetime pattern (a tiny `let`/`if`/arithmetic language). AST in a generational arena (recursive via `Handle`), environment a scope stack of `(name, Value)`, recursive `evalExpr`. **Works, zero unsafe** — `let x=6 in let y=7 in x*y` → 42; `if 3<5 then 100 else 200` → 100. The model carries an interpreter, not just a data structure.
+
+**New finding: `match` on a borrowed enum (`&enum`) is unsupported.** Reading a payload-bearing enum *out of* an arena or collection forces it — the read closure receives `&Expr`, and `match e { ... }` on that `&Expr` is rejected ("match subject must be an enum…, got Value/Expr" — it's behind a ref). The DOM dodged this (its `Node` was a struct with a payload-free `NodeKind`); the interpreter's `Expr`/`Value` are payload enums, so it hits the wall.
+
+Workaround (and what the program uses): **tag-structs** — an `i32` tag + fields, dispatched with if-else, read back by field-copy (string cloned, Copy handles/ints copied) with no match on a reference. This is exactly the idiom `std/json.milo` already uses, so it's an established pattern, not a dead end. But it gives up exhaustiveness checking and payload ergonomics.
+
+**Recommended next feature: `match` on `&enum`** (bind payloads as borrows, à la Rust `match &x`). It's the single most impactful ergonomic gap for the interpreter/AST class of program. Implementation spans checker (accept `&enum` subject, deref to inner) + lower/codegen (use the ref pointer as the match address directly) + **drop-safety** (payload bindings from a ref-match are borrows and must NOT be dropped — same double-free class as the earlier closure-capture UAF, so it needs care and runtime validation, not a rushed change). Alternative: `@derive(Clone)` for enums, letting `e.clone()` produce an owned copy to match.

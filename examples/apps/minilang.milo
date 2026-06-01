@@ -1,0 +1,246 @@
+// minilang — a tree-walking interpreter for a tiny expression language, built
+// to stress the "interpreter env holding an AST + values" lifetime pattern under
+// Milo's no-stored-refs model. The AST lives in a generational arena (recursive
+// via Handle); the environment is a scope stack of (name, Value).
+//
+// Design note: nodes are TAG-STRUCTS (int tag + fields), not payload enums.
+// Reading a payload-bearing enum out of an arena needs `match` on a borrowed
+// enum (the read closure gets `&Expr`), which Milo doesn't support — so, like
+// std/json.milo, we use a tag + fields and dispatch with if-else. A node is
+// read back by copying its fields (string cloned, Copy handles/ints copied),
+// with no match on a reference. See docs/rewrite-findings-*.
+
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaWith }
+
+// Value tags
+let V_INT: i32 = 0
+let V_BOOL: i32 = 1
+let V_STR: i32 = 2
+let V_NIL: i32 = 3
+
+struct Value {
+    tag: i32,
+    i: i64,
+    s: string,
+}
+
+fn vInt(n: i64): Value {
+    return Value { tag: V_INT, i: n, s: "" }
+}
+
+fn vBool(b: bool): Value {
+    var n: i64 = 0
+    if b {
+        n = 1
+    }
+    return Value { tag: V_BOOL, i: n, s: "" }
+}
+
+fn vStr(s: string): Value {
+    return Value { tag: V_STR, i: 0, s: s }
+}
+
+fn vNil(): Value {
+    return Value { tag: V_NIL, i: 0, s: "" }
+}
+
+fn cloneValue(v: &Value): Value {
+    return Value { tag: v.tag, i: v.i, s: v.s.clone() }
+}
+
+fn valueToString(v: &Value): string {
+    if v.tag == V_INT {
+        return intToStr(v.i)
+    }
+    if v.tag == V_BOOL {
+        if v.i != 0 {
+            return "true"
+        }
+        return "false"
+    }
+    if v.tag == V_STR {
+        return v.s.clone()
+    }
+    return "nil"
+}
+
+fn asInt(v: &Value): i64 {
+    if v.tag == V_INT || v.tag == V_BOOL {
+        return v.i
+    }
+    return 0
+}
+
+fn intToStr(n: i64): string {
+    if n == 0 {
+        return "0"
+    }
+    var neg = false
+    var x = n
+    if x < 0 {
+        neg = true
+        x = 0 - x
+    }
+    var digits = String.withCapacity(20)
+    while x > 0 {
+        let d = (x % 10) as u8
+        digits.push(d + 48 as u8)
+        x = x / 10
+    }
+    var out = String.withCapacity(21)
+    if neg {
+        out.push('-')
+    }
+    var i = digits.len() - 1
+    while i >= 0 {
+        out.push(digits[i])
+        i = i - 1
+    }
+    return out
+}
+
+// AST node tags
+let E_NUM: i32 = 0
+let E_STR: i32 = 1
+let E_VAR: i32 = 2
+let E_BIN: i32 = 3
+let E_IF: i32 = 4
+let E_LET: i32 = 5
+
+// Tag-struct AST node. `op`/`name`/`str` reuse `s`; child slots are arena
+// handles. Handle<Expr> is just indices, so the recursive type is finite.
+struct Expr {
+    tag: i32,
+    i: i64,
+    s: string,
+    a: Handle<Expr>,
+    b: Handle<Expr>,
+    c: Handle<Expr>,
+}
+
+struct Binding {
+    name: string,
+    value: Value,
+}
+
+fn cloneExpr(e: &Expr): Expr {
+    return Expr { tag: e.tag, i: e.i, s: e.s.clone(), a: e.a, b: e.b, c: e.c }
+}
+
+fn readExpr(arena: &Arena<Expr>, h: Handle<Expr>): Expr {
+    let r = arenaWith(arena, h, (e: &Expr): Expr => cloneExpr(e))
+    match r {
+        Option.Some(x) => { return x }
+        Option.None => { return Expr { tag: E_NUM, i: 0, s: "", a: h, b: h, c: h } }
+    }
+}
+
+fn envLookup(env: &Vec<Binding>, name: &string): Value {
+    var i = env.len() - 1
+    while i >= 0 {
+        if env[i].name == name {
+            return cloneValue(env[i].value)
+        }
+        i = i - 1
+    }
+    return vNil()
+}
+
+fn evalBin(op: &string, a: &Value, b: &Value): Value {
+    let x = asInt(a)
+    let y = asInt(b)
+    if op == "+" {
+        return vInt(x + y)
+    }
+    if op == "-" {
+        return vInt(x - y)
+    }
+    if op == "*" {
+        return vInt(x * y)
+    }
+    if op == "/" {
+        if y == 0 {
+            return vNil()
+        }
+        return vInt(x / y)
+    }
+    if op == "<" {
+        return vBool(x < y)
+    }
+    if op == ">" {
+        return vBool(x > y)
+    }
+    if op == "==" {
+        return vBool(x == y)
+    }
+    return vNil()
+}
+
+fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value {
+    let node = readExpr(arena, h)
+    if node.tag == E_NUM {
+        return vInt(node.i)
+    }
+    if node.tag == E_STR {
+        return vStr(node.s.clone())
+    }
+    if node.tag == E_VAR {
+        return envLookup(env, node.s)
+    }
+    if node.tag == E_BIN {
+        let va = evalExpr(arena, node.a, env)
+        let vb = evalExpr(arena, node.b, env)
+        return evalBin(node.s, va, vb)
+    }
+    if node.tag == E_IF {
+        let vc = evalExpr(arena, node.a, env)
+        if asInt(vc) != 0 {
+            return evalExpr(arena, node.b, env)
+        }
+        return evalExpr(arena, node.c, env)
+    }
+    if node.tag == E_LET {
+        let v = evalExpr(arena, node.a, env)
+        env.push(Binding { name: node.s.clone(), value: v })
+        let result = evalExpr(arena, node.b, env)
+        env.pop()
+        return result
+    }
+    return vNil()
+}
+
+// Placeholder handle for unused child slots (never dereferenced).
+fn zeroHandle(): Handle<Expr> {
+    return Handle { index: 0, generation: 0 }
+}
+
+fn main(): i32 {
+    var arena: Arena<Expr> = arenaNew()
+
+    // let x = 6 in let y = 7 in x * y    => 42
+    let six = arenaAlloc(arena, Expr { tag: E_NUM, i: 6, s: "", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let seven = arenaAlloc(arena, Expr { tag: E_NUM, i: 7, s: "", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let xVar = arenaAlloc(arena, Expr { tag: E_VAR, i: 0, s: "x", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let yVar = arenaAlloc(arena, Expr { tag: E_VAR, i: 0, s: "y", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let mul = arenaAlloc(arena, Expr { tag: E_BIN, i: 0, s: "*", a: xVar, b: yVar, c: zeroHandle() })
+    let letY = arenaAlloc(arena, Expr { tag: E_LET, i: 0, s: "y", a: seven, b: mul, c: zeroHandle() })
+    let letX = arenaAlloc(arena, Expr { tag: E_LET, i: 0, s: "x", a: six, b: letY, c: zeroHandle() })
+
+    var env: Vec<Binding> = Vec.new()
+    let r1 = evalExpr(arena, letX, env)
+    print(valueToString(r1))          // 42
+
+    // if (3 < 5) then 100 else 200   => 100
+    let three = arenaAlloc(arena, Expr { tag: E_NUM, i: 3, s: "", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let five = arenaAlloc(arena, Expr { tag: E_NUM, i: 5, s: "", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let lt = arenaAlloc(arena, Expr { tag: E_BIN, i: 0, s: "<", a: three, b: five, c: zeroHandle() })
+    let h100 = arenaAlloc(arena, Expr { tag: E_NUM, i: 100, s: "", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let h200 = arenaAlloc(arena, Expr { tag: E_NUM, i: 200, s: "", a: zeroHandle(), b: zeroHandle(), c: zeroHandle() })
+    let ifE = arenaAlloc(arena, Expr { tag: E_IF, i: 0, s: "", a: lt, b: h100, c: h200 })
+
+    var env2: Vec<Binding> = Vec.new()
+    let r2 = evalExpr(arena, ifE, env2)
+    print(valueToString(r2))          // 100
+
+    return 0
+}
