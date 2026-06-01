@@ -1,0 +1,32 @@
+// @expect: hi
+// @expect: 10
+// A closure passed to a generic fn that MOVES a captured mutable local out
+// (push) must move-capture it (no use-after-free); one that MUTATES a captured
+// local in place and reads it after must stay by-reference (write-back works).
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaModifyMut, arenaWith }
+
+struct Box { items: Vec<string>, n: i64 }
+
+fn main(): i32 {
+    var a: Arena<Box> = arenaNew()
+    let h = arenaAlloc(a, Box { items: Vec.new(), n: 0 })
+
+    // move-out of a mutable local capture
+    var built = String.withCapacity(8)
+    built.push('h')
+    built.push('i')
+    arenaModifyMut(a, h, (b: &mut Box): void => {
+        b.items.push(built)
+    })
+    let s = arenaWith(a, h, (b: &Box): string => b.items[0].clone())
+    match s { Option.Some(v) => { print(v) } Option.None => { print("none") } }
+
+    // mutate-in-place of a captured local, read after
+    var total = 0
+    arenaModifyMut(a, h, (b: &mut Box): void => {
+        b.n = 1
+        total = total + 10
+    })
+    print(total)
+    return 0
+}

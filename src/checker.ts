@@ -16,6 +16,11 @@ export interface CaptureInfo {
   name: string;
   type: TypeKind;
   mutable: boolean;
+  // Set when the closure body mutates this capture *in place* (assignment or a
+  // mutating method on it). Distinguishes "needs write-back to the original"
+  // (cannot be move-captured) from a capture that is merely read or moved out
+  // (safe to move-capture). Drives the auto-move decision for generic-fn calls.
+  mutatedInClosure?: boolean;
 }
 
 export interface FnSig {
@@ -1708,6 +1713,7 @@ export class TypeChecker {
           this.error(`cannot assign to immutable variable '${this.describeExpr(stmt.target)}'`, sp, `declare with 'var' instead of 'let' to make it mutable`);
           break;
         }
+        this.markCaptureMutated(stmt.target);
         // reject reassignment while a borrow (slice, iteration ref) is live
         // but allow closures to mutate their own captured variables
         if (stmt.target.kind === "Ident") {
@@ -2490,7 +2496,20 @@ export class TypeChecker {
     return null;
   }
 
+  // Walk to the root identifier of an lvalue; if it is a closure capture being
+  // mutated in place, record that so the value isn't move-captured out from
+  // under the caller (which still needs to see the mutation / drop it).
+  private markCaptureMutated(expr: Expr) {
+    let e: Expr = expr;
+    while (e.kind === "FieldAccess" || e.kind === "IndexAccess") e = e.object;
+    if (e.kind === "Ident" && this.closureScopeDepth !== null) {
+      const cap = this.currentClosureCaptures?.get(e.name);
+      if (cap) cap.mutatedInClosure = true;
+    }
+  }
+
   private isRootMutable(expr: Expr): boolean {
+    this.markCaptureMutated(expr);
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
       return info?.mutable ?? false;
@@ -2949,7 +2968,9 @@ export class TypeChecker {
             if (expr.args[i].kind === "Closure" && i < concreteSig.params.length
                 && concreteSig.params[i].type.tag === "fn" && !(expr.args[i] as any).isMove) {
               const caps = this.closureCaptures.get(expr.args[i]);
-              if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
+              // A capture mutated in place needs write-back, so it cannot be
+              // move-captured; one merely read or moved-out is safe to move.
+              if (!caps?.some(c => c.mutatedInClosure)) (expr.args[i] as any).isMove = true;
             }
             this.tryMove(expr.args[i]);
           }
