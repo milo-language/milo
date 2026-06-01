@@ -113,3 +113,29 @@ fn use(): i32 requires true ensures true { return add(1, 2) }
 fn main(): i32 { return 0 }`;
   expect(rules(src, "do178c-c")).not.toContain("no-recursion");
 });
+
+// ── enforcement must reach every control structure, not just if/while ──
+
+test("noDynamicAllocation catches Vec.new (an EnumLit constructor)", () => {
+  const src = `fn f(): i32 requires true ensures true { let v: Vec<i64> = Vec.new() return 0 }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("no-dynamic-alloc");
+});
+
+test("noDynamicAllocation catches allocation inside a for-loop body", () => {
+  const src = `fn f(): i32 requires true ensures true { for i in 0..3 { let v: Vec<i64> = Vec.new() } return 0 }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("no-dynamic-alloc");
+});
+
+test("noUnsafe catches an unsafe block hidden in a for-loop", () => {
+  const src = `fn f(): i32 requires true ensures true { for i in 0..3 { unsafe { let x = 1 } } return 0 }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("no-unsafe");
+});
+
+test("boundedLoops catches a while-loop nested inside a for-loop", () => {
+  const src = `fn f(n: i32): i32 requires n >= 0 ensures result >= 0 { for i in 0..3 { var j = 0 while j < n { j = j + 1 } } return 0 }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("bounded-loops");
+});

@@ -300,74 +300,63 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
 }
 
 function checkUnboundedLoops(fnName: string, stmts: Stmt[], violations: SafetyViolation[], level: SafetyLevel) {
-  for (const stmt of stmts) {
-    if (stmt.kind === "WhileStmt") {
-      if (!stmt.invariants || stmt.invariants.length === 0) {
-        violations.push({
-          rule: "bounded-loops",
-          message: `[${level}] while loop in '${fnName}' must have an invariant clause for bounded execution`,
-          span: stmt.span,
-          severity: "error",
-        });
-      }
-      checkUnboundedLoops(fnName, stmt.body, violations, level);
+  // walkExprs reaches a `while` nested in any control structure (for/match/…),
+  // not just if/while — an unbounded loop must not hide inside a for body.
+  walkExprs(stmts, () => {}, (s) => {
+    if (s.kind === "WhileStmt" && (!s.invariants || s.invariants.length === 0)) {
+      violations.push({
+        rule: "bounded-loops",
+        message: `[${level}] while loop in '${fnName}' must have an invariant clause for bounded execution`,
+        span: s.span,
+        severity: "error",
+      });
     }
-    if (stmt.kind === "IfStmt") {
-      checkUnboundedLoops(fnName, stmt.thenBody, violations, level);
-      if (stmt.elseBody) checkUnboundedLoops(fnName, stmt.elseBody, violations, level);
-    }
+  });
+}
+
+// A single expression node that allocates on the heap. Walk recursion is the
+// caller's job (via walkExprs), so this only inspects one node.
+function isAllocExpr(e: Expr): boolean {
+  switch (e.kind) {
+    case "EnumLit":
+      // constructors: Vec.new, String.withCapacity, HashMap.new, BTreeMap.new
+      return ["Vec", "String", "HashMap", "BTreeMap"].includes(e.enumName);
+    case "Call":
+      return ["Heap", "Box", "alloc", "malloc", "format"].includes(e.func);
+    case "MethodCall":
+      // growth / reallocation
+      return ["push", "append", "insert", "extend"].includes(e.method);
+    default:
+      return false;
   }
 }
 
 function checkDynamicAllocation(fnName: string, stmts: Stmt[], violations: SafetyViolation[], level: SafetyLevel) {
-  for (const stmt of stmts) {
-    if (stmt.kind === "ExprStmt" || stmt.kind === "LetDecl" || stmt.kind === "VarDecl") {
-      const expr = stmt.kind === "ExprStmt" ? stmt.expr : stmt.value;
-      if (exprHasAllocation(expr)) {
-        violations.push({
-          rule: "no-dynamic-alloc",
-          message: `[${level}] dynamic allocation in '${fnName}' is banned at this safety level`,
-          span: stmt.span,
-          severity: "error",
-        });
-      }
-    }
-    if (stmt.kind === "IfStmt") {
-      checkDynamicAllocation(fnName, stmt.thenBody, violations, level);
-      if (stmt.elseBody) checkDynamicAllocation(fnName, stmt.elseBody, violations, level);
-    }
-    if (stmt.kind === "WhileStmt") checkDynamicAllocation(fnName, stmt.body, violations, level);
-  }
-}
-
-function exprHasAllocation(expr: import("./ast").Expr): boolean {
-  switch (expr.kind) {
-    case "Call":
-      return ["Vec", "String", "HashMap", "BTreeMap", "Box", "alloc"].includes(expr.func)
-        || expr.args.some(exprHasAllocation);
-    case "MethodCall":
-      return ["push", "append", "insert", "extend"].includes(expr.method)
-        || exprHasAllocation(expr.object) || expr.args.some(exprHasAllocation);
-    default: return false;
-  }
-}
-
-function checkUnsafeBlocks(fnName: string, stmts: Stmt[], violations: SafetyViolation[], level: SafetyLevel) {
-  for (const stmt of stmts) {
-    if (stmt.kind === "UnsafeBlock") {
+  // walkExprs descends into every control structure (for/match/if-let/unsafe/…),
+  // not just if/while — allocation hidden in a loop body must not slip through.
+  walkExprs(stmts, (e) => {
+    if (isAllocExpr(e)) {
       violations.push({
-        rule: "no-unsafe",
-        message: `[${level}] unsafe block in '${fnName}' is banned at this safety level`,
-        span: stmt.span,
+        rule: "no-dynamic-alloc",
+        message: `[${level}] dynamic allocation in '${fnName}' is banned at this safety level`,
+        span: (e as { span?: Span }).span,
         severity: "error",
       });
     }
-    if (stmt.kind === "IfStmt") {
-      checkUnsafeBlocks(fnName, stmt.thenBody, violations, level);
-      if (stmt.elseBody) checkUnsafeBlocks(fnName, stmt.elseBody, violations, level);
+  });
+}
+
+function checkUnsafeBlocks(fnName: string, stmts: Stmt[], violations: SafetyViolation[], level: SafetyLevel) {
+  walkExprs(stmts, () => {}, (s) => {
+    if (s.kind === "UnsafeBlock") {
+      violations.push({
+        rule: "no-unsafe",
+        message: `[${level}] unsafe block in '${fnName}' is banned at this safety level`,
+        span: s.span,
+        severity: "error",
+      });
     }
-    if (stmt.kind === "WhileStmt") checkUnsafeBlocks(fnName, stmt.body, violations, level);
-  }
+  });
 }
 
 // Each `&&`/`||` is a decision point in McCabe complexity (it short-circuits,
