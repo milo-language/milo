@@ -12,8 +12,24 @@ worktree only. Per `feedback_iteration_speed`: targeted tests, never full
 ## Stages
 - (A) cross-compile to Cortex-M — triples in src/target.ts + clang -mcpu/-mfloat-abi.  **DONE** (eff5dfc)
 - (B) freestanding runtime — startup vector table + linker script + semihosting + libc shim; `build --target` links runnable ARM ELF.  **DONE** (749f1fa)
-- (C) functional verify on QEMU `mps2-an385 -semihosting`.  **NEXT — needs `brew install qemu`**
-- (D) WCET — emit loop-bound flow facts from safety pass for OTAWA.  not started
+- (C) functional verify on QEMU `mps2-an385 -semihosting`.  **DONE** (1de3f93) — qemu installed; `milo run --target=cortex-m3` runs bare-metal ELF, prints `exit=<n>` via semihosting; e2e test green (add(40,2)→exit=42).
+- (D) WCET — emit loop-bound flow facts from safety pass for OTAWA.  **NEXT**
+
+## Stage C result + boundary
+- Proven end-to-end: Milo src → thumb codegen → freestanding link → QEMU exec →
+  correct computed result on semihosting console. `exit=5` for add(2,3),
+  `exit=42` for return 42. `milo run --target=cortex-m3|stm32f4|...` works.
+- startup.c now prints `exit=<n>` (SYS_WRITE0) because QEMU collapses legacy
+  SYS_EXIT to process-exit 1 — the numeric result can't be read from the process
+  exit code, so we surface it on the console (same as a debug UART on real hw).
+- QEMU semihosting console comes out on qemu's STDERR; runBareMetalQemu forwards
+  it to our stdout (it's the program's stdout).
+- BOUNDARY: full hosted apps (flightController) import std/io|time|term →
+  std/platform (syscalls) → NOT freestanding. `milo run flightController.milo
+  --target=...` errors "cannot open 'std/platform'". Porting stdlib to
+  freestanding (semihosting-backed io, no time/term) is a large separate effort;
+  NOT required for the WCET thesis — WCET targets are compute kernels, and the
+  compute-only path is proven. Defer freestanding-stdlib unless asked.
 
 ## Commits so far (newest first)
 - `749f1fa` embedded freestanding libc shim + wire bare-metal build (15 tests pass, GOOD)
