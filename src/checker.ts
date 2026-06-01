@@ -2682,7 +2682,11 @@ export class TypeChecker {
         for (const f of expr.fields) {
           const fieldDef = hintInfo.fields.find(d => d.name === f.name);
           if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp); continue; }
-          const valType = this.checkExprWithHint(f.value, fieldDef.type);
+          let valType = this.checkExprWithHint(f.value, fieldDef.type);
+          if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
+            this.retypeConstInt(f.value, fieldDef.type);
+            valType = fieldDef.type;
+          }
           if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
             this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
           }
@@ -3301,7 +3305,11 @@ export class TypeChecker {
         for (const f of expr.fields) {
           const fieldDef = info.fields.find(d => d.name === f.name);
           if (!fieldDef) { this.error(`struct '${expr.name}' has no field '${f.name}'`, sp); continue; }
-          const valType = this.checkExprWithHint(f.value, fieldDef.type);
+          let valType = this.checkExprWithHint(f.value, fieldDef.type);
+          if (fieldDef.type.tag === "int" && valType.tag === "int" && !typeEq(fieldDef.type, valType) && this.isConstIntExpr(f.value)) {
+            this.retypeConstInt(f.value, fieldDef.type);
+            valType = fieldDef.type;
+          }
           if (!typeEq(fieldDef.type, valType) && valType.tag !== "unknown") {
             this.error(`field '${f.name}' of '${expr.name}': expected ${typeName(fieldDef.type)}, got ${typeName(valType)}`, sp);
           }
