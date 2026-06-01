@@ -532,9 +532,21 @@ function handleChatSubmit(e) {
 async function connect(terminalId, bootstrapKeyB64) {
   const baseUrl = getServerBaseUrl();
 
-  const resp = await fetch(`${baseUrl}terminal/${terminalId}`);
-  if (resp.status !== 200) {
-    toast("Terminal not found. Check the Terminal ID.");
+  // Retry the metadata fetch: when the share link is opened the instant the
+  // session starts, the terminal may not be queryable yet on the first try.
+  // A bare 404 leaves the user on the landing page with only a toast.
+  let resp = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 250 * attempt));
+    try {
+      resp = await fetch(`${baseUrl}terminal/${terminalId}`);
+      if (resp.status === 200) break;
+    } catch (e) {
+      resp = null;
+    }
+  }
+  if (!resp || resp.status !== 200) {
+    toast("Terminal not found. Check the Terminal ID, or the session may have ended.", 10000);
     setStatus("Not Found");
     return;
   }

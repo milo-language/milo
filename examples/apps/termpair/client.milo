@@ -13,8 +13,8 @@ from "std/pty" import { Pty, WinSize, openAndSpawn }
 from "std/ws" import { WsConn, wsConnect, wsConnectTls }
 from "std/net" import { resolve }
 from "std/term" import { enableRawMode, restoreTerminal, readKey }
-from "std/os" import { ioctl, read, write, exit }
-from "std/io" import { writeStdout, readStdin }
+from "std/os" import { ioctl, read, write, exit, isatty }
+from "std/io" import { writeStdout, readStdin, readLine }
 from "std/sync" import { AtomicBool }
 from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, _schedulerTick }
 from "std/event" import { setNonblocking, clearNonblocking }
@@ -42,6 +42,10 @@ fn termSize(): TermSize {
         ioctl(1, 1074295912, (&ws) as *u8)
     }
     return TermSize { rows: ws.rows as i64, cols: ws.cols as i64 }
+}
+
+fn stdinIsTty(): bool {
+    unsafe { return isatty(0) != 0 }
 }
 
 // ── Simple ISO timestamp ──
@@ -111,6 +115,7 @@ fn main(): i32 {
     parser.addBool("public", "", "public session (no encryption)")
     parser.addBool("read-only", "", "disable browser→shell input")
     parser.addBool("plain", "", "use plain ws:// instead of wss:// (local servers)")
+    parser.addBool("no-wait", "", "start sharing immediately instead of waiting for a keypress")
     let args = parser.parse()
 
     let host = args.getString("host")
@@ -122,6 +127,7 @@ fn main(): i32 {
     let allowControl = !isPublic && !args.getBool("read-only")
     // wss:// unless explicitly forced plain (e.g. a local milo server on :8000).
     let useTls = !args.getBool("plain")
+    let noWait = args.getBool("no-wait")
 
     let connectPath = base + "/connect_to_terminal"
     let scheme = if useTls { "https" } else { "http" }
@@ -232,6 +238,15 @@ fn main(): i32 {
         print($"{cDim}open in browser:{cReset} {cUnderline}{cGreen}{scheme}://{authority}{base}/s/{terminalId}#{keyFragment}{cReset}")
     }
     print($"{cDim}press ctrl-d to stop sharing{cReset}")
+    // Gate the live relay behind a keypress so a viewer can open the link before
+    // any shell output streams. The PTY shell already runs; its startup output
+    // buffers in the master fd and is relayed once we proceed, so the viewer
+    // still sees the session from line 1. Skip when stdin isn't a TTY (piped/CI)
+    // or --no-wait is passed, so non-interactive runs don't block on readLine.
+    if !noWait && stdinIsTty() {
+        print($"{cDim}press Enter to start sharing…{cReset}")
+        let _ = readLine()
+    }
     // Separator rule marks the boundary: everything above is termpair's prelude,
     // everything below is the spawned shell's own output.
     print($"{cDim}────────────────────────────────────────{cReset}")
