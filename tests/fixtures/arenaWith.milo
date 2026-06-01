@@ -1,0 +1,27 @@
+// @expect: 10
+// @expect: 15
+// arenaWith borrows (no copy); arenaModifyMut mutates in place. R infers from
+// the closure's return type (no annotation needed).
+from "std/arena" import { Arena, arenaNew, arenaAlloc, arenaWith, arenaModifyMut }
+
+struct P { x: i64, y: i64 }
+
+fn main(): i32 {
+    var a: Arena<P> = arenaNew()
+    let h = arenaAlloc(a, P { x: 10, y: 20 })
+
+    let r = arenaWith(a, h, (p: &P): i64 => p.x)
+    match r {
+        Option.Some(v) => { print(v) }
+        Option.None => { print("none") }
+    }
+
+    arenaModifyMut(a, h, (p: &mut P): void => { p.x = p.x + 5 })
+
+    let r2 = arenaWith(a, h, (p: &P): i64 => p.x)
+    match r2 {
+        Option.Some(v) => { print(v) }
+        Option.None => { print("none") }
+    }
+    return 0
+}

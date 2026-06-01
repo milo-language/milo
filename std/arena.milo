@@ -149,6 +149,45 @@ fn arenaModify<T> (a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool {
     return true
 }
 
+// Read via borrow — no copy. The &T flows into `f` as a second-class ref:
+// valid only inside the closure, never stored or returned. Returns None (and
+// does not call f) if the handle is stale. This is the zero-copy alternative
+// to arenaGet for large T — read just the field(s) you need inside f.
+
+fn arenaWith<T, R> (a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R> {
+    let idx = h.index as i64
+    if idx < 0 {
+        return Option.None
+    }
+    if idx >= a.data.len {
+        return Option.None
+    }
+    if a.gens[idx] != h.generation {
+        return Option.None
+    }
+    return Option.Some(f(a.data[idx]))
+}
+
+// In-place mutate via &mut borrow — no copy in, no copy out, no full-struct
+// rewrite. Mutate fields of the live value directly inside f. Returns false
+// (f not called) if the handle is stale. Preferred over arenaModify when T is
+// large or you only touch a field or two.
+
+fn arenaModifyMut<T> (a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool {
+    let idx = h.index as i64
+    if idx < 0 {
+        return false
+    }
+    if idx >= a.data.len {
+        return false
+    }
+    if a.gens[idx] != h.generation {
+        return false
+    }
+    f(a.data[idx])
+    return true
+}
+
 // Number of live entries.
 
 fn arenaLen<T> (a: &Arena<T>): i64
@@ -174,6 +213,10 @@ impl Arena<T> {
 
     fn modify(self: &mut Self, h: Handle<T>, f: (T) => T): bool {
         return arenaModify(self, h, f)
+    }
+
+    fn modifyMut(self: &mut Self, h: Handle<T>, f: (&mut T) => void): bool {
+        return arenaModifyMut(self, h, f)
     }
 
     fn free(self: &mut Self, h: Handle<T>): bool {

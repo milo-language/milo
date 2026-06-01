@@ -1,0 +1,286 @@
+// domArena — arena/handle DOM, the load-bearing piece for an html5ever-style
+// rewrite in Milo. No stored refs: nodes live in a generational arena, parent
+// and children are Handles (indices), never &Node. This file answers one
+// question — do the ~12 core TreeSink operations come out clean under Milo's
+// second-class-reference model? They do, with zero copies: reads borrow via
+// arenaWith, mutations borrow via arenaModifyMut. See
+// docs/rewrite-findings-html5ever.md.
+
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaWith, arenaModifyMut }
+
+struct Attr {
+    name: string,
+    value: string,
+}
+
+enum NodeKind {
+    Document,
+    Element,
+    Text,
+    Comment,
+    Doctype,
+}
+
+// One DOM node. `name` is the element local-name (empty otherwise); `text`
+// holds Text/Comment data. parent/children are Handles into the same arena —
+// Handle<Node> stores only indices, so this type is not infinitely sized.
+struct Node {
+    kind: NodeKind,
+    name: string,
+    text: string,
+    attrs: Vec<Attr>,
+    parent: Option<Handle<Node>>,
+    children: Vec<Handle<Node>>,
+}
+
+struct Dom {
+    arena: Arena<Node>,
+    document: Handle<Node>,
+}
+
+fn emptyNode(kind: NodeKind, name: string, text: string): Node {
+    return Node {
+        kind: kind,
+        name: name,
+        text: text,
+        attrs: Vec.new(),
+        parent: Option.None,
+        children: Vec.new(),
+    }
+}
+
+fn domNew(): Dom {
+    var arena: Arena<Node> = arenaNew()
+    let doc = arenaAlloc(arena, emptyNode(NodeKind.Document, "", ""))
+    return Dom { arena: arena, document: doc }
+}
+
+// ── Field readers: borrow the node, copy out only the one small field we
+// need (enum / handle / int / one string). No whole-node copy ever. ──
+
+fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
+    let r = arenaWith(dom.arena, h, (n: &Node): NodeKind => n.kind)
+    match r {
+        Option.Some(k) => { return k }
+        Option.None => {
+            assert(false, "nodeKind: stale handle")
+            return NodeKind.Document
+        }
+    }
+}
+
+fn nodeName(dom: &Dom, h: Handle<Node>): string {
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
+    match r {
+        Option.Some(s) => { return s }
+        Option.None => { return "" }
+    }
+}
+
+fn nodeText(dom: &Dom, h: Handle<Node>): string {
+    let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
+    match r {
+        Option.Some(s) => { return s }
+        Option.None => { return "" }
+    }
+}
+
+fn nodeParent(dom: &Dom, h: Handle<Node>): Option<Handle<Node>> {
+    let r = arenaWith(dom.arena, h, (n: &Node): Option<Handle<Node>> => n.parent)
+    match r {
+        Option.Some(p) => { return p }
+        Option.None => { return Option.None }
+    }
+}
+
+fn childCount(dom: &Dom, h: Handle<Node>): i64 {
+    let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.children.len())
+    match r {
+        Option.Some(c) => { return c }
+        Option.None => { return 0 }
+    }
+}
+
+fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
+    let r = arenaWith(dom.arena, h, (n: &Node): Handle<Node> => n.children[i])
+    match r {
+        Option.Some(c) => { return c }
+        Option.None => {
+            assert(false, "childAt: stale handle")
+            return h
+        }
+    }
+}
+
+// ── The TreeSink-style operations (refs only in params, never stored) ──
+
+fn createElement(dom: &mut Dom, name: string): Handle<Node> {
+    return arenaAlloc(dom.arena, emptyNode(NodeKind.Element, name, ""))
+}
+
+fn createText(dom: &mut Dom, text: string): Handle<Node> {
+    return arenaAlloc(dom.arena, emptyNode(NodeKind.Text, "", text))
+}
+
+fn createComment(dom: &mut Dom, text: string): Handle<Node> {
+    return arenaAlloc(dom.arena, emptyNode(NodeKind.Comment, "", text))
+}
+
+fn setParent(dom: &mut Dom, child: Handle<Node>, parent: Option<Handle<Node>>) {
+    arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
+        c.parent = parent
+    })
+}
+
+fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
+    arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
+        n.children.push(child)
+    })
+    setParent(dom, child, Option.Some(parent))
+}
+
+// html5ever coalesces adjacent text: appending text after a Text sibling
+// extends that node instead of creating a new one.
+fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
+    let c = childCount(dom, parent)
+    if c > 0 {
+        let last = childAt(dom, parent, c - 1)
+        match nodeKind(dom, last) {
+            NodeKind.Text => {
+                // Closures capture non-Copy values (strings) by move; clone so
+                // `t` survives for the non-coalescing path. Handles, being
+                // small Copy structs, capture fine without this.
+                let extra = t.clone()
+                arenaModifyMut(dom.arena, last, (n: &mut Node): void => {
+                    n.text = n.text + extra
+                })
+                return
+            }
+            _ => {}
+        }
+    }
+    let tn = createText(dom, t)
+    append(dom, parent, tn)
+}
+
+fn sameNode(a: Handle<Node>, b: Handle<Node>): bool {
+    return a == b
+}
+
+// No Vec.remove(i) in the stdlib, so ordered removal rebuilds the child list.
+fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
+    match nodeParent(dom, child) {
+        Option.Some(p) => {
+            arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
+                var out: Vec<Handle<Node>> = Vec.new()
+                for i in 0..n.children.len() {
+                    if !(n.children[i] == child) {
+                        out.push(n.children[i])
+                    }
+                }
+                n.children = out
+            })
+            setParent(dom, child, Option.None)
+        }
+        Option.None => {}
+    }
+}
+
+// No Vec.insert(i, v) either — rebuild inserting newNode before `sibling`.
+fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Node>) {
+    match nodeParent(dom, sibling) {
+        Option.Some(p) => {
+            arenaModifyMut(dom.arena, p, (n: &mut Node): void => {
+                var out: Vec<Handle<Node>> = Vec.new()
+                for i in 0..n.children.len() {
+                    if n.children[i] == sibling {
+                        out.push(newNode)
+                    }
+                    out.push(n.children[i])
+                }
+                n.children = out
+            })
+            setParent(dom, newNode, Option.Some(p))
+        }
+        Option.None => {}
+    }
+}
+
+fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handle<Node>) {
+    let c = childCount(dom, oldParent)
+    var kids: Vec<Handle<Node>> = Vec.new()
+    for i in 0..c {
+        kids.push(childAt(dom, oldParent, i))
+    }
+    arenaModifyMut(dom.arena, oldParent, (n: &mut Node): void => {
+        n.children = Vec.new()
+    })
+    for i in 0..kids.len() {
+        append(dom, newParent, kids[i])
+    }
+}
+
+// ── Serialize: walk the tree by borrow-read — no node is ever copied. ──
+
+fn serialize(dom: &Dom, h: Handle<Node>): string {
+    match nodeKind(dom, h) {
+        NodeKind.Text => { return nodeText(dom, h) }
+        NodeKind.Comment => { return "<!--" + nodeText(dom, h) + "-->" }
+        NodeKind.Doctype => { return "<!DOCTYPE html>" }
+        NodeKind.Element => {
+            let name = nodeName(dom, h)
+            var s = "<" + name + ">"
+            let c = childCount(dom, h)
+            for i in 0..c {
+                s = s + serialize(dom, childAt(dom, h, i))
+            }
+            return s + "</" + name + ">"
+        }
+        NodeKind.Document => {
+            var s = ""
+            let c = childCount(dom, h)
+            for i in 0..c {
+                s = s + serialize(dom, childAt(dom, h, i))
+            }
+            return s
+        }
+    }
+}
+
+fn main(): i32 {
+    var dom = domNew()
+    let root = dom.document
+
+    // Build <p>hi<b>x</b></p>
+    let p = createElement(dom, "p")
+    append(dom, root, p)
+    appendText(dom, p, "h")
+    appendText(dom, p, "i")          // coalesces with "h" -> "hi"
+    let b = createElement(dom, "b")
+    append(dom, p, b)
+    appendText(dom, b, "x")
+
+    print(serialize(dom, root))      // <p>hi<b>x</b></p>
+
+    // appendBeforeSibling: <span> before <b>
+    let span = createElement(dom, "span")
+    appendBeforeSibling(dom, b, span)
+    appendText(dom, span, "S")
+    print(serialize(dom, root))      // <p>hi<span>S</span><b>x</b></p>
+
+    // removeFromParent: drop <b>
+    removeFromParent(dom, b)
+    print(serialize(dom, root))      // <p>hi<span>S</span></p>
+
+    // reparentChildren: move p's children into a fresh <div>
+    let div = createElement(dom, "div")
+    append(dom, root, div)
+    reparentChildren(dom, p, div)
+    print(serialize(dom, root))      // <p></p><div>hi<span>S</span></div>
+
+    // sameNode sanity
+    if sameNode(p, p) { print("same") }
+    if !sameNode(p, div) { print("diff") }
+
+    return 0
+}

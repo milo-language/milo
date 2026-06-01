@@ -613,7 +613,14 @@ export class TypeChecker {
   private substituteMiloType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType {
     const idx = typeParams.indexOf(ty.name);
     if (idx !== -1) {
-      return this.typeKindToMiloType(typeArgs[idx]);
+      const sub = this.typeKindToMiloType(typeArgs[idx]);
+      // Preserve reference/pointer wrappers from the original: `&T` must become
+      // `&P`, not value `P`. Dropping isRef here collapsed the param to by-value,
+      // so a generic fn taking `&T` passed a struct where a ptr was expected.
+      if (ty.isRef || ty.isRefMut || ty.isPtr) {
+        return { ...sub, isRef: ty.isRef, isRefMut: ty.isRefMut, isPtr: ty.isPtr };
+      }
+      return sub;
     }
     if (ty.isFn && ty.fnParams && ty.fnRet) {
       return {
@@ -2887,6 +2894,29 @@ export class TypeChecker {
                   }
                 }
               }
+            }
+            // Function-typed param (e.g. f: (&T) => R): infer type params that
+            // appear only inside a closure's signature — notably R in arenaWith,
+            // which no other argument constrains. Strip matching refs and never
+            // overwrite a param already bound by an earlier argument.
+            if (paramTy.isFn && argTypes[i].tag === "fn") {
+              const argFn = argTypes[i] as Extract<TypeKind, { tag: "fn" }>;
+              const unifyFn = (mt: MiloType | undefined, tk: TypeKind | undefined) => {
+                if (!mt || !tk) return;
+                let t = tk;
+                if ((mt.isRef || mt.isRefMut) && t.tag === "ref") t = t.inner;
+                if (genericFn.typeParams.includes(mt.name)) {
+                  if (!typeMap.has(mt.name)) typeMap.set(mt.name, t);
+                  return;
+                }
+                if (mt.typeArgs) this.inferTypeParamsFromHint(mt, t, genericFn.typeParams, typeMap);
+              };
+              if (paramTy.fnParams) {
+                for (let k = 0; k < paramTy.fnParams.length && k < argFn.params.length; k++) {
+                  unifyFn(paramTy.fnParams[k], argFn.params[k]);
+                }
+              }
+              unifyFn(paramTy.fnRet, argFn.ret);
             }
           }
 
