@@ -1725,6 +1725,12 @@ export class TypeChecker {
             break;
           }
         }
+        // Slice/index borrows taken to compute the RHS (e.g. `s[0..n].clone()`)
+        // are consumed within this statement — no binding outlives it — so they
+        // must not leak a freeze onto the next statement. Snapshot which vars are
+        // already frozen, then release any newly-frozen by the RHS afterward.
+        const frozenBeforeRhs = new Set<VarInfo>();
+        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
         const valType = this.checkExprWithHint(stmt.value, targetInfo.type);
         if (!typeEq(targetInfo.type, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(targetInfo.type);
@@ -1735,6 +1741,7 @@ export class TypeChecker {
             this.error(`type mismatch: cannot assign ${typeName(valType)} to ${typeName(targetInfo.type)}`, sp);
           }
         }
+        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBeforeRhs.has(vi)) vi.borrowed = false;
         if (stmt.target.kind === "Ident") {
           const info = this.lookup(stmt.target.name);
           if (info) info.moved = false;
