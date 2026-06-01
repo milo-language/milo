@@ -2941,6 +2941,16 @@ export class TypeChecker {
               this.autoBorrowed.set(expr.args[i], { mutable: concreteSig.params[i].type.mutable });
               continue;
             }
+            // Auto-move closure args (parity with the non-generic call path):
+            // without this, a closure passed to a generic fn keeps its non-Copy
+            // captures owned by the enclosing scope, which then drops them while
+            // the closure still references them — a use-after-free. Skip when the
+            // closure mutates a capture (it must write back to the original).
+            if (expr.args[i].kind === "Closure" && i < concreteSig.params.length
+                && concreteSig.params[i].type.tag === "fn" && !(expr.args[i] as any).isMove) {
+              const caps = this.closureCaptures.get(expr.args[i]);
+              if (!caps?.some(c => c.mutable)) (expr.args[i] as any).isMove = true;
+            }
             this.tryMove(expr.args[i]);
           }
           // check requires contracts at call site (generic fn)

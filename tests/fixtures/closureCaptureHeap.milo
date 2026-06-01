@@ -1,0 +1,35 @@
+// @expect: 2
+// @expect: hi
+// @expect: yo
+// Regression: a closure passed to a GENERIC fn (arenaModifyMut) that captures a
+// heap-owned value (a built String) used to drop the original at scope end while
+// the closure still referenced it — a use-after-free. The generic call path now
+// auto-moves such closures, transferring ownership into the closure env.
+from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaModifyMut, arenaWith }
+
+struct Box { items: Vec<string> }
+
+fn addOne(a: &mut Arena<Box>, h: Handle<Box>, s: string) {
+    arenaModifyMut(a, h, (b: &mut Box): void => {
+        b.items.push(s)
+    })
+}
+
+fn main(): i32 {
+    var a: Arena<Box> = arenaNew()
+    let h = arenaAlloc(a, Box { items: Vec.new() })
+
+    var built = String.withCapacity(8)
+    built.push('h')
+    built.push('i')
+    addOne(a, h, built)
+    addOne(a, h, "yo" + "")
+
+    let n = arenaWith(a, h, (b: &Box): i64 => b.items.len())
+    match n { Option.Some(v) => { print(v) } Option.None => { print("none") } }
+    let s0 = arenaWith(a, h, (b: &Box): string => b.items[0].clone())
+    match s0 { Option.Some(s) => { print(s) } Option.None => { print("none") } }
+    let s1 = arenaWith(a, h, (b: &Box): string => b.items[1].clone())
+    match s1 { Option.Some(s) => { print(s) } Option.None => { print("none") } }
+    return 0
+}
