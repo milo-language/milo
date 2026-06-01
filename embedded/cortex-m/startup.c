@@ -38,12 +38,36 @@ static inline long semihost(int op, void *arg) {
     return r0;
 }
 
+// SYS_WRITE0 (0x04): print a NUL-terminated string to the host console.
+static void semihost_write0(const char *s) {
+    semihost(0x04, (void *)s);
+}
+
+// Print the program's exit code as a line the host can observe and assert on.
+// QEMU's legacy SYS_EXIT collapses every status to process-exit 1, so the
+// numeric result can't be read from the process exit code — we emit it on the
+// semihosting console instead, exactly as you'd observe on real hardware via a
+// debug UART. Format: "exit=<n>\n".
+static void print_exit_code(int code) {
+    char buf[16];
+    int i = 0;
+    unsigned v = (code < 0) ? (unsigned)(-code) : (unsigned)code;
+    char digits[10];
+    int n = 0;
+    do { digits[n++] = (char)('0' + (v % 10u)); v /= 10u; } while (v);
+    buf[i++] = 'e'; buf[i++] = 'x'; buf[i++] = 'i'; buf[i++] = 't'; buf[i++] = '=';
+    if (code < 0) buf[i++] = '-';
+    while (n) buf[i++] = digits[--n];
+    buf[i++] = '\n'; buf[i] = '\0';
+    semihost_write0(buf);
+}
+
 // SYS_EXIT (0x18): report application exit. The "angel" reason code
-// ADP_Stopped_ApplicationExit (0x20026) signals a normal exit; on newer
-// semihosting the second word carries the exit status so the host can surface
-// the program's return value.
+// ADP_Stopped_ApplicationExit (0x20026) signals a normal exit; the second word
+// carries the status. We also print "exit=<n>" first (see print_exit_code).
 __attribute__((noreturn))
 void exit(int code) {
+    print_exit_code(code);
     unsigned args[2] = { 0x20026u, (unsigned)code };
     semihost(0x18, args);
     for (;;) {}  // unreachable; satisfies noreturn if host declines to exit

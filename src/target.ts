@@ -15,6 +15,10 @@ export interface TargetInfo {
   // passed (soft = integer regs, hard = FPU regs). Omitted for hosted targets.
   mcpu?: string;
   floatAbi?: "soft" | "softfp" | "hard";
+  // QEMU `-machine` that models this core, for `milo run --target=...`. All the
+  // MPS2 AN-series boards QEMU ships share the same memory map our linker script
+  // targets, so we pick the AN board matching each core.
+  qemuMachine?: string;
 }
 
 const targets: Record<string, TargetInfo> = {
@@ -28,11 +32,11 @@ const targets: Record<string, TargetInfo> = {
   // Cortex-M cores execute only the Thumb (Thumb-2) instruction set, hence the
   // "thumb…" triple prefix rather than "arm…". These are the WCET-analysis
   // targets: no OS scheduler jitter, statically bounded execution.
-  "cortex-m0":  { triple: "thumbv6m-none-eabi",    os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m0",  floatAbi: "soft" }, // RP2040 (Pi Pico)
-  "cortex-m3":  { triple: "thumbv7m-none-eabi",    os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m3",  floatAbi: "soft" }, // STM32F1; integer-only, cleanest WCET
-  "cortex-m4":  { triple: "thumbv7em-none-eabi",   os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m4",  floatAbi: "soft" }, // M4 without FPU usage
-  "cortex-m4f": { triple: "thumbv7em-none-eabihf", os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m4",  floatAbi: "hard" }, // STM32F4; hardware FPU
-  "cortex-m7":  { triple: "thumbv7em-none-eabihf", os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m7",  floatAbi: "hard" }, // STM32F7/H7; hardware FPU
+  "cortex-m0":  { triple: "thumbv6m-none-eabi",    os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m0",  floatAbi: "soft", qemuMachine: "mps2-an385" }, // RP2040 (Pi Pico); M0 runs on M3 board under emu
+  "cortex-m3":  { triple: "thumbv7m-none-eabi",    os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m3",  floatAbi: "soft", qemuMachine: "mps2-an385" }, // STM32F1; integer-only, cleanest WCET
+  "cortex-m4":  { triple: "thumbv7em-none-eabi",   os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m4",  floatAbi: "soft", qemuMachine: "mps2-an386" }, // M4 without FPU usage
+  "cortex-m4f": { triple: "thumbv7em-none-eabihf", os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m4",  floatAbi: "hard", qemuMachine: "mps2-an386" }, // STM32F4; hardware FPU
+  "cortex-m7":  { triple: "thumbv7em-none-eabihf", os: "none", arch: "arm", bareMetal: true, mcpu: "cortex-m7",  floatAbi: "hard", qemuMachine: "mps2-an500" }, // STM32F7/H7; hardware FPU
 };
 
 // Aliases for chip families the user is more likely to name than the core.

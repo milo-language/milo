@@ -337,14 +337,47 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warn
 function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false) {
   const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize);
   try {
-    const result = execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), {
-      stdio: "inherit",
-    });
+    if (target.bareMetal) {
+      runBareMetalQemu(bin, target);
+      return;
+    }
+    execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), { stdio: "inherit" });
   } catch (e: any) {
     process.exit(e.status ?? 1);
   } finally {
     try { unlinkSync(bin); } catch {}
   }
+}
+
+// Run a bare-metal ELF under QEMU with semihosting. The program's stdout/exit
+// arrive on the semihosting console (startup.c prints "exit=<n>"); QEMU's own
+// process exit is always 1 for legacy SYS_EXIT, so we don't propagate it.
+function runBareMetalQemu(bin: string, target: TargetInfo) {
+  const machine = target.qemuMachine;
+  if (!machine) {
+    console.error(`error: no QEMU machine configured for ${target.triple}`);
+    process.exit(1);
+  }
+  const qemu = "qemu-system-arm";
+  try {
+    execSync(`${qemu} --version`, { stdio: ["pipe", "pipe", "pipe"] });
+  } catch {
+    console.error(`error: ${qemu} not found on PATH — install QEMU to run bare-metal targets (brew install qemu)`);
+    process.exit(1);
+  }
+  // -semihosting routes the program's bkpt 0xAB I/O to this console; -nographic
+  // keeps it headless. mcpu pins the core so the AN board models the right one.
+  // QEMU always exits 1 on legacy SYS_EXIT regardless of the program's status,
+  // so we capture+forward the console output and treat a clean run as success;
+  // the program's actual result is the "exit=<n>" line startup.c prints.
+  const r = spawnSync(qemu, ["-machine", machine, "-cpu", target.mcpu!, "-semihosting", "-nographic", "-kernel", bin], {
+    encoding: "utf-8", timeout: 30000, stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (r.error) { console.error(`error: failed to run ${qemu}: ${r.error.message}`); process.exit(1); }
+  // QEMU emits semihosting console output on its stderr; that's the Milo
+  // program's stdout, so forward it there (not to our stderr).
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stdout.write(r.stderr);
 }
 
 function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean } {

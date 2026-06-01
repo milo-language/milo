@@ -82,3 +82,22 @@ test("bare-metal runtime files (startup + linker script) are present", () => {
   expect(existsSync(join(ed, "startup.c"))).toBe(true);
   expect(existsSync(join(ed, "mps2.ld"))).toBe(true);
 });
+
+// End-to-end: compile → link → QEMU → observe the computed result via
+// semihosting. Skipped automatically if QEMU isn't installed so the suite stays
+// green on machines without it.
+const hasQemu = (() => {
+  try { execSync("qemu-system-arm --version", { stdio: ["pipe", "pipe", "pipe"] }); return true; }
+  catch { return false; }
+})();
+
+test.if(hasQemu)("run --target=cortex-m3 executes on QEMU and prints the exit code", () => {
+  const src = join(tmpdir(), "milo_embed_ret.milo");
+  writeFileSync(src, `fn add(a: i32, b: i32): i32 { return a + b }
+fn main(): i32 { return add(40, 2) }
+`);
+  const r = milo(`run ${src} --target=cortex-m3`);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain("exit=42");  // add(40,2) computed on the emulated core
+  unlinkSync(src);
+});
