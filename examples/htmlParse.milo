@@ -355,11 +355,56 @@ fn skipSpaces(src: &string, pos: i64, n: i64): i64 {
     return i
 }
 
+// Block-level start tags that implicitly close an open <p>.
+fn closesParagraph(tag: &string): bool {
+    return tag == "p" || tag == "div" || tag == "ul" || tag == "ol" || tag == "table"
+        || tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6"
+        || tag == "blockquote" || tag == "pre" || tag == "section" || tag == "article"
+        || tag == "header" || tag == "footer" || tag == "nav" || tag == "form" || tag == "hr"
+}
+
+// Whether opening `newTag` should implicitly close a currently-open `open`
+// element (a pragmatic subset of html5's "generate implied end tags").
+fn shouldImplicitClose(open: &string, newTag: &string): bool {
+    if newTag == "li" && open == "li" {
+        return true
+    }
+    if (newTag == "dd" || newTag == "dt") && (open == "dd" || open == "dt") {
+        return true
+    }
+    if newTag == "option" && open == "option" {
+        return true
+    }
+    if (newTag == "td" || newTag == "th") && (open == "td" || open == "th") {
+        return true
+    }
+    if newTag == "tr" && (open == "tr" || open == "td" || open == "th") {
+        return true
+    }
+    if closesParagraph(newTag) && open == "p" {
+        return true
+    }
+    return false
+}
+
+fn closeImplied(dom: &Dom, stack: &mut Vec<Handle<Node>>, newTag: &string) {
+    var go = true
+    while go && stack.len() > 1 {
+        let topName = nodeName(dom, topOf(stack))
+        if shouldImplicitClose(topName, newTag) {
+            stack.pop()
+        } else {
+            go = false
+        }
+    }
+}
+
 // pos points just past '<'. Parse a start tag, append the element, and push it
 // onto the open-element stack unless it is void or self-closed.
 fn parseStartTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: i64, n: i64): i64 {
     var name = String.withCapacity(8)
     var i = readName(src, pos, n, name)
+    closeImplied(dom, stack, name)
     let el = createElement(dom, name.clone())
     let parent = topOf(stack)
     append(dom, parent, el)
