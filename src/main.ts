@@ -11,7 +11,7 @@ import { Codegen } from "./codegen";
 import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
-import { formatDiagnostic, type WarningConfig } from "./diagnostics";
+import { formatDiagnostic, ParseError, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
 import { format, formatFile } from "./formatter";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
@@ -24,10 +24,16 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   let tokens, program;
   try {
     tokens = new Lexer(source).tokenize();
-    program = new Parser(tokens).parse();
+    program = new Parser(tokens, source).parse();
     program = resolveImports(program, sourceDir, target);
   } catch (e: any) {
-    console.error(e.message);
+    // Parse errors carry a structured Diagnostic — render the source line + caret
+    // + hint (same Elm-style output as type errors). Other errors: terse message.
+    if (e instanceof ParseError) {
+      console.error(formatDiagnostic(e.diagnostic, source, filePath));
+    } else {
+      console.error(e.message);
+    }
     process.exit(1);
   }
 

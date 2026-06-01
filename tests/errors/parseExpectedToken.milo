@@ -1,0 +1,5 @@
+// @error: expected 'IDENT'
+// Malformed parameter list — parser should report what it expected.
+fn main(: i32 {
+    return 0
+}

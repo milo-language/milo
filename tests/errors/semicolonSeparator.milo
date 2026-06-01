@@ -1,0 +1,6 @@
+// @error: Milo uses newlines, not ';', to separate statements
+// Two statements on one line with ';' — Milo has no statement separator.
+fn f(): void {
+    let x = 1; let y = 2
+}
+fn main(): i32 { return 0 }

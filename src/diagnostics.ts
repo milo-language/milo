@@ -15,6 +15,18 @@ export interface WarningConfig {
   allowed: Set<string>;
 }
 
+// Thrown by the parser. Carries a structured Diagnostic so callers that have the
+// source text can render the Elm-style source line + caret + hint (same path as
+// type errors), while `.message` keeps the terse one-line form for callers that
+// only log e.message.
+export class ParseError extends Error {
+  constructor(public diagnostic: Diagnostic) {
+    const loc = diagnostic.span ? `${diagnostic.span.line}:${diagnostic.span.col}: ` : "";
+    super(`error[parse]: ${loc}${diagnostic.message}`);
+    this.name = "ParseError";
+  }
+}
+
 const RESET = "\x1b[0m";
 const BOLD = "\x1b[1m";
 const RED = "\x1b[31m";

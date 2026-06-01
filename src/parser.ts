@@ -1,5 +1,6 @@
 import { Token, TokenKind } from "./tokens";
 import { Lexer } from "./lexer";
+import { ParseError } from "./diagnostics";
 import type {
   MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
   EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, CastExpr,
@@ -9,7 +10,10 @@ import type {
 export class Parser {
   private pos = 0;
 
-  constructor(private tokens: Token[]) {}
+  // `source` is optional — when provided, thrown ParseErrors carry it so the CLI
+  // can render the offending source line + caret. (Some callers — LSP, resolver —
+  // don't pass it and just read e.message.)
+  constructor(private tokens: Token[], private source?: string) {}
 
   private cloneExpr(e: Expr): Expr { return structuredClone(e); }
   private peek(): Token { return this.tokens[this.pos]; }
@@ -32,12 +36,27 @@ export class Parser {
 
   private expect(kind: TokenKind): Token {
     const tok = this.advance();
-    if (tok.kind !== kind) this.error(`expected '${kind}', got '${tok.kind}' ('${tok.value}')`, tok);
+    if (tok.kind !== kind) this.error(`expected '${kind}', got '${tok.kind}' ('${tok.value}')`, tok, kind);
     return tok;
   }
 
-  private error(msg: string, tok: Token): never {
-    throw new Error(`error[parse]: ${tok.line}:${tok.col}: ${msg}`);
+  // Throw a parse error carrying a structured Diagnostic (span + message + hint).
+  // `expected`, when given, drives a precise "expected X" hint; a stray ';' gets
+  // a dedicated hint since Milo uses newlines, not ';', to separate statements.
+  private error(msg: string, tok: Token, expected?: TokenKind): never {
+    let hint: string | undefined;
+    if (tok.kind === TokenKind.Semicolon) {
+      hint = "Milo uses newlines, not ';', to separate statements — remove the ';' or start a new line";
+    } else if (expected !== undefined) {
+      hint = `expected '${expected}' here`;
+    }
+    throw new ParseError({
+      severity: "error",
+      span: { line: tok.line, col: tok.col },
+      message: msg,
+      hint,
+      code: "parse",
+    });
   }
 
   parse(): Program {
@@ -1016,7 +1035,7 @@ export class Parser {
         (closure as any).isMove = true;
         return closure;
       }
-      throw new Error(`error[parse]: ${tok.line}:${tok.col}: 'move' must precede a closure`);
+      this.error("'move' must precede a closure", tok);
     }
     if (tok.kind === TokenKind.LParen) {
       if (this.isArrowClosure()) {

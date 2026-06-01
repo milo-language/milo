@@ -5,7 +5,7 @@ import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 import { TypeChecker, type CheckResult } from "./checker";
 import { resolveImports } from "./resolver";
-import type { Diagnostic } from "./diagnostics";
+import { ParseError, type Diagnostic } from "./diagnostics";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
 import { typeName as formatTypeName } from "./types";
 import { getHostTarget } from "./target";
@@ -258,16 +258,21 @@ function validateDocument(uri: string) {
     diagnostics = new TypeChecker().check(program).diagnostics;
     buildSymbolIndex(uri, program);
   } catch (e: any) {
-    // Parse/lex error — extract line:col from message
-    const match = e.message?.match(/(\d+):(\d+):\s*(.+)/);
-    if (match) {
-      diagnostics = [{
-        severity: "error",
-        span: { line: parseInt(match[1]), col: parseInt(match[2]) },
-        message: match[3],
-      }];
+    // Parse errors carry a structured Diagnostic (span + hint) — use it directly.
+    if (e instanceof ParseError) {
+      diagnostics = [e.diagnostic];
     } else {
-      diagnostics = [{ severity: "error", message: e.message ?? "unknown error" }];
+      // Other lex/parse errors — extract line:col from the message.
+      const match = e.message?.match(/(\d+):(\d+):\s*(.+)/);
+      if (match) {
+        diagnostics = [{
+          severity: "error",
+          span: { line: parseInt(match[1]), col: parseInt(match[2]) },
+          message: match[3],
+        }];
+      } else {
+        diagnostics = [{ severity: "error", message: e.message ?? "unknown error" }];
+      }
     }
   }
 
