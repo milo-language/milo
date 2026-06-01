@@ -1,0 +1,26 @@
+// @expect: got:hi
+// @expect: got:hi
+// @expect: nil
+// match on a borrowed enum (`&E`): payloads bind as borrows, the subject is not
+// consumed. Reading/cloning through the borrow is safe and leaves the owner
+// intact across repeated matches (no double-free of the heap string).
+enum E { S(string), N }
+
+fn describe(e: &E): string {
+    match e {
+        E.S(s) => { return "got:" + s }
+        E.N => { return "nil" }
+    }
+}
+
+fn main(): i32 {
+    var b = String.withCapacity(4)
+    b.push('h')
+    b.push('i')
+    let e = E.S(b)
+    print(describe(e))
+    print(describe(e))
+    let n = E.N
+    print(describe(n))
+    return 0
+}

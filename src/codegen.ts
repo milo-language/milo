@@ -1622,7 +1622,15 @@ export class Codegen {
     const lines: string[] = [];
     let subjAddr: string;
     let subjTy: string;
-    if (stmt.subject.kind === "HeapDeref" && stmt.subject.operand.kind === "Ident") {
+    if (stmt.subjectIsRef && stmt.subject.kind === "Ident" && this.locals.get(stmt.subject.name)?.isRef) {
+      // `match &Enum`: read the tag/payloads through the borrow's pointer
+      // directly — nothing is copied or moved. (genExpr would auto-deref the
+      // ref to a value; we want the pointer itself.)
+      const p = this.nextTemp();
+      lines.push(`  ${p} = load ptr, ptr ${this.localAddr(stmt.subject.name)}`);
+      subjAddr = p;
+      subjTy = `%${stmt.enumName}`;
+    } else if (stmt.subject.kind === "HeapDeref" && stmt.subject.operand.kind === "Ident") {
       const [heapLines, heapVal] = this.genExpr(stmt.subject.operand);
       lines.push(...heapLines);
       subjAddr = heapVal;
@@ -1669,7 +1677,7 @@ export class Codegen {
       lines.push(`${label}:`);
       if (arm.pattern.kind === "EnumPattern" && arm.pattern.bindings.length > 0) {
         const variant = layout.variants.get(arm.pattern.variant)!;
-        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern);
+        this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern, !!stmt.subjectIsRef);
       }
       let armTerminated = false;
       for (const s of arm.body) {
@@ -1707,43 +1715,46 @@ export class Codegen {
     lines: string[], subjAddr: string, subjTy: string,
     variant: { tag: number; fieldTypes: string[] },
     pattern: HIRPattern & { kind: "EnumPattern" },
+    subjectIsRef: boolean,
   ) {
     if (pattern.bindings.length === 0) return;
     const payloadPtr = this.nextTemp();
     lines.push(`  ${payloadPtr} = getelementptr ${subjTy}, ptr ${subjAddr}, i32 0, i32 1`);
 
-    if (pattern.bindings.length === 1) {
-      const ty = variant.fieldTypes[0];
-      const fieldKind = pattern.bindings[0].type;
-      const val = this.nextTemp();
-      lines.push(`  ${val} = load ${ty}, ptr ${payloadPtr}`);
-      // Move semantics: binding consumes the payload. Zero the source so the subject's
-      // drop chain doesn't free the same heap data the binding now owns.
-      if (this.needsDropCg(fieldKind)) {
-        lines.push(`  store ${ty} zeroinitializer, ptr ${payloadPtr}`);
-      }
+    const bind = (name: string, ty: string, fieldKind: TypeKind, fieldPtr: string) => {
       const uid = this.labelCounter++;
-      const addr = `%${pattern.bindings[0].name}.${uid}.addr`;
+      // Ref-match of a non-Copy payload: bind a BORROW — the local holds a
+      // pointer into the still-owned subject. No load, no zeroing, no drop, so
+      // there is no double-free with the subject's real owner.
+      if (subjectIsRef && this.needsDropCg(fieldKind)) {
+        const addr = `%${name}.${uid}.addr`;
+        lines.push(`  ${addr} = alloca ptr`);
+        lines.push(`  store ptr ${fieldPtr}, ptr ${addr}`);
+        this.locals.set(name, { type: ty, typeKind: { tag: "ref", inner: fieldKind, mutable: false }, mutable: false, isRef: true, addr });
+        return;
+      }
+      const val = this.nextTemp();
+      lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
+      // Owned match consumes (moves) the payload: zero the source so the
+      // subject's drop chain doesn't free what the binding now owns. A ref-match
+      // of a Copy payload is just a value copy — nothing to zero.
+      if (!subjectIsRef && this.needsDropCg(fieldKind)) {
+        lines.push(`  store ${ty} zeroinitializer, ptr ${fieldPtr}`);
+      }
+      const addr = `%${name}.${uid}.addr`;
       lines.push(`  ${addr} = alloca ${ty}`);
       lines.push(`  store ${ty} ${val}, ptr ${addr}`);
-      this.locals.set(pattern.bindings[0].name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
+      this.locals.set(name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
+    };
+
+    if (pattern.bindings.length === 1) {
+      bind(pattern.bindings[0].name, variant.fieldTypes[0], pattern.bindings[0].type, payloadPtr);
     } else {
       const payloadStructTy = `{ ${variant.fieldTypes.join(", ")} }`;
       for (let i = 0; i < pattern.bindings.length; i++) {
-        const ty = variant.fieldTypes[i];
-        const fieldKind = pattern.bindings[i].type;
         const fieldPtr = this.nextTemp();
         lines.push(`  ${fieldPtr} = getelementptr ${payloadStructTy}, ptr ${payloadPtr}, i32 0, i32 ${i}`);
-        const val = this.nextTemp();
-        lines.push(`  ${val} = load ${ty}, ptr ${fieldPtr}`);
-        if (this.needsDropCg(fieldKind)) {
-          lines.push(`  store ${ty} zeroinitializer, ptr ${fieldPtr}`);
-        }
-        const uid = this.labelCounter++;
-        const addr = `%${pattern.bindings[i].name}.${uid}.addr`;
-        lines.push(`  ${addr} = alloca ${ty}`);
-        lines.push(`  store ${ty} ${val}, ptr ${addr}`);
-        this.locals.set(pattern.bindings[i].name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
+        bind(pattern.bindings[i].name, variant.fieldTypes[i], pattern.bindings[i].type, fieldPtr);
       }
     }
   }

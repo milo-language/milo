@@ -207,7 +207,11 @@ class LowerCtx {
         return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, span: stmt.span };
       }
       case "MatchStmt": {
-        const subjType = this.typeOf(stmt.subject);
+        let subjType = this.typeOf(stmt.subject);
+        // Matching on a borrowed enum (`&Enum`): the checker already decided this
+        // (reading a ref Ident auto-derefs, hiding the ref from typeOf here).
+        const subjectIsRef = this.c.matchSubjectRef.has(stmt.subject);
+        if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
         const enumName = subjType?.tag === "enum" ? subjType.name : "";
         const enumInfo = this.c.enums.get(enumName);
         return {
@@ -218,6 +222,7 @@ class LowerCtx {
             body: arm.body.map(s => this.lowerStmt(s, fnRetType)),
           })),
           enumName,
+          subjectIsRef,
           span: stmt.span,
         };
       }

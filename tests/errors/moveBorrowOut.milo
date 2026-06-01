@@ -1,0 +1,12 @@
+// moving a non-Copy value out of a borrow would alias the owner's heap data
+// (double-free); it must be rejected — clone to take ownership.
+fn take(s: string) {
+    print(s)
+}
+fn f(s: &string) {
+    take(s)
+}
+fn main(): i32 {
+    return 0
+}
+// @error: cannot move the borrowed value out of

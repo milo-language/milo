@@ -619,5 +619,5 @@ fn fetchPatch(url: &string, body: &string): Result<Response, NetError> {
         headers: "Content-Type: application/json",
         body: body.clone(),
     }
-    return doFetch(url, opts)
+    return doFetch(url.clone(), opts)
 }

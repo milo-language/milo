@@ -47,6 +47,7 @@ export interface CheckResult {
   diagnostics: Diagnostic[];
   exprTypes: Map<Expr, TypeKind>;
   autoBorrowed: Map<Expr, { mutable: boolean }>;
+  matchSubjectRef: Set<Expr>;
   rewrittenCalls: Map<Expr, string>;
   rewrittenEnums: Map<Expr, string>;
   staticCalls: Map<Expr, string>;
@@ -157,6 +158,7 @@ export class TypeChecker {
   private scopes: Map<string, VarInfo>[] = [];
   private exprTypes = new Map<Expr, TypeKind>();
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
+  private matchSubjectRef = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
   private rewrittenEnums = new Map<Expr, string>();
   private staticCalls = new Map<Expr, string>();
@@ -459,6 +461,14 @@ export class TypeChecker {
     const base = typeFromAst(ty);
     if (base.tag === "struct" && this.enums.has(base.name)) {
       return { tag: "enum", name: base.name };
+    }
+    // `&Enum` / `*Enum`: typeFromAst tags the named inner as a struct by default;
+    // correct it to enum so e.g. a `&Value` param's pointee is a real enum.
+    if (base.tag === "ref" && base.inner.tag === "struct" && this.enums.has(base.inner.name)) {
+      return { tag: "ref", inner: { tag: "enum", name: base.inner.name }, mutable: base.mutable };
+    }
+    if (base.tag === "ptr" && base.inner.tag === "struct" && this.enums.has(base.inner.name)) {
+      return { tag: "ptr", inner: { tag: "enum", name: base.inner.name } };
     }
     // opaque extern types can only appear behind *T
     const opaqueCheck = base.tag === "struct" ? base.name
@@ -964,6 +974,7 @@ export class TypeChecker {
       diagnostics: this.diagnostics,
       exprTypes: this.exprTypes,
       autoBorrowed: this.autoBorrowed,
+      matchSubjectRef: this.matchSubjectRef,
       rewrittenCalls: this.rewrittenCalls,
       rewrittenEnums: this.rewrittenEnums,
       staticCalls: this.staticCalls,
@@ -2068,7 +2079,20 @@ export class TypeChecker {
         break;
       }
       case "MatchStmt": {
-        const subjType = this.checkExpr(stmt.subject);
+        const rawSubjType = this.checkExpr(stmt.subject);
+        // Matching on a borrowed enum (`&Enum`) reads the pointee without moving
+        // it. Payload bindings become borrows (see below), so nothing is consumed.
+        // Reading a ref Ident auto-derefs, so also consult its declared type.
+        let subjIsRef = rawSubjType.tag === "ref" && rawSubjType.inner.tag === "enum";
+        let subjType = subjIsRef && rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
+        if (!subjIsRef && stmt.subject.kind === "Ident") {
+          const info = this.lookup(stmt.subject.name);
+          if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") {
+            subjIsRef = true;
+            subjType = info.type.inner;
+          }
+        }
+        if (subjIsRef) this.matchSubjectRef.add(stmt.subject);
         const isEnum = subjType.tag === "enum";
         const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";
         if (!isEnum && !isLiteralType && subjType.tag !== "unknown") {
@@ -2150,7 +2174,14 @@ export class TypeChecker {
               const variant = enumInfo.variants.get(arm.pattern.variant);
               if (variant) {
                 for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
-                  this.declare(arm.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false, read: false });
+                  let bt = variant.fields[i];
+                  // Ref-match: a non-Copy payload binds as a borrow (`&T`) — it
+                  // is a view into the still-owned subject, so it can't be moved
+                  // out or dropped. Copy payloads bind by value (a safe copy).
+                  if (subjIsRef && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+                    bt = { tag: "ref", inner: bt, mutable: false };
+                  }
+                  this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false });
                 }
               }
             }
@@ -2170,7 +2201,9 @@ export class TypeChecker {
             }
           }
         }
-        this.tryMove(stmt.subject);
+        // A ref-match borrows the subject (payload bindings are borrows); it is
+        // not consumed, so don't move it.
+        if (!subjIsRef) this.tryMove(stmt.subject);
         break;
       }
       case "IfLetStmt": {
@@ -2359,6 +2392,15 @@ export class TypeChecker {
   private tryMove(expr: Expr) {
     if (expr.kind === "Ident") {
       const info = this.lookup(expr.name);
+      // Moving in an owned position through a borrow (`&T`, T non-Copy) would
+      // shallow-copy the pointee — e.g. a String's heap buffer — aliasing it
+      // with the real owner and double-freeing on drop. Reject; clone to own.
+      if (info && info.type.tag === "ref" &&
+          !isCopy(info.type.inner, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+        this.error(`cannot move the borrowed value out of '${expr.name}'`, expr.span,
+          `'${expr.name}' is a reference — call .clone() to take an owned copy`);
+        return;
+      }
       if (info && !isCopy(info.type, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
         if (info.borrowed) {
           this.error(`cannot move '${expr.name}' because it is captured by a closure`, expr.span);
