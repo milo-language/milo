@@ -13,7 +13,14 @@ worktree only. Per `feedback_iteration_speed`: targeted tests, never full
 - (A) cross-compile to Cortex-M — triples in src/target.ts + clang -mcpu/-mfloat-abi.  **DONE** (eff5dfc)
 - (B) freestanding runtime — startup vector table + linker script + semihosting + libc shim; `build --target` links runnable ARM ELF.  **DONE** (749f1fa)
 - (C) functional verify on QEMU `mps2-an385 -semihosting`.  **DONE** (1de3f93) — qemu installed; `milo run --target=cortex-m3` runs bare-metal ELF, prints `exit=<n>` via semihosting; e2e test green (add(40,2)→exit=42).
-- (D) WCET — emit loop-bound flow facts from safety pass for OTAWA.  **NEXT**
+- (D) WCET — emit loop-bound flow facts for OTAWA.  **DONE** (85657c8) — `milo wcet <file>` emits OTAWA flow facts. src/wcet.ts walks AST: exact COUNT for literal `for i in A..B`, MAX for `while i<N`/`i<=N`, UNRESOLVED (flagged, not dropped) for non-literal bounds. 7 unit tests. flightController → 2 resolved (COUNT 30, COUNT 30000) + 1 unresolved.
+
+## ALL FOUR STAGES DONE
+The full chain is proven: Milo source → safety-checked → thumb codegen →
+freestanding link → QEMU run (correct result) → WCET flow facts emitted.
+Next possible work (not yet done): run OTAWA itself on ELF+flowfacts for an
+actual cycle bound (needs OTAWA install); port stdlib to freestanding so hosted
+apps run bare-metal; merge embedded-cortexm worktree → main.
 
 ## Stage C result + boundary
 - Proven end-to-end: Milo src → thumb codegen → freestanding link → QEMU exec →
