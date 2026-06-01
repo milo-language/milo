@@ -1,0 +1,26 @@
+// @expect: 25
+// Dynamic dispatch on boxed trait objects stored in a Vec: the dispatch borrows
+// the fat pointer from the slot (no deep-clone — a boxed trait object can't be
+// cloned), so iterating and calling through the interface works.
+interface Counter {
+    fn value(self: &Self): i64
+}
+struct A { n: i64 }
+impl A {
+    fn value(self: &Self): i64 { return self.n }
+}
+struct B { m: i64 }
+impl B {
+    fn value(self: &Self): i64 { return self.m * 2 }
+}
+fn main(): i32 {
+    var xs: Vec<Heap<Counter>> = Vec.new()
+    xs.push(Heap(A { n: 5 }))
+    xs.push(Heap(B { m: 10 }))
+    var total: i64 = 0
+    for i in 0..xs.len() {
+        total = total + xs[i].value()
+    }
+    print(total)
+    return 0
+}

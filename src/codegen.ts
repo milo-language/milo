@@ -2982,8 +2982,21 @@ export class Codegen {
       }
       case "InterfaceMethodCall": {
         // object is { ptr data, ptr itable } — either directly or loaded from alloca
-        const [objLines, objVal] = this.genExpr(expr.object);
-        lines.push(...objLines);
+        let objVal: string;
+        const recv = expr.object;
+        if (recv.kind === "IndexAccess" && recv.object.type.tag === "vec") {
+          // Borrow the fat pointer straight from the Vec slot. Dispatch only
+          // reads data+itable, so don't deep-clone the element — a boxed trait
+          // object can't be cloned (no vtable clone slot), and cloning it as a
+          // thin Heap mis-handles the fat pointer.
+          const [, slotPtr] = this.genVecBoundsCheckedPtr(recv, lines);
+          objVal = this.nextTemp();
+          lines.push(`  ${objVal} = load { ptr, ptr }, ptr ${slotPtr}`);
+        } else {
+          const [objLines, ov] = this.genExpr(recv);
+          lines.push(...objLines);
+          objVal = ov;
+        }
 
         // extract data ptr and itable ptr
         const dataPtr = this.nextTemp();
