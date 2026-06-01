@@ -189,33 +189,252 @@ fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value
     }
 }
 
+// ── Lexer ──
+
+let T_NUM: i32 = 0
+let T_IDENT: i32 = 1
+let T_PLUS: i32 = 2
+let T_MINUS: i32 = 3
+let T_STAR: i32 = 4
+let T_SLASH: i32 = 5
+let T_LT: i32 = 6
+let T_GT: i32 = 7
+let T_EQEQ: i32 = 8
+let T_LPAREN: i32 = 9
+let T_RPAREN: i32 = 10
+let T_LET: i32 = 11
+let T_IN: i32 = 12
+let T_IF: i32 = 13
+let T_THEN: i32 = 14
+let T_ELSE: i32 = 15
+let T_EQ: i32 = 16
+let T_EOF: i32 = 17
+
+struct Token {
+    kind: i32,
+    num: i64,
+    text: string,
+}
+
+fn isSpace(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
+}
+
+fn isDigit(c: u8): bool {
+    return c >= '0' && c <= '9'
+}
+
+fn isAlpha(c: u8): bool {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
+}
+
+fn keywordKind(s: &string): i32 {
+    if s == "let" {
+        return T_LET
+    }
+    if s == "in" {
+        return T_IN
+    }
+    if s == "if" {
+        return T_IF
+    }
+    if s == "then" {
+        return T_THEN
+    }
+    if s == "else" {
+        return T_ELSE
+    }
+    return T_IDENT
+}
+
+fn lex(src: &string): Vec<Token> {
+    var toks: Vec<Token> = Vec.new()
+    let n = src.len()
+    var i: i64 = 0
+    while i < n {
+        let c = src[i]
+        if isSpace(c) {
+            i = i + 1
+        } else if isDigit(c) {
+            var v: i64 = 0
+            while i < n && isDigit(src[i]) {
+                v = v * 10 + (src[i] - '0') as i64
+                i = i + 1
+            }
+            toks.push(Token { kind: T_NUM, num: v, text: "" })
+        } else if isAlpha(c) {
+            var name = String.withCapacity(8)
+            while i < n && (isAlpha(src[i]) || isDigit(src[i])) {
+                name.push(src[i])
+                i = i + 1
+            }
+            let k = keywordKind(name)
+            toks.push(Token { kind: k, num: 0, text: name })
+        } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
+            toks.push(Token { kind: T_EQEQ, num: 0, text: "" })
+            i = i + 2
+        } else {
+            var k: i32 = T_EOF
+            if c == '+' { k = T_PLUS }
+            else if c == '-' { k = T_MINUS }
+            else if c == '*' { k = T_STAR }
+            else if c == '/' { k = T_SLASH }
+            else if c == '<' { k = T_LT }
+            else if c == '>' { k = T_GT }
+            else if c == '(' { k = T_LPAREN }
+            else if c == ')' { k = T_RPAREN }
+            else if c == '=' { k = T_EQ }
+            toks.push(Token { kind: k, num: 0, text: "" })
+            i = i + 1
+        }
+    }
+    toks.push(Token { kind: T_EOF, num: 0, text: "" })
+    return toks
+}
+
+// ── Parser (recursive descent with precedence) ──
+
+struct PState {
+    toks: Vec<Token>,
+    pos: i64,
+}
+
+fn peekKind(p: &PState): i32 {
+    if p.pos < p.toks.len() {
+        return p.toks[p.pos].kind
+    }
+    return T_EOF
+}
+
+fn opStr(kind: i32): string {
+    if kind == T_PLUS { return "+" }
+    if kind == T_MINUS { return "-" }
+    if kind == T_STAR { return "*" }
+    if kind == T_SLASH { return "/" }
+    if kind == T_LT { return "<" }
+    if kind == T_GT { return ">" }
+    return "=="
+}
+
+fn parsePrimary(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+    let k = peekKind(p)
+    if k == T_NUM {
+        let v = p.toks[p.pos].num
+        p.pos = p.pos + 1
+        return arenaAlloc(arena, Expr.Num(v))
+    }
+    if k == T_IDENT {
+        let name = p.toks[p.pos].text.clone()
+        p.pos = p.pos + 1
+        return arenaAlloc(arena, Expr.Var(name))
+    }
+    if k == T_LPAREN {
+        p.pos = p.pos + 1
+        let e = parseExpr(p, arena)
+        if peekKind(p) == T_RPAREN {
+            p.pos = p.pos + 1
+        }
+        return e
+    }
+    if k == T_IF {
+        p.pos = p.pos + 1
+        let cond = parseExpr(p, arena)
+        if peekKind(p) == T_THEN {
+            p.pos = p.pos + 1
+        }
+        let thenE = parseExpr(p, arena)
+        if peekKind(p) == T_ELSE {
+            p.pos = p.pos + 1
+        }
+        let elseE = parseExpr(p, arena)
+        return arenaAlloc(arena, Expr.If(cond, thenE, elseE))
+    }
+    if k == T_LET {
+        p.pos = p.pos + 1
+        var name = String.withCapacity(8)
+        if peekKind(p) == T_IDENT {
+            name = p.toks[p.pos].text.clone()
+            p.pos = p.pos + 1
+        }
+        if peekKind(p) == T_EQ {
+            p.pos = p.pos + 1
+        }
+        let valE = parseExpr(p, arena)
+        if peekKind(p) == T_IN {
+            p.pos = p.pos + 1
+        }
+        let bodyE = parseExpr(p, arena)
+        return arenaAlloc(arena, Expr.Let(name, valE, bodyE))
+    }
+    // error: emit a 0 so eval still terminates
+    return arenaAlloc(arena, Expr.Num(0))
+}
+
+fn parseMul(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+    var left = parsePrimary(p, arena)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_STAR || k == T_SLASH {
+            p.pos = p.pos + 1
+            let right = parsePrimary(p, arena)
+            left = arenaAlloc(arena, Expr.Bin(opStr(k), left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseAdd(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+    var left = parseMul(p, arena)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_PLUS || k == T_MINUS {
+            p.pos = p.pos + 1
+            let right = parseMul(p, arena)
+            left = arenaAlloc(arena, Expr.Bin(opStr(k), left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
+    var left = parseAdd(p, arena)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_LT || k == T_GT || k == T_EQEQ {
+            p.pos = p.pos + 1
+            let right = parseAdd(p, arena)
+            left = arenaAlloc(arena, Expr.Bin(opStr(k), left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn run(arena: &mut Arena<Expr>, src: &string): string {
+    let toks = lex(src)
+    var p = PState { toks: toks, pos: 0 }
+    let root = parseExpr(p, arena)
+    var env: Vec<Binding> = Vec.new()
+    let result = evalExpr(arena, root, env)
+    return valueToString(result)
+}
+
 fn main(): i32 {
     var arena: Arena<Expr> = arenaNew()
 
-    // let x = 6 in let y = 7 in x * y    => 42
-    let six = arenaAlloc(arena, Expr.Num(6))
-    let seven = arenaAlloc(arena, Expr.Num(7))
-    let xVar = arenaAlloc(arena, Expr.Var("x"))
-    let yVar = arenaAlloc(arena, Expr.Var("y"))
-    let mul = arenaAlloc(arena, Expr.Bin("*", xVar, yVar))
-    let letY = arenaAlloc(arena, Expr.Let("y", seven, mul))
-    let letX = arenaAlloc(arena, Expr.Let("x", six, letY))
-
-    var env: Vec<Binding> = Vec.new()
-    let r1 = evalExpr(arena, letX, env)
-    print(valueToString(r1))          // 42
-
-    // if (3 < 5) then 100 else 200   => 100
-    let three = arenaAlloc(arena, Expr.Num(3))
-    let five = arenaAlloc(arena, Expr.Num(5))
-    let lt = arenaAlloc(arena, Expr.Bin("<", three, five))
-    let h100 = arenaAlloc(arena, Expr.Num(100))
-    let h200 = arenaAlloc(arena, Expr.Num(200))
-    let ifE = arenaAlloc(arena, Expr.If(lt, h100, h200))
-
-    var env2: Vec<Binding> = Vec.new()
-    let r2 = evalExpr(arena, ifE, env2)
-    print(valueToString(r2))          // 100
+    print(run(arena, "let x = 6 in let y = 7 in x * y"))         // 42
+    print(run(arena, "if 3 < 5 then 100 else 200"))              // 100
+    print(run(arena, "1 + 2 * 3 - 4"))                           // 3
+    print(run(arena, "let n = 10 in if n > 5 then n * n else 0"))// 100
+    print(run(arena, "(2 + 3) * (4 + 1)"))                       // 25
 
     return 0
 }
