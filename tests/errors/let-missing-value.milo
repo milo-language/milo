@@ -1,0 +1,6 @@
+// @error: let binding 'x' has no value after '='
+// The error must anchor at the `let` (line below), not the `return` a line later.
+fn main(): i32 {
+    let x =
+    return x
+}

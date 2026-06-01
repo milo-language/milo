@@ -43,12 +43,14 @@ export class Parser {
   // Throw a parse error carrying a structured Diagnostic (span + message + hint).
   // `expected`, when given, drives a precise "expected X" hint; a stray ';' gets
   // a dedicated hint since Milo uses newlines, not ';', to separate statements.
-  private error(msg: string, tok: Token, expected?: TokenKind): never {
-    let hint: string | undefined;
-    if (tok.kind === TokenKind.Semicolon) {
-      hint = "Milo uses newlines, not ';', to separate statements — remove the ';' or start a new line";
-    } else if (expected !== undefined) {
-      hint = `expected '${expected}' here`;
+  private error(msg: string, tok: Token, expected?: TokenKind, hintOverride?: string): never {
+    let hint = hintOverride;
+    if (hint === undefined) {
+      if (tok.kind === TokenKind.Semicolon) {
+        hint = "Milo uses newlines, not ';', to separate statements — remove the ';' or start a new line";
+      } else if (expected !== undefined) {
+        hint = `expected '${expected}' here`;
+      }
     }
     throw new ParseError({
       severity: "error",
@@ -552,24 +554,49 @@ export class Parser {
     return { kind: "GlobalDecl", name, type, value, mutable, threadLocal, span: s };
   }
 
+  // Tokens that can never begin an expression. Seeing one where a binding's
+  // value should be means the value is missing (e.g. `let x =` then `return`).
+  private static readonly NON_EXPR_START = new Set<TokenKind>([
+    TokenKind.Let, TokenKind.Var, TokenKind.Return, TokenKind.Else,
+    TokenKind.While, TokenKind.For, TokenKind.Break, TokenKind.Continue,
+    TokenKind.Semicolon, TokenKind.RBrace, TokenKind.Eof,
+  ]);
+
+  // After consuming `=`, error if no expression follows. Anchored at the binding
+  // keyword, not the unrelated next token: the real cause is the dangling
+  // `let x =` a line earlier, so pointing the caret there (with the offending
+  // token named in the message) is what makes the diagnostic land.
+  private requireBindingValue(kw: "let" | "var", name: string, kwTok: Token): void {
+    const next = this.peek();
+    if (Parser.NON_EXPR_START.has(next.kind)) {
+      this.error(
+        `${kw} binding '${name}' has no value after '='`,
+        kwTok, undefined,
+        `expected an expression after '=' — found '${next.value}'; e.g. '${kw} ${name} = 0'`,
+      );
+    }
+  }
+
   private parseLet(): Stmt {
-    const s = this.span(this.peek());
-    this.expect(TokenKind.Let);
+    const letTok = this.expect(TokenKind.Let);
+    const s = this.span(letTok);
     const name = this.expect(TokenKind.Ident).value;
     let type: MiloType | null = null;
     if (this.match(TokenKind.Colon)) type = this.parseType();
     this.expect(TokenKind.Eq);
+    this.requireBindingValue("let", name, letTok);
     const value = this.parseExpr();
     return { kind: "LetDecl", name, type, value, span: s };
   }
 
   private parseVar(): Stmt {
-    const s = this.span(this.peek());
-    this.expect(TokenKind.Var);
+    const varTok = this.expect(TokenKind.Var);
+    const s = this.span(varTok);
     const name = this.expect(TokenKind.Ident).value;
     let type: MiloType | null = null;
     if (this.match(TokenKind.Colon)) type = this.parseType();
     this.expect(TokenKind.Eq);
+    this.requireBindingValue("var", name, varTok);
     const value = this.parseExpr();
     return { kind: "VarDecl", name, type, value, span: s };
   }
