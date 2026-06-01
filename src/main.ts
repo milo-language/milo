@@ -839,6 +839,7 @@ function main() {
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
     console.log("  --deny-all             treat all warnings as errors");
+    console.log("                         (off-by-default warnings: unused-move, unused-unsafe)");
     console.log("  --safety=<level>       enforce safety profile (e.g. --safety=do178)");
     process.exit(1);
   }

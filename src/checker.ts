@@ -143,6 +143,12 @@ export class TypeChecker {
   private sendTypes = new Set<string>();
   private syncTypes = new Set<string>();
   private unsafeDepth = 0;
+  // Parallel to unsafeDepth: one flag per live `unsafe` block, set true the moment
+  // an operation inside it actually needs unsafe. A block popped still false is the
+  // unused-unsafe lint target. Marking happens at the real check sites (via
+  // requireUnsafe) so ops nested in call args/closures count — the trap the
+  // prior statement-walker attempt fell into.
+  private unsafeUsedStack: boolean[] = [];
   private scopes: Map<string, VarInfo>[] = [];
   private exprTypes = new Map<Expr, TypeKind>();
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
@@ -188,6 +194,10 @@ export class TypeChecker {
   constructor(warningConfig?: WarningConfig) {
     const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
     if (!config.denied.has("unused-move")) config.allowed.add("unused-move");
+    // Opt-in: the permissive safe-extern rule makes most stdlib unsafe blocks
+    // technically removable, so on-by-default would flood every compile. Enable
+    // with --deny=unused-unsafe (or remove from --allow) to hunt removable blocks.
+    if (!config.denied.has("unused-unsafe")) config.allowed.add("unused-unsafe");
     this.warningConfig = config;
   }
 
@@ -199,6 +209,16 @@ export class TypeChecker {
     if (this.warningConfig.allowed.has(code)) return;
     const severity = (this.warningConfig.denied.has(code) || this.warningConfig.denied.has("*")) ? "error" : "warning";
     this.diagnostics.push({ severity, span, message: msg, hint, code });
+  }
+
+  // An operation that requires unsafe: error if outside a block, else mark the
+  // innermost live block used (feeds the unused-unsafe lint).
+  private requireUnsafe(msg: string, span?: Span, hint?: string) {
+    if (this.unsafeDepth === 0) {
+      this.error(msg, span, hint);
+    } else if (this.unsafeUsedStack.length > 0) {
+      this.unsafeUsedStack[this.unsafeUsedStack.length - 1] = true;
+    }
   }
 
   // compute the output range of an arithmetic operation on two ranged integers
@@ -2174,10 +2194,15 @@ export class TypeChecker {
       }
       case "UnsafeBlock": {
         this.unsafeDepth++;
+        this.unsafeUsedStack.push(false);
         this.pushScope();
         for (const s of stmt.body) this.checkStmt(s, fnRetType);
         this.popScope();
+        const used = this.unsafeUsedStack.pop();
         this.unsafeDepth--;
+        if (!used) {
+          this.warn("unused-unsafe", `unnecessary 'unsafe' block: nothing inside requires unsafe`, stmt.span, `remove the 'unsafe' wrapper`);
+        }
         break;
       }
       case "ParallelBlock": {
@@ -2722,7 +2747,7 @@ export class TypeChecker {
           if (ot.tag === "ref") return this.setType(expr, ot.inner);
           if (ot.tag === "heap") return this.setType(expr, ot.inner);
           if (ot.tag === "ptr") {
-            if (this.unsafeDepth === 0) this.error(`pointer dereference requires 'unsafe' block`, sp);
+            this.requireUnsafe(`pointer dereference requires 'unsafe' block`, sp);
             return this.setType(expr, ot.inner);
           }
           if (ot.tag !== "unknown") this.error(`cannot dereference type '${typeName(ot)}' (expected &T, *T or Heap<T>)`, sp);
@@ -2750,7 +2775,7 @@ export class TypeChecker {
           return this.setType(expr, ot);
         }
         if (expr.op === "&") {
-          if (this.unsafeDepth === 0) this.error(`address-of operator requires 'unsafe' block`, sp);
+          this.requireUnsafe(`address-of operator requires 'unsafe' block`, sp);
           if (expr.operand.kind !== "Ident" && expr.operand.kind !== "FieldAccess" && expr.operand.kind !== "IndexAccess")
             this.error(`address-of requires an lvalue (variable, field, or index)`, sp);
           return this.setType(expr, { tag: "ptr", inner: ot });
@@ -2782,7 +2807,7 @@ export class TypeChecker {
         if (expr.func === "zeroed") {
           if (!expr.typeArgs || expr.typeArgs.length !== 1) { this.error(`zeroed requires exactly one type argument`, sp); return this.setType(expr, { tag: "unknown" }); }
           if (expr.args.length !== 0) { this.error(`zeroed takes no value arguments`, sp); return this.setType(expr, { tag: "unknown" }); }
-          if (this.unsafeDepth === 0) { this.error(`zeroed<T>() can only be used in unsafe blocks`, sp); }
+          this.requireUnsafe(`zeroed<T>() can only be used in unsafe blocks`, sp);
           const resolved = this.resolve(expr.typeArgs[0]);
           this.sizeOfTypes.set(expr, resolved);
           return this.setType(expr, resolved);
@@ -3042,8 +3067,10 @@ export class TypeChecker {
           }
           this.tryMove(expr.args[i]);
         }
-        // safe extern call: no unsafe needed if all args are safe-passable and return is scalar/void
-        if (sig.isExtern && this.unsafeDepth === 0) {
+        // safe extern call: no unsafe needed if all args are safe-passable and return is scalar/void.
+        // Compute safety unconditionally (not just at depth 0) so an unsafe-requiring extern call
+        // marks its enclosing block used, while a safe one leaves the block flagged unused.
+        if (sig.isExtern) {
           const retSafe = isScalar(sig.ret);
           let argsSafe = retSafe;
           if (argsSafe) {
@@ -3065,7 +3092,7 @@ export class TypeChecker {
             }
           }
           if (!argsSafe) {
-            this.error(`calling extern function '${expr.func}' requires an unsafe block`, sp);
+            this.requireUnsafe(`calling extern function '${expr.func}' requires an unsafe block`, sp);
           }
         }
         // check requires contracts at call site
@@ -3154,7 +3181,7 @@ export class TypeChecker {
         if (objType.tag === "ref") objType = objType.inner;
         // auto-deref through pointers for field access (requires unsafe)
         if (objType.tag === "ptr" && objType.inner.tag === "struct") {
-          if (this.unsafeDepth === 0) this.error(`pointer field access requires 'unsafe' block`, sp);
+          this.requireUnsafe(`pointer field access requires 'unsafe' block`, sp);
           objType = objType.inner;
         }
         if (objType.tag === "struct") {
@@ -3212,7 +3239,7 @@ export class TypeChecker {
         if (objType.tag === "vec") return this.setType(expr, objType.element);
         if (objType.tag === "string") return this.setType(expr, { tag: "int", bits: 8, signed: false });
         if (objType.tag === "ptr") {
-          if (this.unsafeDepth === 0) this.error(`pointer indexing requires 'unsafe' block`, sp);
+          this.requireUnsafe(`pointer indexing requires 'unsafe' block`, sp);
           return this.setType(expr, objType.inner);
         }
         this.error(`cannot index type ${typeName(objType)}`, sp);
@@ -3493,8 +3520,8 @@ export class TypeChecker {
           this.error(`cannot cast to ${typeName(toType)}`, sp);
         }
         const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0;
-        if (toType.tag === "ptr" && this.unsafeDepth === 0 && !isNullPtrConst) {
-          this.error(`cast to pointer type requires 'unsafe' block`, sp);
+        if (toType.tag === "ptr" && !isNullPtrConst) {
+          this.requireUnsafe(`cast to pointer type requires 'unsafe' block`, sp);
         }
         return this.setType(expr, toType);
       }
