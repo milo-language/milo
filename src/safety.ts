@@ -30,6 +30,7 @@ interface SafetyConstraints {
   noUnsafe: boolean;
   noRecursiveTypes: boolean;          // no recursive struct/enum definitions
   requireFullMatchCoverage: boolean;
+  noForeignCalls?: boolean;           // no calls to extern/FFI functions (unverified external code)
 }
 
 const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
@@ -45,6 +46,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noUnsafe: true,
     noRecursiveTypes: true,
     requireFullMatchCoverage: true,
+    noForeignCalls: true,
   },
   "do178c-b": {
     noRecursion: true,
@@ -57,6 +59,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noUnsafe: true,
     noRecursiveTypes: false,
     requireFullMatchCoverage: true,
+    noForeignCalls: true,
   },
   "do178c-c": {
     noRecursion: true,
@@ -119,6 +122,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noUnsafe: true,
     noRecursiveTypes: true,
     requireFullMatchCoverage: true,
+    noForeignCalls: true,
   },
 
   // NASA software classification
@@ -133,6 +137,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noUnsafe: true,
     noRecursiveTypes: true,
     requireFullMatchCoverage: true,
+    noForeignCalls: true,
   },
   "nasa-b": {
     noRecursion: true,
@@ -159,6 +164,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noUnsafe: true,
     noRecursiveTypes: true,
     requireFullMatchCoverage: true,
+    noForeignCalls: true,
   },
   "iec61508-3": {
     noRecursion: true,
@@ -171,6 +177,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noUnsafe: true,
     noRecursiveTypes: false,
     requireFullMatchCoverage: true,
+    noForeignCalls: true,
   },
 
   // IEC 62304 — medical device software
@@ -209,6 +216,7 @@ const PROFILES: Record<SafetyLevel, SafetyConstraints> = {
     noUnsafe: true,
     noRecursiveTypes: true,
     requireFullMatchCoverage: true,
+    noForeignCalls: true,
   },
 };
 
@@ -280,6 +288,10 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
   }
 
   // Whole-program checks (need cross-function / cross-type visibility).
+  if (constraints.noForeignCalls) {
+    checkForeignCalls(program, violations, level);
+  }
+
   if (constraints.noRecursion) {
     checkRecursionCycles(program, violations, level);
   }
@@ -457,6 +469,33 @@ function checkNoFloat(fn: Function, violations: SafetyViolation[], level: Safety
   }, (s) => {
     if ((s.kind === "LetDecl" || s.kind === "VarDecl") && typeIsFloat(s.type)) flag(s.span);
   });
+}
+
+// ── noForeignCalls ──
+// At the most critical levels, a call into extern/FFI code is unverified
+// external object code — exactly what certification wants surfaced and
+// justified, not silent. Milo's permissive safe-extern rule (a matching-ptr,
+// scalar-return extern call needs no `unsafe`) makes such calls invisible
+// otherwise; this makes them loud.
+function checkForeignCalls(program: Program, violations: SafetyViolation[], level: SafetyLevel) {
+  const externNames = new Set<string>();
+  for (const fn of program.functions) if (fn.isExtern) externNames.add(fn.name);
+  if (externNames.size === 0) return;
+  const userFns = program.userFnNames;
+  for (const fn of program.functions) {
+    if (fn.isExtern) continue;
+    if (userFns && !userFns.has(fn.name)) continue;
+    walkExprs(fn.body, (e) => {
+      if (e.kind === "Call" && externNames.has(e.func)) {
+        violations.push({
+          rule: "no-foreign-calls",
+          message: `[${level}] call to extern function '${e.func}' in '${fn.name}' — unverified external code is banned at this safety level (justify it or wrap it behind a verified interface)`,
+          span: (e as { span?: Span }).span,
+          severity: "error",
+        });
+      }
+    });
+  }
 }
 
 // ── noRecursion ──

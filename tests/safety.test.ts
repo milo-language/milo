@@ -139,3 +139,25 @@ test("boundedLoops catches a while-loop nested inside a for-loop", () => {
 fn main(): i32 { return 0 }`;
   expect(rules(src, "do178c-a")).toContain("bounded-loops");
 });
+
+// ── noForeignCalls: unverified extern/FFI banned at catastrophic levels ──
+
+test("noForeignCalls flags a call to an extern function at do178c-a", () => {
+  const src = `extern fn write(fd: i32, buf: * u8, n: i64): i64
+fn emit(p: * u8): i64 requires true ensures true { return write(1, p, 10) }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("no-foreign-calls");
+});
+
+test("noForeignCalls is not enforced at do178c-c (FFI permitted there)", () => {
+  const src = `extern fn write(fd: i32, buf: * u8, n: i64): i64
+fn emit(p: * u8): i64 { return write(1, p, 10) }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-c")).not.toContain("no-foreign-calls");
+});
+
+test("noForeignCalls passes a program with no extern calls", () => {
+  const src = `fn add(a: i32, b: i32): i32 requires true ensures true { return a + b }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).not.toContain("no-foreign-calls");
+});
