@@ -213,4 +213,5 @@ export interface Program {
   interfaces: InterfaceDecl[];
   globals: GlobalDecl[];
   userFnNames?: Set<string>;
+  userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
 }

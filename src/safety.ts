@@ -246,44 +246,43 @@ export function checkSafetyCompliance(program: Program, level: SafetyLevel): Saf
   const violations: SafetyViolation[] = [];
 
   const userFns = program.userFnNames;
-  for (const fn of program.functions) {
-    if (fn.isExtern) continue;
-    if (userFns && !userFns.has(fn.name)) continue;
+  const userImplKeys = program.userImplKeys;
 
+  // Body-local checks, run on free functions AND user impl methods (methods were
+  // previously skipped entirely — a recursive/unsafe/allocating method passed).
+  const perFn = (fn: Function, label: string, isMethod: boolean) => {
     if (constraints.requireContracts && fn.contracts.length === 0 && fn.name !== "main") {
-      violations.push({
-        rule: "require-contracts",
-        message: `[${level}] function '${fn.name}' must have requires/ensures contracts`,
-        severity: "error",
-      });
+      violations.push({ rule: "require-contracts", message: `[${level}] function '${label}' must have requires/ensures contracts`, severity: "error" });
     }
-
-
-    if (constraints.requireBoundedLoops) {
-      checkUnboundedLoops(fn.name, fn.body, violations, level);
-    }
-
-    if (constraints.noDynamicAllocation) {
-      checkDynamicAllocation(fn.name, fn.body, violations, level);
-    }
-
-    if (constraints.noUnsafe) {
-      checkUnsafeBlocks(fn.name, fn.body, violations, level);
-    }
-
+    if (constraints.requireBoundedLoops) checkUnboundedLoops(label, fn.body, violations, level);
+    if (constraints.noDynamicAllocation) checkDynamicAllocation(label, fn.body, violations, level);
+    if (constraints.noUnsafe) checkUnsafeBlocks(label, fn.body, violations, level);
     if (constraints.maxFunctionComplexity !== null) {
       const complexity = computeCyclomaticComplexity(fn.body);
       if (complexity > constraints.maxFunctionComplexity) {
-        violations.push({
-          rule: "max-complexity",
-          message: `[${level}] function '${fn.name}' has cyclomatic complexity ${complexity} (max ${constraints.maxFunctionComplexity})`,
-          severity: "error",
-        });
+        violations.push({ rule: "max-complexity", message: `[${level}] function '${label}' has cyclomatic complexity ${complexity} (max ${constraints.maxFunctionComplexity})`, severity: "error" });
       }
     }
+    if (constraints.noFloatingPoint) checkNoFloat(fn, violations, level);
+    // The whole-program cycle DFS only covers free functions (resolving a method
+    // call to a specific method needs types we don't have here), so detect a
+    // method that recurses on itself (`self.m(...)`) directly.
+    if (constraints.noRecursion && isMethod && methodSelfRecurses(fn)) {
+      violations.push({ rule: "no-recursion", message: `[${level}] method '${label}' is recursive (banned at this safety level)`, severity: "error" });
+    }
+  };
 
-    if (constraints.noFloatingPoint) {
-      checkNoFloat(fn, violations, level);
+  for (const fn of program.functions) {
+    if (fn.isExtern) continue;
+    if (userFns && !userFns.has(fn.name)) continue;
+    perFn(fn, fn.name, false);
+  }
+  for (const impl of program.impls) {
+    for (const m of impl.methods) {
+      if (m.isExtern) continue;
+      const key = `${impl.typeName}.${m.name}`;
+      if (userImplKeys && !userImplKeys.has(key)) continue;
+      perFn(m, key, true);
     }
   }
 
@@ -477,24 +476,43 @@ function checkNoFloat(fn: Function, violations: SafetyViolation[], level: Safety
 // justified, not silent. Milo's permissive safe-extern rule (a matching-ptr,
 // scalar-return extern call needs no `unsafe`) makes such calls invisible
 // otherwise; this makes them loud.
+function methodSelfRecurses(fn: Function): boolean {
+  let found = false;
+  walkExprs(fn.body, (e) => {
+    if (e.kind === "MethodCall" && e.method === fn.name && e.object.kind === "Ident" && e.object.name === "self") found = true;
+    else if (e.kind === "Call" && e.func === fn.name) found = true;
+  });
+  return found;
+}
+
 function checkForeignCalls(program: Program, violations: SafetyViolation[], level: SafetyLevel) {
   const externNames = new Set<string>();
   for (const fn of program.functions) if (fn.isExtern) externNames.add(fn.name);
   if (externNames.size === 0) return;
   const userFns = program.userFnNames;
-  for (const fn of program.functions) {
-    if (fn.isExtern) continue;
-    if (userFns && !userFns.has(fn.name)) continue;
+  const userImplKeys = program.userImplKeys;
+  const scan = (fn: Function, label: string) => {
     walkExprs(fn.body, (e) => {
       if (e.kind === "Call" && externNames.has(e.func)) {
         violations.push({
           rule: "no-foreign-calls",
-          message: `[${level}] call to extern function '${e.func}' in '${fn.name}' — unverified external code is banned at this safety level (justify it or wrap it behind a verified interface)`,
+          message: `[${level}] call to extern function '${e.func}' in '${label}' — unverified external code is banned at this safety level (justify it or wrap it behind a verified interface)`,
           span: (e as { span?: Span }).span,
           severity: "error",
         });
       }
     });
+  };
+  for (const fn of program.functions) {
+    if (fn.isExtern || (userFns && !userFns.has(fn.name))) continue;
+    scan(fn, fn.name);
+  }
+  for (const impl of program.impls) {
+    for (const m of impl.methods) {
+      const key = `${impl.typeName}.${m.name}`;
+      if (m.isExtern || (userImplKeys && !userImplKeys.has(key))) continue;
+      scan(m, key);
+    }
   }
 }
 

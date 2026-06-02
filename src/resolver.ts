@@ -222,5 +222,9 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   }
 
   const userFnNames = new Set(program.functions.map(f => f.name));
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames };
+  // `program` here is still the user's pre-merge AST (imports were pushed into
+  // the separate arrays above), so its impls are the user's own.
+  const userImplKeys = new Set<string>();
+  for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames, userImplKeys };
 }

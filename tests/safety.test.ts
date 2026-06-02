@@ -161,3 +161,30 @@ test("noForeignCalls passes a program with no extern calls", () => {
 fn main(): i32 { return 0 }`;
   expect(rules(src, "do178c-a")).not.toContain("no-foreign-calls");
 });
+
+// ── impl methods are subject to the same constraints as free functions ──
+
+test("safety checks cover impl methods (recursion)", () => {
+  const src = `struct C { n: i32 }
+impl C { fn down(self: &Self, k: i32): i32 requires true ensures true { if k <= 0 { return 0 } return self.down(k - 1) } }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("no-recursion");
+});
+
+test("safety checks cover impl methods (unsafe + dynamic allocation)", () => {
+  const src = `struct W { n: i32 }
+impl W { fn bad(self: &Self): i32 requires true ensures true { let v: Vec<i64> = Vec.new() unsafe { let x = 1 } return 0 } }
+fn main(): i32 { return 0 }`;
+  const rs = rules(src, "do178c-a");
+  expect(rs).toContain("no-dynamic-alloc");
+  expect(rs).toContain("no-unsafe");
+});
+
+test("a clean impl method passes", () => {
+  const src = `struct A { n: i32 }
+impl A { fn get(self: &Self): i32 requires true ensures true { return self.n } }
+fn main(): i32 { return 0 }`;
+  const rs = rules(src, "do178c-a");
+  expect(rs).not.toContain("no-recursion");
+  expect(rs).not.toContain("no-unsafe");
+});
