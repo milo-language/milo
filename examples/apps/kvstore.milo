@@ -1,0 +1,178 @@
+// kvstore — a mini page-based key-value store, the last of the five rewrite
+// probes (sled-lite / buffer-pool pattern). Stresses the iterator/cursor story:
+// in Rust a scan returns Iterator<Item = (&K, &V)> borrowing the pages; Milo's
+// no-stored-refs model forbids a cursor that *holds* a borrow of the store, so
+// the cursor is a plain position value and every step passes the store
+// explicitly: `scanNext(&store, &mut cursor)`. Values are copied out (clone on
+// read), never borrowed out. See docs/rewrite-findings-html5ever.md.
+//
+// Layout: fixed-capacity sorted pages in a Vec (a toy B-tree leaf level).
+// put: binary-search page, insert sorted, split when full.
+// get: binary-search page then key. scan: cursor walks (page, slot) pairs.
+
+let PAGE_CAP: i64 = 4
+
+struct Entry {
+    key: string,
+    value: string,
+}
+
+struct Page {
+    entries: Vec<Entry>,
+}
+
+struct Store {
+    pages: Vec<Page>,
+    count: i64,
+}
+
+fn storeNew(): Store {
+    var pages: Vec<Page> = Vec.new()
+    pages.push(Page { entries: Vec.new() })
+    return Store { pages: pages, count: 0 }
+}
+
+// Index of the page whose key range should contain `key` — the last page whose
+// first key is <= key (or page 0).
+fn pageFor(s: &Store, key: &string): i64 {
+    var lo: i64 = 0
+    var i: i64 = 1
+    while i < s.pages.len() {
+        if s.pages[i].entries.len() > 0 && s.pages[i].entries[0].key <= key {
+            lo = i
+        }
+        i = i + 1
+    }
+    return lo
+}
+
+// Slot of `key` in page `p`, or -1.
+fn slotIn(s: &Store, p: i64, key: &string): i64 {
+    var i: i64 = 0
+    while i < s.pages[p].entries.len() {
+        if s.pages[p].entries[i].key == key {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1 as i64
+}
+
+fn get(s: &Store, key: &string): Option<string> {
+    let p = pageFor(s, key)
+    let slot = slotIn(s, p, key)
+    if slot < 0 {
+        return Option.None
+    }
+    // copy-out, never a borrow into the page
+    return Option.Some(s.pages[p].entries[slot].value.clone())
+}
+
+fn put(s: &mut Store, key: string, value: string) {
+    let p = pageFor(s, key)
+    let slot = slotIn(s, p, key)
+    if slot >= 0 {
+        s.pages[p].entries[slot].value = value
+        return
+    }
+    // sorted insert position
+    var pos: i64 = 0
+    while pos < s.pages[p].entries.len() && s.pages[p].entries[pos].key < key {
+        pos = pos + 1
+    }
+    s.pages[p].entries.insert(pos, Entry { key: key, value: value })
+    s.count = s.count + 1
+
+    // split when over capacity: move the upper half into a new page after p
+    if s.pages[p].entries.len() > PAGE_CAP {
+        let half = s.pages[p].entries.len() / 2
+        var upper: Vec<Entry> = Vec.new()
+        while s.pages[p].entries.len() > half {
+            let e = s.pages[p].entries.remove(half)
+            upper.push(e)
+        }
+        s.pages.insert(p + 1, Page { entries: upper })
+    }
+}
+
+// ── Scan: cursor is a plain position; the store is passed per step ──
+
+struct Cursor {
+    page: i64,
+    slot: i64,
+}
+
+fn scanStart(): Cursor {
+    return Cursor { page: 0, slot: 0 }
+}
+
+// Advance the cursor and copy out the next entry, or None when exhausted.
+// (The Rust shape — an Iterator borrowing pages — needs a stored ref; this is
+// the no-stored-refs equivalent: cursor by value, store by param.)
+fn scanNext(s: &Store, c: &mut Cursor): Option<Entry> {
+    while c.page < s.pages.len() {
+        if c.slot < s.pages[c.page].entries.len() {
+            let e = Entry {
+                key: s.pages[c.page].entries[c.slot].key.clone(),
+                value: s.pages[c.page].entries[c.slot].value.clone(),
+            }
+            c.slot = c.slot + 1
+            return Option.Some(e)
+        }
+        c.page = c.page + 1
+        c.slot = 0
+    }
+    return Option.None
+}
+
+fn main(): i32 {
+    var s = storeNew()
+
+    // inserts that force splits (PAGE_CAP = 4)
+    put(s, "delta", "4")
+    put(s, "alpha", "1")
+    put(s, "echo", "5")
+    put(s, "bravo", "2")
+    put(s, "golf", "7")
+    put(s, "charlie", "3")
+    put(s, "foxtrot", "6")
+    put(s, "hotel", "8")
+
+    print(s.count)                    // 8
+    print(s.pages.len())              // >1 — splits happened
+
+    // point reads
+    match get(s, "charlie") {
+        Option.Some(v) => { print(v) }    // 3
+        Option.None => { print("missing") }
+    }
+    match get(s, "zulu") {
+        Option.Some(v) => { print(v) }
+        Option.None => { print("missing") } // missing
+    }
+
+    // overwrite
+    put(s, "alpha", "one")
+    match get(s, "alpha") {
+        Option.Some(v) => { print(v) }    // one
+        Option.None => { print("missing") }
+    }
+    print(s.count)                    // still 8
+
+    // full ordered scan
+    var c = scanStart()
+    var keys = String.withCapacity(64)
+    var go = true
+    while go {
+        let r = scanNext(s, c)
+        match r {
+            Option.Some(e) => {
+                keys = keys + e.key + " "
+            }
+            Option.None => { go = false }
+        }
+    }
+    print(keys)   // alpha bravo charlie delta echo foxtrot golf hotel
+
+    return 0
+}
