@@ -219,6 +219,8 @@ let s = identity("hello")  // T inferred as string
 
 Functions can declare preconditions (`requires`), postconditions (`ensures`), and loop invariants (`invariant`). These are type-checked at compile time — each clause must be a `bool` expression. In `ensures` clauses, `result` refers to the return value.
 
+In debug builds (`--debug`), contracts are asserted at runtime: `requires` at function entry, `ensures` at every return, and `invariant` before each loop condition evaluation (loop entry, every iteration, and exit). A violation prints `runtime error: <kind> clause violated at file:line` and exits with code 1. Release builds compile contracts out entirely. Call-site `requires` violations with compile-time-constant arguments are still rejected at compile time.
+
 ```milo
 fn clamp(value: i64, lo: i64, hi: i64): i64
   requires lo <= hi

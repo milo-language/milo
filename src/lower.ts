@@ -130,11 +130,16 @@ class LowerCtx {
     const sig = this.c.functions.get(fn.name);
     const retType = sig?.ret ?? typeFromAst(fn.retType);
     this.currentRetType = retType;
+    // invariants are attached to their while loops, not the function
+    const contracts = fn.contracts
+      .filter(c => c.kind !== "invariant")
+      .map(c => ({ kind: c.kind, expr: this.lowerExpr(c.expr), span: c.span }));
     return {
       name: fn.name,
       params: fn.params.map((p, i) => this.lowerParam(p, sig, i)),
       retType,
       body: fn.body.map(s => this.lowerStmt(s, retType)),
+      ...(contracts.length > 0 && { contracts }),
       isExtern: false,
       isVariadic: fn.isVariadic,
     };
@@ -170,13 +175,16 @@ class LowerCtx {
           elseBody: stmt.elseBody ? stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)) : null,
           span: stmt.span,
         };
-      case "WhileStmt":
+      case "WhileStmt": {
+        const invariants = stmt.invariants.map(c => ({ kind: c.kind, expr: this.lowerExpr(c.expr), span: c.span }));
         return {
           kind: "While",
           cond: this.lowerExpr(stmt.cond),
           body: stmt.body.map(s => this.lowerStmt(s, fnRetType)),
+          ...(invariants.length > 0 && { invariants }),
           span: stmt.span,
         };
+      }
       case "BreakStmt":
         return { kind: "Break", span: stmt.span };
       case "ContinueStmt":

@@ -94,7 +94,7 @@ export type HIRStmt =
   | { kind: "Assign"; target: HIRExpr; value: HIRExpr; span?: Span }
   | { kind: "Return"; value: HIRExpr | null; retType: TypeKind; span?: Span }
   | { kind: "If"; cond: HIRExpr; thenBody: HIRStmt[]; elseBody: HIRStmt[] | null; span?: Span }
-  | { kind: "While"; cond: HIRExpr; body: HIRStmt[]; span?: Span }
+  | { kind: "While"; cond: HIRExpr; body: HIRStmt[]; invariants?: HIRContract[]; span?: Span }
   | { kind: "Break"; span?: Span }
   | { kind: "Continue"; span?: Span }
   | { kind: "ExprStmt"; expr: HIRExpr; span?: Span }
@@ -117,11 +117,20 @@ export type HIRPattern =
 
 // ── Top-level ──
 
+// Contracts reach codegen so debug builds can assert them at runtime
+// (requires at entry, ensures at returns, invariant at the loop header).
+export interface HIRContract {
+  kind: "requires" | "ensures" | "invariant";
+  expr: HIRExpr;
+  span?: Span;
+}
+
 export interface HIRFunction {
   name: string;
   params: { name: string; type: TypeKind; isRef: boolean; isRefMut: boolean }[];
   retType: TypeKind;
   body: HIRStmt[];
+  contracts?: HIRContract[];
   isExtern: boolean;
   isVariadic: boolean;
 }

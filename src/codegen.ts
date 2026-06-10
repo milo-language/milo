@@ -1,4 +1,4 @@
-import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern } from "./hir";
+import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRContract } from "./hir";
 import { type TypeKind, needsDrop } from "./types";
 import type { TargetInfo } from "./target";
 import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
@@ -29,6 +29,9 @@ export class Codegen {
   private needsBoundsCheck = false;
   private needsOverflowCheck = false;
   private needsRangeCheck = false;
+  private needsContractCheck = false;
+  // ensures clauses of the function being generated; checked at every return site
+  private currentEnsures: HIRContract[] = [];
   private debugOverflow = false;
   private usedOverflowIntrinsics = new Set<string>();
   private needsPrintf = false;
@@ -345,9 +348,16 @@ export class Codegen {
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
     if (this.needsBoundsCheck)
       this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
-    if (this.needsOverflowCheck || this.needsRangeCheck) {
+    if (this.needsOverflowCheck || this.needsRangeCheck || this.needsContractCheck) {
       const file = this.filePath ?? "<unknown>";
       this.output.splice(1, 0, `@.overflow_file = private unnamed_addr constant [${file.length + 1} x i8] c"${file}\\00"`);
+    }
+    if (this.needsContractCheck) {
+      const msg = "runtime error: %s clause violated at %s:%d";
+      this.output.splice(1, 0, `@.contract_err = private unnamed_addr constant [${msg.length + 2} x i8] c"${msg}\\0A\\00"`);
+      for (const k of ["requires", "ensures", "invariant"]) {
+        this.output.splice(1, 0, `@.contract_kind_${k} = private unnamed_addr constant [${k.length + 1} x i8] c"${k}\\00"`);
+      }
     }
     if (this.needsOverflowCheck) {
       this.output.splice(1, 0, `@.overflow_err = private unnamed_addr constant [42 x i8] c"runtime error: integer overflow at %s:%d\\0A\\00"`);
@@ -497,6 +507,24 @@ export class Codegen {
 
     const allocaInsertPoint = lines.length;
 
+    this.currentEnsures = [];
+    if (this.debugOverflow && fn.contracts) {
+      const ensures = fn.contracts.filter(c => c.kind === "ensures");
+      if (ensures.length > 0) {
+        this.currentEnsures = ensures;
+        // return-value slot for `result` in ensures clauses; hoisted to entry
+        if (this.llvmType(fn.retType) !== "void") {
+          this.entryAllocas.push(`  %__contract_result.addr = alloca ${this.llvmType(fn.retType)}`);
+        }
+      }
+      for (const c of fn.contracts) {
+        if (c.kind !== "requires") continue;
+        const [condLines, condVal] = this.genExpr(c.expr);
+        lines.push(...condLines);
+        this.emitContractCheck(lines, condVal, "requires", c.span?.line ?? 0);
+      }
+    }
+
     let hasTerminator = false;
     for (const stmt of fn.body) {
       const [stmtLines, terminated] = this.genStmt(stmt);
@@ -505,6 +533,8 @@ export class Codegen {
     }
 
     if (!hasTerminator) {
+      // fall-off end is only reachable in void fns (and main's implicit 0), so no `result` binding
+      this.emitEnsuresChecks(lines);
       this.emitDropGlue(lines);
       if (fn.name === "main" && this.usesSchedulerGlobal) {
         lines.push("  call void @_schedulerDrain()");
@@ -600,6 +630,7 @@ export class Codegen {
       }
       case "Return": {
         if (!stmt.value) {
+          this.emitEnsuresChecks(lines);
           this.emitDropGlue(lines);
           if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
             lines.push("  call void @_schedulerDrain()");
@@ -617,6 +648,17 @@ export class Codegen {
         }
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...exprLines);
+        if (this.currentEnsures.length > 0 && valTy !== "void") {
+          // bind `result` to the return value; shadow any user local of the same name
+          lines.push(`  store ${valTy} ${val}, ptr %__contract_result.addr`);
+          const savedResult = this.locals.get("result");
+          this.locals.set("result", { type: valTy, typeKind: stmt.retType, mutable: false, isRef: false, addr: "%__contract_result.addr" });
+          this.emitEnsuresChecks(lines);
+          if (savedResult) this.locals.set("result", savedResult);
+          else this.locals.delete("result");
+        } else {
+          this.emitEnsuresChecks(lines);
+        }
         this.emitDropGlue(lines);
         if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
           lines.push("  call void @_schedulerDrain()");
@@ -838,6 +880,34 @@ export class Codegen {
     lines.push(`${okLabel}:`);
   }
 
+  private emitEnsuresChecks(lines: string[]) {
+    for (const c of this.currentEnsures) {
+      const [condLines, condVal] = this.genExpr(c.expr);
+      lines.push(...condLines);
+      this.emitContractCheck(lines, condVal, "ensures", c.span?.line ?? 0);
+    }
+  }
+
+  private emitContractCheck(lines: string[], condVal: string, kind: "requires" | "ensures" | "invariant", line: number) {
+    this.needsContractCheck = true;
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const okLabel = this.nextLabel("contract.ok");
+    const failLabel = this.nextLabel("contract.fail");
+    lines.push(`  br i1 ${condVal}, label %${okLabel}, label %${failLabel}`);
+    lines.push(`${failLabel}:`);
+    const fmtPtr = this.nextTemp();
+    lines.push(`  ${fmtPtr} = getelementptr [44 x i8], ptr @.contract_err, i32 0, i32 0`);
+    const kindPtr = this.nextTemp();
+    lines.push(`  ${kindPtr} = getelementptr [${kind.length + 1} x i8], ptr @.contract_kind_${kind}, i32 0, i32 0`);
+    const filePtr = this.nextTemp();
+    lines.push(`  ${filePtr} = getelementptr [${(this.filePath ?? "<unknown>").length + 1} x i8], ptr @.overflow_file, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${fmtPtr}, ptr ${kindPtr}, ptr ${filePtr}, i32 ${line})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+  }
+
   private getStructName(llvmTy: string): string | null {
     const m = llvmTy.match(/^%(.+)$/);
     if (m && this.structLayouts.has(m[1])) return m[1];
@@ -879,6 +949,14 @@ export class Codegen {
     this.loopDropStart = this.droppableLocals.length;
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
+    // invariant must hold before every condition eval: loop entry, each back-edge, and exit
+    if (this.debugOverflow && stmt.invariants) {
+      for (const inv of stmt.invariants) {
+        const [invLines, invVal] = this.genExpr(inv.expr);
+        lines.push(...invLines);
+        this.emitContractCheck(lines, invVal, "invariant", inv.span?.line ?? 0);
+      }
+    }
     const [condLines, condVal] = this.genExpr(stmt.cond);
     lines.push(...condLines);
     lines.push(`  br i1 ${condVal}, label %${bodyLabel}, label %${endLabel}`);
@@ -937,6 +1015,7 @@ export class Codegen {
       const savedLoopHeader = this.loopHeader;
       const savedLoopExit = this.loopExit;
       const savedEntryAllocas = this.entryAllocas;
+      const savedEnsures = this.currentEnsures;
       this.tempCounter = 0;
       this.labelCounter = 0;
       this.locals = new Map();
@@ -944,6 +1023,8 @@ export class Codegen {
       this.entryAllocas = [];
       this.loopHeader = null;
       this.loopExit = null;
+      // a Return inside the branch body must not assert the enclosing fn's ensures
+      this.currentEnsures = [];
 
       const body: string[] = [];
       body.push(`define ptr @${branchFnName}(ptr %env) {`);
@@ -993,6 +1074,7 @@ export class Codegen {
       this.entryAllocas = savedEntryAllocas;
       this.loopHeader = savedLoopHeader;
       this.loopExit = savedLoopExit;
+      this.currentEnsures = savedEnsures;
 
       // ── build env and spawn ──
       const envAddr = this.nextTemp();
@@ -2717,6 +2799,7 @@ export class Codegen {
         const savedLoopExit = this.loopExit;
         const savedEntryAllocas = this.entryAllocas;
         const savedFnName = this.currentFnName;
+        const savedEnsures = this.currentEnsures;
         this.tempCounter = 0;
         this.labelCounter = 0;
         this.locals = new Map();
@@ -2724,6 +2807,8 @@ export class Codegen {
         this.entryAllocas = [];
         this.loopHeader = null;
         this.loopExit = null;
+        // a Return inside the closure body must not assert the enclosing fn's ensures
+        this.currentEnsures = [];
         this.currentFnName = closureName;
 
         // generate closure function: @__closure_N(ptr %env, params...)
@@ -2798,6 +2883,7 @@ export class Codegen {
         this.loopHeader = savedLoopHeader;
         this.loopExit = savedLoopExit;
         this.currentFnName = savedFnName;
+        this.currentEnsures = savedEnsures;
 
         // at the call site: build env struct and closure pair
         if (captures.length > 0) {

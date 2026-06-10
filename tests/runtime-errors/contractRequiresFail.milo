@@ -1,0 +1,13 @@
+// @runtime-error: requires clause violated
+
+fn half(n: i32): i32
+  requires n >= 0
+{
+    return n / 2
+}
+
+fn main(): i32 {
+    let x = 0 - 8
+    print(half(x))
+    return 0
+}

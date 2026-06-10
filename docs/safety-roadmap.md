@@ -200,50 +200,26 @@ Configured via `milo build --profile strict` or per-module annotation.
 
 ## Contract Verification Gaps
 
-Contracts (`requires`/`ensures`/`invariant`) are parsed, type-checked, and enforced at call sites when arguments are compile-time constants. Current gaps:
+Contracts (`requires`/`ensures`/`invariant`) are parsed, type-checked, enforced at call sites when arguments are compile-time constants, and **asserted at runtime in debug builds**: `requires` at function entry, `ensures` at every return (`result` bound to the return value), `invariant` at the loop header — loop entry, every back-edge, and exit. Violations print `runtime error: <kind> clause violated at file:line` and exit 1. Release builds compile contracts out.
 
-### Non-constant `requires` — silently unenforced
+Remaining gaps:
 
-When a call site passes computed values, `requires` clauses are not checked. No error, no warning, no runtime assertion. The contract exists in source but provides no guarantee.
+### No static proof — release builds are unprotected
 
-```milo
-fn positive(x: i64): i64
-  requires x > 0
-{ return x }
+Runtime assertions catch violations only on paths that execute, and only in debug builds. A function can still claim `ensures result > 0`, return a negative value on an untested path, and ship that way in release.
 
-var n: i64 = 42
-n = n - 100
-positive(n)   // compiles, runs, returns -58 — contract ignored
-```
+**Options (layer on top of runtime assertions):**
+1. **Symbolic range tracking** — propagate known ranges through assignments/arithmetic. `n = 42; n = n - 100` → `n ∈ {-58}` → violates `x > 0` at compile time. Covers many practical cases without a solver.
+2. **SMT integration** — wire `milo verify` into the compile pipeline for `--safety` profiles. Heavyweight but complete for linear arithmetic.
+3. **Release-mode assertions opt-in** — a `--contracts=on` flag for release builds where the branch cost is acceptable.
 
-**Options (pick one or layer):**
-1. **Runtime assertion fallback** — emit a branch + panic for non-constant args. Always-on in debug, configurable in release. Cheap and catches most violations.
-2. **Symbolic range tracking** — propagate known ranges through assignments/arithmetic. `n = 42; n = n - 100` → `n ∈ {-58}` → violates `x > 0`. Covers many practical cases without a solver.
-3. **SMT integration** — wire `milo verify` into the compile pipeline for `--safety` profiles. Heavyweight but complete for linear arithmetic.
-4. **Mandatory warning** — if a `requires` clause can't be statically checked, emit a warning so the programmer knows the contract is unchecked. Lowest effort, highest honesty.
+### `invariant` — runtime-checked, not proven inductive
 
-### `ensures` — never verified
-
-Postconditions are type-checked as boolean expressions but never proven against the function body. A function can claim `ensures result > 0` and return a negative value without complaint.
-
-```milo
-fn alwaysPositive(x: i64): i64
-  ensures result > 0
-{ return x }    // compiles fine, postcondition is a lie
-```
-
-**Options:**
-1. **Runtime assertion on return** — rewrite `return expr` to `let result = expr; assert(postcondition); return result`. Same debug/release strategy as `requires`.
-2. **Body-level constant eval** — for simple bodies (single return of clamped value), prove the postcondition holds. Covers the `clampF64` pattern in `pidUpdate`.
-3. **SMT verification** — generate verification conditions from the function body. `milo verify` already does this externally; integrate for `--safety` profiles.
-
-### `invariant` — checked for presence, not for inductive validity
-
-`requireBoundedLoops` in safety profiles checks that `while` loops have `invariant` clauses. It does not verify that (a) the invariant holds on loop entry, (b) each iteration preserves it, or (c) it implies the desired postcondition on exit.
+Debug builds assert invariants at every loop-header evaluation, but nothing verifies statically that each iteration *preserves* the invariant or that it implies the desired postcondition on exit. That requires SMT.
 
 ### Priority recommendation
 
-Runtime assertions (#1 for both requires and ensures) give the most safety per effort. They turn contracts from documentation into enforcement. Symbolic range tracking is a natural second step. SMT integration is the long game for `--safety=do178c-a/b` profiles where compile-time proof is the goal.
+Runtime assertions are done. Symbolic range tracking is the natural second step. SMT integration is the long game for `--safety=do178c-a/b` profiles where compile-time proof is the goal.
 
 ## Open Questions
 
