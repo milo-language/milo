@@ -1,5 +1,5 @@
-// Unit tests for the unused-unsafe lint. It's default-allowed (silent), so we
-// drive the checker with the warning denied to assert which blocks it flags.
+// Unit tests for the unused-unsafe lint. On by default for user code (imported
+// std is exempt via userFnNames); denying here just makes assertions strict.
 // The trap the prior attempt hit: marking must fire for ops nested in call
 // args and inside impl-method bodies, not just top-level statements.
 import { test, expect } from "bun:test";

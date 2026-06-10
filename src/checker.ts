@@ -197,14 +197,18 @@ export class TypeChecker {
   private autoJsonStringify = new Map<Expr, TypeKind>();
   private anonStructCounter = 0;
   private anonStructs: { name: string; fields: { name: string; type: TypeKind }[] }[] = [];
+  private _userFnNames?: Set<string>;
+  private _userImplKeys?: Set<string>;
+  // true while checking a function from the user's own file (not imported code);
+  // gates lints that would otherwise flood every compile with stdlib noise
+  private currentFnIsUser = true;
 
   constructor(warningConfig?: WarningConfig) {
     const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
     if (!config.denied.has("unused-move")) config.allowed.add("unused-move");
-    // Opt-in: the permissive safe-extern rule makes most stdlib unsafe blocks
-    // technically removable, so on-by-default would flood every compile. Enable
-    // with --deny=unused-unsafe (or remove from --allow) to hunt removable blocks.
-    if (!config.denied.has("unused-unsafe")) config.allowed.add("unused-unsafe");
+    // unused-unsafe is on by default but fires only in user code (see currentFnIsUser):
+    // the permissive safe-extern rule makes most stdlib unsafe blocks technically
+    // removable, so warning on imported std would flood every compile.
     this.warningConfig = config;
   }
 
@@ -216,6 +220,21 @@ export class TypeChecker {
     if (this.warningConfig.allowed.has(code)) return;
     const severity = (this.warningConfig.denied.has(code) || this.warningConfig.denied.has("*")) ? "error" : "warning";
     this.diagnostics.push({ severity, span, message: msg, hint, code });
+  }
+
+  // Whether a function name belongs to the user's own file. Mangled names cover
+  // monomorphized user fns (`foo$i32`) and impl methods (`Type$method`,
+  // `Type$Trait$method` — matched against userImplKeys `Type.method`).
+  // No resolver info (direct TypeChecker use in tests/tools) → treat all as user.
+  private fnIsUserCode(name: string): boolean {
+    if (!this._userFnNames) return true;
+    if (this._userFnNames.has(name)) return true;
+    const parts = name.split("$");
+    if (parts.length > 1) {
+      if (this._userFnNames.has(parts[0])) return true;
+      if (this._userImplKeys?.has(`${parts[0]}.${parts[parts.length - 1]}`)) return true;
+    }
+    return false;
   }
 
   // An operation that requires unsafe: error if outside a block, else mark the
@@ -759,6 +778,8 @@ export class TypeChecker {
   }
 
   check(program: Program): CheckResult {
+    this._userFnNames = program.userFnNames;
+    this._userImplKeys = program.userImplKeys;
     // register built-in functions
     const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
     const i32t: TypeKind = { tag: "int", bits: 32, signed: true };
@@ -1604,6 +1625,9 @@ export class TypeChecker {
   }
 
   private checkFunction(fn: Function) {
+    // save/restore: monomorphization can re-enter checkFunction mid-expression
+    const savedIsUser = this.currentFnIsUser;
+    this.currentFnIsUser = this.fnIsUserCode(fn.name);
     this.pushScope();
     const retType = this.resolve(fn.retType);
     this.currentFnRetType = retType;
@@ -1657,6 +1681,7 @@ export class TypeChecker {
     }
 
     this.popScope();
+    this.currentFnIsUser = savedIsUser;
   }
 
   private checkStmt(stmt: Stmt, fnRetType: TypeKind) {
@@ -2265,7 +2290,8 @@ export class TypeChecker {
         this.popScope();
         const used = this.unsafeUsedStack.pop();
         this.unsafeDepth--;
-        if (!used) {
+        // only lint user code — stdlib has many technically-removable blocks
+        if (!used && this.currentFnIsUser) {
           this.warn("unused-unsafe", `unnecessary 'unsafe' block: nothing inside requires unsafe`, stmt.span, `remove the 'unsafe' wrapper`);
         }
         break;
