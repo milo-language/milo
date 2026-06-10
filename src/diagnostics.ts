@@ -15,14 +15,15 @@ export interface WarningConfig {
   allowed: Set<string>;
 }
 
-// Thrown by the parser. Carries a structured Diagnostic so callers that have the
-// source text can render the Elm-style source line + caret + hint (same path as
-// type errors), while `.message` keeps the terse one-line form for callers that
-// only log e.message.
+// Thrown by the lexer/parser. Carries a structured Diagnostic so callers can render
+// the Elm-style source line + caret + hint (same path as type errors), while
+// `.message` keeps the terse one-line form for callers that only log e.message.
+// `source`/`filePath` identify the file that failed — errors from imported files
+// must render against the imported file's text, not the top-level entry file.
 export class ParseError extends Error {
-  constructor(public diagnostic: Diagnostic) {
+  constructor(public diagnostic: Diagnostic, public source?: string, public filePath?: string) {
     const loc = diagnostic.span ? `${diagnostic.span.line}:${diagnostic.span.col}: ` : "";
-    super(`error[parse]: ${loc}${diagnostic.message}`);
+    super(`error[${diagnostic.code ?? "parse"}]: ${loc}${diagnostic.message}`);
     this.name = "ParseError";
   }
 }

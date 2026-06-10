@@ -1,4 +1,5 @@
 import { Token, TokenKind, KEYWORDS, Trivia } from "./tokens";
+import { ParseError } from "./diagnostics";
 
 export class Lexer {
   private pos = 0;
@@ -71,7 +72,7 @@ export class Lexer {
   }
 
   private error(msg: string, line: number, col: number): never {
-    throw new Error(`error[lex]: ${line}:${col}: ${msg}`);
+    throw new ParseError({ severity: "error", span: { line, col }, message: msg, code: "lex" }, this.source);
   }
 
   private lexFString(line: number, col: number): Token {

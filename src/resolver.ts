@@ -149,7 +149,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
       }
 
       const tokens = new Lexer(source).tokenize();
-      const imported = new Parser(tokens, source).parse();
+      const imported = new Parser(tokens, source, absPath).parse();
 
       if (imp.names) {
         // validate that all named symbols exist in the imported module

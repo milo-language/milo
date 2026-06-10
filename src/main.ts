@@ -28,9 +28,10 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
     program = resolveImports(program, sourceDir, target);
   } catch (e: any) {
     // Parse errors carry a structured Diagnostic — render the source line + caret
-    // + hint (same Elm-style output as type errors). Other errors: terse message.
+    // + hint (same Elm-style output as type errors). Errors from imported files
+    // carry their own source/path; fall back to the entry file otherwise.
     if (e instanceof ParseError) {
-      console.error(formatDiagnostic(e.diagnostic, source, filePath));
+      console.error(formatDiagnostic(e.diagnostic, e.source ?? source, e.filePath ?? filePath));
     } else {
       console.error(e.message);
     }

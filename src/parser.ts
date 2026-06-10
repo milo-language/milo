@@ -10,10 +10,10 @@ import type {
 export class Parser {
   private pos = 0;
 
-  // `source` is optional — when provided, thrown ParseErrors carry it so the CLI
-  // can render the offending source line + caret. (Some callers — LSP, resolver —
-  // don't pass it and just read e.message.)
-  constructor(private tokens: Token[], private source?: string) {}
+  // `source`/`filePath` are optional — when provided, thrown ParseErrors carry them
+  // so the CLI renders the offending file's source line + caret (essential for errors
+  // inside imported files, which would otherwise render against the entry file).
+  constructor(private tokens: Token[], private source?: string, private filePath?: string) {}
 
   private cloneExpr(e: Expr): Expr { return structuredClone(e); }
   private peek(): Token { return this.tokens[this.pos]; }
@@ -58,7 +58,7 @@ export class Parser {
       message: msg,
       hint,
       code: "parse",
-    });
+    }, this.source, this.filePath);
   }
 
   parse(): Program {

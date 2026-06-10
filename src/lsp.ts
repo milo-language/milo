@@ -260,7 +260,20 @@ function validateDocument(uri: string) {
   } catch (e: any) {
     // Parse errors carry a structured Diagnostic (span + hint) — use it directly.
     if (e instanceof ParseError) {
-      diagnostics = [e.diagnostic];
+      // An error from an imported file has a span in THAT file — don't squiggle an
+      // unrelated line of this document; surface it at the top with the real location.
+      const docPath = uri.startsWith("file://") ? fileURLToPath(uri) : uri;
+      if (e.filePath && e.filePath !== docPath) {
+        const loc = e.diagnostic.span ? `:${e.diagnostic.span.line}:${e.diagnostic.span.col}` : "";
+        diagnostics = [{
+          severity: "error",
+          span: { line: 1, col: 1 },
+          message: `in imported file ${e.filePath}${loc}: ${e.diagnostic.message}`,
+          hint: e.diagnostic.hint,
+        }];
+      } else {
+        diagnostics = [e.diagnostic];
+      }
     } else {
       // Other lex/parse errors — extract line:col from the message.
       const match = e.message?.match(/(\d+):(\d+):\s*(.+)/);
