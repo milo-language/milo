@@ -18,16 +18,16 @@ fn newParser(tokens: Vec<Token>): Parser {
 
 // -- Navigation helpers --
 
-fn peek(p: &Parser): &Token {
-    return &p.tokens[p.pos]
+fn peek(p: &Parser): Token {
+    return p.tokens[p.pos]
 }
 
-fn peekN(p: &Parser, n: i64): &Token {
-    return &p.tokens[p.pos + n]
+fn peekN(p: &Parser, n: i64): Token {
+    return p.tokens[p.pos + n]
 }
 
-fn advance(p: &mut Parser): &Token {
-    let tok = &p.tokens[p.pos]
+fn advance(p: &mut Parser): Token {
+    let tok = p.tokens[p.pos]
     p.pos = p.pos + 1
     return tok
 }
@@ -48,7 +48,7 @@ fn matchTok(p: &mut Parser, kind: TokKind): bool {
     return false
 }
 
-fn expect(p: &mut Parser, kind: TokKind): &Token {
+fn expect(p: &mut Parser, kind: TokKind): Token {
     let tok = advance(p)
     // TODO: proper error reporting — for now, panic on mismatch
     return tok
@@ -126,7 +126,7 @@ fn parseType(p: &mut Parser): MiloType {
             arraySize: Option.None,
             isFn: true,
             fnParams: fnParams,
-            fnRet: Option.Some(Heap.new(fnRet)),
+            fnRet: Option.Some(Heap(fnRet)),
         }
     }
     // Named type
@@ -252,7 +252,7 @@ fn parseStruct(p: &mut Parser): StructDecl {
         let fieldName = expect(p, TokKind.Ident).value
         expect(p, TokKind.Colon)
         let fieldType = parseType(p)
-        fields.push(StructField { name: fieldName, type: fieldType })
+        fields.push(StructField { name: fieldName, ty: fieldType })
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RBrace)
@@ -300,7 +300,7 @@ fn parseParam(p: &mut Parser): Param {
     let name = expect(p, TokKind.Ident).value
     expect(p, TokKind.Colon)
     let ty = parseType(p)
-    return Param { name: name, type: ty }
+    return Param { name: name, ty: ty }
 }
 
 struct ParamResult {
@@ -447,7 +447,7 @@ fn parseImplDecl(p: &mut Parser): ImplDecl {
 fn parseStmts(p: &mut Parser): Vec<Heap<Stmt>> {
     var stmts: Vec<Heap<Stmt>> = Vec.new()
     while !at(p, TokKind.RBrace) && !at(p, TokKind.Eof) {
-        stmts.push(Heap.new(parseStmt(p)))
+        stmts.push(Heap(parseStmt(p)))
     }
     return stmts
 }
@@ -462,7 +462,7 @@ fn parseLet(p: &mut Parser): Stmt {
     }
     expect(p, TokKind.Eq)
     let value = parseExpr(p)
-    return Stmt.LetDecl(name, ty, Heap.new(value), s)
+    return Stmt.LetDecl(name, ty, Heap(value), s)
 }
 
 fn parseVar(p: &mut Parser): Stmt {
@@ -475,7 +475,7 @@ fn parseVar(p: &mut Parser): Stmt {
     }
     expect(p, TokKind.Eq)
     let value = parseExpr(p)
-    return Stmt.VarDecl(name, ty, Heap.new(value), s)
+    return Stmt.VarDecl(name, ty, Heap(value), s)
 }
 
 fn parseReturn(p: &mut Parser): Stmt {
@@ -484,7 +484,7 @@ fn parseReturn(p: &mut Parser): Stmt {
     if at(p, TokKind.RBrace) {
         return Stmt.Return(Option.None, s)
     }
-    return Stmt.Return(Option.Some(Heap.new(parseExpr(p))), s)
+    return Stmt.Return(Option.Some(Heap(parseExpr(p))), s)
 }
 
 fn parseIf(p: &mut Parser): Stmt {
@@ -501,7 +501,7 @@ fn parseIf(p: &mut Parser): Stmt {
     if matchTok(p, TokKind.Else) {
         if at(p, TokKind.If) {
             var elseStmts: Vec<Heap<Stmt>> = Vec.new()
-            elseStmts.push(Heap.new(parseIf(p)))
+            elseStmts.push(Heap(parseIf(p)))
             elseBody = Option.Some(elseStmts)
         } else {
             expect(p, TokKind.LBrace)
@@ -509,7 +509,7 @@ fn parseIf(p: &mut Parser): Stmt {
             expect(p, TokKind.RBrace)
         }
     }
-    return Stmt.IfStmt(Heap.new(cond), thenBody, elseBody, s)
+    return Stmt.IfStmt(Heap(cond), thenBody, elseBody, s)
 }
 
 fn parseIfLet(p: &mut Parser, s: Option<Span>): Stmt {
@@ -526,7 +526,7 @@ fn parseIfLet(p: &mut Parser, s: Option<Span>): Stmt {
         elseBody = Option.Some(parseStmts(p))
         expect(p, TokKind.RBrace)
     }
-    return Stmt.IfLetStmt(Heap.new(pattern), Heap.new(subject), thenBody, elseBody, s)
+    return Stmt.IfLetStmt(Heap(pattern), Heap(subject), thenBody, elseBody, s)
 }
 
 fn parseWhile(p: &mut Parser): Stmt {
@@ -536,7 +536,7 @@ fn parseWhile(p: &mut Parser): Stmt {
     expect(p, TokKind.LBrace)
     let body = parseStmts(p)
     expect(p, TokKind.RBrace)
-    return Stmt.WhileStmt(Heap.new(cond), body, s)
+    return Stmt.WhileStmt(Heap(cond), body, s)
 }
 
 fn parseFor(p: &mut Parser): Stmt {
@@ -549,10 +549,10 @@ fn parseFor(p: &mut Parser): Stmt {
     }
     expect(p, TokKind.In)
     let iterableOrStart = parseExpr(p)
-    var iterable: Heap<Expr> = Heap.new(iterableOrStart)
+    var iterable: Heap<Expr> = Heap(iterableOrStart)
     if matchTok(p, TokKind.DotDot) {
         let end = parseExpr(p)
-        iterable = Heap.new(Expr.RangeExpr(Heap.new(iterableOrStart), Heap.new(end), s))
+        iterable = Heap(Expr.RangeExpr(Heap(iterableOrStart), Heap(end), s))
     }
     expect(p, TokKind.LBrace)
     let body = parseStmts(p)
@@ -575,7 +575,7 @@ fn parseMatch(p: &mut Parser): Stmt {
         arms.push(MatchArm { pattern: pattern, body: body })
     }
     expect(p, TokKind.RBrace)
-    return Stmt.MatchStmt(Heap.new(subject), arms, s)
+    return Stmt.MatchStmt(Heap(subject), arms, s)
 }
 
 fn parseStmt(p: &mut Parser): Stmt {
@@ -607,9 +607,9 @@ fn parseStmt(p: &mut Parser): Stmt {
     if at(p, TokKind.Eq) {
         advance(p)
         let value = parseExpr(p)
-        return Stmt.Assign(Heap.new(expr), Heap.new(value), Option.None)
+        return Stmt.Assign(Heap(expr), Heap(value), Option.None)
     }
-    return Stmt.ExprStmt(Heap.new(expr), Option.None)
+    return Stmt.ExprStmt(Heap(expr), Option.None)
 }
 
 // -- Patterns --
@@ -680,7 +680,7 @@ fn parseExpr(p: &mut Parser): Expr {
     if at(p, TokKind.QuestionQuestion) {
         advance(p)
         let defaultExpr = parseOr(p)
-        left = Expr.DefaultValue(Heap.new(left), Heap.new(defaultExpr), Option.None)
+        left = Expr.DefaultValue(Heap(left), Heap(defaultExpr), Option.None)
     }
     return left
 }
@@ -690,7 +690,7 @@ fn parseOr(p: &mut Parser): Expr {
     while at(p, TokKind.PipePipe) {
         advance(p)
         let right = parseAnd(p)
-        left = Expr.BinOp("||", Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp("||", Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -700,7 +700,7 @@ fn parseAnd(p: &mut Parser): Expr {
     while at(p, TokKind.AmpAmp) {
         advance(p)
         let right = parseBitOr(p)
-        left = Expr.BinOp("&&", Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp("&&", Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -710,7 +710,7 @@ fn parseBitOr(p: &mut Parser): Expr {
     while at(p, TokKind.Pipe) {
         advance(p)
         let right = parseBitXor(p)
-        left = Expr.BinOp("|", Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp("|", Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -720,7 +720,7 @@ fn parseBitXor(p: &mut Parser): Expr {
     while at(p, TokKind.Caret) {
         advance(p)
         let right = parseBitAnd(p)
-        left = Expr.BinOp("^", Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp("^", Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -731,7 +731,7 @@ fn parseBitAnd(p: &mut Parser): Expr {
     while at(p, TokKind.Amp) && peekN(p, 1).kind != TokKind.Mut {
         advance(p)
         let right = parseComparison(p)
-        left = Expr.BinOp("&", Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp("&", Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -741,7 +741,7 @@ fn parseComparison(p: &mut Parser): Expr {
     if at(p, TokKind.Is) {
         advance(p)
         let pattern = parsePattern(p)
-        return Expr.IsExpr(Heap.new(left), Heap.new(pattern), Option.None)
+        return Expr.IsExpr(Heap(left), Heap(pattern), Option.None)
     }
     while peek(p).kind == TokKind.EqEq || peek(p).kind == TokKind.Neq ||
           peek(p).kind == TokKind.LtEq || peek(p).kind == TokKind.GtEq ||
@@ -749,7 +749,7 @@ fn parseComparison(p: &mut Parser): Expr {
           (peek(p).kind == TokKind.Gt && !atAdjacent(p, TokKind.Gt)) {
         let opTok = advance(p)
         let right = parseShift(p)
-        left = Expr.BinOp(opTok.value, Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp(opTok.value, Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -762,7 +762,7 @@ fn parseShift(p: &mut Parser): Expr {
         advance(p)
         let right = parseAdditive(p)
         let op = if isLeft { "<<" } else { ">>" }
-        left = Expr.BinOp(op, Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp(op, Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -772,7 +772,7 @@ fn parseAdditive(p: &mut Parser): Expr {
     while peek(p).kind == TokKind.Plus || peek(p).kind == TokKind.Minus {
         let opTok = advance(p)
         let right = parseMultiplicative(p)
-        left = Expr.BinOp(opTok.value, Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp(opTok.value, Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -786,7 +786,7 @@ fn parseMultiplicative(p: &mut Parser): Expr {
         }
         let opTok = advance(p)
         let right = parseUnary(p)
-        left = Expr.BinOp(opTok.value, Heap.new(left), Heap.new(right), Option.None)
+        left = Expr.BinOp(opTok.value, Heap(left), Heap(right), Option.None)
     }
     return left
 }
@@ -797,7 +797,7 @@ fn parseUnary(p: &mut Parser): Expr {
        peek(p).kind == TokKind.Amp {
         let tok = advance(p)
         let operand = parseUnary(p)
-        return Expr.UnaryOp(tok.value, Heap.new(operand), span(tok))
+        return Expr.UnaryOp(tok.value, Heap(operand), span(tok))
     }
     return parsePostfix(p)
 }
@@ -812,13 +812,13 @@ fn parsePostfix(p: &mut Parser): Expr {
                 advance(p)
                 var args: Vec<Heap<Expr>> = Vec.new()
                 while !at(p, TokKind.RParen) {
-                    args.push(Heap.new(parseExpr(p)))
+                    args.push(Heap(parseExpr(p)))
                     matchTok(p, TokKind.Comma)
                 }
                 expect(p, TokKind.RParen)
-                expr = Expr.MethodCall(Heap.new(expr), field, args, Option.None)
+                expr = Expr.MethodCall(Heap(expr), field, args, Option.None)
             } else {
-                expr = Expr.FieldAccess(Heap.new(expr), field, Option.None)
+                expr = Expr.FieldAccess(Heap(expr), field, Option.None)
             }
         } else if at(p, TokKind.LBracket) {
             advance(p)
@@ -829,23 +829,23 @@ fn parsePostfix(p: &mut Parser): Expr {
                 expect(p, TokKind.RBracket)
                 // s[a..b] → .slice(a, b)
                 var sliceArgs: Vec<Heap<Expr>> = Vec.new()
-                sliceArgs.push(Heap.new(first))
-                sliceArgs.push(Heap.new(end))
-                expr = Expr.MethodCall(Heap.new(expr), "slice", sliceArgs, Option.None)
+                sliceArgs.push(Heap(first))
+                sliceArgs.push(Heap(end))
+                expr = Expr.MethodCall(Heap(expr), "slice", sliceArgs, Option.None)
             } else {
                 expect(p, TokKind.RBracket)
-                expr = Expr.IndexAccess(Heap.new(expr), Heap.new(first), Option.None)
+                expr = Expr.IndexAccess(Heap(expr), Heap(first), Option.None)
             }
         } else if at(p, TokKind.Bang) {
             advance(p)
-            expr = Expr.Unwrap(Heap.new(expr), Option.None)
+            expr = Expr.Unwrap(Heap(expr), Option.None)
         } else if at(p, TokKind.Question) {
             advance(p)
-            expr = Expr.Propagate(Heap.new(expr), Option.None)
+            expr = Expr.Propagate(Heap(expr), Option.None)
         } else if at(p, TokKind.As) {
             advance(p)
             let targetType = parseType(p)
-            expr = Expr.CastExpr(Heap.new(expr), targetType, Option.None)
+            expr = Expr.CastExpr(Heap(expr), targetType, Option.None)
         } else {
             break
         }
@@ -859,8 +859,14 @@ fn isArrowClosure(p: &mut Parser): bool {
     advance(p) // skip (
     if at(p, TokKind.RParen) {
         advance(p)
-        if at(p, TokKind.FatArrow) { p.pos = saved; return true }
-        if at(p, TokKind.Colon) { p.pos = saved; return true }
+        if at(p, TokKind.FatArrow) {
+            p.pos = saved
+            return true
+        }
+        if at(p, TokKind.Colon) {
+            p.pos = saved
+            return true
+        }
         p.pos = saved
         return false
     }
@@ -894,7 +900,7 @@ fn parseClosure(p: &mut Parser, s: Option<Span>, isMove: bool): Expr {
         expect(p, TokKind.RBrace)
     } else {
         let expr = parseExpr(p)
-        body.push(Heap.new(Stmt.Return(Option.Some(Heap.new(expr)), Option.None)))
+        body.push(Heap(Stmt.Return(Option.Some(Heap(expr)), Option.None)))
     }
     return Expr.Closure(params, retType, body, isMove, s)
 }
@@ -946,7 +952,7 @@ fn parsePrimary(p: &mut Parser): Expr {
             var args: Vec<Heap<Expr>> = Vec.new()
             if matchTok(p, TokKind.LParen) {
                 while !at(p, TokKind.RParen) {
-                    args.push(Heap.new(parseExpr(p)))
+                    args.push(Heap(parseExpr(p)))
                     matchTok(p, TokKind.Comma)
                 }
                 expect(p, TokKind.RParen)
@@ -999,7 +1005,7 @@ fn parseStructLit(p: &mut Parser, name: string, s: Option<Span>): Expr {
         let fieldName = expect(p, TokKind.Ident).value
         expect(p, TokKind.Colon)
         let value = parseExpr(p)
-        fields.push(StructLitField { name: fieldName, value: Heap.new(value) })
+        fields.push(StructLitField { name: fieldName, value: Heap(value) })
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RBrace)
@@ -1010,7 +1016,7 @@ fn parseCall(p: &mut Parser, name: string, s: Option<Span>): Expr {
     expect(p, TokKind.LParen)
     var args: Vec<Heap<Expr>> = Vec.new()
     while !at(p, TokKind.RParen) {
-        args.push(Heap.new(parseExpr(p)))
+        args.push(Heap(parseExpr(p)))
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RParen)
@@ -1023,7 +1029,7 @@ fn parseArrayLit(p: &mut Parser): Expr {
     expect(p, TokKind.LBracket)
     var elements: Vec<Heap<Expr>> = Vec.new()
     while !at(p, TokKind.RBracket) {
-        elements.push(Heap.new(parseExpr(p)))
+        elements.push(Heap(parseExpr(p)))
         // [value; count] repeat syntax
         if elements.len == 1 && matchTok(p, TokKind.Semicolon) {
             let countTok = expect(p, TokKind.Int)
@@ -1044,7 +1050,7 @@ fn parseFString(p: &mut Parser, raw: string, s: Option<Span>): Expr {
     while i < raw.len {
         if raw[i] == 123 {  // '{'
             if lit.len > 0 {
-                args.push(Heap.new(Expr.StringLit(lit, s)))
+                args.push(Heap(Expr.StringLit(lit, s)))
                 lit = ""
             }
             i = i + 1
@@ -1054,7 +1060,10 @@ fn parseFString(p: &mut Parser, raw: string, s: Option<Span>): Expr {
                 if raw[i] == 123 { depth = depth + 1 }
                 else if raw[i] == 125 {  // '}'
                     depth = depth - 1
-                    if depth == 0 { i = i + 1; break }
+                    if depth == 0 {
+                        i = i + 1
+                        break
+                    }
                 }
                 exprStr = exprStr + raw[i].toString()
                 i = i + 1
@@ -1062,14 +1071,14 @@ fn parseFString(p: &mut Parser, raw: string, s: Option<Span>): Expr {
             // Re-lex and parse the embedded expression
             let exprTokens = tokenize(exprStr)
             var subParser = newParser(exprTokens)
-            args.push(Heap.new(parseExpr(&mut subParser)))
+            args.push(Heap(parseExpr(subParser)))
         } else {
             lit = lit + raw[i].toString()
             i = i + 1
         }
     }
     if lit.len > 0 {
-        args.push(Heap.new(Expr.StringLit(lit, s)))
+        args.push(Heap(Expr.StringLit(lit, s)))
     }
     if args.len == 1 {
         return *args[0]

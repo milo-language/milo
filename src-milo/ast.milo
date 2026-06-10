@@ -50,12 +50,12 @@ fn ptrType(name: string): MiloType {
 
 struct Param {
     name: string,
-    type: MiloType,
+    ty: MiloType,
 }
 
 struct StructField {
     name: string,
-    type: MiloType,
+    ty: MiloType,
 }
 
 struct TypeParam {

@@ -18,13 +18,13 @@ struct HIRStructField {
 
 struct CaptureInfo {
     name: string,
-    type: TypeKind,
+    ty: TypeKind,
     mutable: bool,
 }
 
 struct ClosureParam {
     name: string,
-    type: TypeKind,
+    ty: TypeKind,
 }
 
 enum HIRExpr {
@@ -97,7 +97,7 @@ struct HIRMatchArm {
 
 struct PatternBinding {
     name: string,
-    type: TypeKind,
+    ty: TypeKind,
 }
 
 enum HIRPattern {
@@ -110,7 +110,7 @@ enum HIRPattern {
 
 struct HIRParam {
     name: string,
-    type: TypeKind,
+    ty: TypeKind,
     isRef: bool,
     isRefMut: bool,
 }
@@ -126,7 +126,7 @@ struct HIRFunction {
 
 struct HIRField {
     name: string,
-    type: TypeKind,
+    ty: TypeKind,
 }
 
 struct HIRStruct {

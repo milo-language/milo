@@ -10,10 +10,10 @@ from "src-milo/codegen/stmt.milo" import { genStmt }
 fn buildFnTable(prog: &Program): Vec<FnSig> {
     var sigs: Vec<FnSig> = Vec.new()
     for i in 0..prog.functions.len {
-        let f = &prog.functions[i]
+        let f = prog.functions[i]
         var pts: Vec<string> = Vec.new()
         for j in 0..f.params.len {
-            pts.push(f.params[j].type.name.clone())
+            pts.push(f.params[j].ty.name.clone())
         }
         sigs.push(FnSig {
             name: f.name.clone(),
@@ -31,7 +31,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<FnSig>) {
         var ps = ""
         for i in 0..f.params.len {
             if i > 0 { ps = ps + ", " }
-            ps = ps + llType(f.params[i].type.name)
+            ps = ps + llType(f.params[i].ty.name)
         }
         if f.isVariadic {
             if f.params.len > 0 { ps = ps + ", " }
@@ -48,7 +48,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<FnSig>) {
     var hdr = "define " + retLl + " @" + f.name + "("
     for pi in 0..f.params.len {
         if pi > 0 { hdr = hdr + ", " }
-        hdr = hdr + llType(f.params[pi].type.name) + " %" + f.params[pi].name
+        hdr = hdr + llType(f.params[pi].ty.name) + " %" + f.params[pi].name
     }
     hdr = hdr + ") {\n"
     emit(cg, hdr)
@@ -56,17 +56,17 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<FnSig>) {
 
     // Spill parameters to allocas
     for pj in 0..f.params.len {
-        let p = &f.params[pj]
-        let llt = llType(p.type.name)
+        let p = f.params[pj]
+        let llt = llType(p.ty.name)
         let addr = "%" + p.name + "_addr"
         emit(cg, "  " + addr + " = alloca " + llt + "\n")
         emit(cg, "  store " + llt + " %" + p.name + ", ptr " + addr + "\n")
-        locs.push(Local { name: p.name.clone(), ty: p.type.name.clone(), addr: addr })
+        locs.push(Local { name: p.name.clone(), ty: p.ty.name.clone(), addr: addr })
     }
 
     var terminated = false
     for si in 0..f.body.len {
-        if genStmt(cg, f.body[si], &mut locs, sigs, f.retType.name) {
+        if genStmt(cg, f.body[si], locs, sigs, f.retType.name) {
             terminated = true
         }
     }
@@ -91,11 +91,11 @@ fn genProgram(prog: Program): string {
 
     // Register enums and emit %Name type declarations
     for ei in 0..prog.enums.len {
-        let e = &prog.enums[ei]
+        let e = prog.enums[ei]
         var variants: Vec<VariantInfo> = Vec.new()
         var maxBytes: i64 = 0
         for vi in 0..e.variants.len {
-            let v = &e.variants[vi]
+            let v = e.variants[vi]
             var payloadTypes: Vec<string> = Vec.new()
             var vBytes: i64 = 0
             for fi in 0..v.fields.len {
@@ -117,32 +117,32 @@ fn genProgram(prog: Program): string {
             payloadSlots: slots,
         })
         if slots > 0 {
-            emitG(&mut cg, "%" + e.name + " = type { i32, [" + slots.toString() + " x i64] }\n")
+            emitG(cg, "%" + e.name + " = type { i32, [" + slots.toString() + " x i64] }\n")
         } else {
-            emitG(&mut cg, "%" + e.name + " = type { i32 }\n")
+            emitG(cg, "%" + e.name + " = type { i32 }\n")
         }
     }
 
     // Register structs and emit %Name type declarations
     for si in 0..prog.structs.len {
-        let s = &prog.structs[si]
+        let s = prog.structs[si]
         var fields: Vec<FieldInfo> = Vec.new()
         var llStruct = "{ "
         for fi in 0..s.fields.len {
-            let f = &s.fields[fi]
+            let f = s.fields[fi]
             if fi > 0 { llStruct = llStruct + ", " }
-            llStruct = llStruct + llType(f.type.name)
-            fields.push(FieldInfo { name: f.name.clone(), ty: f.type.name.clone() })
+            llStruct = llStruct + llType(f.ty.name)
+            fields.push(FieldInfo { name: f.name.clone(), ty: f.ty.name.clone() })
         }
         llStruct = llStruct + " }"
-        emitG(&mut cg, "%" + s.name + " = type " + llStruct + "\n")
+        emitG(cg, "%" + s.name + " = type " + llStruct + "\n")
         cg.structs.insert(s.name.clone(), fields)
     }
 
     // Emit all functions
-    let sigs = buildFnTable(&prog)
+    let sigs = buildFnTable(prog)
     for j in 0..prog.functions.len {
-        genFn(&mut cg, &prog.functions[j], &sigs)
+        genFn(cg, prog.functions[j], sigs)
     }
 
     return cg.globals + "\n" + cg.body

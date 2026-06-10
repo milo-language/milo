@@ -14,7 +14,7 @@ fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string 
     var color = RED
     if d.severity == "warning" { color = YELLOW }
 
-    match &d.span {
+    match d.span {
         Option.Some(sp) => {
             let loc = filePath.clone() + ":" + sp.line.toString() + ":" + sp.col.toString()
             lines.push(BOLD + color + d.severity.clone() + RESET + BOLD + ": " + d.message.clone() + RESET)
@@ -56,7 +56,7 @@ fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string 
 }
 
 fn formatDiagnosticPlain(d: &Diagnostic, filePath: &string): string {
-    match &d.span {
+    match d.span {
         Option.Some(sp) => {
             return d.severity.clone() + "[" + filePath.clone() + ":" + sp.line.toString() + ":" + sp.col.toString() + "]: " + d.message.clone()
         }

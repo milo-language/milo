@@ -38,24 +38,24 @@ fn typeFromAst(ty: &MiloType): TypeKind {
     if ty.isFn {
         var params: Vec<TypeKind> = Vec.new()
         for i in 0..ty.fnParams.len {
-            params.push(typeFromAst(&ty.fnParams[i]))
+            params.push(typeFromAst(ty.fnParams[i]))
         }
         var ret = TypeKind.TVoid
         match ty.fnRet {
-            Option.Some(r) => { ret = typeFromAst(&*r) }
+            Option.Some(r) => { ret = typeFromAst(*r) }
             Option.None => {}
         }
-        return TypeKind.TFn(params, Heap.new(ret))
+        return TypeKind.TFn(params, Heap(ret))
     }
 
     var base = typeFromName(ty.name)
 
     if ty.isArray {
-        base = TypeKind.TArray(Heap.new(base), ty.arraySize)
+        base = TypeKind.TArray(Heap(base), ty.arraySize)
     }
-    if ty.isPtr { return TypeKind.TPtr(Heap.new(base)) }
-    if ty.isRef { return TypeKind.TRef(Heap.new(base), false) }
-    if ty.isRefMut { return TypeKind.TRef(Heap.new(base), true) }
+    if ty.isPtr { return TypeKind.TPtr(Heap(base)) }
+    if ty.isRef { return TypeKind.TRef(Heap(base), false) }
+    if ty.isRefMut { return TypeKind.TRef(Heap(base), true) }
     return base
 }
 
@@ -111,18 +111,18 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
             match b { TypeKind.TEnum(nameB) => { return nameA == nameB } _ => { return false } }
         }
         TypeKind.TPtr(innerA) => {
-            match b { TypeKind.TPtr(innerB) => { return typeEq(&*innerA, &*innerB) } _ => { return false } }
+            match b { TypeKind.TPtr(innerB) => { return typeEq(*innerA, *innerB) } _ => { return false } }
         }
         TypeKind.THeap(innerA) => {
-            match b { TypeKind.THeap(innerB) => { return typeEq(&*innerA, &*innerB) } _ => { return false } }
+            match b { TypeKind.THeap(innerB) => { return typeEq(*innerA, *innerB) } _ => { return false } }
         }
         TypeKind.TVec(elemA) => {
-            match b { TypeKind.TVec(elemB) => { return typeEq(&*elemA, &*elemB) } _ => { return false } }
+            match b { TypeKind.TVec(elemB) => { return typeEq(*elemA, *elemB) } _ => { return false } }
         }
         TypeKind.THashMap(keyA, valA) => {
             match b {
                 TypeKind.THashMap(keyB, valB) => {
-                    return typeEq(&*keyA, &*keyB) && typeEq(&*valA, &*valB)
+                    return typeEq(*keyA, *keyB) && typeEq(*valA, *valB)
                 }
                 _ => { return false }
             }
@@ -130,7 +130,7 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
         TypeKind.TRef(innerA, mutA) => {
             match b {
                 TypeKind.TRef(innerB, mutB) => {
-                    return typeEq(&*innerA, &*innerB) && mutA == mutB
+                    return typeEq(*innerA, *innerB) && mutA == mutB
                 }
                 _ => { return false }
             }
@@ -138,7 +138,7 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
         TypeKind.TArray(elemA, sizeA) => {
             match b {
                 TypeKind.TArray(elemB, sizeB) => {
-                    return typeEq(&*elemA, &*elemB) && sizeA == sizeB
+                    return typeEq(*elemA, *elemB) && sizeA == sizeB
                 }
                 _ => { return false }
             }
@@ -148,9 +148,9 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
                 TypeKind.TFn(paramsB, retB) => {
                     if paramsA.len != paramsB.len { return false }
                     for i in 0..paramsA.len {
-                        if !typeEq(&paramsA[i], &paramsB[i]) { return false }
+                        if !typeEq(paramsA[i], paramsB[i]) { return false }
                     }
-                    return typeEq(&*retA, &*retB)
+                    return typeEq(*retA, *retB)
                 }
                 _ => { return false }
             }
@@ -172,29 +172,29 @@ fn typeName(t: &TypeKind): string {
         TypeKind.TString => { return "string" }
         TypeKind.TStruct(name) => { return name.clone() }
         TypeKind.TEnum(name) => { return name.clone() }
-        TypeKind.TPtr(inner) => { return "*" + typeName(&*inner) }
-        TypeKind.THeap(inner) => { return "Heap<" + typeName(&*inner) + ">" }
-        TypeKind.TVec(elem) => { return "Vec<" + typeName(&*elem) + ">" }
+        TypeKind.TPtr(inner) => { return "*" + typeName(*inner) }
+        TypeKind.THeap(inner) => { return "Heap<" + typeName(*inner) + ">" }
+        TypeKind.TVec(elem) => { return "Vec<" + typeName(*elem) + ">" }
         TypeKind.THashMap(key, val) => {
-            return "HashMap<" + typeName(&*key) + ", " + typeName(&*val) + ">"
+            return "HashMap<" + typeName(*key) + ", " + typeName(*val) + ">"
         }
         TypeKind.TRef(inner, mutable) => {
             let prefix = if mutable { "&mut " } else { "&" }
-            return prefix + typeName(&*inner)
+            return prefix + typeName(*inner)
         }
         TypeKind.TArray(elem, size) => {
             match size {
-                Option.Some(n) => { return "[" + typeName(&*elem) + "; " + n.toString() + "]" }
-                Option.None => { return "[" + typeName(&*elem) + "]" }
+                Option.Some(n) => { return "[" + typeName(*elem) + "; " + n.toString() + "]" }
+                Option.None => { return "[" + typeName(*elem) + "]" }
             }
         }
         TypeKind.TFn(params, ret) => {
             var s = "("
             for i in 0..params.len {
                 if i > 0 { s = s + ", " }
-                s = s + typeName(&params[i])
+                s = s + typeName(params[i])
             }
-            s = s + ") => " + typeName(&*ret)
+            s = s + ") => " + typeName(*ret)
             return s
         }
         TypeKind.TUnknown => { return "<unknown>" }

@@ -1,10 +1,10 @@
 // Import resolver — recursively parse imported files and merge into a single Program
-from "std/fs" import { readFile, fileExists }
-from "std/path" import { resolve, dirname, join }
-from "std/env" import { getEnv, homeDir }
+from "std/io" import { readFile }
+from "std/fs" import { pathExists }
+from "std/path" import { pathDirname, pathJoin }
 from "src-milo/tokens.milo" import { Token }
-from "src-milo/lexer.milo" import { lexerNew, lex }
-from "src-milo/parser.milo" import { parserNew, parse }
+from "src-milo/lexer.milo" import { tokenize }
+from "src-milo/parser.milo" import { newParser, parse }
 from "src-milo/ast.milo" import {
     Program, StructDecl, EnumDecl, Function, ImportDecl, TraitDecl, ImplDecl
 }
@@ -42,21 +42,21 @@ fn resolvePath(rs: &ResolverState, dir: &string, importPath: &string): string {
     }
 
     // Try relative to current file's directory
-    let absPath = resolve(dir, withExt)
-    if fileExists(absPath) {
+    let absPath = pathJoin(dir, withExt)
+    if pathExists(absPath) {
         return absPath
     }
 
     // Try platform-specific variant (e.g. platform.darwin.milo)
     let base = withExt[0..withExt.len - 5]  // strip .milo
-    let platformPath = resolve(rs.stdlibDir, base + "." + rs.targetOs + ".milo")
-    if fileExists(platformPath) {
+    let platformPath = pathJoin(rs.stdlibDir, base + "." + rs.targetOs + ".milo")
+    if pathExists(platformPath) {
         return platformPath
     }
 
     // Try stdlib path
-    let stdPath = resolve(rs.stdlibDir, withExt)
-    if fileExists(stdPath) {
+    let stdPath = pathJoin(rs.stdlibDir, withExt)
+    if pathExists(stdPath) {
         return stdPath
     }
 
@@ -65,17 +65,20 @@ fn resolvePath(rs: &ResolverState, dir: &string, importPath: &string): string {
 
 // Parse a source file and return its Program AST.
 fn parseFile(path: &string): Program {
-    let source = readFile(path)
-    var lexer = lexerNew(source)
-    let tokens = lex(&mut lexer)
-    var p = parserNew(tokens)
-    return parse(&mut p)
+    var source = ""
+    match readFile(path) {
+        Result.Ok(s) => { source = s }
+        Result.Err(e) => {}
+    }
+    let tokens = tokenize(source)
+    var p = newParser(tokens)
+    return parse(p)
 }
 
 // Recursively process imports from a parsed program.
 fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
     for i in 0..prog.imports.len {
-        let imp = &prog.imports[i]
+        let imp = prog.imports[i]
         let absPath = resolvePath(rs, dir, imp.path)
 
         if !rs.visited.contains(absPath) {
@@ -109,8 +112,8 @@ fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
             }
 
             // Recurse into this module's imports
-            let importDir = dirname(absPath)
-            processImports(rs, &imported, importDir)
+            let importDir = pathDirname(absPath)
+            processImports(rs, imported, importDir)
         }
     }
 }
@@ -181,8 +184,8 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
     var rs = newResolver(stdlibDir, targetOs)
 
     // Inject prelude before user code
-    let preludePath = resolve(rs.stdlibDir, "std/prelude.milo")
-    if fileExists(preludePath) && !rs.visited.contains(preludePath) {
+    let preludePath = pathJoin(rs.stdlibDir, "std/prelude.milo")
+    if pathExists(preludePath) && !rs.visited.contains(preludePath) {
         rs.visited.insert(preludePath.clone(), true)
         let prelude = parseFile(preludePath)
         for si in 0..prelude.structs.len { rs.structs.push(prelude.structs[si]) }
@@ -190,8 +193,8 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
         for fi in 0..prelude.functions.len { rs.functions.push(prelude.functions[fi]) }
         for ti in 0..prelude.traits.len { rs.traits.push(prelude.traits[ti]) }
         for ii in 0..prelude.impls.len { rs.impls.push(prelude.impls[ii]) }
-        let preludeDir = dirname(preludePath)
-        processImports(&mut rs, &prelude, preludeDir)
+        let preludeDir = pathDirname(preludePath)
+        processImports(rs, prelude, preludeDir)
     }
 
     // User code comes after prelude (last-wins dedup means user overrides)
@@ -202,7 +205,7 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
     for ii in 0..program.impls.len { rs.impls.push(program.impls[ii]) }
 
     // Process user program's imports
-    processImports(&mut rs, &program, sourceDir)
+    processImports(rs, program, sourceDir)
 
     // Dedup and return merged program
     return Program {

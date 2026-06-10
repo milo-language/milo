@@ -14,7 +14,7 @@ struct Diagnostic {
 // -- Variable info in scope --
 
 struct VarInfo {
-    type: TypeKind,
+    ty: TypeKind,
     mutable: bool,
     moved: bool,
     borrowed: bool,
@@ -33,18 +33,18 @@ struct FnSig {
 
 struct FnParam {
     name: string,
-    type: TypeKind,
+    ty: TypeKind,
 }
 
 // -- Struct info (post-resolution) --
 
-struct StructField {
+struct CkStructField {
     name: string,
-    type: TypeKind,
+    ty: TypeKind,
 }
 
 struct StructInfo {
-    fields: Vec<StructField>,
+    fields: Vec<CkStructField>,
     baseName: string,
 }
 
@@ -168,7 +168,7 @@ fn lookup(ck: &Checker, name: &string): Option<&VarInfo> {
     var i: i64 = ck.scopes.len - 1
     while i >= 0 {
         if ck.scopes[i].contains(name) {
-            return Option.Some(&ck.scopes[i].get(name))
+            return Option.Some(ck.scopes[i].get(name))
         }
         i = i - 1
     }
@@ -179,7 +179,7 @@ fn lookupMut(ck: &mut Checker, name: &string): Option<&mut VarInfo> {
     var i: i64 = ck.scopes.len - 1
     while i >= 0 {
         if ck.scopes[i].contains(name) {
-            return Option.Some(&mut ck.scopes[i].get(name))
+            return Option.Some(ck.scopes[i].get(name))
         }
         i = i - 1
     }

@@ -1,0 +1,14 @@
+// @error: cannot pass 'items' because it is borrowed
+
+fn grow(v: &mut Vec<i64>): void {
+    v.push(99)
+}
+
+fn main(): i32 {
+    var items: Vec<i64> = Vec.new()
+    items.push(1)
+    for x in items {
+        grow(items)
+    }
+    return 0
+}

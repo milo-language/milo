@@ -2694,15 +2694,36 @@ export class TypeChecker {
   // borrow points into. Assignment freezing is handled in the Assign case; this guards
   // mutating method calls. In-place element assignment (v[i] = x) stays legal — it
   // never reallocs, and rewriting elements mid-iteration is a common safe pattern.
-  private errorIfFrozen(obj: Expr, method: string, sp?: Span) {
+  private errorIfFrozen(obj: Expr, action: string, sp?: Span) {
     let e = obj;
     while (e.kind === "FieldAccess" || e.kind === "IndexAccess") e = e.object;
     if (e.kind !== "Ident") return;
     const info = this.lookup(e.name);
     if (info?.borrowed) {
-      this.error(`cannot call '${method}' on '${e.name}' because it is borrowed`, sp,
-        `a slice or loop iteration over this variable is still live — '${method}' could move its memory and dangle the borrow`);
+      this.error(`cannot ${action} '${e.name}' because it is borrowed`, sp,
+        `a slice or loop iteration over this variable is still live — mutating it could move memory the borrow points into`);
     }
+  }
+
+  // Auto-borrow a call argument; passing a frozen var by mutable ref is the same
+  // hazard as calling a mutating method on it (the callee may realloc/free it).
+  private setAutoBorrowChecked(arg: Expr, mutable: boolean, sp?: Span) {
+    if (mutable) this.errorIfFrozen(arg, "pass", sp);
+    this.autoBorrowed.set(arg, { mutable });
+  }
+
+  // Freeze the receiver while checking a callback that iterates it — the callback
+  // mutating its own iteration source (v.each(fn(x){ v.push(x) })) is the same
+  // realloc hazard as for-in. Returns the VarInfo to release afterward, or null
+  // if an outer borrow already owns the freeze.
+  private borrowDuringCallback(obj: Expr): VarInfo | null {
+    let e = obj;
+    while (e.kind === "FieldAccess" || e.kind === "IndexAccess") e = e.object;
+    if (e.kind !== "Ident") return null;
+    const info = this.lookup(e.name);
+    if (!info || info.borrowed) return null;
+    info.borrowed = true;
+    return info;
   }
 
   private describeExpr(expr: Expr): string {
@@ -3157,7 +3178,7 @@ export class TypeChecker {
           const concreteSig = this.functions.get(mangled)!;
           for (let i = 0; i < expr.args.length; i++) {
             if (i < concreteSig.params.length && concreteSig.params[i].type.tag === "ref") {
-              this.autoBorrowed.set(expr.args[i], { mutable: concreteSig.params[i].type.mutable });
+              this.setAutoBorrowChecked(expr.args[i], concreteSig.params[i].type.mutable, sp);
               continue;
             }
             // Auto-move closure args (parity with the non-generic call path):
@@ -3197,7 +3218,7 @@ export class TypeChecker {
                 if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
                   continue;
                 }
-                this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
+                this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
                 if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
                   this.error(`closure argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
                 }
@@ -3290,7 +3311,7 @@ export class TypeChecker {
             if (argType.tag === "ref" && typeEq(paramType.inner, argType.inner)) {
               continue;
             }
-            this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
+            this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
             if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
               if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
                 this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
@@ -3354,7 +3375,12 @@ export class TypeChecker {
             }
           }
           if (!argsSafe) {
-            this.requireUnsafe(`calling extern function '${expr.func}' requires an unsafe block`, sp);
+            // teach the rule, not just the verdict — it's otherwise learned by trial-and-error
+            const why = !retSafe
+              ? `it returns ${typeName(sig.ret)} (non-scalar)`
+              : `an argument doesn't auto-coerce`;
+            this.requireUnsafe(`calling extern function '${expr.func}' requires an unsafe block`, sp,
+              `extern calls are safe only when every arg is scalar, &T, fn, or string/array→*T, AND the return is scalar/void — here ${why}`);
           }
         }
         // check requires contracts at call site
@@ -3634,7 +3660,7 @@ export class TypeChecker {
                 const argType = this.checkExprWithHint(expr.args[i], hint);
                 if (paramType.tag === "ref") {
                   if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
-                    this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
+                    this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
                     if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
                       this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
                     }
@@ -3675,7 +3701,7 @@ export class TypeChecker {
                 const argType = this.checkExprWithHint(expr.args[i], hint);
                 if (paramType.tag === "ref") {
                   if (!(argType.tag === "ref" && typeEq(paramType.inner, argType.inner))) {
-                    this.autoBorrowed.set(expr.args[i], { mutable: paramType.mutable });
+                    this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
                     if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
                       this.error(`'${expr.variant}' argument ${i + 1}: expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
                     }
@@ -3883,7 +3909,7 @@ export class TypeChecker {
         // frozen-collection guard: reject realloc/free-capable builtins on a borrowed receiver
         if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")
             && MUTATING_COLLECTION_METHODS.has(expr.method)) {
-          this.errorIfFrozen(expr.object, expr.method, sp);
+          this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
         }
         if (objType.tag === "vec") {
           if (expr.method === "push") {
@@ -3911,7 +3937,9 @@ export class TypeChecker {
             if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             if (cbType.tag !== "fn") { this.error(`'map' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
             return this.setType(expr, { tag: "vec", element: cbType.ret });
           }
@@ -3919,7 +3947,9 @@ export class TypeChecker {
             if (expr.args.length !== 1) { this.error(`'filter' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             if (cbType.tag !== "fn") { this.error(`'filter' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
             return this.setType(expr, { tag: "vec", element: objType.element });
           }
@@ -3927,21 +3957,27 @@ export class TypeChecker {
             if (expr.args.length !== 1) { this.error(`'each' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "void" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             return this.setType(expr, { tag: "void" });
           }
           if (expr.method === "enumerate") {
             if (expr.args.length !== 1) { this.error(`'enumerate' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [{ tag: "int", bits: 64, signed: true }, elemRef], ret: { tag: "void" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             return this.setType(expr, { tag: "void" });
           }
           if (expr.method === "find") {
             if (expr.args.length !== 1) { this.error(`'find' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             if (cbType.tag !== "fn") { this.error(`'find' argument must be a function`, sp); return this.setType(expr, { tag: "unknown" }); }
             return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
           }
@@ -3949,14 +3985,18 @@ export class TypeChecker {
             if (expr.args.length !== 1) { this.error(`'any' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             return this.setType(expr, { tag: "bool" });
           }
           if (expr.method === "all") {
             if (expr.args.length !== 1) { this.error(`'all' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "bool" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             return this.setType(expr, { tag: "bool" });
           }
           if (expr.method === "join") {
@@ -4037,7 +4077,9 @@ export class TypeChecker {
             }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef, elemRef], ret: { tag: "int", bits: 32, signed: true } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             if (cbType.tag !== "fn") { this.error(`'sortBy' argument must be a comparator function`, sp); }
             return this.setType(expr, { tag: "void" });
           }
@@ -4048,7 +4090,9 @@ export class TypeChecker {
             }
             const elemRef: TypeKind = { tag: "ref", inner: objType.element, mutable: false };
             const cbHint: TypeKind = { tag: "fn", params: [elemRef], ret: { tag: "unknown" } };
+            const cbBorrow = this.borrowDuringCallback(expr.object);
             const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbBorrow) cbBorrow.borrowed = false;
             if (cbType.tag !== "fn") { this.error(`'sortByKey' argument must be a function`, sp); return this.setType(expr, { tag: "void" }); }
             const keyType = cbType.ret;
             if (keyType.tag !== "int" && keyType.tag !== "float" && keyType.tag !== "string" && keyType.tag !== "bool") {
@@ -4269,7 +4313,7 @@ export class TypeChecker {
                   this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
                 }
                 if (expected.type.tag === "ref") {
-                  this.autoBorrowed.set(expr.args[i], { mutable: expected.type.mutable });
+                  this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
                 } else {
                   this.tryMove(expr.args[i]);
                 }
@@ -4297,7 +4341,7 @@ export class TypeChecker {
           if (selfParam) {
             if (selfParam.type.tag === "ref") {
               // a `&var self` method may mutate the receiver — same hazard as builtins
-              if (selfParam.type.mutable) this.errorIfFrozen(expr.object, expr.method, sp);
+              if (selfParam.type.mutable) this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
               this.autoBorrowed.set(expr.object, { mutable: selfParam.type.mutable });
             } else {
               this.tryMove(expr.object);
@@ -4319,7 +4363,7 @@ export class TypeChecker {
               }
             }
             if (expected.type.tag === "ref") {
-              this.autoBorrowed.set(expr.args[i], { mutable: expected.type.mutable });
+              this.setAutoBorrowChecked(expr.args[i], expected.type.mutable, sp);
             } else {
               this.tryMove(expr.args[i]);
             }
@@ -4348,7 +4392,7 @@ export class TypeChecker {
                   this.error(`'${expr.method}' argument ${i + 1}: expected ${typeName(bare)}, got ${typeName(argType)}`, expr.args[i].span);
                 }
                 if (expected.tag === "ref") {
-                  this.autoBorrowed.set(expr.args[i], { mutable: expected.mutable });
+                  this.setAutoBorrowChecked(expr.args[i], expected.mutable, sp);
                 } else {
                   this.tryMove(expr.args[i]);
                 }

@@ -302,16 +302,16 @@ fn isCmpOp(op: &string): bool {
 
 // -- Local variable lookup --
 
-fn findLocal(locs: &Vec<Local>, name: &string): &Local {
+fn findLocal(locs: &Vec<Local>, name: &string): Local {
     var i: i64 = locs.len - 1
     while i >= 0 {
         if locs[i].name == name {
-            return &locs[i]
+            return locs[i]
         }
         i = i - 1
     }
     // Fallback — should not happen in valid programs
-    return &locs[0]
+    return locs[0]
 }
 
 fn genLoad(cg: &mut Cgen, addr: &string, ty: &string): Val {

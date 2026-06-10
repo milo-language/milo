@@ -6,7 +6,7 @@ from "src-milo/checker/types.milo" import {
     isNumeric, isInteger, isFloat, isCopy, needsDrop,
 }
 from "src-milo/checker/state.milo" import {
-    Checker, VarInfo, FnSig, FnParam, StructInfo, StructField,
+    Checker, VarInfo, FnSig, FnParam, StructInfo, CkStructField,
     EnumInfo, VariantInfo, Diagnostic,
     error, errorHint, warn, pushScope, popScope, declare, lookup, lookupMut, hasErrors,
 }
@@ -19,7 +19,7 @@ fn tryMove(ck: &mut Checker, expr: &Expr) {
             let info = lookupMut(ck, name)
             match info {
                 Option.Some(v) => {
-                    if isCopy(&v.type) { return }
+                    if isCopy(v.ty) { return }
                     v.moved = true
                 }
                 Option.None => {}
@@ -38,8 +38,8 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
                 Option.None => { return false }
             }
         }
-        Expr.FieldAccess(obj, field, span) => { return isRootMutable(ck, &*obj) }
-        Expr.IndexAccess(obj, idx, span) => { return isRootMutable(ck, &*obj) }
+        Expr.FieldAccess(obj, field, span) => { return isRootMutable(ck, *obj) }
+        Expr.IndexAccess(obj, idx, span) => { return isRootMutable(ck, *obj) }
         _ => { return false }
     }
 }
@@ -76,10 +76,10 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
             return checkIdent(ck, name, span)
         }
         Expr.BinOp(op, left, right, span) => {
-            return checkBinOp(ck, op, &*left, &*right, span)
+            return checkBinOp(ck, op, *left, *right, span)
         }
         Expr.UnaryOp(op, operand, span) => {
-            return checkUnaryOp(ck, op, &*operand, span)
+            return checkUnaryOp(ck, op, *operand, span)
         }
         Expr.Call(func, args, typeArgs, span) => {
             return checkCall(ck, func, args, span)
@@ -88,49 +88,49 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
             return checkStructLit(ck, name, fields, span)
         }
         Expr.FieldAccess(obj, field, span) => {
-            return checkFieldAccess(ck, &*obj, field, span)
+            return checkFieldAccess(ck, *obj, field, span)
         }
         Expr.ArrayLit(elements, span) => {
             return checkArrayLit(ck, elements, span)
         }
         Expr.ArrayRepeat(value, count, span) => {
-            let elemType = checkExpr(ck, &*value)
-            return TypeKind.TArray(Heap.new(elemType), Option.Some(count))
+            let elemType = checkExpr(ck, *value)
+            return TypeKind.TArray(Heap(elemType), Option.Some(count))
         }
         Expr.IndexAccess(obj, index, span) => {
-            return checkIndexAccess(ck, &*obj, &*index, span)
+            return checkIndexAccess(ck, *obj, *index, span)
         }
         Expr.EnumLit(enumName, variant, args, span) => {
             return checkEnumLit(ck, enumName, variant, args, span)
         }
         Expr.Unwrap(operand, span) => {
-            return checkUnwrap(ck, &*operand, span)
+            return checkUnwrap(ck, *operand, span)
         }
         Expr.Propagate(operand, span) => {
-            return checkPropagate(ck, &*operand, span)
+            return checkPropagate(ck, *operand, span)
         }
         Expr.DefaultValue(operand, default, span) => {
-            return checkDefaultValue(ck, &*operand, &*default, span)
+            return checkDefaultValue(ck, *operand, *default, span)
         }
         Expr.CastExpr(operand, targetType, span) => {
-            return checkCast(ck, &*operand, targetType, span)
+            return checkCast(ck, *operand, targetType, span)
         }
         Expr.MethodCall(obj, method, args, span) => {
-            return checkMethodCall(ck, &*obj, method, args, span)
+            return checkMethodCall(ck, *obj, method, args, span)
         }
         Expr.Closure(params, retType, body, isMove, span) => {
             return checkClosure(ck, params, retType, body, span)
         }
         Expr.RangeExpr(start, end, span) => {
-            let startType = checkExpr(ck, &*start)
-            let endType = checkExpr(ck, &*end)
-            if !isInteger(&startType) {
+            let startType = checkExpr(ck, *start)
+            let endType = checkExpr(ck, *end)
+            if !isInteger(startType) {
                 error(ck, "range bounds must be integer", span.clone())
             }
             return tyVoid()
         }
         Expr.IsExpr(operand, pattern, span) => {
-            checkExpr(ck, &*operand)
+            checkExpr(ck, *operand)
             return tyBool()
         }
     }
@@ -145,9 +145,9 @@ fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
             v.read = true
             if v.moved {
                 error(ck, "use of moved variable '" + name.clone() + "'", span.clone())
-                return deref(&v.type)
+                return deref(v.ty)
             }
-            return deref(&v.type)
+            return deref(v.ty)
         }
         Option.None => {
             // Check if it's a function name used as value
@@ -155,9 +155,9 @@ fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
                 let sig = ck.functions.get(name)
                 var params: Vec<TypeKind> = Vec.new()
                 for i in 0..sig.params.len {
-                    params.push(sig.params[i].type.clone())
+                    params.push(sig.params[i].ty.clone())
                 }
-                return TypeKind.TFn(params, Heap.new(sig.ret.clone()))
+                return TypeKind.TFn(params, Heap(sig.ret.clone()))
             }
             error(ck, "undefined variable '" + name.clone() + "'", span.clone())
             return tyUnknown()
@@ -172,11 +172,11 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
     if op == "&&" || op == "||" {
         let lt = checkExpr(ck, left)
         let rt = checkExpr(ck, right)
-        if !typeEq(&lt, &tyBool()) {
-            error(ck, "operator '" + op.clone() + "' requires bool, got " + typeName(&lt), span.clone())
+        if !typeEq(lt, tyBool()) {
+            error(ck, "operator '" + op.clone() + "' requires bool, got " + typeName(lt), span.clone())
         }
-        if !typeEq(&rt, &tyBool()) {
-            error(ck, "operator '" + op.clone() + "' requires bool, got " + typeName(&rt), span.clone())
+        if !typeEq(rt, tyBool()) {
+            error(ck, "operator '" + op.clone() + "' requires bool, got " + typeName(rt), span.clone())
         }
         return tyBool()
     }
@@ -185,44 +185,44 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
     let rt = checkExpr(ck, right)
 
     // String concatenation
-    if op == "+" && typeEq(&lt, &tyString()) && typeEq(&rt, &tyString()) {
+    if op == "+" && typeEq(lt, tyString()) && typeEq(rt, tyString()) {
         return tyString()
     }
     // String equality
-    if (op == "==" || op == "!=") && typeEq(&lt, &tyString()) && typeEq(&rt, &tyString()) {
+    if (op == "==" || op == "!=") && typeEq(lt, tyString()) && typeEq(rt, tyString()) {
         return tyBool()
     }
 
     // Arithmetic
     if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
-        if !isNumeric(&lt) && !typeEq(&lt, &tyUnknown()) {
-            error(ck, "operator '" + op.clone() + "' requires numeric type, got " + typeName(&lt), span.clone())
+        if !isNumeric(lt) && !typeEq(lt, tyUnknown()) {
+            error(ck, "operator '" + op.clone() + "' requires numeric type, got " + typeName(lt), span.clone())
         }
-        if !typeEq(&lt, &rt) && !typeEq(&lt, &tyUnknown()) && !typeEq(&rt, &tyUnknown()) {
-            error(ck, "type mismatch in '" + op.clone() + "': " + typeName(&lt) + " vs " + typeName(&rt), span.clone())
+        if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown()) {
+            error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), span.clone())
         }
         return lt
     }
 
     // Bitwise
     if op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" {
-        if !isInteger(&lt) && !typeEq(&lt, &tyUnknown()) {
-            error(ck, "operator '" + op.clone() + "' requires integer type, got " + typeName(&lt), span.clone())
+        if !isInteger(lt) && !typeEq(lt, tyUnknown()) {
+            error(ck, "operator '" + op.clone() + "' requires integer type, got " + typeName(lt), span.clone())
         }
-        if !typeEq(&lt, &rt) && !typeEq(&lt, &tyUnknown()) && !typeEq(&rt, &tyUnknown()) {
-            error(ck, "type mismatch in '" + op.clone() + "': " + typeName(&lt) + " vs " + typeName(&rt), span.clone())
+        if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown()) {
+            error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), span.clone())
         }
         return lt
     }
 
     // Comparison
     if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
-        if !typeEq(&lt, &rt) && !typeEq(&lt, &tyUnknown()) && !typeEq(&rt, &tyUnknown()) {
-            error(ck, "type mismatch in '" + op.clone() + "': " + typeName(&lt) + " vs " + typeName(&rt), span.clone())
+        if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown()) {
+            error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), span.clone())
         }
         if op == "<" || op == ">" || op == "<=" || op == ">=" {
-            if !isNumeric(&lt) && !typeEq(&lt, &tyUnknown()) {
-                error(ck, "operator '" + op.clone() + "' requires numeric type, got " + typeName(&lt), span.clone())
+            if !isNumeric(lt) && !typeEq(lt, tyUnknown()) {
+                error(ck, "operator '" + op.clone() + "' requires numeric type, got " + typeName(lt), span.clone())
             }
         }
         return tyBool()
@@ -238,7 +238,7 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
     let ot = checkExpr(ck, operand)
 
     if op == "*" {
-        match &ot {
+        match ot {
             TypeKind.THeap(inner) => { return inner.clone() }
             TypeKind.TPtr(inner) => {
                 if ck.unsafeDepth == 0 {
@@ -247,26 +247,26 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
                 return inner.clone()
             }
             _ => {
-                error(ck, "cannot dereference type '" + typeName(&ot) + "'", span.clone())
+                error(ck, "cannot dereference type '" + typeName(ot) + "'", span.clone())
                 return tyUnknown()
             }
         }
     }
     if op == "-" {
-        if !isNumeric(&ot) && !typeEq(&ot, &tyUnknown()) {
-            error(ck, "unary '-' requires numeric type, got " + typeName(&ot), span.clone())
+        if !isNumeric(ot) && !typeEq(ot, tyUnknown()) {
+            error(ck, "unary '-' requires numeric type, got " + typeName(ot), span.clone())
         }
         return ot
     }
     if op == "!" {
-        if !typeEq(&ot, &tyBool()) && !typeEq(&ot, &tyUnknown()) {
-            error(ck, "unary '!' requires bool, got " + typeName(&ot), span.clone())
+        if !typeEq(ot, tyBool()) && !typeEq(ot, tyUnknown()) {
+            error(ck, "unary '!' requires bool, got " + typeName(ot), span.clone())
         }
         return tyBool()
     }
     if op == "~" {
-        if !isInteger(&ot) && !typeEq(&ot, &tyUnknown()) {
-            error(ck, "unary '~' requires integer type, got " + typeName(&ot), span.clone())
+        if !isInteger(ot) && !typeEq(ot, tyUnknown()) {
+            error(ck, "unary '~' requires integer type, got " + typeName(ot), span.clone())
         }
         return ot
     }
@@ -274,7 +274,7 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
         if ck.unsafeDepth == 0 {
             error(ck, "address-of operator requires 'unsafe' block", span.clone())
         }
-        return TypeKind.TPtr(Heap.new(ot))
+        return TypeKind.TPtr(Heap(ot))
     }
     return tyUnknown()
 }
@@ -288,9 +288,9 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
             error(ck, "Heap() expects 1 argument, got " + args.len.toString(), span.clone())
             return tyUnknown()
         }
-        let argType = checkExpr(ck, &*args[0])
-        tryMove(ck, &*args[0])
-        return TypeKind.THeap(Heap.new(argType))
+        let argType = checkExpr(ck, *args[0])
+        tryMove(ck, *args[0])
+        return TypeKind.THeap(Heap(argType))
     }
 
     // assert builtin
@@ -299,14 +299,14 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
             error(ck, "assert() expects 1-2 arguments, got " + args.len.toString(), span.clone())
             return tyVoid()
         }
-        let condType = checkExpr(ck, &*args[0])
-        if !typeEq(&condType, &tyBool()) && !typeEq(&condType, &tyUnknown()) {
-            error(ck, "assert() condition must be bool, got " + typeName(&condType), span.clone())
+        let condType = checkExpr(ck, *args[0])
+        if !typeEq(condType, tyBool()) && !typeEq(condType, tyUnknown()) {
+            error(ck, "assert() condition must be bool, got " + typeName(condType), span.clone())
         }
         if args.len == 2 {
-            let msgType = checkExpr(ck, &*args[1])
-            if !typeEq(&msgType, &tyString()) && !typeEq(&msgType, &tyUnknown()) {
-                error(ck, "assert() message must be a string, got " + typeName(&msgType), span.clone())
+            let msgType = checkExpr(ck, *args[1])
+            if !typeEq(msgType, tyString()) && !typeEq(msgType, tyUnknown()) {
+                error(ck, "assert() message must be a string, got " + typeName(msgType), span.clone())
             }
         }
         return tyVoid()
@@ -318,13 +318,13 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
             error(ck, func.clone() + "() expects 2 arguments, got " + args.len.toString(), span.clone())
             return tyUnknown()
         }
-        let aType = checkExpr(ck, &*args[0])
-        let bType = checkExpr(ck, &*args[1])
-        if !isNumeric(&aType) && !typeEq(&aType, &tyUnknown()) {
+        let aType = checkExpr(ck, *args[0])
+        let bType = checkExpr(ck, *args[1])
+        if !isNumeric(aType) && !typeEq(aType, tyUnknown()) {
             error(ck, func.clone() + "() arguments must be numeric", span.clone())
             return tyUnknown()
         }
-        if !typeEq(&aType, &bType) && !typeEq(&bType, &tyUnknown()) && !typeEq(&aType, &tyUnknown()) {
+        if !typeEq(aType, bType) && !typeEq(bType, tyUnknown()) && !typeEq(aType, tyUnknown()) {
             error(ck, func.clone() + "() arguments must be same type", span.clone())
         }
         return aType
@@ -336,16 +336,16 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
         let info = lookup(ck, func)
         match info {
             Option.Some(v) => {
-                match &v.type {
+                match v.ty {
                     TypeKind.TFn(params, ret) => {
                         if args.len != params.len {
                             error(ck, "closure expects " + params.len.toString() + " args, got " + args.len.toString(), span.clone())
                         }
                         var i: i64 = 0
                         while i < args.len && i < params.len {
-                            let argType = checkExpr(ck, &*args[i])
-                            if !typeEq(&params[i], &argType) && !typeEq(&argType, &tyUnknown()) {
-                                error(ck, "closure argument " + (i + 1).toString() + ": expected " + typeName(&params[i]) + ", got " + typeName(&argType), span.clone())
+                            let argType = checkExpr(ck, *args[i])
+                            if !typeEq(params[i], argType) && !typeEq(argType, tyUnknown()) {
+                                error(ck, "closure argument " + (i + 1).toString() + ": expected " + typeName(params[i]) + ", got " + typeName(argType), span.clone())
                             }
                             i = i + 1
                         }
@@ -371,20 +371,20 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
 
     var i: i64 = 0
     while i < args.len && i < sig.params.len {
-        let paramType = &sig.params[i].type
-        let argType = checkExpr(ck, &*args[i])
+        let paramType = sig.params[i].ty
+        let argType = checkExpr(ck, *args[i])
         match paramType {
             TypeKind.TRef(inner, mutable) => {
                 // auto-borrow: don't type-error, just check inner matches
-                if !typeEq(inner, &argType) && !typeEq(&argType, &tyUnknown()) {
-                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(&argType), span.clone())
+                if !typeEq(inner, argType) && !typeEq(argType, tyUnknown()) {
+                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), span.clone())
                 }
             }
             _ => {
-                if !typeEq(paramType, &argType) && !typeEq(&argType, &tyUnknown()) {
-                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(&argType), span.clone())
+                if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) {
+                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), span.clone())
                 }
-                tryMove(ck, &*args[i])
+                tryMove(ck, *args[i])
             }
         }
         i = i + 1
@@ -392,7 +392,7 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
 
     // Check remaining variadic args
     while i < args.len {
-        checkExpr(ck, &*args[i])
+        checkExpr(ck, *args[i])
         i = i + 1
     }
 
@@ -413,11 +413,11 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
         for j in 0..info.fields.len {
             if info.fields[j].name == fields[i].name {
                 found = true
-                let valType = checkExpr(ck, &*fields[i].value)
-                if !typeEq(&info.fields[j].type, &valType) && !typeEq(&valType, &tyUnknown()) {
-                    error(ck, "field '" + fields[i].name.clone() + "' of '" + name.clone() + "': expected " + typeName(&info.fields[j].type) + ", got " + typeName(&valType), span.clone())
+                let valType = checkExpr(ck, *fields[i].value)
+                if !typeEq(info.fields[j].ty, valType) && !typeEq(valType, tyUnknown()) {
+                    error(ck, "field '" + fields[i].name.clone() + "' of '" + name.clone() + "': expected " + typeName(info.fields[j].ty) + ", got " + typeName(valType), span.clone())
                 }
-                tryMove(ck, &*fields[i].value)
+                tryMove(ck, *fields[i].value)
             }
         }
         if !found {
@@ -444,12 +444,12 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
 fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
     // auto-deref references
-    match &objType {
+    match objType {
         TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
         _ => {}
     }
 
-    match &objType {
+    match objType {
         TypeKind.TStruct(name) => {
             if !ck.structs.contains(name) {
                 error(ck, "unknown struct '" + name.clone() + "'", span.clone())
@@ -458,7 +458,7 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
             let info = ck.structs.get(name)
             for i in 0..info.fields.len {
                 if info.fields[i].name == field {
-                    return info.fields[i].type.clone()
+                    return info.fields[i].ty.clone()
                 }
             }
             error(ck, "struct '" + name.clone() + "' has no field '" + field.clone() + "'", span.clone())
@@ -489,7 +489,7 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
             return tyUnknown()
         }
         _ => {
-            error(ck, "cannot access field '" + field.clone() + "' on type " + typeName(&objType), span.clone())
+            error(ck, "cannot access field '" + field.clone() + "' on type " + typeName(objType), span.clone())
             return tyUnknown()
         }
     }
@@ -502,30 +502,30 @@ fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Spa
         error(ck, "cannot infer type of empty array literal", span.clone())
         return tyUnknown()
     }
-    let elemType = checkExpr(ck, &*elements[0])
+    let elemType = checkExpr(ck, *elements[0])
     for i in 1..elements.len {
-        let t = checkExpr(ck, &*elements[i])
-        if !typeEq(&elemType, &t) && !typeEq(&t, &tyUnknown()) {
-            error(ck, "array element " + i.toString() + ": expected " + typeName(&elemType) + ", got " + typeName(&t), span.clone())
+        let t = checkExpr(ck, *elements[i])
+        if !typeEq(elemType, t) && !typeEq(t, tyUnknown()) {
+            error(ck, "array element " + i.toString() + ": expected " + typeName(elemType) + ", got " + typeName(t), span.clone())
         }
     }
-    return TypeKind.TArray(Heap.new(elemType), Option.Some(elements.len))
+    return TypeKind.TArray(Heap(elemType), Option.Some(elements.len))
 }
 
 // -- Index access --
 
 fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
-    match &objType {
+    match objType {
         TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
         _ => {}
     }
     let idxType = checkExpr(ck, index)
-    if !isInteger(&idxType) && !typeEq(&idxType, &tyUnknown()) {
-        error(ck, "index must be integer, got " + typeName(&idxType), span.clone())
+    if !isInteger(idxType) && !typeEq(idxType, tyUnknown()) {
+        error(ck, "index must be integer, got " + typeName(idxType), span.clone())
     }
 
-    match &objType {
+    match objType {
         TypeKind.TArray(elem, size) => { return elem.clone() }
         TypeKind.TVec(elem) => { return elem.clone() }
         TypeKind.TString => { return tyU8() }
@@ -536,7 +536,7 @@ fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Sp
             return inner.clone()
         }
         _ => {
-            error(ck, "cannot index type " + typeName(&objType), span.clone())
+            error(ck, "cannot index type " + typeName(objType), span.clone())
             return tyUnknown()
         }
     }
@@ -575,11 +575,11 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
 
     let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
     for i in 0..limit {
-        let argType = checkExpr(ck, &*args[i])
-        if !typeEq(&variantInfo.fields[i], &argType) && !typeEq(&argType, &tyUnknown()) {
-            error(ck, "argument " + (i + 1).toString() + " of '" + enumName.clone() + "." + variant.clone() + "': expected " + typeName(&variantInfo.fields[i]) + ", got " + typeName(&argType), span.clone())
+        let argType = checkExpr(ck, *args[i])
+        if !typeEq(variantInfo.fields[i], argType) && !typeEq(argType, tyUnknown()) {
+            error(ck, "argument " + (i + 1).toString() + " of '" + enumName.clone() + "." + variant.clone() + "': expected " + typeName(variantInfo.fields[i]) + ", got " + typeName(argType), span.clone())
         }
-        tryMove(ck, &*args[i])
+        tryMove(ck, *args[i])
     }
 
     return TypeKind.TEnum(enumName.clone())
@@ -615,11 +615,11 @@ fn unwrapableInner(ck: &Checker, t: &TypeKind): Option<TypeKind> {
 
 fn checkUnwrap(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind {
     let operandType = checkExpr(ck, operand)
-    let inner = unwrapableInner(ck, &operandType)
+    let inner = unwrapableInner(ck, operandType)
     match inner {
         Option.Some(t) => { return t }
         Option.None => {
-            error(ck, "'!' requires Option or Result type, got " + typeName(&operandType), span.clone())
+            error(ck, "'!' requires Option or Result type, got " + typeName(operandType), span.clone())
             return tyUnknown()
         }
     }
@@ -629,10 +629,10 @@ fn checkUnwrap(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind 
 
 fn checkPropagate(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind {
     let operandType = checkExpr(ck, operand)
-    let inner = unwrapableInner(ck, &operandType)
+    let inner = unwrapableInner(ck, operandType)
     match inner {
         Option.Some(t) => {
-            let retInner = unwrapableInner(ck, &ck.currentFnRetType)
+            let retInner = unwrapableInner(ck, ck.currentFnRetType)
             match retInner {
                 Option.None => {
                     error(ck, "'?' requires function to return Option or Result", span.clone())
@@ -642,7 +642,7 @@ fn checkPropagate(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKi
             return t
         }
         Option.None => {
-            error(ck, "'?' requires Option or Result type, got " + typeName(&operandType), span.clone())
+            error(ck, "'?' requires Option or Result type, got " + typeName(operandType), span.clone())
             return tyUnknown()
         }
     }
@@ -652,17 +652,17 @@ fn checkPropagate(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKi
 
 fn checkDefaultValue(ck: &mut Checker, operand: &Expr, default: &Expr, span: &Option<Span>): TypeKind {
     let operandType = checkExpr(ck, operand)
-    let inner = unwrapableInner(ck, &operandType)
+    let inner = unwrapableInner(ck, operandType)
     match inner {
         Option.Some(t) => {
             let defaultType = checkExpr(ck, default)
-            if !typeEq(&t, &defaultType) && !typeEq(&defaultType, &tyUnknown()) {
-                error(ck, "'??' default type mismatch: expected " + typeName(&t) + ", got " + typeName(&defaultType), span.clone())
+            if !typeEq(t, defaultType) && !typeEq(defaultType, tyUnknown()) {
+                error(ck, "'??' default type mismatch: expected " + typeName(t) + ", got " + typeName(defaultType), span.clone())
             }
             return t
         }
         Option.None => {
-            error(ck, "'??' requires Option or Result type, got " + typeName(&operandType), span.clone())
+            error(ck, "'??' requires Option or Result type, got " + typeName(operandType), span.clone())
             return tyUnknown()
         }
     }
@@ -674,22 +674,26 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
     let fromType = checkExpr(ck, operand)
     let toType = typeFromAst(targetType)
 
-    let fromOk = isNumeric(&fromType) || typeEq(&fromType, &tyBool()) || match &fromType {
-        TypeKind.TPtr(inner) => { true }
-        TypeKind.TArray(elem, size) => { true }
-        TypeKind.TFn(params, ret) => { true }
-        TypeKind.TUnknown => { true }
-        _ => { false }
+    var fromCastable = false
+    match fromType.clone() {
+        TypeKind.TPtr(inner) => { fromCastable = true }
+        TypeKind.TArray(elem, size) => { fromCastable = true }
+        TypeKind.TFn(params, ret) => { fromCastable = true }
+        TypeKind.TUnknown => { fromCastable = true }
+        _ => {}
     }
-    let toOk = isNumeric(&toType) || match &toType {
-        TypeKind.TPtr(inner) => { true }
-        _ => { false }
+    let fromOk = isNumeric(fromType) || typeEq(fromType, tyBool()) || fromCastable
+    var toCastable = false
+    match toType.clone() {
+        TypeKind.TPtr(inner) => { toCastable = true }
+        _ => {}
     }
+    let toOk = isNumeric(toType) || toCastable
 
-    if !fromOk { error(ck, "cannot cast from " + typeName(&fromType), span.clone()) }
-    if !toOk { error(ck, "cannot cast to " + typeName(&toType), span.clone()) }
+    if !fromOk { error(ck, "cannot cast from " + typeName(fromType), span.clone()) }
+    if !toOk { error(ck, "cannot cast to " + typeName(toType), span.clone()) }
 
-    match &toType {
+    match toType {
         TypeKind.TPtr(inner) => {
             if ck.unsafeDepth == 0 {
                 error(ck, "cast to pointer type requires 'unsafe' block", span.clone())
@@ -706,19 +710,19 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
 fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
     // auto-deref references
-    match &objType {
+    match objType {
         TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
         _ => {}
     }
 
     // numeric.toString()
-    if (isInteger(&objType) || isFloat(&objType)) && method == "toString" {
+    if (isInteger(objType) || isFloat(objType)) && method == "toString" {
         if args.len != 0 { error(ck, "'toString' takes no arguments", span.clone()) }
         return tyString()
     }
 
     // Vec methods
-    match &objType {
+    match objType {
         TypeKind.TVec(elem) => {
             return checkVecMethod(ck, obj, elem, method, args, span)
         }
@@ -726,7 +730,7 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     }
 
     // HashMap methods
-    match &objType {
+    match objType {
         TypeKind.THashMap(key, val) => {
             return checkHashMapMethod(ck, obj, key, val, method, args, span)
         }
@@ -734,7 +738,7 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     }
 
     // String methods
-    match &objType {
+    match objType {
         TypeKind.TString => {
             return checkStringMethod(ck, obj, method, args, span)
         }
@@ -742,14 +746,14 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     }
 
     // Struct/trait methods
-    match &objType {
+    match objType {
         TypeKind.TStruct(name) => {
             return checkStructMethod(ck, obj, name, method, args, span)
         }
         _ => {}
     }
 
-    error(ck, "no method '" + method.clone() + "' on type " + typeName(&objType), span.clone())
+    error(ck, "no method '" + method.clone() + "' on type " + typeName(objType), span.clone())
     return tyUnknown()
 }
 
@@ -764,11 +768,11 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         if !isRootMutable(ck, obj) {
             error(ck, "cannot push to immutable Vec", span.clone())
         }
-        let argType = checkExpr(ck, &*args[0])
-        if !typeEq(elem, &argType) && !typeEq(&argType, &tyUnknown()) {
-            error(ck, "push: expected " + typeName(elem) + ", got " + typeName(&argType), span.clone())
+        let argType = checkExpr(ck, *args[0])
+        if !typeEq(elem, argType) && !typeEq(argType, tyUnknown()) {
+            error(ck, "push: expected " + typeName(elem) + ", got " + typeName(argType), span.clone())
         }
-        tryMove(ck, &*args[0])
+        tryMove(ck, *args[0])
         return tyVoid()
     }
     if method == "pop" {
@@ -780,18 +784,18 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
     }
     if method == "clone" {
         if args.len != 0 { error(ck, "'clone' takes no arguments", span.clone()) }
-        return TypeKind.TVec(Heap.new(elem.clone()))
+        return TypeKind.TVec(Heap(elem.clone()))
     }
     if method == "contains" {
         if args.len != 1 { error(ck, "'contains' expects 1 argument", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyBool()
     }
     if method == "remove" {
         if args.len != 1 { error(ck, "'remove' expects 1 argument", span.clone()) }
         if args.len >= 1 {
-            let idxType = checkExpr(ck, &*args[0])
-            if !isInteger(&idxType) { error(ck, "'remove' index must be integer", span.clone()) }
+            let idxType = checkExpr(ck, *args[0])
+            if !isInteger(idxType) { error(ck, "'remove' index must be integer", span.clone()) }
         }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot remove from immutable Vec", span.clone())
@@ -800,7 +804,7 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
     }
     if method == "each" {
         if args.len != 1 { error(ck, "'each' expects 1 argument (callback)", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyVoid()
     }
     error(ck, "no method '" + method.clone() + "' on Vec", span.clone())
@@ -818,26 +822,26 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         if !isRootMutable(ck, obj) {
             error(ck, "cannot insert to immutable HashMap", span.clone())
         }
-        let keyType = checkExpr(ck, &*args[0])
-        let valType = checkExpr(ck, &*args[1])
-        if !typeEq(key, &keyType) && !typeEq(&keyType, &tyUnknown()) {
-            error(ck, "insert key: expected " + typeName(key) + ", got " + typeName(&keyType), span.clone())
+        let keyType = checkExpr(ck, *args[0])
+        let valType = checkExpr(ck, *args[1])
+        if !typeEq(key, keyType) && !typeEq(keyType, tyUnknown()) {
+            error(ck, "insert key: expected " + typeName(key) + ", got " + typeName(keyType), span.clone())
         }
-        if !typeEq(val, &valType) && !typeEq(&valType, &tyUnknown()) {
-            error(ck, "insert value: expected " + typeName(val) + ", got " + typeName(&valType), span.clone())
+        if !typeEq(val, valType) && !typeEq(valType, tyUnknown()) {
+            error(ck, "insert value: expected " + typeName(val) + ", got " + typeName(valType), span.clone())
         }
-        tryMove(ck, &*args[0])
-        tryMove(ck, &*args[1])
+        tryMove(ck, *args[0])
+        tryMove(ck, *args[1])
         return tyVoid()
     }
     if method == "get" {
         if args.len != 1 { error(ck, "'get' expects 1 argument (key)", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
         return val.clone()
     }
     if method == "contains" {
         if args.len != 1 { error(ck, "'contains' expects 1 argument (key)", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyBool()
     }
     if method == "remove" {
@@ -845,12 +849,12 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         if !isRootMutable(ck, obj) {
             error(ck, "cannot remove from immutable HashMap", span.clone())
         }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyBool()
     }
     if method == "clone" {
         if args.len != 0 { error(ck, "'clone' takes no arguments", span.clone()) }
-        return TypeKind.THashMap(Heap.new(key.clone()), Heap.new(val.clone()))
+        return TypeKind.THashMap(Heap(key.clone()), Heap(val.clone()))
     }
     error(ck, "no method '" + method.clone() + "' on HashMap", span.clone())
     return tyUnknown()
@@ -866,8 +870,8 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
     if method == "contains" || method == "startsWith" || method == "endsWith" {
         if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", span.clone()) }
         if args.len >= 1 {
-            let argType = checkExpr(ck, &*args[0])
-            if !typeEq(&argType, &tyString()) && !typeEq(&argType, &tyUnknown()) {
+            let argType = checkExpr(ck, *args[0])
+            if !typeEq(argType, tyString()) && !typeEq(argType, tyUnknown()) {
                 error(ck, "'" + method.clone() + "' argument must be string", span.clone())
             }
         }
@@ -875,8 +879,8 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
     }
     if method == "split" {
         if args.len != 1 { error(ck, "'split' expects 1 argument", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
-        return TypeKind.TVec(Heap.new(tyString()))
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        return TypeKind.TVec(Heap(tyString()))
     }
     if method == "trim" || method == "trimStart" || method == "trimEnd" ||
        method == "toLower" || method == "toUpper" {
@@ -885,19 +889,19 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
     }
     if method == "substring" || method == "slice" {
         if args.len != 2 { error(ck, "'" + method.clone() + "' expects 2 arguments (start, end)", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
-        if args.len >= 2 { checkExpr(ck, &*args[1]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len >= 2 { checkExpr(ck, *args[1]) }
         return tyString()
     }
     if method == "indexOf" {
         if args.len != 1 { error(ck, "'indexOf' expects 1 argument", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
         return TypeKind.TInt(64, true)
     }
     if method == "replace" {
         if args.len != 2 { error(ck, "'replace' expects 2 arguments", span.clone()) }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
-        if args.len >= 2 { checkExpr(ck, &*args[1]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len >= 2 { checkExpr(ck, *args[1]) }
         return tyString()
     }
     if method == "push" {
@@ -905,7 +909,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
         if !isRootMutable(ck, obj) {
             error(ck, "cannot push to immutable string", span.clone())
         }
-        if args.len >= 1 { checkExpr(ck, &*args[0]) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyVoid()
     }
     if method == "toInt" || method == "parseInt" {
@@ -915,7 +919,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
         return TypeKind.TFloat(64)
     }
     if method == "chars" || method == "bytes" {
-        return TypeKind.TVec(Heap.new(tyU8()))
+        return TypeKind.TVec(Heap(tyU8()))
     }
     error(ck, "no method '" + method.clone() + "' on string", span.clone())
     return tyUnknown()
@@ -924,11 +928,11 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
 // -- Struct/trait method calls --
 
 fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
-    // Look up inherent impl method
+    // Look up inherent implDecl method
     if ck.inherentImpls.contains(structName) {
-        let impl = ck.inherentImpls.get(structName)
-        if impl.methods.contains(method) {
-            let sig = impl.methods.get(method)
+        let implDecl = ck.inherentImpls.get(structName)
+        if implDecl.methods.contains(method) {
+            let sig = implDecl.methods.get(method)
             // First param is self (skip it in user args)
             let userParams = sig.params.len - 1
             if args.len != userParams {
@@ -936,19 +940,19 @@ fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: 
             }
             var i: i64 = 0
             while i < args.len && (i + 1) < sig.params.len {
-                let argType = checkExpr(ck, &*args[i])
-                let paramType = &sig.params[i + 1].type
+                let argType = checkExpr(ck, *args[i])
+                let paramType = sig.params[i + 1].ty
                 match paramType {
                     TypeKind.TRef(inner, mutable) => {
-                        if !typeEq(inner, &argType) && !typeEq(&argType, &tyUnknown()) {
-                            error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + typeName(paramType) + ", got " + typeName(&argType), span.clone())
+                        if !typeEq(inner, argType) && !typeEq(argType, tyUnknown()) {
+                            error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), span.clone())
                         }
                     }
                     _ => {
-                        if !typeEq(paramType, &argType) && !typeEq(&argType, &tyUnknown()) {
-                            error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + typeName(paramType) + ", got " + typeName(&argType), span.clone())
+                        if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) {
+                            error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), span.clone())
                         }
-                        tryMove(ck, &*args[i])
+                        tryMove(ck, *args[i])
                     }
                 }
                 i = i + 1
@@ -969,7 +973,7 @@ fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: 
                 }
                 var j: i64 = 0
                 while j < args.len && (j + 1) < sig.params.len {
-                    checkExpr(ck, &*args[j])
+                    checkExpr(ck, *args[j])
                     j = j + 1
                 }
                 return sig.ret.clone()
@@ -994,9 +998,9 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
 
     var paramTypes: Vec<TypeKind> = Vec.new()
     for i in 0..params.len {
-        let pType = typeFromAst(&params[i].type)
+        let pType = typeFromAst(params[i].ty)
         declare(ck, params[i].name.clone(), VarInfo {
-            type: pType.clone(),
+            ty: pType.clone(),
             mutable: false,
             moved: false,
             borrowed: false,
@@ -1006,9 +1010,10 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
         paramTypes.push(pType)
     }
 
-    var inferredRet = match retType {
-        Option.Some(rt) => { typeFromAst(rt) }
-        Option.None => { tyVoid() }
+    var inferredRet = tyVoid()
+    match retType {
+        Option.Some(rt) => { inferredRet = typeFromAst(rt) }
+        Option.None => {}
     }
 
     let savedRetType = ck.currentFnRetType.clone()
@@ -1019,5 +1024,5 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
     ck.currentFnRetType = savedRetType
 
     popScope(ck)
-    return TypeKind.TFn(paramTypes, Heap.new(inferredRet))
+    return TypeKind.TFn(paramTypes, Heap(inferredRet))
 }

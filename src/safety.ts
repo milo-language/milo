@@ -22,7 +22,7 @@ export type SafetyLevel =
 interface SafetyConstraints {
   noRecursion: boolean;
   requireBoundedLoops: boolean;       // all loops must have invariant or compile-time-bounded iteration
-  noDynamicAllocation: boolean;       // no heap after init
+  noDynamicAllocation: boolean;       // no heap allocation anywhere, including init (certifiable systems preallocate statically)
   requireContracts: boolean;          // all public functions must have requires/ensures
   noFloatingPoint: boolean;           // integer-only arithmetic
   maxFunctionComplexity: number | null; // cyclomatic complexity bound

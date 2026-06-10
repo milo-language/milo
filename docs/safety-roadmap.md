@@ -47,9 +47,11 @@ reverse/swap/sort*) and `&var self` methods are rejected on a receiver with a li
 their scope pops (`VarInfo.freezes`); for-in releases at loop end; non-ref bindings release
 RHS temporaries immediately (`let x = s[0..n].clone()` no longer freezes `s`).
 In-place element assignment (`v[i] = x`) stays legal — never reallocs.
-Remaining: closure-captured receivers mutated inside `.each()` over the same collection;
-passing a frozen var as a `&var` arg to a free function (cross-statement; same-call aliasing
-is covered by Phase 3a); arena scope tainting (2c).
+Also covered: callbacks that iterate their own receiver (`v.each(fn(x){ v.push(x) })` —
+receiver frozen during callback check) and passing a frozen var as a `&mut` arg to any
+function (all auto-borrow arg sites route through setAutoBorrowChecked).
+Remaining: arena scope tainting (2c — needs `@invalidates_refs`-style annotation since
+Arena is a library type the checker doesn't know).
 **Complexity:** Medium — extends existing move checker
 **Impact:** High — catches most aliasing bugs without annotations
 
