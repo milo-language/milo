@@ -1,0 +1,22 @@
+// Borrow release: a slice binding frees its freeze when its scope ends,
+// and a for-in releases the iterable at loop end — mutation after is legal.
+// @expect: hel
+// @expect: 1
+// @expect: 2
+
+fn main(): i32 {
+    var s = "hello".clone()
+    if true {
+        let sl = s[0..3]
+        print(sl)
+    }
+    s.push(65 as u8)
+    var items: Vec<i64> = Vec.new()
+    items.push(1)
+    for x in items {
+        print(x)
+    }
+    items.push(2)
+    print(items.len())
+    return 0
+}

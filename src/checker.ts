@@ -10,7 +10,18 @@ export interface VarInfo {
   borrowed: boolean;
   read: boolean;
   span?: Span;
+  // For a ref/slice binding: the source vars this binding's borrow froze.
+  // Released (borrowed=false) when the binding's scope pops, so a slice in an
+  // inner block doesn't freeze its source for the rest of the function.
+  freezes?: VarInfo[];
 }
+
+// Builtins that may realloc, free, or shift collection memory — illegal on a
+// receiver with a live borrow (slice or active for-in). Read-only and in-place
+// element ops are intentionally absent.
+const MUTATING_COLLECTION_METHODS = new Set([
+  "push", "pop", "insert", "remove", "reverse", "swap", "sort", "sortBy", "sortByKey",
+]);
 
 export interface CaptureInfo {
   name: string;
@@ -741,7 +752,14 @@ export class TypeChecker {
   }
 
   private pushScope() { this.scopes.push(new Map()); }
-  private popScope() { this.scopes.pop(); }
+  private popScope() {
+    const scope = this.scopes.pop();
+    if (scope) {
+      for (const [, vi] of scope) {
+        if (vi.freezes) for (const src of vi.freezes) src.borrowed = false;
+      }
+    }
+  }
 
   private snapshotMoveState(): Map<VarInfo, boolean> {
     const snap = new Map<VarInfo, boolean>();
@@ -1690,6 +1708,8 @@ export class TypeChecker {
       case "LetDecl": {
         const hint = stmt.type ? this.resolve(stmt.type) : null;
         // refs in locals OK (second-class — can't escape function via return/struct/collection)
+        const frozenBeforeRhs = new Set<VarInfo>();
+        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
@@ -1716,12 +1736,21 @@ export class TypeChecker {
             this.rangeCheckedExprs.set(stmt.value, { min: hint.min, max: hint.max, typeName: typeName(hint) });
           }
         }
-        this.declare(stmt.name, { type: hint ?? valType, mutable: false, moved: false, borrowed: false, read: false, span: sp });
+        // Borrows the RHS created: a ref binding owns them until its scope pops;
+        // any other binding consumed them within the statement (e.g. s[0..n].clone())
+        // and must not leak a freeze onto later statements.
+        const newlyFrozen: VarInfo[] = [];
+        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBeforeRhs.has(vi)) newlyFrozen.push(vi);
+        const bindingType = hint ?? valType;
+        if (bindingType.tag !== "ref") for (const vi of newlyFrozen) vi.borrowed = false;
+        this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
         this.tryMove(stmt.value);
         break;
       }
       case "VarDecl": {
         const hint = stmt.type ? this.resolve(stmt.type) : null;
+        const frozenBeforeRhs = new Set<VarInfo>();
+        for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
         const valType = this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
@@ -1747,7 +1776,13 @@ export class TypeChecker {
             this.rangeCheckedExprs.set(stmt.value, { min: hint.min, max: hint.max, typeName: typeName(hint) });
           }
         }
-        this.declare(stmt.name, { type: hint ?? valType, mutable: true, moved: false, borrowed: false, read: false, span: sp });
+        {
+          const newlyFrozen: VarInfo[] = [];
+          for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed && !frozenBeforeRhs.has(vi)) newlyFrozen.push(vi);
+          const bindingType = hint ?? valType;
+          if (bindingType.tag !== "ref") for (const vi of newlyFrozen) vi.borrowed = false;
+          this.declare(stmt.name, { type: bindingType, mutable: true, moved: false, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+        }
         this.tryMove(stmt.value);
         break;
       }
@@ -2652,6 +2687,22 @@ export class TypeChecker {
     // raw pointer and box derefs are always mutable (unsafe required separately)
     if (expr.kind === "UnaryOp" && (expr.op === "*")) return true;
     return false;
+  }
+
+  // Phase 2 (use-after-invalidate): mutating a collection while a borrow into it is
+  // live (string slice binding, for-in iteration) can realloc or free the memory the
+  // borrow points into. Assignment freezing is handled in the Assign case; this guards
+  // mutating method calls. In-place element assignment (v[i] = x) stays legal — it
+  // never reallocs, and rewriting elements mid-iteration is a common safe pattern.
+  private errorIfFrozen(obj: Expr, method: string, sp?: Span) {
+    let e = obj;
+    while (e.kind === "FieldAccess" || e.kind === "IndexAccess") e = e.object;
+    if (e.kind !== "Ident") return;
+    const info = this.lookup(e.name);
+    if (info?.borrowed) {
+      this.error(`cannot call '${method}' on '${e.name}' because it is borrowed`, sp,
+        `a slice or loop iteration over this variable is still live — '${method}' could move its memory and dangle the borrow`);
+    }
   }
 
   private describeExpr(expr: Expr): string {
@@ -3829,6 +3880,11 @@ export class TypeChecker {
             return this.setType(expr, this.resolveOptionForValue(objType, sp));
           }
         }
+        // frozen-collection guard: reject realloc/free-capable builtins on a borrowed receiver
+        if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")
+            && MUTATING_COLLECTION_METHODS.has(expr.method)) {
+          this.errorIfFrozen(expr.object, expr.method, sp);
+        }
         if (objType.tag === "vec") {
           if (expr.method === "push") {
             if (expr.args.length !== 1) { this.error(`'push' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
@@ -4240,6 +4296,8 @@ export class TypeChecker {
           const selfParam = sig.params[0];
           if (selfParam) {
             if (selfParam.type.tag === "ref") {
+              // a `&var self` method may mutate the receiver — same hazard as builtins
+              if (selfParam.type.mutable) this.errorIfFrozen(expr.object, expr.method, sp);
               this.autoBorrowed.set(expr.object, { mutable: selfParam.type.mutable });
             } else {
               this.tryMove(expr.object);

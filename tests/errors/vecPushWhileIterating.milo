@@ -1,0 +1,10 @@
+// @error: cannot call 'push' on 'items' because it is borrowed
+
+fn main(): i32 {
+    var items: Vec<i64> = Vec.new()
+    items.push(1)
+    for x in items {
+        items.push(x + 1)
+    }
+    return 0
+}

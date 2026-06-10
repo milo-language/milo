@@ -1,0 +1,9 @@
+// @error: cannot call 'push' on 's' because it is borrowed
+
+fn main(): i32 {
+    var s = "hello".clone()
+    let sl = s[0..3]
+    s.push(65 as u8)
+    print(sl)
+    return 0
+}
