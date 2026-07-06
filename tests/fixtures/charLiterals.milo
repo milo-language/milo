@@ -1,6 +1,20 @@
 // @expect: 65
 // @expect: match
 // @expect: newline: 10
+// @expect: a
+// @expect: newline
+// @expect: zero
+// @expect: other
+
+// char literals as match-arm patterns (integer-valued u8 subject)
+fn classify(ch: u8): string {
+    match ch {
+        'a' => { return "a" }
+        '\n' => { return "newline" }
+        '0' => { return "zero" }
+        _ => { return "other" }
+    }
+}
 
 fn main(): i32 {
     let a = 'A'
@@ -14,6 +28,10 @@ fn main(): i32 {
     let nl = '\n'
     print("newline: ", nl)
 
+    print(classify('a'))
+    print(classify('\n'))
+    print(classify('0'))
+    print(classify('z'))
+
     return 0
 }
-

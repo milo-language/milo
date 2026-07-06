@@ -1952,7 +1952,11 @@ export class TypeChecker {
             }
           }
         } else {
-          const iterType = this.checkExpr(stmt.iterable);
+          let iterType = this.checkExpr(stmt.iterable);
+          // iterating a slice (&[T]) or &Vec: deref — the loop borrows the view, not a copy
+          if (iterType.tag === "ref" && (iterType.inner.tag === "array" || iterType.inner.tag === "vec")) {
+            iterType = iterType.inner;
+          }
           if (iterType.tag === "vec") {
             const elemRef: TypeKind = { tag: "ref", inner: iterType.element, mutable: false };
             // mark vec as borrowed to prevent mutation during iteration
@@ -2180,7 +2184,8 @@ export class TypeChecker {
               hasWildcard = true;
             } else if (arm.pattern.kind === "LiteralPattern") {
               const ps = arm.pattern.span;
-              if (subjType.tag === "int" && arm.pattern.literalKind !== "int") {
+              if (subjType.tag === "int" && arm.pattern.literalKind !== "int" && arm.pattern.literalKind !== "char") {
+                // char literals are integer-valued (u8); allow them against any int subject
                 this.error(`expected integer literal in match arm`, ps);
               } else if (subjType.tag === "float" && arm.pattern.literalKind !== "float" && arm.pattern.literalKind !== "int") {
                 this.error(`expected numeric literal in match arm`, ps);
@@ -2847,6 +2852,15 @@ export class TypeChecker {
     this.returnHint = hint;
     const result = this.checkExpr(expr);
     this.returnHint = prevHint;
+    // Coerce a constant-int subtree (`-1`, `a + 1` where every leaf is a literal)
+    // to an int hint — the bare-literal branch above only catches a lone `IntLit`,
+    // so a UnaryOp/BinOp wrapper (`return -1`, `let x: i64 = -1`) would otherwise
+    // fail to widen. Call args, struct fields and enum payloads already do this.
+    if (hint?.tag === "int" && result.tag === "int" && !typeEq(hint, result) &&
+        (expr.kind === "UnaryOp" || expr.kind === "BinOp") && this.isConstIntExpr(expr)) {
+      this.retypeConstInt(expr, hint);
+      return hint;
+    }
     return result;
   }
 
@@ -3312,6 +3326,12 @@ export class TypeChecker {
               continue;
             }
             this.setAutoBorrowChecked(expr.args[i], paramType.mutable, sp);
+            // Vec<T> auto-coerces to &[T] (same {ptr,len,cap} layout; callee ignores cap).
+            // Immutable only — &mut [T] in-place views aren't supported yet.
+            if (paramType.inner.tag === "array" && paramType.inner.size === null && !paramType.mutable
+                && argType.tag === "vec" && typeEq(paramType.inner.element, argType.element)) {
+              continue;
+            }
             if (!typeEq(paramType.inner, argType) && argType.tag !== "unknown") {
               if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
                 this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
@@ -3488,7 +3508,8 @@ export class TypeChecker {
           return this.setType(expr, { tag: "unknown" });
         }
         if (objType.tag === "array" && expr.field === "len") {
-          return this.setType(expr, { tag: "int", bits: 32, signed: true });
+          // fixed arrays: compile-time i32 constant; slices: runtime i64 (matches Vec)
+          return this.setType(expr, { tag: "int", bits: objType.size !== null ? 32 : 64, signed: true });
         }
         if (objType.tag === "string" && expr.field === "len") {
           return this.setType(expr, { tag: "int", bits: 64, signed: true });
@@ -3910,6 +3931,33 @@ export class TypeChecker {
         if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")
             && MUTATING_COLLECTION_METHODS.has(expr.method)) {
           this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
+        }
+        // slices: `v[a..b]` desugars to `.slice(a,b)`; a slice is `&[T]` — a ref to an
+        // unsized array, runtime rep = non-owning %Vec (cap=0, drop glue skips free)
+        if ((objType.tag === "vec" || objType.tag === "array") && expr.method === "slice") {
+          if (objType.tag === "array" && objType.size !== null) {
+            this.error(`cannot slice a fixed-size array yet`, sp, `copy the elements into a Vec first`);
+            return this.setType(expr, { tag: "unknown" });
+          }
+          const refSlice: TypeKind = { tag: "ref", inner: { tag: "array", element: objType.element, size: null }, mutable: false };
+          if (expr.args.length !== 2) { this.error(`'slice' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, refSlice); }
+          const startType = this.checkExpr(expr.args[0]);
+          const endType = this.checkExpr(expr.args[1]);
+          if (startType.tag !== "int" && startType.tag !== "unknown") this.error(`slice start: expected integer, got ${typeName(startType)}`, sp);
+          if (endType.tag !== "int" && endType.tag !== "unknown") this.error(`slice end: expected integer, got ${typeName(endType)}`, sp);
+          // freeze the source — mutation could realloc/free the memory this view points into
+          let root: Expr = expr.object;
+          while (root.kind === "FieldAccess" || root.kind === "IndexAccess") root = root.object;
+          if (root.kind === "Ident") {
+            const info = this.lookup(root.name);
+            if (info) info.borrowed = true;
+          }
+          this.borrowedExprs.add(expr);
+          return this.setType(expr, refSlice);
+        }
+        if (objType.tag === "array" && objType.size === null && expr.method === "len") {
+          if (expr.args.length !== 0) this.error(`'len' takes no arguments`, sp);
+          return this.setType(expr, { tag: "int", bits: 64, signed: true });
         }
         if (objType.tag === "vec") {
           if (expr.method === "push") {
