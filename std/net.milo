@@ -1,7 +1,7 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
-from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_connect, SSL_ctrl, SSL_free, SSL_new, SSL_read, SSL_set_fd, SSL_write, TLS_client_method, close, connect, freeaddrinfo, getaddrinfo, read, socket, write }
-from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, getErrno, eagain }
+from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_connect, SSL_ctrl, SSL_free, SSL_new, SSL_read, SSL_set_fd, SSL_write, TLS_client_method, accept, bind, close, connect, freeaddrinfo, getaddrinfo, listen, read, setsockopt, socket, write }
+from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
 from "std/json" import { Json, jsonParse }
 from "std/event" import { setNonblocking }
 from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
@@ -108,6 +108,92 @@ impl TcpStream {
             }
         }
         return Result.Ok(result)
+    }
+
+    // Release the underlying fd to the caller. After this the stream no longer
+    // closes it on drop — hand it to an fd-based API (e.g. a WebSocket upgrade)
+    // without risking a double close.
+    fn take(self: &mut Self): i32 {
+        let f = self.fd
+        self.fd = -1 as i32
+        return f
+    }
+}
+
+// ── TcpListener ──
+
+// Listening TCP socket. Accepts inbound connections; closes the fd on drop.
+// Server counterpart to TcpStream.connect — no raw syscalls required in user code.
+
+struct TcpListener {
+    fd: i32,
+}
+
+impl Drop for TcpListener {
+    fn drop(self: &mut Self): void {
+        if self.fd >= 0 {
+            unsafe {
+                close(self.fd)
+            }
+        }
+    }
+}
+
+impl TcpListener {
+    // Bind to 0.0.0.0:port and start listening. SO_REUSEADDR is set so a quick
+    // restart doesn't fail with "address already in use". Pass port 0 to let the
+    // OS choose a free port (recover it via the accepted peer or getsockname).
+    fn bind(port: u16): Result<TcpListener, NetError> {
+        let AF_INET: i32 = 2
+        let SOCK_STREAM: i32 = 1
+        let SIZEOF_SOCKADDR_IN: u32 = 16
+
+        unsafe {
+            let fd = socket(AF_INET, SOCK_STREAM, 0)
+            if fd < 0 {
+                return Result.Err(NetError.ConnectionFailed("socket() failed"))
+            }
+
+            var one: i32 = 1
+            setsockopt(fd, solSocket(), soReuseaddr(), one, 4)
+
+            var addr = makeSockaddr(port, 0)
+            if bind(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+                close(fd)
+                return Result.Err(NetError.ConnectionFailed("bind() failed"))
+            }
+            if listen(fd, 1024) < 0 {
+                close(fd)
+                return Result.Err(NetError.ConnectionFailed("listen() failed"))
+            }
+            return Result.Ok(TcpListener { fd: fd })
+        }
+    }
+
+    // Accept one connection. Inside the green scheduler this yields (via the
+    // event loop) until a client is ready rather than blocking the whole
+    // runtime; outside it, it blocks. Mirrors TcpStream.recv's inGreen handling.
+    fn accept(self: &Self): Result<TcpStream, NetError> {
+        let SIZEOF_SOCKADDR_IN: u32 = 16
+        let inGreen = schedulerCurrent() as i64 != 0
+        if inGreen { setNonblocking(self.fd) }
+        while true {
+            unsafe {
+                var clientAddr = makeZeroedSockaddr()
+                var addrlen: u32 = SIZEOF_SOCKADDR_IN
+                let clientFd = accept(self.fd, clientAddr, addrlen)
+                if clientFd < 0 && inGreen && getErrno() == eagain() {
+                    schedulerWaitRead(self.fd)
+                    continue
+                }
+                if clientFd < 0 {
+                    return Result.Err(NetError.ConnectionFailed("accept() failed"))
+                }
+                if inGreen { setNonblocking(clientFd) }
+                return Result.Ok(TcpStream { fd: clientFd })
+            }
+        }
+        return Result.Err(NetError.ConnectionFailed("unreachable"))
     }
 }
 

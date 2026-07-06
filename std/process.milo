@@ -132,14 +132,15 @@ impl Child {
                 } else {
                     dup2(errP[1], 2)
                 }
-                // Close every original pipe fd; the dup'd 0/1/2 keep them alive.
-                close(inP[0])
-                close(inP[1])
-                close(outP[0])
-                close(outP[1])
-                if !mergeStderr {
-                    close(errP[0])
-                    close(errP[1])
+                // Close every inherited fd except the dup'd stdio. Without this
+                // the child leaks the parent's fds — listening sockets, client
+                // connections, the green runtime's kqueue — into the exec'd
+                // program. Some children (e.g. lldb-dap) then wedge or misbehave,
+                // and it's a descriptor leak regardless. The dup'd 0/1/2 stay open.
+                var extraFd: i32 = 3
+                while extraFd < 1024 {
+                    close(extraFd)
+                    extraFd = extraFd + 1
                 }
                 var prog0: *u8 = 0 as *u8
                 memcpy((&prog0) as *u8, argv, 8)
