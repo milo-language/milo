@@ -109,8 +109,13 @@ impl Pty {
                 dup2(slave, 0)
                 dup2(slave, 1)
                 dup2(slave, 2)
-                if slave > 2 { close(slave) }
-                close(self.masterFd)
+                // Close every inherited fd except the dup'd stdio — same leak as
+                // Child.spawn: parent's sockets/kqueue wedge or linger in the child.
+                var extraFd: i32 = 3
+                while extraFd < 1024 {
+                    close(extraFd)
+                    extraFd = extraFd + 1
+                }
                 execvp(pcopy, argv)
                 exit(127)
             }
