@@ -1,6 +1,9 @@
 // std/process — command execution and process control
 
-from "std/os" import { execl, exit, fork, kill, read, system, waitpid }
+from "std/os" import {
+    close, dup2, execl, execvp, exit, fork, free, kill, malloc, memcpy,
+    memset, pipe, read, system, waitpid, write
+}
 from "std/io" import { readFile }
 
 // ── Simple command execution ──
@@ -63,6 +66,202 @@ impl Process {
             }
             return Result.Ok(0)
         }
+    }
+}
+
+// ── Child with piped stdio ──
+//
+// Bidirectional pipe to a spawned process: parent writes the child's stdin and
+// reads its stdout/stderr. Built for stdio-framed protocols (DAP, LSP) where the
+// parent drives a long-lived adapter over its standard streams.
+//
+// Reads are blocking. When mergeStderr is false the caller MUST drain both
+// stdout and stderr or the child can deadlock filling an unread pipe; DAP puts
+// protocol on stdout and logs on stderr, so mergeStderr=true is the safe default.
+
+struct Child {
+    pid: i32,
+    stdinFd: i32,   // parent → child stdin
+    stdoutFd: i32,  // child stdout → parent
+    stderrFd: i32,  // child stderr → parent, or -1 when merged into stdout
+}
+
+impl Child {
+    fn spawn(program: &string, args: &Vec<string>, mergeStderr: bool): Result<Child> {
+        unsafe {
+            var inP: [i32; 2] = [0; 2]
+            var outP: [i32; 2] = [0; 2]
+            var errP: [i32; 2] = [-1; 2]
+            if pipe(inP as *u8) != 0 { return Result.Err("pipe(stdin) failed") }
+            if pipe(outP as *u8) != 0 {
+                close(inP[0])
+                close(inP[1])
+                return Result.Err("pipe(stdout) failed")
+            }
+            if !mergeStderr {
+                if pipe(errP as *u8) != 0 {
+                    close(inP[0])
+                    close(inP[1])
+                    close(outP[0])
+                    close(outP[1])
+                    return Result.Err("pipe(stderr) failed")
+                }
+            }
+
+            let argv = _buildArgv(program, args)
+
+            let pid = fork()
+            if pid < 0 {
+                close(inP[0])
+                close(inP[1])
+                close(outP[0])
+                close(outP[1])
+                if !mergeStderr {
+                    close(errP[0])
+                    close(errP[1])
+                }
+                _freeArgv(argv, args.len + 2)
+                return Result.Err("fork() failed")
+            }
+
+            if pid == 0 {
+                dup2(inP[0], 0)
+                dup2(outP[1], 1)
+                if mergeStderr {
+                    dup2(outP[1], 2)
+                } else {
+                    dup2(errP[1], 2)
+                }
+                // Close every original pipe fd; the dup'd 0/1/2 keep them alive.
+                close(inP[0])
+                close(inP[1])
+                close(outP[0])
+                close(outP[1])
+                if !mergeStderr {
+                    close(errP[0])
+                    close(errP[1])
+                }
+                var prog0: *u8 = 0 as *u8
+                memcpy((&prog0) as *u8, argv, 8)
+                execvp(prog0, argv)
+                exit(127)
+            }
+
+            // Parent: close the child-side ends, keep the parent-side ends.
+            close(inP[0])
+            close(outP[1])
+            var errRead: i32 = -1
+            if !mergeStderr {
+                close(errP[1])
+                errRead = errP[0]
+            }
+            _freeArgv(argv, args.len + 2)
+            return Result.Ok(Child {
+                pid: pid,
+                stdinFd: inP[1],
+                stdoutFd: outP[0],
+                stderrFd: errRead,
+            })
+        }
+    }
+
+    fn writeStdin(self: &Self, buf: *u8, len: i64): i64 {
+        unsafe { return write(self.stdinFd, buf, len) }
+    }
+
+    fn writeStdinStr(self: &Self, s: &string): i64 {
+        unsafe { return write(self.stdinFd, s as *u8, s.len) }
+    }
+
+    fn readStdout(self: &Self, buf: *u8, len: i64): i64 {
+        unsafe { return read(self.stdoutFd, buf, len) }
+    }
+
+    fn readStderr(self: &Self, buf: *u8, len: i64): i64
+      requires self.stderrFd >= 0
+    {
+        unsafe { return read(self.stderrFd, buf, len) }
+    }
+
+    // Close the child's stdin, sending EOF. Idempotent.
+    fn closeStdin(self: &mut Self): void {
+        if self.stdinFd >= 0 {
+            unsafe { close(self.stdinFd) }
+            self.stdinFd = -1
+        }
+    }
+
+    fn wait(self: &Self): Result<i32> {
+        var statusBuf: [u8; 4] = [0; 4]
+        unsafe {
+            let r = waitpid(self.pid, statusBuf, 0)
+            if r < 0 { return Result.Err("waitpid() failed") }
+            // macOS/Linux: low byte holds signal/stop info, next byte the exit code.
+            return Result.Ok(statusBuf[1] as i32)
+        }
+    }
+
+    fn signal(self: &Self, sig: i32): Result<i32> {
+        unsafe {
+            let r = kill(self.pid, sig)
+            if r < 0 { return Result.Err("kill() failed") }
+            return Result.Ok(0)
+        }
+    }
+
+    // Close any still-open parent-side fds. Call after wait().
+    fn close(self: &mut Self): void {
+        self.closeStdin()
+        unsafe {
+            if self.stdoutFd >= 0 {
+                close(self.stdoutFd)
+                self.stdoutFd = -1
+            }
+            if self.stderrFd >= 0 {
+                close(self.stderrFd)
+                self.stderrFd = -1
+            }
+        }
+    }
+}
+
+// Build a NULL-terminated argv: argv[0]=program, argv[1..n]=args, argv[n+1]=NULL.
+// Each string is copied into its own NUL-terminated C buffer so it stays valid
+// across fork/exec. Caller frees with _freeArgv(argv, args.len + 2).
+fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
+    unsafe {
+        let argc = args.len + 2
+        let argv = malloc(argc * 8)
+
+        let plen = program.len
+        let pcopy = malloc(plen + 1)
+        memcpy(pcopy, program as *u8, plen)
+        memset((pcopy as i64 + plen) as *u8, 0, 1)
+        memcpy(argv, (&pcopy) as *u8, 8)
+
+        for i in 0..args.len {
+            let arg = args[i]
+            let alen = arg.len
+            let acopy = malloc(alen + 1)
+            memcpy(acopy, arg as *u8, alen)
+            memset((acopy as i64 + alen) as *u8, 0, 1)
+            memcpy((argv as i64 + (i + 1) * 8) as *u8, (&acopy) as *u8, 8)
+        }
+
+        var nullPtr: *u8 = 0 as *u8
+        memcpy((argv as i64 + (argc - 1) * 8) as *u8, (&nullPtr) as *u8, 8)
+        return argv
+    }
+}
+
+fn _freeArgv(argv: *u8, argc: i64): void {
+    unsafe {
+        for i in 0..(argc - 1) {
+            var p: *u8 = 0 as *u8
+            memcpy((&p) as *u8, (argv as i64 + i * 8) as *u8, 8)
+            if p as i64 != 0 { free(p) }
+        }
+        free(argv)
     }
 }
 

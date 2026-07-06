@@ -1,0 +1,31 @@
+// @expect: hello pipe
+
+from "std/process" import { Child }
+
+fn main(): i32 {
+    var args: Vec<string> = Vec.new()
+    match Child.spawn("cat", args, true) {
+        Result.Ok(child) => {
+            let _w = child.writeStdinStr("hello pipe\n")
+            child.closeStdin()
+
+            var out: string = String.withCapacity(64)
+            var buf: [u8; 256] = [0; 256]
+            while true {
+                var n: i64 = 0
+                unsafe { n = child.readStdout(buf as *u8, 256) }
+                if n <= 0 { break }
+                for i in 0..n {
+                    if buf[i] != 10 { out.push(buf[i]) }
+                }
+            }
+            print(out)
+            let _s = child.wait()
+            child.close()
+        }
+        Result.Err(msg) => {
+            print($"spawn error: {msg}")
+        }
+    }
+    return 0
+}

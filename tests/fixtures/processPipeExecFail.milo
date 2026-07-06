@@ -1,0 +1,23 @@
+// @expect: exit 127
+
+from "std/process" import { Child }
+
+// execvp of a missing binary can't be reported before fork, so the child
+// exec fails and exit(127)s; the parent observes it through wait().
+fn main(): i32 {
+    var args: Vec<string> = Vec.new()
+    match Child.spawn("milo_no_such_binary_xyz", args, true) {
+        Result.Ok(child) => {
+            child.closeStdin()
+            match child.wait() {
+                Result.Ok(code) => { print($"exit {code}") }
+                Result.Err(msg) => { print($"wait error: {msg}") }
+            }
+            child.close()
+        }
+        Result.Err(msg) => {
+            print($"spawn error: {msg}")
+        }
+    }
+    return 0
+}
