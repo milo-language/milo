@@ -24,6 +24,12 @@ fn main(): i32 {
     print(jsonSer(v))
 // @expect: "hi"
 
+    // control chars must be escaped (RFC 8259) — terminal streams contain ESC
+    var ctl: string = "esc:"
+    ctl.push(27 as u8)
+    print(jsonObj().str("t", ctl).build())
+// @expect: {"t":"esc:\u001b"}
+
     // round-trip: builder output parses clean
     match jsonParse(nested.build()) {
         Result.Ok(parsed) => {

@@ -938,6 +938,14 @@ fn jsonEscapeStr(s: &string): string {
         else if c == '\n' { result = result + "\\n" }
         else if c == '\t' { result = result + "\\t" }
         else if c == '\r' { result = result + "\\r" }
+        else if c < 32 {
+            // RFC 8259: all control chars MUST be escaped. Terminal streams
+            // (ESC etc.) otherwise produce unparseable frames.
+            let digits: string = "0123456789abcdef"
+            result = result + "\\u00"
+            result.push(digits[((c as i64) >> 4) & 15])
+            result.push(digits[(c as i64) & 15])
+        }
         else { result.push(c) }
         i = i + 1
     }
