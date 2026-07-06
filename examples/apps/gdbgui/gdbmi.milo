@@ -1,0 +1,520 @@
+// gdbmi — parser for GDB Machine Interface (MI) output.
+// Port of pygdbmi (github.com/cs01/pygdbmi): gdbmiparser + gdbescapes + StringStream.
+// Parses one line of gdb MI text into an MiRecord; values are strings, lists,
+// or insertion-ordered dicts (gdb MI has no other value types).
+
+// ── Values ──
+
+struct MiKv {
+    key: string,
+    val: MiValue,
+}
+
+enum MiValue {
+    Str(string),
+    List(Vec<MiValue>),
+    Dict(Vec<MiKv>),
+}
+
+// kind: "result" | "notify" | "console" | "log" | "target" | "done" | "output"
+struct MiRecord {
+    kind: string,
+    message: string?,
+    payload: MiValue?,
+    token: i64?,
+}
+
+struct MiUnescaped {
+    text: string,
+    afterIndex: i64,
+}
+
+// ── Helpers ──
+
+fn _isWs(c: u8): bool {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}
+
+fn _isOctalDigit(c: u8): bool {
+    return c >= '0' && c <= '7'
+}
+
+fn _threeOctalAt(s: &string, i: i64): bool {
+    return i + 2 < s.len && _isOctalDigit(s[i]) && _isOctalDigit(s[i + 1]) && _isOctalDigit(s[i + 2])
+}
+
+fn _byteToStr(c: u8): string {
+    var out: string = ""
+    out.push(c)
+    return out
+}
+
+fn miClone(v: &MiValue): MiValue {
+    match v {
+        MiValue.Str(s) => { return MiValue.Str(s.clone()) }
+        MiValue.List(items) => {
+            var out: Vec<MiValue> = Vec.new()
+            for i in 0..items.len {
+                out.push(miClone(items[i]))
+            }
+            return MiValue.List(out)
+        }
+        MiValue.Dict(kvs) => {
+            var out: Vec<MiKv> = Vec.new()
+            for i in 0..kvs.len {
+                out.push(MiKv { key: kvs[i].key.clone(), val: miClone(kvs[i].val) })
+            }
+            return MiValue.Dict(out)
+        }
+    }
+    return MiValue.Str("")
+}
+
+// ── Unescaping (port of gdbescapes.py) ──
+// MI escapes are C-style but "\e" is valid and "\NNN" is octal (not hex).
+// See printchar in gdb/utils.c.
+
+// Strict UTF-8 validation, matching Python's bytes.decode("utf-8"):
+// rejects overlong encodings, surrogates, and codepoints above U+10FFFF.
+fn _validUtf8(bytes: &Vec<u8>): bool {
+    var i: i64 = 0
+    while i < bytes.len {
+        let b = bytes[i] as i64
+        var n: i64 = 0
+        if b < 0x80 {
+            n = 0
+        } else if (b & 0xE0) == 0xC0 {
+            if b < 0xC2 { return false }
+            n = 1
+        } else if (b & 0xF0) == 0xE0 {
+            n = 2
+        } else if (b & 0xF8) == 0xF0 {
+            if b > 0xF4 { return false }
+            n = 3
+        } else {
+            return false
+        }
+        var j: i64 = 1
+        while j <= n {
+            if i + j >= bytes.len { return false }
+            if ((bytes[i + j] as i64) & 0xC0) != 0x80 { return false }
+            j = j + 1
+        }
+        if n == 2 {
+            let b1 = bytes[i + 1] as i64
+            if b == 0xE0 && b1 < 0xA0 { return false }
+            if b == 0xED && b1 > 0x9F { return false }
+        }
+        if n == 3 {
+            let b1 = bytes[i + 1] as i64
+            if b == 0xF0 && b1 < 0x90 { return false }
+            if b == 0xF4 && b1 > 0x8F { return false }
+        }
+        i = i + n + 1
+    }
+    return true
+}
+
+fn _unescapeInternal(s: &string, expectClosingQuote: bool, start: i64): Result<MiUnescaped> {
+    var out: string = ""
+    var i: i64 = start
+    while i < s.len {
+        let c = s[i]
+        if c == '"' {
+            if expectClosingQuote {
+                return Result.Ok(MiUnescaped { text: out, afterIndex: i + 1 })
+            }
+            return Result.Err("Unescaped quote found in '" + s + "'")
+        }
+        if c == '\\' && i + 1 < s.len {
+            if _threeOctalAt(s, i + 1) {
+                // Collect a run of \NNN escapes: one Unicode char can span
+                // several octal escapes, so the run must decode as a unit.
+                let runStart = i
+                var bytes: Vec<u8> = Vec.new()
+                while i + 1 < s.len && s[i] == '\\' && _threeOctalAt(s, i + 1) {
+                    let v = ((s[i + 1] - '0') as i64) * 64 + ((s[i + 2] - '0') as i64) * 8 + ((s[i + 3] - '0') as i64)
+                    if v > 255 {
+                        return Result.Err("Invalid octal number '\\" + s.substr(i + 1, i + 4) + "' in '" + s + "'")
+                    }
+                    bytes.push(v as u8)
+                    i = i + 4
+                }
+                if _validUtf8(bytes) {
+                    for k in 0..bytes.len {
+                        out.push(bytes[k])
+                    }
+                } else {
+                    // gdb can emit invalid sequences on some platforms;
+                    // keep them escaped rather than corrupting the string (pygdbmi #64)
+                    out = out + s.substr(runStart, i)
+                }
+                continue
+            }
+            let esc = s[i + 1]
+            if esc == '\'' { out.push('\'') }
+            else if esc == '\\' { out.push('\\') }
+            else if esc == 'a' { out.push(7 as u8) }
+            else if esc == 'b' { out.push(8 as u8) }
+            else if esc == 'e' { out.push(27 as u8) }
+            else if esc == 'f' { out.push(12 as u8) }
+            else if esc == 'n' { out.push('\n') }
+            else if esc == 'r' { out.push('\r') }
+            else if esc == 't' { out.push('\t') }
+            else if esc == '"' { out.push('"') }
+            else {
+                return Result.Err("Invalid escape character '" + _byteToStr(esc) + "' in '" + s + "'")
+            }
+            i = i + 2
+            continue
+        }
+        out.push(c)
+        i = i + 1
+    }
+    if expectClosingQuote {
+        return Result.Err("Missing closing quote in '" + s + "'")
+    }
+    return Result.Ok(MiUnescaped { text: out, afterIndex: (-1 as i64) })
+}
+
+// Unescape a full MI string (no surrounding quotes); unescaped quotes are an error.
+fn miUnescape(s: &string): Result<string> {
+    let r = _unescapeInternal(s, false, 0)?
+    return Result.Ok(r.text)
+}
+
+// Unescape from `start` up to the closing double quote.
+// afterIndex points just past the closing quote.
+fn miAdvancePastString(s: &string, start: i64): Result<MiUnescaped> {
+    return _unescapeInternal(s, true, start)
+}
+
+// ── Stream (port of StringStream.py) ──
+
+struct MiStream {
+    text: string,
+    index: i64,
+}
+
+impl MiStream {
+    // Returns 0 at/past EOF; always advances (mirrors StringStream.read(1)
+    // returning "" so the seek(-1) bookkeeping in callers stays faithful).
+    fn readByte(self: &mut Self): u8 {
+        var b: u8 = 0
+        if self.index < self.text.len {
+            b = self.text[self.index]
+        }
+        self.index = self.index + 1
+        return b
+    }
+
+    fn back(self: &mut Self): void {
+        self.index = self.index - 1
+    }
+
+    // Advance past the first byte in `stops`, returning the bytes before it.
+    fn advancePastChars(self: &mut Self, stops: &string): string {
+        let startIndex = self.index
+        while true {
+            if self.index >= self.text.len {
+                self.index = self.index + 1
+                break
+            }
+            let c = self.text[self.index]
+            self.index = self.index + 1
+            var stop = false
+            for i in 0..stops.len {
+                if stops[i] == c { stop = true }
+            }
+            if stop { break }
+            if self.index == self.text.len { break }
+        }
+        var end = self.index - 1
+        if end < startIndex { end = startIndex }
+        return self.text.substr(startIndex, end)
+    }
+}
+
+// ── MI value parsing (port of _parse_dict/_parse_array/_parse_val) ──
+
+fn _asMergedList(v: &MiValue): Vec<MiValue> {
+    var out: Vec<MiValue> = Vec.new()
+    match v {
+        MiValue.List(items) => {
+            for i in 0..items.len {
+                out.push(miClone(items[i]))
+            }
+        }
+        _ => {
+            out.push(miClone(v))
+        }
+    }
+    return out
+}
+
+fn _dictInsert(kvs: &mut Vec<MiKv>, key: string, val: MiValue): void {
+    var idx: i64 = -1 as i64
+    for i in 0..kvs.len {
+        if kvs[i].key == key { idx = i }
+    }
+    if idx < 0 {
+        kvs.push(MiKv { key: key, val: val })
+        return
+    }
+    // Repeated keys are a gdb bug (sourceware #22217); merge values into a
+    // list instead of losing all but the last, e.g.
+    // thread-ids={thread-id="1",thread-id="2"} → {"thread-id": ["1","2"]}
+    var merged = _asMergedList(kvs[idx].val)
+    merged.push(val)
+    kvs[idx] = MiKv { key: key, val: MiValue.List(merged) }
+}
+
+fn _parseVal(st: &mut MiStream): Result<MiValue> {
+    while true {
+        let c = st.readByte()
+        if c == '{' {
+            let d = _parseDict(st)?
+            return Result.Ok(MiValue.Dict(d))
+        }
+        if c == '[' {
+            let a = _parseArray(st)?
+            return Result.Ok(MiValue.List(a))
+        }
+        if c == '"' {
+            let r = miAdvancePastString(st.text, st.index)?
+            st.index = r.afterIndex
+            return Result.Ok(MiValue.Str(r.text))
+        }
+        if c == 0 {
+            // EOF on malformed input (pygdbmi would spin forever here)
+            return Result.Ok(MiValue.Str(""))
+        }
+        // any other byte is garbage; skip it like pygdbmi does
+    }
+    return Result.Ok(MiValue.Str(""))
+}
+
+fn _parseArray(st: &mut MiStream): Result<Vec<MiValue>> {
+    var arr: Vec<MiValue> = Vec.new()
+    while true {
+        let c = st.readByte()
+        if c == '{' || c == '[' || c == '"' {
+            st.back()
+            let v = _parseVal(st)?
+            arr.push(v)
+        } else if c == ']' || c == 0 {
+            break
+        }
+        // whitespace, ',' and garbage are skipped
+    }
+    return Result.Ok(arr)
+}
+
+fn _parseDict(st: &mut MiStream): Result<Vec<MiKv>> {
+    var kvs: Vec<MiKv> = Vec.new()
+    while true {
+        var c = st.readByte()
+        if _isWs(c) || c == '{' || c == ',' {
+            continue
+        }
+        if c == '}' || c == 0 {
+            break
+        }
+        st.back()
+        let key = st.advancePastChars("=")
+        let val = _parseVal(st)?
+        _dictInsert(kvs, key, val)
+        // skip trailing garbage after a value, e.g. name="gdb"discardme
+        c = st.readByte()
+        while !(c == '}' || c == ',' || c == 0) {
+            c = st.readByte()
+        }
+        st.back()
+    }
+    return Result.Ok(kvs)
+}
+
+// ── Record parsing (port of parse_response) ──
+
+// True if the line is "(gdb)" (plus optional trailing whitespace),
+// which terminates a gdb response.
+fn responseIsFinished(line: &string): bool {
+    if !line.startsWith("(gdb)") { return false }
+    for i in 5..line.len {
+        if !_isWs(line[i]) { return false }
+    }
+    return true
+}
+
+fn _outputRecord(line: &string): MiRecord {
+    return MiRecord {
+        kind: "output",
+        message: Option.None,
+        payload: Option.Some(MiValue.Str(line.clone())),
+        token: Option.None,
+    }
+}
+
+// Parse one line of gdb MI output. Lines that are not MI records are
+// classified as "output" (text printed by the debugged program).
+fn parseResponse(line: &string): Result<MiRecord> {
+    // result/notify records: token? then ^ (result) or * / = (notify),
+    // then a message with no whitespace, then an optional ,payload.
+    var pos: i64 = 0
+    while pos < line.len && line[pos] >= '0' && line[pos] <= '9' {
+        pos = pos + 1
+    }
+    // Python's `$` anchor tolerates one trailing newline; an interior newline
+    // makes the result/notify patterns fail and the line fall through.
+    let nl = line.indexOf("\n")
+    let interiorNl = nl >= 0 && nl != line.len - 1
+
+    if !interiorNl && pos < line.len && (line[pos] == '^' || line[pos] == '*' || line[pos] == '=') {
+        let kind = line[pos]
+        var end = line.len
+        if line[end - 1] == '\n' { end = end - 1 }
+
+        var comma: i64 = -1 as i64
+        var msgOk = pos + 1 < end
+        var scan = pos + 1
+        while scan < end {
+            let c = line[scan]
+            if c == ',' {
+                comma = scan
+                break
+            }
+            if _isWs(c) {
+                msgOk = false
+                break
+            }
+            scan = scan + 1
+        }
+        if comma == pos + 1 { msgOk = false }
+
+        if msgOk {
+            var token: i64? = Option.None
+            if pos > 0 {
+                token = Option.Some(line.substr(0, pos).parseInt())
+            }
+            var message: string = ""
+            var payload: MiValue? = Option.None
+            if comma >= 0 {
+                message = line.substr(pos + 1, comma)
+                var st = MiStream { text: line.substr(comma + 1, line.len), index: 0 }
+                let d = _parseDict(st)?
+                payload = Option.Some(MiValue.Dict(d))
+            } else {
+                message = line.substr(pos + 1, end)
+            }
+            var recKind: string = "notify"
+            if kind == '^' { recKind = "result" }
+            return Result.Ok(MiRecord {
+                kind: recKind,
+                message: Option.Some(message),
+                payload: payload,
+                token: token,
+            })
+        }
+    }
+
+    // stream records: ~"..." console, &"..." log, @"..." target.
+    // Like pygdbmi's regexes, the payload runs to the LAST quote in the line.
+    if line.len >= 2 && (line[0] == '~' || line[0] == '&' || line[0] == '@') && line[1] == '"' {
+        let last = line.lastIndexOf("\"")
+        if last > 1 {
+            let raw = line.substr(2, last)
+            let text = miUnescape(raw)?
+            var recKind: string = "console"
+            if line[0] == '&' { recKind = "log" }
+            if line[0] == '@' { recKind = "target" }
+            return Result.Ok(MiRecord {
+                kind: recKind,
+                message: Option.None,
+                payload: Option.Some(MiValue.Str(text)),
+                token: Option.None,
+            })
+        }
+    }
+
+    if responseIsFinished(line) {
+        return Result.Ok(MiRecord {
+            kind: "done",
+            message: Option.None,
+            payload: Option.None,
+            token: Option.None,
+        })
+    }
+
+    return Result.Ok(_outputRecord(line))
+}
+
+// ── JSON serialization (for sending records to a frontend, and for tests) ──
+
+fn _hexDigit(v: i64): u8 {
+    if v < 10 { return ('0' + (v as u8)) }
+    return ('a' + ((v - 10) as u8))
+}
+
+fn _jsonEscape(s: &string): string {
+    var out: string = "\""
+    for i in 0..s.len {
+        let c = s[i]
+        if c == '"' { out = out + "\\\"" }
+        else if c == '\\' { out = out + "\\\\" }
+        else if c == '\n' { out = out + "\\n" }
+        else if c == '\r' { out = out + "\\r" }
+        else if c == '\t' { out = out + "\\t" }
+        else if (c as i64) < 0x20 {
+            out = out + "\\u00"
+            out.push(_hexDigit((c as i64) >> 4))
+            out.push(_hexDigit((c as i64) & 0xF))
+        }
+        else { out.push(c) }
+    }
+    return out + "\""
+}
+
+fn miToJson(v: &MiValue): string {
+    match v {
+        MiValue.Str(s) => { return _jsonEscape(s) }
+        MiValue.List(items) => {
+            var out: string = "["
+            for i in 0..items.len {
+                if i > 0 { out = out + "," }
+                out = out + miToJson(items[i])
+            }
+            return out + "]"
+        }
+        MiValue.Dict(kvs) => {
+            var out: string = "{"
+            for i in 0..kvs.len {
+                if i > 0 { out = out + "," }
+                out = out + _jsonEscape(kvs[i].key) + ":" + miToJson(kvs[i].val)
+            }
+            return out + "}"
+        }
+    }
+    return "null"
+}
+
+fn recordToJson(r: &MiRecord): string {
+    var out: string = "{\"type\":" + _jsonEscape(r.kind) + ",\"message\":"
+    match r.message {
+        Option.Some(m) => { out = out + _jsonEscape(m) }
+        Option.None => { out = out + "null" }
+    }
+    out = out + ",\"payload\":"
+    match r.payload {
+        Option.Some(p) => { out = out + miToJson(p) }
+        Option.None => { out = out + "null" }
+    }
+    // pygdbmi only includes "token" for result/notify records
+    if r.kind == "result" || r.kind == "notify" {
+        out = out + ",\"token\":"
+        match r.token {
+            Option.Some(t) => { out = out + t.toString() }
+            Option.None => { out = out + "null" }
+        }
+    }
+    return out + "}"
+}
