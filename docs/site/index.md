@@ -30,7 +30,7 @@ hero:
 
 <div class="section-break"></div>
 
-### If you know TypeScript, you know Milo
+### Simple, familiar syntax
 
 ```milo
 fn main(): i32 {

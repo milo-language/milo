@@ -61,13 +61,12 @@ Memory: mem
 
 ### Self-Hosting — Stage-1
 
-Blocking full milo0-on-milo0:
+Pivoted from growing milo0 to a bottom-up port of the full compiler (`src-milo/`):
 
-- [ ] `Vec<T>` in milo0 — 84 use sites, biggest blocker
-- [ ] `String.push` in milo0 — needs mutation-through-self + realloc
-- [ ] Port type checker, HIR, lower, codegen to Milo
-
-End goal: compiler compiles itself, producing equivalent IR for the full Milo source set.
+- [x] Lexer + parser ported to Milo
+- [ ] Type checker — expr + stmt done; generics + traits remaining
+- [ ] HIR + codegen — partial
+- [ ] Bootstrap: compiler compiles itself, producing equivalent IR for the full Milo source set
 
 ---
 
@@ -85,8 +84,8 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 Runtime pressure from `node-milo` changes the order here: binary data and FFI safety land before more expressive abstractions.
 
 - [ ] **Borrowed slices / byte views** — `&[T]` / `&mut [T]`, with slicing generalized beyond `string`. Unblocks offset/length I/O, `Buffer`/`ArrayBuffer` interop, and zero-copy protocol parsing.
-- [ ] **Opaque foreign handle types** — `extern type sqlite3`, `extern type SSL`, `extern type NmRuntime` instead of raw `*u8`. Keeps FFI zero-cost while preventing handle mixups.
-- [ ] **C ABI / layout control** — `repr(c)`, packed structs, `sizeof`, `offsetof`, `extern struct`. Needed for `epoll_event`, `kevent`, `stat`, `addrinfo`, V8 glue, and other platform/FFI structs.
+- [x] **Opaque foreign handle types** — `extern type sqlite3`, `extern type SSL` instead of raw `*u8`. Zero-cost FFI, no handle mixups.
+- [ ] **C ABI / layout control** — `repr(c)`, packed structs, `sizeof`, `offsetof` (`extern struct` landed). Needed for `epoll_event`, `kevent`, `stat`, `addrinfo`, V8 glue, and other platform/FFI structs.
 - [ ] **Structured OS / syscall errors** — `OsError`/`SysError` carrying `errno`/code plus syscall/path context. Needed for runtime bindings, better diagnostics, and Node-compatible error surfacing.
 
 - [x] **Interfaces (runtime polymorphism)** — Go-style interfaces with structural typing and vtable dispatch. `interface Shape { fn area(self: &Self): f64 }` — any type with matching methods satisfies the interface. Separate from traits (which remain compile-time only).
