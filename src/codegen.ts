@@ -61,6 +61,7 @@ export class Codegen {
   private dropImpls = new Set<string>();
   private structDropCache = new Map<string, boolean>();
   private generatedDropHelpers = new Set<string>();
+  private generatedJsonEscapeHelper = false;
   private generatedStructDropHelpers = new Set<string>();
   private dropHelperBodies: string[][] = [];
   private closureBodies: string[][] = [];
@@ -6127,6 +6128,7 @@ export class Codegen {
 
     const formatParts: string[] = ["{"];
     const snprintfArgs: { val: string; type: string }[] = [];
+    const escapeBufs: string[] = [];
 
     for (let i = 0; i < layout.fields.length; i++) {
       const field = layout.fields[i];
@@ -6141,10 +6143,20 @@ export class Codegen {
       formatParts.push(`"${field.name}":`);
 
       if (fk.tag === "string") {
+        // escape before snprintf — raw %s of user data produced invalid JSON
+        // for quotes/backslashes/newlines
+        this.ensureJsonEscapeHelper();
         const dataPtr = this.nextTemp();
         lines.push(`  ${dataPtr} = extractvalue %String ${fieldVal}, 0`);
+        const strLen = this.nextTemp();
+        lines.push(`  ${strLen} = extractvalue %String ${fieldVal}, 1`);
+        const escaped = this.nextTemp();
+        lines.push(`  ${escaped} = call %String @milo.json.escape(ptr ${dataPtr}, i64 ${strLen})`);
+        const escPtr = this.nextTemp();
+        lines.push(`  ${escPtr} = extractvalue %String ${escaped}, 0`);
+        escapeBufs.push(escPtr);
         formatParts.push(`"%s"`);
-        snprintfArgs.push({ val: dataPtr, type: "ptr" });
+        snprintfArgs.push({ val: escPtr, type: "ptr" });
       } else if (fk.tag === "bool") {
         const trueStr = this.addString("true");
         const falseStr = this.addString("false");
@@ -6192,6 +6204,11 @@ export class Codegen {
     // snprintf(buf, size, fmt, ...) to write
     lines.push(`  call i32 (ptr, i64, ptr, ...) @snprintf(ptr ${buf}, i64 ${bufSize}, ptr ${fmt.label}${argsStr})`);
 
+    if (escapeBufs.length > 0) {
+      this.needsFree = true;
+      for (const eb of escapeBufs) lines.push(`  call void @free(ptr ${eb})`);
+    }
+
     const s0 = this.nextTemp();
     lines.push(`  ${s0} = insertvalue %String undef, ptr ${buf}, 0`);
     const s1 = this.nextTemp();
@@ -6199,6 +6216,101 @@ export class Codegen {
     const s2 = this.nextTemp();
     lines.push(`  ${s2} = insertvalue %String ${s1}, i64 ${bufSize}, 2`);
     return [lines, s2, "%String"];
+  }
+
+  // milo.json.escape(src, len) -> %String: RFC 8259 escaping, mirroring
+  // std/json's jsonEscapeStr — ", \, \n, \t, \r as 2-byte escapes, all other
+  // control chars (<0x20) as \u00XX. NUL-terminated so the result's data ptr
+  // can feed snprintf %s. Worst case every byte escapes to \u00XX: 6x + NUL.
+  private ensureJsonEscapeHelper() {
+    if (this.generatedJsonEscapeHelper) return;
+    this.generatedJsonEscapeHelper = true;
+    this.needsMalloc = true;
+    this.dropHelperBodies.push([
+      `define private %String @milo.json.escape(ptr %src, i64 %len) {`,
+      `entry:`,
+      `  %cap0 = mul i64 %len, 6`,
+      `  %cap = add i64 %cap0, 1`,
+      `  %buf = call ptr @malloc(i64 %cap)`,
+      `  br label %loop`,
+      `loop:`,
+      `  %i = phi i64 [ 0, %entry ], [ %inext, %cont ]`,
+      `  %o = phi i64 [ 0, %entry ], [ %onext, %cont ]`,
+      `  %done = icmp sge i64 %i, %len`,
+      `  br i1 %done, label %fin, label %body`,
+      `body:`,
+      `  %cp = getelementptr i8, ptr %src, i64 %i`,
+      `  %c = load i8, ptr %cp`,
+      `  %isq = icmp eq i8 %c, 34`,
+      `  %isb = icmp eq i8 %c, 92`,
+      `  %isn = icmp eq i8 %c, 10`,
+      `  %ist = icmp eq i8 %c, 9`,
+      `  %isr = icmp eq i8 %c, 13`,
+      `  %e1 = or i1 %isq, %isb`,
+      `  %e2 = or i1 %e1, %isn`,
+      `  %e3 = or i1 %e2, %ist`,
+      `  %esc = or i1 %e3, %isr`,
+      `  %s1 = select i1 %isn, i8 110, i8 %c`,
+      `  %s2 = select i1 %ist, i8 116, i8 %s1`,
+      `  %s3 = select i1 %isr, i8 114, i8 %s2`,
+      `  br i1 %esc, label %escblk, label %notnamed`,
+      `notnamed:`,
+      `  %isctl = icmp ult i8 %c, 32`,
+      `  br i1 %isctl, label %ctlblk, label %plain`,
+      `escblk:`,
+      `  %ep0 = getelementptr i8, ptr %buf, i64 %o`,
+      `  store i8 92, ptr %ep0`,
+      `  %eo1 = add i64 %o, 1`,
+      `  %ep1 = getelementptr i8, ptr %buf, i64 %eo1`,
+      `  store i8 %s3, ptr %ep1`,
+      `  %eo2 = add i64 %o, 2`,
+      `  br label %cont`,
+      `ctlblk:`,
+      // \u00XX — c < 32 so the high nibble is 0 or 1, always a digit
+      `  %cp0 = getelementptr i8, ptr %buf, i64 %o`,
+      `  store i8 92, ptr %cp0`,
+      `  %co1 = add i64 %o, 1`,
+      `  %cp1 = getelementptr i8, ptr %buf, i64 %co1`,
+      `  store i8 117, ptr %cp1`,
+      `  %co2 = add i64 %o, 2`,
+      `  %cp2 = getelementptr i8, ptr %buf, i64 %co2`,
+      `  store i8 48, ptr %cp2`,
+      `  %co3 = add i64 %o, 3`,
+      `  %cp3 = getelementptr i8, ptr %buf, i64 %co3`,
+      `  store i8 48, ptr %cp3`,
+      `  %hi = lshr i8 %c, 4`,
+      `  %hid = add i8 %hi, 48`,
+      `  %co4 = add i64 %o, 4`,
+      `  %cp4 = getelementptr i8, ptr %buf, i64 %co4`,
+      `  store i8 %hid, ptr %cp4`,
+      `  %lo = and i8 %c, 15`,
+      `  %lodig = add i8 %lo, 48`,
+      `  %loalpha = add i8 %lo, 87`,
+      `  %lolt = icmp ult i8 %lo, 10`,
+      `  %lod = select i1 %lolt, i8 %lodig, i8 %loalpha`,
+      `  %co5 = add i64 %o, 5`,
+      `  %cp5 = getelementptr i8, ptr %buf, i64 %co5`,
+      `  store i8 %lod, ptr %cp5`,
+      `  %co6 = add i64 %o, 6`,
+      `  br label %cont`,
+      `plain:`,
+      `  %pp = getelementptr i8, ptr %buf, i64 %o`,
+      `  store i8 %c, ptr %pp`,
+      `  %po = add i64 %o, 1`,
+      `  br label %cont`,
+      `cont:`,
+      `  %onext = phi i64 [ %eo2, %escblk ], [ %co6, %ctlblk ], [ %po, %plain ]`,
+      `  %inext = add i64 %i, 1`,
+      `  br label %loop`,
+      `fin:`,
+      `  %np = getelementptr i8, ptr %buf, i64 %o`,
+      `  store i8 0, ptr %np`,
+      `  %r0 = insertvalue %String undef, ptr %buf, 0`,
+      `  %r1 = insertvalue %String %r0, i64 %o, 1`,
+      `  %r2 = insertvalue %String %r1, i64 %cap, 2`,
+      `  ret %String %r2`,
+      `}`,
+    ]);
   }
 
   // emitDeepCloneFromPtr: given a pointer to a value of type `typeKind`,

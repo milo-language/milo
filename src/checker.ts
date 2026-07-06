@@ -3136,6 +3136,17 @@ export class TypeChecker {
           if (argType.tag !== "struct" && argType.tag !== "string" && argType.tag !== "bool" && argType.tag !== "int" && argType.tag !== "float") {
             this.error(`jsonStringify: unsupported type '${typeName(argType)}'`, sp);
           }
+          // codegen only serializes scalar fields — anything else silently
+          // produced invalid JSON before this guard existed
+          if (argType.tag === "struct") {
+            const si = this.structs.get(argType.name);
+            for (const f of si?.fields ?? []) {
+              if (f.type.tag !== "string" && f.type.tag !== "bool" && f.type.tag !== "int" && f.type.tag !== "float") {
+                this.error(`jsonStringify: field '${f.name}' has unsupported type '${typeName(f.type)}'`, sp,
+                  `only string, bool, integer, and float fields are supported — for nested or dynamic JSON use the std/json builders (jsonObj/jsonArr)`);
+              }
+            }
+          }
           this.autoBorrowed.set(expr.args[0], { mutable: false });
           return this.setType(expr, { tag: "string" });
         }
