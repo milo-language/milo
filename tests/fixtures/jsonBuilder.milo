@@ -30,6 +30,13 @@ fn main(): i32 {
     print(jsonObj().str("t", ctl).build())
 // @expect: {"t":"esc:\u001b"}
 
+    // raw splice: pre-serialized fragments pass through verbatim
+    let frag = jsonArr().int(1).int(2).build()
+    print(jsonObj().str("type", "x").raw("items", frag).build())
+// @expect: {"type":"x","items":[1,2]}
+    print(jsonArr().raw("{\"a\":1}").int(9).build())
+// @expect: [{"a":1},9]
+
     // round-trip: builder output parses clean
     match jsonParse(nested.build()) {
         Result.Ok(parsed) => {

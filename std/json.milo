@@ -965,6 +965,10 @@ enum JsonVal {
     JStr(string),
     JArr(Vec<JsonVal>),
     JObj(Vec<JsonMember>),
+    // Pre-serialized JSON spliced verbatim — the caller guarantees validity.
+    // Lets builders compose with fragments produced elsewhere (other builders,
+    // pass-through payloads) without a parse/rebuild round trip.
+    JRaw(string),
 }
 
 struct JsonMember { key: string, val: JsonVal }
@@ -976,6 +980,7 @@ fn jsonSer(v: &JsonVal): string {
         JsonVal.JInt(n) => { return n.toString() }
         JsonVal.JFloat(f) => { return f.toString() }
         JsonVal.JStr(s) => { return "\"" + jsonEscapeStr(s) + "\"" }
+        JsonVal.JRaw(s) => { return s.clone() }
         JsonVal.JArr(items) => {
             var out = "["
             for i in 0..items.len {
@@ -1042,6 +1047,12 @@ impl JsonObj {
         m.members.push(JsonMember { key: key, val: val })
         return m
     }
+    // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
+    fn raw(self: Self, key: string, json: string): Self {
+        var m = self
+        m.members.push(JsonMember { key: key, val: JsonVal.JRaw(json) })
+        return m
+    }
     fn build(self: &Self): string {
         var out = "{"
         for i in 0..self.members.len {
@@ -1097,6 +1108,12 @@ impl JsonArr {
     fn val(self: Self, val: JsonVal): Self {
         var m = self
         m.items.push(val)
+        return m
+    }
+    // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
+    fn raw(self: Self, json: string): Self {
+        var m = self
+        m.items.push(JsonVal.JRaw(json))
         return m
     }
     fn build(self: &Self): string {
