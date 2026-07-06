@@ -1,0 +1,7 @@
+// @runtime-error: slice range out of bounds
+
+fn main(): void {
+    let s = "Hello"
+    let bad = s[2..99]
+    print(bad)
+}

@@ -108,7 +108,9 @@ export class Codegen {
       case "fn":     return "{ ptr, ptr }";
       case "array":
         if (t.size !== null) return `[${t.size} x ${this.llvmType(t.element)}]`;
-        return `{ ptr, i32 }`;
+        // unsized [T] = slice view: same {ptr,len,cap} layout as Vec, cap=0 → non-owning
+        this.hasVecType = true;
+        return `%Vec`;
       case "unknown": throw new Error("unknown type in codegen");
     }
   }
@@ -2438,9 +2440,17 @@ export class Codegen {
         return [lines, val, fieldTy];
       }
       case "ArrayLen": {
-        const objType = expr.object.type;
+        const objType = expr.object.type.tag === "ref" ? expr.object.type.inner : expr.object.type;
         if (objType.tag === "array" && objType.size !== null) {
           return [lines, String(objType.size), "i32"];
+        }
+        if (objType.tag === "array" && objType.size === null) {
+          // slice: runtime length from the %Vec view
+          const [ol, ov] = this.genExpr(expr.object);
+          lines.push(...ol);
+          const len = this.nextTemp();
+          lines.push(`  ${len} = extractvalue %Vec ${ov}, 1`);
+          return [lines, len, "i64"];
         }
         return [lines, "0", "i32"];
       }
@@ -2564,9 +2574,11 @@ export class Codegen {
           lines.push(`  ${val} = load ${elemTy}, ptr ${gep}`);
           return [lines, val, elemTy];
         }
-        if (expr.object.type.tag === "vec") {
+        {
+        const effObj = expr.object.type.tag === "ref" ? expr.object.type.inner : expr.object.type;
+        if (effObj.tag === "vec" || (effObj.tag === "array" && effObj.size === null)) {
           const [ptrLines, ptr, elemTy] = this.genVecBoundsCheckedPtr(expr, lines);
-          const elemKind = expr.object.type.element;
+          const elemKind = effObj.element;
           // Auto-clone non-Copy elements so the Vec stays intact. The user-facing
           // semantics: Vec[i] always returns an independent value.
           if (this.needsDropCg(elemKind)) {
@@ -2581,6 +2593,7 @@ export class Codegen {
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${elemTy}, ptr ${ptr}`);
         return [lines, val, elemTy];
+        }
       }
       case "EnumLit": {
         const layout = this.enumLayouts.get(expr.enumName)!;
@@ -4713,6 +4726,46 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
+  // Validate a substr/slice range before using it: without this, an inverted
+  // or out-of-range span becomes a negative length that malloc/memcpy/getelementptr
+  // turn into a silent crash (or a bogus view) with no diagnostic.
+  private emitStringRangeCheck(
+    lines: string[],
+    startVal: string,
+    endVal: string,
+    strVal: string,
+    what: string,
+    span?: { line: number; col: number },
+  ): void {
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const lenVal = this.nextTemp();
+    lines.push(`  ${lenVal} = extractvalue %String ${strVal}, 1`);
+    const badStart = this.nextTemp();
+    lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
+    const badOrder = this.nextTemp();
+    lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
+    const badEnd = this.nextTemp();
+    lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${lenVal}`);
+    const bad0 = this.nextTemp();
+    lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
+    const bad = this.nextTemp();
+    lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
+    const panicLabel = this.nextLabel(`${what}.panic`);
+    const okLabel = this.nextLabel(`${what}.ok`);
+    lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
+    lines.push(`${panicLabel}:`);
+    const { label: errLabel, length: errLen } = this.addString(
+      `milo: ${what} range out of bounds: %lld..%lld (len %lld) at ${span?.line ?? 0}:${span?.col ?? 0}\n`,
+    );
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr}, i64 ${startVal}, i64 ${endVal}, i64 ${lenVal})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+  }
+
   // String.substr(start, end) — allocate new owned string from s[start..end]
   private genStringSubstr(expr: HIRExpr & { kind: "StringSubstr" }, lines: string[]): [string[], string, string] {
     this.hasStringType = true;
@@ -4725,6 +4778,8 @@ export class Codegen {
     lines.push(...startLines);
     const [endLines, endVal] = this.genExpr(expr.end);
     lines.push(...endLines);
+
+    this.emitStringRangeCheck(lines, startVal, endVal, strVal, "substr", expr.span);
 
     const subLen = this.nextTemp();
     lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
@@ -4764,6 +4819,8 @@ export class Codegen {
     lines.push(...startLines);
     const [endLines, endVal] = this.genExpr(expr.end);
     lines.push(...endLines);
+
+    this.emitStringRangeCheck(lines, startVal, endVal, strVal, "slice", expr.span);
 
     const subLen = this.nextTemp();
     lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);

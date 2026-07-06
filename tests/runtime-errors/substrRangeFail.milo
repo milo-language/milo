@@ -1,0 +1,7 @@
+// @runtime-error: substr range out of bounds
+
+fn main(): void {
+    let s = "Hello, World!"
+    // inverted range: end < start must panic, not silently segfault
+    print(s.substr(7, 5))
+}
