@@ -2,6 +2,11 @@
 
 from "std/random" import { arc4random_buf }
 
+fn _hexChar(n: u8): u8 {
+    if n < 10 { return '0' + n }
+    return 'a' + (n - 10 as u8)
+}
+
 fn _byteToHex(b: u8): string {
     var s = ""
     s.push(_hexChar(b >> 4))
