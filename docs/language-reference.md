@@ -78,7 +78,7 @@ Milo prevents silent integer overflow at multiple levels:
 
 **Compile-time** — literals and constant expressions are range-checked:
 
-```milo
+```milo error
 let x: i8 = 200              // error: integer literal 200 overflows i8 (range -128..127)
 let y: i32 = 2147483647 + 1  // error: constant expression overflows i32
 ```
@@ -109,18 +109,29 @@ Available: `wrappingAdd/Sub/Mul`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul`.
 
 Type aliases with range constraints, inspired by Ada/SPARK. Range checks are always-on in all build modes.
 
+Note: range-type bounds are **inclusive** on both ends — `i32(0..50000)` accepts 0 and 50000. This differs from `for` loop ranges, where `0..n` excludes `n`.
+
 ```milo
 type Altitude = i32(0..50000)
 type Temperature = i32(-100..100)
 
 let alt: Altitude = 30000         // ok
+let top: Altitude = 50000         // ok — bounds are inclusive
+```
+
+```milo error
+type Altitude = i32(0..50000)
 let bad: Altitude = 60000         // compile error: value 60000 is out of range
 ```
 
 Dynamic values are checked at runtime:
 
 ```milo
-fn readSensor(): i32 { ... }
+type Altitude = i32(0..50000)
+
+fn readSensor(): i32 {
+    return 30000
+}
 
 let alt: Altitude = readSensor()  // runtime check: traps if value outside 0..50000
 ```
@@ -141,6 +152,8 @@ let sum: MediumInt = a + b   // no runtime check — compiler proves (0..100)+(0
 Integer-only. C-style precedence: `~` (unary) > `<<` `>>` > `&` > `^` > `|`.
 
 ```milo
+let a: i32 = 0b1100
+let b: i32 = 0b1010
 let mask: i32 = 0xFF & 0x0F    // 15
 let combined = a | b
 let toggled = a ^ b
@@ -191,7 +204,7 @@ fn add(a: i32, b: i32): i32 {
 }
 
 fn greet(name: string): void {
-    print("hello, %s", name)
+    print("hello, ", name)
 }
 ```
 
@@ -212,7 +225,7 @@ let s = identity("hello")  // T inferred as string
 |----------|-------------|
 | `print(fmt, ...)` | Print formatted text with trailing newline |
 | `exit(code)` | Exit the process |
-| `jsonStringify(val)` | Serialize a struct to JSON string |
+| `jsonStringify(val)` | Serialize a flat struct (scalar fields only) to JSON string |
 | `embedFile(path)` | Embed file contents as string at compile time |
 
 ### Contracts
@@ -235,6 +248,9 @@ fn clamp(value: i64, lo: i64, hi: i64): i64
 Loop invariants go between the `while` condition and the loop body:
 
 ```milo
+let n: i64 = 10
+var total: i64 = 0
+var i: i64 = 1
 while i <= n
   invariant total >= 0
   invariant i >= 1
@@ -341,7 +357,7 @@ struct Point {
 }
 
 let p = Point { x: 10, y: 20 }
-print("%d", p.x)
+print(p.x)
 
 // Mutable struct
 var q = Point { x: 1, y: 2 }
@@ -373,7 +389,7 @@ impl Dog {
 }
 
 let d = Dog { age: 7 }
-print("%d", d.getAge())
+print(d.getAge())
 ```
 
 ---
@@ -397,6 +413,12 @@ let s = Shape.Circle(3.14)
 `match` is exhaustive — the compiler requires you to handle every variant.
 
 ```milo
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Point,
+}
+
 fn area(s: Shape): f64 {
     match s {
         Shape.Circle(r) => { return 3.14159 * r * r }
@@ -409,6 +431,13 @@ fn area(s: Shape): f64 {
 Use `_` as a wildcard to match remaining variants:
 
 ```milo
+enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Point,
+}
+
+let s = Shape.Circle(3.14)
 match s {
     Shape.Circle(r) => { print("circle") }
     _ => { print("something else") }
@@ -453,9 +482,18 @@ fn find(id: i32): i32? {
 Every fallible call site must be explicitly handled — `!`, `?`, or `??`. This makes error paths visible in source code, unlike languages where exceptions can silently propagate.
 
 ```milo
-let val = opt!          // unwrap — panic if None (with source location)
-let val = opt?          // propagate — return None from current function if None
-let val = opt ?? 0      // default — use 0 if None
+fn unwrapIt(opt: i32?): i32 {
+    return opt!          // unwrap — panic if None (with source location)
+}
+
+fn orDefault(opt: i32?): i32 {
+    return opt ?? 0      // default — use 0 if None
+}
+
+fn doubled(opt: i32?): i32? {
+    let v = opt?         // propagate — return None from current function if None
+    return Option.Some(v * 2)
+}
 ```
 
 On panic, `!` prints the source location and error message, then exits:
@@ -463,7 +501,7 @@ On panic, `!` prints the source location and error message, then exits:
 error at 12:38: connection refused
 ```
 
-These also work with `Result`:
+These also work with `Result`. Writing `Result<T>` with one type argument defaults the error type to `string` — `Result<i32>` is `Result<i32, string>`:
 
 ```milo
 fn validate(x: i32): Result<i32> {
@@ -486,7 +524,7 @@ For when you only care about one variant:
 ```milo
 let x = Option.Some(42)
 if let Option.Some(val) = x {
-    print("got %d", val)
+    print("got ", val)
 }
 ```
 
@@ -498,8 +536,8 @@ Fixed-size, stack-allocated, bounds-checked.
 
 ```milo
 let arr = [10, 20, 30]
-print("%d", arr[0])
-print("%lld", arr.len)
+print(arr[0])
+print(arr.len)
 
 // Repeat syntax
 let zeros = [0; 100]      // 100 zeros
@@ -521,8 +559,8 @@ v.push(10)
 v.push(20)
 v.push(30)
 
-print("%d", v[0])           // bounds-checked
-print("%lld", v.len)
+print(v[0])           // bounds-checked
+print(v.len)
 
 let last = v.pop()            // removes and returns last element
 ```
@@ -545,7 +583,7 @@ let doubled = nums.map((n: &i32) => n * 2)       // [2, 4, 6, 8, 10]
 let evens = nums.filter((n: &i32) => n % 2 == 0)  // [2, 4]
 let hasNeg = nums.any((n: &i32) => n < 0)          // false
 let allPos = nums.all((n: &i32) => n > 0)          // true
-nums.each((n: &i32) => print("%d", n))             // side effects
+nums.each((n: &i32) => print(n))             // side effects
 nums.enumerate((i: i64, n: &i32) => {              // index + element
     print(i.toString() + ": " + n.toString())
 })
@@ -559,12 +597,17 @@ words.isEmpty()                                     // false
 ### Mutating methods
 
 ```milo
+struct User { name: string, age: i32 }
+
 var v: Vec<i32> = [3, 1, 2]
 v.sort()                  // [1, 2, 3] — in-place, ascending
 v.reverse()               // [3, 2, 1] — in-place
 
 // custom comparator: negative = a first, positive = b first
-var users: Vec<User> = [...]
+var users: Vec<User> = [
+    User { name: "Alice", age: 30 },
+    User { name: "Bob", age: 25 },
+]
 users.sortBy((a: &User, b: &User) => a.age - b.age)  // full control
 
 // key extractor: just return the field to sort on
@@ -585,7 +628,7 @@ var m: HashMap<string, i32> = HashMap.new()
 m.insert("hello", 42)
 m.insert("world", 99)
 
-print("%ld", m.len)
+print(m.len)
 
 if m.contains("hello") {
     print("found it")
@@ -593,7 +636,7 @@ if m.contains("hello") {
 
 let val = m.get("hello")       // returns Option<i32>
 if let Option.Some(v) = val {
-    print("value: %d", v)
+    print("value: ", v)
 }
 
 let v = m.getOrDefault("hello", 0)  // returns i32 directly (0 if missing)
@@ -628,7 +671,7 @@ let tree = Tree.Node(
     Heap(Tree.Leaf(1)),
     Heap(Tree.Leaf(2))
 )
-print("%d", sum(tree))   // 3
+print(sum(tree))   // 3
 ```
 
 Heap auto-frees when it goes out of scope.
@@ -654,6 +697,13 @@ Primitive types (`i32`, `bool`, `f64`, etc.) are copied, not moved.
 The compiler tracks moves through control flow:
 
 ```milo
+struct Point { x: i32, y: i32 }
+
+fn consume(p: Point): void {
+    print(p.x)
+}
+
+let condition = true
 let p = Point { x: 1, y: 2 }
 if condition {
     consume(p)     // p moved here
@@ -692,11 +742,21 @@ fn process(content: &string): void {
 }
 ```
 
+Two things to be aware of:
+
+- **Borrowing is implicit at call sites.** `double(n)` mut-borrows `n` and `consume(s)` moves `s`, but the calls look identical — the function signature, not the call site, tells you which happens. The compiler still rejects any use-after-move, so mistakes are compile errors, not bugs.
+- **Assignment through `&mut` has no deref sigil.** Inside `double`, `x = x * 2` writes through the reference to the caller's variable. (Reassigning a `&string` slice *local*, by contrast, just rebinds the view — see [Strings](#strings).)
+
 **What you can't do:**
 
-```milo
-fn bad(): &string { ... }         // COMPILE ERROR: can't return a reference
-struct Bad { ref: &string }       // COMPILE ERROR: can't store a reference
+```milo error
+fn bad(s: &string): &string {     // COMPILE ERROR: can't return a reference
+    return s
+}
+```
+
+```milo error
+struct Bad { r: &string }         // COMPILE ERROR: can't store a reference
 ```
 
 This is Milo's key insight: by restricting where references can live, you get
@@ -748,7 +808,16 @@ fn printIfEqual<T: Eq>(a: &T, b: &T) {
 Multiple bounds:
 
 ```milo
-fn process<T: Eq + Hash>(item: &T) { ... }
+trait Hash {
+    fn hash(self: &Self): i64
+}
+
+fn process<T: Eq + Hash>(a: &T, b: &T): i64 {
+    if a.eq(b) {
+        return a.hash()
+    }
+    return b.hash()
+}
 ```
 
 ### Supertraits
@@ -881,6 +950,12 @@ fn makeAdder(n: i32): (i32) => i32 {
     }
 }
 
+fn makeMultiplier(n: i32): (i32) => i32 {
+    return move (x: i32): i32 => {
+        return x * n
+    }
+}
+
 let add5 = makeAdder(5)
 print(add5(3))    // 8
 print(add5(10))   // 15
@@ -900,6 +975,12 @@ struct Handler {
     callback: (i32) => i32,
 }
 
+fn makeMultiplier(n: i32): (i32) => i32 {
+    return move (x: i32): i32 => {
+        return x * n
+    }
+}
+
 let h = Handler { name: "doubler", callback: makeMultiplier(2) }
 let cb = h.callback
 print(cb(10))   // 20
@@ -910,6 +991,9 @@ print(cb(10))   // 20
 ## Control Flow
 
 ```milo
+let x: i32 = 5
+let n: i32 = 42
+
 // if/else
 if x > 0 {
     print("positive")
@@ -929,8 +1013,11 @@ let size = if n < 10 { "small" } else if n < 100 { "medium" } else { "big" }
 var i: i32 = 0
 while i < 10 {
     if i == 5 { break }
-    if i % 2 == 0 { i = i + 1; continue }
-    print("%d", i)
+    if i % 2 == 0 {
+        i = i + 1
+        continue
+    }
+    print(i)
     i = i + 1
 }
 ```
@@ -942,8 +1029,10 @@ while i < 10 {
 ```milo
 // Import specific items (required — no wildcard imports)
 from "std/http" import { Context, Response, Router, serveRouter }
+```
 
-// Import from a relative path
+```milo skip
+// Import from a relative path (resolved against the importing file's directory)
 from "lib/math" import { add, multiply }
 ```
 
@@ -994,6 +1083,9 @@ fn main(): i32 {
 `unsafe { }` is required for operations the compiler can't verify:
 
 ```milo
+extern fn malloc(size: i64): *u8
+
+var x: i32 = 5
 unsafe {
     let p = malloc(64)        // extern returning pointer
     p[0] = 42 as u8           // pointer indexing
@@ -1050,6 +1142,15 @@ extern struct SockAddrIn {
 Field access through a pointer auto-derefs (requires `unsafe` for the pointer deref):
 
 ```milo
+extern fn malloc(size: i64): *u8
+extern fn htons(x: u16): u16
+
+struct SockAddrIn {
+    sin_family: u16,
+    sin_port: u16,
+    sin_addr: u32,
+}
+
 unsafe {
     let addr: *SockAddrIn = malloc(16) as *SockAddrIn
     addr.sin_family = 2       // GEP + store, no byte arithmetic
@@ -1084,7 +1185,7 @@ fn main(): i32 {
 
 ## JSON Serialization
 
-`jsonStringify` is a built-in that serializes any struct to a JSON string:
+`jsonStringify` is a built-in that serializes a flat struct to a JSON string. Supported field types: `string` (escaped automatically), integers, floats, and `bool` — anything else is a compile error:
 
 ```milo
 struct User {
@@ -1097,6 +1198,22 @@ let user = User { name: "Chad", age: 30, active: true }
 let json = jsonStringify(user)
 // {"name":"Chad","age":30,"active":true}
 ```
+
+For nested objects, arrays, or JSON built up dynamically, use the fluent builders in `std/json`:
+
+```milo
+from "std/json" import { jsonObj, jsonArr }
+
+let doc = jsonObj()
+    .str("type", "capabilities")
+    .int("seq", 3)
+    .obj("inner", jsonObj().bool("ok", true))
+    .arr("tags", jsonArr().str("a").str("b"))
+    .build()
+// {"type":"capabilities","seq":3,"inner":{"ok":true},"tags":["a","b"]}
+```
+
+Builder methods: `.str/.int/.float/.bool/.nil/.obj/.arr/.val` (chainable, consume and return the builder; string values are escaped). `jsonArr()` has the same set minus keys.
 
 ---
 
@@ -1144,22 +1261,22 @@ from "std/http" import { Context, Response, Router, serveRouter }
 fn main(): i32 {
     var r = Router.new()
 
-    r.get("/", fn(ctx: &mut Context): Response {
+    r.get("/", (ctx: &mut Context) => {
         return ctx.text("Hello from Milo!")
     })
 
-    r.get("/users/:id", fn(ctx: &mut Context): Response {
+    r.get("/users/:id", (ctx: &mut Context) => {
         let id = ctx.param("id")
         ctx.setHeader("X-User-Id", id.clone())
         return ctx.json($"\{\"id\": \"{id}\"}")
     })
 
-    r.get("/search", fn(ctx: &mut Context): Response {
+    r.get("/search", (ctx: &mut Context) => {
         let q = ctx.query("q")
         return ctx.text($"results for: {q}")
     })
 
-    serveRouter(8080, r)
+    let _ = serveRouter(8080, r)
     return 0
 }
 ```
@@ -1167,11 +1284,18 @@ fn main(): i32 {
 ### Route Methods
 
 ```milo
-r.get(pattern, handler)      // GET
-r.post(pattern, handler)     // POST
-r.put(pattern, handler)      // PUT
-r.delete(pattern, handler)   // DELETE
-r.all(pattern, handler)      // any method
+from "std/http" import { Context, Response, Router }
+
+fn handleReq(ctx: &mut Context): Response {
+    return ctx.text("ok")
+}
+
+var r: Router = Router.new()
+r.get("/things", handleReq)      // GET
+r.post("/things", handleReq)     // POST
+r.put("/things", handleReq)      // PUT
+r.delete("/things", handleReq)   // DELETE
+r.all("/things", handleReq)      // any method
 ```
 
 ### Context Methods
@@ -1198,20 +1322,33 @@ r.all(pattern, handler)      // any method
 Middleware wraps handlers with a next-function pattern:
 
 ```milo
-r.use(fn(ctx: &mut Context, next: (&mut Context) => Response): Response {
-    let start = clock()
+from "std/http" import { Context, Response, Router }
+from "std/time" import { now, since, durationMillis }
+
+fn timing(ctx: &mut Context, next: (&mut Context) => Response): Response {
+    let start = now()
     let resp = next(ctx)
-    let elapsed = clock() - start
-    ctx.setHeader("X-Response-Time", elapsed.toString() + "ms")
+    let ms = durationMillis(since(start))
+    ctx.setHeader("X-Response-Time", ms.toString() + "ms")
     return resp
-})
+}
+
+var r: Router = Router.new()
+r.use(timing)
 ```
 
 ### Path Parameters and Wildcards
 
 ```milo
-r.get("/users/:id/posts/:postId", handler)  // named params
-r.get("/static/*", handler)                  // wildcard suffix
+from "std/http" import { Context, Response, Router }
+
+fn handleReq(ctx: &mut Context): Response {
+    return ctx.text("ok")
+}
+
+var r: Router = Router.new()
+r.get("/users/:id/posts/:postId", handleReq)  // named params
+r.get("/static/*", handleReq)                  // wildcard suffix
 ```
 
 ### Response Variants
@@ -1239,13 +1376,21 @@ enum JsonValue {
     Object(Vec<JsonKV>),
 }
 
+fn skipWs(s: &string, pos: &mut i64): void {
+    while pos < s.len && s[pos] == ' ' { pos = pos + 1 }
+}
+
+fn parseString(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
+fn parseObject(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
+fn parseArray(s: &string, pos: &mut i64): Heap<JsonValue> { return Heap(JsonValue.Null) }
+
 fn parseValue(s: &string, pos: &mut i64): Heap<JsonValue> {
     skipWs(s, pos)
     let ch = s[pos]
     if ch == '"' { return parseString(s, pos) }
     if ch == '{' { return parseObject(s, pos) }
     if ch == '[' { return parseArray(s, pos) }
-    // ... etc
+    return Heap(JsonValue.Null)  // ... numbers, bools, null
 }
 ```
 
@@ -1295,7 +1440,7 @@ fn main(): i32 {
         Heap(Tree.Node(Heap(Tree.Leaf(1)), Heap(Tree.Leaf(2)))),
         Heap(Tree.Node(Heap(Tree.Leaf(3)), Heap(Tree.Leaf(4))))
     )
-    print("sum: %d", sum(tree))   // sum: 10
+    print($"sum: {sum(tree)}")   // sum: 10
     return 0
 }
 ```
@@ -1319,6 +1464,8 @@ print($"{x} + {y} = {x + y}")   // 10 + 20 = 30
 F-strings desugar to `format()` calls. The `format()` builtin is also available directly:
 
 ```milo
+let name = "milo"
+let version = "0.1"
 let msg = format("Hello ", name, ", version ", version, "!")
 ```
 
@@ -1414,7 +1561,9 @@ The compiler enforces thread safety at compile time. `Thread.spawn()` requires a
 
 **Non-Send types**: raw pointers (`*T`), structs containing raw pointers (unless annotated).
 
-```milo
+```milo error
+from "std/thread" import { Thread }
+
 // This compiles — i64 and string are Send
 let msg = "hello"
 let t = Thread.spawn((): void => { print(msg) })!
@@ -1423,7 +1572,7 @@ let t = Thread.spawn((): void => { print(msg) })!
 var x: i32 = 42
 unsafe {
     let p = (&x) as *u8
-    let t = Thread.spawn((): void => {    // error: cannot send 'p' of type '*u8' across threads
+    let t2 = Thread.spawn((): void => {    // error: cannot send 'p' of type '*u8' across threads
         print(p as i64)
     })!
 }
@@ -1468,6 +1617,10 @@ For most concurrent work, reach for `Promise<T>`. It runs a function on a green 
 ```milo
 from "std/runtime" import { Promise }
 
+fn expensiveComputation(): i64 {
+    return 42
+}
+
 let p = Promise((): i64 => {
     return expensiveComputation()
 })
@@ -1478,6 +1631,9 @@ let result = p.await()!
 
 ```milo
 from "std/runtime" import { Promise }
+
+fn fetchA(): i64 { return 1 }
+fn fetchB(): i64 { return 2 }
 
 var tasks: Vec<Promise<i64>> = Vec.new()
 tasks.push(Promise((): i64 => { return fetchA() }))
@@ -1520,7 +1676,7 @@ Non-blocking variants for polling:
 ```milo
 from "std/sync" import { Channel }
 
-let ch = Channel.new(4)!
+let ch = Channel<i64>.new(4)!
 ch.trySend(42)               // returns true if sent, false if full
 let val = ch.tryRecv()        // returns Option<i64> — None if empty
 match val {
@@ -1545,6 +1701,8 @@ m.destroy()
 Prefer `withLock` for scoped locking — guarantees unlock:
 
 ```milo
+from "std/sync" import { Mutex }
+
 let m = Mutex.new()!
 var x: i64 = 0
 m.withLock((): void => {
@@ -1681,6 +1839,7 @@ Green threads can yield until a file descriptor is ready for reading or writing.
 from "std/runtime" import { Task, schedulerWaitRead, schedulerWaitWrite }
 from "std/event" import { setNonblocking }
 
+let fd: i32 = 0    // e.g. an accepted socket
 Task.spawn(move (): void => {
     setNonblocking(fd)
     // ... attempt read ...
@@ -1695,9 +1854,11 @@ Task.spawn(move (): void => {
 `stream.recv()` and `stream.send()` from `std/net` automatically detect when they're running inside a green thread. They set the socket non-blocking and yield on EAGAIN — no code changes needed:
 
 ```milo
-from "std/net" import { TcpStream }
+from "std/net" import { TcpStream, resolve }
 from "std/runtime" import { Task }
 
+let ip = resolve("example.com")!
+let port: u16 = 80
 Task.spawn(move (): void => {
     let stream = TcpStream.connect(ip, port)!
     stream.send("hello")!         // yields if socket buffer full
@@ -1852,6 +2013,9 @@ dbClose(db)
 ### Prepared Statements with Bindings
 
 ```milo
+from "std/sqlite" import { dbOpen, dbQuery, dbBindInt, dbStep, dbColumnText, dbFinalize }
+
+let db = dbOpen("app.db")!
 let stmt = dbQuery(db, "SELECT * FROM users WHERE age > ?")!
 dbBindInt(stmt, 1, 25)!
 while dbStep(stmt) {

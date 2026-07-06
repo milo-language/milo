@@ -123,9 +123,9 @@ std::vector<int> v = {1, 2, 3};
 auto v2 = std::move(v);
 v.push_back(4);          // "valid but unspecified" — may silently corrupt
 ```
-```milo
+```milo error
 // Milo — compile error
-var v = Vec.new()
+var v: Vec<i64> = Vec.new()
 let v2 = v               // v moved to v2
 v.push(4)                // ERROR: use of moved value `v`
 ```
@@ -137,7 +137,7 @@ std::string_view getName() {
     return s;
 }
 ```
-```milo
+```milo error
 // Milo — impossible by construction
 fn getName(): &string {  // ERROR: cannot return a reference
     let s = "hello"
