@@ -1,0 +1,8 @@
+// @error: not a compile-time constant
+
+var greeting: string = "hello"
+
+fn main(): i32 {
+    print(greeting)
+    return 0
+}

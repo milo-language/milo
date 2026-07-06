@@ -997,6 +997,20 @@ export class TypeChecker {
         this.error(`global '${g.name}': type mismatch: expected ${typeName(hint)}, got ${typeName(valType)}`, g.span);
       }
       globalTypes.set(g.name, finalType);
+      // A non-empty Vec/HashMap literal is const-shaped but needs heap
+      // allocation, so it's just as silently-zeroed as a runtime call.
+      const heapLit =
+        (finalType.tag === "vec" || finalType.tag === "hashmap") &&
+        !(g.value.kind === "ArrayLit" && g.value.elements.length === 0);
+      if (!this.isConstGlobalInit(g.value) || heapLit) {
+        // Codegen emits globals via LLVM constant initializers only; anything
+        // runtime-evaluated used to silently become zeroinitializer ("" / 0 /
+        // empty), which repeatedly masqueraded as deadlocks downstream.
+        this.error(
+          `global '${g.name}': initializer is not a compile-time constant — module-scope runtime initialization is not supported, so this would silently become zero/empty at runtime. Assign it at the start of main() instead (declare it as '= ""', '= 0', '= []', ...)`,
+          g.span,
+        );
+      }
       this.declare(g.name, { type: finalType, mutable: g.mutable, moved: false, borrowed: false, read: true, span: g.span });
     }
     this._globalTypes = globalTypes;
@@ -2632,6 +2646,37 @@ export class TypeChecker {
     if (e.kind === "Ident" && this.closureScopeDepth !== null) {
       const cap = this.currentClosureCaptures?.get(e.name);
       if (cap) cap.mutatedInClosure = true;
+    }
+  }
+
+  // Mirrors codegen's getConstantInitializer: what can actually be emitted as
+  // an LLVM constant for a module-scope global. Empty string/vec are allowed
+  // (they ARE zeroinitializer); a non-empty string would need heap allocation.
+  private isConstGlobalInit(e: Expr): boolean {
+    switch (e.kind) {
+      case "IntLit":
+      case "FloatLit":
+      case "BoolLit":
+      case "CharLit":
+        return true;
+      case "StringLit":
+        return e.value.length === 0;
+      case "BinOp":
+        return this.isConstGlobalInit(e.left) && this.isConstGlobalInit(e.right);
+      case "UnaryOp":
+        return this.isConstGlobalInit(e.operand);
+      case "CastExpr":
+        return this.isConstGlobalInit(e.operand);
+      case "ArrayLit":
+        return e.elements.every((el) => this.isConstGlobalInit(el));
+      case "ArrayRepeat":
+        return this.isConstGlobalInit(e.value);
+      case "StructLit":
+        return e.fields.every((f) => this.isConstGlobalInit(f.value));
+      case "EnumLit":
+        return e.args.every((a) => this.isConstGlobalInit(a));
+      default:
+        return false;
     }
   }
 
