@@ -2774,6 +2774,8 @@ export class Codegen {
         return this.genStringSubstr(expr, lines);
       case "StringSlice":
         return this.genStringSlice(expr, lines);
+      case "VecSlice":
+        return this.genVecSlice(expr, lines);
       case "StringParseF64":
         return this.genStringParseF64(expr, lines);
       case "StringClone":
@@ -4839,6 +4841,65 @@ export class Codegen {
     lines.push(`  ${s2} = insertvalue %String ${s1}, i64 0, 2`);
 
     return [lines, s2, "%String"];
+  }
+
+  // v.slice(a, b) / v[a..b] — non-owning view: same %Vec rep with adjusted ptr/len
+  // and cap=0, so drop glue skips free (the source still owns the buffer).
+  private genVecSlice(expr: HIRExpr & { kind: "VecSlice" }, lines: string[]): [string[], string, string] {
+    this.hasVecType = true;
+    const elemTy = this.llvmType(expr.elementType);
+
+    const [vLines, vVal] = this.genExpr(expr.vec);
+    lines.push(...vLines);
+    const [startLines, startVal] = this.genExpr(expr.start);
+    lines.push(...startLines);
+    const [endLines, endVal] = this.genExpr(expr.end);
+    lines.push(...endLines);
+
+    // bounds check against the source Vec's len (field 1), mirroring string slices
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const lenVal = this.nextTemp();
+    lines.push(`  ${lenVal} = extractvalue %Vec ${vVal}, 1`);
+    const badStart = this.nextTemp();
+    lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
+    const badOrder = this.nextTemp();
+    lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
+    const badEnd = this.nextTemp();
+    lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${lenVal}`);
+    const bad0 = this.nextTemp();
+    lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
+    const bad = this.nextTemp();
+    lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
+    const panicLabel = this.nextLabel("vecslice.panic");
+    const okLabel = this.nextLabel("vecslice.ok");
+    lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
+    lines.push(`${panicLabel}:`);
+    const { label: errLabel, length: errLen } = this.addString(
+      `milo: slice range out of bounds: %lld..%lld (len %lld) at ${expr.span?.line ?? 0}:${expr.span?.col ?? 0}\n`,
+    );
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr}, i64 ${startVal}, i64 ${endVal}, i64 ${lenVal})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+
+    const subLen = this.nextTemp();
+    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
+    const srcPtr = this.nextTemp();
+    lines.push(`  ${srcPtr} = extractvalue %Vec ${vVal}, 0`);
+    const slicePtr = this.nextTemp();
+    lines.push(`  ${slicePtr} = getelementptr ${elemTy}, ptr ${srcPtr}, i64 ${startVal}`);
+
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %Vec undef, ptr ${slicePtr}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 ${subLen}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
+
+    return [lines, s2, "%Vec"];
   }
 
   // n.toString() / x.toString() — snprintf into heap buffer, return owned %String

@@ -267,7 +267,14 @@ class LowerCtx {
             span: stmt.span,
           };
         }
-        const iterType = this.typeOf(stmt.iterable);
+        let iterType = this.typeOf(stmt.iterable);
+        // slices (&[T]) and &Vec iterate like vecs — same non-owning %Vec layout
+        if (iterType?.tag === "ref" && (iterType.inner.tag === "array" || iterType.inner.tag === "vec")) {
+          iterType = iterType.inner;
+        }
+        if (iterType?.tag === "array" && iterType.size === null) {
+          iterType = { tag: "vec", element: iterType.element };
+        }
         let iterableKind: "vec" | "string" | "hashmap";
         let varType: TypeKind;
         let varType2: TypeKind | null = null;
@@ -629,6 +636,15 @@ class LowerCtx {
               return { kind: "CheckedArith", op, left, right, optionEnumName: optName, type, span: expr.span };
             }
           }
+        }
+        // slice creation (v[a..b] desugar) and slice methods — slices are arrays
+        // with size null whose runtime rep is a non-owning %Vec
+        if ((objType?.tag === "vec" || (objType?.tag === "array" && objType.size === null)) && expr.method === "slice") {
+          const elementType = objType.element;
+          return { kind: "VecSlice", vec: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), elementType, type, span: expr.span };
+        }
+        if (objType?.tag === "array" && objType.size === null && expr.method === "len") {
+          return { kind: "ArrayLen", object: this.lowerExpr(expr.object), type, span: expr.span };
         }
         if (objType?.tag === "vec") {
           if (expr.method === "push") {
