@@ -45,7 +45,9 @@ export interface Attribute {
 
 // ── Expressions ──
 
-export interface IntLit { kind: "IntLit"; value: number; span?: Span }
+// value is a bigint so 64-bit literals (i64::MAX, u64 bit masks) round-trip
+// losslessly — a JS number would round anything past 2^53 and miscompile.
+export interface IntLit { kind: "IntLit"; value: bigint; span?: Span }
 export interface FloatLit { kind: "FloatLit"; value: number; span?: Span }
 export interface BoolLit { kind: "BoolLit"; value: boolean; span?: Span }
 export interface StringLit { kind: "StringLit"; value: string; span?: Span }

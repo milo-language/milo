@@ -29,7 +29,8 @@ export interface FlowFactResult {
 }
 
 function intValue(e: Expr | undefined | null): number | null {
-  if (e && e.kind === "IntLit") return e.value;
+  // loop bounds are small; a JS number is fine here (IntLit.value is bigint)
+  if (e && e.kind === "IntLit") return Number(e.value);
   return null;
 }
 

@@ -1600,8 +1600,9 @@ from "std/sync" import { WaitGroup }
 let wg = WaitGroup.new()
 for i in 0..8 {
     wg.add(1)
+    let n = i
     Task.spawn(move (): void => {
-        work(i)
+        print(n.toString())
         wg.done()
     })
 }
@@ -1614,8 +1615,12 @@ wg.destroy()
 ```milo
 from "std/runtime" import { Task, schedulerRunToCompletion }
 
-Task.spawn(move (): void => { acceptLoop(fd) })   // never returns
-schedulerRunToCompletion()                        // main blocks here
+fn acceptLoop(fd: i32): void {
+    // accept connections and spawn a handler task per client, forever
+}
+
+Task.spawn(move (): void => { acceptLoop(0) })   // never returns in a real server
+schedulerRunToCompletion()                       // main blocks here
 ```
 
 ### Escape hatch: OS threads

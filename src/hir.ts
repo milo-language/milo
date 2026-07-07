@@ -7,7 +7,7 @@ import type { Span } from "./ast";
 // ── Expressions ──
 
 export type HIRExpr =
-  | { kind: "IntLit"; value: number; type: TypeKind; span?: Span }
+  | { kind: "IntLit"; value: bigint; type: TypeKind; span?: Span }
   | { kind: "FloatLit"; value: number; type: TypeKind; span?: Span }
   | { kind: "BoolLit"; value: boolean; type: TypeKind; span?: Span }
   | { kind: "CharLit"; value: number; type: TypeKind; span?: Span }

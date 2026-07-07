@@ -1,0 +1,21 @@
+// i64/u64 literals past 2^53 must round-trip losslessly (IntLit.value is a
+// bigint end-to-end; a JS number would round these and miscompile).
+// @expect: 9223372036854775807
+// @expect: 18446744073709551615
+// @expect: 255
+// @expect: 10
+// @expect: 4611686018427387904
+
+fn main(): i32 {
+    let iMax: i64 = 9223372036854775807
+    let uMax: u64 = 18446744073709551615
+    let hex: u64 = 0xFF
+    let bin: i64 = 0b1010
+    let big: i64 = 4611686018427387904   // 2^62 — past 2^53, would round as a JS number
+    print(iMax.toString())
+    print(uMax.toString())
+    print(hex.toString())
+    print(bin.toString())
+    print(big.toString())
+    return 0
+}

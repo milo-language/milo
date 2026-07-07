@@ -956,7 +956,9 @@ export class Parser {
 
     if (tok.kind === TokenKind.Int) {
       this.advance();
-      return { kind: "IntLit", value: parseInt(tok.value), span: s };
+      // lexer already normalized hex/binary to a plain decimal string and
+      // stripped underscores, so BigInt() parses it losslessly.
+      return { kind: "IntLit", value: BigInt(tok.value), span: s };
     }
     if (tok.kind === TokenKind.Float) {
       this.advance();

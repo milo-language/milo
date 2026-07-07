@@ -289,7 +289,7 @@ export class TypeChecker {
   }
 
   // extract a constant integer value from an expression (handles IntLit and -IntLit)
-  private constIntValue(expr: import("./ast").Expr): number | null {
+  private constIntValue(expr: import("./ast").Expr): bigint | null {
     if (expr.kind === "IntLit") return expr.value;
     if (expr.kind === "UnaryOp" && expr.op === "-" && expr.operand.kind === "IntLit") return -expr.operand.value;
     return null;
@@ -302,7 +302,11 @@ export class TypeChecker {
   }
 
   private constNumericValue(expr: import("./ast").Expr): number | null {
-    return this.constIntValue(expr) ?? this.constFloatValue(expr);
+    // narrows to a JS number for float/contract-eval callers — fine for the
+    // magnitudes those use; exact 64-bit checks go through constIntValue.
+    const iv = this.constIntValue(expr);
+    if (iv !== null) return Number(iv);
+    return this.constFloatValue(expr);
   }
 
   // Evaluate a contract expression with argument substitutions. Returns true/false/null.
@@ -404,17 +408,17 @@ export class TypeChecker {
     return "...";
   }
 
-  private checkConstOverflow(lv: number, rv: number, op: string, ty: TypeKind, span?: Span) {
+  private checkConstOverflow(lv: bigint, rv: bigint, op: string, ty: TypeKind, span?: Span) {
     if (ty.tag !== "int") return;
-    const ops: Record<string, (a: number, b: number) => number> = {
+    const ops: Record<string, (a: bigint, b: bigint) => bigint> = {
       "+": (a, b) => a + b, "-": (a, b) => a - b, "*": (a, b) => a * b,
     };
     const fn = ops[op];
     if (!fn) return;
     const result = fn(lv, rv);
     const { bits, signed } = ty;
-    const min = signed ? -(2 ** (bits - 1)) : 0;
-    const max = signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1;
+    const min = signed ? -(2n ** BigInt(bits - 1)) : 0n;
+    const max = signed ? 2n ** BigInt(bits - 1) - 1n : 2n ** BigInt(bits) - 1n;
     if (result < min || result > max) {
       this.error(`constant expression '${lv} ${op} ${rv}' overflows ${signed ? "i" : "u"}${bits} (result: ${result}, range ${min}..${max})`, span);
     }
@@ -735,7 +739,12 @@ export class TypeChecker {
   private substituteBody(stmts: Stmt[], typeParams: string[], typeArgs: TypeKind[], baseName?: string, mangledName?: string): Stmt[] {
     // Deep clone body with type substitution in all MiloType positions.
     // MiloType objects have `name` but no `kind` (unlike AST nodes).
-    return JSON.parse(JSON.stringify(stmts), (key, value) => {
+    // JSON can't round-trip bigint (IntLit.value), so tag it on the way out and
+    // rebuild it on the way in.
+    return JSON.parse(
+      JSON.stringify(stmts, (_k, v) => typeof v === "bigint" ? { __bigint: v.toString() } : v),
+      (key, value) => {
+      if (value && typeof value === "object" && "__bigint" in value) return BigInt(value.__bigint);
       if (value && typeof value === "object" && "name" in value && !("kind" in value) && typeof value.name === "string") {
         const idx = typeParams.indexOf(value.name);
         if (idx !== -1) {
@@ -2869,8 +2878,8 @@ export class TypeChecker {
       if (expr.kind === "IntLit") {
         const v = expr.value;
         const { bits, signed } = hint;
-        const min = signed ? -(2 ** (bits - 1)) : 0;
-        const max = signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1;
+        const min = signed ? -(2n ** BigInt(bits - 1)) : 0n;
+        const max = signed ? 2n ** BigInt(bits - 1) - 1n : 2n ** BigInt(bits) - 1n;
         if (v < min || v > max) {
           this.error(`integer literal ${v} overflows ${signed ? "i" : "u"}${bits} (range ${min}..${max})`, expr.span);
         }
@@ -3140,8 +3149,8 @@ export class TypeChecker {
           if (ot.tag === "int" && expr.operand.kind === "IntLit") {
             const result = -expr.operand.value;
             const { bits, signed } = ot;
-            const min = signed ? -(2 ** (bits - 1)) : 0;
-            const max = signed ? 2 ** (bits - 1) - 1 : 2 ** bits - 1;
+            const min = signed ? -(2n ** BigInt(bits - 1)) : 0n;
+            const max = signed ? 2n ** BigInt(bits - 1) - 1n : 2n ** BigInt(bits) - 1n;
             if (result < min || result > max) {
               this.error(`negation of ${expr.operand.value} overflows ${signed ? "i" : "u"}${bits} (range ${min}..${max})`, sp);
             }
@@ -3983,7 +3992,7 @@ export class TypeChecker {
         if (!toOk) {
           this.error(`cannot cast to ${typeName(toType)}`, sp);
         }
-        const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0;
+        const isNullPtrConst = toType.tag === "ptr" && expr.operand.kind === "IntLit" && expr.operand.value === 0n;
         if (toType.tag === "ptr" && !isNullPtrConst) {
           this.requireUnsafe(`cast to pointer type requires 'unsafe' block`, sp);
         }
