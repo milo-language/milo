@@ -120,6 +120,8 @@ fn fGetfl(): i32 { return 3 }
 fn fSetfl(): i32 { return 4 }
 fn oNonblock(): i32 { return 2048 }
 fn eagain(): i32 { return 11 }
+fn einprogress(): i32 { return 115 }
+fn soError(): i32 { return 4 }
 
 // ── ucontext (stackful coroutines) ──
 

@@ -51,11 +51,13 @@ Impl notes: waiter nodes live on the parked task's stack (frame stays alive whil
 - `Promise.await` in a task: replace tryRecv/yield spin with parked recv. Main-thread await keeps the tick loop for now (phase 4 fixes).
 - Fixtures: task↔task channel over parked recv; pthread→task send wakes scheduler; task→pthread; close semantics; hades wsWriterLoop pattern reduced to a plain `for msg in ch`.
 
-### Phase 2 — green-aware IO in std/os
+### Phase 2 — green-aware IO in std/os — DONE
 
 - `std/os`: safe wrappers `readFd(fd, buf, n)` / `writeFd(...)` (extern `read`/`write` stay raw): in a task → `setNonblocking` once + EAGAIN → `schedulerWaitRead/Write` loop; else plain blocking call.
 - Port `std/net` (send/recv/accept), `std/ws`, `std/pty`, `std/io` to the wrappers; delete their inline copies. `connect` gets the same treatment (EINPROGRESS → waitWrite → SO_ERROR; note macOS kqueue reports connect *failure* as readable — see node-milo notes).
 - Fixture: task reads a pipe while another task computes — both make progress.
+
+Impl notes: added `readFd`/`writeFd`/`acceptFd`/`connectFd` plus TLS twins `sslConnectFd`/`sslReadFd`/`sslWriteFd` in std/os (imports std/runtime — resolver visited-set makes the cycle safe). `connectFd` does nonblocking connect → park writable → `getsockopt(SO_ERROR)`. New platform consts `einprogress`/`soError`. Deleted inline green-IO from io/net/ws/pty (all four platforms); `_readSome`/`_SSL_ERROR_*` in ws collapsed into the wrappers. Verified live: HTTPS `fetch()` from a green task returns 200 (real TLS handshake through parked SSL IO). Fixtures: `greenIoPipe`, `tcpGreenConnectRefused`.
 
 ### Phase 3 — select
 

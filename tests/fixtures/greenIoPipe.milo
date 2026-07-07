@@ -1,0 +1,45 @@
+// @expect: computed 499500
+// @expect: got hello
+
+// a task parked reading a pipe doesn't block the scheduler: another task
+// computes and then writes, waking the reader — std/os green-aware IO
+from "std/runtime" import { Task }
+from "std/os" import { pipe, readFd, writeFd, close }
+
+fn main(): i32 {
+    var fds: [u8 ; 8] = [0 ; 8]
+    var rfd: i32 = 0
+    var wfd: i32 = 0
+    unsafe {
+        pipe(fds as *u8)
+        let p = fds as *i32
+        rfd = p[0]
+        wfd = p[1]
+    }
+
+    Task.spawn(move (): void => {
+        var buf: [u8 ; 16] = [0 ; 16]
+        let n = readFd(rfd, buf, 16)
+        var s = ""
+        for i in 0..n {
+            s.push(buf[i])
+        }
+        print("got ", s)
+        unsafe { close(rfd) }
+    })
+
+    Task.spawn(move (): void => {
+        var sum: i64 = 0
+        var i: i64 = 0
+        while i < 1000 {
+            sum = sum + i
+            i = i + 1
+        }
+        print("computed ", sum)
+        let msg = "hello"
+        writeFd(wfd, msg, msg.len)
+        unsafe { close(wfd) }
+    })
+
+    return 0
+}

@@ -1,16 +1,10 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
-from "std/os" import { close, read, write, htons, malloc, free, memcpy, socket, connect, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_new, SSL_set_fd, SSL_connect, SSL_read, SSL_write, SSL_free, SSL_ctrl, SSL_get_error }
+from "std/os" import { close, readFd, writeFd, htons, malloc, free, memcpy, socket, connectFd, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_new, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free, SSL_ctrl }
 from "std/crypto" import { sha1Bytes }
 from "std/base64" import { base64Encode }
-from "std/platform" import { SockAddrIn, makeSockaddr, getErrno, eagain }
-from "std/event" import { setNonblocking }
-from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
+from "std/platform" import { SockAddrIn, makeSockaddr }
 from "std/random" import { randBytes }
-
-// SSL_get_error return codes
-fn _SSL_ERROR_WANT_READ(): i32 { return 2 }
-fn _SSL_ERROR_WANT_WRITE(): i32 { return 3 }
 
 // ── Frame opcodes ──
 
@@ -104,16 +98,11 @@ fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
     resp = resp + "Sec-WebSocket-Accept: " + acceptKey + "\r\n"
     resp = resp + "\r\n"
 
-    unsafe {
-        let n = write(fd, resp, resp.len)
-        if n < 0 {
-            return Result.Err("failed to send handshake response")
-        }
+    let n = writeFd(fd, resp, resp.len)
+    if n < 0 {
+        return Result.Err("failed to send handshake response")
     }
 
-    if schedulerCurrent() as i64 != 0 {
-        setNonblocking(fd)
-    }
     return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false })
 }
 
@@ -121,45 +110,25 @@ fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
 
 // Read up to `len` bytes from a plain fd or TLS handle. Yields to the green
 // scheduler on would-block. Returns bytes read (>0), 0 on clean close, <0 on error.
-fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64, inGreen: bool): i64 {
+fn _readSome(fd: i32, ssl: i64, buf: *u8, len: i64): i64 {
     unsafe {
-        while true {
-            if ssl != 0 {
-                let n = SSL_read(ssl as *u8, buf, len as i32)
-                if n > 0 {
-                    return n as i64
-                }
-                if inGreen {
-                    let e = SSL_get_error(ssl as *u8, n)
-                    if e == _SSL_ERROR_WANT_READ() {
-                        schedulerWaitRead(fd)
-                        continue
-                    }
-                    if e == _SSL_ERROR_WANT_WRITE() {
-                        schedulerWaitWrite(fd)
-                        continue
-                    }
-                }
-                return -1 as i64
-            } else {
-                let n = read(fd, buf, len)
-                if n < 0 && inGreen && getErrno() == eagain() {
-                    schedulerWaitRead(fd)
-                    continue
-                }
-                return n
+        if ssl != 0 {
+            let n = sslReadFd(ssl as *u8, fd, buf, len as i32)
+            if n > 0 {
+                return n as i64
             }
+            return -1 as i64
         }
+        return readFd(fd, buf, len)
     }
     return -1 as i64
 }
 
 fn _readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
-    let inGreen = schedulerCurrent() as i64 != 0
     var got: i64 = 0
     unsafe {
         while got < needed {
-            let n = _readSome(fd, ssl, (buf as i64 + got) as *u8, needed - got, inGreen)
+            let n = _readSome(fd, ssl, (buf as i64 + got) as *u8, needed - got)
             if n <= 0 {
                 return false
             }
@@ -361,34 +330,18 @@ impl WsConn {
                 }
             }
 
-            let inGreen = schedulerCurrent() as i64 != 0
             var sent: i64 = 0
             while sent < total {
                 var n: i64 = 0
                 if self.ssl != 0 {
-                    let r = SSL_write(self.ssl as *u8, (frame as i64 + sent) as *u8, (total - sent) as i32)
+                    let r = sslWriteFd(self.ssl as *u8, self.fd, (frame as i64 + sent) as *u8, (total - sent) as i32)
                     if r <= 0 {
-                        if inGreen {
-                            let e = SSL_get_error(self.ssl as *u8, r)
-                            if e == _SSL_ERROR_WANT_READ() {
-                                schedulerWaitRead(self.fd)
-                                continue
-                            }
-                            if e == _SSL_ERROR_WANT_WRITE() {
-                                schedulerWaitWrite(self.fd)
-                                continue
-                            }
-                        }
                         free(frame)
                         return Result.Err("SSL_write failed")
                     }
                     n = r as i64
                 } else {
-                    n = write(self.fd, (frame as i64 + sent) as *u8, total - sent)
-                    if n < 0 && inGreen && getErrno() == eagain() {
-                        schedulerWaitWrite(self.fd)
-                        continue
-                    }
+                    n = writeFd(self.fd, (frame as i64 + sent) as *u8, total - sent)
                     if n < 0 {
                         free(frame)
                         return Result.Err("write failed")
@@ -419,7 +372,7 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
         }
 
         var addr = makeSockaddr(port, ip)
-        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             close(fd)
             return Result.Err("connect() failed")
         }
@@ -435,7 +388,7 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
         req = req + "Sec-WebSocket-Version: 13\r\n"
         req = req + "\r\n"
 
-        let n = write(fd, req, req.len)
+        let n = writeFd(fd, req, req.len)
         if n < 0 {
             close(fd)
             return Result.Err("failed to send upgrade request")
@@ -443,7 +396,7 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
 
         // read response — expect "HTTP/1.1 101"
         var buf: [u8 ; 4096] = [0 ; 4096]
-        let respLen = read(fd, buf, 4096)
+        let respLen = readFd(fd, buf, 4096)
         if respLen <= 0 {
             close(fd)
             return Result.Err("no response from server")
@@ -467,9 +420,6 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
             return Result.Err("invalid Sec-WebSocket-Accept")
         }
 
-        if schedulerCurrent() as i64 != 0 {
-            setNonblocking(fd)
-        }
         return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true })
     }
 }
@@ -491,7 +441,7 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
         }
 
         var addr = makeSockaddr(port, ip)
-        if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
             close(fd)
             return Result.Err("connect() failed")
         }
@@ -515,7 +465,7 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
         SSL_ctrl(ssl, 55, 0, hostname)
         SSL_set_fd(ssl, fd)
 
-        if SSL_connect(ssl) != 1 {
+        if sslConnectFd(ssl, fd) != 1 {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
             close(fd)
@@ -535,16 +485,16 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
         req = req + "Sec-WebSocket-Version: 13\r\n"
         req = req + "\r\n"
 
-        if SSL_write(ssl, req, req.len as i32) <= 0 {
+        if sslWriteFd(ssl, fd, req, req.len as i32) <= 0 {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
             close(fd)
             return Result.Err("failed to send upgrade request")
         }
 
-        // read response — expect "HTTP/1.1 101". Handshake is still blocking here.
+        // read response — expect "HTTP/1.1 101"
         var buf: [u8 ; 4096] = [0 ; 4096]
-        let respLen = SSL_read(ssl, buf as *u8, 4096)
+        let respLen = sslReadFd(ssl, fd, buf as *u8, 4096)
         if respLen <= 0 {
             SSL_free(ssl)
             SSL_CTX_free(ctx)
@@ -573,9 +523,6 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
             return Result.Err("invalid Sec-WebSocket-Accept")
         }
 
-        if schedulerCurrent() as i64 != 0 {
-            setNonblocking(fd)
-        }
         return Result.Ok(WsConn { fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true })
     }
 }

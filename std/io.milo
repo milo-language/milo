@@ -1,9 +1,7 @@
 // std/io — file and directory I/O with automatic cleanup
 
-from "std/os" import { close, lseek, open, read, strerror, write }
-from "std/platform" import { getErrno, oWriteCreateAppend, oWriteCreateTrunc, eagain }
-from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
-from "std/event" import { setNonblocking }
+from "std/os" import { close, lseek, open, readFd, strerror, writeFd }
+from "std/platform" import { getErrno, oWriteCreateAppend, oWriteCreateTrunc }
 
 // ── IoError ──
 
@@ -40,9 +38,7 @@ fn _ioError(path: &string): IoError {
 // Write a string to stdout without appending a newline.
 
 fn writeStdout(s: &string): void {
-    unsafe {
-        write(1, s, s.len)
-    }
+    writeFd(1, s, s.len)
 }
 
 // ── File ──
@@ -116,27 +112,23 @@ impl File {
         var result: string = String.withCapacity(size + 1)
         var buf: [u8 ; 65536] = [0 ; 65536]
         while true {
-            unsafe {
-                let n = read(self.fd, buf, 65536)
-                if n <= 0 {
-                    break
-                }
-                for i in 0..n {
-                    result.push(buf[i])
-                }
+            let n = readFd(self.fd, buf, 65536)
+            if n <= 0 {
+                break
+            }
+            for i in 0..n {
+                result.push(buf[i])
             }
         }
         return Result.Ok(result)
     }
 
     fn writeAll(self: &Self, data: &string): Result<i64, IoError> {
-        unsafe {
-            let n = write(self.fd, data, data.len)
-            if n < 0 {
-                return Result.Err(IoError.Other("write failed"))
-            }
-            return Result.Ok(n)
+        let n = writeFd(self.fd, data, data.len)
+        if n < 0 {
+            return Result.Err(IoError.Other("write failed"))
         }
+        return Result.Ok(n)
     }
 }
 
@@ -148,7 +140,7 @@ fn readFile(path: &string): Result<string, IoError> {
 // Write a string to stdout without a trailing newline.
 
 fn writeStr(s: &string): void {
-    unsafe { write(1, s, s.len) }
+    writeFd(1, s, s.len)
 }
 
 // Write a single byte to stdout.
@@ -156,7 +148,7 @@ fn writeStr(s: &string): void {
 fn putChar(ch: u8): void {
     var _pcBuf: [u8; 1] = [0; 1]
     _pcBuf[0] = ch
-    unsafe { write(1, _pcBuf, 1) }
+    writeFd(1, _pcBuf, 1)
 }
 
 // Split a string into lines on newline boundaries.
@@ -194,14 +186,12 @@ fn _readLineFd(fd: i32): Option<string> {
     var _rlResult = ""
     var _rlGot = false
     while true {
-        unsafe {
-            let n = read(fd, _rlBuf, 1)
-            if n <= 0 {
-                if _rlGot {
-                    return Option.Some(_rlResult)
-                }
-                return Option.None
+        let n = readFd(fd, _rlBuf, 1)
+        if n <= 0 {
+            if _rlGot {
+                return Option.Some(_rlResult)
             }
+            return Option.None
         }
         _rlGot = true
         if _rlBuf[0] == 10 {
@@ -226,55 +216,13 @@ fn readStdin(): string {
     var result: string = ""
     var buf: [u8 ; 4096] = [0 ; 4096]
     while true {
-        unsafe {
-            let n = read(0, buf, 4096)
-            if n <= 0 {
-                break
-            }
-            for i in 0..n {
-                result.push(buf[i])
-            }
+        let n = readFd(0, buf, 4096)
+        if n <= 0 {
+            break
+        }
+        for i in 0..n {
+            result.push(buf[i])
         }
     }
     return result
-}
-
-// Scheduler-aware read. In a green thread, automatically sets fd non-blocking
-// and yields to the scheduler on EAGAIN instead of busy-waiting.
-
-fn ioRead(fd: i32, buf: *u8, len: i64): i64 {
-    let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen { setNonblocking(fd) }
-    unsafe {
-        while true {
-            let n = read(fd, buf, len)
-            if n < 0 && inGreen && getErrno() == eagain() {
-                schedulerWaitRead(fd)
-                continue
-            }
-            return n
-        }
-    }
-    return -1 as i64
-}
-
-// Scheduler-aware write. In a green thread, automatically sets fd non-blocking
-// and yields to the scheduler on EAGAIN instead of busy-waiting.
-
-fn ioWrite(fd: i32, buf: *u8, len: i64): i64 {
-    let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen { setNonblocking(fd) }
-    unsafe {
-        var sent: i64 = 0
-        while sent < len {
-            let n = write(fd, (buf as i64 + sent) as *u8, len - sent)
-            if n < 0 && inGreen && getErrno() == eagain() {
-                schedulerWaitWrite(fd)
-                continue
-            }
-            if n < 0 { return n }
-            sent = sent + n
-        }
-        return sent
-    }
 }

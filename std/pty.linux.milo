@@ -2,8 +2,8 @@
 
 from "std/os" import {
     close, dup2, execvp, fork, free, grantpt, ioctl, isatty, malloc,
-    memcpy, memset, open, posix_openpt, ptsname, read, setsid, unlockpt,
-    waitpid, write
+    memcpy, memset, open, posix_openpt, ptsname, readFd, setsid, unlockpt,
+    waitpid, writeFd
 }
 
 fn tiocgwinsz(): i64 { return 21523 }
@@ -126,17 +126,17 @@ impl Pty {
     fn read(self: &Self, buf: *u8, len: i64): i64
       requires len > 0
     {
-        unsafe { return read(self.masterFd, buf, len) }
+        unsafe { return readFd(self.masterFd, buf, len) }
     }
 
     fn write(self: &Self, buf: *u8, len: i64): i64
       requires len > 0
     {
-        unsafe { return write(self.masterFd, buf, len) }
+        unsafe { return writeFd(self.masterFd, buf, len) }
     }
 
     fn writeStr(self: &Self, s: &string): i64 {
-        unsafe { return write(self.masterFd, s as *u8, s.len) }
+        unsafe { return writeFd(self.masterFd, s as *u8, s.len) }
     }
 
     fn resize(self: &mut Self, rows: u16, cols: u16): i32 {

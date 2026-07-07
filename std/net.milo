@@ -1,10 +1,8 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
-from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_connect, SSL_ctrl, SSL_free, SSL_new, SSL_read, SSL_set_fd, SSL_write, TLS_client_method, accept, bind, close, connect, freeaddrinfo, getaddrinfo, listen, read, setsockopt, socket, write }
-from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
+from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_ctrl, SSL_free, SSL_new, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd }
+from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr }
 from "std/json" import { Json, jsonParse }
-from "std/event" import { setNonblocking }
-from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
 
 // ── NetError ──
 
@@ -59,7 +57,7 @@ impl TcpStream {
 
             var addr = makeSockaddr(port, ip)
 
-            if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
                 close(fd)
                 return Result.Err(NetError.ConnectionFailed("connect() failed"))
             }
@@ -69,42 +67,23 @@ impl TcpStream {
     }
 
     fn send(self: &Self, data: &string): Result<i64, NetError> {
-        let inGreen = schedulerCurrent() as i64 != 0
-        if inGreen { setNonblocking(self.fd) }
-        unsafe {
-            while true {
-                let n = write(self.fd, data, data.len)
-                if n < 0 && inGreen && getErrno() == eagain() {
-                    schedulerWaitWrite(self.fd)
-                    continue
-                }
-                if n < 0 {
-                    return Result.Err(NetError.SendFailed("tcp send failed"))
-                }
-                return Result.Ok(n)
-            }
+        let n = writeFd(self.fd, data, data.len)
+        if n < 0 {
+            return Result.Err(NetError.SendFailed("tcp send failed"))
         }
-        return Result.Err(NetError.SendFailed("unreachable"))
+        return Result.Ok(n)
     }
 
     fn recv(self: &Self): Result<string, NetError> {
-        let inGreen = schedulerCurrent() as i64 != 0
-        if inGreen { setNonblocking(self.fd) }
         var result: string = ""
         var buf: [u8 ; 4096] = [0 ; 4096]
         while true {
-            unsafe {
-                let n = read(self.fd, buf, 4096)
-                if n < 0 && inGreen && getErrno() == eagain() {
-                    schedulerWaitRead(self.fd)
-                    continue
-                }
-                if n <= 0 {
-                    break
-                }
-                for i in 0..n {
-                    result.push(buf[i])
-                }
+            let n = readFd(self.fd, buf, 4096)
+            if n <= 0 {
+                break
+            }
+            for i in 0..n {
+                result.push(buf[i])
             }
         }
         return Result.Ok(result)
@@ -172,28 +151,13 @@ impl TcpListener {
 
     // Accept one connection. Inside the green scheduler this yields (via the
     // event loop) until a client is ready rather than blocking the whole
-    // runtime; outside it, it blocks. Mirrors TcpStream.recv's inGreen handling.
+    // runtime; outside it, it blocks.
     fn accept(self: &Self): Result<TcpStream, NetError> {
-        let SIZEOF_SOCKADDR_IN: u32 = 16
-        let inGreen = schedulerCurrent() as i64 != 0
-        if inGreen { setNonblocking(self.fd) }
-        while true {
-            unsafe {
-                var clientAddr = makeZeroedSockaddr()
-                var addrlen: u32 = SIZEOF_SOCKADDR_IN
-                let clientFd = accept(self.fd, clientAddr, addrlen)
-                if clientFd < 0 && inGreen && getErrno() == eagain() {
-                    schedulerWaitRead(self.fd)
-                    continue
-                }
-                if clientFd < 0 {
-                    return Result.Err(NetError.ConnectionFailed("accept() failed"))
-                }
-                if inGreen { setNonblocking(clientFd) }
-                return Result.Ok(TcpStream { fd: clientFd })
-            }
+        let clientFd = acceptFd(self.fd)
+        if clientFd < 0 {
+            return Result.Err(NetError.ConnectionFailed("accept() failed"))
         }
-        return Result.Err(NetError.ConnectionFailed("unreachable"))
+        return Result.Ok(TcpStream { fd: clientFd })
     }
 }
 
@@ -237,7 +201,7 @@ impl TlsStream {
 
             var addr = makeSockaddr(port, ip)
 
-            if connect(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
                 close(fd)
                 return Result.Err(NetError.ConnectionFailed("connect() failed"))
             }
@@ -263,7 +227,9 @@ impl TlsStream {
             SSL_ctrl(ssl, 55, 0, hostname)
             SSL_set_fd(ssl, fd)
 
-            let r = SSL_connect(ssl)
+            // fd is nonblocking when connecting from a green task; sslConnectFd
+            // parks on WANT_READ/WANT_WRITE until the handshake completes
+            let r = sslConnectFd(ssl, fd)
             if r != 1 {
                 SSL_free(ssl)
                 SSL_CTX_free(ctx)
@@ -277,7 +243,7 @@ impl TlsStream {
 
     fn send(self: &Self, data: &string): Result<i64, NetError> {
         unsafe {
-            let n = SSL_write(self.ssl as *u8, data, data.len as i32)
+            let n = sslWriteFd(self.ssl as *u8, self.fd, data, data.len as i32)
             if n < 0 {
                 return Result.Err(NetError.SendFailed("SSL_write failed"))
             }
@@ -290,7 +256,7 @@ impl TlsStream {
         var buf: [u8 ; 4096] = [0 ; 4096]
         while true {
             unsafe {
-                let n = SSL_read(self.ssl as *u8, buf as *u8, 4096)
+                let n = sslReadFd(self.ssl as *u8, self.fd, buf as *u8, 4096)
                 if n <= 0 {
                     break
                 }
