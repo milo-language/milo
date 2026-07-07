@@ -1,7 +1,7 @@
 // Expression codegen: literals, binops, unary, calls, field access, enums, casts
 from "src-milo/ast.milo" import { Expr, Stmt, StructLitField }
 from "src-milo/codegen/types.milo" import {
-    Cgen, Val, Local, FnSig, FieldInfo,
+    Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
     findLocal, genLoad, ensureMalloc, ensureMemcpy,
@@ -15,7 +15,7 @@ from "src-milo/codegen/strings.milo" import {
 
 // -- Struct literal --
 
-fn genStructLit(cg: &mut Cgen, name: string, fields: Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genStructLit(cg: &mut Cgen, name: string, fields: Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let structTy = "%" + name
     let alloc = nextTemp(cg)
     emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
@@ -35,7 +35,7 @@ fn genStructLit(cg: &mut Cgen, name: string, fields: Vec<StructLitField>, locs: 
 
 // -- Field access --
 
-fn genFieldAccess(cg: &mut Cgen, object: Heap<Expr>, field: string, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genFieldAccess(cg: &mut Cgen, object: Heap<Expr>, field: string, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let lv = genLvalue(cg, object, locs, sigs)
     let lvTyLl = llType(lv.ty)
     // Built-in: string.len
@@ -70,7 +70,7 @@ fn variantStructTy(payloadTypes: &Vec<string>): string {
     return s
 }
 
-fn genEnumLit(cg: &mut Cgen, enumName: string, variant: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genEnumLit(cg: &mut Cgen, enumName: string, variant: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let tag = lookupVariantTag(cg, enumName, variant)
     let structTy = "%" + enumName
     let alloc = nextTemp(cg)
@@ -98,8 +98,8 @@ fn genEnumLit(cg: &mut Cgen, enumName: string, variant: string, args: Vec<Heap<E
 
 // -- Cast --
 
-fn genAsCast(cg: &mut Cgen, inner: Heap<Expr>, targetTy: string, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
-    let v = genExpr(cg, inner, locs, sigs, targetTy)
+fn genAsCast(cg: &mut Cgen, inner: Heap<Expr>, targetTy: string, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let v = genExpr(cg, inner, locs, sigs, targetTy.clone())
     let fromLl = llType(v.ty)
     let toLl = llType(targetTy)
     if fromLl == toLl { return v }
@@ -122,7 +122,7 @@ fn genAsCast(cg: &mut Cgen, inner: Heap<Expr>, targetTy: string, locs: &Vec<Loca
 
 // -- Heap deref --
 
-fn genHeapDeref(cg: &mut Cgen, inner: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genHeapDeref(cg: &mut Cgen, inner: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let v = genExpr(cg, inner, locs, sigs, "")
     var innerRaw = unwrapHeap(v.ty)
     if innerRaw.len == 0 { innerRaw = "i64" }
@@ -134,7 +134,7 @@ fn genHeapDeref(cg: &mut Cgen, inner: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<
 
 // -- Method calls --
 
-fn genMethodCall(cg: &mut Cgen, object: Heap<Expr>, method: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genMethodCall(cg: &mut Cgen, object: Heap<Expr>, method: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let obj = genExpr(cg, object, locs, sigs, "")
     let objTyLl = llType(obj.ty)
     if objTyLl == "%String" && method == "clone" {
@@ -158,7 +158,7 @@ fn genMethodCall(cg: &mut Cgen, object: Heap<Expr>, method: string, args: Vec<He
 
 // -- Index + Slice --
 
-fn genIndex(cg: &mut Cgen, obj: Heap<Expr>, idx: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genIndex(cg: &mut Cgen, obj: Heap<Expr>, idx: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let o = genExpr(cg, obj, locs, sigs, "")
     let i = genExpr(cg, idx, locs, sigs, "i64")
     if llType(o.ty) == "%String" {
@@ -167,7 +167,7 @@ fn genIndex(cg: &mut Cgen, obj: Heap<Expr>, idx: Heap<Expr>, locs: &Vec<Local>, 
     return Val { v: "0", ty: "i64" }
 }
 
-fn genSlice(cg: &mut Cgen, obj: Heap<Expr>, a: Heap<Expr>, b: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genSlice(cg: &mut Cgen, obj: Heap<Expr>, a: Heap<Expr>, b: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let o = genExpr(cg, obj, locs, sigs, "")
     let av = genExpr(cg, a, locs, sigs, "i64")
     let bv = genExpr(cg, b, locs, sigs, "i64")
@@ -179,7 +179,7 @@ fn genSlice(cg: &mut Cgen, obj: Heap<Expr>, a: Heap<Expr>, b: Heap<Expr>, locs: 
 
 // -- Function calls --
 
-fn genCall(cg: &mut Cgen, name: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genCall(cg: &mut Cgen, name: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     // Built-in Heap(expr)
     if name == "Heap" {
         let inner = genExpr(cg, args[0], locs, sigs, "")
@@ -253,7 +253,7 @@ fn genCall(cg: &mut Cgen, name: string, args: Vec<Heap<Expr>>, locs: &Vec<Local>
 
 // -- Lvalue (address-of) --
 
-fn genLvalue(cg: &mut Cgen, e: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>): Val {
+fn genLvalue(cg: &mut Cgen, e: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     match *e {
         Expr.Ident(name, span) => {
             let local = findLocal(locs, name)
@@ -277,7 +277,7 @@ fn genLvalue(cg: &mut Cgen, e: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>)
 
 // -- Main expression dispatch --
 
-fn genExpr(cg: &mut Cgen, e: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<FnSig>, hintTy: string): Val {
+fn genExpr(cg: &mut Cgen, e: Heap<Expr>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: string): Val {
     match *e {
         Expr.IntLit(n, span) => {
             var ty = hintTy.clone()

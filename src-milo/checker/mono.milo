@@ -92,12 +92,12 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
     match t {
         TypeKind.TStruct(name) => {
             if typeMap.contains(name) {
-                return typeMap.get(name).clone()
+                return typeMap.get(name)!.clone()
             }
             return t.clone()
         }
         TypeKind.TArray(elem, size) => {
-            return TypeKind.TArray(Heap(substituteTypeKind(*elem, typeMap)), size.clone())
+            return TypeKind.TArray(Heap(substituteTypeKind(*elem, typeMap)), cloneOptI64(size))
         }
         TypeKind.TRef(inner, mutable) => {
             return TypeKind.TRef(Heap(substituteTypeKind(*inner, typeMap)), mutable)
@@ -186,7 +186,7 @@ fn monomorphizeEnum(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typ
         return mangled
     }
 
-    let generic = ms.genericEnums.get(baseName)
+    let generic = ms.genericEnums.get(baseName)!
 
     // Build type map
     var typeMap: HashMap<string, TypeKind> = HashMap.new()
@@ -246,7 +246,7 @@ fn monomorphizeStruct(ck: &mut Checker, ms: &mut MonoState, baseName: &string, t
         return mangled
     }
 
-    let generic = ms.genericStructs.get(baseName)
+    let generic = ms.genericStructs.get(baseName)!
 
     // Build type map
     var typeMap: HashMap<string, TypeKind> = HashMap.new()
@@ -303,7 +303,7 @@ fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeA
         return mangled
     }
 
-    let generic = ms.genericFns.get(baseName)
+    let generic = ms.genericFns.get(baseName)!
 
     // Register the concrete signature first (allow recursive calls)
     var params: Vec<FnParam> = Vec.new()
@@ -337,7 +337,7 @@ fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeA
         typeParams: Vec.new(),
         params: monoParams,
         retType: subRetType,
-        body: generic.decl.body.clone(),
+        body: cloneStmts(generic.decl.body),
         isExtern: false,
         isVariadic: false,
     }

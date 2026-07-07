@@ -28,7 +28,7 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
         if program.structs[i].typeParams.len == 0 {
             let name = program.structs[i].name.clone()
             if ck.structs.contains(name) {
-                let info = ck.structs.get(name)
+                let info = ck.structs.get(name)!
                 var fields: Vec<HIRField> = Vec.new()
                 for j in 0..info.fields.len {
                     fields.push(HIRField {
@@ -119,7 +119,7 @@ fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
     for i in 0..f.params.len {
         var pType = typeFromAst(f.params[i].ty)
         if hasSig {
-            let sig = ck.functions.get(f.name)
+            let sig = ck.functions.get(f.name)!
             if i < sig.params.len {
                 pType = sig.params[i].ty.clone()
             }
@@ -139,7 +139,7 @@ fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
 
     var retType = typeFromAst(f.retType)
     if hasSig {
-        retType = ck.functions.get(f.name).ret.clone()
+        retType = ck.functions.get(f.name)!.ret.clone()
     }
 
     var body: Vec<Heap<HIRStmt>> = Vec.new()
@@ -168,7 +168,7 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                 Option.Some(ty) => { valType = typeFromAst(ty) }
                 Option.None => {}
             }
-            return HIRStmt.Let(name.clone(), valType, Heap(hirVal), false, span.clone())
+            return HIRStmt.Let(name.clone(), valType, Heap(hirVal), false, cloneSpan(span))
         }
         Stmt.VarDecl(name, typeAnno, value, span) => {
             let hirVal = lowerExpr(*value, ck)
@@ -177,18 +177,18 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                 Option.Some(ty) => { valType = typeFromAst(ty) }
                 Option.None => {}
             }
-            return HIRStmt.Let(name.clone(), valType, Heap(hirVal), true, span.clone())
+            return HIRStmt.Let(name.clone(), valType, Heap(hirVal), true, cloneSpan(span))
         }
         Stmt.Assign(target, value, span) => {
-            return HIRStmt.Assign(Heap(lowerExpr(*target, ck)), Heap(lowerExpr(*value, ck)), span.clone())
+            return HIRStmt.Assign(Heap(lowerExpr(*target, ck)), Heap(lowerExpr(*value, ck)), cloneSpan(span))
         }
         Stmt.Return(value, span) => {
             match value {
                 Option.Some(expr) => {
-                    return HIRStmt.Return(Option.Some(Heap(lowerExpr(*expr, ck))), fnRetType.clone(), span.clone())
+                    return HIRStmt.Return(Option.Some(Heap(lowerExpr(*expr, ck))), fnRetType.clone(), cloneSpan(span))
                 }
                 Option.None => {
-                    return HIRStmt.Return(Option.None, fnRetType.clone(), span.clone())
+                    return HIRStmt.Return(Option.None, fnRetType.clone(), cloneSpan(span))
                 }
             }
         }
@@ -209,7 +209,7 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                 }
                 Option.None => {}
             }
-            return HIRStmt.If(Heap(hirCond), hirThen, hirElse, span.clone())
+            return HIRStmt.If(Heap(hirCond), hirThen, hirElse, cloneSpan(span))
         }
         Stmt.WhileStmt(cond, body, span) => {
             let hirCond = lowerExpr(*cond, ck)
@@ -217,12 +217,12 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             for i in 0..body.len {
                 hirBody.push(Heap(lowerStmt(*body[i], fnRetType, ck)))
             }
-            return HIRStmt.While(Heap(hirCond), hirBody, span.clone())
+            return HIRStmt.While(Heap(hirCond), hirBody, cloneSpan(span))
         }
-        Stmt.BreakStmt(span) => { return HIRStmt.Break(span.clone()) }
-        Stmt.ContinueStmt(span) => { return HIRStmt.Continue(span.clone()) }
+        Stmt.BreakStmt(span) => { return HIRStmt.Break(cloneSpan(span)) }
+        Stmt.ContinueStmt(span) => { return HIRStmt.Continue(cloneSpan(span)) }
         Stmt.ExprStmt(expr, span) => {
-            return HIRStmt.ExprStmt(Heap(lowerExpr(*expr, ck)), span.clone())
+            return HIRStmt.ExprStmt(Heap(lowerExpr(*expr, ck)), cloneSpan(span))
         }
         Stmt.MatchStmt(subject, arms, span) => {
             let hirSubj = lowerExpr(*subject, ck)
@@ -237,14 +237,14 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                 TypeKind.TEnum(name) => { enumName = name.clone() }
                 _ => {}
             }
-            return HIRStmt.Match(Heap(hirSubj), hirArms, enumName, span.clone())
+            return HIRStmt.Match(Heap(hirSubj), hirArms, enumName, cloneSpan(span))
         }
         Stmt.UnsafeBlock(body, span) => {
             var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
             for i in 0..body.len {
                 hirBody.push(Heap(lowerStmt(*body[i], fnRetType, ck)))
             }
-            return HIRStmt.UnsafeBlock(hirBody, span.clone())
+            return HIRStmt.UnsafeBlock(hirBody, cloneSpan(span))
         }
         Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
             match *iterable {
@@ -256,7 +256,7 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                     for i in 0..body.len {
                         hirBody.push(Heap(lowerStmt(*body[i], fnRetType, ck)))
                     }
-                    return HIRStmt.ForRange(varName.clone(), varType, Heap(hirStart), Heap(hirEnd), hirBody, span.clone())
+                    return HIRStmt.ForRange(varName.clone(), varType, Heap(hirStart), Heap(hirEnd), hirBody, cloneSpan(span))
                 }
                 _ => {
                     let hirIter = lowerExpr(*iterable, ck)
@@ -312,7 +312,7 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                     for i in 0..body.len {
                         hirBody.push(Heap(lowerStmt(*body[i], fnRetType, ck)))
                     }
-                    return HIRStmt.ForEach(varName.clone(), varName2.clone(), varType, varType2, Heap(hirIter), iterKind, hirBody, span.clone())
+                    return HIRStmt.ForEach(varName.clone(), varName2.clone(), varType, varType2, Heap(hirIter), iterKind, hirBody, cloneSpan(span))
                 }
             }
         }
@@ -349,7 +349,7 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                 pattern: HIRPattern.WildcardPattern,
                 body: hirElse,
             })
-            return HIRStmt.Match(Heap(hirSubj), arms, enumName, span.clone())
+            return HIRStmt.Match(Heap(hirSubj), arms, enumName, cloneSpan(span))
         }
     }
 }
@@ -384,9 +384,9 @@ fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern 
             var tag: i32 = 0
             var hirBindings: Vec<PatternBinding> = Vec.new()
             if ck.enums.contains(enumName) {
-                let enumInfo = ck.enums.get(enumName)
+                let enumInfo = ck.enums.get(enumName)!
                 if enumInfo.variants.contains(variant) {
-                    let vinfo = enumInfo.variants.get(variant)
+                    let vinfo = enumInfo.variants.get(variant)!
                     tag = vinfo.tag
                     var i: i64 = 0
                     while i < bindings.len && i < vinfo.fields.len {
@@ -437,32 +437,32 @@ fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
 fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
     match expr {
         Expr.IntLit(value, span) => {
-            return HIRExpr.IntLit(value, tyI32(), span.clone())
+            return HIRExpr.IntLit(value, tyI32(), cloneSpan(span))
         }
         Expr.FloatLit(value, span) => {
-            return HIRExpr.FloatLit(value, TypeKind.TFloat(64), span.clone())
+            return HIRExpr.FloatLit(value, TypeKind.TFloat(64), cloneSpan(span))
         }
         Expr.BoolLit(value, span) => {
-            return HIRExpr.BoolLit(value, tyBool(), span.clone())
+            return HIRExpr.BoolLit(value, tyBool(), cloneSpan(span))
         }
         Expr.CharLit(value, span) => {
-            return HIRExpr.CharLit(value, tyU8(), span.clone())
+            return HIRExpr.CharLit(value, tyU8(), cloneSpan(span))
         }
         Expr.StringLit(value, span) => {
-            return HIRExpr.StringLit(value.clone(), tyString(), span.clone())
+            return HIRExpr.StringLit(value.clone(), tyString(), cloneSpan(span))
         }
         Expr.Ident(name, span) => {
             // Look up type from checker
             var idType = tyUnknown()
             if ck.functions.contains(name) {
-                let sig = ck.functions.get(name)
+                let sig = ck.functions.get(name)!
                 var paramTypes: Vec<TypeKind> = Vec.new()
                 for i in 0..sig.params.len {
                     paramTypes.push(sig.params[i].ty.clone())
                 }
                 idType = TypeKind.TFn(paramTypes, Heap(sig.ret.clone()))
             }
-            return HIRExpr.Ident(name.clone(), idType, false, span.clone())
+            return HIRExpr.Ident(name.clone(), idType, false, cloneSpan(span))
         }
         Expr.BinOp(op, left, right, span) => {
             let hirLeft = lowerExpr(*left, ck)
@@ -477,7 +477,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                     _ => {}
                 }
             }
-            return HIRExpr.BinOp(op.clone(), Heap(hirLeft), Heap(hirRight), resultType, span.clone())
+            return HIRExpr.BinOp(op.clone(), Heap(hirLeft), Heap(hirRight), resultType, cloneSpan(span))
         }
         Expr.UnaryOp(op, operand, span) => {
             let hirOp = lowerExpr(*operand, ck)
@@ -485,23 +485,23 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             if op == "*" {
                 match opType {
                     TypeKind.THeap(inner) => {
-                        return HIRExpr.HeapDeref(Heap(hirOp), inner.clone(), span.clone())
+                        return HIRExpr.HeapDeref(Heap(hirOp), inner.clone(), cloneSpan(span))
                     }
                     TypeKind.TPtr(inner) => {
-                        return HIRExpr.PtrDeref(Heap(hirOp), inner.clone(), span.clone())
+                        return HIRExpr.PtrDeref(Heap(hirOp), inner.clone(), cloneSpan(span))
                     }
                     _ => {}
                 }
             }
             var resultType = opType
             if op == "!" { resultType = tyBool() }
-            return HIRExpr.UnaryOp(op.clone(), Heap(hirOp), resultType, span.clone())
+            return HIRExpr.UnaryOp(op.clone(), Heap(hirOp), resultType, cloneSpan(span))
         }
         Expr.Call(func, args, typeArgs, span) => {
             if func == "Heap" && args.len == 1 {
                 let hirArg = lowerExpr(*args[0], ck)
                 let inner = hirExprType(hirArg)
-                return HIRExpr.HeapCreate(Heap(hirArg), TypeKind.THeap(Heap(inner)), span.clone())
+                return HIRExpr.HeapCreate(Heap(hirArg), TypeKind.THeap(Heap(inner)), cloneSpan(span))
             }
             var hirArgs: Vec<HIRArg> = Vec.new()
             for i in 0..args.len {
@@ -511,7 +511,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             var retType = tyUnknown()
             var variadic = false
             if ck.functions.contains(func) {
-                let sig = ck.functions.get(func)
+                let sig = ck.functions.get(func)!
                 retType = sig.ret.clone()
                 variadic = sig.variadic
                 // Mark ref args
@@ -527,7 +527,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                     j = j + 1
                 }
             }
-            return HIRExpr.Call(func.clone(), hirArgs, retType, variadic, span.clone())
+            return HIRExpr.Call(func.clone(), hirArgs, retType, variadic, cloneSpan(span))
         }
         Expr.StructLit(name, fields, span) => {
             var hirFields: Vec<HIRStructField> = Vec.new()
@@ -537,7 +537,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                     value: Heap(lowerExpr(*fields[i].value, ck)),
                 })
             }
-            return HIRExpr.StructLit(name.clone(), hirFields, TypeKind.TStruct(name.clone()), span.clone())
+            return HIRExpr.StructLit(name.clone(), hirFields, TypeKind.TStruct(name.clone()), cloneSpan(span))
         }
         Expr.FieldAccess(obj, field, span) => {
             let hirObj = lowerExpr(*obj, ck)
@@ -550,16 +550,16 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             if field == "len" {
                 match objType {
                     TypeKind.TArray(elem, size) => {
-                        return HIRExpr.ArrayLen(Heap(hirObj), TypeKind.TInt(32, true), span.clone())
+                        return HIRExpr.ArrayLen(Heap(hirObj), TypeKind.TInt(32, true), cloneSpan(span))
                     }
                     TypeKind.TString => {
-                        return HIRExpr.StringLen(Heap(hirObj), TypeKind.TInt(64, true), span.clone())
+                        return HIRExpr.StringLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                     TypeKind.TVec(elem) => {
-                        return HIRExpr.VecLen(Heap(hirObj), TypeKind.TInt(64, true), span.clone())
+                        return HIRExpr.VecLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                     TypeKind.THashMap(key, val) => {
-                        return HIRExpr.HashMapLen(Heap(hirObj), TypeKind.TInt(64, true), span.clone())
+                        return HIRExpr.HashMapLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                     _ => {}
                 }
@@ -569,7 +569,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             match objType {
                 TypeKind.TStruct(sname) => {
                     if ck.structs.contains(sname) {
-                        let info = ck.structs.get(sname)
+                        let info = ck.structs.get(sname)!
                         for k in 0..info.fields.len {
                             if info.fields[k].name == field {
                                 fieldType = info.fields[k].ty.clone()
@@ -579,7 +579,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 }
                 _ => {}
             }
-            return HIRExpr.FieldAccess(Heap(hirObj), field.clone(), fieldType, span.clone())
+            return HIRExpr.FieldAccess(Heap(hirObj), field.clone(), fieldType, cloneSpan(span))
         }
         Expr.ArrayLit(elements, span) => {
             var hirElems: Vec<Heap<HIRExpr>> = Vec.new()
@@ -591,13 +591,13 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 elemType = hirExprType(*hirElems[0])
             }
             let arrType = TypeKind.TArray(Heap(elemType), Option.Some(elements.len))
-            return HIRExpr.ArrayLit(hirElems, arrType, span.clone())
+            return HIRExpr.ArrayLit(hirElems, arrType, cloneSpan(span))
         }
         Expr.ArrayRepeat(value, count, span) => {
             let hirVal = lowerExpr(*value, ck)
             let elemType = hirExprType(hirVal)
             let arrType = TypeKind.TArray(Heap(elemType), Option.Some(count))
-            return HIRExpr.ArrayRepeat(Heap(hirVal), count, arrType, span.clone())
+            return HIRExpr.ArrayRepeat(Heap(hirVal), count, arrType, cloneSpan(span))
         }
         Expr.IndexAccess(obj, index, span) => {
             let hirObj = lowerExpr(*obj, ck)
@@ -615,20 +615,20 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 TypeKind.TPtr(inner) => { elemType = inner.clone() }
                 _ => {}
             }
-            return HIRExpr.IndexAccess(Heap(hirObj), Heap(hirIdx), elemType, false, false, span.clone())
+            return HIRExpr.IndexAccess(Heap(hirObj), Heap(hirIdx), elemType, false, false, cloneSpan(span))
         }
         Expr.EnumLit(enumName, variant, args, span) => {
             if enumName == "Vec" && variant == "new" {
-                return HIRExpr.VecNew(tyUnknown(), TypeKind.TVec(Heap(tyUnknown())), span.clone())
+                return HIRExpr.VecNew(tyUnknown(), TypeKind.TVec(Heap(tyUnknown())), cloneSpan(span))
             }
             if enumName == "HashMap" && variant == "new" {
-                return HIRExpr.HashMapNew(tyUnknown(), tyUnknown(), TypeKind.THashMap(Heap(tyUnknown()), Heap(tyUnknown())), span.clone())
+                return HIRExpr.HashMapNew(tyUnknown(), tyUnknown(), TypeKind.THashMap(Heap(tyUnknown()), Heap(tyUnknown())), cloneSpan(span))
             }
             var hirArgs: Vec<Heap<HIRExpr>> = Vec.new()
             for i in 0..args.len {
                 hirArgs.push(Heap(lowerExpr(*args[i], ck)))
             }
-            return HIRExpr.EnumLit(enumName.clone(), variant.clone(), hirArgs, TypeKind.TEnum(enumName.clone()), span.clone())
+            return HIRExpr.EnumLit(enumName.clone(), variant.clone(), hirArgs, TypeKind.TEnum(enumName.clone()), cloneSpan(span))
         }
         Expr.Unwrap(operand, span) => {
             let hirOp = lowerExpr(*operand, ck)
@@ -638,7 +638,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 TypeKind.TEnum(name) => { enumName = name.clone() }
                 _ => {}
             }
-            return HIRExpr.Unwrap(Heap(hirOp), enumName, tyUnknown(), span.clone())
+            return HIRExpr.Unwrap(Heap(hirOp), enumName, tyUnknown(), cloneSpan(span))
         }
         Expr.Propagate(operand, span) => {
             let hirOp = lowerExpr(*operand, ck)
@@ -648,7 +648,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 TypeKind.TEnum(name) => { enumName = name.clone() }
                 _ => {}
             }
-            return HIRExpr.Propagate(Heap(hirOp), enumName, tyVoid(), tyUnknown(), span.clone())
+            return HIRExpr.Propagate(Heap(hirOp), enumName, tyVoid(), tyUnknown(), cloneSpan(span))
         }
         Expr.DefaultValue(operand, default, span) => {
             let hirOp = lowerExpr(*operand, ck)
@@ -660,12 +660,12 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 _ => {}
             }
             let defType = hirExprType(hirDef)
-            return HIRExpr.DefaultValue(Heap(hirOp), Heap(hirDef), enumName, defType, span.clone())
+            return HIRExpr.DefaultValue(Heap(hirOp), Heap(hirDef), enumName, defType, cloneSpan(span))
         }
         Expr.CastExpr(operand, targetType, span) => {
             let hirOp = lowerExpr(*operand, ck)
             let toType = typeFromAst(targetType)
-            return HIRExpr.Cast(Heap(hirOp), toType.clone(), toType, span.clone())
+            return HIRExpr.Cast(Heap(hirOp), toType.clone(), toType, cloneSpan(span))
         }
         Expr.MethodCall(obj, method, args, span) => {
             let hirObj = lowerExpr(*obj, ck)
@@ -677,19 +677,19 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
 
             // toString on numbers
             if (match objType { TypeKind.TInt(b,s) => { true } TypeKind.TFloat(b) => { true } _ => { false } }) && method == "toString" {
-                return HIRExpr.NumberToString(Heap(hirObj), objType, tyString(), span.clone())
+                return HIRExpr.NumberToString(Heap(hirObj), objType, tyString(), cloneSpan(span))
             }
             // Vec methods
             match objType {
                 TypeKind.TVec(elem) => {
                     if method == "push" && args.len == 1 {
-                        return HIRExpr.VecPush(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyVoid(), span.clone())
+                        return HIRExpr.VecPush(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyVoid(), cloneSpan(span))
                     }
                     if method == "pop" {
-                        return HIRExpr.VecPop(Heap(hirObj), elem.clone(), span.clone())
+                        return HIRExpr.VecPop(Heap(hirObj), elem.clone(), cloneSpan(span))
                     }
                     if method == "len" {
-                        return HIRExpr.VecLen(Heap(hirObj), TypeKind.TInt(64, true), span.clone())
+                        return HIRExpr.VecLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                 }
                 _ => {}
@@ -698,19 +698,19 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             match objType {
                 TypeKind.THashMap(key, val) => {
                     if method == "insert" && args.len == 2 {
-                        return HIRExpr.HashMapInsert(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), Heap(lowerExpr(*args[1], ck)), tyVoid(), span.clone())
+                        return HIRExpr.HashMapInsert(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), Heap(lowerExpr(*args[1], ck)), tyVoid(), cloneSpan(span))
                     }
                     if method == "get" && args.len == 1 {
-                        return HIRExpr.HashMapGet(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), "", val.clone(), span.clone())
+                        return HIRExpr.HashMapGet(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), "", val.clone(), cloneSpan(span))
                     }
                     if method == "contains" && args.len == 1 {
-                        return HIRExpr.HashMapContains(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyBool(), span.clone())
+                        return HIRExpr.HashMapContains(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyBool(), cloneSpan(span))
                     }
                     if method == "remove" && args.len == 1 {
-                        return HIRExpr.HashMapRemove(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyBool(), span.clone())
+                        return HIRExpr.HashMapRemove(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyBool(), cloneSpan(span))
                     }
                     if method == "len" {
-                        return HIRExpr.HashMapLen(Heap(hirObj), TypeKind.TInt(64, true), span.clone())
+                        return HIRExpr.HashMapLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                 }
                 _ => {}
@@ -719,18 +719,18 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             match objType {
                 TypeKind.TString => {
                     if method == "push" && args.len == 1 {
-                        return HIRExpr.StringPush(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyVoid(), span.clone())
+                        return HIRExpr.StringPush(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), tyVoid(), cloneSpan(span))
                     }
                     if method == "clone" {
-                        return HIRExpr.StringClone(Heap(hirObj), tyString(), span.clone())
+                        return HIRExpr.StringClone(Heap(hirObj), tyString(), cloneSpan(span))
                     }
                     if method == "substring" || method == "slice" {
                         if args.len == 2 {
-                            return HIRExpr.StringSubstr(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), Heap(lowerExpr(*args[1], ck)), tyString(), span.clone())
+                            return HIRExpr.StringSubstr(Heap(hirObj), Heap(lowerExpr(*args[0], ck)), Heap(lowerExpr(*args[1], ck)), tyString(), cloneSpan(span))
                         }
                     }
                     if method == "len" {
-                        return HIRExpr.StringLen(Heap(hirObj), TypeKind.TInt(64, true), span.clone())
+                        return HIRExpr.StringLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                 }
                 _ => {}
@@ -741,7 +741,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             for i in 0..args.len {
                 hirArgs.push(HIRArg { expr: Heap(lowerExpr(*args[i], ck)), passByRef: false, refMut: false })
             }
-            return HIRExpr.Call(method.clone(), hirArgs, tyUnknown(), false, span.clone())
+            return HIRExpr.Call(method.clone(), hirArgs, tyUnknown(), false, cloneSpan(span))
         }
         Expr.Closure(params, retType, body, isMove, span) => {
             var hirParams: Vec<ClosureParam> = Vec.new()
@@ -768,11 +768,11 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             }
             let fnType = TypeKind.TFn(paramTypes, Heap(closureRetType.clone()))
             var captures: Vec<CaptureInfo> = Vec.new()
-            return HIRExpr.Closure(hirParams, hirBody, captures, closureRetType, fnType, isMove, span.clone())
+            return HIRExpr.Closure(hirParams, hirBody, captures, closureRetType, fnType, isMove, cloneSpan(span))
         }
         Expr.RangeExpr(start, end, span) => {
             // Should not appear outside ForIn — lower as void
-            return HIRExpr.IntLit(0, tyI32(), span.clone())
+            return HIRExpr.IntLit(0, tyI32(), cloneSpan(span))
         }
         Expr.IsExpr(operand, pattern, span) => {
             let hirOp = lowerExpr(*operand, ck)
@@ -783,9 +783,9 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                     match opType {
                         TypeKind.TEnum(name) => {
                             if ck.enums.contains(name) {
-                                let enumInfo = ck.enums.get(name)
+                                let enumInfo = ck.enums.get(name)!
                                 if enumInfo.variants.contains(variant) {
-                                    tag = enumInfo.variants.get(variant).tag
+                                    tag = enumInfo.variants.get(variant)!.tag
                                 }
                             }
                         }
@@ -794,7 +794,7 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 }
                 _ => {}
             }
-            return HIRExpr.IsCheck(Heap(hirOp), tag, tyBool(), span.clone())
+            return HIRExpr.IsCheck(Heap(hirOp), tag, tyBool(), cloneSpan(span))
         }
     }
 }

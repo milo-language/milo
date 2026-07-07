@@ -422,7 +422,7 @@ fn parseImplDecl(p: &mut Parser): ImplDecl {
     let firstName = expect(p, TokKind.Ident).value
     let typeParams = parseTypeParams(p)
     var traitName: Option<string> = Option.None
-    var typeName = firstName
+    var typeName = firstName.clone()
     if matchTok(p, TokKind.For) {
         traitName = Option.Some(firstName)
         typeName = expect(p, TokKind.Ident).value
@@ -549,10 +549,10 @@ fn parseFor(p: &mut Parser): Stmt {
     }
     expect(p, TokKind.In)
     let iterableOrStart = parseExpr(p)
-    var iterable: Heap<Expr> = Heap(iterableOrStart)
+    var iterable: Heap<Expr> = Heap(iterableOrStart.clone())
     if matchTok(p, TokKind.DotDot) {
         let end = parseExpr(p)
-        iterable = Heap(Expr.RangeExpr(Heap(iterableOrStart), Heap(end), s))
+        iterable = Heap(Expr.RangeExpr(Heap(iterableOrStart), Heap(end), cloneSpan(s)))
     }
     expect(p, TokKind.LBrace)
     let body = parseStmts(p)

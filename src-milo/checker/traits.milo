@@ -120,7 +120,7 @@ fn registerBuiltinTraits(ck: &mut Checker) {
 
 fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): bool {
     if !ck.traitImpls.contains(typeName) { return false }
-    let impls = ck.traitImpls.get(typeName)
+    let impls = ck.traitImpls.get(typeName)!
     for i in 0..impls.len {
         match impls[i].traitName {
             Option.Some(tn) => {
@@ -137,7 +137,7 @@ fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): boo
 fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Option<string> {
     // Check inherent impls
     if ck.inherentImpls.contains(objTypeName) {
-        let implDecl = ck.inherentImpls.get(objTypeName)
+        let implDecl = ck.inherentImpls.get(objTypeName)!
         if implDecl.methods.contains(methodName) {
             return Option.Some(objTypeName.clone() + "$" + methodName.clone())
         }
@@ -145,7 +145,7 @@ fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Optio
 
     // Check trait impls
     if ck.traitImpls.contains(objTypeName) {
-        let impls = ck.traitImpls.get(objTypeName)
+        let impls = ck.traitImpls.get(objTypeName)!
         for i in 0..impls.len {
             if impls[i].methods.contains(methodName) {
                 match impls[i].traitName {
@@ -172,7 +172,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
         Option.Some(traitName) => {
             // Trait implDecl
             if !ck.traits.contains(traitName) {
-                error(ck, "unknown trait '" + traitName.clone() + "'", implDecl.span.clone())
+                error(ck, "unknown trait '" + traitName.clone() + "'", cloneSpan(implDecl.span))
                 return
             }
 
@@ -191,9 +191,9 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 for pi in 0..m.params.len {
                     var pType = typeFromAst(m.params[pi].ty)
                     // Substitute Self with concrete type
-                    match pType {
+                    match pType.clone() {
                         TypeKind.TRef(inner, mutable) => {
-                            match inner {
+                            match *inner {
                                 TypeKind.TStruct(name) => {
                                     if name == "Self" {
                                         pType = TypeKind.TRef(Heap(TypeKind.TStruct(tn.clone())), mutable)
@@ -210,13 +210,13 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     params.push(FnParam { name: m.params[pi].name.clone(), ty: pType })
                 }
                 var retType = typeFromAst(m.retType)
-                match retType {
+                match retType.clone() {
                     TypeKind.TStruct(name) => {
                         if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }
                     }
                     _ => {}
                 }
-                let sig = FnSig { params: params.clone(), ret: retType.clone(), variadic: false, isExtern: false }
+                let sig = FnSig { params: params, ret: retType, variadic: false, isExtern: false }
                 ck.functions.insert(mangled.clone(), sig.clone())
                 methods.insert(m.name.clone(), sig)
 
@@ -224,9 +224,9 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 ck.monomorphizedFns.push(Function {
                     name: mangled,
                     typeParams: Vec.new(),
-                    params: m.params.clone(),
+                    params: cloneParams(m.params),
                     retType: m.retType.clone(),
-                    body: m.body.clone(),
+                    body: cloneStmts(m.body),
                     isExtern: false,
                     isVariadic: false,
                 })
@@ -237,8 +237,11 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 typeName: tn.clone(),
                 methods: methods,
             }
+            // map.get returns a copy now — mutate the copy and write it back
             if ck.traitImpls.contains(tn) {
-                ck.traitImpls.get(tn).push(implInfo)
+                var list = ck.traitImpls.get(tn)!
+                list.push(implInfo)
+                ck.traitImpls.insert(tn.clone(), list)
             } else {
                 var list: Vec<ImplInfo> = Vec.new()
                 list.push(implInfo)
@@ -255,9 +258,9 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 var params: Vec<FnParam> = Vec.new()
                 for pi in 0..m.params.len {
                     var pType = typeFromAst(m.params[pi].ty)
-                    match pType {
+                    match pType.clone() {
                         TypeKind.TRef(inner, mutable) => {
-                            match inner {
+                            match *inner {
                                 TypeKind.TStruct(name) => {
                                     if name == "Self" {
                                         pType = TypeKind.TRef(Heap(TypeKind.TStruct(tn.clone())), mutable)
@@ -274,7 +277,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     params.push(FnParam { name: m.params[pi].name.clone(), ty: pType })
                 }
                 var retType = typeFromAst(m.retType)
-                match retType {
+                match retType.clone() {
                     TypeKind.TStruct(name) => {
                         if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }
                     }
@@ -287,9 +290,9 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 ck.monomorphizedFns.push(Function {
                     name: mangled,
                     typeParams: Vec.new(),
-                    params: m.params.clone(),
+                    params: cloneParams(m.params),
                     retType: m.retType.clone(),
-                    body: m.body.clone(),
+                    body: cloneStmts(m.body),
                     isExtern: false,
                     isVariadic: false,
                 })

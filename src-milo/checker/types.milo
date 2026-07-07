@@ -1,5 +1,5 @@
 // Internal type representation — tagged union equivalent of TS TypeKind
-from "src-milo/ast.milo" import { MiloType, Span }
+from "src-milo/ast.milo" import { MiloType, Span, cloneOptI64 }
 
 // TypeKind — the resolved, internal type representation used by the checker.
 // Milo enums can't be recursive without Heap, so complex types use string names
@@ -138,7 +138,7 @@ fn typeEq(a: &TypeKind, b: &TypeKind): bool {
         TypeKind.TArray(elemA, sizeA) => {
             match b {
                 TypeKind.TArray(elemB, sizeB) => {
-                    return typeEq(*elemA, *elemB) && sizeA == sizeB
+                    return typeEq(*elemA, *elemB) && optI64Eq(sizeA, sizeB)
                 }
                 _ => { return false }
             }
@@ -244,5 +244,52 @@ fn needsDrop(t: &TypeKind): bool {
         TypeKind.TVec(elem) => { return true }
         TypeKind.THashMap(key, val) => { return true }
         _ => { return false }
+    }
+}
+
+// -- Clone impl (no auto-derive in modern Milo) --
+
+impl Clone for TypeKind {
+    fn clone(self: &Self): Self {
+        match self {
+            TypeKind.TInt(bits, signed) => { return TypeKind.TInt(bits, signed) }
+            TypeKind.TFloat(bits) => { return TypeKind.TFloat(bits) }
+            TypeKind.TBool => { return TypeKind.TBool }
+            TypeKind.TVoid => { return TypeKind.TVoid }
+            TypeKind.TString => { return TypeKind.TString }
+            TypeKind.TPtr(inner) => { return TypeKind.TPtr(Heap((*inner).clone())) }
+            TypeKind.TRef(inner, mutable) => { return TypeKind.TRef(Heap((*inner).clone()), mutable) }
+            TypeKind.TStruct(name) => { return TypeKind.TStruct(name.clone()) }
+            TypeKind.TEnum(name) => { return TypeKind.TEnum(name.clone()) }
+            TypeKind.THeap(inner) => { return TypeKind.THeap(Heap((*inner).clone())) }
+            TypeKind.TVec(elem) => { return TypeKind.TVec(Heap((*elem).clone())) }
+            TypeKind.THashMap(key, val) => { return TypeKind.THashMap(Heap((*key).clone()), Heap((*val).clone())) }
+            TypeKind.TArray(elem, size) => { return TypeKind.TArray(Heap((*elem).clone()), cloneOptI64(size)) }
+            TypeKind.TFn(params, ret) => {
+                var ps: Vec<TypeKind> = Vec.new()
+                for i in 0..params.len {
+                    ps.push(params[i].clone())
+                }
+                return TypeKind.TFn(ps, Heap((*ret).clone()))
+            }
+            TypeKind.TUnknown => { return TypeKind.TUnknown }
+        }
+    }
+}
+
+fn optI64Eq(a: &Option<i64>, b: &Option<i64>): bool {
+    match a {
+        Option.Some(x) => {
+            match b {
+                Option.Some(y) => { return x == y }
+                Option.None => { return false }
+            }
+        }
+        Option.None => {
+            match b {
+                Option.Some(y) => { return false }
+                Option.None => { return true }
+            }
+        }
     }
 }

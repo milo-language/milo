@@ -1,21 +1,21 @@
 // Top-level codegen: function emission, program registration, IR assembly
 from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl }
 from "src-milo/codegen/types.milo" import {
-    Cgen, Val, Local, FnSig, FieldInfo, VariantInfo, EnumInfo,
+    Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
     cgenNew, nextTemp, emit, emitG, llType, llTypeBytes
 }
 from "src-milo/codegen/stmt.milo" import { genStmt }
 
 // Build function signature table from program declarations.
-fn buildFnTable(prog: &Program): Vec<FnSig> {
-    var sigs: Vec<FnSig> = Vec.new()
+fn buildFnTable(prog: &Program): Vec<CgFnSig> {
+    var sigs: Vec<CgFnSig> = Vec.new()
     for i in 0..prog.functions.len {
         let f = prog.functions[i]
         var pts: Vec<string> = Vec.new()
         for j in 0..f.params.len {
             pts.push(f.params[j].ty.name.clone())
         }
-        sigs.push(FnSig {
+        sigs.push(CgFnSig {
             name: f.name.clone(),
             retTy: f.retType.name.clone(),
             paramTys: pts,
@@ -26,7 +26,7 @@ fn buildFnTable(prog: &Program): Vec<FnSig> {
 }
 
 // Emit a single function definition or extern declaration.
-fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<FnSig>) {
+fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     if f.isExtern {
         var ps = ""
         for i in 0..f.params.len {
@@ -92,7 +92,7 @@ fn genProgram(prog: Program): string {
     // Register enums and emit %Name type declarations
     for ei in 0..prog.enums.len {
         let e = prog.enums[ei]
-        var variants: Vec<VariantInfo> = Vec.new()
+        var variants: Vec<CgVariantInfo> = Vec.new()
         var maxBytes: i64 = 0
         for vi in 0..e.variants.len {
             let v = e.variants[vi]
@@ -104,14 +104,14 @@ fn genProgram(prog: Program): string {
                 vBytes = vBytes + llTypeBytes(llType(pt))
             }
             if vBytes > maxBytes { maxBytes = vBytes }
-            variants.push(VariantInfo {
+            variants.push(CgVariantInfo {
                 name: v.name.clone(),
                 tag: vi as i32,
                 payloadTypes: payloadTypes,
             })
         }
         let slots = (maxBytes + 7) / 8
-        cg.enums.insert(e.name.clone(), EnumInfo {
+        cg.enums.insert(e.name.clone(), CgEnumInfo {
             name: e.name.clone(),
             variants: variants,
             payloadSlots: slots,
