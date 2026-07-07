@@ -886,6 +886,20 @@ export class TypeChecker {
       }
     }
 
+    // validate extern-struct fields once all structs are registered (nested extern
+    // structs may be declared in any order). Non-extern structs are unrestricted.
+    for (const s of program.structs) {
+      if (s.typeParams.length > 0 || !s.isExtern || s.isOpaque) continue;
+      const info = this.structs.get(s.name);
+      if (!info) continue;
+      for (const f of info.fields) {
+        if (!this.isValidExternStructField(f.type)) {
+          this.error(`extern struct '${s.name}' field '${f.name}': type '${typeName(f.type)}' is not C-representable`, undefined,
+            `extern-struct fields must be scalars, pointers, nested extern structs, or fixed arrays of those`);
+        }
+      }
+    }
+
     // collect @send/@sync annotations
     for (const s of program.structs) {
       if (s.attributes) {
@@ -971,6 +985,16 @@ export class TypeChecker {
       const ret = this.resolve(fn.retType);
       if (ret.tag === "ref") {
         this.error(`function '${fn.name}': cannot return a reference`, undefined, `references are second-class — return an owned value instead`);
+      }
+      // extern signatures must be C-representable — catch ABI-broken decls here rather
+      // than emitting silently-wrong IR in codegen
+      if (fn.isExtern) {
+        for (const p of params) {
+          const err = this.externSigError(p.type, "parameter");
+          if (err) this.error(`extern function '${fn.name}' parameter '${p.name}': ${err.msg}`, undefined, err.hint);
+        }
+        const retErr = this.externSigError(ret, "return type");
+        if (retErr) this.error(`extern function '${fn.name}' return type: ${retErr.msg}`, undefined, retErr.hint);
       }
       // fn return types allowed — move closures heap-allocate and are safe to escape
       this.functions.set(fn.name, { params, ret, variadic: fn.isVariadic, isExtern: fn.isExtern });
@@ -1322,6 +1346,54 @@ export class TypeChecker {
     if (ty.name === "Self") return { ...ty, name: concreteName };
     if (ty.typeArgs) return { ...ty, typeArgs: ty.typeArgs.map(a => this.substituteSelfInMiloType(a, concreteName)) };
     return ty;
+  }
+
+  // extern-struct fields must be plain-old-data: scalars, raw pointers, nested extern
+  // structs, or fixed arrays of those. Strings/Vecs/enums carry drop glue or a non-C
+  // layout, so an extern struct built from them could never round-trip through C.
+  private isValidExternStructField(ty: TypeKind): boolean {
+    switch (ty.tag) {
+      case "int": case "float": case "bool": case "ptr": return true;
+      case "array": return ty.size !== null && this.isValidExternStructField(ty.element);
+      case "struct": { const info = this.structs.get(ty.name); return !!info && !!info.isExtern; }
+      default: return false;
+    }
+  }
+
+  // What may appear in an extern fn signature (by value). `&T` and `*T` cross by
+  // reference and are always fine; a struct crosses by value only if it's `extern struct`;
+  // enums and regular structs have no stable C representation. Returns an error to raise, or null.
+  private externSigError(ty: TypeKind, role: "parameter" | "return type"): { msg: string; hint?: string } | null {
+    switch (ty.tag) {
+      case "int": case "float": case "bool": case "ptr": case "ref": case "string": return null;
+      case "void": return role === "return type" ? null : { msg: `extern function parameter cannot be void` };
+      case "array":
+        return ty.size !== null && this.isValidExternStructField(ty.element)
+          ? null : { msg: `${role} '${typeName(ty)}' has no stable C representation` };
+      case "struct": {
+        const info = this.structs.get(ty.name);
+        if (!info) return { msg: `unknown type '${ty.name}' in extern ${role}` };
+        if (!info.isExtern)
+          return { msg: `struct '${ty.name}' crosses the C ABI by value but is not declared 'extern struct'`,
+                   hint: `declare '${ty.name}' as 'extern struct', or pass it by reference (&${ty.name})` };
+        return null;
+      }
+      case "enum":
+        return { msg: `enum '${ty.name}' cannot cross the C ABI (no stable representation)`,
+                 hint: `pass a pointer (*${ty.name}) or an integer tag instead` };
+      case "fn":
+        // fn-ptr callbacks are fine unless they themselves pass a struct by value (out of scope)
+        for (const p of ty.params)
+          if (p.tag === "struct")
+            return { msg: `function-pointer ${role} passes struct '${p.name}' by value`,
+                     hint: `by-value structs in callbacks aren't supported — pass a pointer` };
+        return ty.ret.tag === "struct"
+          ? { msg: `function-pointer ${role} returns struct '${(ty.ret as any).name}' by value`,
+              hint: `by-value structs in callbacks aren't supported — return a pointer` }
+          : null;
+      default:
+        return { msg: `${role} '${typeName(ty)}' is not valid in an extern function signature` };
+    }
   }
 
   private registerImpl(impl: import("./ast").ImplDecl, program: Program, implFnsToCheck: Function[]) {
@@ -3410,7 +3482,14 @@ export class TypeChecker {
             }
           }
         }
-        for (let i = sig.params.length; i < expr.args.length; i++) this.checkExpr(expr.args[i]);
+        for (let i = sig.params.length; i < expr.args.length; i++) {
+          const vt = this.checkExpr(expr.args[i]);
+          // a struct in the variadic (...) tail has no defined C ABI classification — reject
+          if (sig.isExtern && vt.tag === "struct") {
+            this.error(`argument ${i + 1} of '${expr.func}': struct '${vt.name}' cannot be passed in a variadic position`, expr.args[i].span,
+              `pass it by reference (&${vt.name}) instead`);
+          }
+        }
         for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
           if (sig.params[i].type.tag === "ref") continue;
           // String→*u8 auto-coercion borrows the ptr, doesn't move the String

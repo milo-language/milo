@@ -1,0 +1,12 @@
+// @error: cannot cross the C ABI
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
+
+extern fn currentColor(): Color
+
+fn main(): i32 {
+    return 0
+}

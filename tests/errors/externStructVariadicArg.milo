@@ -1,0 +1,15 @@
+// @error: cannot be passed in a variadic position
+extern struct Pt {
+    x: i32,
+    y: i32,
+}
+
+extern fn logf(fmt: *u8, ...): i32
+
+fn main(): i32 {
+    let p = Pt { x: 1, y: 2 }
+    unsafe {
+        logf("pt", p)
+    }
+    return 0
+}

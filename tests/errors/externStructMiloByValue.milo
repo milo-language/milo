@@ -1,0 +1,12 @@
+// @error: crosses the C ABI by value but is not declared 'extern struct'
+// a regular (non-extern) struct has no defined C layout — can't pass it by value
+struct Vec2 {
+    x: f32,
+    y: f32,
+}
+
+extern fn takeVec(v: Vec2): void
+
+fn main(): i32 {
+    return 0
+}

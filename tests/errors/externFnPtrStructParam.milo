@@ -1,0 +1,12 @@
+// @error: passes struct 'Pt' by value
+extern struct Pt {
+    x: i32,
+    y: i32,
+}
+
+// callback taking a by-value struct — unsupported at the C boundary
+extern fn onEach(cb: (Pt) => void): void
+
+fn main(): i32 {
+    return 0
+}
