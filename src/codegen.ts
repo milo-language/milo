@@ -204,12 +204,46 @@ export class Codegen {
 
   private needsPanicFmt = false;
 
+  // Natural alignment of an LLVM type, mirroring typeSize's cases. `min(size,8)` is
+  // WRONG for aggregates — a 12-byte nested struct or [3 x i32] aligns to 4, not 8 —
+  // which corrupts sizeof/offsetof (and, later, ABI classification) for nested fields.
+  private typeAlign(ty: string): number {
+    if (ty === "i1" || ty === "i8") return 1;
+    if (ty === "i16") return 2;
+    if (ty === "i32") return 4;
+    if (ty === "i64") return 8;
+    if (ty === "float") return 4;
+    if (ty === "double") return 8;
+    if (ty === "ptr") return 8;
+    if (ty === "{ ptr, ptr }") return 8;
+    if (ty === "%String" || ty === "%Vec" || ty === "%HashMap") return 8;
+    const arrMatch = ty.match(/\[(\d+) x (.+)\]/);
+    if (arrMatch) return this.typeAlign(arrMatch[2]);
+    const structName = this.getStructName(ty);
+    if (structName) {
+      const layout = this.structLayouts.get(structName);
+      if (layout) return this.structAlign(layout.fields.map(f => f.type));
+    }
+    const enumMatch = ty.match(/^%(.+)$/);
+    if (enumMatch && this.enumLayouts.has(enumMatch[1])) {
+      const layout = this.enumLayouts.get(enumMatch[1])!;
+      return layout.payloadSlots > 0 ? 8 : 4;
+    }
+    return 8;
+  }
+
+  private structAlign(fieldTypes: string[]): number {
+    let a = 1;
+    for (const ty of fieldTypes) a = Math.max(a, this.typeAlign(ty));
+    return a;
+  }
+
   private structPayloadSize(fieldTypes: string[]): number {
     let offset = 0;
     let maxAlign = 1;
     for (const ty of fieldTypes) {
       const size = this.typeSize(ty);
-      const align = Math.min(size, 8);
+      const align = this.typeAlign(ty);
       offset = Math.ceil(offset / align) * align;
       offset += size;
       maxAlign = Math.max(maxAlign, align);
@@ -221,7 +255,7 @@ export class Codegen {
     let offset = 0;
     for (let i = 0; i <= fieldIdx; i++) {
       const size = this.typeSize(fieldTypes[i]);
-      const align = Math.min(size, 8);
+      const align = this.typeAlign(fieldTypes[i]);
       offset = Math.ceil(offset / align) * align;
       if (i === fieldIdx) return offset;
       offset += size;

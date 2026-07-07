@@ -1,5 +1,5 @@
 import { test, expect, describe, afterAll } from "bun:test";
-import { readdirSync, readFileSync, unlinkSync } from "fs";
+import { readdirSync, readFileSync, unlinkSync, existsSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
 
@@ -55,7 +55,12 @@ describe("fixtures (compile + run)", () => {
       const outBin = join(FIXTURES_DIR, file.replace(".milo", ""));
       binaries.push(outBin);
 
-      execWithRetry(`bun run ${COMPILER} build ${path} -o ${outBin}`, {
+      // a companion `<name>.c` (C ABI test peers) is linked into the build so Milo
+      // and clang agree on struct layout / by-value calling convention
+      const companionC = path.replace(/\.milo$/, ".c");
+      const cArg = existsSync(companionC) ? ` ${companionC}` : "";
+
+      execWithRetry(`bun run ${COMPILER} build ${path} -o ${outBin}${cArg}`, {
         stdio: ["pipe", "pipe", "pipe"],
       });
 

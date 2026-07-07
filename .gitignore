@@ -16,6 +16,7 @@ hello
 fizzbuzz
 tests/fixtures/*
 !tests/fixtures/*.milo
+!tests/fixtures/*.c
 !tests/fixtures/lib/
 
 # code coverage
