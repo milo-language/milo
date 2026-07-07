@@ -136,6 +136,7 @@ export interface Contract {
 export interface Function {
   kind: "Function";
   name: string;
+  sourceFile?: string; // set by the resolver; used to diagnose cross-module name collisions
   typeParams: TypeParam[];
   params: Param[];
   retType: MiloType;

@@ -1,0 +1,38 @@
+// weather — weather.gov frontend served from a single static Milo binary
+from "std/http" import { Request, Response, serve }
+from "std/argparse" import { newParser }
+
+fn main(): i32 {
+    var parser = newParser("weather", "Weather app powered by weather.gov")
+    parser.addI64("port", "p", "port to listen on", 3000)
+    let args = parser.parse()
+    let port = args.getU16("port")
+
+    let indexHtml = embedFile("public/index.html")
+    let styleCss = embedFile("public/style.css")
+    let appJs = embedFile("public/app.js")
+
+    print("Weather App (Milo)")
+
+    let result = serve(port, (req: &Request) => {
+        if req.path == "/" || req.path == "/index.html" {
+            return Response.Html(indexHtml.clone())
+        }
+        if req.path == "/style.css" {
+            return Response.Status(200, "text/css; charset=utf-8", styleCss.clone())
+        }
+        if req.path == "/app.js" {
+            return Response.Status(200, "application/javascript; charset=utf-8", appJs.clone())
+        }
+        return Response.NotFound
+    })
+    match result {
+        Result.Err(msg) => {
+            print($"error: {msg}")
+            return 1
+        }
+        _ => {
+        }
+    }
+    return 0
+}

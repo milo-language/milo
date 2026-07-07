@@ -12,7 +12,7 @@ import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
 import { generateHeader } from "./headergen";
-import { formatDiagnostic, ParseError, type WarningConfig } from "./diagnostics";
+import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
 import { format, formatFile } from "./formatter";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
@@ -26,7 +26,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   try {
     tokens = new Lexer(source).tokenize();
     program = new Parser(tokens, source).parse();
-    program = resolveImports(program, sourceDir, target);
+    program = resolveImports(program, sourceDir, target, filePath);
   } catch (e: any) {
     // Parse errors carry a structured Diagnostic — render the source line + caret
     // + hint (same Elm-style output as type errors). Errors from imported files
@@ -830,6 +830,16 @@ print(json)   // {"name":"app","port":8080,"debug":false}
 - No class inheritance — use traits and composition.
 `;
 
+// "compiled <src> -> <out> in <t>" with color on a TTY, plain when piped/redirected.
+function reportCompiled(source: string, out: string, elapsedMs: number) {
+  const t = elapsedMs >= 1000 ? `${(elapsedMs / 1000).toFixed(2)}s` : `${Math.round(elapsedMs)}ms`;
+  if (process.stdout.isTTY) {
+    console.log(`${GREEN}${BOLD}compiled${RESET} ${source} ${DIM}->${RESET} ${BOLD}${out}${RESET} ${DIM}in${RESET} ${GREEN}${t}${RESET}`);
+  } else {
+    console.log(`compiled ${source} -> ${out} in ${t}`);
+  }
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.length < 1) {
@@ -967,7 +977,7 @@ function main() {
     const sourceDir = dirname(resolve(source!));
     const tokens = new Lexer(src).tokenize();
     let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target);
+    program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
     const result = generateVerificationConditions(program);
     console.log(formatVerifyReport(result));
@@ -981,7 +991,7 @@ function main() {
     const sourceDir = dirname(resolve(source!));
     const tokens = new Lexer(src).tokenize();
     let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target);
+    program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
     const facts = extractFlowFacts(program, source!);
     // --cycles: go past flow facts to an actual Cortex-M3 cycle bound by
@@ -1020,7 +1030,7 @@ function main() {
     const sourceDir = dirname(resolve(source!));
     const tokens = new Lexer(src).tokenize();
     let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target);
+    program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
     const vcs = generateVerificationConditions(program);
     const pr = proveWithZ3(vcs);
@@ -1040,7 +1050,7 @@ function main() {
     const sourceDir = dirname(resolve(source!));
     const tokens = new Lexer(src).tokenize();
     let program = new Parser(tokens, src).parse();
-    program = resolveImports(program, sourceDir, target);
+    program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
     const violations = checkSafetyCompliance(program, level);
     console.log(formatSafetyReport(violations, level));
@@ -1067,13 +1077,15 @@ function main() {
   if (cmd === "run") {
     runFile(source!, rest, target, optFlag, warningConfig, sanitize);
   } else if (cmd === "build") {
+    const t0 = Date.now();
     const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize);
-    console.log(`compiled ${source} -> ${bin}`);
+    reportCompiled(source!, bin, Date.now() - t0);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig, optFlag === "-O0");
   } else if (cmd === "emit-obj") {
+    const t0 = Date.now();
     const obj = compileToObj(source!, output, target, optFlag, warningConfig, noEntry);
-    console.log(`compiled ${source} -> ${obj}`);
+    reportCompiled(source!, obj, Date.now() - t0);
     if (emitHeader) writeHeader(source!, obj.replace(/\.o$/, "") + ".h", target, warningConfig);
   } else if (cmd === "emit-js") {
     const src = readFileSync(source!, "utf-8");

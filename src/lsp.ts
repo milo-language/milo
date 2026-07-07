@@ -254,7 +254,7 @@ function validateDocument(uri: string) {
     const tokens = new Lexer(source).tokenize();
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir, hostTarget);
+    const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
     diagnostics = new TypeChecker().check(program).diagnostics;
     buildSymbolIndex(uri, program);
   } catch (e: any) {
@@ -313,7 +313,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const tokens = new Lexer(source).tokenize();
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir, hostTarget);
+    const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
     let checkResult: CheckResult | null = null;
     try { checkResult = new TypeChecker().check(program); } catch {}
     const exprTypes = checkResult?.exprTypes ?? new Map();
@@ -665,7 +665,7 @@ function handleDefinition(uri: string, line: number, character: number): object 
     const tokens = new Lexer(source).tokenize();
     const parsed = new Parser(tokens).parse();
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
-    const program = resolveImports(parsed, sourceDir, hostTarget);
+    const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
 
     // Find function definition — local first, then imported files
     for (const fn of program.functions) {

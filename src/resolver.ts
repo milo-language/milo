@@ -9,8 +9,10 @@ import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
 
-// repo root: walk up from src/ to find the directory containing std/
-const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
+// repo root: walk up from src/ to find the directory containing std/.
+// MILO_ROOT overrides for contexts where import.meta.url doesn't map to the repo
+// (e.g. a `bun build --compile` binary, whose module URLs point into the bundle).
+const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(new URL(import.meta.url).pathname), "..");
 const CACHE_DIR = resolve(homedir(), ".milo", "cache");
 
 // embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts)
@@ -80,7 +82,7 @@ function parsePkgUrl(url: string): { host: string; path: string; version: string
   return { host: fullPath.slice(0, slashIdx), path: fullPath.slice(slashIdx + 1), version };
 }
 
-export function resolveImports(program: Program, sourceDir: string, target: TargetInfo): Program {
+export function resolveImports(program: Program, sourceDir: string, target: TargetInfo, entryFile?: string): Program {
   const visited = new Set<string>();
   const structs: typeof program.structs = [];
   const enums: typeof program.enums = [];
@@ -167,6 +169,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
         }
       }
       // merge everything — named imports validate but don't restrict (flat compilation)
+      for (const f of imported.functions) f.sourceFile = absPath;
       structs.push(...imported.structs);
       enums.push(...imported.enums);
       functions.push(...imported.functions);
@@ -185,6 +188,7 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     visited.add(preludePath);
     const src = readSource(preludePath);
     const prelude = new Parser(new Lexer(src).tokenize()).parse();
+    for (const f of prelude.functions) f.sourceFile = preludePath;
     structs.push(...prelude.structs);
     enums.push(...prelude.enums);
     functions.push(...prelude.functions);
@@ -195,8 +199,13 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     globals.push(...prelude.globals);
     processImports(prelude, dirname(preludePath));
   }
+  // everything visited so far came in through the prelude (it's processed first);
+  // user redefinition of these names is the documented last-wins override path
+  const preludeFiles = new Set(visited);
+  preludeFiles.add(preludePath);
 
   // user code comes after prelude
+  for (const f of program.functions) f.sourceFile = entryFile ?? "(entry module)";
   structs.push(...program.structs);
   enums.push(...program.enums);
   functions.push(...program.functions);
@@ -207,6 +216,28 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
   globals.push(...program.globals);
 
   processImports(program, sourceDir);
+
+  // Same-name top-level fns from different modules would silently merge below
+  // (dedup keeps one body and every call site runs it — issue #5). Identical
+  // bodies merge harmlessly, so only reject when the bodies actually differ.
+  // Exemptions: prelude + its transitive imports (user redefinition is the
+  // documented override path) and externs (redeclarations all bind the same C symbol).
+  const stripForCompare = (k: string, v: unknown) =>
+    k === "span" || k === "sourceFile" ? undefined : typeof v === "bigint" ? `${v}n` : v;
+  const fnDefs = new Map<string, { file: string; body: string }>();
+  for (const f of functions) {
+    if (f.isExtern || (f.sourceFile && preludeFiles.has(f.sourceFile))) continue;
+    const body = JSON.stringify(f, stripForCompare);
+    const prev = fnDefs.get(f.name);
+    if (prev && prev.body !== body && prev.file !== f.sourceFile) {
+      throw new Error(
+        `error[duplicate-fn]: 'fn ${f.name}' is defined with different bodies in '${prev.file}' and '${f.sourceFile}'.\n` +
+        `  milo compiles all modules into one namespace, so only one body would survive and both call sites would run it.\n` +
+        `  rename one of them, or move the shared implementation into a single module both files import.`
+      );
+    }
+    if (!prev) fnDefs.set(f.name, { file: f.sourceFile ?? "(unknown)", body });
+  }
 
   // dedup: keep last occurrence of each name (user wins over prelude)
   function dedup<T extends { name: string }>(arr: T[]): T[] {

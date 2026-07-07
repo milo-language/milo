@@ -712,7 +712,10 @@ export class Codegen {
       const mainParams = params ? `i32 %_milo_argc, ptr %_milo_argv, ${params}` : "i32 %_milo_argc, ptr %_milo_argv";
       lines.push(`define ${ret} @${fn.name}(${mainParams}) {`);
     } else {
-      const linkage = this.userFnNames.has(fn.name) ? "" : "linkonce_odr ";
+      // Non-root fns are internal (like globals): each object carries its own copy.
+      // linkonce_odr let the linker merge same-named fns across separately-compiled
+      // objects and silently pick one body when they differed (issue #5).
+      const linkage = this.userFnNames.has(fn.name) ? "" : "internal ";
       lines.push(`define ${linkage}${ret} @${fn.name}(${params}) {`);
     }
     lines.push("entry:");
