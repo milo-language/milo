@@ -1,0 +1,18 @@
+// small integer struct passed and returned by value (register coercion)
+extern struct P {
+    x: i32,
+    y: i32,
+}
+
+extern fn add_pts(a: P, b: P): P
+
+fn main(): i32 {
+    let a = P { x: 1, y: 2 }
+    let b = P { x: 10, y: 20 }
+    let c = add_pts(a, b)
+    print(c.x)
+    print(c.y)
+    return 0
+}
+// @expect: 11
+// @expect: 22

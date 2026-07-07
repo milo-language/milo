@@ -1,0 +1,25 @@
+// structs that span two registers, passed and returned by value
+extern struct V2 {
+    a: i64,
+    b: i64,
+}
+
+extern struct V3 {
+    a: i32,
+    b: i32,
+    c: i32,
+}
+
+extern fn v2_add(p: V2, q: V2): V2
+extern fn v3_sum(v: V3): i64
+
+fn main(): i32 {
+    let s = v2_add(V2 { a: 100, b: 200 }, V2 { a: 7, b: 8 })
+    print(s.a)
+    print(s.b)
+    print(v3_sum(V3 { a: 1, b: 2, c: 3 }))
+    return 0
+}
+// @expect: 107
+// @expect: 208
+// @expect: 6

@@ -2,6 +2,12 @@ import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRC
 import { type TypeKind, needsDrop } from "./types";
 import type { TargetInfo } from "./target";
 import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
+import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct } from "./abi";
+
+interface ExternAbiInfo {
+  args: (ArgClass | null)[]; // per fixed param; null = direct (scalar/ptr/ref — no rewrite)
+  ret: RetClass;
+}
 
 interface StructLayout {
   name: string;
@@ -23,6 +29,8 @@ export class Codegen {
   private labelCounter = 0;
   private locals = new Map<string, { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }>();
   private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
+  // extern fns that pass/return a struct by value need native-ABI lowering (byval/sret/coerce)
+  private externAbi = new Map<string, ExternAbiInfo>();
   private structLayouts = new Map<string, StructLayout>();
   private enumLayouts = new Map<string, EnumLayout>();
   private userDeclaredFns = new Set<string>();
@@ -238,6 +246,130 @@ export class Codegen {
     return a;
   }
 
+  // does an extern struct contain any float leaf (recursively through nested structs/arrays)?
+  // Float-containing structs need HFA/SSE classification (stage 3) when register-passed.
+  private structHasFloat(name: string, seen = new Set<string>()): boolean {
+    if (seen.has(name)) return false;
+    seen.add(name);
+    const layout = this.structLayouts.get(name);
+    if (!layout) return false;
+    return layout.fields.some(f => this.typeKindHasFloat(f.typeKind, seen));
+  }
+
+  private typeKindHasFloat(t: TypeKind, seen: Set<string>): boolean {
+    if (t.tag === "float") return true;
+    if (t.tag === "array") return this.typeKindHasFloat(t.element, seen);
+    if (t.tag === "struct") return this.structHasFloat(t.name, seen);
+    return false;
+  }
+
+  private abiStructOf(name: string): AbiStruct {
+    const layout = this.structLayouts.get(name)!;
+    const fieldTypes = layout.fields.map(f => f.type);
+    return {
+      name,
+      size: this.structPayloadSize(fieldTypes),
+      align: this.structAlign(fieldTypes),
+      hasFloat: this.structHasFloat(name),
+    };
+  }
+
+  // Lowered LLVM signature for an extern fn with by-value struct params/return.
+  // The SAME attr rendering (byval/sret/coerce) must appear at the declare AND every
+  // call site — an sret/byval attr present on one but not the other silently miscompiles
+  // on x86_64 — so both go through this single source of truth.
+  private externLoweredSig(name: string): { params: string[]; ret: string } {
+    const abi = this.externAbi.get(name)!;
+    const sig = this.fnSigs.get(name)!;
+    const params: string[] = [];
+    let ret = sig.retType;
+    if (abi.ret.kind === "sret") {
+      params.push(`ptr sret(%${abi.ret.name}) align ${abi.ret.align}`);
+      ret = "void";
+    } else if (abi.ret.kind === "coerce") {
+      ret = abi.ret.retTy;
+    }
+    for (let i = 0; i < sig.paramTypes.length; i++) {
+      const cls = abi.args[i];
+      if (!cls || cls.kind === "direct") { params.push(sig.paramTypes[i]); continue; }
+      if (cls.kind === "coerce") { for (const r of cls.regs) params.push(r.ty); }
+      else params.push(cls.byval ? `ptr byval(%${cls.name}) align ${cls.align}` : `ptr`);
+    }
+    return { params, ret };
+  }
+
+  // Emit an extern call whose signature crosses the C ABI with a by-value struct.
+  // argVals hold the Milo-level argument values (struct params are whole %T values);
+  // here we reinterpret each into the register/indirect/sret form the ABI demands.
+  private emitExternAbiCall(expr: HIRExpr & { kind: "Call" }, argVals: { val: string; type: string }[], lines: string[]): [string[], string, string] {
+    const abi = this.externAbi.get(expr.func)!;
+    const sig = this.fnSigs.get(expr.func)!;
+    const lowered = this.externLoweredSig(expr.func);
+    const finalArgs: string[] = [];
+
+    // sret: caller allocates the result buffer and passes it as a hidden first arg
+    let sretAlloca: string | null = null;
+    if (abi.ret.kind === "sret") {
+      sretAlloca = this.nextTemp();
+      lines.push(`  ${sretAlloca} = alloca %${abi.ret.name}`);
+      finalArgs.push(`ptr sret(%${abi.ret.name}) align ${abi.ret.align} ${sretAlloca}`);
+    }
+
+    for (let i = 0; i < argVals.length; i++) {
+      const cls = i < abi.args.length ? abi.args[i] : null; // variadic tail has no class
+      const a = argVals[i];
+      if (!cls || cls.kind === "direct") { finalArgs.push(`${a.type} ${a.val}`); continue; }
+      if (cls.kind === "coerce") {
+        // stage the struct in an i64-array buffer (>= struct size) so register loads stay in bounds
+        const buf = this.nextTemp();
+        lines.push(`  ${buf} = alloca [${cls.container / 8} x i64]`);
+        lines.push(`  store ${a.type} ${a.val}, ptr ${buf}`);
+        for (const r of cls.regs) {
+          let p = buf;
+          if (r.offset !== 0) { p = this.nextTemp(); lines.push(`  ${p} = getelementptr i8, ptr ${buf}, i64 ${r.offset}`); }
+          const v = this.nextTemp();
+          lines.push(`  ${v} = load ${r.ty}, ptr ${p}`);
+          finalArgs.push(`${r.ty} ${v}`);
+        }
+      } else { // indirect — pass a pointer to a private copy (byval attr on SysV)
+        const buf = this.nextTemp();
+        lines.push(`  ${buf} = alloca %${cls.name}`);
+        lines.push(`  store ${a.type} ${a.val}, ptr ${buf}`);
+        finalArgs.push(cls.byval ? `ptr byval(%${cls.name}) align ${cls.align} ${buf}` : `ptr ${buf}`);
+      }
+    }
+
+    const argsStr = finalArgs.join(", ");
+    let callPrefix = lowered.ret;
+    if (expr.variadic) callPrefix = `${lowered.ret} (${lowered.params.join(", ")}, ...)`;
+
+    if (abi.ret.kind === "sret") {
+      lines.push(`  call ${callPrefix} @${expr.func}(${argsStr})`);
+      const v = this.nextTemp();
+      lines.push(`  ${v} = load %${abi.ret.name}, ptr ${sretAlloca}`);
+      return [lines, v, `%${abi.ret.name}`];
+    }
+    if (abi.ret.kind === "coerce") {
+      const raw = this.nextTemp();
+      lines.push(`  ${raw} = call ${callPrefix} @${expr.func}(${argsStr})`);
+      const buf = this.nextTemp();
+      lines.push(`  ${buf} = alloca [${abi.ret.container / 8} x i64]`);
+      lines.push(`  store ${abi.ret.retTy} ${raw}, ptr ${buf}`);
+      const structTy = sig.retType; // "%Name" for a struct return
+      const v = this.nextTemp();
+      lines.push(`  ${v} = load ${structTy}, ptr ${buf}`);
+      return [lines, v, structTy];
+    }
+    // scalar/void return, but arguments were ABI-rewritten
+    if (lowered.ret === "void") {
+      lines.push(`  call ${callPrefix} @${expr.func}(${argsStr})`);
+      return [lines, "void", "void"];
+    }
+    const tmp = this.nextTemp();
+    lines.push(`  ${tmp} = call ${callPrefix} @${expr.func}(${argsStr})`);
+    return [lines, tmp, lowered.ret];
+  }
+
   private structPayloadSize(fieldTypes: string[]): number {
     let offset = 0;
     let maxAlign = 1;
@@ -317,6 +449,33 @@ export class Codegen {
         retType: fn.isExtern && fn.retType.tag === "fn" ? "ptr" : this.llvmType(fn.retType),
         variadic: fn.isVariadic,
       });
+      // classify by-value struct params/return for extern fns → native ABI lowering.
+      // A `&Struct`/`*Struct` param crosses by reference (already "ptr"), so only bare
+      // struct-tagged params/returns need classification.
+      if (fn.isExtern) {
+        const byValStruct = (t: TypeKind, isRef: boolean) => t.tag === "struct" && !isRef;
+        const wantsAbi =
+          byValStruct(fn.retType, false) ||
+          fn.params.some(p => byValStruct(p.type, !!(p.isRef || p.isRefMut)));
+        if (wantsAbi) {
+          try {
+            const args = fn.params.map(p =>
+              byValStruct(p.type, !!(p.isRef || p.isRefMut))
+                ? classifyArg(this.target.arch, this.abiStructOf((p.type as any).name))
+                : null);
+            const ret: RetClass = byValStruct(fn.retType, false)
+              ? classifyRet(this.target.arch, this.abiStructOf((fn.retType as any).name))
+              : { kind: "direct" };
+            this.externAbi.set(fn.name, { args, ret });
+          } catch (e) {
+            if (e instanceof AbiError) {
+              console.error(`error[codegen]: extern '${fn.name}': ${e.message}`);
+              process.exit(1);
+            }
+            throw e;
+          }
+        }
+      }
     }
 
     this.emit(`target triple = "${this.target.triple}"`);
@@ -466,9 +625,17 @@ export class Codegen {
     // insert extern declarations
     for (const ext of externs) {
       const sig = this.fnSigs.get(ext.name)!;
-      const paramTypes = [...sig.paramTypes];
+      let retType = sig.retType;
+      let paramTypes: string[];
+      if (this.externAbi.has(ext.name)) {
+        const lowered = this.externLoweredSig(ext.name);
+        retType = lowered.ret;
+        paramTypes = [...lowered.params];
+      } else {
+        paramTypes = [...sig.paramTypes];
+      }
       if (ext.isVariadic) paramTypes.push("...");
-      this.output.splice(1, 0, `declare ${sig.retType} @${ext.name}(${paramTypes.join(", ")})`);
+      this.output.splice(1, 0, `declare ${retType} @${ext.name}(${paramTypes.join(", ")})`);
     }
 
     // append function bodies
@@ -2427,6 +2594,11 @@ export class Codegen {
               argVals.push({ val: av, type: at });
             }
           }
+        }
+        // extern fns passing/returning a struct by value need native-ABI lowering:
+        // coerce args into registers, byval/indirect big ones, sret the return.
+        if (this.externAbi.has(expr.func)) {
+          return this.emitExternAbiCall(expr, argVals, lines);
         }
         const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
         const retTy = sig?.retType ?? "i32";

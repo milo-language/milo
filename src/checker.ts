@@ -1348,6 +1348,10 @@ export class TypeChecker {
     return ty;
   }
 
+  private isExternStructType(ty: TypeKind): boolean {
+    return ty.tag === "struct" && !!this.structs.get(ty.name)?.isExtern;
+  }
+
   // extern-struct fields must be plain-old-data: scalars, raw pointers, nested extern
   // structs, or fixed arrays of those. Strings/Vecs/enums carry drop glue or a non-C
   // layout, so an extern struct built from them could never round-trip through C.
@@ -3509,7 +3513,9 @@ export class TypeChecker {
         // Compute safety unconditionally (not just at depth 0) so an unsafe-requiring extern call
         // marks its enclosing block used, while a safe one leaves the block flagged unused.
         if (sig.isExtern) {
-          const retSafe = isScalar(sig.ret);
+          // an extern struct is POD (whitelisted fields, no drop glue) — passing/returning
+          // it by value is a plain bit copy with no provenance, so no unsafe is needed
+          const retSafe = isScalar(sig.ret) || this.isExternStructType(sig.ret);
           let argsSafe = retSafe;
           if (argsSafe) {
             for (let i = 0; i < Math.min(expr.args.length, sig.params.length); i++) {
@@ -3517,6 +3523,8 @@ export class TypeChecker {
               const argType = this.exprTypes.get(expr.args[i]);
               if (isScalar(paramType)) continue;
               if (paramType.tag === "ref") continue;
+              // by-value extern struct arg with an exact type match — safe POD copy
+              if (this.isExternStructType(paramType) && argType && typeEq(paramType, argType)) continue;
               // fn param with matching fn arg — safe (caller provides valid function)
               if (paramType.tag === "fn" && argType?.tag === "fn") continue;
               // *T param with matching *T, string, or [T;N] arg
@@ -3535,7 +3543,7 @@ export class TypeChecker {
               ? `it returns ${typeName(sig.ret)} (non-scalar)`
               : `an argument doesn't auto-coerce`;
             this.requireUnsafe(`calling extern function '${expr.func}' requires an unsafe block`, sp,
-              `extern calls are safe only when every arg is scalar, &T, fn, or string/array→*T, AND the return is scalar/void — here ${why}`);
+              `extern calls are safe only when every arg is scalar, &T, fn, string/array→*T, or a by-value extern struct, AND the return is scalar/void/extern-struct — here ${why}`);
           }
         }
         // check requires contracts at call site

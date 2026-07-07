@@ -1,0 +1,18 @@
+// extern struct carrying a raw pointer, round-tripped through C by value
+extern struct Span {
+    ptr: *u8,
+    len: i64,
+}
+
+extern fn make_span(): Span
+extern fn span_len(s: Span): i64
+extern fn span_first(s: Span): i32
+
+fn main(): i32 {
+    let s = make_span()
+    print(span_len(s))
+    print(span_first(s))
+    return 0
+}
+// @expect: 3
+// @expect: 65

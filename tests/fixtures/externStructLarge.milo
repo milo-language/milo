@@ -1,0 +1,23 @@
+// large struct crosses by value: indirect arg + sret return. The callee mutates its
+// copy; the caller's original stays unchanged (proves a real copy was made).
+extern struct Big {
+    a: i64,
+    b: i64,
+    c: i64,
+}
+
+extern fn bump(v: Big): Big
+
+fn main(): i32 {
+    let v = Big { a: 1, b: 2, c: 3 }
+    let r = bump(v)
+    print(r.a)
+    print(r.c)
+    print(v.a)
+    print(v.c)
+    return 0
+}
+// @expect: 1001
+// @expect: 1003
+// @expect: 1
+// @expect: 3
