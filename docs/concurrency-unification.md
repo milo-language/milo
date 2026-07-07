@@ -82,12 +82,20 @@ Impl notes (`std/select.milo` + runtime/sync additions):
 - Verified: channel-wins, timeout-fires, fd-wins, and cross-thread pthread→parked-select (10/10 stable). Fixtures: `selectChannelVsTimeout`, `selectFdVsChannel`.
 - Not yet done: `select` syntax sugar (stdlib-only for now); `onWrite` has no fixture (symmetric to `onRead`).
 
-### Phase 4 — Promise rework + Go exit semantics
+### Phase 4 — Promise rework + Go exit semantics — DONE
 
 - `Task.spawn` returns a joinable handle: `Task.join()` parks until done (task struct gains a done-waiter slot). Add `WaitGroup` (counter + parked waiters) to `std/sync`.
 - `Promise` reimplemented as task handle + result channel; `await` parks (task context) or drives the scheduler without the 100ms spin (main context, using the wakeup fd).
 - Flip main-exit: remove implicit `_schedulerDrain()`; migrate examples/fixtures that relied on drain to explicit `join`/`WaitGroup`. This is the breaking step — do last, with a sweep of examples/ and hades.
 - Docs: language-reference concurrency section rewrite; Thread/Mutex demoted to escape-hatch section.
+
+Impl notes (2026-07-07):
+- **Cooperative join.** Task struct grew two fields (`tJoiner`, `tJoinCell`; 72→88 B). A green joiner registers `tJoiner`+parks; the main thread registers `tJoinCell` (a heap i64 done-flag) and drives the scheduler until it's set. On completion `_reapTask` frees the task struct and wakes the joiner / sets the cell. Contract: **join before the target can complete** (register precedes completion on the cooperative scheduler) — a late join reads freed memory. Fire-and-forget tasks stay auto-freed with no per-task sync object, so a server spawning one task per connection doesn't leak.
+- **WaitGroup** (`std/sync`): mutex + count + parked-green-waiter list + pthread cond. `done` wakes both worlds; `wait` parks a task, drives the scheduler from main (when `schedulerExists()`), or `cond_wait`s on a plain thread.
+- **Main-context block driver.** `_schedulerRunOnce(timeoutMs)` factors the old tick; `_schedulerBlockMain()` = `_schedulerRunOnce(-1)` polls blocking on the wakeup fd (clamped by any select timer) instead of the 100 ms spin. `Promise.await`, `Task.join`, and `WaitGroup.wait` all use it from main.
+- **Go exit.** codegen no longer emits `_schedulerDrain()` before `main`'s `ret` — main returns → process exits → outstanding tasks die. `_schedulerDrain` was renamed **`schedulerRunToCompletion()`** and kept as an explicit "run all spawned tasks to quiescence, then tear the scheduler down" entry (used by servers that block forever and by fixtures that spawn fire-and-forget workers).
+- Migrated: `greenThread` (WaitGroup), `greenThreadMany` + the park/channel/select/tcp fixtures (`schedulerRunToCompletion`/`join`), termpair server (`schedulerRunToCompletion`) + client (already drove manually), and hades `web`/`mcp` mains. Verified: milo suite green; termpair + hades web stay up serving HTTP 200; hades mcp e2e 10/10.
+- **Compiler bug surfaced + worked around:** i64 literals > 2^53 miscompile (IntLit stored as a JS `number`, so `9223372036854775807` rounds to a double and wraps negative). It bit `_selMinTimeout`'s old i64-max sentinel — replaced with a `haveBound` bool. Proper fix (lossless i64 lexing, or reject imprecise literals in the checker) is still open.
 
 ## Non-goals
 

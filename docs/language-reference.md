@@ -1578,9 +1578,49 @@ print(a != b)   // false
 
 ## Concurrency
 
-### Spawning Threads
+Milo's primary concurrency model is **green tasks**: `Task.spawn` runs a closure on a cooperative, single-threaded scheduler. Blocking I/O and channel operations automatically yield to other tasks — there is no async/await coloring and no event loop to run by hand. `Promise<T>`, `Channel`, `select`, and `WaitGroup` all park the *task* (not the OS thread), so they compose freely. OS `Thread`/`Mutex`/`RwLock` remain for CPU-bound parallelism and blocking FFI (see [Escape hatch: OS threads](#escape-hatch-os-threads)).
 
-Use `Thread.spawn()` to run code on a new OS thread. The compiler automatically infers `move` for the closure — captured variables are copied into a heap-allocated environment so they're safe to send across threads:
+### Tasks
+
+```milo
+from "std/runtime" import { Task }
+
+let t = Task.spawn(move (): void => {
+    print("hello from a task")
+})
+t.join()   // block until the task finishes
+```
+
+**Exit semantics are Go's:** when `main` returns, the process exits and any tasks still running are abandoned. Waiting is always explicit — nothing drains outstanding tasks for you. Join a specific task, or use a `WaitGroup` / `Channel` / `Promise`:
+
+```milo
+from "std/runtime" import { Task }
+from "std/sync" import { WaitGroup }
+
+let wg = WaitGroup.new()
+for i in 0..8 {
+    wg.add(1)
+    Task.spawn(move (): void => {
+        work(i)
+        wg.done()
+    })
+}
+wg.wait()          // returns once all 8 have called done()
+wg.destroy()
+```
+
+`Task.join()` must be called before the joined task can complete (i.e. right after `spawn`, before you yield or drive the scheduler) — the cooperative scheduler guarantees the registration lands first. A server that spawns an accept loop and should run forever can drive the scheduler explicitly with `schedulerRunToCompletion()` (runs every spawned task to quiescence, then tears the scheduler down):
+
+```milo
+from "std/runtime" import { Task, schedulerRunToCompletion }
+
+Task.spawn(move (): void => { acceptLoop(fd) })   // never returns
+schedulerRunToCompletion()                        // main blocks here
+```
+
+### Escape hatch: OS threads
+
+`Thread.spawn()` runs code on a real OS thread — reach for it for CPU-bound parallelism or FFI that must block, not for ordinary concurrency (a blocking `Thread` call parks the whole OS thread, whereas a `Task` yields). The compiler automatically infers `move` for the closure — captured variables are copied into a heap-allocated environment so they're safe to send across threads:
 
 ```milo
 from "std/thread" import { Thread }
