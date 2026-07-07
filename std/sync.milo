@@ -1,7 +1,7 @@
 // std/sync — synchronization primitives (mutex, rwlock, channel, atomics) via pthreads
 
 from "std/os" import { free, malloc, memcpy, memset, pthread_cond_broadcast, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
-from "std/runtime" import { schedulerCurrent, schedulerPark, schedulerUnpark, _selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain }
+from "std/runtime" import { schedulerCurrent, schedulerExists, schedulerPark, schedulerUnpark, _schedulerBlockMain, _selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain }
 
 // ── Mutex ──
 
@@ -648,6 +648,119 @@ impl AtomicBool {
     fn destroy(self: Self): void {
         unsafe {
             free(self._ptr)
+        }
+    }
+}
+
+// ── WaitGroup ──
+// Wait for a set of tasks/threads to finish. `add` before spawning, each worker
+// calls `done`, and `wait` blocks until the counter reaches zero. Cross-world
+// like Channel: a green worker's `done` wakes both parked green waiters and a
+// pthread cond; `wait` parks a task, drives the scheduler from main, or
+// cond_waits on a plain thread.
+//
+//   let wg = WaitGroup.new()
+//   wg.add(1)
+//   Task.spawn(move (): void => { work(); wg.done() })
+//   wg.wait()
+
+// heap layout (32 bytes): 0 mtx, 8 cond, 16 count (i64), 24 greenWaitHead (*u8)
+@send
+@sync
+struct WaitGroup {
+    _p: *u8,
+}
+
+impl WaitGroup {
+    fn new(): WaitGroup {
+        unsafe {
+            let p = malloc(32)
+            memset(p, 0, 32)
+            let mtx = malloc(64)
+            pthread_mutex_init(mtx, 0 as *u8)
+            let cond = malloc(64)
+            pthread_cond_init(cond, 0 as *u8)
+            _nodeStorePtr(p, 0, mtx)
+            _nodeStorePtr(p, 8, cond)
+            return WaitGroup { _p: p }
+        }
+    }
+
+    fn add(self: &Self, n: i64): void {
+        unsafe {
+            let p = self._p
+            let mtx = _nodeLoadPtr(p, 0)
+            pthread_mutex_lock(mtx)
+            _nodeStoreI64(p, 16, _nodeLoadI64(p, 16) + n)
+            pthread_mutex_unlock(mtx)
+        }
+    }
+
+    fn done(self: &Self): void {
+        unsafe {
+            let p = self._p
+            let mtx = _nodeLoadPtr(p, 0)
+            pthread_mutex_lock(mtx)
+            let c = _nodeLoadI64(p, 16) - 1
+            _nodeStoreI64(p, 16, c)
+            if c <= 0 {
+                // wake every parked green waiter, then broadcast to pthreads
+                var h = _nodeLoadPtr(p, 24)
+                while h as i64 != 0 { h = _wakeOne(h) }
+                _nodeStorePtr(p, 24, 0 as *u8)
+                pthread_cond_broadcast(_nodeLoadPtr(p, 8))
+            }
+            pthread_mutex_unlock(mtx)
+        }
+    }
+
+    fn wait(self: &Self): void {
+        unsafe {
+            let p = self._p
+            let mtx = _nodeLoadPtr(p, 0)
+            let cur = schedulerCurrent()
+            if cur as i64 != 0 {
+                pthread_mutex_lock(mtx)
+                while _nodeLoadI64(p, 16) > 0 {
+                    var w: [u8 ; 48] = [0 ; 48]
+                    let wp = w as *u8
+                    _nodeStoreI64(wp, nodeKind(), kindPlain())
+                    _nodeStorePtr(wp, nodeA(), cur)
+                    _nodeStorePtr(wp, nodeNext(), _nodeLoadPtr(p, 24))
+                    _nodeStorePtr(p, 24, wp)
+                    pthread_mutex_unlock(mtx)
+                    schedulerPark()
+                    pthread_mutex_lock(mtx)
+                }
+                pthread_mutex_unlock(mtx)
+            } else if schedulerExists() {
+                // main thread with live tasks: drive the scheduler (blocking on
+                // the wakeup fd) until a worker's done() drops the count to zero
+                while true {
+                    pthread_mutex_lock(mtx)
+                    let c = _nodeLoadI64(p, 16)
+                    pthread_mutex_unlock(mtx)
+                    if c <= 0 { return }
+                    _schedulerBlockMain()
+                }
+            } else {
+                pthread_mutex_lock(mtx)
+                while _nodeLoadI64(p, 16) > 0 {
+                    pthread_cond_wait(_nodeLoadPtr(p, 8), mtx)
+                }
+                pthread_mutex_unlock(mtx)
+            }
+        }
+    }
+
+    fn destroy(self: Self): void {
+        unsafe {
+            let p = self._p
+            pthread_mutex_destroy(_nodeLoadPtr(p, 0))
+            free(_nodeLoadPtr(p, 0))
+            pthread_cond_destroy(_nodeLoadPtr(p, 8))
+            free(_nodeLoadPtr(p, 8))
+            free(p)
         }
     }
 }

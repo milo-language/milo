@@ -1,0 +1,13 @@
+// @expect: worker
+// @expect: joined
+
+from "std/runtime" import { Task }
+
+fn main(): i32 {
+    let t = Task.spawn(move (): void => {
+        print("worker")
+    })
+    t.join()
+    print("joined")
+    return 0
+}

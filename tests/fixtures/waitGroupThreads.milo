@@ -1,0 +1,17 @@
+// @expect: both done
+
+from "std/thread" import { Thread }
+from "std/sync" import { WaitGroup }
+
+fn main(): i32 {
+    let wg = WaitGroup.new()
+    wg.add(2)
+    let t1 = Thread.spawn(move (): void => { wg.done() })!
+    let t2 = Thread.spawn(move (): void => { wg.done() })!
+    wg.wait()
+    print("both done")
+    t1.join()!
+    t2.join()!
+    wg.destroy()
+    return 0
+}

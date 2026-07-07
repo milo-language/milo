@@ -1,0 +1,25 @@
+// @expect: done 0
+// @expect: done 1
+// @expect: done 2
+// @expect: all finished
+
+from "std/runtime" import { Task }
+from "std/sync" import { WaitGroup }
+
+fn main(): i32 {
+    let wg = WaitGroup.new()
+    var i = 0
+    while i < 3 {
+        wg.add(1)
+        let n = i
+        Task.spawn(move (): void => {
+            print("done " + n.toString())
+            wg.done()
+        })
+        i = i + 1
+    }
+    wg.wait()
+    print("all finished")
+    wg.destroy()
+    return 0
+}

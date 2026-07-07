@@ -1,0 +1,15 @@
+// @expect: inner
+// @expect: outer after inner
+
+from "std/runtime" import { Task }
+
+fn main(): i32 {
+    Task.spawn(move (): void => {
+        let inner = Task.spawn(move (): void => {
+            print("inner")
+        })
+        inner.join()
+        print("outer after inner")
+    })
+    return 0
+}

@@ -1,10 +1,14 @@
 // std/runtime — green thread scheduler using ucontext for stackful coroutines
 //
-// Task layout (72 bytes, 8-byte aligned):
+// Task layout (88 bytes, 8-byte aligned):
 //   0: context (*u8)      8: stack (*u8)       16: totalStackSize (i64)
 //  24: state (i32)        28: waitFd (i32)      32: waitWrite (u8) + 7 pad
 //  40: next (*u8)         48: closureFn (*u8)   56: closureEnv (*u8)
 //  64: sched (*u8)  — home scheduler, lets a foreign thread unpark this task
+//  72: joiner (*u8) — a green task parked in Task.join, unparked on completion
+//  80: joinCell (*u8) — main-context Task.join done flag (i32 cell, set to 1 on
+//       completion). Joiner/joinCell must be registered before the task can
+//       complete (cooperative-scheduler usage); a late join reads freed memory.
 //
 // Scheduler layout (80 bytes):
 //   0: context (*u8)       8: runHead (*u8)     16: runTail (*u8)
@@ -36,7 +40,7 @@ fn taskDone(): i32 { return 3 }
 fn taskWaitingPark(): i32 { return 4 }
 fn defaultStackSize(): i64 { return 1048576 }
 fn guardPageSize(): i64 { return 4096 }
-fn taskStructSize(): i64 { return 72 }
+fn taskStructSize(): i64 { return 88 }
 fn schedStructSize(): i64 { return 80 }
 
 // task field offsets
@@ -50,6 +54,8 @@ fn tNext(): i64 { return 40 }
 fn tClosureFn(): i64 { return 48 }
 fn tClosureEnv(): i64 { return 56 }
 fn tSched(): i64 { return 64 }
+fn tJoiner(): i64 { return 72 }
+fn tJoinCell(): i64 { return 80 }
 
 // scheduler field offsets
 fn sCtx(): i64 { return 0 }
@@ -239,6 +245,30 @@ impl Task {
             return Task { _ptr: task }
         }
     }
+
+    // Block until the spawned task finishes. Cooperative contract: call join
+    // before the target can run (i.e. before yielding/driving the scheduler),
+    // so the registration below always precedes completion. A green caller
+    // parks; the main thread drives the scheduler until the done cell is set.
+    fn join(self: &Self): void {
+        unsafe {
+            let task = self._ptr
+            if task as i64 == 0 { return }
+            let cur = schedulerCurrent()
+            if cur as i64 != 0 {
+                _rtWritePtr(task, tJoiner(), cur)
+                schedulerPark()
+            } else {
+                let cell = malloc(8)
+                _rtWriteI64(cell, 0, 0)
+                _rtWritePtr(task, tJoinCell(), cell)
+                while _rtReadI64(cell, 0) == 0 {
+                    _schedulerBlockMain()
+                }
+                free(cell)
+            }
+        }
+    }
 }
 
 // ── Promise<T> — a task that returns a value ──
@@ -265,8 +295,8 @@ impl Promise<T> {
 
     fn await(self: &Self): Result<T> {
         // inside a green task: parked recv — scheduler keeps running.
-        // in main: drive scheduler ticks until the result arrives (phase 4
-        // replaces the tick loop with a wakeup-fd block).
+        // in main: drive the scheduler, blocking the poll on the wakeup fd
+        // until the result task completes (no 100ms cooperative spin).
         if schedulerCurrent() as i64 != 0 {
             let val = self._ch.recv()?
             self._ch.destroy()
@@ -280,7 +310,7 @@ impl Promise<T> {
                     return Result.Ok(val)
                 }
                 Option.None => {
-                    _schedulerTick()
+                    _schedulerBlockMain()
                 }
             }
         }
@@ -392,6 +422,13 @@ fn schedulerCurrent(): *u8 {
         if sched as i64 == 0 { return 0 as *u8 }
         return _rtReadPtr(sched, sCurrent())
     }
+}
+
+// True once a green scheduler has been created on this thread. Lets a main-
+// context waiter (schedulerCurrent()==0) tell "drive the scheduler" apart from
+// "pure pthread, block on a cond".
+fn schedulerExists(): bool {
+    unsafe { return _getSched() as i64 != 0 }
 }
 
 // ── park / unpark ──
@@ -568,18 +605,23 @@ fn _selectUnregisterFd(node: *u8): void {
 // only until the next select timeout instead of the default tick interval.
 fn _selMinTimeout(sched: *u8, cap: i32): i32 {
     unsafe {
-        var best = cap
+        // cap < 0 means "block indefinitely": start from an effectively-infinite
+        // bound so any timer wins, and return -1 only if no timer shrinks it.
+        var infinite = cap < 0
+        var best: i64 = cap as i64
+        if infinite { best = 9223372036854775807 }
         let nowMs = epochMillis()
         var cur = _rtReadPtr(sched, sSelFdHead())
         while cur as i64 != 0 {
             if _rtReadI64(cur, nodeKind()) == kindSelTimer() {
                 var rem = _rtReadI64(cur, nodeDeadline()) - nowMs
                 if rem < 0 { rem = 0 }
-                if (rem as i32) < best { best = rem as i32 }
+                if rem < best { best = rem }
             }
             cur = _rtReadPtr(cur, nodeNext())
         }
-        return best
+        if infinite && best == 9223372036854775807 { return -1 }
+        return best as i32
     }
 }
 
@@ -736,14 +778,31 @@ fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
     }
 }
 
-// run one batch of ready tasks + poll events, return to caller
-fn _schedulerTick(): void {
+// Free a completed task and wake anyone joining it. Reads the join fields
+// before freeing the struct (they point outside it). numTasks is decremented
+// here so the reap is accounted regardless of drain vs tick vs block caller.
+fn _reapTask(sched: *u8, task: *u8): void {
+    unsafe {
+        let joiner = _rtReadPtr(task, tJoiner())
+        let cell = _rtReadPtr(task, tJoinCell())
+        munmap(_rtReadPtr(task, tStack()), _rtReadI64(task, tStackSize()))
+        free(_rtReadPtr(task, tCtx()))
+        free(task)
+        _rtWriteI64(sched, sNumTasks(), _rtReadI64(sched, sNumTasks()) - 1)
+        if cell as i64 != 0 { _rtWriteI64(cell, 0, 1) }
+        if joiner as i64 != 0 { schedulerUnpark(joiner) }
+    }
+}
+
+// Run one batch of ready tasks, then poll events once with `timeoutMs`
+// (-1 blocks until an fd/wakeup/timer fires — used by the main-context
+// blocking driver; 100 is the cooperative tick used by legacy spin loops).
+fn _schedulerRunOnce(timeoutMs: i32): void {
     unsafe {
         let sched = _getSched()
         if sched as i64 == 0 { return }
         if _rtReadI64(sched, sNumTasks()) == 0 { return }
 
-        // run a bounded batch of ready tasks before polling I/O
         var batch: i64 = 0
         var task = _dequeueRun(sched)
         while task as i64 != 0 {
@@ -758,10 +817,7 @@ fn _schedulerTick(): void {
 
             let state = _rtReadI32(task, tState())
             if state == taskDone() {
-                munmap(_rtReadPtr(task, tStack()), _rtReadI64(task, tStackSize()))
-                free(_rtReadPtr(task, tCtx()))
-                free(task)
-                _rtWriteI64(sched, sNumTasks(), _rtReadI64(sched, sNumTasks()) - 1)
+                _reapTask(sched, task)
             } else if state == taskReady() {
                 _enqueueRun(sched, task)
             }
@@ -772,11 +828,25 @@ fn _schedulerTick(): void {
 
         _rtWritePtr(sched, sCurrent(), 0 as *u8)
 
-        // poll event loop
+        // poll event loop; when the run queue still has work, don't block — a
+        // -1 timeout would stall ready tasks behind idle fds.
         if _rtReadI64(sched, sNumTasks()) > 0 {
-            _pollAndWake(sched, 100)
+            var t = timeoutMs
+            if _rtReadPtr(sched, sRunHead()) as i64 != 0 { t = 0 }
+            _pollAndWake(sched, t)
         }
     }
+}
+
+fn _schedulerTick(): void {
+    _schedulerRunOnce(100)
+}
+
+// Main-context blocking driver: advance the scheduler, blocking the poll until
+// a real event arrives instead of the 100ms cooperative spin. Callers loop on
+// their own completion condition (Promise result, join cell, WaitGroup count).
+fn _schedulerBlockMain(): void {
+    _schedulerRunOnce(-1)
 }
 
 // ── scheduler drain — called at end of main ──
@@ -803,10 +873,7 @@ fn _schedulerDrain(): void {
                 // back from task
                 let state = _rtReadI32(task, tState())
                 if state == taskDone() {
-                    munmap(_rtReadPtr(task, tStack()), _rtReadI64(task, tStackSize()))
-                    free(_rtReadPtr(task, tCtx()))
-                    free(task)
-                    _rtWriteI64(sched, sNumTasks(), _rtReadI64(sched, sNumTasks()) - 1)
+                    _reapTask(sched, task)
                 } else if state == taskReady() {
                     _enqueueRun(sched, task)
                 }
