@@ -1,0 +1,23 @@
+// rawStr must round-trip number literals verbatim — f64 re-formatting
+// mangled large ints ("1572864" → "1.57286e+06") and dropped precision.
+// @expect: id=1572864
+// @expect: tid=1844463
+// @expect: f=0.5
+// @expect: e=1e10
+// @expect: neg=-42
+// @expect: arr=[1572864,1844463]
+// @expect: obj={"id":1572864,"nested":{"big":9007199254740991}}
+
+from "std/json" import { jsonParse }
+
+fn main(): i32 {
+    let j = jsonParse("{\"id\":1572864,\"tid\":1844463,\"f\":0.5,\"e\":1e10,\"neg\":-42,\"arr\":[1572864,1844463],\"obj\":{\"id\":1572864,\"nested\":{\"big\":9007199254740991}}}")!
+    print("id=", j.get("id")!.rawStr())
+    print("tid=", j.get("tid")!.rawStr())
+    print("f=", j.get("f")!.rawStr())
+    print("e=", j.get("e")!.rawStr())
+    print("neg=", j.get("neg")!.rawStr())
+    print("arr=", j.get("arr")!.rawStr())
+    print("obj=", j.get("obj")!.rawStr())
+    return 0
+}

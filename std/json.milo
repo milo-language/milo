@@ -484,7 +484,11 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
         if node.boolVal { return "true" }
         return "false"
     }
-    if node.kind == 2 { return $"{node.numVal}" }
+    if node.kind == 2 {
+        // Verbatim source slice: exact round-trip for ints f64 formatting would mangle.
+        if node.strLen > 0 { return jsonMaterializeStr(doc.source, node.strStart, node.strLen) }
+        return $"{node.numVal}"
+    }
     if node.kind == 3 {
         return "\"" + jsonEscapeStr(jsonMaterializeStr(doc.source, node.strStart, node.strLen)) + "\""
     }
@@ -767,6 +771,9 @@ fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i
 }
 
 fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64 {
+    // Record the source span so rawStr can round-trip the literal verbatim —
+    // f64 formatting would mangle large ints ("1572864" → "1.57286e+06").
+    let numStart = pos
     var result: f64 = 0.0
     var negative: bool = false
     if pos < s.len && s[pos] == '-' {
@@ -822,7 +829,7 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
     }
     if negative { result = 0.0 - result }
     let idx = nodes.len()
-    nodes.push(JsonNode { kind: 2, boolVal: false, numVal: result, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+    nodes.push(JsonNode { kind: 2, boolVal: false, numVal: result, strStart: numStart, strLen: pos - numStart, childStart: 0, childCount: 0, keyStart: 0 })
     return idx
 }
 
