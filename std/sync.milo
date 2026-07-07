@@ -1,6 +1,7 @@
 // std/sync — synchronization primitives (mutex, rwlock, channel, atomics) via pthreads
 
 from "std/os" import { free, malloc, memcpy, memset, pthread_cond_broadcast, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_rwlock_init, pthread_rwlock_rdlock, pthread_rwlock_wrlock, pthread_rwlock_unlock, pthread_rwlock_destroy }
+from "std/runtime" import { schedulerCurrent, schedulerPark, schedulerUnpark }
 
 // ── Mutex ──
 
@@ -153,6 +154,73 @@ struct ChannelInner {
     head: i64,
     tail: i64,
     closed: i64,
+    // intrusive lists of parked green tasks; nodes live on the parked task's
+    // stack: [0..8) task ptr, [8..16) next ptr. pthread waiters use the conds.
+    recvWaitHead: *u8,
+    sendWaitHead: *u8,
+}
+
+// Park the current green task as a receive waiter. Caller holds mtx; returns
+// with mtx re-acquired. The waiter node lives on this frame's stack — safe
+// because the frame stays alive while parked and the waker pops the node
+// (under mtx) before unparking, so it never dangles.
+fn _chParkRecv(inner: *ChannelInner): void {
+    unsafe {
+        var w: [u8 ; 16] = [0 ; 16]
+        let wp = w as *u8
+        let me = schedulerCurrent()
+        memcpy(wp, (&me) as *u8, 8)
+        let head = (*inner).recvWaitHead
+        memcpy((wp as i64 + 8) as *u8, (&head) as *u8, 8)
+        (*inner).recvWaitHead = wp
+        pthread_mutex_unlock((*inner).mtx)
+        schedulerPark()
+        pthread_mutex_lock((*inner).mtx)
+    }
+}
+
+fn _chParkSend(inner: *ChannelInner): void {
+    unsafe {
+        var w: [u8 ; 16] = [0 ; 16]
+        let wp = w as *u8
+        let me = schedulerCurrent()
+        memcpy(wp, (&me) as *u8, 8)
+        let head = (*inner).sendWaitHead
+        memcpy((wp as i64 + 8) as *u8, (&head) as *u8, 8)
+        (*inner).sendWaitHead = wp
+        pthread_mutex_unlock((*inner).mtx)
+        schedulerPark()
+        pthread_mutex_lock((*inner).mtx)
+    }
+}
+
+// Pop one parked green receiver and make its task runnable (cross-thread safe
+// via schedulerUnpark). Caller holds mtx. The node must not be touched after
+// unpark — the woken task's frame owns it.
+fn _chWakeOneRecv(inner: *ChannelInner): void {
+    unsafe {
+        let w = (*inner).recvWaitHead
+        if w as i64 == 0 { return }
+        var next: *u8 = 0 as *u8
+        memcpy((&next) as *u8, (w as i64 + 8) as *u8, 8)
+        var task: *u8 = 0 as *u8
+        memcpy((&task) as *u8, w, 8)
+        (*inner).recvWaitHead = next
+        schedulerUnpark(task)
+    }
+}
+
+fn _chWakeOneSend(inner: *ChannelInner): void {
+    unsafe {
+        let w = (*inner).sendWaitHead
+        if w as i64 == 0 { return }
+        var next: *u8 = 0 as *u8
+        memcpy((&next) as *u8, (w as i64 + 8) as *u8, 8)
+        var task: *u8 = 0 as *u8
+        memcpy((&task) as *u8, w, 8)
+        (*inner).sendWaitHead = next
+        schedulerUnpark(task)
+    }
 }
 
 @send
@@ -166,7 +234,7 @@ impl Channel<T> {
       requires capacity > 0
     {
         unsafe {
-            let raw = malloc(72)
+            let raw = malloc(88)
             let inner = raw as *ChannelInner
 
             let mtx = malloc(64)
@@ -203,6 +271,8 @@ impl Channel<T> {
             (*inner).head = 0
             (*inner).tail = 0
             (*inner).closed = 0
+            (*inner).recvWaitHead = 0 as *u8
+            (*inner).sendWaitHead = 0 as *u8
 
             return Result.Ok(Channel { _ptr: raw })
         }
@@ -222,7 +292,17 @@ impl Channel<T> {
             }
             var curLen: i64 = (*inner).len
             while curLen == cap {
-                pthread_cond_wait((*inner).condNotFull, mtx)
+                // in a green task, park the task so the scheduler keeps
+                // running; on a plain OS thread, block on the cond as before
+                if schedulerCurrent() as i64 != 0 {
+                    _chParkSend(inner)
+                } else {
+                    pthread_cond_wait((*inner).condNotFull, mtx)
+                }
+                if (*inner).closed == 1 {
+                    pthread_mutex_unlock(mtx)
+                    return Result.Err("channel closed")
+                }
                 curLen = (*inner).len
             }
             var tail: i64 = (*inner).tail
@@ -232,6 +312,8 @@ impl Channel<T> {
             memset((&v) as *u8, 0, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
+            // a green receiver and a pthread receiver may both be waiting
+            _chWakeOneRecv(inner)
             pthread_cond_signal((*inner).condNotEmpty)
             pthread_mutex_unlock(mtx)
             return Result.Ok(0)
@@ -252,7 +334,11 @@ impl Channel<T> {
                     pthread_mutex_unlock(mtx)
                     return Result.Err("channel closed")
                 }
-                pthread_cond_wait((*inner).condNotEmpty, mtx)
+                if schedulerCurrent() as i64 != 0 {
+                    _chParkRecv(inner)
+                } else {
+                    pthread_cond_wait((*inner).condNotEmpty, mtx)
+                }
                 curLen = (*inner).len
             }
             var head: i64 = (*inner).head
@@ -260,6 +346,7 @@ impl Channel<T> {
             memcpy((&val) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
+            _chWakeOneSend(inner)
             pthread_cond_signal((*inner).condNotFull)
             pthread_mutex_unlock(mtx)
             return Result.Ok(val)
@@ -285,6 +372,7 @@ impl Channel<T> {
             memset((&v) as *u8, 0, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
+            _chWakeOneRecv(inner)
             pthread_cond_signal((*inner).condNotEmpty)
             pthread_mutex_unlock(mtx)
             return true
@@ -309,6 +397,7 @@ impl Channel<T> {
             memcpy((&val) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
+            _chWakeOneSend(inner)
             pthread_cond_signal((*inner).condNotFull)
             pthread_mutex_unlock(mtx)
             return Option.Some(val)
@@ -333,7 +422,11 @@ impl Channel<T> {
             let mtx = (*inner).mtx
             pthread_mutex_lock(mtx)
             (*inner).closed = 1
+            // every parked green task must observe closed and error out
+            while (*inner).recvWaitHead as i64 != 0 { _chWakeOneRecv(inner) }
+            while (*inner).sendWaitHead as i64 != 0 { _chWakeOneSend(inner) }
             pthread_cond_broadcast((*inner).condNotEmpty)
+            pthread_cond_broadcast((*inner).condNotFull)
             pthread_mutex_unlock(mtx)
         }
     }

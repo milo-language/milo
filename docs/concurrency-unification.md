@@ -30,7 +30,7 @@ Consequences (all hit in hades):
 
 Each phase lands as isolated commits with fixtures; full `bun test` before each. hades is the integration test — after phases 1–3, delete its wsWriterLoop self-pipe machinery and per-call-site green IO.
 
-### Phase 0 — unblock + groundwork (small)
+### Phase 0 — unblock + groundwork (small) — DONE
 
 - Document `os.exit(code)` as the immediate error-path escape (bypasses drain). hades bind-failure fix today: `exit(1)` instead of `return 1`.
 - Scheduler wakeup fd: add `EVFILT_USER` (darwin) / `eventfd` (linux) to `std/event`, registered by the scheduler at init. Foundation for cross-world channel wakes and timers. API: `eventLoopNotify(el)` callable from any thread; poll reports it like an fd.
@@ -38,9 +38,11 @@ Each phase lands as isolated commits with fixtures; full `bun test` before each.
   - `schedulerPark(): void` — current task off run queue, swap to scheduler.
   - `schedulerUnpark(task: *u8): void` — push task back on run queue; callable from scheduler thread; cross-thread version signals the wakeup fd with the task ptr queued on a mutex-guarded ready-transfer list.
 
-### Phase 1 — green-aware Channel
+### Phase 1 — green-aware Channel — DONE
 
 Rework `ChannelInner`: keep mutex/buffer/ring; replace cond-only blocking with waiter lists.
+
+Impl notes: waiter nodes live on the parked task's stack (frame stays alive while parked; waker pops under the channel mutex before unpark, so no dangling). `send` now also checks `closed` inside its wait loop, and `close` broadcasts `condNotFull` too. `tryRecv`/`trySend` unpark the opposite side. `Promise.await` in a task is a parked `recv`; main-context await still ticks (phase 4). `promiseRace` still spins (needs select, phase 3).
 
 - Add `recvWaiters` / `sendWaiters`: intrusive lists of `Waiter { task: *u8, next }` (green) alongside the existing conds (pthread).
 - `recv`: buffer non-empty → take (as today). Empty: if `schedulerCurrent() != 0`, append waiter, unlock, `schedulerPark()`; on wake, retry. Else pthread path unchanged.

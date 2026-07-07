@@ -226,8 +226,14 @@ impl Promise<T> {
     }
 
     fn await(self: &Self): Result<T> {
-        // if inside a green thread, yield-poll so scheduler keeps running
-        // if in main, drive scheduler ticks until result arrives
+        // inside a green task: parked recv — scheduler keeps running.
+        // in main: drive scheduler ticks until the result arrives (phase 4
+        // replaces the tick loop with a wakeup-fd block).
+        if schedulerCurrent() as i64 != 0 {
+            let val = self._ch.recv()?
+            self._ch.destroy()
+            return Result.Ok(val)
+        }
         while true {
             let maybe = self._ch.tryRecv()
             match maybe {
@@ -236,11 +242,7 @@ impl Promise<T> {
                     return Result.Ok(val)
                 }
                 Option.None => {
-                    if schedulerCurrent() as i64 != 0 {
-                        schedulerYield()
-                    } else {
-                        _schedulerTick()
-                    }
+                    _schedulerTick()
                 }
             }
         }
