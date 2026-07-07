@@ -189,6 +189,30 @@ export class Codegen {
     return this.typeSize(this.llvmType(t));
   }
 
+  // Zero `ptr` as type `ty`. For large aggregates, emit llvm.memset instead of a
+  // first-class `store [N x i8] zeroinitializer` — clang's InstCombine is
+  // superlinear on big aggregate zero-stores (a 64KB stack buffer alone pushed
+  // an -O2 build to ~110s; memset drops it to ~1s). LLVM auto-recognizes the
+  // intrinsic, so no `declare` is needed. memset is never worse, so the
+  // threshold only needs to sit below the first painful size.
+  private static ZERO_STORE_MEMSET_THRESHOLD = 128;
+  private zeroStore(ty: string, ptr: string): string {
+    const size = this.typeSize(ty);
+    if (size >= Codegen.ZERO_STORE_MEMSET_THRESHOLD) {
+      return `  call void @llvm.memset.p0.i64(ptr ${ptr}, i8 0, i64 ${size}, i1 false)`;
+    }
+    return `  store ${ty} zeroinitializer, ptr ${ptr}`;
+  }
+
+  // Store an already-computed value; routes through zeroStore when the value is
+  // a zeroinitializer (e.g. an all-zero array literal `[0 ; N]`), which is how
+  // large zero-init actually reaches a `store` — the array literal returns the
+  // value "zeroinitializer" and the let/assign store writes it.
+  private valStore(ty: string, val: string, ptr: string): string {
+    if (val === "zeroinitializer") return this.zeroStore(ty, ptr);
+    return `  store ${ty} ${val}, ptr ${ptr}`;
+  }
+
   private needsDropCg(t: TypeKind): boolean {
     if (needsDrop(t)) return true;
     if (t.tag === "enum") return this.droppableEnums.has(t.name);
@@ -791,7 +815,7 @@ export class Codegen {
         // Zero-init droppable allocas so a drop-glue pass over a never-initialized
         // branch-local (e.g. `let s` inside an `if` that wasn't taken) reads cap=0 and skips free.
         if (this.needsDropCg(stmt.type)) {
-          this.entryAllocas.push(`  store ${declTy} zeroinitializer, ptr ${addrName}`);
+          this.entryAllocas.push(this.zeroStore(declTy, addrName));
           // Drop old value before overwriting — needed when this decl is inside a loop
           // and runs multiple times at runtime. The zero-init above makes the first-iteration
           // drop a no-op (null ptr / zero cap guards skip the free).
@@ -799,7 +823,7 @@ export class Codegen {
             this.emitDropValue(lines, addrName, stmt.type);
           }
         }
-        lines.push(`  store ${declTy} ${val}, ptr ${addrName}`);
+        lines.push(this.valStore(declTy, val, addrName));
         if (stmt.rangeCheck) {
           const signed = stmt.type.tag === "int" && stmt.type.signed;
           this.emitRangeCheck(lines, val, declTy, signed, stmt.rangeCheck.min, stmt.rangeCheck.max, stmt.span?.line ?? 0);
@@ -842,7 +866,7 @@ export class Codegen {
         if (stmt.target.kind === "Ident" && this.needsDropCg(stmt.target.type)) {
           this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
-        lines.push(`  store ${valTy} ${val}, ptr ${targetPtr}`);
+        lines.push(this.valStore(valTy, val, targetPtr));
         return [lines, false];
       }
       case "Return": {
@@ -2038,11 +2062,11 @@ export class Codegen {
       // subject's drop chain doesn't free what the binding now owns. A ref-match
       // of a Copy payload is just a value copy — nothing to zero.
       if (!subjectIsRef && this.needsDropCg(fieldKind)) {
-        lines.push(`  store ${ty} zeroinitializer, ptr ${fieldPtr}`);
+        lines.push(this.zeroStore(ty, fieldPtr));
       }
       const addr = `%${name}.${uid}.addr`;
       lines.push(`  ${addr} = alloca ${ty}`);
-      lines.push(`  store ${ty} ${val}, ptr ${addr}`);
+      lines.push(this.valStore(ty, val, addr));
       this.locals.set(name, { type: ty, typeKind: fieldKind, mutable: false, isRef: false, addr });
     };
 
@@ -2480,7 +2504,7 @@ export class Codegen {
         const tmp = this.nextTemp();
         lines.push(`  ${tmp} = load ${local.type}, ptr ${addr}`);
         if (expr.isMove && this.needsDropCg(local.typeKind)) {
-          lines.push(`  store ${local.type} zeroinitializer, ptr ${addr}`);
+          lines.push(this.zeroStore(local.type, addr));
           const dl = this.droppableLocals.find(d => this.localAddr(d.name) === addr);
           if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
         }
@@ -2640,7 +2664,7 @@ export class Codegen {
           lines.push(...fLines);
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = getelementptr ${structTy}, ptr ${alloca}, i32 0, i32 ${idx}`);
-          lines.push(`  store ${fieldTy} ${fVal}, ptr ${ptr}`);
+          lines.push(this.valStore(fieldTy, fVal, ptr));
         }
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${structTy}, ptr ${alloca}`);
@@ -2655,7 +2679,7 @@ export class Codegen {
         // struct's own drop glue skips it (a zeroed %String/Vec has cap=0/null).
         // Otherwise both the moved value and the struct free the same buffer.
         if (expr.isMove && this.needsDropCg(expr.type)) {
-          lines.push(`  store ${fieldTy} zeroinitializer, ptr ${ptr}`);
+          lines.push(this.zeroStore(fieldTy, ptr));
         }
         return [lines, val, fieldTy];
       }
@@ -2901,7 +2925,7 @@ export class Codegen {
         // Zero the heap slot after loading to prevent double-free: the loaded
         // value now owns any inner heap pointers, so the source must not drop them.
         if (expr.kind === "HeapDeref" && this.needsDropCg(expr.type)) {
-          lines.push(`  store ${innerTy} zeroinitializer, ptr ${ptrVal}`);
+          lines.push(this.zeroStore(innerTy, ptrVal));
         }
         return [lines, val, innerTy];
       }
@@ -3151,7 +3175,7 @@ export class Codegen {
                 lines.push(`  store ${capTy} ${loaded}, ptr ${gepSlot}`);
                 // zero source so parent's drop glue won't free moved data
                 if (this.needsDropCg(cap.type)) {
-                  lines.push(`  store ${capTy} zeroinitializer, ptr ${capAddr}`);
+                  lines.push(this.zeroStore(capTy, capAddr));
                   const dl = this.droppableLocals.find(d => this.localAddr(d.name) === capAddr);
                   if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
                 }
@@ -7312,7 +7336,7 @@ export class Codegen {
     // overwrite-drop (after continue) would free the same buffer again.
     lines.push(`  store i1 0, ptr ${local.aliveFlag}`);
     const slotTy = this.llvmType(local.typeKind);
-    lines.push(`  store ${slotTy} zeroinitializer, ptr ${this.localAddr(local.name)}`);
+    lines.push(this.zeroStore(slotTy, this.localAddr(local.name)));
     lines.push(`  br label %${skipLabel}`);
     lines.push(`${skipLabel}:`);
   }
