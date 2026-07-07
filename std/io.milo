@@ -111,11 +111,13 @@ impl File {
         unsafe {
             lseek(self.fd, 0, 0)
         }
-        var result: string = ""
-        var buf: [u8 ; 4096] = [0 ; 4096]
+        // Presize to the stat'd size (+1 for the NUL) so the push loop never reallocs;
+        // push still grows safely if the file grew between size() and read().
+        var result: string = String.withCapacity(size + 1)
+        var buf: [u8 ; 65536] = [0 ; 65536]
         while true {
             unsafe {
-                let n = read(self.fd, buf, 4096)
+                let n = read(self.fd, buf, 65536)
                 if n <= 0 {
                     break
                 }
