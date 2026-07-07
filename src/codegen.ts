@@ -2,7 +2,7 @@ import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRC
 import { type TypeKind, needsDrop } from "./types";
 import type { TargetInfo } from "./target";
 import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
-import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct } from "./abi";
+import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct, type AbiLeaf } from "./abi";
 
 interface ExternAbiInfo {
   args: (ArgClass | null)[]; // per fixed param; null = direct (scalar/ptr/ref — no rewrite)
@@ -246,21 +246,32 @@ export class Codegen {
     return a;
   }
 
-  // does an extern struct contain any float leaf (recursively through nested structs/arrays)?
-  // Float-containing structs need HFA/SSE classification (stage 3) when register-passed.
-  private structHasFloat(name: string, seen = new Set<string>()): boolean {
-    if (seen.has(name)) return false;
-    seen.add(name);
-    const layout = this.structLayouts.get(name);
-    if (!layout) return false;
-    return layout.fields.some(f => this.typeKindHasFloat(f.typeKind, seen));
+  // Flatten a struct's scalar leaves (offset/size/float-ness) for ABI classification —
+  // HFA detection and SysV eightbyte SSE/INTEGER merging need per-leaf info, not just size.
+  private abiLeaves(name: string, base: number): AbiLeaf[] {
+    const layout = this.structLayouts.get(name)!;
+    const fieldTypes = layout.fields.map(f => f.type);
+    const out: AbiLeaf[] = [];
+    layout.fields.forEach((f, i) => out.push(...this.leavesOf(f.typeKind, base + this.structFieldOffset(fieldTypes, i))));
+    return out;
   }
 
-  private typeKindHasFloat(t: TypeKind, seen: Set<string>): boolean {
-    if (t.tag === "float") return true;
-    if (t.tag === "array") return this.typeKindHasFloat(t.element, seen);
-    if (t.tag === "struct") return this.structHasFloat(t.name, seen);
-    return false;
+  private leavesOf(t: TypeKind, off: number): AbiLeaf[] {
+    switch (t.tag) {
+      case "float": return [{ offset: off, size: t.bits / 8, isFloat: true }];
+      case "int": return [{ offset: off, size: Math.max(1, t.bits / 8), isFloat: false }];
+      case "bool": return [{ offset: off, size: 1, isFloat: false }];
+      case "ptr": return [{ offset: off, size: 8, isFloat: false }];
+      case "struct": return this.abiLeaves(t.name, off);
+      case "array": {
+        if (t.size === null) return [{ offset: off, size: 8, isFloat: false }];
+        const stride = this.typeSize(this.llvmType(t.element));
+        const out: AbiLeaf[] = [];
+        for (let i = 0; i < t.size; i++) out.push(...this.leavesOf(t.element, off + i * stride));
+        return out;
+      }
+      default: return [{ offset: off, size: 8, isFloat: false }];
+    }
   }
 
   private abiStructOf(name: string): AbiStruct {
@@ -270,7 +281,7 @@ export class Codegen {
       name,
       size: this.structPayloadSize(fieldTypes),
       align: this.structAlign(fieldTypes),
-      hasFloat: this.structHasFloat(name),
+      leaves: this.abiLeaves(name, 0),
     };
   }
 

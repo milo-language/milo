@@ -2,22 +2,30 @@
 // extern (C) boundary. Covers AArch64 (AAPCS64) and x86_64 System V — the two ABIs
 // Milo targets for hosted code. Bare-metal ARM (AAPCS32) is rejected.
 //
-// The classifier is pure: codegen feeds it a struct's size/align/float-ness (derived
-// from Milo's manual layout, which now matches LLVM's) and gets back a lowering plan —
-// register coercion, indirect (pointer / byval), or sret. Codegen renders the plan into
-// LLVM declares AND matching call-site attributes (they MUST agree or x86_64 miscompiles).
+// The classifier is pure: codegen feeds it a struct's size/align plus its flattened
+// scalar leaves (byte offset, size, int-vs-float), all derived from Milo's manual
+// layout (which matches LLVM's). It returns a lowering plan — register coercion,
+// indirect (pointer / byval), or sret. Codegen renders the plan into LLVM declares AND
+// matching call-site attributes (they MUST agree or x86_64 miscompiles).
 //
-// Stage 2 handles integer/pointer structs only. Structs with float fields that land in
-// the register-passed size class (<=16 bytes) need HFA/SSE classification (stage 3) and
-// currently raise AbiError; large float structs go indirect/sret and work today.
+// Float handling: AAPCS64 passes homogeneous-float aggregates (HFAs, 1-4 same-type
+// float members) in SIMD registers as [N x float/double]; other <=16B aggregates go in
+// GP registers (integer coerce). SysV classifies each eightbyte independently as SSE
+// (all-float -> double, lone trailing f32 -> float) or INTEGER (-> i64).
 
 export type Arch = "aarch64" | "x86_64" | "arm";
+
+export interface AbiLeaf {
+  offset: number; // byte offset within the struct
+  size: number; // 4 or 8 for the scalar kinds that reach the ABI
+  isFloat: boolean;
+}
 
 export interface AbiStruct {
   name: string; // LLVM struct name without the leading '%'
   size: number; // total size in bytes (aligned)
   align: number; // natural alignment
-  hasFloat: boolean; // any float leaf anywhere in the (flattened) struct
+  leaves: AbiLeaf[]; // flattened scalar leaves, in offset order
 }
 
 // One register-sized piece of a coerced struct: an LLVM type loaded from `offset`.
@@ -48,44 +56,75 @@ function armReject(name: string): never {
   );
 }
 
-function floatReject(name: string): never {
-  throw new AbiError(
-    `extern struct '${name}' has float fields and fits in registers — HFA/SSE classification is not implemented yet (stage 3); pass &${name} for now`,
-  );
+// AAPCS64 HFA: 1-4 members, all the same floating-point type (after flattening nested
+// structs and arrays). Returns the element LLVM type and count, or null.
+function hfa(s: AbiStruct): { count: number; eltTy: string } | null {
+  const n = s.leaves.length;
+  if (n < 1 || n > 4) return null;
+  if (!s.leaves.every(l => l.isFloat)) return null;
+  const sz = s.leaves[0].size;
+  if (!s.leaves.every(l => l.size === sz)) return null;
+  return { count: n, eltTy: sz === 4 ? "float" : "double" };
+}
+
+function hfaCoerceTy(h: { count: number; eltTy: string }): string {
+  return h.count === 1 ? h.eltTy : `[${h.count} x ${h.eltTy}]`;
+}
+
+// SysV: type of one eightbyte [8k, 8k+8). SSE if every leaf in it is float; a lone
+// 4-byte float in an otherwise-empty eightbyte is passed as `float`, else `double`.
+function sysvEightbyteTy(s: AbiStruct, k: number): string {
+  const lo = k * 8, hi = lo + 8;
+  const inChunk = s.leaves.filter(l => l.offset < hi && l.offset + l.size > lo);
+  const allFloat = inChunk.length > 0 && inChunk.every(l => l.isFloat);
+  if (!allFloat) return "i64";
+  return inChunk.length === 1 && inChunk[0].size === 4 ? "float" : "double";
+}
+
+function sysvRegs(s: AbiStruct): Reg[] {
+  const n = eightbytes(s.size);
+  const regs: Reg[] = [];
+  for (let k = 0; k < n; k++) regs.push({ ty: sysvEightbyteTy(s, k), offset: k * 8 });
+  return regs;
 }
 
 export function classifyArg(arch: Arch, s: AbiStruct): ArgClass {
   if (arch === "arm") armReject(s.name);
-  if (s.size > 16) {
-    // AAPCS64 passes a plain pointer for oversized aggregates (callee copies if it must);
-    // SysV requires the byval attribute so the backend materializes the copy.
-    return { kind: "indirect", byval: arch === "x86_64", align: s.align, name: s.name };
-  }
-  if (s.hasFloat) floatReject(s.name);
+
   if (arch === "aarch64") {
-    // AAPCS64: <=16B integer aggregate goes in 1-2 X registers, lowered as one
-    // param of type i64 or [2 x i64].
+    const h = hfa(s);
+    if (h) {
+      const ty = hfaCoerceTy(h);
+      return { kind: "coerce", regs: [{ ty, offset: 0 }], container: Math.ceil(s.size / 8) * 8 };
+    }
+    if (s.size > 16) return { kind: "indirect", byval: false, align: s.align, name: s.name };
+    // non-HFA <=16B aggregate → GP registers as i64 / [2 x i64]
     return s.size <= 8
       ? { kind: "coerce", regs: [{ ty: "i64", offset: 0 }], container: 8 }
       : { kind: "coerce", regs: [{ ty: "[2 x i64]", offset: 0 }], container: 16 };
   }
-  // SysV: one i64 param per eightbyte (integer class).
-  const n = eightbytes(s.size);
-  const regs: Reg[] = [];
-  for (let i = 0; i < n; i++) regs.push({ ty: "i64", offset: i * 8 });
-  return { kind: "coerce", regs, container: n * 8 };
+
+  // x86_64 System V
+  if (s.size > 16) return { kind: "indirect", byval: true, align: s.align, name: s.name };
+  const regs = sysvRegs(s);
+  return { kind: "coerce", regs, container: eightbytes(s.size) * 8 };
 }
 
 export function classifyRet(arch: Arch, s: AbiStruct): RetClass {
   if (arch === "arm") armReject(s.name);
-  if (s.size > 16) return { kind: "sret", align: s.align, name: s.name };
-  if (s.hasFloat) floatReject(s.name);
+
   if (arch === "aarch64") {
+    const h = hfa(s);
+    if (h) return { kind: "coerce", retTy: hfaCoerceTy(h), container: Math.ceil(s.size / 8) * 8 };
+    if (s.size > 16) return { kind: "sret", align: s.align, name: s.name };
     return s.size <= 8
       ? { kind: "coerce", retTy: "i64", container: 8 }
       : { kind: "coerce", retTy: "[2 x i64]", container: 16 };
   }
-  const n = eightbytes(s.size);
-  const retTy = n === 1 ? "i64" : `{ ${Array(n).fill("i64").join(", ")} }`;
-  return { kind: "coerce", retTy, container: n * 8 };
+
+  // x86_64 System V
+  if (s.size > 16) return { kind: "sret", align: s.align, name: s.name };
+  const regs = sysvRegs(s);
+  const retTy = regs.length === 1 ? regs[0].ty : `{ ${regs.map(r => r.ty).join(", ")} }`;
+  return { kind: "coerce", retTy, container: eightbytes(s.size) * 8 };
 }

@@ -1,0 +1,25 @@
+// nested homogeneous-float struct is still an HFA after flattening (3 floats)
+extern struct P2 {
+    x: f32,
+    y: f32,
+}
+
+extern struct Tri {
+    base: P2,
+    z: f32,
+}
+
+extern fn tri_sum(t: Tri): f32
+extern fn tri_scale(t: Tri, k: f32): Tri
+
+fn main(): i32 {
+    let t = Tri { base: P2 { x: 1.0, y: 2.0 }, z: 3.0 }
+    print(tri_sum(t))
+    let s = tri_scale(t, 10.0)
+    print(tri_sum(s))
+    print(s.z)
+    return 0
+}
+// @expect: 6
+// @expect: 60
+// @expect: 30

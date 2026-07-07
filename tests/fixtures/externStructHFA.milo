@@ -1,0 +1,29 @@
+// HFA structs (all-float, 1-4 members) passed/returned in float registers
+extern struct D2 {
+    x: f64,
+    y: f64,
+}
+
+extern struct F4 {
+    a: f32,
+    b: f32,
+    c: f32,
+    d: f32,
+}
+
+extern fn dot2(p: D2, q: D2): f64
+extern fn scale2(p: D2, k: f64): D2
+extern fn sum4(v: F4): f32
+
+fn main(): i32 {
+    print(dot2(D2 { x: 1.0, y: 2.0 }, D2 { x: 3.0, y: 4.0 }))
+    let s = scale2(D2 { x: 1.5, y: 2.5 }, 2.0)
+    print(s.x)
+    print(s.y)
+    print(sum4(F4 { a: 1.0, b: 2.0, c: 3.0, d: 4.0 }))
+    return 0
+}
+// @expect: 11
+// @expect: 3
+// @expect: 5
+// @expect: 10
