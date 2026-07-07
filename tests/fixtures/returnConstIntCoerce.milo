@@ -1,0 +1,24 @@
+// @expect: -1
+// @expect: -3
+// @expect: 3
+// A const-int subtree with no typed operand widens to the int hint from the
+// declared return type / let type — `return -1` (UnaryOp) and `let x: i64 = -1`
+// need no `as i64`. The bare-literal path only caught a lone IntLit.
+fn neg(): i64 {
+    return -1
+}
+fn calc(): i64 {
+    let x: i64 = -1
+    var y: i64 = 0
+    y = -2
+    return x + y
+}
+fn sum(): i64 {
+    return 1 + 2
+}
+fn main(): i32 {
+    print(neg())
+    print(calc())
+    print(sum())
+    return 0
+}
