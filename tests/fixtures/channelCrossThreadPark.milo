@@ -4,7 +4,7 @@
 // cross-world wakes both directions: a pthread send unparks a green task
 // blocked in recv (via the scheduler wakeup event), and a pthread recv
 // unparks a green task blocked in send on a full channel
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerRunToCompletion }
 from "std/thread" import { Thread }
 from "std/sync" import { Channel }
 
@@ -34,5 +34,6 @@ fn main(): i32 {
 
     // threads finish before the tasks they wake, so they are not joined
     // (joining before main's implicit drain would deadlock the scheduler)
+    schedulerRunToCompletion()
     return 0
 }

@@ -1,7 +1,7 @@
 // @expect: spawned 1000
 // @expect: all done
 
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerRunToCompletion }
 
 fn main(): i32 {
     var i = 0
@@ -12,6 +12,7 @@ fn main(): i32 {
         i = i + 1
     }
     print("spawned 1000")
+    schedulerRunToCompletion()
     print("all done")
     return 0
 }

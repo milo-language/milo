@@ -5,7 +5,7 @@
 
 // close wakes a parked green receiver; `for v in ch` drains pending items
 // then ends — the hades wsWriterLoop pattern with no self-pipe machinery
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerRunToCompletion }
 from "std/sync" import { Channel }
 
 fn main(): i32 {
@@ -25,5 +25,6 @@ fn main(): i32 {
         ch.close()
     })
 
+    schedulerRunToCompletion()
     return 0
 }

@@ -6,7 +6,7 @@ from "std/os" import {
 }
 from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
-from "std/runtime" import { Task, schedulerCurrent, schedulerWaitRead, schedulerYield }
+from "std/runtime" import { Task, schedulerCurrent, schedulerWaitRead, schedulerYield, schedulerRunToCompletion }
 from "std/ws" import { WsConn, WsMessage, wsAccept, isWsUpgrade, WS_TEXT, WS_CLOSE }
 from "std/sync" import { Channel, AtomicI64 }
 from "std/argparse" import { newParser }
@@ -486,5 +486,9 @@ fn main(): i32 {
         // run accept loop in a green thread so spawned handlers can execute
         Task.spawn(move (): void => { acceptLoop(rawFd) })
     }
+    // Go exit semantics: main no longer drains implicitly. Drive the scheduler
+    // so the accept loop (and the handlers it spawns) keep running — the server
+    // never returns from here.
+    schedulerRunToCompletion()
     return 0
 }

@@ -605,22 +605,26 @@ fn _selectUnregisterFd(node: *u8): void {
 // only until the next select timeout instead of the default tick interval.
 fn _selMinTimeout(sched: *u8, cap: i32): i32 {
     unsafe {
-        // cap < 0 means "block indefinitely": start from an effectively-infinite
-        // bound so any timer wins, and return -1 only if no timer shrinks it.
-        var infinite = cap < 0
+        // Track whether any bound exists rather than seeding an i64-max sentinel
+        // (large i64 literals don't round-trip cleanly through the lexer). cap>=0
+        // is itself a bound; a timer arm shrinks it. cap<0 ("block forever") with
+        // no timer returns -1 so the poll blocks until an fd/wakeup fires.
+        var haveBound = cap >= 0
         var best: i64 = cap as i64
-        if infinite { best = 9223372036854775807 }
         let nowMs = epochMillis()
         var cur = _rtReadPtr(sched, sSelFdHead())
         while cur as i64 != 0 {
             if _rtReadI64(cur, nodeKind()) == kindSelTimer() {
                 var rem = _rtReadI64(cur, nodeDeadline()) - nowMs
                 if rem < 0 { rem = 0 }
-                if rem < best { best = rem }
+                if !haveBound || rem < best {
+                    best = rem
+                    haveBound = true
+                }
             }
             cur = _rtReadPtr(cur, nodeNext())
         }
-        if infinite && best == 9223372036854775807 { return -1 }
+        if !haveBound { return -1 }
         return best as i32
     }
 }
@@ -849,46 +853,18 @@ fn _schedulerBlockMain(): void {
     _schedulerRunOnce(-1)
 }
 
-// ── scheduler drain — called at end of main ──
-
-fn _schedulerDrain(): void {
+// Drive the scheduler until every spawned task has finished, then tear it down.
+// Go exit semantics mean main no longer calls this implicitly; it stays as an
+// explicit "run all outstanding tasks to completion" entry for programs that
+// want the old drain-to-quiescence behavior (e.g. spawn a fleet of workers and
+// block main until they all return without a WaitGroup).
+fn schedulerRunToCompletion(): void {
     unsafe {
         let sched = _getSched()
         if sched as i64 == 0 { return }
 
         while _rtReadI64(sched, sNumTasks()) > 0 {
-            // run a bounded batch of ready tasks before polling I/O
-            var batch: i64 = 0
-            var task = _dequeueRun(sched)
-            while task as i64 != 0 {
-                if batch >= 32 {
-                    _enqueueRun(sched, task)
-                    break
-                }
-                _rtWriteI32(task, tState(), taskRunning())
-                _rtWritePtr(sched, sCurrent(), task)
-
-                swapcontext(_rtReadPtr(sched, sCtx()), _rtReadPtr(task, tCtx()))
-
-                // back from task
-                let state = _rtReadI32(task, tState())
-                if state == taskDone() {
-                    _reapTask(sched, task)
-                } else if state == taskReady() {
-                    _enqueueRun(sched, task)
-                }
-
-                batch = batch + 1
-                task = _dequeueRun(sched)
-            }
-
-            // clear current
-            _rtWritePtr(sched, sCurrent(), 0 as *u8)
-
-            if _rtReadI64(sched, sNumTasks()) == 0 { break }
-
-            // poll event loop
-            _pollAndWake(sched, 100)
+            _schedulerBlockMain()
         }
 
         // cleanup

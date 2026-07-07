@@ -12,17 +12,23 @@
 // @expect: green 9
 
 from "std/runtime" import { Task }
+from "std/sync" import { WaitGroup }
 
 fn main(): i32 {
     print("start")
+    let wg = WaitGroup.new()
     var i = 0
     while i < 10 {
+        wg.add(1)
         let n = i
         Task.spawn(move (): void => {
             print("green " + n.toString())
+            wg.done()
         })
         i = i + 1
     }
     print("spawned")
+    wg.wait()
+    wg.destroy()
     return 0
 }

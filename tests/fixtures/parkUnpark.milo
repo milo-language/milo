@@ -2,7 +2,7 @@
 // @expect: unparking
 // @expect: resumed
 
-from "std/runtime" import { Task, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield }
+from "std/runtime" import { Task, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield, schedulerRunToCompletion }
 from "std/sync" import { AtomicI64 }
 
 fn main(): i32 {
@@ -24,5 +24,6 @@ fn main(): i32 {
         unsafe { schedulerUnpark(slot.load() as *u8) }
     })
 
+    schedulerRunToCompletion()
     return 0
 }

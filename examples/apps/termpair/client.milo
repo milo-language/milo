@@ -431,9 +431,9 @@ fn main(): i32 {
     print("")
     print("termpair session ended")
 
-    // Force exit: task2 (stdin) and task3 (websocket) are still parked on I/O that
-    // will never wake, so the runtime's end-of-main _schedulerDrain would spin
-    // forever (it loops while numTasks > 0). Exit directly to return to the shell.
+    // task2 (stdin) and task3 (websocket) are still parked on I/O that will never
+    // wake. Under Go exit semantics returning would already abandon them, but exit
+    // also flushes stdio after the terminal restore above, so keep it explicit.
     exit(0)
     return 0
 }

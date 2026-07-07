@@ -3,7 +3,7 @@
 // select over an fd read and a channel recv: a task writes the pipe, so the
 // fd arm wins while the channel arm stays quiet — exercises the scheduler
 // poll claiming a select and tearing down the still-armed channel arm
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerRunToCompletion }
 from "std/sync" import { Channel }
 from "std/select" import { Select, selectRecv }
 from "std/os" import { pipe, writeFd, readFd, close }
@@ -47,5 +47,6 @@ fn main(): i32 {
         unsafe { close(wfd) }
     })
 
+    schedulerRunToCompletion()
     return 0
 }

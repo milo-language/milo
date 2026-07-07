@@ -520,11 +520,6 @@ export class Codegen {
     const functions = module.functions.filter(f => !f.isExtern);
     if (module.userFnNames) this.userFnNames = module.userFnNames;
 
-    // detect scheduler usage: if _schedulerDrain is defined, the program uses green threads
-    if (functions.some(f => f.name === "_schedulerDrain")) {
-      this.usesSchedulerGlobal = true;
-    }
-
     // register globals before function generation so they're visible during codegen
     for (const g of module.globals) {
       const ty = this.llvmType(g.type);
@@ -777,13 +772,9 @@ export class Codegen {
       // fall-off end is only reachable in void fns (and main's implicit 0), so no `result` binding
       this.emitEnsuresChecks(lines);
       this.emitDropGlue(lines);
-      if (fn.name === "main" && this.usesSchedulerGlobal) {
-        lines.push("  call void @_schedulerDrain()");
-        lines.push("  call i32 @fflush(ptr null)");
-        this.needsFflush = true;
-        lines.push("  call void @_exit(i32 0)");
-        lines.push("  unreachable");
-      } else if (ret === "void") lines.push("  ret void");
+      // Go exit semantics: when main returns the process exits and any
+      // outstanding green tasks die. Waiting is explicit (Task.join/WaitGroup).
+      if (ret === "void") lines.push("  ret void");
       else if (ret === "i32") lines.push("  ret i32 0");
     }
 
@@ -873,13 +864,7 @@ export class Codegen {
         if (!stmt.value) {
           this.emitEnsuresChecks(lines);
           this.emitDropGlue(lines);
-          if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
-            lines.push("  call void @_schedulerDrain()");
-            lines.push("  call i32 @fflush(ptr null)");
-            this.needsFflush = true;
-            lines.push("  call void @_exit(i32 0)");
-            lines.push("  unreachable");
-          } else if (this.currentFnName === "main") {
+          if (this.currentFnName === "main") {
             // main is forced to i32 (see genFn); a bare `return` must still yield a 0 exit code.
             lines.push("  ret i32 0");
           } else {
@@ -901,17 +886,8 @@ export class Codegen {
           this.emitEnsuresChecks(lines);
         }
         this.emitDropGlue(lines);
-        if (this.currentFnName === "main" && this.usesSchedulerGlobal) {
-          lines.push("  call void @_schedulerDrain()");
-          lines.push("  call i32 @fflush(ptr null)");
-          this.needsFflush = true;
-          const exitVal = valTy === "i32" ? val : "0";
-          lines.push(`  call void @_exit(i32 ${exitVal})`);
-          lines.push("  unreachable");
-        } else {
-          if (valTy === "void") lines.push("  ret void");
-          else lines.push(`  ret ${valTy} ${val}`);
-        }
+        if (valTy === "void") lines.push("  ret void");
+        else lines.push(`  ret ${valTy} ${val}`);
         return [lines, true];
       }
       case "If": return this.genIf(stmt);

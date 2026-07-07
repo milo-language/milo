@@ -3,7 +3,7 @@
 
 // select races a channel recv against a timeout: first run a sender wins the
 // recv arm; second run nobody sends so the timeout arm fires
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerRunToCompletion }
 from "std/sync" import { Channel }
 from "std/select" import { Select, selectRecv }
 
@@ -30,5 +30,6 @@ fn raceOnce(withSend: bool): void {
 fn main(): i32 {
     raceOnce(true)
     raceOnce(false)
+    schedulerRunToCompletion()
     return 0
 }

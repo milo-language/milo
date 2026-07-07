@@ -3,7 +3,7 @@
 
 // a task parked reading a pipe doesn't block the scheduler: another task
 // computes and then writes, waking the reader — std/os green-aware IO
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerRunToCompletion }
 from "std/os" import { pipe, readFd, writeFd, close }
 
 fn main(): i32 {
@@ -41,5 +41,6 @@ fn main(): i32 {
         unsafe { close(wfd) }
     })
 
+    schedulerRunToCompletion()
     return 0
 }

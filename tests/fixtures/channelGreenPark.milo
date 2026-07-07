@@ -6,7 +6,7 @@
 
 // task↔task channel: consumer parks on empty recv, producer parks on full
 // send (cap 1) — scheduler keeps both making progress, no busy-poll
-from "std/runtime" import { Task }
+from "std/runtime" import { Task, schedulerRunToCompletion }
 from "std/sync" import { Channel }
 
 fn main(): i32 {
@@ -30,5 +30,6 @@ fn main(): i32 {
         print("producer done")
     })
 
+    schedulerRunToCompletion()
     return 0
 }

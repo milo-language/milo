@@ -1,7 +1,7 @@
 // @expect: parking
 // @expect: resumed
 
-from "std/runtime" import { Task, schedulerCurrent, schedulerPark, schedulerUnpark }
+from "std/runtime" import { Task, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerRunToCompletion }
 from "std/sync" import { AtomicI64 }
 from "std/thread" import { Thread }
 
@@ -25,5 +25,6 @@ fn main(): i32 {
 
     // main's implicit drain runs the task; the thread is done before the task
     // resumes, so it is not joined (joining before drain would deadlock)
+    schedulerRunToCompletion()
     return 0
 }

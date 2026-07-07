@@ -8,7 +8,7 @@
 from "std/os" import { socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe }
 from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
-from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent }
+from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent, schedulerRunToCompletion }
 
 fn greenRead(fd: i32, buf: &[u8 ; 4096], size: i64): i64 {
     unsafe {
@@ -128,5 +128,6 @@ fn main(): i32 {
     }
 
     print("done")
+    schedulerRunToCompletion()
     return 0
 }
