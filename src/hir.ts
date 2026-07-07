@@ -163,4 +163,7 @@ export interface HIRModule {
   dropImpls: Set<string>;
   itables: { concreteType: string; ifaceName: string; methods: string[] }[];
   userFnNames?: Set<string>;
+  // opaque extern struct names (dropped from `structs` since they have no body) — kept
+  // so the C header generator can emit forward `typedef struct X X;` declarations
+  opaqueTypes?: string[];
 }

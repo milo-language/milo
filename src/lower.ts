@@ -20,10 +20,12 @@ class LowerCtx {
 
   lowerProgram(program: Program): HIRModule {
     const structs: HIRStruct[] = [];
+    const opaqueTypes: string[] = [];
     for (const s of program.structs) {
       if (s.typeParams.length > 0) continue;
       const info = this.c.structs.get(s.name);
-      if (!info || info.isOpaque) continue;
+      if (!info) continue;
+      if (info.isOpaque) { opaqueTypes.push(s.name); continue; }
       structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })), isExtern: info.isExtern });
     }
     for (const s of this.c.monomorphizedStructs) {
@@ -99,7 +101,7 @@ class LowerCtx {
       });
     }
 
-    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: program.userFnNames };
+    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: program.userFnNames, opaqueTypes };
   }
 
   private lowerParam(p: { name: string; type: import("./ast").MiloType }, sig: import("./checker").FnSig | undefined, i: number) {

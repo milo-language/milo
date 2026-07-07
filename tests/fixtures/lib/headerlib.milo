@@ -1,0 +1,49 @@
+// Fixture for tests/header.test.ts — exercises the C header generator: opaque types,
+// nested extern structs (dep order), scalar/pointer/fn-ptr params, and the skip paths
+// (by-value struct return, non-C-representable return).
+extern type Handle
+
+extern struct Point {
+    x: i32,
+    y: i32,
+}
+
+extern struct Rect {
+    origin: Point,
+    w: i32,
+    h: i32,
+}
+
+fn add(a: i32, b: i32): i32 {
+    return a + b
+}
+
+fn scale(v: f64, k: f64): f64 {
+    return v * k
+}
+
+fn rect_area(r: *Rect): i64 {
+    unsafe {
+        return (r.w as i64) * (r.h as i64)
+    }
+}
+
+fn apply(cb: (i32) => i32, v: i32): i32 {
+    return cb(v)
+}
+
+// returns a struct by value → skipped until define-side ABI lowering (stage 6)
+fn make_point(x: i32, y: i32): Point {
+    return Point { x: x, y: y }
+}
+
+// non-C-representable return → skipped with a comment
+fn build(n: i32): Vec<i32> {
+    var out: Vec<i32> = Vec.new()
+    out.push(n)
+    return out
+}
+
+fn main(): i32 {
+    return 0
+}

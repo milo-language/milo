@@ -11,6 +11,7 @@ import { Codegen } from "./codegen";
 import { CodegenJS } from "./codegen-js";
 import { lower } from "./lower";
 import { resolveImports } from "./resolver";
+import { generateHeader } from "./headergen";
 import { formatDiagnostic, ParseError, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
 import { format, formatFile } from "./formatter";
@@ -203,6 +204,17 @@ function compileToObj(sourcePath: string, outputPath: string | null, target: Tar
   return out;
 }
 
+// Emit a C header (declaring exported functions + extern structs) next to a build
+// artifact. Recomputes the frontend to reach the HIR (compileToObj discards it) — the
+// cheapest path that keeps codegen untouched.
+function writeHeader(sourcePath: string, headerPath: string, target: TargetInfo, warningConfig?: WarningConfig) {
+  const source = readFileSync(sourcePath, "utf-8");
+  const hir = frontendToHIR(source, target, sourcePath, warningConfig);
+  const headerName = basename(headerPath).replace(/\.h$/, "");
+  writeFileSync(headerPath, generateHeader(hir, headerName));
+  console.log(`wrote ${headerPath}`);
+}
+
 function buildLib(sourcePaths: string[], outputPath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig) {
   const objFiles: string[] = [];
   try {
@@ -220,6 +232,8 @@ function buildLib(sourcePaths: string[], outputPath: string, target: TargetInfo,
   } finally {
     for (const f of objFiles) { try { unlinkSync(f); } catch {} }
   }
+  // header describes the primary source's public surface
+  writeHeader(sourcePaths[0], outputPath.replace(/\.a$/, "") + ".h", target, warningConfig);
 }
 
 function detectLibs(ir: string, target: TargetInfo): string {
@@ -397,6 +411,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let safetyLevel: string | null = null;
   let sanitize = false;
   let targetName: string | null = null;
+  let emitHeader = false;
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
@@ -406,6 +421,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--debug") { optFlag = "-O0"; }
     else if (args[i] === "--no-entry") { noEntry = true; }
     else if (args[i] === "--sanitize") { sanitize = true; }
+    else if (args[i] === "--emit-header") { emitHeader = true; }
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
     else if (args[i] === "--deny-all") { denied.add("*"); }
@@ -421,7 +437,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -917,7 +933,7 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -1058,6 +1074,7 @@ function main() {
   } else if (cmd === "emit-obj") {
     const obj = compileToObj(source!, output, target, optFlag, warningConfig, noEntry);
     console.log(`compiled ${source} -> ${obj}`);
+    if (emitHeader) writeHeader(source!, obj.replace(/\.o$/, "") + ".h", target, warningConfig);
   } else if (cmd === "emit-js") {
     const src = readFileSync(source!, "utf-8");
     const js = compileToJS(src, target, source!, warningConfig);
