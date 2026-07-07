@@ -9,7 +9,11 @@
 // Scheduler layout (80 bytes):
 //   0: context (*u8)       8: runHead (*u8)     16: runTail (*u8)
 //  24: current (*u8)      32: numTasks (i64)    40: eventLoopFd (i32)  44: wakeupId (i32)
-//  48: waitHead (*u8)     56: xferMutex (*u8)   64: xferHead (*u8)    72: pad
+//  48: waitHead (*u8)     56: xferMutex (*u8)   64: xferHead (*u8)    72: selFdHead (*u8)
+//
+// selFdHead: intrusive list of select fd/timer waiter Nodes (see below). Read
+// arms register their fd with the event loop; the poll loop claims the owning
+// Select when the fd fires or a timer deadline passes.
 
 from "std/os" import { malloc, free, memcpy, memset, mmap, munmap, mprotect, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy }
 from "std/platform" import {
@@ -19,6 +23,7 @@ from "std/platform" import {
 }
 from "std/event" import { EventLoop, eventLoopNew, eventLoopFromFd, eventLoopFd, eventPoll, eventRegisterRead, eventRegisterWrite, eventDeregister, eventLoopClose, eventLoopInitWakeup, eventLoopNotify, eventLoopDrainWakeup, eventLoopCloseWakeup }
 from "std/sync" import { Channel }
+from "std/time" import { epochMillis }
 
 // ── constants ──
 
@@ -59,6 +64,39 @@ fn sWaitHead(): i64 { return 48 }
 // cross-thread unpark transfer list (mutex-guarded; drained after each poll)
 fn sXferMutex(): i64 { return 56 }
 fn sXferHead(): i64 { return 64 }
+// select fd/timer waiter list (scheduler thread only)
+fn sSelFdHead(): i64 { return 72 }
+
+// ── select waiter node (48 bytes) ──
+// One layout serves every waiter: a plain parked task on a channel list, and
+// each armed Select arm (channel recv/send, fd read/write, timer). Channel
+// lists (recvWaitHead/sendWaitHead) hold kind 0/1/2; the scheduler's selFdHead
+// holds kind 3/4/5.
+fn nodeKind(): i64 { return 0 }      // 0 plain, 1 sel-recv, 2 sel-send, 3 sel-read, 4 sel-write, 5 sel-timer
+fn nodeNext(): i64 { return 8 }
+fn nodeA(): i64 { return 16 }        // plain: task ptr; select: SelectState ptr
+fn nodeArm(): i64 { return 24 }      // select arm index
+fn nodeFd(): i64 { return 32 }       // sel-read/write fd
+fn nodeDeadline(): i64 { return 40 } // sel-timer deadline (epoch ms)
+fn nodeSize(): i64 { return 48 }
+
+fn kindPlain(): i64 { return 0 }
+fn kindSelRecv(): i64 { return 1 }
+fn kindSelSend(): i64 { return 2 }
+fn kindSelRead(): i64 { return 3 }
+fn kindSelWrite(): i64 { return 4 }
+fn kindSelTimer(): i64 { return 5 }
+
+// ── SelectState (32 bytes) ──
+// Shared by all arms of one Select. `claimed` records the winning arm (-1 until
+// a source fires); the mutex serializes the claim so at most one arm wins even
+// across a foreign pthread firing a channel. `parked` gates the unpark so a
+// claim that lands before the task commits to parking never queues a stale wake.
+fn ssMtx(): i64 { return 0 }
+fn ssClaimed(): i64 { return 8 }
+fn ssTask(): i64 { return 16 }
+fn ssParked(): i64 { return 24 }
+fn selectStateSize(): i64 { return 32 }
 
 // ── helpers to read/write i64, i32, ptr at offset ──
 
@@ -415,13 +453,183 @@ fn _drainXfer(sched: *u8): void {
     }
 }
 
+// ── select support ──
+
+// Allocate a SelectState (mutex-guarded claim record). Caller frees via
+// _selectStateFree once the select and all its arms are torn down.
+fn _selectStateNew(): *u8 {
+    unsafe {
+        let st = malloc(selectStateSize())
+        memset(st, 0, selectStateSize())
+        let m = malloc(64)
+        pthread_mutex_init(m, 0 as *u8)
+        _rtWritePtr(st, ssMtx(), m)
+        _rtWriteI64(st, ssClaimed(), -1)
+        _rtWritePtr(st, ssTask(), schedulerCurrent())
+        return st
+    }
+}
+
+fn _selectStateFree(st: *u8): void {
+    unsafe {
+        let m = _rtReadPtr(st, ssMtx())
+        pthread_mutex_destroy(m)
+        free(m)
+        free(st)
+    }
+}
+
+// Claim the select for `arm` if nothing has won yet, and wake the owning task
+// only if it has already committed to parking. Safe from any thread (a foreign
+// pthread firing a channel takes this path); unpark itself is thread-safe.
+fn _selectTryClaim(st: *u8, arm: i64): void {
+    unsafe {
+        let m = _rtReadPtr(st, ssMtx())
+        pthread_mutex_lock(m)
+        if _rtReadI64(st, ssClaimed()) == -1 {
+            _rtWriteI64(st, ssClaimed(), arm)
+            if _rtReadI64(st, ssParked()) == 1 {
+                schedulerUnpark(_rtReadPtr(st, ssTask()))
+            }
+        }
+        pthread_mutex_unlock(m)
+    }
+}
+
+// Task side, called after every arm is registered. Returns the winning arm
+// index, parking until a source fires. See SelectState for the race handling.
+fn _selectWaitState(st: *u8): i64 {
+    unsafe {
+        let m = _rtReadPtr(st, ssMtx())
+        pthread_mutex_lock(m)
+        let already = _rtReadI64(st, ssClaimed())
+        if already >= 0 {
+            pthread_mutex_unlock(m)
+            return already
+        }
+        _rtWriteI64(st, ssParked(), 1)
+        _rtWritePtr(st, ssTask(), schedulerCurrent())
+        pthread_mutex_unlock(m)
+        schedulerPark()
+        return _rtReadI64(st, ssClaimed())
+    }
+}
+
+// Link an fd/read-or-write or timer node into the scheduler's select list and,
+// for fd arms, register the fd with the event loop. Scheduler thread only
+// (arms are always set up from the task that owns the Select).
+fn _selectRegisterFd(node: *u8): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+        let kind = _rtReadI64(node, nodeKind())
+        if kind == kindSelRead() || kind == kindSelWrite() {
+            var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+            let fd = _rtReadI32(node, nodeFd())
+            if kind == kindSelWrite() { eventRegisterWrite(el, fd) }
+            else { eventRegisterRead(el, fd) }
+        }
+        _rtWritePtr(node, nodeNext(), _rtReadPtr(sched, sSelFdHead()))
+        _rtWritePtr(sched, sSelFdHead(), node)
+    }
+}
+
+// Unlink a node from the select list and deregister its fd. Idempotent: a node
+// that already fell off the list (never happens today, but cheap to guard) is
+// skipped.
+fn _selectUnregisterFd(node: *u8): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+        var prev: *u8 = 0 as *u8
+        var cur = _rtReadPtr(sched, sSelFdHead())
+        while cur as i64 != 0 {
+            let next = _rtReadPtr(cur, nodeNext())
+            if cur as i64 == node as i64 {
+                if prev as i64 == 0 {
+                    _rtWritePtr(sched, sSelFdHead(), next)
+                } else {
+                    _rtWritePtr(prev, nodeNext(), next)
+                }
+                let kind = _rtReadI64(node, nodeKind())
+                if kind == kindSelRead() || kind == kindSelWrite() {
+                    var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+                    eventDeregister(el, _rtReadI32(node, nodeFd()), kind == kindSelWrite())
+                }
+                return
+            }
+            prev = cur
+            cur = next
+        }
+    }
+}
+
+// Smallest timer deadline remaining (ms), clamped to `cap`. Lets the poll block
+// only until the next select timeout instead of the default tick interval.
+fn _selMinTimeout(sched: *u8, cap: i32): i32 {
+    unsafe {
+        var best = cap
+        let nowMs = epochMillis()
+        var cur = _rtReadPtr(sched, sSelFdHead())
+        while cur as i64 != 0 {
+            if _rtReadI64(cur, nodeKind()) == kindSelTimer() {
+                var rem = _rtReadI64(cur, nodeDeadline()) - nowMs
+                if rem < 0 { rem = 0 }
+                if (rem as i32) < best { best = rem as i32 }
+            }
+            cur = _rtReadPtr(cur, nodeNext())
+        }
+        return best
+    }
+}
+
+// Claim select fd arms whose fd fired this poll.
+fn _wakeSelectFds(sched: *u8, readyFds: *i32, count: i32): void {
+    unsafe {
+        var cur = _rtReadPtr(sched, sSelFdHead())
+        while cur as i64 != 0 {
+            let next = _rtReadPtr(cur, nodeNext())
+            let kind = _rtReadI64(cur, nodeKind())
+            if kind == kindSelRead() || kind == kindSelWrite() {
+                let fd = _rtReadI32(cur, nodeFd())
+                var i = 0
+                while i < count {
+                    if readyFds[i as i64] == fd {
+                        _selectTryClaim(_rtReadPtr(cur, nodeA()), _rtReadI64(cur, nodeArm()))
+                    }
+                    i = i + 1
+                }
+            }
+            cur = next
+        }
+    }
+}
+
+// Claim select timer arms whose deadline has passed.
+fn _wakeSelectTimers(sched: *u8): void {
+    unsafe {
+        let nowMs = epochMillis()
+        var cur = _rtReadPtr(sched, sSelFdHead())
+        while cur as i64 != 0 {
+            let next = _rtReadPtr(cur, nodeNext())
+            if _rtReadI64(cur, nodeKind()) == kindSelTimer() {
+                if nowMs >= _rtReadI64(cur, nodeDeadline()) {
+                    _selectTryClaim(_rtReadPtr(cur, nodeA()), _rtReadI64(cur, nodeArm()))
+                }
+            }
+            cur = next
+        }
+    }
+}
+
 // poll the event loop once and make everything runnable that became ready:
 // io-waiting tasks whose fd fired, and cross-thread unparks via the wakeup event
 fn _pollAndWake(sched: *u8, timeoutMs: i32): void {
     unsafe {
         var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
         var readyBuf: [u8 ; 256] = [0 ; 256]
-        let n = eventPoll(el, readyBuf as *i32, 64, timeoutMs)
+        let effTimeout = _selMinTimeout(sched, timeoutMs)
+        let n = eventPoll(el, readyBuf as *i32, 64, effTimeout)
         if n > 0 {
             let wakeupId = _rtReadI32(sched, sWakeupId())
             let fds = readyBuf as *i32
@@ -433,7 +641,9 @@ fn _pollAndWake(sched: *u8, timeoutMs: i32): void {
                 i = i + 1
             }
             _wakeReadyTasks(sched, fds, n)
+            _wakeSelectFds(sched, fds, n)
         }
+        _wakeSelectTimers(sched)
         _drainXfer(sched)
     }
 }

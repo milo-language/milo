@@ -59,7 +59,7 @@ Impl notes: waiter nodes live on the parked task's stack (frame stays alive whil
 
 Impl notes: added `readFd`/`writeFd`/`acceptFd`/`connectFd` plus TLS twins `sslConnectFd`/`sslReadFd`/`sslWriteFd` in std/os (imports std/runtime — resolver visited-set makes the cycle safe). `connectFd` does nonblocking connect → park writable → `getsockopt(SO_ERROR)`. New platform consts `einprogress`/`soError`. Deleted inline green-IO from io/net/ws/pty (all four platforms); `_readSome`/`_SSL_ERROR_*` in ws collapsed into the wrappers. Verified live: HTTPS `fetch()` from a green task returns 200 (real TLS handshake through parked SSL IO). Fixtures: `greenIoPipe`, `tcpGreenConnectRefused`.
 
-### Phase 3 — select
+### Phase 3 — select — DONE
 
 - Runtime: allow one task to register N wait sources (channel waiter entries + fd registrations); first ready wins, task deregisters the rest on wake.
 - API (stdlib first, syntax later if earned):
@@ -73,6 +73,14 @@ Impl notes: added `readFd`/`writeFd`/`acceptFd`/`connectFd` plus TLS twins `sslC
   `wait()` returns the armed index; the winning recv's value fetched via `sel.takeRecv<T>(0)` or arm-local `tryRecv` after wake (decide during impl — heterogeneous `T` across arms is the constraint; per-arm fetch avoids compiler work).
 - Timeout arm rides the event loop poll timeout.
 - Fixture: fd-or-channel race both directions; timeout fires.
+
+Impl notes (`std/select.milo` + runtime/sync additions):
+- One unified 48-byte waiter Node (runtime) serves plain channel park **and** every Select arm; channel wait lists hold kind 0 (plain) / 1-2 (sel recv/send), scheduler `sSelFdHead` holds kind 3-5 (read/write/timer). This replaced the old 16-byte `[task,next]` channel node.
+- `SelectState` = mutex + `claimed`(-1) + `task` + `parked`. Claim protocol: a firing source calls `_selectTryClaim(state, arm)` (sets claimed once, unparks only if `parked==1`); the task's `_selectWaitState` sets `parked` under the same mutex then parks. The parked-gate is what makes the arm-time-vs-park race safe, including a foreign pthread firing a channel mid-arming.
+- Chose **per-arm fetch**: `wait()` returns the index, user re-reads (`ch.recv()`/`readFd`). Documented single-consumer requirement (TOCTOU if a second consumer drains between claim and fetch).
+- Channel arms are free generic fns `selectRecv`/`selectSend` (no method-level generics in Milo); `onRead`/`onWrite`/`onTimeout` are methods. Timer arms ride `_selMinTimeout` shrinking the poll timeout; fd arms register with the event loop and are claimed in `_pollAndWake`.
+- Verified: channel-wins, timeout-fires, fd-wins, and cross-thread pthread→parked-select (10/10 stable). Fixtures: `selectChannelVsTimeout`, `selectFdVsChannel`.
+- Not yet done: `select` syntax sugar (stdlib-only for now); `onWrite` has no fixture (symmetric to `onRead`).
 
 ### Phase 4 — Promise rework + Go exit semantics
 
