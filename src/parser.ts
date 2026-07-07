@@ -139,7 +139,7 @@ export class Parser {
     if (this.at(TokenKind.Import)) {
       const tok = this.advance();
       const pathTok = this.expect(TokenKind.String);
-      this.error(`use 'from "${pathTok.value}" import { ... }' or 'from "${pathTok.value}" import *'`, tok);
+      this.error(`use 'from "${pathTok.value}" import { ... }'`, tok);
     }
     this.error("expected 'from' import declaration", this.peek());
   }
