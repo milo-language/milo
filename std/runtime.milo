@@ -1,21 +1,23 @@
 // std/runtime — green thread scheduler using ucontext for stackful coroutines
 //
-// Task layout (64 bytes, 8-byte aligned):
+// Task layout (72 bytes, 8-byte aligned):
 //   0: context (*u8)      8: stack (*u8)       16: totalStackSize (i64)
 //  24: state (i32)        28: waitFd (i32)      32: waitWrite (u8) + 7 pad
 //  40: next (*u8)         48: closureFn (*u8)   56: closureEnv (*u8)
+//  64: sched (*u8)  — home scheduler, lets a foreign thread unpark this task
 //
-// Scheduler layout (48 bytes):
+// Scheduler layout (80 bytes):
 //   0: context (*u8)       8: runHead (*u8)     16: runTail (*u8)
-//  24: current (*u8)      32: numTasks (i64)    40: eventLoopFd (i32) + pad
+//  24: current (*u8)      32: numTasks (i64)    40: eventLoopFd (i32)  44: wakeupId (i32)
+//  48: waitHead (*u8)     56: xferMutex (*u8)   64: xferHead (*u8)    72: pad
 
-from "std/os" import { malloc, free, memcpy, memset, mmap, munmap, mprotect }
+from "std/os" import { malloc, free, memcpy, memset, mmap, munmap, mprotect, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy }
 from "std/platform" import {
     getcontext, makecontext, swapcontext,
     uctxSize, uctxStackPtrOffset, uctxStackSizeOffset, uctxLinkOffset,
     protRead, protWrite, protNone, mapPrivate, mapAnon
 }
-from "std/event" import { EventLoop, eventLoopNew, eventLoopFromFd, eventLoopFd, eventPoll, eventRegisterRead, eventRegisterWrite, eventDeregister, eventLoopClose }
+from "std/event" import { EventLoop, eventLoopNew, eventLoopFromFd, eventLoopFd, eventPoll, eventRegisterRead, eventRegisterWrite, eventDeregister, eventLoopClose, eventLoopInitWakeup, eventLoopNotify, eventLoopDrainWakeup, eventLoopCloseWakeup }
 from "std/sync" import { Channel }
 
 // ── constants ──
@@ -24,10 +26,13 @@ fn taskReady(): i32 { return 0 }
 fn taskRunning(): i32 { return 1 }
 fn taskWaitingIo(): i32 { return 2 }
 fn taskDone(): i32 { return 3 }
+// parked: off every scheduler list; whoever holds the task pointer (e.g. a
+// channel waiter entry) is responsible for a future schedulerUnpark
+fn taskWaitingPark(): i32 { return 4 }
 fn defaultStackSize(): i64 { return 1048576 }
 fn guardPageSize(): i64 { return 4096 }
-fn taskStructSize(): i64 { return 64 }
-fn schedStructSize(): i64 { return 48 }
+fn taskStructSize(): i64 { return 72 }
+fn schedStructSize(): i64 { return 80 }
 
 // task field offsets
 fn tCtx(): i64 { return 0 }
@@ -39,6 +44,7 @@ fn tWaitWrite(): i64 { return 32 }
 fn tNext(): i64 { return 40 }
 fn tClosureFn(): i64 { return 48 }
 fn tClosureEnv(): i64 { return 56 }
+fn tSched(): i64 { return 64 }
 
 // scheduler field offsets
 fn sCtx(): i64 { return 0 }
@@ -47,11 +53,12 @@ fn sRunTail(): i64 { return 16 }
 fn sCurrent(): i64 { return 24 }
 fn sNumTasks(): i64 { return 32 }
 fn sElFd(): i64 { return 40 }
+fn sWakeupId(): i64 { return 44 }
 // waiting list head (tasks blocked on I/O)
 fn sWaitHead(): i64 { return 48 }
-
-// scheduler total: 56 bytes
-//  40: eventLoopFd (i32)  44: pad(4)  48: waitHead (*u8)
+// cross-thread unpark transfer list (mutex-guarded; drained after each poll)
+fn sXferMutex(): i64 { return 56 }
+fn sXferHead(): i64 { return 64 }
 
 // ── helpers to read/write i64, i32, ptr at offset ──
 
@@ -109,8 +116,8 @@ fn schedulerEnsureInit(): void {
     unsafe {
         if _getSched() as i64 != 0 { return }
 
-        let sched = malloc(56)
-        memset(sched, 0, 56)
+        let sched = malloc(schedStructSize())
+        memset(sched, 0, schedStructSize())
 
         let ctx = malloc(uctxSize())
         memset(ctx, 0, uctxSize())
@@ -119,6 +126,11 @@ fn schedulerEnsureInit(): void {
 
         let el = eventLoopNew()!
         _rtWriteI32(sched, sElFd(), eventLoopFd(el))
+        _rtWriteI32(sched, sWakeupId(), eventLoopInitWakeup(el))
+
+        let xmtx = malloc(64)
+        pthread_mutex_init(xmtx, 0 as *u8)
+        _rtWritePtr(sched, sXferMutex(), xmtx)
 
         _setSched(sched)
     }
@@ -157,6 +169,7 @@ impl Task {
             _rtWriteI32(task, tWaitFd(), -1)
             _rtWritePtr(task, tClosureFn(), fnPtr)
             _rtWritePtr(task, tClosureEnv(), envPtr)
+            _rtWritePtr(task, tSched(), sched)
 
             let total = guardPageSize() + defaultStackSize()
             let stackMem = mmap(0 as *u8, total, protRead() | protWrite(), mapPrivate() | mapAnon(), -1, 0 as i64)
@@ -341,6 +354,88 @@ fn schedulerCurrent(): *u8 {
     }
 }
 
+// ── park / unpark ──
+
+// Suspend the current task and switch to the scheduler. The task lands on no
+// scheduler list: the caller must have stashed schedulerCurrent() somewhere a
+// future schedulerUnpark can find it, or the task never runs again.
+// Unpark must not precede park on the same thread — cross-thread unparks are
+// safe at any time because they are applied only in scheduler context.
+fn schedulerPark(): void {
+    unsafe {
+        let sched = _getSched()
+        if sched as i64 == 0 { return }
+        let task = _rtReadPtr(sched, sCurrent())
+        if task as i64 == 0 { return }
+        _rtWriteI32(task, tState(), taskWaitingPark())
+        swapcontext(_rtReadPtr(task, tCtx()), _rtReadPtr(sched, sCtx()))
+    }
+}
+
+// Make a parked task runnable. Safe from any thread: on the task's own
+// scheduler thread it goes straight to the run queue; from a foreign thread
+// it is pushed onto the mutex-guarded transfer list and the scheduler's
+// wakeup event is signaled so a blocked poll returns promptly.
+fn schedulerUnpark(task: *u8): void {
+    unsafe {
+        if task as i64 == 0 { return }
+        let home = _rtReadPtr(task, tSched())
+        if home as i64 == 0 { return }
+        if home as i64 == _getSched() as i64 {
+            _rtWriteI32(task, tState(), taskReady())
+            _enqueueRun(home, task)
+        } else {
+            let mtx = _rtReadPtr(home, sXferMutex())
+            pthread_mutex_lock(mtx)
+            _rtWritePtr(task, tNext(), _rtReadPtr(home, sXferHead()))
+            _rtWritePtr(home, sXferHead(), task)
+            pthread_mutex_unlock(mtx)
+            var el = eventLoopFromFd(_rtReadI32(home, sElFd()))
+            eventLoopNotify(el, _rtReadI32(home, sWakeupId()))
+        }
+    }
+}
+
+// move cross-thread unparked tasks onto the run queue (scheduler thread only)
+fn _drainXfer(sched: *u8): void {
+    unsafe {
+        let mtx = _rtReadPtr(sched, sXferMutex())
+        pthread_mutex_lock(mtx)
+        var cur = _rtReadPtr(sched, sXferHead())
+        _rtWritePtr(sched, sXferHead(), 0 as *u8)
+        pthread_mutex_unlock(mtx)
+        while cur as i64 != 0 {
+            let next = _rtReadPtr(cur, tNext())
+            _rtWriteI32(cur, tState(), taskReady())
+            _enqueueRun(sched, cur)
+            cur = next
+        }
+    }
+}
+
+// poll the event loop once and make everything runnable that became ready:
+// io-waiting tasks whose fd fired, and cross-thread unparks via the wakeup event
+fn _pollAndWake(sched: *u8, timeoutMs: i32): void {
+    unsafe {
+        var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+        var readyBuf: [u8 ; 256] = [0 ; 256]
+        let n = eventPoll(el, readyBuf as *i32, 64, timeoutMs)
+        if n > 0 {
+            let wakeupId = _rtReadI32(sched, sWakeupId())
+            let fds = readyBuf as *i32
+            var i = 0
+            while i < n {
+                if fds[i as i64] == wakeupId {
+                    eventLoopDrainWakeup(el, wakeupId)
+                }
+                i = i + 1
+            }
+            _wakeReadyTasks(sched, fds, n)
+        }
+        _drainXfer(sched)
+    }
+}
+
 // ── internal queue ops ──
 
 fn _enqueueRun(sched: *u8, task: *u8): void {
@@ -467,12 +562,7 @@ fn _schedulerTick(): void {
 
         // poll event loop
         if _rtReadI64(sched, sNumTasks()) > 0 {
-            var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
-            var readyBuf: [u8 ; 256] = [0 ; 256]
-            let n = eventPoll(el, readyBuf as *i32, 64, 100)
-            if n > 0 {
-                _wakeReadyTasks(sched, readyBuf as *i32, n)
-            }
+            _pollAndWake(sched, 100)
         }
     }
 }
@@ -519,18 +609,17 @@ fn _schedulerDrain(): void {
             if _rtReadI64(sched, sNumTasks()) == 0 { break }
 
             // poll event loop
-            var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
-            var readyBuf: [u8 ; 256] = [0 ; 256]
-            let n = eventPoll(el, readyBuf as *i32, 64, 100)
-            if n > 0 {
-                _wakeReadyTasks(sched, readyBuf as *i32, n)
-            }
+            _pollAndWake(sched, 100)
         }
 
         // cleanup
         free(_rtReadPtr(sched, sCtx()))
         var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
+        eventLoopCloseWakeup(el, _rtReadI32(sched, sWakeupId()))
         eventLoopClose(el)
+        let xmtx = _rtReadPtr(sched, sXferMutex())
+        pthread_mutex_destroy(xmtx)
+        free(xmtx)
         free(sched)
         _setSched(0 as *u8)
     }

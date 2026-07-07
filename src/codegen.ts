@@ -588,7 +588,9 @@ export class Codegen {
     this.output.splice(1, 0, "@_milo_argc_global = internal global i32 0");
 
     if (this.usesSchedulerGlobal) {
-      this.output.splice(1, 0, "@_milo_scheduler = internal global ptr null");
+      // thread_local: each OS thread gets its own scheduler slot, so a pthread
+      // never observes the main thread's scheduler and misreads green context
+      this.output.splice(1, 0, "@_milo_scheduler = internal thread_local global ptr null");
     }
 
     // emit module-level globals

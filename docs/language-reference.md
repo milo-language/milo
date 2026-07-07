@@ -1864,6 +1864,16 @@ fn main(): i32 {
 
 Green threads run cooperatively. The compiler automatically injects a scheduler drain at the end of `main` that runs all spawned green threads to completion.
 
+Because the drain waits for *all* tasks, `return` from `main` after spawning long-lived tasks (e.g. a server accept loop) never exits. On error paths, call `exit(code)` instead — it terminates the process immediately, bypassing the drain:
+
+```milo
+let bindFailed = true
+if bindFailed {
+    eprint("bind failed")
+    exit(1)      // return 1 would hang waiting on spawned tasks
+}
+```
+
 ### Cooperative Yielding
 
 Green threads yield control explicitly with `schedulerYield()`:

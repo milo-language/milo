@@ -106,10 +106,13 @@ struct Kevent {
 
 fn evfiltRead(): i16 { return -1 as i16 }
 fn evfiltWrite(): i16 { return -2 as i16 }
+fn evfiltUser(): i16 { return -10 as i16 }
 fn evAdd(): u16 { return 1 as u16 }
 fn evDelete(): u16 { return 2 as u16 }
 fn evEnable(): u16 { return 4 as u16 }
 fn evOneshot(): u16 { return 16 as u16 }
+fn evClear(): u16 { return 32 as u16 }
+fn noteTrigger(): u32 { return 16777216 }
 
 // ── fcntl / non-blocking ──
 

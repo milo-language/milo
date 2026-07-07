@@ -4,7 +4,7 @@ from "std/os" import { close, malloc, free, memset }
 from "std/platform" import {
     kqueue, kevent, Kevent,
     fcntl, fGetfl, fSetfl, oNonblock,
-    evfiltRead, evfiltWrite, evAdd, evDelete
+    evfiltRead, evfiltWrite, evfiltUser, evAdd, evDelete, evClear, noteTrigger
 }
 
 fn keventSize(): i64 { return 32 }
@@ -117,6 +117,63 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
 
         free(evBuf)
         return n
+    }
+}
+
+// ── wakeup event (cross-thread poll interruption) ──
+// EVFILT_USER: an in-kernel event with no fd. EV_CLEAR auto-resets it on
+// delivery, so there is nothing to drain after a wakeup.
+
+// ident chosen far above any real fd so eventPoll consumers can tell a wakeup
+// apart from fd readiness in the same readyFds array
+fn wakeupIdentBase(): i32 { return 1073741824 }
+
+fn eventLoopInitWakeup(el: &EventLoop): i32 {
+    unsafe {
+        var ev = Kevent {
+            ident: wakeupIdentBase() as u64,
+            filter: evfiltUser(),
+            flags: evAdd() | evClear(),
+            fflags: 0,
+            data: 0,
+            udata: 0 as *u8,
+        }
+        let r = kevent(el.kqfd, (&ev) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+        if r < 0 { return -1 }
+        return wakeupIdentBase()
+    }
+}
+
+// safe from any thread: kevent on a shared kqueue is thread-safe
+fn eventLoopNotify(el: &EventLoop, wakeupId: i32): i32 {
+    unsafe {
+        var ev = Kevent {
+            ident: wakeupId as u64,
+            filter: evfiltUser(),
+            flags: 0,
+            fflags: noteTrigger(),
+            data: 0,
+            udata: 0 as *u8,
+        }
+        return kevent(el.kqfd, (&ev) as *u8, 1, 0 as *u8, 0, 0 as *u8)
+    }
+}
+
+fn eventLoopDrainWakeup(_el: &EventLoop, _wakeupId: i32): void {
+    // EV_CLEAR already reset the event; nothing to consume on darwin
+}
+
+fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
+    unsafe {
+        var ev = Kevent {
+            ident: wakeupId as u64,
+            filter: evfiltUser(),
+            flags: evDelete(),
+            fflags: 0,
+            data: 0,
+            udata: 0 as *u8,
+        }
+        kevent(el.kqfd, (&ev) as *u8, 1, 0 as *u8, 0, 0 as *u8)
     }
 }
 

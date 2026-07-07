@@ -1,0 +1,28 @@
+// @expect: parking
+// @expect: unparking
+// @expect: resumed
+
+from "std/runtime" import { Task, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerYield }
+from "std/sync" import { AtomicI64 }
+
+fn main(): i32 {
+    let slot = AtomicI64.new(0)
+
+    Task.spawn(move (): void => {
+        slot.store(schedulerCurrent() as i64)
+        print("parking")
+        schedulerPark()
+        print("resumed")
+        slot.destroy()
+    })
+
+    Task.spawn(move (): void => {
+        while slot.load() == 0 {
+            schedulerYield()
+        }
+        print("unparking")
+        unsafe { schedulerUnpark(slot.load() as *u8) }
+    })
+
+    return 0
+}

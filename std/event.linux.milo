@@ -2,7 +2,7 @@
 // epoll_event struct: 12 bytes { events: u32, data: union(u64) }
 // we store fd in the data field as i32 + pad
 
-from "std/os" import { close, malloc, free, memset }
+from "std/os" import { close, malloc, free, memset, read, write }
 from "std/platform" import {
     epoll_create1, epoll_ctl, epoll_wait,
     fcntl, fGetfl, fSetfl, oNonblock,
@@ -95,6 +95,53 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
 
         free(evBuf)
         return n
+    }
+}
+
+// ── wakeup event (cross-thread poll interruption) ──
+// eventfd registered for read; a write from any thread makes epoll_wait return.
+
+extern
+fn eventfd(initval: u32, flags: i32): i32
+
+fn efdNonblock(): i32 { return 2048 }
+fn efdCloexec(): i32 { return 524288 }
+
+fn eventLoopInitWakeup(el: &EventLoop): i32 {
+    unsafe {
+        let efd = eventfd(0, efdNonblock() | efdCloexec())
+        if efd < 0 { return -1 }
+        if eventRegisterRead(el, efd) < 0 {
+            close(efd)
+            return -1
+        }
+        return efd
+    }
+}
+
+// safe from any thread: write(2) on an eventfd is atomic
+fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
+    unsafe {
+        var one: u64 = 1
+        let n = write(wakeupId, (&one) as *u8, 8)
+        if n == 8 { return 0 }
+        return -1
+    }
+}
+
+// eventfd is level-triggered under epoll; the counter must be consumed or
+// every subsequent poll reports it ready again
+fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void {
+    unsafe {
+        var buf: u64 = 0
+        read(wakeupId, (&buf) as *u8, 8)
+    }
+}
+
+fn eventLoopCloseWakeup(el: &EventLoop, wakeupId: i32): void {
+    unsafe {
+        eventDeregister(el, wakeupId, false)
+        close(wakeupId)
     }
 }
 

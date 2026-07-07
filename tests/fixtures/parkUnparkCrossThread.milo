@@ -1,0 +1,29 @@
+// @expect: parking
+// @expect: resumed
+
+from "std/runtime" import { Task, schedulerCurrent, schedulerPark, schedulerUnpark }
+from "std/sync" import { AtomicI64 }
+from "std/thread" import { Thread }
+
+fn main(): i32 {
+    let slot = AtomicI64.new(0)
+
+    Task.spawn(move (): void => {
+        slot.store(schedulerCurrent() as i64)
+        print("parking")
+        schedulerPark()
+        print("resumed")
+    })
+
+    // foreign pthread unparks the task via the transfer list + wakeup event
+    let _t = Thread.spawn(move (): void => {
+        while slot.load() == 0 {}
+        // give the task time to actually reach schedulerPark after storing slot
+        Thread.sleep(50)
+        unsafe { schedulerUnpark(slot.load() as *u8) }
+    })!
+
+    // main's implicit drain runs the task; the thread is done before the task
+    // resumes, so it is not joined (joining before drain would deadlock)
+    return 0
+}
