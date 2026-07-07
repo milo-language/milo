@@ -1059,7 +1059,8 @@ The compiler determines whether an extern call needs `unsafe` based on the argum
 **Safe** (no `unsafe` needed) when:
 - All pointer params receive auto-coerced args: `string`→`*u8`, `[T;N]`→`*T`, matching `*T`→`*T`
 - Function-typed params receive a matching Milo function
-- Return type is scalar or `void`
+- By-value `extern struct` args (exact type match) — a POD bit-copy with no provenance
+- Return type is scalar, `void`, or a by-value `extern struct`
 
 **Unsafe** when:
 - Return type is a pointer (`*T`) — unknown provenance
@@ -1158,6 +1159,61 @@ unsafe {
     let family = addr.sin_family
 }
 ```
+
+### Passing Structs by Value
+
+An `extern struct` may cross the C ABI **by value** — as an argument and as a return
+value. The compiler classifies each struct per the platform ABI (AAPCS64 on ARM64,
+System V on x86-64): small structs are coerced into registers, homogeneous-float
+structs go in SIMD/SSE registers, larger ones pass indirectly (`byval`) and return via
+a hidden pointer (`sret`). The lowering matches what clang emits, so calls interoperate
+with real C libraries.
+
+```milo
+extern struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+extern fn vec2_add(a: Vec2, b: Vec2): Vec2
+
+fn main(): i32 {
+    let a = Vec2 { x: 1.0, y: 2.0 }
+    let b = Vec2 { x: 3.0, y: 4.0 }
+    let c = vec2_add(a, b)        // safe — by-value extern struct, no unsafe needed
+    print(c.x)
+    return 0
+}
+```
+
+**Rules and limits:**
+
+- Only an `extern struct` may cross by value. A regular struct passed by value to an
+  extern function is a compile error — declare it `extern struct`, or pass it by
+  reference (`&T`).
+- Extern-struct fields must be C-representable: integers, floats, `bool`, pointers
+  (`*T`), nested extern structs, and fixed arrays of those. `string`, `Vec`, enums, and
+  other managed types are rejected — every extern struct is plain-old-data (Copy, no
+  drop glue), so passing one leaves the original usable.
+- Not supported (compile error, pass `&T` instead): a struct in a variadic (`...`)
+  position, an `enum` crossing the ABI, a function-pointer parameter that itself passes
+  a struct by value, and struct-by-value on bare-metal ARM (AAPCS32).
+
+### Generating C Headers
+
+`build-lib` writes a companion C header next to the archive so C code can call into a
+Milo library:
+
+```bash
+milo build-lib mathlib.milo -o libmathlib.a   # also writes libmathlib.h
+milo emit-obj mathlib.milo --emit-header       # writes mathlib.h next to mathlib.o
+```
+
+The header declares the exported functions and the extern structs (opaque `extern type`
+declarations become forward `typedef struct X X;`). Anything without a stable C
+spelling — a `Vec`/`String`/enum in a signature, or (until define-side ABI lowering
+lands) an exported function that passes or returns a struct by value — is emitted as a
+`/* skipped: ... */` comment so the header stays valid and the gap stays visible.
 
 ### Typed Function Pointers in Extern Decls
 
@@ -2147,6 +2203,8 @@ The parser auto-handles `--help`/`-h` and validates required args, integer forma
 | FFI | `extern fn name(args): ret` |
 | Opaque foreign type | `extern type Name` |
 | Extern struct | `extern struct Name { field: Type }` |
+| Struct by value across FFI | `extern fn f(v: ExternStruct): ExternStruct` |
+| C header for a library | `milo build-lib lib.milo -o lib.a` writes `lib.h` |
 | String to C ptr | `s.cstr()` returns `*u8` |
 | Trait | `trait Name { fn method(self: &Self): T }` |
 | Impl trait | `impl Trait for Type { ... }` |
