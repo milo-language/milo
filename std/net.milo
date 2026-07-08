@@ -5,6 +5,7 @@ from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSo
 from "std/json" import { Json, jsonParse }
 from "std/sync" import { Channel }
 from "std/io" import { fdChannel }
+from "std/runtime" import { Task }
 
 // ── NetError ──
 
@@ -276,6 +277,32 @@ impl TlsStream {
             }
         }
         return Result.Ok(result)
+    }
+
+    // Stream decrypted inbound bytes as an iterable channel, pumped on a green
+    // task — the uniform async-read API, TLS variant. Uses the SSL-aware read
+    // (parks on WANT_READ) rather than the raw-fd fdChannel. `for chunk in
+    // tls.incoming()`; the channel closes at EOF / on SSL error.
+    fn incoming(self: &Self): Channel<string> {
+        let ch = Channel<string>.new(256)!
+        let ssl = self.ssl
+        let fd = self.fd
+        Task.spawn(move (): void => {
+            var buf: [u8 ; 4096] = [0 ; 4096]
+            while true {
+                var n: i32 = 0
+                unsafe { n = sslReadFd(ssl as *u8, fd, buf as *u8, 4096) }
+                if n <= 0 { break }
+                var data: string = ""
+                for i in 0..n as i64 { data.push(buf[i]) }
+                match ch.send(data) {
+                    Result.Ok(_v) => {}
+                    Result.Err(_e) => { break }
+                }
+            }
+            ch.close()
+        })
+        return ch
     }
 }
 

@@ -323,6 +323,17 @@ fn TlsStream.connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, N
 
 _Undocumented._
 
+### `TlsStream.incoming`
+
+```milo
+fn TlsStream.incoming(self: &TlsStream): Channel<string>
+```
+
+Stream decrypted inbound bytes as an iterable channel, pumped on a green
+task — the uniform async-read API, TLS variant. Uses the SSL-aware read
+(parks on WANT_READ) rather than the raw-fd fdChannel. `for chunk in
+tls.incoming()`; the channel closes at EOF / on SSL error.
+
 ### `TlsStream.recv`
 
 ```milo
