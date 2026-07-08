@@ -1032,6 +1032,287 @@ function handleCodeLens(uri: string): object[] {
   return lenses;
 }
 
+// ── Shared: identifier occurrences (text-based) ──
+// milod's semantics are name-based (like hover/definition): we scan source text
+// for whole-word matches, skipping string literals and line comments. Not
+// scope-aware — a v1 that matches the rest of the server. Multi-line strings are
+// not handled (Milo string literals are single-line).
+function escapeRe(s: string): string { return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+
+function isInStringOrComment(line: string, idx: number): boolean {
+  let inStr = false;
+  for (let i = 0; i < idx; i++) {
+    const c = line[i];
+    if (c === '"' && line[i - 1] !== "\\") inStr = !inStr;
+    else if (!inStr && c === "/" && line[i + 1] === "/") return true;
+  }
+  return inStr;
+}
+
+function wordOccurrences(source: string, word: string): { line: number; startCol: number }[] {
+  const out: { line: number; startCol: number }[] = [];
+  const lines = source.split("\n");
+  const re = new RegExp(`\\b${escapeRe(word)}\\b`, "g");
+  for (let i = 0; i < lines.length; i++) {
+    let m: RegExpExecArray | null;
+    re.lastIndex = 0;
+    while ((m = re.exec(lines[i]))) {
+      if (!isInStringOrComment(lines[i], m.index)) out.push({ line: i, startCol: m.index });
+    }
+  }
+  return out;
+}
+
+function nameRangeOnLine(source: string, line: number, name: string): object {
+  const text = source.split("\n")[line] ?? "";
+  const col = Math.max(0, text.indexOf(name));
+  return { start: { line, character: col }, end: { line, character: col + name.length } };
+}
+
+function fullLineRange(source: string, line: number): object {
+  const text = source.split("\n")[line] ?? "";
+  return { start: { line, character: 0 }, end: { line, character: text.length } };
+}
+
+function posToOffset(source: string, line: number, character: number): number {
+  const lines = source.split("\n");
+  let off = 0;
+  for (let i = 0; i < line && i < lines.length; i++) off += lines[i].length + 1;
+  return off + character;
+}
+
+function offsetToPos(source: string, offset: number): { line: number; character: number } {
+  let line = 0, col = 0;
+  for (let i = 0; i < offset && i < source.length; i++) {
+    if (source[i] === "\n") { line++; col = 0; } else col++;
+  }
+  return { line, character: col };
+}
+
+// ── Document symbols (outline) ──
+
+function handleDocumentSymbol(uri: string): object[] {
+  const source = documents.get(uri);
+  if (!source) return [];
+  const sym = (name: string, kind: number, line: number, children?: object[]) => ({
+    name, kind,
+    range: fullLineRange(source, line),
+    selectionRange: nameRangeOnLine(source, line, name),
+    ...(children && children.length ? { children } : {}),
+  });
+  try {
+    const parsed = new Parser(new Lexer(source).tokenize()).parse();
+    const out: object[] = [];
+    for (const f of parsed.functions) {
+      if (f.isExtern) continue;
+      const line = findFnLine(source, f.name);
+      if (line >= 0) out.push(sym(f.name, 12 /*Function*/, line));
+    }
+    for (const s of parsed.structs) {
+      const line = findDeclLine(source, "struct", s.name);
+      if (line < 0) continue;
+      const fields = s.fields.map(fl => sym(fl.name, 8 /*Field*/, line));
+      out.push(sym(s.name, 23 /*Struct*/, line, fields));
+    }
+    for (const e of parsed.enums) {
+      const line = findDeclLine(source, "enum", e.name);
+      if (line < 0) continue;
+      const variants = e.variants.map(v => sym(v.name, 22 /*EnumMember*/, line));
+      out.push(sym(e.name, 10 /*Enum*/, line, variants));
+    }
+    for (const ta of parsed.typeAliases) {
+      const line = findDeclLine(source, "type", ta.name);
+      if (line >= 0) out.push(sym(ta.name, 5 /*Class*/, line));
+    }
+    for (const iface of parsed.interfaces) {
+      const line = findDeclLine(source, "interface", iface.name);
+      if (line < 0) continue;
+      const methods = iface.methods.map(m => sym(m.name, 6 /*Method*/, line));
+      out.push(sym(iface.name, 11 /*Interface*/, line, methods));
+    }
+    for (const impl of parsed.impls) {
+      const line = findDeclLine(source, "impl", impl.typeName);
+      if (line < 0) continue;
+      const methods = impl.methods.map(m => {
+        const mLine = findFnLine(source, m.name);
+        return sym(m.name, 6 /*Method*/, mLine >= 0 ? mLine : line);
+      });
+      out.push(sym(`impl ${impl.typeName}`, 5 /*Class*/, line, methods));
+    }
+    return out;
+  } catch { return []; }
+}
+
+// ── Code actions (quickfix from diagnostics) ──
+
+function handleCodeAction(uri: string, range: any): object[] {
+  const source = documents.get(uri);
+  if (!source) return [];
+  let diags: Diagnostic[] = [];
+  try {
+    const parsed = new Parser(new Lexer(source).tokenize()).parse();
+    const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+    const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
+    diags = new TypeChecker().check(program).diagnostics;
+  } catch { return []; }
+
+  const actions: object[] = [];
+  for (const d of diags) {
+    if (d.code !== "unused-unsafe" || !d.span) continue;
+    // Only offer the fix if the diagnostic sits within the requested range's lines.
+    const dl = d.span.line - 1;
+    if (dl < range.start.line || dl > range.end.line) continue;
+    const edit = unwrapUnsafeEdit(source, d.span.line - 1, d.span.col - 1);
+    if (!edit) continue;
+    actions.push({
+      title: "Remove unnecessary 'unsafe'",
+      kind: "quickfix",
+      diagnostics: [{
+        range: { start: { line: dl, character: d.span.col - 1 }, end: { line: dl, character: d.span.col } },
+        severity: 2, source: "milo", message: d.message,
+      }],
+      edit: { changes: { [uri]: [edit] } },
+    });
+  }
+  return actions;
+}
+
+// Unwrap `unsafe { X }` -> `X` at the given 0-based position of the `unsafe` keyword.
+function unwrapUnsafeEdit(source: string, line: number, col: number): object | null {
+  const start = posToOffset(source, line, col);
+  if (source.slice(start, start + 6) !== "unsafe") return null;
+  const open = source.indexOf("{", start + 6);
+  if (open < 0) return null;
+  let depth = 0, close = -1;
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") { depth--; if (depth === 0) { close = i; break; } }
+  }
+  if (close < 0) return null;
+  const inner = source.slice(open + 1, close).trim();
+  return {
+    range: { start: offsetToPos(source, start), end: offsetToPos(source, close + 1) },
+    newText: inner,
+  };
+}
+
+// ── Signature help ──
+
+function handleSignatureHelp(uri: string, line: number, character: number): object | null {
+  const source = documents.get(uri);
+  if (!source) return null;
+  const lineText = (source.split("\n")[line] ?? "").slice(0, character);
+  // Walk left to the open paren of the enclosing call, tracking nesting.
+  let depth = 0, openIdx = -1;
+  for (let i = lineText.length - 1; i >= 0; i--) {
+    const c = lineText[i];
+    if (c === ")") depth++;
+    else if (c === "(") { if (depth === 0) { openIdx = i; break; } depth--; }
+  }
+  if (openIdx < 0) return null;
+  const name = getWordAt(source, line, openIdx - 1);
+  if (!name) return null;
+  // Active parameter = top-level commas between the open paren and the cursor.
+  let active = 0, d2 = 0;
+  for (let i = openIdx + 1; i < lineText.length; i++) {
+    const c = lineText[i];
+    if (c === "(" || c === "[") d2++;
+    else if (c === ")" || c === "]") d2--;
+    else if (c === "," && d2 === 0) active++;
+  }
+  try {
+    const parsed = new Parser(new Lexer(source).tokenize()).parse();
+    const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+    const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
+    const mk = (label: string, params: string[]) => ({
+      signatures: [{ label, parameters: params.map(p => ({ label: p })) }],
+      activeSignature: 0, activeParameter: Math.min(active, Math.max(0, params.length - 1)),
+    });
+    const f = program.functions.find(fn => fn.name === name && !fn.isExtern);
+    if (f) {
+      const ps = f.params.map(p => `${p.name}: ${formatMiloType(p.type)}`);
+      return mk(`fn ${f.name}(${ps.join(", ")}): ${formatMiloType(f.retType)}`, ps);
+    }
+    for (const impl of program.impls) {
+      for (const m of impl.methods) {
+        if (m.name === name) {
+          const ps = m.params.filter(p => p.name !== "self").map(p => `${p.name}: ${formatMiloType(p.type)}`);
+          return mk(`fn ${impl.typeName}.${m.name}(${ps.join(", ")}): ${formatMiloType(m.retType)}`, ps);
+        }
+      }
+    }
+  } catch { return null; }
+  return null;
+}
+
+// ── References / document highlight / rename (text-based, across open docs) ──
+
+function referenceLocations(word: string): { uri: string; line: number; startCol: number }[] {
+  const locs: { uri: string; line: number; startCol: number }[] = [];
+  for (const [docUri, src] of documents) {
+    for (const occ of wordOccurrences(src, word)) locs.push({ uri: docUri, ...occ });
+  }
+  return locs;
+}
+
+function handleReferences(uri: string, line: number, character: number): object[] {
+  const source = documents.get(uri);
+  if (!source) return [];
+  const word = getWordAt(source, line, character);
+  if (!word) return [];
+  return referenceLocations(word).map(l => ({
+    uri: l.uri,
+    range: { start: { line: l.line, character: l.startCol }, end: { line: l.line, character: l.startCol + word.length } },
+  }));
+}
+
+function handleDocumentHighlight(uri: string, line: number, character: number): object[] {
+  const source = documents.get(uri);
+  if (!source) return [];
+  const word = getWordAt(source, line, character);
+  if (!word) return [];
+  return wordOccurrences(source, word).map(o => ({
+    range: { start: { line: o.line, character: o.startCol }, end: { line: o.line, character: o.startCol + word.length } },
+    kind: 1 /*Text*/,
+  }));
+}
+
+function handleRename(uri: string, line: number, character: number, newName: string): object | null {
+  const source = documents.get(uri);
+  if (!source) return null;
+  const word = getWordAt(source, line, character);
+  if (!word) return null;
+  const changes: Record<string, object[]> = {};
+  for (const l of referenceLocations(word)) {
+    (changes[l.uri] ??= []).push({
+      range: { start: { line: l.line, character: l.startCol }, end: { line: l.line, character: l.startCol + word.length } },
+      newText: newName,
+    });
+  }
+  return { changes };
+}
+
+// ── Workspace symbols ──
+
+function handleWorkspaceSymbol(query: string): object[] {
+  const q = query.toLowerCase();
+  const out: object[] = [];
+  const push = (name: string, kind: number, uri: string, line: number) => {
+    if (q && !name.toLowerCase().includes(q)) return;
+    out.push({ name, kind, location: { uri, range: nameRangeOnLine(documents.get(uri) ?? "", line, name) } });
+  };
+  for (const [uri, src] of documents) {
+    try {
+      const parsed = new Parser(new Lexer(src).tokenize()).parse();
+      for (const f of parsed.functions) { if (f.isExtern) continue; const ln = findFnLine(src, f.name); if (ln >= 0) push(f.name, 12, uri, ln); }
+      for (const s of parsed.structs) { const ln = findDeclLine(src, "struct", s.name); if (ln >= 0) push(s.name, 23, uri, ln); }
+      for (const e of parsed.enums) { const ln = findDeclLine(src, "enum", e.name); if (ln >= 0) push(e.name, 10, uri, ln); }
+      for (const ta of parsed.typeAliases) { const ln = findDeclLine(src, "type", ta.name); if (ln >= 0) push(ta.name, 5, uri, ln); }
+    } catch {}
+  }
+  return out;
+}
+
 // ── Request dispatch ──
 
 function handleRequest(id: number | string, method: string, params: any) {
@@ -1045,6 +1326,13 @@ function handleRequest(id: number | string, method: string, params: any) {
           documentFormattingProvider: true,
           completionProvider: { triggerCharacters: ['"', "{", "."] },
           codeLensProvider: { resolveProvider: false },
+          documentSymbolProvider: true,
+          codeActionProvider: true,
+          signatureHelpProvider: { triggerCharacters: ["(", ","] },
+          referencesProvider: true,
+          documentHighlightProvider: true,
+          renameProvider: true,
+          workspaceSymbolProvider: true,
         },
         serverInfo: { name: "milod", version: "0.1.0" },
       });
@@ -1067,6 +1355,27 @@ function handleRequest(id: number | string, method: string, params: any) {
       break;
     case "textDocument/codeLens":
       sendResponse(id, handleCodeLens(params.textDocument.uri));
+      break;
+    case "textDocument/documentSymbol":
+      sendResponse(id, handleDocumentSymbol(params.textDocument.uri));
+      break;
+    case "textDocument/codeAction":
+      sendResponse(id, handleCodeAction(params.textDocument.uri, params.range));
+      break;
+    case "textDocument/signatureHelp":
+      sendResponse(id, handleSignatureHelp(params.textDocument.uri, params.position.line, params.position.character));
+      break;
+    case "textDocument/references":
+      sendResponse(id, handleReferences(params.textDocument.uri, params.position.line, params.position.character));
+      break;
+    case "textDocument/documentHighlight":
+      sendResponse(id, handleDocumentHighlight(params.textDocument.uri, params.position.line, params.position.character));
+      break;
+    case "textDocument/rename":
+      sendResponse(id, handleRename(params.textDocument.uri, params.position.line, params.position.character, params.newName));
+      break;
+    case "workspace/symbol":
+      sendResponse(id, handleWorkspaceSymbol(params.query ?? ""));
       break;
     case "textDocument/formatting": {
       const source = documents.get(params.textDocument.uri) ?? "";

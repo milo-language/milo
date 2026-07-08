@@ -1,23 +1,41 @@
-// Regression: hover/goto-def on an imported stdlib symbol must not hang.
+// milod LSP end-to-end tests: drive the real server over stdio JSON-RPC.
+//
+// Regression anchor: hover/goto-def on an imported stdlib symbol must not hang.
 // std/os <-> std/runtime is a cyclic import; the transitive-import walkers in
 // lsp.ts (findDocInImports / findInImportedFiles) used to recurse that cycle
-// forever, pinning a CPU at 100%. Any file importing std/string (transitively
-// pulls in the cycle) reproduced it. These tests drive the real milod over
-// stdio and fail via timeout if the spin ever returns.
+// forever, pinning a CPU at 100%. The per-request timeout below fails if the
+// spin ever returns. The rest exercise the Tier 1/2 capabilities.
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { spawn, type Subprocess } from "bun";
 import { join } from "path";
 
 const COMPILER = join(import.meta.dir, "..", "src", "main.ts");
-// server.milo hits it via strStartsWith; here we use a self-contained doc so the
-// test doesn't depend on any external repo.
-const SRC = `from "std/string" import { strStartsWith }
+
+const STDLIB_SRC = `from "std/string" import { strStartsWith }
 
 fn main() {
     let ok = strStartsWith("hello", "he")
 }
 `;
-const URI = "file:///tmp/milo-lsp-regression.milo";
+const STDLIB_URI = "file:///tmp/milo-lsp-regression.milo";
+
+// Rich doc for outline/refs/rename/sighelp/codeaction/workspace-symbol.
+const RICH_SRC = `struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn add(a: i32, b: i32): i32 {
+    return a + b
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    let s = add(p.x, p.y)
+    unsafe { let z = 1 }
+}
+`;
+const RICH_URI = "file:///tmp/milo-lsp-rich.milo";
 
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
@@ -69,21 +87,78 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri: URI, languageId: "milo", version: 1, text: SRC } } });
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC]] as const) {
+    await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
+  }
 });
 
 afterAll(() => { proc?.kill(); });
 
-// strStartsWith is on line 4 (0-based 3), starting at column 13.
-const POS = { line: 3, character: 13 };
+// strStartsWith is on line 4 (0-based 3), column 13.
+const STDLIB_POS = { line: 3, character: 13 };
 
 test("hover on imported stdlib symbol returns without hanging", async () => {
-  const hover = await req(2, "textDocument/hover", { textDocument: { uri: URI }, position: POS });
+  const hover = await req(2, "textDocument/hover", { textDocument: { uri: STDLIB_URI }, position: STDLIB_POS });
   expect(hover?.contents?.value).toContain("strStartsWith");
   expect(hover?.contents?.value).toContain("std/string");
 });
 
 test("goto-definition on imported stdlib symbol resolves to std/string.milo", async () => {
-  const def = await req(3, "textDocument/definition", { textDocument: { uri: URI }, position: POS });
+  const def = await req(3, "textDocument/definition", { textDocument: { uri: STDLIB_URI }, position: STDLIB_POS });
   expect(def?.uri).toContain("std/string.milo");
+});
+
+test("documentSymbol lists top-level decls with nesting", async () => {
+  const syms = await req(10, "textDocument/documentSymbol", { textDocument: { uri: RICH_URI } });
+  const names = syms.map((s: any) => s.name);
+  expect(names).toContain("Point");
+  expect(names).toContain("add");
+  expect(names).toContain("main");
+  const point = syms.find((s: any) => s.name === "Point");
+  expect(point.children.map((c: any) => c.name)).toEqual(["x", "y"]);
+});
+
+test("references finds declaration and use sites", async () => {
+  // `add` on the fn decl line (line 5, col 3)
+  const refs = await req(11, "textDocument/references", { textDocument: { uri: RICH_URI }, position: { line: 5, character: 3 } });
+  expect(refs.length).toBeGreaterThanOrEqual(2); // fn add + call site
+  expect(refs.every((r: any) => r.uri === RICH_URI)).toBe(true);
+});
+
+test("rename produces edits for every occurrence", async () => {
+  const edit = await req(12, "textDocument/rename", { textDocument: { uri: RICH_URI }, position: { line: 5, character: 3 }, newName: "plus" });
+  expect(edit.changes[RICH_URI].length).toBeGreaterThanOrEqual(2);
+  expect(edit.changes[RICH_URI].every((e: any) => e.newText === "plus")).toBe(true);
+});
+
+test("documentHighlight highlights occurrences in the file", async () => {
+  // `Point` on the struct decl line (line 0, col 7)
+  const hl = await req(13, "textDocument/documentHighlight", { textDocument: { uri: RICH_URI }, position: { line: 0, character: 7 } });
+  expect(hl.length).toBeGreaterThanOrEqual(2); // struct Point + Point { ... }
+});
+
+test("signatureHelp reports the active signature and parameter", async () => {
+  // inside add( |p.x, p.y ) on line 11; place cursor just after the open paren
+  const line = RICH_SRC.split("\n")[11];
+  const open = line.indexOf("add(") + 4;
+  const help = await req(14, "textDocument/signatureHelp", { textDocument: { uri: RICH_URI }, position: { line: 11, character: open } });
+  expect(help.signatures[0].label).toContain("add(a: i32, b: i32)");
+  expect(help.activeParameter).toBe(0);
+});
+
+test("codeAction offers to remove an unnecessary unsafe block", async () => {
+  const action = await req(15, "textDocument/codeAction", {
+    textDocument: { uri: RICH_URI },
+    range: { start: { line: 12, character: 0 }, end: { line: 12, character: 20 } },
+    context: { diagnostics: [] },
+  });
+  expect(action.length).toBeGreaterThanOrEqual(1);
+  expect(action[0].title).toContain("unsafe");
+  const edit = action[0].edit.changes[RICH_URI][0];
+  expect(edit.newText).toBe("let z = 1");
+});
+
+test("workspaceSymbol matches by substring across open docs", async () => {
+  const syms = await req(16, "workspace/symbol", { query: "Poin" });
+  expect(syms.map((s: any) => s.name)).toContain("Point");
 });
