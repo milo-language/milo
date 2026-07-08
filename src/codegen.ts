@@ -92,7 +92,16 @@ export class Codegen {
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
   private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
-  private localAddr(name: string): string { return this.locals.get(name)?.addr ?? (this.globalVars.has(name) ? `@${name}` : `%${name}.addr`); }
+  private localAddr(name: string): string {
+    // A local/param shadows a same-named global. Decide on membership in `locals`,
+    // NOT on whether the entry carries an explicit `addr` — params, closure
+    // captures and match-bindings register without one, and `?.addr` would then
+    // fall through to the global's `@name` and read the wrong storage (issue: a
+    // param named like a module global read garbage).
+    const local = this.locals.get(name);
+    if (local) return local.addr ?? `%${name}.addr`;
+    return this.globalVars.has(name) ? `@${name}` : `%${name}.addr`;
+  }
   private emit(line: string) { this.output.push(line); }
 
   private llvmType(t: TypeKind): string {
@@ -718,7 +727,11 @@ export class Codegen {
       const linkage = this.userFnNames.has(fn.name) ? "" : "internal ";
       lines.push(`define ${linkage}${ret} @${fn.name}(${params}) {`);
     }
-    lines.push("entry:");
+    // Dotted label, not bare `entry`: LLVM shares one symbol table for block
+    // labels and local values, and params are emitted as `%<name>`. A param named
+    // `entry` (a legal Milo identifier) would otherwise collide with the entry
+    // block. A `.` can't appear in a Milo identifier, so `entry.bb` never clashes.
+    lines.push("entry.bb:");
     if (fn.name === "main") {
       lines.push("  store i32 %_milo_argc, ptr @_milo_argc_global");
       lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
@@ -1248,7 +1261,7 @@ export class Codegen {
 
       const body: string[] = [];
       body.push(`define ptr @${branchFnName}(ptr %env) {`);
-      body.push("entry:");
+      body.push("entry.bb:");
 
       // load result slot pointer from env[0]
       const slotGep = this.nextTemp();
@@ -2440,7 +2453,7 @@ export class Codegen {
               const fwdArgs = sig.paramTypes.map((t, i) => `${t} %${paramNames[i]}`).join(", ");
               const body: string[] = [];
               body.push(`define ${sig.retType} @${trampolineName}(${trampolineParams}) {`);
-              body.push("entry:");
+              body.push("entry.bb:");
               if (sig.retType === "void") {
                 body.push(`  call void @${expr.name}(${fwdArgs})`);
                 body.push("  ret void");
@@ -3053,7 +3066,7 @@ export class Codegen {
         const closureBody: string[] = [];
         const closureParams = [`ptr %env`, ...expr.params.map(p => `${this.llvmType(p.type)} %${p.name}`)].join(", ");
         closureBody.push(`define ${retTy} @${closureName}(${closureParams}) {`);
-        closureBody.push("entry:");
+        closureBody.push("entry.bb:");
 
         // load captures from env struct
         for (let i = 0; i < captures.length; i++) {
@@ -6511,14 +6524,14 @@ export class Codegen {
     this.needsMalloc = true;
     this.dropHelperBodies.push([
       `define private %String @milo.json.escape(ptr %src, i64 %len) {`,
-      `entry:`,
+      `entry.bb:`,
       `  %cap0 = mul i64 %len, 6`,
       `  %cap = add i64 %cap0, 1`,
       `  %buf = call ptr @malloc(i64 %cap)`,
       `  br label %loop`,
       `loop:`,
-      `  %i = phi i64 [ 0, %entry ], [ %inext, %cont ]`,
-      `  %o = phi i64 [ 0, %entry ], [ %onext, %cont ]`,
+      `  %i = phi i64 [ 0, %entry.bb ], [ %inext, %cont ]`,
+      `  %o = phi i64 [ 0, %entry.bb ], [ %onext, %cont ]`,
       `  %done = icmp sge i64 %i, %len`,
       `  br i1 %done, label %fin, label %body`,
       `body:`,
@@ -6955,7 +6968,7 @@ export class Codegen {
 
     const body: string[] = [];
     body.push(`define void @${helperName}(ptr %self) {`);
-    body.push("entry:");
+    body.push("entry.bb:");
     const tagPtr = this.nextTemp();
     body.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr %self, i32 0, i32 0`);
     const tag = this.nextTemp();
@@ -7026,7 +7039,7 @@ export class Codegen {
 
     const body: string[] = [];
     body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
-    body.push("entry:");
+    body.push("entry.bb:");
     for (let i = 0; i < layout.fields.length; i++) {
       const f = layout.fields[i];
       const srcFieldPtr = this.nextTemp();
@@ -7057,7 +7070,7 @@ export class Codegen {
 
     const body: string[] = [];
     body.push(`define void @${helperName}(ptr %self) {`);
-    body.push("entry:");
+    body.push("entry.bb:");
     const skipLabel = this.nextLabel("struct.drop.skip");
     const dropLabel = this.nextLabel("struct.drop");
     // Find a droppable field to use as sentinel — heap types (string, vec, hashmap)
