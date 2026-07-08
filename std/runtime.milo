@@ -198,6 +198,11 @@ fn _taskEntry(): void {
 // ── public API ──
 
 impl Task {
+    // Spawn a green (M:N) task that runs `f` on the cooperative scheduler, and
+    // return a handle to it. Returns immediately — the task does not run until
+    // the scheduler is driven (by a blocking IO op, `schedulerYield`, or a
+    // `join`). Each task gets its own guard-paged stack. Await completion with
+    // `task.join()`.
     fn spawn(f: () => void): Task {
         unsafe {
             schedulerEnsureInit()

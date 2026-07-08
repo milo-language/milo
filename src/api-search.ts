@@ -17,6 +17,7 @@ interface Entry {
   module: string;    // "std/string"
   signature: string; // "fn strPadStart(s: &string, targetLen: i64, padStr: &string): string"
   doc: string;       // first line of the leading doc-comment, "" if none
+  docFull: string;   // the whole leading doc-comment (all lines), "" if none
   name: string;      // "strPadStart" or "String.split"
 }
 
@@ -54,15 +55,16 @@ function fnName(sig: string): string {
 }
 
 // Collect the contiguous `//` doc-comment lines immediately above `idx`.
-function leadingDoc(lines: string[], idx: number): string {
+// A section-divider comment (── … ──) is a boundary, not doc — stop there.
+function leadingDoc(lines: string[], idx: number): { first: string; full: string } {
   let i = idx - 1;
   const buf: string[] = [];
   while (i >= 0) {
     const t = lines[i].trim();
-    if (t.startsWith("//")) { buf.unshift(t.replace(/^\/\/\s?/, "")); i--; }
+    if (t.startsWith("//") && !t.includes("──")) { buf.unshift(t.replace(/^\/\/\s?/, "")); i--; }
     else break;
   }
-  return buf.length ? buf[0] : "";
+  return { first: buf.length ? buf[0] : "", full: buf.join("\n") };
 }
 
 function parseModule(file: string): Entry[] {
@@ -96,7 +98,8 @@ function parseModule(file: string): Entry[] {
       const shown = inImpl
         ? sig.replace(/\bSelf\b/g, inImpl).replace(/^fn\s+/, `fn ${inImpl}.`)
         : sig;
-      entries.push({ module, signature: shown, doc: leadingDoc(lines, i), name });
+      const ld = leadingDoc(lines, i);
+      entries.push({ module, signature: shown, doc: ld.first, docFull: ld.full, name });
       i = end;
     } else if (trimmed.length > 0 && !trimmed.startsWith("//")) {
       externMode = false;
@@ -145,7 +148,27 @@ function printEntries(entries: Entry[]): void {
   }
 }
 
+// Render entries as reference markdown, grouped by module: one `##` per module,
+// each API as a `###` signature code line followed by its full doc-comment. This
+// makes the doc-comments in std the single source of truth for the .md docs.
+function renderMarkdown(entries: Entry[]): string {
+  const byModule = new Map<string, Entry[]>();
+  for (const e of entries) (byModule.get(e.module) ?? byModule.set(e.module, []).get(e.module)!).push(e);
+  const out: string[] = [];
+  for (const module of [...byModule.keys()].sort()) {
+    out.push(`## ${module}\n`);
+    const es = byModule.get(module)!.sort((a, b) => a.name.localeCompare(b.name));
+    for (const e of es) {
+      out.push(`### \`${e.name}\`\n`);
+      out.push("```milo\n" + e.signature + "\n```\n");
+      out.push(e.docFull ? e.docFull + "\n" : "_Undocumented._\n");
+    }
+  }
+  return out.join("\n");
+}
+
 export function runApiSearch(args: string[]): number {
+  const markdown = args.includes("--markdown");
   const moduleFlag = args.find(a => a.startsWith("--module="))?.slice("--module=".length)
     ?? (args.includes("--module") ? args[args.indexOf("--module") + 1] : undefined);
   const positional = args.filter(a => a !== "--module" && !a.startsWith("--") && a !== moduleFlag);
@@ -162,9 +185,13 @@ export function runApiSearch(args: string[]): number {
     const inMod = all.filter(e => e.module === `std/${want}` || e.module === moduleFlag);
     if (inMod.length === 0) { console.error(`milo api: no module '${moduleFlag}'`); return 1; }
     inMod.sort((a, b) => a.name.localeCompare(b.name));
+    if (markdown) { process.stdout.write(renderMarkdown(inMod)); return 0; }
     printEntries(inMod);
     return 0;
   }
+
+  // `--markdown` with no module/query → full std reference (doc generator).
+  if (markdown && !query) { process.stdout.write(renderMarkdown(all)); return 0; }
 
   if (!query) {
     console.error("usage: milo api <search terms>   |   milo api --module std/<name>");

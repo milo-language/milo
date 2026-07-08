@@ -859,7 +859,7 @@ function main() {
     console.log("  safety --list          list available safety profiles");
     console.log("  wcet <file>            emit OTAWA flow facts (loop bounds) for WCET analysis");
     console.log("  skill                  print language guide for LLMs");
-    console.log("  api <terms>            search std signatures by name/doc (--module std/x to dump one)");
+    console.log("  api <terms>            search std signatures by name/doc (--module std/x to dump one, --markdown to emit reference docs)");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
