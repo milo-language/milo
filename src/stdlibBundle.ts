@@ -3,9 +3,10 @@
 // files aren't on disk (a shipped `bun build --compile` binary). The resolver
 // keeps its own copy of this logic on the hot compile path; this module serves
 // the tooling side (hover, goto-def, api search).
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { homedir } from "os";
 
 export const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -36,4 +37,24 @@ export function readStd(absPath: string): string | null {
 export function bundledStdPaths(): string[] {
   if (!BUNDLE) return [];
   return [...BUNDLE.keys()].map(k => resolve(STDLIB_DIR, k));
+}
+
+// Return a real on-disk path for a std file the editor can open. If it's only in
+// the bundle (shipped binary, no std/ on disk), write it to a cache dir and
+// return that — so goto-definition into the stdlib works offline.
+export function materializeStd(absPath: string): string {
+  if (existsSync(absPath)) return absPath;
+  const k = bundleKey(absPath);
+  if (BUNDLE && k) {
+    const content = BUNDLE.get(k);
+    if (content !== undefined) {
+      const out = resolve(homedir(), ".milo", "std-cache", k);
+      try {
+        mkdirSync(dirname(out), { recursive: true });
+        writeFileSync(out, content);
+        return out;
+      } catch {}
+    }
+  }
+  return absPath;
 }

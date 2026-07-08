@@ -12,7 +12,7 @@ import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, readFileSync, readdirSync } from "fs";
-import { STDLIB_DIR, stdExists, readStd } from "./stdlibBundle";
+import { STDLIB_DIR, stdExists, readStd, materializeStd } from "./stdlibBundle";
 import { format as tsFormat } from "./formatter";
 import { spawnSync } from "child_process";
 
@@ -632,7 +632,7 @@ function findInImportedFiles(parsed: Program, sourceDir: string, word: string, v
       const lines = fileSource.split("\n");
       for (let i = 0; i < lines.length; i++) {
         if (re.test(lines[i])) {
-          return { uri: pathToFileURL(absPath).href, range: { start: { line: i, character: 0 }, end: { line: i, character: 0 } } };
+          return { uri: pathToFileURL(materializeStd(absPath)).href, range: { start: { line: i, character: 0 }, end: { line: i, character: 0 } } };
         }
       }
     }
@@ -662,7 +662,7 @@ function handleDefinition(uri: string, line: number, character: number): object 
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
     const resolved = resolveImportPath(sourceDir, importPath);
     if (resolved) {
-      const targetUri = pathToFileURL(resolved).href;
+      const targetUri = pathToFileURL(materializeStd(resolved)).href;
       return { uri: targetUri, range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } } };
     }
   }
