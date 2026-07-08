@@ -15,14 +15,15 @@ import { Parser } from "./parser";
 const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(new URL(import.meta.url).pathname), "..");
 const CACHE_DIR = resolve(homedir(), ".milo", "cache");
 
-// embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts)
-// only loaded when MILO_USE_BUNDLE=1 to avoid silently serving stale code during dev
+// embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts).
+// Always loaded when present, but used only as a FALLBACK — disk always wins (see
+// readSource / resolveImportPath), so a dev checkout with std/ on disk never
+// serves stale bundled code, while a shipped `bun build --compile` binary (no
+// std/ on disk) resolves the stdlib from here with no env flag needed.
 let STDLIB_BUNDLE: Map<string, string> | null = null;
-if (process.env.MILO_USE_BUNDLE) {
-  try {
-    STDLIB_BUNDLE = require("./stdlib-bundle").STDLIB;
-  } catch {}
-}
+try {
+  STDLIB_BUNDLE = require("./stdlib-bundle").STDLIB;
+} catch {}
 
 function toStdlibKey(absPath: string): string | null {
   return absPath.startsWith(STDLIB_DIR + "/") ? absPath.slice(STDLIB_DIR.length + 1) : null;
@@ -35,6 +36,8 @@ function bundleExists(absPath: string): boolean {
 }
 
 function readSource(absPath: string): string {
+  // Disk wins; bundle is the fallback for when the file isn't on disk.
+  if (existsSync(absPath)) return readFileSync(absPath, "utf-8");
   if (STDLIB_BUNDLE) {
     const key = toStdlibKey(absPath);
     if (key) {
