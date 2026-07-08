@@ -250,7 +250,8 @@ fn readLine(): Option<string> {
     return _readLineFd(0)
 }
 
-// Read all available data from stdin into a string.
+// Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
+// streaming/incremental consumption.
 
 fn readStdin(): string {
     var result: string = ""

@@ -8,7 +8,7 @@
 fn pathBasename(path: &string): string
 ```
 
-_Undocumented._
+Final component of the path (the file name), directories stripped.
 
 ### `pathDirname`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn pathDirname(path: &string): string
 ```
 
-_Undocumented._
+Directory portion of the path (everything before the final component).
 
 ### `pathExt`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn pathExt(path: &string): string
 ```
 
-_Undocumented._
+File extension including the leading dot (e.g. ".txt"); empty if none.
 
 ### `pathJoin`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn pathJoin(a: &string, b: &string): string
 ```
 
-_Undocumented._
+Join two segments with a single "/" separator (avoids doubling an existing one).
 
 ### `pathStem`
 
@@ -40,4 +40,4 @@ _Undocumented._
 fn pathStem(path: &string): string
 ```
 
-_Undocumented._
+File name without its extension (basename minus pathExt).

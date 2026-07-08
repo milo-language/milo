@@ -8,7 +8,7 @@
 fn formatFloat(n: f64, decimals: i32): string
 ```
 
-_Undocumented._
+Format `n` with exactly `decimals` digits after the decimal point.
 
 ### `i64ToBin`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn i64ToBin(n: i64): string
 ```
 
-_Undocumented._
+Binary text for `n`, no prefix.
 
 ### `i64ToHex`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn i64ToHex(n: i64): string
 ```
 
-_Undocumented._
+Lowercase hexadecimal text for `n`, no "0x" prefix.
 
 ### `i64ToOct`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn i64ToOct(n: i64): string
 ```
 
-_Undocumented._
+Octal text for `n`, no prefix.
 
 ### `parseFloat`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn parseFloat(s: string): Option<f64>
 ```
 
-_Undocumented._
+Parse a floating-point number, or None if the string isn't a valid float.
 
 ### `parseInt`
 
@@ -48,7 +48,9 @@ _Undocumented._
 fn parseInt(s: string): Option<i64>
 ```
 
-_Undocumented._
+Parse a base-10 integer strictly: Some(n) only if the whole string is an
+optionally-signed run of digits, else None. (Contrast str.strParseInt, which
+is lenient and returns 0 on bad input.)
 
 ### `parseIntRadix`
 
@@ -56,4 +58,4 @@ _Undocumented._
 fn parseIntRadix(s: string, base: i32): Option<i64>
 ```
 
-_Undocumented._
+Parse an integer in `base` (2, 8, 10, or 16), or None if invalid.

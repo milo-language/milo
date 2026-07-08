@@ -2,6 +2,7 @@
 
 // Check if haystack contains needle.
 
+// True if `needle` occurs anywhere in `haystack` (empty needle → true).
 fn strContains(haystack: &string, needle: &string): bool {
     if needle.len == 0 {
         return true
@@ -28,6 +29,7 @@ fn strContains(haystack: &string, needle: &string): bool {
 
 // Find first occurrence of needle in haystack. Returns -1 if not found.
 
+// Byte index of the first occurrence of `needle`, or -1 if not found.
 fn strIndexOf(haystack: &string, needle: &string): i64 {
     var notFound: i64 = 0
     notFound = notFound - 1
@@ -56,6 +58,7 @@ fn strIndexOf(haystack: &string, needle: &string): i64 {
 
 // Find first occurrence of needle starting at pos. Returns -1 if not found.
 
+// Byte index of the first occurrence of `needle` at or after `pos`, or -1.
 fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64
   requires pos >= 0
 {
@@ -89,6 +92,7 @@ fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64
 
 // Find last occurrence of needle. Returns -1 if not found.
 
+// Byte index of the last occurrence of `needle`, or -1 if not found.
 fn strLastIndexOf(haystack: &string, needle: &string): i64 {
     var notFound: i64 = 0
     notFound = notFound - 1
@@ -117,6 +121,7 @@ fn strLastIndexOf(haystack: &string, needle: &string): i64 {
 
 // Check if string starts with prefix.
 
+// True if `s` begins with `prefix`.
 fn strStartsWith(s: &string, prefix: &string): bool {
     if prefix.len > s.len {
         return false
@@ -131,6 +136,7 @@ fn strStartsWith(s: &string, prefix: &string): bool {
 
 // Check if string ends with suffix.
 
+// True if `s` ends with `suffix`.
 fn strEndsWith(s: &string, suffix: &string): bool {
     if suffix.len > s.len {
         return false
@@ -146,6 +152,7 @@ fn strEndsWith(s: &string, suffix: &string): bool {
 
 // Return new string with ASCII uppercase letters converted to lowercase.
 
+// ASCII-lowercased copy (A–Z → a–z; other bytes unchanged).
 fn strToLower(s: &string): string
   ensures result.len == s.len
 {
@@ -163,6 +170,7 @@ fn strToLower(s: &string): string
 
 // Return new string with ASCII lowercase letters converted to uppercase.
 
+// ASCII-uppercased copy (a–z → A–Z; other bytes unchanged).
 fn strToUpper(s: &string): string
   ensures result.len == s.len
 {
@@ -180,6 +188,7 @@ fn strToUpper(s: &string): string
 
 // Strip leading and trailing ASCII whitespace (space, tab, newline, carriage return).
 
+// Copy with leading and trailing ASCII whitespace removed.
 fn strTrim(s: &string): string {
     var start: i64 = 0
     while start < s.len {
@@ -205,6 +214,7 @@ fn strTrim(s: &string): string {
 
 // Strip leading ASCII whitespace.
 
+// Copy with leading ASCII whitespace removed.
 fn strTrimStart(s: &string): string {
     var start: i64 = 0
     while start < s.len {
@@ -222,6 +232,7 @@ fn strTrimStart(s: &string): string {
 
 // Strip trailing ASCII whitespace.
 
+// Copy with trailing ASCII whitespace removed.
 fn strTrimEnd(s: &string): string {
     var end: i64 = s.len
     while end > 0 as i64 {
@@ -239,6 +250,8 @@ fn strTrimEnd(s: &string): string {
 
 // Split string by separator. Returns Vec of substrings.
 
+// Split `s` on every occurrence of `sep` into a Vec of pieces (adjacent
+// separators yield empty pieces; keeps them, unlike strSplitWhitespace).
 fn strSplit(s: &string, sep: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var notFound: i64 = 0
@@ -264,6 +277,7 @@ fn strSplit(s: &string, sep: &string): Vec<string> {
 
 // Repeat a string n times.
 
+// `s` concatenated `n` times (n <= 0 → empty string).
 fn strRepeat(s: &string, n: i64): string
   requires n >= 0
 {
@@ -276,6 +290,8 @@ fn strRepeat(s: &string, n: i64): string
 
 // Pad start of string to targetLen using padStr (cycles if shorter than needed).
 
+// Left-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
+// (returned unchanged if already at least that long).
 fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
   requires targetLen >= 0
 {
@@ -296,6 +312,8 @@ fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
 
 // Pad end of string to targetLen using padStr (cycles if shorter than needed).
 
+// Right-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
+// (returned unchanged if already at least that long).
 fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string
   requires targetLen >= 0
 {
@@ -318,6 +336,7 @@ fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string
 
 // Replace all occurrences of old with newVal.
 
+// Copy of `s` with every occurrence of `old` replaced by `newVal`.
 fn strReplace(s: &string, old: &string, newVal: &string): string {
     if old.len == 0 {
         return s.clone()
@@ -367,6 +386,8 @@ fn charIsAlphanumeric(ch: u8): bool {
 
 // Split string into words (contiguous alphabetic sequences), lowercased.
 
+// Extract maximal runs of ASCII letters as lowercased words, dropping all
+// other characters (digits, punctuation, whitespace). For tokenizing prose.
 fn strSplitWords(s: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var word: string = ""
@@ -393,6 +414,8 @@ fn strSplitWords(s: &string): Vec<string> {
 
 // Split string on whitespace into non-empty tokens.
 
+// Split on runs of whitespace into non-empty tokens (no empty pieces, unlike
+// strSplit). Leading/trailing whitespace is ignored.
 fn strSplitWhitespace(s: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var token: string = ""
@@ -446,10 +469,13 @@ fn vecJoin(parts: &Vec<string>, sep: &string): string {
     return result
 }
 
+// True if `s` has zero length.
 fn strIsEmpty(s: &string): bool {
     return s.len == 0
 }
 
+// The single byte at `idx` as a length-1 string. Requires 0 <= idx < s.len
+// (byte index, not codepoint).
 fn strCharAt(s: &string, idx: i64): string
   requires idx >= 0 && idx < s.len
 {
@@ -477,6 +503,9 @@ fn strReverse(s: &string): string
     return result
 }
 
+// Parse a leading (optionally '-' signed) run of ASCII digits to i64. Stops at
+// the first non-digit; returns 0 for empty/non-numeric input (no error — use a
+// stricter parser if you must distinguish "0" from invalid).
 fn strParseInt(s: &string): i64 {
     var result: i64 = 0
     var i: i64 = 0
@@ -500,6 +529,7 @@ fn strParseInt(s: &string): i64 {
     return result
 }
 
+// Copy of `s` with only the first occurrence of `old` replaced by `newVal`.
 fn strReplaceFirst(s: &string, old: &string, newVal: &string): string {
     let idx = strIndexOf(s, old)
     var notFound: i64 = 0

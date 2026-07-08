@@ -77,6 +77,9 @@ impl TcpStream {
         return Result.Ok(n)
     }
 
+    // Read everything until the peer closes, as one string (blocks to EOF).
+    // Prefer `incoming()` for streaming/incremental consumption — it delivers
+    // chunks as they arrive instead of buffering the whole response.
     fn recv(self: &Self): Result<string, NetError> {
         var result: string = ""
         var buf: [u8 ; 4096] = [0 ; 4096]
@@ -262,6 +265,8 @@ impl TlsStream {
         }
     }
 
+    // Read everything until the peer closes, as one string (blocks to EOF).
+    // Prefer `incoming()` for streaming/incremental consumption.
     fn recv(self: &Self): Result<string, NetError> {
         var result: string = ""
         var buf: [u8 ; 4096] = [0 ; 4096]

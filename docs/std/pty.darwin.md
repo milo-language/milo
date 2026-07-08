@@ -60,7 +60,8 @@ with green-task semantics underneath.
 fn Pty.read(self: &Pty, buf: *u8, len: i64): i64
 ```
 
-_Undocumented._
+Low-level single read into a raw buffer. Prefer `output()` for streaming —
+it owns the read/EAGAIN pump and hands you an iterable channel of chunks.
 
 ### `Pty.resize`
 

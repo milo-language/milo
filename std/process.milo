@@ -175,10 +175,12 @@ impl Child {
         unsafe { return write(self.stdinFd, s as *u8, s.len) }
     }
 
+    // Low-level single read into a raw buffer. Prefer `stdout()` for streaming.
     fn readStdout(self: &Self, buf: *u8, len: i64): i64 {
         unsafe { return read(self.stdoutFd, buf, len) }
     }
 
+    // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
       requires self.stderrFd >= 0
     {

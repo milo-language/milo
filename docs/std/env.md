@@ -8,7 +8,7 @@
 fn getEnv(name: string): Option<string>
 ```
 
-_Undocumented._
+Value of environment variable `name`, or None if it isn't set.
 
 ### `getEnvOr`
 
@@ -16,4 +16,4 @@ _Undocumented._
 fn getEnvOr(name: string, defaultVal: string): string
 ```
 
-_Undocumented._
+Value of environment variable `name`, or `defaultVal` if it isn't set.

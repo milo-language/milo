@@ -295,7 +295,9 @@ task — the uniform async-read API shared with pty/child/pipe. Iterate with
 fn TcpStream.recv(self: &TcpStream): Result<string, NetError>
 ```
 
-_Undocumented._
+Read everything until the peer closes, as one string (blocks to EOF).
+Prefer `incoming()` for streaming/incremental consumption — it delivers
+chunks as they arrive instead of buffering the whole response.
 
 ### `TcpStream.send`
 
@@ -340,7 +342,8 @@ tls.incoming()`; the channel closes at EOF / on SSL error.
 fn TlsStream.recv(self: &TlsStream): Result<string, NetError>
 ```
 
-_Undocumented._
+Read everything until the peer closes, as one string (blocks to EOF).
+Prefer `incoming()` for streaming/incremental consumption.
 
 ### `TlsStream.resolve`
 

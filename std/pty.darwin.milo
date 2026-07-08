@@ -128,6 +128,8 @@ impl Pty {
         }
     }
 
+    // Low-level single read into a raw buffer. Prefer `output()` for streaming —
+    // it owns the read/EAGAIN pump and hands you an iterable channel of chunks.
     fn read(self: &Self, buf: *u8, len: i64): i64
       requires len > 0
     {

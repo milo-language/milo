@@ -12,6 +12,9 @@ fn atof(str: *u8): f64
 
 // Parse a decimal integer string. Returns None if not a valid integer.
 
+// Parse a base-10 integer strictly: Some(n) only if the whole string is an
+// optionally-signed run of digits, else None. (Contrast str.strParseInt, which
+// is lenient and returns 0 on bad input.)
 fn parseInt(s: string): Option<i64> {
     if s.len == 0 {
         return Option.None
@@ -37,6 +40,7 @@ fn parseInt(s: string): Option<i64> {
 
 // Parse an integer string with a given base (2, 8, 10, 16).
 
+// Parse an integer in `base` (2, 8, 10, or 16), or None if invalid.
 fn parseIntRadix(s: string, base: i32): Option<i64> {
     if s.len == 0 {
         return Option.None
@@ -48,6 +52,7 @@ fn parseIntRadix(s: string, base: i32): Option<i64> {
 
 // Parse a floating-point string. Returns None if not a valid number.
 
+// Parse a floating-point number, or None if the string isn't a valid float.
 fn parseFloat(s: string): Option<f64> {
     if s.len == 0 {
         return Option.None
@@ -70,6 +75,7 @@ fn parseFloat(s: string): Option<f64> {
 
 // Convert i64 to hexadecimal string (lowercase).
 
+// Lowercase hexadecimal text for `n`, no "0x" prefix.
 fn i64ToHex(n: i64): string {
     var buf: [u8 ; 32] = [0 ; 32]
     unsafe {
@@ -80,6 +86,7 @@ fn i64ToHex(n: i64): string {
 
 // Convert i64 to octal string.
 
+// Octal text for `n`, no prefix.
 fn i64ToOct(n: i64): string {
     var buf: [u8 ; 32] = [0 ; 32]
     unsafe {
@@ -90,6 +97,7 @@ fn i64ToOct(n: i64): string {
 
 // Convert i64 to binary string.
 
+// Binary text for `n`, no prefix.
 fn i64ToBin(n: i64): string {
     if n == 0 {
         return "0"
@@ -109,6 +117,7 @@ fn i64ToBin(n: i64): string {
 
 // Format f64 with a specific number of decimal places.
 
+// Format `n` with exactly `decimals` digits after the decimal point.
 fn formatFloat(n: f64, decimals: i32): string {
     var buf: [u8 ; 64] = [0 ; 64]
     unsafe {

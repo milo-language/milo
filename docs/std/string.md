@@ -40,7 +40,8 @@ _Undocumented._
 fn strCharAt(s: &string, idx: i64): string
 ```
 
-_Undocumented._
+The single byte at `idx` as a length-1 string. Requires 0 <= idx < s.len
+(byte index, not codepoint).
 
 ### `strContains`
 
@@ -48,7 +49,7 @@ _Undocumented._
 fn strContains(haystack: &string, needle: &string): bool
 ```
 
-_Undocumented._
+True if `needle` occurs anywhere in `haystack` (empty needle → true).
 
 ### `strEndsWith`
 
@@ -56,7 +57,7 @@ _Undocumented._
 fn strEndsWith(s: &string, suffix: &string): bool
 ```
 
-_Undocumented._
+True if `s` ends with `suffix`.
 
 ### `strIndexOf`
 
@@ -64,7 +65,7 @@ _Undocumented._
 fn strIndexOf(haystack: &string, needle: &string): i64
 ```
 
-_Undocumented._
+Byte index of the first occurrence of `needle`, or -1 if not found.
 
 ### `strIndexOfFrom`
 
@@ -72,7 +73,7 @@ _Undocumented._
 fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64
 ```
 
-_Undocumented._
+Byte index of the first occurrence of `needle` at or after `pos`, or -1.
 
 ### `strIsEmpty`
 
@@ -80,7 +81,7 @@ _Undocumented._
 fn strIsEmpty(s: &string): bool
 ```
 
-_Undocumented._
+True if `s` has zero length.
 
 ### `strLastIndexOf`
 
@@ -88,7 +89,7 @@ _Undocumented._
 fn strLastIndexOf(haystack: &string, needle: &string): i64
 ```
 
-_Undocumented._
+Byte index of the last occurrence of `needle`, or -1 if not found.
 
 ### `strPadEnd`
 
@@ -96,7 +97,8 @@ _Undocumented._
 fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string
 ```
 
-_Undocumented._
+Right-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
+(returned unchanged if already at least that long).
 
 ### `strPadStart`
 
@@ -104,7 +106,8 @@ _Undocumented._
 fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
 ```
 
-_Undocumented._
+Left-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
+(returned unchanged if already at least that long).
 
 ### `strParseInt`
 
@@ -112,7 +115,9 @@ _Undocumented._
 fn strParseInt(s: &string): i64
 ```
 
-_Undocumented._
+Parse a leading (optionally '-' signed) run of ASCII digits to i64. Stops at
+the first non-digit; returns 0 for empty/non-numeric input (no error — use a
+stricter parser if you must distinguish "0" from invalid).
 
 ### `strRepeat`
 
@@ -120,7 +125,7 @@ _Undocumented._
 fn strRepeat(s: &string, n: i64): string
 ```
 
-_Undocumented._
+`s` concatenated `n` times (n <= 0 → empty string).
 
 ### `strReplace`
 
@@ -128,7 +133,7 @@ _Undocumented._
 fn strReplace(s: &string, old: &string, newVal: &string): string
 ```
 
-_Undocumented._
+Copy of `s` with every occurrence of `old` replaced by `newVal`.
 
 ### `strReplaceFirst`
 
@@ -136,7 +141,7 @@ _Undocumented._
 fn strReplaceFirst(s: &string, old: &string, newVal: &string): string
 ```
 
-_Undocumented._
+Copy of `s` with only the first occurrence of `old` replaced by `newVal`.
 
 ### `strReverse`
 
@@ -152,7 +157,8 @@ UTF-8 aware: scans backward past continuation bytes to reverse whole codepoints
 fn strSplit(s: &string, sep: &string): Vec<string>
 ```
 
-_Undocumented._
+Split `s` on every occurrence of `sep` into a Vec of pieces (adjacent
+separators yield empty pieces; keeps them, unlike strSplitWhitespace).
 
 ### `strSplitWhitespace`
 
@@ -160,7 +166,8 @@ _Undocumented._
 fn strSplitWhitespace(s: &string): Vec<string>
 ```
 
-_Undocumented._
+Split on runs of whitespace into non-empty tokens (no empty pieces, unlike
+strSplit). Leading/trailing whitespace is ignored.
 
 ### `strSplitWords`
 
@@ -168,7 +175,8 @@ _Undocumented._
 fn strSplitWords(s: &string): Vec<string>
 ```
 
-_Undocumented._
+Extract maximal runs of ASCII letters as lowercased words, dropping all
+other characters (digits, punctuation, whitespace). For tokenizing prose.
 
 ### `strStartsWith`
 
@@ -176,7 +184,7 @@ _Undocumented._
 fn strStartsWith(s: &string, prefix: &string): bool
 ```
 
-_Undocumented._
+True if `s` begins with `prefix`.
 
 ### `strToLower`
 
@@ -184,7 +192,7 @@ _Undocumented._
 fn strToLower(s: &string): string
 ```
 
-_Undocumented._
+ASCII-lowercased copy (A–Z → a–z; other bytes unchanged).
 
 ### `strToUpper`
 
@@ -192,7 +200,7 @@ _Undocumented._
 fn strToUpper(s: &string): string
 ```
 
-_Undocumented._
+ASCII-uppercased copy (a–z → A–Z; other bytes unchanged).
 
 ### `strTrim`
 
@@ -200,7 +208,7 @@ _Undocumented._
 fn strTrim(s: &string): string
 ```
 
-_Undocumented._
+Copy with leading and trailing ASCII whitespace removed.
 
 ### `strTrimEnd`
 
@@ -208,7 +216,7 @@ _Undocumented._
 fn strTrimEnd(s: &string): string
 ```
 
-_Undocumented._
+Copy with trailing ASCII whitespace removed.
 
 ### `strTrimStart`
 
@@ -216,7 +224,7 @@ _Undocumented._
 fn strTrimStart(s: &string): string
 ```
 
-_Undocumented._
+Copy with leading ASCII whitespace removed.
 
 ### `trim`
 

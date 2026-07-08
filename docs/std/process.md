@@ -32,7 +32,7 @@ Close the child's stdin, sending EOF. Idempotent.
 fn Child.readStderr(self: &Child, buf: *u8, len: i64): i64
 ```
 
-_Undocumented._
+Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
 
 ### `Child.readStdout`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn Child.readStdout(self: &Child, buf: *u8, len: i64): i64
 ```
 
-_Undocumented._
+Low-level single read into a raw buffer. Prefer `stdout()` for streaming.
 
 ### `Child.signal`
 
