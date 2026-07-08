@@ -1097,50 +1097,79 @@ function offsetToPos(source: string, offset: number): { line: number; character:
 function handleDocumentSymbol(uri: string): object[] {
   const source = documents.get(uri);
   if (!source) return [];
-  const sym = (name: string, kind: number, line: number, children?: object[]) => ({
+  const lines = source.split("\n");
+  const lineLen = (l: number) => (lines[l] ?? "").length;
+  // selectionRange must be a subrange of range, and children must be contained
+  // in their parent — VS Code rejects the whole response otherwise. So we clamp
+  // the name range to its line and span containers over their members.
+  const nameRange = (l: number, name: string) => {
+    const t = lines[l] ?? "";
+    const idx = t.indexOf(name);
+    const c = idx >= 0 ? idx : 0;
+    const e = idx >= 0 ? c + name.length : t.length;
+    return { start: { line: l, character: c }, end: { line: l, character: e } };
+  };
+  const leaf = (name: string, kind: number, l: number) => ({
     name, kind,
-    range: fullLineRange(source, line),
-    selectionRange: nameRangeOnLine(source, line, name),
-    ...(children && children.length ? { children } : {}),
+    range: { start: { line: l, character: 0 }, end: { line: l, character: lineLen(l) } },
+    selectionRange: nameRange(l, name),
   });
+  const container = (name: string, kind: number, declLine: number, children: any[]) => {
+    const last = children.length
+      ? Math.max(declLine, ...children.map(c => c.range.end.line))
+      : declLine;
+    return {
+      name, kind,
+      range: { start: { line: declLine, character: 0 }, end: { line: last, character: lineLen(last) } },
+      selectionRange: nameRange(declLine, name),
+      ...(children.length ? { children } : {}),
+    };
+  };
+  // First line at/after `start` that mentions `name` — locates a member's own
+  // line rather than pinning it to the parent's declaration line.
+  const memberLine = (start: number, name: string) => {
+    const re = new RegExp(`\\b${escapeRe(name)}\\b`);
+    for (let i = start; i < lines.length; i++) if (re.test(lines[i])) return i;
+    return start;
+  };
   try {
     const parsed = new Parser(new Lexer(source).tokenize()).parse();
     const out: object[] = [];
     for (const f of parsed.functions) {
       if (f.isExtern) continue;
       const line = findFnLine(source, f.name);
-      if (line >= 0) out.push(sym(f.name, 12 /*Function*/, line));
+      if (line >= 0) out.push(leaf(f.name, 12 /*Function*/, line));
     }
     for (const s of parsed.structs) {
       const line = findDeclLine(source, "struct", s.name);
       if (line < 0) continue;
-      const fields = s.fields.map(fl => sym(fl.name, 8 /*Field*/, line));
-      out.push(sym(s.name, 23 /*Struct*/, line, fields));
+      const fields = s.fields.map(fl => leaf(fl.name, 8 /*Field*/, memberLine(line, fl.name)));
+      out.push(container(s.name, 23 /*Struct*/, line, fields));
     }
     for (const e of parsed.enums) {
       const line = findDeclLine(source, "enum", e.name);
       if (line < 0) continue;
-      const variants = e.variants.map(v => sym(v.name, 22 /*EnumMember*/, line));
-      out.push(sym(e.name, 10 /*Enum*/, line, variants));
+      const variants = e.variants.map(v => leaf(v.name, 22 /*EnumMember*/, memberLine(line, v.name)));
+      out.push(container(e.name, 10 /*Enum*/, line, variants));
     }
     for (const ta of parsed.typeAliases) {
       const line = findDeclLine(source, "type", ta.name);
-      if (line >= 0) out.push(sym(ta.name, 5 /*Class*/, line));
+      if (line >= 0) out.push(leaf(ta.name, 5 /*Class*/, line));
     }
     for (const iface of parsed.interfaces) {
       const line = findDeclLine(source, "interface", iface.name);
       if (line < 0) continue;
-      const methods = iface.methods.map(m => sym(m.name, 6 /*Method*/, line));
-      out.push(sym(iface.name, 11 /*Interface*/, line, methods));
+      const methods = iface.methods.map(m => leaf(m.name, 6 /*Method*/, memberLine(line, m.name)));
+      out.push(container(iface.name, 11 /*Interface*/, line, methods));
     }
     for (const impl of parsed.impls) {
       const line = findDeclLine(source, "impl", impl.typeName);
       if (line < 0) continue;
       const methods = impl.methods.map(m => {
         const mLine = findFnLine(source, m.name);
-        return sym(m.name, 6 /*Method*/, mLine >= 0 ? mLine : line);
+        return leaf(m.name, 6 /*Method*/, mLine >= 0 ? mLine : line);
       });
-      out.push(sym(`impl ${impl.typeName}`, 5 /*Class*/, line, methods));
+      out.push(container(`impl ${impl.typeName}`, 5 /*Class*/, line, methods));
     }
     return out;
   } catch { return []; }

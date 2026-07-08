@@ -116,6 +116,16 @@ test("documentSymbol lists top-level decls with nesting", async () => {
   expect(names).toContain("main");
   const point = syms.find((s: any) => s.name === "Point");
   expect(point.children.map((c: any) => c.name)).toEqual(["x", "y"]);
+  // VS Code rejects the response unless selectionRange ⊆ range and child ⊆ parent.
+  const inside = (a: any, b: any) =>
+    (a.start.line > b.start.line || (a.start.line === b.start.line && a.start.character >= b.start.character)) &&
+    (a.end.line < b.end.line || (a.end.line === b.end.line && a.end.character <= b.end.character));
+  const walk = (s: any, parent: any) => {
+    expect(inside(s.selectionRange, s.range)).toBe(true);
+    if (parent) expect(inside(s.range, parent.range)).toBe(true);
+    for (const c of s.children ?? []) walk(c, s);
+  };
+  for (const s of syms) walk(s, null);
 });
 
 test("references finds declaration and use sites", async () => {
