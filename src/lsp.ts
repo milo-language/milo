@@ -207,10 +207,14 @@ function symbolExistsInSource(source: string, word: string, kind: "fn" | "struct
   return re.test(source);
 }
 
-function findDocInImports(parsed: Program, sourceDir: string, word: string, kind: "fn" | "struct" | "enum"): { doc: string | null, module: string } | null {
+function findDocInImports(parsed: Program, sourceDir: string, word: string, kind: "fn" | "struct" | "enum", visited: Set<string> = new Set()): { doc: string | null, module: string } | null {
   for (const imp of parsed.imports) {
     const absPath = resolveImportPath(sourceDir, imp.path);
     if (!absPath) continue;
+    // Guard against cyclic imports (e.g. std/os <-> std/runtime) — without this
+    // the transitive walk recurses forever and pins a CPU at 100%.
+    if (visited.has(absPath)) continue;
+    visited.add(absPath);
     let fileSource: string;
     try { fileSource = readFileSync(absPath, "utf-8"); } catch { continue; }
 
@@ -221,7 +225,7 @@ function findDocInImports(parsed: Program, sourceDir: string, word: string, kind
     try {
       const tokens = new Lexer(fileSource).tokenize();
       const importedParsed = new Parser(tokens).parse();
-      const transResult = findDocInImports(importedParsed, dirname(absPath), word, kind);
+      const transResult = findDocInImports(importedParsed, dirname(absPath), word, kind, visited);
       if (transResult) return transResult;
     } catch {}
   }
@@ -612,10 +616,13 @@ function resolveImportPath(sourceDir: string, importPath: string): string | null
   return null;
 }
 
-function findInImportedFiles(parsed: Program, sourceDir: string, word: string): object | null {
+function findInImportedFiles(parsed: Program, sourceDir: string, word: string, visited: Set<string> = new Set()): object | null {
   for (const imp of parsed.imports) {
     const absPath = resolveImportPath(sourceDir, imp.path);
     if (!absPath) continue;
+    // Cyclic-import guard (e.g. std/os <-> std/runtime) — see findDocInImports.
+    if (visited.has(absPath)) continue;
+    visited.add(absPath);
     let fileSource: string;
     try { fileSource = readFileSync(absPath, "utf-8"); } catch { continue; }
 
@@ -632,7 +639,7 @@ function findInImportedFiles(parsed: Program, sourceDir: string, word: string): 
     try {
       const tokens = new Lexer(fileSource).tokenize();
       const importedParsed = new Parser(tokens).parse();
-      const result = findInImportedFiles(importedParsed, dirname(absPath), word);
+      const result = findInImportedFiles(importedParsed, dirname(absPath), word, visited);
       if (result) return result;
     } catch {}
   }
