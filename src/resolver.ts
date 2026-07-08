@@ -16,13 +16,13 @@ const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(new URL(import.meta.
 const CACHE_DIR = resolve(homedir(), ".milo", "cache");
 
 // embedded stdlib for compiled binaries (populated by scripts/bundle-stdlib.ts).
-// Always loaded when present, but used only as a FALLBACK — disk always wins (see
-// readSource / resolveImportPath), so a dev checkout with std/ on disk never
-// serves stale bundled code, while a shipped `bun build --compile` binary (no
-// std/ on disk) resolves the stdlib from here with no env flag needed.
+// Loaded ONLY when std/ isn't on disk (a shipped `bun build --compile` binary).
+// In a dev checkout the on-disk std/ is authoritative and the bundle is ignored
+// entirely — otherwise the gitignored, build-time stdlib-bundle.ts would linger
+// and silently resurrect deleted/renamed std files against a stale copy.
 let STDLIB_BUNDLE: Map<string, string> | null = null;
 try {
-  STDLIB_BUNDLE = require("./stdlib-bundle").STDLIB;
+  if (!existsSync(resolve(STDLIB_DIR, "std"))) STDLIB_BUNDLE = require("./stdlib-bundle").STDLIB;
 } catch {}
 
 function toStdlibKey(absPath: string): string | null {

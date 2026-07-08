@@ -22,6 +22,11 @@ channel of raw chunks. This is the single pump behind every async byte source
 (`for chunk in fdChannel(fd)`), never touching read/EAGAIN. The channel closes
 at EOF (read returns <= 0). Milo's answer to a node.js Readable, minus the fd.
 
+LIFETIME: the detached pump holds the raw fd. Keep the owning source (Pty /
+TcpStream / Child) alive and open for as long as you consume the channel —
+closing or dropping it out from under the pump strands the pump (parks
+forever), and for a TLS source would read freed SSL state.
+
 ### `File.openAppend`
 
 ```milo
@@ -135,6 +140,9 @@ fn stdinChannel(): Channel<string>
 
 Stream stdin as an iterable channel of chunks — the async counterpart to the
 blocking readStdin/readLine. `for chunk in stdinChannel() { ... }`.
+NOTE: this puts fd 0 into O_NONBLOCK and does not restore it, so afterward the
+blocking readLine/readStdin on the same tty may return early. Pick one style
+per stdin session; don't mix streaming and blocking reads of the same fd.
 
 ### `writeStdout`
 

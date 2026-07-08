@@ -10,8 +10,13 @@ import { homedir } from "os";
 
 export const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
+// Loaded only when std/ isn't on disk (shipped binary). A dev checkout uses the
+// on-disk std/ exclusively, so a stale build-time bundle can't resurrect deleted
+// files. Mirrors the resolver's gate.
 let BUNDLE: Map<string, string> | null = null;
-try { BUNDLE = require("./stdlib-bundle").STDLIB; } catch {}
+try {
+  if (!existsSync(resolve(STDLIB_DIR, "std"))) BUNDLE = require("./stdlib-bundle").STDLIB;
+} catch {}
 
 function bundleKey(absPath: string): string | null {
   return absPath.startsWith(STDLIB_DIR + "/") ? absPath.slice(STDLIB_DIR.length + 1) : null;

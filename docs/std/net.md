@@ -335,6 +335,8 @@ Stream decrypted inbound bytes as an iterable channel, pumped on a green
 task — the uniform async-read API, TLS variant. Uses the SSL-aware read
 (parks on WANT_READ) rather than the raw-fd fdChannel. `for chunk in
 tls.incoming()`; the channel closes at EOF / on SSL error.
+LIFETIME: keep this TlsStream alive while consuming — the detached pump
+reads through its SSL handle; dropping it frees that state under the pump.
 
 ### `TlsStream.recv`
 

@@ -6,6 +6,7 @@ from "std/json" import { Json, jsonParse }
 from "std/sync" import { Channel }
 from "std/io" import { fdChannel }
 from "std/runtime" import { Task }
+from "std/event" import { setNonblocking }
 
 // ── NetError ──
 
@@ -288,10 +289,17 @@ impl TlsStream {
     // task — the uniform async-read API, TLS variant. Uses the SSL-aware read
     // (parks on WANT_READ) rather than the raw-fd fdChannel. `for chunk in
     // tls.incoming()`; the channel closes at EOF / on SSL error.
+    // LIFETIME: keep this TlsStream alive while consuming — the detached pump
+    // reads through its SSL handle; dropping it frees that state under the pump.
     fn incoming(self: &Self): Channel<string> {
         let ch = Channel<string>.new(256)!
         let ssl = self.ssl
         let fd = self.fd
+        // The fd MUST be nonblocking or sslReadFd blocks the OS thread and the
+        // WANT_READ park path is dead code — one read would freeze the whole
+        // scheduler. connect() sets this when called from a green task, but not
+        // if it ran outside one, so enforce it here.
+        setNonblocking(fd)
         Task.spawn(move (): void => {
             var buf: [u8 ; 4096] = [0 ; 4096]
             while true {
