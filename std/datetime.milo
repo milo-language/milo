@@ -1,6 +1,15 @@
 // std/datetime — date/time components and formatting from epoch seconds
+// (UTC by default; dateTimeFromEpochLocal/dateTimeLocalNow apply the host TZ)
 
 from "std/time" import { epochSecs, since }
+
+extern
+
+fn localtime_r(timep: *u8, result: *u8): *u8
+
+extern
+
+fn tzset(): void
 
 struct DateTime {
     year: i32,
@@ -103,4 +112,45 @@ fn _padI32(val: i32, width: i32): string {
         s = "0" + s
     }
     return s
+}
+
+// ── local time (host timezone) ──
+
+// Little-endian i32 read out of the struct tm buffer.
+fn _tmI32(buf: &[u8; 128], off: i64): i32 {
+    var v: i64 = 0
+    var i: i64 = 3
+    while i >= 0 {
+        v = v * 256 + (buf[off + i] as i64)
+        i = i - 1
+    }
+    return v as i32
+}
+
+// Same components as dateTimeFromEpoch but in the host timezone (TZ env /
+// /etc/localtime). struct tm leads with nine consecutive ints
+// (tm_sec, tm_min, tm_hour, tm_mday, tm_mon, tm_year, tm_wday, tm_yday,
+// tm_isdst) on both macOS and glibc — only those leading fields are read, so
+// the trailing platform differences (tm_gmtoff/tm_zone) don't matter.
+fn dateTimeFromEpochLocal(epochSec: i64): DateTime {
+    // POSIX doesn't require localtime_r to imply tzset(); call it so TZ
+    // changes (and the first call) always take effect.
+    tzset()
+    var t: [i64; 1] = [0; 1]
+    t[0] = epochSec
+    var tm: [u8; 128] = [0; 128]
+    unsafe { let _r = localtime_r(t as *u8, tm as *u8) }
+    return DateTime {
+        year: _tmI32(tm, 20) + 1900,
+        month: _tmI32(tm, 16) + 1,
+        day: _tmI32(tm, 12),
+        hour: _tmI32(tm, 8),
+        minute: _tmI32(tm, 4),
+        second: _tmI32(tm, 0),
+        weekday: _tmI32(tm, 24),
+    }
+}
+
+fn dateTimeLocalNow(): DateTime {
+    return dateTimeFromEpochLocal(epochSecs())
 }

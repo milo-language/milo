@@ -1,0 +1,23 @@
+from "std/datetime" import { dateTimeFormat, dateTimeFromEpochLocal, weekdayName }
+
+extern
+
+fn setenv(name: *u8, value: *u8, overwrite: i32): i32
+
+fn main(): i32 {
+    // Pin TZ so the fixture is deterministic on any machine. tzset() runs
+    // inside dateTimeFromEpochLocal, so the new TZ takes effect per call.
+    unsafe { let _a = setenv("TZ", "UTC", 1) }
+    let utc = dateTimeFromEpochLocal(1705318245)
+    print(dateTimeFormat(utc))
+    print(weekdayName(utc.weekday))
+
+    // Fixed-offset zone (no DST ambiguity): UTC-5 all year.
+    unsafe { let _b = setenv("TZ", "EST5", 1) }
+    let est = dateTimeFromEpochLocal(1705318245)
+    print(dateTimeFormat(est))
+    return 0
+}
+// @expect: 2024-01-15T11:30:45
+// @expect: Monday
+// @expect: 2024-01-15T06:30:45
