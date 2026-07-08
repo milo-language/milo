@@ -10,8 +10,7 @@
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { fileURLToPath } from "url";
 import { resolve, dirname, relative } from "path";
-
-const STDLIB_DIR = process.env.MILO_ROOT ?? resolve(dirname(fileURLToPath(import.meta.url)), "..");
+import { STDLIB_DIR, readStd, bundledStdPaths } from "./stdlibBundle";
 
 interface Entry {
   module: string;    // "std/string"
@@ -69,7 +68,8 @@ function leadingDoc(lines: string[], idx: number): { first: string; full: string
 
 function parseModule(file: string): Entry[] {
   const module = "std/" + relative(resolve(STDLIB_DIR, "std"), file).replace(/\.milo$/, "").replace(/\\/g, "/");
-  const src = readFileSync(file, "utf-8");
+  const src = readStd(file);
+  if (src === null) return [];
   const lines = src.split("\n");
   const entries: Entry[] = [];
   // Track the enclosing `impl Type` so methods print as Type.method.
@@ -124,9 +124,9 @@ export function stdDocsByModule(): Map<string, string> {
 
 function loadAll(): Entry[] {
   const stdDir = resolve(STDLIB_DIR, "std");
-  if (!existsSync(stdDir)) return [];
-  const files: string[] = [];
-  walkMilo(stdDir, files);
+  // Disk when present; otherwise enumerate the embedded bundle (shipped binary).
+  const files: string[] = existsSync(stdDir) ? [] : bundledStdPaths();
+  if (existsSync(stdDir)) walkMilo(stdDir, files);
   const all: Entry[] = [];
   for (const f of files) all.push(...parseModule(f));
   return all;

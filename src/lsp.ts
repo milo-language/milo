@@ -12,6 +12,7 @@ import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, readFileSync, readdirSync } from "fs";
+import { STDLIB_DIR, stdExists, readStd } from "./stdlibBundle";
 import { format as tsFormat } from "./formatter";
 import { spawnSync } from "child_process";
 
@@ -218,8 +219,8 @@ function findDocInImports(parsed: Program, sourceDir: string, word: string, kind
     // the transitive walk recurses forever and pins a CPU at 100%.
     if (visited.has(absPath)) continue;
     visited.add(absPath);
-    let fileSource: string;
-    try { fileSource = readFileSync(absPath, "utf-8"); } catch { continue; }
+    const fileSource = readStd(absPath);
+    if (fileSource === null) continue;
 
     if (symbolExistsInSource(fileSource, word, kind)) {
       return { doc: findSymbolDoc(fileSource, word, kind), module: imp.path };
@@ -608,14 +609,12 @@ function getWordAt(source: string, line: number, character: number): string {
 
 // ── Go to definition ──
 
-const STDLIB_DIR = resolve(dirname(new URL(import.meta.url).pathname), "..");
-
 function resolveImportPath(sourceDir: string, importPath: string): string | null {
   const withExt = importPath.endsWith(".milo") ? importPath : importPath + ".milo";
   const rel = resolve(sourceDir, withExt);
-  if (existsSync(rel)) return rel;
+  if (stdExists(rel)) return rel;
   const std = resolve(STDLIB_DIR, withExt);
-  if (existsSync(std)) return std;
+  if (stdExists(std)) return std;
   return null;
 }
 
@@ -626,8 +625,8 @@ function findInImportedFiles(parsed: Program, sourceDir: string, word: string, v
     // Cyclic-import guard (e.g. std/os <-> std/runtime) — see findDocInImports.
     if (visited.has(absPath)) continue;
     visited.add(absPath);
-    let fileSource: string;
-    try { fileSource = readFileSync(absPath, "utf-8"); } catch { continue; }
+    const fileSource = readStd(absPath);
+    if (fileSource === null) continue;
 
     for (const [keyword, re] of [["fn", new RegExp(`\\bfn\\s+${word}\\s*[<(]`)], ["struct", new RegExp(`\\bstruct\\s+${word}\\b`)], ["enum", new RegExp(`\\benum\\s+${word}\\b`)]] as const) {
       const lines = fileSource.split("\n");
@@ -862,8 +861,8 @@ function getStdlibModules(): string[] {
 function getModuleExports(modulePath: string, sourceDir: string): { name: string; kind: string }[] {
   const absPath = resolveImportPath(sourceDir, modulePath);
   if (!absPath) return [];
-  let src: string;
-  try { src = readFileSync(absPath, "utf-8"); } catch { return []; }
+  const src = readStd(absPath);
+  if (src === null) return [];
   const exports: { name: string; kind: string }[] = [];
   for (const line of src.split("\n")) {
     let m;
