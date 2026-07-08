@@ -56,7 +56,8 @@ _Undocumented._
 fn File.readFile(path: &string): Result<string, IoError>
 ```
 
-_Undocumented._
+Read an entire file into a string. Returns an IoError (NotFound, permission,
+etc.) rather than throwing; propagate with `?` or match on it.
 
 ### `File.readLine`
 

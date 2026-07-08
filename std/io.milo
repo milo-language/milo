@@ -132,6 +132,8 @@ impl File {
     }
 }
 
+// Read an entire file into a string. Returns an IoError (NotFound, permission,
+// etc.) rather than throwing; propagate with `?` or match on it.
 fn readFile(path: &string): Result<string, IoError> {
     let f = File.openRead(path)?
     return f.readAll()
