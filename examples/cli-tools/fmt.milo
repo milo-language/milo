@@ -699,6 +699,9 @@ fn formatSource(src: string): string {
 
     var lastLine: i64 = 1
     var blankCount: i64 = 0
+    // Tracks whether the last emitted real token was `extern`, so a following
+    // `fn` can be glued to it as `extern fn` even if the source split them.
+    var lastWasExtern: bool = false
 
     for i in 0..tokens.len {
         let tok = tokens[i]
@@ -713,6 +716,9 @@ fn formatSource(src: string): string {
             break
         }
 
+        // `extern fn` is one construct — keep `fn` glued to a preceding `extern`.
+        let hugExtern = tok.kind == TokKind.Keyword && tok.text == "fn" && lastWasExtern
+
         // } decreases indent
         if tok.kind == TokKind.RBrace {
             if depth > 0 {
@@ -725,7 +731,7 @@ fn formatSource(src: string): string {
         }
 
         // Blank line before top-level decls
-        if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) {
+        if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) && !hugExtern {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
                     out = out + "\n"
@@ -736,11 +742,11 @@ fn formatSource(src: string): string {
         }
 
         // Preserve one blank line between sections (when source had 2+ newlines)
-        if blankCount >= 2 && !atLineStart {
+        if blankCount >= 2 && !atLineStart && !hugExtern {
             out = out + "\n"
             atLineStart = true
         }
-        if blankCount >= 2 && atLineStart && out.len > 0 && !out.endsWith("\n\n") {
+        if blankCount >= 2 && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern {
             out = out + "\n"
         }
         blankCount = 0
@@ -770,7 +776,7 @@ fn formatSource(src: string): string {
         }
 
         // New source line → new output line
-        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace {
+        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern {
             out = out + "\n"
             atLineStart = true
         }
@@ -781,13 +787,14 @@ fn formatSource(src: string): string {
                 out = out + "    "
             }
             atLineStart = false
-        } else if wantSpaceBefore(tokens, i) {
+        } else if hugExtern || wantSpaceBefore(tokens, i) {
             out = out + " "
         }
 
         // Emit token
         out = out + tok.text
         lastLine = tok.line
+        lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
 
         // { increases indent and forces newline
         if tok.kind == TokKind.LBrace {

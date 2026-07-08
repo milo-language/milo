@@ -210,12 +210,17 @@ export function format(source: string): string {
       break;
     }
 
+    // `extern fn` is one construct — keep `fn` glued to a preceding `extern`
+    // even if the source split them across lines (or blank lines). Otherwise the
+    // newline/blank-line/top-level rules below would break them apart.
+    const hugExtern = tok.kind === TokenKind.Fn && i > 0 && tokens[i - 1].kind === TokenKind.Extern;
+
     // Leading trivia
-    if (tok.leadingTrivia) writeTrivia(tok.leadingTrivia, true);
+    if (tok.leadingTrivia && !hugExtern) writeTrivia(tok.leadingTrivia, true);
 
     // Determine if we need a line break based on source line numbers
     // Token is on a new line in the source → emit newline in output
-    const onNewLine = tok.line > lastLine && !atLineStart;
+    const onNewLine = tok.line > lastLine && !atLineStart && !hugExtern;
 
     // } decreases depth before we emit it
     if (tok.kind === TokenKind.RBrace) {
@@ -224,7 +229,7 @@ export function format(source: string): string {
     }
 
     // Blank line before top-level items at depth 0 (unless trivia already added one)
-    if (depth === 0 && isTopLevel(tok.kind) && out.length > 0 &&
+    if (depth === 0 && isTopLevel(tok.kind) && !hugExtern && out.length > 0 &&
         !out.endsWith("\n\n") && !tok.leadingTrivia?.some(t => t.kind === "blank")) {
       blankLine();
     }
@@ -238,7 +243,7 @@ export function format(source: string): string {
     if (atLineStart) {
       indent();
       atLineStart = false;
-    } else if (spaceBefore(tokens, i)) {
+    } else if (hugExtern || spaceBefore(tokens, i)) {
       out += " ";
     }
 
