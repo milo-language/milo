@@ -49,6 +49,9 @@ function sendNotification(method: string, params: unknown) {
 // ── Document store ──
 
 const documents = new Map<string, string>();
+// Project root from `initialize`; enables whole-project references/rename beyond
+// the currently-open buffers. Null when the client sends no root (single-file).
+let workspaceRoot: string | null = null;
 
 // ── Symbol index (rebuilt on each change) ──
 
@@ -1247,9 +1250,37 @@ function handleSignatureHelp(uri: string, line: number, character: number): obje
 
 // ── References / document highlight / rename (text-based, across open docs) ──
 
+function walkMiloFiles(dir: string, acc: string[]): void {
+  let entries: import("fs").Dirent[];
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
+    // Skip dotdirs (.git, .worktrees, .claude) and vendored deps.
+    if (e.name.startsWith(".") || e.name === "node_modules") continue;
+    const full = resolve(dir, e.name);
+    if (e.isDirectory()) walkMiloFiles(full, acc);
+    else if (e.name.endsWith(".milo")) acc.push(full);
+  }
+}
+
+// All in-scope Milo sources: project files on disk, overlaid with open buffers
+// (open content wins, so refs/rename reflect unsaved edits). Falls back to just
+// the open buffers when no workspace root was provided.
+function projectSources(): Map<string, string> {
+  const out = new Map<string, string>();
+  if (workspaceRoot) {
+    const files: string[] = [];
+    walkMiloFiles(workspaceRoot, files);
+    for (const f of files) {
+      try { out.set(pathToFileURL(f).href, readFileSync(f, "utf-8")); } catch {}
+    }
+  }
+  for (const [uri, src] of documents) out.set(uri, src);
+  return out;
+}
+
 function referenceLocations(word: string): { uri: string; line: number; startCol: number }[] {
   const locs: { uri: string; line: number; startCol: number }[] = [];
-  for (const [docUri, src] of documents) {
+  for (const [docUri, src] of projectSources()) {
     for (const occ of wordOccurrences(src, word)) locs.push({ uri: docUri, ...occ });
   }
   return locs;
@@ -1317,7 +1348,12 @@ function handleWorkspaceSymbol(query: string): object[] {
 
 function handleRequest(id: number | string, method: string, params: any) {
   switch (method) {
-    case "initialize":
+    case "initialize": {
+      const rootUriStr = params?.workspaceFolders?.[0]?.uri ?? params?.rootUri
+        ?? (params?.rootPath ? pathToFileURL(params.rootPath).href : null);
+      workspaceRoot = rootUriStr
+        ? (rootUriStr.startsWith("file://") ? fileURLToPath(rootUriStr) : rootUriStr)
+        : null;
       sendResponse(id, {
         capabilities: {
           textDocumentSync: 1, // full sync
@@ -1337,6 +1373,7 @@ function handleRequest(id: number | string, method: string, params: any) {
         serverInfo: { name: "milod", version: "0.1.0" },
       });
       break;
+    }
     case "shutdown":
       sendResponse(id, null);
       break;
