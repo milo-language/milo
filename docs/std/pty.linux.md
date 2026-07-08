@@ -42,6 +42,18 @@ fn Pty.openAndSpawn(program: &string, args: &Vec<string>): Result<Pty, string>
 
 Convenience: open + spawn in one call
 
+### `Pty.output`
+
+```milo
+fn Pty.output(self: &Pty): Channel<string>
+```
+
+Pump this pty's output on a background green task and return a channel of
+raw output chunks. The caller only `recv`s the channel — no read(),
+EAGAIN handling, or hand-written pump loop. The channel is closed when the
+child exits (read returns <= 0). This is node-pty's `.onData` ergonomics
+with green-task semantics underneath.
+
 ### `Pty.read`
 
 ```milo

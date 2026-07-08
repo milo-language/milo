@@ -5,6 +5,9 @@ from "std/os" import {
     memcpy, memset, open, posix_openpt, ptsname, readFd, setsid, unlockpt,
     waitpid, writeFd
 }
+from "std/sync" import { Channel }
+from "std/runtime" import { Task, schedulerWaitRead }
+from "std/event" import { setNonblocking }
 
 fn tiocgwinsz(): i64 { return 21523 }
 fn tiocswinsz(): i64 { return 21524 }
@@ -137,6 +140,34 @@ impl Pty {
 
     fn writeStr(self: &Self, s: &string): i64 {
         unsafe { return writeFd(self.masterFd, s as *u8, s.len) }
+    }
+
+    // Pump this pty's output on a background green task and return a channel of
+    // raw output chunks. The caller only `recv`s the channel — no read(),
+    // EAGAIN handling, or hand-written pump loop. The channel is closed when the
+    // child exits (read returns <= 0). This is node-pty's `.onData` ergonomics
+    // with green-task semantics underneath.
+    fn output(self: &Self): Channel<string> {
+        let ch = Channel<string>.new(256)!
+        let fd = self.masterFd
+        setNonblocking(fd)
+        Task.spawn(move (): void => {
+            var buf: [u8; 4096] = [0; 4096]
+            while true {
+                var n: i64 = 0
+                schedulerWaitRead(fd)
+                unsafe { n = readFd(fd, buf as *u8, 4096) }
+                if n <= 0 { break }
+                var data: string = ""
+                for i in 0..n { data.push(buf[i]) }
+                match ch.send(data) {
+                    Result.Ok(_v) => {}
+                    Result.Err(_e) => { break }
+                }
+            }
+            ch.close()
+        })
+        return ch
     }
 
     fn resize(self: &mut Self, rows: u16, cols: u16): i32 {
