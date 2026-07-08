@@ -4,7 +4,8 @@ from "std/os" import {
     close, dup2, execl, execvp, exit, fork, free, kill, malloc, memcpy,
     memset, pipe, read, system, waitpid, write
 }
-from "std/io" import { readFile }
+from "std/io" import { readFile, fdChannel }
+from "std/sync" import { Channel }
 
 // ── Simple command execution ──
 
@@ -182,6 +183,21 @@ impl Child {
       requires self.stderrFd >= 0
     {
         unsafe { return read(self.stderrFd, buf, len) }
+    }
+
+    // Stream the child's stdout as an iterable channel, pumped on a background
+    // green task — the uniform async-read API shared with pty/socket/pipe.
+    // `for chunk in child.stdout()`; closes at EOF (child exits / closes stdout).
+    fn stdout(self: &Self): Channel<string> {
+        return fdChannel(self.stdoutFd)
+    }
+
+    // Stream the child's stderr the same way. Only valid when stderr is a
+    // separate pipe (not merged into stdout).
+    fn stderr(self: &Self): Channel<string>
+      requires self.stderrFd >= 0
+    {
+        return fdChannel(self.stderrFd)
     }
 
     // Close the child's stdin, sending EOF. Idempotent.

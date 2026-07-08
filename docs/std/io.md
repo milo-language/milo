@@ -127,6 +127,15 @@ fn File.writeStr(s: &string): void
 
 _Undocumented._
 
+### `stdinChannel`
+
+```milo
+fn stdinChannel(): Channel<string>
+```
+
+Stream stdin as an iterable channel of chunks — the async counterpart to the
+blocking readStdin/readLine. `for chunk in stdinChannel() { ... }`.
+
 ### `writeStdout`
 
 ```milo

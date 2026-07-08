@@ -278,6 +278,17 @@ fn TcpStream.connect(ip: u32, port: u16): Result<TcpStream, NetError>
 
 _Undocumented._
 
+### `TcpStream.incoming`
+
+```milo
+fn TcpStream.incoming(self: &TcpStream): Channel<string>
+```
+
+Stream inbound bytes as an iterable channel, pumped on a background green
+task — the uniform async-read API shared with pty/child/pipe. Iterate with
+`for chunk in stream.incoming()`; the channel closes when the peer does.
+(Plaintext only — TlsStream needs an SSL-aware pump.)
+
 ### `TcpStream.recv`
 
 ```milo

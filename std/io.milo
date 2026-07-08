@@ -73,6 +73,12 @@ fn fdChannel(fd: i32): Channel<string> {
     return ch
 }
 
+// Stream stdin as an iterable channel of chunks — the async counterpart to the
+// blocking readStdin/readLine. `for chunk in stdinChannel() { ... }`.
+fn stdinChannel(): Channel<string> {
+    return fdChannel(0)
+}
+
 // ── File ──
 
 // Owned file handle. Automatically closes the fd when dropped.

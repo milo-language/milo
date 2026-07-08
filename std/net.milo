@@ -3,6 +3,8 @@
 from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_ctrl, SSL_free, SSL_new, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd }
 from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr }
 from "std/json" import { Json, jsonParse }
+from "std/sync" import { Channel }
+from "std/io" import { fdChannel }
 
 // ── NetError ──
 
@@ -87,6 +89,14 @@ impl TcpStream {
             }
         }
         return Result.Ok(result)
+    }
+
+    // Stream inbound bytes as an iterable channel, pumped on a background green
+    // task — the uniform async-read API shared with pty/child/pipe. Iterate with
+    // `for chunk in stream.incoming()`; the channel closes when the peer does.
+    // (Plaintext only — TlsStream needs an SSL-aware pump.)
+    fn incoming(self: &Self): Channel<string> {
+        return fdChannel(self.fd)
     }
 
     // Release the underlying fd to the caller. After this the stream no longer

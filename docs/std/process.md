@@ -58,6 +58,25 @@ fn Child.spawn(program: &string, args: &Vec<string>, mergeStderr: bool): Result<
 
 _Undocumented._
 
+### `Child.stderr`
+
+```milo
+fn Child.stderr(self: &Child): Channel<string>
+```
+
+Stream the child's stderr the same way. Only valid when stderr is a
+separate pipe (not merged into stdout).
+
+### `Child.stdout`
+
+```milo
+fn Child.stdout(self: &Child): Channel<string>
+```
+
+Stream the child's stdout as an iterable channel, pumped on a background
+green task — the uniform async-read API shared with pty/socket/pipe.
+`for chunk in child.stdout()`; closes at EOF (child exits / closes stdout).
+
 ### `Child.wait`
 
 ```milo
