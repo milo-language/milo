@@ -21,6 +21,13 @@ test("flags a block whose only content needs no unsafe", () => {
   expect(unusedUnsafeLines(src)).toEqual([1]);
 });
 
+test("underlines the whole 'unsafe' keyword, not just the first char", () => {
+  const prog = new Parser(new Lexer(`fn f(): i64 { unsafe { return 1 + 2 } }`).tokenize()).parse();
+  const res = new TypeChecker({ denied: new Set(["unused-unsafe"]), allowed: new Set() }).check(prog);
+  const d = res.diagnostics.find(x => x.code === "unused-unsafe");
+  expect(d?.len).toBe(6); // "unsafe".length
+});
+
 test("does not flag a cast-to-pointer nested in a call argument", () => {
   // munmap(self.ptr as *u8, ...) — the prior lint false-positived here because
   // the cast is buried inside a call arg, missed by a shallow statement walker.

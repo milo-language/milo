@@ -5,6 +5,9 @@ export type Severity = "error" | "warning" | "hint";
 export interface Diagnostic {
   severity: Severity;
   span?: Span;
+  // Width of the underlined span in columns (caret count / LSP range end).
+  // Defaults to 1 when absent — Span is only a start point.
+  len?: number;
   message: string;
   hint?: string;
   code?: string;
@@ -55,7 +58,7 @@ export function formatDiagnostic(d: Diagnostic, source: string, filePath?: strin
       const pad = " ".repeat(lineNum.length);
       lines.push(`${DIM}${pad} │${RESET}`);
       lines.push(`${DIM}${lineNum} │${RESET} ${srcLines[lineIdx]}`);
-      lines.push(`${DIM}${pad} │${RESET} ${" ".repeat(d.span.col - 1)}${color}^${RESET}`);
+      lines.push(`${DIM}${pad} │${RESET} ${" ".repeat(d.span.col - 1)}${color}${"^".repeat(Math.max(1, d.len ?? 1))}${RESET}`);
     }
   } else {
     lines.push(`${BOLD}${color}${d.severity}${RESET}${BOLD}: ${d.message}${RESET}`);

@@ -227,10 +227,10 @@ export class TypeChecker {
     this.diagnostics.push({ severity: "error", span, message: msg, hint });
   }
 
-  private warn(code: string, msg: string, span?: Span, hint?: string) {
+  private warn(code: string, msg: string, span?: Span, hint?: string, len?: number) {
     if (this.warningConfig.allowed.has(code)) return;
     const severity = (this.warningConfig.denied.has(code) || this.warningConfig.denied.has("*")) ? "error" : "warning";
-    this.diagnostics.push({ severity, span, message: msg, hint, code });
+    this.diagnostics.push({ severity, span, len, message: msg, hint, code });
   }
 
   // Whether a function name belongs to the user's own file. Mangled names cover
@@ -2431,7 +2431,7 @@ export class TypeChecker {
         this.unsafeDepth--;
         // only lint user code — stdlib has many technically-removable blocks
         if (!used && this.currentFnIsUser) {
-          this.warn("unused-unsafe", `unnecessary 'unsafe' block: nothing inside requires unsafe`, stmt.span, `remove the 'unsafe' wrapper`);
+          this.warn("unused-unsafe", `unnecessary 'unsafe' block: nothing inside requires unsafe`, stmt.span, `remove the 'unsafe' wrapper`, "unsafe".length);
         }
         break;
       }

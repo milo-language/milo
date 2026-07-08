@@ -298,7 +298,7 @@ function validateDocument(uri: string) {
     diagnostics: diagnostics.map(d => ({
       range: d.span ? {
         start: { line: d.span.line - 1, character: d.span.col - 1 },
-        end: { line: d.span.line - 1, character: d.span.col },
+        end: { line: d.span.line - 1, character: d.span.col - 1 + Math.max(1, d.len ?? 1) },
       } : { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
       severity: d.severity === "error" ? 1 : d.severity === "warning" ? 2 : 3,
       source: "milo",
