@@ -1752,8 +1752,24 @@ export class Codegen {
 
   private genForIterator(stmt: HIRStmt & { kind: "ForIterator" }): [string[], boolean] {
     const lines: string[] = [];
-    const [iterLines, iterAddr] = this.genLValue(stmt.iterable);
-    lines.push(...iterLines);
+    // The iterator protocol calls next(&mut self), which needs the iterable at a
+    // real address. An lvalue already has one; an rvalue (e.g. `for x in mk()`)
+    // does not — genLValue would hand back `null` and next() would deref it
+    // (SIGTRAP). Materialize the rvalue into a temp alloca first.
+    const lvalueKinds = ["Ident", "FieldAccess", "IndexAccess", "PtrDeref", "HeapDeref"];
+    let iterAddr: string;
+    if (lvalueKinds.includes(stmt.iterable.kind)) {
+      const [iterLines, addr] = this.genLValue(stmt.iterable);
+      lines.push(...iterLines);
+      iterAddr = addr;
+    } else {
+      const [valLines, val] = this.genExpr(stmt.iterable);
+      lines.push(...valLines);
+      const iterTy = this.llvmType(stmt.iterable.type);
+      iterAddr = this.nextTemp();
+      this.entryAllocas.push(`  ${iterAddr} = alloca ${iterTy}`);
+      lines.push(`  store ${iterTy} ${val}, ptr ${iterAddr}`);
+    }
 
     const sig = this.fnSigs.get(stmt.nextMethod);
     const retTy = sig?.retType ?? `%${stmt.optionEnumName}`;

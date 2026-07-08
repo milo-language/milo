@@ -1,0 +1,21 @@
+// @expect: 7
+// Regression: `for x in <rvalue>` where the iterator protocol's next() takes
+// &mut Self used to SIGTRAP — genLValue returned `null` for a non-lvalue
+// iterable, so next() dereferenced a null pointer. (Vec for-in was unaffected;
+// it indexes rather than calling next(&mut).) Now rvalue iterables are
+// materialized into a temp alloca first.
+from "std/sync" import { Channel }
+
+fn makeChannel(): Channel<i64> {
+    let c = Channel<i64>.new(4)!
+    c.send(7)!
+    c.close()
+    return c
+}
+
+fn main(): i32 {
+    for x in makeChannel() {
+        print(x)
+    }
+    return 0
+}
