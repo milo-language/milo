@@ -859,6 +859,7 @@ function main() {
     console.log("  safety --list          list available safety profiles");
     console.log("  wcet <file>            emit OTAWA flow facts (loop bounds) for WCET analysis");
     console.log("  skill                  print language guide for LLMs");
+    console.log("  api <terms>            search std signatures by name/doc (--module std/x to dump one)");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
@@ -876,6 +877,11 @@ function main() {
   if (cmd === "skill") {
     process.stdout.write(SKILL_TEXT);
     return;
+  }
+
+  if (cmd === "api") {
+    const { runApiSearch } = require("./api-search");
+    process.exit(runApiSearch(args.slice(1)));
   }
 
   if (cmd === "lsp") {
