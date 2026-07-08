@@ -10,6 +10,18 @@ fn Drop.drop(self: &mut Drop): void
 
 _Undocumented._
 
+### `fdChannel`
+
+```milo
+fn fdChannel(fd: i32): Channel<string>
+```
+
+Stream a file descriptor's bytes on a background green task, returned as a
+channel of raw chunks. This is the single pump behind every async byte source
+(pty, sockets, child stdio, pipes) — the caller just `recv`s or iterates
+(`for chunk in fdChannel(fd)`), never touching read/EAGAIN. The channel closes
+at EOF (read returns <= 0). Milo's answer to a node.js Readable, minus the fd.
+
 ### `File.openAppend`
 
 ```milo

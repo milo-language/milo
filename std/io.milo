@@ -2,6 +2,9 @@
 
 from "std/os" import { close, lseek, open, readFd, strerror, writeFd }
 from "std/platform" import { getErrno, oWriteCreateAppend, oWriteCreateTrunc }
+from "std/sync" import { Channel }
+from "std/runtime" import { Task, schedulerWaitRead }
+from "std/event" import { setNonblocking }
 
 // ── IoError ──
 
@@ -39,6 +42,35 @@ fn _ioError(path: &string): IoError {
 
 fn writeStdout(s: &string): void {
     writeFd(1, s, s.len)
+}
+
+// ── Async byte streams ──
+
+// Stream a file descriptor's bytes on a background green task, returned as a
+// channel of raw chunks. This is the single pump behind every async byte source
+// (pty, sockets, child stdio, pipes) — the caller just `recv`s or iterates
+// (`for chunk in fdChannel(fd)`), never touching read/EAGAIN. The channel closes
+// at EOF (read returns <= 0). Milo's answer to a node.js Readable, minus the fd.
+fn fdChannel(fd: i32): Channel<string> {
+    let ch = Channel<string>.new(256)!
+    setNonblocking(fd)
+    Task.spawn(move (): void => {
+        var buf: [u8; 4096] = [0; 4096]
+        while true {
+            var n: i64 = 0
+            schedulerWaitRead(fd)
+            unsafe { n = readFd(fd, buf as *u8, 4096) }
+            if n <= 0 { break }
+            var data: string = ""
+            for i in 0..n { data.push(buf[i]) }
+            match ch.send(data) {
+                Result.Ok(_v) => {}
+                Result.Err(_e) => { break }
+            }
+        }
+        ch.close()
+    })
+    return ch
 }
 
 // ── File ──
