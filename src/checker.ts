@@ -1742,8 +1742,13 @@ export class TypeChecker {
   }
 
   private checkFunction(fn: Function) {
-    // save/restore: monomorphization can re-enter checkFunction mid-expression
+    // save/restore: monomorphization can re-enter checkFunction mid-expression.
+    // currentFnRetType MUST be saved too — resolving/checking a generic in this
+    // fn's body (e.g. Channel<string>.new) re-enters checkFunction for that
+    // type's methods (some returning void), which would otherwise leave
+    // currentFnRetType clobbered and make a later `?` see a void return.
     const savedIsUser = this.currentFnIsUser;
+    const savedRetType = this.currentFnRetType;
     this.currentFnIsUser = this.fnIsUserCode(fn.name);
     this.pushScope();
     const retType = this.resolve(fn.retType);
@@ -1799,6 +1804,7 @@ export class TypeChecker {
 
     this.popScope();
     this.currentFnIsUser = savedIsUser;
+    this.currentFnRetType = savedRetType;
   }
 
   private checkStmt(stmt: Stmt, fnRetType: TypeKind) {

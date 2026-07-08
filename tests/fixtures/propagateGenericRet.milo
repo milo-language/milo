@@ -1,0 +1,24 @@
+// @expect: ok
+// Regression: `?` in a fn returning Result<Channel<string>> intermittently
+// reported "'?' requires function to return Option or Result, but returns void".
+// Cause: checkFunction set currentFnRetType but didn't save/restore it, so
+// re-entrant monomorphization of Channel<string> (checking its void-returning
+// methods) clobbered it before the `?` check. Was order-dependent (worked for
+// some fn names / for i64 but not string). Now saved/restored per function.
+from "std/sync" import { Channel }
+
+fn mkChan(): Result<Channel<string>> {
+    let c = Channel<string>.new(4)?
+    return Result.Ok(c)
+}
+
+fn main(): i32 {
+    let ch = mkChan()!
+    ch.send("ok")!
+    match ch.recv() {
+        Result.Ok(v) => { print(v) }
+        Result.Err(_e) => { print("err") }
+    }
+    ch.destroy()
+    return 0
+}
