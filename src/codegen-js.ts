@@ -419,6 +419,28 @@ export class CodegenJS {
         return `Math.max(${args.join(", ")})`;
       case "min":
         return `Math.min(${args.join(", ")})`;
+      case "sqrt":
+        return `Math.sqrt(${args[0]})`;
+      case "abs":
+        return `Math.abs(${args[0]})`;
+      case "floor":
+        return `Math.floor(${args[0]})`;
+      case "ceil":
+        return `Math.ceil(${args[0]})`;
+      case "round":
+        return `Math.round(${args[0]})`;
+      case "pow":
+        return `Math.pow(${args[0]}, ${args[1]})`;
+      case "log":
+        return `Math.log(${args[0]})`;
+      case "sin":
+        return `Math.sin(${args[0]})`;
+      case "cos":
+        return `Math.cos(${args[0]})`;
+      case "strToUpper":
+        return `${args[0]}.toUpperCase()`;
+      case "strToLower":
+        return `${args[0]}.toLowerCase()`;
       default:
         return `${expr.func}(${args.join(", ")})`;
     }
