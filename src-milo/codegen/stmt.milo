@@ -10,15 +10,15 @@ from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
 
 // -- Assignment --
 
-fn genAssign(cg: &mut Cgen, target: Heap<Expr>, value: Heap<Expr>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>) {
-    match *target {
+fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>) {
+    match target {
         Expr.Ident(name, span) => {
             let local = findLocal(locs, name)
             let v = genExpr(cg, value, locs, sigs, local.ty.clone())
             emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
         }
         Expr.FieldAccess(object, field, span) => {
-            let lv = genLvalue(cg, object, locs, sigs)
+            let lv = genLvalue(cg, *object, locs, sigs)
             let rawName = stripPercent(lv.ty)
             let idx = lookupFieldIndex(cg, rawName, field)
             let fty = lookupFieldType(cg, rawName, idx)
@@ -38,7 +38,7 @@ fn genAssign(cg: &mut Cgen, target: Heap<Expr>, value: Heap<Expr>, locs: &mut Ve
 
 // -- While loop --
 
-fn genWhile(cg: &mut Cgen, cond: Heap<Expr>, body: Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
+fn genWhile(cg: &mut Cgen, cond: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
     let condLbl = nextLabel(cg, "wcond")
     let bodyLbl = nextLabel(cg, "wbody")
     let endLbl = nextLabel(cg, "wend")
@@ -53,7 +53,7 @@ fn genWhile(cg: &mut Cgen, cond: Heap<Expr>, body: Vec<Heap<Stmt>>, locs: &mut V
     emit(cg, bodyLbl + ":\n")
     var bodyTerm = false
     for bi in 0..body.len {
-        if genStmt(cg, body[bi], locs, sigs, retTy) { bodyTerm = true }
+        if genStmt(cg, *body[bi], locs, sigs, retTy) { bodyTerm = true }
     }
     if !bodyTerm { emit(cg, "  br label %" + condLbl + "\n") }
     emit(cg, endLbl + ":\n")
@@ -63,7 +63,7 @@ fn genWhile(cg: &mut Cgen, cond: Heap<Expr>, body: Vec<Heap<Stmt>>, locs: &mut V
 
 // -- If statement --
 
-fn genIf(cg: &mut Cgen, cond: Heap<Expr>, thenBody: Vec<Heap<Stmt>>, elseBody: Option<Vec<Heap<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+fn genIf(cg: &mut Cgen, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let cv = genExpr(cg, cond, locs, sigs, "bool")
     let thenLbl = nextLabel(cg, "then")
     let elseLbl = nextLabel(cg, "else")
@@ -72,7 +72,7 @@ fn genIf(cg: &mut Cgen, cond: Heap<Expr>, thenBody: Vec<Heap<Stmt>>, elseBody: O
     emit(cg, thenLbl + ":\n")
     var thenTerm = false
     for ti in 0..thenBody.len {
-        if genStmt(cg, thenBody[ti], locs, sigs, retTy) { thenTerm = true }
+        if genStmt(cg, *thenBody[ti], locs, sigs, retTy) { thenTerm = true }
     }
     if !thenTerm { emit(cg, "  br label %" + endLbl + "\n") }
     emit(cg, elseLbl + ":\n")
@@ -80,7 +80,7 @@ fn genIf(cg: &mut Cgen, cond: Heap<Expr>, thenBody: Vec<Heap<Stmt>>, elseBody: O
     match elseBody {
         Option.Some(stmts) => {
             for ei in 0..stmts.len {
-                if genStmt(cg, stmts[ei], locs, sigs, retTy) { elseTerm = true }
+                if genStmt(cg, *stmts[ei], locs, sigs, retTy) { elseTerm = true }
             }
         }
         Option.None => {}
@@ -93,7 +93,7 @@ fn genIf(cg: &mut Cgen, cond: Heap<Expr>, thenBody: Vec<Heap<Stmt>>, elseBody: O
 
 // -- Match statement --
 
-fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let subjLv = genLvalue(cg, subject, locs, sigs)
     let rawName = stripPercent(subjLv.ty)
     let structTy = "%" + rawName
@@ -141,7 +141,7 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
                             let bindAddr = nextTemp(cg)
                             emit(cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
                             emit(cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
-                            locs.push(Local { name: bindings[bi], ty: payloadTypes[bi], addr: bindAddr })
+                            locs.push(Local { name: bindings[bi].clone(), ty: payloadTypes[bi].clone(), addr: bindAddr })
                         }
                     }
                 }
@@ -150,7 +150,7 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
         }
         var armTerm = false
         for si in 0..arms[ai].body.len {
-            if genStmt(cg, arms[ai].body[si], locs, sigs, retTy) { armTerm = true }
+            if genStmt(cg, *arms[ai].body[si], locs, sigs, retTy) { armTerm = true }
         }
         // Pop bindings
         while locs.len > locsPreLen { locs.pop() }
@@ -168,44 +168,44 @@ fn genMatch(cg: &mut Cgen, subject: Heap<Expr>, arms: Vec<MatchArm>, locs: &mut 
 
 // -- Main statement dispatch. Returns true if stmt terminates block. --
 
-fn genStmt(cg: &mut Cgen, s: Heap<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
-    match *s {
+fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+    match s {
         Stmt.LetDecl(name, ty, value, span) => {
             var hintTy = ""
             match ty {
-                Option.Some(t) => { hintTy = t.name }
+                Option.Some(t) => { hintTy = t.name.clone() }
                 Option.None => {}
             }
-            let v = genExpr(cg, value, locs, sigs, hintTy)
+            let v = genExpr(cg, *value, locs, sigs, hintTy)
             let vtyLl = llType(v.ty)
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
             emit(cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
-            locs.push(Local { name: name, ty: v.ty, addr: addr })
+            locs.push(Local { name: name.clone(), ty: v.ty.clone(), addr: addr })
             return false
         }
         Stmt.VarDecl(name, ty, value, span) => {
             var hintTy = ""
             match ty {
-                Option.Some(t) => { hintTy = t.name }
+                Option.Some(t) => { hintTy = t.name.clone() }
                 Option.None => {}
             }
-            let v = genExpr(cg, value, locs, sigs, hintTy)
+            let v = genExpr(cg, *value, locs, sigs, hintTy)
             let vtyLl = llType(v.ty)
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
             emit(cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
-            locs.push(Local { name: name, ty: v.ty, addr: addr })
+            locs.push(Local { name: name.clone(), ty: v.ty.clone(), addr: addr })
             return false
         }
         Stmt.Assign(target, value, span) => {
-            genAssign(cg, target, value, locs, sigs)
+            genAssign(cg, *target, *value, locs, sigs)
             return false
         }
         Stmt.Return(value, span) => {
             match value {
                 Option.Some(expr) => {
-                    let v = genExpr(cg, expr, locs, sigs, retTy.clone())
+                    let v = genExpr(cg, *expr, locs, sigs, retTy.clone())
                     let fnRetLl = llType(retTy)
                     let valLl = llType(v.ty)
                     if valLl == fnRetLl {
@@ -223,14 +223,14 @@ fn genStmt(cg: &mut Cgen, s: Heap<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<CgFnS
             return true
         }
         Stmt.ExprStmt(e, span) => {
-            genExpr(cg, e, locs, sigs, "")
+            genExpr(cg, *e, locs, sigs, "")
             return false
         }
         Stmt.IfStmt(cond, thenBody, elseBody, span) => {
-            return genIf(cg, cond, thenBody, elseBody, locs, sigs, retTy)
+            return genIf(cg, *cond, thenBody, elseBody, locs, sigs, retTy)
         }
         Stmt.WhileStmt(cond, body, span) => {
-            genWhile(cg, cond, body, locs, sigs, retTy)
+            genWhile(cg, *cond, body, locs, sigs, retTy)
             return false
         }
         Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
@@ -238,7 +238,7 @@ fn genStmt(cg: &mut Cgen, s: Heap<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<CgFnS
             return false
         }
         Stmt.MatchStmt(subject, arms, span) => {
-            return genMatch(cg, subject, arms, locs, sigs, retTy)
+            return genMatch(cg, *subject, arms, locs, sigs, retTy)
         }
         Stmt.BreakStmt(span) => {
             if cg.curBreakLbl.len > 0 {
@@ -259,7 +259,7 @@ fn genStmt(cg: &mut Cgen, s: Heap<Stmt>, locs: &mut Vec<Local>, sigs: &Vec<CgFnS
         Stmt.UnsafeBlock(body, span) => {
             var term = false
             for i in 0..body.len {
-                if genStmt(cg, body[i], locs, sigs, retTy) { term = true }
+                if genStmt(cg, *body[i], locs, sigs, retTy) { term = true }
             }
             return term
         }

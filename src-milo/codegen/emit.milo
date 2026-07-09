@@ -66,7 +66,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 
     var terminated = false
     for si in 0..f.body.len {
-        if genStmt(cg, f.body[si], locs, sigs, f.retType.name) {
+        if genStmt(cg, *f.body[si], locs, sigs, f.retType.name) {
             terminated = true
         }
     }

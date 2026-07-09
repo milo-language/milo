@@ -55,7 +55,7 @@ fn emitStringLit(cg: &mut Cgen, raw: &string): string {
 }
 
 // Build %String aggregate { @.strN, len, 0 } for a string literal.
-fn genStringLit(cg: &mut Cgen, raw: string): Val {
+fn genStringLit(cg: &mut Cgen, raw: &string): Val {
     ensureStringTy(cg)
     let label = emitStringLit(cg, raw)
     let len = raw.len
