@@ -96,7 +96,7 @@ let x: i32 = 2147483647
 let y = x + 1     // runtime error: integer overflow at main.milo:2
 ```
 
-Build with `--debug` to enable overflow traps. Default (`-O2`) and `--release` (`-O3`) builds use wrapping arithmetic for performance.
+Build with `--debug` to enable overflow traps. Default (`-O2`) and `--release` (`-O3`) builds use wrapping arithmetic for performance. Add `-g` for DWARF debug info (source-level `lldb`/`gdb` stepping and variable inspection) — see `docs/site/getting-started/debugging.md`.
 
 Checked operations: `+`, `-`, `*`, and unary negation (`-x`) on all integer types.
 

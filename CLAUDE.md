@@ -9,6 +9,7 @@ bun run src/main.ts run examples/hello.milo               # compile + run (no ar
 bun run src/main.ts build examples/hello.milo -o hello    # compile to binary
 bun run src/main.ts emit-ir examples/hello.milo           # emit LLVM IR
 bun run src/main.ts build foo.milo --release              # -O3 (default -O2; --debug for -O0)
+bun run src/main.ts build foo.milo -o foo -g --debug      # DWARF for lldb/hades (-g composes with any -O)
 bun test                                                  # full test suite
 bun test tests/run.test.ts -t "arithmetic"                # single fixture by name
 ./benchmarks/run.sh                                       # reproduce perf numbers

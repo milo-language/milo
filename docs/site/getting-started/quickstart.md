@@ -36,7 +36,10 @@ The binary is standalone — no runtime needed. Typically under 300KB.
 bun run src/main.ts build app.milo -o app            # default: -O2
 bun run src/main.ts build app.milo -o app --release   # -O3
 bun run src/main.ts build app.milo -o app --debug     # -O0
+bun run src/main.ts build app.milo -o app -g --debug  # -O0 + DWARF, for lldb
 ```
+
+`-g` emits DWARF debug info and composes with any optimization level. See [Debugging](/getting-started/debugging).
 
 ## See the LLVM IR
 

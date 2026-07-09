@@ -40,6 +40,7 @@ export default defineConfig({
             { text: 'Installation', link: '/getting-started/installation' },
             { text: 'Quickstart', link: '/getting-started/quickstart' },
             { text: 'IDE Setup', link: '/getting-started/ide-setup' },
+            { text: 'Debugging', link: '/getting-started/debugging' },
           ]
         },
         {

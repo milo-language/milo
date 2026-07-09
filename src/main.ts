@@ -886,6 +886,7 @@ function main() {
     console.log("  --debug                no optimization (-O0)");
     console.log("  -g                     emit DWARF line info (source-level lldb/hades); composes with any -O / --debug");
     console.log("  -O<level>              clang opt level: 0,1,2,3,s,z (default: -O2)");
+    console.log("  --sanitize             link with AddressSanitizer (requires clang)");
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
     console.log("  --deny-all             treat all warnings as errors");
