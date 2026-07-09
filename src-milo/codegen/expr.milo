@@ -10,7 +10,7 @@ from "src-milo/codegen/types.milo" import {
 }
 from "src-milo/codegen/strings.milo" import {
     genStringLit, genStringClone, genStringConcat, genStringEq,
-    genIntToString, genStringIndex, genStringSlice
+    genIntToString, genStringIndex, genStringSlice, emitStringLit
 }
 
 // -- Struct literal --
@@ -201,20 +201,58 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Loca
         argVals.push(genExpr(cg, *args[i], locs, sigs, ""))
     }
 
+    let isPrintCall = name == "print" || name == "println"
     let isVariadicExtern = name == "printf" || name == "fprintf" ||
-                           name == "snprintf" || name == "print" || name == "println"
+                           name == "snprintf" || isPrintCall
 
     // Build argument string
     var argStr = ""
-    for ai in 0..argVals.len {
-        if ai > 0 { argStr = argStr + ", " }
-        let elemLl = llType(argVals[ai].ty)
-        if elemLl == "%String" && isVariadicExtern {
-            let p = nextTemp(cg)
-            emit(cg, "  " + p + " = extractvalue %String " + argVals[ai].v + ", 0\n")
-            argStr = argStr + "ptr " + p
-        } else {
-            argStr = argStr + elemLl + " " + argVals[ai].v
+    if isPrintCall {
+        // print/println are printf with a format string synthesized from the
+        // argument types; passing the values bare (printf(i64 42)) is not even
+        // valid IR. Trailing newline matches the TS compiler's `print`.
+        var fmt = ""
+        for ai in 0..argVals.len {
+            let elemLl = llType(argVals[ai].ty)
+            if elemLl == "%String" {
+                fmt = fmt + "%s"
+                let p = nextTemp(cg)
+                emit(cg, "  " + p + " = extractvalue %String " + argVals[ai].v + ", 0\n")
+                argStr = argStr + ", ptr " + p
+            } else if elemLl == "double" {
+                fmt = fmt + "%f"
+                argStr = argStr + ", double " + argVals[ai].v
+            } else if elemLl == "i64" {
+                fmt = fmt + "%lld"
+                argStr = argStr + ", i64 " + argVals[ai].v
+            } else if elemLl == "ptr" {
+                fmt = fmt + "%p"
+                argStr = argStr + ", ptr " + argVals[ai].v
+            } else if elemLl == "i32" {
+                fmt = fmt + "%d"
+                argStr = argStr + ", i32 " + argVals[ai].v
+            } else {
+                // i1/i8/i16 — printf varargs promote to int
+                fmt = fmt + "%d"
+                let z = nextTemp(cg)
+                emit(cg, "  " + z + " = zext " + elemLl + " " + argVals[ai].v + " to i32\n")
+                argStr = argStr + ", i32 " + z
+            }
+        }
+        fmt = fmt + "\\n"
+        let flabel = emitStringLit(cg, fmt)
+        argStr = "ptr " + flabel + argStr
+    } else {
+        for ai in 0..argVals.len {
+            if ai > 0 { argStr = argStr + ", " }
+            let elemLl = llType(argVals[ai].ty)
+            if elemLl == "%String" && isVariadicExtern {
+                let p = nextTemp(cg)
+                emit(cg, "  " + p + " = extractvalue %String " + argVals[ai].v + ", 0\n")
+                argStr = argStr + "ptr " + p
+            } else {
+                argStr = argStr + elemLl + " " + argVals[ai].v
+            }
         }
     }
 
@@ -233,10 +271,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Loca
             emitG(cg, "declare i32 @printf(ptr, ...)\n")
             cg.declaredPrintf = true
         }
-        if isPrintln && !cg.declaredPutchar {
-            emitG(cg, "declare i32 @putchar(i32)\n")
-            cg.declaredPutchar = true
-        }
+
     }
     if name == "printf" || name == "fprintf" || name == "snprintf" {
         sigStr = "i32 (ptr, ...)"
@@ -244,10 +279,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Loca
 
     let t = nextTemp(cg)
     emit(cg, "  " + t + " = call " + sigStr + " @" + emitName + "(" + argStr + ")\n")
-    if isPrintln {
-        let tNl = nextTemp(cg)
-        emit(cg, "  " + tNl + " = call i32 @putchar(i32 10)\n")
-    }
+
     return Val { v: t, ty: retLl }
 }
 

@@ -291,6 +291,18 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
         return TypeKind.THeap(Heap(argType))
     }
 
+    // print/println/eprint are compiler builtins (codegen/expr.milo genCall), not
+    // prelude functions — the checker has to know them or every call is
+    // "undefined function". Variadic; any displayable argument.
+    if func == "print" || func == "println" || func == "eprint" {
+        var pi: i64 = 0
+        while pi < args.len {
+            checkExpr(ck, *args[pi])
+            pi = pi + 1
+        }
+        return tyVoid()
+    }
+
     // assert builtin
     if func == "assert" {
         if args.len < 1 || args.len > 2 {

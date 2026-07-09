@@ -5,8 +5,9 @@
 //        milo check <file>
 
 from "std/io" import { readFile }
-from "std/fs" import { writeFile }
+from "std/fs" import { writeFile, pathExists }
 from "std/path" import { pathDirname, pathJoin }
+from "std/env" import { getEnv }
 from "std/process" import { run }
 from "std/args" import { args }
 from "src-milo/tokens.milo" import { Token }
@@ -19,6 +20,29 @@ from "src-milo/checker/state.milo" import { Checker, newChecker, hasErrors }
 from "src-milo/checker/stmt.milo" import { checkProgram }
 from "src-milo/codegen/emit.milo" import { buildFnTable, genProgram }
 from "src-milo/target.milo" import { getHostTarget }
+
+
+// The stdlib root is the directory *containing* `std/` (resolvePath joins it with
+// "std/io.milo"), not `std/` itself. Mirrors src/resolver.ts: MILO_ROOT wins,
+// otherwise walk up from the source file looking for std/prelude.milo.
+fn findStdlibRoot(sourceDir: &string): string {
+    match getEnv("MILO_ROOT") {
+        Option.Some(root) => { return root }
+        Option.None => {}
+    }
+    var dir = sourceDir.clone()
+    var depth: i64 = 0
+    while depth < 32 {
+        if pathExists(pathJoin(dir, "std/prelude.milo")) {
+            return dir
+        }
+        let parent = pathDirname(dir.clone())
+        if parent == dir { break }
+        dir = parent
+        depth = depth + 1
+    }
+    return sourceDir.clone()
+}
 
 fn compile(path: string): string {
     var source = ""
@@ -40,7 +64,7 @@ fn compile(path: string): string {
     // Resolve imports
     let target = getHostTarget()
     let sourceDir = pathDirname(path.clone())
-    let stdlibDir = pathJoin(pathDirname(path.clone()), "std")
+    let stdlibDir = findStdlibRoot(sourceDir)
     let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
 
     // Type check
@@ -114,7 +138,7 @@ fn main() {
         let program = parse(parser)
         let target = getHostTarget()
         let sourceDir = pathDirname(source.clone())
-        let stdlibDir = pathJoin(pathDirname(source.clone()), "std")
+        let stdlibDir = findStdlibRoot(sourceDir)
         let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
         var checker = newChecker()
         checkProgram(checker, resolved)
