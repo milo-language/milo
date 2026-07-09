@@ -10,16 +10,18 @@ from "src-milo/codegen/stmt.milo" import { genStmt }
 fn buildFnTable(prog: &Program): Vec<CgFnSig> {
     var sigs: Vec<CgFnSig> = Vec.new()
     for i in 0..prog.functions.len {
-        let f = prog.functions[i]
+        // Never bind `prog.functions[i]` to a local: that materializes an owned
+        // copy which is dropped at scope exit, freeing the AST `prog` still owns.
+        // Read the fields through the borrow instead.
         var pts: Vec<string> = Vec.new()
-        for j in 0..f.params.len {
-            pts.push(f.params[j].ty.name.clone())
+        for j in 0..prog.functions[i].params.len {
+            pts.push(prog.functions[i].params[j].ty.name.clone())
         }
         sigs.push(CgFnSig {
-            name: f.name.clone(),
-            retTy: f.retType.name.clone(),
+            name: prog.functions[i].name.clone(),
+            retTy: prog.functions[i].retType.name.clone(),
             paramTys: pts,
-            isVariadic: f.isVariadic,
+            isVariadic: prog.functions[i].isVariadic,
         })
     }
     return sigs
@@ -56,12 +58,11 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 
     // Spill parameters to allocas
     for pj in 0..f.params.len {
-        let p = f.params[pj]
-        let llt = llType(p.ty.name)
-        let addr = "%" + p.name + "_addr"
+        let llt = llType(f.params[pj].ty.name)
+        let addr = "%" + f.params[pj].name + "_addr"
         emit(cg, "  " + addr + " = alloca " + llt + "\n")
-        emit(cg, "  store " + llt + " %" + p.name + ", ptr " + addr + "\n")
-        locs.push(Local { name: p.name.clone(), ty: p.ty.name.clone(), addr: addr })
+        emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
+        locs.push(Local { name: f.params[pj].name.clone(), ty: f.params[pj].ty.name.clone(), addr: addr })
     }
 
     var terminated = false
@@ -91,11 +92,11 @@ fn genProgram(prog: Program): string {
 
     // Register enums and emit %Name type declarations
     for ei in 0..prog.enums.len {
-        let e = prog.enums[ei]
+        let e = prog.enums[ei].clone()
         var variants: Vec<CgVariantInfo> = Vec.new()
         var maxBytes: i64 = 0
         for vi in 0..e.variants.len {
-            let v = e.variants[vi]
+            let v = e.variants[vi].clone()
             var payloadTypes: Vec<string> = Vec.new()
             var vBytes: i64 = 0
             for fi in 0..v.fields.len {
@@ -125,11 +126,11 @@ fn genProgram(prog: Program): string {
 
     // Register structs and emit %Name type declarations
     for si in 0..prog.structs.len {
-        let s = prog.structs[si]
+        let s = prog.structs[si].clone()
         var fields: Vec<FieldInfo> = Vec.new()
         var llStruct = "{ "
         for fi in 0..s.fields.len {
-            let f = s.fields[fi]
+            let f = s.fields[fi].clone()
             if fi > 0 { llStruct = llStruct + ", " }
             llStruct = llStruct + llType(f.ty.name)
             fields.push(FieldInfo { name: f.name.clone(), ty: f.ty.name.clone() })

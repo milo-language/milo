@@ -20,7 +20,7 @@ fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs
     let alloc = nextTemp(cg)
     emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
     for fi in 0..fields.len {
-        let ef = fields[fi]
+        let ef = fields[fi].clone()
         let idx = lookupFieldIndex(cg, name, ef.name)
         let fty = lookupFieldType(cg, name, idx)
         let fv = genExpr(cg, *ef.value, locs, sigs, fty)
