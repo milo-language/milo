@@ -66,6 +66,57 @@ acceptance test, and the rules in "Working Agreement" are mandatory.
   same from day one (`codegen/emit.milo` — see `hoistAllocas` in
   `src/codegen.ts` for the invariant and `tests/allocaHoist.test.ts`).
 
+## Data-Structure Guidance (read before touching checker state)
+
+Milo has no stored/returned references, so the TS compiler's core idiom —
+`map.get(name)` returns a live object, mutate it in place — cannot be
+translated literally. src-milo currently uses **copy-back**: clone the entry
+out, mutate the clone, re-insert (`checker/state.milo:169` `lookup` returns a
+cloned `VarInfo`; the write-backs are the `ck.scopes[i].insert(name.clone(),
+updated)` calls at `state.milo:188` and `:206`). Copy-back done ad hoc is
+both slow (every `VarInfo` clone deep-clones its recursive `TypeKind`) and
+bug-prone (stale write-backs; clone/drop interactions on `Heap` payloads) —
+and it is the prime suspect for the current crash. Do not extend the pattern.
+Two sanctioned replacements, in order of preference:
+
+1. **Intern types; index everything.** The single highest-leverage change.
+   Add a type interner to `Checker`: `typeTable: Vec<TypeKind>` plus
+   `type TypeId = i64` handles. Interned equal types share one id, so
+   `typeEq` on interned types becomes integer compare, and `VarInfo.ty`
+   becomes a Copy `TypeId` — after which cloning a `VarInfo` is trivially
+   cheap and copy-back loses most of its danger and all of its cost. This is
+   not a workaround: rustc interns all types in `TyCtxt` for the same reason
+   (reference graphs fight the ownership model even *with* lifetimes).
+   Compilers are table-shaped; lean into it. Same trick applies to any other
+   hot recursive value (e.g. monomorphization keys in `checker/mono.milo`).
+
+2. **`std/arena` for mutate-in-place.** Already shipped: generational
+   `Arena<T>` / `Handle<T>` (Copy, storable — legal where `&T` is not).
+   The API that kills copy-back is `arenaModifyMut(a, h, (v: &mut T): void
+   => { ... })` — in-place mutation through a closure, no clone-out, no
+   write-back, no stale-copy window. `arenaWith(a, h, (v: &T): R => ...)`
+   for reads, `arenaGet` where a clone is genuinely wanted. Usage example:
+   `tests/fixtures/closureCaptureMutableLocal.milo`. Good fit for scope
+   entries: store `VarInfo` in an arena, keep `HashMap<string, Handle>`
+   per scope, mutate flags (`moved`, `borrowed`, `read`) via `modifyMut`.
+   Caveat: `arenaGet` clones `T` out — keep arena'd structs small (which
+   interning already does).
+
+Sequencing: don't refactor preemptively. M1 first diagnoses the crash; if
+the root cause is copy-back/clone corruption (likely), fix *forward* by
+converting the offending table to pattern 1 or 2 rather than patching the
+clone. Perf gate at M4: if self-compiling src-milo takes >60s, intern types
+before optimizing anything else.
+
+Other pre-approved escape hatches (from v1, still valid):
+- HashMap codegen too hard for milo-self → sorted `Vec` + binary search
+  (localized to `checker/mono.milo` tables).
+- Recursive-enum ergonomics → `Heap<T>` is the answer; if a specific
+  clone/drop pattern miscompiles, extract it to a fixture and fix the
+  compiler — do not contort the milo0 source around it.
+- String building too verbose → byte-index loops and `String.push`; no
+  iterator machinery needed.
+
 ## Milestones
 
 ### M0 — Differential harness (do this first, nothing else until green)
