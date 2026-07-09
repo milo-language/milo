@@ -202,10 +202,54 @@ fn resolve(program: Vec<Heap<St>>): Vec<Heap<St>> { /* rs.push(program[fi]) */ }
 added `impl Clone` for `TraitMethod`/`TraitDecl`/`ImplDecl`). `check` on a
 trivial program is now deterministic and gated by `CHECK_MUST_PASS`.
 
-**Still open — `run`**: milo0's *codegen* has the same class of bug. It emits
-corrupted IR intermittently (`trunc i64 0 to <NUL><NUL>…`,
-`trunc %String %t2 to i32`), i.e. `String` memory reused after free while
-building instruction text. Same hunt: find the index-moves in `src-milo/codegen/`.
+#### Second root cause (2026-07-09): enum payload sizing — an *oracle* miscompile
+
+`milo-self run` emitted corrupted IR (`trunc i64 0 to <NUL><NUL>…`,
+`trunc %String %t2 to i32`). That was **not** a milo0 bug. Minimal repro:
+
+```milo
+enum Outer { Wrap(Option<i64>), Nop }
+fn f(o: &Outer): i64 { match o { Outer.Wrap(v) => …, Outer.Nop => -2 } }
+f(Outer.Wrap(Option.Some(42)))   // → -2: the OUTER match took the wrong arm
+```
+
+`%Outer = type { i32, [1 x i64] }` — an 8-byte payload holding a 16-byte
+`%Option_i64`. Enum layouts were registered in one pass, and monomorphized
+generics (`Option_i64`) are appended *after* the enums that reference them, so
+`typeSize()` hit its 8-byte fallback and every store scribbled past the slot.
+Non-generic payloads (`Wrap(Inner)`) worked only by luck. Fixed in `ee5d379`:
+seed all layouts, then grow payload sizes to a fixpoint (monotone → terminates;
+recursion goes through `Heap`, a pointer). This shape is exactly milo0's
+`Stmt.Return(Option<Heap<Expr>>, …)`, so the oracle was corrupting the
+self-hosted compiler's own AST.
+
+Also landed (`7ad21dd`): milo0's codegen now **borrows** the AST (`&Stmt`,
+`&Expr`) instead of taking `Heap<Stmt>`/`Heap<Expr>` by value — previously every
+callee dropped (freed) the node it was handed, the same bug class as the
+resolver fix, at six call sites. This mirrors what the checker already does.
+
+**Still open — `run`/`emit-ir`.** milo-self now reaches the right arms and
+`genExpr` returns correctly, but `emit-ir` on `fn main(): i32 { return 0 }`
+prints an **empty** IR string (`cg.globals` and `cg.body` both empty), while
+`run` exits 0 without propagating the program's exit code.
+
+Next lead — it is a heisenbug: adding a single `eprint` to `genFn` makes it
+emit **correct** IR (`body=72`, `define i32 @main() { entry: %t0 = trunc i64 0
+to i32 …`). So an uninitialized/freed read still corrupts `Cgen` accumulation.
+Reproduce with:
+
+```sh
+bun run src/main.ts build src-milo/main.milo -o .selfhost/milo-self
+.selfhost/milo-self emit-ir min.milo   # prints nothing; add an eprint in genFn -> prints IR
+```
+
+Prime suspects: the remaining bare index-moves that shallow-copy structs owning
+strings — `let f = prog.functions[i]` (`emit.milo` `buildFnTable`), `let e =
+prog.enums[ei]`, `let s = prog.structs[si]`, `let v = e.variants[vi]`, `let p =
+f.params[pj]`, `let ef = fields[fi]`. These bind fine today only because codegen
+treats `let x = v[i]` as a non-dropping borrow-init; they alias whatever the
+container owns. Also verify `emit(cg, …)` really mutates the caller's `Cgen`
+rather than a copy.
 
 **The oracle is unsound here (flagged, not fixed).** `src/checker.ts` `tryMove`
 handles `Ident` and `FieldAccess` (codegen zeroes the moved-out field) but has
@@ -319,7 +363,7 @@ while the language stagnates.
 | Milestone | Status | Date |
 |---|---|---|
 | M0 harness | **done** (`bun test tests/selfhost.test.ts`) | 2026-07-09 |
-| M1 fix crash | in progress (repro: `./milo-self check` on any file) | |
+| M1 fix crash | partial — `check` green + gated; `emit-ir`/`run` still broken | 2026-07-09 |
 | M2 attic HIR | not started | |
 | M3 codegen gaps | not started | |
 | M4 self-compile | not started | |
