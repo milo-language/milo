@@ -228,41 +228,42 @@ Also landed (`7ad21dd`): milo0's codegen now **borrows** the AST (`&Stmt`,
 callee dropped (freed) the node it was handed, the same bug class as the
 resolver fix, at six call sites. This mirrors what the checker already does.
 
-**Still open — `run`/`emit-ir`.** milo-self now reaches the right arms and
-`genExpr` returns correctly, but `emit-ir` on `fn main(): i32 { return 0 }`
-prints an **empty** IR string (`cg.globals` and `cg.body` both empty), while
-`run` exits 0 without propagating the program's exit code.
+#### Third root cause (2026-07-09): deref of a borrowed `Heap` in an argument position
 
-Next lead — it is a heisenbug: adding a single `eprint` to `genFn` makes it
-emit **correct** IR (`body=72`, `define i32 @main() { entry: %t0 = trunc i64 0
-to i32 …`). So an uninitialized/freed read still corrupts `Cgen` accumulation.
-Reproduce with:
+`emit-ir` produced `ret i32 0` for `return 4095` — every integer literal reached
+codegen as 0. Traced with read-only borrow probes (note: a probe that *binds* an
+element, e.g. `fns[0].clone()`, perturbs the very bug it is measuring) to
+`checkExpr(ck, *expr)` inside `checkReturn`, and reproduced with an empty callee:
 
-```sh
-bun run src/main.ts build src-milo/main.milo -o .selfhost/milo-self
-.selfhost/milo-self emit-ir min.milo   # prints nothing; add an eprint in genFn -> prints IR
+```milo
+enum Ex { IntLit(i64), Name(string) }   // any drop glue at all
+fn noop(e: &Ex): i64 { return 0 }
+fn f(h: &Heap<Ex>): void { let r = noop(*h) }   // frees/zeroes the Heap box
 ```
 
-Prime suspects: the remaining bare index-moves that shallow-copy structs owning
-strings — `let f = prog.functions[i]` (`emit.milo` `buildFnTable`), `let e =
-prog.enums[ei]`, `let s = prog.structs[si]`, `let v = e.variants[vi]`, `let p =
-f.params[pj]`, `let ef = fields[fi]`. These bind fine today only because codegen
-treats `let x = v[i]` as a non-dropping borrow-init; they alias whatever the
-container owns. Also verify `emit(cg, …)` really mutates the caller's `Cgen`
-rather than a copy.
+`genExpr(HeapDeref)` zeroes the source slot after loading — correct for a move
+(`let x = *h`), wrong for a borrow. `genLValueForArg` handled `Ident` /
+`FieldAccess` / `IndexAccess` and *fell through to `genExpr`* for `HeapDeref`, so
+every auto-borrowed `*h` argument destroyed the pointee. `enum E { A(i64), B }`
+(no drop glue) was fine; adding a `string` variant broke it. Fixed in `a49bfad`.
 
-**The oracle is unsound here (flagged, not fixed).** `src/checker.ts` `tryMove`
-handles `Ident` and `FieldAccess` (codegen zeroes the moved-out field) but has
-**no `IndexAccess` case**, so moving a non-Copy element out of a container is
-accepted silently. Rust rejects this ("cannot move out of index"). Adding the
-rule naively fails 21 existing tests — `Vec<fnptr-struct>` reads, stdlib
-(`std/arena`, `std/process`, `std/pty`), and README/language-reference examples
-— because codegen currently treats `let x = v[i]` as a non-dropping borrow-init,
-so the unsoundness only bites when the indexed value is then *moved into
-something that owns and drops it*. Deciding the rule (reject moves out of an
-index vs. make the binding a real borrow) is a language-design call; it is
-tracked here and deliberately **not** bundled with milo0 changes, per the
-Working Agreement.
+**M1 is done.** `milo-self check` and `milo-self run` are both deterministic,
+gated by `CHECK_MUST_PASS` / `RUN_MUST_PASS`, and `run` propagates the exit code
+(`return 7` → rc 7). `build -o` works.
+
+**Manifest is still empty — next blocker is not a bug but a gap.** milo-self
+cannot compile any `tests/fixtures/` file yet:
+- `print` is not a builtin in milo0 (the TS compiler has it in `Codegen.BUILTINS`);
+  milo0 expects it from the prelude.
+- prelude/stdlib resolution is `pathJoin(pathDirname(source), "std")`, so it only
+  finds `std/` next to the source file. It needs the repo-root/`MILO_ROOT` lookup
+  the TS resolver does.
+- `Vec` literal typing: `let nums: Vec<i32> = [1, 2, 3]` errors with
+  `type mismatch: 'nums' declared as Vec but got [i32; 5]`.
+
+Fix those three and the manifest can be seeded; that is the real M3 entry point.
+The `emit-ir` diffing playbook now works:
+`diff <(bun run src/main.ts emit-ir f.milo) <(.selfhost/milo-self emit-ir f.milo)`.
 
 ### M2 — Retire the dead HIR path (decision, then mechanical)
 
@@ -363,7 +364,7 @@ while the language stagnates.
 | Milestone | Status | Date |
 |---|---|---|
 | M0 harness | **done** (`bun test tests/selfhost.test.ts`) | 2026-07-09 |
-| M1 fix crash | partial — `check` green + gated; `emit-ir`/`run` still broken | 2026-07-09 |
+| M1 fix crash | **done** — `check` + `run` green and gated | 2026-07-09 |
 | M2 attic HIR | not started | |
 | M3 codegen gaps | not started | |
 | M4 self-compile | not started | |
