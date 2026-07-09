@@ -12,7 +12,11 @@ bun run src/main.ts build foo.milo --release              # -O3 (default -O2; --
 bun test                                                  # full test suite
 bun test tests/run.test.ts -t "arithmetic"                # single fixture by name
 ./benchmarks/run.sh                                       # reproduce perf numbers
+bun run src/main.ts api <terms>                           # search std signatures (name + doc, ranked)
+bun run src/main.ts api --module std/json                 # dump one module's full API
 ```
+
+**Finding stdlib APIs:** before writing stdlib-adjacent code, run `milo api <terms>` to find existing signatures — don't roll your own. Grep-backed and auto-discovered: it scans `std/**/*.milo` fresh each call, so new/edited `.milo` files appear with no registration. Lexical only (no generics/re-exports/visibility) — good for discovery, not a spec.
 
 ## Tests
 

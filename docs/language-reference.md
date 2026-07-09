@@ -13,7 +13,13 @@ bun run src/main.ts build examples/hello.milo -o hello
 
 # Emit LLVM IR (useful for understanding what the compiler does)
 bun run src/main.ts emit-ir examples/hello.milo
+
+# Search the standard library (auto-discovered from std/**/*.milo)
+bun run src/main.ts api time                  # ranked signature search by name + doc
+bun run src/main.ts api --module std/datetime # dump one module's full API
 ```
+
+Reach for `milo api` before hand-writing something the stdlib already provides.
 
 ## Hello, Milo
 

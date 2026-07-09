@@ -2,467 +2,257 @@
 
 // these imports exist for the green-aware wrappers at the bottom of this
 // file; the resolver's visited-set makes the std/os ↔ std/runtime cycle safe
-from "std/platform" import { getErrno, eagain, einprogress, solSocket, soError, SockAddrIn, makeZeroedSockaddr }
-from "std/event" import { setNonblocking }
-from "std/runtime" import { schedulerCurrent, schedulerWaitRead, schedulerWaitWrite }
+from "std/platform" import {
+    getErrno, eagain, einprogress, solSocket, soError, SockAddrIn, makeZeroedSockaddr
+}
+from "std/event" import {
+    setNonblocking
+}
+from "std/runtime" import {
+    schedulerCurrent, schedulerWaitRead, schedulerWaitWrite
+}
 
 // ── I/O ──
 
-extern
+extern fn read(fd: i32, buf: *u8, nbyte: i64): i64
 
-fn read(fd: i32, buf: *u8, nbyte: i64): i64
+extern fn write(fd: i32, buf: *u8, nbyte: i64): i64
 
-extern
+extern fn open(path: *u8, flags: i32,...): i32
 
-fn write(fd: i32, buf: *u8, nbyte: i64): i64
+extern fn close(fd: i32): i32
 
-extern
+extern fn lseek(fd: i32, offset: i64, whence: i32): i64
 
-fn open(path: *u8, flags: i32,...): i32
+extern fn fstat(fd: i32, buf: *u8): i32
 
-extern
+extern fn stat(path: *u8, buf: *u8): i32
 
-fn close(fd: i32): i32
+extern fn access(path: *u8, mode: i32): i32
 
-extern
+extern fn puts(s: *u8): i32
 
-fn lseek(fd: i32, offset: i64, whence: i32): i64
-
-extern
-
-fn fstat(fd: i32, buf: *u8): i32
-
-extern
-
-fn stat(path: *u8, buf: *u8): i32
-
-extern
-
-fn access(path: *u8, mode: i32): i32
-
-extern
-
-fn puts(s: *u8): i32
-
-extern
-
-fn printf(fmt: *u8,...): i32
+extern fn printf(fmt: *u8,...): i32
 
 // ── Memory ──
 
-extern
+extern fn malloc(size: i64): *u8
 
-fn malloc(size: i64): *u8
+extern fn realloc(ptr: *u8, size: i64): *u8
 
-extern
+extern fn free(ptr: *u8): void
 
-fn realloc(ptr: *u8, size: i64): *u8
+extern fn memcpy(dst: *u8, src: *u8, n: i64): *u8
 
-extern
+extern fn memset(dst: *u8, c: i32, n: i64): *u8
 
-fn free(ptr: *u8): void
+extern fn memmove(dst: *u8, src: *u8, n: i64): *u8
 
-extern
+extern fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
 
-fn memcpy(dst: *u8, src: *u8, n: i64): *u8
+extern fn munmap(addr: *u8, len: i64): i32
 
-extern
-
-fn memset(dst: *u8, c: i32, n: i64): *u8
-
-extern
-
-fn memmove(dst: *u8, src: *u8, n: i64): *u8
-
-extern
-
-fn mmap(addr: *u8, len: i64, prot: i32, flags: i32, fd: i32, offset: i64): *u8
-
-extern
-
-fn munmap(addr: *u8, len: i64): i32
-
-extern
-
-fn mprotect(addr: *u8, len: i64, prot: i32): i32
+extern fn mprotect(addr: *u8, len: i64, prot: i32): i32
 
 // ── Error ──
 
-extern
-
-fn strerror(errnum: i32): *u8
+extern fn strerror(errnum: i32): *u8
 
 // ── Strings ──
 
-extern
+extern fn strlen(s: *u8): i64
 
-fn strlen(s: *u8): i64
+extern fn strcmp(a: *u8, b: *u8): i32
 
-extern
+extern fn strncmp(a: *u8, b: *u8, n: i64): i32
 
-fn strcmp(a: *u8, b: *u8): i32
-
-extern
-
-fn strncmp(a: *u8, b: *u8, n: i64): i32
-
-extern
-
-fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
+extern fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
 
 // ── Network ──
 
-extern
+extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
 
-fn socket(domain: i32, sockType: i32, protocol: i32): i32
+extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
-extern
+extern fn listen(sockfd: i32, backlog: i32): i32
 
-fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
 
-extern
+extern fn connect(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
-fn listen(sockfd: i32, backlog: i32): i32
+extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 
-extern
+extern fn getsockopt(fd: i32, level: i32, opt: i32, val: &mut i32, len: &mut u32): i32
 
-fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
+extern fn htons(hostshort: u16): u16
 
-extern
+extern fn ntohs(netshort: u16): u16
 
-fn connect(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+extern fn getsockname(fd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
 
-extern
-
-fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
-
-extern
-
-fn getsockopt(fd: i32, level: i32, opt: i32, val: &mut i32, len: &mut u32): i32
-
-extern
-
-fn htons(hostshort: u16): u16
-
-extern
-
-fn ntohs(netshort: u16): u16
-
-extern
-
-fn getsockname(fd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
-
-extern
-
-fn inet_pton(af: i32, src: *u8, dst: *u8): i32
+extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
 
 // ── TLS (OpenSSL) ──
 
-extern
+extern fn TLS_client_method(): *u8
 
-fn TLS_client_method(): *u8
+extern fn SSL_CTX_new(method: *u8): *u8
 
-extern
+extern fn SSL_CTX_free(ctx: *u8): void
 
-fn SSL_CTX_new(method: *u8): *u8
+extern fn SSL_CTX_set_default_verify_paths(ctx: *u8): i32
 
-extern
+extern fn SSL_new(ctx: *u8): *u8
 
-fn SSL_CTX_free(ctx: *u8): void
+extern fn SSL_set_fd(ssl: *u8, fd: i32): i32
 
-extern
+extern fn SSL_connect(ssl: *u8): i32
 
-fn SSL_CTX_set_default_verify_paths(ctx: *u8): i32
+extern fn SSL_read(ssl: *u8, buf: *u8, num: i32): i32
 
-extern
+extern fn SSL_write(ssl: *u8, buf: *u8, num: i32): i32
 
-fn SSL_new(ctx: *u8): *u8
+extern fn SSL_free(ssl: *u8): void
 
-extern
+extern fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
 
-fn SSL_set_fd(ssl: *u8, fd: i32): i32
-
-extern
-
-fn SSL_connect(ssl: *u8): i32
-
-extern
-
-fn SSL_read(ssl: *u8, buf: *u8, num: i32): i32
-
-extern
-
-fn SSL_write(ssl: *u8, buf: *u8, num: i32): i32
-
-extern
-
-fn SSL_free(ssl: *u8): void
-
-extern
-
-fn SSL_ctrl(ssl: *u8, cmd: i32, larg: i64, parg: *u8): i64
-
-extern
-
-fn SSL_get_error(ssl: *u8, ret: i32): i32
+extern fn SSL_get_error(ssl: *u8, ret: i32): i32
 
 // ── DNS ──
 
-extern
+extern fn getaddrinfo(node: *u8, service: *u8, hints: *u8, res: *u8): i32
 
-fn getaddrinfo(node: *u8, service: *u8, hints: *u8, res: *u8): i32
-
-extern
-
-fn freeaddrinfo(res: *u8): void
+extern fn freeaddrinfo(res: *u8): void
 
 // ── Filesystem ──
 
-extern
+extern fn lstat(path: *u8, buf: *u8): i32
 
-fn lstat(path: *u8, buf: *u8): i32
+extern fn link(existing: *u8, new_path: *u8): i32
 
-extern
+extern fn unlink(path: *u8): i32
 
-fn link(existing: *u8, new_path: *u8): i32
+extern fn symlink(target: *u8, path: *u8): i32
 
-extern
+extern fn readlink(path: *u8, buf: *u8, bufsize: i64): i64
 
-fn unlink(path: *u8): i32
+extern fn realpath(path: *u8, resolved: *u8): *u8
 
-extern
+extern fn rename(old_path: *u8, new_path: *u8): i32
 
-fn symlink(target: *u8, path: *u8): i32
+extern fn mkdir(path: *u8, mode: u32): i32
 
-extern
+extern fn rmdir(path: *u8): i32
 
-fn readlink(path: *u8, buf: *u8, bufsize: i64): i64
+extern fn chmod(path: *u8, mode: u32): i32
 
-extern
+extern fn fchmod(fd: i32, mode: u32): i32
 
-fn realpath(path: *u8, resolved: *u8): *u8
+extern fn chown(path: *u8, uid: u32, gid: u32): i32
 
-extern
+extern fn fchown(fd: i32, uid: u32, gid: u32): i32
 
-fn rename(old_path: *u8, new_path: *u8): i32
+extern fn lchown(path: *u8, uid: u32, gid: u32): i32
 
-extern
+extern fn truncate(path: *u8, length: i64): i32
 
-fn mkdir(path: *u8, mode: u32): i32
+extern fn ftruncate(fd: i32, length: i64): i32
 
-extern
+extern fn fsync(fd: i32): i32
 
-fn rmdir(path: *u8): i32
+extern fn fdatasync(fd: i32): i32
 
-extern
+extern fn mkdtemp(template: *u8): *u8
 
-fn chmod(path: *u8, mode: u32): i32
+extern fn getcwd(buf: *u8, size: i64): *u8
 
-extern
-
-fn fchmod(fd: i32, mode: u32): i32
-
-extern
-
-fn chown(path: *u8, uid: u32, gid: u32): i32
-
-extern
-
-fn fchown(fd: i32, uid: u32, gid: u32): i32
-
-extern
-
-fn lchown(path: *u8, uid: u32, gid: u32): i32
-
-extern
-
-fn truncate(path: *u8, length: i64): i32
-
-extern
-
-fn ftruncate(fd: i32, length: i64): i32
-
-extern
-
-fn fsync(fd: i32): i32
-
-extern
-
-fn fdatasync(fd: i32): i32
-
-extern
-
-fn mkdtemp(template: *u8): *u8
-
-extern
-
-fn getcwd(buf: *u8, size: i64): *u8
-
-extern
-
-fn chdir(path: *u8): i32
+extern fn chdir(path: *u8): i32
 
 // ── Directory ──
 
-extern
+extern fn opendir(path: *u8): *u8
 
-fn opendir(path: *u8): *u8
+extern fn closedir(dir: *u8): i32
 
-extern
-
-fn closedir(dir: *u8): i32
-
-extern
-
-fn readdir(dir: *u8): *u8
+extern fn readdir(dir: *u8): *u8
 
 // ── Terminal ──
 
-extern
+extern fn tcgetattr(fd: i32, termios: *u8): i32
 
-fn tcgetattr(fd: i32, termios: *u8): i32
+extern fn tcsetattr(fd: i32, actions: i32, termios: *u8): i32
 
-extern
+extern fn ioctl(fd: i32, request: i64,...): i32
 
-fn tcsetattr(fd: i32, actions: i32, termios: *u8): i32
-
-extern
-
-fn ioctl(fd: i32, request: i64, ...): i32
-
-extern
-
-fn isatty(fd: i32): i32
+extern fn isatty(fd: i32): i32
 
 // ── PTY ──
 
-extern
+extern fn posix_openpt(flags: i32): i32
 
-fn posix_openpt(flags: i32): i32
+extern fn grantpt(fd: i32): i32
 
-extern
+extern fn unlockpt(fd: i32): i32
 
-fn grantpt(fd: i32): i32
-
-extern
-
-fn unlockpt(fd: i32): i32
-
-extern
-
-fn ptsname(fd: i32): *u8
+extern fn ptsname(fd: i32): *u8
 
 // ── Process ──
 
-extern
+extern fn exit(status: i32): void
 
-fn exit(status: i32): void
+extern fn getenv(name: *u8): *u8
 
-extern
+extern fn system(cmd: *u8): i32
 
-fn getenv(name: *u8): *u8
+extern fn fork(): i32
 
-extern
+extern fn execl(path: *u8,...): i32
 
-fn system(cmd: *u8): i32
+extern fn waitpid(pid: i32, status: *u8, options: i32): i32
 
-extern
+extern fn dup2(oldfd: i32, newfd: i32): i32
 
-fn fork(): i32
+extern fn pipe(fds: *u8): i32
 
-extern
+extern fn kill(pid: i32, sig: i32): i32
 
-fn execl(path: *u8,...): i32
+extern fn setsid(): i32
 
-extern
-
-fn waitpid(pid: i32, status: *u8, options: i32): i32
-
-extern
-
-fn dup2(oldfd: i32, newfd: i32): i32
-
-extern
-
-fn pipe(fds: *u8): i32
-
-extern
-
-fn kill(pid: i32, sig: i32): i32
-
-extern
-
-fn setsid(): i32
-
-extern
-
-fn execvp(file: *u8, argv: *u8): i32
+extern fn execvp(file: *u8, argv: *u8): i32
 
 // ── pthreads ──
 
-extern
+extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
 
-fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
+extern fn pthread_join(thread: i64, retval: *u8): i32
 
-extern
+extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
 
-fn pthread_join(thread: i64, retval: *u8): i32
+extern fn pthread_mutex_lock(mutex: *u8): i32
 
-extern
+extern fn pthread_mutex_unlock(mutex: *u8): i32
 
-fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
+extern fn pthread_mutex_destroy(mutex: *u8): i32
 
-extern
+extern fn pthread_cond_init(cond: *u8, attr: *u8): i32
 
-fn pthread_mutex_lock(mutex: *u8): i32
+extern fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
 
-extern
+extern fn pthread_cond_signal(cond: *u8): i32
 
-fn pthread_mutex_unlock(mutex: *u8): i32
+extern fn pthread_cond_broadcast(cond: *u8): i32
 
-extern
+extern fn pthread_cond_destroy(cond: *u8): i32
 
-fn pthread_mutex_destroy(mutex: *u8): i32
+extern fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
 
-extern
+extern fn pthread_rwlock_rdlock(rwlock: *u8): i32
 
-fn pthread_cond_init(cond: *u8, attr: *u8): i32
+extern fn pthread_rwlock_wrlock(rwlock: *u8): i32
 
-extern
+extern fn pthread_rwlock_unlock(rwlock: *u8): i32
 
-fn pthread_cond_wait(cond: *u8, mutex: *u8): i32
-
-extern
-
-fn pthread_cond_signal(cond: *u8): i32
-
-extern
-
-fn pthread_cond_broadcast(cond: *u8): i32
-
-extern
-
-fn pthread_cond_destroy(cond: *u8): i32
-
-extern
-
-fn pthread_rwlock_init(rwlock: *u8, attr: *u8): i32
-
-extern
-
-fn pthread_rwlock_rdlock(rwlock: *u8): i32
-
-extern
-
-fn pthread_rwlock_wrlock(rwlock: *u8): i32
-
-extern
-
-fn pthread_rwlock_unlock(rwlock: *u8): i32
-
-extern
-
-fn pthread_rwlock_destroy(rwlock: *u8): i32
+extern fn pthread_rwlock_destroy(rwlock: *u8): i32
 
 // ── green-aware fd IO ──
 // Safe wrappers over the raw syscalls above. Called from a green task they
@@ -471,9 +261,12 @@ fn pthread_rwlock_destroy(rwlock: *u8): i32
 // IO in std should go through these instead of per-call-site EAGAIN loops.
 
 // One read(2). Returns bytes read, 0 at EOF, <0 on error.
+
 fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen { setNonblocking(fd) }
+    if inGreen {
+        setNonblocking(fd)
+    }
     unsafe {
         while true {
             let n = read(fd, buf, len)
@@ -484,13 +277,16 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64 {
             return n
         }
     }
-    return -1 as i64
+    return - 1 as i64
 }
 
 // Write all len bytes (loops over partial writes). Returns len or <0 on error.
+
 fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen { setNonblocking(fd) }
+    if inGreen {
+        setNonblocking(fd)
+    }
     unsafe {
         var sent: i64 = 0
         while sent < len {
@@ -499,7 +295,9 @@ fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
                 schedulerWaitWrite(fd)
                 continue
             }
-            if n < 0 { return n }
+            if n < 0 {
+                return n
+            }
             sent = sent + n
         }
         return sent
@@ -509,9 +307,12 @@ fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
 // Accept one connection; returns the client fd (<0 on error). In a green task
 // the client fd is left nonblocking so later readFd/writeFd calls skip a
 // redundant fcntl round-trip.
+
 fn acceptFd(fd: i32): i32 {
     let inGreen = schedulerCurrent() as i64 != 0
-    if inGreen { setNonblocking(fd) }
+    if inGreen {
+        setNonblocking(fd)
+    }
     while true {
         unsafe {
             var clientAddr = makeZeroedSockaddr()
@@ -521,15 +322,18 @@ fn acceptFd(fd: i32): i32 {
                 schedulerWaitRead(fd)
                 continue
             }
-            if clientFd >= 0 && inGreen { setNonblocking(clientFd) }
+            if clientFd >= 0 && inGreen {
+                setNonblocking(clientFd)
+            }
             return clientFd
         }
     }
-    return -1
+    return - 1
 }
 
 // connect(2). In a green task: nonblocking connect, park until writable,
 // then check SO_ERROR. Returns 0 on success, <0 on failure.
+
 fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
     unsafe {
         if schedulerCurrent() as i64 == 0 {
@@ -537,13 +341,21 @@ fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
         }
         setNonblocking(fd)
         let r = connect(fd, addr, addrlen)
-        if r == 0 { return 0 }
-        if getErrno() != einprogress() { return -1 }
+        if r == 0 {
+            return 0
+        }
+        if getErrno() != einprogress() {
+            return - 1
+        }
         schedulerWaitWrite(fd)
         var err: i32 = 0
         var len: u32 = 4
-        if getsockopt(fd, solSocket(), soError(), err, len) < 0 { return -1 }
-        if err != 0 { return -1 }
+        if getsockopt(fd, solSocket(), soError(), err, len) < 0 {
+            return - 1
+        }
+        if err != 0 {
+            return - 1
+        }
         return 0
     }
 }
@@ -553,16 +365,26 @@ fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
 // green task until the fd is ready and retry. On a plain OS thread (blocking
 // fd) the WANT codes never occur and these reduce to one SSL call.
 
-fn _sslWantRead(): i32 { return 2 }
-fn _sslWantWrite(): i32 { return 3 }
+fn _sslWantRead(): i32 {
+    return 2
+}
+
+fn _sslWantWrite(): i32 {
+    return 3
+}
 
 // Drive SSL_connect to completion. Returns 1 on success (SSL_connect result otherwise).
+
 fn sslConnectFd(ssl: *u8, fd: i32): i32 {
     unsafe {
         while true {
             let r = SSL_connect(ssl)
-            if r == 1 { return 1 }
-            if schedulerCurrent() as i64 == 0 { return r }
+            if r == 1 {
+                return 1
+            }
+            if schedulerCurrent() as i64 == 0 {
+                return r
+            }
             let e = SSL_get_error(ssl, r)
             if e == _sslWantRead() {
                 schedulerWaitRead(fd)
@@ -575,16 +397,21 @@ fn sslConnectFd(ssl: *u8, fd: i32): i32 {
             return r
         }
     }
-    return -1
+    return - 1
 }
 
 // One SSL_read. Returns bytes read (>0), or <=0 on close/error.
+
 fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     unsafe {
         while true {
             let n = SSL_read(ssl, buf, len)
-            if n > 0 { return n }
-            if schedulerCurrent() as i64 == 0 { return n }
+            if n > 0 {
+                return n
+            }
+            if schedulerCurrent() as i64 == 0 {
+                return n
+            }
             let e = SSL_get_error(ssl, n)
             if e == _sslWantRead() {
                 schedulerWaitRead(fd)
@@ -597,16 +424,21 @@ fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
             return n
         }
     }
-    return -1
+    return - 1
 }
 
 // One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
+
 fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     unsafe {
         while true {
             let n = SSL_write(ssl, buf, len)
-            if n > 0 { return n }
-            if schedulerCurrent() as i64 == 0 { return n }
+            if n > 0 {
+                return n
+            }
+            if schedulerCurrent() as i64 == 0 {
+                return n
+            }
             let e = SSL_get_error(ssl, n)
             if e == _sslWantRead() {
                 schedulerWaitRead(fd)
@@ -619,5 +451,6 @@ fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
             return n
         }
     }
-    return -1
+    return - 1
 }
+
