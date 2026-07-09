@@ -47,7 +47,10 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
 
 fn deref(t: &TypeKind): TypeKind {
     match t {
-        TypeKind.TRef(inner, mutable) => { return inner.clone() }
+        // `inner` is &Heap<TypeKind> — a pointer to the Heap slot. `inner.clone()`
+        // would clone through the wrong level and reinterpret the pointer bytes as
+        // a TypeKind (garbage tag). Deref to the pointee first.
+        TypeKind.TRef(inner, mutable) => { return (*inner).clone() }
         _ => { return t.clone() }
     }
 }
@@ -237,7 +240,7 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
 
     if op == "*" {
         match ot {
-            TypeKind.THeap(inner) => { return inner.clone() }
+            TypeKind.THeap(inner) => { return (*inner).clone() }
             TypeKind.TPtr(inner) => {
                 if ck.unsafeDepth == 0 {
                     error(ck, "pointer dereference requires 'unsafe' block", cloneSpan(span))
