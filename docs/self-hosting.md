@@ -251,41 +251,50 @@ every auto-borrowed `*h` argument destroyed the pointee. `enum E { A(i64), B }`
 gated by `CHECK_MUST_PASS` / `RUN_MUST_PASS`, and `run` propagates the exit code
 (`return 7` → rc 7). `build -o` works.
 
-**Manifest is still empty.** Progress and remaining blockers, in order:
+**Manifest is still empty.** Progress and remaining blockers:
 
-1. ~~`print` is not a builtin in milo0.~~ **Done** — the checker recognizes
-   `print`/`println`/`eprint`, and codegen emits `printf` with a format string
-   synthesized from the argument types (`%lld`/`%d`/`%f`/`%s`, trailing newline,
-   matching the TS `print`). `print(42)` and `print("Hello, Milo!")` agree with
-   the oracle. Previously milo0 emitted `printf(i64 42)` — not even valid IR.
+1. ~~`print` is not a builtin in milo0.~~ **Done** — checker recognizes
+   `print`/`println`/`eprint`; codegen emits `printf` with a format string
+   synthesized from the argument types. Previously it emitted `printf(i64 42)`,
+   not even valid IR.
 
-2. **milo0's checker crashes on `std/prelude` → `std/string`.** This is the
-   blocker. `findStdlibRoot` (MILO_ROOT, else walk up to `std/prelude.milo`)
-   exists in `src-milo/main.milo` but is deliberately **not wired up**: enabling
-   it makes every in-repo program inject the prelude and crash, which reddens
-   both smoke gates. Repro:
+2. ~~milo0's checker crashes on `std/prelude` → `std/string`.~~ **Done.** Two
+   root causes, one in each compiler:
 
-   ```sh
-   MILO_ROOT=$PWD .selfhost/milo-self check tests/fixtures/arithmetic.milo
-   ```
+   - *Oracle* (`1cd6e27`): `HashMap.get` did a bare `load` of the entry value, so
+     a heap-owning value's copy aliased the map. The copy-back idiom
+     `match m.get(k) { Some(v) => { var u = v; u.f = 1; m.insert(k, u) } }` then
+     had `insert` drop the old value out from under `u`. `emitDeepCloneFromPtr`
+     also had `// enum/hashmap/array — fall back to shallow load (TODO)`, so enum
+     payloads stayed shallow. Added `milo.clone.<enum>` (tag switch, mirrors
+     `ensureDropHelper`). Gotcha: the clone opens new basic blocks, so the `found`
+     block stops being the phi's predecessor — without re-anchoring, `opt -O2`
+     reports *"PHI node entries do not match predecessors"* and clang dies with a
+     bus error on a module this large. Exactly the shape milo0's scopes use:
+     `HashMap<string, VarInfo>`, `VarInfo.ty: TypeKind`, a Heap-recursive enum.
+     `&T` params were the trigger because only `TRef` carries a `Heap` payload.
+   - *milo0* (`b916a5f`): `TypeKind.TRef(inner, ..) => inner.clone()` cloned at
+     the wrong level (`inner` is `&Heap<TypeKind>`), reinterpreting pointer bytes
+     as a `TypeKind` — the garbage tag printed as `*u1`. Needs `(*inner).clone()`.
 
-   Silent `EXC_BAD_ACCESS`; the faulting frame moves (`TypeKind$Clone$clone`,
-   `typeName`) and an ASan build *hangs* instead of reporting — so suspect
-   runaway recursion / stack overflow, not a stray write. Narrowed to the first
-   three functions of `std/string.milo`. `requires` clauses and the extern
-   `memchr`/`memcmp` calls are **not** the trigger on their own. Fix this, wire
-   `findStdlibRoot` into the two `stdlibDir` bindings, and the manifest can seed.
+3. ~~No int-literal coercion.~~ **Done** (`ce7fc22`) — const-int-literal coercion
+   at binop, call args, return, and let/var annotations.
 
-3. **No int-literal coercion in milo0's checker.** `fn f(pos: i64): i64 { return
-   pos }` reports `return type mismatch: expected i64, got i32`, and `a + 1`
-   reports `type mismatch in '+': i64 vs i32`. Integer literals are typed `i32`
-   with no const-subexpression coercion (the TS compiler does this). This will
-   block most fixtures even after (2).
+Checking a prelude-importing program went **161 → 44** errors. `findStdlibRoot`
+is written and documented in `src-milo/main.milo` but still **not wired up**:
+wiring it makes every in-repo program pull the prelude, and those 44 errors would
+fail `check` and redden the smoke gates. Remaining classes, all milo0 gaps:
 
-4. `let nums: Vec<i32> = [1, 2, 3]` → `type mismatch: 'nums' declared as Vec but
-   got [i32; 5]`.
+- `no method 'substr' on string` (9) and `no method 'push' on struct 'Vec'` (7) —
+  missing built-in method signatures in the checker.
+- `undefined variable 'error_unexpected'` (8) — `requires` clauses lower to a
+  bogus identifier. Repro: a fn with a `requires` clause.
+- `use of moved variable 'result'` / `undefined variable 'result'` (6) — move
+  checker false positive.
+- `operator '+' requires numeric type, got string` (3).
 
-The `emit-ir` diffing playbook works now:
+Clear those, wire `findStdlibRoot` into the two `stdlibDir` bindings, and the
+manifest can finally seed. The `emit-ir` diffing playbook works:
 `diff <(bun run src/main.ts emit-ir f.milo) <(.selfhost/milo-self emit-ir f.milo)`.
 
 ### M2 — Retire the dead HIR path (decision, then mechanical)
