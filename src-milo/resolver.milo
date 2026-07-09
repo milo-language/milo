@@ -96,19 +96,19 @@ fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
 
             // Merge declarations
             for si in 0..imported.structs.len {
-                rs.structs.push(imported.structs[si])
+                rs.structs.push(imported.structs[si].clone())
             }
             for ei in 0..imported.enums.len {
-                rs.enums.push(imported.enums[ei])
+                rs.enums.push(imported.enums[ei].clone())
             }
             for fi in 0..imported.functions.len {
-                rs.functions.push(imported.functions[fi])
+                rs.functions.push(imported.functions[fi].clone())
             }
             for ti in 0..imported.traits.len {
-                rs.traits.push(imported.traits[ti])
+                rs.traits.push(imported.traits[ti].clone())
             }
             for ii in 0..imported.impls.len {
-                rs.impls.push(imported.impls[ii])
+                rs.impls.push(imported.impls[ii].clone())
             }
 
             // Recurse into this module's imports
@@ -126,7 +126,7 @@ fn dedupStructs(arr: Vec<StructDecl>): Vec<StructDecl> {
     while i >= 0 {
         if !seen.contains(arr[i].name) {
             seen.insert(arr[i].name.clone(), true)
-            result.push(arr[i])
+            result.push(arr[i].clone())
         }
         i = i - 1
     }
@@ -141,7 +141,7 @@ fn dedupEnums(arr: Vec<EnumDecl>): Vec<EnumDecl> {
     while i >= 0 {
         if !seen.contains(arr[i].name) {
             seen.insert(arr[i].name.clone(), true)
-            result.push(arr[i])
+            result.push(arr[i].clone())
         }
         i = i - 1
     }
@@ -156,7 +156,7 @@ fn dedupFunctions(arr: Vec<Function>): Vec<Function> {
     while i >= 0 {
         if !seen.contains(arr[i].name) {
             seen.insert(arr[i].name.clone(), true)
-            result.push(arr[i])
+            result.push(arr[i].clone())
         }
         i = i - 1
     }
@@ -171,7 +171,7 @@ fn dedupTraits(arr: Vec<TraitDecl>): Vec<TraitDecl> {
     while i >= 0 {
         if !seen.contains(arr[i].name) {
             seen.insert(arr[i].name.clone(), true)
-            result.push(arr[i])
+            result.push(arr[i].clone())
         }
         i = i - 1
     }
@@ -188,21 +188,21 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
     if pathExists(preludePath) && !rs.visited.contains(preludePath) {
         rs.visited.insert(preludePath.clone(), true)
         let prelude = parseFile(preludePath)
-        for si in 0..prelude.structs.len { rs.structs.push(prelude.structs[si]) }
-        for ei in 0..prelude.enums.len { rs.enums.push(prelude.enums[ei]) }
-        for fi in 0..prelude.functions.len { rs.functions.push(prelude.functions[fi]) }
-        for ti in 0..prelude.traits.len { rs.traits.push(prelude.traits[ti]) }
-        for ii in 0..prelude.impls.len { rs.impls.push(prelude.impls[ii]) }
+        for si in 0..prelude.structs.len { rs.structs.push(prelude.structs[si].clone()) }
+        for ei in 0..prelude.enums.len { rs.enums.push(prelude.enums[ei].clone()) }
+        for fi in 0..prelude.functions.len { rs.functions.push(prelude.functions[fi].clone()) }
+        for ti in 0..prelude.traits.len { rs.traits.push(prelude.traits[ti].clone()) }
+        for ii in 0..prelude.impls.len { rs.impls.push(prelude.impls[ii].clone()) }
         let preludeDir = pathDirname(preludePath)
         processImports(rs, prelude, preludeDir)
     }
 
     // User code comes after prelude (last-wins dedup means user overrides)
-    for si in 0..program.structs.len { rs.structs.push(program.structs[si]) }
-    for ei in 0..program.enums.len { rs.enums.push(program.enums[ei]) }
-    for fi in 0..program.functions.len { rs.functions.push(program.functions[fi]) }
-    for ti in 0..program.traits.len { rs.traits.push(program.traits[ti]) }
-    for ii in 0..program.impls.len { rs.impls.push(program.impls[ii]) }
+    for si in 0..program.structs.len { rs.structs.push(program.structs[si].clone()) }
+    for ei in 0..program.enums.len { rs.enums.push(program.enums[ei].clone()) }
+    for fi in 0..program.functions.len { rs.functions.push(program.functions[fi].clone()) }
+    for ti in 0..program.traits.len { rs.traits.push(program.traits[ti].clone()) }
+    for ii in 0..program.impls.len { rs.impls.push(program.impls[ii].clone()) }
 
     // Process user program's imports
     processImports(rs, program, sourceDir)

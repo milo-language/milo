@@ -10,10 +10,10 @@
 //      against the fixture's `// @expect:` lines
 //   4. report manifest coverage
 //
-// The smoke test is expected to FAIL today (milo-self aborts on all input, M1).
-// It is skipped-with-a-warning rather than failing so the harness can land and
-// run in CI first; flip SMOKE_MUST_PASS to true the moment M1 is fixed, and it
-// becomes a hard regression gate. See docs/self-hosting.md.
+// M1 status: `check` on a trivial program is fixed and is now a hard gate.
+// `run` still fails intermittently — milo-self's codegen emits corrupted IR
+// (garbage bytes inside instruction text), the same class of memory bug that
+// broke `check`. Flip RUN_MUST_PASS once that lands. See docs/self-hosting.md.
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { execFile, execSync } from "child_process";
@@ -29,9 +29,11 @@ const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 const MANIFEST = join(import.meta.dir, "selfhost-manifest.txt");
 const MILO_SELF = join(MILO_ROOT, ".selfhost", "milo-self");
 
-// Flip to true once M1 lands. Guards against silently regressing back to
-// "milo-self crashes on everything".
-const SMOKE_MUST_PASS = false;
+// Hard gate: milo-self must type-check a trivial program. Regressing this means
+// re-introducing the memory corruption M1 fixed.
+const CHECK_MUST_PASS = true;
+// Not yet: milo-self's codegen still emits corrupted IR intermittently.
+const RUN_MUST_PASS = false;
 
 const CHILD_ENV = { ...process.env, MILO_ROOT };
 
@@ -79,7 +81,7 @@ describe("milo-self", () => {
       const src = join(tmpDir, "min.milo");
       writeFileSync(src, trivial);
       const r = await run(MILO_SELF, ["check", src]);
-      if (!SMOKE_MUST_PASS && r.code !== 0) {
+      if (!CHECK_MUST_PASS && r.code !== 0) {
         console.warn(`  [M1] milo-self check: exit=${r.code} signal=${r.signal ?? "none"} (known failure)`);
         return;
       }
@@ -90,7 +92,7 @@ describe("milo-self", () => {
       const src = join(tmpDir, "min2.milo");
       writeFileSync(src, trivial);
       const r = await run(MILO_SELF, ["run", src]);
-      if (!SMOKE_MUST_PASS && r.code !== 0) {
+      if (!RUN_MUST_PASS && r.code !== 0) {
         console.warn(`  [M1] milo-self run: exit=${r.code} signal=${r.signal ?? "none"} (known failure)`);
         return;
       }

@@ -542,3 +542,69 @@ fn cloneParams(v: &Vec<Param>): Vec<Param> {
     }
     return out
 }
+
+fn cloneTypeParams(v: &Vec<TypeParam>): Vec<TypeParam> {
+    var out: Vec<TypeParam> = Vec.new()
+    for i in 0..v.len {
+        out.push(v[i].clone())
+    }
+    return out
+}
+
+impl Clone for TraitMethod {
+    fn clone(self: &Self): Self {
+        var body: Option<Vec<Heap<Stmt>>> = Option.None
+        match self.body {
+            Option.Some(b) => { body = Option.Some(cloneStmts(b)) }
+            Option.None => { body = Option.None }
+        }
+        return TraitMethod {
+            name: self.name.clone(),
+            params: cloneParams(self.params),
+            retType: self.retType.clone(),
+            body: body,
+            span: cloneSpan(self.span),
+        }
+    }
+}
+
+impl Clone for TraitDecl {
+    fn clone(self: &Self): Self {
+        var supertraits: Vec<string> = Vec.new()
+        for i in 0..self.supertraits.len {
+            supertraits.push(self.supertraits[i].clone())
+        }
+        var methods: Vec<TraitMethod> = Vec.new()
+        for i in 0..self.methods.len {
+            methods.push(self.methods[i].clone())
+        }
+        return TraitDecl {
+            name: self.name.clone(),
+            typeParams: cloneTypeParams(self.typeParams),
+            supertraits: supertraits,
+            methods: methods,
+            span: cloneSpan(self.span),
+        }
+    }
+}
+
+impl Clone for ImplDecl {
+    fn clone(self: &Self): Self {
+        var traitName: Option<string> = Option.None
+        match self.traitName {
+            Option.Some(n) => { traitName = Option.Some(n.clone()) }
+            Option.None => { traitName = Option.None }
+        }
+        var methods: Vec<Function> = Vec.new()
+        for i in 0..self.methods.len {
+            methods.push(self.methods[i].clone())
+        }
+        return ImplDecl {
+            traitName: traitName,
+            typeName: self.typeName.clone(),
+            typeParams: cloneTypeParams(self.typeParams),
+            methods: methods,
+            span: cloneSpan(self.span),
+        }
+    }
+}

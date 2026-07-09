@@ -144,17 +144,81 @@ reports manifest status. Committed and in CI.
 
 `./milo-self check min.milo` currently dies on the most trivial input, so the
 fault is in startup or the shared front path (readFile → tokenize → parse →
-newChecker). Bisect src-milo history (c7ef5ea vs its parent 6e987e7) by
-rebuilding milo-self at each; lldb the winner. Suspect the copy-back /
-deep-clone rework: hand-written `impl Clone` helpers on recursive
-`Heap<T>` enums are exactly where a double-free or infinite clone loop would
-live. If the bug turns out to be a *TS codegen* bug miscompiling valid milo0
-code, extract a minimal fixture, fix the TS compiler first (separate commit),
-then return.
+newChecker).
 
-**Accept**: smoke test in M0 green (`check` exit 0, `run` of return-0 works).
-Seed manifest with all fixtures that pass; expect at least `hello`, `fib`,
-`fizzbuzz` (stage-0 claims).
+**Bisection is not available (verified 2026-07-09).** There is no last-good
+revision: at `6e987e7` src-milo does not compile with its own contemporaneous
+TS compiler (`use of moved variable 'firstName'`, `'iterableOrStart'`,
+`cannot use '==' on enum 'Option_i64' with payload-bearing variants`).
+`c7ef5ea` is the first commit where milo-self *builds*, and it has never run.
+So M1 is direct debugging, not a bisect.
+
+Symptoms — memory corruption, signal varies per run and per opt level:
+- `-O2`: `SIGABRT`, `malloc: pointer being freed was not allocated` on a
+  **stack** address (a drop calling `free()` on a stack slot).
+- `-O0`: `SIGSEGV` in `checkExpr`.
+- also seen: `SIGUSR1`. Backtraces are unwalkable (frame chain clobbered).
+
+Suspect the copy-back / deep-clone rework: hand-written `impl Clone` helpers on
+recursive `Heap<T>` enums are exactly where a double-free or a free-of-stack
+would live. Note `milo-self` with no args prints usage and exits 0, so the
+fault is on the path that reads a file and type-checks it.
+If the bug turns out to be a *TS codegen* bug miscompiling valid milo0 code,
+extract a minimal fixture, fix the TS compiler first (separate commit), then
+return.
+
+**Accept**: smoke test in M0 green (`check` exit 0, `run` of return-0 works);
+flip `SMOKE_MUST_PASS = true` in `tests/selfhost.test.ts`. Seed the manifest
+with all fixtures that pass.
+
+#### Root cause (2026-07-09): move-out-of-index is unsound
+
+Narrowed by input-bisection (`check` on an empty file, `fn main() {}`, and a
+bare struct all pass; **any program containing an expression** crashed), then by
+`eprint` tracing: the fault was in `resolveImports`, not the checker.
+
+`v[i]` on a **non-Copy** element yields a *shallow copy* while the container
+goes on owning it. `resolveImports` did this twice in a row:
+
+```milo
+rs.functions.push(program.functions[fi])   // rs aliases program's heap
+...
+result.push(arr[i])                        // result aliases rs's heap
+```
+
+`dedupFunctions` drops `arr` and frees the `Heap<Stmt>` payloads; `resolveImports`
+then drops `program` and frees them again → invalid free. Minimal repro (no
+struct needed; `St.Ret`, a variant with no `Heap` payload, does **not** crash,
+which is what pins it to nested drop glue):
+
+```milo
+enum Ex { Lit(i64) }
+enum St { Let(Heap<Ex>), Ret }
+fn dedup(arr: Vec<Heap<St>>): Vec<Heap<St>> { /* result.push(arr[i]) */ }
+fn resolve(program: Vec<Heap<St>>): Vec<Heap<St>> { /* rs.push(program[fi]) */ }
+```
+
+**Fixed forward in milo0** (`src-milo/resolver.milo` clones at every index-move;
+added `impl Clone` for `TraitMethod`/`TraitDecl`/`ImplDecl`). `check` on a
+trivial program is now deterministic and gated by `CHECK_MUST_PASS`.
+
+**Still open — `run`**: milo0's *codegen* has the same class of bug. It emits
+corrupted IR intermittently (`trunc i64 0 to <NUL><NUL>…`,
+`trunc %String %t2 to i32`), i.e. `String` memory reused after free while
+building instruction text. Same hunt: find the index-moves in `src-milo/codegen/`.
+
+**The oracle is unsound here (flagged, not fixed).** `src/checker.ts` `tryMove`
+handles `Ident` and `FieldAccess` (codegen zeroes the moved-out field) but has
+**no `IndexAccess` case**, so moving a non-Copy element out of a container is
+accepted silently. Rust rejects this ("cannot move out of index"). Adding the
+rule naively fails 21 existing tests — `Vec<fnptr-struct>` reads, stdlib
+(`std/arena`, `std/process`, `std/pty`), and README/language-reference examples
+— because codegen currently treats `let x = v[i]` as a non-dropping borrow-init,
+so the unsoundness only bites when the indexed value is then *moved into
+something that owns and drops it*. Deciding the rule (reject moves out of an
+index vs. make the binding a real borrow) is a language-design call; it is
+tracked here and deliberately **not** bundled with milo0 changes, per the
+Working Agreement.
 
 ### M2 — Retire the dead HIR path (decision, then mechanical)
 
@@ -254,8 +318,8 @@ while the language stagnates.
 
 | Milestone | Status | Date |
 |---|---|---|
-| M0 harness | not started | |
-| M1 fix crash | not started (repro: `./milo-self check` on any file) | |
+| M0 harness | **done** (`bun test tests/selfhost.test.ts`) | 2026-07-09 |
+| M1 fix crash | in progress (repro: `./milo-self check` on any file) | |
 | M2 attic HIR | not started | |
 | M3 codegen gaps | not started | |
 | M4 self-compile | not started | |
