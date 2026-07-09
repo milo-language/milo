@@ -11,7 +11,7 @@ from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, EnumInfo, VariantInfo,
     Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
 }
-from "src-milo/checker/expr.milo" import { checkExpr, tryMove, isRootMutable, deref }
+from "src-milo/checker/expr.milo" import { intCoercible, checkExpr, tryMove, isRootMutable, deref }
 from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, processDerives, typeImplementsTrait, resolveMethod }
 from "src-milo/checker/mono.milo" import { MonoState, newMonoState, registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum }
 
@@ -79,7 +79,7 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
     match typeAnno {
         Option.Some(ty) => {
             let hint = typeFromAst(ty)
-            if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) {
+            if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) {
                 error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
             }
             valType = hint
@@ -128,7 +128,8 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
     match value {
         Option.Some(expr) => {
             let valType = checkExpr(ck, *expr)
-            if !typeEq(fnRetType, valType) && !typeEq(valType, tyUnknown()) && !typeEq(fnRetType, tyUnknown()) {
+            if !typeEq(fnRetType, valType) && !typeEq(valType, tyUnknown()) && !typeEq(fnRetType, tyUnknown())
+                && !intCoercible(fnRetType, valType, *expr) {
                 error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
             }
             tryMove(ck, *expr)

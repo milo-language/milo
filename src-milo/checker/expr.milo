@@ -168,6 +168,42 @@ fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
 
 // -- Binary operators --
 
+
+// An integer literal (or a const expression built only from integer literals) has
+// no intrinsic width — it takes its type from the context. Mirrors the TS
+// checker's const-subexpression coercion, without which `pos + 1` on an i64 and
+// `b != 0` on a u8 are both type errors.
+fn isConstIntExpr(e: &Expr): bool {
+    match e {
+        Expr.IntLit(v, span) => { return true }
+        Expr.UnaryOp(op, operand, span) => {
+            if op == "-" {
+                return isConstIntExpr(*operand)
+            }
+            return false
+        }
+        Expr.BinOp(op, l, r, span) => {
+            if op == "+" || op == "-" || op == "*" || op == "/" || op == "%" {
+                return isConstIntExpr(*l) && isConstIntExpr(*r)
+            }
+            return false
+        }
+        _ => { return false }
+    }
+}
+
+// Whether a value of type `src`, produced by `srcExpr`, may be used where `to`
+// is expected: only when both are integers and `srcExpr` is a const int.
+fn intCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
+    if !isInteger(to) {
+        return false
+    }
+    if !isInteger(src) {
+        return false
+    }
+    return isConstIntExpr(srcExpr)
+}
+
 fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &Option<Span>): TypeKind {
     // Logical operators
     if op == "&&" || op == "||" {
@@ -200,6 +236,12 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
             error(ck, "operator '" + op.clone() + "' requires numeric type, got " + typeName(lt), cloneSpan(span))
         }
         if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown()) {
+            if intCoercible(lt, rt, right) {
+                return lt
+            }
+            if intCoercible(rt, lt, left) {
+                return rt.clone()
+            }
             error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), cloneSpan(span))
         }
         return lt
@@ -211,6 +253,12 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
             error(ck, "operator '" + op.clone() + "' requires integer type, got " + typeName(lt), cloneSpan(span))
         }
         if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown()) {
+            if intCoercible(lt, rt, right) {
+                return lt
+            }
+            if intCoercible(rt, lt, left) {
+                return rt.clone()
+            }
             error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), cloneSpan(span))
         }
         return lt
@@ -218,7 +266,8 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
 
     // Comparison
     if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
-        if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown()) {
+        if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown())
+            && !intCoercible(lt, rt, right) && !intCoercible(rt, lt, left) {
             error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), cloneSpan(span))
         }
         if op == "<" || op == ">" || op == "<=" || op == ">=" {
@@ -389,12 +438,12 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
         match paramType {
             TypeKind.TRef(inner, mutable) => {
                 // auto-borrow: don't type-error, just check inner matches
-                if !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) {
+                if !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(*inner, argType, *args[i]) {
                     error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
                 }
             }
             _ => {
-                if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) {
+                if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(paramType, argType, *args[i]) {
                     error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
                 }
                 tryMove(ck, *args[i])
