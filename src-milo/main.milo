@@ -26,9 +26,10 @@ from "src-milo/target.milo" import { getHostTarget }
 // "std/io.milo"), not `std/` itself. Mirrors src/resolver.ts: MILO_ROOT wins,
 // otherwise walk up from the source file looking for std/prelude.milo.
 //
-// NOT WIRED UP YET. Enabling it makes every in-repo program pull in the prelude,
-// and milo0's checker still crashes on `std/string` (see docs/self-hosting.md).
-// Switch the two `stdlibDir` bindings over once that is fixed.
+// STILL NOT WIRED UP. With the prelude injected, milo0's checker is
+// nondeterministic: repeated `check` runs on the same trivial input alternate
+// between "no errors" and a handful of bogus ones (a garbage `TFloat` type name
+// like `f-255281472` shows the corruption directly). See docs/self-hosting.md.
 fn findStdlibRoot(sourceDir: &string): string {
     match getEnv("MILO_ROOT") {
         Option.Some(root) => { return root }

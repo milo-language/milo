@@ -48,7 +48,16 @@ fn typeFromAst(ty: &MiloType): TypeKind {
         return TypeKind.TFn(params, Heap(ret))
     }
 
+    // Built-in generics carry their element types in `typeArgs`; typeFromName only
+    // sees the bare name, so `Vec<string>` would come back as TStruct("Vec").
     var base = typeFromName(ty.name)
+    if ty.name == "Vec" && ty.typeArgs.len == 1 {
+        base = TypeKind.TVec(Heap(typeFromAst(ty.typeArgs[0])))
+    } else if ty.name == "Heap" && ty.typeArgs.len == 1 {
+        base = TypeKind.THeap(Heap(typeFromAst(ty.typeArgs[0])))
+    } else if ty.name == "HashMap" && ty.typeArgs.len == 2 {
+        base = TypeKind.THashMap(Heap(typeFromAst(ty.typeArgs[0])), Heap(typeFromAst(ty.typeArgs[1])))
+    }
 
     if ty.isArray {
         base = TypeKind.TArray(Heap(base), ty.arraySize)

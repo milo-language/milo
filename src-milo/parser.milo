@@ -349,12 +349,24 @@ fn parseExternFn(p: &mut Parser): Function {
     }
 }
 
+// Contract clauses (`requires` / `ensures`) sit between a function's signature and
+// its body. They are plain identifiers to milo0's lexer. milo0 neither verifies nor
+// emits contracts — the TS compiler does — but it must parse past them or the body
+// never starts, and the clause tokens get read as a bogus expression.
+fn skipContractClauses(p: &mut Parser) {
+    while at(p, TokKind.Ident) && (peek(p).value == "requires" || peek(p).value == "ensures") {
+        advance(p)
+        var discarded = parseExpr(p)
+    }
+}
+
 fn parseFn(p: &mut Parser): Function {
     expect(p, TokKind.Fn)
     let name = expect(p, TokKind.Ident).value
     let typeParams = parseTypeParams(p)
     let pl = parseParamList(p)
     let retType = parseReturnType(p)
+    skipContractClauses(p)
     expect(p, TokKind.LBrace)
     let body = parseStmts(p)
     expect(p, TokKind.RBrace)
