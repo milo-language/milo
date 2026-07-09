@@ -88,6 +88,25 @@ void *memset(void *dst, int c, size_t n) {
     return dst;
 }
 
+// std/string's substring search calls these (memchr-skip + memcmp-verify).
+void *memchr(const void *s, int c, size_t n) {
+    const unsigned char *p = s;
+    while (n--) {
+        if (*p == (unsigned char)c) return (void *)p;
+        p++;
+    }
+    return 0;
+}
+
+int memcmp(const void *a, const void *b, size_t n) {
+    const unsigned char *x = a, *y = b;
+    while (n--) {
+        if (*x != *y) return *x - *y;
+        x++; y++;
+    }
+    return 0;
+}
+
 // Bump allocator over a static arena. No reclamation — free() is a no-op. This
 // is a link-time fallback, NOT a WCET-safe heap (see file header).
 static unsigned char g_arena[64 * 1024];
