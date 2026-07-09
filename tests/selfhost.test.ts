@@ -10,10 +10,9 @@
 //      against the fixture's `// @expect:` lines
 //   4. report manifest coverage
 //
-// M1 status: `check` on a trivial program is fixed and is now a hard gate.
-// `run` still fails intermittently — milo-self's codegen emits corrupted IR
-// (garbage bytes inside instruction text), the same class of memory bug that
-// broke `check`. Flip RUN_MUST_PASS once that lands. See docs/self-hosting.md.
+// M1 status: `check` and `run` on a trivial program are both fixed and gated.
+// See docs/self-hosting.md for the three root causes (move-out-of-index,
+// enum payload sizing, and deref-of-borrowed-Heap in an argument position).
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { execFile, execSync } from "child_process";
@@ -32,8 +31,8 @@ const MILO_SELF = join(MILO_ROOT, ".selfhost", "milo-self");
 // Hard gate: milo-self must type-check a trivial program. Regressing this means
 // re-introducing the memory corruption M1 fixed.
 const CHECK_MUST_PASS = true;
-// Not yet: milo-self's codegen still emits corrupted IR intermittently.
-const RUN_MUST_PASS = false;
+// Hard gate: milo-self must compile+run a trivial program end to end.
+const RUN_MUST_PASS = true;
 
 const CHILD_ENV = { ...process.env, MILO_ROOT };
 
