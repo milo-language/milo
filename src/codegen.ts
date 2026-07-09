@@ -798,9 +798,35 @@ export class Codegen {
     if (this.entryAllocas.length > 0) {
       lines.splice(allocaInsertPoint, 0, ...this.entryAllocas);
     }
+    this.hoistAllocas(lines, allocaInsertPoint);
 
     lines.push("}");
     return lines;
+  }
+
+  // LLVM folds only entry-block allocas into the fixed stack frame; an alloca in
+  // any later block bumps SP every time it executes and never restores it, so an
+  // expression-temp alloca inside a loop leaks stack each iteration (a 1M-line
+  // grep overflowed the 8MB stack this way). Clang hoists all constant-size
+  // allocas to the entry block; do the same. Every alloca we emit is
+  // constant-size, so hoisting is unconditionally safe (allocas have no operands
+  // that need dominating, and relative order is preserved).
+  private hoistAllocas(lines: string[], insertAt: number): void {
+    const hoisted: string[] = [];
+    let pastEntryBlock = false;
+    for (let i = insertAt; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.length > 0 && line[0] !== " " && line.endsWith(":")) {
+        pastEntryBlock = true;
+        continue;
+      }
+      if (pastEntryBlock && /^ {2}%\S+ = alloca /.test(line)) {
+        hoisted.push(line);
+        lines.splice(i, 1);
+        i--;
+      }
+    }
+    if (hoisted.length > 0) lines.splice(insertAt, 0, ...hoisted);
   }
 
   private genStmt(stmt: HIRStmt): [string[], boolean] {
@@ -1296,6 +1322,7 @@ export class Codegen {
       if (this.entryAllocas.length > 0) {
         body.splice(allocaInsertPt, 0, ...this.entryAllocas);
       }
+      this.hoistAllocas(body, allocaInsertPt);
       body.push("}");
       this.closureBodies.push(body);
 
@@ -3138,6 +3165,7 @@ export class Codegen {
         if (this.entryAllocas.length > 0) {
           closureBody.splice(closureAllocaInsertPoint, 0, ...this.entryAllocas);
         }
+        this.hoistAllocas(closureBody, closureAllocaInsertPoint);
         closureBody.push("}");
         this.closureBodies.push(closureBody);
 
