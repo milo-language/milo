@@ -7327,6 +7327,10 @@ export class Codegen {
     body.push("  ret void");
     body.push("}");
 
+    // Helper bodies bypass the normal function emitter, so hoist here: the clone
+    // of a Vec field emits its allocas inside the copy loop, and a dynamic alloca
+    // per iteration walks the stack off the end.
+    this.hoistAllocas(body, 2);
     this.dropHelperBodies.push(body);
     this.tempCounter = savedTemp;
     this.labelCounter = savedLabel;
@@ -7607,6 +7611,7 @@ export class Codegen {
     body.push("  ret void");
     body.push("}");
 
+    this.hoistAllocas(body, 2); // see ensureEnumCloneHelper
     this.dropHelperBodies.push(body);
     this.tempCounter = savedTemp;
     this.labelCounter = savedLabel;
