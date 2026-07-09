@@ -25,6 +25,10 @@ from "src-milo/target.milo" import { getHostTarget }
 // The stdlib root is the directory *containing* `std/` (resolvePath joins it with
 // "std/io.milo"), not `std/` itself. Mirrors src/resolver.ts: MILO_ROOT wins,
 // otherwise walk up from the source file looking for std/prelude.milo.
+//
+// NOT WIRED UP YET. Enabling it makes every in-repo program pull in the prelude,
+// and milo0's checker still crashes on `std/string` (see docs/self-hosting.md).
+// Switch the two `stdlibDir` bindings over once that is fixed.
 fn findStdlibRoot(sourceDir: &string): string {
     match getEnv("MILO_ROOT") {
         Option.Some(root) => { return root }
@@ -64,7 +68,7 @@ fn compile(path: string): string {
     // Resolve imports
     let target = getHostTarget()
     let sourceDir = pathDirname(path.clone())
-    let stdlibDir = findStdlibRoot(sourceDir)
+    let stdlibDir = pathJoin(sourceDir, "std")
     let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
 
     // Type check
@@ -138,7 +142,7 @@ fn main() {
         let program = parse(parser)
         let target = getHostTarget()
         let sourceDir = pathDirname(source.clone())
-        let stdlibDir = findStdlibRoot(sourceDir)
+        let stdlibDir = pathJoin(sourceDir, "std")
         let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
         var checker = newChecker()
         checkProgram(checker, resolved)
