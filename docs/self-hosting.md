@@ -251,18 +251,41 @@ every auto-borrowed `*h` argument destroyed the pointee. `enum E { A(i64), B }`
 gated by `CHECK_MUST_PASS` / `RUN_MUST_PASS`, and `run` propagates the exit code
 (`return 7` → rc 7). `build -o` works.
 
-**Manifest is still empty — next blocker is not a bug but a gap.** milo-self
-cannot compile any `tests/fixtures/` file yet:
-- `print` is not a builtin in milo0 (the TS compiler has it in `Codegen.BUILTINS`);
-  milo0 expects it from the prelude.
-- prelude/stdlib resolution is `pathJoin(pathDirname(source), "std")`, so it only
-  finds `std/` next to the source file. It needs the repo-root/`MILO_ROOT` lookup
-  the TS resolver does.
-- `Vec` literal typing: `let nums: Vec<i32> = [1, 2, 3]` errors with
-  `type mismatch: 'nums' declared as Vec but got [i32; 5]`.
+**Manifest is still empty.** Progress and remaining blockers, in order:
 
-Fix those three and the manifest can be seeded; that is the real M3 entry point.
-The `emit-ir` diffing playbook now works:
+1. ~~`print` is not a builtin in milo0.~~ **Done** — the checker recognizes
+   `print`/`println`/`eprint`, and codegen emits `printf` with a format string
+   synthesized from the argument types (`%lld`/`%d`/`%f`/`%s`, trailing newline,
+   matching the TS `print`). `print(42)` and `print("Hello, Milo!")` agree with
+   the oracle. Previously milo0 emitted `printf(i64 42)` — not even valid IR.
+
+2. **milo0's checker crashes on `std/prelude` → `std/string`.** This is the
+   blocker. `findStdlibRoot` (MILO_ROOT, else walk up to `std/prelude.milo`)
+   exists in `src-milo/main.milo` but is deliberately **not wired up**: enabling
+   it makes every in-repo program inject the prelude and crash, which reddens
+   both smoke gates. Repro:
+
+   ```sh
+   MILO_ROOT=$PWD .selfhost/milo-self check tests/fixtures/arithmetic.milo
+   ```
+
+   Silent `EXC_BAD_ACCESS`; the faulting frame moves (`TypeKind$Clone$clone`,
+   `typeName`) and an ASan build *hangs* instead of reporting — so suspect
+   runaway recursion / stack overflow, not a stray write. Narrowed to the first
+   three functions of `std/string.milo`. `requires` clauses and the extern
+   `memchr`/`memcmp` calls are **not** the trigger on their own. Fix this, wire
+   `findStdlibRoot` into the two `stdlibDir` bindings, and the manifest can seed.
+
+3. **No int-literal coercion in milo0's checker.** `fn f(pos: i64): i64 { return
+   pos }` reports `return type mismatch: expected i64, got i32`, and `a + 1`
+   reports `type mismatch in '+': i64 vs i32`. Integer literals are typed `i32`
+   with no const-subexpression coercion (the TS compiler does this). This will
+   block most fixtures even after (2).
+
+4. `let nums: Vec<i32> = [1, 2, 3]` → `type mismatch: 'nums' declared as Vec but
+   got [i32; 5]`.
+
+The `emit-ir` diffing playbook works now:
 `diff <(bun run src/main.ts emit-ir f.milo) <(.selfhost/milo-self emit-ir f.milo)`.
 
 ### M2 — Retire the dead HIR path (decision, then mechanical)
