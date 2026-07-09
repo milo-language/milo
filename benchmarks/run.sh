@@ -22,25 +22,30 @@ cd "$DIR/fib"
 $MILO build fib.milo -o fib_milo > /dev/null
 $CC $CFLAGS fib.c -o fib_c
 go build $GOFLAGS -o fib_go fib.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-fib.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-fib.md" \
   -n "milo" "./fib_milo" \
   -n "c"    "./fib_c" \
   -n "go"   "./fib_go"
 
 # ── grep ──
-bold "==> grep 'fox' on 5MB file"
+bold "==> grep 'fox' on 60MB file"
 cd "$DIR/grep"
 INPUT="$DIR/grep/input.txt"
-if [ ! -f "$INPUT" ]; then
+# ~60MB, only every 3rd line matches — big enough that runtime dwarfs process
+# startup, and the matcher does real work on non-matching lines
+if [ ! -f "$INPUT" ] || [ "$(wc -c < "$INPUT")" -lt 50000000 ]; then
   python3 -c "
-for i in range(20000):
-    print(f'line {i}: the quick brown fox jumps over the lazy dog')
+for i in range(1000000):
+    if i % 3 == 0:
+        print(f'line {i}: the quick brown fox jumps over the lazy dog')
+    else:
+        print(f'line {i}: lorem ipsum dolor sit amet consectetur adipiscing elit sed')
 " > "$INPUT"
 fi
 $MILO build grep.milo -o grep_milo > /dev/null
 $CC $CFLAGS grep.c -o grep_c
 go build $GOFLAGS -o grep_go grep.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-grep.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-grep.md" \
   -n "milo"      "./grep_milo fox $INPUT" \
   -n "c"         "./grep_c fox $INPUT" \
   -n "go"        "./grep_go fox $INPUT" \
@@ -52,7 +57,7 @@ cd "$DIR/matmul"
 $MILO build matmul.milo -o matmul_milo > /dev/null
 $CC $CFLAGS matmul.c -o matmul_c
 go build $GOFLAGS -o matmul_go matmul.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-matmul.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-matmul.md" \
   -n "milo" "./matmul_milo" \
   -n "c"    "./matmul_c" \
   -n "go"   "./matmul_go"
@@ -63,7 +68,7 @@ cd "$DIR/binarytrees"
 $MILO build binarytrees.milo -o binarytrees_milo > /dev/null
 $CC $CFLAGS binarytrees.c -o binarytrees_c
 go build $GOFLAGS -o binarytrees_go binarytrees.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-binarytrees.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-binarytrees.md" \
   -n "milo" "./binarytrees_milo" \
   -n "c"    "./binarytrees_c" \
   -n "go"   "./binarytrees_go"
@@ -74,7 +79,7 @@ cd "$DIR/startup"
 $MILO build startup.milo -o startup_milo > /dev/null
 $CC $CFLAGS startup.c -o startup_c
 go build $GOFLAGS -o startup_go startup.go
-hyperfine --warmup $WARMUP --runs 50 --export-markdown "$DIR/results-startup.md" \
+hyperfine -N --warmup $WARMUP --runs 50 --export-markdown "$DIR/results-startup.md" \
   -n "milo" "./startup_milo" \
   -n "c"    "./startup_c" \
   -n "go"   "./startup_go"
@@ -85,7 +90,7 @@ cd "$DIR/maplookup"
 $MILO build maplookup.milo -o maplookup_milo > /dev/null
 $CC $CFLAGS maplookup.c -o maplookup_c
 go build $GOFLAGS -o maplookup_go maplookup.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-maplookup.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-maplookup.md" \
   -n "milo" "./maplookup_milo" \
   -n "c"    "./maplookup_c" \
   -n "go"   "./maplookup_go"
@@ -96,7 +101,7 @@ cd "$DIR/stringops"
 $MILO build stringops.milo -o stringops_milo > /dev/null
 $CC $CFLAGS stringops.c -o stringops_c
 go build $GOFLAGS -o stringops_go stringops.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-stringops.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-stringops.md" \
   -n "milo" "./stringops_milo" \
   -n "c"    "./stringops_c" \
   -n "go"   "./stringops_go"
@@ -107,7 +112,7 @@ cd "$DIR/json"
 $MILO build json.milo -o json_milo > /dev/null
 $CC $CFLAGS json.c -I/opt/homebrew/include -L/opt/homebrew/lib -lyyjson -o json_c
 go build $GOFLAGS -o json_go json.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-json.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-json.md" \
   -n "milo (stdlib)" "./json_milo $DIR/json/data.json" \
   -n "c (yyjson)"    "./json_c $DIR/json/data.json" \
   -n "go (stdlib)"   "./json_go $DIR/json/data.json"
@@ -118,7 +123,7 @@ cd "$DIR/sieve"
 $MILO build sieve.milo -o sieve_milo > /dev/null
 $CC $CFLAGS sieve.c -o sieve_c
 go build $GOFLAGS -o sieve_go sieve.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-sieve.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-sieve.md" \
   -n "milo" "./sieve_milo" \
   -n "c"    "./sieve_c" \
   -n "go"   "./sieve_go"
@@ -129,7 +134,7 @@ cd "$DIR/sort"
 $MILO build sort.milo -o sort_milo > /dev/null
 $CC $CFLAGS sort.c -o sort_c
 go build $GOFLAGS -o sort_go sort.go
-hyperfine --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-sort.md" \
+hyperfine -N --warmup $WARMUP --runs $RUNS --export-markdown "$DIR/results-sort.md" \
   -n "milo" "./sort_milo" \
   -n "c"    "./sort_c" \
   -n "go"   "./sort_go"

@@ -22,16 +22,17 @@ fn main(): i32 {
 
     var count: i64 = 0
     var lineStart: i64 = 0
-    var pos: i64 = 0
-    while pos <= content.len {
-        if pos == content.len || content[pos] == 10 {
-            let line = content.substr(lineStart, pos)
-            if line.contains(pat) {
-                count = count + 1
-            }
-            lineStart = pos + 1
+    while lineStart <= content.len {
+        var nl = strIndexOfFrom(content, "\n", lineStart)
+        if nl < 0 {
+            nl = content.len
         }
-        pos = pos + 1
+        // zero-copy &string slice — C/Go scan in place too, keep it fair
+        let line = content[lineStart..nl]
+        if line.contains(pat) {
+            count = count + 1
+        }
+        lineStart = nl + 1
     }
 
     print(count)
