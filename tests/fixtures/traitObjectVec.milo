@@ -5,18 +5,37 @@
 interface Counter {
     fn value(self: &Self): i64
 }
-struct A { n: i64 }
+
+struct A {
+    n: i64
+}
+
 impl A {
-    fn value(self: &Self): i64 { return self.n }
+    fn value(self: &Self): i64 {
+        return self.n
+    }
 }
-struct B { m: i64 }
+
+struct B {
+    m: i64
+}
+
 impl B {
-    fn value(self: &Self): i64 { return self.m * 2 }
+    fn value(self: &Self): i64 {
+        return self.m * 2
+    }
 }
+
 fn main(): i32 {
     var xs: Vec<Heap<Counter>> = Vec.new()
-    xs.push(Heap(A { n: 5 }))
-    xs.push(Heap(B { m: 10 }))
+    xs.push(Heap(A {
+        n: 5
+    }
+    ))
+    xs.push(Heap(B {
+        m: 10
+    }
+    ))
     var total: i64 = 0
     for i in 0..xs.len() {
         total = total + xs[i].value()

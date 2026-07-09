@@ -1,9 +1,13 @@
 // std/uuid — UUID v4 generation (random, RFC 4122)
 
-from "std/random" import { arc4random_buf }
+from "std/random" import {
+    arc4random_buf
+}
 
 fn _hexChar(n: u8): u8 {
-    if n < 10 { return '0' + n }
+    if n < 10 {
+        return '0' + n
+    }
     return 'a' + (n - 10 as u8)
 }
 
@@ -18,7 +22,9 @@ fn _byteToHex(b: u8): string {
 
 fn uuidV4(): string {
     var buf: [u8; 16] = [0 as u8; 16]
-    unsafe { arc4random_buf(buf as *u8, 16) }
+    unsafe {
+        arc4random_buf(buf as *u8, 16)
+    }
 
     // version 4: high nibble of byte 6 = 0100
     buf[6] = (buf[6] & 0x0f as u8) | 0x40 as u8

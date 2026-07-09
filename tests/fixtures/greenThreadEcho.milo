@@ -5,12 +5,20 @@
 // @expect: client 2 connected
 // @expect: echo: hello from 2
 
-from "std/os" import { socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe }
-from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
-from "std/event" import { setNonblocking }
-from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent, schedulerRunToCompletion }
+from "std/os" import {
+    socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe
+}
+from "std/platform" import {
+    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain
+}
+from "std/event" import {
+    setNonblocking
+}
+from "std/runtime" import {
+    Task, schedulerYield, schedulerWaitRead, schedulerWaitWrite, schedulerCurrent, schedulerRunToCompletion
+}
 
-fn greenRead(fd: i32, buf: &[u8 ; 4096], size: i64): i64 {
+fn greenRead(fd: i32, buf: &[u8; 4096], size: i64): i64 {
     unsafe {
         while true {
             let n = read(fd, buf, size)
@@ -49,7 +57,7 @@ fn doClient(port: u16, id: i32): void {
         print("client ", id, " connected")
         let msg = format("hello from ", id)
         greenWrite(fd, msg)
-        var buf: [u8 ; 4096] = [0 ; 4096]
+        var buf: [u8; 4096] = [0; 4096]
         let n = greenRead(fd, buf, 4096)
         if n > 0 {
             var resp: string = ""
@@ -85,7 +93,7 @@ fn main(): i32 {
         print("server ready")
 
         // spawn server accept loop
-        Task.spawn(move (): void => {
+        Task.spawn(move(): void => {
             var handled = 0
             while handled < 2 {
                 var clientAddr = makeZeroedSockaddr()
@@ -100,8 +108,8 @@ fn main(): i32 {
                 }
                 setNonblocking(clientFd)
                 let fd = clientFd
-                Task.spawn(move (): void => {
-                    var buf: [u8 ; 4096] = [0 ; 4096]
+                Task.spawn(move(): void => {
+                    var buf: [u8; 4096] = [0; 4096]
                     let n = greenRead(fd, buf, 4096)
                     if n > 0 {
                         var msg: string = ""
@@ -114,17 +122,20 @@ fn main(): i32 {
                         greenWrite(fd, resp)
                     }
                     close(fd)
-                })
+                }
+                )
                 handled = handled + 1
             }
             close(serverFd)
-        })
+        }
+        )
 
         // run clients sequentially so output order is deterministic
-        Task.spawn(move (): void => {
+        Task.spawn(move(): void => {
             doClient(port, 1)
             doClient(port, 2)
-        })
+        }
+        )
     }
 
     print("done")

@@ -2,7 +2,9 @@
 // @expect: decrypted: hello world
 // @expect: roundtrip ok
 
-from "std/crypto" import { aesGcmEncrypt, aesGcmDecrypt }
+from "std/crypto" import {
+    aesGcmEncrypt, aesGcmDecrypt
+}
 
 fn main(): i32 {
     // 32-byte key, 12-byte IV
@@ -24,10 +26,14 @@ fn main(): i32 {
                         print("roundtrip FAILED")
                     }
                 }
-                Result.Err(e) => { print($"decrypt error: {e}") }
+                Result.Err(e) => {
+                    print($"decrypt error: {e}")
+                }
             }
         }
-        Result.Err(e) => { print($"encrypt error: {e}") }
+        Result.Err(e) => {
+            print($"encrypt error: {e}")
+        }
     }
 
     return 0

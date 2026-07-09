@@ -1,4 +1,6 @@
-from "std/toml" import { tomlParse }
+from "std/toml" import {
+    tomlParse
+}
 
 fn main(): i32 {
     let data = "name = \"myapp\"\nport = 8080\ndebug = true\npi = 3.14\n\n[database]\nhost = \"localhost\"\nport = 5432\n"

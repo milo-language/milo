@@ -8,9 +8,15 @@ struct Vec2 {
 }
 
 fn main(): i32 {
-    let a = Vec2 { x: 1, y: 2 }
-    let b = Vec2 { x: 1, y: 2 }
-    let c = Vec2 { x: 3, y: 4 }
+    let a = Vec2 {
+        x: 1, y: 2
+    }
+    let b = Vec2 {
+        x: 1, y: 2
+    }
+    let c = Vec2 {
+        x: 3, y: 4
+    }
     print(a == b)
     print(a == c)
     print(c == c)

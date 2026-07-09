@@ -1,12 +1,26 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
-from "std/os" import { SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_ctrl, SSL_free, SSL_new, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd }
-from "std/platform" import { SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr }
-from "std/json" import { Json, jsonParse }
-from "std/sync" import { Channel }
-from "std/io" import { fdChannel }
-from "std/runtime" import { Task }
-from "std/event" import { setNonblocking }
+from "std/os" import {
+    SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_ctrl, SSL_free, SSL_new, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd
+}
+from "std/platform" import {
+    SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr
+}
+from "std/json" import {
+    Json, jsonParse
+}
+from "std/sync" import {
+    Channel
+}
+from "std/io" import {
+    fdChannel
+}
+from "std/runtime" import {
+    Task
+}
+from "std/event" import {
+    setNonblocking
+}
 
 // ── NetError ──
 
@@ -66,7 +80,10 @@ impl TcpStream {
                 return Result.Err(NetError.ConnectionFailed("connect() failed"))
             }
 
-            return Result.Ok(TcpStream { fd: fd })
+            return Result.Ok(TcpStream {
+                fd: fd
+            }
+            )
         }
     }
 
@@ -83,7 +100,7 @@ impl TcpStream {
     // chunks as they arrive instead of buffering the whole response.
     fn recv(self: &Self): Result<string, NetError> {
         var result: string = ""
-        var buf: [u8 ; 4096] = [0 ; 4096]
+        var buf: [u8; 4096] = [0; 4096]
         while true {
             let n = readFd(self.fd, buf, 4096)
             if n <= 0 {
@@ -160,7 +177,10 @@ impl TcpListener {
                 close(fd)
                 return Result.Err(NetError.ConnectionFailed("listen() failed"))
             }
-            return Result.Ok(TcpListener { fd: fd })
+            return Result.Ok(TcpListener {
+                fd: fd
+            }
+            )
         }
     }
 
@@ -172,7 +192,10 @@ impl TcpListener {
         if clientFd < 0 {
             return Result.Err(NetError.ConnectionFailed("accept() failed"))
         }
-        return Result.Ok(TcpStream { fd: clientFd })
+        return Result.Ok(TcpStream {
+            fd: clientFd
+        }
+        )
     }
 }
 
@@ -252,7 +275,10 @@ impl TlsStream {
                 return Result.Err(NetError.TlsError("SSL handshake failed"))
             }
 
-            return Result.Ok(TlsStream { fd: fd, ssl: sslAddr, ctx: ctxAddr })
+            return Result.Ok(TlsStream {
+                fd: fd, ssl: sslAddr, ctx: ctxAddr
+            }
+            )
         }
     }
 
@@ -270,7 +296,7 @@ impl TlsStream {
     // Prefer `incoming()` for streaming/incremental consumption.
     fn recv(self: &Self): Result<string, NetError> {
         var result: string = ""
-        var buf: [u8 ; 4096] = [0 ; 4096]
+        var buf: [u8; 4096] = [0; 4096]
         while true {
             unsafe {
                 let n = sslReadFd(self.ssl as *u8, self.fd, buf as *u8, 4096)
@@ -300,21 +326,31 @@ impl TlsStream {
         // scheduler. connect() sets this when called from a green task, but not
         // if it ran outside one, so enforce it here.
         setNonblocking(fd)
-        Task.spawn(move (): void => {
-            var buf: [u8 ; 4096] = [0 ; 4096]
+        Task.spawn(move(): void => {
+            var buf: [u8; 4096] = [0; 4096]
             while true {
                 var n: i32 = 0
-                unsafe { n = sslReadFd(ssl as *u8, fd, buf as *u8, 4096) }
-                if n <= 0 { break }
+                unsafe {
+                    n = sslReadFd(ssl as *u8, fd, buf as *u8, 4096)
+                }
+                if n <= 0 {
+                    break
+                }
                 var data: string = ""
-                for i in 0..n as i64 { data.push(buf[i]) }
+                for i in 0..n as i64 {
+                    data.push(buf[i])
+                }
                 match ch.send(data) {
-                    Result.Ok(_v) => {}
-                    Result.Err(_e) => { break }
+                    Result.Ok(_v) => {
+                    }
+                    Result.Err(_e) => {
+                        break
+                    }
                 }
             }
             ch.close()
-        })
+        }
+        )
         return ch
     }
 }
@@ -322,22 +358,22 @@ impl TlsStream {
 // ── DNS ──
 
 fn resolve(hostname: &string): Result<u32, NetError> {
-    var hints: [u8 ; 48] = [0 ; 48]
+    var hints: [u8; 48] = [0; 48]
     unsafe {
         let hintsFamily = (hints as *i32)
         hintsFamily[1] = 2
         hintsFamily[2] = 1
     }
 
-    var resBuf: [u8 ; 8] = [0 ; 8]
+    var resBuf: [u8; 8] = [0; 8]
     unsafe {
         let err = getaddrinfo(hostname, 0 as *u8, hints as *u8, resBuf as *u8)
         if err != 0 {
             return Result.Err(NetError.DnsFailure(hostname.clone()))
         }
-        let infoPtr =*(resBuf as *i64)
-        let addrPtr =*((infoPtr + addrinfoAddrOffset()) as *i64)
-        let ip =*((addrPtr + 4) as *u32)
+        let infoPtr = *(resBuf as *i64)
+        let addrPtr = *((infoPtr + addrinfoAddrOffset()) as *i64)
+        let ip = *((addrPtr + 4) as *u32)
         freeaddrinfo(infoPtr as *u8)
         return Result.Ok(ip)
     }
@@ -445,7 +481,7 @@ fn hexDigit(c: u8): i64 {
     if c >= 'A' && c <= 'F' {
         return (c - 'A') as i64 + 10
     }
-    return - 1 as i64
+    return -1 as i64
 }
 
 // ── HTTP parsing ──

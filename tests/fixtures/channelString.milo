@@ -2,17 +2,22 @@
 // @expect: world
 // @expect: done
 
-from "std/thread" import { Thread }
-from "std/sync" import { Channel }
+from "std/thread" import {
+    Thread
+}
+from "std/sync" import {
+    Channel
+}
 
 fn main(): i32 {
     let ch = Channel<string>.new(8)!
 
-    let t = Thread.spawn(move (): void => {
+    let t = Thread.spawn(move(): void => {
         ch.send("hello")!
         ch.send("world")!
         ch.send("")!
-    })!
+    }
+    )!
 
     while true {
         let val = ch.recv()!

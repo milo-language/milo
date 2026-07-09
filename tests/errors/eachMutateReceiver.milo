@@ -5,6 +5,7 @@ fn main(): i32 {
     items.push(1)
     items.each((x: &i64) => {
         items.push(1)
-    })
+    }
+    )
     return 0
 }

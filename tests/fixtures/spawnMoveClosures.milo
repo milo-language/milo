@@ -2,16 +2,19 @@
 // @expect: value is 42
 // @expect: done
 
-from "std/thread" import { Thread }
+from "std/thread" import {
+    Thread
+}
 
 fn main(): i32 {
     let msg = "hello from thread"
     let val: i64 = 42
 
-    let t = Thread.spawn(move (): void => {
+    let t = Thread.spawn(move(): void => {
         print(msg)
         print("value is ", val)
-    })!
+    }
+    )!
 
     t.join()!
     print("done")

@@ -22,4 +22,3 @@ fn main(): i32 {
     print("using ", r1.id, " ", r2.id)
     return 0
 }
-

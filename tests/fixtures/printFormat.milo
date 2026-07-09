@@ -4,4 +4,3 @@ fn main(): i32 {
     print("hello ", 42)
     return 0
 }
-

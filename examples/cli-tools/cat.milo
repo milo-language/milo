@@ -1,8 +1,16 @@
 // cat — file viewer with line numbers and syntax highlighting
-from "std/argparse" import { newParser }
-from "std/io" import { File, readFile }
-from "std/path" import { pathExt }
-from "std/color" import { red, green, blue, magenta, cyan, gray, bold, dim }
+from "std/argparse" import {
+    newParser
+}
+from "std/io" import {
+    File, readFile
+}
+from "std/path" import {
+    pathExt
+}
+from "std/color" import {
+    red, green, blue, magenta, cyan, gray, bold, dim
+}
 
 fn parseI64(s: string): i64 {
     var result: i64 = 0
@@ -345,4 +353,3 @@ fn main(): i32 {
 
     return 0
 }
-

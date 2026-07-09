@@ -5,7 +5,9 @@
 // @expect: 100
 // @expect: 200
 
-from "std/runtime" import { Task, Promise }
+from "std/runtime" import {
+    Task, Promise
+}
 
 fn compute(n: i64): i64 {
     return n * 10
@@ -13,18 +15,30 @@ fn compute(n: i64): i64 {
 
 fn main(): i32 {
     // auto-move inferred, T inferred from closure return type
-    let a = Promise((): i64 => { return 42 })
+    let a = Promise((): i64 => {
+        return 42
+    }
+    )
 
     let msg = "hello world"
-    let b = Promise((): string => { return msg })
+    let b = Promise((): string => {
+        return msg
+    }
+    )
 
     print(a.await()!)
     print(b.await()!)
 
     // Promise.all still works with Promise(fn)
     var promises: Vec<Promise<i64>> = Vec.new()
-    promises.push(Promise((): i64 => { return compute(10) }))
-    promises.push(Promise((): i64 => { return compute(20) }))
+    promises.push(Promise((): i64 => {
+        return compute(10)
+    }
+    ))
+    promises.push(Promise((): i64 => {
+        return compute(20)
+    }
+    ))
     let results = Promise.all(promises).await()!
     for r in results {
         print(r)

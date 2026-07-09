@@ -1,14 +1,27 @@
 // @expect: bob
 // Returning a concrete boxed value where the fn's return type is a boxed
 // interface coerces to the trait object (parity with let-bindings / call args).
-interface Greeter { fn name(self: &Self): string }
-struct P { n: string }
+interface Greeter {
+    fn name(self: &Self): string
+}
+
+struct P {
+    n: string
+}
+
 impl P {
-    fn name(self: &Self): string { return self.n.clone() }
+    fn name(self: &Self): string {
+        return self.n.clone()
+    }
 }
+
 fn mk(): Heap<Greeter> {
-    return Heap(P { n: "bob" })
+    return Heap(P {
+        n: "bob"
+    }
+    )
 }
+
 fn main(): i32 {
     let g = mk()
     print(g.name())

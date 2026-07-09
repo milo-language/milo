@@ -6,4 +6,3 @@ fn main(): i32 {
     let r = u - s
     return 0
 }
-

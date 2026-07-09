@@ -25,4 +25,3 @@ fn main(): i32 {
     printValue(b)
     return 0
 }
-

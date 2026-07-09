@@ -6,4 +6,3 @@ fn main(): i32 {
     print(val)
     return 0
 }
-

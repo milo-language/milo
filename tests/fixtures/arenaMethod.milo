@@ -4,7 +4,9 @@
 // @expect: updated
 // @expect: true
 // @expect: false
-from "std/arena" import { Arena, Handle, arenaNew }
+from "std/arena" import {
+    Arena, Handle, arenaNew
+}
 
 fn main(): i32 {
     var names: Arena<string> = arenaNew()
@@ -18,8 +20,12 @@ fn main(): i32 {
     // free + stale handle
     names.free(a)
     match names.get(a) {
-        Option.Some(n) => { print(n) }
-        Option.None => { print("gone") }
+        Option.Some(n) => {
+            print(n)
+        }
+        Option.None => {
+            print("gone")
+        }
     }
 
     // set
@@ -29,7 +35,9 @@ fn main(): i32 {
     // handle equality via @derive(Eq)
     var nums: Arena<i64> = arenaNew()
     let h1 = nums.alloc(42)
-    let h2: Handle<i64> = Handle { index: h1.index, generation: h1.generation }
+    let h2: Handle<i64> = Handle {
+        index: h1.index, generation: h1.generation
+    }
     print(h1 == h2)
 
     let h3 = nums.alloc(99)

@@ -2,15 +2,19 @@
 // @expect: hello
 // @expect: done
 
-from "std/runtime" import { Task, Promise }
+from "std/runtime" import {
+    Task, Promise
+}
 
 fn main(): i32 {
-    let a = Promise<i64>.run(move (): i64 => {
+    let a = Promise<i64>.run(move(): i64 => {
         return 42
-    })
-    let b = Promise<string>.run(move (): string => {
+    }
+    )
+    let b = Promise<string>.run(move(): string => {
         return "hello"
-    })
+    }
+    )
 
     let valA = a.await()!
     let valB = b.await()!

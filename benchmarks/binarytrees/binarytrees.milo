@@ -13,7 +13,7 @@ fn makeTree(d: i32): Heap<Tree> {
 }
 
 fn check(t: &Heap<Tree>): i32 {
-    match * t {
+    match *t {
         Tree.Leaf => {
             return 1
         }
@@ -30,4 +30,3 @@ fn main(): i32 {
     print("depth ", depth, " check=", c)
     return 0
 }
-

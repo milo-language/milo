@@ -10,28 +10,50 @@
 // @expect: 3.14
 // @expect: 2.71828
 
-from "std/strconv" import { formatFloat, i64ToBin, i64ToHex, i64ToOct, parseFloat, parseInt, parseIntRadix }
+from "std/strconv" import {
+    formatFloat, i64ToBin, i64ToHex, i64ToOct, parseFloat, parseInt, parseIntRadix
+}
 
 fn main(): i32 {
     match parseInt("42") {
-        Option.Some(n) => { print(n) }
-        Option.None => { print("none") }
+        Option.Some(n) => {
+            print(n)
+        }
+        Option.None => {
+            print("none")
+        }
     }
     match parseInt("-7") {
-        Option.Some(n) => { print(n) }
-        Option.None => { print("none") }
+        Option.Some(n) => {
+            print(n)
+        }
+        Option.None => {
+            print("none")
+        }
     }
     match parseFloat("3.14") {
-        Option.Some(f) => { print(f.toString()) }
-        Option.None => { print("none") }
+        Option.Some(f) => {
+            print(f.toString())
+        }
+        Option.None => {
+            print("none")
+        }
     }
     match parseIntRadix("ff", 16) {
-        Option.Some(n) => { print(n) }
-        Option.None => { print("none") }
+        Option.Some(n) => {
+            print(n)
+        }
+        Option.None => {
+            print("none")
+        }
     }
     match parseIntRadix("777", 8) {
-        Option.Some(n) => { print(n) }
-        Option.None => { print("none") }
+        Option.Some(n) => {
+            print(n)
+        }
+        Option.None => {
+            print("none")
+        }
     }
 
     print(i64ToHex(255))

@@ -6,7 +6,9 @@
 // @expect: b,c
 // @expect: d"e
 
-from "std/csv" import { csvParse }
+from "std/csv" import {
+    csvParse
+}
 
 fn main(): i32 {
     let data = "name,age,city\nAlice,30,NYC\nBob,25,SF\n"
@@ -18,7 +20,9 @@ fn main(): i32 {
         var ci: i64 = 0
         var rowStr = ""
         while ci < rows[ri].len {
-            if ci > 0 { rowStr = rowStr + "|" }
+            if ci > 0 {
+                rowStr = rowStr + "|"
+            }
             rowStr = rowStr + rows[ri][ci]
             ci = ci + 1
         }

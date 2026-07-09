@@ -1,14 +1,12 @@
 // std/strconv — string-to-number and number-to-string conversions
 
-from "std/os" import { snprintf }
+from "std/os" import {
+    snprintf
+}
 
-extern
+extern fn strtol(str: *u8, endptr: *u8, base: i32): i64
 
-fn strtol(str: *u8, endptr: *u8, base: i32): i64
-
-extern
-
-fn atof(str: *u8): f64
+extern fn atof(str: *u8): f64
 
 // Parse a decimal integer string. Returns None if not a valid integer.
 
@@ -77,7 +75,7 @@ fn parseFloat(s: string): Option<f64> {
 
 // Lowercase hexadecimal text for `n`, no "0x" prefix.
 fn i64ToHex(n: i64): string {
-    var buf: [u8 ; 32] = [0 ; 32]
+    var buf: [u8; 32] = [0; 32]
     unsafe {
         snprintf(buf, 32, "%lx", n)
         return _cstrToString(buf as *u8)
@@ -88,7 +86,7 @@ fn i64ToHex(n: i64): string {
 
 // Octal text for `n`, no prefix.
 fn i64ToOct(n: i64): string {
-    var buf: [u8 ; 32] = [0 ; 32]
+    var buf: [u8; 32] = [0; 32]
     unsafe {
         snprintf(buf, 32, "%lo", n)
         return _cstrToString(buf as *u8)
@@ -119,7 +117,7 @@ fn i64ToBin(n: i64): string {
 
 // Format `n` with exactly `decimals` digits after the decimal point.
 fn formatFloat(n: f64, decimals: i32): string {
-    var buf: [u8 ; 64] = [0 ; 64]
+    var buf: [u8; 64] = [0; 64]
     unsafe {
         snprintf(buf, 64, "%.*f", decimals, n)
         return _cstrToString(buf as *u8)

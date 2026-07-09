@@ -1,16 +1,19 @@
 // @expect: MSG: hello from heap
 // @expect: done
 
-from "std/thread" import { Thread }
+from "std/thread" import {
+    Thread
+}
 
 fn main(): i32 {
     // heap-allocated string (cap > 0) — exercises the move-capture ownership transfer
     var msg = "hello"
     msg = msg + " from heap"
 
-    let t = Thread.spawn(move (): void => {
+    let t = Thread.spawn(move(): void => {
         print("MSG: ", msg)
-    })!
+    }
+    )!
 
     t.join()!
     print("done")

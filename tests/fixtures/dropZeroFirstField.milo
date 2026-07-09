@@ -14,7 +14,9 @@ impl Drop for Counter {
 }
 
 fn main(): i32 {
-    let c = Counter { count: 0, data: "hello" }
+    let c = Counter {
+        count: 0, data: "hello"
+    }
     print("count: ", c.count)
     return 0
 }

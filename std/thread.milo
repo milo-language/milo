@@ -1,7 +1,11 @@
 // std/thread — OS thread spawning and joining via pthreads
 
-from "std/os" import { free, malloc, memcpy, pthread_create, pthread_join }
-from "std/time" import { sleepMs }
+from "std/os" import {
+    free, malloc, memcpy, pthread_create, pthread_join
+}
+from "std/time" import {
+    sleepMs
+}
 
 // Handle to a spawned OS thread.
 
@@ -26,7 +30,10 @@ fn threadSpawn(func: *u8, arg: *u8): Result<Thread> {
             return Result.Err("pthread_create failed")
         }
     }
-    return Result.Ok(Thread { id: tid })
+    return Result.Ok(Thread {
+        id: tid
+    }
+    )
 }
 
 // Spawn a thread running a no-arg function (convenience wrapper).

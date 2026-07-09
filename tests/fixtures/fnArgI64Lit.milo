@@ -9,4 +9,3 @@ fn main(): i32 {
     print(r)
     return 0
 }
-

@@ -1,10 +1,20 @@
 // std/io — file and directory I/O with automatic cleanup
 
-from "std/os" import { close, lseek, open, readFd, strerror, writeFd }
-from "std/platform" import { getErrno, oWriteCreateAppend, oWriteCreateTrunc }
-from "std/sync" import { Channel }
-from "std/runtime" import { Task, schedulerWaitRead }
-from "std/event" import { setNonblocking }
+from "std/os" import {
+    close, lseek, open, readFd, strerror, writeFd
+}
+from "std/platform" import {
+    getErrno, oWriteCreateAppend, oWriteCreateTrunc
+}
+from "std/sync" import {
+    Channel
+}
+from "std/runtime" import {
+    Task, schedulerWaitRead
+}
+from "std/event" import {
+    setNonblocking
+}
 
 // ── IoError ──
 
@@ -59,22 +69,32 @@ fn writeStdout(s: &string): void {
 fn fdChannel(fd: i32): Channel<string> {
     let ch = Channel<string>.new(256)!
     setNonblocking(fd)
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         var buf: [u8; 4096] = [0; 4096]
         while true {
             var n: i64 = 0
             schedulerWaitRead(fd)
-            unsafe { n = readFd(fd, buf as *u8, 4096) }
-            if n <= 0 { break }
+            unsafe {
+                n = readFd(fd, buf as *u8, 4096)
+            }
+            if n <= 0 {
+                break
+            }
             var data: string = ""
-            for i in 0..n { data.push(buf[i]) }
+            for i in 0..n {
+                data.push(buf[i])
+            }
             match ch.send(data) {
-                Result.Ok(_v) => {}
-                Result.Err(_e) => { break }
+                Result.Ok(_v) => {
+                }
+                Result.Err(_e) => {
+                    break
+                }
             }
         }
         ch.close()
-    })
+    }
+    )
     return ch
 }
 
@@ -112,7 +132,10 @@ impl File {
             if fd < 0 {
                 return Result.Err(_ioError(path))
             }
-            return Result.Ok(File { fd: fd })
+            return Result.Ok(File {
+                fd: fd
+            }
+            )
         }
     }
 
@@ -122,7 +145,10 @@ impl File {
             if fd < 0 {
                 return Result.Err(_ioError(path))
             }
-            return Result.Ok(File { fd: fd })
+            return Result.Ok(File {
+                fd: fd
+            }
+            )
         }
     }
 
@@ -132,7 +158,10 @@ impl File {
             if fd < 0 {
                 return Result.Err(_ioError(path))
             }
-            return Result.Ok(File { fd: fd })
+            return Result.Ok(File {
+                fd: fd
+            }
+            )
         }
     }
 
@@ -156,7 +185,7 @@ impl File {
         // Presize to the stat'd size (+1 for the NUL) so the push loop never reallocs;
         // push still grows safely if the file grew between size() and read().
         var result: string = String.withCapacity(size + 1)
-        var buf: [u8 ; 65536] = [0 ; 65536]
+        var buf: [u8; 65536] = [0; 65536]
         while true {
             let n = readFd(self.fd, buf, 65536)
             if n <= 0 {
@@ -230,7 +259,7 @@ fn readLines(path: &string): Result<Vec<string>, IoError> {
 // Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
 
 fn _readLineFd(fd: i32): Option<string> {
-    var _rlBuf: [u8 ; 1] = [0 ; 1]
+    var _rlBuf: [u8; 1] = [0; 1]
     var _rlResult = ""
     var _rlGot = false
     while true {
@@ -263,7 +292,7 @@ fn readLine(): Option<string> {
 
 fn readStdin(): string {
     var result: string = ""
-    var buf: [u8 ; 4096] = [0 ; 4096]
+    var buf: [u8; 4096] = [0; 4096]
     while true {
         let n = readFd(0, buf, 4096)
         if n <= 0 {

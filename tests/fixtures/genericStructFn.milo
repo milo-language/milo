@@ -15,4 +15,3 @@ fn main(): i32 {
     print(unbox(b))
     return 0
 }
-

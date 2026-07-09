@@ -25,4 +25,3 @@ fn main(): i32 {
     useOps(ops)
     return 0
 }
-

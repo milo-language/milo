@@ -6,16 +6,30 @@
 //   milo build examples/apps/splitPty.milo -o splitpty
 //   ./splitpty
 
-from "std/pty" import { Pty, WinSize, isInteractive }
-from "std/io" import { writeStdout }
-from "std/time" import { sleepMs }
-from "std/term" import { enableRawMode, restoreTerminal, readKey, KEY_QUIT }
-from "std/platform" import { fcntl, fGetfl, fSetfl, oNonblock }
-from "std/os" import { ioctl }
+from "std/pty" import {
+    Pty, WinSize, isInteractive
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs
+}
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey, KEY_QUIT
+}
+from "std/platform" import {
+    fcntl, fGetfl, fSetfl, oNonblock
+}
+from "std/os" import {
+    ioctl
+}
 
 // query host terminal size via ioctl on stdout
 fn termSize(): WinSize {
-    var ws = WinSize { rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16 }
+    var ws = WinSize {
+        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
     unsafe {
         // TIOCGWINSZ on macOS
         ioctl(1, 1074295912, (&ws) as *u8)
@@ -33,9 +47,13 @@ fn drawBorder(leftTitle: &string, rightTitle: &string, half: i64, paneRows: i64)
     // top
     moveTo(1, 1)
     writeStdout("\x1b[36m\xe2\x94\x8c")
-    for i in 0..half { writeStdout("\xe2\x94\x80") }
+    for i in 0..half {
+        writeStdout("\xe2\x94\x80")
+    }
     writeStdout("\xe2\x94\xac")
-    for i in 0..half { writeStdout("\xe2\x94\x80") }
+    for i in 0..half {
+        writeStdout("\xe2\x94\x80")
+    }
     writeStdout("\xe2\x94\x90\x1b[0m")
 
     // titles
@@ -43,37 +61,57 @@ fn drawBorder(leftTitle: &string, rightTitle: &string, half: i64, paneRows: i64)
     writeStdout("\x1b[36m\xe2\x94\x82\x1b[1;33m ")
     writeStdout(leftTitle)
     let lpad = half - leftTitle.len - 1
-    if lpad > 0 { for i in 0..lpad { writeStdout(" ") } }
+    if lpad > 0 {
+        for i in 0..lpad {
+            writeStdout(" ")
+        }
+    }
     writeStdout("\x1b[36m\xe2\x94\x82\x1b[1;33m ")
     writeStdout(rightTitle)
     let rpad = half - rightTitle.len - 1
-    if rpad > 0 { for i in 0..rpad { writeStdout(" ") } }
+    if rpad > 0 {
+        for i in 0..rpad {
+            writeStdout(" ")
+        }
+    }
     writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
 
     // title separator
     moveTo(3, 1)
     writeStdout("\x1b[36m\xe2\x94\x9c")
-    for i in 0..half { writeStdout("\xe2\x94\x80") }
+    for i in 0..half {
+        writeStdout("\xe2\x94\x80")
+    }
     writeStdout("\xe2\x94\xbc")
-    for i in 0..half { writeStdout("\xe2\x94\x80") }
+    for i in 0..half {
+        writeStdout("\xe2\x94\x80")
+    }
     writeStdout("\xe2\x94\xa4\x1b[0m")
 
     // empty content rows
     for row in 0..paneRows {
         moveTo(4 + row as i64, 1)
         writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
-        for i in 0..half { writeStdout(" ") }
+        for i in 0..half {
+            writeStdout(" ")
+        }
         writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
-        for i in 0..half { writeStdout(" ") }
+        for i in 0..half {
+            writeStdout(" ")
+        }
         writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
     }
 
     // bottom
     moveTo(4 + paneRows, 1)
     writeStdout("\x1b[36m\xe2\x94\x94")
-    for i in 0..half { writeStdout("\xe2\x94\x80") }
+    for i in 0..half {
+        writeStdout("\xe2\x94\x80")
+    }
     writeStdout("\xe2\x94\xb4")
-    for i in 0..half { writeStdout("\xe2\x94\x80") }
+    for i in 0..half {
+        writeStdout("\xe2\x94\x80")
+    }
     writeStdout("\xe2\x94\x98\x1b[0m")
 
     moveTo(5 + paneRows, 1)
@@ -83,7 +121,9 @@ fn drawBorder(leftTitle: &string, rightTitle: &string, half: i64, paneRows: i64)
 fn clearPane(startCol: i64, half: i64, paneRows: i64): void {
     for row in 0..paneRows {
         moveTo(4 + row as i64, startCol)
-        for i in 0..(half - 1) { writeStdout(" ") }
+        for i in 0..(half - 1) {
+            writeStdout(" ")
+        }
     }
 }
 
@@ -147,7 +187,9 @@ fn drainPty(pty: &Pty, output: &mut string): bool {
     unsafe {
         let n = pty.read(buf as *u8, 4095)
         if n > 0 {
-            for i in 0..n { output.push(buf[i]) }
+            for i in 0..n {
+                output.push(buf[i])
+            }
             return true
         }
     }
@@ -169,8 +211,12 @@ fn main(): void {
                     var ws = termSize()
                     var half = (ws.cols as i64 - 2) / 2
                     var paneRows = ws.rows as i64 - 6
-                    if half < 20 { half = 20 }
-                    if paneRows < 5 { paneRows = 5 }
+                    if half < 20 {
+                        half = 20
+                    }
+                    if paneRows < 5 {
+                        paneRows = 5
+                    }
 
                     var args1: Vec<string> = Vec.new()
                     args1.push("-c")
@@ -210,8 +256,12 @@ fn main(): void {
                                             ws = newWs
                                             half = (ws.cols as i64 - 2) / 2
                                             paneRows = ws.rows as i64 - 6
-                                            if half < 20 { half = 20 }
-                                            if paneRows < 5 { paneRows = 5 }
+                                            if half < 20 {
+                                                half = 20
+                                            }
+                                            if paneRows < 5 {
+                                                paneRows = 5
+                                            }
                                             pty1.resize(paneRows as u16, (half - 1) as u16)
                                             pty2.resize(paneRows as u16, (half - 1) as u16)
                                             out2 = ""
@@ -235,26 +285,36 @@ fn main(): void {
                                         }
 
                                         let key = readKey()
-                                        if key == KEY_QUIT { done = true }
+                                        if key == KEY_QUIT {
+                                            done = true
+                                        }
                                         sleepMs(50)
                                     }
 
                                     pty2.wait()
                                 }
-                                Result.Err(msg) => { print($"error: {msg}") }
+                                Result.Err(msg) => {
+                                    print($"error: {msg}")
+                                }
                             }
                             pty1.wait()
                         }
-                        Result.Err(msg) => { print($"error: {msg}") }
+                        Result.Err(msg) => {
+                            print($"error: {msg}")
+                        }
                     }
 
                     pty2.close()
                 }
-                Result.Err(msg) => { print($"error: {msg}") }
+                Result.Err(msg) => {
+                    print($"error: {msg}")
+                }
             }
             pty1.close()
         }
-        Result.Err(msg) => { print($"error: {msg}") }
+        Result.Err(msg) => {
+            print($"error: {msg}")
+        }
     }
 
     // restore terminal before clearing so output flushes in cooked mode

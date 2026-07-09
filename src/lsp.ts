@@ -19,13 +19,28 @@ import { spawnSync } from "child_process";
 const hostTarget = getHostTarget();
 
 // ── Formatter ──
-// Use the Milo-native formatter binary when available, fall back to TS implementation.
-const fmtBinaryPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "milo-fmt");
-const hasMiloFmt = existsSync(fmtBinaryPath);
+// bin/milo-fmt is the source of truth (same binary `milo fmt` uses); build it on
+// first use rather than silently formatting differently from the CLI. tsFormat
+// remains a last resort so format-on-save degrades instead of failing.
+const lspRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const fmtBinaryPath = resolve(lspRoot, "bin", "milo-fmt");
+let fmtBinaryReady: boolean | null = null;
+
+function ensureMiloFmt(): boolean {
+  if (fmtBinaryReady !== null) return fmtBinaryReady;
+  if (existsSync(fmtBinaryPath)) return (fmtBinaryReady = true);
+  const build = spawnSync(process.execPath, [
+    resolve(lspRoot, "src", "main.ts"), "build",
+    resolve(lspRoot, "examples", "cli-tools", "fmt.milo"), "-o", fmtBinaryPath,
+  ], { encoding: "utf-8" });
+  fmtBinaryReady = build.status === 0 && existsSync(fmtBinaryPath);
+  if (!fmtBinaryReady) process.stderr.write("milod: could not build bin/milo-fmt; falling back to the TS formatter\n");
+  return fmtBinaryReady;
+}
 
 function formatSource(source: string): string {
-  if (hasMiloFmt) {
-    const result = spawnSync(fmtBinaryPath, [], { input: source, encoding: "utf-8", timeout: 5000 });
+  if (ensureMiloFmt()) {
+    const result = spawnSync(fmtBinaryPath, [], { input: source, encoding: "utf-8", timeout: 30000 });
     if (result.status === 0 && result.stdout) return result.stdout;
   }
   return tsFormat(source);

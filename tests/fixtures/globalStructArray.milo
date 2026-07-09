@@ -1,31 +1,34 @@
 struct Timer {
-  id: i32,
-  active: bool,
-  delayMs: i32,
+    id: i32,
+    active: bool,
+    delayMs: i32,
 }
 
-var timers: [Timer; 4] = [Timer { id: 0, active: false, delayMs: 0 }; 4]
+var timers: [Timer; 4] = [Timer {
+    id: 0, active: false, delayMs: 0
+}
+; 4]
 
 fn main(): i32 {
-  // verify zero-init values
-  print(timers[0].id)
-  print(timers[0].active)
-  print(timers[0].delayMs)
+    // verify zero-init values
+    print(timers[0].id)
+    print(timers[0].active)
+    print(timers[0].delayMs)
 
-  // mutate one element
-  timers[1].id = 42
-  timers[1].active = true
-  timers[1].delayMs = 1000
+    // mutate one element
+    timers[1].id = 42
+    timers[1].active = true
+    timers[1].delayMs = 1000
 
-  print(timers[1].id)
-  print(timers[1].active)
-  print(timers[1].delayMs)
+    print(timers[1].id)
+    print(timers[1].active)
+    print(timers[1].delayMs)
 
-  // confirm others unchanged
-  print(timers[2].id)
-  print(timers[3].active)
+    // confirm others unchanged
+    print(timers[2].id)
+    print(timers[3].active)
 
-  return 0
+    return 0
 }
 
 // @expect: 0

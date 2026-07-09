@@ -16,4 +16,3 @@ fn main(): i32 {
     print(manhattan(v))
     return 0
 }
-

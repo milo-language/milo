@@ -15,4 +15,3 @@ fn main(): i32 {
     print(p.b)
     return 0
 }
-

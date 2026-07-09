@@ -1,8 +1,12 @@
 // @expect: hello from worker
 // @expect: done
 
-from "std/thread" import { Thread }
-from "std/sync" import { Channel }
+from "std/thread" import {
+    Thread
+}
+from "std/sync" import {
+    Channel
+}
 
 struct Worker {
     ch: Channel<string>
@@ -10,11 +14,14 @@ struct Worker {
 
 fn main(): i32 {
     let ch = Channel<string>.new(8)!
-    let w = Worker { ch: ch }
+    let w = Worker {
+        ch: ch
+    }
 
-    let t = Thread.spawn(move (): void => {
+    let t = Thread.spawn(move(): void => {
         w.ch.send("hello from worker")!
-    })!
+    }
+    )!
 
     let msg = w.ch.recv()!
     print(msg)

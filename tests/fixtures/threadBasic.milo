@@ -1,11 +1,15 @@
 // @expect: hello from thread
 // @expect: done
 
-from "std/thread" import { Thread, threadSpawn }
+from "std/thread" import {
+    Thread, threadSpawn
+}
 
 fn worker(arg: *u8): *u8 {
     print("hello from thread")
-    unsafe { return 0 as *u8 }
+    unsafe {
+        return 0 as *u8
+    }
 }
 
 fn main(): i32 {

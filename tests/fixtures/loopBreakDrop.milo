@@ -4,11 +4,18 @@
 // @expect: 2
 // @expect: 1
 // @expect: done
-struct Msg { payload: string }
+struct Msg {
+    payload: string
+}
 
 fn getMsg(n: i64): Result<Msg, string> {
-    if n <= 0 { return Result.Err("done") }
-    return Result.Ok(Msg { payload: "frame-" + n.toString() + "-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" })
+    if n <= 0 {
+        return Result.Err("done")
+    }
+    return Result.Ok(Msg {
+        payload: "frame-" + n.toString() + "-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+    )
 }
 
 fn main(): i32 {
@@ -20,7 +27,9 @@ fn main(): i32 {
                 print(i.toString())
                 i = i - 1
             }
-            Result.Err(e) => { break }
+            Result.Err(e) => {
+                break
+            }
         }
     }
     print("done")

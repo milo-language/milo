@@ -10,7 +10,9 @@
 // @expect: 10
 // @expect: 3.14159
 
-from "std/math" import { absI64, clampI64, mathAbs, mathCeil, mathFloor, mathPi, mathPow, mathRound, mathSqrt, maxI64, minI64 }
+from "std/math" import {
+    absI64, clampI64, mathAbs, mathCeil, mathFloor, mathPi, mathPow, mathRound, mathSqrt, maxI64, minI64
+}
 
 fn main(): i32 {
     print(mathSqrt(9.0).toString())

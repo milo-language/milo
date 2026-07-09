@@ -5,25 +5,31 @@
 
 // close wakes a parked green receiver; `for v in ch` drains pending items
 // then ends — the hades wsWriterLoop pattern with no self-pipe machinery
-from "std/runtime" import { Task, schedulerRunToCompletion }
-from "std/sync" import { Channel }
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/sync" import {
+    Channel
+}
 
 fn main(): i32 {
     var ch = Channel<i64>.new(2)!
 
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         for v in ch {
             print(v)
         }
         print("done")
-    })
+    }
+    )
 
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         ch.send(1)!
         ch.send(2)!
         ch.send(3)!
         ch.close()
-    })
+    }
+    )
 
     schedulerRunToCompletion()
     return 0

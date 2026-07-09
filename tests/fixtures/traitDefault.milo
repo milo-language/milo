@@ -20,4 +20,3 @@ fn main(): i32 {
     print(c.greet())
     return 0
 }
-

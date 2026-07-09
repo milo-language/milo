@@ -1,7 +1,11 @@
 // @expect: sum 100
 
-from "std/thread" import { Thread }
-from "std/sync" import { Channel }
+from "std/thread" import {
+    Thread
+}
+from "std/sync" import {
+    Channel
+}
 
 fn main(): i32 {
     let ch = Channel<i64>.new(16)!
@@ -10,9 +14,10 @@ fn main(): i32 {
     var i: i64 = 0
     while i < 4 {
         let val = (i + 1) * 10
-        let t = Thread.spawn(move (): void => {
+        let t = Thread.spawn(move(): void => {
             ch.send(val)!
-        })!
+        }
+        )!
         threads.push(t)
         i = i + 1
     }

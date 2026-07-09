@@ -6,7 +6,9 @@
 // @expect: 0
 // @expect: true
 
-from "std/string" import { strContains, strToLower, strToUpper, strTrim, strTrimEnd, strTrimStart }
+from "std/string" import {
+    strContains, strToLower, strToUpper, strTrim, strTrimEnd, strTrimStart
+}
 
 fn main(): i32 {
     print(strToUpper("hello world"))

@@ -3,17 +3,26 @@
 
 // green-aware connect: a refused connection from inside a task reports an
 // error via SO_ERROR after parking on writability — it must not hang
-from "std/runtime" import { Task }
-from "std/net" import { TcpStream, ip4 }
+from "std/runtime" import {
+    Task
+}
+from "std/net" import {
+    TcpStream, ip4
+}
 
 fn main(): i32 {
-    let t = Task.spawn(move (): void => {
+    let t = Task.spawn(move(): void => {
         match TcpStream.connect(ip4(127, 0, 0, 1), 1) {
-            Result.Ok(_) => { print("connected") }
-            Result.Err(_) => { print("connect failed") }
+            Result.Ok(_) => {
+                print("connected")
+            }
+            Result.Err(_) => {
+                print("connect failed")
+            }
         }
         print("after")
-    })
+    }
+    )
     t.join()
     return 0
 }

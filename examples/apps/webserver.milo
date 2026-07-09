@@ -5,7 +5,9 @@ from "std/http" import {
 from "std/argparse" import {
     newParser, ArgParser, ParsedArgs
 }
-from "std/strconv" import { parseInt }
+from "std/strconv" import {
+    parseInt
+}
 
 // ── Algorithms ──
 
@@ -91,22 +93,34 @@ fn helloHandler(ctx: &mut Context): Response {
 }
 
 fn jsonHandler(ctx: &mut Context): Response {
-    return ctx.json({ language: "milo", backend: "llvm", memorySafe: true })
+    return ctx.json({
+        language: "milo", backend: "llvm", memorySafe: true
+    }
+    )
 }
 
 fn fibHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n"))!
-    return ctx.json({ n: n, result: fibonacci(n) })
+    return ctx.json({
+        n: n, result: fibonacci(n)
+    }
+    )
 }
 
 fn primeHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n"))!
-    return ctx.json({ n: n, isPrime: isPrime(n) })
+    return ctx.json({
+        n: n, isPrime: isPrime(n)
+    }
+    )
 }
 
 fn collatzHandler(ctx: &mut Context): Response {
     let n = parseInt(ctx.param("n"))!
-    return ctx.json({ start: n, steps: collatzSteps(n) })
+    return ctx.json({
+        start: n, steps: collatzSteps(n)
+    }
+    )
 }
 
 fn fizzbuzzHandler(ctx: &mut Context): Response {
@@ -118,9 +132,15 @@ fn searchHandler(ctx: &mut Context): Response {
     let q = ctx.query("q")
     if q.len == 0 {
         ctx.setStatus(400)
-        return ctx.json({ error: "missing ?q= parameter" })
+        return ctx.json({
+            error: "missing ?q= parameter"
+        }
+        )
     }
-    return ctx.json({ query: q })
+    return ctx.json({
+        query: q
+    }
+    )
 }
 
 fn logMiddleware(ctx: &mut Context, next: (&mut Context) => Response): Response {

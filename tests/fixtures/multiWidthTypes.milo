@@ -11,4 +11,3 @@ fn main(): i32 {
     print(c)
     return 0
 }
-

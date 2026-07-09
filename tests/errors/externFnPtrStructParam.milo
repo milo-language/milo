@@ -1,5 +1,7 @@
 // @error: passes struct 'Pt' by value
-extern struct Pt {
+extern
+
+struct Pt {
     x: i32,
     y: i32,
 }

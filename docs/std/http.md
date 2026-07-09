@@ -5,7 +5,7 @@
 ### `Context.bufToStr`
 
 ```milo
-fn Context.bufToStr(buf: &[u8 ; 8192], start: i64, end: i64): string
+fn Context.bufToStr(buf: &[u8; 8192], start: i64, end: i64): string
 ```
 
 _Undocumented._
@@ -101,7 +101,7 @@ _Undocumented._
 ### `Context.parseRequest`
 
 ```milo
-fn Context.parseRequest(buf: &[u8 ; 8192], n: i64): Request
+fn Context.parseRequest(buf: &[u8; 8192], n: i64): Request
 ```
 
 _Undocumented._

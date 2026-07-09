@@ -1,4 +1,6 @@
-from "std/url" import { urlParse }
+from "std/url" import {
+    urlParse
+}
 
 fn main(): i32 {
     let u = urlParse("https://example.com:8080/api/users?page=1#top")!

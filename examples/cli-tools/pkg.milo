@@ -1,13 +1,27 @@
 // milo-pkg — package manager for Milo
 // uses git as transport, GitHub as registry, global cache at ~/.milo/cache/
 
-from "std/args" import { args }
-from "std/env" import { getEnv }
-from "std/fs" import { pathExists, writeFile }
-from "std/io" import { readFile }
-from "std/json" import { jsonParse }
-from "std/process" import { capture, run }
-from "std/string" import { strIndexOf, strReplace, strStartsWith, trim }
+from "std/args" import {
+    args
+}
+from "std/env" import {
+    getEnv
+}
+from "std/fs" import {
+    pathExists, writeFile
+}
+from "std/io" import {
+    readFile
+}
+from "std/json" import {
+    jsonParse
+}
+from "std/process" import {
+    capture, run
+}
+from "std/string" import {
+    strIndexOf, strReplace, strStartsWith, trim
+}
 
 fn getHome(): string {
     let h = getEnv("HOME")
@@ -114,13 +128,15 @@ fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
                         Option.Some(n) => {
                             out = out + "  \"name\": \"" + n + "\",\n"
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
                     match version {
                         Option.Some(v) => {
                             out = out + "  \"version\": \"" + v + "\",\n"
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
                     out = out + "  \"deps\": {\n"
                     // copy existing deps
@@ -138,12 +154,14 @@ fn cmdAdd(pkgAlias: &string, pkgUrl: &string): i32 {
                                     Option.Some(v) => {
                                         out = out + "    \"" + key + "\": \"" + v + "\""
                                     }
-                                    Option.None => {}
+                                    Option.None => {
+                                    }
                                 }
                                 hasPrev = true
                             }
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
                     // add new dep
                     if hasPrev {
@@ -212,7 +230,8 @@ fn installPkg(name: &string, url: &string): i32 {
             let trimmedSha = trim(sha)
             appendLock(name, url, trimmedSha)
         }
-        Result.Err(e) => {}
+        Result.Err(e) => {
+        }
     }
 
     print($"  installed: {name}")
@@ -228,7 +247,8 @@ fn appendLock(name: &string, url: &string, sha: &string): void {
             Result.Ok(content) => {
                 line = content + line
             }
-            Result.Err(e) => {}
+            Result.Err(e) => {
+            }
         }
     }
     let _ = writeFile("milo.lock", line)
@@ -301,7 +321,8 @@ fn cmdNew(name: &string): i32 {
     let manifestPath = name.clone() + "/milo.json"
     let w1 = writeFile(manifestPath, manifest)
     match w1 {
-        Result.Ok(n) => {}
+        Result.Ok(n) => {
+        }
         Result.Err(e) => {
             print("error: failed to write milo.json")
             return 1
@@ -312,7 +333,8 @@ fn cmdNew(name: &string): i32 {
     let libPath = name.clone() + "/lib.milo"
     let w2 = writeFile(libPath, lib)
     match w2 {
-        Result.Ok(n) => {}
+        Result.Ok(n) => {
+        }
         Result.Err(e) => {
             print("error: failed to write lib.milo")
             return 1

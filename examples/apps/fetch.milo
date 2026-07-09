@@ -1,5 +1,7 @@
 // Fetch data from an HTTP API and parse the JSON response
-from "std/net" import { fetch }
+from "std/net" import {
+    fetch
+}
 
 fn main(): i32 {
     let resp = fetch("https://httpbin.org/get")
@@ -13,8 +15,11 @@ fn main(): i32 {
             match origin {
                 Option.Some(v) => {
                     match v.asStr() {
-                        Option.Some(s) => { print("origin: ", s) }
-                        Option.None => {}
+                        Option.Some(s) => {
+                            print("origin: ", s)
+                        }
+                        Option.None => {
+                        }
                     }
                 }
                 Option.None => {
@@ -28,8 +33,11 @@ fn main(): i32 {
                     match host {
                         Option.Some(v) => {
                             match v.asStr() {
-                                Option.Some(s) => { print("host: ", s) }
-                                Option.None => {}
+                                Option.Some(s) => {
+                                    print("host: ", s)
+                                }
+                                Option.None => {
+                                }
                             }
                         }
                         Option.None => {
@@ -44,8 +52,11 @@ fn main(): i32 {
             match url {
                 Option.Some(v) => {
                     match v.asStr() {
-                        Option.Some(s) => { print("url: ", s) }
-                        Option.None => {}
+                        Option.Some(s) => {
+                            print("url: ", s)
+                        }
+                        Option.None => {
+                        }
                     }
                 }
                 Option.None => {
@@ -59,4 +70,3 @@ fn main(): i32 {
 
     return 0
 }
-

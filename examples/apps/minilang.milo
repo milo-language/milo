@@ -9,7 +9,9 @@
 // tag-structs because matching a borrowed enum wasn't yet supported. See
 // docs/rewrite-findings-html5ever.md (Probe 2).
 
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaWith }
+from "std/arena" import {
+    Arena, Handle, arenaNew, arenaAlloc, arenaWith
+}
 
 enum Value {
     Int(i64),
@@ -65,37 +67,55 @@ fn intToStr(n: i64): string {
 // Clone a Value behind a borrow — `match &Value` binds Str's payload as &string.
 fn cloneValue(v: &Value): Value {
     match v {
-        Value.Int(n) => { return Value.Int(n) }
-        Value.Bool(b) => { return Value.Bool(b) }
-        Value.Str(s) => { return Value.Str(s.clone()) }
-        Value.Nil => { return Value.Nil }
+        Value.Int(n) => {
+            return Value.Int(n)
+        }
+        Value.Bool(b) => {
+            return Value.Bool(b)
+        }
+        Value.Str(s) => {
+            return Value.Str(s.clone())
+        }
+        Value.Nil => {
+            return Value.Nil
+        }
     }
 }
 
 fn valueToString(v: &Value): string {
     match v {
-        Value.Int(n) => { return intToStr(n) }
+        Value.Int(n) => {
+            return intToStr(n)
+        }
         Value.Bool(b) => {
             if b {
                 return "true"
             }
             return "false"
         }
-        Value.Str(s) => { return s.clone() }
-        Value.Nil => { return "nil" }
+        Value.Str(s) => {
+            return s.clone()
+        }
+        Value.Nil => {
+            return "nil"
+        }
     }
 }
 
 fn asInt(v: &Value): i64 {
     match v {
-        Value.Int(n) => { return n }
+        Value.Int(n) => {
+            return n
+        }
         Value.Bool(b) => {
             if b {
                 return 1
             }
             return 0
         }
-        _ => { return 0 }
+        _ => {
+            return 0
+        }
     }
 }
 
@@ -103,20 +123,36 @@ fn asInt(v: &Value): i64 {
 // borrows (cloned here) and Copy handle payloads as values (used directly).
 fn cloneExpr(e: &Expr): Expr {
     match e {
-        Expr.Num(n) => { return Expr.Num(n) }
-        Expr.StrLit(s) => { return Expr.StrLit(s.clone()) }
-        Expr.Var(name) => { return Expr.Var(name.clone()) }
-        Expr.Bin(op, a, b) => { return Expr.Bin(op.clone(), a, b) }
-        Expr.If(c, t, f) => { return Expr.If(c, t, f) }
-        Expr.Let(nm, v, body) => { return Expr.Let(nm.clone(), v, body) }
+        Expr.Num(n) => {
+            return Expr.Num(n)
+        }
+        Expr.StrLit(s) => {
+            return Expr.StrLit(s.clone())
+        }
+        Expr.Var(name) => {
+            return Expr.Var(name.clone())
+        }
+        Expr.Bin(op, a, b) => {
+            return Expr.Bin(op.clone(), a, b)
+        }
+        Expr.If(c, t, f) => {
+            return Expr.If(c, t, f)
+        }
+        Expr.Let(nm, v, body) => {
+            return Expr.Let(nm.clone(), v, body)
+        }
     }
 }
 
 fn readExpr(arena: &Arena<Expr>, h: Handle<Expr>): Expr {
     let r = arenaWith(arena, h, (e: &Expr): Expr => cloneExpr(e))
     match r {
-        Option.Some(x) => { return x }
-        Option.None => { return Expr.Num(0) }
+        Option.Some(x) => {
+            return x
+        }
+        Option.None => {
+            return Expr.Num(0)
+        }
     }
 }
 
@@ -164,9 +200,15 @@ fn evalBin(op: &string, a: &Value, b: &Value): Value {
 fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value {
     let node = readExpr(arena, h)
     match node {
-        Expr.Num(n) => { return Value.Int(n) }
-        Expr.StrLit(s) => { return Value.Str(s) }
-        Expr.Var(name) => { return envLookup(env, name) }
+        Expr.Num(n) => {
+            return Value.Int(n)
+        }
+        Expr.StrLit(s) => {
+            return Value.Str(s)
+        }
+        Expr.Var(name) => {
+            return envLookup(env, name)
+        }
         Expr.Bin(op, a, b) => {
             let va = evalExpr(arena, a, env)
             let vb = evalExpr(arena, b, env)
@@ -181,7 +223,10 @@ fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value
         }
         Expr.Let(nm, valExpr, body) => {
             let v = evalExpr(arena, valExpr, env)
-            env.push(Binding { name: nm, value: v })
+            env.push(Binding {
+                name: nm, value: v
+            }
+            )
             let result = evalExpr(arena, body, env)
             env.pop()
             return result
@@ -261,7 +306,10 @@ fn lex(src: &string): Vec<Token> {
                 v = v * 10 + (src[i] - '0') as i64
                 i = i + 1
             }
-            toks.push(Token { kind: T_NUM, num: v, text: "" })
+            toks.push(Token {
+                kind: T_NUM, num: v, text: ""
+            }
+            )
         } else if isAlpha(c) {
             var name = String.withCapacity(8)
             while i < n && (isAlpha(src[i]) || isDigit(src[i])) {
@@ -269,26 +317,56 @@ fn lex(src: &string): Vec<Token> {
                 i = i + 1
             }
             let k = keywordKind(name)
-            toks.push(Token { kind: k, num: 0, text: name })
+            toks.push(Token {
+                kind: k, num: 0, text: name
+            }
+            )
         } else if c == '=' && i + 1 < n && src[i + 1] == '=' {
-            toks.push(Token { kind: T_EQEQ, num: 0, text: "" })
+            toks.push(Token {
+                kind: T_EQEQ, num: 0, text: ""
+            }
+            )
             i = i + 2
         } else {
             var k: i32 = T_EOF
-            if c == '+' { k = T_PLUS }
-            else if c == '-' { k = T_MINUS }
-            else if c == '*' { k = T_STAR }
-            else if c == '/' { k = T_SLASH }
-            else if c == '<' { k = T_LT }
-            else if c == '>' { k = T_GT }
-            else if c == '(' { k = T_LPAREN }
-            else if c == ')' { k = T_RPAREN }
-            else if c == '=' { k = T_EQ }
-            toks.push(Token { kind: k, num: 0, text: "" })
+            if c == '+' {
+                k = T_PLUS
+            } 
+            else if c == '-' {
+                k = T_MINUS
+            } 
+            else if c == '*' {
+                k = T_STAR
+            } 
+            else if c == '/' {
+                k = T_SLASH
+            } 
+            else if c == '<' {
+                k = T_LT
+            } 
+            else if c == '>' {
+                k = T_GT
+            } 
+            else if c == '(' {
+                k = T_LPAREN
+            } 
+            else if c == ')' {
+                k = T_RPAREN
+            } 
+            else if c == '=' {
+                k = T_EQ
+            }
+            toks.push(Token {
+                kind: k, num: 0, text: ""
+            }
+            )
             i = i + 1
         }
     }
-    toks.push(Token { kind: T_EOF, num: 0, text: "" })
+    toks.push(Token {
+        kind: T_EOF, num: 0, text: ""
+    }
+    )
     return toks
 }
 
@@ -307,12 +385,24 @@ fn peekKind(p: &PState): i32 {
 }
 
 fn opStr(kind: i32): string {
-    if kind == T_PLUS { return "+" }
-    if kind == T_MINUS { return "-" }
-    if kind == T_STAR { return "*" }
-    if kind == T_SLASH { return "/" }
-    if kind == T_LT { return "<" }
-    if kind == T_GT { return ">" }
+    if kind == T_PLUS {
+        return "+"
+    }
+    if kind == T_MINUS {
+        return "-"
+    }
+    if kind == T_STAR {
+        return "*"
+    }
+    if kind == T_SLASH {
+        return "/"
+    }
+    if kind == T_LT {
+        return "<"
+    }
+    if kind == T_GT {
+        return ">"
+    }
     return "=="
 }
 
@@ -420,7 +510,9 @@ fn parseExpr(p: &mut PState, arena: &mut Arena<Expr>): Handle<Expr> {
 
 fn run(arena: &mut Arena<Expr>, src: &string): string {
     let toks = lex(src)
-    var p = PState { toks: toks, pos: 0 }
+    var p = PState {
+        toks: toks, pos: 0
+    }
     let root = parseExpr(p, arena)
     var env: Vec<Binding> = Vec.new()
     let result = evalExpr(arena, root, env)
@@ -430,11 +522,11 @@ fn run(arena: &mut Arena<Expr>, src: &string): string {
 fn main(): i32 {
     var arena: Arena<Expr> = arenaNew()
 
-    print(run(arena, "let x = 6 in let y = 7 in x * y"))         // 42
-    print(run(arena, "if 3 < 5 then 100 else 200"))              // 100
-    print(run(arena, "1 + 2 * 3 - 4"))                           // 3
-    print(run(arena, "let n = 10 in if n > 5 then n * n else 0"))// 100
-    print(run(arena, "(2 + 3) * (4 + 1)"))                       // 25
+    print(run(arena, "let x = 6 in let y = 7 in x * y")) // 42
+    print(run(arena, "if 3 < 5 then 100 else 200")) // 100
+    print(run(arena, "1 + 2 * 3 - 4")) // 3
+    print(run(arena, "let n = 10 in if n > 5 then n * n else 0")) // 100
+    print(run(arena, "(2 + 3) * (4 + 1)")) // 25
 
     return 0
 }

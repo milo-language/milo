@@ -7,4 +7,3 @@ struct MyView {
 fn main(): i32 {
     return 0
 }
-

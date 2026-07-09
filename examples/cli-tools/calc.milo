@@ -1,8 +1,12 @@
 // calc — simple expression evaluator
 // Supports: + - * / % ** () with standard precedence, unary minus, floats
 
-from "std/argparse" import { newParser }
-from "std/math" import { exp, mathMod, mathPow }
+from "std/argparse" import {
+    newParser
+}
+from "std/math" import {
+    exp, mathMod, mathPow
+}
 
 // Tokenizer
 
@@ -54,39 +58,69 @@ fn tokenize(input: &string): Vec<CalcToken> {
                     }
                 }
             }
-            tokens.push(CalcToken { kind: CalcTok.Num, val: val + frac })
+            tokens.push(CalcToken {
+                kind: CalcTok.Num, val: val + frac
+            }
+            )
         } else if ch == 43 {
-            tokens.push(CalcToken { kind: CalcTok.Plus, val: 0.0 })
+            tokens.push(CalcToken {
+                kind: CalcTok.Plus, val: 0.0
+            }
+            )
             i = i + 1
         } else if ch == 45 {
-            tokens.push(CalcToken { kind: CalcTok.Minus, val: 0.0 })
+            tokens.push(CalcToken {
+                kind: CalcTok.Minus, val: 0.0
+            }
+            )
             i = i + 1
         } else if ch == 42 {
             if i + 1 < input.len && input[i + 1] == 42 {
-                tokens.push(CalcToken { kind: CalcTok.StarStar, val: 0.0 })
+                tokens.push(CalcToken {
+                    kind: CalcTok.StarStar, val: 0.0
+                }
+                )
                 i = i + 2
             } else {
-                tokens.push(CalcToken { kind: CalcTok.Star, val: 0.0 })
+                tokens.push(CalcToken {
+                    kind: CalcTok.Star, val: 0.0
+                }
+                )
                 i = i + 1
             }
         } else if ch == 47 {
-            tokens.push(CalcToken { kind: CalcTok.Slash, val: 0.0 })
+            tokens.push(CalcToken {
+                kind: CalcTok.Slash, val: 0.0
+            }
+            )
             i = i + 1
         } else if ch == 37 {
-            tokens.push(CalcToken { kind: CalcTok.Percent, val: 0.0 })
+            tokens.push(CalcToken {
+                kind: CalcTok.Percent, val: 0.0
+            }
+            )
             i = i + 1
         } else if ch == 40 {
-            tokens.push(CalcToken { kind: CalcTok.LParen, val: 0.0 })
+            tokens.push(CalcToken {
+                kind: CalcTok.LParen, val: 0.0
+            }
+            )
             i = i + 1
         } else if ch == 41 {
-            tokens.push(CalcToken { kind: CalcTok.RParen, val: 0.0 })
+            tokens.push(CalcToken {
+                kind: CalcTok.RParen, val: 0.0
+            }
+            )
             i = i + 1
         } else {
             print($"error: unexpected character '{ch.toString()}'")
             return tokens
         }
     }
-    tokens.push(CalcToken { kind: CalcTok.End, val: 0.0 })
+    tokens.push(CalcToken {
+        kind: CalcTok.End, val: 0.0
+    }
+    )
     return tokens
 }
 
@@ -218,7 +252,9 @@ fn main(): i32 {
     let input = args.getString("expression")
 
     let tokens = tokenize(input)
-    var p = Parser { tokens: tokens, pos: 0 }
+    var p = Parser {
+        tokens: tokens, pos: 0
+    }
     let result = parseExpr(p)
     print(formatResult(result))
     return 0

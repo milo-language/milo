@@ -3,27 +3,41 @@
 
 // select races a channel recv against a timeout: first run a sender wins the
 // recv arm; second run nobody sends so the timeout arm fires
-from "std/runtime" import { Task, schedulerRunToCompletion }
-from "std/sync" import { Channel }
-from "std/select" import { Select, selectRecv }
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/sync" import {
+    Channel
+}
+from "std/select" import {
+    Select, selectRecv
+}
 
 fn raceOnce(withSend: bool): void {
     let ch = Channel<i64>.new(1)!
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         var sel = Select.new()
         selectRecv(sel, ch)
         sel.onTimeout(60)
         match sel.wait() {
-            0 => { print("recv ", ch.recv()!) }
-            1 => { print("timed out") }
-            _ => { print("other") }
+            0 => {
+                print("recv ", ch.recv()!)
+            }
+            1 => {
+                print("timed out")
+            }
+            _ => {
+                print("other")
+            }
         }
         sel.destroy()
-    })
+    }
+    )
     if withSend {
-        Task.spawn(move (): void => {
+        Task.spawn(move(): void => {
             ch.send(42)!
-        })
+        }
+        )
     }
 }
 

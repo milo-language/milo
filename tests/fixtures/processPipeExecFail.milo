@@ -1,6 +1,8 @@
 // @expect: exit 127
 
-from "std/process" import { Child }
+from "std/process" import {
+    Child
+}
 
 // execvp of a missing binary can't be reported before fork, so the child
 // exec fails and exit(127)s; the parent observes it through wait().
@@ -10,8 +12,12 @@ fn main(): i32 {
         Result.Ok(child) => {
             child.closeStdin()
             match child.wait() {
-                Result.Ok(code) => { print($"exit {code}") }
-                Result.Err(msg) => { print($"wait error: {msg}") }
+                Result.Ok(code) => {
+                    print($"exit {code}")
+                }
+                Result.Err(msg) => {
+                    print($"wait error: {msg}")
+                }
             }
             child.close()
         }

@@ -1,20 +1,16 @@
 // @expect: bind ok
 
-from "std/platform" import { SockAddrIn, makeSockaddr }
+from "std/platform" import {
+    SockAddrIn, makeSockaddr
+}
 
-extern
+extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
 
-fn socket(domain: i32, sockType: i32, protocol: i32): i32
-
-extern
-
-fn close(fd: i32): i32
+extern fn close(fd: i32): i32
 
 // bind takes &SockAddrIn — auto-borrow passes the pointer, matching C ABI
 
-extern
-
-fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
 fn main(): i32 {
     unsafe {

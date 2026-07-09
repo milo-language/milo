@@ -4,8 +4,12 @@ from "std/os" import {
     close, dup2, execl, execvp, exit, fork, free, kill, malloc, memcpy,
     memset, pipe, read, system, waitpid, write
 }
-from "std/io" import { readFile, fdChannel }
-from "std/sync" import { Channel }
+from "std/io" import {
+    readFile, fdChannel
+}
+from "std/sync" import {
+    Channel
+}
 
 // ── Simple command execution ──
 
@@ -43,12 +47,15 @@ impl Process {
                 execl(path, path, 0 as *u8)
                 exit(127)
             }
-            return Result.Ok(Process { pid: pid })
+            return Result.Ok(Process {
+                pid: pid
+            }
+            )
         }
     }
 
     fn wait(self: &Self): Result<i32> {
-        var statusBuf: [u8 ; 4] = [0 ; 4]
+        var statusBuf: [u8; 4] = [0; 4]
         unsafe {
             let r = waitpid(self.pid, statusBuf, 0)
             if r < 0 {
@@ -82,9 +89,9 @@ impl Process {
 
 struct Child {
     pid: i32,
-    stdinFd: i32,   // parent → child stdin
-    stdoutFd: i32,  // child stdout → parent
-    stderrFd: i32,  // child stderr → parent, or -1 when merged into stdout
+    stdinFd: i32, // parent → child stdin
+    stdoutFd: i32, // child stdout → parent
+    stderrFd: i32, // child stderr → parent, or -1 when merged into stdout
 }
 
 impl Child {
@@ -93,7 +100,9 @@ impl Child {
             var inP: [i32; 2] = [0; 2]
             var outP: [i32; 2] = [0; 2]
             var errP: [i32; 2] = [-1; 2]
-            if pipe(inP as *u8) != 0 { return Result.Err("pipe(stdin) failed") }
+            if pipe(inP as *u8) != 0 {
+                return Result.Err("pipe(stdin) failed")
+            }
             if pipe(outP as *u8) != 0 {
                 close(inP[0])
                 close(inP[1])
@@ -163,28 +172,37 @@ impl Child {
                 stdinFd: inP[1],
                 stdoutFd: outP[0],
                 stderrFd: errRead,
-            })
+            }
+            )
         }
     }
 
     fn writeStdin(self: &Self, buf: *u8, len: i64): i64 {
-        unsafe { return write(self.stdinFd, buf, len) }
+        unsafe {
+            return write(self.stdinFd, buf, len)
+        }
     }
 
     fn writeStdinStr(self: &Self, s: &string): i64 {
-        unsafe { return write(self.stdinFd, s as *u8, s.len) }
+        unsafe {
+            return write(self.stdinFd, s as *u8, s.len)
+        }
     }
 
     // Low-level single read into a raw buffer. Prefer `stdout()` for streaming.
     fn readStdout(self: &Self, buf: *u8, len: i64): i64 {
-        unsafe { return read(self.stdoutFd, buf, len) }
+        unsafe {
+            return read(self.stdoutFd, buf, len)
+        }
     }
 
     // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
-      requires self.stderrFd >= 0
+    requires self.stderrFd >= 0
     {
-        unsafe { return read(self.stderrFd, buf, len) }
+        unsafe {
+            return read(self.stderrFd, buf, len)
+        }
     }
 
     // Stream the child's stdout as an iterable channel, pumped on a background
@@ -197,7 +215,7 @@ impl Child {
     // Stream the child's stderr the same way. Only valid when stderr is a
     // separate pipe (not merged into stdout).
     fn stderr(self: &Self): Channel<string>
-      requires self.stderrFd >= 0
+    requires self.stderrFd >= 0
     {
         return fdChannel(self.stderrFd)
     }
@@ -205,7 +223,9 @@ impl Child {
     // Close the child's stdin, sending EOF. Idempotent.
     fn closeStdin(self: &mut Self): void {
         if self.stdinFd >= 0 {
-            unsafe { close(self.stdinFd) }
+            unsafe {
+                close(self.stdinFd)
+            }
             self.stdinFd = -1
         }
     }
@@ -214,16 +234,20 @@ impl Child {
         var statusBuf: [u8; 4] = [0; 4]
         unsafe {
             let r = waitpid(self.pid, statusBuf, 0)
-            if r < 0 { return Result.Err("waitpid() failed") }
+            if r < 0 {
+                return Result.Err("waitpid() failed")
+            }
             // macOS/Linux: low byte holds signal/stop info, next byte the exit code.
-            return Result.Ok(statusBuf[1] as i32)
+            return Result.Ok(statusBuf[1]as i32)
         }
     }
 
     fn signal(self: &Self, sig: i32): Result<i32> {
         unsafe {
             let r = kill(self.pid, sig)
-            if r < 0 { return Result.Err("kill() failed") }
+            if r < 0 {
+                return Result.Err("kill() failed")
+            }
             return Result.Ok(0)
         }
     }
@@ -278,7 +302,9 @@ fn _freeArgv(argv: *u8, argc: i64): void {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8
             memcpy((&p) as *u8, (argv as i64 + i * 8) as *u8, 8)
-            if p as i64 != 0 { free(p) }
+            if p as i64 != 0 {
+                free(p)
+            }
         }
         free(argv)
     }

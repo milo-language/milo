@@ -6,7 +6,9 @@
 // arenaWith, mutations borrow via arenaModifyMut. See
 // docs/rewrite-findings-html5ever.md.
 
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaWith, arenaModifyMut }
+from "std/arena" import {
+    Arena, Handle, arenaNew, arenaAlloc, arenaWith, arenaModifyMut
+}
 
 struct Attr {
     name: string,
@@ -52,7 +54,9 @@ fn emptyNode(kind: NodeKind, name: string, text: string): Node {
 fn domNew(): Dom {
     var arena: Arena<Node> = arenaNew()
     let doc = arenaAlloc(arena, emptyNode(NodeKind.Document, "", ""))
-    return Dom { arena: arena, document: doc }
+    return Dom {
+        arena: arena, document: doc
+    }
 }
 
 // ── Field readers: borrow the node, copy out only the one small field we
@@ -61,7 +65,9 @@ fn domNew(): Dom {
 fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
     let r = arenaWith(dom.arena, h, (n: &Node): NodeKind => n.kind)
     match r {
-        Option.Some(k) => { return k }
+        Option.Some(k) => {
+            return k
+        }
         Option.None => {
             assert(false, "nodeKind: stale handle")
             return NodeKind.Document
@@ -72,39 +78,57 @@ fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
 fn nodeName(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
     match r {
-        Option.Some(s) => { return s }
-        Option.None => { return "" }
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
     }
 }
 
 fn nodeText(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
     match r {
-        Option.Some(s) => { return s }
-        Option.None => { return "" }
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
     }
 }
 
 fn nodeParent(dom: &Dom, h: Handle<Node>): Option<Handle<Node>> {
     let r = arenaWith(dom.arena, h, (n: &Node): Option<Handle<Node>> => n.parent)
     match r {
-        Option.Some(p) => { return p }
-        Option.None => { return Option.None }
+        Option.Some(p) => {
+            return p
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
 fn childCount(dom: &Dom, h: Handle<Node>): i64 {
     let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.children.len())
     match r {
-        Option.Some(c) => { return c }
-        Option.None => { return 0 }
+        Option.Some(c) => {
+            return c
+        }
+        Option.None => {
+            return 0
+        }
     }
 }
 
 fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
     let r = arenaWith(dom.arena, h, (n: &Node): Handle<Node> => n.children[i])
     match r {
-        Option.Some(c) => { return c }
+        Option.Some(c) => {
+            return c
+        }
         Option.None => {
             assert(false, "childAt: stale handle")
             return h
@@ -129,13 +153,15 @@ fn createComment(dom: &mut Dom, text: string): Handle<Node> {
 fn setParent(dom: &mut Dom, child: Handle<Node>, parent: Option<Handle<Node>>) {
     arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
         c.parent = parent
-    })
+    }
+    )
 }
 
 fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
     arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
-    })
+    }
+    )
     setParent(dom, child, Option.Some(parent))
 }
 
@@ -153,10 +179,12 @@ fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
                 let extra = t.clone()
                 arenaModifyMut(dom.arena, last, (n: &mut Node): void => {
                     n.text = n.text + extra
-                })
+                }
+                )
                 return
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     let tn = createText(dom, t)
@@ -182,10 +210,12 @@ fn removeFromParent(dom: &mut Dom, child: Handle<Node>) {
                 if found {
                     n.children.remove(idx)
                 }
-            })
+            }
+            )
             setParent(dom, child, Option.None)
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
 }
 
@@ -204,10 +234,12 @@ fn appendBeforeSibling(dom: &mut Dom, sibling: Handle<Node>, newNode: Handle<Nod
                 if found {
                     n.children.insert(idx, newNode)
                 }
-            })
+            }
+            )
             setParent(dom, newNode, Option.Some(p))
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
 }
 
@@ -219,7 +251,8 @@ fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handle<No
     }
     arenaModifyMut(dom.arena, oldParent, (n: &mut Node): void => {
         n.children = Vec.new()
-    })
+    }
+    )
     for i in 0..kids.len() {
         append(dom, newParent, kids[i])
     }
@@ -229,9 +262,15 @@ fn reparentChildren(dom: &mut Dom, oldParent: Handle<Node>, newParent: Handle<No
 
 fn serialize(dom: &Dom, h: Handle<Node>): string {
     match nodeKind(dom, h) {
-        NodeKind.Text => { return nodeText(dom, h) }
-        NodeKind.Comment => { return "<!--" + nodeText(dom, h) + "-->" }
-        NodeKind.Doctype => { return "<!DOCTYPE html>" }
+        NodeKind.Text => {
+            return nodeText(dom, h)
+        }
+        NodeKind.Comment => {
+            return "<!--" + nodeText(dom, h) + "-->"
+        }
+        NodeKind.Doctype => {
+            return "<!DOCTYPE html>"
+        }
         NodeKind.Element => {
             let name = nodeName(dom, h)
             var s = "<" + name + ">"
@@ -260,32 +299,36 @@ fn main(): i32 {
     let p = createElement(dom, "p")
     append(dom, root, p)
     appendText(dom, p, "h")
-    appendText(dom, p, "i")          // coalesces with "h" -> "hi"
+    appendText(dom, p, "i") // coalesces with "h" -> "hi"
     let b = createElement(dom, "b")
     append(dom, p, b)
     appendText(dom, b, "x")
 
-    print(serialize(dom, root))      // <p>hi<b>x</b></p>
+    print(serialize(dom, root)) // <p>hi<b>x</b></p>
 
     // appendBeforeSibling: <span> before <b>
     let span = createElement(dom, "span")
     appendBeforeSibling(dom, b, span)
     appendText(dom, span, "S")
-    print(serialize(dom, root))      // <p>hi<span>S</span><b>x</b></p>
+    print(serialize(dom, root)) // <p>hi<span>S</span><b>x</b></p>
 
     // removeFromParent: drop <b>
     removeFromParent(dom, b)
-    print(serialize(dom, root))      // <p>hi<span>S</span></p>
+    print(serialize(dom, root)) // <p>hi<span>S</span></p>
 
     // reparentChildren: move p's children into a fresh <div>
     let div = createElement(dom, "div")
     append(dom, root, div)
     reparentChildren(dom, p, div)
-    print(serialize(dom, root))      // <p></p><div>hi<span>S</span></div>
+    print(serialize(dom, root)) // <p></p><div>hi<span>S</span></div>
 
     // sameNode sanity
-    if sameNode(p, p) { print("same") }
-    if !sameNode(p, div) { print("diff") }
+    if sameNode(p, p) {
+        print("same")
+    }
+    if !sameNode(p, div) {
+        print("diff")
+    }
 
     return 0
 }

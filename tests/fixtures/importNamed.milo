@@ -7,4 +7,3 @@ fn main(): i32 {
     print(add(3, 4))
     return 0
 }
-

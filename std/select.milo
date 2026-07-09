@@ -21,9 +21,15 @@
 // Channel arms are free functions (selectRecv/selectSend) rather than methods
 // because Milo has no method-level generics; fd/timeout arms are methods.
 
-from "std/os" import { malloc, free, memset }
-from "std/sync" import { Channel, channelArmRecv, channelArmSend, channelUnarmRecv, channelUnarmSend }
-from "std/time" import { epochMillis }
+from "std/os" import {
+    malloc, free, memset
+}
+from "std/sync" import {
+    Channel, channelArmRecv, channelArmSend, channelUnarmRecv, channelUnarmSend
+}
+from "std/time" import {
+    epochMillis
+}
 from "std/runtime" import {
     _selectStateNew, _selectStateFree, _selectWaitState, _selectTryClaim,
     _selectRegisterFd, _selectUnregisterFd,
@@ -32,14 +38,19 @@ from "std/runtime" import {
     kindSelRecv, kindSelSend, kindSelRead, kindSelWrite, kindSelTimer
 }
 
-fn _maxArms(): i64 { return 16 }
+fn _maxArms(): i64 {
+    return 16
+}
+
 // channel arms stash the ChannelInner ptr in the node's otherwise-unused
 // deadline slot so cleanup can unlink without a parallel array
-fn _nodeChan(): i64 { return nodeDeadline() }
+fn _nodeChan(): i64 {
+    return nodeDeadline()
+}
 
 struct Select {
-    _state: *u8,   // SelectState (runtime)
-    _nodes: *u8,   // array of _maxArms nodes, nodeSize() bytes each
+    _state: *u8, // SelectState (runtime)
+    _nodes: *u8, // array of _maxArms nodes, nodeSize() bytes each
     _count: i64,
 }
 
@@ -49,16 +60,22 @@ impl Select {
             let state = _selectStateNew()
             let nodes = malloc(nodeSize() * _maxArms())
             memset(nodes, 0, nodeSize() * _maxArms())
-            return Select { _state: state, _nodes: nodes, _count: 0 }
+            return Select {
+                _state: state, _nodes: nodes, _count: 0
+            }
         }
     }
 
     fn _node(self: &Self, i: i64): *u8 {
-        unsafe { return (self._nodes as i64 + i * nodeSize()) as *u8 }
+        unsafe {
+            return (self._nodes as i64 + i * nodeSize()) as *u8
+        }
     }
 
     fn armChan(self: &mut Self, kind: i64, ptr: *u8): void {
-        if self._count >= _maxArms() { return }
+        if self._count >= _maxArms() {
+            return
+        }
         let node = self._node(self._count)
         _rtWriteI64(node, nodeKind(), kind)
         _rtWritePtr(node, nodeA(), self._state)
@@ -68,7 +85,9 @@ impl Select {
     }
 
     fn onRead(self: &mut Self, fd: i32): void {
-        if self._count >= _maxArms() { return }
+        if self._count >= _maxArms() {
+            return
+        }
         let node = self._node(self._count)
         _rtWriteI64(node, nodeKind(), kindSelRead())
         _rtWritePtr(node, nodeA(), self._state)
@@ -78,7 +97,9 @@ impl Select {
     }
 
     fn onWrite(self: &mut Self, fd: i32): void {
-        if self._count >= _maxArms() { return }
+        if self._count >= _maxArms() {
+            return
+        }
         let node = self._node(self._count)
         _rtWriteI64(node, nodeKind(), kindSelWrite())
         _rtWritePtr(node, nodeA(), self._state)
@@ -88,7 +109,9 @@ impl Select {
     }
 
     fn onTimeout(self: &mut Self, ms: i64): void {
-        if self._count >= _maxArms() { return }
+        if self._count >= _maxArms() {
+            return
+        }
         let node = self._node(self._count)
         _rtWriteI64(node, nodeKind(), kindSelTimer())
         _rtWritePtr(node, nodeA(), self._state)

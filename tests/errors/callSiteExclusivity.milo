@@ -4,6 +4,7 @@
 fn grow(a: &mut Vec<i64>, b: &i64) {
     a.push(b)
 }
+
 fn main(): i32 {
     var v: Vec<i64> = [7]
     grow(v, v[0])

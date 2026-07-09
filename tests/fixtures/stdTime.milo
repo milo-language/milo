@@ -3,7 +3,9 @@
 // @expect: 0
 // @expect: micros ok
 
-from "std/time" import { durationMicros, durationMillis, durationSecs, epochMillis, now, since, sleepMs }
+from "std/time" import {
+    durationMicros, durationMillis, durationSecs, epochMillis, now, since, sleepMs
+}
 
 fn main(): i32 {
     let start = now()

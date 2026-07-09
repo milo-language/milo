@@ -1,12 +1,14 @@
 // platform-specific constants and helpers for Linux
 
-from "std/os" import { htons }
+from "std/os" import {
+    htons
+}
 
 struct SockAddrIn {
     sinFamily: u16,
     sinPort: u16,
     sinAddr: u32,
-    sinZero: [u8 ; 8],
+    sinZero: [u8; 8],
 }
 
 fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
@@ -15,14 +17,14 @@ fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
             sinFamily: 2 as u16,
             sinPort: htons(port),
             sinAddr: addr,
-            sinZero: [0 ; 8],
+            sinZero: [0; 8],
         }
     }
 }
 
 fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
-        sinFamily: 0 as u16, sinPort: 0, sinAddr: 0, sinZero: [0 ; 8],
+        sinFamily: 0 as u16, sinPort: 0, sinAddr: 0, sinZero: [0; 8],
     }
 }
 
@@ -45,11 +47,13 @@ fn oWriteCreateTrunc(): i32 {
 fn oWriteCreateAppend(): i32 {
     return 1089
 }
+
 // offset of aiAddr field in struct addrinfo (swapped with aiCanonname vs macOS)
 
 fn addrinfoAddrOffset(): i64 {
     return 24
 }
+
 // struct stat layout (Linux x8664)
 
 fn statModeOffset(): i64 {
@@ -63,6 +67,7 @@ fn statSizeOffset(): i64 {
 fn statBufSize(): i64 {
     return 144
 }
+
 // struct dirent layout
 
 fn direntTypeOffset(): i64 {
@@ -72,11 +77,10 @@ fn direntTypeOffset(): i64 {
 fn direntNameOffset(): i64 {
     return 19
 }
+
 // errno access — glibc uses __errno_location() to get errno pointer
 
-extern
-
-fn __errno_location(): *u8
+extern fn __errno_location(): *u8
 
 fn getErrno(): i32 {
     unsafe {
@@ -86,14 +90,11 @@ fn getErrno(): i32 {
 
 // ── epoll ──
 
-extern
-fn epoll_create1(flags: i32): i32
+extern fn epoll_create1(flags: i32): i32
 
-extern
-fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *u8): i32
+extern fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *u8): i32
 
-extern
-fn epoll_wait(epfd: i32, events: *u8, maxevents: i32, timeout: i32): i32
+extern fn epoll_wait(epfd: i32, events: *u8, maxevents: i32, timeout: i32): i32
 
 // epoll_event: 12 bytes (packed: u32 events + epoll_data_t as i64)
 struct EpollEvent {
@@ -102,48 +103,109 @@ struct EpollEvent {
     dataPad: i32,
 }
 
-fn epollCtlAdd(): i32 { return 1 }
-fn epollCtlDel(): i32 { return 2 }
-fn epollCtlMod(): i32 { return 3 }
-fn epollIn(): u32 { return 1 }
-fn epollOut(): u32 { return 4 }
-fn epollErr(): u32 { return 8 }
-fn epollHup(): u32 { return 16 }
-fn epollOneshot(): u32 { return 1073741824 }
+fn epollCtlAdd(): i32 {
+    return 1
+}
+
+fn epollCtlDel(): i32 {
+    return 2
+}
+
+fn epollCtlMod(): i32 {
+    return 3
+}
+
+fn epollIn(): u32 {
+    return 1
+}
+
+fn epollOut(): u32 {
+    return 4
+}
+
+fn epollErr(): u32 {
+    return 8
+}
+
+fn epollHup(): u32 {
+    return 16
+}
+
+fn epollOneshot(): u32 {
+    return 1073741824
+}
 
 // ── fcntl / non-blocking ──
 
-extern
-fn fcntl(fd: i32, cmd: i32, ...): i32
+extern fn fcntl(fd: i32, cmd: i32,...): i32
 
-fn fGetfl(): i32 { return 3 }
-fn fSetfl(): i32 { return 4 }
-fn oNonblock(): i32 { return 2048 }
-fn eagain(): i32 { return 11 }
-fn einprogress(): i32 { return 115 }
-fn soError(): i32 { return 4 }
+fn fGetfl(): i32 {
+    return 3
+}
+
+fn fSetfl(): i32 {
+    return 4
+}
+
+fn oNonblock(): i32 {
+    return 2048
+}
+
+fn eagain(): i32 {
+    return 11
+}
+
+fn einprogress(): i32 {
+    return 115
+}
+
+fn soError(): i32 {
+    return 4
+}
 
 // ── ucontext (stackful coroutines) ──
 
-extern
-fn getcontext(ucp: *u8): i32
+extern fn getcontext(ucp: *u8): i32
 
-extern
-fn makecontext(ucp: *u8, func: *u8, argc: i32, ...): void
+extern fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void
 
-extern
-fn swapcontext(oucp: *u8, ucp: *u8): i32
+extern fn swapcontext(oucp: *u8, ucp: *u8): i32
 
 // sizeof(ucontext_t) on linux x86_64
-fn uctxSize(): i64 { return 968 }
-fn uctxStackPtrOffset(): i64 { return 16 }
-fn uctxStackSizeOffset(): i64 { return 32 }
-fn uctxLinkOffset(): i64 { return 8 }
+fn uctxSize(): i64 {
+    return 968
+}
+
+fn uctxStackPtrOffset(): i64 {
+    return 16
+}
+
+fn uctxStackSizeOffset(): i64 {
+    return 32
+}
+
+fn uctxLinkOffset(): i64 {
+    return 8
+}
 
 // ── mmap constants ──
 
-fn protRead(): i32 { return 1 }
-fn protWrite(): i32 { return 2 }
-fn protNone(): i32 { return 0 }
-fn mapPrivate(): i32 { return 2 }
-fn mapAnon(): i32 { return 32 }
+fn protRead(): i32 {
+    return 1
+}
+
+fn protWrite(): i32 {
+    return 2
+}
+
+fn protNone(): i32 {
+    return 0
+}
+
+fn mapPrivate(): i32 {
+    return 2
+}
+
+fn mapAnon(): i32 {
+    return 32
+}

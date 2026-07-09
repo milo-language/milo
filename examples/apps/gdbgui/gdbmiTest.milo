@@ -4,7 +4,9 @@
 //
 // Run: bun run src/main.ts run examples/apps/gdbgui/gdbmiTest.milo
 
-from "std/os" import { exit }
+from "std/os" import {
+    exit
+}
 from "./gdbmi" import {
     MiValue, MiRecord, parseResponse, recordToJson,
     miUnescape, miAdvancePastString, responseIsFinished
@@ -103,8 +105,12 @@ fn _appendStr(out: &mut string, s: &string): void {
 
 fn _payloadListLen(r: &MiRecord, key: string): i64 {
     match r.payload {
-        Option.Some(p) => { return _dictListLen(p, key) }
-        Option.None => { return -1 as i64 }
+        Option.Some(p) => {
+            return _dictListLen(p, key)
+        }
+        Option.None => {
+            return -1 as i64
+        }
     }
     return -1 as i64
 }
@@ -118,15 +124,19 @@ fn _dictListLen(v: &MiValue, key: string): i64 {
                 }
             }
         }
-        _ => {}
+        _ => {
+        }
     }
     return -1 as i64
 }
 
 fn _listLen(v: &MiValue): i64 {
     match v {
-        MiValue.List(items) => { return items.len }
-        _ => {}
+        MiValue.List(items) => {
+            return items.len
+        }
+        _ => {
+        }
     }
     return -1 as i64
 }
@@ -138,7 +148,9 @@ fn bigListTest(fails: &mut i64): void {
     var input: string = String.withCapacity(24 * n + 64)
     _appendStr(input, "=test-message,test-data=[")
     for i in 0..n {
-        if i > 0 { _appendStr(input, ", ") }
+        if i > 0 {
+            _appendStr(input, ", ")
+        }
         _appendStr(input, "\"/a/path/to/parse/")
         _appendStr(input, i.toString())
         _appendStr(input, "\"")
@@ -180,40 +192,40 @@ fn main(): void {
 
     // repeated dict keys merge into a list (gdb bug, sourceware #22217)
     checkParse(
-        "^done,thread-ids={thread-id=\"3\",thread-id=\"2\",thread-id=\"1\"}, current-thread-id=\"1\",number-of-threads=\"3\"",
-        "{\"type\":\"result\",\"message\":\"done\",\"payload\":{\"thread-ids\":{\"thread-id\":[\"3\",\"2\",\"1\"]},\"current-thread-id\":\"1\",\"number-of-threads\":\"3\"},\"token\":null}",
-        fails)
+    "^done,thread-ids={thread-id=\"3\",thread-id=\"2\",thread-id=\"1\"}, current-thread-id=\"1\",number-of-threads=\"3\"",
+    "{\"type\":\"result\",\"message\":\"done\",\"payload\":{\"thread-ids\":{\"thread-id\":[\"3\",\"2\",\"1\"]},\"current-thread-id\":\"1\",\"number-of-threads\":\"3\"},\"token\":null}",
+    fails)
 
     // errors
     checkParse("^error,msg=\"some message\"",
-        "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"some message\"},\"token\":null}", fails)
+    "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"some message\"},\"token\":null}", fails)
     checkParse("^error,msg=\"some message\",code=\"undefined-command\"",
-        "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"some message\",\"code\":\"undefined-command\"},\"token\":null}", fails)
+    "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"some message\",\"code\":\"undefined-command\"},\"token\":null}", fails)
     checkParse("^error,msg=\"message\\twith\\nescapes\"",
-        "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"message\\twith\\nescapes\"},\"token\":null}", fails)
+    "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"message\\twith\\nescapes\"},\"token\":null}", fails)
     checkParse("^error,msg=\"This is a double quote: <\\\">\"",
-        "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"This is a double quote: <\\\">\"},\"token\":null}", fails)
+    "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"This is a double quote: <\\\">\"},\"token\":null}", fails)
     checkParse("^error,msg=\"This is a double quote: <\\\">\",code=\"undefined-command\"",
-        "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"This is a double quote: <\\\">\",\"code\":\"undefined-command\"},\"token\":null}", fails)
+    "{\"type\":\"result\",\"message\":\"error\",\"payload\":{\"msg\":\"This is a double quote: <\\\">\",\"code\":\"undefined-command\"},\"token\":null}", fails)
 
     // a real world dictionary
     checkParse(
-        "=breakpoint-modified,bkpt={number=\"1\",empty_arr=[],type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000000000040059c\",func=\"main\",file=\"hello.c\",fullname=\"/home/git/pygdbmi/tests/sample_c_app/hello.c\",line=\"9\",thread-groups=[\"i1\"],times=\"1\",original-location=\"hello.c:9\"}",
-        "{\"type\":\"notify\",\"message\":\"breakpoint-modified\",\"payload\":{\"bkpt\":{\"number\":\"1\",\"empty_arr\":[],\"type\":\"breakpoint\",\"disp\":\"keep\",\"enabled\":\"y\",\"addr\":\"0x000000000040059c\",\"func\":\"main\",\"file\":\"hello.c\",\"fullname\":\"/home/git/pygdbmi/tests/sample_c_app/hello.c\",\"line\":\"9\",\"thread-groups\":[\"i1\"],\"times\":\"1\",\"original-location\":\"hello.c:9\"}},\"token\":null}",
-        fails)
+    "=breakpoint-modified,bkpt={number=\"1\",empty_arr=[],type=\"breakpoint\",disp=\"keep\",enabled=\"y\",addr=\"0x000000000040059c\",func=\"main\",file=\"hello.c\",fullname=\"/home/git/pygdbmi/tests/sample_c_app/hello.c\",line=\"9\",thread-groups=[\"i1\"],times=\"1\",original-location=\"hello.c:9\"}",
+    "{\"type\":\"notify\",\"message\":\"breakpoint-modified\",\"payload\":{\"bkpt\":{\"number\":\"1\",\"empty_arr\":[],\"type\":\"breakpoint\",\"disp\":\"keep\",\"enabled\":\"y\",\"addr\":\"0x000000000040059c\",\"func\":\"main\",\"file\":\"hello.c\",\"fullname\":\"/home/git/pygdbmi/tests/sample_c_app/hello.c\",\"line\":\"9\",\"thread-groups\":[\"i1\"],\"times\":\"1\",\"original-location\":\"hello.c:9\"}},\"token\":null}",
+    fails)
 
     // records with token
     checkParse("1342^done", "{\"type\":\"result\",\"message\":\"done\",\"payload\":null,\"token\":1342}", fails)
 
     // extra characters at end of dictionary are discarded (pygdbmi issue #30)
     checkParse("=event,name=\"gdb\"discardme",
-        "{\"type\":\"notify\",\"message\":\"event\",\"payload\":{\"name\":\"gdb\"},\"token\":null}", fails)
+    "{\"type\":\"notify\",\"message\":\"event\",\"payload\":{\"name\":\"gdb\"},\"token\":null}", fails)
 
     // async record status changes
     checkParse("*running,thread-id=\"all\"",
-        "{\"type\":\"notify\",\"message\":\"running\",\"payload\":{\"thread-id\":\"all\"},\"token\":null}", fails)
+    "{\"type\":\"notify\",\"message\":\"running\",\"payload\":{\"thread-id\":\"all\"},\"token\":null}", fails)
     checkParse("*stopped",
-        "{\"type\":\"notify\",\"message\":\"stopped\",\"payload\":null,\"token\":null}", fails)
+    "{\"type\":\"notify\",\"message\":\"stopped\",\"payload\":null,\"token\":null}", fails)
 
     // trailing newline tolerated like Python's `$` anchor
     checkParse("^done\n", "{\"type\":\"result\",\"message\":\"done\",\"payload\":null,\"token\":null}", fails)
@@ -245,9 +257,9 @@ fn main(): void {
     checkUnescape("\\040", " ", fails)
     // several escapes in the same string
     checkUnescape(
-        "\\tmultiple\\nescapes\\tin\\\"the\\'same\\\"string\\\"foo\\040bar\\360\\237\\215\\225",
-        "\tmultiple\nescapes\tin\"the'same\"string\"foo bar\xf0\x9f\x8d\x95",
-        fails)
+    "\\tmultiple\\nescapes\\tin\\\"the\\'same\\\"string\\\"foo\\040bar\\360\\237\\215\\225",
+    "\tmultiple\nescapes\tin\"the'same\"string\"foo bar\xf0\x9f\x8d\x95",
+    fails)
     // an octal sequence that is not valid UTF-8 stays unchanged (pygdbmi #64)
     checkUnescape("254 '\\376'", "254 '\\376'", fails)
 

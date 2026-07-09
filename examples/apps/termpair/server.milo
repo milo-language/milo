@@ -4,14 +4,30 @@ from "std/os" import {
     accept, bind, close, getsockname, listen, ntohs, read, write,
     setsockopt, socket, malloc, free, memcpy
 }
-from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
-from "std/event" import { setNonblocking }
-from "std/runtime" import { Task, schedulerCurrent, schedulerWaitRead, schedulerYield, schedulerRunToCompletion }
-from "std/ws" import { WsConn, WsMessage, wsAccept, isWsUpgrade, WS_TEXT, WS_CLOSE }
-from "std/sync" import { Channel, AtomicI64 }
-from "std/argparse" import { newParser }
-from "std/json" import { jsonParse }
-from "std/signal" import { ignoreSignal, SIGPIPE }
+from "std/platform" import {
+    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain
+}
+from "std/event" import {
+    setNonblocking
+}
+from "std/runtime" import {
+    Task, schedulerCurrent, schedulerWaitRead, schedulerYield, schedulerRunToCompletion
+}
+from "std/ws" import {
+    WsConn, WsMessage, wsAccept, isWsUpgrade, WS_TEXT, WS_CLOSE
+}
+from "std/sync" import {
+    Channel, AtomicI64
+}
+from "std/argparse" import {
+    newParser
+}
+from "std/json" import {
+    jsonParse
+}
+from "std/signal" import {
+    ignoreSignal, SIGPIPE
+}
 
 from "./protocol" import {
     makeTerminalInfo, makePublicSession, makeStartBroadcast,
@@ -58,8 +74,12 @@ fn findSession(terminalId: &string): i64 {
 
 fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
     var statusText: string = "200 OK"
-    if status == 404 { statusText = "404 Not Found" }
-    if status == 400 { statusText = "400 Bad Request" }
+    if status == 404 {
+        statusText = "404 Not Found"
+    }
+    if status == 400 {
+        statusText = "400 Bad Request"
+    }
 
     var resp: string = "HTTP/1.1 " + statusText + "\r\n"
     resp = resp + "Content-Type: " + contentType + "\r\n"
@@ -67,36 +87,56 @@ fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
     resp = resp + "Access-Control-Allow-Origin: *\r\n"
     resp = resp + "Connection: close\r\n\r\n"
     resp = resp + body
-    unsafe { write(fd, resp, resp.len) }
+    unsafe {
+        write(fd, resp, resp.len)
+    }
 }
 
-struct RequestLine { method: string, path: string, query: string }
+struct RequestLine {
+    method: string, path: string, query: string
+}
 
 fn parseRequestLine(raw: &string): RequestLine {
     var i: i64 = 0
-    while i < raw.len && raw[i] != ' ' { i = i + 1 }
+    while i < raw.len && raw[i] != ' ' {
+        i = i + 1
+    }
     let method = raw.substr(0, i)
-    while i < raw.len && raw[i] == ' ' { i = i + 1 }
+    while i < raw.len && raw[i] == ' ' {
+        i = i + 1
+    }
     let uriStart = i
-    while i < raw.len && raw[i] != ' ' { i = i + 1 }
+    while i < raw.len && raw[i] != ' ' {
+        i = i + 1
+    }
     let uri = raw.substr(uriStart, i)
 
     var path: string = ""
     var query: string = ""
     var foundQ: bool = false
     for ch in uri {
-        if !foundQ && ch == '?' { foundQ = true }
-        else if foundQ { query.push(ch) }
-        else { path.push(ch) }
+        if !foundQ && ch == '?' {
+            foundQ = true
+        } 
+        else if foundQ {
+            query.push(ch)
+        } 
+        else {
+            path.push(ch)
+        }
     }
-    return RequestLine { method: method, path: path, query: query }
+    return RequestLine {
+        method: method, path: path, query: query
+    }
 }
 
 // True if `path` is exactly `suffix` or ends with it (e.g. "/app.js" matches
 // both "/app.js" and "/s/app.js"). index.html references assets relatively, so
 // when the page is served at /s/<id> the browser requests /s/app.js etc.
 fn pathEndsWith(path: &string, suffix: &string): bool {
-    if path.len < suffix.len { return false }
+    if path.len < suffix.len {
+        return false
+    }
     return path.substr(path.len - suffix.len, path.len) == suffix
 }
 
@@ -104,17 +144,25 @@ fn queryParam(qs: &string, name: &string): string {
     var i: i64 = 0
     while i < qs.len {
         let ks = i
-        while i < qs.len && qs[i] != '=' && qs[i] != '&' { i = i + 1 }
+        while i < qs.len && qs[i] != '=' && qs[i] != '&' {
+            i = i + 1
+        }
         let key = qs.substr(ks, i)
         var value: string = ""
         if i < qs.len && qs[i] == '=' {
             i = i + 1
             let vs = i
-            while i < qs.len && qs[i] != '&' { i = i + 1 }
+            while i < qs.len && qs[i] != '&' {
+                i = i + 1
+            }
             value = qs.substr(vs, i)
         }
-        if key == name { return value }
-        if i < qs.len && qs[i] == '&' { i = i + 1 }
+        if key == name {
+            return value
+        }
+        if i < qs.len && qs[i] == '&' {
+            i = i + 1
+        }
     }
     return ""
 }
@@ -135,9 +183,13 @@ fn handleTerminalWs(ws: WsConn): void {
     // read init message
     var initPayload: string = ""
     match conn.recv() {
-        Result.Ok(msg) => { initPayload = msg.payload }
-        Result.Err(e) => { conn.close()
-            return }
+        Result.Ok(msg) => {
+            initPayload = msg.payload
+        }
+        Result.Err(e) => {
+            conn.close()
+            return
+        }
     }
 
     let j = jsonParse(initPayload.clone())!
@@ -149,7 +201,11 @@ fn handleTerminalWs(ws: WsConn): void {
     let allowControl = j.bool("allow_browser_control") ?? false
 
     let terminalId = generateId()
-    let displayName = if isPublic { "milo-terminal" } else { "" }
+    let displayName = if isPublic {
+        "milo-terminal"
+    } else {
+        ""
+    }
 
     let broadcast = Channel<string>.new(256)!
     let toTerminal = Channel<string>.new(256)!
@@ -164,14 +220,18 @@ fn handleTerminalWs(ws: WsConn): void {
         rows: rows, cols: cols,
         browserCount: 0,
         alive: true,
-    })
+    }
+    )
     toTermChans.push(toTerminal)
     bcastChans.push(broadcast)
 
     match conn.sendText(makeStartBroadcast(terminalId)) {
-        Result.Err(_) => { conn.close()
-            return }
-        _ => {}
+        Result.Err(_) => {
+            conn.close()
+            return
+        }
+        _ => {
+        }
     }
     print($"terminal connected: {terminalId} (command: {command})")
     flush()
@@ -179,20 +239,31 @@ fn handleTerminalWs(ws: WsConn): void {
     // forward browser→terminal messages via a non-owning fd copy
     let tid = terminalId.clone()
     let sendFd = conn.fd
-    Task.spawn(move (): void => {
-        var sendWs = WsConn { fd: sendFd, ssl: 0, _ctx: 0, _closed: true, _isClient: false }
+    Task.spawn(move(): void => {
+        var sendWs = WsConn {
+            fd: sendFd, ssl: 0, _ctx: 0, _closed: true, _isClient: false
+        }
         while true {
             let idx = findSession(tid)
-            if idx < 0 { break }
-            if !sessions[idx].alive { break }
+            if idx < 0 {
+                break
+            }
+            if !sessions[idx].alive {
+                break
+            }
 
             let maybe = toTermChans[idx].tryRecv()
             match maybe {
-                Option.Some(msg) => { let _ = sendWs.sendText(msg) }
-                Option.None => { schedulerYield() }
+                Option.Some(msg) => {
+                    let _ = sendWs.sendText(msg)
+                }
+                Option.None => {
+                    schedulerYield()
+                }
             }
         }
-    })
+    }
+    )
 
     // read terminal output, broadcast to browsers
     let tid2 = terminalId.clone()
@@ -202,7 +273,9 @@ fn handleTerminalWs(ws: WsConn): void {
                 let raw = msg.payload
                 let event = parseEvent(raw)
                 let idx = findSession(tid2)
-                if idx < 0 { break }
+                if idx < 0 {
+                    break
+                }
 
                 if event == "resize" {
                     sessions[idx].rows = parsePayloadI64(raw, "rows")
@@ -212,7 +285,9 @@ fn handleTerminalWs(ws: WsConn): void {
                     bcastChans[idx].trySend(raw.clone())
                 }
             }
-            Result.Err(e) => { break }
+            Result.Err(e) => {
+                break
+            }
         }
     }
 
@@ -246,9 +321,12 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
     bcastChans[idx].trySend(makeNumClients(count))
 
     match conn.sendText(makeResizeMsg(sessions[idx].rows, sessions[idx].cols)) {
-        Result.Err(_) => { conn.close()
-            return }
-        _ => {}
+        Result.Err(_) => {
+            conn.close()
+            return
+        }
+        _ => {
+        }
     }
     toTermChans[idx].trySend("{\"event\":\"new_browser_connected\",\"payload\":{}}")
 
@@ -259,11 +337,15 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
     // forward broadcast → browser via non-owning fd copy
     let tid2 = terminalId.clone()
     let bcastFd = conn.fd
-    Task.spawn(move (): void => {
-        var sendWs = WsConn { fd: bcastFd, ssl: 0, _ctx: 0, _closed: true, _isClient: false }
+    Task.spawn(move(): void => {
+        var sendWs = WsConn {
+            fd: bcastFd, ssl: 0, _ctx: 0, _closed: true, _isClient: false
+        }
         while true {
             let bidx = findSession(tid2)
-            if bidx < 0 { break }
+            if bidx < 0 {
+                break
+            }
             if !sessions[bidx].alive {
                 let _ = sendWs.sendText("{\"event\":\"fatal_error\",\"payload\":\"session ended\"}")
                 break
@@ -272,14 +354,20 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
             match maybe {
                 Option.Some(msg) => {
                     match sendWs.sendText(msg) {
-                        Result.Err(_) => { break }
-                        _ => {}
+                        Result.Err(_) => {
+                            break
+                        }
+                        _ => {
+                        }
                     }
                 }
-                Option.None => { schedulerYield() }
+                Option.None => {
+                    schedulerYield()
+                }
             }
         }
-    })
+    }
+    )
 
     // read loop: browser → terminal
     while true {
@@ -288,7 +376,9 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
                 let raw = msg.payload
                 let event = parseEvent(raw)
                 let bidx = findSession(tid)
-                if bidx < 0 { break }
+                if bidx < 0 {
+                    break
+                }
 
                 if event == "command" || event == "new_browser_connected" || event == "request_key_rotation" {
                     toTermChans[bidx].trySend(raw.clone())
@@ -296,12 +386,17 @@ fn handleBrowserWs(ws: WsConn, terminalId: string): void {
                     bcastChans[bidx].trySend(raw.clone())
                 } else if event == "request_terminal_dimensions" {
                     match conn.sendText(makeResizeMsg(sessions[bidx].rows, sessions[bidx].cols)) {
-                        Result.Err(_) => { break }
-                        _ => {}
+                        Result.Err(_) => {
+                            break
+                        }
+                        _ => {
+                        }
                     }
                 }
             }
-            Result.Err(e) => { break }
+            Result.Err(e) => {
+                break
+            }
         }
     }
 
@@ -320,12 +415,14 @@ fn handleGetSessions(): string {
     var first: bool = true
     for i in 0..sessions.len {
         if sessions[i].isPublic && sessions[i].alive {
-            if !first { result = result + "," }
+            if !first {
+                result = result + ","
+            }
             first = false
             result = result + makePublicSession(
-                sessions[i].terminalId, sessions[i].displayName,
-                sessions[i].command, sessions[i].rows, sessions[i].cols,
-                sessions[i].startTime, sessions[i].browserCount
+            sessions[i].terminalId, sessions[i].displayName,
+            sessions[i].command, sessions[i].rows, sessions[i].cols,
+            sessions[i].startTime, sessions[i].browserCount
             )
         }
     }
@@ -335,12 +432,14 @@ fn handleGetSessions(): string {
 
 fn handleGetTerminal(terminalId: &string): string {
     let idx = findSession(terminalId)
-    if idx < 0 { return "" }
+    if idx < 0 {
+        return ""
+    }
     return makeTerminalInfo(
-        sessions[idx].terminalId, sessions[idx].rows, sessions[idx].cols,
-        sessions[idx].command, sessions[idx].startTime,
-        sessions[idx].isPublic, sessions[idx].displayName,
-        sessions[idx].allowControl
+    sessions[idx].terminalId, sessions[idx].rows, sessions[idx].cols,
+    sessions[idx].command, sessions[idx].startTime,
+    sessions[idx].isPublic, sessions[idx].displayName,
+    sessions[idx].allowControl
     )
 }
 
@@ -358,9 +457,14 @@ fn acceptLoop(rawFd: i32): void {
             var addrlen: u32 = SIZEOF_SOCKADDR_IN
             unsafe {
                 let clientFd = accept(rawFd, clientAddr, addrlen)
-                if clientFd < 0 { break }
+                if clientFd < 0 {
+                    break
+                }
                 setNonblocking(clientFd)
-                Task.spawn(move (): void => { handleConnection(clientFd) })
+                Task.spawn(move(): void => {
+                    handleConnection(clientFd)
+                }
+                )
             }
         }
     }
@@ -368,7 +472,7 @@ fn acceptLoop(rawFd: i32): void {
 
 // Handle a single connection in its own green thread
 fn handleConnection(clientFd: i32): void {
-    var buf: [u8 ; 8192] = [0 ; 8192]
+    var buf: [u8; 8192] = [0; 8192]
     unsafe {
         schedulerWaitRead(clientFd)
         let n = read(clientFd, buf as *u8, 8192)
@@ -378,15 +482,21 @@ fn handleConnection(clientFd: i32): void {
         }
 
         var raw: string = ""
-        for i in 0..n { raw.push(buf[i]) }
+        for i in 0..n {
+            raw.push(buf[i])
+        }
 
         let rl = parseRequestLine(raw)
 
         if isWsUpgrade(raw) {
             if rl.path == "/connect_to_terminal" {
                 match wsAccept(clientFd, raw) {
-                    Result.Ok(ws) => { handleTerminalWs(ws) }
-                    Result.Err(e) => { close(clientFd) }
+                    Result.Ok(ws) => {
+                        handleTerminalWs(ws)
+                    }
+                    Result.Err(e) => {
+                        close(clientFd)
+                    }
                 }
             } else if rl.path == "/connect_browser_to_terminal" {
                 let tid = queryParam(rl.query, "terminal_id")
@@ -395,11 +505,17 @@ fn handleConnection(clientFd: i32): void {
                     close(clientFd)
                 } else {
                     match wsAccept(clientFd, raw) {
-                        Result.Ok(ws) => { handleBrowserWs(ws, tid) }
-                        Result.Err(e) => { close(clientFd) }
+                        Result.Ok(ws) => {
+                            handleBrowserWs(ws, tid)
+                        }
+                        Result.Err(e) => {
+                            close(clientFd)
+                        }
                     }
                 }
-            } else { close(clientFd) }
+            } else {
+                close(clientFd)
+            }
             return
         }
 
@@ -420,8 +536,12 @@ fn handleConnection(clientFd: i32): void {
                 sendHttp(clientFd, 200, "application/json", handleGetSessions())
             } else if rl.path.startsWith("/terminal/") {
                 let body = handleGetTerminal(rl.path.substr(10, rl.path.len))
-                if body.len == 0 { sendHttp(clientFd, 404, "text/plain", "not found") }
-                else { sendHttp(clientFd, 200, "application/json", body) }
+                if body.len == 0 {
+                    sendHttp(clientFd, 404, "text/plain", "not found")
+                } 
+                else {
+                    sendHttp(clientFd, 200, "application/json", body)
+                }
             } else if rl.path.startsWith("/s/") {
                 sendHttp(clientFd, 200, "text/html; charset=utf-8", indexHtml)
             } else {
@@ -484,7 +604,10 @@ fn main(): i32 {
         flush()
 
         // run accept loop in a green thread so spawned handlers can execute
-        Task.spawn(move (): void => { acceptLoop(rawFd) })
+        Task.spawn(move(): void => {
+            acceptLoop(rawFd)
+        }
+        )
     }
     // Go exit semantics: main no longer drains implicitly. Drive the scheduler
     // so the accept loop (and the handlers it spawns) keep running — the server

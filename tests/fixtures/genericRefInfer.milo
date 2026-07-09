@@ -20,14 +20,20 @@ fn setAndGet<T>(val: T, w: &mut Wrapper<T>): T {
 }
 
 fn main(): i32 {
-    var w: Wrapper<i64> = Wrapper { val: 0 }
+    var w: Wrapper<i64> = Wrapper {
+        val: 0
+    }
     setVal(w, 99)
     print(getVal(w))
 
-    var w2: Wrapper<i64> = Wrapper { val: 0 }
+    var w2: Wrapper<i64> = Wrapper {
+        val: 0
+    }
     print(setAndGet(42, w2))
 
-    var w3: Wrapper<string> = Wrapper { val: "" }
+    var w3: Wrapper<string> = Wrapper {
+        val: ""
+    }
     setVal(w3, "hello")
     print(getVal(w3))
     return 0

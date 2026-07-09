@@ -4,33 +4,43 @@
 // cross-world wakes both directions: a pthread send unparks a green task
 // blocked in recv (via the scheduler wakeup event), and a pthread recv
 // unparks a green task blocked in send on a full channel
-from "std/runtime" import { Task, schedulerRunToCompletion }
-from "std/thread" import { Thread }
-from "std/sync" import { Channel }
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/thread" import {
+    Thread
+}
+from "std/sync" import {
+    Channel
+}
 
 fn main(): i32 {
     let ch = Channel<i64>.new(1)!
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         let v = ch.recv()!
         print("task got ", v)
-    })
-    let _t1 = Thread.spawn(move (): void => {
+    }
+    )
+    let _t1 = Thread.spawn(move(): void => {
         // give the task time to park in recv first
         Thread.sleep(50)
         ch.send(7)!
-    })!
+    }
+    )!
 
     let ch2 = Channel<i64>.new(1)!
     ch2.send(1)!
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         ch2.send(2)!
         print("sender resumed")
-    })
-    let _t2 = Thread.spawn(move (): void => {
+    }
+    )
+    let _t2 = Thread.spawn(move(): void => {
         Thread.sleep(100)
         let _a = ch2.recv()!
         let _b = ch2.recv()!
-    })!
+    }
+    )!
 
     // threads finish before the tasks they wake, so they are not joined
     // (joining before main's implicit drain would deadlock the scheduler)

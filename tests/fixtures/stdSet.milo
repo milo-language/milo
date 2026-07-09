@@ -7,7 +7,9 @@
 // @expect: has apple
 // @expect: no grape
 
-from "std/set" import { HashSet, setAdd, setContains, setLen, setNew, setRemove }
+from "std/set" import {
+    HashSet, setAdd, setContains, setLen, setNew, setRemove
+}
 
 fn main(): i32 {
     var s: HashSet<i32> = setNew()
@@ -16,18 +18,34 @@ fn main(): i32 {
     setAdd(s, 3)
     setAdd(s, 2)
     print(setLen(s).toString())
-    if setContains(s, 2) { print("has 2") }
-    if setContains(s, 5) { print("has 5") } else { print("no 5") }
+    if setContains(s, 2) {
+        print("has 2")
+    }
+    if setContains(s, 5) {
+        print("has 5")
+    } else {
+        print("no 5")
+    }
     setRemove(s, 2)
     print(setLen(s).toString())
-    if setContains(s, 2) { print("has 2") } else { print("no 2") }
+    if setContains(s, 2) {
+        print("has 2")
+    } else {
+        print("no 2")
+    }
 
     var words: HashSet<string> = setNew()
     setAdd(words, "apple")
     setAdd(words, "banana")
     setAdd(words, "apple")
     print(setLen(words).toString())
-    if setContains(words, "apple") { print("has apple") }
-    if setContains(words, "grape") { print("has grape") } else { print("no grape") }
+    if setContains(words, "apple") {
+        print("has apple")
+    }
+    if setContains(words, "grape") {
+        print("has grape")
+    } else {
+        print("no grape")
+    }
     return 0
 }

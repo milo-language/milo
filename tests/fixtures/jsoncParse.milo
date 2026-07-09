@@ -4,7 +4,9 @@
 // @expect: strictRejectsComments=true
 // @expect: urlIntact=http://x.io//path
 
-from "std/json" import { jsonParse, jsonParseJsonc }
+from "std/json" import {
+    jsonParse, jsonParseJsonc
+}
 
 fn main(): i32 {
     // line comments, a block comment, and trailing commas in both object and array
@@ -18,8 +20,12 @@ fn main(): i32 {
     // strict parser must still reject comments
     var rejected: bool = false
     match jsonParse(src) {
-        Result.Ok(x) => { rejected = false }
-        Result.Err(e) => { rejected = true }
+        Result.Ok(x) => {
+            rejected = false
+        }
+        Result.Err(e) => {
+            rejected = true
+        }
     }
     print("strictRejectsComments=", rejected)
 

@@ -14,4 +14,3 @@ fn main(): i32 {
     print(p.y)
     return 0
 }
-

@@ -5,25 +5,27 @@
 // @expect: 4
 
 struct Counter {
-  current: i32,
-  max: i32,
+    current: i32,
+    max: i32,
 }
 
 impl Counter {
-  fn next(self: &mut Self): Option<i32> {
-    if self.current >= self.max {
-      return Option.None
+    fn next(self: &mut Self): Option<i32> {
+        if self.current >= self.max {
+            return Option.None
+        }
+        let val = self.current
+        self.current = self.current + 1
+        return Option.Some(val)
     }
-    let val = self.current
-    self.current = self.current + 1
-    return Option.Some(val)
-  }
 }
 
 fn main(): i32 {
-  var c = Counter { current: 0, max: 5 }
-  for i in c {
-    print(i)
-  }
-  return 0
+    var c = Counter {
+        current: 0, max: 5
+    }
+    for i in c {
+        print(i)
+    }
+    return 0
 }

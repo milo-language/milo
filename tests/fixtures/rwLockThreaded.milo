@@ -1,7 +1,11 @@
 // @expect: 600
 
-from "std/sync" import { RwLock, AtomicI64 }
-from "std/thread" import { Thread }
+from "std/sync" import {
+    RwLock, AtomicI64
+}
+from "std/thread" import {
+    Thread
+}
 
 fn main(): i32 {
     let rw = RwLock.new()!
@@ -9,7 +13,7 @@ fn main(): i32 {
     let readCount = AtomicI64.new(0)
 
     // 2 writer threads, each adds 100
-    let w1 = Thread.spawn(move (): void => {
+    let w1 = Thread.spawn(move(): void => {
         var i: i64 = 0
         while i < 100 {
             rw.write()!
@@ -17,8 +21,9 @@ fn main(): i32 {
             rw.unlock()!
             i = i + 1
         }
-    })!
-    let w2 = Thread.spawn(move (): void => {
+    }
+    )!
+    let w2 = Thread.spawn(move(): void => {
         var i: i64 = 0
         while i < 100 {
             rw.write()!
@@ -26,10 +31,11 @@ fn main(): i32 {
             rw.unlock()!
             i = i + 1
         }
-    })!
+    }
+    )!
 
     // 2 reader threads, each reads 200 times
-    let r1 = Thread.spawn(move (): void => {
+    let r1 = Thread.spawn(move(): void => {
         var i: i64 = 0
         while i < 200 {
             rw.read()!
@@ -38,8 +44,9 @@ fn main(): i32 {
             readCount.add(1)
             i = i + 1
         }
-    })!
-    let r2 = Thread.spawn(move (): void => {
+    }
+    )!
+    let r2 = Thread.spawn(move(): void => {
         var i: i64 = 0
         while i < 200 {
             rw.read()!
@@ -48,7 +55,8 @@ fn main(): i32 {
             readCount.add(1)
             i = i + 1
         }
-    })!
+    }
+    )!
 
     w1.join()!
     w2.join()!

@@ -1,6 +1,8 @@
 // protocol — termpair message types and JSON serialization
 
-from "std/json" import { Json, jsonParse }
+from "std/json" import {
+    Json, jsonParse
+}
 
 // ── JSON message builder ──
 
@@ -22,7 +24,12 @@ fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, i
     var msg: string = "{"
     msg = msg + "\"rows\":" + rows.toString()
     msg = msg + ",\"cols\":" + cols.toString()
-    msg = msg + ",\"allow_browser_control\":" + (if allowControl { "true" } else { "false" })
+    msg = msg + ",\"allow_browser_control\":" + (if allowControl {
+        "true"
+    } else {
+        "false"
+    }
+    )
     msg = msg + ",\"command\":\"" + command + "\""
     msg = msg + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
     msg = msg + ",\"subprotocol_version\":\"4\""
@@ -38,23 +45,33 @@ fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, i
 // ── terminal info (GET /terminal/:id response) ──
 
 fn makeTerminalInfo(
-    terminalId: &string,
-    rows: i64, cols: i64,
-    command: &string,
-    startTime: &string,
-    isPublic: bool,
-    displayName: &string,
-    allowControl: bool
+terminalId: &string,
+rows: i64, cols: i64,
+command: &string,
+startTime: &string,
+isPublic: bool,
+displayName: &string,
+allowControl: bool
 ): string {
     var j: string = "{"
     j = j + "\"terminal_id\":\"" + terminalId + "\""
     j = j + ",\"cols\":" + cols.toString()
     j = j + ",\"rows\":" + rows.toString()
-    j = j + ",\"allow_browser_control\":" + (if allowControl { "true" } else { "false" })
+    j = j + ",\"allow_browser_control\":" + (if allowControl {
+        "true"
+    } else {
+        "false"
+    }
+    )
     j = j + ",\"command\":\"" + command + "\""
     j = j + ",\"broadcast_start_time_iso\":\"" + startTime + "\""
     j = j + ",\"termpair_version\":\"0.1.0\""
-    j = j + ",\"is_public\":" + (if isPublic { "true" } else { "false" })
+    j = j + ",\"is_public\":" + (if isPublic {
+        "true"
+    } else {
+        "false"
+    }
+    )
     j = j + ",\"display_name\":\"" + displayName + "\""
     j = j + "}"
     return j
@@ -63,12 +80,12 @@ fn makeTerminalInfo(
 // ── public sessions list (GET /api/sessions response) ──
 
 fn makePublicSession(
-    terminalId: &string,
-    displayName: &string,
-    command: &string,
-    rows: i64, cols: i64,
-    startTime: &string,
-    viewerCount: i64
+terminalId: &string,
+displayName: &string,
+command: &string,
+rows: i64, cols: i64,
+startTime: &string,
+viewerCount: i64
 ): string {
     var j: string = "{"
     j = j + "\"terminal_id\":\"" + terminalId + "\""

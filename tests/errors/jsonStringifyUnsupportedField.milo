@@ -3,10 +3,13 @@ struct Bad {
     name: string,
     tags: Vec<string>,
 }
+
 fn main(): i32 {
     var tags: Vec<string> = Vec.new()
     tags.push("x")
-    let b = Bad { name: "a", tags: tags }
+    let b = Bad {
+        name: "a", tags: tags
+    }
     print(jsonStringify(b))
     return 0
 }

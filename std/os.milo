@@ -277,7 +277,7 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64 {
             return n
         }
     }
-    return - 1 as i64
+    return -1 as i64
 }
 
 // Write all len bytes (loops over partial writes). Returns len or <0 on error.
@@ -328,7 +328,7 @@ fn acceptFd(fd: i32): i32 {
             return clientFd
         }
     }
-    return - 1
+    return -1
 }
 
 // connect(2). In a green task: nonblocking connect, park until writable,
@@ -345,16 +345,16 @@ fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
             return 0
         }
         if getErrno() != einprogress() {
-            return - 1
+            return -1
         }
         schedulerWaitWrite(fd)
         var err: i32 = 0
         var len: u32 = 4
         if getsockopt(fd, solSocket(), soError(), err, len) < 0 {
-            return - 1
+            return -1
         }
         if err != 0 {
-            return - 1
+            return -1
         }
         return 0
     }
@@ -397,7 +397,7 @@ fn sslConnectFd(ssl: *u8, fd: i32): i32 {
             return r
         }
     }
-    return - 1
+    return -1
 }
 
 // One SSL_read. Returns bytes read (>0), or <=0 on close/error.
@@ -424,7 +424,7 @@ fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
             return n
         }
     }
-    return - 1
+    return -1
 }
 
 // One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
@@ -451,6 +451,5 @@ fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
             return n
         }
     }
-    return - 1
+    return -1
 }
-

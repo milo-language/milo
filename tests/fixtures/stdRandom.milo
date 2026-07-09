@@ -3,14 +3,20 @@
 // @expect: 5
 // @expect: done
 
-from "std/random" import { randFloat, randRange, shuffleI64 }
+from "std/random" import {
+    randFloat, randRange, shuffleI64
+}
 
 fn main(): i32 {
     var i = 0
     while i < 10 {
         let r = randRange(1, 6)
-        if r < 1 { print("FAIL: below range") }
-        if r > 6 { print("FAIL: above range") }
+        if r < 1 {
+            print("FAIL: below range")
+        }
+        if r > 6 {
+            print("FAIL: above range")
+        }
         i = i + 1
     }
     print("range ok")
@@ -18,8 +24,12 @@ fn main(): i32 {
     var j = 0
     while j < 10 {
         let f = randFloat()
-        if f < 0.0 { print("FAIL: negative float") }
-        if f >= 1.0 { print("FAIL: float >= 1") }
+        if f < 0.0 {
+            print("FAIL: negative float")
+        }
+        if f >= 1.0 {
+            print("FAIL: float >= 1")
+        }
         j = j + 1
     }
     print("float ok")

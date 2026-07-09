@@ -1,6 +1,8 @@
 // Dependency graph with topological sort — classic arena use case
 // Nodes cross-reference each other via Handle, not pointers or &T
-from "std/arena" import { Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew }
+from "std/arena" import {
+    Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew
+}
 
 struct Node {
     name: string,
@@ -139,4 +141,3 @@ fn main(): i32 {
 
     return 0
 }
-

@@ -1,6 +1,8 @@
 // @error: type does not implement Send
 
-from "std/thread" import { Thread }
+from "std/thread" import {
+    Thread
+}
 
 struct Dangerous {
     _ptr: *u8,
@@ -8,10 +10,13 @@ struct Dangerous {
 
 fn main(): i32 {
     unsafe {
-        let d = Dangerous { _ptr: 0 as *u8 }
-        let _t = Thread.spawn(move (): void => {
+        let d = Dangerous {
+            _ptr: 0 as *u8
+        }
+        let _t = Thread.spawn(move(): void => {
             let _x = d._ptr
-        })!
+        }
+        )!
     }
     return 0
 }

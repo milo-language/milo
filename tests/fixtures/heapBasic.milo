@@ -3,11 +3,10 @@
 
 fn main(): i32 {
     let b = Heap(42)
-    print(* b)
+    print(*b)
 
     let s = Heap("hello")
-    print(* s)
+    print(*s)
 
     return 0
 }
-

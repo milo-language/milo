@@ -4,4 +4,3 @@ fn main(): i32 {
     let x = embedFile("nonexistent.txt")
     return 0
 }
-

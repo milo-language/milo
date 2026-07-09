@@ -3,7 +3,9 @@
 // @expect: 99
 // @expect: 2
 // @expect: 100
-from "std/arena" import { Arena, arenaAlloc, arenaFree, arenaGet, arenaLen, arenaNew }
+from "std/arena" import {
+    Arena, arenaAlloc, arenaFree, arenaGet, arenaLen, arenaNew
+}
 
 fn main(): i32 {
     var arena: Arena<i32> = arenaNew()
@@ -54,4 +56,3 @@ fn main(): i32 {
 
     return 0
 }
-

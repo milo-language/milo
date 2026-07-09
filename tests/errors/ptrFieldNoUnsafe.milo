@@ -1,13 +1,17 @@
-extern struct Point {
-  x: i32,
-  y: i32,
+extern
+
+struct Point {
+    x: i32,
+    y: i32,
 }
 
 fn main(): i32 {
-  var p = Point { x: 1, y: 2 }
-  let ptr = 0 as *Point
-  let v = ptr.x
-  return 0
+    var p = Point {
+        x: 1, y: 2
+    }
+    let ptr = 0 as *Point
+    let v = ptr.x
+    return 0
 }
 
 // @error: pointer field access requires 'unsafe' block

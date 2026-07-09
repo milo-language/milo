@@ -1,15 +1,13 @@
 // std/datetime — date/time components and formatting from epoch seconds
 // (UTC by default; dateTimeFromEpochLocal/dateTimeLocalNow apply the host TZ)
 
-from "std/time" import { epochSecs, since }
+from "std/time" import {
+    epochSecs, since
+}
 
-extern
+extern fn localtime_r(timep: *u8, result: *u8): *u8
 
-fn localtime_r(timep: *u8, result: *u8): *u8
-
-extern
-
-fn tzset(): void
+extern fn tzset(): void
 
 struct DateTime {
     year: i32,
@@ -33,12 +31,16 @@ fn dateTimeFromEpoch(epochSec: i64): DateTime {
 
     // weekday: 1970-01-01 was Thursday (4)
     var wd = ((totalDays + 4) % 7) as i32
-    if wd < 0 { wd = wd + 7 }
+    if wd < 0 {
+        wd = wd + 7
+    }
 
     // civil date from day count (Hinnant algorithm)
     var z = totalDays + 719468
     var eraInput = z
-    if z < 0 { eraInput = z - 146096 }
+    if z < 0 {
+        eraInput = z - 146096
+    }
     let era = eraInput / 146097
     let doe = z - era * 146097
     let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
@@ -47,9 +49,13 @@ fn dateTimeFromEpoch(epochSec: i64): DateTime {
     let mp = (5 * doy + 2) / 153
     let d = doy - (153 * mp + 2) / 5 + 1
     var m = mp + 3
-    if mp >= 10 { m = mp - 9 }
+    if mp >= 10 {
+        m = mp - 9
+    }
     var yr = y
-    if m <= 2 { yr = y + 1 }
+    if m <= 2 {
+        yr = y + 1
+    }
 
     return DateTime {
         year: yr as i32, month: m as i32, day: d as i32,
@@ -80,29 +86,67 @@ fn dateTimeFormatTime(dt: &DateTime): string {
 }
 
 fn weekdayName(wd: i32): string {
-    if wd == 0 { return "Sunday" }
-    if wd == 1 { return "Monday" }
-    if wd == 2 { return "Tuesday" }
-    if wd == 3 { return "Wednesday" }
-    if wd == 4 { return "Thursday" }
-    if wd == 5 { return "Friday" }
-    if wd == 6 { return "Saturday" }
+    if wd == 0 {
+        return "Sunday"
+    }
+    if wd == 1 {
+        return "Monday"
+    }
+    if wd == 2 {
+        return "Tuesday"
+    }
+    if wd == 3 {
+        return "Wednesday"
+    }
+    if wd == 4 {
+        return "Thursday"
+    }
+    if wd == 5 {
+        return "Friday"
+    }
+    if wd == 6 {
+        return "Saturday"
+    }
     return "Unknown"
 }
 
 fn monthName(m: i32): string {
-    if m == 1 { return "January" }
-    if m == 2 { return "February" }
-    if m == 3 { return "March" }
-    if m == 4 { return "April" }
-    if m == 5 { return "May" }
-    if m == 6 { return "June" }
-    if m == 7 { return "July" }
-    if m == 8 { return "August" }
-    if m == 9 { return "September" }
-    if m == 10 { return "October" }
-    if m == 11 { return "November" }
-    if m == 12 { return "December" }
+    if m == 1 {
+        return "January"
+    }
+    if m == 2 {
+        return "February"
+    }
+    if m == 3 {
+        return "March"
+    }
+    if m == 4 {
+        return "April"
+    }
+    if m == 5 {
+        return "May"
+    }
+    if m == 6 {
+        return "June"
+    }
+    if m == 7 {
+        return "July"
+    }
+    if m == 8 {
+        return "August"
+    }
+    if m == 9 {
+        return "September"
+    }
+    if m == 10 {
+        return "October"
+    }
+    if m == 11 {
+        return "November"
+    }
+    if m == 12 {
+        return "December"
+    }
     return "Unknown"
 }
 
@@ -121,7 +165,7 @@ fn _tmI32(buf: &[u8; 128], off: i64): i32 {
     var v: i64 = 0
     var i: i64 = 3
     while i >= 0 {
-        v = v * 256 + (buf[off + i] as i64)
+        v = v * 256 + (buf[off + i]as i64)
         i = i - 1
     }
     return v as i32
@@ -139,7 +183,9 @@ fn dateTimeFromEpochLocal(epochSec: i64): DateTime {
     var t: [i64; 1] = [0; 1]
     t[0] = epochSec
     var tm: [u8; 128] = [0; 128]
-    unsafe { let _r = localtime_r(t as *u8, tm as *u8) }
+    unsafe {
+        let _r = localtime_r(t as *u8, tm as *u8)
+    }
     return DateTime {
         year: _tmI32(tm, 20) + 1900,
         month: _tmI32(tm, 16) + 1,

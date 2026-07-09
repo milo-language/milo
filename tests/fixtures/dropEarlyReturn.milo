@@ -26,7 +26,7 @@ fn mightFail(fail: bool): i32 {
     }
     if fail {
         print("failing early")
-        return - 1
+        return -1
     }
     print("success")
     return 0
@@ -39,4 +39,3 @@ fn main(): i32 {
     mightFail(false)
     return 0
 }
-

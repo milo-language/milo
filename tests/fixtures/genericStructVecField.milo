@@ -23,4 +23,3 @@ fn main(): i32 {
     print(s.items[0])
     return 0
 }
-

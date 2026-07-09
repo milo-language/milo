@@ -3,13 +3,21 @@
 // select over an fd read and a channel recv: a task writes the pipe, so the
 // fd arm wins while the channel arm stays quiet — exercises the scheduler
 // poll claiming a select and tearing down the still-armed channel arm
-from "std/runtime" import { Task, schedulerRunToCompletion }
-from "std/sync" import { Channel }
-from "std/select" import { Select, selectRecv }
-from "std/os" import { pipe, writeFd, readFd, close }
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/sync" import {
+    Channel
+}
+from "std/select" import {
+    Select, selectRecv
+}
+from "std/os" import {
+    pipe, writeFd, readFd, close
+}
 
 fn main(): i32 {
-    var fds: [u8 ; 8] = [0 ; 8]
+    var fds: [u8; 8] = [0; 8]
     var rfd: i32 = 0
     var wfd: i32 = 0
     unsafe {
@@ -20,32 +28,46 @@ fn main(): i32 {
     }
     let ch = Channel<i64>.new(1)!
 
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         var sel = Select.new()
         selectRecv(sel, ch)
         sel.onRead(rfd)
         sel.onTimeout(2000)
         match sel.wait() {
-            0 => { print("chan") }
+            0 => {
+                print("chan")
+            }
             1 => {
-                var buf: [u8 ; 8] = [0 ; 8]
+                var buf: [u8; 8] = [0; 8]
                 let n = readFd(rfd, buf, 8)
                 var s = ""
-                for i in 0..n { s.push(buf[i]) }
+                for i in 0..n {
+                    s.push(buf[i])
+                }
                 print("fd woke: ", s)
-                unsafe { close(rfd) }
+                unsafe {
+                    close(rfd)
+                }
             }
-            2 => { print("timeout") }
-            _ => { print("other") }
+            2 => {
+                print("timeout")
+            }
+            _ => {
+                print("other")
+            }
         }
         sel.destroy()
-    })
+    }
+    )
 
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         let m = "hi"
         writeFd(wfd, m, m.len)
-        unsafe { close(wfd) }
-    })
+        unsafe {
+            close(wfd)
+        }
+    }
+    )
 
     schedulerRunToCompletion()
     return 0

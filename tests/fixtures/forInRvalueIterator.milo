@@ -4,7 +4,9 @@
 // iterable, so next() dereferenced a null pointer. (Vec for-in was unaffected;
 // it indexes rather than calling next(&mut).) Now rvalue iterables are
 // materialized into a temp alloca first.
-from "std/sync" import { Channel }
+from "std/sync" import {
+    Channel
+}
 
 fn makeChannel(): Channel<i64> {
     let c = Channel<i64>.new(4)!

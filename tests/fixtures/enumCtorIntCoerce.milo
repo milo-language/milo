@@ -2,12 +2,18 @@
 // @expect: 9
 // Enum constructor args coerce a constant-int literal/subexpression to the
 // field's int width, like fn args and binary ops do (no `as i64` needed).
-enum E { Num(i64), Pair(i64, i64) }
+enum E {
+    Num(i64), Pair(i64, i64)
+}
 
 fn val(e: &E): i64 {
     match e {
-        E.Num(n) => { return n }
-        E.Pair(a, b) => { return a + b }
+        E.Num(n) => {
+            return n
+        }
+        E.Pair(a, b) => {
+            return a + b
+        }
     }
 }
 

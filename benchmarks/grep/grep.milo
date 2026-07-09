@@ -1,5 +1,7 @@
 // minimal grep -c implementation for benchmarking
-from "std/io" import { readFile }
+from "std/io" import {
+    readFile
+}
 
 fn main(): i32 {
     if _miloArgCount() < 3 {
@@ -41,4 +43,3 @@ fn main(): i32 {
     }
     return 0
 }
-

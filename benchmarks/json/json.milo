@@ -1,6 +1,10 @@
 // JSON parse + walk using std/json
-from "std/json" import { jsonParse, jsonNull }
-from "std/io" import { readFile }
+from "std/json" import {
+    jsonParse, jsonNull
+}
+from "std/io" import {
+    readFile
+}
 
 fn main(): i32 {
     if _miloArgCount() < 2 {
@@ -9,7 +13,9 @@ fn main(): i32 {
     }
     var content: string = ""
     match readFile(_miloArgAt(1)) {
-        Result.Ok(d) => { content = d }
+        Result.Ok(d) => {
+            content = d
+        }
         Result.Err(e) => {
             print("err: ", e)
             return 1
@@ -17,7 +23,9 @@ fn main(): i32 {
     }
     var doc = jsonNull()
     match jsonParse(content) {
-        Result.Ok(d) => { doc = d }
+        Result.Ok(d) => {
+            doc = d
+        }
         Result.Err(e) => {
             print("parse error: ", e)
             return 1
@@ -29,14 +37,20 @@ fn main(): i32 {
     var i: i64 = 0
     while i < n {
         match doc.childF64At("items", i, "price") {
-            Option.Some(p) => { sum = sum + p }
-            Option.None => {}
+            Option.Some(p) => {
+                sum = sum + p
+            }
+            Option.None => {
+            }
         }
         match doc.childBoolAt("items", i, "active") {
             Option.Some(a) => {
-                if a { active = active + 1 }
+                if a {
+                    active = active + 1
+                }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
         i = i + 1
     }

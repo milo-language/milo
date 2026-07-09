@@ -11,7 +11,7 @@ fn main(): i32 {
     let uMax: u64 = 18446744073709551615
     let hex: u64 = 0xFF
     let bin: i64 = 0b1010
-    let big: i64 = 4611686018427387904   // 2^62 — past 2^53, would round as a JS number
+    let big: i64 = 4611686018427387904 // 2^62 — past 2^53, would round as a JS number
     print(iMax.toString())
     print(uMax.toString())
     print(hex.toString())

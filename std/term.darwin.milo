@@ -1,6 +1,8 @@
 // std/term — terminal raw mode and keyboard input (macOS)
 
-from "std/os" import { read, tcgetattr, tcsetattr }
+from "std/os" import {
+    read, tcgetattr, tcsetattr
+}
 
 let KEY_NONE: i32 = 0
 let KEY_UP: i32 = 1
@@ -31,9 +33,9 @@ fn enableRawMode(): TermState {
         // ICANON (0x100) + IEXTEN (0x400) in byte 1. Clearing ISIG is what makes
         // ctrl-c/ctrl-z pass through as raw bytes to the PTY instead of signalling
         // this process — without it, ctrl-c kills the client itself.
-        let b0 = raw[24] as i32
+        let b0 = raw[24]as i32
         raw[24] = (b0 & 0x77) as u8
-        let b1 = raw[25] as i32
+        let b1 = raw[25]as i32
         raw[25] = (b1 & 0xFA) as u8
 
         // VMIN=0, VTIME=0 — non-blocking reads without O_NONBLOCK
@@ -67,10 +69,18 @@ fn readKey(): i32 {
         if buf[0] == 27 {
             let n2 = read(0, buf, 2)
             if n2 == 2 && buf[0] == 91 {
-                if buf[1] == 65 { return KEY_UP }
-                if buf[1] == 66 { return KEY_DOWN }
-                if buf[1] == 68 { return KEY_LEFT }
-                if buf[1] == 67 { return KEY_RIGHT }
+                if buf[1] == 65 {
+                    return KEY_UP
+                }
+                if buf[1] == 66 {
+                    return KEY_DOWN
+                }
+                if buf[1] == 68 {
+                    return KEY_LEFT
+                }
+                if buf[1] == 67 {
+                    return KEY_RIGHT
+                }
             }
         }
         return KEY_NONE

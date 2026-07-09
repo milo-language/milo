@@ -1,8 +1,6 @@
 // std/random — random number generation (Linux/getentropy)
 
-extern
-
-fn getentropy(_buf: *u8, _len: i64): i32
+extern fn getentropy(_buf: *u8, _len: i64): i32
 
 // Random u32 in [0, 2^32).
 
@@ -74,7 +72,9 @@ fn randBytes(buf: *u8, n: i64): void {
         var offset: i64 = 0
         while offset < n {
             var chunk = n - offset
-            if chunk > 256 { chunk = 256 }
+            if chunk > 256 {
+                chunk = 256
+            }
             getentropy((buf as i64 + offset) as *u8, chunk)
             offset = offset + chunk
         }

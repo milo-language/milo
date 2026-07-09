@@ -1,19 +1,46 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
-from "std/os" import { close, readFd, writeFd, htons, malloc, free, memcpy, socket, connectFd, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_new, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free, SSL_ctrl }
-from "std/crypto" import { sha1Bytes }
-from "std/base64" import { base64Encode }
-from "std/platform" import { SockAddrIn, makeSockaddr }
-from "std/random" import { randBytes }
+from "std/os" import {
+    close, readFd, writeFd, htons, malloc, free, memcpy, socket, connectFd, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_new, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free, SSL_ctrl
+}
+from "std/crypto" import {
+    sha1Bytes
+}
+from "std/base64" import {
+    base64Encode
+}
+from "std/platform" import {
+    SockAddrIn, makeSockaddr
+}
+from "std/random" import {
+    randBytes
+}
 
 // ── Frame opcodes ──
 
-fn WS_CONTINUATION(): u8 { return 0 }
-fn WS_TEXT(): u8 { return 1 }
-fn WS_BINARY(): u8 { return 2 }
-fn WS_CLOSE(): u8 { return 8 }
-fn WS_PING(): u8 { return 9 }
-fn WS_PONG(): u8 { return 10 }
+fn WS_CONTINUATION(): u8 {
+    return 0
+}
+
+fn WS_TEXT(): u8 {
+    return 1
+}
+
+fn WS_BINARY(): u8 {
+    return 2
+}
+
+fn WS_CLOSE(): u8 {
+    return 8
+}
+
+fn WS_PING(): u8 {
+    return 9
+}
+
+fn WS_PONG(): u8 {
+    return 10
+}
 
 // ── Types ──
 
@@ -103,7 +130,10 @@ fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
         return Result.Err("failed to send handshake response")
     }
 
-    return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false })
+    return Result.Ok(WsConn {
+        fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: false
+    }
+    )
 }
 
 // ── Frame reading ──
@@ -146,7 +176,7 @@ impl WsConn {
         var resultOpcode: u8 = 0
 
         while true {
-            var header: [u8 ; 2] = [0 ; 2]
+            var header: [u8; 2] = [0; 2]
             if !_readExact(self.fd, self.ssl, header, 2) {
                 return Result.Err("connection closed")
             }
@@ -157,25 +187,25 @@ impl WsConn {
             var payloadLen: i64 = (header[1] & 127) as i64
 
             if payloadLen == 126 {
-                var extLen: [u8 ; 2] = [0 ; 2]
+                var extLen: [u8; 2] = [0; 2]
                 if !_readExact(self.fd, self.ssl, extLen, 2) {
                     return Result.Err("connection closed reading length")
                 }
-                let hi = extLen[0] as i64
-                let lo = extLen[1] as i64
+                let hi = extLen[0]as i64
+                let lo = extLen[1]as i64
                 payloadLen = (hi << 8) | lo
             } else if payloadLen == 127 {
-                var extLen: [u8 ; 8] = [0 ; 8]
+                var extLen: [u8; 8] = [0; 8]
                 if !_readExact(self.fd, self.ssl, extLen, 8) {
                     return Result.Err("connection closed reading length")
                 }
                 payloadLen = 0
                 for i in 0..8 {
-                    payloadLen = (payloadLen << 8) | extLen[i] as i64
+                    payloadLen = (payloadLen << 8) | extLen[i]as i64
                 }
             }
 
-            var maskKey: [u8 ; 4] = [0 ; 4]
+            var maskKey: [u8; 4] = [0; 4]
             if masked {
                 if !_readExact(self.fd, self.ssl, maskKey, 4) {
                     return Result.Err("connection closed reading mask")
@@ -227,7 +257,10 @@ impl WsConn {
             }
 
             if fin {
-                return Result.Ok(WsMessage { opcode: resultOpcode, payload: resultPayload })
+                return Result.Ok(WsMessage {
+                    opcode: resultOpcode, payload: resultPayload
+                }
+                )
             }
         }
 
@@ -258,7 +291,9 @@ impl WsConn {
         if !self._closed {
             let _ = self._sendFrame(WS_CLOSE(), "", true)
             self._closed = true
-            unsafe { close(self.fd) }
+            unsafe {
+                close(self.fd)
+            }
         }
     }
 
@@ -271,11 +306,17 @@ impl WsConn {
             headerLen = 10
         }
         // RFC 6455: client→server frames MUST be masked; server frames MUST NOT be.
-        let maskBytes: i64 = if self._isClient { 4 as i64 } else { 0 as i64 }
+        let maskBytes: i64 = if self._isClient {
+            4 as i64
+        } else {
+            0 as i64
+        }
 
-        var mask: [u8 ; 4] = [0 ; 4]
+        var mask: [u8; 4] = [0; 4]
         if self._isClient {
-            unsafe { randBytes(mask as *u8, 4) }
+            unsafe {
+                randBytes(mask as *u8, 4)
+            }
         }
 
         let total = headerLen + maskBytes + payload.len
@@ -285,12 +326,18 @@ impl WsConn {
 
             // byte 0: FIN + opcode
             var b0: u8 = opcode
-            if fin { b0 = b0 | 128 }
+            if fin {
+                b0 = b0 | 128
+            }
             *((frame as i64 + pos) as *u8) = b0
             pos = pos + 1
 
             // byte 1+: mask bit + payload length
-            let maskBit: u8 = if self._isClient { 128 as u8 } else { 0 as u8 }
+            let maskBit: u8 = if self._isClient {
+                128 as u8
+            } else {
+                0 as u8
+            }
             if payload.len < 126 {
                 *((frame as i64 + pos) as *u8) = maskBit | (payload.len as u8)
                 pos = pos + 1
@@ -395,7 +442,7 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
         }
 
         // read response — expect "HTTP/1.1 101"
-        var buf: [u8 ; 4096] = [0 ; 4096]
+        var buf: [u8; 4096] = [0; 4096]
         let respLen = readFd(fd, buf, 4096)
         if respLen <= 0 {
             close(fd)
@@ -420,7 +467,10 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
             return Result.Err("invalid Sec-WebSocket-Accept")
         }
 
-        return Result.Ok(WsConn { fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true })
+        return Result.Ok(WsConn {
+            fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true
+        }
+        )
     }
 }
 
@@ -493,7 +543,7 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
         }
 
         // read response — expect "HTTP/1.1 101"
-        var buf: [u8 ; 4096] = [0 ; 4096]
+        var buf: [u8; 4096] = [0; 4096]
         let respLen = sslReadFd(ssl, fd, buf as *u8, 4096)
         if respLen <= 0 {
             SSL_free(ssl)
@@ -523,7 +573,10 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
             return Result.Err("invalid Sec-WebSocket-Accept")
         }
 
-        return Result.Ok(WsConn { fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true })
+        return Result.Ok(WsConn {
+            fd: fd, ssl: sslAddr, _ctx: ctxAddr, _closed: false, _isClient: true
+        }
+        )
     }
 }
 

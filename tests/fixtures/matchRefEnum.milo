@@ -4,12 +4,18 @@
 // match on a borrowed enum (`&E`): payloads bind as borrows, the subject is not
 // consumed. Reading/cloning through the borrow is safe and leaves the owner
 // intact across repeated matches (no double-free of the heap string).
-enum E { S(string), N }
+enum E {
+    S(string), N
+}
 
 fn describe(e: &E): string {
     match e {
-        E.S(s) => { return "got:" + s }
-        E.N => { return "nil" }
+        E.S(s) => {
+            return "got:" + s
+        }
+        E.N => {
+            return "nil"
+        }
     }
 }
 

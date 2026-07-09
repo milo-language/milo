@@ -6,13 +6,25 @@
 // @expect: small
 
 fn main(): i32 {
-    let x = if true { 10 } else { 20 }
+    let x = if true {
+        10
+    } else {
+        20
+    }
     print(x)
 
-    let y = if false { 10 } else { 20 }
+    let y = if false {
+        10
+    } else {
+        20
+    }
     print(y)
 
-    let s = if true { "hello" } else { "world" }
+    let s = if true {
+        "hello"
+    } else {
+        "world"
+    }
     print(s)
 
     let n = 5

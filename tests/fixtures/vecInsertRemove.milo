@@ -14,9 +14,13 @@ fn main(): i32 {
     var v: Vec<i64> = [1, 2, 3]
     v.insert(1, 99)
     v.insert(0, 7)
-    for i in 0..v.len() { print(v[i]) }
+    for i in 0..v.len() {
+        print(v[i])
+    }
     let r = v.remove(2)
     print(r)
-    for i in 0..v.len() { print(v[i]) }
+    for i in 0..v.len() {
+        print(v[i])
+    }
     return 0
 }

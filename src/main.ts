@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync } from "fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync } from "fs";
 import { execSync, spawnSync } from "child_process";
 import { fileURLToPath } from "url";
 import { basename, resolve, dirname } from "path";
@@ -14,7 +14,6 @@ import { resolveImports } from "./resolver";
 import { generateHeader } from "./headergen";
 import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
-import { format, formatFile } from "./formatter";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
@@ -929,21 +928,30 @@ function main() {
     const write = fmtArgs.includes("-w");
     const files = fmtArgs.filter(a => a !== "-w");
     if (files.length === 0) { console.error("error: no files to format"); process.exit(1); }
-    const fmtBin = resolve(dirname(fileURLToPath(import.meta.url)), "..", "bin", "milo-fmt");
-    const useMiloFmt = existsSync(fmtBin);
+
+    // bin/milo-fmt is the source of truth for formatting. src/formatter.ts is a
+    // reference impl whose output differs (it rewrites hex literals to decimal,
+    // among others), so falling back to it would make `milo fmt` produce
+    // different bytes depending on whether the binary happened to be built.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const fmtBin = resolve(root, "bin", "milo-fmt");
+    if (!existsSync(fmtBin)) {
+      mkdirSync(resolve(root, "bin"), { recursive: true });
+      const src = resolve(root, "examples", "cli-tools", "fmt.milo");
+      const build = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "build", src, "-o", fmtBin], { encoding: "utf-8" });
+      if (build.status !== 0 || !existsSync(fmtBin)) {
+        console.error(build.stderr || "error: could not build bin/milo-fmt");
+        process.exit(1);
+      }
+    }
+
     let changed = 0;
     for (const f of files) {
-      if (useMiloFmt) {
-        const result = spawnSync(fmtBin, write ? ["-w", f] : [f], { encoding: "utf-8", timeout: 5000 });
-        if (result.status !== 0) { console.error(result.stderr || `error formatting ${f}`); process.exit(1); }
-        if (!write) process.stdout.write(result.stdout);
-        else if (result.stdout) { console.log(result.stdout.trim()); changed++; }
-      } else if (write) {
-        const result = formatFile(f, true);
-        if (result) { console.log(result); changed++; }
-      } else {
-        process.stdout.write(format(readFileSync(f, "utf-8")));
-      }
+      const before = write ? readFileSync(f, "utf-8") : null;
+      const result = spawnSync(fmtBin, write ? ["-w", f] : [f], { encoding: "utf-8", timeout: 30000 });
+      if (result.status !== 0) { console.error(result.stderr || `error formatting ${f}`); process.exit(1); }
+      if (!write) { process.stdout.write(result.stdout); continue; }
+      if (readFileSync(f, "utf-8") !== before) { console.log(f); changed++; }
     }
     if (write && changed === 0) console.log("all files already formatted");
     return;

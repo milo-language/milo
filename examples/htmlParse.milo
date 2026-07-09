@@ -5,7 +5,9 @@
 // character references (named + numeric). Not a full html5 insertion-mode
 // engine — a pragmatic stack builder that handles well-formed input.
 
-from "std/arena" import { Arena, Handle, arenaNew, arenaAlloc, arenaWith, arenaModifyMut }
+from "std/arena" import {
+    Arena, Handle, arenaNew, arenaAlloc, arenaWith, arenaModifyMut
+}
 
 struct Attr {
     name: string,
@@ -48,7 +50,9 @@ fn emptyNode(kind: NodeKind, name: string, text: string): Node {
 fn domNew(): Dom {
     var arena: Arena<Node> = arenaNew()
     let doc = arenaAlloc(arena, emptyNode(NodeKind.Document, "", ""))
-    return Dom { arena: arena, document: doc }
+    return Dom {
+        arena: arena, document: doc
+    }
 }
 
 // ── Field readers (borrow, no whole-node copy) ──
@@ -56,7 +60,9 @@ fn domNew(): Dom {
 fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
     let r = arenaWith(dom.arena, h, (n: &Node): NodeKind => n.kind)
     match r {
-        Option.Some(k) => { return k }
+        Option.Some(k) => {
+            return k
+        }
         Option.None => {
             assert(false, "nodeKind: stale handle")
             return NodeKind.Document
@@ -67,31 +73,45 @@ fn nodeKind(dom: &Dom, h: Handle<Node>): NodeKind {
 fn nodeName(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.name.clone())
     match r {
-        Option.Some(s) => { return s }
-        Option.None => { return "" }
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
     }
 }
 
 fn nodeText(dom: &Dom, h: Handle<Node>): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.text.clone())
     match r {
-        Option.Some(s) => { return s }
-        Option.None => { return "" }
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
     }
 }
 
 fn childCount(dom: &Dom, h: Handle<Node>): i64 {
     let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.children.len())
     match r {
-        Option.Some(c) => { return c }
-        Option.None => { return 0 }
+        Option.Some(c) => {
+            return c
+        }
+        Option.None => {
+            return 0
+        }
     }
 }
 
 fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
     let r = arenaWith(dom.arena, h, (n: &Node): Handle<Node> => n.children[i])
     match r {
-        Option.Some(c) => { return c }
+        Option.Some(c) => {
+            return c
+        }
         Option.None => {
             assert(false, "childAt: stale handle")
             return h
@@ -102,24 +122,36 @@ fn childAt(dom: &Dom, h: Handle<Node>, i: i64): Handle<Node> {
 fn attrCount(dom: &Dom, h: Handle<Node>): i64 {
     let r = arenaWith(dom.arena, h, (n: &Node): i64 => n.attrs.len())
     match r {
-        Option.Some(c) => { return c }
-        Option.None => { return 0 }
+        Option.Some(c) => {
+            return c
+        }
+        Option.None => {
+            return 0
+        }
     }
 }
 
 fn attrNameAt(dom: &Dom, h: Handle<Node>, i: i64): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].name.clone())
     match r {
-        Option.Some(s) => { return s }
-        Option.None => { return "" }
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
     }
 }
 
 fn attrValueAt(dom: &Dom, h: Handle<Node>, i: i64): string {
     let r = arenaWith(dom.arena, h, (n: &Node): string => n.attrs[i].value.clone())
     match r {
-        Option.Some(s) => { return s }
-        Option.None => { return "" }
+        Option.Some(s) => {
+            return s
+        }
+        Option.None => {
+            return ""
+        }
     }
 }
 
@@ -140,16 +172,22 @@ fn createComment(dom: &mut Dom, text: string): Handle<Node> {
 fn append(dom: &mut Dom, parent: Handle<Node>, child: Handle<Node>) {
     arenaModifyMut(dom.arena, parent, (n: &mut Node): void => {
         n.children.push(child)
-    })
+    }
+    )
     arenaModifyMut(dom.arena, child, (c: &mut Node): void => {
         c.parent = Option.Some(parent)
-    })
+    }
+    )
 }
 
 fn addAttr(dom: &mut Dom, h: Handle<Node>, name: string, value: string) {
     arenaModifyMut(dom.arena, h, (n: &mut Node): void => {
-        n.attrs.push(Attr { name: name, value: value })
-    })
+        n.attrs.push(Attr {
+            name: name, value: value
+        }
+        )
+    }
+    )
 }
 
 fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
@@ -163,10 +201,12 @@ fn appendText(dom: &mut Dom, parent: Handle<Node>, t: string) {
                     for i in 0..extra.len() {
                         n.text.push(extra[i])
                     }
-                })
+                }
+                )
                 return
             }
-            _ => {}
+            _ => {
+            }
         }
     }
     let tn = createText(dom, t)
@@ -196,9 +236,9 @@ fn lower(c: u8): u8 {
 
 fn isVoidElement(name: &string): bool {
     return name == "br" || name == "img" || name == "input" || name == "meta"
-        || name == "link" || name == "hr" || name == "area" || name == "base"
-        || name == "col" || name == "embed" || name == "source" || name == "track"
-        || name == "wbr"
+    || name == "link" || name == "hr" || name == "area" || name == "base"
+    || name == "col" || name == "embed" || name == "source" || name == "track"
+    || name == "wbr"
 }
 
 // Encode a Unicode code point as UTF-8 into `out` (mirrors std/json).
@@ -259,9 +299,15 @@ fn namedEntity(name: &string, out: &mut string): bool {
 }
 
 fn hexDigit(c: u8): i64 {
-    if c >= '0' && c <= '9' { return (c - '0') as i64 }
-    if c >= 'a' && c <= 'f' { return (c - 'a' + 10 as u8) as i64 }
-    if c >= 'A' && c <= 'F' { return (c - 'A' + 10 as u8) as i64 }
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a' + 10 as u8) as i64
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A' + 10 as u8) as i64
+    }
     return 0 as i64 - 1
 }
 
@@ -283,7 +329,11 @@ fn decodeEntity(src: &string, pos: i64, n: i64, out: &mut string): i64 {
             let d = src[i]
             if hex {
                 let hv = hexDigit(d)
-                if hv < 0 { ok = false } else { code = code * 16 + hv }
+                if hv < 0 {
+                    ok = false
+                } else {
+                    code = code * 16 + hv
+                }
             } else {
                 if d >= '0' && d <= '9' {
                     code = code * 10 + (d - '0') as i64
@@ -358,9 +408,9 @@ fn skipSpaces(src: &string, pos: i64, n: i64): i64 {
 // Block-level start tags that implicitly close an open <p>.
 fn closesParagraph(tag: &string): bool {
     return tag == "p" || tag == "div" || tag == "ul" || tag == "ol" || tag == "table"
-        || tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6"
-        || tag == "blockquote" || tag == "pre" || tag == "section" || tag == "article"
-        || tag == "header" || tag == "footer" || tag == "nav" || tag == "form" || tag == "hr"
+    || tag == "h1" || tag == "h2" || tag == "h3" || tag == "h4" || tag == "h5" || tag == "h6"
+    || tag == "blockquote" || tag == "pre" || tag == "section" || tag == "article"
+    || tag == "header" || tag == "footer" || tag == "nav" || tag == "form" || tag == "hr"
 }
 
 // Whether opening `newTag` should implicitly close a currently-open `open`
@@ -686,7 +736,8 @@ fn countTag(dom: &Dom, h: Handle<Node>, tag: &string): i64 {
                 total = total + 1
             }
         }
-        _ => {}
+        _ => {
+        }
     }
     let c = childCount(dom, h)
     for i in 0..c {
@@ -705,8 +756,8 @@ fn main(): i32 {
     serialize(dom, dom.document, out)
     print(out)
 
-    print(countTag(dom, dom.document, "li"))      // 2
-    print(countTag(dom, dom.document, "p"))        // 1
-    print(countTag(dom, dom.document, "img"))      // 1 (void, not pushed)
+    print(countTag(dom, dom.document, "li")) // 2
+    print(countTag(dom, dom.document, "p")) // 1
+    print(countTag(dom, dom.document, "img")) // 1 (void, not pushed)
     return 0
 }

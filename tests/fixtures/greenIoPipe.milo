@@ -3,11 +3,15 @@
 
 // a task parked reading a pipe doesn't block the scheduler: another task
 // computes and then writes, waking the reader — std/os green-aware IO
-from "std/runtime" import { Task, schedulerRunToCompletion }
-from "std/os" import { pipe, readFd, writeFd, close }
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/os" import {
+    pipe, readFd, writeFd, close
+}
 
 fn main(): i32 {
-    var fds: [u8 ; 8] = [0 ; 8]
+    var fds: [u8; 8] = [0; 8]
     var rfd: i32 = 0
     var wfd: i32 = 0
     unsafe {
@@ -17,18 +21,21 @@ fn main(): i32 {
         wfd = p[1]
     }
 
-    Task.spawn(move (): void => {
-        var buf: [u8 ; 16] = [0 ; 16]
+    Task.spawn(move(): void => {
+        var buf: [u8; 16] = [0; 16]
         let n = readFd(rfd, buf, 16)
         var s = ""
         for i in 0..n {
             s.push(buf[i])
         }
         print("got ", s)
-        unsafe { close(rfd) }
-    })
+        unsafe {
+            close(rfd)
+        }
+    }
+    )
 
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         var sum: i64 = 0
         var i: i64 = 0
         while i < 1000 {
@@ -38,8 +45,11 @@ fn main(): i32 {
         print("computed ", sum)
         let msg = "hello"
         writeFd(wfd, msg, msg.len)
-        unsafe { close(wfd) }
-    })
+        unsafe {
+            close(wfd)
+        }
+    }
+    )
 
     schedulerRunToCompletion()
     return 0

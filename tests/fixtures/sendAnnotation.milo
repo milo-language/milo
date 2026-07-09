@@ -1,18 +1,24 @@
 // @expect: 42
 
-from "std/thread" import { Thread }
+from "std/thread" import {
+    Thread
+}
 
-@send
+@ send
+
 struct SafeHandle {
     _ptr: *u8,
 }
 
 fn main(): i32 {
     unsafe {
-        let h = SafeHandle { _ptr: 0 as *u8 }
-        let t = Thread.spawn(move (): void => {
+        let h = SafeHandle {
+            _ptr: 0 as *u8
+        }
+        let t = Thread.spawn(move(): void => {
             let _x = h._ptr
-        })!
+        }
+        )!
         t.join()!
     }
     print(42)

@@ -1,14 +1,14 @@
 // @expect: 55
 
 fn sumTo(n: i64): i64
-  requires n >= 0
-  ensures result >= 0
+requires n >= 0
+ensures result >= 0
 {
     var total: i64 = 0
     var i: i64 = 1
     while i <= n
-      invariant total >= 0
-      invariant i >= 1
+    invariant total >= 0
+    invariant i >= 1
     {
         total = total + i
         i = i + 1

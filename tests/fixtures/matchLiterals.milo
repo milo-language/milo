@@ -9,26 +9,46 @@
 
 fn describeInt(n: i32): string {
     match n {
-        0 => { return "zero" }
-        1 => { return "one" }
-        2 => { return "two" }
-        -1 => { return "negative" }
-        _ => { return "other" }
+        0 => {
+            return "zero"
+        }
+        1 => {
+            return "one"
+        }
+        2 => {
+            return "two"
+        }
+        -1 => {
+            return "negative"
+        }
+        _ => {
+            return "other"
+        }
     }
 }
 
 fn handleCmd(cmd: string): string {
     match cmd {
-        "hello" => { return "greeting" }
-        "bye" => { return "farewell" }
-        _ => { return "unknown" }
+        "hello" => {
+            return "greeting"
+        }
+        "bye" => {
+            return "farewell"
+        }
+        _ => {
+            return "unknown"
+        }
     }
 }
 
 fn yesNo(b: bool): string {
     match b {
-        true => { return "yes" }
-        false => { return "no" }
+        true => {
+            return "yes"
+        }
+        false => {
+            return "no"
+        }
     }
 }
 

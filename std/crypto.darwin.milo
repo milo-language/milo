@@ -1,29 +1,21 @@
 // std/crypto — cryptographic primitives (macOS/CommonCrypto)
 
-from "std/os" import { malloc, free }
+from "std/os" import {
+    malloc, free
+}
 
-extern
+extern fn CC_SHA256(_data: *u8, _len: u32, _md: *u8): *u8
 
-fn CC_SHA256(_data: *u8, _len: u32, _md: *u8): *u8
+extern fn CC_MD5(_data: *u8, _len: u32, _md: *u8): *u8
 
-extern
-
-fn CC_MD5(_data: *u8, _len: u32, _md: *u8): *u8
-
-extern
-
-fn CC_SHA1(_data: *u8, _len: u32, _md: *u8): *u8
+extern fn CC_SHA1(_data: *u8, _len: u32, _md: *u8): *u8
 
 // kCCAlgorithmAES=0, encrypt=0, decrypt=1
-extern
+extern fn CCCryptorGCMOneshotEncrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _dataIn: *u8, _dataInLen: i64, _cipherOut: *u8, _tagOut: *u8, _tagLen: i64): i32
 
-fn CCCryptorGCMOneshotEncrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _dataIn: *u8, _dataInLen: i64, _cipherOut: *u8, _tagOut: *u8, _tagLen: i64): i32
+extern fn CCCryptorGCMOneshotDecrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _cipherIn: *u8, _cipherInLen: i64, _plainOut: *u8, _tagIn: *u8, _tagLen: i64): i32
 
-extern
-
-fn CCCryptorGCMOneshotDecrypt(_alg: i32, _key: *u8, _keyLen: i64, _iv: *u8, _ivLen: i64, _aad: *u8, _aadLen: i64, _cipherIn: *u8, _cipherInLen: i64, _plainOut: *u8, _tagIn: *u8, _tagLen: i64): i32
-
-fn _bytesToHex(buf: &[u8 ; 32], n: i64): string {
+fn _bytesToHex(buf: &[u8; 32], n: i64): string {
     var result = ""
     for i in 0..n {
         let b = buf[i]
@@ -46,7 +38,7 @@ fn _bytesToHex(buf: &[u8 ; 32], n: i64): string {
 // Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
 
 fn sha256(input: &string): string {
-    var hash: [u8 ; 32] = [0 ; 32]
+    var hash: [u8; 32] = [0; 32]
     unsafe {
         CC_SHA256(input, input.len as u32, hash)
     }
@@ -56,7 +48,7 @@ fn sha256(input: &string): string {
 // Compute MD5 hash of a string. Returns 32-char lowercase hex string.
 
 fn md5(input: &string): string {
-    var hash: [u8 ; 32] = [0 ; 32]
+    var hash: [u8; 32] = [0; 32]
     unsafe {
         CC_MD5(input, input.len as u32, hash)
     }
@@ -66,7 +58,7 @@ fn md5(input: &string): string {
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
 
 fn sha1(input: &string): string {
-    var hash: [u8 ; 32] = [0 ; 32]
+    var hash: [u8; 32] = [0; 32]
     unsafe {
         CC_SHA1(input, input.len as u32, hash)
     }
@@ -76,7 +68,7 @@ fn sha1(input: &string): string {
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
 
 fn sha1Bytes(input: &string): string {
-    var hash: [u8 ; 32] = [0 ; 32]
+    var hash: [u8; 32] = [0; 32]
     unsafe {
         CC_SHA1(input, input.len as u32, hash)
     }
@@ -97,14 +89,22 @@ struct AesGcmResult {
 // Encrypt with AES-256-GCM. Key must be 32 bytes, IV should be 12 bytes.
 
 fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
-  requires key.len == 32
-  requires iv.len == 12
+requires key.len == 32
+requires iv.len == 12
 {
-    var tag: [u8 ; 16] = [0 ; 16]
+    var tag: [u8; 16] = [0; 16]
 
     unsafe {
-        let aadPtr = if aad.len > 0 { aad as *u8 } else { 0 as *u8 }
-        let ptPtr = if plaintext.len > 0 { plaintext as *u8 } else { 0 as *u8 }
+        let aadPtr = if aad.len > 0 {
+            aad as *u8
+        } else {
+            0 as *u8
+        }
+        let ptPtr = if plaintext.len > 0 {
+            plaintext as *u8
+        } else {
+            0 as *u8
+        }
 
         var ctBuf: *u8 = 0 as *u8
         if plaintext.len > 0 {
@@ -112,13 +112,15 @@ fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): R
         }
 
         let ret = CCCryptorGCMOneshotEncrypt(
-            0, key, 32, iv, 12,
-            aadPtr, aad.len,
-            ptPtr, plaintext.len,
-            ctBuf, tag, 16
+        0, key, 32, iv, 12,
+        aadPtr, aad.len,
+        ptPtr, plaintext.len,
+        ctBuf, tag, 16
         )
         if ret != 0 {
-            if plaintext.len > 0 { free(ctBuf) }
+            if plaintext.len > 0 {
+                free(ctBuf)
+            }
             return Result.Err("AES-GCM encrypt failed")
         }
 
@@ -126,27 +128,40 @@ fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): R
         for i in 0..plaintext.len {
             ciphertext.push(*((ctBuf as i64 + i) as *u8))
         }
-        if plaintext.len > 0 { free(ctBuf) }
+        if plaintext.len > 0 {
+            free(ctBuf)
+        }
 
         var tagStr: string = ""
         for i in 0..16 {
             tagStr.push(tag[i])
         }
 
-        return Result.Ok(AesGcmResult { ciphertext: ciphertext, tag: tagStr })
+        return Result.Ok(AesGcmResult {
+            ciphertext: ciphertext, tag: tagStr
+        }
+        )
     }
 }
 
 // Decrypt with AES-256-GCM. Key must be 32 bytes, IV 12 bytes, tag 16 bytes.
 
 fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
-  requires key.len == 32
-  requires iv.len == 12
-  requires tag.len == 16
+requires key.len == 32
+requires iv.len == 12
+requires tag.len == 16
 {
     unsafe {
-        let aadPtr = if aad.len > 0 { aad as *u8 } else { 0 as *u8 }
-        let ctPtr = if ciphertext.len > 0 { ciphertext as *u8 } else { 0 as *u8 }
+        let aadPtr = if aad.len > 0 {
+            aad as *u8
+        } else {
+            0 as *u8
+        }
+        let ctPtr = if ciphertext.len > 0 {
+            ciphertext as *u8
+        } else {
+            0 as *u8
+        }
 
         var ptBuf: *u8 = 0 as *u8
         if ciphertext.len > 0 {
@@ -154,13 +169,15 @@ fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, a
         }
 
         let ret = CCCryptorGCMOneshotDecrypt(
-            0, key, 32, iv, 12,
-            aadPtr, aad.len,
-            ctPtr, ciphertext.len,
-            ptBuf, tag, 16
+        0, key, 32, iv, 12,
+        aadPtr, aad.len,
+        ctPtr, ciphertext.len,
+        ptBuf, tag, 16
         )
         if ret != 0 {
-            if ciphertext.len > 0 { free(ptBuf) }
+            if ciphertext.len > 0 {
+                free(ptBuf)
+            }
             return Result.Err("AES-GCM decrypt failed: authentication error")
         }
 
@@ -168,7 +185,9 @@ fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, a
         for i in 0..ciphertext.len {
             plaintext.push(*((ptBuf as i64 + i) as *u8))
         }
-        if ciphertext.len > 0 { free(ptBuf) }
+        if ciphertext.len > 0 {
+            free(ptBuf)
+        }
         return Result.Ok(plaintext)
     }
 }
@@ -176,14 +195,22 @@ fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, a
 // Encrypt with AES-128-GCM. Key must be 16 bytes, IV 12 bytes. (termpair uses AES-128.)
 
 fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
-  requires key.len == 16
-  requires iv.len == 12
+requires key.len == 16
+requires iv.len == 12
 {
-    var tag: [u8 ; 16] = [0 ; 16]
+    var tag: [u8; 16] = [0; 16]
 
     unsafe {
-        let aadPtr = if aad.len > 0 { aad as *u8 } else { 0 as *u8 }
-        let ptPtr = if plaintext.len > 0 { plaintext as *u8 } else { 0 as *u8 }
+        let aadPtr = if aad.len > 0 {
+            aad as *u8
+        } else {
+            0 as *u8
+        }
+        let ptPtr = if plaintext.len > 0 {
+            plaintext as *u8
+        } else {
+            0 as *u8
+        }
 
         var ctBuf: *u8 = 0 as *u8
         if plaintext.len > 0 {
@@ -191,13 +218,15 @@ fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string)
         }
 
         let ret = CCCryptorGCMOneshotEncrypt(
-            0, key, 16, iv, 12,
-            aadPtr, aad.len,
-            ptPtr, plaintext.len,
-            ctBuf, tag, 16
+        0, key, 16, iv, 12,
+        aadPtr, aad.len,
+        ptPtr, plaintext.len,
+        ctBuf, tag, 16
         )
         if ret != 0 {
-            if plaintext.len > 0 { free(ctBuf) }
+            if plaintext.len > 0 {
+                free(ctBuf)
+            }
             return Result.Err("AES-128-GCM encrypt failed")
         }
 
@@ -205,27 +234,40 @@ fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string)
         for i in 0..plaintext.len {
             ciphertext.push(*((ctBuf as i64 + i) as *u8))
         }
-        if plaintext.len > 0 { free(ctBuf) }
+        if plaintext.len > 0 {
+            free(ctBuf)
+        }
 
         var tagStr: string = ""
         for i in 0..16 {
             tagStr.push(tag[i])
         }
 
-        return Result.Ok(AesGcmResult { ciphertext: ciphertext, tag: tagStr })
+        return Result.Ok(AesGcmResult {
+            ciphertext: ciphertext, tag: tagStr
+        }
+        )
     }
 }
 
 // Decrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes, tag 16 bytes.
 
 fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
-  requires key.len == 16
-  requires iv.len == 12
-  requires tag.len == 16
+requires key.len == 16
+requires iv.len == 12
+requires tag.len == 16
 {
     unsafe {
-        let aadPtr = if aad.len > 0 { aad as *u8 } else { 0 as *u8 }
-        let ctPtr = if ciphertext.len > 0 { ciphertext as *u8 } else { 0 as *u8 }
+        let aadPtr = if aad.len > 0 {
+            aad as *u8
+        } else {
+            0 as *u8
+        }
+        let ctPtr = if ciphertext.len > 0 {
+            ciphertext as *u8
+        } else {
+            0 as *u8
+        }
 
         var ptBuf: *u8 = 0 as *u8
         if ciphertext.len > 0 {
@@ -233,13 +275,15 @@ fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string
         }
 
         let ret = CCCryptorGCMOneshotDecrypt(
-            0, key, 16, iv, 12,
-            aadPtr, aad.len,
-            ctPtr, ciphertext.len,
-            ptBuf, tag, 16
+        0, key, 16, iv, 12,
+        aadPtr, aad.len,
+        ctPtr, ciphertext.len,
+        ptBuf, tag, 16
         )
         if ret != 0 {
-            if ciphertext.len > 0 { free(ptBuf) }
+            if ciphertext.len > 0 {
+                free(ptBuf)
+            }
             return Result.Err("AES-128-GCM decrypt failed: authentication error")
         }
 
@@ -247,7 +291,9 @@ fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string
         for i in 0..ciphertext.len {
             plaintext.push(*((ptBuf as i64 + i) as *u8))
         }
-        if ciphertext.len > 0 { free(ptBuf) }
+        if ciphertext.len > 0 {
+            free(ptBuf)
+        }
         return Result.Ok(plaintext)
     }
 }

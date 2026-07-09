@@ -1,6 +1,8 @@
 // by-value extern struct args/returns are safe (POD copy) — no unsafe block needed,
 // and the struct stays usable after being passed (Copy semantics)
-extern struct P {
+extern
+
+struct P {
     x: i32,
     y: i32,
 }
@@ -8,7 +10,9 @@ extern struct P {
 extern fn sum_p(p: P): i32
 
 fn main(): i32 {
-    let p = P { x: 5, y: 7 }
+    let p = P {
+        x: 5, y: 7
+    }
     print(sum_p(p))
     print(sum_p(p))
     return 0

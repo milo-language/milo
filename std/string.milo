@@ -3,6 +3,7 @@
 // declared here rather than imported from std/os so std/string (pulled into
 // every program via the prelude) stays dependency-free
 extern fn memchr(s: *u8, c: i32, n: i64): *u8
+
 extern fn memcmp(s1: *u8, s2: *u8, n: i64): i32
 
 // Check if haystack contains needle.
@@ -23,7 +24,7 @@ fn strIndexOf(haystack: &string, needle: &string): i64 {
 
 // Byte index of the first occurrence of `needle` at or after `pos`, or -1.
 fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64
-  requires pos >= 0
+requires pos >= 0
 {
     var notFound: i64 = 0
     notFound = notFound - 1
@@ -40,7 +41,7 @@ fn strIndexOfFrom(haystack: &string, needle: &string, pos: i64): i64
     // verifies the rest — ~5x faster than a byte-at-a-time loop on big inputs
     let base = haystack.cstr() as i64
     let nptr = needle.cstr()
-    let c0 = needle[0] as i32
+    let c0 = needle[0]as i32
     let last = haystack.len - needle.len
     var i: i64 = pos
     while i <= last {
@@ -129,7 +130,7 @@ fn strEndsWith(s: &string, suffix: &string): bool {
 
 // ASCII-lowercased copy (A–Z → a–z; other bytes unchanged).
 fn strToLower(s: &string): string
-  ensures result.len == s.len
+ensures result.len == s.len
 {
     var result: string = ""
     for i in 0..s.len {
@@ -147,7 +148,7 @@ fn strToLower(s: &string): string
 
 // ASCII-uppercased copy (a–z → A–Z; other bytes unchanged).
 fn strToUpper(s: &string): string
-  ensures result.len == s.len
+ensures result.len == s.len
 {
     var result: string = ""
     for i in 0..s.len {
@@ -254,7 +255,7 @@ fn strSplit(s: &string, sep: &string): Vec<string> {
 
 // `s` concatenated `n` times (n <= 0 → empty string).
 fn strRepeat(s: &string, n: i64): string
-  requires n >= 0
+requires n >= 0
 {
     var result: string = ""
     for i in 0..n {
@@ -268,7 +269,7 @@ fn strRepeat(s: &string, n: i64): string
 // Left-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
 // (returned unchanged if already at least that long).
 fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
-  requires targetLen >= 0
+requires targetLen >= 0
 {
     if s.len >= targetLen || padStr.len == 0 {
         return s.clone()
@@ -290,7 +291,7 @@ fn strPadStart(s: &string, targetLen: i64, padStr: &string): string
 // Right-pad `s` with repeated `padStr` until it reaches `targetLen` bytes
 // (returned unchanged if already at least that long).
 fn strPadEnd(s: &string, targetLen: i64, padStr: &string): string
-  requires targetLen >= 0
+requires targetLen >= 0
 {
     if s.len >= targetLen || padStr.len == 0 {
         return s.clone()
@@ -452,14 +453,14 @@ fn strIsEmpty(s: &string): bool {
 // The single byte at `idx` as a length-1 string. Requires 0 <= idx < s.len
 // (byte index, not codepoint).
 fn strCharAt(s: &string, idx: i64): string
-  requires idx >= 0 && idx < s.len
+requires idx >= 0 && idx < s.len
 {
     return s.substr(idx, idx + 1)
 }
 
 // UTF-8 aware: scans backward past continuation bytes to reverse whole codepoints
 fn strReverse(s: &string): string
-  ensures result.len == s.len
+ensures result.len == s.len
 {
     var result: string = ""
     var i: i64 = s.len

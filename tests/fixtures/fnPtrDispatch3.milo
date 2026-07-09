@@ -22,4 +22,3 @@ fn main(): i32 {
     print("result: ", op.apply(5))
     return 0
 }
-

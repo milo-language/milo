@@ -17,4 +17,3 @@ fn main(): i32 {
     print(d.getAge())
     return 0
 }
-

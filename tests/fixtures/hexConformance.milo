@@ -8,7 +8,9 @@
 // @expect: rtLower=foobar
 // @expect: rtUpper=foobar
 
-from "std/hex" import { hexEncode, hexDecode }
+from "std/hex" import {
+    hexEncode, hexDecode
+}
 
 fn main(): i32 {
     print("empty=[", hexEncode(""), "]")

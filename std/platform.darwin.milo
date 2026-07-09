@@ -1,13 +1,15 @@
 // platform-specific constants and helpers for macOS/BSD
 
-from "std/os" import { htons }
+from "std/os" import {
+    htons
+}
 
 struct SockAddrIn {
     sinLen: u8,
     sinFamily: u8,
     sinPort: u16,
     sinAddr: u32,
-    sinZero: [u8 ; 8],
+    sinZero: [u8; 8],
 }
 
 fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
@@ -17,14 +19,14 @@ fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
             sinFamily: 2 as u8,
             sinPort: htons(port),
             sinAddr: addr,
-            sinZero: [0 ; 8],
+            sinZero: [0; 8],
         }
     }
 }
 
 fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
-        sinLen: 0, sinFamily: 0, sinPort: 0, sinAddr: 0, sinZero: [0 ; 8],
+        sinLen: 0, sinFamily: 0, sinPort: 0, sinAddr: 0, sinZero: [0; 8],
     }
 }
 
@@ -47,11 +49,13 @@ fn oWriteCreateTrunc(): i32 {
 fn oWriteCreateAppend(): i32 {
     return 521
 }
+
 // offset of aiAddr field in struct addrinfo
 
 fn addrinfoAddrOffset(): i64 {
     return 32
 }
+
 // struct stat layout (macOS aarch64/x8664)
 
 fn statModeOffset(): i64 {
@@ -65,6 +69,7 @@ fn statSizeOffset(): i64 {
 fn statBufSize(): i64 {
     return 144
 }
+
 // struct dirent layout
 
 fn direntTypeOffset(): i64 {
@@ -74,11 +79,10 @@ fn direntTypeOffset(): i64 {
 fn direntNameOffset(): i64 {
     return 21
 }
+
 // errno access — macOS uses __error() to get errno pointer
 
-extern
-
-fn __error(): *u8
+extern fn __error(): *u8
 
 fn getErrno(): i32 {
     unsafe {
@@ -88,11 +92,9 @@ fn getErrno(): i32 {
 
 // ── kqueue ──
 
-extern
-fn kqueue(): i32
+extern fn kqueue(): i32
 
-extern
-fn kevent(kq: i32, changelist: *u8, nchanges: i32, eventlist: *u8, nevents: i32, timeout: *u8): i32
+extern fn kevent(kq: i32, changelist: *u8, nchanges: i32, eventlist: *u8, nevents: i32, timeout: *u8): i32
 
 // kevent struct: 32 bytes on darwin arm64
 struct Kevent {
@@ -104,48 +106,112 @@ struct Kevent {
     udata: *u8,
 }
 
-fn evfiltRead(): i16 { return -1 as i16 }
-fn evfiltWrite(): i16 { return -2 as i16 }
-fn evfiltUser(): i16 { return -10 as i16 }
-fn evAdd(): u16 { return 1 as u16 }
-fn evDelete(): u16 { return 2 as u16 }
-fn evEnable(): u16 { return 4 as u16 }
-fn evOneshot(): u16 { return 16 as u16 }
-fn evClear(): u16 { return 32 as u16 }
-fn noteTrigger(): u32 { return 16777216 }
+fn evfiltRead(): i16 {
+    return -1 as i16
+}
+
+fn evfiltWrite(): i16 {
+    return -2 as i16
+}
+
+fn evfiltUser(): i16 {
+    return -10 as i16
+}
+
+fn evAdd(): u16 {
+    return 1 as u16
+}
+
+fn evDelete(): u16 {
+    return 2 as u16
+}
+
+fn evEnable(): u16 {
+    return 4 as u16
+}
+
+fn evOneshot(): u16 {
+    return 16 as u16
+}
+
+fn evClear(): u16 {
+    return 32 as u16
+}
+
+fn noteTrigger(): u32 {
+    return 16777216
+}
 
 // ── fcntl / non-blocking ──
 
-extern
-fn fcntl(fd: i32, cmd: i32, ...): i32
+extern fn fcntl(fd: i32, cmd: i32,...): i32
 
-fn fGetfl(): i32 { return 3 }
-fn fSetfl(): i32 { return 4 }
-fn oNonblock(): i32 { return 4 }
-fn eagain(): i32 { return 35 }
-fn einprogress(): i32 { return 36 }
-fn soError(): i32 { return 4103 }
+fn fGetfl(): i32 {
+    return 3
+}
+
+fn fSetfl(): i32 {
+    return 4
+}
+
+fn oNonblock(): i32 {
+    return 4
+}
+
+fn eagain(): i32 {
+    return 35
+}
+
+fn einprogress(): i32 {
+    return 36
+}
+
+fn soError(): i32 {
+    return 4103
+}
 
 // ── ucontext (stackful coroutines) ──
 
-extern
-fn getcontext(ucp: *u8): i32
+extern fn getcontext(ucp: *u8): i32
 
-extern
-fn makecontext(ucp: *u8, func: *u8, argc: i32, ...): void
+extern fn makecontext(ucp: *u8, func: *u8, argc: i32,...): void
 
-extern
-fn swapcontext(oucp: *u8, ucp: *u8): i32
+extern fn swapcontext(oucp: *u8, ucp: *u8): i32
 
-fn uctxSize(): i64 { return 880 }
-fn uctxStackPtrOffset(): i64 { return 8 }
-fn uctxStackSizeOffset(): i64 { return 16 }
-fn uctxLinkOffset(): i64 { return 32 }
+fn uctxSize(): i64 {
+    return 880
+}
+
+fn uctxStackPtrOffset(): i64 {
+    return 8
+}
+
+fn uctxStackSizeOffset(): i64 {
+    return 16
+}
+
+fn uctxLinkOffset(): i64 {
+    return 32
+}
 
 // ── mmap constants ──
 
-fn protRead(): i32 { return 1 }
-fn protWrite(): i32 { return 2 }
-fn protNone(): i32 { return 0 }
-fn mapPrivate(): i32 { return 2 }
-fn mapAnon(): i32 { return 4096 }
+fn protRead(): i32 {
+    return 1
+}
+
+fn protWrite(): i32 {
+    return 2
+}
+
+fn protNone(): i32 {
+    return 0
+}
+
+fn mapPrivate(): i32 {
+    return 2
+}
+
+fn mapAnon(): i32 {
+    return 4096
+}

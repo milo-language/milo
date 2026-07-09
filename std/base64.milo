@@ -81,7 +81,7 @@ fn base64UrlEncode(input: &string): string {
             result.push('-')
         } else if c == '/' {
             result.push('_')
-        } else if c != 61 {  // 61 == '='
+        } else if c != 61 { // 61 == '='
             result.push(c)
         }
     }

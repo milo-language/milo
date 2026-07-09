@@ -1,6 +1,8 @@
 // @expect: hello pipe
 
-from "std/process" import { Child }
+from "std/process" import {
+    Child
+}
 
 fn main(): i32 {
     var args: Vec<string> = Vec.new()
@@ -13,10 +15,16 @@ fn main(): i32 {
             var buf: [u8; 256] = [0; 256]
             while true {
                 var n: i64 = 0
-                unsafe { n = child.readStdout(buf as *u8, 256) }
-                if n <= 0 { break }
+                unsafe {
+                    n = child.readStdout(buf as *u8, 256)
+                }
+                if n <= 0 {
+                    break
+                }
                 for i in 0..n {
-                    if buf[i] != 10 { out.push(buf[i]) }
+                    if buf[i] != 10 {
+                        out.push(buf[i])
+                    }
                 }
             }
             print(out)

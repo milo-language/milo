@@ -15,8 +15,8 @@
 let FP_SHIFT: i32 = 16
 
 fn fpMul(a: i32, b: i32): i32
-  requires a >= 0 - 2147483648 && b >= 0 - 2147483648
-  ensures result == result
+requires a >= 0 - 2147483648 && b >= 0 - 2147483648
+ensures result == result
 {
     // (a/2^16)*(b/2^16) = (a*b)/2^16, kept in 64-bit to avoid overflow midway.
     let wide: i64 = (a as i64) * (b as i64)
@@ -24,11 +24,15 @@ fn fpMul(a: i32, b: i32): i32
 }
 
 fn clampI32(v: i32, lo: i32, hi: i32): i32
-  requires lo <= hi
-  ensures result >= lo && result <= hi
+requires lo <= hi
+ensures result >= lo && result <= hi
 {
-    if v < lo { return lo }
-    if v > hi { return hi }
+    if v < lo {
+        return lo
+    }
+    if v > hi {
+        return hi
+    }
     return v
 }
 
@@ -36,8 +40,8 @@ fn clampI32(v: i32, lo: i32, hi: i32): i32
 // carried between ticks; here we exercise a fixed number of ticks in a bounded
 // loop so the kernel is fully WCET-bounded.
 fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32,
-           integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
-  requires outLo <= outHi
+integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
+requires outLo <= outHi
 {
     let error: i32 = setpoint - measured
     let newIntegral: i32 = integral + error
@@ -55,8 +59,8 @@ fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32,
 // return the final actuator command. The loop bound (200) is what WCET analysis
 // reads as the iteration count.
 fn settle(setpoint: i32, kp: i32, ki: i32, kd: i32, outLo: i32, outHi: i32): i32
-  requires outLo <= outHi
-  ensures result >= outLo && result <= outHi
+requires outLo <= outHi
+ensures result >= outLo && result <= outHi
 {
     var measured: i32 = 0
     var integral: i32 = 0
@@ -79,13 +83,13 @@ fn settle(setpoint: i32, kp: i32, ki: i32, kd: i32, outLo: i32, outHi: i32): i32
 }
 
 fn main(): i32 {
-    let one: i32 = 65536        // 1.0 in Q16.16
+    let one: i32 = 65536 // 1.0 in Q16.16
     let setpoint: i32 = 100 * one
-    let kp: i32 = one / 2       // 0.5
-    let ki: i32 = one / 100     // 0.01
-    let kd: i32 = one / 10      // 0.1
+    let kp: i32 = one / 2 // 0.5
+    let ki: i32 = one / 100 // 0.01
+    let kd: i32 = one / 10 // 0.1
     let outLo: i32 = 0
-    let outHi: i32 = 255 * one  // actuator range 0..255 (e.g. PWM duty)
+    let outHi: i32 = 255 * one // actuator range 0..255 (e.g. PWM duty)
 
     let cmd: i32 = settle(setpoint, kp, ki, kd, outLo, outHi)
     // return the final command in whole units (Q16.16 -> integer) as exit code.

@@ -1,31 +1,65 @@
 // rg — ripgrep-lite: regex-powered recursive search
 
-from "std/argparse" import { newParser }
-from "std/io" import { readFile }
-from "std/fs" import { isDir, isFile, readDir }
-from "std/path" import { pathJoin, pathExt }
-from "std/regex" import { Regex, RegexMatch, regexNewFlags, regexFindAll }
-from "std/color" import { red, green, magenta, bold }
+from "std/argparse" import {
+    newParser
+}
+from "std/io" import {
+    readFile
+}
+from "std/fs" import {
+    isDir, isFile, readDir
+}
+from "std/path" import {
+    pathJoin, pathExt
+}
+from "std/regex" import {
+    Regex, RegexMatch, regexNewFlags, regexFindAll
+}
+from "std/color" import {
+    red, green, magenta, bold
+}
 
 // ── helpers ──
 
 fn shouldSkipDir(name: &string): bool {
-    if name == ".git" { return true }
-    if name == ".hg" { return true }
-    if name == ".svn" { return true }
-    if name == "node_modules" { return true }
-    if name == "target" { return true }
-    if name == "build" { return true }
-    if name == "dist" { return true }
-    if name == "__pycache__" { return true }
-    if name == ".cache" { return true }
+    if name == ".git" {
+        return true
+    }
+    if name == ".hg" {
+        return true
+    }
+    if name == ".svn" {
+        return true
+    }
+    if name == "node_modules" {
+        return true
+    }
+    if name == "target" {
+        return true
+    }
+    if name == "build" {
+        return true
+    }
+    if name == "dist" {
+        return true
+    }
+    if name == "__pycache__" {
+        return true
+    }
+    if name == ".cache" {
+        return true
+    }
     return false
 }
 
 fn matchesType(path: &string, fileType: &string): bool {
-    if fileType.len == 0 { return true }
+    if fileType.len == 0 {
+        return true
+    }
     let ext = pathExt(path)
-    if ext.len == 0 { return false }
+    if ext.len == 0 {
+        return false
+    }
     return ext == "." + fileType
 }
 
@@ -69,7 +103,10 @@ fn filterWordBounds(line: &string, matches: Vec<RegexMatch>): Vec<RegexMatch> {
             }
         }
         if ok {
-            result.push(RegexMatch { start: matches[i].start, end: matches[i].end })
+            result.push(RegexMatch {
+                start: matches[i].start, end: matches[i].end
+            }
+            )
         }
     }
     return result
@@ -105,7 +142,7 @@ fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): strin
 // ── output formatting ──
 
 fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &string,
-              multiFile: bool, opts: &RgOpts): string {
+multiFile: bool, opts: &RgOpts): string {
     var out: string = ""
     if multiFile && opts.noHeading {
         if opts.noColor {
@@ -141,8 +178,12 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
 
     var content: string = ""
     match readFile(filePath) {
-        Result.Ok(data) => { content = data }
-        Result.Err(_) => { return }
+        Result.Ok(data) => {
+            content = data
+        }
+        Result.Err(_) => {
+            return
+        }
     }
 
     let lines = content.split("\n")
@@ -183,8 +224,12 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
 
                 // before-context lines
                 var ctxStart: i64 = i - opts.beforeCtx
-                if ctxStart < 0 { ctxStart = 0 }
-                if ctxStart <= lastPrinted { ctxStart = lastPrinted + 1 }
+                if ctxStart < 0 {
+                    ctxStart = 0
+                }
+                if ctxStart <= lastPrinted {
+                    ctxStart = lastPrinted + 1
+                }
 
                 if lastPrinted >= 0 && ctxStart > lastPrinted + 1 {
                     print("--")
@@ -291,9 +336,13 @@ fn main(): i32 {
         flags = 3
     }
 
-    var re = Regex { _preg: [0 ; 128], _valid: false }
+    var re = Regex {
+        _preg: [0; 128], _valid: false
+    }
     match regexNewFlags(pattern.clone(), flags) {
-        Option.Some(r) => { re = r }
+        Option.Some(r) => {
+            re = r
+        }
         Option.None => {
             print($"rg: invalid regex: {pattern}")
             return 2
@@ -306,8 +355,12 @@ fn main(): i32 {
     let beforeVal = args.getI64("before-context")
     var afterCtx: i64 = ctxVal
     var beforeCtx: i64 = ctxVal
-    if afterVal > 0 { afterCtx = afterVal }
-    if beforeVal > 0 { beforeCtx = beforeVal }
+    if afterVal > 0 {
+        afterCtx = afterVal
+    }
+    if beforeVal > 0 {
+        beforeCtx = beforeVal
+    }
 
     var opts = RgOpts {
         countOnly: args.getBool("count"),

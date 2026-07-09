@@ -6,8 +6,11 @@
 // @expect: done!
 // @expect: sum 120
 
-from "std/runtime" import { Task, Promise }
-from "std/time" import {}
+from "std/runtime" import {
+    Task, Promise
+}
+from "std/time" import {
+}
 
 fn main(): i32 {
     var promises: Vec<Promise<i64>> = Vec.new()
@@ -15,12 +18,13 @@ fn main(): i32 {
     var i: i64 = 1
     while i <= 3 {
         let val = i * 20
-        promises.push(Promise<i64>.run(move (): i64 => {
+        promises.push(Promise<i64>.run(move(): i64 => {
             print("sleeping!")
             sleepMs(100)
             print("done!")
             return val
-        }))
+        }
+        ))
         i = i + 1
     }
 

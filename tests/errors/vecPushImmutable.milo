@@ -5,4 +5,3 @@ fn main(): i32 {
     v.push(10)
     return 0
 }
-

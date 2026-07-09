@@ -1,6 +1,8 @@
 // @expect: done
 
-from "std/log" import { logDebug, logError, logInfo, logWarn }
+from "std/log" import {
+    logDebug, logError, logInfo, logWarn
+}
 
 fn main(): i32 {
     logInfo("server starting")

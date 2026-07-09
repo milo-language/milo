@@ -1,7 +1,11 @@
 // std/http — high-level HTTP server for Milo
 
-from "std/os" import { accept, bind, close, getsockname, listen, ntohs, read, setsockopt, socket, write }
-from "std/platform" import { SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr }
+from "std/os" import {
+    accept, bind, close, getsockname, listen, ntohs, read, setsockopt, socket, write
+}
+from "std/platform" import {
+    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr
+}
 
 // ── Public types ──
 
@@ -64,22 +68,32 @@ impl Context {
     }
 
     fn setHeader(self: &mut Self, name: string, value: string): void {
-        self.respHeaders.push(Param { name: name, value: value })
+        self.respHeaders.push(Param {
+            name: name, value: value
+        }
+        )
     }
 
     fn setCookie(self: &mut Self, name: string, value: string): void {
-        self.respHeaders.push(Param { name: "Set-Cookie", value: name + "=" + value })
+        self.respHeaders.push(Param {
+            name: "Set-Cookie", value: name + "=" + value
+        }
+        )
     }
 
     fn setCookieWithOptions(self: &mut Self, name: string, value: string, options: string): void {
-        self.respHeaders.push(Param { name: "Set-Cookie", value: name + "=" + value + "; " + options })
+        self.respHeaders.push(Param {
+            name: "Set-Cookie", value: name + "=" + value + "; " + options
+        }
+        )
     }
 
     fn deleteCookie(self: &mut Self, name: string): void {
         self.respHeaders.push(Param {
             name: "Set-Cookie",
             value: name + "=; Max-Age=0",
-        })
+        }
+        )
     }
 
     fn text(self: &Self, body: string): Response {
@@ -145,7 +159,7 @@ fn eqIgnoreCase(a: &string, b: &string): bool {
     return true
 }
 
-fn bufToStr(buf: &[u8 ; 8192], start: i64, end: i64): string {
+fn bufToStr(buf: &[u8; 8192], start: i64, end: i64): string {
     var s: string = ""
     var i: i64 = start
     while i < end {
@@ -155,7 +169,7 @@ fn bufToStr(buf: &[u8 ; 8192], start: i64, end: i64): string {
     return s
 }
 
-fn parseRequest(buf: &[u8 ; 8192], n: i64): Request {
+fn parseRequest(buf: &[u8; 8192], n: i64): Request {
     var i: i64 = 0
 
     // parse method
@@ -213,7 +227,10 @@ fn parseRequest(buf: &[u8 ; 8192], n: i64): Request {
         if eqIgnoreCase(headerName, "content-length") {
             contentLength = parseContentLength(headerValue)
         }
-        headers.push(Param { name: headerName, value: headerValue })
+        headers.push(Param {
+            name: headerName, value: headerValue
+        }
+        )
         if i < n && buf[i] == '\r' {
             i = i + 1
         }
@@ -279,7 +296,10 @@ fn parseQueryString(qs: &string): Vec<Param> {
     for ch in qs {
         if ch == '&' {
             if key.len > 0 {
-                params.push(Param { name: key, value: value })
+                params.push(Param {
+                    name: key, value: value
+                }
+                )
             }
             key = ""
             value = ""
@@ -293,7 +313,10 @@ fn parseQueryString(qs: &string): Vec<Param> {
         }
     }
     if key.len > 0 {
-        params.push(Param { name: key, value: value })
+        params.push(Param {
+            name: key, value: value
+        }
+        )
     }
     return params
 }
@@ -446,7 +469,9 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         if rawFd < 0 {
             return Result.Err("socket() failed")
         }
-        let sock = Socket { fd: rawFd }
+        let sock = Socket {
+            fd: rawFd
+        }
 
         var one: i32 = 1
         setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
@@ -476,7 +501,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
                 continue
             }
 
-            var buf: [u8 ; 8192] = [0 ; 8192]
+            var buf: [u8; 8192] = [0; 8192]
             let n = read(clientFd, buf, BUF_SIZE)
             if n > 0 {
                 let req = parseRequest(buf, n)
@@ -501,7 +526,7 @@ struct Route {
 
 struct Router {
     routes: Vec<Route>,
-    middleware: Vec<(&mut Context, (&mut Context) => Response) => Response>,
+    middleware: Vec < (&mut Context, (&mut Context) => Response) => Response >,
 }
 
 impl Router {
@@ -543,12 +568,13 @@ impl Router {
             pattern: pattern,
             paramNames: paramNames,
             handler: h,
-        })
+        }
+        )
     }
 
     fn handle(self: &Self, req: Request): HandledResponse {
         // find matching route index + params first (borrowing req), then move req after the loop
-        var matchIdx: i64 = - 1 as i64
+        var matchIdx: i64 = -1 as i64
         var matchedParams: Vec<Param> = []
         for i in 0..self.routes.len {
             let route = self.routes[i]
@@ -563,7 +589,9 @@ impl Router {
         }
 
         if matchIdx < 0 {
-            return HandledResponse { response: Response.NotFound, headers: [] }
+            return HandledResponse {
+                response: Response.NotFound, headers: []
+            }
         }
 
         var ctx = Context {
@@ -584,7 +612,9 @@ impl Router {
             m = m - 1
         }
         let resp = final(ctx)
-        return HandledResponse { response: resp, headers: ctx.respHeaders }
+        return HandledResponse {
+            response: resp, headers: ctx.respHeaders
+        }
     }
 }
 
@@ -606,7 +636,9 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
         if rawFd < 0 {
             return Result.Err("socket() failed")
         }
-        let sock = Socket { fd: rawFd }
+        let sock = Socket {
+            fd: rawFd
+        }
 
         var one: i32 = 1
         setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
@@ -633,7 +665,7 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
                 continue
             }
 
-            var buf: [u8 ; 8192] = [0 ; 8192]
+            var buf: [u8; 8192] = [0; 8192]
             let n = read(clientFd, buf, BUF_SIZE)
             if n > 0 {
                 let req = parseRequest(buf, n)
@@ -703,7 +735,10 @@ fn matchRoute(pattern: &string, paramNames: &Vec<string>, path: &string): Option
         let seg = pathSegs[i]
         if pat.len > 0 && pat[0] == ':' {
             if paramIdx < paramNames.len {
-                params.push(Param { name: paramNames[paramIdx].clone(), value: seg.clone() })
+                params.push(Param {
+                    name: paramNames[paramIdx].clone(), value: seg.clone()
+                }
+                )
                 paramIdx = paramIdx + 1
             }
         } else if pat != seg {

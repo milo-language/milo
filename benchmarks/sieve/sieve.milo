@@ -34,4 +34,3 @@ fn main(): i32 {
     print("primes <= ", limit, ": ", count)
     return 0
 }
-

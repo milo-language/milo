@@ -5,7 +5,8 @@ interface Greeter {
     fn greet(self: &Self): string
 }
 
-struct Dog {}
+struct Dog {
+}
 
 impl Dog {
     fn greet(self: &Self): string {
@@ -13,7 +14,8 @@ impl Dog {
     }
 }
 
-struct Cat {}
+struct Cat {
+}
 
 impl Cat {
     fn greet(self: &Self): string {
@@ -26,8 +28,10 @@ fn sayHello(g: &Greeter) {
 }
 
 fn main(): i32 {
-    let d = Dog {}
-    let c = Cat {}
+    let d = Dog {
+    }
+    let c = Cat {
+    }
     sayHello(d)
     sayHello(c)
     return 0

@@ -1,6 +1,10 @@
 // jq — minimal JSON query tool (field access, array iteration, array indexing)
-from "std/argparse" import { newParser }
-from "std/io" import { readFile, readStdin }
+from "std/argparse" import {
+    newParser
+}
+from "std/io" import {
+    readFile, readStdin
+}
 
 fn skipWs(s: &string, start: i64): i64 {
     var pos: i64 = start
@@ -381,4 +385,3 @@ fn main(): i32 {
 
     return 0
 }
-

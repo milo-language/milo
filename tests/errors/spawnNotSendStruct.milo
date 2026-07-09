@@ -1,6 +1,8 @@
 // @error: cannot send 'u' of type 'Unsafe' across threads
 
-from "std/thread" import { Thread }
+from "std/thread" import {
+    Thread
+}
 
 struct Unsafe {
     p: *u8,
@@ -8,10 +10,13 @@ struct Unsafe {
 
 fn main(): i32 {
     unsafe {
-        let u = Unsafe { p: 0 as *u8 }
-        let t = Thread.spawn(move (): void => {
+        let u = Unsafe {
+            p: 0 as *u8
+        }
+        let t = Thread.spawn(move(): void => {
             print("bad: ", u.p as i64)
-        })!
+        }
+        )!
         t.join()!
     }
     return 0

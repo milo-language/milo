@@ -3,12 +3,16 @@
 // (by-value struct return, non-C-representable return).
 extern type Handle
 
-extern struct Point {
+extern
+
+struct Point {
     x: i32,
     y: i32,
 }
 
-extern struct Rect {
+extern
+
+struct Rect {
     origin: Point,
     w: i32,
     h: i32,
@@ -34,7 +38,9 @@ fn apply(cb: (i32) => i32, v: i32): i32 {
 
 // returns a struct by value → skipped until define-side ABI lowering (stage 6)
 fn make_point(x: i32, y: i32): Point {
-    return Point { x: x, y: y }
+    return Point {
+        x: x, y: y
+    }
 }
 
 // non-C-representable return → skipped with a comment

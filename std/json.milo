@@ -26,15 +26,23 @@ struct Json {
 
 fn jsonNull(): Json {
     var nodes: Vec<JsonNode> = Vec.new()
-    nodes.push(JsonNode { kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
-    return Json { source: "", nodes: nodes, childIdx: Vec.new(), keyOffsets: Vec.new(), keyLens: Vec.new(), root: 0 }
+    nodes.push(JsonNode {
+        kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+    }
+    )
+    return Json {
+        source: "", nodes: nodes, childIdx: Vec.new(), keyOffsets: Vec.new(), keyLens: Vec.new(), root: 0
+    }
 }
 
 fn jsonClone(src: &Json): Json {
     var nodes: Vec<JsonNode> = Vec.new()
     for i in 0..src.nodes.len() {
         let n = src.nodes[i]
-        nodes.push(JsonNode { kind: n.kind, boolVal: n.boolVal, numVal: n.numVal, strStart: n.strStart, strLen: n.strLen, childStart: n.childStart, childCount: n.childCount, keyStart: n.keyStart })
+        nodes.push(JsonNode {
+            kind: n.kind, boolVal: n.boolVal, numVal: n.numVal, strStart: n.strStart, strLen: n.strLen, childStart: n.childStart, childCount: n.childCount, keyStart: n.keyStart
+        }
+        )
     }
     var ci: Vec<i64> = Vec.new()
     for i in 0..src.childIdx.len() {
@@ -46,15 +54,21 @@ fn jsonClone(src: &Json): Json {
         ko.push(src.keyOffsets[i])
         kl.push(src.keyLens[i])
     }
-    return Json { source: src.source.clone(), nodes: nodes, childIdx: ci, keyOffsets: ko, keyLens: kl, root: src.root }
+    return Json {
+        source: src.source.clone(), nodes: nodes, childIdx: ci, keyOffsets: ko, keyLens: kl, root: src.root
+    }
 }
 
 // ── Key comparison (byte-by-byte against source, zero allocation) ──
 
 fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
-    if klen != target.len { return false }
+    if klen != target.len {
+        return false
+    }
     for i in 0..klen {
-        if source[off + i] != target[i] { return false }
+        if source[off + i] != target[i] {
+            return false
+        }
     }
     return true
 }
@@ -62,9 +76,15 @@ fn jsonKeyEq(source: &string, off: i64, klen: i64, target: &string): bool {
 // ── String materialization (allocates only when user requests the value) ──
 
 fn _jsonHexVal(c: u8): i64 {
-    if c >= 48 && c <= 57 { return (c - 48) as i64 }        // 0-9
-    if c >= 97 && c <= 102 { return (c - 97 + 10) as i64 }  // a-f
-    if c >= 65 && c <= 70 { return (c - 65 + 10) as i64 }   // A-F
+    if c >= 48 && c <= 57 {
+        return (c - 48) as i64
+    } // 0-9
+    if c >= 97 && c <= 102 {
+        return (c - 97 + 10) as i64
+    } // a-f
+    if c >= 65 && c <= 70 {
+        return (c - 65 + 10) as i64
+    } // A-F
     return 0
 }
 
@@ -93,21 +113,37 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
         if source[start + i] == '\\' && i + 1 < len {
             i = i + 1
             let esc = source[start + i]
-            if esc == 'n' { result.push('\n') }
-            else if esc == 't' { result.push('\t') }
-            else if esc == 'r' { result.push('\r') }
-            else if esc == '"' { result.push('"') }
-            else if esc == '\\' { result.push('\\') }
-            else if esc == '/' { result.push('/') }
-            else if esc == 'b' { result.push(8 as u8) }
-            else if esc == 'f' { result.push(12 as u8) }
+            if esc == 'n' {
+                result.push('\n')
+            } 
+            else if esc == 't' {
+                result.push('\t')
+            } 
+            else if esc == 'r' {
+                result.push('\r')
+            } 
+            else if esc == '"' {
+                result.push('"')
+            } 
+            else if esc == '\\' {
+                result.push('\\')
+            } 
+            else if esc == '/' {
+                result.push('/')
+            } 
+            else if esc == 'b' {
+                result.push(8 as u8)
+            } 
+            else if esc == 'f' {
+                result.push(12 as u8)
+            } 
             else if esc == 'u' && i + 4 < len {
                 // \uXXXX → codepoint → UTF-8 bytes (BMP only; surrogate pairs
                 // emit per-half, which round-trips fine for terminal control input).
                 let cp = (_jsonHexVal(source[start + i + 1]) << 12)
-                    | (_jsonHexVal(source[start + i + 2]) << 8)
-                    | (_jsonHexVal(source[start + i + 3]) << 4)
-                    | _jsonHexVal(source[start + i + 4])
+                | (_jsonHexVal(source[start + i + 2]) << 8)
+                | (_jsonHexVal(source[start + i + 3]) << 4)
+                | _jsonHexVal(source[start + i + 4])
                 i = i + 4
                 if cp < 0x80 {
                     result.push(cp as u8)
@@ -119,8 +155,10 @@ fn jsonMaterializeStr(source: &string, start: i64, len: i64): string {
                     result.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
                     result.push((0x80 | (cp & 0x3F)) as u8)
                 }
+            } 
+            else {
+                result.push(esc)
             }
-            else { result.push(esc) }
         } else {
             result.push(source[start + i])
         }
@@ -134,7 +172,9 @@ impl Json {
 
     fn get(self: &Self, key: &string): Option<Json> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let childNodeIdx = self.childIdx[node.childStart + i]
@@ -146,7 +186,9 @@ impl Json {
 
     fn str(self: &Self, key: &string): Option<string> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
@@ -161,11 +203,15 @@ impl Json {
 
     fn i64(self: &Self, key: &string): Option<i64> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
-                if child.kind == 2 { return Option.Some(child.numVal as i64) }
+                if child.kind == 2 {
+                    return Option.Some(child.numVal as i64)
+                }
                 return Option.None
             }
         }
@@ -174,11 +220,15 @@ impl Json {
 
     fn f64(self: &Self, key: &string): Option<f64> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
-                if child.kind == 2 { return Option.Some(child.numVal) }
+                if child.kind == 2 {
+                    return Option.Some(child.numVal)
+                }
                 return Option.None
             }
         }
@@ -187,11 +237,15 @@ impl Json {
 
     fn bool(self: &Self, key: &string): Option<bool> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         for i in 0..node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[node.childStart + i]]
-                if child.kind == 1 { return Option.Some(child.boolVal) }
+                if child.kind == 1 {
+                    return Option.Some(child.boolVal)
+                }
                 return Option.None
             }
         }
@@ -202,7 +256,9 @@ impl Json {
 
     fn at(self: &Self, index: i64): Option<Json> {
         let node = self.nodes[self.root]
-        if node.kind != 4 || index < 0 || index >= node.childCount { return Option.None }
+        if node.kind != 4 || index < 0 || index >= node.childCount {
+            return Option.None
+        }
         let childNodeIdx = self.childIdx[node.childStart + index]
         return Option.Some(jsonExtractSubtree(self, childNodeIdx))
     }
@@ -211,15 +267,21 @@ impl Json {
 
     fn strAt(self: &Self, index: i64, key: &string): Option<string> {
         let node = self.nodes[self.root]
-        if node.kind != 4 || index < 0 || index >= node.childCount { return Option.None }
+        if node.kind != 4 || index < 0 || index >= node.childCount {
+            return Option.None
+        }
         let objIdx = self.childIdx[node.childStart + index]
         let obj = self.nodes[objIdx]
-        if obj.kind != 5 { return Option.None }
+        if obj.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < obj.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + i], self.keyLens[obj.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[obj.childStart + i]]
-                if child.kind == 3 { return Option.Some(jsonMaterializeStr(self.source, child.strStart, child.strLen)) }
+                if child.kind == 3 {
+                    return Option.Some(jsonMaterializeStr(self.source, child.strStart, child.strLen))
+                }
                 return Option.None
             }
             i = i + 1
@@ -229,15 +291,21 @@ impl Json {
 
     fn i64At(self: &Self, index: i64, key: &string): Option<i64> {
         let node = self.nodes[self.root]
-        if node.kind != 4 || index < 0 || index >= node.childCount { return Option.None }
+        if node.kind != 4 || index < 0 || index >= node.childCount {
+            return Option.None
+        }
         let objIdx = self.childIdx[node.childStart + index]
         let obj = self.nodes[objIdx]
-        if obj.kind != 5 { return Option.None }
+        if obj.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < obj.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + i], self.keyLens[obj.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[obj.childStart + i]]
-                if child.kind == 2 { return Option.Some(child.numVal as i64) }
+                if child.kind == 2 {
+                    return Option.Some(child.numVal as i64)
+                }
                 return Option.None
             }
             i = i + 1
@@ -247,15 +315,21 @@ impl Json {
 
     fn f64At(self: &Self, index: i64, key: &string): Option<f64> {
         let node = self.nodes[self.root]
-        if node.kind != 4 || index < 0 || index >= node.childCount { return Option.None }
+        if node.kind != 4 || index < 0 || index >= node.childCount {
+            return Option.None
+        }
         let objIdx = self.childIdx[node.childStart + index]
         let obj = self.nodes[objIdx]
-        if obj.kind != 5 { return Option.None }
+        if obj.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < obj.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + i], self.keyLens[obj.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[obj.childStart + i]]
-                if child.kind == 2 { return Option.Some(child.numVal) }
+                if child.kind == 2 {
+                    return Option.Some(child.numVal)
+                }
                 return Option.None
             }
             i = i + 1
@@ -265,15 +339,21 @@ impl Json {
 
     fn boolAt(self: &Self, index: i64, key: &string): Option<bool> {
         let node = self.nodes[self.root]
-        if node.kind != 4 || index < 0 || index >= node.childCount { return Option.None }
+        if node.kind != 4 || index < 0 || index >= node.childCount {
+            return Option.None
+        }
         let objIdx = self.childIdx[node.childStart + index]
         let obj = self.nodes[objIdx]
-        if obj.kind != 5 { return Option.None }
+        if obj.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < obj.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + i], self.keyLens[obj.keyStart + i], key) {
                 let child = self.nodes[self.childIdx[obj.childStart + i]]
-                if child.kind == 1 { return Option.Some(child.boolVal) }
+                if child.kind == 1 {
+                    return Option.Some(child.boolVal)
+                }
                 return Option.None
             }
             i = i + 1
@@ -283,10 +363,14 @@ impl Json {
 
     fn getAt(self: &Self, index: i64, key: &string): Option<Json> {
         let node = self.nodes[self.root]
-        if node.kind != 4 || index < 0 || index >= node.childCount { return Option.None }
+        if node.kind != 4 || index < 0 || index >= node.childCount {
+            return Option.None
+        }
         let objIdx = self.childIdx[node.childStart + index]
         let obj = self.nodes[objIdx]
-        if obj.kind != 5 { return Option.None }
+        if obj.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < obj.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + i], self.keyLens[obj.keyStart + i], key) {
@@ -301,7 +385,9 @@ impl Json {
 
     fn childLen(self: &Self, key: &string): i64 {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return 0 }
+        if node.kind != 5 {
+            return 0
+        }
         var i: i64 = 0
         while i < node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
@@ -315,20 +401,28 @@ impl Json {
 
     fn childF64At(self: &Self, key: &string, index: i64, subKey: &string): Option<f64> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let arr = self.nodes[self.childIdx[node.childStart + i]]
-                if arr.kind != 4 || index < 0 || index >= arr.childCount { return Option.None }
+                if arr.kind != 4 || index < 0 || index >= arr.childCount {
+                    return Option.None
+                }
                 let objIdx = self.childIdx[arr.childStart + index]
                 let obj = self.nodes[objIdx]
-                if obj.kind != 5 { return Option.None }
+                if obj.kind != 5 {
+                    return Option.None
+                }
                 var j: i64 = 0
                 while j < obj.childCount {
                     if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + j], self.keyLens[obj.keyStart + j], subKey) {
                         let val = self.nodes[self.childIdx[obj.childStart + j]]
-                        if val.kind == 2 { return Option.Some(val.numVal) }
+                        if val.kind == 2 {
+                            return Option.Some(val.numVal)
+                        }
                         return Option.None
                     }
                     j = j + 1
@@ -342,20 +436,28 @@ impl Json {
 
     fn childBoolAt(self: &Self, key: &string, index: i64, subKey: &string): Option<bool> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let arr = self.nodes[self.childIdx[node.childStart + i]]
-                if arr.kind != 4 || index < 0 || index >= arr.childCount { return Option.None }
+                if arr.kind != 4 || index < 0 || index >= arr.childCount {
+                    return Option.None
+                }
                 let objIdx = self.childIdx[arr.childStart + index]
                 let obj = self.nodes[objIdx]
-                if obj.kind != 5 { return Option.None }
+                if obj.kind != 5 {
+                    return Option.None
+                }
                 var j: i64 = 0
                 while j < obj.childCount {
                     if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + j], self.keyLens[obj.keyStart + j], subKey) {
                         let val = self.nodes[self.childIdx[obj.childStart + j]]
-                        if val.kind == 1 { return Option.Some(val.boolVal) }
+                        if val.kind == 1 {
+                            return Option.Some(val.boolVal)
+                        }
                         return Option.None
                     }
                     j = j + 1
@@ -369,20 +471,28 @@ impl Json {
 
     fn childStrAt(self: &Self, key: &string, index: i64, subKey: &string): Option<string> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let arr = self.nodes[self.childIdx[node.childStart + i]]
-                if arr.kind != 4 || index < 0 || index >= arr.childCount { return Option.None }
+                if arr.kind != 4 || index < 0 || index >= arr.childCount {
+                    return Option.None
+                }
                 let objIdx = self.childIdx[arr.childStart + index]
                 let obj = self.nodes[objIdx]
-                if obj.kind != 5 { return Option.None }
+                if obj.kind != 5 {
+                    return Option.None
+                }
                 var j: i64 = 0
                 while j < obj.childCount {
                     if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + j], self.keyLens[obj.keyStart + j], subKey) {
                         let val = self.nodes[self.childIdx[obj.childStart + j]]
-                        if val.kind == 3 { return Option.Some(jsonMaterializeStr(self.source, val.strStart, val.strLen)) }
+                        if val.kind == 3 {
+                            return Option.Some(jsonMaterializeStr(self.source, val.strStart, val.strLen))
+                        }
                         return Option.None
                     }
                     j = j + 1
@@ -396,20 +506,28 @@ impl Json {
 
     fn childI64At(self: &Self, key: &string, index: i64, subKey: &string): Option<i64> {
         let node = self.nodes[self.root]
-        if node.kind != 5 { return Option.None }
+        if node.kind != 5 {
+            return Option.None
+        }
         var i: i64 = 0
         while i < node.childCount {
             if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
                 let arr = self.nodes[self.childIdx[node.childStart + i]]
-                if arr.kind != 4 || index < 0 || index >= arr.childCount { return Option.None }
+                if arr.kind != 4 || index < 0 || index >= arr.childCount {
+                    return Option.None
+                }
                 let objIdx = self.childIdx[arr.childStart + index]
                 let obj = self.nodes[objIdx]
-                if obj.kind != 5 { return Option.None }
+                if obj.kind != 5 {
+                    return Option.None
+                }
                 var j: i64 = 0
                 while j < obj.childCount {
                     if jsonKeyEq(self.source, self.keyOffsets[obj.keyStart + j], self.keyLens[obj.keyStart + j], subKey) {
                         let val = self.nodes[self.childIdx[obj.childStart + j]]
-                        if val.kind == 2 { return Option.Some(val.numVal as i64) }
+                        if val.kind == 2 {
+                            return Option.Some(val.numVal as i64)
+                        }
                         return Option.None
                     }
                     j = j + 1
@@ -425,36 +543,56 @@ impl Json {
 
     fn asStr(self: &Self): Option<string> {
         let node = self.nodes[self.root]
-        if node.kind == 3 { return Option.Some(jsonMaterializeStr(self.source, node.strStart, node.strLen)) }
+        if node.kind == 3 {
+            return Option.Some(jsonMaterializeStr(self.source, node.strStart, node.strLen))
+        }
         return Option.None
     }
 
     fn asI64(self: &Self): Option<i64> {
         let node = self.nodes[self.root]
-        if node.kind == 2 { return Option.Some(node.numVal as i64) }
+        if node.kind == 2 {
+            return Option.Some(node.numVal as i64)
+        }
         return Option.None
     }
 
     fn asF64(self: &Self): Option<f64> {
         let node = self.nodes[self.root]
-        if node.kind == 2 { return Option.Some(node.numVal) }
+        if node.kind == 2 {
+            return Option.Some(node.numVal)
+        }
         return Option.None
     }
 
     fn asBool(self: &Self): Option<bool> {
         let node = self.nodes[self.root]
-        if node.kind == 1 { return Option.Some(node.boolVal) }
+        if node.kind == 1 {
+            return Option.Some(node.boolVal)
+        }
         return Option.None
     }
 
     // ── Type checks ──
 
-    fn isNull(self: &Self): bool { return self.nodes[self.root].kind == 0 }
-    fn isStr(self: &Self): bool { return self.nodes[self.root].kind == 3 }
-    fn isNum(self: &Self): bool { return self.nodes[self.root].kind == 2 }
-    fn isBool(self: &Self): bool { return self.nodes[self.root].kind == 1 }
-    fn isArray(self: &Self): bool { return self.nodes[self.root].kind == 4 }
-    fn isObject(self: &Self): bool { return self.nodes[self.root].kind == 5 }
+    fn isNull(self: &Self): bool {
+        return self.nodes[self.root].kind == 0
+    }
+    fn isStr(self: &Self): bool {
+        return self.nodes[self.root].kind == 3
+    }
+    fn isNum(self: &Self): bool {
+        return self.nodes[self.root].kind == 2
+    }
+    fn isBool(self: &Self): bool {
+        return self.nodes[self.root].kind == 1
+    }
+    fn isArray(self: &Self): bool {
+        return self.nodes[self.root].kind == 4
+    }
+    fn isObject(self: &Self): bool {
+        return self.nodes[self.root].kind == 5
+    }
 
     fn len(self: &Self): i64 {
         return self.nodes[self.root].childCount
@@ -467,7 +605,9 @@ impl Json {
     fn keys(self: &Self): Vec<string> {
         let node = self.nodes[self.root]
         var result: Vec<string> = Vec.new()
-        if node.kind != 5 { return result }
+        if node.kind != 5 {
+            return result
+        }
         var i: i64 = 0
         while i < node.childCount {
             result.push(jsonMaterializeStr(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i]))
@@ -479,14 +619,20 @@ impl Json {
 
 fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
     let node = doc.nodes[nodeIdx]
-    if node.kind == 0 { return "null" }
+    if node.kind == 0 {
+        return "null"
+    }
     if node.kind == 1 {
-        if node.boolVal { return "true" }
+        if node.boolVal {
+            return "true"
+        }
         return "false"
     }
     if node.kind == 2 {
         // Verbatim source slice: exact round-trip for ints f64 formatting would mangle.
-        if node.strLen > 0 { return jsonMaterializeStr(doc.source, node.strStart, node.strLen) }
+        if node.strLen > 0 {
+            return jsonMaterializeStr(doc.source, node.strStart, node.strLen)
+        }
         return $"{node.numVal}"
     }
     if node.kind == 3 {
@@ -496,7 +642,9 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
         var s: string = "["
         var i: i64 = 0
         while i < node.childCount {
-            if i > 0 { s = s + "," }
+            if i > 0 {
+                s = s + ","
+            }
             s = s + jsonNodeRawStr(doc, doc.childIdx[node.childStart + i])
             i = i + 1
         }
@@ -506,7 +654,9 @@ fn jsonNodeRawStr(doc: &Json, nodeIdx: i64): string {
         var s: string = "{"
         var i: i64 = 0
         while i < node.childCount {
-            if i > 0 { s = s + "," }
+            if i > 0 {
+                s = s + ","
+            }
             s = s + "\"" + jsonEscapeStr(jsonMaterializeStr(doc.source, doc.keyOffsets[node.keyStart + i], doc.keyLens[node.keyStart + i])) + "\":" + jsonNodeRawStr(doc, doc.childIdx[node.childStart + i])
             i = i + 1
         }
@@ -532,7 +682,9 @@ fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
         var newKeyStart: i64 = 0
         if old.childCount > 0 {
             newChildStart = childIdx.len()
-            if old.kind == 5 { newKeyStart = keyOffsets.len() }
+            if old.kind == 5 {
+                newKeyStart = keyOffsets.len()
+            }
             var c: i64 = 0
             while c < old.childCount {
                 let oldChildIdx = src.childIdx[old.childStart + c]
@@ -550,16 +702,21 @@ fn jsonExtractSubtree(src: &Json, nodeIdx: i64): Json {
             kind: old.kind, boolVal: old.boolVal, numVal: old.numVal,
             strStart: old.strStart, strLen: old.strLen,
             childStart: newChildStart, childCount: old.childCount, keyStart: newKeyStart,
-        })
+        }
+        )
         processed = processed + 1
     }
-    return Json { source: src.source.clone(), nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: 0 }
+    return Json {
+        source: src.source.clone(), nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: 0
+    }
 }
 
 // ── Parser ──
 
 fn jsonParse(s: string): Result<Json> {
-    if s.len == 0 { return Result.Err("empty input") }
+    if s.len == 0 {
+        return Result.Err("empty input")
+    }
     var nodes: Vec<JsonNode> = Vec.new()
     var childIdx: Vec<i64> = Vec.new()
     var keyOffsets: Vec<i64> = Vec.new()
@@ -571,12 +728,21 @@ fn jsonParse(s: string): Result<Json> {
     var pos: i64 = 0
     var err: bool = false
     jsonSkipWs(s, pos)
-    if pos >= s.len { return Result.Err("empty input") }
+    if pos >= s.len {
+        return Result.Err("empty input")
+    }
     let rootIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
-    if err { return Result.Err("malformed json") }
+    if err {
+        return Result.Err("malformed json")
+    }
     jsonSkipWs(s, pos)
-    if pos != s.len { return Result.Err("trailing content") }
-    return Result.Ok(Json { source: s, nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: rootIdx })
+    if pos != s.len {
+        return Result.Err("trailing content")
+    }
+    return Result.Ok(Json {
+        source: s, nodes: nodes, childIdx: childIdx, keyOffsets: keyOffsets, keyLens: keyLens, root: rootIdx
+    }
+    )
 }
 
 // JSONC (Microsoft/VS Code flavor): JSON plus // and /* */ comments and trailing commas.
@@ -598,7 +764,9 @@ fn jsonStripJsonc(s: &string): string {
                 nc.push(s[i + 1])
                 i = i + 2
             } else {
-                if c == '"' { inStr = false }
+                if c == '"' {
+                    inStr = false
+                }
                 i = i + 1
             }
         } else if c == '"' {
@@ -607,10 +775,14 @@ fn jsonStripJsonc(s: &string): string {
             i = i + 1
         } else if c == '/' && i + 1 < s.len && s[i + 1] == '/' {
             i = i + 2
-            while i < s.len && s[i] != '\n' { i = i + 1 }
+            while i < s.len && s[i] != '\n' {
+                i = i + 1
+            }
         } else if c == '/' && i + 1 < s.len && s[i + 1] == '*' {
             i = i + 2
-            while i + 1 < s.len && !(s[i] == '*' && s[i + 1] == '/') { i = i + 1 }
+            while i + 1 < s.len && !(s[i] == '*' && s[i + 1] == '/') {
+                i = i + 1
+            }
             i = i + 2
         } else {
             nc.push(c)
@@ -629,7 +801,9 @@ fn jsonStripJsonc(s: &string): string {
                 out.push(nc[j + 1])
                 j = j + 2
             } else {
-                if c == '"' { inStr2 = false }
+                if c == '"' {
+                    inStr2 = false
+                }
                 j = j + 1
             }
         } else if c == '"' {
@@ -638,7 +812,9 @@ fn jsonStripJsonc(s: &string): string {
             j = j + 1
         } else if c == ',' {
             var k: i64 = j + 1
-            while k < nc.len && (nc[k] == ' ' || nc[k] == '\t' || nc[k] == '\n' || nc[k] == '\r') { k = k + 1 }
+            while k < nc.len && (nc[k] == ' ' || nc[k] == '\t' || nc[k] == '\n' || nc[k] == '\r') {
+                k = k + 1
+            }
             if k < nc.len && (nc[k] == '}' || nc[k] == ']') {
                 j = j + 1
             } else {
@@ -661,7 +837,9 @@ fn jsonParseJsonc(s: string): Result<Json> {
 fn jsonSkipWs(s: &string, pos: &mut i64) {
     while pos < s.len {
         let c = s[pos]
-        if c != ' ' && c != '\t' && c != '\n' && c != '\r' { break }
+        if c != ' ' && c != '\t' && c != '\n' && c != '\r' {
+            break
+        }
         pos = pos + 1
     }
 }
@@ -683,37 +861,60 @@ fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
     if pos >= s.len {
         err = true
         let idx = nodes.len()
-        nodes.push(JsonNode { kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+        nodes.push(JsonNode {
+            kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+        }
+        )
         return idx
     }
     let c = s[pos]
-    if c == '"' { return jsonParseString(s, pos, nodes, err) }
-    if c == '{' { return jsonParseObject(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err) }
-    if c == '[' { return jsonParseArray(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err) }
+    if c == '"' {
+        return jsonParseString(s, pos, nodes, err)
+    }
+    if c == '{' {
+        return jsonParseObject(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
+    }
+    if c == '[' {
+        return jsonParseArray(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
+    }
     if c == 't' {
         pos = pos + 4
         let idx = nodes.len()
-        nodes.push(JsonNode { kind: 1, boolVal: true, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+        nodes.push(JsonNode {
+            kind: 1, boolVal: true, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+        }
+        )
         return idx
     }
     if c == 'f' {
         pos = pos + 5
         let idx = nodes.len()
-        nodes.push(JsonNode { kind: 1, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+        nodes.push(JsonNode {
+            kind: 1, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+        }
+        )
         return idx
     }
     if c == 'n' {
         pos = pos + 4
         let idx = nodes.len()
-        nodes.push(JsonNode { kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+        nodes.push(JsonNode {
+            kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+        }
+        )
         return idx
     }
     // Only '-' or a digit can begin a value here; anything else (',', ']', '}', ':', stray punctuation)
     // is a structural error — guarding here is what rejects empty/leading-comma elements like `[ , x]`.
-    if c == '-' || (c >= '0' && c <= '9') { return jsonParseNumber(s, pos, nodes, err) }
+    if c == '-' || (c >= '0' && c <= '9') {
+        return jsonParseNumber(s, pos, nodes, err)
+    }
     err = true
     let idx = nodes.len()
-    nodes.push(JsonNode { kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+    nodes.push(JsonNode {
+        kind: 0, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+    }
+    )
     return idx
 }
 
@@ -728,7 +929,9 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
     let n = s.len
     while p < n {
         let ch = s[p]
-        if ch == '"' { break }
+        if ch == '"' {
+            break
+        }
         if ch == '\\' {
             p = p + 1
             if p < n {
@@ -747,7 +950,9 @@ fn jsonScanString(s: &string, pos: &mut i64, _err: &mut bool) {
             p = p + 1
         }
     }
-    if p >= n { _err = true }
+    if p >= n {
+        _err = true
+    }
     pos = p
 }
 
@@ -756,9 +961,14 @@ fn jsonParseString(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, err: &m
     let start = pos
     jsonScanString(s, pos, err)
     let slen = pos - start
-    if pos < s.len { pos = pos + 1 }
+    if pos < s.len {
+        pos = pos + 1
+    }
     let idx = nodes.len()
-    nodes.push(JsonNode { kind: 3, boolVal: false, numVal: 0.0, strStart: start, strLen: slen, childStart: 0, childCount: 0, keyStart: 0 })
+    nodes.push(JsonNode {
+        kind: 3, boolVal: false, numVal: 0.0, strStart: start, strLen: slen, childStart: 0, childCount: 0, keyStart: 0
+    }
+    )
     return idx
 }
 
@@ -767,7 +977,9 @@ fn jsonScanStringRange(s: &string, pos: &mut i64, start: &mut i64, _slen: &mut i
     start = pos
     jsonScanString(s, pos, err)
     _slen = pos - start
-    if pos < s.len { pos = pos + 1 }
+    if pos < s.len {
+        pos = pos + 1
+    }
 }
 
 fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &mut bool): i64 {
@@ -786,19 +998,23 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
         _err = true
     } else if s[pos] == '0' {
         pos = pos + 1
-        if pos < s.len && s[pos] >= '0' && s[pos] <= '9' { _err = true }
+        if pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+            _err = true
+        }
     } else {
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            result = result * 10.0 + (s[pos] as i32 - 48) as f64
+            result = result * 10.0 + (s[pos]as i32 - 48) as f64
             pos = pos + 1
         }
     }
     if pos < s.len && s[pos] == '.' {
         pos = pos + 1
-        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') { _err = true }
+        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') {
+            _err = true
+        }
         var frac: f64 = 0.1
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            result = result + (s[pos] as i32 - 48) as f64 * frac
+            result = result + (s[pos]as i32 - 48) as f64 * frac
             frac = frac * 0.1
             pos = pos + 1
         }
@@ -812,10 +1028,12 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
         } else if pos < s.len && s[pos] == '+' {
             pos = pos + 1
         }
-        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') { _err = true }
+        if pos >= s.len || !(s[pos] >= '0' && s[pos] <= '9') {
+            _err = true
+        }
         var exp: i64 = 0
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            exp = exp * 10 + (s[pos] as i32 - 48) as i64
+            exp = exp * 10 + (s[pos]as i32 - 48) as i64
             pos = pos + 1
         }
         var factor: f64 = 1.0
@@ -824,12 +1042,21 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
             factor = factor * 10.0
             e = e + 1
         }
-        if expNeg { result = result / factor }
-        else { result = result * factor }
+        if expNeg {
+            result = result / factor
+        } 
+        else {
+            result = result * factor
+        }
     }
-    if negative { result = 0.0 - result }
+    if negative {
+        result = 0.0 - result
+    }
     let idx = nodes.len()
-    nodes.push(JsonNode { kind: 2, boolVal: false, numVal: result, strStart: numStart, strLen: pos - numStart, childStart: 0, childCount: 0, keyStart: 0 })
+    nodes.push(JsonNode {
+        kind: 2, boolVal: false, numVal: result, strStart: numStart, strLen: pos - numStart, childStart: 0, childCount: 0, keyStart: 0
+    }
+    )
     return idx
 }
 
@@ -840,7 +1067,10 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
 fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
     pos = pos + 1
     let myIdx = nodes.len()
-    nodes.push(JsonNode { kind: 4, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+    nodes.push(JsonNode {
+        kind: 4, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+    }
+    )
     jsonSkipWs(s, pos)
     if pos < s.len && s[pos] == ']' {
         pos = pos + 1
@@ -852,7 +1082,9 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
         // turns a trailing comma (`,]`) into an error because ']' cannot begin a value.
         let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
         jsonScratchPush(scratch, scratchLen, childNodeIdx)
-        if err { break }
+        if err {
+            break
+        }
         jsonSkipWs(s, pos)
         if pos < s.len && s[pos] == ',' {
             pos = pos + 1
@@ -861,7 +1093,11 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
         }
     }
     // Unterminated array (`["x"`) is an error — the close bracket is mandatory.
-    if pos < s.len && s[pos] == ']' { pos = pos + 1 } else { err = true }
+    if pos < s.len && s[pos] == ']' {
+        pos = pos + 1
+    } else {
+        err = true
+    }
     let ci = scratchLen - sStart
     let childStart = childIdx.len()
     var k: i64 = 0
@@ -878,7 +1114,10 @@ fn jsonParseArray(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx
 fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64 {
     pos = pos + 1
     let myIdx = nodes.len()
-    nodes.push(JsonNode { kind: 5, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0 })
+    nodes.push(JsonNode {
+        kind: 5, boolVal: false, numVal: 0.0, strStart: 0, strLen: 0, childStart: 0, childCount: 0, keyStart: 0
+    }
+    )
     jsonSkipWs(s, pos)
     if pos < s.len && s[pos] == '}' {
         pos = pos + 1
@@ -893,7 +1132,9 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
     while pos < s.len {
         jsonSkipWs(s, pos)
         if pos >= s.len || s[pos] != '"' {
-            if expectKey { err = true }
+            if expectKey {
+                err = true
+            }
             break
         }
         expectKey = false
@@ -902,12 +1143,18 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
         jsonScanStringRange(s, pos, koff, klen, err)
         jsonSkipWs(s, pos)
         // The colon separating key and value is mandatory (`{"k" null}` is an error).
-        if pos < s.len && s[pos] == ':' { pos = pos + 1 } else { err = true }
+        if pos < s.len && s[pos] == ':' {
+            pos = pos + 1
+        } else {
+            err = true
+        }
         let childNodeIdx = jsonParseValue(s, pos, nodes, childIdx, keyOffsets, keyLens, scratch, scratchLen, err)
         jsonScratchPush(scratch, scratchLen, childNodeIdx)
         jsonScratchPush(scratch, scratchLen, koff)
         jsonScratchPush(scratch, scratchLen, klen)
-        if err { break }
+        if err {
+            break
+        }
         jsonSkipWs(s, pos)
         if pos < s.len && s[pos] == ',' {
             pos = pos + 1
@@ -917,7 +1164,11 @@ fn jsonParseObject(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childId
         }
     }
     // Unterminated object (`{"k":1,`) is an error — the close brace is mandatory.
-    if pos < s.len && s[pos] == '}' { pos = pos + 1 } else { err = true }
+    if pos < s.len && s[pos] == '}' {
+        pos = pos + 1
+    } else {
+        err = true
+    }
     let ci = (scratchLen - sStart) / 3
     let childStart = childIdx.len()
     let keyStart = keyOffsets.len()
@@ -940,11 +1191,21 @@ fn jsonEscapeStr(s: &string): string {
     var i: i64 = 0
     while i < s.len {
         let c = s[i]
-        if c == '"' { result = result + "\\\"" }
-        else if c == '\\' { result = result + "\\\\" }
-        else if c == '\n' { result = result + "\\n" }
-        else if c == '\t' { result = result + "\\t" }
-        else if c == '\r' { result = result + "\\r" }
+        if c == '"' {
+            result = result + "\\\""
+        } 
+        else if c == '\\' {
+            result = result + "\\\\"
+        } 
+        else if c == '\n' {
+            result = result + "\\n"
+        } 
+        else if c == '\t' {
+            result = result + "\\t"
+        } 
+        else if c == '\r' {
+            result = result + "\\r"
+        } 
         else if c < 32 {
             // RFC 8259: all control chars MUST be escaped. Terminal streams
             // (ESC etc.) otherwise produce unparseable frames.
@@ -952,8 +1213,10 @@ fn jsonEscapeStr(s: &string): string {
             result = result + "\\u00"
             result.push(digits[((c as i64) >> 4) & 15])
             result.push(digits[(c as i64) & 15])
+        } 
+        else {
+            result.push(c)
         }
-        else { result.push(c) }
         i = i + 1
     }
     return result
@@ -978,20 +1241,40 @@ enum JsonVal {
     JRaw(string),
 }
 
-struct JsonMember { key: string, val: JsonVal }
+struct JsonMember {
+    key: string, val: JsonVal
+}
 
 fn jsonSer(v: &JsonVal): string {
     match v {
-        JsonVal.JNull => { return "null" }
-        JsonVal.JBool(b) => { if b { return "true" } else { return "false" } }
-        JsonVal.JInt(n) => { return n.toString() }
-        JsonVal.JFloat(f) => { return f.toString() }
-        JsonVal.JStr(s) => { return "\"" + jsonEscapeStr(s) + "\"" }
-        JsonVal.JRaw(s) => { return s.clone() }
+        JsonVal.JNull => {
+            return "null"
+        }
+        JsonVal.JBool(b) => {
+            if b {
+                return "true"
+            } else {
+                return "false"
+            }
+        }
+        JsonVal.JInt(n) => {
+            return n.toString()
+        }
+        JsonVal.JFloat(f) => {
+            return f.toString()
+        }
+        JsonVal.JStr(s) => {
+            return "\"" + jsonEscapeStr(s) + "\""
+        }
+        JsonVal.JRaw(s) => {
+            return s.clone()
+        }
         JsonVal.JArr(items) => {
             var out = "["
             for i in 0..items.len {
-                if i > 0 { out = out + "," }
+                if i > 0 {
+                    out = out + ","
+                }
                 out = out + jsonSer(items[i])
             }
             return out + "]"
@@ -999,7 +1282,9 @@ fn jsonSer(v: &JsonVal): string {
         JsonVal.JObj(members) => {
             var out = "{"
             for i in 0..members.len {
-                if i > 0 { out = out + "," }
+                if i > 0 {
+                    out = out + ","
+                }
                 out = out + "\"" + jsonEscapeStr(members[i].key) + "\":" + jsonSer(members[i].val)
             }
             return out + "}"
@@ -1009,61 +1294,96 @@ fn jsonSer(v: &JsonVal): string {
 
 // Fluent object builder. Methods consume and return self to enable chaining:
 //   jsonObj().str("type", "capabilities").int("seq", 3).build()
-struct JsonObj { members: Vec<JsonMember> }
+struct JsonObj {
+    members: Vec<JsonMember>
+}
 
-fn jsonObj(): JsonObj { return JsonObj { members: Vec.new() } }
+fn jsonObj(): JsonObj {
+    return JsonObj {
+        members: Vec.new()
+    }
+}
 
 impl JsonObj {
     fn str(self: Self, key: string, val: string): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JStr(val) })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JStr(val)
+        }
+        )
         return m
     }
     fn int(self: Self, key: string, val: i64): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JInt(val) })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JInt(val)
+        }
+        )
         return m
     }
     fn float(self: Self, key: string, val: f64): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JFloat(val) })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JFloat(val)
+        }
+        )
         return m
     }
     fn bool(self: Self, key: string, val: bool): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JBool(val) })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JBool(val)
+        }
+        )
         return m
     }
     fn nil(self: Self, key: string): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JNull })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JNull
+        }
+        )
         return m
     }
     fn obj(self: Self, key: string, val: JsonObj): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JObj(val.members) })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JObj(val.members)
+        }
+        )
         return m
     }
     fn arr(self: Self, key: string, val: JsonArr): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JArr(val.items) })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JArr(val.items)
+        }
+        )
         return m
     }
     fn val(self: Self, key: string, val: JsonVal): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: val })
+        m.members.push(JsonMember {
+            key: key, val: val
+        }
+        )
         return m
     }
     // Splice a pre-serialized JSON value verbatim (caller guarantees validity).
     fn raw(self: Self, key: string, json: string): Self {
         var m = self
-        m.members.push(JsonMember { key: key, val: JsonVal.JRaw(json) })
+        m.members.push(JsonMember {
+            key: key, val: JsonVal.JRaw(json)
+        }
+        )
         return m
     }
     fn build(self: &Self): string {
         var out = "{"
         for i in 0..self.members.len {
-            if i > 0 { out = out + "," }
+            if i > 0 {
+                out = out + ","
+            }
             out = out + "\"" + jsonEscapeStr(self.members[i].key) + "\":" + jsonSer(self.members[i].val)
         }
         return out + "}"
@@ -1072,9 +1392,15 @@ impl JsonObj {
 
 // Fluent array builder:
 //   jsonArr().str("a").int(2).obj(jsonObj().bool("ok", true)).build()
-struct JsonArr { items: Vec<JsonVal> }
+struct JsonArr {
+    items: Vec<JsonVal>
+}
 
-fn jsonArr(): JsonArr { return JsonArr { items: Vec.new() } }
+fn jsonArr(): JsonArr {
+    return JsonArr {
+        items: Vec.new()
+    }
+}
 
 impl JsonArr {
     fn str(self: Self, val: string): Self {
@@ -1126,7 +1452,9 @@ impl JsonArr {
     fn build(self: &Self): string {
         var out = "["
         for i in 0..self.items.len {
-            if i > 0 { out = out + "," }
+            if i > 0 {
+                out = out + ","
+            }
             out = out + jsonSer(self.items[i])
         }
         return out + "]"

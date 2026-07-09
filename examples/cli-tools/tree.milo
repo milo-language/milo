@@ -1,7 +1,13 @@
 // tree — display directory tree
-from "std/argparse" import { newParser }
-from "std/fs" import { isDir, readDir }
-from "std/path" import { pathJoin }
+from "std/argparse" import {
+    newParser
+}
+from "std/fs" import {
+    isDir, readDir
+}
+from "std/path" import {
+    pathJoin
+}
 
 struct Counts {
     dirs: i64,
@@ -77,4 +83,3 @@ fn main(): i32 {
 
     return 0
 }
-

@@ -36,4 +36,3 @@ fn main(): i32 {
     dispatch(ops, 7)
     return 0
 }
-

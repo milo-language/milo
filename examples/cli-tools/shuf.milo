@@ -1,7 +1,13 @@
 // shuf — shuffle lines from stdin or a file
-from "std/argparse" import { newParser }
-from "std/io" import { readFile, readStdin, writeStdout }
-from "std/random" import { randRange }
+from "std/argparse" import {
+    newParser
+}
+from "std/io" import {
+    readFile, readStdin, writeStdout
+}
+from "std/random" import {
+    randRange
+}
 
 fn shuffleLines(lines: &mut Vec<string>): void {
     var i = lines.len - 1
@@ -22,7 +28,9 @@ fn main(): i32 {
     var content: string = ""
     if args.has("file") {
         match readFile(args.getString("file")) {
-            Result.Ok(data) => { content = data }
+            Result.Ok(data) => {
+                content = data
+            }
             Result.Err(e) => {
                 print($"shuf: {e}")
                 return 1
@@ -50,7 +58,11 @@ fn main(): i32 {
     shuffleLines(lines)
 
     let head = args.getI64("head")
-    let count = if head > 0 && head < lines.len { head } else { lines.len }
+    let count = if head > 0 && head < lines.len {
+        head
+    } else {
+        lines.len
+    }
 
     for i in 0..count {
         writeStdout(lines[i])

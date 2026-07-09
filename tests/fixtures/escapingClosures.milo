@@ -5,19 +5,19 @@
 // @expect: composed = 16
 
 fn makeAdder(n: i32): (i32) => i32 {
-    return move (x: i32): i32 => {
+    return move(x: i32): i32 => {
         return x + n
     }
 }
 
 fn makeMultiplier(factor: i32): (i32) => i32 {
-    return move (x: i32): i32 => {
+    return move(x: i32): i32 => {
         return x * factor
     }
 }
 
 fn compose(f: (i32) => i32, g: (i32) => i32): (i32) => i32 {
-    return move (x: i32): i32 => {
+    return move(x: i32): i32 => {
         return f(g(x))
     }
 }

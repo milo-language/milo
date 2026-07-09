@@ -3,8 +3,12 @@
 // @expect: done 2
 // @expect: all finished
 
-from "std/runtime" import { Task }
-from "std/sync" import { WaitGroup }
+from "std/runtime" import {
+    Task
+}
+from "std/sync" import {
+    WaitGroup
+}
 
 fn main(): i32 {
     let wg = WaitGroup.new()
@@ -12,10 +16,11 @@ fn main(): i32 {
     while i < 3 {
         wg.add(1)
         let n = i
-        Task.spawn(move (): void => {
+        Task.spawn(move(): void => {
             print("done " + n.toString())
             wg.done()
-        })
+        }
+        )
         i = i + 1
     }
     wg.wait()

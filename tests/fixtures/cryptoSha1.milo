@@ -1,7 +1,9 @@
 // @expect: da39a3ee5e6b4b0d3255bfef95601890afd80709
 // @expect: a9993e364706816aba3e25717850c26c9cd0d89d
 
-from "std/crypto" import { sha1 }
+from "std/crypto" import {
+    sha1
+}
 
 fn main(): i32 {
     print(sha1(""))

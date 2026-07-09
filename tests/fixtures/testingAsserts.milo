@@ -1,6 +1,8 @@
 // @expect: all assertions passed
 
-from "std/testing" import { assert, assertBool, assertEqual, assertEqual64, assertStrEqual }
+from "std/testing" import {
+    assert, assertBool, assertEqual, assertEqual64, assertStrEqual
+}
 
 fn main(): i32 {
     assert(true)

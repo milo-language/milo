@@ -6,29 +6,35 @@
 
 // task↔task channel: consumer parks on empty recv, producer parks on full
 // send (cap 1) — scheduler keeps both making progress, no busy-poll
-from "std/runtime" import { Task, schedulerRunToCompletion }
-from "std/sync" import { Channel }
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/sync" import {
+    Channel
+}
 
 fn main(): i32 {
     let ch = Channel<i64>.new(1)!
 
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         var i: i64 = 0
         while i < 4 {
             let v = ch.recv()!
             print("got ", v)
             i = i + 1
         }
-    })
+    }
+    )
 
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         var i: i64 = 0
         while i < 4 {
             ch.send(i)!
             i = i + 1
         }
         print("producer done")
-    })
+    }
+    )
 
     schedulerRunToCompletion()
     return 0

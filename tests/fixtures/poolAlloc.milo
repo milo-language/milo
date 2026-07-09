@@ -7,7 +7,9 @@
 // @expect: true
 // @expect: true
 
-from "std/pool" import { Pool, poolNew, poolAlloc, poolFree, poolLive, poolAvailable, poolFull, poolEmpty, poolReset }
+from "std/pool" import {
+    Pool, poolNew, poolAlloc, poolFree, poolLive, poolAvailable, poolFull, poolEmpty, poolReset
+}
 
 fn main(): i32 {
     var pool = poolNew(16, 3)!

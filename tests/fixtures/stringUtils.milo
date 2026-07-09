@@ -13,7 +13,9 @@
 // @expect: repeat: ababab
 // @expect: replace: hello universe
 // @expect: isFuncs: true true false true
-from "std/string" import { charIsAlpha, charIsAlphanumeric, charIsDigit, charIsWhitespace, strContains, strEndsWith, strIndexOf, strIndexOfFrom, strRepeat, strReplace, strSplit, strStartsWith, strToLower, strToUpper, strTrim, strTrimEnd, strTrimStart, trim }
+from "std/string" import {
+    charIsAlpha, charIsAlphanumeric, charIsDigit, charIsWhitespace, strContains, strEndsWith, strIndexOf, strIndexOfFrom, strRepeat, strReplace, strSplit, strStartsWith, strToLower, strToUpper, strTrim, strTrimEnd, strTrimStart, trim
+}
 
 fn boolStr(b: bool): string {
     if b {
@@ -74,4 +76,3 @@ fn main(): i32 {
 
     return 0
 }
-

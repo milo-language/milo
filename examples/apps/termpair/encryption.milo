@@ -13,18 +13,31 @@
 // lets the two relay green threads each own their counter and a clone of the
 // keys they need, with no shared mutable state (no rotation in read-only mode).
 
-from "std/crypto" import { aesGcm128Encrypt, aesGcm128Decrypt }
-from "std/random" import { randBytes }
-from "std/base64" import { base64Encode, base64Decode }
+from "std/crypto" import {
+    aesGcm128Encrypt, aesGcm128Decrypt
+}
+from "std/random" import {
+    randBytes
+}
+from "std/base64" import {
+    base64Encode, base64Decode
+}
 
 // 2^20; matches ROTATION_THRESHOLD in termpair-common.
-fn rotationThreshold(): i64 { return 1048576 }
+fn rotationThreshold(): i64 {
+    return 1048576
+}
+
 // floor(0.1 * 2^20) — the browser-side rotation safety buffer.
-fn rotationBuffer(): i64 { return 104857 }
+fn rotationBuffer(): i64 {
+    return 104857
+}
 
 fn genKey(): string {
-    var buf: [u8 ; 16] = [0 ; 16]
-    unsafe { randBytes(buf as *u8, 16) }
+    var buf: [u8; 16] = [0; 16]
+    unsafe {
+        randBytes(buf as *u8, 16)
+    }
     var s: string = ""
     for i in 0..16 {
         s.push(buf[i])
@@ -65,11 +78,17 @@ fn decryptWithKey(key: &string, wireB64: &string): Result<string, string> {
     }
     let ctEnd = wire.len - 16
     var iv: string = ""
-    for i in 0..12 { iv.push(wire[i]) }
+    for i in 0..12 {
+        iv.push(wire[i])
+    }
     var ct: string = ""
-    for i in 12..ctEnd { ct.push(wire[i]) }
+    for i in 12..ctEnd {
+        ct.push(wire[i])
+    }
     var tag: string = ""
-    for i in ctEnd..wire.len { tag.push(wire[i]) }
+    for i in ctEnd..wire.len {
+        tag.push(wire[i])
+    }
     return aesGcm128Decrypt(key, iv, ct, tag, "")
 }
 
@@ -77,7 +96,11 @@ fn decryptWithKey(key: &string, wireB64: &string): Result<string, string> {
 // `encBrowser` are the bootstrap-wrapped unix/browser keys (already base64).
 // `browserNumber` is 1-based and selects the browser's IV window.
 fn aesKeysMessage(encUnix: &string, encBrowser: &string, browserNumber: i64): string {
-    let n = if browserNumber < 1 { 1 as i64 } else { browserNumber }
+    let n = if browserNumber < 1 {
+        1 as i64
+    } else {
+        browserNumber
+    }
     let ivCount = (n - 1) * rotationThreshold()
     let maxIv = ivCount + rotationThreshold() - rotationBuffer()
 

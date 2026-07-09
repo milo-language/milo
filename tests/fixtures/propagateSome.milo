@@ -10,4 +10,3 @@ fn main(): i32 {
     print(result!)
     return 0
 }
-

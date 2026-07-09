@@ -1,12 +1,14 @@
 extern type HandleA
+
 extern type HandleB
 
-fn takeA(h: *HandleA): void {}
+fn takeA(h: *HandleA): void {
+}
 
 fn main(): i32 {
-  let b = 0 as *HandleB
-  takeA(b)
-  return 0
+    let b = 0 as *HandleB
+    takeA(b)
+    return 0
 }
 
 // @error: expected *HandleA, got *HandleB

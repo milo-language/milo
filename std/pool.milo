@@ -4,7 +4,9 @@
 // syscalls. Suitable for DO-178C DAL-A (no dynamic allocation after init).
 // Free-list is embedded in unused blocks — zero overhead.
 
-from "std/os" import { free, malloc }
+from "std/os" import {
+    free, malloc
+}
 
 struct Pool {
     base: i64,
@@ -17,7 +19,9 @@ struct Pool {
 impl Drop for Pool {
     fn drop(self: &mut Self): void {
         if self.base != 0 {
-            unsafe { free(self.base as *u8) }
+            unsafe {
+                free(self.base as *u8)
+            }
         }
     }
 }
@@ -26,8 +30,8 @@ impl Drop for Pool {
 // Single malloc at init — no further heap allocation.
 
 fn poolNew(size: i64, count: i64): Result<Pool>
-  requires size >= 8
-  requires count > 0
+requires size >= 8
+requires count > 0
 {
     let totalSize = size * count
     unsafe {
@@ -55,14 +59,15 @@ fn poolNew(size: i64, count: i64): Result<Pool>
             blockCount: count,
             freeHead: addr,
             liveCount: 0,
-        })
+        }
+        )
     }
 }
 
 // Allocate one block. O(1). Returns Err when pool is exhausted.
 
 fn poolAlloc(p: &mut Pool): Result<i64>
-  ensures p.liveCount <= p.blockCount
+ensures p.liveCount <= p.blockCount
 {
     if p.freeHead == 0 {
         return Result.Err("pool exhausted")
@@ -80,9 +85,9 @@ fn poolAlloc(p: &mut Pool): Result<i64>
 // Caller must pass a pointer previously returned by poolAlloc.
 
 fn poolFree(p: &mut Pool, block: i64): void
-  requires block >= p.base
-  requires p.liveCount > 0
-  ensures p.liveCount >= 0
+requires block >= p.base
+requires p.liveCount > 0
+ensures p.liveCount >= 0
 {
     unsafe {
         let slot = block as *i64
@@ -95,10 +100,10 @@ fn poolFree(p: &mut Pool, block: i64): void
 // Number of blocks currently in use.
 
 fn poolLive(p: &Pool): i64
-  requires p.liveCount >= 0
-  requires p.liveCount <= p.blockCount
-  ensures result >= 0
-  ensures result <= p.blockCount
+requires p.liveCount >= 0
+requires p.liveCount <= p.blockCount
+ensures result >= 0
+ensures result <= p.blockCount
 {
     return p.liveCount
 }
@@ -106,10 +111,10 @@ fn poolLive(p: &Pool): i64
 // Number of blocks available.
 
 fn poolAvailable(p: &Pool): i64
-  requires p.liveCount >= 0
-  requires p.liveCount <= p.blockCount
-  ensures result >= 0
-  ensures result <= p.blockCount
+requires p.liveCount >= 0
+requires p.liveCount <= p.blockCount
+ensures result >= 0
+ensures result <= p.blockCount
 {
     return p.blockCount - p.liveCount
 }
@@ -130,7 +135,7 @@ fn poolEmpty(p: &Pool): bool {
 // Existing pointers become invalid.
 
 fn poolReset(p: &mut Pool): void
-  ensures p.liveCount == 0
+ensures p.liveCount == 0
 {
     // re-thread free list
     unsafe {
@@ -156,20 +161,20 @@ impl Pool {
     }
 
     fn free(self: &mut Self, block: i64): void
-      requires block >= self.base
-      requires self.liveCount > 0
+    requires block >= self.base
+    requires self.liveCount > 0
     {
         poolFree(self, block)
     }
 
     fn live(self: &Self): i64
-      ensures result >= 0
+    ensures result >= 0
     {
         return poolLive(self)
     }
 
     fn available(self: &Self): i64
-      ensures result >= 0
+    ensures result >= 0
     {
         return poolAvailable(self)
     }
@@ -183,7 +188,7 @@ impl Pool {
     }
 
     fn reset(self: &mut Self): void
-      ensures self.liveCount == 0
+    ensures self.liveCount == 0
     {
         poolReset(self)
     }

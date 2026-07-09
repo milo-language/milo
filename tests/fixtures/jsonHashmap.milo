@@ -121,11 +121,11 @@ fn main(): i32 {
     let input: string = "{\"name\": \"milo\", \"version\": 1, \"active\": true}"
     var pos: i64 = 0
     let result = parseValue(input, pos)
-    match * result {
+    match *result {
         JsonValue.Object(obj) => {
             let r1 = obj.get("name")
             if let Option.Some(val) = r1 {
-                match * val {
+                match *val {
                     JsonValue.Str(s) => {
                         print("name=", s)
                     }
@@ -136,7 +136,7 @@ fn main(): i32 {
             }
             let r2 = obj.get("version")
             if let Option.Some(val) = r2 {
-                match * val {
+                match *val {
                     JsonValue.Number(n) => {
                         print("version=", n)
                     }
@@ -158,4 +158,3 @@ fn main(): i32 {
     }
     return 0
 }
-

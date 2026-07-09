@@ -2,18 +2,23 @@
 // @expect: 2
 // @expect: 3
 // @expect: done
-from "std/thread" import { Thread }
-from "std/sync" import { Channel }
+from "std/thread" import {
+    Thread
+}
+from "std/sync" import {
+    Channel
+}
 
 fn main(): i32 {
     var ch = Channel<i64>.new(4)!
 
-    let t = Thread.spawn(move (): void => {
+    let t = Thread.spawn(move(): void => {
         ch.send(1)!
         ch.send(2)!
         ch.send(3)!
         ch.close()
-    })!
+    }
+    )!
 
     for val in ch {
         print(val)

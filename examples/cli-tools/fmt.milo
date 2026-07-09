@@ -1,8 +1,14 @@
 // fmt — Milo source code formatter
 // Tokenizes the input and re-emits with normalized indentation and spacing.
-from "std/io" import { readFile, readStdin, writeStdout }
-from "std/fs" import { writeFile }
-from "std/argparse" import { newParser }
+from "std/io" import {
+    readFile, readStdin, writeStdout
+}
+from "std/fs" import {
+    writeFile
+}
+from "std/argparse" import {
+    newParser
+}
 
 // ── Token types ──
 
@@ -21,6 +27,7 @@ enum TokKind {
     RBracket,
     Colon,
     ColonColon,
+    Semi,
     Comma,
     Dot,
     DotDot,
@@ -545,6 +552,13 @@ impl Lexer {
             }
         }
 
+        // `;` separates the element type and length in `[T; N]`
+        if ch == 59 {
+            return Token {
+                kind: TokKind.Semi, text: ";", line: line
+            }
+        }
+
         // Unknown char — emit as ident to preserve it
         var s: string = ""
         s.push(ch)
@@ -583,9 +597,27 @@ fn isSpacedOp(kind: TokKind): bool {
     kind == TokKind.QuestionQuestion
 }
 
-// Whether prev token makes the current * or & a binary operator (not unary/type prefix)
+// Whether the comment block starting at i introduces a top-level declaration.
+// Such a comment is that decl's doc comment, so no blank line may separate them.
 
-fn isBinaryStarOrAmp(tokens: &Vec<Token>, i: i64): bool {
+fn commentLeadsTopLevel(tokens: &Vec<Token>, i: i64): bool {
+    var j: i64 = i
+    while j < tokens.len {
+        let k = tokens[j].kind
+        if k == TokKind.Comment || k == TokKind.Newline {
+            j = j + 1
+            continue
+        }
+        return k == TokKind.Keyword && isTopLevel(tokens[j].text)
+    }
+    return false
+}
+
+// Whether the token before position i is a value, i.e. something a `*`, `&` or
+// `-` at i could be the right-hand side of. Distinguishes binary `a - b` from
+// unary `n: -7`, and binary `a * b` from a pointer type `*u8`.
+
+fn prevIsValue(tokens: &Vec<Token>, i: i64): bool {
     if i <= 0 {
         return false
     }
@@ -672,32 +704,39 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     pk == TokKind.Dot || pk == TokKind.ColonColon {
         return false
     }
-    // Never space before ) ] , . :: ? :
+    // Never space before ) ] , . :: ? : ;
     if tk == TokKind.RParen || tk == TokKind.RBracket ||
     tk == TokKind.Comma || tk == TokKind.Dot ||
     tk == TokKind.ColonColon || tk == TokKind.Question ||
-    tk == TokKind.Colon {
+    tk == TokKind.Colon || tk == TokKind.Semi {
         return false
     }
     // ! — space after keywords and binary ops (unary !), no space when postfix
     if tk == TokKind.Bang {
         return pk == TokKind.Keyword || isSpacedOp(pk)
     }
-    // * — space when binary (multiply), tight when unary/pointer type
+    // * — space when binary (multiply), tight when unary/pointer type.
+    // After `:` `,` a keyword or any spaced operator (`=>`, `=`, ...) the `*`
+    // is a prefix, but still needs the separating space those rules provide.
     if tk == TokKind.Star && pk != TokKind.Colon && pk != TokKind.Comma &&
-    pk != TokKind.Keyword {
-        return isBinaryStarOrAmp(tokens, i)
+    pk != TokKind.Keyword && !isSpacedOp(pk) {
+        return prevIsValue(tokens, i)
     }
     if pk == TokKind.Star {
-        return isBinaryStarOrAmp(tokens, i - 1)
+        return prevIsValue(tokens, i - 1)
     }
     // & — space when binary (bitwise AND), tight when reference type
     if tk == TokKind.Amp && pk != TokKind.Colon && pk != TokKind.Comma &&
-    pk != TokKind.Keyword {
-        return isBinaryStarOrAmp(tokens, i)
+    pk != TokKind.Keyword && !isSpacedOp(pk) {
+        return prevIsValue(tokens, i)
     }
     if pk == TokKind.Amp {
-        return isBinaryStarOrAmp(tokens, i - 1)
+        return prevIsValue(tokens, i - 1)
+    }
+    // - — binary subtraction keeps its space, unary negation hugs its operand
+    // (`n: -7`, `x = -1`, `return -a`, and the second `-` of `5 - -3`)
+    if pk == TokKind.Minus {
+        return prevIsValue(tokens, i - 1)
     }
     // No space around ..
     if tk == TokKind.DotDot || pk == TokKind.DotDot {
@@ -721,7 +760,10 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
         return false
     }
     if pk == TokKind.Gt && isInsideGeneric(tokens, i - 1) {
-        if tk == TokKind.Comma || tk == TokKind.RParen || tk == TokKind.Gt {
+        // `fn f<T>(x: T)` — the param list hugs the generic close, as do the
+        // tight punctuation cases.
+        if tk == TokKind.Comma || tk == TokKind.RParen || tk == TokKind.Gt ||
+        tk == TokKind.LParen {
             return false
         }
     }
@@ -737,6 +779,9 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
         return true
     }
     if pk == TokKind.Comma {
+        return true
+    }
+    if pk == TokKind.Semi {
         return true
     }
     // Space after keywords
@@ -777,6 +822,8 @@ fn formatSource(src: string): string {
     // Tracks whether the last emitted real token was `extern`, so a following
     // `fn` can be glued to it as `extern fn` even if the source split them.
     var lastWasExtern: bool = false
+    // Only own-line comments can be doc comments; `} // note` cannot.
+    var lastWasOwnLineComment: bool = false
 
     for i in 0..tokens.len {
         let tok = tokens[i]
@@ -805,8 +852,25 @@ fn formatSource(src: string): string {
             }
         }
 
+        // A doc comment sits directly above its decl. The separating blank line
+        // belongs above the comment block, not between the comment and the decl
+        // — inserting it there detaches the doc from what it documents.
+        let attachedDoc = lastWasOwnLineComment && blankCount <= 1
+
         // Blank line before top-level decls
-        if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) && !hugExtern {
+        if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) && !hugExtern && !attachedDoc {
+            if out.len > 0 && !out.endsWith("\n\n") {
+                if !atLineStart {
+                    out = out + "\n"
+                }
+                out = out + "\n"
+                atLineStart = true
+            }
+        }
+
+        // ...so put it before the comment block instead
+        if depth == 0 && tok.kind == TokKind.Comment && !lastWasOwnLineComment &&
+        tok.line > lastLine && commentLeadsTopLevel(tokens, i) {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
                     out = out + "\n"
@@ -832,21 +896,24 @@ fn formatSource(src: string): string {
                 out = out + "\n"
                 atLineStart = true
             }
+            var ownLine: bool = false
             if atLineStart {
                 for d in 0..depth {
                     out = out + "    "
                 }
                 atLineStart = false
+                ownLine = true
             } else {
                 out = out + " "
             }
             out = out + tok.text
             // Trailing comment stays on line, leading comment gets newline
-            if atLineStart || tok.line > lastLine {
+            if ownLine || tok.line > lastLine {
                 out = out + "\n"
                 atLineStart = true
             }
             lastLine = tok.line
+            lastWasOwnLineComment = ownLine
             continue
         }
 
@@ -870,12 +937,23 @@ fn formatSource(src: string): string {
         out = out + tok.text
         lastLine = tok.line
         lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
+        lastWasOwnLineComment = false
 
         // { increases indent and forces newline
         if tok.kind == TokKind.LBrace {
             depth = depth + 1
-            out = out + "\n"
-            atLineStart = true
+            var nextIsTrailing: bool = false
+            if i + 1 < tokens.len {
+                let nt = tokens[i + 1]
+                nextIsTrailing = nt.kind == TokKind.Comment && nt.line == tok.line
+            }
+            // `{ // note` — keep the comment on this line
+            if nextIsTrailing {
+                atLineStart = false
+            } else {
+                out = out + "\n"
+                atLineStart = true
+            }
         }
 
         // } forces newline unless next is else
@@ -892,6 +970,10 @@ fn formatSource(src: string): string {
             }
             if nextKind == TokKind.Keyword && tokens[j].text == "else" {
                 out = out + " "
+                atLineStart = false
+            } else if nextKind == TokKind.Comment && tokens[j].line == tok.line {
+                // `} // note` — leave the line open so the comment branch
+                // attaches the comment here instead of on its own line.
                 atLineStart = false
             } else {
                 out = out + "\n"

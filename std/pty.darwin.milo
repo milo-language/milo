@@ -5,12 +5,24 @@ from "std/os" import {
     memcpy, memset, open, posix_openpt, ptsname, readFd, setsid, unlockpt,
     waitpid, writeFd
 }
-from "std/sync" import { Channel }
-from "std/io" import { fdChannel }
+from "std/sync" import {
+    Channel
+}
+from "std/io" import {
+    fdChannel
+}
 
-fn tiocgwinsz(): i64 { return 1074295912 }
-fn tiocswinsz(): i64 { return 2148037735 }
-fn tiocsctty(): i64 { return 536900705 }
+fn tiocgwinsz(): i64 {
+    return 1074295912
+}
+
+fn tiocswinsz(): i64 {
+    return 2148037735
+}
+
+fn tiocsctty(): i64 {
+    return 536900705
+}
 
 struct WinSize {
     rows: u16,
@@ -29,7 +41,9 @@ struct Pty {
 
 // Returns true if fd is connected to a terminal.
 fn fdIsTerminal(fd: i32): bool {
-    unsafe { return isatty(fd) == 1 }
+    unsafe {
+        return isatty(fd) == 1
+    }
 }
 
 // Returns true if stdin is a terminal (process is interactive).
@@ -42,7 +56,9 @@ impl Pty {
         unsafe {
             // O_RDWR=2 | O_NOCTTY=0x20000
             let master = posix_openpt(131074)
-            if master < 0 { return Result.Err("posix_openpt failed") }
+            if master < 0 {
+                return Result.Err("posix_openpt failed")
+            }
 
             if grantpt(master) != 0 {
                 close(master)
@@ -60,13 +76,16 @@ impl Pty {
             }
 
             let name = _cstrToString(namePtr)
-            return Result.Ok(Pty { masterFd: master, slavePath: name, childPid: -1, _rows: 24 as u16, _cols: 80 as u16 })
+            return Result.Ok(Pty {
+                masterFd: master, slavePath: name, childPid: -1, _rows: 24 as u16, _cols: 80 as u16
+            }
+            )
         }
     }
 
     // Spawn child connected to PTY.
     fn spawn(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string>
-      requires self.masterFd >= 0
+    requires self.masterFd >= 0
     {
         unsafe {
             let argc = args.len + 2
@@ -103,10 +122,14 @@ impl Pty {
             if pid == 0 {
                 setsid()
                 let slave = open(self.slavePath, 2)
-                if slave < 0 { exit(1) }
+                if slave < 0 {
+                    exit(1)
+                }
                 ioctl(slave, tiocsctty(), 0)
                 // set winsize on slave so child sees correct dimensions
-                var childWs = WinSize { rows: self._rows, cols: self._cols, xpixel: 0 as u16, ypixel: 0 as u16 }
+                var childWs = WinSize {
+                    rows: self._rows, cols: self._cols, xpixel: 0 as u16, ypixel: 0 as u16
+                }
                 ioctl(slave, tiocswinsz(), (&childWs) as *u8)
                 dup2(slave, 0)
                 dup2(slave, 1)
@@ -131,19 +154,25 @@ impl Pty {
     // Low-level single read into a raw buffer. Prefer `output()` for streaming —
     // it owns the read/EAGAIN pump and hands you an iterable channel of chunks.
     fn read(self: &Self, buf: *u8, len: i64): i64
-      requires len > 0
+    requires len > 0
     {
-        unsafe { return readFd(self.masterFd, buf, len) }
+        unsafe {
+            return readFd(self.masterFd, buf, len)
+        }
     }
 
     fn write(self: &Self, buf: *u8, len: i64): i64
-      requires len > 0
+    requires len > 0
     {
-        unsafe { return writeFd(self.masterFd, buf, len) }
+        unsafe {
+            return writeFd(self.masterFd, buf, len)
+        }
     }
 
     fn writeStr(self: &Self, s: &string): i64 {
-        unsafe { return writeFd(self.masterFd, s as *u8, s.len) }
+        unsafe {
+            return writeFd(self.masterFd, s as *u8, s.len)
+        }
     }
 
     // Pump this pty's output on a background green task and return a channel of
@@ -158,29 +187,39 @@ impl Pty {
     fn resize(self: &mut Self, rows: u16, cols: u16): i32 {
         self._rows = rows
         self._cols = cols
-        var ws = WinSize { rows: rows, cols: cols, xpixel: 0, ypixel: 0 }
-        unsafe { return ioctl(self.masterFd, tiocswinsz(), (&ws) as *u8) }
+        var ws = WinSize {
+            rows: rows, cols: cols, xpixel: 0, ypixel: 0
+        }
+        unsafe {
+            return ioctl(self.masterFd, tiocswinsz(), (&ws) as *u8)
+        }
     }
 
     fn winSize(self: &Self): WinSize {
-        var ws = WinSize { rows: 0, cols: 0, xpixel: 0, ypixel: 0 }
-        unsafe { ioctl(self.masterFd, tiocgwinsz(), (&ws) as *u8) }
+        var ws = WinSize {
+            rows: 0, cols: 0, xpixel: 0, ypixel: 0
+        }
+        unsafe {
+            ioctl(self.masterFd, tiocgwinsz(), (&ws) as *u8)
+        }
         return ws
     }
 
     // Wait for child to exit. Returns exit status.
     fn wait(self: &Self): i32
-      requires self.childPid > 0
+    requires self.childPid > 0
     {
         var status: [u8; 4] = [0; 4]
         unsafe {
             waitpid(self.childPid, status, 0)
-            return status[1] as i32
+            return status[1]as i32
         }
     }
 
     fn close(self: &Self): void {
-        unsafe { close(self.masterFd) }
+        unsafe {
+            close(self.masterFd)
+        }
     }
 }
 
@@ -196,7 +235,9 @@ fn _freeArgv(argv: *u8, argc: i64): void {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8
             memcpy((&p) as *u8, (argv as i64 + i * 8) as *u8, 8)
-            if p as i64 != 0 { free(p) }
+            if p as i64 != 0 {
+                free(p)
+            }
         }
         free(argv)
     }

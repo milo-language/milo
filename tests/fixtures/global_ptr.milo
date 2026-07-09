@@ -1,14 +1,14 @@
 var ptr: *u8 = 0 as *u8
 
 fn setPtr(p: *u8): void {
-  unsafe {
-    ptr = p
-  }
+    unsafe {
+        ptr = p
+    }
 }
 
 fn main(): i32 {
-  print(ptr as i64)
-  return 0
+    print(ptr as i64)
+    return 0
 }
 
 // @expect: 0

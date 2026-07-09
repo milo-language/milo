@@ -21,4 +21,3 @@ impl Ord for Score {
 fn main(): i32 {
     return 0
 }
-

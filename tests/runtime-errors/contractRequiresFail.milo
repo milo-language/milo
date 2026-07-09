@@ -1,7 +1,7 @@
 // @runtime-error: requires clause violated
 
 fn half(n: i32): i32
-  requires n >= 0
+requires n >= 0
 {
     return n / 2
 }

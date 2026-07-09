@@ -3,9 +3,11 @@
 fn take(s: string) {
     print(s)
 }
+
 fn f(s: &string) {
     take(s)
 }
+
 fn main(): i32 {
     return 0
 }

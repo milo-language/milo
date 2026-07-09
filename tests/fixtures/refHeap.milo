@@ -7,11 +7,11 @@ enum Tree {
 }
 
 fn printHeaped(b: &Heap<i32>) {
-    print("value: ", * b)
+    print("value: ", *b)
 }
 
 fn printLeaf(t: &Heap<Tree>) {
-    match * t {
+    match *t {
         Tree.Leaf(n) => {
             print("leaf: ", n)
         }
@@ -28,4 +28,3 @@ fn main(): i32 {
     printLeaf(t)
     return 0
 }
-

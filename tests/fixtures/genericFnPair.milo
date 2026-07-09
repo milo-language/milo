@@ -1,11 +1,11 @@
 // @expect: 10
 // @expect: 20
 
-fn first<A, B> (a: A, b: B): A {
+fn first<A, B>(a: A, b: B): A {
     return a
 }
 
-fn second<A, B> (a: A, b: B): B {
+fn second<A, B>(a: A, b: B): B {
     return b
 }
 
@@ -16,4 +16,3 @@ fn main(): i32 {
     print(y)
     return 0
 }
-

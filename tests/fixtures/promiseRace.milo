@@ -1,13 +1,15 @@
 // @expect: got one
 
-from "std/runtime" import { Task, Promise }
+from "std/runtime" import {
+    Task, Promise
+}
 
 fn main(): i32 {
     var promises: Vec<Promise<i64>> = Vec.new()
 
-    promises.push(Promise<i64>.run(move (): i64 => 10))
-    promises.push(Promise<i64>.run(move (): i64 => 20))
-    promises.push(Promise<i64>.run(move (): i64 => 30))
+    promises.push(Promise<i64>.run(move(): i64 => 10))
+    promises.push(Promise<i64>.run(move(): i64 => 20))
+    promises.push(Promise<i64>.run(move(): i64 => 30))
 
     let first = Promise.race(promises).await()!
     // any of 10, 20, 30 is valid — just verify we got something

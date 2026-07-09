@@ -7,7 +7,9 @@
 // @expect: abcabc
 // @expect: 6
 
-from "std/string" import { strIndexOf, strRepeat, strReplace, strSplit }
+from "std/string" import {
+    strIndexOf, strRepeat, strReplace, strSplit
+}
 
 fn main(): i32 {
     let parts = strSplit("hello,world,foo", ",")

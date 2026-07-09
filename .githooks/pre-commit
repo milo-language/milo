@@ -1,0 +1,18 @@
+#!/bin/sh
+# Format staged .milo files with bin/milo-fmt (built on demand by `milo fmt`).
+# Enable with: git config core.hooksPath .githooks
+#
+# src-milo/ is excluded on purpose: self-hosting M1 bisects that directory's
+# history, and a reformat commit there would rewrite the files under
+# investigation. Drop the exclusion once M1 lands (docs/self-hosting.md).
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.milo' | grep -v '^src-milo/' || true)
+[ -z "$staged" ] && exit 0
+
+# shellcheck disable=SC2086
+echo "$staged" | while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    bun run src/main.ts fmt -w "$f" >/dev/null
+    git add -- "$f"
+done

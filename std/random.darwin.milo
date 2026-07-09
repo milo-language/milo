@@ -3,18 +3,11 @@
 // Uses arc4random (macOS/BSD) — no seeding required, cryptographically strong.
 // For Linux compat, could fall back to /dev/urandom via std/io.
 
+extern fn arc4random(): u32
 
-extern
+extern fn arc4random_uniform(upper: u32): u32
 
-fn arc4random(): u32
-
-extern
-
-fn arc4random_uniform(upper: u32): u32
-
-extern
-
-fn arc4random_buf(buf: *u8, nbytes: i64): void
+extern fn arc4random_buf(buf: *u8, nbytes: i64): void
 
 // Random u32 in [0, 2^32).
 

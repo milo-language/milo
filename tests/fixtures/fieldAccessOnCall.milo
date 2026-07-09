@@ -13,11 +13,15 @@ struct Named {
 }
 
 fn makePair(): Pair {
-    return Pair { x: 42, y: 99 }
+    return Pair {
+        x: 42, y: 99
+    }
 }
 
 fn makeNamed(): Named {
-    return Named { name: "hello", value: 99 }
+    return Named {
+        name: "hello", value: 99
+    }
 }
 
 fn main(): i32 {

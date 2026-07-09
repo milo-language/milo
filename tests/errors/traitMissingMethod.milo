@@ -14,4 +14,3 @@ impl Eq for Point {
 fn main(): i32 {
     return 0
 }
-

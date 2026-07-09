@@ -10,4 +10,3 @@ fn main(): i32 {
     take(s)
     return 0
 }
-

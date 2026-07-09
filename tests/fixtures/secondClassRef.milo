@@ -14,4 +14,3 @@ fn main(): i32 {
     print(readIt(n))
     return 0
 }
-

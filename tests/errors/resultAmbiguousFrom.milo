@@ -21,4 +21,3 @@ fn process(path: string): Result<string, AppError> {
 fn main(): i32 {
     return 0
 }
-

@@ -3,7 +3,9 @@
 // @expect: 42
 // @expect: 3
 
-from "std/regex" import { regexFind, regexFindAll, regexMatch, regexNew }
+from "std/regex" import {
+    regexFind, regexFindAll, regexMatch, regexNew
+}
 
 fn main(): i32 {
     match regexNew("[0-9]+") {
@@ -20,13 +22,17 @@ fn main(): i32 {
                     let input = "abc 42 def 99"
                     print(input[m.start..m.end])
                 }
-                Option.None => { print("none") }
+                Option.None => {
+                    print("none")
+                }
             }
 
             let all = regexFindAll(re, "abc 42 def 99 ghi 7")
             print(all.len.toString())
         }
-        Option.None => { print("compile fail") }
+        Option.None => {
+            print("compile fail")
+        }
     }
     return 0
 }

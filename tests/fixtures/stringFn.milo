@@ -9,4 +9,3 @@ fn main(): i32 {
     print("greeting: ", msg)
     return 0
 }
-

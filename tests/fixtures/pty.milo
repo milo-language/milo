@@ -1,7 +1,9 @@
 // @expect: pty opened
 // @expect: slave path starts with /dev/
 
-from "std/pty" import { Pty }
+from "std/pty" import {
+    Pty
+}
 
 fn main(): void {
     match Pty.open() {

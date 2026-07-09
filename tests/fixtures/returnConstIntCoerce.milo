@@ -7,15 +7,18 @@
 fn neg(): i64 {
     return -1
 }
+
 fn calc(): i64 {
     let x: i64 = -1
     var y: i64 = 0
     y = -2
     return x + y
 }
+
 fn sum(): i64 {
     return 1 + 2
 }
+
 fn main(): i32 {
     print(neg())
     print(calc())

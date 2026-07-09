@@ -1,5 +1,7 @@
 // Doubly-linked list via arena — nodes point to neighbors via Handle
-from "std/arena" import { Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew }
+from "std/arena" import {
+    Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew
+}
 
 struct DLNode {
     value: i64,
@@ -152,4 +154,3 @@ fn main(): i32 {
 
     return 0
 }
-

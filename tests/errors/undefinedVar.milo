@@ -1,11 +1,8 @@
 // @error: undefined variable 'y'
 
-extern
-
-fn printf(fmt: * u8, val: i32): i32
+extern fn printf(fmt: *u8, val: i32): i32
 
 fn main(): i32 {
     printf("%d\n", y)
     return 0
 }
-

@@ -14,13 +14,12 @@ fn main(): i32 {
         print("err branch")
     }
 
-    let b = Result.Err(- 1)
+    let b = Result.Err(-1)
     if let Result.Ok(v) = b {
         print("ok branch")
     } else {
-        print("err: ", - 1)
+        print("err: ", -1)
     }
 
     return 0
 }
-

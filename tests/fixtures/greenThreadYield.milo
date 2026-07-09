@@ -5,24 +5,29 @@
 // @expect: B2
 // @expect: C2
 
-from "std/runtime" import { Task, schedulerYield, schedulerRunToCompletion }
+from "std/runtime" import {
+    Task, schedulerYield, schedulerRunToCompletion
+}
 
 fn main(): i32 {
-    Task.spawn(move (): void => {
+    Task.spawn(move(): void => {
         print("A1")
         schedulerYield()
         print("A2")
-    })
-    Task.spawn(move (): void => {
+    }
+    )
+    Task.spawn(move(): void => {
         print("B1")
         schedulerYield()
         print("B2")
-    })
-    Task.spawn(move (): void => {
+    }
+    )
+    Task.spawn(move(): void => {
         print("C1")
         schedulerYield()
         print("C2")
-    })
+    }
+    )
     schedulerRunToCompletion()
     return 0
 }

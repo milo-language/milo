@@ -11,7 +11,7 @@ fn sum(t: Tree): i32 {
             return n
         }
         Tree.Node(left, right) => {
-            return sum(* left) + sum(* right)
+            return sum(*left) + sum(*right)
         }
     }
     return 0
@@ -25,4 +25,3 @@ fn main(): i32 {
     print("sum: ", sum(tree))
     return 0
 }
-

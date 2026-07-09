@@ -10,7 +10,9 @@ struct Entry {
 
 fn makeEntry(): Entry {
     var s = "hello"
-    return Entry{name: s, value: 42}
+    return Entry {
+        name: s, value: 42
+    }
 }
 
 fn main() {

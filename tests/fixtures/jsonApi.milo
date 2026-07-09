@@ -10,7 +10,9 @@
 // @expect: wrongtype=none
 // @expect: bare=hello
 
-from "std/json" import { jsonParse }
+from "std/json" import {
+    jsonParse
+}
 
 fn main(): i32 {
     let j = jsonParse("{\"name\": \"milo\", \"version\": 1, \"pi\": 3.14, \"active\": true, \"nothing\": null, \"tags\": [\"alpha\", \"beta\", \"gamma\"], \"addr\": {\"city\": \"SF\"}}")!
@@ -55,4 +57,3 @@ fn main(): i32 {
 
     return 0
 }
-

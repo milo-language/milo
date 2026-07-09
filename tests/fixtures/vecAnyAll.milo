@@ -14,4 +14,3 @@ fn main(): i32 {
     print("all: ", nums.all((n: &i32) => n > 0))
     return 0
 }
-

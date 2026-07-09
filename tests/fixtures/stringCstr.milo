@@ -1,22 +1,23 @@
 extern fn puts(s: *u8): i32
+
 extern fn strlen(s: *u8): i64
 
 fn main(): i32 {
-  let msg = "hello cstr"
+    let msg = "hello cstr"
 
-  // .cstr() returns *u8 without unsafe
-  let ptr = msg.cstr()
+    // .cstr() returns *u8 without unsafe
+    let ptr = msg.cstr()
 
-  // passing *u8 to extern *u8 param is safe (ptr already exists)
-  let len = strlen(ptr)
-  if len == 10 {
-    puts("length ok")
-  }
+    // passing *u8 to extern *u8 param is safe (ptr already exists)
+    let len = strlen(ptr)
+    if len == 10 {
+        puts("length ok")
+    }
 
-  // string auto-coercion still works
-  puts(msg)
+    // string auto-coercion still works
+    puts(msg)
 
-  return 0
+    return 0
 }
 
 // @expect: length ok

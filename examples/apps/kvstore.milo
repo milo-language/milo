@@ -28,8 +28,13 @@ struct Store {
 
 fn storeNew(): Store {
     var pages: Vec<Page> = Vec.new()
-    pages.push(Page { entries: Vec.new() })
-    return Store { pages: pages, count: 0 }
+    pages.push(Page {
+        entries: Vec.new()
+    }
+    )
+    return Store {
+        pages: pages, count: 0
+    }
 }
 
 // Index of the page whose key range should contain `key` — the last page whose
@@ -80,7 +85,10 @@ fn put(s: &mut Store, key: string, value: string) {
     while pos < s.pages[p].entries.len() && s.pages[p].entries[pos].key < key {
         pos = pos + 1
     }
-    s.pages[p].entries.insert(pos, Entry { key: key, value: value })
+    s.pages[p].entries.insert(pos, Entry {
+        key: key, value: value
+    }
+    )
     s.count = s.count + 1
 
     // split when over capacity: move the upper half into a new page after p
@@ -91,7 +99,10 @@ fn put(s: &mut Store, key: string, value: string) {
             let e = s.pages[p].entries.remove(half)
             upper.push(e)
         }
-        s.pages.insert(p + 1, Page { entries: upper })
+        s.pages.insert(p + 1, Page {
+            entries: upper
+        }
+        )
     }
 }
 
@@ -103,7 +114,9 @@ struct Cursor {
 }
 
 fn scanStart(): Cursor {
-    return Cursor { page: 0, slot: 0 }
+    return Cursor {
+        page: 0, slot: 0
+    }
 }
 
 // Advance the cursor and copy out the next entry, or None when exhausted.
@@ -138,26 +151,38 @@ fn main(): i32 {
     put(s, "foxtrot", "6")
     put(s, "hotel", "8")
 
-    print(s.count)                    // 8
-    print(s.pages.len())              // >1 — splits happened
+    print(s.count) // 8
+    print(s.pages.len()) // >1 — splits happened
 
     // point reads
     match get(s, "charlie") {
-        Option.Some(v) => { print(v) }    // 3
-        Option.None => { print("missing") }
+        Option.Some(v) => {
+            print(v)
+        } // 3
+        Option.None => {
+            print("missing")
+        }
     }
     match get(s, "zulu") {
-        Option.Some(v) => { print(v) }
-        Option.None => { print("missing") } // missing
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("missing")
+        } // missing
     }
 
     // overwrite
     put(s, "alpha", "one")
     match get(s, "alpha") {
-        Option.Some(v) => { print(v) }    // one
-        Option.None => { print("missing") }
+        Option.Some(v) => {
+            print(v)
+        } // one
+        Option.None => {
+            print("missing")
+        }
     }
-    print(s.count)                    // still 8
+    print(s.count) // still 8
 
     // full ordered scan
     var c = scanStart()
@@ -169,10 +194,12 @@ fn main(): i32 {
             Option.Some(e) => {
                 keys = keys + e.key + " "
             }
-            Option.None => { go = false }
+            Option.None => {
+                go = false
+            }
         }
     }
-    print(keys)   // alpha bravo charlie delta echo foxtrot golf hotel
+    print(keys) // alpha bravo charlie delta echo foxtrot golf hotel
 
     return 0
 }

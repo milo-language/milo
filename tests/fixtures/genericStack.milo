@@ -23,20 +23,30 @@ fn stackLen<T>(s: &Stack<T>): i64 {
 }
 
 fn main(): i32 {
-    var s: Stack<i64> = Stack { items: Vec.new() }
+    var s: Stack<i64> = Stack {
+        items: Vec.new()
+    }
     stackPush(s, 10)
     stackPush(s, 20)
     stackPush(s, 30)
     print("len:", stackLen(s))
 
     match stackPop(s) {
-        Option.Some(val) => { print("popped:", val) }
-        Option.None => { print("empty") }
+        Option.Some(val) => {
+            print("popped:", val)
+        }
+        Option.None => {
+            print("empty")
+        }
     }
 
     match stackPop(s) {
-        Option.Some(val) => { print("popped:", val) }
-        Option.None => { print("empty") }
+        Option.Some(val) => {
+            print("popped:", val)
+        }
+        Option.None => {
+            print("empty")
+        }
     }
 
     print("len:", stackLen(s))

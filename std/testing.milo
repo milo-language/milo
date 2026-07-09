@@ -1,9 +1,13 @@
 // std/testing — test assertion functions
 
-from "std/os" import { exit }
+from "std/os" import {
+    exit
+}
 
 fn _testFail(): void {
-    unsafe { exit(1) }
+    unsafe {
+        exit(1)
+    }
 }
 
 fn assert(cond: bool): void {

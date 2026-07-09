@@ -4,7 +4,9 @@
 // @expect: key: dGhlIHNhbXBsZSBub25jZQ==
 // @expect: WS_TEXT: 1
 
-from "std/ws" import { isWsUpgrade, extractWsKey, WS_TEXT, _computeAcceptKey }
+from "std/ws" import {
+    isWsUpgrade, extractWsKey, WS_TEXT, _computeAcceptKey
+}
 
 fn main(): i32 {
     // RFC 6455 Section 4.2.2 example: known accept key for this test vector

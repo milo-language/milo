@@ -1,16 +1,23 @@
 // jsonStringify escapes quotes, backslashes, and control chars in string fields
-struct Msg { kind: string, raw: string, n: i64, ok: bool }
+struct Msg {
+    kind: string, raw: string, n: i64, ok: bool
+}
+
 fn main(): i32 {
-    let m = Msg { kind: "cap\"s", raw: "a\"b\nc\\d\te", n: -7, ok: false }
+    let m = Msg {
+        kind: "cap\"s", raw: "a\"b\nc\\d\te", n: -7, ok: false
+    }
     print(jsonStringify(m))
-// @expect: {"kind":"cap\"s","raw":"a\"b\nc\\d\te","n":-7,"ok":false}
+    // @expect: {"kind":"cap\"s","raw":"a\"b\nc\\d\te","n":-7,"ok":false}
 
     // RFC 8259: bare control chars (e.g. ESC from pty streams) become \u00XX
     var s = "a"
     s.push(27 as u8)
     s = s + "b"
-    let e = Msg { kind: "k", raw: s, n: 0, ok: true }
+    let e = Msg {
+        kind: "k", raw: s, n: 0, ok: true
+    }
     print(jsonStringify(e))
-// @expect: {"kind":"k","raw":"a\u001bb","n":0,"ok":true}
+    // @expect: {"kind":"k","raw":"a\u001bb","n":0,"ok":true}
     return 0
 }

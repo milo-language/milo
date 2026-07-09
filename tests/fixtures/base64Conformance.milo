@@ -11,7 +11,9 @@
 // @expect: url_foob=Zm9vYg
 // @expect: url_fo=Zm8
 
-from "std/base64" import { base64Encode, base64Decode, base64UrlEncode }
+from "std/base64" import {
+    base64Encode, base64Decode, base64UrlEncode
+}
 
 fn main(): i32 {
     print("empty=[", base64Encode(""), "]")

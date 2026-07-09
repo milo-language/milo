@@ -4,14 +4,16 @@ interface Drawable {
     fn draw(self: &Self): string
 }
 
-struct Empty {}
+struct Empty {
+}
 
 fn render(d: &Drawable) {
     print(d.draw())
 }
 
 fn main(): i32 {
-    let e = Empty {}
+    let e = Empty {
+    }
     render(e)
     return 0
 }

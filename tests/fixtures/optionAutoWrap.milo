@@ -27,4 +27,3 @@ fn main(): i32 {
     check(z)
     return 0
 }
-

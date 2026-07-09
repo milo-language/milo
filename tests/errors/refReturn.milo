@@ -7,4 +7,3 @@ fn getSlice(s: &string): &string {
 fn main(): i32 {
     return 0
 }
-

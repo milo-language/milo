@@ -2,16 +2,20 @@
 // @expect: outer after inner
 // @expect: main after outer
 
-from "std/runtime" import { Task }
+from "std/runtime" import {
+    Task
+}
 
 fn main(): i32 {
-    let outer = Task.spawn(move (): void => {
-        let inner = Task.spawn(move (): void => {
+    let outer = Task.spawn(move(): void => {
+        let inner = Task.spawn(move(): void => {
             print("inner")
-        })
+        }
+        )
         inner.join()
         print("outer after inner")
-    })
+    }
+    )
     outer.join()
     print("main after outer")
     return 0

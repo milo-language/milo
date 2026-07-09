@@ -6,4 +6,3 @@ from "lib/math" import {
 fn main(): i32 {
     return 0
 }
-

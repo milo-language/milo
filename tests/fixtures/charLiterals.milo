@@ -9,10 +9,18 @@
 // char literals as match-arm patterns (integer-valued u8 subject)
 fn classify(ch: u8): string {
     match ch {
-        'a' => { return "a" }
-        '\n' => { return "newline" }
-        '0' => { return "zero" }
-        _ => { return "other" }
+        'a' => {
+            return "a"
+        }
+        '\n' => {
+            return "newline"
+        }
+        '0' => {
+            return "zero"
+        }
+        _ => {
+            return "other"
+        }
     }
 }
 

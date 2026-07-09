@@ -5,7 +5,9 @@
 // @expect: 3
 // @expect: 1
 
-from "std/unicode" import { codepoints, codepointCount }
+from "std/unicode" import {
+    codepoints, codepointCount
+}
 
 fn main(): i32 {
     let s = "café"

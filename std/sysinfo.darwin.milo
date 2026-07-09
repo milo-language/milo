@@ -1,28 +1,44 @@
 // std/sysinfo — high-level system information (macOS)
 
 extern fn gethostname(name: *u8, len: i64): i32
+
 extern fn getcwd(buf: *u8, size: i64): *u8
+
 extern fn chdir(path: *u8): i32
+
 extern fn getpid(): i32
+
 extern fn getppid(): i32
+
 extern fn getuid(): u32
+
 extern fn getgid(): u32
+
 extern fn geteuid(): u32
+
 extern fn getegid(): u32
+
 extern fn sysconf(name: i32): i64
+
 extern fn getloadavg(loadavg: *f64, nelem: i32): i32
+
 extern fn sysctlbyname(name: *u8, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
+
 extern fn sysctl(name: *i32, namelen: u32, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32
+
 extern fn gettimeofday(tv: *u8, tz: *u8): i32
 
 // Mach
 extern fn mach_host_self(): u32
+
 extern fn host_statistics64(host: u32, flavor: i32, info: *u8, count: *u32): i32
 
 fn hostname(): string {
     var buf: [u8; 256] = [0; 256]
     gethostname(buf, 256)
-    unsafe { return _cstrToString(buf as *u8) }
+    unsafe {
+        return _cstrToString(buf as *u8)
+    }
 }
 
 fn cwd(): string {
@@ -59,7 +75,9 @@ fn egid(): u32 {
 
 fn cpuCount(): i64 {
     let n = sysconf(58)
-    if n < 1 { return 1 }
+    if n < 1 {
+        return 1
+    }
     return n
 }
 
@@ -75,7 +93,9 @@ fn cpuModel(): string {
 fn totalMem(): i64 {
     var mem: [i64; 1] = [0]
     var len: [i64; 1] = [8]
-    unsafe { sysctlbyname("hw.memsize", mem as *u8, len as *i64, 0 as *u8, 0) }
+    unsafe {
+        sysctlbyname("hw.memsize", mem as *u8, len as *i64, 0 as *u8, 0)
+    }
     return mem[0]
 }
 
@@ -86,9 +106,9 @@ fn freeMem(): i64 {
     var count: [u32; 1] = [38]
     unsafe {
         if host_statistics64(mach_host_self(), 4, stats, count as *u32) == 0 {
-            let freePages = (stats as *u32)[0] as i64
-            let inactivePages = (stats as *u32)[2] as i64
-            let purgeablePages = (stats as *u32)[22] as i64
+            let freePages = (stats as *u32) [0]as i64
+            let inactivePages = (stats as *u32) [2]as i64
+            let purgeablePages = (stats as *u32) [22]as i64
             let pageSize = sysconf(29)
             return (freePages + inactivePages + purgeablePages) * pageSize
         }
@@ -110,7 +130,7 @@ fn uptime(): i64 {
         // seconds at offset 0 (little-endian i64)
         var nowSec: i64 = 0
         for i in 0..8 {
-            nowSec = nowSec | ((tvbuf[i] as i64) << (i as i64 * 8))
+            nowSec = nowSec | ((tvbuf[i]as i64) << (i as i64 * 8))
         }
         return nowSec - boottime[0]
     }

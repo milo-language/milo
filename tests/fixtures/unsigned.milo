@@ -7,4 +7,3 @@ fn main(): i32 {
     print(q)
     return 0
 }
-

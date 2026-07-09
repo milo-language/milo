@@ -8,8 +8,12 @@ enum Maybe<T> {
 
 fn unwrapOr<T>(m: Maybe<T>, fallback: T): T {
     match m {
-        Maybe.Just(val) => { return val }
-        Maybe.Nothing => { return fallback }
+        Maybe.Just(val) => {
+            return val
+        }
+        Maybe.Nothing => {
+            return fallback
+        }
     }
 }
 

@@ -6,21 +6,30 @@ interface Shape {
     fn area(self: &Self): f64
 }
 
-struct Circle { radius: f64 }
+struct Circle {
+    radius: f64
+}
+
 impl Circle {
     fn area(self: &Self): f64 {
         return 3.14159 * self.radius * self.radius
     }
 }
 
-struct Square { side: f64 }
+struct Square {
+    side: f64
+}
+
 impl Square {
     fn area(self: &Self): f64 {
         return self.side * self.side
     }
 }
 
-struct Triangle { base: f64, height: f64 }
+struct Triangle {
+    base: f64, height: f64
+}
+
 impl Triangle {
     fn area(self: &Self): f64 {
         return 0.5 * self.base * self.height
@@ -29,9 +38,18 @@ impl Triangle {
 
 fn main(): i32 {
     var shapes: Vec<Heap<Shape>> = Vec.new()
-    shapes.push(Heap(Circle { radius: 5.0 }))
-    shapes.push(Heap(Square { side: 4.0 }))
-    shapes.push(Heap(Triangle { base: 10.0, height: 5.6549 }))
+    shapes.push(Heap(Circle {
+        radius: 5.0
+    }
+    ))
+    shapes.push(Heap(Square {
+        side: 4.0
+    }
+    ))
+    shapes.push(Heap(Triangle {
+        base: 10.0, height: 5.6549
+    }
+    ))
     for s in shapes {
         print(s.area())
     }

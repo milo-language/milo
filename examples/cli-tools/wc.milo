@@ -1,6 +1,10 @@
 // wc — count lines, words, and characters
-from "std/argparse" import { newParser }
-from "std/io" import { readFile, readStdin }
+from "std/argparse" import {
+    newParser
+}
+from "std/io" import {
+    readFile, readStdin
+}
 
 fn pad(n: i64): string {
     let s = n.toString()
@@ -87,4 +91,3 @@ fn main(): i32 {
 
     return 0
 }
-

@@ -3,7 +3,9 @@
 // @expect: trailing=true
 // @expect: propagated=none
 
-from "std/json" import { jsonParse }
+from "std/json" import {
+    jsonParse
+}
 
 fn tryParse(s: string): Result<string> {
     let j = jsonParse(s)?
@@ -57,4 +59,3 @@ fn main(): i32 {
 
     return 0
 }
-

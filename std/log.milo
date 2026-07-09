@@ -1,6 +1,8 @@
 // std/log — logging to stderr with level tags
 
-from "std/time" import { epochSecs }
+from "std/time" import {
+    epochSecs
+}
 
 fn _logMsg(tag: string, msg: string): void {
     let ts = epochSecs()

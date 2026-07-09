@@ -1,6 +1,5 @@
 // std/url — URL parsing into components
 
-
 struct Url {
     scheme: string,
     host: string,
@@ -46,7 +45,7 @@ fn urlParse(s: string): Result<Url> {
         let auth = s[authStart..i]
 
         // split host:port
-        var colonPos: i64 = - 1 as i64
+        var colonPos: i64 = -1 as i64
         var j: i64 = auth.len - 1
         while j >= 0 {
             if auth[j] == ':' {
@@ -93,15 +92,20 @@ fn urlParse(s: string): Result<Url> {
 
     // default ports
     if port == 0 {
-        if scheme == "http" { port = 80 }
-        if scheme == "https" { port = 443 }
+        if scheme == "http" {
+            port = 80
+        }
+        if scheme == "https" {
+            port = 443
+        }
     }
 
     return Result.Ok(Url {
         scheme: scheme, host: host, port: port,
         path: path, query: query, fragment: fragment,
         raw: s.clone(),
-    })
+    }
+    )
 }
 
 fn _parsePort(s: &string): i32 {
@@ -109,7 +113,9 @@ fn _parsePort(s: &string): i32 {
     var i: i64 = 0
     while i < s.len {
         let c = s[i]
-        if c < '0' || c > '9' { return 0 }
+        if c < '0' || c > '9' {
+            return 0
+        }
         result = result * 10 + (c as i32 - 48)
         i = i + 1
     }
@@ -117,7 +123,9 @@ fn _parsePort(s: &string): i32 {
 }
 
 fn urlQueryGet(u: &Url, key: &string): Option<string> {
-    if u.query.len == 0 { return Option.None }
+    if u.query.len == 0 {
+        return Option.None
+    }
     var i: i64 = 0
     while i < u.query.len {
         let kStart = i
@@ -145,10 +153,14 @@ fn urlQueryGet(u: &Url, key: &string): Option<string> {
 }
 
 fn _strEqUrl(a: &string, b: &string): bool {
-    if a.len != b.len { return false }
+    if a.len != b.len {
+        return false
+    }
     var i: i64 = 0
     while i < a.len {
-        if a[i] != b[i] { return false }
+        if a[i] != b[i] {
+            return false
+        }
         i = i + 1
     }
     return true

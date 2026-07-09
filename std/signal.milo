@@ -1,6 +1,5 @@
 // std/signal — OS signal handling (POSIX)
 
-
 extern fn signal(signum: i32, handler: *u8): *u8
 
 let SIGHUP: i32 = 1

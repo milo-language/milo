@@ -8,4 +8,3 @@ fn main(): i32 {
     var m: HashMap<Point, i32> = HashMap.new()
     return 0
 }
-

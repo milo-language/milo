@@ -268,4 +268,3 @@ fn main(): i32 {
     check("{\"a\" 1}", false)
     return 0
 }
-

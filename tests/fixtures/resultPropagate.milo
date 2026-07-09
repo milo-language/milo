@@ -24,7 +24,7 @@ fn main(): i32 {
         }
     }
 
-    let b = doubleValid(- 1)
+    let b = doubleValid(-1)
     match b {
         Result.Ok(v) => {
             print("got ", v)
@@ -36,4 +36,3 @@ fn main(): i32 {
 
     return 0
 }
-

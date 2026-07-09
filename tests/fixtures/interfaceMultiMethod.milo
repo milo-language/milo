@@ -6,7 +6,9 @@ interface Shape {
     fn name(self: &Self): string
 }
 
-struct Circle { radius: f64 }
+struct Circle {
+    radius: f64
+}
 
 impl Circle {
     fn area(self: &Self): f64 {
@@ -17,7 +19,9 @@ impl Circle {
     }
 }
 
-struct Rect { w: f64, h: f64 }
+struct Rect {
+    w: f64, h: f64
+}
 
 impl Rect {
     fn area(self: &Self): f64 {
@@ -33,8 +37,12 @@ fn describe(s: &Shape) {
 }
 
 fn main(): i32 {
-    let c = Circle { radius: 5.0 }
-    let r = Rect { w: 4.0, h: 6.0 }
+    let c = Circle {
+        radius: 5.0
+    }
+    let r = Rect {
+        w: 4.0, h: 6.0
+    }
     describe(c)
     describe(r)
     return 0

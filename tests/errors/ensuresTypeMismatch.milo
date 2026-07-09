@@ -1,7 +1,7 @@
 // @error: ensures clause must be bool
 
 fn bar(x: i64): i64
-  ensures result + 1
+ensures result + 1
 {
     return x
 }

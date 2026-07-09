@@ -9,24 +9,58 @@
 // pass --read-only to disable it. Mirrors termpair-rs: control is allowed only
 // for private (encrypted) sessions, never public ones.
 
-from "std/pty" import { Pty, WinSize, openAndSpawn }
-from "std/ws" import { WsConn, wsConnect, wsConnectTls }
-from "std/net" import { resolve }
-from "std/term" import { enableRawMode, restoreTerminal, readKey }
-from "std/os" import { ioctl, read, write, exit, isatty }
-from "std/io" import { writeStdout, readStdin, readLine }
-from "std/sync" import { AtomicBool }
-from "std/runtime" import { Task, schedulerYield, schedulerWaitRead, _schedulerTick }
-from "std/event" import { setNonblocking, clearNonblocking }
-from "std/platform" import { getErrno, eagain }
-from "std/time" import { epochSecs, sleepMs }
-from "std/argparse" import { newParser }
-from "std/base64" import { base64Encode, base64UrlEncode }
-from "std/signal" import { ignoreSignal, SIGPIPE }
-from "std/env" import { getEnvOr }
+from "std/pty" import {
+    Pty, WinSize, openAndSpawn
+}
+from "std/ws" import {
+    WsConn, wsConnect, wsConnectTls
+}
+from "std/net" import {
+    resolve
+}
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey
+}
+from "std/os" import {
+    ioctl, read, write, exit, isatty
+}
+from "std/io" import {
+    writeStdout, readStdin, readLine
+}
+from "std/sync" import {
+    AtomicBool
+}
+from "std/runtime" import {
+    Task, schedulerYield, schedulerWaitRead, _schedulerTick
+}
+from "std/event" import {
+    setNonblocking, clearNonblocking
+}
+from "std/platform" import {
+    getErrno, eagain
+}
+from "std/time" import {
+    epochSecs, sleepMs
+}
+from "std/argparse" import {
+    newParser
+}
+from "std/base64" import {
+    base64Encode, base64UrlEncode
+}
+from "std/signal" import {
+    ignoreSignal, SIGPIPE
+}
+from "std/env" import {
+    getEnvOr
+}
 
-from "./protocol" import { makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr, parseField }
-from "./encryption" import { genKey, encryptWithKey, decryptWithKey, aesKeysMessage }
+from "./protocol" import {
+    makeInitMessage, makeResizeMsg, makeNewOutput, parseEvent, parsePayloadStr, parseField
+}
+from "./encryption" import {
+    genKey, encryptWithKey, decryptWithKey, aesKeysMessage
+}
 
 // ── Terminal size query ──
 
@@ -36,22 +70,30 @@ struct TermSize {
 }
 
 fn termSize(): TermSize {
-    var ws = WinSize { rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16 }
+    var ws = WinSize {
+        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
     unsafe {
         // TIOCGWINSZ on macOS
         ioctl(1, 1074295912, (&ws) as *u8)
     }
-    return TermSize { rows: ws.rows as i64, cols: ws.cols as i64 }
+    return TermSize {
+        rows: ws.rows as i64, cols: ws.cols as i64
+    }
 }
 
 fn stdinIsTty(): bool {
-    unsafe { return isatty(0) != 0 }
+    unsafe {
+        return isatty(0) != 0
+    }
 }
 
 // ── Simple ISO timestamp ──
 
 fn pad2(n: i64): string {
-    if n < 10 { return "0" + n.toString() }
+    if n < 10 {
+        return "0" + n.toString()
+    }
     return n.toString()
 }
 
@@ -81,8 +123,12 @@ fn isoTimestamp(): string {
     }
 
     let isLeap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-    let febDays: i64 = if isLeap { 29 as i64 } else { 28 as i64 }
-    let monthDays: [i64 ; 12] = [31, febDays, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+    let febDays: i64 = if isLeap {
+        29 as i64
+    } else {
+        28 as i64
+    }
+    let monthDays: [i64; 12] = [31, febDays, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     var m: i64 = 0
     while m < 12 && remaining >= monthDays[m] {
         remaining = remaining - monthDays[m]
@@ -130,17 +176,31 @@ fn main(): i32 {
     let noWait = args.getBool("no-wait")
 
     let connectPath = base + "/connect_to_terminal"
-    let scheme = if useTls { "https" } else { "http" }
+    let scheme = if useTls {
+        "https"
+    } else {
+        "http"
+    }
     // Authority for the share URL: include the port unless it's the scheme default
     // (443 for https, 80 for http). Omitting it broke local servers — a browser sent
     // to http://127.0.0.1/... hits port 80, not the actual --port.
-    let defaultPort: i64 = if useTls { 443 as i64 } else { 80 as i64 }
-    let authority = if (port as i64) == defaultPort { host } else { host + ":" + (port as i64).toString() }
+    let defaultPort: i64 = if useTls {
+        443 as i64
+    } else {
+        80 as i64
+    }
+    let authority = if (port as i64) == defaultPort {
+        host
+    } else {
+        host + ":" + (port as i64).toString()
+    }
 
     // resolve server address
     var ip: u32 = 0
     match resolve(host) {
-        Result.Ok(v) => { ip = v }
+        Result.Ok(v) => {
+            ip = v
+        }
         Result.Err(e) => {
             print($"error: could not resolve host '{host}'")
             return 1
@@ -154,9 +214,13 @@ fn main(): i32 {
 
     // open PTY and spawn shell
     var shellArgs: Vec<string> = []
-    var pty: Pty = Pty { masterFd: -1, slavePath: "", childPid: -1, _rows: 0 as u16, _cols: 0 as u16 }
+    var pty: Pty = Pty {
+        masterFd: -1, slavePath: "", childPid: -1, _rows: 0 as u16, _cols: 0 as u16
+    }
     match openAndSpawn(shell, shellArgs) {
-        Result.Ok(v) => { pty = v }
+        Result.Ok(v) => {
+            pty = v
+        }
         Result.Err(e) => {
             print($"error: {e}")
             return 1
@@ -164,14 +228,22 @@ fn main(): i32 {
     }
 
     // resize PTY to match terminal (minus 1 row for status)
-    let ptyRows = if rows > 1 { rows - 1 } else { rows }
+    let ptyRows = if rows > 1 {
+        rows - 1
+    } else {
+        rows
+    }
     pty.resize(ptyRows as u16, cols as u16)
 
     // connect to server
-    var ws: WsConn = WsConn { fd: -1, ssl: 0, _ctx: 0, _closed: true, _isClient: true }
+    var ws: WsConn = WsConn {
+        fd: -1, ssl: 0, _ctx: 0, _closed: true, _isClient: true
+    }
     if useTls {
         match wsConnectTls(ip, port, host, connectPath) {
-            Result.Ok(v) => { ws = v }
+            Result.Ok(v) => {
+                ws = v
+            }
             Result.Err(e) => {
                 print($"error: could not connect to server: {e}")
                 return 1
@@ -179,7 +251,9 @@ fn main(): i32 {
         }
     } else {
         match wsConnect(ip, port, connectPath) {
-            Result.Ok(v) => { ws = v }
+            Result.Ok(v) => {
+                ws = v
+            }
             Result.Err(e) => {
                 print($"error: could not connect to server: {e}")
                 return 1
@@ -196,7 +270,8 @@ fn main(): i32 {
     let startTime = isoTimestamp()
     let initMsg = makeInitMessage(ptyRows, cols, shell, startTime, isPublic, allowControl)
     match ws.sendText(initMsg) {
-        Result.Ok(_) => {}
+        Result.Ok(_) => {
+        }
         Result.Err(e) => {
             print($"error: failed to send init: {e}")
             return 1
@@ -206,7 +281,9 @@ fn main(): i32 {
     // read start_broadcast response
     var startPayload: string = ""
     match ws.recv() {
-        Result.Ok(msg) => { startPayload = msg.payload }
+        Result.Ok(msg) => {
+            startPayload = msg.payload
+        }
         Result.Err(e) => {
             print($"error: no start_broadcast from server: {e}")
             return 1
@@ -264,9 +341,15 @@ fn main(): i32 {
     let wsFd3 = ws.fd
     let wsSsl1 = ws.ssl
     let wsSsl3 = ws.ssl
-    let done1 = AtomicBool { _ptr: done._ptr }
-    let done2 = AtomicBool { _ptr: done._ptr }
-    let done3 = AtomicBool { _ptr: done._ptr }
+    let done1 = AtomicBool {
+        _ptr: done._ptr
+    }
+    let done2 = AtomicBool {
+        _ptr: done._ptr
+    }
+    let done3 = AtomicBool {
+        _ptr: done._ptr
+    }
 
     // per-thread key clones — no shared mutable crypto state (read-only, no rotation)
     let unixKeyA = unixKey.clone()
@@ -283,15 +366,19 @@ fn main(): i32 {
     setNonblocking(0)
 
     // task 1: PTY output → WebSocket (terminal → server → browsers)
-    Task.spawn(move (): void => {
-        var sendWs = WsConn { fd: wsFd1, ssl: wsSsl1, _ctx: 0, _closed: true, _isClient: true }
-        var buf: [u8 ; 4096] = [0 ; 4096]
+    Task.spawn(move(): void => {
+        var sendWs = WsConn {
+            fd: wsFd1, ssl: wsSsl1, _ctx: 0, _closed: true, _isClient: true
+        }
+        var buf: [u8; 4096] = [0; 4096]
         var msgCount: i64 = 0
         while !done1.load() {
             unsafe {
                 schedulerWaitRead(ptyFd1)
                 let n = read(ptyFd1, buf as *u8, 4095)
-                if n < 0 && getErrno() == eagain() { continue }
+                if n < 0 && getErrno() == eagain() {
+                    continue
+                }
                 if n <= 0 {
                     done1.store(true)
                     break
@@ -311,8 +398,12 @@ fn main(): i32 {
                 } else {
                     msgCount = msgCount + 1
                     match encryptWithKey(unixKeyA, msgCount, plaintext) {
-                        Result.Ok(v) => { payload = v }
-                        Result.Err(_) => { continue }
+                        Result.Ok(v) => {
+                            payload = v
+                        }
+                        Result.Err(_) => {
+                            continue
+                        }
                     }
                 }
 
@@ -322,20 +413,24 @@ fn main(): i32 {
                         done1.store(true)
                         break
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
             }
         }
-    })
+    }
+    )
 
     // task 2: stdin → PTY (local keyboard input → shell)
-    Task.spawn(move (): void => {
-        var buf: [u8 ; 256] = [0 ; 256]
+    Task.spawn(move(): void => {
+        var buf: [u8; 256] = [0; 256]
         while !done2.load() {
             unsafe {
                 schedulerWaitRead(0)
                 let n = read(0, buf as *u8, 256)
-                if n < 0 && getErrno() == eagain() { continue }
+                if n < 0 && getErrno() == eagain() {
+                    continue
+                }
                 // n == 0 from non-blocking terminal is not EOF, just no data yet
                 if n < 0 {
                     done2.store(true)
@@ -346,11 +441,14 @@ fn main(): i32 {
                 }
             }
         }
-    })
+    }
+    )
 
     // task 3: WebSocket → control handling (browser joins, resize requests)
-    Task.spawn(move (): void => {
-        var recvWs = WsConn { fd: wsFd3, ssl: wsSsl3, _ctx: 0, _closed: true, _isClient: true }
+    Task.spawn(move(): void => {
+        var recvWs = WsConn {
+            fd: wsFd3, ssl: wsSsl3, _ctx: 0, _closed: true, _isClient: true
+        }
         var bootstrapCount: i64 = 0
         var browserCount: i64 = 0
         while !done3.load() {
@@ -369,12 +467,18 @@ fn main(): i32 {
                             var eu: string = ""
                             var eb: string = ""
                             match encryptWithKey(bootKeyB, c1, unixKeyB) {
-                                Result.Ok(v) => { eu = v }
-                                Result.Err(_) => {}
+                                Result.Ok(v) => {
+                                    eu = v
+                                }
+                                Result.Err(_) => {
+                                }
                             }
                             match encryptWithKey(bootKeyB, c2, browserKeyB) {
-                                Result.Ok(v) => { eb = v }
-                                Result.Err(_) => {}
+                                Result.Ok(v) => {
+                                    eb = v
+                                }
+                                Result.Err(_) => {
+                                }
                             }
                             if eu.len > 0 && eb.len > 0 {
                                 let km = aesKeysMessage(eu, eb, browserCount)
@@ -393,19 +497,30 @@ fn main(): i32 {
                                     let data = parseField(plain, "data")
                                     // Cap at MAX_COMMAND_INPUT_BYTES (4096) — matches termpair-rs.
                                     var dlen = data.len
-                                    if dlen > 4096 { dlen = 4096 }
+                                    if dlen > 4096 {
+                                        dlen = 4096
+                                    }
                                     if dlen > 0 {
-                                        var wbuf: [u8 ; 4096] = [0 ; 4096]
-                                        for i in 0..dlen { wbuf[i] = data[i] }
-                                        unsafe { write(ptyFd3, wbuf as *u8, dlen) }
+                                        var wbuf: [u8; 4096] = [0; 4096]
+                                        for i in 0..dlen {
+                                            wbuf[i] = data[i]
+                                        }
+                                        unsafe {
+                                            write(ptyFd3, wbuf as *u8, dlen)
+                                        }
                                     }
                                 }
-                                Result.Err(_) => {}
+                                Result.Err(_) => {
+                                }
                             }
                         }
                     } else if ev == "request_terminal_dimensions" {
                         let ts2 = termSize()
-                        let r2 = if ts2.rows > 1 { ts2.rows - 1 } else { ts2.rows }
+                        let r2 = if ts2.rows > 1 {
+                            ts2.rows - 1
+                        } else {
+                            ts2.rows
+                        }
                         let _ = recvWs.sendText(makeResizeMsg(r2, ts2.cols))
                     }
                     // `request_key_rotation` ignored: keys are fixed for the session.
@@ -416,7 +531,8 @@ fn main(): i32 {
                 }
             }
         }
-    })
+    }
+    )
 
     // drive scheduler from main thread until a task signals done
     while !done.load() {

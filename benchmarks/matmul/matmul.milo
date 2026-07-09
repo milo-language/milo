@@ -31,4 +31,3 @@ fn main(): i32 {
     print("c[0]=", c[0 as i64], " c[last]=", c[total - 1])
     return 0
 }
-

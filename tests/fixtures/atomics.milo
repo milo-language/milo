@@ -7,7 +7,9 @@
 // @expect: true
 // @expect: false
 
-from "std/sync" import { AtomicI64, AtomicBool }
+from "std/sync" import {
+    AtomicI64, AtomicBool
+}
 
 fn main(): i32 {
     let counter = AtomicI64.new(0)
