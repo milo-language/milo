@@ -251,50 +251,74 @@ every auto-borrowed `*h` argument destroyed the pointee. `enum E { A(i64), B }`
 gated by `CHECK_MUST_PASS` / `RUN_MUST_PASS`, and `run` propagates the exit code
 (`return 7` → rc 7). `build -o` works.
 
-**Manifest is still empty.** Progress and remaining blockers:
+**Manifest is still empty.** One blocker left, and it is a real bug.
 
-1. ~~`print` is not a builtin in milo0.~~ **Done** — checker recognizes
-   `print`/`println`/`eprint`; codegen emits `printf` with a format string
-   synthesized from the argument types. Previously it emitted `printf(i64 42)`,
-   not even valid IR.
+Fixed since the plan was written:
 
-2. ~~milo0's checker crashes on `std/prelude` → `std/string`.~~ **Done.** Two
-   root causes, one in each compiler:
+1. ~~`print` is not a builtin in milo0.~~ Checker knows `print`/`println`/`eprint`;
+   codegen emits `printf` with a format string synthesized from the argument types.
+2. ~~Checker crashes on `std/prelude` → `std/string`.~~ Two root causes:
+   - *Oracle* (`1cd6e27`): `HashMap.get` did a bare `load`, so a heap-owning value's
+     copy aliased the map and a later `insert` on the same key dropped the old value
+     out from under it. `emitDeepCloneFromPtr` also punted on enums
+     (`TODO: full enum deep clone`); added `milo.clone.<enum>`. Gotcha: the clone
+     opens new basic blocks, so the `found` block stops being the phi's predecessor —
+     `opt -O2` says *"PHI node entries do not match predecessors"* while clang just
+     dies with `Bus error: 10`.
+   - *milo0* (`b916a5f`): `TRef(inner, ..) => inner.clone()` cloned `&Heap<TypeKind>`
+     one level too high, reinterpreting pointer bytes as a TypeKind (`*u1`).
+3. ~~No int-literal coercion.~~ Const-int coercion at binop / call args / return /
+   let annotations (`ce7fc22`).
+4. ~~`requires`/`ensures`, `Vec<T>` type args, `Vec.new()`, `substr`/`cstr`.~~
+   (`eb55e1b`) Contract clauses are plain identifiers to milo0's lexer, so the
+   parser fell into `error_unexpected` and never reached the body; `typeFromAst`
+   ignored `MiloType.typeArgs`, so `Vec<string>` came back as `TStruct("Vec")`.
+5. ~~Allocas in the clone helpers.~~ (`400a71f`) Helper bodies bypass the function
+   emitter, so `hoistAllocas` never ran — a Vec field's clone allocated once per
+   loop iteration.
 
-   - *Oracle* (`1cd6e27`): `HashMap.get` did a bare `load` of the entry value, so
-     a heap-owning value's copy aliased the map. The copy-back idiom
-     `match m.get(k) { Some(v) => { var u = v; u.f = 1; m.insert(k, u) } }` then
-     had `insert` drop the old value out from under `u`. `emitDeepCloneFromPtr`
-     also had `// enum/hashmap/array — fall back to shallow load (TODO)`, so enum
-     payloads stayed shallow. Added `milo.clone.<enum>` (tag switch, mirrors
-     `ensureDropHelper`). Gotcha: the clone opens new basic blocks, so the `found`
-     block stops being the phi's predecessor — without re-anchoring, `opt -O2`
-     reports *"PHI node entries do not match predecessors"* and clang dies with a
-     bus error on a module this large. Exactly the shape milo0's scopes use:
-     `HashMap<string, VarInfo>`, `VarInfo.ty: TypeKind`, a Heap-recursive enum.
-     `&T` params were the trigger because only `TRef` carries a `Heap` payload.
-   - *milo0* (`b916a5f`): `TypeKind.TRef(inner, ..) => inner.clone()` cloned at
-     the wrong level (`inner` is `&Heap<TypeKind>`), reinterpreting pointer bytes
-     as a `TypeKind` — the garbage tag printed as `*u1`. Needs `(*inner).clone()`.
+Together these took a prelude-importing program from **161 errors → 8**.
 
-3. ~~No int-literal coercion.~~ **Done** (`ce7fc22`) — const-int-literal coercion
-   at binop, call args, return, and let/var annotations.
+### The remaining blocker: nondeterministic corruption in milo0's checker
 
-Checking a prelude-importing program went **161 → 44** errors. `findStdlibRoot`
-is written and documented in `src-milo/main.milo` but still **not wired up**:
-wiring it makes every in-repo program pull the prelude, and those 44 errors would
-fail `check` and redden the smoke gates. Remaining classes, all milo0 gaps:
+`findStdlibRoot` (MILO_ROOT, else walk up to `std/prelude.milo`) is written and
+documented in `src-milo/main.milo` but deliberately **not wired up** — wiring it
+makes every in-repo program inject the prelude and reddens both smoke gates.
 
-- `no method 'substr' on string` (9) and `no method 'push' on struct 'Vec'` (7) —
-  missing built-in method signatures in the checker.
-- `undefined variable 'error_unexpected'` (8) — `requires` clauses lower to a
-  bogus identifier. Repro: a fn with a `requires` clause.
-- `use of moved variable 'result'` / `undefined variable 'result'` (6) — move
-  checker false positive.
-- `operator '+' requires numeric type, got string` (3).
+Repro (nondeterministic — run it several times):
 
-Clear those, wire `findStdlibRoot` into the two `stdlibDir` bindings, and the
-manifest can finally seed. The `emit-ir` diffing playbook works:
+```sh
+mkdir -p /tmp/root && ln -s "$PWD/std" /tmp/root/std
+printf 'from "std/string" import { strTrim }
+fn main(): i32 { return 0 }
+' > /tmp/root/t.milo
+for i in 1 2 3 4 5; do .selfhost/milo-self check /tmp/root/t.milo; echo "rc=$?"; done
+```
+
+Alternates between 8 errors, 7 errors, and clean-with-no-output. One of the errors
+prints a garbage type name — `type mismatch in '+': string vs f-255281472` — i.e. a
+`TypeKind` is read after free (a `TFloat` with garbage bits).
+
+Under ASan (`--debug --sanitize`) it is a **SEGV/BUS on an invalid PC**, with the
+faulting address equal to `x8` and no module — an indirect jump through smashed
+memory. milo0 contains no indirect calls (no closures, no fn pointers, no trait
+objects in the checker), so a **return address is being overwritten**. ASan does not
+report the write itself, which points at a memcpy-family write or a store through a
+bad pointer rather than a plain stack-buffer overflow.
+
+Next steps: get a backtrace out of the ASan build under lldb (plain `lldb` on the
+release build hangs, and unoptimized frames don't unwind); suspect the newly added
+`milo.clone.<enum>` payload stores (a single-field variant stores `fieldTypes[0]`
+straight at the payload GEP) and the `emitDeepCloneFromPtr` `heap` branch. Bisect by
+reverting `1cd6e27` locally and re-running the repro — that tells you immediately
+whether the corruption predates the HashMap deep-clone work.
+
+The remaining 8 errors, once the corruption is fixed, are ordinary milo0 gaps:
+`use of moved variable 'result'/'word'/'token'` (move-checker false positives on a
+loop-carried Vec), `operator '+' requires numeric type, got string`, and
+`type mismatch: cannot assign i32 to i64`.
+
+The `emit-ir` diffing playbook works:
 `diff <(bun run src/main.ts emit-ir f.milo) <(.selfhost/milo-self emit-ir f.milo)`.
 
 ### M2 — Retire the dead HIR path (decision, then mechanical)
