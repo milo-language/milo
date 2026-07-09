@@ -4385,6 +4385,14 @@ export class Codegen {
       lines.push(...lv);
       return [lines, ptr];
     }
+    // `*h` in an auto-borrowed argument position: the callee wants the address of
+    // the pointee, which is exactly the pointer `h` already holds. Falling through
+    // to genExpr() would *load* the value and, for HeapDeref, zero the source box
+    // as if this were a move — freeing data the caller still owns.
+    if (expr.kind === "HeapDeref" || expr.kind === "PtrDeref") {
+      const [lines, ptr] = this.genExpr(expr.operand);
+      return [lines, ptr];
+    }
     const lines: string[] = [];
     const [el, ev, et] = this.genExpr(expr);
     lines.push(...el);
