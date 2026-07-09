@@ -50,9 +50,9 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   return lower(program, result, sourceDir);
 }
 
-function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false): string {
+function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false): string {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
-  return new Codegen(target, filePath, debugOverflow).generate(hirModule);
+  return new Codegen(target, filePath, debugOverflow, emitDebug).generate(hirModule);
 }
 
 function compileToJS(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
@@ -60,9 +60,9 @@ function compileToJS(source: string, target: TargetInfo, filePath?: string, warn
   return new CodegenJS().generate(hirModule);
 }
 
-function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig, debugOverflow = false) {
+function compileToIr(sourcePath: string, outputPath: string | null, target: TargetInfo, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false) {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
+  const ir = compile(source, target, sourcePath, warningConfig, debugOverflow, emitDebug);
   if (outputPath) {
     writeFileSync(outputPath, ir);
     console.log(`wrote ${outputPath}`);
@@ -139,12 +139,29 @@ function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optF
   );
 }
 
-function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false) {
+function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false) {
   const tc = detectToolchain();
   const san = sanitize ? " -fsanitize=address" : "";
   if (tc.kind === "clang") {
     const opt = optFlag ? ` ${optFlag}` : "";
-    execSync(`${tc.path}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+    // Mach-O keeps DWARF in the .o and references it from the executable via a debug
+    // map (N_OSO); the DWARF is never copied into the linked binary. The default
+    // single-step `clang x.ll -o out` deletes its internal .o, dangling that map. So on
+    // a Mach-O target with debug info, persist the .o, link it, then dsymutil the debug
+    // map into out.dSYM (which lldb/hades auto-load). ELF embeds DWARF in the binary
+    // directly, so it needs none of this.
+    if (emitDebug && process.platform === "darwin") {
+      const obj = `${outFile}.dbg.o`;
+      try {
+        execSync(`${tc.path}${opt}${san} -c ${llFile} -o ${obj} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+        execSync(`${tc.path}${opt}${san} ${obj} -o ${outFile}${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+        execSync(`dsymutil ${outFile}`, { stdio: ["pipe", "pipe", "pipe"] });
+      } finally {
+        try { unlinkSync(obj); } catch {}
+      }
+    } else {
+      execSync(`${tc.path}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+    }
   } else {
     if (sanitize) {
       console.error("error: --sanitize requires clang (not llc+cc)");
@@ -253,10 +270,13 @@ function detectLibs(ir: string, target: TargetInfo): string {
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false): string {
   const source = readFileSync(sourcePath, "utf-8");
   const debugOverflow = optFlag === "-O0";
-  const ir = compile(source, target, sourcePath, warningConfig, debugOverflow);
+  // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
+  // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
+  // -identical and free of per-build dsymutil / .dSYM litter.
+  const ir = compile(source, target, sourcePath, warningConfig, debugOverflow, emitDebug);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
@@ -270,7 +290,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     } else {
       const libs = detectLibs(ir, target);
       const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
-      linkIR(tmpLl, out, optFlag, libs, extra, sanitize);
+      linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug);
     }
   } catch (e: any) {
     console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
@@ -356,8 +376,8 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warn
   }
 }
 
-function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false) {
-  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize);
+function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false) {
+  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug);
   try {
     if (target.bareMetal) {
       runBareMetalQemu(bin, target);
@@ -402,10 +422,11 @@ function runBareMetalQemu(bin: string, target: TargetInfo) {
   if (r.stderr) process.stdout.write(r.stderr);
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; emitDebug: boolean } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
+  let emitDebug = false;
   let noEntry = false;
   let safetyLevel: string | null = null;
   let sanitize = false;
@@ -418,6 +439,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
     else if (args[i] === "--debug") { optFlag = "-O0"; }
+    else if (args[i] === "-g") { emitDebug = true; } // DWARF line info, composes with any -O
     else if (args[i] === "--no-entry") { noEntry = true; }
     else if (args[i] === "--sanitize") { sanitize = true; }
     else if (args[i] === "--emit-header") { emitHeader = true; }
@@ -436,7 +458,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -862,6 +884,7 @@ function main() {
     console.log("options:");
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
+    console.log("  -g                     emit DWARF line info (source-level lldb/hades); composes with any -O / --debug");
     console.log("  -O<level>              clang opt level: 0,1,2,3,s,z (default: -O2)");
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
@@ -957,7 +980,7 @@ function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -1089,13 +1112,13 @@ function main() {
   }
 
   if (cmd === "run") {
-    runFile(source!, rest, target, optFlag, warningConfig, sanitize);
+    runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug);
   } else if (cmd === "build") {
     const t0 = Date.now();
-    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug);
     reportCompiled(source!, bin, Date.now() - t0);
   } else if (cmd === "emit-ir") {
-    compileToIr(source!, output, target, warningConfig, optFlag === "-O0");
+    compileToIr(source!, output, target, warningConfig, optFlag === "-O0", emitDebug);
   } else if (cmd === "emit-obj") {
     const t0 = Date.now();
     const obj = compileToObj(source!, output, target, optFlag, warningConfig, noEntry);

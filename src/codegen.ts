@@ -3,6 +3,7 @@ import { type TypeKind, needsDrop } from "./types";
 import type { TargetInfo } from "./target";
 import { genVecSort, genVecSortBy, genVecSortByKey } from "./codegen-vec";
 import { classifyArg, classifyRet, AbiError, type ArgClass, type RetClass, type AbiStruct, type AbiLeaf } from "./abi";
+import { resolve, dirname, basename } from "path";
 
 interface ExternAbiInfo {
   args: (ArgClass | null)[]; // per fixed param; null = direct (scalar/ptr/ref — no rewrite)
@@ -84,10 +85,248 @@ export class Codegen {
 
   private filePath?: string;
 
-  constructor(target: TargetInfo, filePath?: string, debugOverflow = false) {
+  // ── DWARF line-table emission (M1) ──
+  // Off unless `emitDebug`. All metadata is interned here and rendered as trailing
+  // `!N = ...` nodes in applyDebugInfo(); the `!N` id space is otherwise unused, so
+  // codegen owns it entirely. LLVM permits forward metadata references, so mint order
+  // is irrelevant. Scope is resolved lazily in the final text pass (see applyDebugInfo)
+  // rather than threaded through the recursive emitters — that sidesteps every
+  // closure/trampoline state-save landmine.
+  private emitDebug = false;
+  private metaCounter = 0;
+  private diNodes: string[] = [];
+  private diFiles = new Map<string, number>();
+  private diSubprograms = new Map<string, number>();
+  private diSubprogramLine = new Map<number, number>();
+  private diLocations = new Map<string, number>();
+  private diCompileUnitId = -1;
+  private diSubroutineTypeId = -1;
+  // M2 — local variable inspection. currentSubprogram{Id,FileId} scope the
+  // DILocalVariables of the function being emitted; null while a closure/trampoline
+  // body is generated so its locals are never mis-scoped (the final pass also strips
+  // any dbg.declare that lands in a subprogram-less function as a backstop).
+  private currentSubprogramId: number | null = null;
+  private currentSubprogramFileId = 0;
+  private usedDbgDeclare = false;
+  private diTypes = new Map<string, number>();
+
+  constructor(target: TargetInfo, filePath?: string, debugOverflow = false, emitDebug = false) {
     this.target = target;
     this.filePath = filePath;
     this.debugOverflow = debugOverflow;
+    this.emitDebug = emitDebug;
+  }
+
+  private diEsc(s: string): string { return s.replace(/\\/g, "\\5C").replace(/"/g, "\\22"); }
+
+  private diFile(path: string): number {
+    const key = path || "<unknown>";
+    const cached = this.diFiles.get(key);
+    if (cached !== undefined) return cached;
+    const id = this.metaCounter++;
+    const abs = resolve(key);
+    this.diNodes.push(`!${id} = !DIFile(filename: "${this.diEsc(basename(abs))}", directory: "${this.diEsc(dirname(abs))}")`);
+    this.diFiles.set(key, id);
+    return id;
+  }
+
+  private diCompileUnit(): number {
+    if (this.diCompileUnitId >= 0) return this.diCompileUnitId;
+    const fileId = this.diFile(this.filePath ?? "<unknown>");
+    const id = this.metaCounter++;
+    this.diNodes.push(`!${id} = distinct !DICompileUnit(language: DW_LANG_C99, file: !${fileId}, producer: "milo", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)`);
+    this.diCompileUnitId = id;
+    return id;
+  }
+
+  // M1 has no per-parameter type info yet; `types: !{null}` = void/unspecified, shared by all fns.
+  private diSubroutineType(): number {
+    if (this.diSubroutineTypeId >= 0) return this.diSubroutineTypeId;
+    const typesId = this.metaCounter++;
+    this.diNodes.push(`!${typesId} = !{null}`);
+    const id = this.metaCounter++;
+    this.diNodes.push(`!${id} = !DISubroutineType(types: !${typesId})`);
+    this.diSubroutineTypeId = id;
+    return id;
+  }
+
+  private diSubprogram(fn: HIRFunction): number {
+    const cached = this.diSubprograms.get(fn.name);
+    if (cached !== undefined) return cached;
+    const fileId = this.diFile(fn.sourceFile ?? this.filePath ?? "<unknown>");
+    const cu = this.diCompileUnit();
+    const subT = this.diSubroutineType();
+    const line = fn.line ?? 0;
+    const id = this.metaCounter++;
+    this.diNodes.push(`!${id} = distinct !DISubprogram(name: "${this.diEsc(fn.name)}", scope: !${fileId}, file: !${fileId}, line: ${line}, type: !${subT}, scopeLine: ${line}, spFlags: DISPFlagDefinition, unit: !${cu})`);
+    this.diSubprograms.set(fn.name, id);
+    this.diSubprogramLine.set(id, line);
+    return id;
+  }
+
+  private diLocation(line: number, col: number, scope: number): number {
+    const key = `${line}:${col}:${scope}`;
+    const cached = this.diLocations.get(key);
+    if (cached !== undefined) return cached;
+    const id = this.metaCounter++;
+    this.diNodes.push(`!${id} = !DILocation(line: ${line}, column: ${col}, scope: !${scope})`);
+    this.diLocations.set(key, id);
+    return id;
+  }
+
+  // Tag every instruction line (2-space indented, non-comment) with a deferred source
+  // marker. Nested stmts recurse first and mark their own lines; the outer stmt's marker
+  // then only lands on its own lines (skip-if-marked). Resolved to real !dbg in applyDebugInfo.
+  private markDbg(lines: string[], line: number, col: number): void {
+    const marker = ` ;MILODBG ${line} ${col | 0}`;
+    for (let i = 0; i < lines.length; i++) {
+      const l = lines[i];
+      if (l.length < 2 || l[0] !== " " || l[1] !== " ") continue;
+      const t = l.trimStart();
+      if (t.length === 0 || t[0] === ";") continue;
+      if (l.includes(";MILODBG") || l.includes("!dbg")) continue;
+      lines[i] = l + marker;
+    }
+  }
+
+  // ── DWARF variable types (M2) ──
+  // Structural key so pointers/refs (whose llvmType collapses to "ptr") still cache
+  // distinctly by pointee.
+  private diTypeKey(t: TypeKind): string {
+    switch (t.tag) {
+      case "int": return `i${t.bits}${t.signed ? "s" : "u"}`;
+      case "float": return `f${t.bits}`;
+      case "ptr": case "heap": return `p:${this.diTypeKey(t.inner)}`;
+      case "ref": return `r:${this.diTypeKey(t.inner)}`;
+      case "struct": return `s:${t.name}`;
+      case "enum": return `e:${t.name}`;
+      case "vec": return `v:${this.diTypeKey(t.element)}`;
+      case "hashmap": return `m:${this.diTypeKey(t.key)}:${this.diTypeKey(t.value)}`;
+      case "array": return `a:${this.diTypeKey(t.element)}:${t.size}`;
+      default: return t.tag;
+    }
+  }
+
+  private diPointer(base: number | null): number {
+    const id = this.metaCounter++;
+    // baseType is required; a void/opaque pointer must spell it `null`, not omit it.
+    this.diNodes.push(`!${id} = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: ${base !== null ? "!" + base : "null"}, size: 64)`);
+    return id;
+  }
+
+  private diBasic(name: string, sizeBits: number, encoding: string): number {
+    const id = this.metaCounter++;
+    this.diNodes.push(`!${id} = !DIBasicType(name: "${name}", size: ${sizeBits}, encoding: ${encoding})`);
+    return id;
+  }
+
+  // Composite from LLVM field types — offsets/sizes come from the same layout math the
+  // struct codegen uses, so DWARF member offsets match the emitted %Struct exactly.
+  private diComposite(name: string, fieldLlvm: string[], fieldNames: string[], fieldKinds: TypeKind[], key: string): number {
+    const id = this.metaCounter++;
+    this.diTypes.set(key, id); // reserve before recursing into members (breaks self-reference cycles)
+    const memberIds: number[] = [];
+    for (let i = 0; i < fieldLlvm.length; i++) {
+      const ft = this.diType(fieldKinds[i]);
+      if (ft === null) continue;
+      const mid = this.metaCounter++;
+      const off = this.structFieldOffset(fieldLlvm, i) * 8;
+      const sz = this.typeSize(fieldLlvm[i]) * 8;
+      this.diNodes.push(`!${mid} = !DIDerivedType(tag: DW_TAG_member, name: "${this.diEsc(fieldNames[i])}", baseType: !${ft}, size: ${sz}, offset: ${off})`);
+      memberIds.push(mid);
+    }
+    const tuple = this.metaCounter++;
+    this.diNodes.push(`!${tuple} = !{${memberIds.map(m => "!" + m).join(", ")}}`);
+    const totBits = this.structPayloadSize(fieldLlvm) * 8;
+    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diEsc(name)}", size: ${totBits}, elements: !${tuple})`);
+    return id;
+  }
+
+  // Translate a Milo type to a DIType node id. Returns null for types we don't model
+  // yet (fn/interface/void/unknown/slices) — callers then skip the variable rather
+  // than emit metadata the verifier would reject.
+  private diType(t: TypeKind): number | null {
+    const key = this.diTypeKey(t);
+    const cached = this.diTypes.get(key);
+    if (cached !== undefined) return cached;
+    let id: number | null = null;
+    switch (t.tag) {
+      case "int":
+        id = this.diBasic(`${t.signed ? "i" : "u"}${t.bits}`, t.bits, t.signed ? "DW_ATE_signed" : "DW_ATE_unsigned");
+        break;
+      case "float":
+        id = this.diBasic(`f${t.bits}`, t.bits, "DW_ATE_float");
+        break;
+      case "bool":
+        id = this.diBasic("bool", 8, "DW_ATE_boolean"); // i1 occupies a byte in an alloca
+        break;
+      case "ptr": case "heap": case "ref":
+        id = this.diPointer(this.diType(t.inner));
+        break;
+      case "string":
+        id = this.diComposite("string", ["ptr", "i64", "i64"], ["data", "len", "cap"],
+          [{ tag: "ptr", inner: { tag: "int", bits: 8, signed: false } }, { tag: "int", bits: 64, signed: true }, { tag: "int", bits: 64, signed: true }], key);
+        break;
+      case "vec": {
+        const el = this.llvmType(t.element);
+        id = this.diComposite(`Vec<${el}>`, ["ptr", "i64", "i64"], ["data", "len", "cap"],
+          [{ tag: "ptr", inner: t.element }, { tag: "int", bits: 64, signed: true }, { tag: "int", bits: 64, signed: true }], key);
+        break;
+      }
+      case "hashmap":
+        id = this.diComposite("HashMap", ["ptr", "i64", "i64", "i64"], ["entries", "cap", "len", "tombstones"],
+          [{ tag: "ptr", inner: { tag: "unknown" } }, { tag: "int", bits: 64, signed: true }, { tag: "int", bits: 64, signed: true }, { tag: "int", bits: 64, signed: true }], key);
+        break;
+      case "struct": {
+        const layout = this.structLayouts.get(t.name);
+        if (!layout) return null;
+        id = this.diComposite(t.name, layout.fields.map(f => f.type), layout.fields.map(f => f.name), layout.fields.map(f => f.typeKind), key);
+        break;
+      }
+      case "enum": {
+        const layout = this.enumLayouts.get(t.name);
+        if (!layout) return null;
+        // {i32 tag, [N x i64] payload} — debuggers show the raw tag + payload bytes.
+        // A proper DW_TAG_variant_part (pretty Rust-style enums) is deferred.
+        const fields = layout.payloadSlots > 0 ? ["i32", `[${layout.payloadSlots} x i64]`] : ["i32"];
+        const names = layout.payloadSlots > 0 ? ["tag", "payload"] : ["tag"];
+        const kinds: TypeKind[] = layout.payloadSlots > 0
+          ? [{ tag: "int", bits: 32, signed: true }, { tag: "array", element: { tag: "int", bits: 64, signed: true }, size: layout.payloadSlots }]
+          : [{ tag: "int", bits: 32, signed: true }];
+        id = this.diComposite(t.name, fields, names, kinds, key);
+        break;
+      }
+      case "array": {
+        if (t.size === null) return null; // slice — no fixed extent to describe yet
+        const base = this.diType(t.element);
+        if (base === null) return null;
+        const sub = this.metaCounter++;
+        this.diNodes.push(`!${sub} = !DISubrange(count: ${t.size})`);
+        const subs = this.metaCounter++;
+        this.diNodes.push(`!${subs} = !{!${sub}}`);
+        id = this.metaCounter++;
+        this.diNodes.push(`!${id} = !DICompositeType(tag: DW_TAG_array_type, baseType: !${base}, size: ${this.typeSizeOf(t) * 8}, elements: !${subs})`);
+        break;
+      }
+      default:
+        return null; // fn / interface / void / unknown
+    }
+    this.diTypes.set(key, id);
+    return id;
+  }
+
+  // Emit a dbg.declare binding `varName` (stored at `addr`) to a DILocalVariable.
+  // Skips silently when debug is off, we're inside a subprogram-less body (closure),
+  // or the type can't be modelled — never emits metadata the verifier would reject.
+  private dbgDeclare(lines: string[], varName: string, addr: string, t: TypeKind, line: number, argIndex: number): void {
+    if (!this.emitDebug || this.currentSubprogramId === null) return;
+    const ty = this.diType(t);
+    if (ty === null) return;
+    const varId = this.metaCounter++;
+    const argAttr = argIndex > 0 ? `arg: ${argIndex}, ` : "";
+    this.diNodes.push(`!${varId} = !DILocalVariable(name: "${this.diEsc(varName)}", ${argAttr}scope: !${this.currentSubprogramId}, file: !${this.currentSubprogramFileId}, line: ${line}, type: !${ty})`);
+    lines.push(`  call void @llvm.dbg.declare(metadata ptr ${addr}, metadata !${varId}, metadata !DIExpression())`);
+    this.usedDbgDeclare = true;
   }
 
   private nextTemp(): string { return `%t${this.tempCounter++}`; }
@@ -596,6 +835,8 @@ export class Codegen {
       this.output.splice(1, 0, `declare i32 @dprintf(i32, ptr, ...)`);
     if (this.needsPrintf && !declaredExterns.has("printf"))
       this.output.splice(1, 0, `declare i32 @printf(ptr, ...)`);
+    if (this.usedDbgDeclare)
+      this.output.splice(1, 0, `declare void @llvm.dbg.declare(metadata, metadata, metadata)`);
     if (this.needsBoundsCheck)
       this.output.splice(1, 0, `@.bounds_err = private unnamed_addr constant [40 x i8] c"milo: array index out of bounds: %d/%d\\0A\\00"`);
     if (this.needsOverflowCheck || this.needsRangeCheck || this.needsContractCheck) {
@@ -712,7 +953,62 @@ export class Codegen {
       for (const line of body) this.emit(line);
     }
 
+    if (this.emitDebug) this.applyDebugInfo();
+
     return this.output.join("\n") + "\n";
+  }
+
+  // Resolve deferred ;MILODBG markers into real !dbg attachments over the assembled
+  // module. Scope comes from the enclosing function's define-line subprogram, so
+  // closures/trampolines (no subprogram) get their markers stripped instead of
+  // mis-scoped — the one rule the LLVM verifier enforces on debug locations. Also
+  // back-fills prologue/contract/drop instructions with the function line so that
+  // any `call` in a debug-info function carries a location (verifier requirement).
+  private applyDebugInfo(): void {
+    const out = this.output;
+    const MARK = " ;MILODBG ";
+    let curSp = -1;
+    let curLine = 0;
+    for (let i = 0; i < out.length; i++) {
+      const l = out[i];
+      if (l.startsWith("define ")) {
+        const m = l.match(/ !dbg !(\d+) \{$/);
+        if (m) { curSp = parseInt(m[1], 10); curLine = this.diSubprogramLine.get(curSp) ?? 0; }
+        else curSp = -1;
+        continue;
+      }
+      if (l === "}") { curSp = -1; continue; }
+      const mk = l.indexOf(MARK);
+      if (curSp < 0) {
+        // A dbg.declare can only ride into a subprogram-less body (closure/trampoline)
+        // if scope leaked during its generation; drop it so its mis-scoped variable
+        // can't reach the verifier. The orphaned DILocalVariable node is harmless.
+        if (l.includes("@llvm.dbg.declare")) { out.splice(i, 1); i--; continue; }
+        if (mk >= 0) out[i] = l.slice(0, mk); // drop stray marker in a non-debug fn
+        continue;
+      }
+      if (mk >= 0) {
+        const parts = l.slice(mk + MARK.length).split(" ");
+        const locId = this.diLocation(parseInt(parts[0], 10), parseInt(parts[1], 10) || 0, curSp);
+        out[i] = l.slice(0, mk) + `, !dbg !${locId}`;
+      } else if (l.length >= 2 && l[0] === " " && l[1] === " ") {
+        const t = l.trimStart();
+        if (t.length > 0 && t[0] !== ";" && !l.includes("!dbg")) {
+          out[i] = l + `, !dbg !${this.diLocation(curLine, 0, curSp)}`;
+        }
+      }
+    }
+
+    if (this.diNodes.length === 0) return; // no user functions → nothing to anchor
+    const cu = this.diCompileUnit();
+    const dwarfVer = this.metaCounter++;
+    const dbgVer = this.metaCounter++;
+    out.push("");
+    for (const n of this.diNodes) out.push(n);
+    out.push(`!${dwarfVer} = !{i32 2, !"Dwarf Version", i32 4}`);
+    out.push(`!${dbgVer} = !{i32 2, !"Debug Info Version", i32 3}`);
+    out.push(`!llvm.dbg.cu = !{!${cu}}`);
+    out.push(`!llvm.module.flags = !{!${dwarfVer}, !${dbgVer}}`);
   }
 
   private genFunction(fn: HIRFunction): string[] {
@@ -732,15 +1028,21 @@ export class Codegen {
     // must always be i32 even when the Milo signature is void (`fn main()`). A `void @main` leaves
     // garbage in the return register → nonzero exit on a program that should succeed.
     const ret = fn.name === "main" ? "i32" : this.llvmType(fn.retType);
+    // Subprogram attaches BEFORE the `{`; applyDebugInfo keys function boundaries off this.
+    const dbgAttr = this.emitDebug ? ` !dbg !${this.diSubprogram(fn)}` : "";
+    if (this.emitDebug) {
+      this.currentSubprogramId = this.diSubprogram(fn);
+      this.currentSubprogramFileId = this.diFile(fn.sourceFile ?? this.filePath ?? "<unknown>");
+    }
     if (fn.name === "main") {
       const mainParams = params ? `i32 %_milo_argc, ptr %_milo_argv, ${params}` : "i32 %_milo_argc, ptr %_milo_argv";
-      lines.push(`define ${ret} @${fn.name}(${mainParams}) {`);
+      lines.push(`define ${ret} @${fn.name}(${mainParams})${dbgAttr} {`);
     } else {
       // Non-root fns are internal (like globals): each object carries its own copy.
       // linkonce_odr let the linker merge same-named fns across separately-compiled
       // objects and silently pick one body when they differed (issue #5).
       const linkage = this.userFnNames.has(fn.name) ? "" : "internal ";
-      lines.push(`define ${linkage}${ret} @${fn.name}(${params}) {`);
+      lines.push(`define ${linkage}${ret} @${fn.name}(${params})${dbgAttr} {`);
     }
     // Dotted label, not bare `entry`: LLVM shares one symbol table for block
     // labels and local values, and params are emitted as `%<name>`. A param named
@@ -752,17 +1054,21 @@ export class Codegen {
       lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
     }
 
-    for (const p of fn.params) {
+    for (let pi = 0; pi < fn.params.length; pi++) {
+      const p = fn.params[pi];
       if (p.isRef || p.isRefMut) {
         const innerTy = this.llvmType(p.type);
         lines.push(`  %${p.name}.addr = alloca ptr`);
         lines.push(`  store ptr %${p.name}, ptr %${p.name}.addr`);
         this.locals.set(p.name, { type: innerTy, typeKind: p.type, mutable: p.isRefMut, isRef: true });
+        // .addr holds a pointer to the pointee → describe the param as ptr-to-T
+        this.dbgDeclare(lines, p.name, `%${p.name}.addr`, { tag: "ptr", inner: p.type }, fn.line ?? 0, pi + 1);
       } else {
         const lt = this.llvmType(p.type);
         lines.push(`  %${p.name}.addr = alloca ${lt}`);
         lines.push(`  store ${lt} %${p.name}, ptr %${p.name}.addr`);
         this.locals.set(p.name, { type: lt, typeKind: p.type, mutable: false, isRef: false });
+        this.dbgDeclare(lines, p.name, `%${p.name}.addr`, p.type, fn.line ?? 0, pi + 1);
         if (this.needsDropCg(p.type)) {
           const aliveFlag = `%${p.name}.alive`;
           lines.push(`  ${aliveFlag} = alloca i1`);
@@ -816,6 +1122,7 @@ export class Codegen {
     this.hoistAllocas(lines, allocaInsertPoint);
 
     lines.push("}");
+    this.currentSubprogramId = null; // scope closes with the function
     return lines;
   }
 
@@ -845,6 +1152,14 @@ export class Codegen {
   }
 
   private genStmt(stmt: HIRStmt): [string[], boolean] {
+    const [lines, terminated] = this.genStmtRaw(stmt);
+    // Precise per-stmt line tagging. Nested stmts (via recursive genStmt) mark first;
+    // skip-if-marked leaves only this stmt's own lines for its span.
+    if (this.emitDebug && stmt.span) this.markDbg(lines, stmt.span.line, stmt.span.col);
+    return [lines, terminated];
+  }
+
+  private genStmtRaw(stmt: HIRStmt): [string[], boolean] {
     const lines: string[] = [];
 
     switch (stmt.kind) {
@@ -872,6 +1187,8 @@ export class Codegen {
           }
         }
         lines.push(this.valStore(declTy, val, addrName));
+        // Describe the value actually stored: for `&T` locals that's the inner value.
+        this.dbgDeclare(lines, stmt.name, addrName, storedTypeKind, stmt.span?.line ?? 0, 0);
         if (stmt.rangeCheck) {
           const signed = stmt.type.tag === "int" && stmt.type.signed;
           this.emitRangeCheck(lines, val, declTy, signed, stmt.rangeCheck.min, stmt.rangeCheck.max, stmt.span?.line ?? 0);
@@ -3119,6 +3436,10 @@ export class Codegen {
         // a Return inside the closure body must not assert the enclosing fn's ensures
         this.currentEnsures = [];
         this.currentFnName = closureName;
+        // closure bodies carry no subprogram (M1/M2); suppress dbg.declare so its locals
+        // aren't scoped to the enclosing fn (the closure define lacks !dbg anyway)
+        const savedSubprogram = this.currentSubprogramId;
+        this.currentSubprogramId = null;
 
         // generate closure function: @__closure_N(ptr %env, params...)
         const closureBody: string[] = [];
@@ -3193,6 +3514,7 @@ export class Codegen {
         this.loopHeader = savedLoopHeader;
         this.loopExit = savedLoopExit;
         this.currentFnName = savedFnName;
+        this.currentSubprogramId = savedSubprogram;
         this.currentEnsures = savedEnsures;
 
         // at the call site: build env struct and closure pair

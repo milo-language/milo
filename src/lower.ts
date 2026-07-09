@@ -144,6 +144,12 @@ class LowerCtx {
       ...(contracts.length > 0 && { contracts }),
       isExtern: false,
       isVariadic: fn.isVariadic,
+      ...(fn.sourceFile && { sourceFile: fn.sourceFile }),
+      // AST fns carry no span; proxy the decl line with the first body stmt that has one
+      ...((): { line: number } | {} => {
+        const l = fn.body.map(s => s.span?.line).find(x => x !== undefined);
+        return l !== undefined ? { line: l } : {};
+      })(),
     };
   }
 
