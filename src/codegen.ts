@@ -449,21 +449,36 @@ export class Codegen {
       this.structLayouts.set(s.name, layout);
     }
 
-    // register enum layouts
+    // Register enum layouts. An enum payload can itself be an enum
+    // (`Return(Option<Heap<Expr>>)`), and monomorphized generics like
+    // `Option_i64` are appended *after* the enums that reference them. A single
+    // pass would therefore size such a payload via typeSize()'s 8-byte fallback
+    // — `%Outer = { i32, [1 x i64] }` holding a 16-byte `%Option_i64` — and the
+    // store would scribble past the slot. Seed every layout, then grow payload
+    // sizes to a fixpoint (monotone, so it terminates; recursion goes through
+    // Heap, which is a pointer).
     for (const e of module.enums) {
-      let maxPayload = 0;
       const variants = new Map<string, { tag: number; fieldTypes: string[]; fieldTypeKinds: TypeKind[] }>();
       for (const v of e.variants) {
-        const fieldTypes = v.fields.map(f => this.llvmType(f));
-        const payloadSize = this.structPayloadSize(fieldTypes);
-        maxPayload = Math.max(maxPayload, payloadSize);
-        variants.set(v.name, { tag: v.tag, fieldTypes, fieldTypeKinds: v.fields });
+        variants.set(v.name, { tag: v.tag, fieldTypes: v.fields.map(f => this.llvmType(f)), fieldTypeKinds: v.fields });
       }
-      this.enumLayouts.set(e.name, {
-        name: e.name,
-        payloadSlots: Math.ceil(maxPayload / 8),
-        variants,
-      });
+      this.enumLayouts.set(e.name, { name: e.name, payloadSlots: 0, variants });
+    }
+    for (let pass = 0; pass <= module.enums.length; pass++) {
+      let changed = false;
+      for (const e of module.enums) {
+        const layout = this.enumLayouts.get(e.name)!;
+        let maxPayload = 0;
+        for (const v of layout.variants.values()) {
+          maxPayload = Math.max(maxPayload, this.structPayloadSize(v.fieldTypes));
+        }
+        const slots = Math.ceil(maxPayload / 8);
+        if (slots > layout.payloadSlots) {
+          layout.payloadSlots = slots;
+          changed = true;
+        }
+      }
+      if (!changed) break;
     }
 
     // store user-defined Drop impls
