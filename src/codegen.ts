@@ -242,6 +242,76 @@ export class Codegen {
     return id;
   }
 
+  // The `tag` field of an enum, described as a real DWARF enumeration so debuggers
+  // print `tag = Rect` rather than `tag = 1`.
+  private diEnumeration(name: string, layout: EnumLayout): number {
+    const base = this.diType({ tag: "int", bits: 32, signed: true })!;
+    const enumerators: number[] = [];
+    for (const [vname, v] of layout.variants) {
+      const eid = this.metaCounter++;
+      this.diNodes.push(`!${eid} = !DIEnumerator(name: "${this.diEsc(vname)}", value: ${v.tag})`);
+      enumerators.push(eid);
+    }
+    const tuple = this.metaCounter++;
+    this.diNodes.push(`!${tuple} = !{${enumerators.map(e => "!" + e).join(", ")}}`);
+    const id = this.metaCounter++;
+    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_enumeration_type, name: "${this.diEsc(name)}", size: 32, baseType: !${base}, elements: !${tuple})`);
+    return id;
+  }
+
+  // A Milo enum is `{ i32 tag, [N x i64] payload }`. Describe it as the classic C
+  // tagged union — enumerated tag + union of per-variant payload structs — which every
+  // debugger renders natively. DW_TAG_variant_part would be more faithful but lldb
+  // shows it as `$variant$0`/`$discr$` noise without a synthetic provider.
+  private diEnum(layout: EnumLayout, key: string): number {
+    // fieldless enum: the whole value *is* the tag, so no phantom payload slots
+    if (layout.payloadSlots === 0) {
+      const only = this.diEnumeration(layout.name, layout);
+      this.diTypes.set(key, only);
+      return only;
+    }
+    const id = this.metaCounter++;
+    this.diTypes.set(key, id); // reserve before recursing into payloads (Heap<Self> variants)
+
+    const tagId = this.diEnumeration(`${layout.name}$tag`, layout);
+    const payloadBits = layout.payloadSlots * 64;
+
+    // union member per payload-carrying variant; single-field variants bind the field
+    // type directly (`Some = 42`), multi-field ones get a positional struct.
+    const unionMembers: number[] = [];
+    for (const [vname, v] of layout.variants) {
+      if (v.fieldTypes.length === 0) continue;
+      let baseId: number | null;
+      let sizeBits: number;
+      if (v.fieldTypes.length === 1) {
+        baseId = this.diType(v.fieldTypeKinds[0]);
+        sizeBits = this.typeSize(v.fieldTypes[0]) * 8;
+      } else {
+        baseId = this.diComposite(`${layout.name}::${vname}`, v.fieldTypes,
+          v.fieldTypes.map((_, i) => `_${i}`), v.fieldTypeKinds, `ev:${layout.name}:${vname}`);
+        sizeBits = this.structPayloadSize(v.fieldTypes) * 8;
+      }
+      if (baseId === null) continue; // unmodellable payload — omit rather than emit bad metadata
+      const mid = this.metaCounter++;
+      this.diNodes.push(`!${mid} = !DIDerivedType(tag: DW_TAG_member, name: "${this.diEsc(vname)}", baseType: !${baseId}, size: ${sizeBits}, offset: 0)`);
+      unionMembers.push(mid);
+    }
+    const utuple = this.metaCounter++;
+    this.diNodes.push(`!${utuple} = !{${unionMembers.map(m => "!" + m).join(", ")}}`);
+    const unionId = this.metaCounter++;
+    this.diNodes.push(`!${unionId} = distinct !DICompositeType(tag: DW_TAG_union_type, name: "${this.diEsc(layout.name)}$payload", size: ${payloadBits}, elements: !${utuple})`);
+
+    const tagMember = this.metaCounter++;
+    this.diNodes.push(`!${tagMember} = !DIDerivedType(tag: DW_TAG_member, name: "tag", baseType: !${tagId}, size: 32, offset: 0)`);
+    const payloadMember = this.metaCounter++;
+    // payload starts at byte 8: [N x i64] has align 8, so the i32 tag is tail-padded
+    this.diNodes.push(`!${payloadMember} = !DIDerivedType(tag: DW_TAG_member, name: "payload", baseType: !${unionId}, size: ${payloadBits}, offset: 64)`);
+    const tuple = this.metaCounter++;
+    this.diNodes.push(`!${tuple} = !{!${tagMember}, !${payloadMember}}`);
+    this.diNodes.push(`!${id} = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "${this.diEsc(layout.name)}", size: ${64 + payloadBits}, elements: !${tuple})`);
+    return id;
+  }
+
   // Translate a Milo type to a DIType node id. Returns null for types we don't model
   // yet (fn/interface/void/unknown/slices) — callers then skip the variable rather
   // than emit metadata the verifier would reject.
@@ -286,14 +356,7 @@ export class Codegen {
       case "enum": {
         const layout = this.enumLayouts.get(t.name);
         if (!layout) return null;
-        // {i32 tag, [N x i64] payload} — debuggers show the raw tag + payload bytes.
-        // A proper DW_TAG_variant_part (pretty Rust-style enums) is deferred.
-        const fields = layout.payloadSlots > 0 ? ["i32", `[${layout.payloadSlots} x i64]`] : ["i32"];
-        const names = layout.payloadSlots > 0 ? ["tag", "payload"] : ["tag"];
-        const kinds: TypeKind[] = layout.payloadSlots > 0
-          ? [{ tag: "int", bits: 32, signed: true }, { tag: "array", element: { tag: "int", bits: 64, signed: true }, size: layout.payloadSlots }]
-          : [{ tag: "int", bits: 32, signed: true }];
-        id = this.diComposite(t.name, fields, names, kinds, key);
+        id = this.diEnum(layout, key);
         break;
       }
       case "array": {
@@ -6400,8 +6463,16 @@ export class Codegen {
     lines.push(`${foundLabel}:`);
     const valPtr = this.nextTemp();
     lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-    const foundVal = this.nextTemp();
-    lines.push(`  ${foundVal} = load ${valTy}, ptr ${valPtr}`);
+    // Deep-clone, don't `load`: a shallow copy aliases the map's heap, and a later
+    // `insert` on the same key drops the old value out from under it (the copy-back
+    // idiom `let v = m.get(k); v.x = 1; m.insert(k, v)`). Vec indexing already does
+    // this; emitDeepCloneFromPtr degrades to a plain load for Copy types.
+    const foundVal = this.emitDeepCloneFromPtr(lines, valPtr, valueType);
+    // The clone can open new basic blocks (vec/enum clone loops), so the phi at
+    // the bottom must name the block we actually end in, not `foundLabel`.
+    const foundEnd = this.nextLabel("hmg.found.end");
+    lines.push(`  br label %${foundEnd}`);
+    lines.push(`${foundEnd}:`);
     // build Option::Some(val) — tag=0, payload=value
     const someAlloca = this.nextTemp();
     lines.push(`  ${someAlloca} = alloca ${optionTy}`);
@@ -6445,7 +6516,7 @@ export class Codegen {
 
     lines.push(`${doneLabel}:`);
     const result = this.nextTemp();
-    lines.push(`  ${result} = phi ${optionTy} [${someVal}, %${foundLabel}], [${noneVal}, %${notFoundLabel}]`);
+    lines.push(`  ${result} = phi ${optionTy} [${someVal}, %${foundEnd}], [${noneVal}, %${notFoundLabel}]`);
     return [lines, result, optionTy];
   }
 
@@ -6521,12 +6592,15 @@ export class Codegen {
     const keysMatch = this.emitKeyCompare(lines, keyVal, existingKey, keyType);
     lines.push(`  br i1 ${keysMatch}, label %${foundLabel}, label %${probeNext}`);
 
-    // found — return the value directly
+    // found — return the value directly (deep-cloned; see genHashMapGet)
     lines.push(`${foundLabel}:`);
     const valPtr = this.nextTemp();
     lines.push(`  ${valPtr} = getelementptr ${entryTy}, ptr ${entryPtr}, i32 0, i32 2`);
-    const foundVal = this.nextTemp();
-    lines.push(`  ${foundVal} = load ${valTy}, ptr ${valPtr}`);
+    const foundVal = this.emitDeepCloneFromPtr(lines, valPtr, valueType);
+    // see genHashMapGet: the clone may have opened new blocks
+    const foundEnd = this.nextLabel("hmgd.found.end");
+    lines.push(`  br label %${foundEnd}`);
+    lines.push(`${foundEnd}:`);
     lines.push(`  br label %${doneLabel}`);
 
     // not found — use the default value
@@ -6543,7 +6617,7 @@ export class Codegen {
 
     lines.push(`${doneLabel}:`);
     const result = this.nextTemp();
-    lines.push(`  ${result} = phi ${valTy} [${foundVal}, %${foundLabel}], [${defaultVal}, %${notFoundLabel}]`);
+    lines.push(`  ${result} = phi ${valTy} [${foundVal}, %${foundEnd}], [${defaultVal}, %${notFoundLabel}]`);
     return [lines, result, valTy];
   }
 
@@ -7160,10 +7234,102 @@ export class Codegen {
       return result;
     }
 
-    // enum/hashmap/array — fall back to shallow load (TODO: full enum deep clone)
+    if (typeKind.tag === "enum" && this.needsDropCg(typeKind) && this.enumLayouts.has(typeKind.name)) {
+      this.ensureEnumCloneHelper(typeKind.name);
+      const dstAlloca = this.nextTemp();
+      lines.push(`  ${dstAlloca} = alloca ${lt}`);
+      lines.push(`  call void @milo.clone.${typeKind.name}(ptr ${srcPtr}, ptr ${dstAlloca})`);
+      const result = this.nextTemp();
+      lines.push(`  ${result} = load ${lt}, ptr ${dstAlloca}`);
+      return result;
+    }
+
+    // hashmap/array — fall back to shallow load
     const v = this.nextTemp();
     lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
     return v;
+  }
+
+  private generatedEnumCloneHelpers = new Set<string>();
+
+  // Deep-clone an enum by tag: shallow-copy first (tag + Copy payload fields), then
+  // overwrite each droppable payload field with a deep clone. Mirrors
+  // ensureDropHelper. Recursive enums terminate because the recursion goes through
+  // `Heap`, and the memo set stops re-entrant generation.
+  private ensureEnumCloneHelper(enumName: string) {
+    if (this.generatedEnumCloneHelpers.has(enumName)) return;
+    this.generatedEnumCloneHelpers.add(enumName);
+
+    const layout = this.enumLayouts.get(enumName)!;
+    const enumTy = `%${enumName}`;
+    const helperName = `milo.clone.${enumName}`;
+    const savedTemp = this.tempCounter;
+    const savedLabel = this.labelCounter;
+    this.tempCounter = 0;
+    this.labelCounter = 0;
+
+    const body: string[] = [];
+    body.push(`define void @${helperName}(ptr %src, ptr %dst) {`);
+    body.push("entry.bb:");
+    const shallow = this.nextTemp();
+    body.push(`  ${shallow} = load ${enumTy}, ptr %src`);
+    body.push(`  store ${enumTy} ${shallow}, ptr %dst`);
+    const tagPtr = this.nextTemp();
+    body.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr %src, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    body.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+
+    const doneLabel = this.nextLabel("clone.done");
+    const cases: string[] = [];
+    const variantBodies: string[][] = [];
+
+    for (const [vName, variant] of layout.variants) {
+      if (!variant.fieldTypeKinds.some(f => this.needsDropCg(f))) continue;
+
+      const label = this.nextLabel(`clone.${vName}`);
+      cases.push(`    i32 ${variant.tag}, label %${label}`);
+
+      const vLines: string[] = [];
+      vLines.push(`${label}:`);
+      const srcPayload = this.nextTemp();
+      vLines.push(`  ${srcPayload} = getelementptr ${enumTy}, ptr %src, i32 0, i32 1`);
+      const dstPayload = this.nextTemp();
+      vLines.push(`  ${dstPayload} = getelementptr ${enumTy}, ptr %dst, i32 0, i32 1`);
+
+      if (variant.fieldTypes.length === 1) {
+        const cloned = this.emitDeepCloneFromPtr(vLines, srcPayload, variant.fieldTypeKinds[0]);
+        vLines.push(`  store ${variant.fieldTypes[0]} ${cloned}, ptr ${dstPayload}`);
+      } else {
+        const structTy = `{ ${variant.fieldTypes.join(", ")} }`;
+        for (let i = 0; i < variant.fieldTypes.length; i++) {
+          if (!this.needsDropCg(variant.fieldTypeKinds[i])) continue;
+          const srcFieldPtr = this.nextTemp();
+          vLines.push(`  ${srcFieldPtr} = getelementptr ${structTy}, ptr ${srcPayload}, i32 0, i32 ${i}`);
+          const cloned = this.emitDeepCloneFromPtr(vLines, srcFieldPtr, variant.fieldTypeKinds[i]);
+          const dstFieldPtr = this.nextTemp();
+          vLines.push(`  ${dstFieldPtr} = getelementptr ${structTy}, ptr ${dstPayload}, i32 0, i32 ${i}`);
+          vLines.push(`  store ${variant.fieldTypes[i]} ${cloned}, ptr ${dstFieldPtr}`);
+        }
+      }
+      vLines.push(`  br label %${doneLabel}`);
+      variantBodies.push(vLines);
+    }
+
+    if (cases.length > 0) {
+      body.push(`  switch i32 ${tag}, label %${doneLabel} [`);
+      for (const c of cases) body.push(c);
+      body.push("  ]");
+      for (const vb of variantBodies) body.push(...vb);
+    } else {
+      body.push(`  br label %${doneLabel}`);
+    }
+    body.push(`${doneLabel}:`);
+    body.push("  ret void");
+    body.push("}");
+
+    this.dropHelperBodies.push(body);
+    this.tempCounter = savedTemp;
+    this.labelCounter = savedLabel;
   }
 
   private emitDropValue(lines: string[], allocaPtr: string, typeKind: TypeKind) {
