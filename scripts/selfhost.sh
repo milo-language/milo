@@ -1,0 +1,11 @@
+#!/bin/sh
+# Build milo-self (the Milo compiler written in Milo) with the TS compiler.
+# The TS compiler is the oracle; this script only produces the stage-1 binary.
+# Exits nonzero if it does not build. See docs/self-hosting.md.
+set -e
+
+root=$(cd "$(dirname "$0")/.." && pwd)
+out="$root/.selfhost"
+mkdir -p "$out"
+
+exec bun run "$root/src/main.ts" build "$root/src-milo/main.milo" -o "$out/milo-self" "$@"

@@ -1,0 +1,12 @@
+# Fixtures that milo-self must compile and run correctly.
+#
+# THE RATCHET: this list only grows. Every commit must keep it green.
+# A temporary shrink requires a `# SHRUNK: <reason>` line and a plan to restore.
+# See docs/self-hosting.md.
+#
+# One fixture name per line (no .milo extension). Blank lines and # comments
+# are ignored.
+#
+# Currently empty: milo-self aborts on every input, including
+# `fn main(): i32 { return 0 }` (M1). The harness exists so the next fix is
+# measurable and the breakage can't land silently again.

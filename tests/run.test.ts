@@ -4,6 +4,7 @@ import { execFile, execSync } from "child_process";
 import { promisify } from "util";
 import { tmpdir } from "os";
 import { join } from "path";
+import { parseExpected, parseExpectedError, parseExpectedRuntimeError } from "./annotations";
 
 const execFileAsync = promisify(execFile);
 
@@ -71,25 +72,6 @@ afterAll(() => {
   try { rmSync(TOOL_DIR, { recursive: true, force: true }); } catch {}
 });
 
-// Annotations are matched after trimming: the formatter indents comments to
-// their enclosing block, so requiring column 0 would make `milo fmt` break
-// every fixture whose annotation sits inside a function body.
-function parseExpected(source: string): string[] {
-  return source.split("\n")
-    .map(l => l.trim())
-    .filter(l => l.startsWith("// @expect:"))
-    .map(l => l.replace("// @expect:", "").trim());
-}
-
-function parseExpectedError(source: string): string | null {
-  const line = source.split("\n").map(l => l.trim()).find(l => l.startsWith("// @error:"));
-  return line ? line.replace("// @error:", "").trim() : null;
-}
-
-function parseExpectedRuntimeError(source: string): string | null {
-  const line = source.split("\n").map(l => l.trim()).find(l => l.startsWith("// @runtime-error:"));
-  return line ? line.replace("// @runtime-error:", "").trim() : null;
-}
 
 // Compiles fan out in beforeAll (expensive, timing-insensitive); the produced
 // binaries then run serially inside each test — timing-sensitive fixtures

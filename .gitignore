@@ -85,3 +85,6 @@ docs/site/.vitepress/cache/
 lib.a
 tmp/
 .worktrees/
+
+# self-host stage binaries
+.selfhost/
