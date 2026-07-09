@@ -76,6 +76,7 @@ export class Lexer {
   }
 
   private lexFString(line: number, col: number): Token {
+    const start = this.pos;
     this.advance(); // $
     this.advance(); // opening "
     let value = "";
@@ -95,7 +96,9 @@ export class Lexer {
         value += ch;
       }
     }
-    return this.token(TokenKind.FString, value, line, col);
+    const tok = this.token(TokenKind.FString, value, line, col);
+    tok.raw = this.source.slice(start, this.pos);
+    return tok;
   }
 
   private lexHexEscape(): string {

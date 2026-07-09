@@ -100,6 +100,11 @@ export interface Token {
   value: string;
   line: number;
   col: number;
+  // Exact source slice, delimiters included. Only set for FString, where
+  // `value` is lossy: the lexer decodes `\{` to a bare `{`, which is then
+  // indistinguishable from an interpolation brace. The formatter needs the
+  // original bytes to round-trip.
+  raw?: string;
   leadingTrivia?: Trivia[];
   trailingTrivia?: Trivia[];
 }

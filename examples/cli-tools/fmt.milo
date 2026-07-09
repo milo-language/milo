@@ -1,6 +1,6 @@
 // fmt — Milo source code formatter
 // Tokenizes the input and re-emits with normalized indentation and spacing.
-from "std/io" import { readFile, readStdin }
+from "std/io" import { readFile, readStdin, writeStdout }
 from "std/fs" import { writeFile }
 from "std/argparse" import { newParser }
 
@@ -27,6 +27,7 @@ enum TokKind {
     Arrow,
     FatArrow,
     Eq,
+    OpAssign,
     EqEq,
     Neq,
     Lt,
@@ -59,6 +60,10 @@ struct Token {
 }
 
 // ── Keywords ──
+
+fn charIsHexDigit(c: u8): bool {
+    return charIsDigit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70)
+}
 
 fn isKeyword(s: &string): bool {
     return s == "fn" || s == "let" || s == "var" || s == "return" ||
@@ -145,6 +150,40 @@ impl Lexer {
         return s
     }
 
+    // `$"..."` is a single token. A quote inside a `{...}` interpolation does
+    // not terminate it (nested f-strings are legal), so track brace depth.
+    fn lexFString(self: &mut Self): string {
+        self.advance()
+        self.advance()
+        var s: string = "$\""
+        var depth: i64 = 0
+        while self.pos < self.src.len {
+            if depth == 0 && self.peek() == 34 {
+                break
+            }
+            let ch = self.advance()
+            if ch == 92 {
+                s.push(ch)
+                if self.pos < self.src.len {
+                    s.push(self.advance())
+                }
+                continue
+            }
+            if ch == 123 {
+                depth = depth + 1
+            }
+            if ch == 125 && depth > 0 {
+                depth = depth - 1
+            }
+            s.push(ch)
+        }
+        if self.pos < self.src.len {
+            self.advance()
+        }
+        s.push(34 as u8)
+        return s
+    }
+
     fn lexChar(self: &mut Self): string {
         self.advance()
         var s: string = "'"
@@ -164,6 +203,19 @@ impl Lexer {
 
     fn lexNumber(self: &mut Self): string {
         var s: string = ""
+        // 0x.. / 0b.. must be consumed whole; stopping after the leading `0`
+        // would split the literal into `0` and an identifier.
+        if self.peek() == 48 && self.pos + 1 < self.src.len {
+            let p = self.peekAt(1)
+            if p == 120 || p == 88 || p == 98 || p == 66 {
+                s.push(self.advance())
+                s.push(self.advance())
+                while self.pos < self.src.len && (charIsHexDigit(self.peek()) || self.peek() == 95) {
+                    s.push(self.advance())
+                }
+                return s
+            }
+        }
         while self.pos < self.src.len && (charIsDigit(self.peek()) || self.peek() == 95) {
             s.push(self.advance())
         }
@@ -219,6 +271,14 @@ impl Lexer {
             let text = self.lexComment()
             return Token {
                 kind: TokKind.Comment, text: text, line: line
+            }
+        }
+
+        // F-string — must precede the plain-string case
+        if ch == 36 && ch2 == 34 {
+            let text = self.lexFString()
+            return Token {
+                kind: TokKind.Str, text: text, line: line
             }
         }
 
@@ -351,6 +411,19 @@ impl Lexer {
             self.advance()
             return Token {
                 kind: TokKind.PipePipe, text: "||", line: line
+            }
+        }
+        // Compound assignment: += -= *= /= %= &= |= ^=
+        // Must follow the ==/!=/<=/>= cases above, which share the trailing '='.
+        if ch2 == 61 && (ch == 43 || ch == 45 || ch == 42 || ch == 47 ||
+        ch == 37 || ch == 38 || ch == 124 || ch == 94) {
+            self.advance()
+            self.advance()
+            var op: string = ""
+            op.push(ch)
+            op.push(61 as u8)
+            return Token {
+                kind: TokKind.OpAssign, text: op, line: line
             }
         }
 
@@ -500,7 +573,8 @@ fn tokenize(src: string): Vec<Token> {
 fn isSpacedOp(kind: TokKind): bool {
     return kind == TokKind.Plus || kind == TokKind.Minus ||
     kind == TokKind.Slash || kind == TokKind.Percent ||
-    kind == TokKind.Eq || kind == TokKind.EqEq || kind == TokKind.Neq ||
+    kind == TokKind.Eq || kind == TokKind.OpAssign ||
+    kind == TokKind.EqEq || kind == TokKind.Neq ||
     kind == TokKind.Lt || kind == TokKind.Gt ||
     kind == TokKind.LtEq || kind == TokKind.GtEq ||
     kind == TokKind.AmpAmp || kind == TokKind.PipePipe ||
@@ -573,7 +647,8 @@ fn isInsideGeneric(tokens: &Vec<Token>, i: i64): bool {
                 return isGenericOpen(tokens, j)
             }
         } else if t.kind == TokKind.LBrace || t.kind == TokKind.RBrace ||
-        t.kind == TokKind.Eq || t.kind == TokKind.EqEq ||
+        t.kind == TokKind.Eq || t.kind == TokKind.OpAssign ||
+        t.kind == TokKind.EqEq ||
         t.kind == TokKind.Neq || t.kind == TokKind.LtEq ||
         t.kind == TokKind.GtEq {
             return false
@@ -825,8 +900,12 @@ fn formatSource(src: string): string {
         }
     }
 
-    // Ensure trailing newline
-    if out.len > 0 && !out.endsWith("\n") {
+    // Exactly one trailing newline. Blank lines before EOF would otherwise
+    // survive, so formatting was never a fixed point.
+    while out.len > 0 && out.endsWith("\n") {
+        out = out.substr(0, out.len - 1)
+    }
+    if out.len > 0 {
         out = out + "\n"
     }
     return out
@@ -869,7 +948,9 @@ fn main(): i32 {
             return 1
         }
     } else {
-        print(formatted)
+        // not print(): formatSource already ends the output with exactly one
+        // newline, and print() would append a second.
+        writeStdout(formatted)
     }
     return 0
 }

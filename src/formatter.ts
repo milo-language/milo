@@ -22,7 +22,17 @@ function isKeyword(kind: TokenKind): boolean {
     TokenKind.As, TokenKind.Trait, TokenKind.Impl, TokenKind.For, TokenKind.In,
     TokenKind.Unsafe, TokenKind.Parallel, TokenKind.Null, TokenKind.True, TokenKind.False,
     TokenKind.Is, TokenKind.Interface, TokenKind.Requires, TokenKind.Ensures, TokenKind.Invariant,
+    TokenKind.Move, TokenKind.Type,
   ].includes(kind);
+}
+
+// `<<` and `>>` are not tokens: the parser recognizes a shift by seeing two
+// same-kind `<`/`>` tokens adjacent in the source (parser.ts `atAdjacent`).
+// Emitting a space between them silently turns a shift into a comparison.
+function isShiftPair(p: Token, tok: Token): boolean {
+  if (p.kind !== tok.kind) return false;
+  if (p.kind !== TokenKind.Lt && p.kind !== TokenKind.Gt) return false;
+  return p.line === tok.line && tok.col === p.col + 1;
 }
 
 function isUnary(ctx: Token[], pos: number, tok: Token): boolean {
@@ -31,10 +41,16 @@ function isUnary(ctx: Token[], pos: number, tok: Token): boolean {
       tok.kind !== TokenKind.Tilde) return false;
   if (pos === 0) return true;
   const p = ctx[pos - 1];
+  // A keyword can't be the left operand of a binary op, so `*`/`&`/`-` right
+  // after one is always prefix (`match *t`, `p as *u8`, `while *p > 0`).
+  // `true`/`false`/`null` are the exception: they are values.
+  const afterKeyword = isKeyword(p.kind) && p.kind !== TokenKind.True &&
+    p.kind !== TokenKind.False && p.kind !== TokenKind.Null;
   return p.kind === TokenKind.LParen || p.kind === TokenKind.LBracket ||
     p.kind === TokenKind.Comma || p.kind === TokenKind.Eq ||
     p.kind === TokenKind.Return || p.kind === TokenKind.FatArrow ||
     p.kind === TokenKind.LBrace || p.kind === TokenKind.Colon ||
+    afterKeyword ||
     SPACED_OPS.has(p.kind);
 }
 
@@ -59,6 +75,9 @@ function spaceBefore(tokens: Token[], pos: number): boolean {
   // No space around ..
   if (tok.kind === TokenKind.DotDot || p.kind === TokenKind.DotDot) return false;
 
+  // Keep `<<` / `>>` glued together
+  if (isShiftPair(p, tok)) return false;
+
   // Generics: no space around < > when used as type brackets
   if (tok.kind === TokenKind.Lt && isGenericOpen(tokens, pos)) return false;
   if (p.kind === TokenKind.Lt && isGenericOpen(tokens, pos - 1)) return false;
@@ -71,6 +90,8 @@ function spaceBefore(tokens: Token[], pos: number): boolean {
 
   // Space around binary ops (not unary)
   if (SPACED_OPS.has(tok.kind) && !isUnary(tokens, pos, tok)) return true;
+  // ...but never after a prefix operator: `*t`, `-a`, `&x`, `!b`, `~m`
+  if (isUnary(tokens, pos - 1, p)) return false;
   if (SPACED_OPS.has(p.kind)) return true;
 
   // Space after :
@@ -252,6 +273,10 @@ export function format(source: string): string {
       out += `"${escapeString(tok.value)}"`;
     } else if (tok.kind === TokenKind.Char) {
       out += `'${escapeChar(parseInt(tok.value))}'`;
+    } else if (tok.kind === TokenKind.FString) {
+      // `value` has the `$"` / `"` delimiters stripped and escapes decoded;
+      // re-emitting it would produce source that doesn't lex.
+      out += tok.raw ?? `$"${tok.value}"`;
     } else {
       out += tok.value;
     }
@@ -278,6 +303,9 @@ export function format(source: string): string {
   // Ensure trailing newline, collapse excessive blank lines
   if (!out.endsWith("\n")) out += "\n";
   out = out.replace(/\n{3,}/g, "\n\n");
+  // Blank trivia before EOF would otherwise leave the file ending in "\n\n",
+  // so formatting was never a fixed point.
+  out = out.replace(/\n+$/, "\n");
   return out;
 }
 
