@@ -416,8 +416,16 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Loca
             } else if elemLl == "i32" {
                 fmt = fmt + "%d"
                 argStr = argStr + ", i32 " + argVals[ai].v
+            } else if elemLl == "i1" {
+                // bool prints as true/false, matching the TS compiler
+                fmt = fmt + "%s"
+                let ts = emitStringLit(cg, "true")
+                let fs = emitStringLit(cg, "false")
+                let b = nextTemp(cg)
+                emit(cg, "  " + b + " = select i1 " + argVals[ai].v + ", ptr " + ts + ", ptr " + fs + "\n")
+                argStr = argStr + ", ptr " + b
             } else {
-                // i1/i8/i16 — printf varargs promote to int
+                // i8/i16 — printf varargs promote to int
                 fmt = fmt + "%d"
                 let z = nextTemp(cg)
                 emit(cg, "  " + z + " = zext " + elemLl + " " + argVals[ai].v + " to i32\n")

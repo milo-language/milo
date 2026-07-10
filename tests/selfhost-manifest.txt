@@ -8,6 +8,7 @@
 # are ignored.
 arithmetic
 assignI64Lit
+autoEq
 booleanLogic
 break_drop
 breakContinue
