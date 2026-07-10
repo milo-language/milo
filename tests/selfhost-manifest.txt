@@ -6,7 +6,6 @@
 #
 # One fixture name per line (no .milo extension). Blank lines and # comments
 # are ignored.
-
 arithmetic
 assignI64Lit
 booleanLogic
@@ -15,8 +14,10 @@ breakContinue
 contracts
 dropStringReturn
 fnArgI64Lit
+fstring
 functionCall
 hello
+hexEscape
 ifElse
 importBasic
 importDedup
