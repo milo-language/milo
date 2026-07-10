@@ -226,6 +226,54 @@ fn intCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
     return isConstIntExpr(srcExpr)
 }
 
+
+// A string argument passed where *u8 is expected reads as its data pointer
+// (extern cstr boundary). An int-element array literal takes its element
+// width from the annotation, like scalar const-int coercion.
+fn ptrCoercible(to: &TypeKind, src: &TypeKind): bool {
+    match to {
+        TypeKind.TPtr(inner) => {
+            // string data pointer at the cstr boundary
+            match *inner {
+                TypeKind.TInt(bits, signed) => {
+                    if bits == 8 && typeEq(src, tyString()) { return true }
+                }
+                _ => {}
+            }
+            // array-to-pointer decay: [T; N] (and its Vec lowering) where *T
+            // is expected — a borrow of the buffer, not a move
+            match src {
+                TypeKind.TArray(srcElem, size) => {
+                    return typeEq(*inner, *srcElem) || (isInteger(*inner) && isInteger(*srcElem))
+                }
+                TypeKind.TVec(srcElem2) => {
+                    return typeEq(*inner, *srcElem2) || (isInteger(*inner) && isInteger(*srcElem2))
+                }
+                _ => {}
+            }
+            return false
+        }
+        _ => { return false }
+    }
+}
+
+fn arrayIntCoercible(to: &TypeKind, src: &TypeKind): bool {
+    match to {
+        TypeKind.TArray(toElem, toSize) => {
+            match src {
+                TypeKind.TArray(srcElem, srcSize) => {
+                    return isInteger(*toElem) && isInteger(*srcElem)
+                }
+                TypeKind.TVec(srcElem2) => {
+                    return isInteger(*toElem) && isInteger(*srcElem2)
+                }
+                _ => { return false }
+            }
+        }
+        _ => { return false }
+    }
+}
+
 fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &Option<Span>): TypeKind {
     // Logical operators
     if op == "&&" || op == "||" {
@@ -494,6 +542,21 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         if func == "sizeOf" {
             return tyI64()
         }
+        // _cstrToString(ptr) — compiler builtin at the extern cstr boundary
+        if func == "_cstrToString" {
+            if args.len >= 1 { checkExpr(ck, *args[0]) }
+            return tyString()
+        }
+        // runtime-support builtins (_atomic*, _callClosure*, scheduler hooks)
+        // exist in the oracle's codegen only; accept them so std checks
+        if func.len > 1 && func[0] == 95 {
+            var bi: i64 = 0
+            while bi < args.len {
+                checkExpr(ck, *args[bi])
+                bi = bi + 1
+            }
+            return tyUnknown()
+        }
         // exit is a compiler builtin when std/os is not imported
         if func == "exit" {
             if args.len >= 1 { checkExpr(ck, *args[0]) }
@@ -524,10 +587,14 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
                 }
             }
             _ => {
-                if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(paramType, argType, *args[i]) {
+                if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(paramType, argType, *args[i]) &&
+                    !ptrCoercible(paramType, argType) {
                     error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
                 }
-                tryMove(ck, *args[i])
+                // pointer decay borrows the buffer; it must not move it
+                if !ptrCoercible(paramType, argType) {
+                    tryMove(ck, *args[i])
+                }
             }
         }
         i = i + 1
@@ -558,7 +625,8 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
                 found = true
                 let valType = checkExpr(ck, *fields[i].value)
                 if !typeEq(info.fields[j].ty, valType) && !containsUnknown(valType) &&
-                    !(isConstIntExpr(*fields[i].value) && isInteger(info.fields[j].ty)) {
+                    !(isConstIntExpr(*fields[i].value) && isInteger(info.fields[j].ty)) &&
+                    !arrayIntCoercible(info.fields[j].ty, valType) {
                     error(ck, "field '" + fields[i].name.clone() + "' of '" + name.clone() + "': expected " + typeName(info.fields[j].ty) + ", got " + typeName(valType), cloneSpan(span))
                 }
                 tryMove(ck, *fields[i].value)
@@ -935,6 +1003,8 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
         TypeKind.TArray(elem, size) => { fromCastable = true }
         TypeKind.TFn(params, ret) => { fromCastable = true }
         TypeKind.TUnknown => { fromCastable = true }
+        // string as *u8 — cstr data pointer at extern boundaries
+        TypeKind.TString => { fromCastable = true }
         _ => {}
     }
     let fromOk = isNumeric(fromType) || typeEq(fromType, tyBool()) || fromCastable
@@ -1053,6 +1123,13 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
             error(ck, "push: expected " + typeName(elem) + ", got " + typeName(argType), cloneSpan(span))
         }
         tryMove(ck, *args[0])
+        return tyVoid()
+    }
+    if method == "reverse" {
+        if args.len != 0 { error(ck, "'reverse' takes no arguments", cloneSpan(span)) }
+        if !isRootMutable(ck, obj) {
+            error(ck, "cannot reverse immutable Vec", cloneSpan(span))
+        }
         return tyVoid()
     }
     if method == "pop" {

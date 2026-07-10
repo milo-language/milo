@@ -13,7 +13,7 @@ from "src-milo/checker/state.milo" import {
     Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
     normalizeEnumNames, stmtTerminates, snapshotMoves, restoreMoves, orMoves,
 }
-from "src-milo/checker/expr.milo" import { intCoercible, checkExpr, tryMove, isRootMutable, deref }
+from "src-milo/checker/expr.milo" import { intCoercible, arrayIntCoercible, checkExpr, tryMove, isRootMutable, deref }
 from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, processDerives, typeImplementsTrait, resolveMethod }
 from "src-milo/checker/mono.milo" import { registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum }
 
@@ -81,7 +81,8 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
     match typeAnno {
         Option.Some(ty) => {
             let hint = resolveAstType(ck, ty)
-            if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) {
+            if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) &&
+                !arrayIntCoercible(hint, valType) {
                 error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
             }
             valType = hint
@@ -222,8 +223,23 @@ fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: 
 fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType: &TypeKind, span: &Option<Span>) {
     let subjType = checkExpr(ck, subject)
 
+    // Arms are mutually exclusive: each checks from the pre-state, then the
+    // join keeps any-path moves (terminated arms drop out) — same rules as
+    // if/else branches.
+    let preSnap = snapshotMoves(ck)
+    var armSnaps: Vec<Vec<HashMap<string, bool>>> = Vec.new()
+    var armTerms: Vec<bool> = Vec.new()
     for i in 0..arms.len {
+        restoreMoves(ck, preSnap)
         checkMatchArm(ck, arms[i], subjType, fnRetType, span)
+        armSnaps.push(snapshotMoves(ck))
+        var term = false
+        if arms[i].body.len > 0 { term = stmtTerminates(*arms[i].body[arms[i].body.len - 1]) }
+        armTerms.push(term)
+    }
+    restoreMoves(ck, preSnap)
+    for i in 0..armSnaps.len {
+        if !armTerms[i] { orMoves(ck, armSnaps[i]) }
     }
 }
 

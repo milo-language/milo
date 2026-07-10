@@ -14,6 +14,7 @@ arrays
 assignI64Lit
 autoEq
 base64Conformance
+bigZeroBuffer
 booleanLogic
 borrowMutateAfterLoop
 break_drop
@@ -84,11 +85,13 @@ resultTypedUnwrap
 returnConstIntCoerce
 returnI64Lit
 returnU32Lit
+safeExternCall
 stdBase64
 stdHex
 stdlibPrint
 stringBasic
 stringConcat
+stringCstr
 stringEq
 stringFfi
 stringFn
