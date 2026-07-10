@@ -228,7 +228,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 // Register function signature
                 var params: Vec<FnParam> = Vec.new()
                 for pi in 0..m.params.len {
-                    var pType = typeFromAst(m.params[pi].ty)
+                    var pType = resolveAstType(ck, m.params[pi].ty)
                     // Substitute Self with concrete type
                     match pType.clone() {
                         TypeKind.TRef(inner, mutable) => {
@@ -248,7 +248,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     params.push(FnParam { name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
                 }
-                var retType = typeFromAst(m.retType)
+                var retType = resolveAstType(ck, m.retType)
                 match retType.clone() {
                     TypeKind.TStruct(name) => {
                         if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }
@@ -296,7 +296,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
 
                 var params: Vec<FnParam> = Vec.new()
                 for pi in 0..m.params.len {
-                    var pType = typeFromAst(m.params[pi].ty)
+                    var pType = resolveAstType(ck, m.params[pi].ty)
                     match pType.clone() {
                         TypeKind.TRef(inner, mutable) => {
                             match *inner {
@@ -315,7 +315,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     params.push(FnParam { name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
                 }
-                var retType = typeFromAst(m.retType)
+                var retType = resolveAstType(ck, m.retType)
                 match retType.clone() {
                     TypeKind.TStruct(name) => {
                         if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }

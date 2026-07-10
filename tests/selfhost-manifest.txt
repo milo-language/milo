@@ -86,6 +86,7 @@ returnConstIntCoerce
 returnI64Lit
 returnU32Lit
 safeExternCall
+sizeOf
 stdBase64
 stdHex
 stdlibPrint
@@ -97,6 +98,7 @@ stringFfi
 stringFn
 stringIndex
 stringLen
+stringWithCapacity
 structCopy
 structFieldIntCoerce
 structFieldMoveDrop

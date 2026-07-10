@@ -628,14 +628,15 @@ fn parseStmt(p: &mut Parser): Stmt {
         return Stmt.UnsafeBlock(body, s)
     }
 
+    let s0 = span(peek(p))
     let expr = parseExpr(p)
     // assignment
     if at(p, TokKind.Eq) {
         advance(p)
         let value = parseExpr(p)
-        return Stmt.Assign(Heap(expr), Heap(value), Option.None)
+        return Stmt.Assign(Heap(expr), Heap(value), s0)
     }
-    return Stmt.ExprStmt(Heap(expr), Option.None)
+    return Stmt.ExprStmt(Heap(expr), s0)
 }
 
 // -- Patterns --
@@ -1003,8 +1004,9 @@ fn parsePrimary(p: &mut Parser): Expr {
         if at(p, TokKind.LBrace) && tok.value[0] >= 65 && tok.value[0] <= 90 {
             return parseStructLit(p, tok.value, s)
         }
-        // Function call: name(args) or name<T>(args)
-        if at(p, TokKind.LParen) {
+        // Function call: name(args) or name<T>(args). A '(' on a NEW line is
+        // the next statement, not call args — milo has no semicolons.
+        if at(p, TokKind.LParen) && peek(p).line == tok.line {
             return parseCall(p, tok.value, s)
         }
         if isTypeArgCall(p) {

@@ -1053,6 +1053,11 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         let sz = genSizeOf(cg, ll)
         return Val { v: sz, ty: "i64" }
     }
+    // zeroed<T>() — llvm zeroinitializer of the instantiated type
+    if name == "zeroed" && typeArgs.len == 1 {
+        let zt = resolveTyStr(cg, astTypeStr(typeArgs[0]))
+        return Val { v: "zeroinitializer", ty: zt }
+    }
     // Built-in Heap(expr)
     if name == "Heap" {
         let inner = genExpr(cg, *args[0], locs, sigs, "")
@@ -1327,6 +1332,11 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             }
             if enumName == "HashMap" && variant == "new" {
                 return genHashMapNew(cg, hintTy)
+            }
+            if enumName == "String" && variant == "withCapacity" {
+                // capacity is a growth hint; an empty string (cap 0 = literal
+                // convention, push mallocs) is semantically equivalent
+                return genStringLit(cg, "")
             }
             return genEnumLit(cg, enumName, variant, args, locs, sigs)
         }

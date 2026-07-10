@@ -171,7 +171,14 @@ fn main() {
             for i in 0..checker.diagnostics.len {
                 let d = checker.diagnostics[i]
                 if d.severity == "error" {
-                    eprint("error: " + d.message.clone())
+                    var loc = ""
+                    match d.span {
+                        Option.Some(sp) => {
+                            loc = sp.line.toString() + ":" + sp.col.toString() + ": "
+                        }
+                        Option.None => {}
+                    }
+                    eprint(loc + "error: " + d.message.clone())
                 }
             }
             exit(1)
