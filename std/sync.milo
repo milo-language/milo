@@ -12,11 +12,12 @@ from "std/runtime" import {
 // Channel is a handle type — copying it shares the underlying queue.
 //
 //   let ch = Channel<i64>.new(16)!
-//   let t = Thread.spawn(move (): void => {
+//   let p = Promise<i64>.blocking(move (): i64 => {
 //       ch.send(42)!
-//   })!
+//       return 0
+//   })
 //   let val = ch.recv()!
-//   t.join()!
+//   p.await()!
 //   ch.destroy()
 
 struct ChannelInner {
