@@ -15,13 +15,10 @@
 // enum payload sizing, and deref-of-borrowed-Heap in an argument position).
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { readFileSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { execFile, execSync } from "child_process";
-import { promisify } from "util";
 import { tmpdir } from "os";
 import { join } from "path";
 import { parseExpected } from "./annotations";
-
-const execFileAsync = promisify(execFile);
+import { guardedRun, type RunResult } from "../scripts/guard";
 
 const MILO_ROOT = join(import.meta.dir, "..");
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
@@ -36,15 +33,12 @@ const RUN_MUST_PASS = true;
 
 const CHILD_ENV = { ...process.env, MILO_ROOT };
 
-type RunResult = { stdout: string; stderr: string; code: number; signal: string | null };
-
-async function run(cmd: string, args: string[], cwd?: string): Promise<RunResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync(cmd, args, { env: CHILD_ENV, cwd, timeout: 60000 });
-    return { stdout, stderr, code: 0, signal: null };
-  } catch (e: any) {
-    return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", code: e.code ?? 1, signal: e.signal ?? null };
-  }
+// milo-self and the binaries it produces are UNTRUSTED: known memory bugs
+// mean any invocation can allocate without bound, and macOS enforces no
+// rlimits — an unguarded run has swap-thrashed the whole machine. Everything
+// goes through guardedRun, which SIGKILLs the process tree on RSS breach.
+async function run(cmd: string, args: string[], cwd?: string, timeoutMs = 60000): Promise<RunResult> {
+  return guardedRun(cmd, args, { env: CHILD_ENV, cwd, timeoutMs });
 }
 
 function readManifest(): string[] {
@@ -59,7 +53,7 @@ let buildResult: RunResult;
 
 beforeAll(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "milo-selfhost-"));
-  buildResult = await run("sh", [join(MILO_ROOT, "scripts", "selfhost.sh")], MILO_ROOT);
+  buildResult = await run("sh", [join(MILO_ROOT, "scripts", "selfhost.sh")], MILO_ROOT, 240000);
 }, 300000);
 
 afterAll(() => {

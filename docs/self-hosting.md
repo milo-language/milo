@@ -57,10 +57,19 @@ acceptance test, and the rules in "Working Agreement" are mandatory.
   (a) shrink the repro with `emit-ir` diffing, (b) extract the failing
   pattern into a new fixture and fix the milo0 phase it exposes,
   (c) mark deferred in this doc with the repro path, move on.
-- **Debugging playbook**: crash → `lldb -b -o run -o bt ./milo-self <cmd>`;
-  wrong output → `diff <(bun run src/main.ts emit-ir f.milo) <(./milo-self
-  emit-ir f.milo)`; regression → `git log --oneline -- src-milo/` and bisect
-  by rebuilding milo-self at each candidate commit.
+- **Memory guard (MANDATORY)**: milo-self can allocate without bound, and
+  macOS enforces no rlimits — an unguarded run has consumed all system RAM
+  and crashed the machine. NEVER invoke `.selfhost/milo-self` (or a binary it
+  produced) bare. Always wrap:
+  `bun scripts/guard.ts -- .selfhost/milo-self check foo.milo`
+  (SIGKILLs the process tree at 4GB RSS / 60s; `--mem-mb`/`--timeout-s` to
+  adjust). The test harnesses and `scripts/selfhost.sh` already do this.
+- **Debugging playbook**: crash → `lldb -b -o run -o bt ./milo-self <cmd>`
+  (lldb runs can't be guard-wrapped — watch Activity Monitor and keep inputs
+  tiny); wrong output → `diff <(bun run src/main.ts emit-ir f.milo)
+  <(bun scripts/guard.ts -- ./milo-self emit-ir f.milo)`; regression →
+  `git log --oneline -- src-milo/` and bisect by rebuilding milo-self at each
+  candidate commit.
 - Known runtime gotcha already fixed in TS codegen: allocas are hoisted to
   the entry block (loop-body allocas leak stack). milo0's codegen must do the
   same from day one (`codegen/emit.milo` — see `hoistAllocas` in

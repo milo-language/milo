@@ -62,6 +62,13 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 
 ## Key Rules
 
+- **NEVER run `.selfhost/milo-self` (or any binary it compiled) bare.** It has
+  known memory bugs; macOS enforces no rlimits, and a runaway allocation will
+  consume all RAM and crash the OS. Always wrap manual invocations:
+  `bun scripts/guard.ts -- .selfhost/milo-self <cmd> <args>` (kills the
+  process tree at 4GB RSS / 60s). `bun test tests/selfhost.test.ts` and
+  `scripts/selfhost.sh` are already guarded — prefer them.
+
 - Use Bun for everything (not Node)
 - Type checker runs before codegen — semantic errors must be caught there, not in codegen
 - LLVM IR uses opaque `ptr` (not `i8*`) — LLVM 15+ requirement

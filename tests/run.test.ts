@@ -1,12 +1,10 @@
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import { readdirSync, readFileSync, unlinkSync, existsSync, mkdtempSync, rmSync } from "fs";
-import { execFile, execSync } from "child_process";
-import { promisify } from "util";
+import { execSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
 import { parseExpected, parseExpectedError, parseExpectedRuntimeError } from "./annotations";
-
-const execFileAsync = promisify(execFile);
+import { guardedRun, type RunResult } from "../scripts/guard";
 
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 const ERRORS_DIR = join(import.meta.dir, "errors");
@@ -28,19 +26,11 @@ beforeAll(() => {
   });
 });
 
-type RunResult = { stdout: string; stderr: string; code: number; signal: string | null };
-
+// All compiles and fixture binaries run under guardedRun: macOS enforces no
+// rlimits, so a miscompiled program that allocates in a loop would otherwise
+// swap the machine to death. The guard SIGKILLs the tree on RSS breach.
 async function run(cmd: string, args: string[]): Promise<RunResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync(cmd, args, {
-      encoding: "utf-8",
-      maxBuffer: 64 * 1024 * 1024,
-      env: CHILD_ENV,
-    });
-    return { stdout, stderr, code: 0, signal: null };
-  } catch (e: any) {
-    return { stdout: e.stdout ?? "", stderr: e.stderr ?? "", code: e.code ?? 1, signal: e.signal ?? null };
-  }
+  return guardedRun(cmd, args, { env: CHILD_ENV });
 }
 
 // Retry once on signal-based failures (resource pressure under full suite).
