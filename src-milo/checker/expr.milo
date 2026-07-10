@@ -42,6 +42,12 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
         }
         Expr.FieldAccess(obj, field, span) => { return isRootMutable(ck, *obj) }
         Expr.IndexAccess(obj, idx, span) => { return isRootMutable(ck, *obj) }
+        // writes through a deref target (*p).f / *p — raw pointers are gated
+        // by unsafe, heap boxes own their pointee
+        Expr.UnaryOp(op, operand, span) => {
+            if op == "*" { return true }
+            return false
+        }
         _ => { return false }
     }
 }
