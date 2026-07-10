@@ -63,12 +63,12 @@ Ongoing work on aliasing/invalidation gaps: [safety-roadmap.md](safety-roadmap.m
 
 ## Concurrency
 
-Two layers, no async/await, no `Future` types:
+One model — green tasks — with a single OS-thread escape hatch. No async/await, no `Future` types, no function coloring:
 
-- **OS threads** for CPU-bound parallelism — `spawn()` with move closures (Send enforced on all captures), structured `parallel { }` blocks (N expressions on N threads, join before continuing), bounded channels with `send/recv/trySend/tryRecv`, `Mutex`/`RwLock` with closure helpers, `AtomicI64`/`AtomicBool` (seq_cst LLVM atomics), `@send`/`@sync` annotations for user types wrapping unsafe internals.
-- **Green threads** for high-concurrency I/O — `Task.spawn(f)`: stackful coroutines via ucontext, 64KB guarded stacks (10K+ concurrent), cooperative scheduling with `schedulerYield()` and fd-readiness waits (kqueue/epoll).
+- **Green tasks** are the default — `Task.spawn(f)` / `Promise<T>.run(f)`: stackful coroutines via ucontext, 64KB guarded stacks (10K+ concurrent), cooperative scheduling with `schedulerYield()` and fd-readiness waits (kqueue/epoll). `Promise`/`Channel`/`select`/`WaitGroup` all park the task, not the OS thread, and compose freely. Collect results with `.await()`; `Promise.all`/`Promise.race` for fan-out.
+- **`Promise.blocking(f)`** is the one escape hatch to a real OS thread — for CPU-bound work or blocking FFI that would otherwise starve the single-threaded cooperative scheduler. Its captures must be `Send` (compiler-enforced); the result comes back through the same `await`. Shared state across parallel workers goes through channels or `AtomicI64`/`AtomicBool` (seq_cst). `@send`/`@sync` annotate user types wrapping unsafe internals. (Public `Thread`/`Mutex`/`RwLock`/`parallel` were removed 2026-07-10 — see [concurrency-simplification.md](concurrency-simplification.md).)
 
-The key design point: the same blocking `stream.recv()` works in both worlds. I/O functions check `schedulerCurrent()` at runtime — in a green thread they set non-blocking and yield on EAGAIN; in an OS thread they block. The compiler injects a scheduler drain at end of `main` when green threads are used. No manual event loop, no function coloring.
+The key design point: the same blocking `stream.recv()` works in a task and on a `Promise.blocking` thread. I/O functions check `schedulerCurrent()` at runtime — in a green task they set non-blocking and yield on EAGAIN; on an OS thread they block. Exit semantics are Go's: when `main` returns the process exits and outstanding tasks are abandoned — wait explicitly (`join`, `WaitGroup`, `Promise`, channel) or `schedulerRunToCompletion()`. No manual event loop, no scheduler auto-drain.
 
 ## FFI
 
