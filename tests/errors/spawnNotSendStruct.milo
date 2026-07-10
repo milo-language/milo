@@ -1,7 +1,7 @@
 // @error: cannot send 'u' of type 'Unsafe' across threads
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 
 struct Unsafe {
@@ -13,11 +13,11 @@ fn main(): i32 {
         let u = Unsafe {
             p: 0 as *u8
         }
-        let t = Thread.spawn(move(): void => {
+        let _t = Promise<i64>.blocking(move(): i64 => {
             print("bad: ", u.p as i64)
+            return 0
         }
-        )!
-        t.join()!
+        )
     }
     return 0
 }

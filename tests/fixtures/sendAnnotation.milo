@@ -1,7 +1,7 @@
 // @expect: 42
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 
 @ send
@@ -15,11 +15,12 @@ fn main(): i32 {
         let h = SafeHandle {
             _ptr: 0 as *u8
         }
-        let t = Thread.spawn(move(): void => {
+        let t = Promise<i64>.blocking(move(): i64 => {
             let _x = h._ptr
+            return 0
         }
-        )!
-        t.join()!
+        )
+        t.await()!
     }
     print(42)
     return 0

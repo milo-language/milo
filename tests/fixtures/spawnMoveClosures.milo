@@ -2,21 +2,22 @@
 // @expect: value is 42
 // @expect: done
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 
 fn main(): i32 {
     let msg = "hello from thread"
     let val: i64 = 42
 
-    let t = Thread.spawn(move(): void => {
+    let t = Promise<i64>.blocking(move(): i64 => {
         print(msg)
         print("value is ", val)
+        return 0
     }
-    )!
+    )
 
-    t.join()!
+    t.await()!
     print("done")
     return 0
 }

@@ -2,8 +2,8 @@
 // @expect: world
 // @expect: done
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 from "std/sync" import {
     Channel
@@ -12,12 +12,13 @@ from "std/sync" import {
 fn main(): i32 {
     let ch = Channel<string>.new(8)!
 
-    let t = Thread.spawn(move(): void => {
+    let t = Promise<i64>.blocking(move(): i64 => {
         ch.send("hello")!
         ch.send("world")!
         ch.send("")!
+        return 0
     }
-    )!
+    )
 
     while true {
         let val = ch.recv()!
@@ -27,7 +28,7 @@ fn main(): i32 {
         print(val)
     }
 
-    t.join()!
+    t.await()!
     ch.destroy()
     print("done")
     return 0

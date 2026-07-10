@@ -1,7 +1,7 @@
 // @expect: sum 100
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 from "std/sync" import {
     Channel
@@ -9,16 +9,17 @@ from "std/sync" import {
 
 fn main(): i32 {
     let ch = Channel<i64>.new(16)!
-    var threads: Vec<Thread> = Vec.new()
+    var workers: Vec<Promise<i64>> = Vec.new()
 
     var i: i64 = 0
     while i < 4 {
         let val = (i + 1) * 10
-        let t = Thread.spawn(move(): void => {
+        let t = Promise<i64>.blocking(move(): i64 => {
             ch.send(val)!
+            return 0
         }
-        )!
-        threads.push(t)
+        )
+        workers.push(t)
         i = i + 1
     }
 
@@ -32,7 +33,7 @@ fn main(): i32 {
 
     i = 0
     while i < 4 {
-        threads[i].join()!
+        workers[i].await()!
         i = i + 1
     }
 

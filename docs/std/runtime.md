@@ -133,6 +133,18 @@ fn Promise.await(self: &Promise): Result<T>
 
 _Undocumented._
 
+### `Promise.blocking`
+
+```milo
+fn Promise.blocking(f: () => T): Promise<T>
+```
+
+Run `f` on a real OS thread for CPU-bound work or blocking FFI — anything
+that would otherwise starve the single-threaded cooperative scheduler.
+The caller never blocks here; the result arrives over the channel and is
+collected with await(), like any Promise. Fan out across N cores by
+pushing several Promise.blocking handles into Promise.all.
+
 ### `Promise.promiseAll`
 
 ```milo

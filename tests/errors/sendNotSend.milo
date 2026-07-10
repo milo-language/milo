@@ -1,7 +1,7 @@
 // @error: type does not implement Send
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 
 struct Dangerous {
@@ -13,10 +13,11 @@ fn main(): i32 {
         let d = Dangerous {
             _ptr: 0 as *u8
         }
-        let _t = Thread.spawn(move(): void => {
+        let _t = Promise<i64>.blocking(move(): i64 => {
             let _x = d._ptr
+            return 0
         }
-        )!
+        )
     }
     return 0
 }

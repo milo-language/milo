@@ -226,6 +226,8 @@ extern fn pthread_create(thread: *u8, attr: *u8, start: *u8, arg: *u8): i32
 
 extern fn pthread_join(thread: i64, retval: *u8): i32
 
+extern fn pthread_detach(thread: i64): i32
+
 extern fn pthread_mutex_init(mutex: *u8, attr: *u8): i32
 
 extern fn pthread_mutex_lock(mutex: *u8): i32

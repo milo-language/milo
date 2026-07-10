@@ -715,7 +715,6 @@ function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s: Stmt) 
         case "MatchStmt": ex(s.subject); s.arms.forEach(a => st(a.body)); break;
         case "IfLetStmt": ex(s.subject); st(s.thenBody); if (s.elseBody) st(s.elseBody); break;
         case "UnsafeBlock": st(s.body); break;
-        case "ParallelBlock": s.bindings.forEach(b => ex(b.value)); break;
       }
     }
   };

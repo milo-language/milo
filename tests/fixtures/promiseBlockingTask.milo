@@ -1,0 +1,23 @@
+// @expect: 99
+// @expect: done
+
+from "std/runtime" import {
+    Task, Promise
+}
+
+// A green task awaits a blocking promise: the OS worker's send must wake the
+// parked green task through the channel's cross-thread unpark path.
+fn main(): i32 {
+    let done = Task.spawn(move(): void => {
+        let p = Promise<i64>.blocking(move(): i64 => {
+            return 99
+        }
+        )
+        let v = p.await()!
+        print(v)
+    }
+    )
+    done.join()
+    print("done")
+    return 0
+}

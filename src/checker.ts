@@ -75,7 +75,6 @@ export interface CheckResult {
   monomorphizedEnums: import("./ast").EnumDecl[];
   monomorphizedStructs: StructDecl[];
   closureCaptures: Map<Expr, CaptureInfo[]>;
-  parallelCaptures: Map<Expr, CaptureInfo[]>;
   closureCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
   // method calls whose receiver was auto-dereffed through a Heap<T>
@@ -181,7 +180,6 @@ export class TypeChecker {
   private autoWrappedOption = new Map<Expr, string>();
   private arrayToVecCoercions = new Set<Expr>();
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
-  private parallelCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
   private sizeOfTypes = new Map<Expr, TypeKind>();
   private offsetOfFields = new Map<Expr, string>();
@@ -1089,7 +1087,6 @@ export class TypeChecker {
       monomorphizedEnums: this.monomorphizedDecls,
       monomorphizedStructs: this.monomorphizedStructDecls,
       closureCaptures: this.closureCaptures,
-      parallelCaptures: this.parallelCaptures,
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
       heapMethodReceivers: this.heapMethodReceivers,
@@ -2449,40 +2446,6 @@ export class TypeChecker {
         // only lint user code — stdlib has many technically-removable blocks
         if (!used && this.currentFnIsUser) {
           this.warn("unused-unsafe", `unnecessary 'unsafe' block: nothing inside requires unsafe`, stmt.span, `remove the 'unsafe' wrapper`, "unsafe".length);
-        }
-        break;
-      }
-      case "ParallelBlock": {
-        const bindingTypes: { name: string; type: TypeKind }[] = [];
-        for (const binding of stmt.bindings) {
-          const savedDepth = this.closureScopeDepth;
-          const savedCaptures = this.currentClosureCaptures;
-          this.currentClosureCaptures = new Map();
-          this.pushScope();
-          this.closureScopeDepth = this.scopes.length - 1;
-
-          this.checkExpr(binding.value, null);
-          const branchType = this.exprTypes.get(binding.value) ?? { tag: "void" as const };
-          bindingTypes.push({ name: binding.name, type: branchType });
-
-          const captures = Array.from(this.currentClosureCaptures.values());
-          this.parallelCaptures.set(binding.value, captures);
-          for (const cap of captures) {
-            if (!this.isSend(cap.type)) {
-              this.error(
-                `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads in parallel block — type is not Send`,
-                binding.span,
-                this.whyNotSend(cap.type),
-              );
-            }
-          }
-
-          this.popScope();
-          this.closureScopeDepth = savedDepth;
-          this.currentClosureCaptures = savedCaptures;
-        }
-        for (const bt of bindingTypes) {
-          this.declare(bt.name, { type: bt.type, mutable: false, moved: false, borrowed: false, read: false });
         }
         break;
       }
@@ -3865,6 +3828,22 @@ export class TypeChecker {
                 if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
               }
               this.staticCalls.set(expr, mangledMethod);
+              // Send enforcement: Promise.blocking() runs the closure on a real
+              // OS thread, so all captures must be Send.
+              if (expr.enumName === "Promise" && expr.variant === "blocking" && expr.args.length === 1 && expr.args[0].kind === "Closure") {
+                const captures = this.closureCaptures.get(expr.args[0]);
+                if (captures) {
+                  for (const cap of captures) {
+                    if (!this.isSend(cap.type)) {
+                      this.error(
+                        `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
+                        expr.args[0].span,
+                        this.whyNotSend(cap.type),
+                      );
+                    }
+                  }
+                }
+              }
               return this.setType(expr, sig.ret);
             }
           }

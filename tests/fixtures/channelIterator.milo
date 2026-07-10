@@ -2,8 +2,8 @@
 // @expect: 2
 // @expect: 3
 // @expect: done
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 from "std/sync" import {
     Channel
@@ -12,20 +12,21 @@ from "std/sync" import {
 fn main(): i32 {
     var ch = Channel<i64>.new(4)!
 
-    let t = Thread.spawn(move(): void => {
+    let t = Promise<i64>.blocking(move(): i64 => {
         ch.send(1)!
         ch.send(2)!
         ch.send(3)!
         ch.close()
+        return 0
     }
-    )!
+    )
 
     for val in ch {
         print(val)
     }
     print("done")
 
-    t.join()!
+    t.await()!
     ch.destroy()
     return 0
 }

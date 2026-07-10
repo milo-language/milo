@@ -98,9 +98,7 @@ export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr;
 
 export interface UnsafeBlock { kind: "UnsafeBlock"; body: Stmt[]; span?: Span }
 export interface ForInStmt { kind: "ForInStmt"; varName: string; varName2: string | null; iterable: Expr; body: Stmt[]; span?: Span }
-export interface ParallelBlock { kind: "ParallelBlock"; bindings: { name: string; value: Expr; span?: Span }[]; span?: Span }
-
-export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | UnsafeBlock | ForInStmt | ParallelBlock;
+export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | UnsafeBlock | ForInStmt;
 
 // ── Top-level ──
 

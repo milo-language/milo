@@ -1,7 +1,7 @@
 // @expect: both done
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 from "std/sync" import {
     WaitGroup
@@ -10,18 +10,20 @@ from "std/sync" import {
 fn main(): i32 {
     let wg = WaitGroup.new()
     wg.add(2)
-    let t1 = Thread.spawn(move(): void => {
+    let t1 = Promise<i64>.blocking(move(): i64 => {
         wg.done()
+        return 0
     }
-    )!
-    let t2 = Thread.spawn(move(): void => {
+    )
+    let t2 = Promise<i64>.blocking(move(): i64 => {
         wg.done()
+        return 0
     }
-    )!
+    )
     wg.wait()
     print("both done")
-    t1.join()!
-    t2.join()!
+    t1.await()!
+    t2.await()!
     wg.destroy()
     return 0
 }

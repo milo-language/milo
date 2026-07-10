@@ -8,11 +8,12 @@ fn main(): i32 {
     var x: i32 = 42
     unsafe {
         let p = (&x) as *u8
-        let _t = Promise<i64>.blocking(move(): i64 => {
-            print("ptr value: ", p as i64)
-            return 0
+        let job = Promise<i64>.blocking(move(): i64 => {
+            return p as i64
         }
         )
+        let v = job.await()!
+        print(v)
     }
     return 0
 }
