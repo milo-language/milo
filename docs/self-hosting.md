@@ -251,67 +251,66 @@ every auto-borrowed `*h` argument destroyed the pointee. `enum E { A(i64), B }`
 gated by `CHECK_MUST_PASS` / `RUN_MUST_PASS`, and `run` propagates the exit code
 (`return 7` → rc 7). `build -o` works.
 
-**Manifest is still empty**, but the blocker has moved out of the checker.
+**Manifest: 48 fixtures and growing.** `bun test tests/selfhost.test.ts` → 53 pass,
+0 fail. `findStdlibRoot` is wired: milo-self injects the prelude, type-checks it,
+codegens it, and `run min.milo` exits 0 (and `return 7` → rc 7).
 
-milo0 now **type-checks the prelude cleanly** — `check` on a program that pulls in
-`std/prelude` → `std/string` reports zero errors, deterministically. Getting there
-took five oracle bugs and six milo0 bugs:
+### What M1 actually cost, and what it bought
 
-*Oracle (TS compiler) bugs found via milo0:*
-1. `1cd6e27` `HashMap.get` did a bare `load`, so a heap-owning value's copy aliased
-   the map; a later `insert` on the same key dropped the old value out from under
-   it. Added `milo.clone.<enum>` (`emitDeepCloneFromPtr` had punted on enums).
-   Gotcha: the clone opens new basic blocks, so the `found` block stops being the
-   phi's predecessor — `opt -O2` says *"PHI node entries do not match
-   predecessors"* while clang just dies with `Bus error: 10`.
-2. `400a71f` clone helper bodies bypass the function emitter, so `hoistAllocas`
-   never ran — a Vec field's clone allocated once per loop iteration.
-3. `234204f` **`h.m()` on a `Heap<T>` receiver passed the address of the Heap slot
-   (a ptr-to-ptr) as `&T`.** The checker unwraps the heap to resolve the method but
-   never told lower to deref. This was the big one: milo0's `deref()`,
-   `checkIndexAccess` and friends all write `inner.clone()` on a `&Heap<TypeKind>`
-   payload, so every `&T`, Vec-element and array-element type came back as a
-   TypeKind read out of a pointer's bytes. Hence `type mismatch in '+': string vs
-   f-255281472`, and ASan showing a jump into a zero-filled page.
-4. Earlier: `a49bfad` deref-of-borrowed-Heap in an argument position moved and
-   zeroed the caller's box; `ee5d379` enum payload sizing undersized a payload that
-   was itself an enum.
+Every one of the five M1 root causes was a **miscompile in the TS oracle**, not a
+milo0 bug. They are all fixed and shipped to every Milo user:
 
-*milo0 bugs:* `inner.clone()` at the wrong level (`b916a5f`); no const-int-literal
-coercion (`ce7fc22`); `requires`/`ensures` unparsed, `typeFromAst` ignoring
-`typeArgs`, `Vec.new()` rejected, missing `substr`/`cstr` (`eb55e1b`); `checkAssign`
-type-checking its target as a *read* (so `word = ""` reported "use of moved
-variable 'word'"), and `checkReturn` poisoning later uses in a flow-insensitive
-checker (`0b99b22`).
+| commit | bug |
+|---|---|
+| `ee5d379` | enum payload sizing undersized a payload that was itself an enum |
+| `a49bfad` | deref of a borrowed `Heap` in an argument position moved *and zeroed* the caller's box |
+| `1cd6e27` | `HashMap.get` returned a shallow copy; `emitDeepCloneFromPtr` punted on enums |
+| `400a71f` | clone helper bodies bypassed `hoistAllocas` — a Vec clone allocated per loop iteration |
+| `234204f` | `h.m()` on a `Heap<T>` receiver passed the *slot address* (ptr-to-ptr) as `&T` |
 
-Debugging notes worth keeping:
-- `check ... 2>&1 | wc -l` returning `0` means *no output* — a crash — not "zero
-  errors". This cost me a false celebration twice.
-- Plain `lldb` on the release build hangs and won't unwind. The ASan build gives a
-  deterministic fault; walk the frame-pointer chain by hand
-  (`p.ReadPointerFromMemory(fp)` / `fp+8`) to get the caller — that is what
-  fingered `checkIndexAccess`.
-- A probe that *binds* a container element (`v[0].clone()`) perturbs the very bug
-  it measures. Probe read-only through borrows.
+Self-hosting is doing its job: it is the most brutal integration test this compiler
+has. The heisenbug phase is over — what remains is mechanical porting.
 
-### Next: M3 — codegen gaps
+Debugging playbook that actually worked:
+- `check … 2>&1 | wc -l` returning `0` means *no output* — a crash — not "zero errors".
+- Plain `lldb` on the release build hangs and won't unwind. Build with
+  `--debug --sanitize`; ASan makes the fault deterministic. If the PC is garbage,
+  walk the frame-pointer chain by hand (`ReadPointerFromMemory(fp)` / `fp+8`).
+- `opt -O2 -S` reports IR bugs (*"PHI node entries do not match predecessors"*)
+  that clang only reports as `Bus error: 10`.
+- A probe that *binds* a container element (`v[0].clone()`) perturbs the bug it is
+  measuring. Probe read-only through borrows.
 
-`findStdlibRoot` (MILO_ROOT, else walk up to `std/prelude.milo`) is written and
-documented in `src-milo/main.milo` and still **not wired up**. Wiring it now
-reddens the `run` gate, because injecting the prelude means milo0 must *codegen*
-all of `std/string`, and it cannot:
+### M3 — codegen gaps (in progress)
 
-```
-$ MILO_ROOT=$PWD .selfhost/milo-self run min.milo
-codegen: unsupported method 'push' on %Vec
-```
+Landed: Vec runtime (`%Vec = {ptr,i64,i64}`, `new`/`push`/`len`/index, element size
+via `getelementptr T, ptr null, i32 1` so `%String` and structs work); string `push`
+(cap==0 means a `.rodata` literal — malloc+memcpy, don't realloc); `astTypeStr`
+(codegen keyed off `MiloType.name`, dropping type args, so `Vec<string>` sized its
+elements as i64); `ptrtoint`/`inttoptr` (`intBits("ptr")` is 64, so `p as i64` hit
+the bitcast branch); bounds-safe `peek`/`peekN`/`advance`; f-strings end-to-end
+(`parseFString` stringified the *byte value* of each literal char; `format` was
+implemented nowhere).
 
-`genMethodCall` in `src-milo/codegen/expr.milo` has no Vec runtime (push / len /
-index) and no string `push`. Its unknown-method fallback used to return
-`Val{v:"0", ty:"i64"}` silently, which surfaced 400 lines later as
-`trunc i64 0 to %String`; it now fails loud, so each gap names itself. Work the
-list until `MILO_ROOT=$PWD .selfhost/milo-self run min.milo` exits 0, then flip the
-two `stdlibDir` bindings to `findStdlibRoot(sourceDir)` and seed the manifest.
+`genMethodCall` and `genFieldAccess` now **fail loud** on an unknown method/field
+instead of returning `Val{v:"0"}`, which used to surface 400 lines later as
+`trunc i64 0 to %String`. Each remaining gap names itself.
+
+Failure census over the 290 non-passing fixtures (before the f-string fix, which
+should clear a large slice of the OOB bucket):
+
+- **76** `array index out of bounds` — the `peekN` lookahead bug. Fixed; re-sweep pending.
+- **~45** generics not wired through (`unknown struct`, `undefined function` on
+  generic fns) — the `resultBasic`/`genericStruct` family. Biggest remaining theme.
+- **18** output mismatch — builds succeed, output wrong. **The scariest class**
+  (silent miscompiles) and exactly what the differential harness exists for. Worth
+  attacking before they hide behind other fixes.
+- **13** SIGTRAP during build + `unsupported method` — more codegen surface.
+- Long tail: closures, traits, Option/Result propagation, compound assignment, globals.
+
+Artifact paths are pid-suffixed (`/tmp/milo_out_<pid>.ll`): they were shared, so
+concurrent milo-self builds clobbered each other's IR — this undercounted a
+parallel sweep 34 vs the true 48.
 
 The `emit-ir` diffing playbook works:
 `diff <(bun run src/main.ts emit-ir f.milo) <(.selfhost/milo-self emit-ir f.milo)`.
@@ -417,7 +416,7 @@ while the language stagnates.
 | M0 harness | **done** (`bun test tests/selfhost.test.ts`) | 2026-07-09 |
 | M1 fix crash | **done** — `check` + `run` green and gated | 2026-07-09 |
 | M2 attic HIR | not started | |
-| M3 codegen gaps | not started | |
+| M3 codegen gaps | in progress — manifest 48/338 | 2026-07-09 |
 | M4 self-compile | not started | |
 | M5 convergence | not started | |
 | M6 parity | not started | |
