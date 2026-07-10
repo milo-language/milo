@@ -265,3 +265,38 @@ impl Clone for FnSig {
         return FnSig { params: params, ret: self.ret.clone(), variadic: self.variadic, isExtern: self.isExtern }
     }
 }
+
+// typeFromName cannot know whether a bare name is a struct or an enum —
+// annotations like `fn f(): TokKind` come back as TStruct("TokKind") and then
+// fail typeEq against the TEnum the body produces. Rewrite anywhere an enum
+// with that name is registered.
+fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
+    match t {
+        TypeKind.TStruct(name) => {
+            if ck.enums.contains(name) { return TypeKind.TEnum(name.clone()) }
+            return t.clone()
+        }
+        TypeKind.TRef(inner, m) => {
+            return TypeKind.TRef(Heap(normalizeEnumNames(ck, *inner)), m)
+        }
+        TypeKind.THeap(inner) => {
+            return TypeKind.THeap(Heap(normalizeEnumNames(ck, *inner)))
+        }
+        TypeKind.TVec(elem) => {
+            return TypeKind.TVec(Heap(normalizeEnumNames(ck, *elem)))
+        }
+        TypeKind.THashMap(k, v) => {
+            return TypeKind.THashMap(Heap(normalizeEnumNames(ck, *k)), Heap(normalizeEnumNames(ck, *v)))
+        }
+        TypeKind.TArray(elem, size) => {
+            var sz: Option<i64> = Option.None
+            match size {
+                Option.Some(n) => { sz = Option.Some(n) }
+                Option.None => {}
+            }
+            return TypeKind.TArray(Heap(normalizeEnumNames(ck, *elem)), sz)
+        }
+        _ => { return t.clone() }
+    }
+}
+

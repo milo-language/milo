@@ -24,6 +24,7 @@ dropEarlyReturn
 dropStringReturn
 dropUser
 dropWithFields
+dropZeroFirstField
 enumBasic
 enumMultiPayload
 enumPayload
@@ -68,6 +69,7 @@ importString
 importTransitive
 intConstCoerce
 letInWhile
+logicalOps
 moveVarIntoEnumReturn
 multiWidthTypes
 nestedCalls
@@ -91,8 +93,10 @@ stringFfi
 stringFn
 stringIndex
 stringLen
+structFieldIntCoerce
 structFieldMoveDrop
 structFn
+structI64Field
 structMutate
 structs
 traitHashmapString

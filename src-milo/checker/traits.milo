@@ -10,7 +10,7 @@ from "src-milo/checker/types.milo" import {
 from "src-milo/checker/state.milo" import {
     Checker, FnSig, FnParam, StructInfo, CkStructField, EnumInfo, VariantInfo,
     TraitInfo, TraitMethodInfo, ImplInfo,
-    error, pushScope, popScope, declare,
+    error, pushScope, popScope, declare, normalizeEnumNames,
 }
 
 // -- Register builtin traits (Eq, Hash, Clone, Display, Add/Sub/Mul/Div, Drop) --
@@ -239,7 +239,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                         }
                         _ => {}
                     }
-                    params.push(FnParam { name: m.params[pi].name.clone(), ty: pType })
+                    params.push(FnParam { name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
                 }
                 var retType = typeFromAst(m.retType)
                 match retType.clone() {
@@ -248,7 +248,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     _ => {}
                 }
-                let sig = FnSig { params: params, ret: retType, variadic: false, isExtern: false }
+                let sig = FnSig { params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false }
                 ck.functions.insert(mangled.clone(), sig.clone())
                 methods.insert(m.name.clone(), sig)
 
@@ -306,7 +306,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                         }
                         _ => {}
                     }
-                    params.push(FnParam { name: m.params[pi].name.clone(), ty: pType })
+                    params.push(FnParam { name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
                 }
                 var retType = typeFromAst(m.retType)
                 match retType.clone() {
@@ -315,7 +315,7 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     }
                     _ => {}
                 }
-                let sig = FnSig { params: params, ret: retType, variadic: false, isExtern: false }
+                let sig = FnSig { params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false }
                 ck.functions.insert(mangled.clone(), sig.clone())
                 methods.insert(m.name.clone(), sig)
 

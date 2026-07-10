@@ -32,6 +32,22 @@ fn tyVoid(): TypeKind { return TypeKind.TVoid }
 fn tyString(): TypeKind { return TypeKind.TString }
 fn tyUnknown(): TypeKind { return TypeKind.TUnknown }
 
+// An unknown ANYWHERE in a type means some upstream inference gave up; treat
+// the whole type as unknown for mismatch purposes (Heap<unknown> vs Heap<Expr>
+// must not error — the top-level tyUnknown() guards miss nested cases).
+fn containsUnknown(t: &TypeKind): bool {
+    match t {
+        TypeKind.TUnknown => { return true }
+        TypeKind.THeap(inner) => { return containsUnknown(*inner) }
+        TypeKind.TVec(inner) => { return containsUnknown(*inner) }
+        TypeKind.TRef(inner, m) => { return containsUnknown(*inner) }
+        TypeKind.TPtr(inner) => { return containsUnknown(*inner) }
+        TypeKind.TArray(inner, size) => { return containsUnknown(*inner) }
+        TypeKind.THashMap(k, v) => { return containsUnknown(*k) || containsUnknown(*v) }
+        _ => { return false }
+    }
+}
+
 // -- Convert AST MiloType → TypeKind (non-generic base types) --
 
 fn typeFromAst(ty: &MiloType): TypeKind {

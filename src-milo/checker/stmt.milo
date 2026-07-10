@@ -11,6 +11,7 @@ from "src-milo/checker/types.milo" import {
 from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, EnumInfo, VariantInfo,
     Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
+    normalizeEnumNames,
 }
 from "src-milo/checker/expr.milo" import { intCoercible, checkExpr, tryMove, isRootMutable, deref }
 from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, processDerives, typeImplementsTrait, resolveMethod }
@@ -453,9 +454,15 @@ fn checkFunction(ck: &mut Checker, func: &Function) {
     var i: i64 = 0
     while i < func.params.len {
         let pType = resolveAstType(ck, func.params[i].ty)
+        // a &mut param makes the pointee assignable through the ref
+        var pMut = false
+        match pType.clone() {
+            TypeKind.TRef(inner, m) => { pMut = m }
+            _ => {}
+        }
         declare(ck, func.params[i].name.clone(), VarInfo {
             ty: pType,
-            mutable: false,
+            mutable: pMut,
             moved: false,
             borrowed: false,
             read: false,
@@ -501,7 +508,7 @@ fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
     while i < decl.fields.len {
         fields.push(CkStructField {
             name: decl.fields[i].name.clone(),
-            ty: typeFromAst(decl.fields[i].ty),
+            ty: resolveAstType(ck, decl.fields[i].ty),
         })
         i = i + 1
     }
@@ -519,7 +526,7 @@ fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
         var fields: Vec<TypeKind> = Vec.new()
         var j: i64 = 0
         while j < decl.variants[i].fields.len {
-            fields.push(typeFromAst(decl.variants[i].fields[j]))
+            fields.push(resolveAstType(ck, decl.variants[i].fields[j]))
             j = j + 1
         }
         variants.insert(decl.variants[i].name.clone(), VariantInfo {
@@ -591,7 +598,7 @@ fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
             return TypeKind.TStruct(mangled)
         }
     }
-    return typeFromAst(ty)
+    return normalizeEnumNames(ck, typeFromAst(ty))
 }
 
 fn checkProgram(ck: &mut Checker, program: &Program) {
@@ -627,6 +634,43 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
             registerFunction(ck, program.functions[i])
         }
         i = i + 1
+    }
+
+    // Phase 1.5: enum payloads and struct fields were converted before every
+    // enum name was registered — normalize TStruct(enumName) → TEnum(enumName)
+    // now that the full name set is known.
+    var enumNames: Vec<string> = Vec.new()
+    for en, ev in ck.enums {
+        enumNames.push(en.clone())
+    }
+    for ei in 0..enumNames.len {
+        var info = ck.enums.get(enumNames[ei])!
+        var newVariants: HashMap<string, VariantInfo> = HashMap.new()
+        for vn, vi in info.variants {
+            var fields: Vec<TypeKind> = Vec.new()
+            for fi in 0..vi.fields.len {
+                fields.push(normalizeEnumNames(ck, vi.fields[fi]))
+            }
+            newVariants.insert(vn.clone(), VariantInfo { tag: vi.tag, fields: fields })
+        }
+        info.variants = newVariants
+        ck.enums.insert(enumNames[ei].clone(), info)
+    }
+    var structNames: Vec<string> = Vec.new()
+    for sn, sv in ck.structs {
+        structNames.push(sn.clone())
+    }
+    for si in 0..structNames.len {
+        var sInfo = ck.structs.get(structNames[si])!
+        var newFields: Vec<CkStructField> = Vec.new()
+        for fi in 0..sInfo.fields.len {
+            newFields.push(CkStructField {
+                name: sInfo.fields[fi].name.clone(),
+                ty: normalizeEnumNames(ck, sInfo.fields[fi].ty),
+            })
+        }
+        sInfo.fields = newFields
+        ck.structs.insert(structNames[si].clone(), sInfo)
     }
 
     // Phase 2: register impls and derive macros

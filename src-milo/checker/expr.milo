@@ -3,7 +3,7 @@ from "src-milo/ast.milo" import { Expr, Param, MiloType, Span, StructLitField, P
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName,
     tyI32, tyI64, tyU8, tyBool, tyVoid, tyString, tyUnknown,
-    isNumeric, isInteger, isFloat, isCopy, needsDrop,
+    isNumeric, isInteger, isFloat, isCopy, needsDrop, containsUnknown,
 }
 from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, CkStructField,
@@ -434,6 +434,11 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
         if ck.genericFns.contains(func) {
             return checkGenericCall(ck, func, args, span)
         }
+        // exit is a compiler builtin when std/os is not imported
+        if func == "exit" {
+            if args.len >= 1 { checkExpr(ck, *args[0]) }
+            return tyVoid()
+        }
         error(ck, "undefined function '" + func.clone() + "'", cloneSpan(span))
         return tyUnknown()
     }
@@ -492,7 +497,8 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
             if info.fields[j].name == fields[i].name {
                 found = true
                 let valType = checkExpr(ck, *fields[i].value)
-                if !typeEq(info.fields[j].ty, valType) && !typeEq(valType, tyUnknown()) {
+                if !typeEq(info.fields[j].ty, valType) && !containsUnknown(valType) &&
+                    !(isConstIntExpr(*fields[i].value) && isInteger(info.fields[j].ty)) {
                     error(ck, "field '" + fields[i].name.clone() + "' of '" + name.clone() + "': expected " + typeName(info.fields[j].ty) + ", got " + typeName(valType), cloneSpan(span))
                 }
                 tryMove(ck, *fields[i].value)
@@ -659,7 +665,7 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
     let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
     for i in 0..limit {
         let argType = checkExpr(ck, *args[i])
-        if !typeEq(variantInfo.fields[i], argType) && !typeEq(argType, tyUnknown()) {
+        if !typeEq(variantInfo.fields[i], argType) && !containsUnknown(argType) {
             error(ck, "argument " + (i + 1).toString() + " of '" + enumName.clone() + "." + variant.clone() + "': expected " + typeName(variantInfo.fields[i]) + ", got " + typeName(argType), cloneSpan(span))
         }
         tryMove(ck, *args[i])
@@ -938,6 +944,30 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     match objType.clone() {
         TypeKind.TStruct(name) => {
             return checkStructMethod(ck, obj, name, method, args, span)
+        }
+        _ => {}
+    }
+
+    // Enum methods resolve through the same name-keyed impl tables
+    match objType.clone() {
+        TypeKind.TEnum(name) => {
+            return checkStructMethod(ck, obj, name, method, args, span)
+        }
+        _ => {}
+    }
+
+    // Heap<T> receivers auto-deref to the pointee's methods
+    match objType.clone() {
+        TypeKind.THeap(inner) => {
+            match *inner {
+                TypeKind.TStruct(name) => {
+                    return checkStructMethod(ck, obj, name, method, args, span)
+                }
+                TypeKind.TEnum(name) => {
+                    return checkStructMethod(ck, obj, name, method, args, span)
+                }
+                _ => {}
+            }
         }
         _ => {}
     }
