@@ -494,24 +494,6 @@ export class Parser {
       this.expect(TokenKind.RBrace);
       return { kind: "UnsafeBlock", body, span: s };
     }
-    if (this.at(TokenKind.Parallel)) {
-      const s = this.span(this.advance());
-      this.expect(TokenKind.LBrace);
-      const bindings: { name: string; value: Expr; span?: Span }[] = [];
-      while (!this.at(TokenKind.RBrace)) {
-        const bSpan = this.span(this.peek());
-        this.expect(TokenKind.Let);
-        const name = this.expect(TokenKind.Ident).value;
-        this.expect(TokenKind.Eq);
-        const value = this.parseExpr();
-        bindings.push({ name, value, span: bSpan });
-      }
-      this.expect(TokenKind.RBrace);
-      if (bindings.length < 2) {
-        this.error("parallel block requires at least 2 bindings", s);
-      }
-      return { kind: "ParallelBlock", bindings, span: s };
-    }
 
     const expr = this.parseExpr();
     // assignment: x = ..., x.field = ..., x[i] = ...

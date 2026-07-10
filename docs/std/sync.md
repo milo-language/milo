@@ -178,133 +178,37 @@ fn Channel.trySend(self: &Channel, val: T): bool
 
 _Undocumented._
 
-### `Mutex.destroy`
+### `channelArmRecv`
 
 ```milo
-fn Mutex.destroy(self: &Mutex): void
-```
-
-_Undocumented._
-
-### `Mutex.lock`
-
-```milo
-fn Mutex.lock(self: &Mutex): Result<i32>
-```
-
-_Undocumented._
-
-### `Mutex.new`
-
-```milo
-fn Mutex.new(): Result<Mutex>
-```
-
-_Undocumented._
-
-### `Mutex.unlock`
-
-```milo
-fn Mutex.unlock(self: &Mutex): Result<i32>
-```
-
-_Undocumented._
-
-### `Mutex.withLock`
-
-```milo
-fn Mutex.withLock(self: &Mutex, f: () => void): Result<i32>
-```
-
-_Undocumented._
-
-### `RwLock.channelArmRecv`
-
-```milo
-fn RwLock.channelArmRecv(ptr: *u8, node: *u8): bool
+fn channelArmRecv(ptr: *u8, node: *u8): bool
 ```
 
 Arm a Select recv on this channel. Returns true if recv would proceed right
 now (buffer non-empty or closed) — the caller claims immediately and does not
 link. Otherwise links `node` (kind sel-recv) and returns false.
 
-### `RwLock.channelArmSend`
+### `channelArmSend`
 
 ```milo
-fn RwLock.channelArmSend(ptr: *u8, node: *u8): bool
+fn channelArmSend(ptr: *u8, node: *u8): bool
 ```
 
 Arm a Select send. Ready if the buffer has room or the channel is closed
 (a send on a closed channel returns Err rather than blocking).
 
-### `RwLock.channelUnarmRecv`
+### `channelUnarmRecv`
 
 ```milo
-fn RwLock.channelUnarmRecv(ptr: *u8, node: *u8): void
+fn channelUnarmRecv(ptr: *u8, node: *u8): void
 ```
 
 _Undocumented._
 
-### `RwLock.channelUnarmSend`
+### `channelUnarmSend`
 
 ```milo
-fn RwLock.channelUnarmSend(ptr: *u8, node: *u8): void
-```
-
-_Undocumented._
-
-### `RwLock.destroy`
-
-```milo
-fn RwLock.destroy(self: &RwLock): void
-```
-
-_Undocumented._
-
-### `RwLock.new`
-
-```milo
-fn RwLock.new(): Result<RwLock>
-```
-
-_Undocumented._
-
-### `RwLock.read`
-
-```milo
-fn RwLock.read(self: &RwLock): Result<i32>
-```
-
-_Undocumented._
-
-### `RwLock.unlock`
-
-```milo
-fn RwLock.unlock(self: &RwLock): Result<i32>
-```
-
-_Undocumented._
-
-### `RwLock.withReadLock`
-
-```milo
-fn RwLock.withReadLock(self: &RwLock, f: () => void): Result<i32>
-```
-
-_Undocumented._
-
-### `RwLock.withWriteLock`
-
-```milo
-fn RwLock.withWriteLock(self: &RwLock, f: () => void): Result<i32>
-```
-
-_Undocumented._
-
-### `RwLock.write`
-
-```milo
-fn RwLock.write(self: &RwLock): Result<i32>
+fn channelUnarmSend(ptr: *u8, node: *u8): void
 ```
 
 _Undocumented._

@@ -103,8 +103,7 @@ export type HIRStmt =
   | { kind: "UnsafeBlock"; body: HIRStmt[]; span?: Span }
   | { kind: "ForRange"; varName: string; varType: TypeKind; start: HIRExpr; end: HIRExpr; body: HIRStmt[]; span?: Span }
   | { kind: "ForEach"; varName: string; varName2: string | null; varType: TypeKind; varType2: TypeKind | null; iterable: HIRExpr; iterableKind: "vec" | "string" | "hashmap" | "array"; body: HIRStmt[]; span?: Span }
-  | { kind: "ForIterator"; varName: string; varType: TypeKind; iterable: HIRExpr; nextMethod: string; optionEnumName: string; body: HIRStmt[]; span?: Span }
-  | { kind: "Parallel"; branches: { name: string; expr: HIRExpr; type: TypeKind; captures: { name: string; type: TypeKind; mutable: boolean }[] }[]; span?: Span };
+  | { kind: "ForIterator"; varName: string; varType: TypeKind; iterable: HIRExpr; nextMethod: string; optionEnumName: string; body: HIRStmt[]; span?: Span };
 
 export interface HIRMatchArm {
   pattern: HIRPattern;

@@ -1584,7 +1584,7 @@ print(a != b)   // false
 
 ## Concurrency
 
-Milo's primary concurrency model is **green tasks**: `Task.spawn` runs a closure on a cooperative, single-threaded scheduler. Blocking I/O and channel operations automatically yield to other tasks — there is no async/await coloring and no event loop to run by hand. `Promise<T>`, `Channel`, `select`, and `WaitGroup` all park the *task* (not the OS thread), so they compose freely. OS `Thread`/`Mutex`/`RwLock` remain for CPU-bound parallelism and blocking FFI (see [Escape hatch: OS threads](#escape-hatch-os-threads)).
+Milo's primary concurrency model is **green tasks**: `Task.spawn` runs a closure on a cooperative, single-threaded scheduler. Blocking I/O and channel operations automatically yield to other tasks — there is no async/await coloring and no event loop to run by hand. `Promise<T>`, `Channel`, `select`, and `WaitGroup` all park the *task* (not the OS thread), so they compose freely. The one way onto a real OS thread is `Promise.blocking`, for CPU-bound parallelism and blocking FFI (see [Escape hatch: OS threads](#escape-hatch-os-threads)).
 
 ### Choosing a tool
 
@@ -1595,7 +1595,7 @@ Milo's primary concurrency model is **green tasks**: `Task.spawn` runs a closure
 | Fleet of fire-and-forget workers | `Task.spawn` + `WaitGroup` |
 | Wait on first-of-many sources | `std/select` |
 | CPU-bound work or blocking FFI | `Promise.blocking(fn)` → `.await()!`; fan out across cores via `Promise.all` |
-| Shared mutable state across threads | `Mutex.withLock` / `RwLock`; plain counters and flags → atomics |
+| Shared state across parallel workers | channels (pass ownership) or atomics (counters, flags) |
 
 Most programs need only the first row. `Promise` is the familiar promise/await model with no event loop and no function coloring, and `await()` frees the promise's resources itself — there is nothing to `destroy()`.
 
@@ -1644,36 +1644,11 @@ schedulerRunToCompletion()                       // main blocks here
 
 ### Escape hatch: OS threads
 
-`Thread.spawn()` runs code on a real OS thread — reach for it for CPU-bound parallelism or FFI that must block, not for ordinary concurrency (a blocking `Thread` call parks the whole OS thread, whereas a `Task` yields). The compiler automatically infers `move` for the closure — captured variables are copied into a heap-allocated environment so they're safe to send across threads:
-
-```milo
-from "std/thread" import { Thread }
-
-let t = Thread.spawn((): void => {
-    print("hello from thread")
-})!
-t.join()!
-```
-
-```milo
-from "std/thread" import { Thread }
-
-var threads: Vec<Thread> = Vec.new()
-for i in 0..4 {
-    let id = i as i64
-    let t = Thread.spawn((): void => {
-        print($"thread {id}")
-    })!
-    threads.push(t)
-}
-for i in 0..4 {
-    threads[i].join()!
-}
-```
+There is one way to reach a real OS thread — [`Promise.blocking`](#promiseblocking--cpu-bound-work-and-blocking-ffi), for CPU-bound work or FFI that must block. Everything else is green tasks. There is no separate `Thread`/`Mutex`/`RwLock`/`parallel` surface: results flow back through `await`, and shared state across blocking workers is expressed with channels or atomics.
 
 ### Thread Safety (Send / Sync)
 
-The compiler enforces thread safety at compile time. `Thread.spawn()` requires all captured variables to implement `Send` — meaning they're safe to transfer across threads.
+The compiler enforces thread safety at compile time. Because `Promise.blocking` runs its closure on a real OS thread, it requires every captured variable to implement `Send` — safe to transfer across threads. (Green `Task`/`Promise.run` closures stay on one thread and carry no such requirement.)
 
 **Send types** (safe to move to another thread): all primitives, `string`, `Heap<T>`, `Vec<T>`, `HashMap<K,V>`, structs/enums where all fields are Send, and any struct annotated with `@send`.
 
@@ -1682,19 +1657,19 @@ The compiler enforces thread safety at compile time. `Thread.spawn()` requires a
 **Non-Send types**: raw pointers (`*T`), structs containing raw pointers (unless annotated).
 
 ```milo error
-from "std/thread" import { Thread }
+from "std/runtime" import { Promise }
 
 // This compiles — i64 and string are Send
 let msg = "hello"
-let t = Thread.spawn((): void => { print(msg) })!
+let p = Promise<i64>.blocking(move (): i64 => { print(msg); return 0 })
 
 // This is a compile error — *u8 is not Send
 var x: i32 = 42
 unsafe {
-    let p = (&x) as *u8
-    let t2 = Thread.spawn((): void => {    // error: cannot send 'p' of type '*u8' across threads
-        print(p as i64)
-    })!
+    let raw = (&x) as *u8
+    let bad = Promise<i64>.blocking(move (): i64 => {    // error: cannot send 'raw' of type '*u8' across threads
+        return raw as i64
+    })
 }
 ```
 
@@ -1711,24 +1686,6 @@ struct MyHandle {
 The compiler error message tells you exactly which field breaks Send and suggests adding the annotation.
 
 This prevents data races at compile time — if you can't send a raw pointer to another thread, you can't have unsynchronized shared mutable state.
-
-### Parallel Blocks
-
-Run multiple expressions concurrently and collect all results. Each branch runs on its own OS thread; the block completes when all branches finish.
-
-```milo
-fn expensiveA(): i64 { return 42 }
-fn expensiveB(): i64 { return 99 }
-
-parallel {
-    let a = expensiveA()
-    let b = expensiveB()
-}
-// a and b are in scope here
-print(a + b)   // 141
-```
-
-Each branch is implicitly a move closure — captured variables are copied/moved into each branch. Variables bound in the `parallel` block are available in the enclosing scope after the block. Requires at least 2 bindings.
 
 ### Promises
 
@@ -1771,7 +1728,7 @@ The green scheduler is single-threaded and cooperative: a closure that spins on 
 ```milo
 from "std/runtime" import { Promise }
 
-fn crunch(): i64 { /* heavy pure computation */ return 0 }
+fn crunch(): i64 { return 0 }   // heavy pure computation
 
 let p = Promise<i64>.blocking(move (): i64 => { return crunch() })
 let r = p.await()!   // caller never blocks; the work runs in parallel
@@ -1782,9 +1739,13 @@ The closure's captures must be `Send` (it crosses to another thread) — the com
 Split work across cores by fanning `Promise.blocking` handles into `Promise.all` — no dedicated parallel construct needed:
 
 ```milo
+from "std/runtime" import { Promise }
+
+fn sumRange(lo: i64, hi: i64): i64 { return (lo + hi - 1) * (hi - lo) / 2 }
+
 var parts: Vec<Promise<i64>> = Vec.new()
 for k in 0..8 {
-    let lo = k * 1000
+    let lo = (k as i64) * 1000
     parts.push(Promise<i64>.blocking(move (): i64 => { return sumRange(lo, lo + 1000) }))
 }
 let sums = Promise.all(parts).await()!   // 8 threads, joined through one await
@@ -1799,23 +1760,26 @@ Bounded FIFO channels for streaming values between threads. Use channels when a 
 Channel is a handle type — safe to capture in move closures without `unsafe`.
 
 ```milo
-from "std/thread" import { Thread }
+from "std/runtime" import { Promise }
 from "std/sync" import { Channel }
 
 var ch = Channel<i64>.new(8)!
 
-let t = Thread.spawn(move (): void => {
+let producer = Promise<i64>.blocking(move (): i64 => {
     ch.send(10)!
     ch.send(20)!
     ch.close()
-})!
+    return 0
+})
 
-for val in ch {
+for val in ch {   // main consumes as the worker produces
     print(val)
 }
-t.join()!
+producer.await()!
 ch.destroy()
 ```
+
+Here the producer is a `Promise.blocking` worker so it runs while `main` consumes. Between two green tasks the same channel works with no thread — but a green producer only runs when the scheduler is driven, so don't block `main` on a channel that only a green task fills (await inside a task, or drive with `schedulerRunToCompletion`).
 
 Call `close()` to signal no more values will be sent. Remaining items are delivered before iteration ends. `send()` on a closed channel returns `Result.Err`.
 
@@ -1834,52 +1798,9 @@ match val {
 print(ch.len())               // current number of items
 ```
 
-### Mutex
+### Sharing state across blocking workers
 
-```milo
-from "std/sync" import { Mutex }
-
-let m = Mutex.new()!
-m.lock()!
-// critical section
-m.unlock()!
-m.destroy()
-```
-
-Prefer `withLock` for scoped locking — guarantees unlock:
-
-```milo
-from "std/sync" import { Mutex }
-
-let m = Mutex.new()!
-var x: i64 = 0
-m.withLock((): void => {
-    x = 42
-})!
-m.destroy()
-```
-
-### RwLock
-
-Reader-writer lock: multiple concurrent readers OR one exclusive writer.
-
-```milo
-from "std/sync" import { RwLock }
-
-let rw = RwLock.new()!
-
-// Multiple readers allowed simultaneously
-rw.withReadLock((): void => {
-    // read shared data
-})!
-
-// Exclusive writer
-rw.withWriteLock((): void => {
-    // write shared data
-})!
-
-rw.destroy()
-```
+Green tasks never run in parallel, so plain sequencing protects task-to-task state. Across `Promise.blocking` workers, which do run in parallel, share through channels (pass ownership) or atomics (lock-free counters and flags) rather than a lock. Move-capture gives each worker its own copy of what it captures, so a fan-out that returns results through `await` needs no synchronization at all.
 
 ### Atomics
 
@@ -1907,36 +1828,32 @@ All atomic operations use sequential consistency (seq_cst). AtomicI64 and Atomic
 
 1. **`main` returning abandons running tasks.** Exit semantics are Go's — wait explicitly (`join`, `WaitGroup`, `Promise`, channel) or the work silently dies with the process. `exit(code)` terminates immediately from anywhere.
 2. **Call `Task.join()` immediately after `spawn`.** The registration must land before the task can complete; joining after you've yielded or blocked elsewhere is a lost wakeup.
-3. **The green scheduler is single-threaded and cooperative.** A task that spins on CPU or calls blocking FFI starves every other task — nothing preempts it. Move that work to a `Thread`; long compute loops that must stay on a task should `schedulerYield()` periodically.
-4. **Same call, opposite cost per tier.** `ch.recv()` in a task parks just the task; on a `Thread` it parks the whole OS thread. Default to tasks — threads only for CPU parallelism and blocking FFI.
-5. **Sync primitives are shared handles with manual lifecycle.** Copying a `Channel`/`Mutex`/`WaitGroup` shares the underlying object, so there is no automatic drop — call `.destroy()` exactly once, after every user is done. Prefer `withLock`/`withReadLock` over raw `lock`/`unlock` (unlock guaranteed on every path).
+3. **The green scheduler is single-threaded and cooperative.** A task that spins on CPU or calls blocking FFI starves every other task — nothing preempts it. Move that work to `Promise.blocking`; long compute loops that must stay on a task should `schedulerYield()` periodically.
+4. **`Promise.blocking` is the only OS thread.** Its closure runs in parallel and its captures must be `Send`; a plain `Promise`/`Task` closure stays on the scheduler and has no such requirement. Use `blocking` only for CPU-bound work or blocking FFI — ordinary I/O already yields on a green task.
+5. **Channels, `WaitGroup`, and atomics are shared handles with manual lifecycle.** Copying one shares the underlying object, so there is no automatic drop — call `.destroy()` exactly once, after every user is done. (`Promise` is the exception: `await` frees it for you.)
 6. **Channels must be `close()`d** or the consumer's `for val in ch` never ends. `send` on a closed channel returns `Result.Err`, not a panic. Bounded `send` blocking when full is backpressure, not a bug — poll with `trySend`/`tryRecv`.
-7. **Move closures capture copies.** Mutating a captured `var` inside a task or thread is invisible outside. Communicate results through a `Channel`/`Promise`, or share through a `Mutex`/atomic — never through captured locals.
+7. **Move closures capture copies.** Mutating a captured `var` inside a task or worker is invisible outside. Communicate results through a `Channel`/`Promise`, or share through an atomic — never through captured locals.
 
-### Thread API
+### Concurrency API
 
 | Function | Description |
 |----------|-------------|
-| `Thread.spawn(move () => {...})` | Spawn thread with move closure |
-| `t.join()` | Wait for thread to finish |
-| `Thread.sleep(ms)` | Sleep current thread (milliseconds) |
-| `parallel { let a = ...; let b = ... }` | Run branches concurrently, join all |
+| `Task.spawn(move () => {...})` | Spawn a green task |
+| `t.join()` | Wait for a task to finish |
+| `Promise(fn)` / `Promise<T>.run(fn)` | Run `fn` on a green task, result via `await` |
+| `Promise<T>.blocking(fn)` | Run `fn` on an OS thread (CPU-bound / blocking FFI) |
+| `p.await()` | Wait for a promise's result |
+| `Promise.all(v)` / `Promise.race(v)` | Collect all results / first to finish |
 | `Channel.new(cap)` | Create bounded channel |
-| `ch.send(val)` | Send i64 value (blocks if full) |
-| `ch.recv()` | Receive i64 value (blocks if empty) |
+| `ch.send(val)` | Send value (blocks if full) |
+| `ch.recv()` | Receive value (blocks if empty) |
 | `ch.trySend(val)` | Non-blocking send, returns `bool` |
-| `ch.tryRecv()` | Non-blocking receive, returns `Option<i64>` |
+| `ch.tryRecv()` | Non-blocking receive, returns `Option<T>` |
+| `ch.close()` | Signal no more values |
 | `ch.len()` | Current items in channel |
 | `ch.destroy()` | Free channel resources |
-| `Mutex.new()` | Create mutex |
-| `m.lock()` / `m.unlock()` | Lock/unlock |
-| `m.withLock(f)` | Scoped lock — runs closure, unlocks |
-| `m.destroy()` | Free mutex |
-| `RwLock.new()` | Create reader-writer lock |
-| `r.read()` / `r.write()` | Acquire read/write lock |
-| `r.unlock()` | Release lock |
-| `r.withReadLock(f)` / `r.withWriteLock(f)` | Scoped read/write lock |
-| `r.destroy()` | Free rwlock |
+| `WaitGroup.new()` | Create a wait group |
+| `wg.add(n)` / `wg.done()` / `wg.wait()` | Track and await a fleet of tasks |
 | `AtomicI64.new(v)` / `AtomicBool.new(v)` | Create atomic |
 | `a.load()` | Atomic read |
 | `a.store(v)` | Atomic write |
@@ -2072,7 +1989,7 @@ fn main(): i32 {
 
 ### Green Thread vs OS Thread
 
-| | OS Thread (`Thread.spawn`) | Green Thread (`Task.spawn`) |
+| | OS Thread (`Promise.blocking`) | Green Task (`Task.spawn` / `Promise`) |
 |---|---|---|
 | Stack size | ~8MB | 64KB |
 | Context switch | Kernel (microseconds) | Userspace (nanoseconds) |

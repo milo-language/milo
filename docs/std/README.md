@@ -50,7 +50,6 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/term.darwin](./term.darwin.md)
 - [std/term.linux](./term.linux.md)
 - [std/testing](./testing.md)
-- [std/thread](./thread.md)
 - [std/time](./time.md)
 - [std/toml](./toml.md)
 - [std/unicode](./unicode.md)

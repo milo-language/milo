@@ -330,17 +330,6 @@ class LowerCtx {
           span: stmt.span,
         };
       }
-      case "ParallelBlock": {
-        return {
-          kind: "Parallel",
-          branches: stmt.bindings.map(b => {
-            const type = this.typeOf(b.value) ?? { tag: "void" as const };
-            const captures = this.c.parallelCaptures.get(b.value) ?? [];
-            return { name: b.name, expr: this.lowerExpr(b.value), type, captures };
-          }),
-          span: stmt.span,
-        };
-      }
     }
   }
 

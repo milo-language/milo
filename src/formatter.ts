@@ -20,7 +20,7 @@ function isKeyword(kind: TokenKind): boolean {
     TokenKind.Struct, TokenKind.Enum, TokenKind.Match, TokenKind.Mut,
     TokenKind.Import, TokenKind.From, TokenKind.Break, TokenKind.Continue,
     TokenKind.As, TokenKind.Trait, TokenKind.Impl, TokenKind.For, TokenKind.In,
-    TokenKind.Unsafe, TokenKind.Parallel, TokenKind.Null, TokenKind.True, TokenKind.False,
+    TokenKind.Unsafe, TokenKind.Null, TokenKind.True, TokenKind.False,
     TokenKind.Is, TokenKind.Interface, TokenKind.Requires, TokenKind.Ensures, TokenKind.Invariant,
     TokenKind.Move, TokenKind.Type,
   ].includes(kind);
