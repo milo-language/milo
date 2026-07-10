@@ -446,13 +446,13 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
 
 fn checkFunction(ck: &mut Checker, func: &Function) {
     pushScope(ck)
-    let retType = typeFromAst(func.retType)
+    let retType = resolveAstType(ck, func.retType)
     ck.currentFnRetType = retType.clone()
 
     // Declare parameters
     var i: i64 = 0
     while i < func.params.len {
-        let pType = typeFromAst(func.params[i].ty)
+        let pType = resolveAstType(ck, func.params[i].ty)
         declare(ck, func.params[i].name.clone(), VarInfo {
             ty: pType,
             mutable: false,
@@ -482,13 +482,13 @@ fn registerFunction(ck: &mut Checker, func: &Function) {
     while i < func.params.len {
         params.push(FnParam {
             name: func.params[i].name.clone(),
-            ty: typeFromAst(func.params[i].ty),
+            ty: resolveAstType(ck, func.params[i].ty),
         })
         i = i + 1
     }
     let sig = FnSig {
         params: params,
-        ret: typeFromAst(func.retType),
+        ret: resolveAstType(ck, func.retType),
         variadic: func.isVariadic,
         isExtern: func.isExtern,
     }

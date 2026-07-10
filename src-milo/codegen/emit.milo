@@ -2,7 +2,7 @@
 from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
-    cgenNew, nextTemp, emit, emitG, llType, llTypeBytes
+    cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, resolveTyStr,
 }
 from "src-milo/codegen/stmt.milo" import { genStmt, emitScopeDrops }
 
@@ -69,6 +69,10 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
             if cg.declaredSnprintf { return }
             cg.declaredSnprintf = true
         }
+        if f.name == "exit" {
+            if cg.declaredExit { return }
+            cg.declaredExit = true
+        }
         emitG(cg, "declare " + llType(f.retType.name) + " @" + f.name + "(" + ps + ")\n")
         return
     }
@@ -76,11 +80,12 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     cg.temp = 0
     cg.label = 0
     var locs: Vec<Local> = Vec.new()
-    let retLl = llType(f.retType.name)
+    let retTyStr = resolveTyStr(cg, astTypeStr(f.retType))
+    let retLl = llType(retTyStr)
     var hdr = "define " + retLl + " @" + f.name + "("
     for pi in 0..f.params.len {
         if pi > 0 { hdr = hdr + ", " }
-        hdr = hdr + llType(astTypeStr(f.params[pi].ty)) + " %" + f.params[pi].name
+        hdr = hdr + llType(resolveTyStr(cg, astTypeStr(f.params[pi].ty))) + " %" + f.params[pi].name
     }
     hdr = hdr + ") {\n"
     emit(cg, hdr)
@@ -88,17 +93,18 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 
     // Spill parameters to allocas
     for pj in 0..f.params.len {
-        let llt = llType(astTypeStr(f.params[pj].ty))
+        let pTyStr = resolveTyStr(cg, astTypeStr(f.params[pj].ty))
+        let llt = llType(pTyStr)
         let addr = "%" + f.params[pj].name + "_addr"
         emit(cg, "  " + addr + " = alloca " + llt + "\n")
         emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
         let pIsRef = f.params[pj].ty.isRef || f.params[pj].ty.isRefMut
-        locs.push(Local { name: f.params[pj].name.clone(), ty: astTypeStr(f.params[pj].ty), addr: addr, isRef: pIsRef })
+        locs.push(Local { name: f.params[pj].name.clone(), ty: pTyStr, addr: addr, isRef: pIsRef })
     }
 
     var terminated = false
     for si in 0..f.body.len {
-        if genStmt(cg, *f.body[si], locs, sigs, f.retType.name) {
+        if genStmt(cg, *f.body[si], locs, sigs, retTyStr) {
             terminated = true
         }
     }
@@ -119,9 +125,11 @@ fn genProgram(prog: Program): string {
 
     // Register function return types. Generic templates never codegen — only
     // their monomorphized copies (appended to the program by main.milo) do.
+    // Full astTypeStr, not just the name: "Result<i32,string>" must keep its
+    // args so use sites can resolve it to the mangled enum.
     for i in 0..prog.functions.len {
         if prog.functions[i].typeParams.len > 0 { continue }
-        cg.fnRets.insert(prog.functions[i].name.clone(), prog.functions[i].retType.name.clone())
+        cg.fnRets.insert(prog.functions[i].name.clone(), astTypeStr(prog.functions[i].retType))
     }
 
     // Register enums and emit %Name type declarations

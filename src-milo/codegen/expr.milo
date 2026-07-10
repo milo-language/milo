@@ -1,9 +1,9 @@
 // Expression codegen: literals, binops, unary, calls, field access, enums, casts
-from "src-milo/ast.milo" import { Expr, Stmt, StructLitField }
+from "src-milo/ast.milo" import { Expr, Stmt, StructLitField, Span }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
-    resolveEnumName, resolveFnName,
+    resolveEnumName, resolveFnName, resolveTyStr, ensureExit,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -549,6 +549,142 @@ fn genArrayRepeat(cg: &mut Cgen, value: &Expr, count: i64, locs: &Vec<Local>, si
     return Val { v: c, ty: "Vec<" + elemTy + ">" }
 }
 
+// -- ! unwrap and ?? default (M3c) --
+
+// `expr!` on Option_T / Result_T_E: tag 0 (Some/Ok) yields the payload;
+// otherwise print the oracle's message shape and exit(1).
+fn genUnwrap(cg: &mut Cgen, inner: &Expr, span: &Option<Span>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let v = genExpr(cg, inner, locs, sigs, "")
+    let enumName = resolveEnumName(cg, stripPercent(v.ty))
+    let enumTy = "%" + enumName
+    let someTag = lookupVariantTag(cg, enumName, "Some")
+    var okVariant = "Some"
+    var failWord = "None"
+    if someTag < 0 {
+        okVariant = "Ok"
+        failWord = "Err"
+    }
+    let payloadTypes = lookupVariantPayload(cg, enumName, okVariant)
+    if payloadTypes.len != 1 {
+        eprint("codegen: '!' on non-unwrappable type " + v.ty.clone())
+        exit(1)
+    }
+    let payTy = payloadTypes[0].clone()
+    let payLl = llType(payTy)
+
+    var line: i32 = 0
+    var col: i32 = 0
+    match span {
+        Option.Some(s) => {
+            line = s.line
+            col = s.col
+        }
+        Option.None => {}
+    }
+
+    let addr = nextTemp(cg)
+    emit(cg, "  " + addr + " = alloca " + enumTy + "\n")
+    emit(cg, "  store " + enumTy + " " + v.v + ", ptr " + addr + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + enumTy + ", ptr " + addr + ", i32 0, i32 0\n")
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
+    let okTag = lookupVariantTag(cg, enumName, okVariant)
+    let isOk = nextTemp(cg)
+    emit(cg, "  " + isOk + " = icmp eq i32 " + tag + ", " + okTag.toString() + "\n")
+    let okLbl = nextLabel(cg, "unwrap.ok")
+    let failLbl = nextLabel(cg, "unwrap.fail")
+    emit(cg, "  br i1 " + isOk + ", label %" + okLbl + ", label %" + failLbl + "\n")
+
+    emit(cg, failLbl + ":\n")
+    if !cg.declaredPrintf {
+        emitG(cg, "declare i32 @printf(ptr, ...)\n")
+        cg.declaredPrintf = true
+    }
+    ensureExit(cg)
+    // Err(string) prints the error's message, matching the TS panic shape
+    var printedErrString = false
+    if failWord == "Err" {
+        let errPayload = lookupVariantPayload(cg, enumName, "Err")
+        if errPayload.len == 1 && llType(errPayload[0]) == "%String" {
+            let fmtLbl = emitStringLit(cg, "error at " + line.toString() + ":" + col.toString() + ": %s\\n")
+            let payPtrE = nextTemp(cg)
+            emit(cg, "  " + payPtrE + " = getelementptr " + enumTy + ", ptr " + addr + ", i32 0, i32 1\n")
+            let errStr = nextTemp(cg)
+            emit(cg, "  " + errStr + " = load %String, ptr " + payPtrE + "\n")
+            let errData = nextTemp(cg)
+            emit(cg, "  " + errData + " = extractvalue %String " + errStr + ", 0\n")
+            let pcall = nextTemp(cg)
+            emit(cg, "  " + pcall + " = call i32 (ptr, ...) @printf(ptr " + fmtLbl + ", ptr " + errData + ")\n")
+            printedErrString = true
+        }
+    }
+    if !printedErrString {
+        let msgLbl = emitStringLit(cg, "error at " + line.toString() + ":" + col.toString() + ": unwrap called on " + failWord + "\\n")
+        let pcall2 = nextTemp(cg)
+        emit(cg, "  " + pcall2 + " = call i32 (ptr, ...) @printf(ptr " + msgLbl + ")\n")
+    }
+    emit(cg, "  call void @exit(i32 1)\n")
+    emit(cg, "  unreachable\n")
+
+    emit(cg, okLbl + ":\n")
+    let payPtr = nextTemp(cg)
+    emit(cg, "  " + payPtr + " = getelementptr " + enumTy + ", ptr " + addr + ", i32 0, i32 1\n")
+    let pstructTy = "{ " + payLl + " }"
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = getelementptr " + pstructTy + ", ptr " + payPtr + ", i32 0, i32 0\n")
+    let result = nextTemp(cg)
+    emit(cg, "  " + result + " = load " + payLl + ", ptr " + fp + "\n")
+    return Val { v: result, ty: payTy }
+}
+
+// `expr ?? default`: Some/Ok payload, else the default.
+fn genDefaultValue(cg: &mut Cgen, inner: &Expr, defaultE: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let v = genExpr(cg, inner, locs, sigs, "")
+    let enumName = resolveEnumName(cg, stripPercent(v.ty))
+    let enumTy = "%" + enumName
+    var okVariant = "Some"
+    if lookupVariantTag(cg, enumName, "Some") < 0 { okVariant = "Ok" }
+    let payloadTypes = lookupVariantPayload(cg, enumName, okVariant)
+    if payloadTypes.len != 1 {
+        eprint("codegen: '??' on non-unwrappable type " + v.ty.clone())
+        exit(1)
+    }
+    let payTy = payloadTypes[0].clone()
+    let payLl = llType(payTy)
+    let addr = nextTemp(cg)
+    emit(cg, "  " + addr + " = alloca " + enumTy + "\n")
+    emit(cg, "  store " + enumTy + " " + v.v + ", ptr " + addr + "\n")
+    let resAddr = nextTemp(cg)
+    emit(cg, "  " + resAddr + " = alloca " + payLl + "\n")
+    let dv = genExpr(cg, defaultE, locs, sigs, payTy.clone())
+    emit(cg, "  store " + payLl + " " + dv.v + ", ptr " + resAddr + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + enumTy + ", ptr " + addr + ", i32 0, i32 0\n")
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
+    let okTag = lookupVariantTag(cg, enumName, okVariant)
+    let isOk = nextTemp(cg)
+    emit(cg, "  " + isOk + " = icmp eq i32 " + tag + ", " + okTag.toString() + "\n")
+    let okLbl = nextLabel(cg, "dflt.some")
+    let endLbl = nextLabel(cg, "dflt.end")
+    emit(cg, "  br i1 " + isOk + ", label %" + okLbl + ", label %" + endLbl + "\n")
+    emit(cg, okLbl + ":\n")
+    let payPtr = nextTemp(cg)
+    emit(cg, "  " + payPtr + " = getelementptr " + enumTy + ", ptr " + addr + ", i32 0, i32 1\n")
+    let pstructTy = "{ " + payLl + " }"
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = getelementptr " + pstructTy + ", ptr " + payPtr + ", i32 0, i32 0\n")
+    let pv = nextTemp(cg)
+    emit(cg, "  " + pv + " = load " + payLl + ", ptr " + fp + "\n")
+    emit(cg, "  store " + payLl + " " + pv + ", ptr " + resAddr + "\n")
+    emit(cg, "  br label %" + endLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = load " + payLl + ", ptr " + resAddr + "\n")
+    return Val { v: r, ty: payTy }
+}
+
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     // Generic enums are registered under their mangled name
     let rEnum = resolveEnumName(cg, enumName)
@@ -879,7 +1015,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Loca
 
     // Generic fns are registered under their mangled name
     let callName = resolveFnName(cg, name)
-    let retTy = lookupFnRet(cg, callName)
+    let retTy = resolveTyStr(cg, lookupFnRet(cg, callName))
     let retLl = llType(retTy)
     var sigStr = retLl.clone()
 
@@ -1056,8 +1192,10 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return genArrayRepeat(cg, *value, count, locs, sigs, hintTy)
         }
         Expr.Unwrap(inner, span) => {
-            // TODO: option unwrap codegen
-            return genExpr(cg, *inner, locs, sigs, hintTy)
+            return genUnwrap(cg, *inner, span, locs, sigs)
+        }
+        Expr.DefaultValue(inner, defaultE, span) => {
+            return genDefaultValue(cg, *inner, *defaultE, locs, sigs)
         }
         Expr.Propagate(inner, span) => {
             // TODO: result propagation codegen

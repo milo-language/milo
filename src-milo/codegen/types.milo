@@ -76,6 +76,7 @@ struct Cgen {
     declaredVecTy: bool,
     declaredRealloc: bool,
     declaredHashMapTy: bool,
+    declaredExit: bool,
 }
 
 fn cgenNew(): Cgen {
@@ -100,6 +101,7 @@ fn cgenNew(): Cgen {
         declaredVecTy: false,
         declaredRealloc: false,
         declaredHashMapTy: false,
+        declaredExit: false,
     }
 }
 
@@ -423,6 +425,42 @@ fn resolveEnumName(cg: &Cgen, base: &string): string {
     return base.clone()
 }
 
+fn resolveStructName(cg: &Cgen, base: &string): string {
+    if cg.structs.contains(base) { return base.clone() }
+    var found = ""
+    var count = 0
+    for k, v in cg.structs {
+        if nameHasMonoPrefix(k, base) {
+            found = k.clone()
+            count = count + 1
+        }
+    }
+    if count == 1 { return found }
+    return base.clone()
+}
+
+// A milo type string that still carries generic args ("Result<i32,string>")
+// resolves to the registered mangled decl. Vec/HashMap/Heap keep their
+// built-in lowering; everything else falls through unchanged.
+fn resolveTyStr(cg: &Cgen, s: &string): string {
+    if isVecTy(s) || isHashMapTy(s) { return s.clone() }
+    var lt: i64 = -1
+    for i in 0..s.len {
+        if s[i] == 60 {
+            lt = i
+            break
+        }
+    }
+    if lt <= 0 { return s.clone() }
+    let base = s[0..lt].clone()
+    if base == "Heap" { return s.clone() }
+    let e = resolveEnumName(cg, base)
+    if e != base { return e }
+    let st = resolveStructName(cg, base)
+    if st != base { return st }
+    return s.clone()
+}
+
 fn resolveFnName(cg: &Cgen, base: &string): string {
     if cg.fnRets.contains(base) { return base.clone() }
     var found = ""
@@ -441,6 +479,13 @@ fn ensureHashMapTy(cg: &mut Cgen) {
     if !cg.declaredHashMapTy {
         emitG(cg, "%HashMap = type { ptr, i64, i64 }\n")
         cg.declaredHashMapTy = true
+    }
+}
+
+fn ensureExit(cg: &mut Cgen) {
+    if !cg.declaredExit {
+        emitG(cg, "declare void @exit(i32)\n")
+        cg.declaredExit = true
     }
 }
 

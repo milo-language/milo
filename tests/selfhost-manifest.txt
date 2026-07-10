@@ -19,6 +19,7 @@ borrowMutateAfterLoop
 break_drop
 breakContinue
 contracts
+defaultValue
 dropEarlyReturn
 dropStringReturn
 dropUser
@@ -71,6 +72,7 @@ moveVarIntoEnumReturn
 multiWidthTypes
 nestedCalls
 printFormat
+resultTypedUnwrap
 returnConstIntCoerce
 returnI64Lit
 returnU32Lit
@@ -93,6 +95,7 @@ typeHints
 u64Arithmetic
 unicodeStringLiteral
 unsigned
+unwrapOption
 variables
 vecAssign
 vecBasic
