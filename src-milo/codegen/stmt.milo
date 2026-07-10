@@ -46,6 +46,19 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
                 emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i64v + "\n")
                 let v = genExpr(cg, value, locs, sigs, elemTy)
                 emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
+            } else if lv.ty.len > 0 && lv.ty[0] == 42 {
+                // Raw pointer `*T` (unsafe): lv.v is the alloca holding the
+                // pointer, so load the pointer value before indexing.
+                let elemTy = lv.ty[1..lv.ty.len].clone()
+                let elemLl = llType(elemTy)
+                let base = nextTemp(cg)
+                emit(cg, "  " + base + " = load ptr, ptr " + lv.v + "\n")
+                let iv = genExpr(cg, *idx, locs, sigs, "i64")
+                let i64v = widenToI64(cg, iv)
+                let slot = nextTemp(cg)
+                emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + base + ", i64 " + i64v + "\n")
+                let v = genExpr(cg, value, locs, sigs, elemTy)
+                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
             } else {
                 eprint("codegen: cannot index-assign type " + lv.ty.clone())
                 exit(1)

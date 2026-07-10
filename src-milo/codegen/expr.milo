@@ -779,6 +779,13 @@ fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Hea
     // Generic enums are registered under their mangled name
     let rEnum = resolveEnumName(cg, enumName)
     let tag = lookupVariantTag(cg, rEnum, variant)
+    // `Type.method(...)` with no matching variant is a static method on a struct
+    // (e.g. File.openRead) — the parser lands both on the enum-literal form. It is
+    // registered as `Type$method`; route it to the plain call path.
+    if tag < 0 {
+        var emptyTA: Vec<MiloType> = Vec.new()
+        return genCall(cg, rEnum + "$" + variant, args, emptyTA, locs, sigs)
+    }
     let structTy = "%" + rEnum
     let alloc = nextTemp(cg)
     emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
@@ -809,6 +816,30 @@ fn genAsCast(cg: &mut Cgen, inner: &Expr, targetTy: &string, locs: &Vec<Local>, 
     let v = genExpr(cg, inner, locs, sigs, targetTy.clone())
     let fromLl = llType(v.ty)
     let toLl = llType(targetTy)
+    // Pointer target (`x as *T`): the value is an opaque `ptr`, but carry the
+    // SURFACE `*T` so index/index-assign can recover the element type T.
+    let toIsPtr = targetTy.len > 0 && targetTy[0] == 42
+    if toIsPtr {
+        // Vec/String decay to their data pointer (field 0), not the whole header.
+        if fromLl == "%Vec" || fromLl == "%String" {
+            let d = nextTemp(cg)
+            emit(cg, "  " + d + " = extractvalue " + fromLl + " " + v.v + ", 0\n")
+            return Val { v: d, ty: targetTy.clone() }
+        }
+        if fromLl == "ptr" || intBits(fromLl) == 0 {
+            return Val { v: v.v, ty: targetTy.clone() }
+        }
+        var src = v.v.clone()
+        if intBits(fromLl) < 64 {
+            let ext = nextTemp(cg)
+            let op = if isUnsigned(v.ty) { "zext" } else { "sext" }
+            emit(cg, "  " + ext + " = " + op + " " + fromLl + " " + src + " to i64\n")
+            src = ext
+        }
+        let ip = nextTemp(cg)
+        emit(cg, "  " + ip + " = inttoptr i64 " + src + " to ptr\n")
+        return Val { v: ip, ty: targetTy.clone() }
+    }
     if fromLl == toLl { return v }
     let fromBits = intBits(fromLl)
     let toBits = intBits(toLl)
@@ -997,6 +1028,16 @@ fn genIndex(cg: &mut Cgen, obj: &Expr, idx: &Expr, locs: &Vec<Local>, sigs: &Vec
         emit(cg, "  " + d + " = extractvalue %Vec " + o.v + ", 0\n")
         let slot = nextTemp(cg)
         emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i.v + "\n")
+        let v = nextTemp(cg)
+        emit(cg, "  " + v + " = load " + elemLl + ", ptr " + slot + "\n")
+        return Val { v: v, ty: elemTy }
+    }
+    // Raw pointer `*T` (unsafe): o.v is already the loaded pointer value.
+    if o.ty.len > 0 && o.ty[0] == 42 {
+        let elemTy = o.ty[1..o.ty.len].clone()
+        let elemLl = llType(elemTy)
+        let slot = nextTemp(cg)
+        emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + o.v + ", i64 " + i.v + "\n")
         let v = nextTemp(cg)
         emit(cg, "  " + v + " = load " + elemLl + ", ptr " + slot + "\n")
         return Val { v: v, ty: elemTy }
@@ -1221,8 +1262,52 @@ fn genLvalue(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): V
             emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + inner.v + ", i32 0, i32 " + idx.toString() + "\n")
             return Val { v: fp, ty: fty }
         }
-        _ => {
+        Expr.UnaryOp(op, operand, span) => {
+            // `*p` as an lvalue: the pointee's address IS the pointer value, so
+            // evaluate the operand (Heap<T> box ptr or raw `*T`) and return it
+            // with the pointee type. Covers `(*inner).field` reads and writes.
+            if op == "*" {
+                let pv = genExpr(cg, *operand, locs, sigs, "")
+                var pointee = unwrapHeap(pv.ty)
+                if pointee.len == 0 && pv.ty.len > 0 && pv.ty[0] == 42 {
+                    pointee = pv.ty[1..pv.ty.len].clone()
+                }
+                if pointee.len == 0 { pointee = "i64" }
+                return Val { v: pv.v, ty: pointee }
+            }
             return Val { v: "0", ty: "i64" }
+        }
+        Expr.IndexAccess(obj, idx, span) => {
+            // `a[i]` as an lvalue — needed for `a[i].field = x` and `&a[i]`.
+            let o = genExpr(cg, *obj, locs, sigs, "")
+            let iv = genExpr(cg, *idx, locs, sigs, "i64")
+            if isVecTy(o.ty) {
+                let elemTy = unwrapVec(o.ty)
+                let elemLl = llType(elemTy)
+                let d = nextTemp(cg)
+                emit(cg, "  " + d + " = extractvalue %Vec " + o.v + ", 0\n")
+                let slot = nextTemp(cg)
+                emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + iv.v + "\n")
+                return Val { v: slot, ty: elemTy }
+            }
+            if o.ty.len > 0 && o.ty[0] == 42 {
+                let elemTy = o.ty[1..o.ty.len].clone()
+                let elemLl = llType(elemTy)
+                let slot = nextTemp(cg)
+                emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + o.v + ", i64 " + iv.v + "\n")
+                return Val { v: slot, ty: elemTy }
+            }
+            return Val { v: "0", ty: "i64" }
+        }
+        _ => {
+            // rvalue (call result, etc.) used where an address is needed
+            // (`peek(p).kind`, `match f()`): materialize it into a temp alloca.
+            let v = genExpr(cg, e, locs, sigs, "")
+            let ll = llType(v.ty)
+            let addr = nextTemp(cg)
+            emit(cg, "  " + addr + " = alloca " + ll + "\n")
+            emit(cg, "  store " + ll + " " + v.v + ", ptr " + addr + "\n")
+            return Val { v: addr, ty: v.ty }
         }
     }
 }
@@ -1343,7 +1428,9 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return genEnumLit(cg, enumName, variant, args, locs, sigs)
         }
         Expr.CastExpr(inner, targetType, span) => {
-            return genAsCast(cg, *inner, targetType.name, locs, sigs)
+            // full astTypeStr, not just .name: `x as *i64` must keep pointer-ness
+            // (otherwise the target reads as plain i64 and the cast result loses it)
+            return genAsCast(cg, *inner, astTypeStr(targetType), locs, sigs)
         }
         Expr.MethodCall(object, method, args, span) => {
             return genMethodCall(cg, *object, method, args, locs, sigs)
