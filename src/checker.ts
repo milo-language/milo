@@ -2274,12 +2274,14 @@ export class TypeChecker {
             subjType = info.type.inner;
           }
         }
-        // Matching on a place (s.field, v[i]) also borrows: the container keeps
-        // ownership, so consuming the subject would zero data the checker cannot
-        // track (a second `match v[i].f` used to read a zeroed enum — wrong tag,
-        // empty payloads — with no diagnostic). Bindings become borrows below.
+        // Matching on a place (s.field, v[i], *heapBox) also borrows: the
+        // container keeps ownership, so consuming the subject would zero data
+        // the checker cannot track (a second `match v[i].f` read a zeroed enum;
+        // `match *h` through a &Heap zeroed the pointee in place — both silent).
+        // Bindings become borrows below.
         const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
-          (stmt.subject.kind === "FieldAccess" || stmt.subject.kind === "IndexAccess");
+          (stmt.subject.kind === "FieldAccess" || stmt.subject.kind === "IndexAccess" ||
+           (stmt.subject.kind === "UnaryOp" && stmt.subject.op === "*"));
         const subjBorrows = subjIsRef || subjIsPlace;
         if (subjBorrows) this.matchSubjectRef.add(stmt.subject);
         const isEnum = subjType.tag === "enum";
