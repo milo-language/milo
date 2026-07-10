@@ -73,7 +73,10 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
             if cg.declaredExit { return }
             cg.declaredExit = true
         }
-        emitG(cg, "declare " + llType(f.retType.name) + " @" + f.name + "(" + ps + ")\n")
+        // astTypeStr, not .name: a `*u8` return must stay a pointer (`.name` alone
+        // drops pointer-ness, declaring e.g. strerror as returning i8 → truncated
+        // pointer → strlen on garbage in the self-compiled build).
+        emitG(cg, "declare " + llType(astTypeStr(f.retType)) + " @" + f.name + "(" + ps + ")\n")
         return
     }
 

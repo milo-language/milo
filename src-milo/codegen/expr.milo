@@ -1,5 +1,5 @@
 // Expression codegen: literals, binops, unary, calls, field access, enums, casts
-from "src-milo/ast.milo" import { Expr, Stmt, StructLitField, Span }
+from "src-milo/ast.milo" import { Expr, Stmt, Pattern, StructLitField, Span }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
@@ -776,6 +776,26 @@ fn genDefaultValue(cg: &mut Cgen, inner: &Expr, defaultE: &Expr, locs: &Vec<Loca
     let r = nextTemp(cg)
     emit(cg, "  " + r + " = load " + payLl + ", ptr " + resAddr + "\n")
     return Val { v: r, ty: payTy }
+}
+
+// `subject is Enum.Variant` → i1 tag equality (no bindings; a boolean test).
+fn genIsExpr(cg: &mut Cgen, subject: &Expr, pattern: &Pattern, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let sv = genExpr(cg, subject, locs, sigs, "")
+    let svLl = llType(sv.ty)
+    let rawName = stripPercent(sv.ty)
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = extractvalue " + svLl + " " + sv.v + ", 0\n")
+    match pattern {
+        Pattern.EnumPattern(enumName, variant, bindings, span) => {
+            let vtag = lookupVariantTag(cg, rawName, variant)
+            let res = nextTemp(cg)
+            emit(cg, "  " + res + " = icmp eq i32 " + tag + ", " + vtag.toString() + "\n")
+            return Val { v: res, ty: "bool" }
+        }
+        _ => {
+            return Val { v: "0", ty: "bool" }
+        }
+    }
 }
 
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
@@ -1890,6 +1910,9 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         }
         Expr.Propagate(inner, span) => {
             return genPropagate(cg, *inner, locs, sigs)
+        }
+        Expr.IsExpr(subject, pattern, span) => {
+            return genIsExpr(cg, *subject, *pattern, locs, sigs)
         }
         _ => {
             return Val { v: "0", ty: "i64" }
