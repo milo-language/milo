@@ -1,5 +1,14 @@
 # Concurrency Surface Reduction — Implementation Plan
 
+**STATUS: DONE (2026-07-10, merged as e0c40bd).** All three phases shipped:
+`Promise.blocking` added (Send-checked, cross-thread wake verified); thread fixtures
+migrated; `Thread`/`Mutex`/`RwLock`/`parallel` removed. Full suite + selfhost green;
+one resolved deviation — main-thread `await` of a blocking promise blocks on the
+channel condvar (via a `_blocking` flag) rather than driving the scheduler, so it does
+not run other green tasks during the wait (documented in language-reference). Corpus
+change noted in `self-hosting.md` for the self-host track. The plan below is retained
+as the design record.
+
 Goal: one concurrency story. Green tasks + `Promise` are the model; `Promise.blocking(fn)`
 becomes the only escape hatch for CPU-bound work / blocking FFI. Then remove the public
 OS-thread tier (`Thread`, `Mutex`, `RwLock`, `parallel` block) while it has zero users.
