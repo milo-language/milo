@@ -469,11 +469,11 @@ Both inherent methods and trait implementations count toward satisfaction. If `D
 
 ## Concurrency
 
-No `async`/`await`. Write blocking code, and the runtime runs it concurrently on green threads. For most concurrent work, use `Promise<T>` — it runs a function and delivers the result.
+No `async`/`await`, no callbacks. Write ordinary blocking code, and the runtime runs it concurrently in the background. Each concurrent job is a lightweight task the runtime schedules for you — you can have thousands at once, and a task that's waiting on I/O steps aside so others keep running, without tying up a system thread.
 
 ### Promises
 
-`Promise(fn)` runs a closure on a green thread. Call `.await()!` to get the result:
+A `Promise` runs a function in the background and hands you the result later. `Promise(fn)` starts it; `.await()!` waits for the answer:
 
 ```milo
 from "std/runtime" import { Promise }
@@ -486,22 +486,26 @@ fn main(): i32 {
 }
 ```
 
-### Tasks and Channels
+Launch several and they run at the same time — while one waits on a network call, the others make progress. That's the concurrency, with no extra ceremony.
 
-Green tasks communicate through typed channels. For CPU-bound producers that must run in parallel with the consumer, spawn the producer with `Promise.blocking` (a green producer only advances while the scheduler is driven):
+### Channels
+
+A channel is a typed queue connecting two jobs: one side `send`s values in, the other receives them with `for val in ch`. Reach for it when a producer streams many values over time (for a single result, a `Promise` is simpler).
 
 ```milo
 from "std/runtime" import { Promise }
 from "std/sync" import { Channel }
 
 fn main(): i32 {
-    var ch = Channel<i64>.new(8)!
+    var ch = Channel<i64>.new(8)!   // holds up to 8 pending values
 
+    // The producer runs on its own thread so it keeps sending
+    // while `main` receives.
     let producer = Promise<i64>.blocking(move (): i64 => {
         for i in 1..6 {
             ch.send(i as i64)!
         }
-        ch.close()
+        ch.close()   // "no more values coming"
         return 0
     })
 
@@ -514,7 +518,9 @@ fn main(): i32 {
 }
 ```
 
-The compiler enforces thread safety — data captured by a `Promise.blocking` closure must implement `Send`. The standard library also includes wait groups and atomics for coordinating parallel workers.
+**Why close it yourself?** The receiving `for` loop can't tell "nothing in the queue right now" apart from "nothing will ever arrive" — and a channel may have many senders, so the runtime can't guess when the last one is done. `close()` is that signal: it ends the loop once the remaining values are drained. (`send` on a closed channel returns an error instead of crashing.)
+
+This example uses `Promise.blocking` for the producer, which runs it on a real system thread — the right choice for CPU-heavy work that must run in true parallel with the consumer. The compiler checks that anything crossing that thread boundary is safe to share. The standard library also includes wait groups and atomics for coordinating parallel workers.
 
 [Learn more](/language/concurrency)
 
