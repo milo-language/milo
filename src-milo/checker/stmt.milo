@@ -616,9 +616,11 @@ fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
 }
 
 fn checkProgram(ck: &mut Checker, program: &Program) {
+    eprint("PHASE 0")
     // Phase 0: register builtin traits and generic types
     registerBuiltinTraits(ck)
     registerBuiltinGenericEnums(ck)
+    eprint("PHASE 1")
 
     // Phase 1: register all declarations (generics park on ck.generic* until
     // a use site provides concrete type args)
@@ -650,6 +652,7 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
         i = i + 1
     }
 
+    eprint("PHASE 1.5")
     // Phase 1.5: enum payloads and struct fields were converted before every
     // enum name was registered — normalize TStruct(enumName) → TEnum(enumName)
     // now that the full name set is known.
@@ -687,10 +690,12 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
         ck.structs.insert(structNames[si].clone(), sInfo)
     }
 
+    eprint("PHASE 2")
     // Phase 2: register impls and derive macros
     registerAllImpls(ck, program)
     processDerives(ck, program)
 
+    eprint("PHASE 3")
     // Phase 3: check function bodies
     i = 0
     while i < program.functions.len {
@@ -700,6 +705,7 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
         i = i + 1
     }
 
+    eprint("PHASE 4")
     // Phase 4: check monomorphized functions
     i = 0
     while i < ck.monomorphizedFns.len {

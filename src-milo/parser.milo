@@ -1007,6 +1007,24 @@ fn parsePrimary(p: &mut Parser): Expr {
         if at(p, TokKind.LParen) {
             return parseCall(p, tok.value, s)
         }
+        if isTypeArgCall(p) {
+            advance(p)
+            var typeArgs: Vec<MiloType> = Vec.new()
+            typeArgs.push(parseType(p))
+            while matchTok(p, TokKind.Comma) {
+                typeArgs.push(parseType(p))
+            }
+            expect(p, TokKind.Gt)
+            expect(p, TokKind.LParen)
+            var args: Vec<Heap<Expr>> = Vec.new()
+            while !at(p, TokKind.RParen) {
+                if at(p, TokKind.Eof) { break }
+                args.push(Heap(parseExpr(p)))
+                matchTok(p, TokKind.Comma)
+            }
+            expect(p, TokKind.RParen)
+            return Expr.Call(tok.value, args, typeArgs, s)
+        }
         return Expr.Ident(tok.value, s)
     }
     // Array literal: [a, b, c]
@@ -1056,12 +1074,39 @@ fn parseCall(p: &mut Parser, name: string, s: Option<Span>): Expr {
     expect(p, TokKind.LParen)
     var args: Vec<Heap<Expr>> = Vec.new()
     while !at(p, TokKind.RParen) {
+        // a desynced parse must not spin at EOF forever
+        if at(p, TokKind.Eof) { break }
         args.push(Heap(parseExpr(p)))
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RParen)
     var typeArgs: Vec<MiloType> = Vec.new()
     return Expr.Call(name, args, typeArgs, s)
+}
+
+// Lookahead for `name<T, U>(` — distinguishes a type-arg call from a
+// comparison chain without consuming tokens.
+fn isTypeArgCall(p: &Parser): bool {
+    if peek(p).kind != TokKind.Lt { return false }
+    var i: i64 = 1
+    var depth: i64 = 1
+    while depth > 0 {
+        let t = peekN(p, i)
+        if t.kind == TokKind.Eof { return false }
+        if t.kind == TokKind.Lt { depth = depth + 1 }
+        if t.kind == TokKind.Gt { depth = depth - 1 }
+        if depth > 0 {
+            // only type-ish tokens may appear inside the angle brackets
+            if t.kind != TokKind.Ident && t.kind != TokKind.Comma &&
+                t.kind != TokKind.Star && t.kind != TokKind.LBracket &&
+                t.kind != TokKind.RBracket && t.kind != TokKind.Semicolon &&
+                t.kind != TokKind.Int && t.kind != TokKind.Amp {
+                return false
+            }
+        }
+        i = i + 1
+    }
+    return peekN(p, i).kind == TokKind.LParen
 }
 
 fn parseArrayLit(p: &mut Parser): Expr {

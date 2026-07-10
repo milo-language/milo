@@ -448,6 +448,10 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
         if ck.genericFns.contains(func) {
             return checkGenericCall(ck, func, args, span)
         }
+        // sizeOf<T>() is a compiler builtin: size of the instantiated type
+        if func == "sizeOf" {
+            return tyI64()
+        }
         // exit is a compiler builtin when std/os is not imported
         if func == "exit" {
             if args.len >= 1 { checkExpr(ck, *args[0]) }
