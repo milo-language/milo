@@ -355,6 +355,24 @@ Artifact paths are pid-suffixed (`/tmp/milo_out_<pid>.ll`): they were shared, so
 concurrent milo-self builds clobbered each other's IR — this undercounted a
 parallel sweep 34 vs the true 48.
 
+> **Corpus change 2026-07-10 (concurrency surface reduction, commit e0c40bd).**
+> The public OS-thread tier was removed: `std/thread.milo` deleted, public
+> `Mutex`/`RwLock` dropped from `std/sync.milo`, and the `parallel` block removed
+> from the grammar. `Promise.blocking(fn)` (new, in `std/runtime.milo`) is now the
+> sole OS-thread escape hatch. Impact on the sweep:
+> - Fixture count moved (now 338 fixtures / 72 errors): deleted `threadBasic`,
+>   `rwLock`, `rwLockThreaded`, `withLock`, `parallelBlock`; added `promiseBlocking`,
+>   `promiseBlockingAll`, `promiseBlockingTask`, `promiseBlockingNotSend`; migrated
+>   the `channel*`/`atomics*`/`waitGroup*`/`spawnMove*`/`*CrossThreadPark`/
+>   `sendAnnotation` fixtures from `Thread.spawn` to `Promise.blocking`. Re-baseline
+>   the "/340" denominator against the new count.
+> - None of these are in `selfhost-manifest.txt` or the exclusion list — all sit in
+>   the expected **threads/green-runtime** gap, so the 69-fixture ratchet is
+>   unaffected (verified: selfhost.test.ts green post-change).
+> - **Scope shrank for milo-self:** it never has to implement `Thread`/`Mutex`/
+>   `RwLock`/`parallel`. `Promise.blocking` is the only new construct in that space,
+>   and like the rest of the green runtime it stays an expected M6 gap for now.
+
 The `emit-ir` diffing playbook works:
 `diff <(bun run src/main.ts emit-ir f.milo) <(.selfhost/milo-self emit-ir f.milo)`.
 
