@@ -1,5 +1,5 @@
 // Checker state — scopes, variable info, diagnostic tracking, type tables
-from "src-milo/ast.milo" import { Span, Function, StructDecl, EnumDecl, Program, Stmt }
+from "src-milo/ast.milo" import { Span, Function, StructDecl, EnumDecl, Program, Stmt, ImplDecl }
 from "src-milo/checker/types.milo" import { TypeKind, typeEq, typeName, tyVoid, isCopy }
 
 // -- Diagnostics --
@@ -121,6 +121,8 @@ struct Checker {
     genericFns: HashMap<string, GenericFnInfo>,
     genericStructs: HashMap<string, GenericStructInfo>,
     genericEnums: HashMap<string, GenericEnumInfo>,
+    // impl blocks with type params, instantiated when their type monomorphizes
+    genericImpls: Vec<ImplDecl>,
     // moves inside a return expression never poison later paths — the fn
     // exits, so a flow-insensitive walk must not carry them forward (mirrors
     // the TS checker's returnOnlyMoves)
@@ -147,6 +149,7 @@ fn newChecker(): Checker {
         genericFns: HashMap.new(),
         genericStructs: HashMap.new(),
         genericEnums: HashMap.new(),
+        genericImpls: Vec.new(),
         inReturn: false,
     }
 }

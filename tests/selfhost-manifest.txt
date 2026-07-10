@@ -101,7 +101,9 @@ structFn
 structI64Field
 structMutate
 structs
+traitBasic
 traitHashmapString
+traitImpl
 typeHints
 u64Arithmetic
 unicodeStringLiteral

@@ -9,9 +9,10 @@ from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, CkStructField,
     EnumInfo, VariantInfo, Diagnostic,
     error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
-    isCopyCk,
+    isCopyCk, normalizeEnumNames,
 }
-from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn }
+from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn, monomorphizeStruct }
+from "src-milo/checker/traits.milo" import { resolveMethod }
 
 // -- Move tracking --
 
@@ -93,7 +94,7 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
             return checkUnaryOp(ck, op, *operand, span)
         }
         Expr.Call(func, args, typeArgs, span) => {
-            return checkCall(ck, func, args, span)
+            return checkCall(ck, func, args, typeArgs, span)
         }
         Expr.StructLit(name, fields, span) => {
             return checkStructLit(ck, name, fields, span)
@@ -352,7 +353,42 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
 
 // -- Function calls --
 
-fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, span: &Option<Span>): TypeKind {
+    // Static method on an instantiated generic type: Type<Args>.method(...)
+    var dotIdx: i64 = -1
+    for di in 0..func.len {
+        if func[di] == 46 {
+            dotIdx = di
+            break
+        }
+    }
+    if dotIdx > 0 && typeArgs.len > 0 {
+        let base = func[0..dotIdx].clone()
+        let methodName = func[dotIdx + 1..func.len].clone()
+        var tks: Vec<TypeKind> = Vec.new()
+        for ti in 0..typeArgs.len {
+            tks.push(normalizeEnumNames(ck, typeFromAst(typeArgs[ti])))
+        }
+        var mangled = ""
+        if ck.genericStructs.contains(base) {
+            mangled = monomorphizeStruct(ck, base, tks)
+        } else if ck.genericEnums.contains(base) {
+            mangled = monomorphizeEnum(ck, base, tks)
+        }
+        if mangled.len > 0 {
+            match resolveMethod(ck, mangled, methodName) {
+                Option.Some(fnName) => {
+                    var noTypeArgs: Vec<MiloType> = Vec.new()
+                    return checkCall(ck, fnName, args, noTypeArgs, span)
+                }
+                Option.None => {
+                    error(ck, "no method '" + methodName.clone() + "' on '" + mangled.clone() + "'", cloneSpan(span))
+                    return tyUnknown()
+                }
+            }
+        }
+    }
+
     // Heap constructor
     if func == "Heap" {
         if args.len != 1 {

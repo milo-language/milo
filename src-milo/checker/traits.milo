@@ -198,6 +198,11 @@ fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
 }
 
 fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
+    // generic impls park until their type monomorphizes (see mono.milo)
+    if implDecl.typeParams.len > 0 {
+        ck.genericImpls.push(implDecl.clone())
+        return
+    }
     let tn = implDecl.typeName.clone()
 
     match implDecl.traitName {

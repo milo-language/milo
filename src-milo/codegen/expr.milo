@@ -947,6 +947,34 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         emit(cg, "  " + w + " = sext i32 " + obj.v + " to i64\n")
         return genIntToString(cg, w)
     }
+    // User-defined methods via impl tables: Ty$m or Ty$Trait$m; the receiver
+    // is passed by value first (milo0's ref-param convention)
+    let recvName = stripPercent(resolveTyStr(cg, stripPercent(obj.ty)))
+    var userFn = recvName.clone() + "$" + method.clone()
+    if !cg.fnRets.contains(userFn) {
+        for k, v in cg.fnRets {
+            if k.startsWith(recvName + "$") && k.endsWith("$" + method) {
+                userFn = k.clone()
+            }
+        }
+    }
+    if cg.fnRets.contains(userFn) {
+        var argStr = llType(obj.ty) + " " + obj.v
+        for ai in 0..args.len {
+            let av = genExpr(cg, *args[ai], locs, sigs, "")
+            argStr = argStr + ", " + llType(av.ty) + " " + av.v
+        }
+        let retTy = resolveTyStr(cg, lookupFnRet(cg, userFn))
+        let retLl = llType(retTy)
+        if retLl == "void" {
+            emit(cg, "  call void @" + userFn + "(" + argStr + ")\n")
+            return Val { v: "0", ty: "void" }
+        }
+        let t = nextTemp(cg)
+        emit(cg, "  " + t + " = call " + retLl + " @" + userFn + "(" + argStr + ")\n")
+        return Val { v: t, ty: retTy }
+    }
+
     // A silent placeholder here becomes invalid IR much later (`trunc i64 0 to
     // %String`), which is a miserable way to discover a missing method. Fail loud.
     eprint("codegen: unsupported method '" + method.clone() + "' on " + objTyLl.clone())
@@ -1109,8 +1137,38 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         }
     }
 
+    // Static method on an instantiated generic type: Type<Args>.method —
+    // registered as <MangledType>$method (or $Trait$method)
+    var staticName = name.clone()
+    var dotIdx: i64 = -1
+    for di in 0..name.len {
+        if name[di] == 46 {
+            dotIdx = di
+            break
+        }
+    }
+    if dotIdx > 0 && typeArgs.len > 0 {
+        let base = name[0..dotIdx].clone()
+        let methodName = name[dotIdx + 1..name.len].clone()
+        var full = base + "<"
+        for ti in 0..typeArgs.len {
+            if ti > 0 { full = full + "," }
+            full = full + astTypeStr(typeArgs[ti])
+        }
+        full = full + ">"
+        let tyName = stripPercent(resolveTyStr(cg, full))
+        var cand = tyName.clone() + "$" + methodName.clone()
+        if !cg.fnRets.contains(cand) {
+            for k, v in cg.fnRets {
+                if k.startsWith(tyName + "$") && k.endsWith("$" + methodName) {
+                    cand = k.clone()
+                }
+            }
+        }
+        staticName = cand
+    }
     // Generic fns are registered under their mangled name
-    let callName = resolveFnName(cg, name)
+    let callName = resolveFnName(cg, staticName)
     let retTy = resolveTyStr(cg, lookupFnRet(cg, callName))
     let retLl = llType(retTy)
     var sigStr = retLl.clone()
