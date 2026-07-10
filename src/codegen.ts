@@ -1107,6 +1107,7 @@ export class Codegen {
       lines.push("  store ptr %_milo_argv, ptr @_milo_argv_global");
     }
 
+    const paramSpillStart = lines.length;
     for (let pi = 0; pi < fn.params.length; pi++) {
       const p = fn.params[pi];
       if (p.isRef || p.isRefMut) {
@@ -1129,6 +1130,17 @@ export class Codegen {
           this.droppableLocals.push({ name: p.name, typeKind: p.type, aliveFlag });
         }
       }
+    }
+
+    // Attribute the parameter spill to line 0 (the DWARF "compiler-generated"
+    // convention for prologue code). Left on the scopeLine, LLVM places
+    // prologue_end before the by-value struct store completes, so a breakpoint
+    // at the first statement reads a half-copied argument (garbage len/cap for
+    // string/struct params). Line 0 pushes prologue_end past the whole spill.
+    if (this.emitDebug && lines.length > paramSpillStart) {
+      const spill = lines.slice(paramSpillStart);
+      this.markDbg(spill, 0, 0);
+      for (let i = 0; i < spill.length; i++) lines[paramSpillStart + i] = spill[i];
     }
 
     const allocaInsertPoint = lines.length;
