@@ -15,6 +15,9 @@ struct Local {
     name: string,
     ty: string,
     addr: string,
+    // ref params are borrows — never dropped by this scope (a drop hook's own
+    // &mut self param used to recurse into itself forever)
+    isRef: bool,
 }
 
 // -- Function signature for call-site type lookup --

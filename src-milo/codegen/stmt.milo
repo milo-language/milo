@@ -111,10 +111,10 @@ fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, o
     emit(cg, "  " + v + " = load " + valLl + ", ptr " + vp + "\n")
     emit(cg, "  store " + valLl + " " + v + ", ptr " + valAddr + "\n")
     let locsPreLen = locs.len
-    locs.push(Local { name: varName.clone(), ty: keyTy.clone(), addr: keyAddr.clone() })
+    locs.push(Local { name: varName.clone(), ty: keyTy.clone(), addr: keyAddr.clone(), isRef: false })
     match varName2 {
         Option.Some(valName) => {
-            locs.push(Local { name: valName.clone(), ty: valTy.clone(), addr: valAddr.clone() })
+            locs.push(Local { name: valName.clone(), ty: valTy.clone(), addr: valAddr.clone(), isRef: false })
         }
         Option.None => {}
     }
@@ -156,7 +156,7 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
             emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
             emit(cg, bodyLbl + ":\n")
             let locsPreLen = locs.len
-            locs.push(Local { name: varName.clone(), ty: "i64", addr: idxAddr.clone() })
+            locs.push(Local { name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false })
             var bodyTerm = false
             for bi in 0..body.len {
                 if genStmt(cg, *body[bi], locs, sigs, retTy) { bodyTerm = true }
@@ -217,10 +217,10 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
             emit(cg, "  " + elem + " = load " + elemLl + ", ptr " + slot + "\n")
             emit(cg, "  store " + elemLl + " " + elem + ", ptr " + elemAddr + "\n")
             let locsPreLen = locs.len
-            locs.push(Local { name: varName.clone(), ty: elemTy.clone(), addr: elemAddr.clone() })
+            locs.push(Local { name: varName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false })
             match varName2 {
                 Option.Some(idxName) => {
-                    locs.push(Local { name: idxName.clone(), ty: "i64", addr: idxAddr.clone() })
+                    locs.push(Local { name: idxName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false })
                 }
                 Option.None => {}
             }
@@ -317,7 +317,7 @@ fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Hea
                         let bindAddr = nextTemp(cg)
                         emit(cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
                         emit(cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
-                        locs.push(Local { name: bindings[bi].clone(), ty: payloadTypes[bi].clone(), addr: bindAddr })
+                        locs.push(Local { name: bindings[bi].clone(), ty: payloadTypes[bi].clone(), addr: bindAddr, isRef: false })
                     }
                 }
             }
@@ -407,7 +407,7 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
                             let bindAddr = nextTemp(cg)
                             emit(cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
                             emit(cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
-                            locs.push(Local { name: bindings[bi].clone(), ty: payloadTypes[bi].clone(), addr: bindAddr })
+                            locs.push(Local { name: bindings[bi].clone(), ty: payloadTypes[bi].clone(), addr: bindAddr, isRef: false })
                         }
                     }
                 }
@@ -432,6 +432,27 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
     return allTerminated && arms.len > 0
 }
 
+// User Drop hooks: a local whose struct type has an `impl Drop` runs
+// `Ty$Drop$drop(&mut self)` when it leaves scope. Declaration order matches
+// the oracle's observable behavior. skipName: a returned local is moved out
+// of the scope, not dropped.
+fn emitScopeDrops(cg: &mut Cgen, locs: &Vec<Local>, fromLen: i64, skipName: &string) {
+    for i in fromLen..locs.len {
+        if locs[i].isRef { continue }
+        if locs[i].name == skipName { continue }
+        let dropFn = stripPercent(locs[i].ty) + "$Drop$drop"
+        if cg.fnRets.contains(dropFn) {
+            // milo0 lowers &mut self by value (astTypeStr strips ref-ness), so
+            // the hook is called with a loaded copy — fine for observable
+            // side effects, which is all the drop hook contributes here
+            let structLl = llType(locs[i].ty)
+            let loaded = nextTemp(cg)
+            emit(cg, "  " + loaded + " = load " + structLl + ", ptr " + locs[i].addr + "\n")
+            emit(cg, "  call void @" + dropFn + "(" + structLl + " " + loaded + ")\n")
+        }
+    }
+}
+
 // -- Main statement dispatch. Returns true if stmt terminates block. --
 
 fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
@@ -447,7 +468,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
             emit(cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
-            locs.push(Local { name: name.clone(), ty: v.ty.clone(), addr: addr })
+            locs.push(Local { name: name.clone(), ty: v.ty.clone(), addr: addr, isRef: false })
             return false
         }
         Stmt.VarDecl(name, ty, value, span) => {
@@ -461,7 +482,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
             emit(cg, "  store " + vtyLl + " " + v.v + ", ptr " + addr + "\n")
-            locs.push(Local { name: name.clone(), ty: v.ty.clone(), addr: addr })
+            locs.push(Local { name: name.clone(), ty: v.ty.clone(), addr: addr, isRef: false })
             return false
         }
         Stmt.Assign(target, value, span) => {
@@ -469,9 +490,21 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
             return false
         }
         Stmt.Return(value, span) => {
+            // a returned local is moved out — everything else in scope drops
+            var skipName = ""
+            match value {
+                Option.Some(expr) => {
+                    match *expr {
+                        Expr.Ident(n, ispan) => { skipName = n.clone() }
+                        _ => {}
+                    }
+                }
+                Option.None => {}
+            }
             match value {
                 Option.Some(expr) => {
                     let v = genExpr(cg, *expr, locs, sigs, retTy.clone())
+                    emitScopeDrops(cg, locs, 0, skipName)
                     let fnRetLl = llType(retTy)
                     let valLl = llType(v.ty)
                     if valLl == fnRetLl {
@@ -483,6 +516,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                     }
                 }
                 Option.None => {
+                    emitScopeDrops(cg, locs, 0, skipName)
                     emit(cg, "  ret void\n")
                 }
             }

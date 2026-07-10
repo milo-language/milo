@@ -15,7 +15,10 @@ borrowMutateAfterLoop
 break_drop
 breakContinue
 contracts
+dropEarlyReturn
 dropStringReturn
+dropUser
+dropWithFields
 enumBasic
 enumMultiPayload
 enumPayload
@@ -59,6 +62,7 @@ importString
 importTransitive
 intConstCoerce
 letInWhile
+moveVarIntoEnumReturn
 multiWidthTypes
 nestedCalls
 printFormat

@@ -4,7 +4,7 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
     cgenNew, nextTemp, emit, emitG, llType, llTypeBytes
 }
-from "src-milo/codegen/stmt.milo" import { genStmt }
+from "src-milo/codegen/stmt.milo" import { genStmt, emitScopeDrops }
 
 // Build function signature table from program declarations.
 fn buildFnTable(prog: &Program): Vec<CgFnSig> {
@@ -92,7 +92,8 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
         let addr = "%" + f.params[pj].name + "_addr"
         emit(cg, "  " + addr + " = alloca " + llt + "\n")
         emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
-        locs.push(Local { name: f.params[pj].name.clone(), ty: astTypeStr(f.params[pj].ty), addr: addr })
+        let pIsRef = f.params[pj].ty.isRef || f.params[pj].ty.isRefMut
+        locs.push(Local { name: f.params[pj].name.clone(), ty: astTypeStr(f.params[pj].ty), addr: addr, isRef: pIsRef })
     }
 
     var terminated = false
@@ -102,6 +103,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
         }
     }
     if !terminated {
+        emitScopeDrops(cg, locs, 0, "")
         if retLl == "void" {
             emit(cg, "  ret void\n")
         } else {
