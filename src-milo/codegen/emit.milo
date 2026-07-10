@@ -80,17 +80,28 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     cg.temp = 0
     cg.label = 0
     var locs: Vec<Local> = Vec.new()
-    let retTyStr = resolveTyStr(cg, astTypeStr(f.retType))
+    // C `main` is forced to `i32 (i32 argc, ptr argv)`: it stashes argc/argv into
+    // globals that _miloArgCount/_miloArgAt read, and returns an exit code.
+    let isMain = f.name == "main"
+    var retTyStr = resolveTyStr(cg, astTypeStr(f.retType))
+    if isMain { retTyStr = "i32" }
     let retLl = llType(retTyStr)
     cg.curRetTy = retTyStr.clone()
     var hdr = "define " + retLl + " @" + f.name + "("
+    if isMain {
+        hdr = hdr + "i32 %_milo_argc, ptr %_milo_argv"
+    }
     for pi in 0..f.params.len {
-        if pi > 0 { hdr = hdr + ", " }
+        if pi > 0 || isMain { hdr = hdr + ", " }
         hdr = hdr + llType(resolveTyStr(cg, astTypeStr(f.params[pi].ty))) + " %" + f.params[pi].name
     }
     hdr = hdr + ") {\n"
     emit(cg, hdr)
     emit(cg, "entry:\n")
+    if isMain {
+        emit(cg, "  store i32 %_milo_argc, ptr @_milo_argc_global\n")
+        emit(cg, "  store ptr %_milo_argv, ptr @_milo_argv_global\n")
+    }
 
     // Spill parameters to allocas
     for pj in 0..f.params.len {
@@ -123,6 +134,12 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 // Register structs, enums, functions in Cgen tables, then emit all functions.
 fn genProgram(prog: Program): string {
     var cg = cgenNew()
+
+    // Runtime-support globals: argc/argv (read by _miloArgCount/_miloArgAt) and
+    // the current green scheduler (read/written by _schedulerGet/_schedulerSet).
+    emitG(cg, "@_milo_argc_global = internal global i32 0\n")
+    emitG(cg, "@_milo_argv_global = internal global ptr null\n")
+    emitG(cg, "@_milo_scheduler = internal global ptr null\n")
 
     // Register function return types. Generic templates never codegen — only
     // their monomorphized copies (appended to the program by main.milo) do.

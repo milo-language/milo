@@ -119,6 +119,30 @@ fn compile(path: string): string {
     return genProgram(finalProg)
 }
 
+// Scan the emitted IR for extern symbols that need a link library, mirroring the
+// TS driver's detectLibs. Only SSL/crypto/sqlite are auto-linked.
+fn detectLibs(ir: &string, os: &string): string {
+    var libs = ""
+    if ir.contains("@SSL_") || ir.contains("@TLS_client_method") {
+        if os == "darwin" {
+            libs = libs + " -L/opt/homebrew/opt/openssl@3/lib -lssl -lcrypto"
+        } else {
+            libs = libs + " -lssl -lcrypto"
+        }
+    }
+    if !libs.contains("-lcrypto") && (ir.contains("@SHA256") || ir.contains("@MD5")) {
+        libs = libs + " -lcrypto"
+    }
+    if ir.contains("@sqlite3_") {
+        if os == "darwin" {
+            libs = libs + " -L/opt/homebrew/opt/sqlite/lib -lsqlite3"
+        } else {
+            libs = libs + " -lsqlite3"
+        }
+    }
+    return libs
+}
+
 fn main() {
     let argv = args()
     if argv.len < 2 {
@@ -209,7 +233,7 @@ fn main() {
         // Write IR to temp file, invoke clang
         let irFile = tmpPath("out", ".ll")
         writeFile(irFile, ir)
-        let clangCmd = "clang -O2 -o " + output.clone() + " " + irFile
+        let clangCmd = "clang -O2 -o " + output.clone() + " " + irFile + detectLibs(ir, getHostTarget().os)
         var status: i32 = 127
         match run(clangCmd) {
             Result.Ok(c) => { status = c }
@@ -228,7 +252,7 @@ fn main() {
         let irFile = tmpPath("out", ".ll")
         writeFile(irFile, ir)
         let binary = tmpPath("run", "")
-        let clangCmd = "clang -O2 -o " + binary + " " + irFile
+        let clangCmd = "clang -O2 -o " + binary + " " + irFile + detectLibs(ir, getHostTarget().os)
         var status: i32 = 127
         match run(clangCmd) {
             Result.Ok(c) => { status = c }

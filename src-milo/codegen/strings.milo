@@ -178,6 +178,31 @@ fn genIntToString(cg: &mut Cgen, val: &string): Val {
     return Val { v: s1, ty: "string" }
 }
 
+// double.toString() — snprintf("%g") into an owned heap buffer
+fn genFloatToString(cg: &mut Cgen, val: &string): Val {
+    ensureStringTy(cg)
+    ensureMalloc(cg)
+    if !cg.declaredSnprintf {
+        emitG(cg, "declare i32 @snprintf(ptr, i64, ptr, ...)\n")
+        cg.declaredSnprintf = true
+    }
+    let fmt = emitStringLit(cg, "%g")
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr " + fmt + ", double " + val + ")\n")
+    let len64 = nextTemp(cg)
+    emit(cg, "  " + len64 + " = sext i32 " + len + " to i64\n")
+    let sz = nextTemp(cg)
+    emit(cg, "  " + sz + " = add i64 " + len64 + ", 1\n")
+    let buf = nextTemp(cg)
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + sz + ")\n")
+    emit(cg, "  call i32 (ptr, i64, ptr, ...) @snprintf(ptr " + buf + ", i64 " + sz + ", ptr " + fmt + ", double " + val + ")\n")
+    let s0 = nextTemp(cg)
+    emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
+    let s1 = nextTemp(cg)
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len64 + ", 1\n")
+    return Val { v: s1, ty: "string" }
+}
+
 // String index: s[i] → load byte
 fn genStringIndex(cg: &mut Cgen, sv: &string, idx: &string): Val {
     let data = nextTemp(cg)

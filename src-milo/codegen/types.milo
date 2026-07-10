@@ -81,6 +81,8 @@ struct Cgen {
     declaredHashMapTy: bool,
     declaredExit: bool,
     declaredStrtod: bool,
+    declaredStrlen: bool,
+    declaredDprintf: bool,
 }
 
 fn cgenNew(): Cgen {
@@ -108,6 +110,8 @@ fn cgenNew(): Cgen {
         declaredHashMapTy: false,
         declaredExit: false,
         declaredStrtod: false,
+        declaredStrlen: false,
+        declaredDprintf: false,
     }
 }
 

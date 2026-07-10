@@ -13,7 +13,7 @@ from "src-milo/codegen/types.milo" import {
 }
 from "src-milo/codegen/strings.milo" import {
     genStringLit, genStringClone, genStringConcat, genStringEq,
-    genIntToString, genStringIndex, genStringSlice, emitStringLit, genStringPush
+    genIntToString, genFloatToString, genStringIndex, genStringSlice, emitStringLit, genStringPush
 }
 
 // -- Struct literal --
@@ -338,7 +338,10 @@ fn genHashMapGet(cg: &mut Cgen, obj: &Val, keyVal: &Val): Val {
     let valTy = hashMapValTy(obj.ty)
     let entryTy = hmEntryTy(keyTy, valTy)
     let valLl = llType(valTy)
-    let optName = "Option_" + valTy
+    // Mangle the whole `Option<valTy>` so a nested generic value (Vec<ImplInfo>)
+    // resolves to the registered mono enum (Option_Vec_ImplInfo, not the partial
+    // Option_Vec<ImplInfo>).
+    let optName = stripPercent(resolveTyStr(cg, "Option<" + valTy + ">"))
     let optTy = "%" + optName
     let someTag = lookupVariantTag(cg, optName, "Some")
     let noneTag = lookupVariantTag(cg, optName, "None")
@@ -775,10 +778,19 @@ fn genDefaultValue(cg: &mut Cgen, inner: &Expr, defaultE: &Expr, locs: &Vec<Loca
     return Val { v: r, ty: payTy }
 }
 
-fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     // Generic enums are registered under their mangled name
-    let rEnum = resolveEnumName(cg, enumName)
-    let tag = lookupVariantTag(cg, rEnum, variant)
+    var rEnum = resolveEnumName(cg, enumName)
+    var tag = lookupVariantTag(cg, rEnum, variant)
+    // A generic enum literal (`Result.Ok(x)`) can't pick its instantiation from
+    // the base name alone when several exist; the expected type supplies it.
+    if tag < 0 && hintTy.len > 0 {
+        let he = stripPercent(resolveTyStr(cg, stripPercent(hintTy)))
+        if he.startsWith(enumName + "_") && lookupVariantTag(cg, he, variant) >= 0 {
+            rEnum = he.clone()
+            tag = lookupVariantTag(cg, he, variant)
+        }
+    }
     // `Type.method(...)` with no matching variant is a static method on a struct
     // (e.g. File.openRead) — the parser lands both on the enum-literal form. It is
     // registered as `Type$method`; route it to the plain call path.
@@ -816,9 +828,9 @@ fn genAsCast(cg: &mut Cgen, inner: &Expr, targetTy: &string, locs: &Vec<Local>, 
     let v = genExpr(cg, inner, locs, sigs, targetTy.clone())
     let fromLl = llType(v.ty)
     let toLl = llType(targetTy)
-    // Pointer target (`x as *T`): the value is an opaque `ptr`, but carry the
-    // SURFACE `*T` so index/index-assign can recover the element type T.
-    let toIsPtr = targetTy.len > 0 && targetTy[0] == 42
+    // Pointer target (`x as *T`, or a bare `ptr`): the value is an opaque `ptr`,
+    // but carry the SURFACE `*T` so index/index-assign can recover element type T.
+    let toIsPtr = (targetTy.len > 0 && targetTy[0] == 42) || toLl == "ptr"
     if toIsPtr {
         // Vec/String decay to their data pointer (field 0), not the whole header.
         if fromLl == "%Vec" || fromLl == "%String" {
@@ -952,6 +964,42 @@ fn genVecReverse(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
     return Val { v: "0", ty: "void" }
 }
 
+// Clone a loaded value of surface type `ty` (already in register `v`), returning
+// the cloned register. Strings deep-copy; types with an `impl Clone` route to
+// their `Ty$..$clone` helper; Heap boxes recurse; Copy types pass through.
+fn genCloneOfLoaded(cg: &mut Cgen, v: &string, ty: &string): string {
+    let ll = llType(ty)
+    if ll == "%String" {
+        return genStringClone(cg, v).v
+    }
+    // find an impl-Clone helper Ty$..$clone for this type
+    let rec = stripPercent(resolveTyStr(cg, stripPercent(ty)))
+    var cloneFn = ""
+    for k, kv in cg.fnRets {
+        if k.startsWith(rec + "$") && k.endsWith("$clone") {
+            cloneFn = k.clone()
+        }
+    }
+    if cloneFn.len > 0 {
+        let t = nextTemp(cg)
+        emit(cg, "  " + t + " = call " + ll + " @" + cloneFn + "(" + ll + " " + v + ")\n")
+        return t
+    }
+    // Copy (ints/bool/ptr) or no clone helper: value copy is a faithful clone
+    return v.clone()
+}
+
+// `h.clone()` for h: Heap<T> is a deref-and-clone: the checker types it as T
+// (not Heap<T>), so return the cloned pointee VALUE, not a re-boxed pointer.
+fn genHeapClone(cg: &mut Cgen, boxPtr: &string, heapTy: &string): Val {
+    let inner = unwrapHeap(heapTy)
+    let innerLl = llType(inner)
+    let p = nextTemp(cg)
+    emit(cg, "  " + p + " = load " + innerLl + ", ptr " + boxPtr + "\n")
+    let cloned = genCloneOfLoaded(cg, p, inner)
+    return Val { v: cloned, ty: inner }
+}
+
 // Vec.pop: panic if empty, else len-- and return the (former) last element.
 fn genVecPop(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
     let elemTy = unwrapVec(vecTy)
@@ -1064,6 +1112,10 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     if objTyLl == "%String" && method == "clone" {
         return genStringClone(cg, obj.v)
     }
+    // Heap<T>.clone() — deep-copy the box (recursive enums rely on this)
+    if method == "clone" && unwrapHeap(obj.ty).len > 0 {
+        return genHeapClone(cg, obj.v, obj.ty)
+    }
     if objTyLl == "%String" && (method == "substr" || method == "slice") {
         let a = genExpr(cg, *args[0], locs, sigs, "i64")
         let b = genExpr(cg, *args[1], locs, sigs, "i64")
@@ -1081,6 +1133,9 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     }
     if objTyLl == "i64" && method == "toString" {
         return genIntToString(cg, obj.v)
+    }
+    if objTyLl == "double" && method == "toString" {
+        return genFloatToString(cg, obj.v)
     }
     if objTyLl == "i32" && method == "toString" {
         let w = nextTemp(cg)
@@ -1229,6 +1284,32 @@ fn genFormat(cg: &mut Cgen, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Ve
     return acc
 }
 
+// Copy a NUL-terminated C string at `pv` into an owned %String {buf,len,len+1}.
+fn genCstrToString(cg: &mut Cgen, pv: &string): Val {
+    ensureStringTy(cg)
+    ensureMalloc(cg)
+    ensureMemcpy(cg)
+    // strlen is already declared by the stdlib's extern `fn strlen` — a second
+    // `declare` here would be an invalid redefinition, so don't emit one.
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = call i64 @strlen(ptr " + pv + ")\n")
+    let cap = nextTemp(cg)
+    emit(cg, "  " + cap + " = add i64 " + len + ", 1\n")
+    let buf = nextTemp(cg)
+    emit(cg, "  " + buf + " = call ptr @malloc(i64 " + cap + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + buf + ", ptr " + pv + ", i64 " + len + ")\n")
+    let nul = nextTemp(cg)
+    emit(cg, "  " + nul + " = getelementptr i8, ptr " + buf + ", i64 " + len + "\n")
+    emit(cg, "  store i8 0, ptr " + nul + "\n")
+    let s0 = nextTemp(cg)
+    emit(cg, "  " + s0 + " = insertvalue %String zeroinitializer, ptr " + buf + ", 0\n")
+    let s1 = nextTemp(cg)
+    emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
+    let s2 = nextTemp(cg)
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 " + cap + ", 2\n")
+    return Val { v: s2, ty: "string" }
+}
+
 fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     if name == "format" {
         return genFormat(cg, args, locs, sigs)
@@ -1259,13 +1340,149 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         return Val { v: boxPtr, ty: "ptr" }
     }
 
-    // Evaluate arguments
-    var argVals: Vec<Val> = Vec.new()
-    for i in 0..args.len {
-        argVals.push(genExpr(cg, *args[i], locs, sigs, ""))
+    // _cstrToString(ptr): copy a NUL-terminated C string into an owned %String.
+    if name == "_cstrToString" {
+        let cstrp = genExpr(cg, *args[0], locs, sigs, "")
+        return genCstrToString(cg, cstrp.v)
+    }
+    // Runtime-support builtins (mirror the TS oracle's intrinsics).
+    if name == "_miloArgCount" {
+        let macraw = nextTemp(cg)
+        emit(cg, "  " + macraw + " = load i32, ptr @_milo_argc_global\n")
+        let macext = nextTemp(cg)
+        emit(cg, "  " + macext + " = sext i32 " + macraw + " to i64\n")
+        return Val { v: macext, ty: "i64" }
+    }
+    if name == "_miloArgAt" {
+        let maidx = genExpr(cg, *args[0], locs, sigs, "i64")
+        let maargv = nextTemp(cg)
+        emit(cg, "  " + maargv + " = load ptr, ptr @_milo_argv_global\n")
+        let maslot = nextTemp(cg)
+        emit(cg, "  " + maslot + " = getelementptr ptr, ptr " + maargv + ", i64 " + maidx.v + "\n")
+        let macstr = nextTemp(cg)
+        emit(cg, "  " + macstr + " = load ptr, ptr " + maslot + "\n")
+        return genCstrToString(cg, macstr)
+    }
+    if name == "_schedulerGet" {
+        let schgv = nextTemp(cg)
+        emit(cg, "  " + schgv + " = load ptr, ptr @_milo_scheduler\n")
+        return Val { v: schgv, ty: "ptr" }
+    }
+    if name == "_schedulerSet" {
+        let schsp = genExpr(cg, *args[0], locs, sigs, "")
+        emit(cg, "  store ptr " + schsp.v + ", ptr @_milo_scheduler\n")
+        return Val { v: "0", ty: "void" }
+    }
+    if name == "_callClosureVoid" {
+        let fnPtr = genExpr(cg, *args[0], locs, sigs, "")
+        let envPtr = genExpr(cg, *args[1], locs, sigs, "")
+        emit(cg, "  call void " + fnPtr.v + "(ptr " + envPtr.v + ")\n")
+        return Val { v: "0", ty: "void" }
+    }
+    if name == "_loadU8" {
+        let lu8p = genExpr(cg, *args[0], locs, sigs, "")
+        let lu8v = nextTemp(cg)
+        emit(cg, "  " + lu8v + " = load i8, ptr " + lu8p.v + "\n")
+        return Val { v: lu8v, ty: "u8" }
+    }
+    if name == "_loadI32" {
+        let li32p = genExpr(cg, *args[0], locs, sigs, "")
+        let li32v = nextTemp(cg)
+        emit(cg, "  " + li32v + " = load i32, ptr " + li32p.v + "\n")
+        return Val { v: li32v, ty: "i32" }
+    }
+    if name == "_strDataPtr" {
+        let sdp = genExpr(cg, *args[0], locs, sigs, "")
+        let sdg = nextTemp(cg)
+        emit(cg, "  " + sdg + " = getelementptr %String, ptr " + sdp.v + ", i32 0, i32 0\n")
+        let sdd = nextTemp(cg)
+        emit(cg, "  " + sdd + " = load ptr, ptr " + sdg + "\n")
+        return Val { v: sdd, ty: "ptr" }
+    }
+    if name == "_atomicLoadI64" {
+        let alip = genExpr(cg, *args[0], locs, sigs, "")
+        let aliv = nextTemp(cg)
+        emit(cg, "  " + aliv + " = load atomic i64, ptr " + alip.v + " seq_cst, align 8\n")
+        return Val { v: aliv, ty: "i64" }
+    }
+    if name == "_atomicStoreI64" {
+        let asip = genExpr(cg, *args[0], locs, sigs, "")
+        let asiv = genExpr(cg, *args[1], locs, sigs, "i64")
+        emit(cg, "  store atomic i64 " + asiv.v + ", ptr " + asip.v + " seq_cst, align 8\n")
+        return Val { v: "0", ty: "void" }
+    }
+    if name == "_atomicAddI64" {
+        let aaip = genExpr(cg, *args[0], locs, sigs, "")
+        let aaiv = genExpr(cg, *args[1], locs, sigs, "i64")
+        let aaio = nextTemp(cg)
+        emit(cg, "  " + aaio + " = atomicrmw add ptr " + aaip.v + ", i64 " + aaiv.v + " seq_cst, align 8\n")
+        return Val { v: aaio, ty: "i64" }
+    }
+    if name == "_atomicSubI64" {
+        let asubp = genExpr(cg, *args[0], locs, sigs, "")
+        let asubv = genExpr(cg, *args[1], locs, sigs, "i64")
+        let asubo = nextTemp(cg)
+        emit(cg, "  " + asubo + " = atomicrmw sub ptr " + asubp.v + ", i64 " + asubv.v + " seq_cst, align 8\n")
+        return Val { v: asubo, ty: "i64" }
+    }
+    if name == "_atomicCasI64" {
+        let acp = genExpr(cg, *args[0], locs, sigs, "")
+        let ace = genExpr(cg, *args[1], locs, sigs, "i64")
+        let acd = genExpr(cg, *args[2], locs, sigs, "i64")
+        let acpair = nextTemp(cg)
+        emit(cg, "  " + acpair + " = cmpxchg ptr " + acp.v + ", i64 " + ace.v + ", i64 " + acd.v + " seq_cst seq_cst, align 8\n")
+        let aco = nextTemp(cg)
+        emit(cg, "  " + aco + " = extractvalue { i64, i1 } " + acpair + ", 0\n")
+        return Val { v: aco, ty: "i64" }
+    }
+    if name == "_atomicLoadBool" {
+        let albp = genExpr(cg, *args[0], locs, sigs, "")
+        let albraw = nextTemp(cg)
+        emit(cg, "  " + albraw + " = load atomic i8, ptr " + albp.v + " seq_cst, align 1\n")
+        let albv = nextTemp(cg)
+        emit(cg, "  " + albv + " = trunc i8 " + albraw + " to i1\n")
+        return Val { v: albv, ty: "bool" }
+    }
+    if name == "_atomicStoreBool" {
+        let asbp = genExpr(cg, *args[0], locs, sigs, "")
+        let asbb = genExpr(cg, *args[1], locs, sigs, "bool")
+        let asbe = nextTemp(cg)
+        emit(cg, "  " + asbe + " = zext i1 " + asbb.v + " to i8\n")
+        emit(cg, "  store atomic i8 " + asbe + ", ptr " + asbp.v + " seq_cst, align 1\n")
+        return Val { v: "0", ty: "void" }
+    }
+    if name == "_atomicSwapBool" {
+        let aswp = genExpr(cg, *args[0], locs, sigs, "")
+        let aswb = genExpr(cg, *args[1], locs, sigs, "bool")
+        let aswe = nextTemp(cg)
+        emit(cg, "  " + aswe + " = zext i1 " + aswb.v + " to i8\n")
+        let aswo = nextTemp(cg)
+        emit(cg, "  " + aswo + " = atomicrmw xchg ptr " + aswp.v + ", i8 " + aswe + " seq_cst, align 1\n")
+        let aswv = nextTemp(cg)
+        emit(cg, "  " + aswv + " = trunc i8 " + aswo + " to i1\n")
+        return Val { v: aswv, ty: "bool" }
     }
 
-    let isPrintCall = name == "print" || name == "println"
+    // Evaluate arguments. Pass each parameter's declared type as the hint so a
+    // generic enum literal in argument position (`error(_, _, Option.None)`)
+    // resolves to the right instantiation instead of an unmangled Option$None.
+    var paramHints: Vec<string> = Vec.new()
+    for si in 0..sigs.len {
+        if sigs[si].name == name {
+            for pi in 0..sigs[si].paramTys.len {
+                paramHints.push(resolveTyStr(cg, sigs[si].paramTys[pi]))
+            }
+        }
+    }
+    var argVals: Vec<Val> = Vec.new()
+    for i in 0..args.len {
+        var hint = ""
+        if i < paramHints.len { hint = paramHints[i].clone() }
+        argVals.push(genExpr(cg, *args[i], locs, sigs, hint))
+    }
+
+    let isEprint = name == "eprint"
+    let isPrintCall = name == "print" || name == "println" || isEprint
     let isVariadicExtern = name == "printf" || name == "fprintf" ||
                            name == "snprintf" || isPrintCall
 
@@ -1314,6 +1531,15 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         fmt = fmt + "\\n"
         let flabel = emitStringLit(cg, fmt)
         argStr = "ptr " + flabel + argStr
+        // eprint writes to stderr via dprintf(2, ...) instead of printf.
+        if isEprint {
+            if !cg.declaredDprintf {
+                emitG(cg, "declare i32 @dprintf(i32, ptr, ...)\n")
+                cg.declaredDprintf = true
+            }
+            emit(cg, "  call i32 (i32, ptr, ...) @dprintf(i32 2, " + argStr + ")\n")
+            return Val { v: "0", ty: "void" }
+        }
     } else {
         for ai in 0..argVals.len {
             if ai > 0 { argStr = argStr + ", " }
@@ -1381,6 +1607,11 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         sigStr = "i32 (ptr, ...)"
     }
 
+    // A void call must NOT be named (`%t = call void ...` is invalid IR).
+    if retLl == "void" {
+        emit(cg, "  call " + sigStr + " @" + emitName + "(" + argStr + ")\n")
+        return Val { v: "0", ty: "void" }
+    }
     let t = nextTemp(cg)
     emit(cg, "  " + t + " = call " + sigStr + " @" + emitName + "(" + argStr + ")\n")
 
@@ -1464,7 +1695,22 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         Expr.IntLit(n, span) => {
             var ty = hintTy.clone()
             if ty.len == 0 { ty = "i64" }
-            return Val { v: n.toString(), ty: llType(ty) }
+            var ll = llType(ty)
+            // An integer literal in pointer position (`p: *u8 = 0`) is a null
+            // pointer: LLVM writes `null`, not the integer constant `0`.
+            if ll == "ptr" {
+                if n == 0 {
+                    return Val { v: "null", ty: "ptr" }
+                }
+                let t = nextTemp(cg)
+                emit(cg, "  " + t + " = inttoptr i64 " + n.toString() + " to ptr\n")
+                return Val { v: t, ty: "ptr" }
+            }
+            // Only integer hints apply to an int literal; a non-int hint (e.g. a
+            // generic type param `A` passed as a call-arg hint) must not retype it.
+            let isInt = ll.len > 0 && ll[0] == 105
+            if !isInt { ll = "i64" }
+            return Val { v: n.toString(), ty: ll }
         }
         Expr.FloatLit(f, span) => {
             return Val { v: f.toString(), ty: "double" }
@@ -1488,6 +1734,11 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         Expr.UnaryOp(op, inner, span) => {
             if op == "*" {
                 return genHeapDeref(cg, *inner, locs, sigs)
+            }
+            // `&place` yields the place's address (used for `(&x) as *T` extern args).
+            if op == "&" {
+                let lv = genLvalue(cg, *inner, locs, sigs)
+                return Val { v: lv.v, ty: "ptr" }
             }
             let v = genExpr(cg, *inner, locs, sigs, hintTy)
             let t = nextTemp(cg)
@@ -1527,16 +1778,40 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 emit(cg, "  " + res + " = icmp " + opn + " i32 " + lt + ", " + rt + "\n")
                 return Val { v: res, ty: "bool" }
             }
+            // Mixed integer widths (e.g. `i64Var < i32Param`): widen the narrower
+            // operand so the op has one type. i1 is excluded (bool, not arithmetic).
+            var lvv = lv.v.clone()
+            var rvv = rv.v.clone()
+            var opLl = lvLl.clone()
+            let rvLl = llType(rv.ty)
+            let lInt = lvLl.len > 1 && lvLl[0] == 105
+            let rInt = rvLl.len > 1 && rvLl[0] == 105
+            if lInt && rInt && lvLl != rvLl {
+                let lb = intBits(lvLl)
+                let rb = intBits(rvLl)
+                if lb < rb {
+                    let w = nextTemp(cg)
+                    let ext = if isUnsigned(lv.ty) { "zext" } else { "sext" }
+                    emit(cg, "  " + w + " = " + ext + " " + lvLl + " " + lvv + " to " + rvLl + "\n")
+                    lvv = w
+                    opLl = rvLl.clone()
+                } else {
+                    let w = nextTemp(cg)
+                    let ext = if isUnsigned(rv.ty) { "zext" } else { "sext" }
+                    emit(cg, "  " + w + " = " + ext + " " + rvLl + " " + rvv + " to " + lvLl + "\n")
+                    rvv = w
+                }
+            }
             let t = nextTemp(cg)
             let unsigned = isUnsigned(lv.ty)
             if isArithOp(op) {
                 let opname = binOpInt(op, unsigned)
-                emit(cg, "  " + t + " = " + opname + " " + lvLl + " " + lv.v + ", " + rv.v + "\n")
+                emit(cg, "  " + t + " = " + opname + " " + opLl + " " + lvv + ", " + rvv + "\n")
                 return Val { v: t, ty: lv.ty }
             }
             if isCmpOp(op) {
                 let opname = cmpOpInt(op, unsigned)
-                emit(cg, "  " + t + " = icmp " + opname + " " + lvLl + " " + lv.v + ", " + rv.v + "\n")
+                emit(cg, "  " + t + " = icmp " + opname + " " + opLl + " " + lvv + ", " + rvv + "\n")
                 return Val { v: t, ty: "bool" }
             }
             if op == "&&" {
@@ -1570,7 +1845,7 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 // convention, push mallocs) is semantically equivalent
                 return genStringLit(cg, "")
             }
-            return genEnumLit(cg, enumName, variant, args, locs, sigs)
+            return genEnumLit(cg, enumName, variant, args, locs, sigs, hintTy)
         }
         Expr.CastExpr(inner, targetType, span) => {
             // full astTypeStr, not just .name: `x as *i64` must keep pointer-ness

@@ -400,6 +400,9 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
     let endLbl = nextLabel(cg, "match.end")
     var switchCases = ""
     var armLabels: Vec<string> = Vec.new()
+    // A wildcard/binding arm (`_ => …`) is the switch DEFAULT, not a numbered case
+    // — numbering it collides with a real variant tag (duplicate switch case).
+    var wildcardLbl = ""
     for i in 0..arms.len {
         let armLbl = nextLabel(cg, "match.arm")
         match arms[i].pattern {
@@ -409,12 +412,17 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
                 switchCases = switchCases + "i32 " + tg.toString() + ", label %" + armLbl + " "
             }
             _ => {
-                switchCases = switchCases + "i32 " + i.toString() + ", label %" + armLbl + " "
+                if wildcardLbl.len == 0 { wildcardLbl = armLbl.clone() }
             }
         }
         armLabels.push(armLbl)
     }
-    let defaultLbl = nextLabel(cg, "match.default")
+    var defaultLbl = nextLabel(cg, "match.default")
+    var emitUnreachableDefault = true
+    if wildcardLbl.len > 0 {
+        defaultLbl = wildcardLbl.clone()
+        emitUnreachableDefault = false
+    }
     emit(cg, "  switch i32 " + tag + ", label %" + defaultLbl + " [" + switchCases + "]\n")
     var allTerminated = true
     for ai in 0..arms.len {
@@ -456,8 +464,12 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
             allTerminated = false
         }
     }
-    emit(cg, defaultLbl + ":\n")
-    emit(cg, "  unreachable\n")
+    // Only emit a synthetic unreachable default when there was no wildcard arm
+    // (a wildcard arm already serves as the default and emits its own body).
+    if emitUnreachableDefault {
+        emit(cg, defaultLbl + ":\n")
+        emit(cg, "  unreachable\n")
+    }
     emit(cg, endLbl + ":\n")
     if allTerminated && arms.len > 0 { emit(cg, "  unreachable\n") }
     return allTerminated && arms.len > 0
@@ -548,7 +560,13 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 }
                 Option.None => {
                     emitScopeDrops(cg, locs, 0, skipName)
-                    emit(cg, "  ret void\n")
+                    let fnRetLl = llType(retTy)
+                    if fnRetLl == "void" {
+                        emit(cg, "  ret void\n")
+                    } else {
+                        // bare `return` in a non-void fn (main is forced to i32)
+                        emit(cg, "  ret " + fnRetLl + " 0\n")
+                    }
                 }
             }
             return true
