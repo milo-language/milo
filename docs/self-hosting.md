@@ -320,30 +320,36 @@ implemented nowhere).
 instead of returning `Val{v:"0"}`, which used to surface 400 lines later as
 `trunc i64 0 to %String`. Each remaining gap names itself.
 
-Landed since (2026-07-10): `Self` substitution in impl-method ASTs pushed to
-monomorphizedFns (checker resolved `Self` as a struct name and errored — cleared
-the whole 24-fixture `unknown struct 'Self'` bucket; user `Drop` impls still
-don't *fire* at scope end, that's a codegen gap); bool prints as `true`/`false`
-via select, matching TS.
+Landed since (2026-07-10): `Self` substitution in impl-method ASTs (cleared the
+24-fixture `unknown struct 'Self'` bucket); bool prints as `true`/`false`;
+**for-in codegen** (range/vec/string-bytes, continue goes to the step block);
+**if-let codegen** (one-pattern match with a real else path).
 
-Failure census 2026-07-10, manifest 51/338:
+Oracle miscompiles #6 and #7 (2026-07-10), both found because milo-self hung
+checking ANY enum match — the entire ~40-fixture guard-kill bucket was ONE bug:
 
-- **123** "other" — dominated by lost type info in codegen (`no field 'len' on
-  i64`, `cannot index type i64`, bad IR types). Mostly the generics-not-wired
-  theme plus AST-codegen re-deriving types wrongly.
-- **~57** guard kills (memory/footprint) — milo-self allocates without bound
-  *while compiling* channel/atomics/arena fixtures. Real milo0 bugs (likely
-  runaway recursion or clone loops), all safely contained by the guard now.
-- **21** output mismatch — builds succeed, output wrong. The scariest class
-  (silent miscompiles); shrunk by the bool fix, `%.*s` vs `%s` string printing
-  is another known member.
-- **18** `undefined function` — arena*/closure-heavy stdlib fixtures.
-- **16** SIGTRAP during build, **15** `unsupported method` (String.slice,
-  HashMap insert/get/iterate — the M4 hard spot).
-- Sweep flakiness note: 2-3 fixtures pass/fail nondeterministically under the
-  4-way parallel sweep but pass serially (hexEscape seen both ways) — points at
-  uninitialized memory somewhere in milo-self; the serial harness is the
-  ratchet ground truth.
+| commit | bug |
+|---|---|
+| `d0e4e76` | deep clone of a hashmap fell back to a *shallow load*; the clone's drop freed the shared entry buffer and the next probe loop walked freed memory forever |
+| `1411df6` | `match` on a place (`s.field`, `v[i]`) consumed the subject: codegen zeroed the container slot behind an untrackable projection, so a second match read tag 0 with empty payloads, silently |
+
+Place-match semantics are now: borrow the subject, non-Copy payload bindings
+bind as `&T` (same as ref-match). Fixtures: hashmapCloneNested,
+matchPlaceBorrows.
+
+Failure census 2026-07-10 (post-fixes), manifest 69/340, serial sweep
+(`MILO_SWEEP_CONCURRENCY=1` — parallel sweeps flip a few fixtures
+nondeterministically; serial is the ratchet ground truth):
+
+- **138** "other" — lost type info in codegen (`no field 'len' on i64`,
+  `cannot index type i64`, bad IR types); generics-not-wired is the big theme.
+- **18** `unknown struct` / `undefined function` each — arena*, extern-struct,
+  closure-heavy stdlib fixtures.
+- **18** `unsupported method` — String.slice, HashMap insert/get/iterate
+  (the M4 hard spot, next up).
+- **8** output mismatch — includes the user-`Drop`-not-firing-at-scope-end gap
+  (dropUser prints "using 1 2" but no "drop" lines).
+- **5** SIGSEGV, **1** run-crash. Guard-kill buckets: **zero**.
 
 Artifact paths are pid-suffixed (`/tmp/milo_out_<pid>.ll`): they were shared, so
 concurrent milo-self builds clobbered each other's IR — this undercounted a
@@ -453,7 +459,7 @@ while the language stagnates.
 | M0 harness | **done** (`bun test tests/selfhost.test.ts`) | 2026-07-09 |
 | M1 fix crash | **done** — `check` + `run` green and gated | 2026-07-09 |
 | M2 attic HIR | not started | |
-| M3 codegen gaps | in progress — manifest 51/338 | 2026-07-10 |
+| M3 codegen gaps | in progress — manifest 69/340 | 2026-07-10 |
 | M4 self-compile | not started | |
 | M5 convergence | not started | |
 | M6 parity | not started | |
