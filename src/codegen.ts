@@ -7244,7 +7244,101 @@ export class Codegen {
       return result;
     }
 
-    // hashmap/array — fall back to shallow load
+    if (typeKind.tag === "hashmap") {
+      // A shallow load here shares the entry buffer; the clone's drop then
+      // frees it under the original, and the next probe loop walks freed
+      // memory forever (found via self-hosting: milo-self checking any enum
+      // match ran away on a cloned EnumInfo's variants map).
+      this.hasHashMapType = true;
+      this.needsMalloc = true;
+      this.needsMemcpy = true;
+      const keyType = typeKind.key;
+      const valueType = typeKind.value;
+      const entryTy = this.hashMapEntryType(keyType, valueType);
+      const orig = this.nextTemp();
+      lines.push(`  ${orig} = load %HashMap, ptr ${srcPtr}`);
+      const srcData = this.nextTemp();
+      lines.push(`  ${srcData} = extractvalue %HashMap ${orig}, 0`);
+      const len = this.nextTemp();
+      lines.push(`  ${len} = extractvalue %HashMap ${orig}, 1`);
+      const cap = this.nextTemp();
+      lines.push(`  ${cap} = extractvalue %HashMap ${orig}, 2`);
+      const seed = this.nextTemp();
+      lines.push(`  ${seed} = extractvalue %HashMap ${orig}, 3`);
+      const entrySizePtr = this.nextTemp();
+      lines.push(`  ${entrySizePtr} = getelementptr ${entryTy}, ptr null, i32 1`);
+      const entrySize = this.nextTemp();
+      lines.push(`  ${entrySize} = ptrtoint ptr ${entrySizePtr} to i64`);
+      const bytes = this.nextTemp();
+      lines.push(`  ${bytes} = mul i64 ${cap}, ${entrySize}`);
+      const newBuf = this.nextTemp();
+      lines.push(`  ${newBuf} = call ptr @malloc(i64 ${bytes})`);
+      lines.push(`  call ptr @memcpy(ptr ${newBuf}, ptr ${srcData}, i64 ${bytes})`);
+
+      if (this.needsDropCg(keyType) || this.needsDropCg(valueType)) {
+        // memcpy covered states and Copy fields; re-clone owned K/V in
+        // occupied slots so the two maps share no heap data
+        const condLbl = this.nextLabel("hm.clone.cond");
+        const bodyLbl = this.nextLabel("hm.clone.body");
+        const skipLbl = this.nextLabel("hm.clone.skip");
+        const endLbl = this.nextLabel("hm.clone.end");
+        const iAddr = this.nextTemp();
+        lines.push(`  ${iAddr} = alloca i64`);
+        lines.push(`  store i64 0, ptr ${iAddr}`);
+        lines.push(`  br label %${condLbl}`);
+        lines.push(`${condLbl}:`);
+        const iVal = this.nextTemp();
+        lines.push(`  ${iVal} = load i64, ptr ${iAddr}`);
+        const cmp = this.nextTemp();
+        lines.push(`  ${cmp} = icmp ult i64 ${iVal}, ${cap}`);
+        lines.push(`  br i1 ${cmp}, label %${bodyLbl}, label %${endLbl}`);
+        lines.push(`${bodyLbl}:`);
+        const statePtr = this.nextTemp();
+        lines.push(`  ${statePtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 0`);
+        const state = this.nextTemp();
+        lines.push(`  ${state} = load i8, ptr ${statePtr}`);
+        const occupied = this.nextTemp();
+        lines.push(`  ${occupied} = icmp eq i8 ${state}, 1`);
+        const cloneLbl = this.nextLabel("hm.clone.slot");
+        lines.push(`  br i1 ${occupied}, label %${cloneLbl}, label %${skipLbl}`);
+        lines.push(`${cloneLbl}:`);
+        if (this.needsDropCg(keyType)) {
+          const srcKeyPtr = this.nextTemp();
+          lines.push(`  ${srcKeyPtr} = getelementptr ${entryTy}, ptr ${srcData}, i64 ${iVal}, i32 1`);
+          const clonedKey = this.emitDeepCloneFromPtr(lines, srcKeyPtr, keyType);
+          const dstKeyPtr = this.nextTemp();
+          lines.push(`  ${dstKeyPtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 1`);
+          lines.push(`  store ${this.llvmType(keyType)} ${clonedKey}, ptr ${dstKeyPtr}`);
+        }
+        if (this.needsDropCg(valueType)) {
+          const srcValPtr = this.nextTemp();
+          lines.push(`  ${srcValPtr} = getelementptr ${entryTy}, ptr ${srcData}, i64 ${iVal}, i32 2`);
+          const clonedVal = this.emitDeepCloneFromPtr(lines, srcValPtr, valueType);
+          const dstValPtr = this.nextTemp();
+          lines.push(`  ${dstValPtr} = getelementptr ${entryTy}, ptr ${newBuf}, i64 ${iVal}, i32 2`);
+          lines.push(`  store ${this.llvmType(valueType)} ${clonedVal}, ptr ${dstValPtr}`);
+        }
+        lines.push(`  br label %${skipLbl}`);
+        lines.push(`${skipLbl}:`);
+        const nextI = this.nextTemp();
+        lines.push(`  ${nextI} = add i64 ${iVal}, 1`);
+        lines.push(`  store i64 ${nextI}, ptr ${iAddr}`);
+        lines.push(`  br label %${condLbl}`);
+        lines.push(`${endLbl}:`);
+      }
+
+      const h0 = this.nextTemp();
+      lines.push(`  ${h0} = insertvalue %HashMap undef, ptr ${newBuf}, 0`);
+      const h1 = this.nextTemp();
+      lines.push(`  ${h1} = insertvalue %HashMap ${h0}, i64 ${len}, 1`);
+      const h2 = this.nextTemp();
+      lines.push(`  ${h2} = insertvalue %HashMap ${h1}, i64 ${cap}, 2`);
+      const h3 = this.nextTemp();
+      lines.push(`  ${h3} = insertvalue %HashMap ${h2}, i64 ${seed}, 3`);
+      return h3;
+    }
+
+    // array — fall back to shallow load
     const v = this.nextTemp();
     lines.push(`  ${v} = load ${lt}, ptr ${srcPtr}`);
     return v;

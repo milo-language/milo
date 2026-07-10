@@ -1,0 +1,31 @@
+// @expect: yes
+// @expect: 1
+
+// HashMap.get of a struct containing a HashMap must deep-clone the inner map.
+// A shallow copy shared the entry buffer; the clone's drop freed it under the
+// original, and the next probe loop walked freed memory forever (found via
+// self-hosting: milo-self checking any enum match hung on EnumInfo.variants).
+
+struct Info {
+    variants: HashMap<string, i64>,
+}
+
+fn main(): i32 {
+    var m: HashMap<string, Info> = HashMap.new()
+    var v: HashMap<string, i64> = HashMap.new()
+    v.insert("Red", 1)
+    m.insert("Color", Info {
+        variants: v
+    }
+    )
+    let info = m.get("Color")!
+    if info.variants.contains("Red") {
+        print("yes")
+    } else {
+        print("no")
+    }
+    // original must still be intact after the clone is dropped
+    let again = m.get("Color")!
+    print(again.variants.get("Red")!)
+    return 0
+}
