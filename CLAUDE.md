@@ -62,12 +62,18 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
 
 ## Key Rules
 
-- **NEVER run `.selfhost/milo-self` (or any binary it compiled) bare.** It has
-  known memory bugs; macOS enforces no rlimits, and a runaway allocation will
-  consume all RAM and crash the OS. Always wrap manual invocations:
-  `bun scripts/guard.ts -- .selfhost/milo-self <cmd> <args>` (kills the
-  process tree at 4GB RSS / 60s). `bun test tests/selfhost.test.ts` and
-  `scripts/selfhost.sh` are already guarded — prefer them.
+- **Memory guards (macOS enforces no rlimits — a runaway allocation crashes the OS):**
+  - `.selfhost/milo-self` is a self-guarding wrapper (RSS/timeout watchdog built in);
+    the real binary is `.selfhost/milo-self.bin` — **NEVER run the `.bin` bare**, and
+    never build/copy other bare milo-self binaries. Manual guarded runs of anything:
+    `bun scripts/guard.ts [--mem-mb N] [--timeout-s N] -- <cmd> <args>`.
+  - `milo run` / `milo test` / `milo fmt` guard their child binaries by default
+    (`MILO_RUN_MEM_MB` to raise, `MILO_RUN_UNGUARDED=1` to disable — don't, for
+    milo-self or anything it compiled).
+  - `bun test tests/selfhost.test.ts`, `scripts/selfhost.sh`, and
+    `scripts/selfhost-sweep.ts` are already guarded — prefer them.
+  - Do not raise sweep/test concurrency or per-child mem caps without checking the
+    math in `scripts/guard.ts` (N workers × cap must stay under half of RAM).
 
 - Use Bun for everything (not Node)
 - Type checker runs before codegen — semantic errors must be caught there, not in codegen

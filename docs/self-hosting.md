@@ -59,15 +59,19 @@ acceptance test, and the rules in "Working Agreement" are mandatory.
   (c) mark deferred in this doc with the repro path, move on.
 - **Memory guard (MANDATORY)**: milo-self can allocate without bound, and
   macOS enforces no rlimits — an unguarded run has consumed all system RAM
-  and crashed the machine. NEVER invoke `.selfhost/milo-self` (or a binary it
-  produced) bare. Always wrap:
-  `bun scripts/guard.ts -- .selfhost/milo-self check foo.milo`
-  (SIGKILLs the process tree at 4GB RSS / 60s; `--mem-mb`/`--timeout-s` to
-  adjust). The test harnesses and `scripts/selfhost.sh` already do this.
-- **Debugging playbook**: crash → `lldb -b -o run -o bt ./milo-self <cmd>`
+  and crashed the machine (twice). Defense in depth now makes the default
+  paths safe: `.selfhost/milo-self` is a self-guarding wrapper (real binary:
+  `milo-self.bin` — NEVER run the `.bin` bare), `milo run`/`milo test` guard
+  their children by default, guardedRun plants an in-pgid shell watchdog that
+  survives even the death of the bun process that spawned it, and the sweep
+  caps concurrency×mem below half of RAM. Manual guarded run of anything else:
+  `bun scripts/guard.ts [--mem-mb N] [--timeout-s N] -- <cmd> <args>`.
+  Binaries **compiled by** milo-self are equally untrusted — run them through
+  guard.ts too. The test harnesses already do all of this.
+- **Debugging playbook**: crash → `lldb -b -o run -o bt ./milo-self.bin <cmd>`
   (lldb runs can't be guard-wrapped — watch Activity Monitor and keep inputs
   tiny); wrong output → `diff <(bun run src/main.ts emit-ir f.milo)
-  <(bun scripts/guard.ts -- ./milo-self emit-ir f.milo)`; regression →
+  <(.selfhost/milo-self emit-ir f.milo)` (wrapper self-guards); regression →
   `git log --oneline -- src-milo/` and bisect by rebuilding milo-self at each
   candidate commit.
 - Known runtime gotcha already fixed in TS codegen: allocas are hoisted to

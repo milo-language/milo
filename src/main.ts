@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, unlinkSync, existsSync, readdirSync, mkdirSync } from "fs";
-import { execSync, spawnSync } from "child_process";
+import { execSync, spawnSync, spawn } from "child_process";
+import { guardedRun, monitorPidTree, DEFAULT_MEM_MB } from "../scripts/guard";
 import { fileURLToPath } from "url";
 import { basename, resolve, dirname } from "path";
 import { tmpdir } from "os";
@@ -319,7 +320,7 @@ function compileSourceToBinary(source: string, sourcePath: string, target: Targe
   return out;
 }
 
-function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warningConfig?: WarningConfig) {
+async function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warningConfig?: WarningConfig) {
   let totalPassed = 0;
   let totalFailed = 0;
   const failures: string[] = [];
@@ -354,9 +355,10 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warn
     }
 
     try {
-      const result = spawnSync(bin, [], { encoding: "utf-8", timeout: 30000, stdio: ["pipe", "pipe", "pipe"] });
+      // guardedRun, not spawnSync: test binaries are milo-built and untrusted
+      const result = await guardedRun(bin, [], { timeoutMs: 30000, memMb: 2048 });
       if (result.stderr) process.stderr.write(result.stderr);
-      if (result.status === 0) {
+      if (result.code === 0) {
         totalPassed += testFns.length;
       } else {
         totalFailed++;
@@ -376,16 +378,38 @@ function runTests(testFiles: string[], target: TargetInfo, optFlag: string, warn
   }
 }
 
-function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false) {
+// Compiled programs run with an RSS watchdog BY DEFAULT: macOS enforces no
+// rlimits, and one runaway allocation (e.g. a milo-self memory bug) swaps the
+// whole machine to death. Raise with MILO_RUN_MEM_MB, disable with
+// MILO_RUN_UNGUARDED=1. No wall-clock timeout — long-running programs are legal.
+async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false) {
   const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug);
   try {
     if (target.bareMetal) {
       runBareMetalQemu(bin, target);
       return;
     }
-    execSync([bin, ...extraArgs].map(a => `"${a}"`).join(" "), { stdio: "inherit" });
-  } catch (e: any) {
-    process.exit(e.status ?? 1);
+    const memMb = Number(process.env.MILO_RUN_MEM_MB || 0) || DEFAULT_MEM_MB;
+    const child = spawn(bin, extraArgs, { stdio: "inherit" });
+    let breached = false;
+    const stop =
+      process.env.MILO_RUN_UNGUARDED === "1"
+        ? () => {}
+        : monitorPidTree(child.pid!, memMb, rssMb => {
+            breached = true;
+            console.error(
+              `\nerror: program exceeded ${memMb} MB RSS (${rssMb} MB) and was killed.` +
+                `\n       raise the cap with MILO_RUN_MEM_MB=<mb> or disable with MILO_RUN_UNGUARDED=1`
+            );
+          });
+    const { code, signal } = await new Promise<{ code: number | null; signal: string | null }>(res => {
+      child.on("error", () => res({ code: 127, signal: null }));
+      child.on("close", (code, signal) => res({ code, signal }));
+    });
+    stop();
+    if (breached) process.exit(137);
+    if (signal) process.exit(137);
+    if (code !== 0) process.exit(code ?? 1);
   } finally {
     try { unlinkSync(bin); } catch {}
   }
@@ -861,7 +885,7 @@ function reportCompiled(source: string, out: string, elapsedMs: number) {
   }
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   if (args.length < 1) {
     console.log("usage: milo <command> [options] <file>");
@@ -972,8 +996,8 @@ function main() {
     let changed = 0;
     for (const f of files) {
       const before = write ? readFileSync(f, "utf-8") : null;
-      const result = spawnSync(fmtBin, write ? ["-w", f] : [f], { encoding: "utf-8", timeout: 30000 });
-      if (result.status !== 0) { console.error(result.stderr || `error formatting ${f}`); process.exit(1); }
+      const result = await guardedRun(fmtBin, write ? ["-w", f] : [f], { timeoutMs: 30000, memMb: 1024 });
+      if (result.code !== 0) { console.error(result.stderr || `error formatting ${f}`); process.exit(1); }
       if (!write) { process.stdout.write(result.stdout); continue; }
       if (readFileSync(f, "utf-8") !== before) { console.log(f); changed++; }
     }
@@ -1108,12 +1132,12 @@ function main() {
       files = readdirSync(dir).filter(f => f.endsWith("_test.milo")).map(f => join(dir, f));
     }
     if (files.length === 0) { console.error("no test files found"); process.exit(1); }
-    runTests(files, target, testOpt, testWc);
+    await runTests(files, target, testOpt, testWc);
     return;
   }
 
   if (cmd === "run") {
-    runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug);
+    await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug);
   } else if (cmd === "build") {
     const t0 = Date.now();
     const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug);
@@ -1140,4 +1164,4 @@ function main() {
   }
 }
 
-main();
+await main();

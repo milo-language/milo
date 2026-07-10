@@ -23,7 +23,9 @@ import { guardedRun, type RunResult } from "../scripts/guard";
 const MILO_ROOT = join(import.meta.dir, "..");
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 const MANIFEST = join(import.meta.dir, "selfhost-manifest.txt");
-const MILO_SELF = join(MILO_ROOT, ".selfhost", "milo-self");
+// .bin is the real binary — .selfhost/milo-self is a guard wrapper for manual
+// use; the harness guards via guardedRun itself, so it calls .bin directly.
+const MILO_SELF = join(MILO_ROOT, ".selfhost", "milo-self.bin");
 
 // Hard gate: milo-self must type-check a trivial program. Regressing this means
 // re-introducing the memory corruption M1 fixed.
@@ -37,8 +39,10 @@ const CHILD_ENV = { ...process.env, MILO_ROOT };
 // mean any invocation can allocate without bound, and macOS enforces no
 // rlimits — an unguarded run has swap-thrashed the whole machine. Everything
 // goes through guardedRun, which SIGKILLs the process tree on RSS breach.
-async function run(cmd: string, args: string[], cwd?: string, timeoutMs = 60000): Promise<RunResult> {
-  return guardedRun(cmd, args, { env: CHILD_ENV, cwd, timeoutMs });
+// 2GB cap: healthy milo-self compiles use well under this, and the tighter
+// the cap the sooner the watchdog fires — before swap pressure blinds it.
+async function run(cmd: string, args: string[], cwd?: string, timeoutMs = 60000, memMb = 2048): Promise<RunResult> {
+  return guardedRun(cmd, args, { env: CHILD_ENV, cwd, timeoutMs, memMb });
 }
 
 function readManifest(): string[] {
