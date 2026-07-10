@@ -775,6 +775,16 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
         if ck.genericEnums.contains(enumName) {
             return checkGenericEnumLit(ck, enumName, variant, args, span)
         }
+        // Static method on a struct: File.open(...) parses as an enum literal
+        if ck.structs.contains(enumName) {
+            match resolveMethod(ck, enumName, variant) {
+                Option.Some(fnName) => {
+                    var noTypeArgs: Vec<MiloType> = Vec.new()
+                    return checkCall(ck, fnName, args, noTypeArgs, span)
+                }
+                Option.None => {}
+            }
+        }
         error(ck, "unknown enum '" + enumName.clone() + "'", cloneSpan(span))
         return tyUnknown()
     }

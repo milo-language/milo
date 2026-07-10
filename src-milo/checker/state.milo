@@ -80,6 +80,14 @@ struct ImplInfo {
     methods: HashMap<string, FnSig>,
 }
 
+// A monomorphized struct instantiation, recorded so generic impls that
+// register later (phase 2) can replay against it.
+struct StructInst {
+    base: string,
+    mangled: string,
+    args: Vec<TypeKind>,
+}
+
 // -- Checker state --
 
 // Generic declarations parked until a use site provides concrete type args.
@@ -123,6 +131,7 @@ struct Checker {
     genericEnums: HashMap<string, GenericEnumInfo>,
     // impl blocks with type params, instantiated when their type monomorphizes
     genericImpls: Vec<ImplDecl>,
+    structInsts: Vec<StructInst>,
     // moves inside a return expression never poison later paths — the fn
     // exits, so a flow-insensitive walk must not carry them forward (mirrors
     // the TS checker's returnOnlyMoves)
@@ -150,6 +159,7 @@ fn newChecker(): Checker {
         genericStructs: HashMap.new(),
         genericEnums: HashMap.new(),
         genericImpls: Vec.new(),
+        structInsts: Vec.new(),
         inReturn: false,
     }
 }

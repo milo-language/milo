@@ -11,7 +11,15 @@ from "src-milo/checker/types.milo" import {
 from "src-milo/checker/state.milo" import {
     Checker, FnSig, FnParam, StructInfo, CkStructField,
     EnumInfo, VariantInfo, error,
-    GenericFnInfo, GenericStructInfo, GenericEnumInfo,
+    GenericFnInfo, GenericStructInfo, GenericEnumInfo, StructInst,
+}
+
+fn cloneTypeArgs(v: &Vec<TypeKind>): Vec<TypeKind> {
+    var out: Vec<TypeKind> = Vec.new()
+    for i in 0..v.len {
+        out.push(v[i].clone())
+    }
+    return out
 }
 
 // -- Type name mangling --
@@ -310,6 +318,66 @@ fn substStmt(s: &Stmt, tps: &Vec<string>, tas: &Vec<TypeKind>): Stmt {
     }
 }
 
+
+// A generic impl that registers after its type already monomorphized (impls
+// land in phase 2, annotations monomorphize in phase 1) replays here.
+fn replayImplForInsts(ck: &mut Checker, gi: &ImplDecl) {
+    var ii: i64 = 0
+    while ii < ck.structInsts.len {
+        if ck.structInsts[ii].base == gi.typeName {
+            let mangled = ck.structInsts[ii].mangled.clone()
+            let typeArgs = cloneTypeArgs(ck.structInsts[ii].args)
+            instantiateImpl(ck, gi, mangled, typeArgs)
+        }
+        ii = ii + 1
+    }
+}
+
+fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeArgs: &Vec<TypeKind>) {
+    var tps: Vec<string> = Vec.new()
+    for ti in 0..gi.typeParams.len {
+        tps.push(gi.typeParams[ti].name.clone())
+    }
+    var tas2: Vec<TypeKind> = Vec.new()
+    for ti2 in 0..typeArgs.len {
+        tas2.push(typeArgs[ti2].clone())
+    }
+    tps.push(gi.typeName.clone())
+    tas2.push(TypeKind.TStruct(mangled.clone()))
+    var monoMethods: Vec<Function> = Vec.new()
+    for mi in 0..gi.methods.len {
+        var mParams: Vec<Param> = Vec.new()
+        for pi in 0..gi.methods[mi].params.len {
+            mParams.push(Param {
+                name: gi.methods[mi].params[pi].name.clone(),
+                ty: substituteMiloType(gi.methods[mi].params[pi].ty, tps, tas2),
+            })
+        }
+        monoMethods.push(Function {
+            name: gi.methods[mi].name.clone(),
+            typeParams: Vec.new(),
+            params: mParams,
+            retType: substituteMiloType(gi.methods[mi].retType, tps, tas2),
+            body: substStmts(gi.methods[mi].body, tps, tas2),
+            isExtern: false,
+            isVariadic: false,
+        })
+    }
+    var cTraitName: Option<string> = Option.None
+    match gi.traitName {
+        Option.Some(t) => { cTraitName = Option.Some(t.clone()) }
+        Option.None => {}
+    }
+    let concrete = ImplDecl {
+        traitName: cTraitName,
+        typeName: mangled.clone(),
+        typeParams: Vec.new(),
+        methods: monoMethods,
+        span: Option.None,
+    }
+    registerImpl(ck, concrete)
+}
+
 // -- Monomorphize a generic enum --
 
 fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<TypeKind>): string {
@@ -432,50 +500,14 @@ fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
         attributes: Vec.new(),
     })
 
-    // Instantiate any parked generic impls for this type: substitute the type
-    // params in every method and register against the mangled name.
+    ck.structInsts.push(StructInst { base: baseName.clone(), mangled: mangled.clone(), args: cloneTypeArgs(typeArgs) })
+
+    // Instantiate any parked generic impls for this type
     var gii: i64 = 0
     while gii < ck.genericImpls.len {
         if ck.genericImpls[gii].typeName == baseName {
             let gi = ck.genericImpls[gii].clone()
-            var tps: Vec<string> = Vec.new()
-            for ti in 0..gi.typeParams.len {
-                tps.push(gi.typeParams[ti].name.clone())
-            }
-            // the impl's own type name maps to the concrete instantiation
-            var tas2: Vec<TypeKind> = Vec.new()
-            for ti2 in 0..typeArgs.len {
-                tas2.push(typeArgs[ti2].clone())
-            }
-            tps.push(baseName.clone())
-            tas2.push(TypeKind.TStruct(mangled.clone()))
-            var monoMethods: Vec<Function> = Vec.new()
-            for mi in 0..gi.methods.len {
-                var mParams: Vec<Param> = Vec.new()
-                for pi in 0..gi.methods[mi].params.len {
-                    mParams.push(Param {
-                        name: gi.methods[mi].params[pi].name.clone(),
-                        ty: substituteMiloType(gi.methods[mi].params[pi].ty, tps, tas2),
-                    })
-                }
-                monoMethods.push(Function {
-                    name: gi.methods[mi].name.clone(),
-                    typeParams: Vec.new(),
-                    params: mParams,
-                    retType: substituteMiloType(gi.methods[mi].retType, tps, tas2),
-                    body: substStmts(gi.methods[mi].body, tps, tas2),
-                    isExtern: false,
-                    isVariadic: false,
-                })
-            }
-            let concrete = ImplDecl {
-                traitName: gi.traitName,
-                typeName: mangled.clone(),
-                typeParams: Vec.new(),
-                methods: monoMethods,
-                span: gi.span,
-            }
-            registerImpl(ck, concrete)
+            instantiateImpl(ck, gi, mangled, typeArgs)
         }
         gii = gii + 1
     }
