@@ -72,6 +72,7 @@ struct Cgen {
     declaredSnprintf: bool,
     declaredVecTy: bool,
     declaredRealloc: bool,
+    declaredHashMapTy: bool,
 }
 
 fn cgenNew(): Cgen {
@@ -95,6 +96,7 @@ fn cgenNew(): Cgen {
         declaredSnprintf: false,
         declaredVecTy: false,
         declaredRealloc: false,
+        declaredHashMapTy: false,
     }
 }
 
@@ -171,6 +173,7 @@ fn llType(t: &string): string {
     // Vec<T> — {data, len, cap}, like %String. Must precede the uppercase
     // user-struct rule below, which would otherwise yield "%Vec<T>".
     if isVecTy(t) { return "%Vec" }
+    if isHashMapTy(t) { return "%HashMap" }
     // Already an LLVM type (%Name)
     if t.len > 0 && t[0] == 37 { return t.clone() }
     // Uppercase = user struct
@@ -344,6 +347,56 @@ fn ensureVecTy(cg: &mut Cgen) {
     if !cg.declaredVecTy {
         emitG(cg, "%Vec = type { ptr, i64, i64 }\n")
         cg.declaredVecTy = true
+    }
+}
+
+// milo-self compiles whole programs (no linking against oracle IR), so this
+// %HashMap layout only has to be self-consistent — a flat unordered array of
+// { K, V } entries, linear scan. O(n) per op is fine for bootstrap; the M4
+// perf gate decides if it ever needs real hashing.
+// "HashMap<" — 'H','a','s','h','M','a','p','<'
+fn isHashMapTy(t: &string): bool {
+    return t.len >= 9 && t[0] == 72 && t[1] == 97 && t[2] == 115 && t[3] == 104 &&
+        t[4] == 77 && t[5] == 97 && t[6] == 112 && t[7] == 60
+}
+
+// top-level comma split of "HashMap<K, V>" (K/V may nest generics)
+fn hashMapKeyTy(t: &string): string {
+    let inner = t[8..t.len - 1]
+    var depth = 0
+    for i in 0..inner.len {
+        let c = inner[i]
+        if c == 60 { depth = depth + 1 }
+        if c == 62 { depth = depth - 1 }
+        if c == 44 && depth == 0 { return inner[0..i].clone() }
+    }
+    return "i64"
+}
+
+fn hashMapValTy(t: &string): string {
+    let inner = t[8..t.len - 1]
+    var depth = 0
+    for i in 0..inner.len {
+        let c = inner[i]
+        if c == 60 { depth = depth + 1 }
+        if c == 62 { depth = depth - 1 }
+        if c == 44 && depth == 0 {
+            var j = i + 1
+            while j < inner.len && inner[j] == 32 { j = j + 1 }
+            return inner[j..inner.len].clone()
+        }
+    }
+    return "i64"
+}
+
+fn hmEntryTy(keyTy: &string, valTy: &string): string {
+    return "{ " + llType(keyTy) + ", " + llType(valTy) + " }"
+}
+
+fn ensureHashMapTy(cg: &mut Cgen) {
+    if !cg.declaredHashMapTy {
+        emitG(cg, "%HashMap = type { ptr, i64, i64 }\n")
+        cg.declaredHashMapTy = true
     }
 }
 

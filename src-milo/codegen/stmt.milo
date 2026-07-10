@@ -4,6 +4,7 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig,
     nextTemp, nextLabel, emit, llType, stripPercent,
     findLocal, genLoad, isVecTy, unwrapVec,
+    isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
 }
 from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
@@ -72,6 +73,59 @@ fn widenToI64(cg: &mut Cgen, v: &Val): string {
     return w
 }
 
+// `for key, value in map`: walk the flat entry array; body sees copies bound
+// through hoisted allocas. Emits everything up to (not including) stepLbl.
+fn genForInHashMap(cg: &mut Cgen, varName: &string, varName2: &Option<string>, obj: &Val, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string, condLbl: &string, bodyLbl: &string, stepLbl: &string, endLbl: &string, idxAddr: &string) {
+    let keyTy = hashMapKeyTy(obj.ty)
+    let valTy = hashMapValTy(obj.ty)
+    let entryTy = hmEntryTy(keyTy, valTy)
+    let keyLl = llType(keyTy)
+    let valLl = llType(valTy)
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = extractvalue %HashMap " + obj.v + ", 0\n")
+    let count = nextTemp(cg)
+    emit(cg, "  " + count + " = extractvalue %HashMap " + obj.v + ", 1\n")
+    let keyAddr = nextTemp(cg)
+    emit(cg, "  " + keyAddr + " = alloca " + keyLl + "\n")
+    let valAddr = nextTemp(cg)
+    emit(cg, "  " + valAddr + " = alloca " + valLl + "\n")
+    emit(cg, "  store i64 0, ptr " + idxAddr.clone() + "\n")
+    emit(cg, "  br label %" + condLbl.clone() + "\n")
+    emit(cg, condLbl.clone() + ":\n")
+    let cur = nextTemp(cg)
+    emit(cg, "  " + cur + " = load i64, ptr " + idxAddr.clone() + "\n")
+    let lt = nextTemp(cg)
+    emit(cg, "  " + lt + " = icmp slt i64 " + cur + ", " + count + "\n")
+    emit(cg, "  br i1 " + lt + ", label %" + bodyLbl.clone() + ", label %" + endLbl.clone() + "\n")
+    emit(cg, bodyLbl.clone() + ":\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + entryTy + ", ptr " + data + ", i64 " + cur + "\n")
+    let kp = nextTemp(cg)
+    emit(cg, "  " + kp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 0\n")
+    let k = nextTemp(cg)
+    emit(cg, "  " + k + " = load " + keyLl + ", ptr " + kp + "\n")
+    emit(cg, "  store " + keyLl + " " + k + ", ptr " + keyAddr + "\n")
+    let vp = nextTemp(cg)
+    emit(cg, "  " + vp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 1\n")
+    let v = nextTemp(cg)
+    emit(cg, "  " + v + " = load " + valLl + ", ptr " + vp + "\n")
+    emit(cg, "  store " + valLl + " " + v + ", ptr " + valAddr + "\n")
+    let locsPreLen = locs.len
+    locs.push(Local { name: varName.clone(), ty: keyTy.clone(), addr: keyAddr.clone() })
+    match varName2 {
+        Option.Some(valName) => {
+            locs.push(Local { name: valName.clone(), ty: valTy.clone(), addr: valAddr.clone() })
+        }
+        Option.None => {}
+    }
+    var bodyTerm = false
+    for bi in 0..body.len {
+        if genStmt(cg, *body[bi], locs, sigs, retTy) { bodyTerm = true }
+    }
+    while locs.len > locsPreLen { locs.pop() }
+    if !bodyTerm { emit(cg, "  br label %" + stepLbl.clone() + "\n") }
+}
+
 fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
     let condLbl = nextLabel(cg, "fcond")
     let bodyLbl = nextLabel(cg, "fbody")
@@ -111,9 +165,23 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
             if !bodyTerm { emit(cg, "  br label %" + stepLbl + "\n") }
         }
         _ => {
-            // Vec or string: copy the 3-word header, walk data by index.
+            // Vec, string, or HashMap: copy the 3-word header, walk by index.
             let obj = genExpr(cg, iterable, locs, sigs, "")
             let objLl = llType(obj.ty)
+            if isHashMapTy(obj.ty) {
+                genForInHashMap(cg, varName, varName2, obj, body, locs, sigs, retTy, condLbl, bodyLbl, stepLbl, endLbl, idxAddr)
+                emit(cg, stepLbl + ":\n")
+                let hCur = nextTemp(cg)
+                emit(cg, "  " + hCur + " = load i64, ptr " + idxAddr + "\n")
+                let hInc = nextTemp(cg)
+                emit(cg, "  " + hInc + " = add i64 " + hCur + ", 1\n")
+                emit(cg, "  store i64 " + hInc + ", ptr " + idxAddr + "\n")
+                emit(cg, "  br label %" + condLbl + "\n")
+                emit(cg, endLbl + ":\n")
+                cg.curBreakLbl = savedBreak
+                cg.curContLbl = savedCont
+                return
+            }
             var elemTy = "u8"
             var container = "%String"
             if isVecTy(obj.ty) {

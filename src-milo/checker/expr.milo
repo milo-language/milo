@@ -843,7 +843,8 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
             error(ck, "cannot push to immutable Vec", cloneSpan(span))
         }
         let argType = checkExpr(ck, *args[0])
-        if !typeEq(elem, argType) && !typeEq(argType, tyUnknown()) {
+        if !typeEq(elem, argType) && !typeEq(argType, tyUnknown()) &&
+            !(isConstIntExpr(*args[0]) && isInteger(elem)) {
             error(ck, "push: expected " + typeName(elem) + ", got " + typeName(argType), cloneSpan(span))
         }
         tryMove(ck, *args[0])
@@ -898,10 +899,12 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         }
         let keyType = checkExpr(ck, *args[0])
         let valType = checkExpr(ck, *args[1])
-        if !typeEq(key, keyType) && !typeEq(keyType, tyUnknown()) {
+        if !typeEq(key, keyType) && !typeEq(keyType, tyUnknown()) &&
+            !(isConstIntExpr(*args[0]) && isInteger(key)) {
             error(ck, "insert key: expected " + typeName(key) + ", got " + typeName(keyType), cloneSpan(span))
         }
-        if !typeEq(val, valType) && !typeEq(valType, tyUnknown()) {
+        if !typeEq(val, valType) && !typeEq(valType, tyUnknown()) &&
+            !(isConstIntExpr(*args[1]) && isInteger(val)) {
             error(ck, "insert value: expected " + typeName(val) + ", got " + typeName(valType), cloneSpan(span))
         }
         tryMove(ck, *args[0])
@@ -917,6 +920,23 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         if args.len != 1 { error(ck, "'contains' expects 1 argument (key)", cloneSpan(span)) }
         if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyBool()
+    }
+    if method == "getOrDefault" {
+        if args.len != 2 {
+            error(ck, "'getOrDefault' expects 2 arguments (key, default)", cloneSpan(span))
+            return val.clone()
+        }
+        let keyType = checkExpr(ck, *args[0])
+        let defType = checkExpr(ck, *args[1])
+        if !typeEq(key, keyType) && !typeEq(keyType, tyUnknown()) &&
+            !(isConstIntExpr(*args[0]) && isInteger(key)) {
+            error(ck, "getOrDefault key: expected " + typeName(key) + ", got " + typeName(keyType), cloneSpan(span))
+        }
+        if !typeEq(val, defType) && !typeEq(defType, tyUnknown()) &&
+            !(isConstIntExpr(*args[1]) && isInteger(val)) {
+            error(ck, "getOrDefault default: expected " + typeName(val) + ", got " + typeName(defType), cloneSpan(span))
+        }
+        return val.clone()
     }
     if method == "remove" {
         if args.len != 1 { error(ck, "'remove' expects 1 argument (key)", cloneSpan(span)) }

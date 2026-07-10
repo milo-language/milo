@@ -22,6 +22,7 @@ enumPayload
 fnArgI64Lit
 forBreak
 forContinue
+forHashmap
 forLoopReuse
 forNested
 forRange
@@ -30,6 +31,12 @@ forVec
 forVecString
 fstring
 functionCall
+hashmapBasic
+hashmapGetOrDefault
+hashmapGrow
+hashMapIterate
+hashmapOverwrite
+hashmapRemove
 hello
 hexConformance
 hexEscape
@@ -56,6 +63,7 @@ stdHex
 stdlibPrint
 stringBasic
 stringConcat
+stringEq
 stringFfi
 stringFn
 stringIndex
@@ -71,6 +79,7 @@ unsigned
 variables
 vecBasic
 vecGrow
+vecI64
 vecRefFn
 vecString
 voidMainExit

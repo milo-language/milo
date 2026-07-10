@@ -2,6 +2,7 @@
 from "src-milo/ast.milo" import { Expr, Stmt, StructLitField }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
+    isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -51,6 +52,13 @@ fn genFieldAccess(cg: &mut Cgen, object: &Expr, field: &string, locs: &Vec<Local
     if isVecTy(lv.ty) && field == "len" {
         let lenPtr = nextTemp(cg)
         emit(cg, "  " + lenPtr + " = getelementptr %Vec, ptr " + lv.v + ", i32 0, i32 1\n")
+        let lenT = nextTemp(cg)
+        emit(cg, "  " + lenT + " = load i64, ptr " + lenPtr + "\n")
+        return Val { v: lenT, ty: "i64" }
+    }
+    if isHashMapTy(lv.ty) && field == "len" {
+        let lenPtr = nextTemp(cg)
+        emit(cg, "  " + lenPtr + " = getelementptr %HashMap, ptr " + lv.v + ", i32 0, i32 1\n")
         let lenT = nextTemp(cg)
         emit(cg, "  " + lenT + " = load i64, ptr " + lenPtr + "\n")
         return Val { v: lenT, ty: "i64" }
@@ -153,6 +161,250 @@ fn genVecPush(cg: &mut Cgen, addr: &string, vecTy: &string, elemVal: &Val, locs:
     emit(cg, "  " + l1 + " = add i64 " + l + ", 1\n")
     emit(cg, "  store i64 " + l1 + ", ptr " + lPtr + "\n")
     return Val { v: "0", ty: "void" }
+}
+
+// -- HashMap runtime: flat { K, V } entry array, linear scan --
+
+fn genHashMapNew(cg: &mut Cgen, hintTy: &string): Val {
+    ensureHashMapTy(cg)
+    let a = nextTemp(cg)
+    emit(cg, "  " + a + " = insertvalue %HashMap undef, ptr null, 0\n")
+    let b = nextTemp(cg)
+    emit(cg, "  " + b + " = insertvalue %HashMap " + a + ", i64 0, 1\n")
+    let c = nextTemp(cg)
+    emit(cg, "  " + c + " = insertvalue %HashMap " + b + ", i64 0, 2\n")
+    var ty = hintTy.clone()
+    if !isHashMapTy(ty) { ty = "HashMap<i64, i64>" }
+    return Val { v: c, ty: ty }
+}
+
+// i1 temp that is true when two keys of keyTy compare equal
+fn genKeyEq(cg: &mut Cgen, keyTy: &string, a: &string, b: &string): string {
+    let keyLl = llType(keyTy)
+    if keyLl == "%String" {
+        let r = genStringEq(cg, a, b, true)
+        return r.v
+    }
+    let t = nextTemp(cg)
+    emit(cg, "  " + t + " = icmp eq " + keyLl + " " + a + ", " + b + "\n")
+    return t
+}
+
+// Scan loop shared by contains/getOrDefault/remove/insert: walks entries from
+// a data ptr + count, jumping to foundLbl with the index in idxAddr on key
+// match, or notFoundLbl after the last entry.
+fn genHashMapScan(cg: &mut Cgen, entryTy: &string, keyTy: &string, data: &string, count: &string, keyVal: &string, idxAddr: &string, foundLbl: &string, notFoundLbl: &string) {
+    let condLbl = nextLabel(cg, "hm.scan.cond")
+    let bodyLbl = nextLabel(cg, "hm.scan.body")
+    let stepLbl = nextLabel(cg, "hm.scan.step")
+    emit(cg, "  store i64 0, ptr " + idxAddr + "\n")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, condLbl + ":\n")
+    let i = nextTemp(cg)
+    emit(cg, "  " + i + " = load i64, ptr " + idxAddr + "\n")
+    let lt = nextTemp(cg)
+    emit(cg, "  " + lt + " = icmp slt i64 " + i + ", " + count + "\n")
+    emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + notFoundLbl + "\n")
+    emit(cg, bodyLbl + ":\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + entryTy + ", ptr " + data + ", i64 " + i + "\n")
+    let kp = nextTemp(cg)
+    emit(cg, "  " + kp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 0\n")
+    let k = nextTemp(cg)
+    emit(cg, "  " + k + " = load " + llType(keyTy) + ", ptr " + kp + "\n")
+    let eq = genKeyEq(cg, keyTy, k, keyVal)
+    emit(cg, "  br i1 " + eq + ", label %" + foundLbl + ", label %" + stepLbl + "\n")
+    emit(cg, stepLbl + ":\n")
+    let i1t = nextTemp(cg)
+    emit(cg, "  " + i1t + " = add i64 " + i + ", 1\n")
+    emit(cg, "  store i64 " + i1t + ", ptr " + idxAddr + "\n")
+    emit(cg, "  br label %" + condLbl + "\n")
+}
+
+// insert through the receiver's address: replace on key match, else append
+// (growing the entry array like Vec push).
+fn genHashMapInsert(cg: &mut Cgen, addr: &string, mapTy: &string, keyVal: &Val, valVal: &Val): Val {
+    ensureHashMapTy(cg)
+    ensureRealloc(cg)
+    let keyTy = hashMapKeyTy(mapTy)
+    let valTy = hashMapValTy(mapTy)
+    let entryTy = hmEntryTy(keyTy, valTy)
+    let keyLl = llType(keyTy)
+    let valLl = llType(valTy)
+
+    let dPtr = nextTemp(cg)
+    emit(cg, "  " + dPtr + " = getelementptr %HashMap, ptr " + addr.clone() + ", i32 0, i32 0\n")
+    let lPtr = nextTemp(cg)
+    emit(cg, "  " + lPtr + " = getelementptr %HashMap, ptr " + addr.clone() + ", i32 0, i32 1\n")
+    let cPtr = nextTemp(cg)
+    emit(cg, "  " + cPtr + " = getelementptr %HashMap, ptr " + addr.clone() + ", i32 0, i32 2\n")
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = load i64, ptr " + lPtr + "\n")
+    let cap = nextTemp(cg)
+    emit(cg, "  " + cap + " = load i64, ptr " + cPtr + "\n")
+
+    let idxAddr = nextTemp(cg)
+    emit(cg, "  " + idxAddr + " = alloca i64\n")
+    let foundLbl = nextLabel(cg, "hm.ins.found")
+    let missLbl = nextLabel(cg, "hm.ins.miss")
+    let doneLbl = nextLabel(cg, "hm.ins.done")
+    genHashMapScan(cg, entryTy, keyTy, d, l, keyVal.v, idxAddr, foundLbl, missLbl)
+
+    emit(cg, foundLbl + ":\n")
+    let fi = nextTemp(cg)
+    emit(cg, "  " + fi + " = load i64, ptr " + idxAddr + "\n")
+    let fslot = nextTemp(cg)
+    emit(cg, "  " + fslot + " = getelementptr " + entryTy + ", ptr " + d + ", i64 " + fi + "\n")
+    let fvp = nextTemp(cg)
+    emit(cg, "  " + fvp + " = getelementptr " + entryTy + ", ptr " + fslot + ", i32 0, i32 1\n")
+    emit(cg, "  store " + valLl + " " + valVal.v + ", ptr " + fvp + "\n")
+    emit(cg, "  br label %" + doneLbl + "\n")
+
+    emit(cg, missLbl + ":\n")
+    let full = nextTemp(cg)
+    emit(cg, "  " + full + " = icmp eq i64 " + l + ", " + cap + "\n")
+    let growLbl = nextLabel(cg, "hm.ins.grow")
+    let storeLbl = nextLabel(cg, "hm.ins.store")
+    emit(cg, "  br i1 " + full + ", label %" + growLbl + ", label %" + storeLbl + "\n")
+    emit(cg, growLbl + ":\n")
+    let isZero = nextTemp(cg)
+    emit(cg, "  " + isZero + " = icmp eq i64 " + cap + ", 0\n")
+    let dbl = nextTemp(cg)
+    emit(cg, "  " + dbl + " = mul i64 " + cap + ", 2\n")
+    let newCap = nextTemp(cg)
+    emit(cg, "  " + newCap + " = select i1 " + isZero + ", i64 8, i64 " + dbl + "\n")
+    let esz = genSizeOf(cg, entryTy)
+    let bytes = nextTemp(cg)
+    emit(cg, "  " + bytes + " = mul i64 " + newCap + ", " + esz + "\n")
+    let nd = nextTemp(cg)
+    emit(cg, "  " + nd + " = call ptr @realloc(ptr " + d + ", i64 " + bytes + ")\n")
+    emit(cg, "  store ptr " + nd + ", ptr " + dPtr + "\n")
+    emit(cg, "  store i64 " + newCap + ", ptr " + cPtr + "\n")
+    emit(cg, "  br label %" + storeLbl + "\n")
+    emit(cg, storeLbl + ":\n")
+    let dd = nextTemp(cg)
+    emit(cg, "  " + dd + " = load ptr, ptr " + dPtr + "\n")
+    let nslot = nextTemp(cg)
+    emit(cg, "  " + nslot + " = getelementptr " + entryTy + ", ptr " + dd + ", i64 " + l + "\n")
+    let nkp = nextTemp(cg)
+    emit(cg, "  " + nkp + " = getelementptr " + entryTy + ", ptr " + nslot + ", i32 0, i32 0\n")
+    emit(cg, "  store " + keyLl + " " + keyVal.v + ", ptr " + nkp + "\n")
+    let nvp = nextTemp(cg)
+    emit(cg, "  " + nvp + " = getelementptr " + entryTy + ", ptr " + nslot + ", i32 0, i32 1\n")
+    emit(cg, "  store " + valLl + " " + valVal.v + ", ptr " + nvp + "\n")
+    let l1 = nextTemp(cg)
+    emit(cg, "  " + l1 + " = add i64 " + l + ", 1\n")
+    emit(cg, "  store i64 " + l1 + ", ptr " + lPtr + "\n")
+    emit(cg, "  br label %" + doneLbl + "\n")
+    emit(cg, doneLbl + ":\n")
+    return Val { v: "0", ty: "void" }
+}
+
+// contains/getOrDefault: read-only scans over a loaded %HashMap value.
+fn genHashMapContains(cg: &mut Cgen, obj: &Val, keyVal: &Val): Val {
+    ensureHashMapTy(cg)
+    let keyTy = hashMapKeyTy(obj.ty)
+    let valTy = hashMapValTy(obj.ty)
+    let entryTy = hmEntryTy(keyTy, valTy)
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = extractvalue %HashMap " + obj.v + ", 0\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = extractvalue %HashMap " + obj.v + ", 1\n")
+    let resAddr = nextTemp(cg)
+    emit(cg, "  " + resAddr + " = alloca i1\n")
+    emit(cg, "  store i1 0, ptr " + resAddr + "\n")
+    let idxAddr = nextTemp(cg)
+    emit(cg, "  " + idxAddr + " = alloca i64\n")
+    let foundLbl = nextLabel(cg, "hm.has.found")
+    let endLbl = nextLabel(cg, "hm.has.end")
+    genHashMapScan(cg, entryTy, keyTy, d, l, keyVal.v, idxAddr, foundLbl, endLbl)
+    emit(cg, foundLbl + ":\n")
+    emit(cg, "  store i1 1, ptr " + resAddr + "\n")
+    emit(cg, "  br label %" + endLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = load i1, ptr " + resAddr + "\n")
+    return Val { v: r, ty: "bool" }
+}
+
+fn genHashMapGetOrDefault(cg: &mut Cgen, obj: &Val, keyVal: &Val, defVal: &Val): Val {
+    ensureHashMapTy(cg)
+    let keyTy = hashMapKeyTy(obj.ty)
+    let valTy = hashMapValTy(obj.ty)
+    let entryTy = hmEntryTy(keyTy, valTy)
+    let valLl = llType(valTy)
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = extractvalue %HashMap " + obj.v + ", 0\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = extractvalue %HashMap " + obj.v + ", 1\n")
+    let resAddr = nextTemp(cg)
+    emit(cg, "  " + resAddr + " = alloca " + valLl + "\n")
+    emit(cg, "  store " + valLl + " " + defVal.v + ", ptr " + resAddr + "\n")
+    let idxAddr = nextTemp(cg)
+    emit(cg, "  " + idxAddr + " = alloca i64\n")
+    let foundLbl = nextLabel(cg, "hm.god.found")
+    let endLbl = nextLabel(cg, "hm.god.end")
+    genHashMapScan(cg, entryTy, keyTy, d, l, keyVal.v, idxAddr, foundLbl, endLbl)
+    emit(cg, foundLbl + ":\n")
+    let fi = nextTemp(cg)
+    emit(cg, "  " + fi + " = load i64, ptr " + idxAddr + "\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + entryTy + ", ptr " + d + ", i64 " + fi + "\n")
+    let vp = nextTemp(cg)
+    emit(cg, "  " + vp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 1\n")
+    let fv = nextTemp(cg)
+    emit(cg, "  " + fv + " = load " + valLl + ", ptr " + vp + "\n")
+    emit(cg, "  store " + valLl + " " + fv + ", ptr " + resAddr + "\n")
+    emit(cg, "  br label %" + endLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = load " + valLl + ", ptr " + resAddr + "\n")
+    return Val { v: r, ty: valTy }
+}
+
+// remove through the receiver's address: swap the last entry into the hole.
+fn genHashMapRemove(cg: &mut Cgen, addr: &string, mapTy: &string, keyVal: &Val): Val {
+    ensureHashMapTy(cg)
+    let keyTy = hashMapKeyTy(mapTy)
+    let valTy = hashMapValTy(mapTy)
+    let entryTy = hmEntryTy(keyTy, valTy)
+    let dPtr = nextTemp(cg)
+    emit(cg, "  " + dPtr + " = getelementptr %HashMap, ptr " + addr.clone() + ", i32 0, i32 0\n")
+    let lPtr = nextTemp(cg)
+    emit(cg, "  " + lPtr + " = getelementptr %HashMap, ptr " + addr.clone() + ", i32 0, i32 1\n")
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = load i64, ptr " + lPtr + "\n")
+    let resAddr = nextTemp(cg)
+    emit(cg, "  " + resAddr + " = alloca i1\n")
+    emit(cg, "  store i1 0, ptr " + resAddr + "\n")
+    let idxAddr = nextTemp(cg)
+    emit(cg, "  " + idxAddr + " = alloca i64\n")
+    let foundLbl = nextLabel(cg, "hm.rm.found")
+    let endLbl = nextLabel(cg, "hm.rm.end")
+    genHashMapScan(cg, entryTy, keyTy, d, l, keyVal.v, idxAddr, foundLbl, endLbl)
+    emit(cg, foundLbl + ":\n")
+    let fi = nextTemp(cg)
+    emit(cg, "  " + fi + " = load i64, ptr " + idxAddr + "\n")
+    let last = nextTemp(cg)
+    emit(cg, "  " + last + " = sub i64 " + l + ", 1\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + entryTy + ", ptr " + d + ", i64 " + fi + "\n")
+    let lastSlot = nextTemp(cg)
+    emit(cg, "  " + lastSlot + " = getelementptr " + entryTy + ", ptr " + d + ", i64 " + last + "\n")
+    let moved = nextTemp(cg)
+    emit(cg, "  " + moved + " = load " + entryTy + ", ptr " + lastSlot + "\n")
+    emit(cg, "  store " + entryTy + " " + moved + ", ptr " + slot + "\n")
+    emit(cg, "  store i64 " + last + ", ptr " + lPtr + "\n")
+    emit(cg, "  store i1 1, ptr " + resAddr + "\n")
+    emit(cg, "  br label %" + endLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = load i1, ptr " + resAddr + "\n")
+    return Val { v: r, ty: "bool" }
 }
 
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
@@ -259,9 +511,37 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
             return genStringPush(cg, lv.v, ev.v)
         }
     }
+    // HashMap mutators also need the receiver's address, not a loaded copy
+    if method == "insert" || method == "remove" {
+        let lv = genLvalue(cg, object, locs, sigs)
+        if isHashMapTy(lv.ty) {
+            let keyTy = hashMapKeyTy(lv.ty)
+            let kv = genExpr(cg, *args[0], locs, sigs, keyTy)
+            if method == "insert" {
+                let valTy = hashMapValTy(lv.ty)
+                let vv = genExpr(cg, *args[1], locs, sigs, valTy)
+                return genHashMapInsert(cg, lv.v, lv.ty, kv, vv)
+            }
+            return genHashMapRemove(cg, lv.v, lv.ty, kv)
+        }
+    }
 
     let obj = genExpr(cg, object, locs, sigs, "")
     let objTyLl = llType(obj.ty)
+    if isHashMapTy(obj.ty) && method == "contains" {
+        let kv = genExpr(cg, *args[0], locs, sigs, hashMapKeyTy(obj.ty))
+        return genHashMapContains(cg, obj, kv)
+    }
+    if isHashMapTy(obj.ty) && method == "getOrDefault" {
+        let kv = genExpr(cg, *args[0], locs, sigs, hashMapKeyTy(obj.ty))
+        let dv = genExpr(cg, *args[1], locs, sigs, hashMapValTy(obj.ty))
+        return genHashMapGetOrDefault(cg, obj, kv, dv)
+    }
+    if isHashMapTy(obj.ty) && method == "len" {
+        let lenT = nextTemp(cg)
+        emit(cg, "  " + lenT + " = extractvalue %HashMap " + obj.v + ", 1\n")
+        return Val { v: lenT, ty: "i64" }
+    }
     if isVecTy(obj.ty) && method == "len" {
         let lenT = nextTemp(cg)
         emit(cg, "  " + lenT + " = extractvalue %Vec " + obj.v + ", 1\n")
@@ -604,6 +884,9 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         Expr.EnumLit(enumName, variant, args, span) => {
             if enumName == "Vec" && variant == "new" {
                 return genVecNew(cg, hintTy)
+            }
+            if enumName == "HashMap" && variant == "new" {
+                return genHashMapNew(cg, hintTy)
             }
             return genEnumLit(cg, enumName, variant, args, locs, sigs)
         }

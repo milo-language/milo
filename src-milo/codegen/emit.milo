@@ -39,6 +39,36 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
             if f.params.len > 0 { ps = ps + ", " }
             ps = ps + "..."
         }
+        // extern decls double as the runtime-helper declares — coordinate with
+        // the ensure* flags in either order (clang rejects a redefinition)
+        if f.name == "memcmp" {
+            if cg.declaredMemcmp { return }
+            cg.declaredMemcmp = true
+        }
+        if f.name == "memcpy" {
+            if cg.declaredMemcpy { return }
+            cg.declaredMemcpy = true
+        }
+        if f.name == "malloc" {
+            if cg.declaredMalloc { return }
+            cg.declaredMalloc = true
+        }
+        if f.name == "realloc" {
+            if cg.declaredRealloc { return }
+            cg.declaredRealloc = true
+        }
+        if f.name == "printf" {
+            if cg.declaredPrintf { return }
+            cg.declaredPrintf = true
+        }
+        if f.name == "putchar" {
+            if cg.declaredPutchar { return }
+            cg.declaredPutchar = true
+        }
+        if f.name == "snprintf" {
+            if cg.declaredSnprintf { return }
+            cg.declaredSnprintf = true
+        }
         emitG(cg, "declare " + llType(f.retType.name) + " @" + f.name + "(" + ps + ")\n")
         return
     }
