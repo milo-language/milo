@@ -138,7 +138,15 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
 
 // -- Monomorphize a generic enum --
 
-fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>): string {
+fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<TypeKind>): string {
+    // Result<T> sugar: the error type defaults to string
+    var typeArgs: Vec<TypeKind> = Vec.new()
+    for ai in 0..typeArgsIn.len {
+        typeArgs.push(typeArgsIn[ai].clone())
+    }
+    if baseName == "Result" && typeArgs.len == 1 {
+        typeArgs.push(TypeKind.TString)
+    }
     var mangled = baseName.clone() + "_"
     var i: i64 = 0
     while i < typeArgs.len {

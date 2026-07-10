@@ -82,6 +82,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     var locs: Vec<Local> = Vec.new()
     let retTyStr = resolveTyStr(cg, astTypeStr(f.retType))
     let retLl = llType(retTyStr)
+    cg.curRetTy = retTyStr.clone()
     var hdr = "define " + retLl + " @" + f.name + "("
     for pi in 0..f.params.len {
         if pi > 0 { hdr = hdr + ", " }

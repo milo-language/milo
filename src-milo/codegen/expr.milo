@@ -555,7 +555,7 @@ fn genArrayRepeat(cg: &mut Cgen, value: &Expr, count: i64, locs: &Vec<Local>, si
 // otherwise print the oracle's message shape and exit(1).
 fn genUnwrap(cg: &mut Cgen, inner: &Expr, span: &Option<Span>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let v = genExpr(cg, inner, locs, sigs, "")
-    let enumName = resolveEnumName(cg, stripPercent(v.ty))
+    let enumName = resolveEnumName(cg, resolveTyStr(cg, stripPercent(v.ty)))
     let enumTy = "%" + enumName
     let someTag = lookupVariantTag(cg, enumName, "Some")
     var okVariant = "Some"
@@ -638,10 +638,100 @@ fn genUnwrap(cg: &mut Cgen, inner: &Expr, span: &Option<Span>, locs: &Vec<Local>
     return Val { v: result, ty: payTy }
 }
 
+// `expr?` (M3d): Ok/Some yields the payload; Err/None returns early with the
+// enclosing fn's result type. Same-enum propagation returns the value as-is;
+// differing Result enums copy the Err payload when the slot types match
+// (auto-From conversions are not ported yet — fail loud instead of silently).
+fn genPropagate(cg: &mut Cgen, inner: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let v = genExpr(cg, inner, locs, sigs, "")
+    let srcEnum = resolveEnumName(cg, resolveTyStr(cg, stripPercent(v.ty)))
+    let srcTy = "%" + srcEnum
+    var okVariant = "Some"
+    var failVariant = "None"
+    if lookupVariantTag(cg, srcEnum, "Some") < 0 {
+        okVariant = "Ok"
+        failVariant = "Err"
+    }
+    let payloadTypes = lookupVariantPayload(cg, srcEnum, okVariant)
+    if payloadTypes.len != 1 {
+        eprint("codegen: '?' on non-propagatable type " + v.ty.clone())
+        exit(1)
+    }
+    let payTy = payloadTypes[0].clone()
+    let payLl = llType(payTy)
+    let retEnum = resolveEnumName(cg, stripPercent(cg.curRetTy))
+    let retTy = "%" + retEnum
+
+    let addr = nextTemp(cg)
+    emit(cg, "  " + addr + " = alloca " + srcTy + "\n")
+    emit(cg, "  store " + srcTy + " " + v.v + ", ptr " + addr + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + srcTy + ", ptr " + addr + ", i32 0, i32 0\n")
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
+    let okTag = lookupVariantTag(cg, srcEnum, okVariant)
+    let isOk = nextTemp(cg)
+    emit(cg, "  " + isOk + " = icmp eq i32 " + tag + ", " + okTag.toString() + "\n")
+    let okLbl = nextLabel(cg, "prop.ok")
+    let errLbl = nextLabel(cg, "prop.err")
+    emit(cg, "  br i1 " + isOk + ", label %" + okLbl + ", label %" + errLbl + "\n")
+
+    emit(cg, errLbl + ":\n")
+    if srcEnum == retEnum {
+        let whole = nextTemp(cg)
+        emit(cg, "  " + whole + " = load " + srcTy + ", ptr " + addr + "\n")
+        emit(cg, "  ret " + srcTy + " " + whole + "\n")
+    } else {
+        let retFail = lookupVariantTag(cg, retEnum, failVariant)
+        if retFail < 0 {
+            eprint("codegen: '?' cannot propagate " + srcEnum.clone() + " into fn returning " + retEnum.clone())
+            exit(1)
+        }
+        let retAddr = nextTemp(cg)
+        emit(cg, "  " + retAddr + " = alloca " + retTy + "\n")
+        let rTagPtr = nextTemp(cg)
+        emit(cg, "  " + rTagPtr + " = getelementptr " + retTy + ", ptr " + retAddr + ", i32 0, i32 0\n")
+        emit(cg, "  store i32 " + retFail.toString() + ", ptr " + rTagPtr + "\n")
+        if failVariant == "Err" {
+            let srcErrTypes = lookupVariantPayload(cg, srcEnum, "Err")
+            let retErrTypes = lookupVariantPayload(cg, retEnum, "Err")
+            if srcErrTypes.len == 1 && retErrTypes.len == 1 && llType(srcErrTypes[0]) == llType(retErrTypes[0]) {
+                let errLl = llType(srcErrTypes[0])
+                let sPay = nextTemp(cg)
+                emit(cg, "  " + sPay + " = getelementptr " + srcTy + ", ptr " + addr + ", i32 0, i32 1\n")
+                let sfp = nextTemp(cg)
+                emit(cg, "  " + sfp + " = getelementptr { " + errLl + " }, ptr " + sPay + ", i32 0, i32 0\n")
+                let ev = nextTemp(cg)
+                emit(cg, "  " + ev + " = load " + errLl + ", ptr " + sfp + "\n")
+                let rPay = nextTemp(cg)
+                emit(cg, "  " + rPay + " = getelementptr " + retTy + ", ptr " + retAddr + ", i32 0, i32 1\n")
+                let rfp = nextTemp(cg)
+                emit(cg, "  " + rfp + " = getelementptr { " + errLl + " }, ptr " + rPay + ", i32 0, i32 0\n")
+                emit(cg, "  store " + errLl + " " + ev + ", ptr " + rfp + "\n")
+            } else {
+                eprint("codegen: '?' error conversion (auto-From) not supported: " + srcEnum.clone() + " -> " + retEnum.clone())
+                exit(1)
+            }
+        }
+        let rWhole = nextTemp(cg)
+        emit(cg, "  " + rWhole + " = load " + retTy + ", ptr " + retAddr + "\n")
+        emit(cg, "  ret " + retTy + " " + rWhole + "\n")
+    }
+
+    emit(cg, okLbl + ":\n")
+    let payPtr = nextTemp(cg)
+    emit(cg, "  " + payPtr + " = getelementptr " + srcTy + ", ptr " + addr + ", i32 0, i32 1\n")
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = getelementptr { " + payLl + " }, ptr " + payPtr + ", i32 0, i32 0\n")
+    let result = nextTemp(cg)
+    emit(cg, "  " + result + " = load " + payLl + ", ptr " + fp + "\n")
+    return Val { v: result, ty: payTy }
+}
+
 // `expr ?? default`: Some/Ok payload, else the default.
 fn genDefaultValue(cg: &mut Cgen, inner: &Expr, defaultE: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let v = genExpr(cg, inner, locs, sigs, "")
-    let enumName = resolveEnumName(cg, stripPercent(v.ty))
+    let enumName = resolveEnumName(cg, resolveTyStr(cg, stripPercent(v.ty)))
     let enumTy = "%" + enumName
     var okVariant = "Some"
     if lookupVariantTag(cg, enumName, "Some") < 0 { okVariant = "Ok" }
@@ -1198,8 +1288,7 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return genDefaultValue(cg, *inner, *defaultE, locs, sigs)
         }
         Expr.Propagate(inner, span) => {
-            // TODO: result propagation codegen
-            return genExpr(cg, *inner, locs, sigs, hintTy)
+            return genPropagate(cg, *inner, locs, sigs)
         }
         _ => {
             return Val { v: "0", ty: "i64" }

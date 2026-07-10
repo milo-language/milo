@@ -71,7 +71,12 @@ letInWhile
 moveVarIntoEnumReturn
 multiWidthTypes
 nestedCalls
+optionSugar
 printFormat
+propagateOption
+propagateSome
+resultBasic
+resultPropagate
 resultTypedUnwrap
 returnConstIntCoerce
 returnI64Lit

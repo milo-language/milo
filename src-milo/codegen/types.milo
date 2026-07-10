@@ -64,6 +64,9 @@ struct Cgen {
     enums: HashMap<string, CgEnumInfo>,
     // Loop labels for break/continue
     curBreakLbl: string,
+    // enclosing fn's resolved return type string — `?` builds the early
+    // return from it
+    curRetTy: string,
     curContLbl: string,
     // Deduplication flags for extern declarations
     declaredPrintf: bool,
@@ -90,6 +93,7 @@ fn cgenNew(): Cgen {
         structs: HashMap.new(),
         enums: HashMap.new(),
         curBreakLbl: "",
+        curRetTy: "",
         curContLbl: "",
         declaredPrintf: false,
         declaredPutchar: false,
@@ -454,6 +458,26 @@ fn resolveTyStr(cg: &Cgen, s: &string): string {
     if lt <= 0 { return s.clone() }
     let base = s[0..lt].clone()
     if base == "Heap" { return s.clone() }
+    // Exact mangling first: "Result<i32,string>" → "Result_i32_string" is the
+    // checker's mangling scheme, so a registered decl matches directly even
+    // when several instantiations exist.
+    var mangled = ""
+    for i in 0..s.len {
+        let c = s[i]
+        if c == 60 || c == 44 {
+            mangled = mangled + "_"
+        } else if c == 62 || c == 32 {
+        } else {
+            mangled.push(c)
+        }
+    }
+    if cg.enums.contains(mangled) { return mangled }
+    if cg.structs.contains(mangled) { return mangled }
+    // Result<T> sugar mirrors the checker: E defaults to string
+    if base == "Result" {
+        let sugared = mangled + "_string"
+        if cg.enums.contains(sugared) { return sugared }
+    }
     let e = resolveEnumName(cg, base)
     if e != base { return e }
     let st = resolveStructName(cg, base)
