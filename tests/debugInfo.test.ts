@@ -106,6 +106,73 @@ fn main(): i32 {
 }
 `;
 
+const ENUM_SRC = `enum Shape {
+    Circle(f64),
+    Rect(f64, f64),
+    Empty,
+}
+enum Color { Red, Green, Blue }
+fn main(): i32 {
+    let s = Shape.Rect(3.0, 4.0)
+    let c = Color.Green
+    match s {
+        Shape.Rect(w, h) => { print(w * h) }
+        _ => { print(0.0) }
+    }
+    print(c == Color.Green)
+    return 0
+}
+`;
+
+test("enums emit an enumerated tag and a per-variant payload union", () => {
+  const f = join(tmpdir(), "milo_dbg_enum_ir.milo");
+  writeFileSync(f, ENUM_SRC);
+  try {
+    const ir = emitIr(f, true);
+    // tag is a real DWARF enumeration, not a bare i32
+    expect(ir).toMatch(/DW_TAG_enumeration_type, name: "Shape\$tag"/);
+    expect(ir).toContain(`!DIEnumerator(name: "Rect", value: 1)`);
+    // payload is a union of per-variant types; fieldless Empty contributes no member
+    expect(ir).toMatch(/DW_TAG_union_type, name: "Shape\$payload"/);
+    expect(ir).toMatch(/DW_TAG_structure_type, name: "Shape::Rect"/); // multi-field variant
+    expect(ir).not.toMatch(/DW_TAG_member, name: "Empty"/);
+    // all-fieldless enum collapses to the enumeration itself — no phantom payload
+    expect(ir).toMatch(/DW_TAG_enumeration_type, name: "Color"/);
+    expect(ir).not.toContain(`"Color$payload"`);
+
+    if (have("llvm-as")) {
+      const ll = join(tmpdir(), "milo_dbg_enum_ir.ll");
+      writeFileSync(ll, ir);
+      execSync(`llvm-as ${ll} -o /dev/null`, { stdio: ["pipe", "pipe", "pipe"] });
+      unlinkSync(ll);
+    }
+  } finally {
+    unlinkSync(f);
+  }
+});
+
+test("frame variable renders enum variants by name with typed payloads", () => {
+  if (!have("lldb")) return; // toolchain-gated
+  const f = join(tmpdir(), "milo_dbg_enum.milo");
+  const bin = join(tmpdir(), "milo_dbg_enum");
+  writeFileSync(f, ENUM_SRC);
+  try {
+    execSync(`bun run ${COMPILER} build ${f} -o ${bin} -g --debug`, { stdio: ["pipe", "pipe", "pipe"] });
+    const r = spawnSync("lldb", [bin,
+      "-o", "b milo_dbg_enum.milo:10", "-o", "run", "-o", "frame variable", "-o", "quit"],
+      { stdio: "pipe" });
+    const out = (r.stdout?.toString() ?? "") + (r.stderr?.toString() ?? "");
+    expect(out).toMatch(/tag = Rect/);              // named variant, not `tag = 1`
+    expect(out).toMatch(/Rect = \(_0 = 3, _1 = 4\)/); // f64 payload, not raw i64 bit patterns
+    expect(out).toMatch(/\(Color\)\s+c = Green/);   // fieldless enum: no payload slots at all
+  } finally {
+    unlinkSync(f);
+    try { rmSync(bin); } catch {}
+    try { rmSync(`${bin}.dSYM`, { recursive: true, force: true }); } catch {}
+    if (existsSync(`${bin}.dbg.o`)) unlinkSync(`${bin}.dbg.o`);
+  }
+});
+
 // -g --debug: -O0 keeps the allocas that dbg.declare binds, so locals are inspectable.
 test("frame variable inspects Milo locals, params, and structs (M2)", () => {
   if (!have("lldb")) return; // toolchain-gated
