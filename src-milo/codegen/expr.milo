@@ -897,6 +897,61 @@ fn genHeapDeref(cg: &mut Cgen, inner: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnS
 
 // -- Method calls --
 
+// In-place two-pointer reverse of a Vec, swapping element-sized blocks via
+// memcpy — mirrors the TS oracle's genVecReverse.
+fn genVecReverse(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
+    ensureMemcpy(cg)
+    let elemLl = llType(unwrapVec(vecTy))
+    let elemSz = genSizeOf(cg, elemLl)
+    let dataPtr = nextTemp(cg)
+    emit(cg, "  " + dataPtr + " = getelementptr %Vec, ptr " + addr + ", i32 0, i32 0\n")
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = load ptr, ptr " + dataPtr + "\n")
+    let lenPtr = nextTemp(cg)
+    emit(cg, "  " + lenPtr + " = getelementptr %Vec, ptr " + addr + ", i32 0, i32 1\n")
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = load i64, ptr " + lenPtr + "\n")
+    let tmp = nextTemp(cg)
+    emit(cg, "  " + tmp + " = alloca " + elemLl + "\n")
+    let loA = nextTemp(cg)
+    emit(cg, "  " + loA + " = alloca i64\n")
+    emit(cg, "  store i64 0, ptr " + loA + "\n")
+    let hiA = nextTemp(cg)
+    emit(cg, "  " + hiA + " = alloca i64\n")
+    let hiInit = nextTemp(cg)
+    emit(cg, "  " + hiInit + " = sub i64 " + len + ", 1\n")
+    emit(cg, "  store i64 " + hiInit + ", ptr " + hiA + "\n")
+    let condL = nextLabel(cg, "rev.cond")
+    let bodyL = nextLabel(cg, "rev.body")
+    let endL = nextLabel(cg, "rev.end")
+    emit(cg, "  br label %" + condL + "\n")
+    emit(cg, condL + ":\n")
+    let lo = nextTemp(cg)
+    emit(cg, "  " + lo + " = load i64, ptr " + loA + "\n")
+    let hi = nextTemp(cg)
+    emit(cg, "  " + hi + " = load i64, ptr " + hiA + "\n")
+    let cmp = nextTemp(cg)
+    emit(cg, "  " + cmp + " = icmp slt i64 " + lo + ", " + hi + "\n")
+    emit(cg, "  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL + "\n")
+    emit(cg, bodyL + ":\n")
+    let loP = nextTemp(cg)
+    emit(cg, "  " + loP + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + lo + "\n")
+    let hiP = nextTemp(cg)
+    emit(cg, "  " + hiP + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + hi + "\n")
+    emit(cg, "  call ptr @memcpy(ptr " + tmp + ", ptr " + loP + ", i64 " + elemSz + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + loP + ", ptr " + hiP + ", i64 " + elemSz + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + hiP + ", ptr " + tmp + ", i64 " + elemSz + ")\n")
+    let nlo = nextTemp(cg)
+    emit(cg, "  " + nlo + " = add i64 " + lo + ", 1\n")
+    emit(cg, "  store i64 " + nlo + ", ptr " + loA + "\n")
+    let nhi = nextTemp(cg)
+    emit(cg, "  " + nhi + " = sub i64 " + hi + ", 1\n")
+    emit(cg, "  store i64 " + nhi + ", ptr " + hiA + "\n")
+    emit(cg, "  br label %" + condL + "\n")
+    emit(cg, endL + ":\n")
+    return Val { v: "0", ty: "void" }
+}
+
 fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     // `push` grows the receiver in place, so it needs the address, not a loaded
     // copy. Resolve the lvalue before evaluating the object as a value.
@@ -910,6 +965,14 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         if llType(lv.ty) == "%String" {
             let ev = genExpr(cg, *args[0], locs, sigs, "u8")
             return genStringPush(cg, lv.v, ev.v)
+        }
+    }
+    // Vec.reverse mutates in place → needs the receiver address. (String.reverse
+    // is a different method — it falls through to the strReverse mapping below.)
+    if method == "reverse" {
+        let lv = genLvalue(cg, object, locs, sigs)
+        if isVecTy(lv.ty) {
+            return genVecReverse(cg, lv.v, lv.ty)
         }
     }
     // HashMap mutators also need the receiver's address, not a loaded copy
@@ -955,7 +1018,7 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     if objTyLl == "%String" && method == "clone" {
         return genStringClone(cg, obj.v)
     }
-    if objTyLl == "%String" && method == "substr" {
+    if objTyLl == "%String" && (method == "substr" || method == "slice") {
         let a = genExpr(cg, *args[0], locs, sigs, "i64")
         let b = genExpr(cg, *args[1], locs, sigs, "i64")
         return genStringSlice(cg, obj.v, a.v, b.v)
