@@ -16,6 +16,9 @@ break_drop
 breakContinue
 contracts
 dropStringReturn
+enumBasic
+enumMultiPayload
+enumPayload
 fnArgI64Lit
 forBreak
 forContinue
@@ -31,6 +34,9 @@ hello
 hexConformance
 hexEscape
 ifElse
+ifLetBasic
+ifLetElse
+ifLetResult
 importBasic
 importDedup
 importNamed

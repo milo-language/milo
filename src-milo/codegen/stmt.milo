@@ -209,6 +209,85 @@ fn genIf(cg: &mut Cgen, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Opti
 
 // -- Match statement --
 
+// -- If-let (M3b): a one-pattern match with an else path --
+
+fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+    let subjLv = genLvalue(cg, subject, locs, sigs)
+    let rawName = stripPercent(subjLv.ty)
+    let structTy = "%" + rawName
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 0\n")
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
+    let thenLbl = nextLabel(cg, "iflet.then")
+    let elseLbl = nextLabel(cg, "iflet.else")
+    let endLbl = nextLabel(cg, "iflet.end")
+
+    var thenTerm = false
+    match pattern {
+        Pattern.EnumPattern(enumName, variant, bindings, span) => {
+            let tg = lookupVariantTag(cg, enumName, variant)
+            let eq = nextTemp(cg)
+            emit(cg, "  " + eq + " = icmp eq i32 " + tag + ", " + tg.toString() + "\n")
+            emit(cg, "  br i1 " + eq + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
+            emit(cg, thenLbl + ":\n")
+            let locsPreLen = locs.len
+            if bindings.len > 0 {
+                let payloadTypes = lookupVariantPayload(cg, enumName, variant)
+                if payloadTypes.len > 0 {
+                    let payPtr = nextTemp(cg)
+                    emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 1\n")
+                    let vstructTy = variantStructTy(payloadTypes)
+                    for bi in 0..bindings.len {
+                        let ftyLl = llType(payloadTypes[bi])
+                        let fp = nextTemp(cg)
+                        emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 " + bi.toString() + "\n")
+                        let loaded = nextTemp(cg)
+                        emit(cg, "  " + loaded + " = load " + ftyLl + ", ptr " + fp + "\n")
+                        let bindAddr = nextTemp(cg)
+                        emit(cg, "  " + bindAddr + " = alloca " + ftyLl + "\n")
+                        emit(cg, "  store " + ftyLl + " " + loaded + ", ptr " + bindAddr + "\n")
+                        locs.push(Local { name: bindings[bi].clone(), ty: payloadTypes[bi].clone(), addr: bindAddr })
+                    }
+                }
+            }
+            for si in 0..thenBody.len {
+                if genStmt(cg, *thenBody[si], locs, sigs, retTy) { thenTerm = true }
+            }
+            while locs.len > locsPreLen { locs.pop() }
+        }
+        _ => {
+            // non-enum pattern: checker should have rejected; take the then path
+            emit(cg, "  br label %" + thenLbl + "\n")
+            emit(cg, thenLbl + ":\n")
+            for si in 0..thenBody.len {
+                if genStmt(cg, *thenBody[si], locs, sigs, retTy) { thenTerm = true }
+            }
+        }
+    }
+    if !thenTerm { emit(cg, "  br label %" + endLbl + "\n") }
+
+    emit(cg, elseLbl + ":\n")
+    var elseTerm = false
+    var hasElse = false
+    match elseBody {
+        Option.Some(stmts) => {
+            hasElse = true
+            for ei in 0..stmts.len {
+                if genStmt(cg, *stmts[ei], locs, sigs, retTy) { elseTerm = true }
+            }
+        }
+        Option.None => {}
+    }
+    if !elseTerm { emit(cg, "  br label %" + endLbl + "\n") }
+    emit(cg, endLbl + ":\n")
+    if thenTerm && elseTerm && hasElse {
+        emit(cg, "  unreachable\n")
+        return true
+    }
+    return false
+}
+
 fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let subjLv = genLvalue(cg, subject, locs, sigs)
     let rawName = stripPercent(subjLv.ty)
@@ -380,8 +459,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
             return term
         }
         Stmt.IfLetStmt(pattern, subject, thenBody, elseBody, span) => {
-            // TODO: if-let codegen
-            return false
+            return genIfLet(cg, *pattern, *subject, thenBody, elseBody, locs, sigs, retTy)
         }
     }
 }
