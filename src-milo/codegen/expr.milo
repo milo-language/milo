@@ -1,6 +1,7 @@
 // Expression codegen: literals, binops, unary, calls, field access, enums, casts
 from "src-milo/ast.milo" import { Expr, Stmt, StructLitField }
 from "src-milo/codegen/types.milo" import {
+    isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -10,7 +11,7 @@ from "src-milo/codegen/types.milo" import {
 }
 from "src-milo/codegen/strings.milo" import {
     genStringLit, genStringClone, genStringConcat, genStringEq,
-    genIntToString, genStringIndex, genStringSlice, emitStringLit
+    genIntToString, genStringIndex, genStringSlice, emitStringLit, genStringPush
 }
 
 // -- Struct literal --
@@ -46,8 +47,20 @@ fn genFieldAccess(cg: &mut Cgen, object: &Expr, field: &string, locs: &Vec<Local
         emit(cg, "  " + lenT + " = extractvalue %String " + loaded + ", 1\n")
         return Val { v: lenT, ty: "i64" }
     }
+    // Built-in: vec.len (a field, not a method, in the surface syntax)
+    if isVecTy(lv.ty) && field == "len" {
+        let lenPtr = nextTemp(cg)
+        emit(cg, "  " + lenPtr + " = getelementptr %Vec, ptr " + lv.v + ", i32 0, i32 1\n")
+        let lenT = nextTemp(cg)
+        emit(cg, "  " + lenT + " = load i64, ptr " + lenPtr + "\n")
+        return Val { v: lenT, ty: "i64" }
+    }
     let rawName = stripPercent(lv.ty)
     let idx = lookupFieldIndex(cg, rawName, field)
+    if idx < 0 {
+        eprint("codegen: no field '" + field.clone() + "' on " + lv.ty.clone())
+        exit(1)
+    }
     let fty = lookupFieldType(cg, rawName, idx)
     let ftyLl = llType(fty)
     let structTy = "%" + rawName
@@ -68,6 +81,78 @@ fn variantStructTy(payloadTypes: &Vec<string>): string {
     }
     s = s + " }"
     return s
+}
+
+// `Vec.new()` is an empty {data, len, cap}. Its element type is not recoverable
+// from the call, so it rides in on the caller's type hint (`var v: Vec<string> =
+// Vec.new()`), exactly as the let/var annotation supplies it in the checker.
+fn genVecNew(cg: &mut Cgen, hintTy: &string): Val {
+    ensureVecTy(cg)
+    let a = nextTemp(cg)
+    emit(cg, "  " + a + " = insertvalue %Vec undef, ptr null, 0\n")
+    let b = nextTemp(cg)
+    emit(cg, "  " + b + " = insertvalue %Vec " + a + ", i64 0, 1\n")
+    let c = nextTemp(cg)
+    emit(cg, "  " + c + " = insertvalue %Vec " + b + ", i64 0, 2\n")
+    var ty = hintTy.clone()
+    if !isVecTy(ty) { ty = "Vec<i64>" }
+    return Val { v: c, ty: ty }
+}
+
+// Append to a Vec through its address: growth has to be visible to the caller,
+// so this takes the receiver as an lvalue rather than a loaded value.
+fn genVecPush(cg: &mut Cgen, addr: &string, vecTy: &string, elemVal: &Val, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    ensureVecTy(cg)
+    ensureRealloc(cg)
+    let elemTy = unwrapVec(vecTy)
+    let elemLl = llType(elemTy)
+
+    let dPtr = nextTemp(cg)
+    emit(cg, "  " + dPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 0\n")
+    let lPtr = nextTemp(cg)
+    emit(cg, "  " + lPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 1\n")
+    let cPtr = nextTemp(cg)
+    emit(cg, "  " + cPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 2\n")
+
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = load i64, ptr " + lPtr + "\n")
+    let cap = nextTemp(cg)
+    emit(cg, "  " + cap + " = load i64, ptr " + cPtr + "\n")
+
+    let full = nextTemp(cg)
+    emit(cg, "  " + full + " = icmp eq i64 " + l + ", " + cap + "\n")
+    let growLbl = nextLabel(cg, "vec.grow")
+    let storeLbl = nextLabel(cg, "vec.store")
+    emit(cg, "  br i1 " + full + ", label %" + growLbl + ", label %" + storeLbl + "\n")
+
+    emit(cg, growLbl + ":\n")
+    let isZero = nextTemp(cg)
+    emit(cg, "  " + isZero + " = icmp eq i64 " + cap + ", 0\n")
+    let dbl = nextTemp(cg)
+    emit(cg, "  " + dbl + " = mul i64 " + cap + ", 2\n")
+    let newCap = nextTemp(cg)
+    emit(cg, "  " + newCap + " = select i1 " + isZero + ", i64 4, i64 " + dbl + "\n")
+    let esz = genSizeOf(cg, elemLl)
+    let bytes = nextTemp(cg)
+    emit(cg, "  " + bytes + " = mul i64 " + newCap + ", " + esz + "\n")
+    let nd = nextTemp(cg)
+    emit(cg, "  " + nd + " = call ptr @realloc(ptr " + d + ", i64 " + bytes + ")\n")
+    emit(cg, "  store ptr " + nd + ", ptr " + dPtr + "\n")
+    emit(cg, "  store i64 " + newCap + ", ptr " + cPtr + "\n")
+    emit(cg, "  br label %" + storeLbl + "\n")
+
+    emit(cg, storeLbl + ":\n")
+    let dd = nextTemp(cg)
+    emit(cg, "  " + dd + " = load ptr, ptr " + dPtr + "\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + dd + ", i64 " + l + "\n")
+    emit(cg, "  store " + elemLl + " " + elemVal.v.clone() + ", ptr " + slot + "\n")
+    let l1 = nextTemp(cg)
+    emit(cg, "  " + l1 + " = add i64 " + l + ", 1\n")
+    emit(cg, "  store i64 " + l1 + ", ptr " + lPtr + "\n")
+    return Val { v: "0", ty: "void" }
 }
 
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
@@ -105,6 +190,31 @@ fn genAsCast(cg: &mut Cgen, inner: &Expr, targetTy: &string, locs: &Vec<Local>, 
     if fromLl == toLl { return v }
     let fromBits = intBits(fromLl)
     let toBits = intBits(toLl)
+    // ptr <-> int needs ptrtoint/inttoptr, not bitcast. intBits("ptr") is 64, so
+    // without this `p as i64` lands in the equal-width bitcast branch below and
+    // clang rejects it.
+    if fromLl == "ptr" && toBits > 0 {
+        let pi = nextTemp(cg)
+        emit(cg, "  " + pi + " = ptrtoint ptr " + v.v + " to i64\n")
+        if toBits == 64 {
+            return Val { v: pi, ty: toLl }
+        }
+        let tr = nextTemp(cg)
+        emit(cg, "  " + tr + " = trunc i64 " + pi + " to " + toLl + "\n")
+        return Val { v: tr, ty: toLl }
+    }
+    if toLl == "ptr" && fromBits > 0 {
+        var src = v.v.clone()
+        if fromBits < 64 {
+            let ext = nextTemp(cg)
+            let op = if isUnsigned(v.ty) { "zext" } else { "sext" }
+            emit(cg, "  " + ext + " = " + op + " " + fromLl + " " + src + " to i64\n")
+            src = ext
+        }
+        let ip = nextTemp(cg)
+        emit(cg, "  " + ip + " = inttoptr i64 " + src + " to ptr\n")
+        return Val { v: ip, ty: "ptr" }
+    }
     if fromBits == 0 || toBits == 0 {
         return Val { v: v.v, ty: toLl }
     }
@@ -135,8 +245,28 @@ fn genHeapDeref(cg: &mut Cgen, inner: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnS
 // -- Method calls --
 
 fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    // `push` grows the receiver in place, so it needs the address, not a loaded
+    // copy. Resolve the lvalue before evaluating the object as a value.
+    if method == "push" {
+        let lv = genLvalue(cg, object, locs, sigs)
+        if isVecTy(lv.ty) {
+            let elemTy = unwrapVec(lv.ty)
+            let ev = genExpr(cg, *args[0], locs, sigs, elemTy)
+            return genVecPush(cg, lv.v, lv.ty, ev, locs, sigs)
+        }
+        if llType(lv.ty) == "%String" {
+            let ev = genExpr(cg, *args[0], locs, sigs, "u8")
+            return genStringPush(cg, lv.v, ev.v)
+        }
+    }
+
     let obj = genExpr(cg, object, locs, sigs, "")
     let objTyLl = llType(obj.ty)
+    if isVecTy(obj.ty) && method == "len" {
+        let lenT = nextTemp(cg)
+        emit(cg, "  " + lenT + " = extractvalue %Vec " + obj.v + ", 1\n")
+        return Val { v: lenT, ty: "i64" }
+    }
     if objTyLl == "%String" && method == "clone" {
         return genStringClone(cg, obj.v)
     }
@@ -178,6 +308,19 @@ fn genIndex(cg: &mut Cgen, obj: &Expr, idx: &Expr, locs: &Vec<Local>, sigs: &Vec
     if llType(o.ty) == "%String" {
         return genStringIndex(cg, o.v, i.v)
     }
+    if isVecTy(o.ty) {
+        let elemTy = unwrapVec(o.ty)
+        let elemLl = llType(elemTy)
+        let d = nextTemp(cg)
+        emit(cg, "  " + d + " = extractvalue %Vec " + o.v + ", 0\n")
+        let slot = nextTemp(cg)
+        emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i.v + "\n")
+        let v = nextTemp(cg)
+        emit(cg, "  " + v + " = load " + elemLl + ", ptr " + slot + "\n")
+        return Val { v: v, ty: elemTy }
+    }
+    eprint("codegen: cannot index type " + o.ty.clone())
+    exit(1)
     return Val { v: "0", ty: "i64" }
 }
 
@@ -423,6 +566,9 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return genFieldAccess(cg, *object, field, locs, sigs)
         }
         Expr.EnumLit(enumName, variant, args, span) => {
+            if enumName == "Vec" && variant == "new" {
+                return genVecNew(cg, hintTy)
+            }
             return genEnumLit(cg, enumName, variant, args, locs, sigs)
         }
         Expr.CastExpr(inner, targetType, span) => {

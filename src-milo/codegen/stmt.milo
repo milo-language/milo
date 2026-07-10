@@ -1,6 +1,6 @@
 // Statement codegen: let/var, assign, if, while, for, match, break/continue
 from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm }
-from "src-milo/codegen/types.milo" import {
+from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig,
     nextTemp, nextLabel, emit, llType, stripPercent,
     findLocal, genLoad,
@@ -173,7 +173,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
         Stmt.LetDecl(name, ty, value, span) => {
             var hintTy = ""
             match ty {
-                Option.Some(t) => { hintTy = t.name.clone() }
+                Option.Some(t) => { hintTy = astTypeStr(t) }
                 Option.None => {}
             }
             let v = genExpr(cg, *value, locs, sigs, hintTy)
@@ -187,7 +187,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
         Stmt.VarDecl(name, ty, value, span) => {
             var hintTy = ""
             match ty {
-                Option.Some(t) => { hintTy = t.name.clone() }
+                Option.Some(t) => { hintTy = astTypeStr(t) }
                 Option.None => {}
             }
             let v = genExpr(cg, *value, locs, sigs, hintTy)

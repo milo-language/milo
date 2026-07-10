@@ -25,11 +25,21 @@ from "src-milo/target.milo" import { getHostTarget }
 // The stdlib root is the directory *containing* `std/` (resolvePath joins it with
 // "std/io.milo"), not `std/` itself. Mirrors src/resolver.ts: MILO_ROOT wins,
 // otherwise walk up from the source file looking for std/prelude.milo.
-//
-// STILL NOT WIRED UP, but the blocker has moved: milo0 now *type-checks* the
-// prelude cleanly. It cannot *codegen* it — `genMethodCall` has no Vec runtime
-// (push/len/index) and no string `push`. Injecting the prelude therefore reddens
-// the `run` smoke gate. Wire this up once M3 closes the codegen gaps.
+// Intermediate artifact paths must be unique per process: `bun test` compiles
+// fixtures concurrently, and a shared /tmp/milo_out.ll had every milo-self build
+// clobbering its neighbours.
+extern fn getpid(): i32
+
+fn tmpPath(stem: &string, ext: &string): string {
+    var p = "/tmp/milo_"
+    p = p + stem.clone()
+    p = p + "_"
+    unsafe {
+        p = p + getpid().toString()
+    }
+    return p + ext.clone()
+}
+
 fn findStdlibRoot(sourceDir: &string): string {
     match getEnv("MILO_ROOT") {
         Option.Some(root) => { return root }
@@ -69,7 +79,7 @@ fn compile(path: string): string {
     // Resolve imports
     let target = getHostTarget()
     let sourceDir = pathDirname(path.clone())
-    let stdlibDir = pathJoin(sourceDir, "std")
+    let stdlibDir = findStdlibRoot(sourceDir)
     let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
 
     // Type check
@@ -143,7 +153,7 @@ fn main() {
         let program = parse(parser)
         let target = getHostTarget()
         let sourceDir = pathDirname(source.clone())
-        let stdlibDir = pathJoin(sourceDir, "std")
+        let stdlibDir = findStdlibRoot(sourceDir)
         let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
         var checker = newChecker()
         checkProgram(checker, resolved)
@@ -180,7 +190,7 @@ fn main() {
             }
         }
         // Write IR to temp file, invoke clang
-        let irFile = "/tmp/milo_out.ll"
+        let irFile = tmpPath("out", ".ll")
         writeFile(irFile, ir)
         let clangCmd = "clang -O2 -o " + output.clone() + " " + irFile
         var status: i32 = 127
@@ -198,9 +208,9 @@ fn main() {
 
     if cmd == "run" {
         let ir = compile(source.clone())
-        let irFile = "/tmp/milo_out.ll"
+        let irFile = tmpPath("out", ".ll")
         writeFile(irFile, ir)
-        let binary = "/tmp/milo_run"
+        let binary = tmpPath("run", "")
         let clangCmd = "clang -O2 -o " + binary + " " + irFile
         var status: i32 = 127
         match run(clangCmd) {

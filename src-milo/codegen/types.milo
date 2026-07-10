@@ -70,6 +70,8 @@ struct Cgen {
     declaredMemcmp: bool,
     declaredStringTy: bool,
     declaredSnprintf: bool,
+    declaredVecTy: bool,
+    declaredRealloc: bool,
 }
 
 fn cgenNew(): Cgen {
@@ -91,6 +93,8 @@ fn cgenNew(): Cgen {
         declaredMemcmp: false,
         declaredStringTy: false,
         declaredSnprintf: false,
+        declaredVecTy: false,
+        declaredRealloc: false,
     }
 }
 
@@ -164,6 +168,9 @@ fn llType(t: &string): string {
     if t.len >= 5 && t[0] == 72 && t[1] == 101 && t[2] == 97 && t[3] == 112 && t[4] == 60 {
         return "ptr"
     }
+    // Vec<T> — {data, len, cap}, like %String. Must precede the uppercase
+    // user-struct rule below, which would otherwise yield "%Vec<T>".
+    if isVecTy(t) { return "%Vec" }
     // Already an LLVM type (%Name)
     if t.len > 0 && t[0] == 37 { return t.clone() }
     // Uppercase = user struct
@@ -318,4 +325,67 @@ fn genLoad(cg: &mut Cgen, addr: &string, ty: &string): Val {
     let t = nextTemp(cg)
     emit(cg, "  " + t + " = load " + ty + ", ptr " + addr + "\n")
     return Val { v: t, ty: ty.clone() }
+}
+
+
+// "Vec<T>" — 'V','e','c','<'
+fn isVecTy(t: &string): bool {
+    return t.len >= 5 && t[0] == 86 && t[1] == 101 && t[2] == 99 && t[3] == 60
+}
+
+fn unwrapVec(t: &string): string {
+    if isVecTy(t) {
+        return t[4..t.len - 1].clone()
+    }
+    return t.clone()
+}
+
+fn ensureVecTy(cg: &mut Cgen) {
+    if !cg.declaredVecTy {
+        emitG(cg, "%Vec = type { ptr, i64, i64 }\n")
+        cg.declaredVecTy = true
+    }
+}
+
+fn ensureRealloc(cg: &mut Cgen) {
+    if !cg.declaredRealloc {
+        emitG(cg, "declare ptr @realloc(ptr, i64)\n")
+        cg.declaredRealloc = true
+    }
+}
+
+// Byte size of an LLVM type, computed by the compiler rather than a table —
+// %String and user structs have no fixed size we can hardcode.
+fn genSizeOf(cg: &mut Cgen, llTy: &string): string {
+    let p = nextTemp(cg)
+    emit(cg, "  " + p + " = getelementptr " + llTy.clone() + ", ptr null, i32 1\n")
+    let n = nextTemp(cg)
+    emit(cg, "  " + n + " = ptrtoint ptr " + p + " to i64\n")
+    return n
+}
+
+
+// Render an AST type back to milo0's internal type-name string. codegen keys
+// everything off these strings (llType, unwrapVec, unwrapHeap), and a bare
+// `ty.name` drops the type arguments -- `Vec<string>` would arrive as "Vec" and
+// its elements would be sized as i64.
+fn astTypeStr(ty: &MiloType): string {
+    if ty.isFn {
+        return "fn"
+    }
+    var base = ty.name.clone()
+    if ty.typeArgs.len > 0 {
+        base = base + "<"
+        for i in 0..ty.typeArgs.len {
+            if i > 0 {
+                base = base + ","
+            }
+            base = base + astTypeStr(ty.typeArgs[i])
+        }
+        base = base + ">"
+    }
+    if ty.isPtr {
+        return "*" + base
+    }
+    return base
 }

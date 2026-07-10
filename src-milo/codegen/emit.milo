@@ -1,6 +1,6 @@
 // Top-level codegen: function emission, program registration, IR assembly
 from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl }
-from "src-milo/codegen/types.milo" import {
+from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
     cgenNew, nextTemp, emit, emitG, llType, llTypeBytes
 }
@@ -15,11 +15,11 @@ fn buildFnTable(prog: &Program): Vec<CgFnSig> {
         // Read the fields through the borrow instead.
         var pts: Vec<string> = Vec.new()
         for j in 0..prog.functions[i].params.len {
-            pts.push(prog.functions[i].params[j].ty.name.clone())
+            pts.push(astTypeStr(prog.functions[i].params[j].ty))
         }
         sigs.push(CgFnSig {
             name: prog.functions[i].name.clone(),
-            retTy: prog.functions[i].retType.name.clone(),
+            retTy: astTypeStr(prog.functions[i].retType),
             paramTys: pts,
             isVariadic: prog.functions[i].isVariadic,
         })
@@ -33,7 +33,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
         var ps = ""
         for i in 0..f.params.len {
             if i > 0 { ps = ps + ", " }
-            ps = ps + llType(f.params[i].ty.name)
+            ps = ps + llType(astTypeStr(f.params[i].ty))
         }
         if f.isVariadic {
             if f.params.len > 0 { ps = ps + ", " }
@@ -50,7 +50,7 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     var hdr = "define " + retLl + " @" + f.name + "("
     for pi in 0..f.params.len {
         if pi > 0 { hdr = hdr + ", " }
-        hdr = hdr + llType(f.params[pi].ty.name) + " %" + f.params[pi].name
+        hdr = hdr + llType(astTypeStr(f.params[pi].ty)) + " %" + f.params[pi].name
     }
     hdr = hdr + ") {\n"
     emit(cg, hdr)
@@ -58,11 +58,11 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 
     // Spill parameters to allocas
     for pj in 0..f.params.len {
-        let llt = llType(f.params[pj].ty.name)
+        let llt = llType(astTypeStr(f.params[pj].ty))
         let addr = "%" + f.params[pj].name + "_addr"
         emit(cg, "  " + addr + " = alloca " + llt + "\n")
         emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
-        locs.push(Local { name: f.params[pj].name.clone(), ty: f.params[pj].ty.name.clone(), addr: addr })
+        locs.push(Local { name: f.params[pj].name.clone(), ty: astTypeStr(f.params[pj].ty), addr: addr })
     }
 
     var terminated = false
@@ -132,8 +132,8 @@ fn genProgram(prog: Program): string {
         for fi in 0..s.fields.len {
             let f = s.fields[fi].clone()
             if fi > 0 { llStruct = llStruct + ", " }
-            llStruct = llStruct + llType(f.ty.name)
-            fields.push(FieldInfo { name: f.name.clone(), ty: f.ty.name.clone() })
+            llStruct = llStruct + llType(astTypeStr(f.ty))
+            fields.push(FieldInfo { name: f.name.clone(), ty: astTypeStr(f.ty) })
         }
         llStruct = llStruct + " }"
         emitG(cg, "%" + s.name + " = type " + llStruct + "\n")

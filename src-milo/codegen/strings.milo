@@ -1,5 +1,6 @@
 // String codegen: literals, concat, equality, clone, int-to-string
 from "src-milo/codegen/types.milo" import {
+    ensureRealloc, nextLabel,
     Cgen, Val, emit, emitG, nextTemp, ensureStringTy, ensureMalloc, ensureMemcpy, ensureMemcmp
 }
 
@@ -211,4 +212,83 @@ fn genStringSlice(cg: &mut Cgen, sv: &string, av: &string, bv: &string): Val {
     let s1 = nextTemp(cg)
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
     return Val { v: s1, ty: "string" }
+}
+
+
+// Append one byte to a %String through its address. Keeps the NUL terminator so
+// the buffer stays printf-safe (print() passes the data pointer to %s).
+fn genStringPush(cg: &mut Cgen, addr: &string, byteVal: &string): Val {
+    ensureStringTy(cg)
+    ensureRealloc(cg)
+    let dPtr = nextTemp(cg)
+    emit(cg, "  " + dPtr + " = getelementptr %String, ptr " + addr.clone() + ", i32 0, i32 0\n")
+    let lPtr = nextTemp(cg)
+    emit(cg, "  " + lPtr + " = getelementptr %String, ptr " + addr.clone() + ", i32 0, i32 1\n")
+    let cPtr = nextTemp(cg)
+    emit(cg, "  " + cPtr + " = getelementptr %String, ptr " + addr.clone() + ", i32 0, i32 2\n")
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = load i64, ptr " + lPtr + "\n")
+    let cap = nextTemp(cg)
+    emit(cg, "  " + cap + " = load i64, ptr " + cPtr + "\n")
+
+    // need room for the new byte plus the NUL
+    let need = nextTemp(cg)
+    emit(cg, "  " + need + " = add i64 " + l + ", 2\n")
+    let small = nextTemp(cg)
+    emit(cg, "  " + small + " = icmp ult i64 " + cap + ", " + need + "\n")
+    let growLbl = nextLabel(cg, "str.grow")
+    let storeLbl = nextLabel(cg, "str.store")
+    emit(cg, "  br i1 " + small + ", label %" + growLbl + ", label %" + storeLbl + "\n")
+
+    emit(cg, growLbl + ":\n")
+    let dbl = nextTemp(cg)
+    emit(cg, "  " + dbl + " = mul i64 " + cap + ", 2\n")
+    let bigger = nextTemp(cg)
+    emit(cg, "  " + bigger + " = icmp ugt i64 " + dbl + ", " + need + "\n")
+    let newCap = nextTemp(cg)
+    emit(cg, "  " + newCap + " = select i1 " + bigger + ", i64 " + dbl + ", i64 " + need + "\n")
+    // cap == 0 means the buffer is a string literal living in .rodata, not a
+    // heap block — realloc'ing it is an invalid free. Copy it out instead.
+    let isStatic = nextTemp(cg)
+    emit(cg, "  " + isStatic + " = icmp eq i64 " + cap + ", 0\n")
+    let copyLbl = nextLabel(cg, "str.copy")
+    let reallocLbl = nextLabel(cg, "str.realloc")
+    let grownLbl = nextLabel(cg, "str.grown")
+    emit(cg, "  br i1 " + isStatic + ", label %" + copyLbl + ", label %" + reallocLbl + "\n")
+
+    emit(cg, copyLbl + ":\n")
+    ensureMalloc(cg)
+    ensureMemcpy(cg)
+    let fresh = nextTemp(cg)
+    emit(cg, "  " + fresh + " = call ptr @malloc(i64 " + newCap + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + fresh + ", ptr " + d + ", i64 " + l + ")\n")
+    emit(cg, "  br label %" + grownLbl + "\n")
+
+    emit(cg, reallocLbl + ":\n")
+    let grown = nextTemp(cg)
+    emit(cg, "  " + grown + " = call ptr @realloc(ptr " + d + ", i64 " + newCap + ")\n")
+    emit(cg, "  br label %" + grownLbl + "\n")
+
+    emit(cg, grownLbl + ":\n")
+    let nd = nextTemp(cg)
+    emit(cg, "  " + nd + " = phi ptr [ " + fresh + ", %" + copyLbl + " ], [ " + grown + ", %" + reallocLbl + " ]\n")
+    emit(cg, "  store ptr " + nd + ", ptr " + dPtr + "\n")
+    emit(cg, "  store i64 " + newCap + ", ptr " + cPtr + "\n")
+    emit(cg, "  br label %" + storeLbl + "\n")
+
+    emit(cg, storeLbl + ":\n")
+    let dd = nextTemp(cg)
+    emit(cg, "  " + dd + " = load ptr, ptr " + dPtr + "\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr i8, ptr " + dd + ", i64 " + l + "\n")
+    emit(cg, "  store i8 " + byteVal.clone() + ", ptr " + slot + "\n")
+    let l1 = nextTemp(cg)
+    emit(cg, "  " + l1 + " = add i64 " + l + ", 1\n")
+    emit(cg, "  store i64 " + l1 + ", ptr " + lPtr + "\n")
+    let nulSlot = nextTemp(cg)
+    emit(cg, "  " + nulSlot + " = getelementptr i8, ptr " + dd + ", i64 " + l1 + "\n")
+    emit(cg, "  store i8 0, ptr " + nulSlot + "\n")
+    return Val { v: "0", ty: "void" }
 }
