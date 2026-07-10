@@ -1,0 +1,41 @@
+// @expect: 4950
+// @expect: done
+
+from "std/runtime" import {
+    Promise
+}
+
+// Split a range across N OS threads, sum each chunk, combine. The per-chunk
+// results are collected by promiseAll's green task, which awaits each blocking
+// promise cross-thread (foreign send wakes the parked green task).
+fn sumRange(lo: i64, hi: i64): i64 {
+    var acc: i64 = 0
+    var i: i64 = lo
+    while i < hi {
+        acc = acc + i
+        i = i + 1
+    }
+    return acc
+}
+
+fn main(): i32 {
+    let n: i64 = 4
+    let chunk: i64 = 25
+    var ps: Vec<Promise<i64>> = Vec.new()
+    for k in 0..n {
+        let lo = k * chunk
+        let hi = lo + chunk
+        ps.push(Promise<i64>.blocking(move(): i64 => {
+            return sumRange(lo, hi)
+        }
+        ))
+    }
+    let parts = Promise.all(ps).await()!
+    var total: i64 = 0
+    for part in parts {
+        total = total + part
+    }
+    print(total)
+    print("done")
+    return 0
+}

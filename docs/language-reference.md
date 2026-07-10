@@ -1594,7 +1594,7 @@ Milo's primary concurrency model is **green tasks**: `Task.spawn` runs a closure
 | Stream of values over time | `Channel<T>` — producer `send`s + `close()`s, consumer `for val in ch` |
 | Fleet of fire-and-forget workers | `Task.spawn` + `WaitGroup` |
 | Wait on first-of-many sources | `std/select` |
-| CPU-bound work or blocking FFI | `Thread.spawn`, or a `parallel` block for a fixed few |
+| CPU-bound work or blocking FFI | `Promise.blocking(fn)` → `.await()!`; fan out across cores via `Promise.all` |
 | Shared mutable state across threads | `Mutex.withLock` / `RwLock`; plain counters and flags → atomics |
 
 Most programs need only the first row. `Promise` is the familiar promise/await model with no event loop and no function coloring, and `await()` frees the promise's resources itself — there is nothing to `destroy()`.
@@ -1763,6 +1763,34 @@ let results = Promise.all(tasks).await()!   // [resultA, resultB]
 ```
 
 Promises run on green threads with cooperative scheduling — no async/await coloring, no event loop. Blocking I/O automatically yields to other tasks.
+
+#### `Promise.blocking` — CPU-bound work and blocking FFI
+
+The green scheduler is single-threaded and cooperative: a closure that spins on the CPU or calls a C function that blocks never yields, so it starves every other task. `Promise.blocking(fn)` runs `fn` on a real OS thread instead — the one escape hatch for work that can't cooperate. The result comes back through the same `await()`, so from the caller's side it is just a `Promise`:
+
+```milo
+from "std/runtime" import { Promise }
+
+fn crunch(): i64 { /* heavy pure computation */ return 0 }
+
+let p = Promise<i64>.blocking(move (): i64 => { return crunch() })
+let r = p.await()!   // caller never blocks; the work runs in parallel
+```
+
+The closure's captures must be `Send` (it crosses to another thread) — the compiler enforces this exactly as for the closures below. Use `Promise.blocking` **only** for CPU-bound work or FFI that must block; ordinary I/O already yields on a plain `Promise`, so a thread would only add overhead.
+
+Split work across cores by fanning `Promise.blocking` handles into `Promise.all` — no dedicated parallel construct needed:
+
+```milo
+var parts: Vec<Promise<i64>> = Vec.new()
+for k in 0..8 {
+    let lo = k * 1000
+    parts.push(Promise<i64>.blocking(move (): i64 => { return sumRange(lo, lo + 1000) }))
+}
+let sums = Promise.all(parts).await()!   // 8 threads, joined through one await
+```
+
+Awaiting inside a green task is the normal case and keeps the scheduler running. Awaiting a `Promise.blocking` at the top level of `main` parks the main thread on the worker and does not simultaneously drive other green tasks — await from within a task (or use `schedulerRunToCompletion`) if you need concurrency during the wait.
 
 ### Channels
 

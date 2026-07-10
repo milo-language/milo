@@ -3865,6 +3865,22 @@ export class TypeChecker {
                 if (paramType.tag !== "ref") this.tryMove(expr.args[i]);
               }
               this.staticCalls.set(expr, mangledMethod);
+              // Send enforcement: Promise.blocking() runs the closure on a real
+              // OS thread, so all captures must be Send.
+              if (expr.enumName === "Promise" && expr.variant === "blocking" && expr.args.length === 1 && expr.args[0].kind === "Closure") {
+                const captures = this.closureCaptures.get(expr.args[0]);
+                if (captures) {
+                  for (const cap of captures) {
+                    if (!this.isSend(cap.type)) {
+                      this.error(
+                        `cannot send '${cap.name}' of type '${typeName(cap.type)}' across threads — type does not implement Send`,
+                        expr.args[0].span,
+                        this.whyNotSend(cap.type),
+                      );
+                    }
+                  }
+                }
+              }
               return this.setType(expr, sig.ret);
             }
           }
