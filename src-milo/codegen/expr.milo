@@ -1198,7 +1198,9 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     let t = nextTemp(cg)
     emit(cg, "  " + t + " = call " + sigStr + " @" + emitName + "(" + argStr + ")\n")
 
-    return Val { v: t, ty: retLl }
+    // carry the SURFACE type (Vec<string>, not %Vec) so field/method resolution
+    // on the result (`.len`, index, isVecTy) still works; llType(retTy)==retLl
+    return Val { v: t, ty: retTy }
 }
 
 // -- Lvalue (address-of) --

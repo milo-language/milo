@@ -177,8 +177,11 @@ fn genProgram(prog: Program): string {
         for fi in 0..s.fields.len {
             let f = s.fields[fi].clone()
             if fi > 0 { llStruct = llStruct + ", " }
-            llStruct = llStruct + llType(astTypeStr(f.ty))
-            fields.push(FieldInfo { name: f.name.clone(), ty: astTypeStr(f.ty) })
+            // mangle generic field types (Option<Span> -> Option_Span) so field
+            // access and match-on-field resolve the same mangled decl as locals do
+            let fty = resolveTyStr(cg, astTypeStr(f.ty))
+            llStruct = llStruct + llType(fty)
+            fields.push(FieldInfo { name: f.name.clone(), ty: fty })
         }
         llStruct = llStruct + " }"
         emitG(cg, "%" + s.name + " = type " + llStruct + "\n")
