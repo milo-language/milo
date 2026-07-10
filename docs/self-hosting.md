@@ -251,72 +251,67 @@ every auto-borrowed `*h` argument destroyed the pointee. `enum E { A(i64), B }`
 gated by `CHECK_MUST_PASS` / `RUN_MUST_PASS`, and `run` propagates the exit code
 (`return 7` → rc 7). `build -o` works.
 
-**Manifest is still empty.** One blocker left, and it is a real bug.
+**Manifest is still empty**, but the blocker has moved out of the checker.
 
-Fixed since the plan was written:
+milo0 now **type-checks the prelude cleanly** — `check` on a program that pulls in
+`std/prelude` → `std/string` reports zero errors, deterministically. Getting there
+took five oracle bugs and six milo0 bugs:
 
-1. ~~`print` is not a builtin in milo0.~~ Checker knows `print`/`println`/`eprint`;
-   codegen emits `printf` with a format string synthesized from the argument types.
-2. ~~Checker crashes on `std/prelude` → `std/string`.~~ Two root causes:
-   - *Oracle* (`1cd6e27`): `HashMap.get` did a bare `load`, so a heap-owning value's
-     copy aliased the map and a later `insert` on the same key dropped the old value
-     out from under it. `emitDeepCloneFromPtr` also punted on enums
-     (`TODO: full enum deep clone`); added `milo.clone.<enum>`. Gotcha: the clone
-     opens new basic blocks, so the `found` block stops being the phi's predecessor —
-     `opt -O2` says *"PHI node entries do not match predecessors"* while clang just
-     dies with `Bus error: 10`.
-   - *milo0* (`b916a5f`): `TRef(inner, ..) => inner.clone()` cloned `&Heap<TypeKind>`
-     one level too high, reinterpreting pointer bytes as a TypeKind (`*u1`).
-3. ~~No int-literal coercion.~~ Const-int coercion at binop / call args / return /
-   let annotations (`ce7fc22`).
-4. ~~`requires`/`ensures`, `Vec<T>` type args, `Vec.new()`, `substr`/`cstr`.~~
-   (`eb55e1b`) Contract clauses are plain identifiers to milo0's lexer, so the
-   parser fell into `error_unexpected` and never reached the body; `typeFromAst`
-   ignored `MiloType.typeArgs`, so `Vec<string>` came back as `TStruct("Vec")`.
-5. ~~Allocas in the clone helpers.~~ (`400a71f`) Helper bodies bypass the function
-   emitter, so `hoistAllocas` never ran — a Vec field's clone allocated once per
-   loop iteration.
+*Oracle (TS compiler) bugs found via milo0:*
+1. `1cd6e27` `HashMap.get` did a bare `load`, so a heap-owning value's copy aliased
+   the map; a later `insert` on the same key dropped the old value out from under
+   it. Added `milo.clone.<enum>` (`emitDeepCloneFromPtr` had punted on enums).
+   Gotcha: the clone opens new basic blocks, so the `found` block stops being the
+   phi's predecessor — `opt -O2` says *"PHI node entries do not match
+   predecessors"* while clang just dies with `Bus error: 10`.
+2. `400a71f` clone helper bodies bypass the function emitter, so `hoistAllocas`
+   never ran — a Vec field's clone allocated once per loop iteration.
+3. `234204f` **`h.m()` on a `Heap<T>` receiver passed the address of the Heap slot
+   (a ptr-to-ptr) as `&T`.** The checker unwraps the heap to resolve the method but
+   never told lower to deref. This was the big one: milo0's `deref()`,
+   `checkIndexAccess` and friends all write `inner.clone()` on a `&Heap<TypeKind>`
+   payload, so every `&T`, Vec-element and array-element type came back as a
+   TypeKind read out of a pointer's bytes. Hence `type mismatch in '+': string vs
+   f-255281472`, and ASan showing a jump into a zero-filled page.
+4. Earlier: `a49bfad` deref-of-borrowed-Heap in an argument position moved and
+   zeroed the caller's box; `ee5d379` enum payload sizing undersized a payload that
+   was itself an enum.
 
-Together these took a prelude-importing program from **161 errors → 8**.
+*milo0 bugs:* `inner.clone()` at the wrong level (`b916a5f`); no const-int-literal
+coercion (`ce7fc22`); `requires`/`ensures` unparsed, `typeFromAst` ignoring
+`typeArgs`, `Vec.new()` rejected, missing `substr`/`cstr` (`eb55e1b`); `checkAssign`
+type-checking its target as a *read* (so `word = ""` reported "use of moved
+variable 'word'"), and `checkReturn` poisoning later uses in a flow-insensitive
+checker (`0b99b22`).
 
-### The remaining blocker: nondeterministic corruption in milo0's checker
+Debugging notes worth keeping:
+- `check ... 2>&1 | wc -l` returning `0` means *no output* — a crash — not "zero
+  errors". This cost me a false celebration twice.
+- Plain `lldb` on the release build hangs and won't unwind. The ASan build gives a
+  deterministic fault; walk the frame-pointer chain by hand
+  (`p.ReadPointerFromMemory(fp)` / `fp+8`) to get the caller — that is what
+  fingered `checkIndexAccess`.
+- A probe that *binds* a container element (`v[0].clone()`) perturbs the very bug
+  it measures. Probe read-only through borrows.
+
+### Next: M3 — codegen gaps
 
 `findStdlibRoot` (MILO_ROOT, else walk up to `std/prelude.milo`) is written and
-documented in `src-milo/main.milo` but deliberately **not wired up** — wiring it
-makes every in-repo program inject the prelude and reddens both smoke gates.
+documented in `src-milo/main.milo` and still **not wired up**. Wiring it now
+reddens the `run` gate, because injecting the prelude means milo0 must *codegen*
+all of `std/string`, and it cannot:
 
-Repro (nondeterministic — run it several times):
-
-```sh
-mkdir -p /tmp/root && ln -s "$PWD/std" /tmp/root/std
-printf 'from "std/string" import { strTrim }
-fn main(): i32 { return 0 }
-' > /tmp/root/t.milo
-for i in 1 2 3 4 5; do .selfhost/milo-self check /tmp/root/t.milo; echo "rc=$?"; done
+```
+$ MILO_ROOT=$PWD .selfhost/milo-self run min.milo
+codegen: unsupported method 'push' on %Vec
 ```
 
-Alternates between 8 errors, 7 errors, and clean-with-no-output. One of the errors
-prints a garbage type name — `type mismatch in '+': string vs f-255281472` — i.e. a
-`TypeKind` is read after free (a `TFloat` with garbage bits).
-
-Under ASan (`--debug --sanitize`) it is a **SEGV/BUS on an invalid PC**, with the
-faulting address equal to `x8` and no module — an indirect jump through smashed
-memory. milo0 contains no indirect calls (no closures, no fn pointers, no trait
-objects in the checker), so a **return address is being overwritten**. ASan does not
-report the write itself, which points at a memcpy-family write or a store through a
-bad pointer rather than a plain stack-buffer overflow.
-
-Next steps: get a backtrace out of the ASan build under lldb (plain `lldb` on the
-release build hangs, and unoptimized frames don't unwind); suspect the newly added
-`milo.clone.<enum>` payload stores (a single-field variant stores `fieldTypes[0]`
-straight at the payload GEP) and the `emitDeepCloneFromPtr` `heap` branch. Bisect by
-reverting `1cd6e27` locally and re-running the repro — that tells you immediately
-whether the corruption predates the HashMap deep-clone work.
-
-The remaining 8 errors, once the corruption is fixed, are ordinary milo0 gaps:
-`use of moved variable 'result'/'word'/'token'` (move-checker false positives on a
-loop-carried Vec), `operator '+' requires numeric type, got string`, and
-`type mismatch: cannot assign i32 to i64`.
+`genMethodCall` in `src-milo/codegen/expr.milo` has no Vec runtime (push / len /
+index) and no string `push`. Its unknown-method fallback used to return
+`Val{v:"0", ty:"i64"}` silently, which surfaced 400 lines later as
+`trunc i64 0 to %String`; it now fails loud, so each gap names itself. Work the
+list until `MILO_ROOT=$PWD .selfhost/milo-self run min.milo` exits 0, then flip the
+two `stdlibDir` bindings to `findStdlibRoot(sourceDir)` and seed the manifest.
 
 The `emit-ir` diffing playbook works:
 `diff <(bun run src/main.ts emit-ir f.milo) <(.selfhost/milo-self emit-ir f.milo)`.
