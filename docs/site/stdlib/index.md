@@ -56,8 +56,8 @@ Import modules with `from "std/<name>" import { symbols }`.
 
 | Module | What it provides |
 |--------|-----------------|
-| [`std/thread`](thread) | `Thread.spawn` with move closures, `.join()`, `Thread.sleep(ms)` |
-| [`std/sync`](sync) | `Mutex`, `Channel`, `RwLock`, `AtomicI64`, `AtomicBool` — all method-based |
+| `std/runtime` | `Task.spawn`, `Promise` / `Promise.blocking`, green scheduler |
+| [`std/sync`](sync) | `Channel`, `WaitGroup`, `AtomicI64`, `AtomicBool` — all method-based |
 
 ## Database & Network
 

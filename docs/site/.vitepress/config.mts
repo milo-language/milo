@@ -129,7 +129,6 @@ export default defineConfig({
               text: 'Concurrency',
               collapsed: true,
               items: [
-                { text: 'std/thread', link: '/stdlib/thread' },
                 { text: 'std/sync', link: '/stdlib/sync' },
                 { text: 'std/runtime', link: '/stdlib/runtime' },
                 { text: 'std/event', link: '/stdlib/event' },

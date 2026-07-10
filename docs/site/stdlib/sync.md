@@ -1,22 +1,14 @@
 # std/sync
 
-Mutex, channel, rwlock, and atomic primitives for thread synchronization.
+Channel, wait-group, and atomic primitives for coordinating green tasks and `Promise.blocking` workers.
 
 ```milo
-from "std/sync" import { Mutex, Channel, RwLock, AtomicI64, AtomicBool }
+from "std/sync" import { Channel, WaitGroup, AtomicI64, AtomicBool }
 ```
+
+There is no `Mutex` or `RwLock`: green tasks never run in parallel, and parallel `Promise.blocking` workers share state through channels (pass ownership) or atomics (lock-free counters and flags). See [Concurrency](/language/concurrency).
 
 ## Types
-
-### Mutex
-
-```milo
-struct Mutex {
-    _handle: *u8,
-}
-```
-
-OS-level mutex. Must be destroyed after use to avoid resource leaks.
 
 ### Channel
 
@@ -26,17 +18,17 @@ struct Channel {
 }
 ```
 
-Bounded FIFO channel for sending `i64` values between threads. Blocks on send when full, blocks on recv when empty.
+Bounded FIFO channel for streaming values between green tasks and `Promise.blocking` workers. Blocks on send when full, blocks on recv when empty.
 
-### RwLock
+### WaitGroup
 
 ```milo
-struct RwLock {
-    _handle: *u8,
+struct WaitGroup {
+    _ptr: *u8,
 }
 ```
 
-Reader-writer lock: multiple concurrent readers OR one exclusive writer.
+Counting barrier — `add` before spawning, `done` from each task, `wait` for the counter to reach zero.
 
 ### AtomicI64
 
@@ -57,48 +49,6 @@ struct AtomicBool {
 ```
 
 Lock-free atomic boolean. All operations use sequential consistency.
-
-## Mutex Methods
-
-### Mutex.new
-
-```milo
-fn Mutex.new(): Result<Mutex>
-```
-
-Create a new unlocked mutex.
-
-### m.lock
-
-```milo
-fn lock(self: &Mutex): Result<i32>
-```
-
-Acquire the lock. Blocks if another thread holds it.
-
-### m.unlock
-
-```milo
-fn unlock(self: &Mutex): Result<i32>
-```
-
-Release the lock.
-
-### m.withLock
-
-```milo
-fn withLock(self: &Mutex, f: () => void): Result<i32>
-```
-
-Scoped locking — acquires, runs closure, unlocks. Guarantees unlock.
-
-### m.destroy
-
-```milo
-fn destroy(self: &Mutex): void
-```
-
-Free the underlying OS mutex resource.
 
 ## Channel Methods
 
@@ -158,63 +108,47 @@ fn destroy(self: &Channel): void
 
 Free the underlying channel resource.
 
-## RwLock Methods
+## WaitGroup Methods
 
-### RwLock.new
-
-```milo
-fn RwLock.new(): Result<RwLock>
-```
-
-Create a new reader-writer lock.
-
-### r.read
+### WaitGroup.new
 
 ```milo
-fn read(self: &RwLock): Result<i32>
+fn WaitGroup.new(): WaitGroup
 ```
 
-Acquire a read lock. Multiple readers allowed simultaneously.
+Create a new wait group with a zero counter.
 
-### r.write
+### wg.add
 
 ```milo
-fn write(self: &RwLock): Result<i32>
+fn add(self: &WaitGroup, n: i64): void
 ```
 
-Acquire an exclusive write lock.
+Add `n` to the counter — call before spawning the tasks it tracks.
 
-### r.unlock
+### wg.done
 
 ```milo
-fn unlock(self: &RwLock): Result<i32>
+fn done(self: &WaitGroup): void
 ```
 
-Release the lock.
+Decrement the counter by one — call from each task when it finishes.
 
-### r.withReadLock
+### wg.wait
 
 ```milo
-fn withReadLock(self: &RwLock, f: () => void): Result<i32>
+fn wait(self: &WaitGroup): void
 ```
 
-Scoped read lock — acquires, runs closure, unlocks.
+Block until the counter reaches zero.
 
-### r.withWriteLock
+### wg.destroy
 
 ```milo
-fn withWriteLock(self: &RwLock, f: () => void): Result<i32>
+fn destroy(self: &WaitGroup): void
 ```
 
-Scoped write lock — acquires, runs closure, unlocks.
-
-### r.destroy
-
-```milo
-fn destroy(self: &RwLock): void
-```
-
-Free the underlying rwlock resource.
+Free the underlying wait-group resource.
 
 ## AtomicI64 Methods
 
@@ -318,29 +252,28 @@ Free the atomic resource.
 
 ## Example: Producer-Consumer
 
+The producer runs on a `Promise.blocking` worker so it makes progress while `main` consumes on the channel (a green producer would only run while the scheduler is driven):
+
 ```milo
-from "std/thread" import { Thread }
+from "std/runtime" import { Promise }
 from "std/sync" import { Channel }
 
 fn main(): i32 {
-    let ch = Channel.new(8)!
+    var ch = Channel<i64>.new(8)!
 
-    let t = Thread.spawn(move (): void => {
+    let producer = Promise<i64>.blocking(move (): i64 => {
         ch.send(10)!
         ch.send(20)!
         ch.send(30)!
-        ch.send(0)!
-    })!
+        ch.close()
+        return 0
+    })
 
-    while true {
-        let val = ch.recv()!
-        if val == 0 {
-            break
-        }
+    for val in ch {
         print(val)
     }
 
-    t.join()!
+    producer.await()!
     ch.destroy()
     print("done")
     return 0

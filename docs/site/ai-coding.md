@@ -70,13 +70,15 @@ std::thread t2([&]{ counter++; });
 ```
 
 ```milo
-// Milo — compile error
-var counter = 0
-Thread.spawn(() => { counter += 1 })  // ERROR: `counter` is not Send
-
-// correct version:
+// Milo — a plain captured var is a copy; a raw pointer to it isn't Send, so
+// there's no way to share unsynchronized mutable state across a blocking worker.
+// correct version — share via an atomic:
 let counter = AtomicI64.new(0)
-Thread.spawn(move () => { counter.add(1) })  // OK — AtomicI64 is Send
+let p = Promise<i64>.blocking(move (): i64 => {
+    counter.add(1)    // OK — AtomicI64 is Send + Sync
+    return 0
+})
+p.await()!
 ```
 
 ## vs. Rust: borrow checker fights

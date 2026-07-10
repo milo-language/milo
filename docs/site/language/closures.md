@@ -123,16 +123,20 @@ fn main(): i32 {
 
 Here, `makeAdder` returns a closure. The `move` keyword tells the compiler to take ownership of `n` rather than borrowing it. Without `move`, this would be a compile error because `n` would be a dangling reference once `makeAdder` returns.
 
-### Sending closures to threads
+### Sending closures to tasks
 
-Move closures are essential for concurrency. Because they own their data, there is no risk of dangling references across threads.
+Move closures are essential for concurrency. Because they own their data, there is no risk of dangling references across tasks or threads.
 
 ```milo
-let t = Thread.spawn(move (): void => {
-    print("running in another thread")
+from "std/runtime" import { Task }
+
+let t = Task.spawn(move (): void => {
+    print("running in a task")
 })
 t.join()
 ```
+
+A `Promise.blocking` closure runs on a real OS thread, so its captures must additionally be `Send` — the compiler enforces this. See [Concurrency](/language/concurrency).
 
 ### When to use `move`
 

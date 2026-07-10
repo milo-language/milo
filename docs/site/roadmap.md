@@ -17,21 +17,20 @@ The foundation is complete: primitive types, let/var bindings, if/else, while/fo
 
 ### Concurrency
 
-Full concurrency stack, from OS threads to lightweight green threads to structured promises:
+One model — green tasks — with a single OS-thread escape hatch. No async/await, no function coloring:
 
-- **OS threads** (`std/thread`): `Thread.spawn()` with move closures, `Thread.join()`
-- **Synchronization** (`std/sync`): `Mutex`, `RwLock`, `Channel<T>` (bounded FIFO, multi-producer, blocking + non-blocking), `AtomicI64`, `AtomicBool`
-- **Green threads** (`std/runtime`): stackful coroutines via ucontext (64KB stacks, guard pages, kqueue/epoll), cooperative scheduling, transparent async I/O — `stream.recv()`/`stream.send()` auto-yield on EAGAIN
-- **Promises** (`std/runtime`): `Promise<T>.run()`, `.await()`, `Promise.all()`, `Promise.race()` — structured concurrency over green threads
-- **Task API** (`std/runtime`): `Task.spawn()` for fire-and-forget lightweight concurrency
-- **No async/await**: write normal blocking code — it yields automatically in green thread context
+- **Green tasks** (`std/runtime`): stackful coroutines via ucontext (64KB guarded stacks, kqueue/epoll), cooperative scheduling — `Task.spawn()` for fire-and-forget, transparent async I/O (`stream.recv()`/`stream.send()` auto-yield on EAGAIN)
+- **Promises** (`std/runtime`): `Promise<T>.run()`, `.await()`, `Promise.all()`, `Promise.race()` — structured concurrency over green tasks
+- **OS-thread escape hatch** (`std/runtime`): `Promise<T>.blocking()` runs `Send` closures on a real thread for CPU-bound work or blocking FFI; result returns through the same `.await()`
+- **Synchronization** (`std/sync`): `Channel<T>` (bounded FIFO, multi-producer, blocking + non-blocking), `WaitGroup`, `AtomicI64`, `AtomicBool`; `select` (`std/select`)
+- **Go exit semantics**: when `main` returns the process exits and outstanding tasks are abandoned — wait explicitly, or drive with `schedulerRunToCompletion()`
 
 ### Standard Library (44 modules)
 
 I/O & system: io, fs, path, env, args, process, signal
 Networking: net, http, url
 Data: json, csv, toml, base64, hex, sqlite, arena, set
-Concurrency: thread, sync, runtime, event
+Concurrency: runtime, sync, select, event
 Strings: string, fmt, strconv, unicode, regex
 Math: math, random, sort
 CLI: argparse, color, log

@@ -486,34 +486,35 @@ fn main(): i32 {
 }
 ```
 
-### Threads and Channels
+### Tasks and Channels
 
-For CPU-bound parallelism, use OS threads. They communicate through typed channels:
+Green tasks communicate through typed channels. For CPU-bound producers that must run in parallel with the consumer, spawn the producer with `Promise.blocking` (a green producer only advances while the scheduler is driven):
 
 ```milo
-from "std/thread" import { Thread }
+from "std/runtime" import { Promise }
 from "std/sync" import { Channel }
 
 fn main(): i32 {
     var ch = Channel<i64>.new(8)!
 
-    let producer = Thread.spawn(move (): void => {
+    let producer = Promise<i64>.blocking(move (): i64 => {
         for i in 1..6 {
             ch.send(i as i64)!
         }
         ch.close()
-    })!
+        return 0
+    })
 
     for val in ch {
         print($"received: {val}")
     }
-    producer.join()!
+    producer.await()!
     ch.destroy()
     return 0
 }
 ```
 
-The compiler enforces thread safety — data sent across threads must implement `Send`. The standard library also includes mutexes, rwlocks, and atomics for shared mutable state.
+The compiler enforces thread safety — data captured by a `Promise.blocking` closure must implement `Send`. The standard library also includes wait groups and atomics for coordinating parallel workers.
 
 [Learn more](/language/concurrency)
 
