@@ -522,6 +522,16 @@ export class Codegen {
     return `  store ${ty} ${val}, ptr ${ptr}`;
   }
 
+  // Structural equality of two lvalue expressions, restricted to Ident and
+  // FieldAccess chains (no index/call — those may have side effects). Used to
+  // recognize `place = place + rhs` and to guard against aliasing self-assigns.
+  private lvalueMatches(a: HIRExpr, b: HIRExpr): boolean {
+    if (a.kind === "Ident" && b.kind === "Ident") return a.name === b.name;
+    if (a.kind === "FieldAccess" && b.kind === "FieldAccess")
+      return a.field === b.field && this.lvalueMatches(a.object, b.object);
+    return false;
+  }
+
   private needsDropCg(t: TypeKind): boolean {
     if (needsDrop(t)) return true;
     if (t.tag === "enum") return this.droppableEnums.has(t.name);
@@ -1270,17 +1280,18 @@ export class Codegen {
         return [lines, false];
       }
       case "Assign": {
-        // Optimization: `x = x + rhs` for strings → in-place append (amortized O(1)).
-        // The naive path allocates a fresh String each time which makes accumulation O(n^2).
+        // Optimization: `place = place + rhs` for strings → in-place append
+        // (amortized O(1)). The naive path allocates a fresh String each time,
+        // making accumulation O(n^2). Applies to any Ident/FieldAccess place
+        // (e.g. `cg.body = cg.body + s`), not just plain idents.
         if (
-          stmt.target.kind === "Ident" &&
+          (stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess") &&
           stmt.target.type.tag === "string" &&
           stmt.value.kind === "BinOp" &&
           stmt.value.op === "+" &&
-          stmt.value.left.kind === "Ident" &&
-          stmt.value.left.name === stmt.target.name &&
+          this.lvalueMatches(stmt.value.left, stmt.target) &&
           // Bail on `x = x + x` — overlapping memcpy is unsafe; let the slow path handle it.
-          !(stmt.value.right.kind === "Ident" && stmt.value.right.name === stmt.target.name)
+          !this.lvalueMatches(stmt.value.right, stmt.target)
         ) {
           const [rhsLines, rhsVal] = this.genExpr(stmt.value.right);
           lines.push(...rhsLines);
@@ -1293,7 +1304,13 @@ export class Codegen {
         lines.push(...valLines);
         const [targetLines, targetPtr, targetTy] = this.genLValue(stmt.target);
         lines.push(...targetLines);
-        if (stmt.target.kind === "Ident" && this.needsDropCg(stmt.target.type)) {
+        // Drop the old value at the target slot before overwriting it — for ANY
+        // place (Ident/FieldAccess/IndexAccess), not just idents, or reassigning
+        // a non-Copy field/element leaks its old buffer. Skip identity self-assign
+        // (`p = p`), where `val` still aliases the slot's live data.
+        const isLValueTarget =
+          stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess";
+        if (isLValueTarget && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
           this.emitDropValue(lines, targetPtr, stmt.target.type);
         }
         lines.push(this.valStore(valTy, val, targetPtr));
