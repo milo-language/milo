@@ -3,7 +3,7 @@ from "src-milo/ast.milo" import { Expr, Stmt, StructLitField, Span }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
-    resolveEnumName, resolveFnName, resolveTyStr, ensureExit, astTypeStr,
+    resolveEnumName, resolveFnName, resolveTyStr, ensureExit, ensureStrtod, astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -1004,6 +1004,42 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         let t = nextTemp(cg)
         emit(cg, "  " + t + " = call " + retLl + " @" + userFn + "(" + argStr + ")\n")
         return Val { v: t, ty: retTy }
+    }
+
+    // String methods are sugar for std/string free functions (`s.trim()` ->
+    // `strTrim(s)`): the name is `str` + Capitalized(method), receiver passed as
+    // the first arg. parseInt/toInt alias strParseInt; parseF64 is a strtod call.
+    if objTyLl == "%String" {
+        if method == "parseF64" || method == "parseFloat" || method == "toFloat" {
+            ensureStrtod(cg)
+            let dp = nextTemp(cg)
+            emit(cg, "  " + dp + " = extractvalue %String " + obj.v + ", 0\n")
+            let r = nextTemp(cg)
+            emit(cg, "  " + r + " = call double @strtod(ptr " + dp + ", ptr null)\n")
+            return Val { v: r, ty: "double" }
+        }
+        var sfn = ""
+        if method == "toInt" || method == "parseInt" {
+            sfn = "strParseInt"
+        } else {
+            var first = method[0]
+            if first >= 97 && first <= 122 { first = first - 32 }
+            sfn = "str"
+            sfn.push(first)
+            sfn = sfn + method[1..method.len].clone()
+        }
+        if cg.fnRets.contains(sfn) {
+            var argStr = "%String " + obj.v
+            for ai in 0..args.len {
+                let av = genExpr(cg, *args[ai], locs, sigs, "")
+                argStr = argStr + ", " + llType(av.ty) + " " + av.v
+            }
+            let retTy = resolveTyStr(cg, lookupFnRet(cg, sfn))
+            let retLl = llType(retTy)
+            let t = nextTemp(cg)
+            emit(cg, "  " + t + " = call " + retLl + " @" + sfn + "(" + argStr + ")\n")
+            return Val { v: t, ty: retTy }
+        }
     }
 
     // A silent placeholder here becomes invalid IR much later (`trunc i64 0 to
