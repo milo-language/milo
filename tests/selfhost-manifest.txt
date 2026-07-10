@@ -6,7 +6,52 @@
 #
 # One fixture name per line (no .milo extension). Blank lines and # comments
 # are ignored.
-#
-# Currently empty: milo-self aborts on every input, including
-# `fn main(): i32 { return 0 }` (M1). The harness exists so the next fix is
-# measurable and the breakage can't land silently again.
+
+arithmetic
+assignI64Lit
+booleanLogic
+break_drop
+breakContinue
+contracts
+dropStringReturn
+fnArgI64Lit
+functionCall
+hello
+ifElse
+importBasic
+importDedup
+importNamed
+importNamedMulti
+importString
+importTransitive
+intConstCoerce
+letInWhile
+multiWidthTypes
+nestedCalls
+printFormat
+returnConstIntCoerce
+returnI64Lit
+returnU32Lit
+stdBase64
+stdlibPrint
+stringBasic
+stringConcat
+stringFfi
+stringFn
+stringIndex
+stringLen
+structFieldMoveDrop
+structFn
+structMutate
+structs
+typeHints
+u64Arithmetic
+unicodeStringLiteral
+unsigned
+variables
+vecBasic
+vecGrow
+vecRefFn
+vecString
+voidMainExit
+whileLoop
