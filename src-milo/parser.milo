@@ -1015,6 +1015,14 @@ fn parsePrimary(p: &mut Parser): Expr {
                 typeArgs.push(parseType(p))
             }
             expect(p, TokKind.Gt)
+            // Type<Args>.method(args) — static call on an instantiated type,
+            // encoded as Call("Type.method", args, typeArgs)
+            var callName = tok.value.clone()
+            if at(p, TokKind.Dot) {
+                advance(p)
+                let methodName = expect(p, TokKind.Ident).value
+                callName = callName + "." + methodName
+            }
             expect(p, TokKind.LParen)
             var args: Vec<Heap<Expr>> = Vec.new()
             while !at(p, TokKind.RParen) {
@@ -1023,7 +1031,7 @@ fn parsePrimary(p: &mut Parser): Expr {
                 matchTok(p, TokKind.Comma)
             }
             expect(p, TokKind.RParen)
-            return Expr.Call(tok.value, args, typeArgs, s)
+            return Expr.Call(callName, args, typeArgs, s)
         }
         return Expr.Ident(tok.value, s)
     }
@@ -1106,7 +1114,9 @@ fn isTypeArgCall(p: &Parser): bool {
         }
         i = i + 1
     }
-    return peekN(p, i).kind == TokKind.LParen
+    // `(` = generic call; `.` = static method on an instantiated type
+    let after = peekN(p, i).kind
+    return after == TokKind.LParen || after == TokKind.Dot
 }
 
 fn parseArrayLit(p: &mut Parser): Expr {

@@ -3,7 +3,7 @@ from "src-milo/ast.milo" import { Expr, Stmt, StructLitField, Span }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
-    resolveEnumName, resolveFnName, resolveTyStr, ensureExit,
+    resolveEnumName, resolveFnName, resolveTyStr, ensureExit, astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -1015,9 +1015,15 @@ fn genFormat(cg: &mut Cgen, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Ve
     return acc
 }
 
-fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     if name == "format" {
         return genFormat(cg, args, locs, sigs)
+    }
+    // sizeOf<T>() — byte size of the instantiated type
+    if name == "sizeOf" && typeArgs.len == 1 {
+        let ll = llType(resolveTyStr(cg, astTypeStr(typeArgs[0])))
+        let sz = genSizeOf(cg, ll)
+        return Val { v: sz, ty: "i64" }
     }
     // Built-in Heap(expr)
     if name == "Heap" {
@@ -1249,7 +1255,7 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return Val { v: "0", ty: "i64" }
         }
         Expr.Call(name, args, typeArgs, span) => {
-            return genCall(cg, name, args, locs, sigs)
+            return genCall(cg, name, args, typeArgs, locs, sigs)
         }
         Expr.StructLit(name, fields, span) => {
             return genStructLit(cg, name, fields, locs, sigs)

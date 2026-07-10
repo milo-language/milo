@@ -136,6 +136,166 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
     return ty.clone()
 }
 
+
+// -- Type substitution inside monomorphized bodies --
+// cloneStmts alone leaves T inside bodies (sizeOf<T>(), `x as T`, `let v: T`).
+// These mirror the ast clone helpers with substituteMiloType at every
+// MiloType touchpoint.
+
+fn substOptType(t: &Option<MiloType>, tps: &Vec<string>, tas: &Vec<TypeKind>): Option<MiloType> {
+    match t {
+        Option.Some(ty) => { return Option.Some(substituteMiloType(ty, tps, tas)) }
+        Option.None => { return Option.None }
+    }
+}
+
+fn substExprs(v: &Vec<Heap<Expr>>, tps: &Vec<string>, tas: &Vec<TypeKind>): Vec<Heap<Expr>> {
+    var out: Vec<Heap<Expr>> = Vec.new()
+    for i in 0..v.len {
+        out.push(Heap(substExpr(*v[i], tps, tas)))
+    }
+    return out
+}
+
+fn substExpr(e: &Expr, tps: &Vec<string>, tas: &Vec<TypeKind>): Expr {
+    match e {
+        Expr.BinOp(op, l, r, span) => {
+            return Expr.BinOp(op.clone(), Heap(substExpr(*l, tps, tas)), Heap(substExpr(*r, tps, tas)), cloneSpan(span))
+        }
+        Expr.UnaryOp(op, operand, span) => {
+            return Expr.UnaryOp(op.clone(), Heap(substExpr(*operand, tps, tas)), cloneSpan(span))
+        }
+        Expr.Call(name, args, typeArgs, span) => {
+            var ta2: Vec<MiloType> = Vec.new()
+            for i in 0..typeArgs.len {
+                ta2.push(substituteMiloType(typeArgs[i], tps, tas))
+            }
+            return Expr.Call(name.clone(), substExprs(args, tps, tas), ta2, cloneSpan(span))
+        }
+        Expr.StructLit(name, fields, span) => {
+            var fs: Vec<StructLitField> = Vec.new()
+            for i in 0..fields.len {
+                fs.push(StructLitField { name: fields[i].name.clone(), value: Heap(substExpr(*fields[i].value, tps, tas)) })
+            }
+            return Expr.StructLit(name.clone(), fs, cloneSpan(span))
+        }
+        Expr.FieldAccess(obj, field, span) => {
+            return Expr.FieldAccess(Heap(substExpr(*obj, tps, tas)), field.clone(), cloneSpan(span))
+        }
+        Expr.ArrayLit(elems, span) => {
+            return Expr.ArrayLit(substExprs(elems, tps, tas), cloneSpan(span))
+        }
+        Expr.ArrayRepeat(value, count, span) => {
+            return Expr.ArrayRepeat(Heap(substExpr(*value, tps, tas)), count, cloneSpan(span))
+        }
+        Expr.IndexAccess(obj, index, span) => {
+            return Expr.IndexAccess(Heap(substExpr(*obj, tps, tas)), Heap(substExpr(*index, tps, tas)), cloneSpan(span))
+        }
+        Expr.EnumLit(enumName, variant, args, span) => {
+            return Expr.EnumLit(enumName.clone(), variant.clone(), substExprs(args, tps, tas), cloneSpan(span))
+        }
+        Expr.Unwrap(operand, span) => {
+            return Expr.Unwrap(Heap(substExpr(*operand, tps, tas)), cloneSpan(span))
+        }
+        Expr.Propagate(operand, span) => {
+            return Expr.Propagate(Heap(substExpr(*operand, tps, tas)), cloneSpan(span))
+        }
+        Expr.DefaultValue(operand, default, span) => {
+            return Expr.DefaultValue(Heap(substExpr(*operand, tps, tas)), Heap(substExpr(*default, tps, tas)), cloneSpan(span))
+        }
+        Expr.CastExpr(operand, targetType, span) => {
+            return Expr.CastExpr(Heap(substExpr(*operand, tps, tas)), substituteMiloType(targetType, tps, tas), cloneSpan(span))
+        }
+        Expr.MethodCall(obj, method, args, span) => {
+            return Expr.MethodCall(Heap(substExpr(*obj, tps, tas)), method.clone(), substExprs(args, tps, tas), cloneSpan(span))
+        }
+        Expr.Closure(params, retType, body, isMove, span) => {
+            var ps: Vec<Param> = Vec.new()
+            for i in 0..params.len {
+                ps.push(Param { name: params[i].name.clone(), ty: substituteMiloType(params[i].ty, tps, tas) })
+            }
+            return Expr.Closure(ps, substOptType(retType, tps, tas), substStmts(body, tps, tas), isMove, cloneSpan(span))
+        }
+        Expr.RangeExpr(start, end, span) => {
+            return Expr.RangeExpr(Heap(substExpr(*start, tps, tas)), Heap(substExpr(*end, tps, tas)), cloneSpan(span))
+        }
+        Expr.IsExpr(subject, pattern, span) => {
+            return Expr.IsExpr(Heap(substExpr(*subject, tps, tas)), Heap((*pattern).clone()), cloneSpan(span))
+        }
+        Expr.IfExpr(cond, thenE, elseE, span) => {
+            return Expr.IfExpr(Heap(substExpr(*cond, tps, tas)), Heap(substExpr(*thenE, tps, tas)), Heap(substExpr(*elseE, tps, tas)), cloneSpan(span))
+        }
+        Expr.IntLit(v, span) => { return Expr.IntLit(v, cloneSpan(span)) }
+        Expr.FloatLit(v, span) => { return Expr.FloatLit(v, cloneSpan(span)) }
+        Expr.BoolLit(v, span) => { return Expr.BoolLit(v, cloneSpan(span)) }
+        Expr.StringLit(v, span) => { return Expr.StringLit(v.clone(), cloneSpan(span)) }
+        Expr.CharLit(v, span) => { return Expr.CharLit(v, cloneSpan(span)) }
+        Expr.Ident(name, span) => { return Expr.Ident(name.clone(), cloneSpan(span)) }
+    }
+}
+
+fn substStmts(v: &Vec<Heap<Stmt>>, tps: &Vec<string>, tas: &Vec<TypeKind>): Vec<Heap<Stmt>> {
+    var out: Vec<Heap<Stmt>> = Vec.new()
+    for i in 0..v.len {
+        out.push(Heap(substStmt(*v[i], tps, tas)))
+    }
+    return out
+}
+
+fn substOptStmts(v: &Option<Vec<Heap<Stmt>>>, tps: &Vec<string>, tas: &Vec<TypeKind>): Option<Vec<Heap<Stmt>>> {
+    match v {
+        Option.Some(stmts) => { return Option.Some(substStmts(stmts, tps, tas)) }
+        Option.None => { return Option.None }
+    }
+}
+
+fn substStmt(s: &Stmt, tps: &Vec<string>, tas: &Vec<TypeKind>): Stmt {
+    match s {
+        Stmt.LetDecl(name, typeAnno, value, span) => {
+            return Stmt.LetDecl(name.clone(), substOptType(typeAnno, tps, tas), Heap(substExpr(*value, tps, tas)), cloneSpan(span))
+        }
+        Stmt.VarDecl(name, typeAnno, value, span) => {
+            return Stmt.VarDecl(name.clone(), substOptType(typeAnno, tps, tas), Heap(substExpr(*value, tps, tas)), cloneSpan(span))
+        }
+        Stmt.Assign(target, value, span) => {
+            return Stmt.Assign(Heap(substExpr(*target, tps, tas)), Heap(substExpr(*value, tps, tas)), cloneSpan(span))
+        }
+        Stmt.Return(value, span) => {
+            match value {
+                Option.Some(e) => { return Stmt.Return(Option.Some(Heap(substExpr(*e, tps, tas))), cloneSpan(span)) }
+                Option.None => { return Stmt.Return(Option.None, cloneSpan(span)) }
+            }
+        }
+        Stmt.IfStmt(cond, thenBody, elseBody, span) => {
+            return Stmt.IfStmt(Heap(substExpr(*cond, tps, tas)), substStmts(thenBody, tps, tas), substOptStmts(elseBody, tps, tas), cloneSpan(span))
+        }
+        Stmt.WhileStmt(cond, body, span) => {
+            return Stmt.WhileStmt(Heap(substExpr(*cond, tps, tas)), substStmts(body, tps, tas), cloneSpan(span))
+        }
+        Stmt.ExprStmt(e, span) => {
+            return Stmt.ExprStmt(Heap(substExpr(*e, tps, tas)), cloneSpan(span))
+        }
+        Stmt.MatchStmt(subject, arms, span) => {
+            var as2: Vec<MatchArm> = Vec.new()
+            for i in 0..arms.len {
+                as2.push(MatchArm { pattern: arms[i].pattern.clone(), body: substStmts(arms[i].body, tps, tas) })
+            }
+            return Stmt.MatchStmt(Heap(substExpr(*subject, tps, tas)), as2, cloneSpan(span))
+        }
+        Stmt.IfLetStmt(pattern, subject, thenBody, elseBody, span) => {
+            return Stmt.IfLetStmt(Heap((*pattern).clone()), Heap(substExpr(*subject, tps, tas)), substStmts(thenBody, tps, tas), substOptStmts(elseBody, tps, tas), cloneSpan(span))
+        }
+        Stmt.UnsafeBlock(body, span) => {
+            return Stmt.UnsafeBlock(substStmts(body, tps, tas), cloneSpan(span))
+        }
+        Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
+            return Stmt.ForInStmt(varName.clone(), cloneOptString(varName2), Heap(substExpr(*iterable, tps, tas)), substStmts(body, tps, tas), cloneSpan(span))
+        }
+        Stmt.BreakStmt(span) => { return Stmt.BreakStmt(cloneSpan(span)) }
+        Stmt.ContinueStmt(span) => { return Stmt.ContinueStmt(cloneSpan(span)) }
+    }
+}
+
 // -- Monomorphize a generic enum --
 
 fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<TypeKind>): string {
@@ -313,7 +473,7 @@ fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>)
         typeParams: Vec.new(),
         params: monoParams,
         retType: subRetType,
-        body: cloneStmts(generic.decl.body),
+        body: substStmts(generic.decl.body, generic.typeParams, typeArgs),
         isExtern: false,
         isVariadic: false,
     }
