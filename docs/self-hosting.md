@@ -478,7 +478,7 @@ while the language stagnates.
 | M1 fix crash | **done** — `check` + `run` green and gated | 2026-07-09 |
 | M2 attic HIR | not started | |
 | M3 codegen gaps | in progress — manifest 99/339. Landed: unwrap/default (M3c) with oracle panic shape; resolveTyStr carries generic args through fn signatures; hashmap runtime; generics (mono on demand, builtin Option/Result, get→Option<V>; codegen resolves mangled names by single-instantiation prefix — multi-instantiation is the next wall); user Drop hooks at scope end/returns (ref params excluded via Local.isRef); fixed arrays on the Vec runtime; vec index assignment (M3e). Known gaps: ref params lower BY VALUE (astTypeStr strips ref-ness — mutation through &mut param is lost, works only for read-only refs); `!`/`?` codegen still TODO stubs; latent prelude strContains miscompile (`memcmp(i8 …)`). Oracle miscompile #8 fixed en route: match on `*h` consumed the pointee through a borrow (`7bb8432`). | 2026-07-10 |
-| M4 self-compile | not started | |
+| M4 self-compile | in progress — milo-self type-checks src-milo file-by-file: tokens/ast/lexer CLEAN; parser: string-literal enum-ctor arg misparsed as ident (`Expr.Ident(\"error_unexpected\", s)` → undefined variable, 6× from one site — runtime misparse, next lead) + `parseF64`/`tokenize` visibility; diagnostics/hir: deref-of-unknown; target/resolver/lexTest/main: checker runaway (guard-killed at 2-3GB — bisect which construct loops). Move checker gained oracle-parity flow handling: inReturn suppression, terminated-branch discard, branch-isolated any-path joins. | 2026-07-10 |
 | M5 convergence | not started | |
 | M6 parity | not started | |
 
