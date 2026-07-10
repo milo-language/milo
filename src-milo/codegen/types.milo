@@ -265,7 +265,15 @@ fn lookupVariantPayload(cg: &Cgen, enumName: &string, variantName: &string): Vec
     let info = cg.enums.get(enumName)!
     for i in 0..info.variants.len {
         if info.variants[i].name == variantName {
-            return cloneStrings(info.variants[i].payloadTypes)
+            // Payloads are stored with full args but UNMANGLED (a mono enum like
+            // Option_i64 isn't registered yet when its container registers). Mangle
+            // here at read-time — codegen of bodies runs after all registration, so
+            // generic instantiations now resolve to their mono decl (%Option_i64).
+            var out: Vec<string> = Vec.new()
+            for j in 0..info.variants[i].payloadTypes.len {
+                out.push(resolveTyStr(cg, info.variants[i].payloadTypes[j]))
+            }
+            return out
         }
     }
     return Vec.new()

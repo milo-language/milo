@@ -144,10 +144,10 @@ fn genProgram(prog: Program): string {
             var payloadTypes: Vec<string> = Vec.new()
             var vBytes: i64 = 0
             for fi in 0..v.fields.len {
-                // full type, not just .name: a `Vec<TypeKind>` / `Heap<Expr>`
-                // payload must keep its args so match bindings recover len/index/
-                // deref (and generic instantiations mangle to their mono decl)
-                let pt = resolveTyStr(cg, astTypeStr(v.fields[fi]))
+                // full type, not just .name (a `Vec<TypeKind>`/`Heap<Expr>` payload
+                // must keep its args). Store UNMANGLED — mono enums aren't all
+                // registered yet; lookupVariantPayload mangles at read-time.
+                let pt = astTypeStr(v.fields[fi])
                 payloadTypes.push(pt.clone())
                 vBytes = vBytes + llTypeBytes(llType(pt))
             }
