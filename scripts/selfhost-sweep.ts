@@ -20,7 +20,9 @@ const MANIFEST = join(MILO_ROOT, "tests", "selfhost-manifest.txt");
 const CHILD_ENV = { ...process.env, MILO_ROOT };
 // 4 workers × 1.5GB compile cap = 6GB worst case, under the 8GB global cap on
 // a 16GB machine. 8×4GB default caps could outrun the watchdog and swap-thrash.
-const CONCURRENCY = 4;
+// milo-self is nondeterministic under parallel load (a few fixtures flip
+// pass/fail; pass serially) — use MILO_SWEEP_CONCURRENCY=1 for ratchet runs.
+const CONCURRENCY = Number(process.env.MILO_SWEEP_CONCURRENCY || 0) || 4;
 const COMPILE_MEM_MB = 1536;
 const RUN_MEM_MB = 512;
 

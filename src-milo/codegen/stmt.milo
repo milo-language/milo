@@ -3,7 +3,7 @@ from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig,
     nextTemp, nextLabel, emit, llType, stripPercent,
-    findLocal, genLoad,
+    findLocal, genLoad, isVecTy, unwrapVec,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
 }
 from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
@@ -56,6 +56,122 @@ fn genWhile(cg: &mut Cgen, cond: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<L
         if genStmt(cg, *body[bi], locs, sigs, retTy) { bodyTerm = true }
     }
     if !bodyTerm { emit(cg, "  br label %" + condLbl + "\n") }
+    emit(cg, endLbl + ":\n")
+    cg.curBreakLbl = savedBreak
+    cg.curContLbl = savedCont
+}
+
+// -- For-in loops (M3a): range, Vec, string bytes --
+
+// Widen an integer Val to i64 so range bounds of any width share one compare.
+fn widenToI64(cg: &mut Cgen, v: &Val): string {
+    let ll = llType(v.ty)
+    if ll == "i64" { return v.v.clone() }
+    let w = nextTemp(cg)
+    emit(cg, "  " + w + " = sext " + ll + " " + v.v + " to i64\n")
+    return w
+}
+
+fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable: &Expr, body: &Vec<Heap<Stmt>>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string) {
+    let condLbl = nextLabel(cg, "fcond")
+    let bodyLbl = nextLabel(cg, "fbody")
+    let stepLbl = nextLabel(cg, "fstep")
+    let endLbl = nextLabel(cg, "fend")
+    let savedBreak = cg.curBreakLbl.clone()
+    let savedCont = cg.curContLbl.clone()
+    cg.curBreakLbl = endLbl.clone()
+    // continue must run the increment, unlike while where it re-tests directly
+    cg.curContLbl = stepLbl.clone()
+
+    let idxAddr = nextTemp(cg)
+    emit(cg, "  " + idxAddr + " = alloca i64\n")
+
+    match iterable {
+        Expr.RangeExpr(startE, endE, span) => {
+            let sv = genExpr(cg, *startE, locs, sigs, "i64")
+            let ev = genExpr(cg, *endE, locs, sigs, "i64")
+            let s64 = widenToI64(cg, sv)
+            let e64 = widenToI64(cg, ev)
+            emit(cg, "  store i64 " + s64 + ", ptr " + idxAddr + "\n")
+            emit(cg, "  br label %" + condLbl + "\n")
+            emit(cg, condLbl + ":\n")
+            let cur = nextTemp(cg)
+            emit(cg, "  " + cur + " = load i64, ptr " + idxAddr + "\n")
+            let lt = nextTemp(cg)
+            emit(cg, "  " + lt + " = icmp slt i64 " + cur + ", " + e64 + "\n")
+            emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+            emit(cg, bodyLbl + ":\n")
+            let locsPreLen = locs.len
+            locs.push(Local { name: varName.clone(), ty: "i64", addr: idxAddr.clone() })
+            var bodyTerm = false
+            for bi in 0..body.len {
+                if genStmt(cg, *body[bi], locs, sigs, retTy) { bodyTerm = true }
+            }
+            while locs.len > locsPreLen { locs.pop() }
+            if !bodyTerm { emit(cg, "  br label %" + stepLbl + "\n") }
+        }
+        _ => {
+            // Vec or string: copy the 3-word header, walk data by index.
+            let obj = genExpr(cg, iterable, locs, sigs, "")
+            let objLl = llType(obj.ty)
+            var elemTy = "u8"
+            var container = "%String"
+            if isVecTy(obj.ty) {
+                elemTy = unwrapVec(obj.ty)
+                container = "%Vec"
+            } else if objLl == "%String" {
+                elemTy = "u8"
+                container = "%String"
+            } else {
+                eprint("codegen: cannot iterate type " + obj.ty.clone())
+                exit(1)
+            }
+            let elemLl = llType(elemTy)
+            let data = nextTemp(cg)
+            emit(cg, "  " + data + " = extractvalue " + container + " " + obj.v + ", 0\n")
+            let count = nextTemp(cg)
+            emit(cg, "  " + count + " = extractvalue " + container + " " + obj.v + ", 1\n")
+            // element slot, hoisted out of the loop so the body can rebind it
+            let elemAddr = nextTemp(cg)
+            emit(cg, "  " + elemAddr + " = alloca " + elemLl + "\n")
+            emit(cg, "  store i64 0, ptr " + idxAddr + "\n")
+            emit(cg, "  br label %" + condLbl + "\n")
+            emit(cg, condLbl + ":\n")
+            let cur = nextTemp(cg)
+            emit(cg, "  " + cur + " = load i64, ptr " + idxAddr + "\n")
+            let lt = nextTemp(cg)
+            emit(cg, "  " + lt + " = icmp slt i64 " + cur + ", " + count + "\n")
+            emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+            emit(cg, bodyLbl + ":\n")
+            let slot = nextTemp(cg)
+            emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + cur + "\n")
+            let elem = nextTemp(cg)
+            emit(cg, "  " + elem + " = load " + elemLl + ", ptr " + slot + "\n")
+            emit(cg, "  store " + elemLl + " " + elem + ", ptr " + elemAddr + "\n")
+            let locsPreLen = locs.len
+            locs.push(Local { name: varName.clone(), ty: elemTy.clone(), addr: elemAddr.clone() })
+            match varName2 {
+                Option.Some(idxName) => {
+                    locs.push(Local { name: idxName.clone(), ty: "i64", addr: idxAddr.clone() })
+                }
+                Option.None => {}
+            }
+            var bodyTerm = false
+            for bi in 0..body.len {
+                if genStmt(cg, *body[bi], locs, sigs, retTy) { bodyTerm = true }
+            }
+            while locs.len > locsPreLen { locs.pop() }
+            if !bodyTerm { emit(cg, "  br label %" + stepLbl + "\n") }
+        }
+    }
+
+    emit(cg, stepLbl + ":\n")
+    let stepCur = nextTemp(cg)
+    emit(cg, "  " + stepCur + " = load i64, ptr " + idxAddr + "\n")
+    let inc = nextTemp(cg)
+    emit(cg, "  " + inc + " = add i64 " + stepCur + ", 1\n")
+    emit(cg, "  store i64 " + inc + ", ptr " + idxAddr + "\n")
+    emit(cg, "  br label %" + condLbl + "\n")
     emit(cg, endLbl + ":\n")
     cg.curBreakLbl = savedBreak
     cg.curContLbl = savedCont
@@ -234,7 +350,7 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
             return false
         }
         Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
-            // TODO: for-in loop codegen (range + iterator)
+            genForIn(cg, varName, varName2, *iterable, body, locs, sigs, retTy)
             return false
         }
         Stmt.MatchStmt(subject, arms, span) => {
