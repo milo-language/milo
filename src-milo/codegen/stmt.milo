@@ -31,7 +31,25 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
             emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
         }
         Expr.IndexAccess(obj, idx, span) => {
-            // TODO: array/vec index assignment
+            // M3e: v[i] = x for Vec receivers (fixed arrays still pending)
+            let lv = genLvalue(cg, *obj, locs, sigs)
+            if isVecTy(lv.ty) {
+                let elemTy = unwrapVec(lv.ty)
+                let elemLl = llType(elemTy)
+                let dPtr = nextTemp(cg)
+                emit(cg, "  " + dPtr + " = getelementptr %Vec, ptr " + lv.v + ", i32 0, i32 0\n")
+                let d = nextTemp(cg)
+                emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+                let iv = genExpr(cg, *idx, locs, sigs, "i64")
+                let i64v = widenToI64(cg, iv)
+                let slot = nextTemp(cg)
+                emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i64v + "\n")
+                let v = genExpr(cg, value, locs, sigs, elemTy)
+                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
+            } else {
+                eprint("codegen: cannot index-assign type " + lv.ty.clone())
+                exit(1)
+            }
         }
         _ => {}
     }

@@ -481,6 +481,11 @@ fn astTypeStr(ty: &MiloType): string {
         }
         base = base + ">"
     }
+    // Fixed arrays lower onto the Vec runtime: same {ptr,len,cap} header, so
+    // len/index/iterate/index-assign all reuse the Vec paths.
+    if ty.isArray {
+        base = "Vec<" + base + ">"
+    }
     if ty.isPtr {
         return "*" + base
     }

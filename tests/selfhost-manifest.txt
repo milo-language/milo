@@ -7,6 +7,10 @@
 # One fixture name per line (no .milo extension). Blank lines and # comments
 # are ignored.
 arithmetic
+arrayLen
+arrayMutate
+arrayRepeat
+arrays
 assignI64Lit
 autoEq
 base64Conformance
@@ -23,6 +27,7 @@ enumBasic
 enumMultiPayload
 enumPayload
 fnArgI64Lit
+forArray
 forBreak
 forContinue
 forHashmap
@@ -89,6 +94,7 @@ u64Arithmetic
 unicodeStringLiteral
 unsigned
 variables
+vecAssign
 vecBasic
 vecGrow
 vecI64

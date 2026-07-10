@@ -457,6 +457,98 @@ fn genHashMapRemove(cg: &mut Cgen, addr: &string, mapTy: &string, keyVal: &Val):
     return Val { v: r, ty: "bool" }
 }
 
+// Fixed arrays lower onto the Vec runtime (see astTypeStr): a literal is a
+// malloc'd buffer with a {ptr, n, n} header.
+fn genArrayLit(cg: &mut Cgen, elems: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
+    ensureVecTy(cg)
+    ensureMalloc(cg)
+    var elemTy = "i64"
+    var haveTy = false
+    if isVecTy(hintTy) {
+        elemTy = unwrapVec(hintTy)
+        haveTy = true
+    }
+    var vals: Vec<Val> = Vec.new()
+    for i in 0..elems.len {
+        var h = ""
+        if haveTy { h = elemTy.clone() }
+        let v = genExpr(cg, *elems[i], locs, sigs, h)
+        if !haveTy {
+            elemTy = v.ty.clone()
+            haveTy = true
+        }
+        vals.push(v)
+    }
+    let elemLl = llType(elemTy)
+    let esz = genSizeOf(cg, elemLl)
+    let n = elems.len
+    let bytes = nextTemp(cg)
+    emit(cg, "  " + bytes + " = mul i64 " + n.toString() + ", " + esz + "\n")
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = call ptr @malloc(i64 " + bytes + ")\n")
+    for i in 0..vals.len {
+        let slot = nextTemp(cg)
+        emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + i.toString() + "\n")
+        emit(cg, "  store " + elemLl + " " + vals[i].v + ", ptr " + slot + "\n")
+    }
+    let a = nextTemp(cg)
+    emit(cg, "  " + a + " = insertvalue %Vec undef, ptr " + data + ", 0\n")
+    let b = nextTemp(cg)
+    emit(cg, "  " + b + " = insertvalue %Vec " + a + ", i64 " + n.toString() + ", 1\n")
+    let c = nextTemp(cg)
+    emit(cg, "  " + c + " = insertvalue %Vec " + b + ", i64 " + n.toString() + ", 2\n")
+    return Val { v: c, ty: "Vec<" + elemTy + ">" }
+}
+
+// [x; N] — evaluate once, fill N slots with an emitted loop (N can be large).
+fn genArrayRepeat(cg: &mut Cgen, value: &Expr, count: i64, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
+    ensureVecTy(cg)
+    ensureMalloc(cg)
+    var elemTy = "i64"
+    var h = ""
+    if isVecTy(hintTy) {
+        elemTy = unwrapVec(hintTy)
+        h = elemTy.clone()
+    }
+    let v = genExpr(cg, value, locs, sigs, h)
+    if !isVecTy(hintTy) { elemTy = v.ty.clone() }
+    let elemLl = llType(elemTy)
+    let esz = genSizeOf(cg, elemLl)
+    let bytes = nextTemp(cg)
+    emit(cg, "  " + bytes + " = mul i64 " + count.toString() + ", " + esz + "\n")
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = call ptr @malloc(i64 " + bytes + ")\n")
+    let iAddr = nextTemp(cg)
+    emit(cg, "  " + iAddr + " = alloca i64\n")
+    emit(cg, "  store i64 0, ptr " + iAddr + "\n")
+    let condLbl = nextLabel(cg, "arr.fill.cond")
+    let bodyLbl = nextLabel(cg, "arr.fill.body")
+    let endLbl = nextLabel(cg, "arr.fill.end")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, condLbl + ":\n")
+    let cur = nextTemp(cg)
+    emit(cg, "  " + cur + " = load i64, ptr " + iAddr + "\n")
+    let lt = nextTemp(cg)
+    emit(cg, "  " + lt + " = icmp slt i64 " + cur + ", " + count.toString() + "\n")
+    emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+    emit(cg, bodyLbl + ":\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + cur + "\n")
+    emit(cg, "  store " + elemLl + " " + v.v + ", ptr " + slot + "\n")
+    let inc = nextTemp(cg)
+    emit(cg, "  " + inc + " = add i64 " + cur + ", 1\n")
+    emit(cg, "  store i64 " + inc + ", ptr " + iAddr + "\n")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let a = nextTemp(cg)
+    emit(cg, "  " + a + " = insertvalue %Vec undef, ptr " + data + ", 0\n")
+    let b = nextTemp(cg)
+    emit(cg, "  " + b + " = insertvalue %Vec " + a + ", i64 " + count.toString() + ", 1\n")
+    let c = nextTemp(cg)
+    emit(cg, "  " + c + " = insertvalue %Vec " + b + ", i64 " + count.toString() + ", 2\n")
+    return Val { v: c, ty: "Vec<" + elemTy + ">" }
+}
+
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     // Generic enums are registered under their mangled name
     let rEnum = resolveEnumName(cg, enumName)
@@ -956,6 +1048,12 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         }
         Expr.IndexAccess(obj, idx, span) => {
             return genIndex(cg, *obj, *idx, locs, sigs)
+        }
+        Expr.ArrayLit(elems, span) => {
+            return genArrayLit(cg, elems, locs, sigs, hintTy)
+        }
+        Expr.ArrayRepeat(value, count, span) => {
+            return genArrayRepeat(cg, *value, count, locs, sigs, hintTy)
         }
         Expr.Unwrap(inner, span) => {
             // TODO: option unwrap codegen
