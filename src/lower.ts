@@ -812,6 +812,7 @@ class LowerCtx {
         const resolved = this.c.resolvedMethods.get(expr);
         if (resolved) {
           const sig = this.c.functions.get(resolved)!;
+          const heapRecv = this.c.heapMethodReceivers.has(expr);
           const allExprs = [expr.object, ...expr.args];
           const args: HIRArg[] = allExprs.map((a, i) => {
             const borrowed = this.c.autoBorrowed.get(a);
@@ -819,6 +820,15 @@ class LowerCtx {
             let lowered = this.lowerExpr(a);
             if (jsonType) {
               lowered = { kind: "JsonStringify", value: lowered, valueType: jsonType, type: { tag: "string" }, span: a.span };
+            }
+            // `h.m()` on a `Heap<T>` receiver means `(*h).m()`; make the deref
+            // explicit so codegen passes the pointee, not the Heap slot's address.
+            if (i === 0 && heapRecv) {
+              const ht = this.typeOf(expr.object);
+              const inner = ht && ht.tag === "heap" ? ht.inner
+                : ht && ht.tag === "ref" && ht.inner.tag === "heap" ? ht.inner.inner
+                : lowered.type;
+              lowered = { kind: "HeapDeref", operand: lowered, type: inner, span: a.span };
             }
             return {
               expr: lowered,

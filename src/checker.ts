@@ -78,6 +78,8 @@ export interface CheckResult {
   parallelCaptures: Map<Expr, CaptureInfo[]>;
   closureCalls: Map<Expr, TypeKind>;
   resolvedMethods: Map<Expr, string>;
+  // method calls whose receiver was auto-dereffed through a Heap<T>
+  heapMethodReceivers: Set<Expr>;
   resolvedOperators: Map<Expr, string>;
   fnFieldCalls: Set<Expr>;
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
@@ -198,6 +200,7 @@ export class TypeChecker {
   private genericImpls = new Map<string, { impl: import("./ast").ImplDecl; program: Program }[]>();
   private _pendingImplFns: Function[] = [];
   private resolvedMethods = new Map<Expr, string>();
+  private heapMethodReceivers = new Set<Expr>();
   private iteratorForIns = new Map<Stmt, { nextMethod: string; elemType: TypeKind; optionEnumName: string }>();
   private resolvedOperators = new Map<Expr, string>();
   private fnFieldCalls = new Set<Expr>();
@@ -1089,6 +1092,7 @@ export class TypeChecker {
       parallelCaptures: this.parallelCaptures,
       closureCalls: this.closureCalls,
       resolvedMethods: this.resolvedMethods,
+      heapMethodReceivers: this.heapMethodReceivers,
       resolvedOperators: this.resolvedOperators,
       fnFieldCalls: this.fnFieldCalls,
       propagateConversions: this.propagateConversions,
@@ -4496,7 +4500,11 @@ export class TypeChecker {
           // fall through to trait/inherent lookup for String
         }
 
-        // user-defined method resolution: inherent first, then traits
+        // user-defined method resolution: inherent first, then traits.
+        // A `Heap<T>` receiver resolves to T's method; record it so lower can
+        // insert the deref. Without it codegen passes the address of the Heap
+        // slot (a ptr-to-ptr) as `&T`.
+        if (objType.tag === "heap") this.heapMethodReceivers.add(expr);
         const derefOnce = objType.tag === "ref" ? objType.inner : objType.tag === "heap" ? objType.inner : objType;
         const bareObjType = derefOnce.tag === "ref" ? derefOnce.inner : derefOnce;
         // interface method dispatch — virtual call through itable
