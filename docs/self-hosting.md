@@ -320,17 +320,30 @@ implemented nowhere).
 instead of returning `Val{v:"0"}`, which used to surface 400 lines later as
 `trunc i64 0 to %String`. Each remaining gap names itself.
 
-Failure census over the 290 non-passing fixtures (before the f-string fix, which
-should clear a large slice of the OOB bucket):
+Landed since (2026-07-10): `Self` substitution in impl-method ASTs pushed to
+monomorphizedFns (checker resolved `Self` as a struct name and errored — cleared
+the whole 24-fixture `unknown struct 'Self'` bucket; user `Drop` impls still
+don't *fire* at scope end, that's a codegen gap); bool prints as `true`/`false`
+via select, matching TS.
 
-- **76** `array index out of bounds` — the `peekN` lookahead bug. Fixed; re-sweep pending.
-- **~45** generics not wired through (`unknown struct`, `undefined function` on
-  generic fns) — the `resultBasic`/`genericStruct` family. Biggest remaining theme.
-- **18** output mismatch — builds succeed, output wrong. **The scariest class**
-  (silent miscompiles) and exactly what the differential harness exists for. Worth
-  attacking before they hide behind other fixes.
-- **13** SIGTRAP during build + `unsupported method` — more codegen surface.
-- Long tail: closures, traits, Option/Result propagation, compound assignment, globals.
+Failure census 2026-07-10, manifest 51/338:
+
+- **123** "other" — dominated by lost type info in codegen (`no field 'len' on
+  i64`, `cannot index type i64`, bad IR types). Mostly the generics-not-wired
+  theme plus AST-codegen re-deriving types wrongly.
+- **~57** guard kills (memory/footprint) — milo-self allocates without bound
+  *while compiling* channel/atomics/arena fixtures. Real milo0 bugs (likely
+  runaway recursion or clone loops), all safely contained by the guard now.
+- **21** output mismatch — builds succeed, output wrong. The scariest class
+  (silent miscompiles); shrunk by the bool fix, `%.*s` vs `%s` string printing
+  is another known member.
+- **18** `undefined function` — arena*/closure-heavy stdlib fixtures.
+- **16** SIGTRAP during build, **15** `unsupported method` (String.slice,
+  HashMap insert/get/iterate — the M4 hard spot).
+- Sweep flakiness note: 2-3 fixtures pass/fail nondeterministically under the
+  4-way parallel sweep but pass serially (hexEscape seen both ways) — points at
+  uninitialized memory somewhere in milo-self; the serial harness is the
+  ratchet ground truth.
 
 Artifact paths are pid-suffixed (`/tmp/milo_out_<pid>.ll`): they were shared, so
 concurrent milo-self builds clobbered each other's IR — this undercounted a
@@ -440,7 +453,7 @@ while the language stagnates.
 | M0 harness | **done** (`bun test tests/selfhost.test.ts`) | 2026-07-09 |
 | M1 fix crash | **done** — `check` + `run` green and gated | 2026-07-09 |
 | M2 attic HIR | not started | |
-| M3 codegen gaps | in progress — manifest 48/338 | 2026-07-09 |
+| M3 codegen gaps | in progress — manifest 51/338 | 2026-07-10 |
 | M4 self-compile | not started | |
 | M5 convergence | not started | |
 | M6 parity | not started | |
