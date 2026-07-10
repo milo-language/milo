@@ -477,7 +477,7 @@ while the language stagnates.
 | M0 harness | **done** (`bun test tests/selfhost.test.ts`) | 2026-07-09 |
 | M1 fix crash | **done** — `check` + `run` green and gated | 2026-07-09 |
 | M2 attic HIR | not started | |
-| M3 codegen gaps | in progress — manifest 78/340 (hashmap runtime landed; get→Option blocked on builtin generic Option; latent prelude strContains miscompile: `memcmp(i8 …)`, repro `emit-ir forHashmap` grep memcmp) | 2026-07-10 |
+| M3 codegen gaps | in progress — manifest 86/340 (hashmap runtime + generics wired: mono on demand at use sites, builtin Option/Result, get→Option<V>; codegen resolves mangled names by single-instantiation prefix — multi-instantiation sites are the next wall. Latent prelude strContains miscompile: `memcmp(i8 …)`, repro `emit-ir forHashmap` grep memcmp) | 2026-07-10 |
 | M4 self-compile | not started | |
 | M5 convergence | not started | |
 | M6 parity | not started | |
