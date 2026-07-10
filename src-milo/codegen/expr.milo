@@ -336,7 +336,35 @@ fn genSlice(cg: &mut Cgen, obj: &Expr, a: &Expr, b: &Expr, locs: &Vec<Local>, si
 
 // -- Function calls --
 
+// f-strings lower to `format(parts...)`. Fold the parts into one %String:
+// string parts pass through, integers go via genIntToString.
+fn genFormat(cg: &mut Cgen, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    ensureStringTy(cg)
+    var acc = genStringLit(cg, "")
+    for i in 0..args.len {
+        let part = genExpr(cg, *args[i], locs, sigs, "")
+        let partLl = llType(part.ty)
+        var sv = part.v.clone()
+        if partLl != "%String" {
+            var widened = part.v.clone()
+            if partLl != "i64" {
+                let w = nextTemp(cg)
+                let op = if isUnsigned(part.ty) { "zext" } else { "sext" }
+                emit(cg, "  " + w + " = " + op + " " + partLl + " " + part.v + " to i64\n")
+                widened = w
+            }
+            let st = genIntToString(cg, widened)
+            sv = st.v.clone()
+        }
+        acc = genStringConcat(cg, acc.v, sv)
+    }
+    return acc
+}
+
 fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    if name == "format" {
+        return genFormat(cg, args, locs, sigs)
+    }
     // Built-in Heap(expr)
     if name == "Heap" {
         let inner = genExpr(cg, *args[0], locs, sigs, "")

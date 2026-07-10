@@ -343,6 +343,17 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
         return TypeKind.THeap(Heap(argType))
     }
 
+    // f-strings lower to `format(parts...)` in parseFString; it is a builtin, not
+    // a prelude function. Variadic, any displayable part, yields a string.
+    if func == "format" {
+        var fi: i64 = 0
+        while fi < args.len {
+            checkExpr(ck, *args[fi])
+            fi = fi + 1
+        }
+        return tyString()
+    }
+
     // print/println/eprint are compiler builtins (codegen/expr.milo genCall), not
     // prelude functions — the checker has to know them or every call is
     // "undefined function". Variadic; any displayable argument.

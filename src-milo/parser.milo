@@ -18,15 +18,29 @@ fn newParser(tokens: Vec<Token>): Parser {
 
 // -- Navigation helpers --
 
+// The token stream always ends with an Eof token, so clamping to the last token
+// is the same as "there is nothing more". Without this, lookahead past the end
+// (atAdjacent's `<<`/`>>` probe does exactly that on a trailing operand) indexes
+// one past the array and trips the bounds check.
 fn peek(p: &Parser): Token {
+    if p.pos >= p.tokens.len {
+        return p.tokens[p.tokens.len - 1]
+    }
     return p.tokens[p.pos]
 }
 
 fn peekN(p: &Parser, n: i64): Token {
-    return p.tokens[p.pos + n]
+    let i = p.pos + n
+    if i >= p.tokens.len {
+        return p.tokens[p.tokens.len - 1]
+    }
+    return p.tokens[i]
 }
 
 fn advance(p: &mut Parser): Token {
+    if p.pos >= p.tokens.len {
+        return p.tokens[p.tokens.len - 1]
+    }
     let tok = p.tokens[p.pos]
     p.pos = p.pos + 1
     return tok
@@ -1077,7 +1091,7 @@ fn parseFString(p: &mut Parser, raw: string, s: Option<Span>): Expr {
                         break
                     }
                 }
-                exprStr = exprStr + raw[i].toString()
+                exprStr.push(raw[i])
                 i = i + 1
             }
             // Re-lex and parse the embedded expression
@@ -1085,7 +1099,7 @@ fn parseFString(p: &mut Parser, raw: string, s: Option<Span>): Expr {
             var subParser = newParser(exprTokens)
             args.push(Heap(parseExpr(subParser)))
         } else {
-            lit = lit + raw[i].toString()
+            lit.push(raw[i])
             i = i + 1
         }
     }
