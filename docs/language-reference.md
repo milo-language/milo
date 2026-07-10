@@ -1586,6 +1586,19 @@ print(a != b)   // false
 
 Milo's primary concurrency model is **green tasks**: `Task.spawn` runs a closure on a cooperative, single-threaded scheduler. Blocking I/O and channel operations automatically yield to other tasks — there is no async/await coloring and no event loop to run by hand. `Promise<T>`, `Channel`, `select`, and `WaitGroup` all park the *task* (not the OS thread), so they compose freely. OS `Thread`/`Mutex`/`RwLock` remain for CPU-bound parallelism and blocking FFI (see [Escape hatch: OS threads](#escape-hatch-os-threads)).
 
+### Choosing a tool
+
+| Need | Use |
+|------|-----|
+| One-shot result off the main flow | `Promise(fn)` → `.await()!`; fan-out with `Promise.all`, first-wins with `Promise.race` |
+| Stream of values over time | `Channel<T>` — producer `send`s + `close()`s, consumer `for val in ch` |
+| Fleet of fire-and-forget workers | `Task.spawn` + `WaitGroup` |
+| Wait on first-of-many sources | `std/select` |
+| CPU-bound work or blocking FFI | `Thread.spawn`, or a `parallel` block for a fixed few |
+| Shared mutable state across threads | `Mutex.withLock` / `RwLock`; plain counters and flags → atomics |
+
+Most programs need only the first row. `Promise` is the familiar promise/await model with no event loop and no function coloring, and `await()` frees the promise's resources itself — there is nothing to `destroy()`.
+
 ### Tasks
 
 ```milo
@@ -1862,6 +1875,16 @@ flag.destroy()
 
 All atomic operations use sequential consistency (seq_cst). AtomicI64 and AtomicBool are `@send` + `@sync` — safe to share across threads.
 
+### Pitfalls
+
+1. **`main` returning abandons running tasks.** Exit semantics are Go's — wait explicitly (`join`, `WaitGroup`, `Promise`, channel) or the work silently dies with the process. `exit(code)` terminates immediately from anywhere.
+2. **Call `Task.join()` immediately after `spawn`.** The registration must land before the task can complete; joining after you've yielded or blocked elsewhere is a lost wakeup.
+3. **The green scheduler is single-threaded and cooperative.** A task that spins on CPU or calls blocking FFI starves every other task — nothing preempts it. Move that work to a `Thread`; long compute loops that must stay on a task should `schedulerYield()` periodically.
+4. **Same call, opposite cost per tier.** `ch.recv()` in a task parks just the task; on a `Thread` it parks the whole OS thread. Default to tasks — threads only for CPU parallelism and blocking FFI.
+5. **Sync primitives are shared handles with manual lifecycle.** Copying a `Channel`/`Mutex`/`WaitGroup` shares the underlying object, so there is no automatic drop — call `.destroy()` exactly once, after every user is done. Prefer `withLock`/`withReadLock` over raw `lock`/`unlock` (unlock guaranteed on every path).
+6. **Channels must be `close()`d** or the consumer's `for val in ch` never ends. `send` on a closed channel returns `Result.Err`, not a panic. Bounded `send` blocking when full is backpressure, not a bug — poll with `trySend`/`tryRecv`.
+7. **Move closures capture copies.** Mutating a captured `var` inside a task or thread is invisible outside. Communicate results through a `Channel`/`Promise`, or share through a `Mutex`/atomic — never through captured locals.
+
 ### Thread API
 
 | Function | Description |
@@ -1913,17 +1936,7 @@ fn main(): i32 {
 }
 ```
 
-Green threads run cooperatively. The compiler automatically injects a scheduler drain at the end of `main` that runs all spawned green threads to completion.
-
-Because the drain waits for *all* tasks, `return` from `main` after spawning long-lived tasks (e.g. a server accept loop) never exits. On error paths, call `exit(code)` instead — it terminates the process immediately, bypassing the drain:
-
-```milo
-let bindFailed = true
-if bindFailed {
-    eprint("bind failed")
-    exit(1)      // return 1 would hang waiting on spawned tasks
-}
-```
+Green threads run cooperatively. When `main` returns, the process exits and any tasks still running are abandoned — nothing waits for them. Waiting is always explicit: `t.join()`, a `WaitGroup`/`Channel`/`Promise`, or `schedulerRunToCompletion()` for a run-forever server (see [Concurrency](#concurrency)).
 
 ### Cooperative Yielding
 
