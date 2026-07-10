@@ -106,9 +106,21 @@ fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span
         return
     }
 
-    let targetType = checkExpr(ck, target)
+    // A plain `x = ...` target is written, not read. Routing it through checkExpr
+    // would hit checkIdent's use-after-move check and report "use of moved
+    // variable 'x'" for the very statement that un-moves it.
+    var targetType = tyUnknown()
+    match target {
+        Expr.Ident(name, tspan) => {
+            match lookup(ck, name) {
+                Option.Some(v) => { targetType = deref(v.ty) }
+                Option.None => { error(ck, "undefined variable '" + name.clone() + "'", cloneSpan(span)) }
+            }
+        }
+        _ => { targetType = checkExpr(ck, target) }
+    }
     let valType = checkExpr(ck, value)
-    if !typeEq(targetType, valType) && !typeEq(valType, tyUnknown()) {
+    if !typeEq(targetType, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(targetType, valType, value) {
         error(ck, "type mismatch: cannot assign " + typeName(valType) + " to " + typeName(targetType), cloneSpan(span))
     }
 
@@ -132,7 +144,11 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
                 && !intCoercible(fnRetType, valType, *expr) {
                 error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
             }
-            tryMove(ck, *expr)
+            // Deliberately no tryMove here: this checker is flow-insensitive, so
+            // marking the returned variable moved poisons every later use of it
+            // (`if cond { return result }` ... `result.push(x)`), which is exactly
+            // what the TS checker's returnOnlyMoves bookkeeping exists to avoid.
+            // The function exits, so nothing after can observe the move.
         }
         Option.None => {
             if !typeEq(fnRetType, tyVoid()) {

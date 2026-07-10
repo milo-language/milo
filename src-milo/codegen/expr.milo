@@ -140,6 +140,16 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     if objTyLl == "%String" && method == "clone" {
         return genStringClone(cg, obj.v)
     }
+    if objTyLl == "%String" && method == "substr" {
+        let a = genExpr(cg, *args[0], locs, sigs, "i64")
+        let b = genExpr(cg, *args[1], locs, sigs, "i64")
+        return genStringSlice(cg, obj.v, a.v, b.v)
+    }
+    if objTyLl == "%String" && method == "cstr" {
+        let p = nextTemp(cg)
+        emit(cg, "  " + p + " = extractvalue %String " + obj.v + ", 0\n")
+        return Val { v: p, ty: "ptr" }
+    }
     if objTyLl == "%String" && method == "len" {
         let lenT = nextTemp(cg)
         emit(cg, "  " + lenT + " = extractvalue %String " + obj.v + ", 1\n")
@@ -153,6 +163,10 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         emit(cg, "  " + w + " = sext i32 " + obj.v + " to i64\n")
         return genIntToString(cg, w)
     }
+    // A silent placeholder here becomes invalid IR much later (`trunc i64 0 to
+    // %String`), which is a miserable way to discover a missing method. Fail loud.
+    eprint("codegen: unsupported method '" + method.clone() + "' on " + objTyLl.clone())
+    exit(1)
     return Val { v: "0", ty: "i64" }
 }
 

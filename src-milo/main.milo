@@ -26,10 +26,10 @@ from "src-milo/target.milo" import { getHostTarget }
 // "std/io.milo"), not `std/` itself. Mirrors src/resolver.ts: MILO_ROOT wins,
 // otherwise walk up from the source file looking for std/prelude.milo.
 //
-// STILL NOT WIRED UP. With the prelude injected, milo0's checker is
-// nondeterministic: repeated `check` runs on the same trivial input alternate
-// between "no errors" and a handful of bogus ones (a garbage `TFloat` type name
-// like `f-255281472` shows the corruption directly). See docs/self-hosting.md.
+// STILL NOT WIRED UP, but the blocker has moved: milo0 now *type-checks* the
+// prelude cleanly. It cannot *codegen* it — `genMethodCall` has no Vec runtime
+// (push/len/index) and no string `push`. Injecting the prelude therefore reddens
+// the `run` smoke gate. Wire this up once M3 closes the codegen gaps.
 fn findStdlibRoot(sourceDir: &string): string {
     match getEnv("MILO_ROOT") {
         Option.Some(root) => { return root }
