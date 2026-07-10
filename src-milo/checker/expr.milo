@@ -15,6 +15,7 @@ from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn }
 // -- Move tracking --
 
 fn tryMove(ck: &mut Checker, expr: &Expr) {
+    if ck.inReturn { return }
     match expr {
         Expr.Ident(name, span) => {
             match lookup(ck, name) {

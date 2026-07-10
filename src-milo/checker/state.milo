@@ -1,5 +1,5 @@
 // Checker state — scopes, variable info, diagnostic tracking, type tables
-from "src-milo/ast.milo" import { Span, Function, StructDecl, EnumDecl, Program }
+from "src-milo/ast.milo" import { Span, Function, StructDecl, EnumDecl, Program, Stmt }
 from "src-milo/checker/types.milo" import { TypeKind, typeEq, typeName, tyVoid }
 
 // -- Diagnostics --
@@ -121,6 +121,10 @@ struct Checker {
     genericFns: HashMap<string, GenericFnInfo>,
     genericStructs: HashMap<string, GenericStructInfo>,
     genericEnums: HashMap<string, GenericEnumInfo>,
+    // moves inside a return expression never poison later paths — the fn
+    // exits, so a flow-insensitive walk must not carry them forward (mirrors
+    // the TS checker's returnOnlyMoves)
+    inReturn: bool,
 }
 
 fn newChecker(): Checker {
@@ -143,6 +147,7 @@ fn newChecker(): Checker {
         genericFns: HashMap.new(),
         genericStructs: HashMap.new(),
         genericEnums: HashMap.new(),
+        inReturn: false,
     }
 }
 
@@ -300,3 +305,66 @@ fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
     }
 }
 
+
+// -- Branch-terminating move merges --
+
+// A branch that ends in break/continue/return never falls through, so its
+// moves must not poison the code after the branch (flow-insensitive walk).
+fn stmtTerminates(s: &Stmt): bool {
+    match s {
+        Stmt.BreakStmt(sp) => { return true }
+        Stmt.ContinueStmt(sp) => { return true }
+        Stmt.Return(v, sp) => { return true }
+        _ => { return false }
+    }
+}
+
+fn snapshotMoves(ck: &Checker): Vec<HashMap<string, bool>> {
+    var out: Vec<HashMap<string, bool>> = Vec.new()
+    for i in 0..ck.scopes.len {
+        var m: HashMap<string, bool> = HashMap.new()
+        for name, info in ck.scopes[i] {
+            m.insert(name.clone(), info.moved)
+        }
+        out.push(m)
+    }
+    return out
+}
+
+fn restoreMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
+    var i: i64 = 0
+    while i < ck.scopes.len && i < snap.len {
+        for name, moved in snap[i] {
+            match ck.scopes[i].get(name) {
+                Option.Some(v) => {
+                    var updated = v
+                    updated.moved = moved
+                    ck.scopes[i].insert(name.clone(), updated)
+                }
+                Option.None => {}
+            }
+        }
+        i = i + 1
+    }
+}
+
+// Re-apply a branch's moves on top of the current state (any-path-moved
+// stays moved after the join).
+fn orMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
+    var i: i64 = 0
+    while i < ck.scopes.len && i < snap.len {
+        for name, moved in snap[i] {
+            if moved {
+                match ck.scopes[i].get(name) {
+                    Option.Some(v) => {
+                        var updated = v
+                        updated.moved = true
+                        ck.scopes[i].insert(name.clone(), updated)
+                    }
+                    Option.None => {}
+                }
+            }
+        }
+        i = i + 1
+    }
+}

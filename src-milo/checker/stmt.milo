@@ -11,7 +11,7 @@ from "src-milo/checker/types.milo" import {
 from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, EnumInfo, VariantInfo,
     Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
-    normalizeEnumNames,
+    normalizeEnumNames, stmtTerminates, snapshotMoves, restoreMoves, orMoves,
 }
 from "src-milo/checker/expr.milo" import { intCoercible, checkExpr, tryMove, isRootMutable, deref }
 from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, processDerives, typeImplementsTrait, resolveMethod }
@@ -141,7 +141,9 @@ fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span
 fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKind, span: &Option<Span>) {
     match value {
         Option.Some(expr) => {
+            ck.inReturn = true
             let valType = checkExpr(ck, *expr)
+            ck.inReturn = false
             if !typeEq(fnRetType, valType) && !typeEq(valType, tyUnknown()) && !typeEq(fnRetType, tyUnknown())
                 && !intCoercible(fnRetType, valType, *expr) {
                 error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
@@ -168,11 +170,19 @@ fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: 
         error(ck, "if condition must be bool, got " + typeName(condType), cloneSpan(span))
     }
 
+    // Branches are checked in isolation from the pre-state (a sibling arm
+    // must not see this arm's moves), then joined: any-path moves survive,
+    // except from branches that terminate (break/continue/return).
+    let preSnap = snapshotMoves(ck)
     pushScope(ck)
     for i in 0..thenBody.len {
         checkStmt(ck, *thenBody[i], fnRetType)
     }
     popScope(ck)
+    var thenTerm = false
+    if thenBody.len > 0 { thenTerm = stmtTerminates(*thenBody[thenBody.len - 1]) }
+    let afterThen = snapshotMoves(ck)
+    restoreMoves(ck, preSnap)
 
     match elseBody {
         Option.Some(body) => {
@@ -181,9 +191,13 @@ fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: 
                 checkStmt(ck, *body[j], fnRetType)
             }
             popScope(ck)
+            var elseTerm = false
+            if body.len > 0 { elseTerm = stmtTerminates(*body[body.len - 1]) }
+            if elseTerm { restoreMoves(ck, preSnap) }
         }
         Option.None => {}
     }
+    if !thenTerm { orMoves(ck, afterThen) }
 }
 
 // -- While statement --
