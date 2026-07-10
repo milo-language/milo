@@ -1275,6 +1275,24 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         Expr.IndexAccess(obj, idx, span) => {
             return genIndex(cg, *obj, *idx, locs, sigs)
         }
+        Expr.IfExpr(cond, thenE, elseE, span) => {
+            let cv = genExpr(cg, *cond, locs, sigs, "bool")
+            let thenLbl = nextLabel(cg, "ifx.then")
+            let elseLbl = nextLabel(cg, "ifx.else")
+            let endLbl = nextLabel(cg, "ifx.end")
+            emit(cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
+            emit(cg, thenLbl + ":\n")
+            let av = genExpr(cg, *thenE, locs, sigs, hintTy)
+            emit(cg, "  br label %" + endLbl + "\n")
+            emit(cg, elseLbl + ":\n")
+            let bv = genExpr(cg, *elseE, locs, sigs, av.ty.clone())
+            emit(cg, "  br label %" + endLbl + "\n")
+            emit(cg, endLbl + ":\n")
+            let r = nextTemp(cg)
+            let ll = llType(av.ty)
+            emit(cg, "  " + r + " = phi " + ll + " [" + av.v + ", %" + thenLbl + "], [" + bv.v + ", %" + elseLbl + "]\n")
+            return Val { v: r, ty: av.ty.clone() }
+        }
         Expr.ArrayLit(elems, span) => {
             return genArrayLit(cg, elems, locs, sigs, hintTy)
         }

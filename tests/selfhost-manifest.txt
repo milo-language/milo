@@ -94,6 +94,7 @@ stringFfi
 stringFn
 stringIndex
 stringLen
+structCopy
 structFieldIntCoerce
 structFieldMoveDrop
 structFn

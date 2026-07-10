@@ -935,6 +935,20 @@ fn parsePrimary(p: &mut Parser): Expr {
     let tok = peek(p)
     let s = span(tok)
 
+    // if-else expression: if cond { expr } else { expr }
+    if tok.kind == TokKind.If {
+        advance(p)
+        let cond = parseExpr(p)
+        expect(p, TokKind.LBrace)
+        let thenE = parseExpr(p)
+        expect(p, TokKind.RBrace)
+        expect(p, TokKind.Else)
+        expect(p, TokKind.LBrace)
+        let elseE = parseExpr(p)
+        expect(p, TokKind.RBrace)
+        return Expr.IfExpr(Heap(cond), Heap(thenE), Heap(elseE), s)
+    }
+
     if tok.kind == TokKind.Int {
         advance(p)
         return Expr.IntLit(tok.value.parseInt(), s)

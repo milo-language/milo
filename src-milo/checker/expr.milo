@@ -9,6 +9,7 @@ from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, CkStructField,
     EnumInfo, VariantInfo, Diagnostic,
     error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
+    isCopyCk,
 }
 from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn }
 
@@ -20,7 +21,7 @@ fn tryMove(ck: &mut Checker, expr: &Expr) {
         Expr.Ident(name, span) => {
             match lookup(ck, name) {
                 Option.Some(v) => {
-                    if isCopy(v.ty) { return }
+                    if isCopyCk(ck, v.ty) { return }
                     setVarMoved(ck, name, true)
                 }
                 Option.None => {}
@@ -136,6 +137,18 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
         Expr.IsExpr(operand, pattern, span) => {
             checkExpr(ck, *operand)
             return tyBool()
+        }
+        Expr.IfExpr(cond, thenE, elseE, span) => {
+            let condType = checkExpr(ck, *cond)
+            if !typeEq(condType, tyBool()) && !typeEq(condType, tyUnknown()) {
+                error(ck, "if-expression condition must be bool, got " + typeName(condType), cloneSpan(span))
+            }
+            let thenType = checkExpr(ck, *thenE)
+            let elseType = checkExpr(ck, *elseE)
+            if !typeEq(thenType, elseType) && !containsUnknown(thenType) && !containsUnknown(elseType) {
+                error(ck, "if-expression branches disagree: " + typeName(thenType) + " vs " + typeName(elseType), cloneSpan(span))
+            }
+            return thenType
         }
     }
 }
@@ -1169,7 +1182,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
     if method == "toInt" || method == "parseInt" {
         return TypeKind.TInt(64, true)
     }
-    if method == "toFloat" || method == "parseFloat" {
+    if method == "toFloat" || method == "parseFloat" || method == "parseF64" {
         return TypeKind.TFloat(64)
     }
     if method == "chars" || method == "bytes" {

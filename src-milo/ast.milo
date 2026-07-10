@@ -99,6 +99,7 @@ enum Expr {
     Closure(Vec<Param>, Option<MiloType>, Vec<Heap<Stmt>>, bool, Option<Span>),
     RangeExpr(Heap<Expr>, Heap<Expr>, Option<Span>),
     IsExpr(Heap<Expr>, Heap<Pattern>, Option<Span>),
+    IfExpr(Heap<Expr>, Heap<Expr>, Heap<Expr>, Option<Span>),
 }
 
 // -- Patterns --
@@ -406,6 +407,9 @@ impl Clone for Expr {
             }
             Expr.RangeExpr(start, end, span) => {
                 return Expr.RangeExpr(Heap((*start).clone()), Heap((*end).clone()), cloneSpan(span))
+            }
+            Expr.IfExpr(cond, thenE, elseE, span) => {
+                return Expr.IfExpr(Heap((*cond).clone()), Heap((*thenE).clone()), Heap((*elseE).clone()), cloneSpan(span))
             }
             Expr.IsExpr(subject, pattern, span) => {
                 return Expr.IsExpr(Heap((*subject).clone()), Heap((*pattern).clone()), cloneSpan(span))

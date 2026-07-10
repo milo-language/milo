@@ -1,6 +1,6 @@
 // Checker state — scopes, variable info, diagnostic tracking, type tables
 from "src-milo/ast.milo" import { Span, Function, StructDecl, EnumDecl, Program, Stmt }
-from "src-milo/checker/types.milo" import { TypeKind, typeEq, typeName, tyVoid }
+from "src-milo/checker/types.milo" import { TypeKind, typeEq, typeName, tyVoid, isCopy }
 
 // -- Diagnostics --
 
@@ -366,5 +366,33 @@ fn orMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
             }
         }
         i = i + 1
+    }
+}
+
+// Enums/structs whose payloads are all Copy are themselves Copy (mirrors the
+// oracle's isAllCopyEnum/isAllCopyStruct): an Option<Span> never moves.
+// Recursion terminates because recursive types go through Heap (not Copy).
+fn isCopyCk(ck: &Checker, t: &TypeKind): bool {
+    if isCopy(t) { return true }
+    match t {
+        TypeKind.TEnum(name) => {
+            if !ck.enums.contains(name) { return false }
+            let info = ck.enums.get(name)!
+            for vn, vi in info.variants {
+                for i in 0..vi.fields.len {
+                    if !isCopyCk(ck, vi.fields[i]) { return false }
+                }
+            }
+            return true
+        }
+        TypeKind.TStruct(name) => {
+            if !ck.structs.contains(name) { return false }
+            let info = ck.structs.get(name)!
+            for i in 0..info.fields.len {
+                if !isCopyCk(ck, info.fields[i].ty) { return false }
+            }
+            return true
+        }
+        _ => { return false }
     }
 }
