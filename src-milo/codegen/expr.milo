@@ -952,6 +952,45 @@ fn genVecReverse(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
     return Val { v: "0", ty: "void" }
 }
 
+// Vec.pop: panic if empty, else len-- and return the (former) last element.
+fn genVecPop(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
+    let elemTy = unwrapVec(vecTy)
+    let elemLl = llType(elemTy)
+    let lenPtr = nextTemp(cg)
+    emit(cg, "  " + lenPtr + " = getelementptr %Vec, ptr " + addr + ", i32 0, i32 1\n")
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = load i64, ptr " + lenPtr + "\n")
+    let isEmpty = nextTemp(cg)
+    emit(cg, "  " + isEmpty + " = icmp eq i64 " + len + ", 0\n")
+    let panicLbl = nextLabel(cg, "pop.panic")
+    let okLbl = nextLabel(cg, "pop.ok")
+    emit(cg, "  br i1 " + isEmpty + ", label %" + panicLbl + ", label %" + okLbl + "\n")
+    emit(cg, panicLbl + ":\n")
+    if !cg.declaredPrintf {
+        emitG(cg, "declare i32 @printf(ptr, ...)\n")
+        cg.declaredPrintf = true
+    }
+    ensureExit(cg)
+    let msgLbl = emitStringLit(cg, "pop on empty Vec\\n")
+    let pcall = nextTemp(cg)
+    emit(cg, "  " + pcall + " = call i32 (ptr, ...) @printf(ptr " + msgLbl + ")\n")
+    emit(cg, "  call void @exit(i32 1)\n")
+    emit(cg, "  unreachable\n")
+    emit(cg, okLbl + ":\n")
+    let newLen = nextTemp(cg)
+    emit(cg, "  " + newLen + " = sub i64 " + len + ", 1\n")
+    emit(cg, "  store i64 " + newLen + ", ptr " + lenPtr + "\n")
+    let dataPtr = nextTemp(cg)
+    emit(cg, "  " + dataPtr + " = getelementptr %Vec, ptr " + addr + ", i32 0, i32 0\n")
+    let data = nextTemp(cg)
+    emit(cg, "  " + data + " = load ptr, ptr " + dataPtr + "\n")
+    let elemPtr = nextTemp(cg)
+    emit(cg, "  " + elemPtr + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + newLen + "\n")
+    let val = nextTemp(cg)
+    emit(cg, "  " + val + " = load " + elemLl + ", ptr " + elemPtr + "\n")
+    return Val { v: val, ty: elemTy }
+}
+
 fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     // `push` grows the receiver in place, so it needs the address, not a loaded
     // copy. Resolve the lvalue before evaluating the object as a value.
@@ -973,6 +1012,13 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         let lv = genLvalue(cg, object, locs, sigs)
         if isVecTy(lv.ty) {
             return genVecReverse(cg, lv.v, lv.ty)
+        }
+    }
+    // Vec.pop shrinks the receiver in place → needs its address.
+    if method == "pop" {
+        let lv = genLvalue(cg, object, locs, sigs)
+        if isVecTy(lv.ty) {
+            return genVecPop(cg, lv.v, lv.ty)
         }
     }
     // HashMap mutators also need the receiver's address, not a loaded copy
