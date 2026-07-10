@@ -2277,7 +2277,14 @@ export class TypeChecker {
             subjType = info.type.inner;
           }
         }
-        if (subjIsRef) this.matchSubjectRef.add(stmt.subject);
+        // Matching on a place (s.field, v[i]) also borrows: the container keeps
+        // ownership, so consuming the subject would zero data the checker cannot
+        // track (a second `match v[i].f` used to read a zeroed enum — wrong tag,
+        // empty payloads — with no diagnostic). Bindings become borrows below.
+        const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
+          (stmt.subject.kind === "FieldAccess" || stmt.subject.kind === "IndexAccess");
+        const subjBorrows = subjIsRef || subjIsPlace;
+        if (subjBorrows) this.matchSubjectRef.add(stmt.subject);
         const isEnum = subjType.tag === "enum";
         const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";
         if (!isEnum && !isLiteralType && subjType.tag !== "unknown") {
@@ -2361,10 +2368,10 @@ export class TypeChecker {
               if (variant) {
                 for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
                   let bt = variant.fields[i];
-                  // Ref-match: a non-Copy payload binds as a borrow (`&T`) — it
-                  // is a view into the still-owned subject, so it can't be moved
-                  // out or dropped. Copy payloads bind by value (a safe copy).
-                  if (subjIsRef && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+                  // Ref- or place-match: a non-Copy payload binds as a borrow
+                  // (`&T`) — a view into the still-owned subject, so it can't be
+                  // moved out or dropped. Copy payloads bind by value.
+                  if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
                     bt = { tag: "ref", inner: bt, mutable: false };
                   }
                   this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false });
@@ -2387,9 +2394,9 @@ export class TypeChecker {
             }
           }
         }
-        // A ref-match borrows the subject (payload bindings are borrows); it is
-        // not consumed, so don't move it.
-        if (!subjIsRef) this.tryMove(stmt.subject);
+        // A ref- or place-match borrows the subject (payload bindings are
+        // borrows); it is not consumed, so don't move it.
+        if (!subjBorrows) this.tryMove(stmt.subject);
         break;
       }
       case "IfLetStmt": {

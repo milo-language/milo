@@ -1,0 +1,43 @@
+// @expect: first Opt 1
+// @expect: second Opt 1
+
+// match on a place (field of a vec element) borrows the subject: the container
+// keeps ownership and the same place can be matched again. Consuming it used to
+// zero the slot behind the checker's back — the second match then saw tag 0
+// with empty payloads and no diagnostic.
+
+enum Pat {
+    E(string, Vec<string>),
+    W,
+}
+
+struct Arm {
+    pattern: Pat,
+}
+
+fn main(): i32 {
+    var arms: Vec<Arm> = Vec.new()
+    var bs: Vec<string> = Vec.new()
+    bs.push("v")
+    arms.push(Arm {
+        pattern: Pat.E("Opt", bs)
+    }
+    )
+    match arms[0].pattern {
+        Pat.E(name, bindings) => {
+            print("first ", name, " ", bindings.len)
+        }
+        Pat.W => {
+            print("w")
+        }
+    }
+    match arms[0].pattern {
+        Pat.E(name, bindings) => {
+            print("second ", name, " ", bindings.len)
+        }
+        Pat.W => {
+            print("w")
+        }
+    }
+    return 0
+}
