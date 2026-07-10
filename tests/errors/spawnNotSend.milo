@@ -1,18 +1,18 @@
 // @error: cannot send 'p' of type '*u8' across threads
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 
 fn main(): i32 {
     var x: i32 = 42
     unsafe {
         let p = (&x) as *u8
-        let t = Thread.spawn(move(): void => {
+        let _t = Promise<i64>.blocking(move(): i64 => {
             print("ptr value: ", p as i64)
+            return 0
         }
-        )!
-        t.join()!
+        )
     }
     return 0
 }

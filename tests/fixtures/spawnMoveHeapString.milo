@@ -1,8 +1,8 @@
 // @expect: MSG: hello from heap
 // @expect: done
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 
 fn main(): i32 {
@@ -10,12 +10,13 @@ fn main(): i32 {
     var msg = "hello"
     msg = msg + " from heap"
 
-    let t = Thread.spawn(move(): void => {
+    let t = Promise<i64>.blocking(move(): i64 => {
         print("MSG: ", msg)
+        return 0
     }
-    )!
+    )
 
-    t.join()!
+    t.await()!
     print("done")
     return 0
 }

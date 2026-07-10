@@ -2,13 +2,13 @@
 // @expect: resumed
 
 from "std/runtime" import {
-    Task, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerRunToCompletion
+    Task, Promise, schedulerCurrent, schedulerPark, schedulerUnpark, schedulerRunToCompletion
+}
+from "std/time" import {
+    sleepMs
 }
 from "std/sync" import {
     AtomicI64
-}
-from "std/thread" import {
-    Thread
 }
 
 fn main(): i32 {
@@ -22,20 +22,20 @@ fn main(): i32 {
     }
     )
 
-    // foreign pthread unparks the task via the transfer list + wakeup event
-    let _t = Thread.spawn(move(): void => {
+    // foreign OS thread unparks the task via the transfer list + wakeup event
+    // (fire-and-forget — it finishes before the task resumes, handle unused)
+    let _t = Promise<i64>.blocking(move(): i64 => {
         while slot.load() == 0 {
         }
         // give the task time to actually reach schedulerPark after storing slot
-        Thread.sleep(50)
+        sleepMs(50)
         unsafe {
             schedulerUnpark(slot.load() as *u8)
         }
+        return 0
     }
-    )!
+    )
 
-    // main's implicit drain runs the task; the thread is done before the task
-    // resumes, so it is not joined (joining before drain would deadlock)
     schedulerRunToCompletion()
     return 0
 }

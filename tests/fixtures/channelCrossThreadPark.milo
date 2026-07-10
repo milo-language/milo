@@ -1,14 +1,16 @@
 // @expect: task got 7
 // @expect: sender resumed
 
-// cross-world wakes both directions: a pthread send unparks a green task
-// blocked in recv (via the scheduler wakeup event), and a pthread recv
-// unparks a green task blocked in send on a full channel
+// cross-world wakes both directions: a foreign OS-thread send unparks a green
+// task blocked in recv (via the scheduler wakeup event), and a foreign-thread
+// recv unparks a green task blocked in send on a full channel. The OS threads
+// come from Promise.blocking (fire-and-forget — they finish before the tasks
+// they wake, so their handles are unused).
 from "std/runtime" import {
-    Task, schedulerRunToCompletion
+    Task, Promise, schedulerRunToCompletion
 }
-from "std/thread" import {
-    Thread
+from "std/time" import {
+    sleepMs
 }
 from "std/sync" import {
     Channel
@@ -21,12 +23,13 @@ fn main(): i32 {
         print("task got ", v)
     }
     )
-    let _t1 = Thread.spawn(move(): void => {
+    let _t1 = Promise<i64>.blocking(move(): i64 => {
         // give the task time to park in recv first
-        Thread.sleep(50)
+        sleepMs(50)
         ch.send(7)!
+        return 0
     }
-    )!
+    )
 
     let ch2 = Channel<i64>.new(1)!
     ch2.send(1)!
@@ -35,15 +38,14 @@ fn main(): i32 {
         print("sender resumed")
     }
     )
-    let _t2 = Thread.spawn(move(): void => {
-        Thread.sleep(100)
+    let _t2 = Promise<i64>.blocking(move(): i64 => {
+        sleepMs(100)
         let _a = ch2.recv()!
         let _b = ch2.recv()!
+        return 0
     }
-    )!
+    )
 
-    // threads finish before the tasks they wake, so they are not joined
-    // (joining before main's implicit drain would deadlock the scheduler)
     schedulerRunToCompletion()
     return 0
 }

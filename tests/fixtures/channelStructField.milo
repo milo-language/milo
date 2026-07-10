@@ -1,8 +1,8 @@
 // @expect: hello from worker
 // @expect: done
 
-from "std/thread" import {
-    Thread
+from "std/runtime" import {
+    Promise
 }
 from "std/sync" import {
     Channel
@@ -18,14 +18,15 @@ fn main(): i32 {
         ch: ch
     }
 
-    let t = Thread.spawn(move(): void => {
+    let t = Promise<i64>.blocking(move(): i64 => {
         w.ch.send("hello from worker")!
+        return 0
     }
-    )!
+    )
 
     let msg = w.ch.recv()!
     print(msg)
-    t.join()!
+    t.await()!
     w.ch.destroy()
     print("done")
     return 0
