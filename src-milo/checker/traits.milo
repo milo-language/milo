@@ -165,6 +165,38 @@ fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Optio
 
 // -- Register an implDecl block --
 
+// Mirrors substituteSelfInMiloType in src/checker.ts: method bodies are
+// type-checked from the AST later, so the AST types pushed to
+// monomorphizedFns must carry the concrete type name, not 'Self'.
+fn substSelfMiloType(ty: &MiloType, concrete: &string): MiloType {
+    var result = ty.clone()
+    if result.name == "Self" { result.name = concrete.clone() }
+    for j in 0..result.typeArgs.len {
+        result.typeArgs[j] = substSelfMiloType(result.typeArgs[j], concrete)
+    }
+    for k in 0..result.fnParams.len {
+        result.fnParams[k] = substSelfMiloType(result.fnParams[k], concrete)
+    }
+    match ty.fnRet {
+        Option.Some(ret) => {
+            result.fnRet = Option.Some(Heap(substSelfMiloType(*ret, concrete)))
+        }
+        Option.None => {}
+    }
+    return result
+}
+
+fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
+    var out: Vec<Param> = Vec.new()
+    for i in 0..params.len {
+        out.push(Param {
+            name: params[i].name.clone(),
+            ty: substSelfMiloType(params[i].ty, concrete),
+        })
+    }
+    return out
+}
+
 fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
     let tn = implDecl.typeName.clone()
 
@@ -224,8 +256,8 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 ck.monomorphizedFns.push(Function {
                     name: mangled,
                     typeParams: Vec.new(),
-                    params: cloneParams(m.params),
-                    retType: m.retType.clone(),
+                    params: substSelfParams(m.params, tn),
+                    retType: substSelfMiloType(m.retType, tn),
                     body: cloneStmts(m.body),
                     isExtern: false,
                     isVariadic: false,
@@ -290,8 +322,8 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                 ck.monomorphizedFns.push(Function {
                     name: mangled,
                     typeParams: Vec.new(),
-                    params: cloneParams(m.params),
-                    retType: m.retType.clone(),
+                    params: substSelfParams(m.params, tn),
+                    retType: substSelfMiloType(m.retType, tn),
                     body: cloneStmts(m.body),
                     isExtern: false,
                     isVariadic: false,
