@@ -82,6 +82,26 @@ struct ImplInfo {
 
 // -- Checker state --
 
+// Generic declarations parked until a use site provides concrete type args.
+// Live on the Checker (not a separate MonoState) so checkExpr can
+// monomorphize on demand at call/literal sites.
+struct GenericFnInfo {
+    typeParams: Vec<string>,
+    decl: Function,
+}
+
+struct GenericStructInfo {
+    typeParams: Vec<string>,
+    decl: StructDecl,
+    fields: Vec<CkStructField>,
+}
+
+struct GenericEnumInfo {
+    typeParams: Vec<string>,
+    decl: EnumDecl,
+    variants: HashMap<string, VariantInfo>,
+}
+
 struct Checker {
     diagnostics: Vec<Diagnostic>,
     functions: HashMap<string, FnSig>,
@@ -98,6 +118,9 @@ struct Checker {
     monomorphizedEnums: Vec<EnumDecl>,
     monomorphizedStructs: Vec<StructDecl>,
     dropImpls: HashMap<string, bool>,
+    genericFns: HashMap<string, GenericFnInfo>,
+    genericStructs: HashMap<string, GenericStructInfo>,
+    genericEnums: HashMap<string, GenericEnumInfo>,
 }
 
 fn newChecker(): Checker {
@@ -117,6 +140,9 @@ fn newChecker(): Checker {
         monomorphizedEnums: Vec.new(),
         monomorphizedStructs: Vec.new(),
         dropImpls: HashMap.new(),
+        genericFns: HashMap.new(),
+        genericStructs: HashMap.new(),
+        genericEnums: HashMap.new(),
     }
 }
 

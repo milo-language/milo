@@ -115,13 +115,16 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 fn genProgram(prog: Program): string {
     var cg = cgenNew()
 
-    // Register function return types
+    // Register function return types. Generic templates never codegen — only
+    // their monomorphized copies (appended to the program by main.milo) do.
     for i in 0..prog.functions.len {
+        if prog.functions[i].typeParams.len > 0 { continue }
         cg.fnRets.insert(prog.functions[i].name.clone(), prog.functions[i].retType.name.clone())
     }
 
     // Register enums and emit %Name type declarations
     for ei in 0..prog.enums.len {
+        if prog.enums[ei].typeParams.len > 0 { continue }
         let e = prog.enums[ei].clone()
         var variants: Vec<CgVariantInfo> = Vec.new()
         var maxBytes: i64 = 0
@@ -156,6 +159,7 @@ fn genProgram(prog: Program): string {
 
     // Register structs and emit %Name type declarations
     for si in 0..prog.structs.len {
+        if prog.structs[si].typeParams.len > 0 { continue }
         let s = prog.structs[si].clone()
         var fields: Vec<FieldInfo> = Vec.new()
         var llStruct = "{ "
@@ -170,9 +174,10 @@ fn genProgram(prog: Program): string {
         cg.structs.insert(s.name.clone(), fields)
     }
 
-    // Emit all functions
+    // Emit all functions (generic templates excluded — see registration above)
     let sigs = buildFnTable(prog)
     for j in 0..prog.functions.len {
+        if prog.functions[j].typeParams.len > 0 { continue }
         genFn(cg, prog.functions[j], sigs)
     }
 

@@ -1,6 +1,7 @@
 // Statement type checking
 from "src-milo/ast.milo" import {
     Stmt, Expr, MiloType, Span, MatchArm, Pattern, Param, Function, Program,
+    EnumDecl, EnumVariant, TypeParam, simpleType,
 }
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName,
@@ -13,7 +14,7 @@ from "src-milo/checker/state.milo" import {
 }
 from "src-milo/checker/expr.milo" import { intCoercible, checkExpr, tryMove, isRootMutable, deref }
 from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, processDerives, typeImplementsTrait, resolveMethod }
-from "src-milo/checker/mono.milo" import { MonoState, newMonoState, registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum }
+from "src-milo/checker/mono.milo" import { registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum }
 
 // -- Statement checker --
 
@@ -78,7 +79,7 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
 
     match typeAnno {
         Option.Some(ty) => {
-            let hint = typeFromAst(ty)
+            let hint = resolveAstType(ck, ty)
             if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) {
                 error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
             }
@@ -534,16 +535,76 @@ fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
     ck.enums.insert(decl.name.clone(), info)
 }
 
+// Option<T> and Result<T, E> are compiler builtins with no source declaration;
+// synthesize generic EnumDecls so the normal mono machinery instantiates them.
+fn registerBuiltinGenericEnums(ck: &mut Checker) {
+    var someFields: Vec<MiloType> = Vec.new()
+    someFields.push(simpleType("T"))
+    var optVariants: Vec<EnumVariant> = Vec.new()
+    optVariants.push(EnumVariant { name: "Some", fields: someFields })
+    optVariants.push(EnumVariant { name: "None", fields: Vec.new() })
+    var optParams: Vec<TypeParam> = Vec.new()
+    optParams.push(TypeParam { name: "T", bounds: Vec.new() })
+    registerGenericEnum(ck, EnumDecl {
+        name: "Option",
+        typeParams: optParams,
+        variants: optVariants,
+        attributes: Vec.new(),
+    })
+
+    var okFields: Vec<MiloType> = Vec.new()
+    okFields.push(simpleType("T"))
+    var errFields: Vec<MiloType> = Vec.new()
+    errFields.push(simpleType("E"))
+    var resVariants: Vec<EnumVariant> = Vec.new()
+    resVariants.push(EnumVariant { name: "Ok", fields: okFields })
+    resVariants.push(EnumVariant { name: "Err", fields: errFields })
+    var resParams: Vec<TypeParam> = Vec.new()
+    resParams.push(TypeParam { name: "T", bounds: Vec.new() })
+    resParams.push(TypeParam { name: "E", bounds: Vec.new() })
+    registerGenericEnum(ck, EnumDecl {
+        name: "Result",
+        typeParams: resParams,
+        variants: resVariants,
+        attributes: Vec.new(),
+    })
+}
+
+// Annotation-side generic instantiation: `Option<i32>` must resolve to the
+// monomorphized enum/struct, not TStruct("Option").
+fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
+    if ty.typeArgs.len > 0 && !ty.isFn {
+        if ck.genericEnums.contains(ty.name) {
+            var typeArgs: Vec<TypeKind> = Vec.new()
+            for i in 0..ty.typeArgs.len {
+                typeArgs.push(resolveAstType(ck, ty.typeArgs[i]))
+            }
+            let mangled = monomorphizeEnum(ck, ty.name, typeArgs)
+            return TypeKind.TEnum(mangled)
+        }
+        if ck.genericStructs.contains(ty.name) {
+            var typeArgs: Vec<TypeKind> = Vec.new()
+            for i in 0..ty.typeArgs.len {
+                typeArgs.push(resolveAstType(ck, ty.typeArgs[i]))
+            }
+            let mangled = monomorphizeStruct(ck, ty.name, typeArgs)
+            return TypeKind.TStruct(mangled)
+        }
+    }
+    return typeFromAst(ty)
+}
+
 fn checkProgram(ck: &mut Checker, program: &Program) {
     // Phase 0: register builtin traits and generic types
     registerBuiltinTraits(ck)
+    registerBuiltinGenericEnums(ck)
 
-    // Phase 1: register all declarations (skip generics — they go to mono state)
-    var ms = newMonoState()
+    // Phase 1: register all declarations (generics park on ck.generic* until
+    // a use site provides concrete type args)
     var i: i64 = 0
     while i < program.structs.len {
         if program.structs[i].typeParams.len > 0 {
-            registerGenericStruct(ms, program.structs[i])
+            registerGenericStruct(ck, program.structs[i])
         } else {
             registerStruct(ck, program.structs[i])
         }
@@ -552,7 +613,7 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     i = 0
     while i < program.enums.len {
         if program.enums[i].typeParams.len > 0 {
-            registerGenericEnum(ms, program.enums[i])
+            registerGenericEnum(ck, program.enums[i])
         } else {
             registerEnum(ck, program.enums[i])
         }
@@ -561,7 +622,7 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     i = 0
     while i < program.functions.len {
         if program.functions[i].typeParams.len > 0 {
-            registerGenericFn(ms, program.functions[i])
+            registerGenericFn(ck, program.functions[i])
         } else {
             registerFunction(ck, program.functions[i])
         }

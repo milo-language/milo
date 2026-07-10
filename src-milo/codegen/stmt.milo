@@ -294,14 +294,16 @@ fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Hea
     var thenTerm = false
     match pattern {
         Pattern.EnumPattern(enumName, variant, bindings, span) => {
-            let tg = lookupVariantTag(cg, enumName, variant)
+            // variant tables are keyed by the subject's (mangled) enum name,
+            // not the pattern's base name
+            let tg = lookupVariantTag(cg, rawName, variant)
             let eq = nextTemp(cg)
             emit(cg, "  " + eq + " = icmp eq i32 " + tag + ", " + tg.toString() + "\n")
             emit(cg, "  br i1 " + eq + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
             emit(cg, thenLbl + ":\n")
             let locsPreLen = locs.len
             if bindings.len > 0 {
-                let payloadTypes = lookupVariantPayload(cg, enumName, variant)
+                let payloadTypes = lookupVariantPayload(cg, rawName, variant)
                 if payloadTypes.len > 0 {
                     let payPtr = nextTemp(cg)
                     emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 1\n")
@@ -371,7 +373,8 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
         let armLbl = nextLabel(cg, "match.arm")
         match arms[i].pattern {
             Pattern.EnumPattern(enumName, variant, bindings, span) => {
-                let tg = lookupVariantTag(cg, enumName, variant)
+                // keyed by the subject's mangled name, not the pattern's base name
+                let tg = lookupVariantTag(cg, rawName, variant)
                 switchCases = switchCases + "i32 " + tg.toString() + ", label %" + armLbl + " "
             }
             _ => {
@@ -390,7 +393,7 @@ fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<
         match arms[ai].pattern {
             Pattern.EnumPattern(enumName, variant, bindings, span) => {
                 if bindings.len > 0 {
-                    let payloadTypes = lookupVariantPayload(cg, enumName, variant)
+                    let payloadTypes = lookupVariantPayload(cg, rawName, variant)
                     if payloadTypes.len > 0 {
                         let payPtr = nextTemp(cg)
                         emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + subjLv.v + ", i32 0, i32 1\n")

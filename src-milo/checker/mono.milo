@@ -10,39 +10,7 @@ from "src-milo/checker/types.milo" import {
 from "src-milo/checker/state.milo" import {
     Checker, FnSig, FnParam, StructInfo, CkStructField,
     EnumInfo, VariantInfo, error,
-}
-
-// -- Generic function/struct/enum registries --
-
-struct GenericFnInfo {
-    typeParams: Vec<string>,
-    decl: Function,
-}
-
-struct GenericStructInfo {
-    typeParams: Vec<string>,
-    decl: StructDecl,
-    fields: Vec<CkStructField>,
-}
-
-struct GenericEnumInfo {
-    typeParams: Vec<string>,
-    decl: EnumDecl,
-    variants: HashMap<string, VariantInfo>,
-}
-
-struct MonoState {
-    genericFns: HashMap<string, GenericFnInfo>,
-    genericStructs: HashMap<string, GenericStructInfo>,
-    genericEnums: HashMap<string, GenericEnumInfo>,
-}
-
-fn newMonoState(): MonoState {
-    return MonoState {
-        genericFns: HashMap.new(),
-        genericStructs: HashMap.new(),
-        genericEnums: HashMap.new(),
-    }
+    GenericFnInfo, GenericStructInfo, GenericEnumInfo,
 }
 
 // -- Type name mangling --
@@ -170,7 +138,7 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
 
 // -- Monomorphize a generic enum --
 
-fn monomorphizeEnum(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeArgs: &Vec<TypeKind>): string {
+fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>): string {
     var mangled = baseName.clone() + "_"
     var i: i64 = 0
     while i < typeArgs.len {
@@ -181,12 +149,12 @@ fn monomorphizeEnum(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typ
 
     if ck.enums.contains(mangled) { return mangled }
 
-    if !ms.genericEnums.contains(baseName) {
+    if !ck.genericEnums.contains(baseName) {
         error(ck, "unknown generic enum '" + baseName.clone() + "'", Option.None)
         return mangled
     }
 
-    let generic = ms.genericEnums.get(baseName)!
+    let generic = ck.genericEnums.get(baseName)!
 
     // Build type map
     var typeMap: HashMap<string, TypeKind> = HashMap.new()
@@ -230,7 +198,7 @@ fn monomorphizeEnum(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typ
 
 // -- Monomorphize a generic struct --
 
-fn monomorphizeStruct(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeArgs: &Vec<TypeKind>): string {
+fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>): string {
     var mangled = baseName.clone() + "_"
     var i: i64 = 0
     while i < typeArgs.len {
@@ -241,12 +209,12 @@ fn monomorphizeStruct(ck: &mut Checker, ms: &mut MonoState, baseName: &string, t
 
     if ck.structs.contains(mangled) { return mangled }
 
-    if !ms.genericStructs.contains(baseName) {
+    if !ck.genericStructs.contains(baseName) {
         error(ck, "unknown generic struct '" + baseName.clone() + "'", Option.None)
         return mangled
     }
 
-    let generic = ms.genericStructs.get(baseName)!
+    let generic = ck.genericStructs.get(baseName)!
 
     // Build type map
     var typeMap: HashMap<string, TypeKind> = HashMap.new()
@@ -287,7 +255,7 @@ fn monomorphizeStruct(ck: &mut Checker, ms: &mut MonoState, baseName: &string, t
 
 // -- Monomorphize a generic function --
 
-fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeArgs: &Vec<TypeKind>): string {
+fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>): string {
     var mangled = baseName.clone() + "_"
     var i: i64 = 0
     while i < typeArgs.len {
@@ -298,12 +266,12 @@ fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeA
 
     if ck.functions.contains(mangled) { return mangled }
 
-    if !ms.genericFns.contains(baseName) {
+    if !ck.genericFns.contains(baseName) {
         error(ck, "unknown generic function '" + baseName.clone() + "'", Option.None)
         return mangled
     }
 
-    let generic = ms.genericFns.get(baseName)!
+    let generic = ck.genericFns.get(baseName)!
 
     // Register the concrete signature first (allow recursive calls)
     var params: Vec<FnParam> = Vec.new()
@@ -348,18 +316,18 @@ fn monomorphizeFn(ck: &mut Checker, ms: &mut MonoState, baseName: &string, typeA
 
 // -- Register generic declarations --
 
-fn registerGenericFn(ms: &mut MonoState, f: &Function) {
+fn registerGenericFn(ck: &mut Checker, f: &Function) {
     var typeParams: Vec<string> = Vec.new()
     for i in 0..f.typeParams.len {
         typeParams.push(f.typeParams[i].name.clone())
     }
-    ms.genericFns.insert(f.name.clone(), GenericFnInfo {
+    ck.genericFns.insert(f.name.clone(), GenericFnInfo {
         typeParams: typeParams,
         decl: f.clone(),
     })
 }
 
-fn registerGenericStruct(ms: &mut MonoState, s: &StructDecl) {
+fn registerGenericStruct(ck: &mut Checker, s: &StructDecl) {
     var typeParams: Vec<string> = Vec.new()
     for i in 0..s.typeParams.len {
         typeParams.push(s.typeParams[i].name.clone())
@@ -371,14 +339,14 @@ fn registerGenericStruct(ms: &mut MonoState, s: &StructDecl) {
             ty: typeFromAst(s.fields[j].ty),
         })
     }
-    ms.genericStructs.insert(s.name.clone(), GenericStructInfo {
+    ck.genericStructs.insert(s.name.clone(), GenericStructInfo {
         typeParams: typeParams,
         decl: s.clone(),
         fields: fields,
     })
 }
 
-fn registerGenericEnum(ms: &mut MonoState, e: &EnumDecl) {
+fn registerGenericEnum(ck: &mut Checker, e: &EnumDecl) {
     var typeParams: Vec<string> = Vec.new()
     for i in 0..e.typeParams.len {
         typeParams.push(e.typeParams[i].name.clone())
@@ -391,7 +359,7 @@ fn registerGenericEnum(ms: &mut MonoState, e: &EnumDecl) {
         }
         variants.insert(e.variants[vi].name.clone(), VariantInfo { tag: vi as i32, fields: fields })
     }
-    ms.genericEnums.insert(e.name.clone(), GenericEnumInfo {
+    ck.genericEnums.insert(e.name.clone(), GenericEnumInfo {
         typeParams: typeParams,
         decl: e.clone(),
         variants: variants,

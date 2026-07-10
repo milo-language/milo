@@ -393,6 +393,47 @@ fn hmEntryTy(keyTy: &string, valTy: &string): string {
     return "{ " + llType(keyTy) + ", " + llType(valTy) + " }"
 }
 
+// The AST still names generic types/fns by their base name ("Maybe", "pick");
+// the registered decls are the monomorphized ones ("Maybe_i64"). With exactly
+// one instantiation the base resolves unambiguously — multi-instantiation
+// sites need type info the AST-directed codegen doesn't carry yet.
+fn nameHasMonoPrefix(name: &string, base: &string): bool {
+    if name.len <= base.len + 1 { return false }
+    if name[base.len] != 95 { return false }
+    for i in 0..base.len {
+        if name[i] != base[i] { return false }
+    }
+    return true
+}
+
+fn resolveEnumName(cg: &Cgen, base: &string): string {
+    if cg.enums.contains(base) { return base.clone() }
+    var found = ""
+    var count = 0
+    for k, v in cg.enums {
+        if nameHasMonoPrefix(k, base) {
+            found = k.clone()
+            count = count + 1
+        }
+    }
+    if count == 1 { return found }
+    return base.clone()
+}
+
+fn resolveFnName(cg: &Cgen, base: &string): string {
+    if cg.fnRets.contains(base) { return base.clone() }
+    var found = ""
+    var count = 0
+    for k, v in cg.fnRets {
+        if nameHasMonoPrefix(k, base) {
+            found = k.clone()
+            count = count + 1
+        }
+    }
+    if count == 1 { return found }
+    return base.clone()
+}
+
 fn ensureHashMapTy(cg: &mut Cgen) {
     if !cg.declaredHashMapTy {
         emitG(cg, "%HashMap = type { ptr, i64, i64 }\n")

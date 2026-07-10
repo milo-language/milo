@@ -105,8 +105,18 @@ fn compile(path: string): string {
         exit(1)
     }
 
-    // Codegen
-    return genProgram(resolved)
+    // Codegen: monomorphized decls become ordinary program declarations
+    var finalProg = resolved
+    for i in 0..checker.monomorphizedEnums.len {
+        finalProg.enums.push(checker.monomorphizedEnums[i].clone())
+    }
+    for i in 0..checker.monomorphizedStructs.len {
+        finalProg.structs.push(checker.monomorphizedStructs[i].clone())
+    }
+    for i in 0..checker.monomorphizedFns.len {
+        finalProg.functions.push(checker.monomorphizedFns[i].clone())
+    }
+    return genProgram(finalProg)
 }
 
 fn main() {

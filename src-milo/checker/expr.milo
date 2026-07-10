@@ -10,6 +10,7 @@ from "src-milo/checker/state.milo" import {
     EnumInfo, VariantInfo, Diagnostic,
     error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
 }
+from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn }
 
 // -- Move tracking --
 
@@ -429,6 +430,10 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Opt
             }
             Option.None => {}
         }
+        // Generic function call: infer type args from argument types
+        if ck.genericFns.contains(func) {
+            return checkGenericCall(ck, func, args, span)
+        }
         error(ck, "undefined function '" + func.clone() + "'", cloneSpan(span))
         return tyUnknown()
     }
@@ -632,6 +637,10 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
     }
 
     if !ck.enums.contains(enumName) {
+        // Generic enum literal: infer type args from the payload arguments
+        if ck.genericEnums.contains(enumName) {
+            return checkGenericEnumLit(ck, enumName, variant, args, span)
+        }
         error(ck, "unknown enum '" + enumName.clone() + "'", cloneSpan(span))
         return tyUnknown()
     }
@@ -657,6 +666,112 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
     }
 
     return TypeKind.TEnum(enumName.clone())
+}
+
+// -- Generic instantiation at use sites --
+
+fn typeParamIndex(typeParams: &Vec<string>, name: &string): i64 {
+    for i in 0..typeParams.len {
+        if typeParams[i] == name { return i }
+    }
+    return -1
+}
+
+// Single-level inference: a declared type that IS a type parameter (T) takes
+// the argument's type; T one level under &, Heap, or Vec also unifies.
+// Unresolved type-param names parse as TStruct(param).
+fn inferInto(typeParams: &Vec<string>, declTy: &TypeKind, argTy: &TypeKind, inferred: &mut HashMap<string, TypeKind>) {
+    match declTy {
+        TypeKind.TStruct(name) => {
+            if typeParamIndex(typeParams, name) >= 0 && !inferred.contains(name) && !typeEq(argTy, tyUnknown()) {
+                inferred.insert(name.clone(), argTy.clone())
+            }
+        }
+        TypeKind.TRef(inner, m) => {
+            match argTy {
+                TypeKind.TRef(ai, am) => { inferInto(typeParams, *inner, *ai, inferred) }
+                _ => { inferInto(typeParams, *inner, argTy, inferred) }
+            }
+        }
+        TypeKind.THeap(inner) => {
+            match argTy {
+                TypeKind.THeap(ai) => { inferInto(typeParams, *inner, *ai, inferred) }
+                _ => {}
+            }
+        }
+        TypeKind.TVec(inner) => {
+            match argTy {
+                TypeKind.TVec(ai) => { inferInto(typeParams, *inner, *ai, inferred) }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+    let generic = ck.genericFns.get(func)!
+    if args.len != generic.decl.params.len {
+        error(ck, "function '" + func.clone() + "' expects " + generic.decl.params.len.toString() + " args, got " + args.len.toString(), cloneSpan(span))
+        return tyUnknown()
+    }
+    var declParams: Vec<TypeKind> = Vec.new()
+    for i in 0..generic.decl.params.len {
+        declParams.push(typeFromAst(generic.decl.params[i].ty))
+    }
+    var inferred: HashMap<string, TypeKind> = HashMap.new()
+    for i in 0..args.len {
+        let argType = checkExpr(ck, *args[i])
+        inferInto(generic.typeParams, declParams[i], argType, inferred)
+        match declParams[i] {
+            TypeKind.TRef(inner, m) => {}
+            _ => { tryMove(ck, *args[i]) }
+        }
+    }
+    var typeArgs: Vec<TypeKind> = Vec.new()
+    for i in 0..generic.typeParams.len {
+        if inferred.contains(generic.typeParams[i]) {
+            typeArgs.push(inferred.get(generic.typeParams[i])!.clone())
+        } else {
+            error(ck, "cannot infer type parameter '" + generic.typeParams[i].clone() + "' for '" + func.clone() + "'", cloneSpan(span))
+            return tyUnknown()
+        }
+    }
+    let mangled = monomorphizeFn(ck, func, typeArgs)
+    if !ck.functions.contains(mangled) { return tyUnknown() }
+    let sig = ck.functions.get(mangled)!
+    return sig.ret.clone()
+}
+
+fn checkGenericEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+    let generic = ck.genericEnums.get(enumName)!
+    if !generic.variants.contains(variant) {
+        error(ck, "enum '" + enumName.clone() + "' has no variant '" + variant.clone() + "'", cloneSpan(span))
+        return tyUnknown()
+    }
+    let variantInfo = generic.variants.get(variant)!
+    if args.len != variantInfo.fields.len {
+        error(ck, "variant '" + enumName.clone() + "." + variant.clone() + "' expects " + variantInfo.fields.len.toString() + " args, got " + args.len.toString(), cloneSpan(span))
+    }
+    var inferred: HashMap<string, TypeKind> = HashMap.new()
+    let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
+    for i in 0..limit {
+        let argType = checkExpr(ck, *args[i])
+        inferInto(generic.typeParams, variantInfo.fields[i], argType, inferred)
+        tryMove(ck, *args[i])
+    }
+    var typeArgs: Vec<TypeKind> = Vec.new()
+    for i in 0..generic.typeParams.len {
+        if inferred.contains(generic.typeParams[i]) {
+            typeArgs.push(inferred.get(generic.typeParams[i])!.clone())
+        } else {
+            // No evidence (e.g. Option.None): give unknown and let the
+            // let-annotation resolve it, exactly like Vec.new().
+            return tyUnknown()
+        }
+    }
+    let mangled = monomorphizeEnum(ck, enumName, typeArgs)
+    return TypeKind.TEnum(mangled)
 }
 
 // -- Unwrap (!) --
@@ -914,7 +1029,11 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
     if method == "get" {
         if args.len != 1 { error(ck, "'get' expects 1 argument (key)", cloneSpan(span)) }
         if args.len >= 1 { checkExpr(ck, *args[0]) }
-        return val.clone()
+        // get returns Option<V>, matching the TS oracle
+        var optArgs: Vec<TypeKind> = Vec.new()
+        optArgs.push(val.clone())
+        let mangled = monomorphizeEnum(ck, "Option", optArgs)
+        return TypeKind.TEnum(mangled)
     }
     if method == "contains" {
         if args.len != 1 { error(ck, "'contains' expects 1 argument (key)", cloneSpan(span)) }

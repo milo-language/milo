@@ -3,6 +3,7 @@ from "src-milo/ast.milo" import { Expr, Stmt, StructLitField }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
+    resolveEnumName, resolveFnName,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -329,6 +330,55 @@ fn genHashMapContains(cg: &mut Cgen, obj: &Val, keyVal: &Val): Val {
     return Val { v: r, ty: "bool" }
 }
 
+// get returns Option_<V> — the checker monomorphizes it, so the enum layout
+// is registered by the time this emits.
+fn genHashMapGet(cg: &mut Cgen, obj: &Val, keyVal: &Val): Val {
+    ensureHashMapTy(cg)
+    let keyTy = hashMapKeyTy(obj.ty)
+    let valTy = hashMapValTy(obj.ty)
+    let entryTy = hmEntryTy(keyTy, valTy)
+    let valLl = llType(valTy)
+    let optName = "Option_" + valTy
+    let optTy = "%" + optName
+    let someTag = lookupVariantTag(cg, optName, "Some")
+    let noneTag = lookupVariantTag(cg, optName, "None")
+    let resAddr = nextTemp(cg)
+    emit(cg, "  " + resAddr + " = alloca " + optTy + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 0\n")
+    emit(cg, "  store i32 " + noneTag.toString() + ", ptr " + tagPtr + "\n")
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = extractvalue %HashMap " + obj.v + ", 0\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = extractvalue %HashMap " + obj.v + ", 1\n")
+    let idxAddr = nextTemp(cg)
+    emit(cg, "  " + idxAddr + " = alloca i64\n")
+    let foundLbl = nextLabel(cg, "hm.get.found")
+    let endLbl = nextLabel(cg, "hm.get.end")
+    genHashMapScan(cg, entryTy, keyTy, d, l, keyVal.v, idxAddr, foundLbl, endLbl)
+    emit(cg, foundLbl + ":\n")
+    let fi = nextTemp(cg)
+    emit(cg, "  " + fi + " = load i64, ptr " + idxAddr + "\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + entryTy + ", ptr " + d + ", i64 " + fi + "\n")
+    let vp = nextTemp(cg)
+    emit(cg, "  " + vp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 1\n")
+    let fv = nextTemp(cg)
+    emit(cg, "  " + fv + " = load " + valLl + ", ptr " + vp + "\n")
+    emit(cg, "  store i32 " + someTag.toString() + ", ptr " + tagPtr + "\n")
+    let payPtr = nextTemp(cg)
+    emit(cg, "  " + payPtr + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 1\n")
+    let pstructTy = "{ " + valLl + " }"
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = getelementptr " + pstructTy + ", ptr " + payPtr + ", i32 0, i32 0\n")
+    emit(cg, "  store " + valLl + " " + fv + ", ptr " + fp + "\n")
+    emit(cg, "  br label %" + endLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = load " + optTy + ", ptr " + resAddr + "\n")
+    return Val { v: r, ty: optName }
+}
+
 fn genHashMapGetOrDefault(cg: &mut Cgen, obj: &Val, keyVal: &Val, defVal: &Val): Val {
     ensureHashMapTy(cg)
     let keyTy = hashMapKeyTy(obj.ty)
@@ -408,14 +458,16 @@ fn genHashMapRemove(cg: &mut Cgen, addr: &string, mapTy: &string, keyVal: &Val):
 }
 
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
-    let tag = lookupVariantTag(cg, enumName, variant)
-    let structTy = "%" + enumName
+    // Generic enums are registered under their mangled name
+    let rEnum = resolveEnumName(cg, enumName)
+    let tag = lookupVariantTag(cg, rEnum, variant)
+    let structTy = "%" + rEnum
     let alloc = nextTemp(cg)
     emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
     let tagPtr = nextTemp(cg)
     emit(cg, "  " + tagPtr + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 0\n")
     emit(cg, "  store i32 " + tag.toString() + ", ptr " + tagPtr + "\n")
-    let payloadTypes = lookupVariantPayload(cg, enumName, variant)
+    let payloadTypes = lookupVariantPayload(cg, rEnum, variant)
     if args.len > 0 && payloadTypes.len > 0 {
         let payPtr = nextTemp(cg)
         emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 1\n")
@@ -531,6 +583,10 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     if isHashMapTy(obj.ty) && method == "contains" {
         let kv = genExpr(cg, *args[0], locs, sigs, hashMapKeyTy(obj.ty))
         return genHashMapContains(cg, obj, kv)
+    }
+    if isHashMapTy(obj.ty) && method == "get" {
+        let kv = genExpr(cg, *args[0], locs, sigs, hashMapKeyTy(obj.ty))
+        return genHashMapGet(cg, obj, kv)
     }
     if isHashMapTy(obj.ty) && method == "getOrDefault" {
         let kv = genExpr(cg, *args[0], locs, sigs, hashMapKeyTy(obj.ty))
@@ -729,14 +785,16 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Loca
         }
     }
 
-    let retTy = lookupFnRet(cg, name)
+    // Generic fns are registered under their mangled name
+    let callName = resolveFnName(cg, name)
+    let retTy = lookupFnRet(cg, callName)
     let retLl = llType(retTy)
     var sigStr = retLl.clone()
 
     // Builtins: print/println → printf
     let isPrint = name == "print"
     let isPrintln = name == "println"
-    var emitName = name.clone()
+    var emitName = callName.clone()
     if isPrint || isPrintln {
         emitName = "printf"
         sigStr = "i32 (ptr, ...)"
