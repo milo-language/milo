@@ -67,6 +67,9 @@ Source → Lexer → Parser → AST → Resolver (imports) → AST (merged) → 
     the real binary is `.selfhost/milo-self.bin` — **NEVER run the `.bin` bare**, and
     never build/copy other bare milo-self binaries. Manual guarded runs of anything:
     `bun scripts/guard.ts [--mem-mb N] [--timeout-s N] -- <cmd> <args>`.
+  - Guards enforce caps against phys_footprint (not just RSS — the compressor
+    hides a runaway's RSS exactly when the machine is dying) and shed guarded
+    trees on system memory pressure. Pressure kills are fail-closed by design.
   - `milo run` / `milo test` / `milo fmt` guard their child binaries by default
     (`MILO_RUN_MEM_MB` to raise, `MILO_RUN_UNGUARDED=1` to disable — don't, for
     milo-self or anything it compiled).

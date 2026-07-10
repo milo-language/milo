@@ -66,6 +66,17 @@ acceptance test, and the rules in "Working Agreement" are mandatory.
   survives even the death of the bun process that spawned it, and the sweep
   caps concurrency×mem below half of RAM. Manual guarded run of anything else:
   `bun scripts/guard.ts [--mem-mb N] [--timeout-s N] -- <cmd> <args>`.
+  **RSS alone is not enough** (learned 2026-07-09: a sweep runaway reached
+  ~80GB phys_footprint while its RSS sat under cap — the compressor absorbs a
+  runaway's pages under pressure, so RSS plateaus exactly when the machine is
+  dying; only the 60s wall timeout ended it, after the OS hit the
+  "out of application memory" dialog). guard.ts therefore also enforces the
+  per-tree cap against **phys_footprint** (footprint(1), includes compressed,
+  1Hz) and sheds guarded trees on **system memory pressure**
+  (`kern.memorystatus_vm_pressure_level`: critical → kill all, sustained
+  warning → kill largest per tick; both watchdog layers check it). Pressure
+  kills are fail-closed on purpose: guarded children die even when another app
+  caused the pressure.
   Binaries **compiled by** milo-self are equally untrusted — run them through
   guard.ts too. The test harnesses already do all of this.
 - **Debugging playbook**: crash → `lldb -b -o run -o bt ./milo-self.bin <cmd>`

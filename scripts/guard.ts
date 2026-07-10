@@ -29,7 +29,28 @@ const GLOBAL_MEM_KB = (Number(process.env.MILO_GUARD_TOTAL_MB || 0) || Math.floo
 const POLL_MS = 100;
 const MAX_CAPTURE_BYTES = 64 * 1024 * 1024;
 
-export type GuardKill = "memory" | "global-memory" | "timeout" | "watchdog-blind";
+// RSS alone is not enough: once macOS starts compressing a runaway's pages,
+// its RSS stops growing while its real footprint balloons (observed: ~80GB
+// phys_footprint with RSS under cap — jetsam killed it, not us, after the
+// system hit the "out of application memory" dialog). Two extra layers:
+//  1. phys_footprint (includes compressed pages) per tree, polled at 1Hz via
+//     footprint(1), enforced against the same per-tree limit.
+//  2. system memory-pressure level (kern.memorystatus_vm_pressure_level:
+//     1=normal 2=warning 4=critical). Critical kills every guarded tree;
+//     sustained warning kills the largest tree per tick until pressure clears.
+//     Fail-closed by design: pressure caused by *other* apps still kills
+//     guarded children — they are untrusted, Chrome is not.
+const PRESSURE_KILL_LEVEL = Number(process.env.MILO_GUARD_PRESSURE_KILL_LEVEL || 0) || 2;
+const PRESSURE_SUSTAIN_TICKS = Number(process.env.MILO_GUARD_PRESSURE_SUSTAIN_TICKS || 0) || 10;
+const FOOTPRINT_EVERY_TICKS = 10;
+
+export type GuardKill =
+  | "memory"
+  | "footprint"
+  | "global-memory"
+  | "pressure"
+  | "timeout"
+  | "watchdog-blind";
 export type RunResult = {
   stdout: string;
   stderr: string;
@@ -55,46 +76,118 @@ function schedulePoll() {
 // If ps itself starts failing the watchdog is blind — usually a sign the
 // system is already under severe pressure. Fail closed: kill everything.
 let psFailures = 0;
+let warnTicks = 0;
+let tickNo = 0;
+let footprintInFlight = false;
+// pgid → phys_footprint KB, refreshed at 1Hz; between refreshes the last
+// sample is enforced so a tree can't hide behind the sampling gap.
+const footprintByPgid = new Map<number, number>();
 
-function poll() {
+function exec(cmd: string, args: string[]): Promise<string | null> {
+  return new Promise(res =>
+    execFile(cmd, args, { maxBuffer: 16 * 1024 * 1024 }, (err, out) => res(err ? null : String(out)))
+  );
+}
+
+// darwin only; missing sysctl (linux) reads as normal — linux enforces ulimits.
+async function pressureLevel(): Promise<number> {
+  const out = await exec("sysctl", ["-n", "kern.memorystatus_vm_pressure_level"]);
+  return out === null ? 1 : Number(out.trim()) || 1;
+}
+
+// One footprint(1) call for every pid in the map; parses per-pid
+// phys_footprint (KB/MB/GB) and sums per group key. Dead pids just drop out
+// of the output. Returns null when footprint(1) is unavailable (linux —
+// where ulimits are enforced anyway).
+export async function footprintSums(pidsByGroup: Map<number, number[]>): Promise<Map<number, number> | null> {
+  const args: string[] = [];
+  for (const pids of pidsByGroup.values()) for (const p of pids) args.push("-p", String(p));
+  if (args.length === 0) return new Map();
+  const out = await exec("footprint", args);
+  if (out === null) return null;
+  const pidToGroup = new Map<number, number>();
+  for (const [g, pids] of pidsByGroup) for (const p of pids) pidToGroup.set(p, g);
+  const sums = new Map<number, number>();
+  let curPid = -1;
+  for (const line of out.split("\n")) {
+    const head = line.match(/\[(\d+)\]/);
+    if (head) curPid = Number(head[1]);
+    const fp = line.match(/^\s*phys_footprint:\s+([\d.]+)\s+(KB|MB|GB)/);
+    if (fp && curPid >= 0) {
+      const kb = parseFloat(fp[1]!) * (fp[2] === "GB" ? 1024 * 1024 : fp[2] === "MB" ? 1024 : 1);
+      const g = pidToGroup.get(curPid);
+      if (g !== undefined) sums.set(g, (sums.get(g) ?? 0) + kb);
+    }
+  }
+  return sums;
+}
+
+async function sampleFootprints(pidsByPgid: Map<number, number[]>) {
+  footprintInFlight = true;
+  try {
+    const sums = await footprintSums(pidsByPgid);
+    if (sums === null) return; // no footprint(1) → rss layer still guards
+    footprintByPgid.clear();
+    for (const [pgid, kb] of sums) footprintByPgid.set(pgid, kb);
+  } finally {
+    footprintInFlight = false;
+  }
+}
+
+async function poll() {
   pollScheduled = false;
   if (live.size === 0) return;
-  execFile("ps", ["-axo", "pgid=,rss="], { maxBuffer: 16 * 1024 * 1024 }, (err, out) => {
-    if (err) {
-      if (++psFailures >= 5) for (const e of live.values()) e.kill("watchdog-blind");
-    } else {
-      psFailures = 0;
-      const rssByPgid = new Map<number, number>();
-      for (const line of String(out).split("\n")) {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length !== 2) continue;
-        const pgid = Number(parts[0]);
-        rssByPgid.set(pgid, (rssByPgid.get(pgid) ?? 0) + (Number(parts[1]) || 0));
-      }
-      const now = Date.now();
-      let totalKb = 0;
-      const sized: { e: Entry; kb: number }[] = [];
-      for (const e of live.values()) {
-        const kb = rssByPgid.get(e.pgid) ?? 0;
-        totalKb += kb;
-        sized.push({ e, kb });
-        if (kb > e.limitKb) e.kill("memory");
-        else if (now > e.deadline) e.kill("timeout");
-      }
-      // Global breach: killing one tree per tick loses the race against N
-      // concurrent allocators — kill largest trees until projected under cap.
-      if (totalKb > GLOBAL_MEM_KB) {
-        sized.sort((a, b) => b.kb - a.kb);
-        let excess = totalKb - GLOBAL_MEM_KB;
-        for (const { e, kb } of sized) {
-          if (excess <= 0) break;
-          e.kill("global-memory");
-          excess -= kb;
-        }
+  tickNo++;
+  const [out, level] = await Promise.all([exec("ps", ["-axo", "pgid=,pid=,rss="]), pressureLevel()]);
+  if (out === null) {
+    if (++psFailures >= 5) for (const e of live.values()) e.kill("watchdog-blind");
+  } else {
+    psFailures = 0;
+    const rssByPgid = new Map<number, number>();
+    const pidsByPgid = new Map<number, number[]>();
+    for (const line of out.split("\n")) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length !== 3) continue;
+      const pgid = Number(parts[0]);
+      rssByPgid.set(pgid, (rssByPgid.get(pgid) ?? 0) + (Number(parts[2]) || 0));
+      if (live.has(pgid)) {
+        if (!pidsByPgid.has(pgid)) pidsByPgid.set(pgid, []);
+        pidsByPgid.get(pgid)!.push(Number(parts[1]));
       }
     }
-    schedulePoll();
-  });
+    if (tickNo % FOOTPRINT_EVERY_TICKS === 0 && !footprintInFlight) void sampleFootprints(pidsByPgid);
+
+    const now = Date.now();
+    let totalKb = 0;
+    const sized: { e: Entry; kb: number }[] = [];
+    for (const e of live.values()) {
+      // footprint ≥ rss; take the max so compressed pages count against the cap
+      const kb = Math.max(rssByPgid.get(e.pgid) ?? 0, footprintByPgid.get(e.pgid) ?? 0);
+      totalKb += kb;
+      sized.push({ e, kb });
+      if ((rssByPgid.get(e.pgid) ?? 0) > e.limitKb) e.kill("memory");
+      else if (kb > e.limitKb) e.kill("footprint");
+      else if (now > e.deadline) e.kill("timeout");
+    }
+    sized.sort((a, b) => b.kb - a.kb);
+    // Global breach: killing one tree per tick loses the race against N
+    // concurrent allocators — kill largest trees until projected under cap.
+    if (totalKb > GLOBAL_MEM_KB) {
+      let excess = totalKb - GLOBAL_MEM_KB;
+      for (const { e, kb } of sized) {
+        if (excess <= 0) break;
+        e.kill("global-memory");
+        excess -= kb;
+      }
+    }
+    // System pressure failsafe: critical kills everything guarded; sustained
+    // warning sheds the largest tree per tick until the system recovers.
+    if (level >= 4) for (const e of live.values()) e.kill("pressure");
+    else if (level >= PRESSURE_KILL_LEVEL) {
+      if (++warnTicks >= PRESSURE_SUSTAIN_TICKS && sized.length > 0) sized[0]!.e.kill("pressure");
+    } else warnTicks = 0;
+  }
+  schedulePoll();
 }
 
 export interface GuardOpts {
@@ -118,13 +211,20 @@ export function guardedRun(cmd: string, args: string[], opts: GuardOpts = {}): P
   // kills the group itself on RSS breach or tick-cap (wall clock) breach.
   // It exits when the group leader (the exec'd command) does.
   const maxTicks = Math.ceil(timeoutMs / 250) + 40;
+  // Pressure check mirrors the node watchdog: this layer must also fire when a
+  // compressed runaway hides from RSS (level 4 = critical → kill own group
+  // immediately; level >= 2 sustained 2s → kill). Missing sysctl (linux) reads 1.
   const ulimits = `ulimit -t ${cpuSec} 2>/dev/null; ulimit -v ${limitKb} 2>/dev/null; ulimit -d ${limitKb} 2>/dev/null
 pgid=$$
 (
   t=0
+  warn=0
   while kill -0 "$pgid" 2>/dev/null; do
     rss=$(ps -axo pgid=,rss= 2>/dev/null | awk -v g="$pgid" '$1==g {s+=$2} END {print s+0}')
-    if [ "\${rss:-0}" -gt ${limitKb} ] || [ "$t" -ge ${maxTicks} ]; then
+    lvl=$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null || echo 1)
+    case "$lvl" in (*[!0-9]*|"") lvl=1;; esac
+    if [ "$lvl" -ge 2 ]; then warn=$((warn+1)); else warn=0; fi
+    if [ "\${rss:-0}" -gt ${limitKb} ] || [ "$t" -ge ${maxTicks} ] || [ "$lvl" -ge 4 ] || [ "$warn" -ge 8 ]; then
       kill -9 -"$pgid" 2>/dev/null
       exit 0
     fi
@@ -179,11 +279,19 @@ exec "$@"`;
     const finish = (code: number, signal: string | null) => {
       if (pid !== undefined) live.delete(pid);
       if (guardKill === "memory") stderr += `\n[guard] SIGKILL: process tree exceeded ${memMb} MB RSS`;
+      else if (guardKill === "footprint")
+        stderr += `\n[guard] SIGKILL: process tree exceeded ${memMb} MB phys_footprint (RSS + compressed)`;
+      else if (guardKill === "pressure")
+        stderr += `\n[guard] SIGKILL: system memory pressure — guarded tree shed fail-closed`;
       else if (guardKill === "global-memory")
         stderr += `\n[guard] SIGKILL: combined guarded processes exceeded ${Math.floor(GLOBAL_MEM_KB / 1024)} MB RSS (largest tree killed)`;
       else if (guardKill === "timeout") stderr += `\n[guard] SIGKILL: exceeded ${timeoutMs} ms`;
       else if (guardKill === "watchdog-blind")
         stderr += `\n[guard] SIGKILL: ps unresponsive, watchdog blind — killed fail-closed`;
+      else if (signal === "SIGKILL")
+        // unattributed SIGKILL: the in-pgid shell watchdog (RSS/tick/pressure
+        // breach) or jetsam got there before the node poll did
+        stderr += `\n[guard] SIGKILL (unattributed — in-pgid watchdog or external OOM kill)`;
       resolve({ stdout, stderr, code, signal, guardKill });
     };
 
@@ -201,15 +309,20 @@ exec "$@"`;
 export function monitorPidTree(
   rootPid: number,
   memMb: number,
-  onBreach: (rssMb: number) => void
+  onBreach: (rssMb: number, reason?: "memory" | "pressure") => void
 ): () => void {
   const limitKb = memMb * 1024;
   let stopped = false;
   let notified = false;
+  let ticks = 0;
+  let treeFootprintKb = 0;
+  let fpInFlight = false;
+  let warnTicksLocal = 0;
   const tick = () => {
     if (stopped) return;
-    execFile("ps", ["-axo", "pid=,ppid=,rss="], { maxBuffer: 16 * 1024 * 1024 }, (err, out) => {
+    execFile("ps", ["-axo", "pid=,ppid=,rss="], { maxBuffer: 16 * 1024 * 1024 }, async (err, out) => {
       if (stopped) return;
+      ticks++;
       if (!err) {
         const kids = new Map<number, number[]>();
         const rss = new Map<number, number>();
@@ -229,8 +342,23 @@ export function monitorPidTree(
           tree.push(p);
           for (const c of kids.get(p) ?? []) queue.push(c);
         }
-        const totalKb = tree.reduce((s, p) => s + (rss.get(p) ?? 0), 0);
-        if (totalKb > limitKb) {
+        // 1Hz phys_footprint over the same tree — compressed pages leave RSS
+        if (ticks % FOOTPRINT_EVERY_TICKS === 0 && !fpInFlight) {
+          fpInFlight = true;
+          void footprintSums(new Map([[rootPid, [...tree]]])).then(sums => {
+            if (sums !== null) treeFootprintKb = sums.get(rootPid) ?? 0;
+            fpInFlight = false;
+          });
+        }
+        const totalKb = Math.max(
+          tree.reduce((s, p) => s + (rss.get(p) ?? 0), 0),
+          treeFootprintKb
+        );
+        const level = await pressureLevel();
+        if (level >= 2) warnTicksLocal++;
+        else warnTicksLocal = 0;
+        const pressureKill = level >= 4 || warnTicksLocal >= PRESSURE_SUSTAIN_TICKS;
+        if (totalKb > limitKb || pressureKill) {
           // keep killing every tick until stop() — catches fork races
           for (const p of tree) {
             try {
@@ -239,7 +367,7 @@ export function monitorPidTree(
           }
           if (!notified) {
             notified = true;
-            onBreach(Math.round(totalKb / 1024));
+            onBreach(Math.round(totalKb / 1024), totalKb > limitKb ? "memory" : "pressure");
           }
         }
       }

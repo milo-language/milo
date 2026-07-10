@@ -395,11 +395,13 @@ async function runFile(sourcePath: string, extraArgs: string[], target: TargetIn
     const stop =
       process.env.MILO_RUN_UNGUARDED === "1"
         ? () => {}
-        : monitorPidTree(child.pid!, memMb, rssMb => {
+        : monitorPidTree(child.pid!, memMb, (rssMb, reason) => {
             breached = true;
             console.error(
-              `\nerror: program exceeded ${memMb} MB RSS (${rssMb} MB) and was killed.` +
-                `\n       raise the cap with MILO_RUN_MEM_MB=<mb> or disable with MILO_RUN_UNGUARDED=1`
+              reason === "pressure"
+                ? `\nerror: system memory pressure — program killed fail-closed (footprint ${rssMb} MB).`
+                : `\nerror: program exceeded ${memMb} MB (footprint ${rssMb} MB) and was killed.` +
+                    `\n       raise the cap with MILO_RUN_MEM_MB=<mb> or disable with MILO_RUN_UNGUARDED=1`
             );
           });
     const { code, signal } = await new Promise<{ code: number | null; signal: string | null }>(res => {
