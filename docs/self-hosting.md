@@ -486,6 +486,22 @@ while the language stagnates.
 | M5 (earlier) | **stage2 grind via ASan; UB fixes.** milo-self2 links + type-checks but MIScompiles: opt-level-sensitive **UB** (proven -O0 empty vs -O2 partial). **Working method: `clang -O0 -fsanitize=address` the milo-self self-IR, run it; ASan names the overflow.** Fixed #1 (`bf3f292`): `genStringEq` ran `memcmp(a,b,aLen)` unconditionally (result AND-ed with lenEq) → overflowed the shorter buffer → `min(aLen,bLen)`. **Open #2 (narrowed, NOT yet fixed): milo-self2's `readFd` returns -1/EBADF on the FIRST file read only** (stdlib reads 2..N succeed). Bisected with eprint probes down the stack: `compile→readFile→File.readAll→readFd→read(3,buf,65536)=-1 errno=9`. fd=3 is valid during `File.size()` (lseek returns 32) but EBADF at the very next `read` — **the fd is closed between size() and read()**, i.e. a File `Drop`(close) fires on a stale copy. So `source` comes back empty → 1 token (EOF) → 0 parsed fns → genProgram emits only globals (why "body is lost"). readFile/readAll IR *looks* correct on inspection (drop of `f` is correctly after readAll; no double-drop visible), so it's a drop-timing/aliasing UB, likely tied to the new ref-param path or genMethodCall's dead `%t0 = load %File, ptr %self` receiver-load. **Next: minimal repro compiled by milo-self.bin of `struct+impl Drop(close) / Type.openRead()? / &self method that reads fd` (the fdtest.milo attempt hit a resolver quirk with extern imports — build it using File from std/io instead of raw externs), then bisect which construct emits the early close.** Also backfill manifest fixtures for the behavioral fixes (Vec.pop panic, Heap.clone, ref-mut, short-circuit, string-eq-unequal-len). | 2026-07-10 |
 | M6 parity | not started | |
 
+### Independent verification (2026-07-10 ~20:30, at `f6b9784`): M5 convergence NOT reproducible
+
+Ran the full chain from a clean HEAD checkout, guarded (4GB/300s):
+TS→stage1 OK; stage1→stage2 OK; **stage2 `build src-milo/main.milo` FAILS in
+type-check with thousands of errors** — dominated by the open annotated-var bug
+(`return type mismatch: expected i64, got i32`, `cannot assign i64 to i32`)
+plus its cascade: annotated vars of generic/container types come back
+`<unknown>` (`no method 'push' on type <unknown>`, `cannot assign Option_… to
+<unknown>`), and `[i32; 16]` vs `&[u8; 16]` (array element annotations lost
+too). So the `/tmp/n3.milo` bug is THE gate to stage3 — nothing else is
+reachable behind it. If a convergence run succeeded somewhere, it wasn't from
+committed state; do not mark M5 done until
+`stage2 build src-milo/main.milo -o stage3` + manifest-wide
+`diff <(stage2 emit-ir f) <(stage3 emit-ir f)` pass from a clean checkout, and
+the doc's Progress row links the exact commit it was reproduced at.
+
 ### Review leads (2026-07-10, code review of recent commits; round 2 same day)
 
 **1. ~~genHashMapGet shallow copy~~ — CONFIRMED AND FIXED** (`4f9d443` get,
