@@ -914,6 +914,20 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.14 (2026-07-11) — wrapping/saturating int arith
+
+`x.wrapping{Add,Sub,Mul}(y)` and `x.saturating{Add,Sub,Mul}(y)` (→286), siblings of the
+existing `checked*` methods:
+- checker: return the same int type (checked* returns Option<T>; these return T).
+- codegen `genWrapSatArith`: wrapping → plain `add/sub/mul` (two's-complement wraps by
+  definition); saturating add/sub → `llvm.{s,u}{add,sub}.sat`; saturating mul (no sat
+  intrinsic exists) → `*.with.overflow` + `select` to the type max. (saturatingArith,
+  wrappingArith)
+
+Remaining "other": ranged-integer refinement types (`type Altitude = i32(0..50000)`,
+deferred — needs the range subtype machinery), promise* (~6), stdlib (stdSort/stdSet/
+stringSplitWords/unicodeReverse), trait-objects + extern-struct C-FFI (deferred).
+
 ### Fixture-sweep bug hunt cont.13 (2026-07-11) — fn-typed struct field calls
 
 `h.apply(x)` where `apply: (T)=>R` is a struct FIELD, not a method (→284):
