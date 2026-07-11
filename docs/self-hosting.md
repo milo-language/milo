@@ -746,3 +746,31 @@ already mandates.
 ### Exclusion list (fixtures milo-self is not expected to pass yet)
 
 (populate at M0 seed time)
+
+### Parity progress (2026-07-10) — milo-self compiling real example programs
+
+Self-hosting compiler is converged/done; this tracks the **parity** goal (milo-self
+compiles the full example suite, so the self-built binary can replace the bun
+compiler). **14/30 examples compile via milo-self** (up from 13). Fixes landed this
+session, each keeps manifest 173 green + byte-identical -O2 convergence:
+- int-literal coercion in **method** args (checkMethodCall mirrored checkCall) → fmt/rg/tree/parallel
+- `jsonStringify` intrinsic (checker + genJsonStringify, scalar struct fields)
+- `Vec.len()` / `.swap()` methods
+- `llType` idempotent on `"double"` (float literal arg was emitted `i32 3.5`)
+- single-interpolation f-string `$"{x}"` goes through `format()` (was returning raw expr type)
+- `print()`/`println()` Display struct/enum args as `%s` (was `zext` aggregate) → hex
+
+Remaining gaps, bucketed (each is one root cause, not per-example):
+- **parser "unexpected token" (5):** flightController, kvstore, minilang, splitPty,
+  sysmon — parse desync; sysmon/flightController is `if x == CONST {` parsed as a
+  struct literal (`CONST { ... }` eats the block brace). Fix: no-struct-literal mode
+  in if/while condition position (Rust-style).
+- **arena generic inference (4):** depgraph, domArena, htmlParse, linkedList —
+  `arenaNew<T>()` / `arenaGet<T>` can't infer T.
+- **json/net codegen stack (5):** pkg (gep unsized), shuf (float i32/double), fetch +
+  httpClient (i64/i32 slot), json (integer constant) — stacked codegen type bugs.
+- **singles (2):** serve (u16→Option<u16> auto-wrap coercion), webserver (`embedFile` intrinsic).
+
+Method: run milo-self over `examples/**`, bucket errors; fix the shared root, not the
+example. `.len` exists as both field (`.len`) and method (`.len()`) — a language wart
+matching the oracle, worth unifying.
