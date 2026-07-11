@@ -74,6 +74,14 @@ enum TokKind {
     Caret,
     Tilde,
     At,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
+    AmpEq,
+    PipeEq,
+    CaretEq,
     Eof,
 }
 
@@ -202,6 +210,14 @@ fn tokKindName(k: TokKind): string {
         TokKind.Caret => { return "^" }
         TokKind.Tilde => { return "~" }
         TokKind.At => { return "@" }
+        TokKind.PlusEq => { return "+=" }
+        TokKind.MinusEq => { return "-=" }
+        TokKind.StarEq => { return "*=" }
+        TokKind.SlashEq => { return "/=" }
+        TokKind.PercentEq => { return "%=" }
+        TokKind.AmpEq => { return "&=" }
+        TokKind.PipeEq => { return "|=" }
+        TokKind.CaretEq => { return "^=" }
         TokKind.Eof => { return "EOF" }
     }
 }

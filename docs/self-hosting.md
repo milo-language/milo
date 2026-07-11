@@ -914,6 +914,19 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.11 (2026-07-11) — untyped closures + Vec.map/filter
+
+Multi-part functional feature (→273, unlocked several untyped-closure fixtures):
+- **Untyped closure params** (`(x) => x * 2`): `parseParam` makes the type optional
+  (empty-name MiloType placeholder); `isArrowClosure` now scans to the matching `)` and
+  checks for `=>`/`:` (was requiring a `:`-typed first param, so untyped closures fell
+  through to a parenthesized-expr misparse).
+- **Closure-param inference**: an unannotated param takes its type from the enclosing
+  expected fn type (`ck.expectedType` set to a `TFn` by the method call site).
+- **`Vec.map` / `Vec.filter`**: checker sets the expected `(T)=>R` / `(T)=>bool` fn type and
+  returns `Vec<R>` / `Vec<T>`; codegen walks the input calling the closure per element
+  (by-ptr ABI) and builds a new Vec. (closureInferParams)
+
 ### Fixture-sweep bug hunt cont.10 (2026-07-11) — channel for-in iteration
 
 - **`for x in channel`** — drains the channel via `recv()` until it returns Err (closed).

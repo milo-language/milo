@@ -668,7 +668,30 @@ fn parseStmt(p: &mut Parser): Stmt {
         let value = parseExpr(p)
         return Stmt.Assign(Heap(expr), Heap(value), s0)
     }
+    // compound assignment `x <op>= v` desugars to `x = x <op> v`
+    let cop = compoundOp(peek(p).kind)
+    if cop.len > 0 {
+        advance(p)
+        let rhs = parseExpr(p)
+        let value = Expr.BinOp(cop, Heap(expr.clone()), Heap(rhs), cloneSpan(s0))
+        return Stmt.Assign(Heap(expr), Heap(value), s0)
+    }
     return Stmt.ExprStmt(Heap(expr), s0)
+}
+
+// maps a compound-assign token to its binary operator, or "" if not compound
+fn compoundOp(k: TokKind): string {
+    match k {
+        TokKind.PlusEq => { return "+" }
+        TokKind.MinusEq => { return "-" }
+        TokKind.StarEq => { return "*" }
+        TokKind.SlashEq => { return "/" }
+        TokKind.PercentEq => { return "%" }
+        TokKind.AmpEq => { return "&" }
+        TokKind.PipeEq => { return "|" }
+        TokKind.CaretEq => { return "^" }
+        _ => { return "" }
+    }
 }
 
 // -- Patterns --

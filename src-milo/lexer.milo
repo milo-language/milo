@@ -405,6 +405,47 @@ fn nextToken(lex: &mut Lexer): Token {
         advanceChar(lex)
         return makeToken(TokKind.QuestionQuestion, "??", line, col)
     }
+    // compound assignment: += -= *= /= %= &= |= ^= (must precede single-char ops)
+    if ch == 43 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.PlusEq, "+=", line, col)
+    }
+    if ch == 45 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.MinusEq, "-=", line, col)
+    }
+    if ch == 42 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.StarEq, "*=", line, col)
+    }
+    if ch == 47 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.SlashEq, "/=", line, col)
+    }
+    if ch == 37 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.PercentEq, "%=", line, col)
+    }
+    if ch == 38 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.AmpEq, "&=", line, col)
+    }
+    if ch == 124 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.PipeEq, "|=", line, col)
+    }
+    if ch == 94 && next == 61 {
+        advanceChar(lex)
+        advanceChar(lex)
+        return makeToken(TokKind.CaretEq, "^=", line, col)
+    }
     // &&
     if ch == 38 && next == 38 {
         advanceChar(lex)
