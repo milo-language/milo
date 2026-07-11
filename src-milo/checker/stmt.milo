@@ -621,34 +621,40 @@ fn registerBuiltinGenericEnums(ck: &mut Checker) {
 // monomorphized enum/struct, not TStruct("Option").
 fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
     if ty.typeArgs.len > 0 && !ty.isFn {
+        var base = tyUnknown()
+        var matched = false
         if ck.genericEnums.contains(ty.name) {
             var typeArgs: Vec<TypeKind> = Vec.new()
             for i in 0..ty.typeArgs.len {
                 typeArgs.push(resolveAstType(ck, ty.typeArgs[i]))
             }
-            let mangled = monomorphizeEnum(ck, ty.name, typeArgs)
-            return TypeKind.TEnum(mangled)
-        }
-        if ck.genericStructs.contains(ty.name) {
+            base = TypeKind.TEnum(monomorphizeEnum(ck, ty.name, typeArgs))
+            matched = true
+        } else if ck.genericStructs.contains(ty.name) {
             var typeArgs: Vec<TypeKind> = Vec.new()
             for i in 0..ty.typeArgs.len {
                 typeArgs.push(resolveAstType(ck, ty.typeArgs[i]))
             }
-            let mangled = monomorphizeStruct(ck, ty.name, typeArgs)
-            return TypeKind.TStruct(mangled)
+            base = TypeKind.TStruct(monomorphizeStruct(ck, ty.name, typeArgs))
+            matched = true
+        } else if ty.name == "Vec" && ty.typeArgs.len == 1 {
+            base = TypeKind.TVec(Heap(resolveAstType(ck, ty.typeArgs[0])))
+            matched = true
+        } else if ty.name == "Heap" && ty.typeArgs.len == 1 {
+            base = TypeKind.THeap(Heap(resolveAstType(ck, ty.typeArgs[0])))
+            matched = true
+        } else if ty.name == "HashMap" && ty.typeArgs.len == 2 {
+            base = TypeKind.THashMap(Heap(resolveAstType(ck, ty.typeArgs[0])), Heap(resolveAstType(ck, ty.typeArgs[1])))
+            matched = true
         }
-        // Built-in containers: resolve the element args too (mono-aware), so a
-        // `Vec<Handle<Node>>` keeps Handle_Node rather than the flattened Handle.
-        if !ty.isRef && !ty.isRefMut && !ty.isPtr && !ty.isArray {
-            if ty.name == "Vec" && ty.typeArgs.len == 1 {
-                return TypeKind.TVec(Heap(resolveAstType(ck, ty.typeArgs[0])))
-            }
-            if ty.name == "Heap" && ty.typeArgs.len == 1 {
-                return TypeKind.THeap(Heap(resolveAstType(ck, ty.typeArgs[0])))
-            }
-            if ty.name == "HashMap" && ty.typeArgs.len == 2 {
-                return TypeKind.THashMap(Heap(resolveAstType(ck, ty.typeArgs[0])), Heap(resolveAstType(ck, ty.typeArgs[1])))
-            }
+        if matched {
+            // Preserve any &/&mut/* wrapper the annotation spelled — dropping it
+            // made a `&mut Arena<T>` param non-mutable and un-derefable.
+            if ty.isArray { base = TypeKind.TArray(Heap(base), ty.arraySize) }
+            if ty.isPtr { return TypeKind.TPtr(Heap(base)) }
+            if ty.isRef { return TypeKind.TRef(Heap(base), false) }
+            if ty.isRefMut { return TypeKind.TRef(Heap(base), true) }
+            return base
         }
     }
     return normalizeEnumNames(ck, typeFromAst(ty))
