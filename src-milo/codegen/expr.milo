@@ -2116,6 +2116,38 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         emit(cg, "  " + w + " = " + op + " " + objTyLl + " " + obj.v + " to i64\n")
         return genIntToString(cg, w, false)
     }
+    // Interface (trait-object) dispatch: obj is a `%Iface {ptr data, ptr itable}`
+    // fat pointer. Extract data + itable, load the method's itable slot, call it with
+    // data as the receiver.
+    let recvName0 = stripPercent(resolveTyStr(cg, stripPercent(obj.ty)))
+    if cg.interfaces.contains(recvName0) {
+        let ifTy = "%" + recvName0.clone()
+        let slot = lookupFieldIndex(cg, recvName0, method)
+        let retTy = lookupFieldType(cg, recvName0, slot)
+        let retLl = llType(retTy)
+        let dataP = nextTemp(cg)
+        emit(cg, "  " + dataP + " = extractvalue " + ifTy + " " + obj.v + ", 0\n")
+        let itabP = nextTemp(cg)
+        emit(cg, "  " + itabP + " = extractvalue " + ifTy + " " + obj.v + ", 1\n")
+        // itable is an array of fn pointers; load slot `slot`
+        let mslotP = nextTemp(cg)
+        emit(cg, "  " + mslotP + " = getelementptr ptr, ptr " + itabP + ", i64 " + slot.toString() + "\n")
+        let mfn = nextTemp(cg)
+        emit(cg, "  " + mfn + " = load ptr, ptr " + mslotP + "\n")
+        var argStr = "ptr " + dataP
+        for ai in 0..args.len {
+            let av = genExpr(cg, *args[ai], locs, sigs, "")
+            argStr = argStr + ", " + llType(av.ty) + " " + av.v
+        }
+        if retLl == "void" {
+            emit(cg, "  call void " + mfn + "(" + argStr + ")\n")
+            return Val { v: "0", ty: "void" }
+        }
+        let t = nextTemp(cg)
+        emit(cg, "  " + t + " = call " + retLl + " " + mfn + "(" + argStr + ")\n")
+        return Val { v: t, ty: retTy }
+    }
+
     // User-defined methods via impl tables: Ty$m or Ty$Trait$m; the receiver
     // is passed by value first (milo0's ref-param convention)
     let recvName = stripPercent(resolveTyStr(cg, stripPercent(obj.ty)))
@@ -2723,6 +2755,37 @@ fn disambiguatePass(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &
 
 // True if `e` is a bare top-level function name (not a local variable) — i.e. a
 // value that denotes a function, eligible to pass as a raw fn pointer.
+// Emit (once) the itable global for a concrete type's implementation of an
+// interface: `@itable.<Concrete>.<Iface> = constant [N x ptr] [ptr @m0, …]`, method
+// pointers in the interface's declared method order. Returns the global name.
+fn ensureItable(cg: &mut Cgen, concrete: &string, iface: &string): string {
+    let gname = "@itable." + concrete.clone() + "." + iface.clone()
+    let key = concrete.clone() + "." + iface.clone()
+    if cg.itableEmitted.contains(key) { return gname }
+    cg.itableEmitted.insert(key, true)
+    let methods = cg.structs.get(iface.clone())!
+    let n = methods.len
+    var body = "["
+    for mi in 0..n {
+        if mi > 0 { body = body + ", " }
+        let mname = methods[mi].name.clone()
+        // resolve the concrete's method: Concrete$Iface$m, Concrete$m, or a scan
+        var mfn = concrete.clone() + "$" + iface.clone() + "$" + mname.clone()
+        if !cg.fnRets.contains(mfn) {
+            mfn = concrete.clone() + "$" + mname.clone()
+            if !cg.fnRets.contains(mfn) {
+                for ik, iv in cg.fnRets {
+                    if ik.startsWith(concrete + "$") && ik.endsWith("$" + mname) { mfn = ik.clone() }
+                }
+            }
+        }
+        body = body + "ptr @" + mfn
+    }
+    body = body + "]"
+    emitG(cg, gname + " = private unnamed_addr constant [" + n.toString() + " x ptr] " + body + "\n")
+    return gname
+}
+
 fn isBareFnName(cg: &Cgen, e: &Expr, locs: &Vec<Local>): bool {
     match e {
         Expr.Ident(nm, sp) => { return !hasLocal(locs, nm) && cg.fnRets.contains(nm) }
@@ -3011,7 +3074,26 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         // the callee mutates the caller's storage rather than a copy.
         var isRefParam = false
         if i < paramRefs.len { isRefParam = paramRefs[i] }
-        if isRefParam {
+        // interface coercion: an `&Interface` param takes a fat pointer {data, itable},
+        // not a plain ref. Build it from the concrete arg's address + its itable.
+        let hintBase = stripPercent(resolveTyStr(cg, stripPercent(hint)))
+        if cg.interfaces.contains(hintBase) {
+            let lv = genLvalue(cg, *args[i], locs, sigs)
+            let concrete = stripPercent(lv.ty)
+            let itab = ensureItable(cg, concrete, hintBase)
+            let ifTy = "%" + hintBase.clone()
+            let v0 = nextTemp(cg)
+            emit(cg, "  " + v0 + " = insertvalue " + ifTy + " undef, ptr " + lv.v + ", 0\n")
+            let v1 = nextTemp(cg)
+            emit(cg, "  " + v1 + " = insertvalue " + ifTy + " " + v0 + ", ptr " + itab + ", 1\n")
+            // an `&Interface` param uses the ref ABI (callee gets a ptr, loads the fat
+            // pointer): materialize the fat pointer and pass its address.
+            let slot = nextTemp(cg)
+            emit(cg, "  " + slot + " = alloca " + ifTy + "\n")
+            emit(cg, "  store " + ifTy + " " + v1 + ", ptr " + slot + "\n")
+            argVals.push(Val { v: slot, ty: "ptr" })
+            argPointees.push("")
+        } else if isRefParam {
             let lv = genLvalue(cg, *args[i], locs, sigs)
             argVals.push(Val { v: lv.v, ty: "ptr" })
             argPointees.push(lv.ty.clone())

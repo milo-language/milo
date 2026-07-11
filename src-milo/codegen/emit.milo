@@ -360,6 +360,22 @@ fn genProgram(prog: Program, sourceDir: string): string {
         emitG(cg, "%" + sname + " = type " + llStruct + "\n")
     }
 
+    // Interfaces (traits used as types) are trait objects — a fat pointer
+    // `%Iface = type { ptr data, ptr itable }`. Register the name + emit the type so
+    // `llType(Iface)` resolves and coercion/dispatch can build/read the fat pointer.
+    for ti in 0..prog.traits.len {
+        let tn = prog.traits[ti].name.clone()
+        cg.interfaces.insert(tn.clone(), true)
+        // itable slot layout as a pseudo-struct: field i = method i, its `ty` = the
+        // method's RETURN type (so dispatch recovers the call's result type by slot).
+        var slots: Vec<FieldInfo> = Vec.new()
+        for mi in 0..prog.traits[ti].methods.len {
+            slots.push(FieldInfo { name: prog.traits[ti].methods[mi].name.clone(), ty: resolveTyStr(cg, astTypeStr(prog.traits[ti].methods[mi].retType)) })
+        }
+        cg.structs.insert(tn.clone(), slots)
+        emitG(cg, "%" + tn + " = type { ptr, ptr }\n")
+    }
+
     // Module-level global initializers — emitted here so struct/enum/%Vec/%String
     // types they reference are already declared above.
     for gi in 0..prog.globals.len {

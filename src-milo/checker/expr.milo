@@ -347,11 +347,26 @@ fn opMethodName(op: &string): string {
     return ""
 }
 
+// True if `sname` (a concrete struct) implements every method of interface `iface`
+// (a registered trait) — the requirement to coerce it to an `&iface` trait object.
+fn structImplementsInterface(ck: &Checker, sname: &string, iface: &string): bool {
+    if !ck.traits.contains(iface) { return false }
+    if !ck.structs.contains(sname) { return false }
+    let tinfo = ck.traits.get(iface)!
+    for mname, minfo in tinfo.methods {
+        if !structHasMethod(ck, sname, mname) { return false }
+    }
+    return true
+}
+
 // does struct `sname` define method `method` via an inherent or trait impl?
 fn structHasMethod(ck: &Checker, sname: &string, method: &string): bool {
     if method.len == 0 { return false }
     if ck.inherentImpls.contains(sname) {
-        if ck.inherentImpls.get(sname)!.methods.contains(method) { return true }
+        // extract ONCE: inline `get(sname)!.methods.contains()` clones the nested-Vec
+        // ImplDecl on the temporary and hangs (the documented HashMap.get gotcha).
+        let implD = ck.inherentImpls.get(sname)!
+        if implD.methods.contains(method) { return true }
     }
     if ck.traitImpls.contains(sname) {
         let impls = ck.traitImpls.get(sname)!
@@ -770,8 +785,20 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         let argType = checkExpr(ck, *args[i])
         match paramType {
             TypeKind.TRef(inner, mutable) => {
+                // interface coercion: a concrete struct implementing interface `inner`
+                // may be passed as `&inner` (codegen builds the fat pointer).
+                var ifaceOk = false
+                match (*inner).clone() {
+                    TypeKind.TStruct(ifn) => {
+                        match argType.clone() {
+                            TypeKind.TStruct(an) => { if structImplementsInterface(ck, an, ifn) { ifaceOk = true } }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
                 // auto-borrow: don't type-error, just check inner matches
-                if !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(*inner, argType, *args[i]) {
+                if !ifaceOk && !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(*inner, argType, *args[i]) {
                     error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + ptName + ", got " + typeName(argType), cloneSpan(span))
                 }
             }
@@ -1963,6 +1990,25 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
                 }
             }
         }
+    }
+
+    // interface/trait-object dispatch: `g.method()` where g's type is an interface
+    // (a registered trait used as a type). The method resolves against the trait;
+    // codegen dispatches through the fat pointer's itable.
+    if ck.traits.contains(structName) {
+        let tinfo = ck.traits.get(structName)!
+        if tinfo.methods.contains(method) {
+            let m = tinfo.methods.get(method)!
+            // user args skip the implicit self (trait method's first param)
+            var ai: i64 = 0
+            while ai < args.len {
+                checkExpr(ck, *args[ai])
+                ai = ai + 1
+            }
+            return m.ret.clone()
+        }
+        error(ck, "interface '" + structName.clone() + "' has no method '" + method.clone() + "'", cloneSpan(span))
+        return tyUnknown()
     }
 
     error(ck, "no method '" + method.clone() + "' on struct '" + structName.clone() + "'", cloneSpan(span))

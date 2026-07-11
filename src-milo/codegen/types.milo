@@ -62,6 +62,8 @@ struct Cgen {
     // Type lookup tables (replaces old string-encoded DBs)
     fnRets: HashMap<string, string>,
     externFns: HashMap<string, bool>,
+    interfaces: HashMap<string, bool>,
+    itableEmitted: HashMap<string, bool>,
     structs: HashMap<string, Vec<FieldInfo>>,
     enums: HashMap<string, CgEnumInfo>,
     // module-level global constants: name -> llvm type (referenced via @name)
@@ -112,6 +114,8 @@ fn cgenNew(): Cgen {
         strId: 0,
         fnRets: HashMap.new(),
         externFns: HashMap.new(),
+        interfaces: HashMap.new(),
+        itableEmitted: HashMap.new(),
         structs: HashMap.new(),
         enums: HashMap.new(),
         globalVars: HashMap.new(),
