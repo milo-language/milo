@@ -852,6 +852,7 @@ fn parseUnary(p: &mut Parser): Expr {
 }
 
 fn parsePostfix(p: &mut Parser): Expr {
+    let startSpan = span(peek(p))
     var expr = parsePrimary(p)
     while true {
         if at(p, TokKind.Dot) {
@@ -886,8 +887,10 @@ fn parsePostfix(p: &mut Parser): Expr {
                 expr = Expr.IndexAccess(Heap(expr), Heap(first), Option.None)
             }
         } else if at(p, TokKind.Bang) {
+            // span of the whole unwrapped expression (its start), matching the
+            // oracle's `error at L:C` — not the `!` token position.
             advance(p)
-            expr = Expr.Unwrap(Heap(expr), Option.None)
+            expr = Expr.Unwrap(Heap(expr), cloneSpan(startSpan))
         } else if at(p, TokKind.Question) {
             advance(p)
             expr = Expr.Propagate(Heap(expr), Option.None)
