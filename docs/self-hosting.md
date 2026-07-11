@@ -914,6 +914,21 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.25 (2026-07-11) — no-hint generic enum literal mono
+
+`let a = Maybe.Just(42)` (no annotation) (→ genericEnumUser): base `Maybe` carries no variant
+tag, so genEnumLit fell through to an `@Maybe$Just` static-call. Now it collects the
+registered `Maybe_*` monomorphizations that carry the variant and picks the sole one — or,
+when several exist (`Maybe_i32` + `Maybe_i64`), the one whose variant payload type matches the
+first payload argument's peeked type (`peekArgTy`, a non-emitting best-effort type of a simple
+literal/ident arg).
+
+NEXT — genericRefInfer (`getVal(w)` with `w: Wrapper<i64>` calls bare `@getVal`, not
+`@getVal_i64`): `disambiguateGenericCall` can't tell `getVal_i64` from `getVal_string` because
+a `&Wrapper<T>` ref param is passed as `ptr` and the arg Val's ty is the load-bearing `"ptr"`
+(used for emission). Fix needs the arg's pointee type threaded in separately (a small refactor
+of the argVals/disambiguation path). Deferred.
+
 ### Fixture-sweep bug hunt cont.24 (2026-07-11) — i64 index widen + raw-ptr field access
 
 - **narrow index → i64 in genIndex** (→ stdSort): a gep index must be i64, but an i32 index
