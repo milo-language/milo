@@ -616,7 +616,7 @@ fn genUnwrap(cg: &mut Cgen, inner: &Expr, span: &Option<Span>, locs: &Vec<Local>
     if failWord == "Err" {
         let errPayload = lookupVariantPayload(cg, enumName, "Err")
         if errPayload.len == 1 && llType(errPayload[0]) == "%String" {
-            let fmtLbl = emitStringLit(cg, "error at " + line.toString() + ":" + col.toString() + ": %s\\n")
+            let fmtLbl = emitStringLit(cg, "error at " + line.toString() + ":" + col.toString() + ": %s\n")
             let payPtrE = nextTemp(cg)
             emit(cg, "  " + payPtrE + " = getelementptr " + enumTy + ", ptr " + addr + ", i32 0, i32 1\n")
             let errStr = nextTemp(cg)
@@ -629,7 +629,7 @@ fn genUnwrap(cg: &mut Cgen, inner: &Expr, span: &Option<Span>, locs: &Vec<Local>
         }
     }
     if !printedErrString {
-        let msgLbl = emitStringLit(cg, "error at " + line.toString() + ":" + col.toString() + ": unwrap called on " + failWord + "\\n")
+        let msgLbl = emitStringLit(cg, "error at " + line.toString() + ":" + col.toString() + ": unwrap called on " + failWord + "\n")
         let pcall2 = nextTemp(cg)
         emit(cg, "  " + pcall2 + " = call i32 (ptr, ...) @printf(ptr " + msgLbl + ")\n")
     }
@@ -1611,7 +1611,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
                 argStr = argStr + ", i32 " + z
             }
         }
-        fmt = fmt + "\\n"
+        fmt = fmt + "\n"
         let flabel = emitStringLit(cg, fmt)
         argStr = "ptr " + flabel + argStr
         // eprint writes to stderr via dprintf(2, ...) instead of printf.

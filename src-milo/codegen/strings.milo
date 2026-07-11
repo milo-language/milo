@@ -27,26 +27,18 @@ fn emitStringLit(cg: &mut Cgen, raw: &string): string {
     var encoded = ""
     var byteCount: i64 = 0
     var i: i64 = 0
+    // `raw` is the already-decoded runtime string: a backslash byte is a
+    // literal backslash, NOT an escape introducer. Escape each byte on its own
+    // (mirrors the oracle's addString) — re-decoding \n/\0 here would bake a
+    // real NUL into the constant and truncate the emitted IR at print time.
     while i < raw.len {
         let c = raw[i]
-        if c == 92 && i + 1 < raw.len {
-            let n = raw[i + 1]
-            var actual: u8 = n
-            if n == 110 { actual = 10 }       // \n
-            else if n == 116 { actual = 9 }   // \t
-            else if n == 114 { actual = 13 }  // \r
-            else if n == 48 { actual = 0 }    // \0
-            else if n == 92 { actual = 92 }   // \\
-            else if n == 34 { actual = 34 }   // \"
-            encoded = encoded + "\\" + hex2(actual)
-            i = i + 2
-        } else if c < 32 || c == 34 || c == 92 || c >= 127 {
+        if c < 32 || c == 34 || c == 92 || c >= 127 {
             encoded = encoded + "\\" + hex2(c)
-            i = i + 1
         } else {
             encoded.push(c)
-            i = i + 1
         }
+        i = i + 1
         byteCount = byteCount + 1
     }
     encoded = encoded + "\\00"
