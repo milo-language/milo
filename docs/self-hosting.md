@@ -914,6 +914,22 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.3 (2026-07-11) — generic structs + interface, →255
+
+- **Generic-struct literal inference**: `Heap { value: 42 }` (a user `struct Heap<T>`, no
+  annotation) now infers `T` from field values via `inferFromAst` + `monomorphizeStruct`
+  → `Heap_i32`. (genericStruct, genericStructFn) Gotcha fixed: extract the
+  `genericStructs` entry into a local ONCE — repeated `.get()!` (copying a struct with
+  nested Vecs) crashed with an array-oob.
+- **`interface` keyword** — a synonym for `trait` in the oracle; milo-self's lexer now maps
+  it to `TokKind.Trait`. Interface decls parse.
+
+Still open (fixture-only): dynamic dispatch / trait objects (`fn f(g: &SomeTrait)`,
+`Heap<Trait>` — needs vtables or trait-bound monomorphization; milo prefers generics so no
+example uses it), multi-instantiation generic-struct literals in codegen (`Pair` with both
+i32,i32 and string,i32 — codegen can't disambiguate `%Pair`, same class as arenaWith),
+JSON string escaping, global fixed-array initializers, C-FFI fixtures.
+
 ### Fixture-sweep bug hunt cont.2 (2026-07-11) — match/compare/assert, 250→254 pass
 
 - **`if 3 > 2` compared as i1** — a comparison's bool result-hint leaked onto its
