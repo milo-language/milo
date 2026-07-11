@@ -574,6 +574,12 @@ fn parseWhile(p: &mut Parser): Stmt {
     let savedNS = p.noStructLit
     p.noStructLit = true
     let cond = parseExpr(p)
+    // loop invariant clauses (verification hints, no runtime effect) sit between
+    // the condition and the body — parse past them like fn requires/ensures.
+    while at(p, TokKind.Ident) && peek(p).value == "invariant" {
+        advance(p)
+        var discarded = parseExpr(p)
+    }
     p.noStructLit = savedNS
     expect(p, TokKind.LBrace)
     let body = parseStmts(p)
