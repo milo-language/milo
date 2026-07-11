@@ -2667,7 +2667,7 @@ fn closureRetOf(ty: &string): string {
 // prefix alone. Pick the candidate whose param LLVM types match the actual args,
 // breaking a closure-return ambiguity (arenaWith_T_{NodeKind,string,…}) by
 // matching the closure arg's carried return type against the candidate's ret.
-fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, sigs: &Vec<CgFnSig>): string {
+fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &Vec<string>, sigs: &Vec<CgFnSig>): string {
     var result = base.clone()
     var count = 0
     for si in 0..sigs.len {
@@ -2676,8 +2676,17 @@ fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, sigs: &
         var ok = true
         for pi in 0..argVals.len {
             var pll = llType(resolveTyStr(cg, sigs[si].paramTys[pi]))
-            // a ref param is passed as a bare pointer, so the arg's llType is "ptr"
-            if pi < sigs[si].paramRefs.len && sigs[si].paramRefs[pi] { pll = "ptr" }
+            let isRef = pi < sigs[si].paramRefs.len && sigs[si].paramRefs[pi]
+            // a ref param is passed as a bare pointer (arg llType "ptr"); when the
+            // arg's pointee type is known, match on the POINTEE so `getVal_i64` and
+            // `getVal_string` (both `ptr` params) stay distinguishable.
+            if isRef && pi < argPointees.len && argPointees[pi].len > 0 {
+                let want = llType(resolveTyStr(cg, sigs[si].paramTys[pi]))
+                let got = llType(resolveTyStr(cg, argPointees[pi]))
+                if want != got { ok = false }
+                continue
+            }
+            if isRef { pll = "ptr" }
             let all = llType(resolveTyStr(cg, argVals[pi].ty))
             if pll == "%Closure" && all == "%Closure" {
                 let cr = closureRetOf(argVals[pi].ty)
@@ -2961,6 +2970,9 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         }
     }
     var argVals: Vec<Val> = Vec.new()
+    // for ref args, the lvalue's pointee type (kept parallel to argVals) so generic
+    // disambiguation can tell `&Wrapper<i64>` from `&Wrapper<string>` — both pass as ptr.
+    var argPointees: Vec<string> = Vec.new()
     for i in 0..args.len {
         var hint = ""
         if i < paramHints.len { hint = paramHints[i].clone() }
@@ -2971,6 +2983,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         if isRefParam {
             let lv = genLvalue(cg, *args[i], locs, sigs)
             argVals.push(Val { v: lv.v, ty: "ptr" })
+            argPointees.push(lv.ty.clone())
         } else {
             var av = genExpr(cg, *args[i], locs, sigs, hint)
             // auto-wrap a bare T argument into an Option<T> param
@@ -2987,6 +3000,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
                 }
             }
             argVals.push(av)
+            argPointees.push("")
         }
     }
 
@@ -3122,7 +3136,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     // resolveFnName falls back to the bare name when >1 instantiation exists;
     // disambiguate by the actual argument types (incl. a closure arg's return).
     if callName == staticName && !cg.fnRets.contains(staticName) {
-        callName = disambiguateGenericCall(cg, staticName, argVals, sigs)
+        callName = disambiguateGenericCall(cg, staticName, argVals, argPointees, sigs)
     }
     // still ambiguous (a no-arg generic like arenaNew) → use the return-type hint.
     if callName == staticName && !cg.fnRets.contains(staticName) && hintTy.len > 0 {
