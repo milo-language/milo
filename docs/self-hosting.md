@@ -914,6 +914,21 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.17 (2026-07-11) — array→Vec coercion + for-in order
+
+- **`let v: Vec<T> = [a, b, c]`** (→ vecLiteral): checker's let/var mismatch guard now allows
+  an array literal against a `Vec<T>` annotation (`arrayToVecCoercible`, matching TS's
+  `arrayToVecCoercions`). Codegen needed nothing — milo0 already lowers array literals to
+  `%Vec` (genArrayLit returns `Vec<elem>`).
+- **Two-var Vec for-in order** (→ enumerate): `for i, val in vec` — codegen `genForIn` bound
+  `varName`=element / `varName2`=index, BACKWARDS from the checker (and Rust/TS convention:
+  index first). Swapped so `varName`=index (i64), `varName2`=value. Latent because no manifest
+  fixture exercised two-var Vec iteration until the coercion fix let enumerate through.
+
+Note: attempted the promise runtime gap (cont.16) but the green-scheduler/channel path can't
+be minimally reproduced — `Channel<T>.new` even fails standalone unless `Promise` is also
+imported (an import-registration quirk). Deferred; needs work inside the actual fixtures.
+
 ### Fixture-sweep bug hunt cont.16 (2026-07-11) — nested-generic mangling fix
 
 `substituteMiloType` (checker/mono.milo) flattened a compound type-param arg via
