@@ -655,7 +655,7 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
             }
             _ => {
                 if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(paramType, argType, *args[i]) &&
-                    !ptrCoercible(paramType, argType) {
+                    !ptrCoercible(paramType, argType) && !optionWrapCoercible(ck, paramType, argType) {
                     error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
                 }
                 // pointer decay borrows the buffer; it must not move it
@@ -1172,6 +1172,22 @@ fn unwrapableInner(ck: &Checker, t: &TypeKind): Option<TypeKind> {
             return Option.None
         }
         _ => { return Option.None }
+    }
+}
+
+// A bare `T` argument coerces to an `Option<T>` param (auto-wrap in Some), e.g.
+// `serve(port: u16?, …)` called with a plain u16.
+fn optionWrapCoercible(ck: &Checker, paramType: &TypeKind, argType: &TypeKind): bool {
+    match paramType {
+        TypeKind.TEnum(name) => {
+            if !ck.enums.contains(name) { return false }
+            let info = ck.enums.get(name)!
+            if !info.variants.contains("Some") { return false }
+            let sv = info.variants.get("Some")!
+            if sv.fields.len != 1 { return false }
+            return typeEq(sv.fields[0], argType)
+        }
+        _ => { return false }
     }
 }
 

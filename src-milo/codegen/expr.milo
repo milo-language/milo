@@ -949,6 +949,44 @@ fn genIsExpr(cg: &mut Cgen, subject: &Expr, pattern: &Pattern, locs: &Vec<Local>
     }
 }
 
+// Wrap an already-computed value in `Some` for an `Option<T>` param (auto-wrap at
+// a call site). rEnum is the mangled option name (e.g. "Option_u16").
+fn genWrapSome(cg: &mut Cgen, innerVal: &Val, rEnum: &string): Val {
+    let tag = lookupVariantTag(cg, rEnum, "Some")
+    let structTy = "%" + rEnum.clone()
+    let alloc = nextTemp(cg)
+    emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 0\n")
+    emit(cg, "  store i32 " + tag.toString() + ", ptr " + tagPtr + "\n")
+    let payloadTypes = lookupVariantPayload(cg, rEnum, "Some")
+    if payloadTypes.len > 0 {
+        let payPtr = nextTemp(cg)
+        emit(cg, "  " + payPtr + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 1\n")
+        let vstructTy = variantStructTy(payloadTypes)
+        let ftyLl = llType(payloadTypes[0])
+        let fp = nextTemp(cg)
+        emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 0\n")
+        var storeVal = innerVal.v.clone()
+        let fvLl = llType(innerVal.ty)
+        if fvLl != ftyLl && intBits(fvLl) > 0 && intBits(ftyLl) > 0 {
+            let w = nextTemp(cg)
+            if intBits(fvLl) > intBits(ftyLl) {
+                emit(cg, "  " + w + " = trunc " + fvLl + " " + innerVal.v + " to " + ftyLl + "\n")
+            } else {
+                var ext = "sext"
+                if isUnsigned(innerVal.ty) { ext = "zext" }
+                emit(cg, "  " + w + " = " + ext + " " + fvLl + " " + innerVal.v + " to " + ftyLl + "\n")
+            }
+            storeVal = w
+        }
+        emit(cg, "  store " + ftyLl + " " + storeVal + ", ptr " + fp + "\n")
+    }
+    let loaded = nextTemp(cg)
+    emit(cg, "  " + loaded + " = load " + structTy + ", ptr " + alloc + "\n")
+    return Val { v: loaded, ty: rEnum.clone() }
+}
+
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     // Generic enums are registered under their mangled name
     var rEnum = resolveEnumName(cg, enumName)
@@ -2111,7 +2149,21 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
             let lv = genLvalue(cg, *args[i], locs, sigs)
             argVals.push(Val { v: lv.v, ty: "ptr" })
         } else {
-            argVals.push(genExpr(cg, *args[i], locs, sigs, hint))
+            var av = genExpr(cg, *args[i], locs, sigs, hint)
+            // auto-wrap a bare T argument into an Option<T> param
+            if i < paramHints.len {
+                let rp = stripPercent(resolveTyStr(cg, stripPercent(paramHints[i])))
+                if cg.enums.contains(rp) && llType(av.ty) != ("%" + rp) {
+                    let stag = lookupVariantTag(cg, rp, "Some")
+                    if stag >= 0 {
+                        let pl = lookupVariantPayload(cg, rp, "Some")
+                        if pl.len == 1 && llType(pl[0]) == llType(av.ty) {
+                            av = genWrapSome(cg, av, rp)
+                        }
+                    }
+                }
+            }
+            argVals.push(av)
         }
     }
 
