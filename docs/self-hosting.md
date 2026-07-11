@@ -914,6 +914,14 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.23 (2026-07-11) — string reverse + ptr-global null
+
+- **`s.reverse()`** (→ unicodeReverse): added `reverse` to checkStringMethod (→ string);
+  codegen str-prefix rule already routes it to the prelude's UTF-8-aware `strReverse`.
+- **ptr-global null init** (→ global_ptr): `var p: *u8 = 0 as *u8` emitted an invalid
+  `@p = global ptr 0` (constInitOf fell to "0" on the CastExpr). Now `constInitOf` returns
+  `null` for any `ptr`-typed global (the only compile-time-constant a ptr global can hold).
+
 ### Fixture-sweep bug hunt cont.22 (2026-07-11) — `?` auto-From error conversion
 
 `?` propagating a `Result<_, IoError>` out of a fn returning `Result<_, AppError>` where
