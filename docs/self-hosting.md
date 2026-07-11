@@ -914,6 +914,31 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt (2026-07-11) — 6 real correctness fixes, 227→232 pass
+
+With every example at parity, ran `scripts/selfhost-sweep.ts` over all 339 fixtures and
+fixed the shared root causes it surfaced (manifest 173 + byte-identical convergence each):
+- **Global-assign crash**: the string-append fast-path called `lvalueTypeStr` → `findLocal`
+  on a global not in `locs`, hitting the `locs[0]` out-of-bounds fallback in a local-less
+  fn. Now globals resolve through `globalVars`. (module_globals)
+- **Float print `%g` not `%f`**: `print(3.14159)` gave `3.141590`; %g trims trailing zeros
+  and matches `double.toString()` + the oracle. (calc's `0.666666` matched only by luck.)
+- **Monomorphized struct fields keep their generic arg**: `Promise<T>{_ch: Channel<T>}`
+  collapsed to bare `Channel` (TStruct holds only a name); now resolved from the AST field
+  type → `Channel_i64`. Unblocked COMPILATION of ~69 concurrency fixtures (their green-
+  thread RUNTIME is a separate, still-open subsystem).
+- **Int-literal signedness**: a typed int literal returned its LLVM type (`i8`) not the
+  surface type (`u8`), so `let b: u8 = 200; b as i32` sign-extended to `-56`. Keep the
+  surface type → zero-extends to `200`. (cast)
+- **`Heap(x)` element type**: returned `ptr`, so `*box` on a string Heap loaded an i64 and
+  printed the data pointer. Now carries `Heap<T>` → derefs correctly. (heapBasic)
+- **Unsigned int print/toString**: used `%lld`/`%d`; u64 max printed `-1`. Now `%llu`/`%u`
+  for unsigned. (intLiteral64)
+
+Still open in the fixtures (none block an example): the green-thread/channel RUNTIME
+(~22 run-crashes — channels compile but produce no output), extern-struct parsing (~15
+parse errors), and JSON string escaping in jsonStringify. These are fixture-only coverage.
+
 ### milo-self IS FASTER than the bun/TS oracle (2026-07-11)
 
 The whole point of shipping the self-built binary: it's faster. Measured `emit-ir` wall
