@@ -968,6 +968,16 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
         if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyString()
     }
+    // Promise.all(v)/Promise.race(v) → the generic free fns promiseAll/promiseRace;
+    // T is inferred from the Vec<Promise<T>> arg by checkGenericCall.
+    if enumName == "Promise" && (variant == "all" || variant == "race") {
+        var pfn = "promiseAll"
+        if variant == "race" { pfn = "promiseRace" }
+        if ck.genericFns.contains(pfn) {
+            var noTypeArgs: Vec<MiloType> = Vec.new()
+            return checkCall(ck, pfn, args, noTypeArgs, span)
+        }
+    }
 
     if !ck.enums.contains(enumName) {
         // Generic enum literal: infer type args from the payload arguments

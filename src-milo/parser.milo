@@ -1187,11 +1187,13 @@ fn isTypeArgCall(p: &Parser): bool {
         if t.kind == TokKind.Lt { depth = depth + 1 }
         if t.kind == TokKind.Gt { depth = depth - 1 }
         if depth > 0 {
-            // only type-ish tokens may appear inside the angle brackets
+            // only type-ish tokens may appear inside the angle brackets; Lt/Gt are
+            // allowed so NESTED generics parse (`Channel<Vec<T>>.new`).
             if t.kind != TokKind.Ident && t.kind != TokKind.Comma &&
                 t.kind != TokKind.Star && t.kind != TokKind.LBracket &&
                 t.kind != TokKind.RBracket && t.kind != TokKind.Semicolon &&
-                t.kind != TokKind.Int && t.kind != TokKind.Amp {
+                t.kind != TokKind.Int && t.kind != TokKind.Amp &&
+                t.kind != TokKind.Lt && t.kind != TokKind.Gt {
                 return false
             }
         }

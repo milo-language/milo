@@ -3365,6 +3365,14 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 // convention, push mallocs) is semantically equivalent
                 return genStringLit(cg, "")
             }
+            // Promise.all/race → the generic free fns promiseAll/promiseRace
+            // (mono picked by the Vec<Promise<T>> arg type in genCall).
+            if enumName == "Promise" && (variant == "all" || variant == "race") {
+                var pfn = "promiseAll"
+                if variant == "race" { pfn = "promiseRace" }
+                var emptyTA: Vec<MiloType> = Vec.new()
+                return genCall(cg, pfn, args, emptyTA, locs, sigs, hintTy)
+            }
             return genEnumLit(cg, enumName, variant, args, locs, sigs, hintTy)
         }
         Expr.CastExpr(inner, targetType, span) => {
