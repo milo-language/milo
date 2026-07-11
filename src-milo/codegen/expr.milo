@@ -1490,6 +1490,46 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
             return genHashMapRemove(cg, lv.v, lv.ty, kv)
         }
     }
+    // `.each(fn)` — call the closure once per element, passing the element address
+    // (uniform closure ABI: env + by-ptr arg).
+    if method == "each" {
+        let ov = genExpr(cg, object, locs, sigs, "")
+        if isVecTy(ov.ty) {
+            let elemLl = llType(unwrapVec(resolveTyStr(cg, ov.ty)))
+            let clv = genExpr(cg, *args[0], locs, sigs, "")
+            let d = nextTemp(cg)
+            emit(cg, "  " + d + " = extractvalue %Vec " + ov.v + ", 0\n")
+            let len = nextTemp(cg)
+            emit(cg, "  " + len + " = extractvalue %Vec " + ov.v + ", 1\n")
+            let fp = nextTemp(cg)
+            emit(cg, "  " + fp + " = extractvalue %Closure " + clv.v + ", 0\n")
+            let env = nextTemp(cg)
+            emit(cg, "  " + env + " = extractvalue %Closure " + clv.v + ", 1\n")
+            let iAddr = nextTemp(cg)
+            emit(cg, "  " + iAddr + " = alloca i64\n")
+            emit(cg, "  store i64 0, ptr " + iAddr + "\n")
+            let condLbl = nextLabel(cg, "each.cond")
+            let bodyLbl = nextLabel(cg, "each.body")
+            let endLbl = nextLabel(cg, "each.end")
+            emit(cg, "  br label %" + condLbl + "\n")
+            emitLabel(cg, condLbl)
+            let i = nextTemp(cg)
+            emit(cg, "  " + i + " = load i64, ptr " + iAddr + "\n")
+            let lt = nextTemp(cg)
+            emit(cg, "  " + lt + " = icmp slt i64 " + i + ", " + len + "\n")
+            emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+            emitLabel(cg, bodyLbl)
+            let slot = nextTemp(cg)
+            emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i + "\n")
+            emit(cg, "  call void " + fp + "(ptr " + env + ", ptr " + slot + ")\n")
+            let i1 = nextTemp(cg)
+            emit(cg, "  " + i1 + " = add i64 " + i + ", 1\n")
+            emit(cg, "  store i64 " + i1 + ", ptr " + iAddr + "\n")
+            emit(cg, "  br label %" + condLbl + "\n")
+            emitLabel(cg, endLbl)
+            return Val { v: "0", ty: "void" }
+        }
+    }
     // `.len()` — the length word of the receiver's 3-word header (same slot the
     // `.len` field reads, exposed as a method for `vec.len()` call syntax).
     if method == "len" {
