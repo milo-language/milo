@@ -747,6 +747,28 @@ already mandates.
 
 (populate at M0 seed time)
 
+### Parity progress (2026-07-11, cont.47) — examples goal MET & re-verified; inline arrays is out of scope
+
+Re-ran the full 35-example RUN-parity check after the cont.46 ABI work: **33/35 exact
+MATCH, 2 verified non-bugs** (flightController frame-count timing, sysmon live
+system-monitor data — ANSI layout byte-identical). No regression from the ABI/f32
+changes. The loop's stated objective — every `examples/**` program compiles via
+milo-self AND runs correctly (`--help` + real operation) — is **achieved**.
+
+**Inline fixed arrays is NOT an examples gap and is out of scope.** Confirmed the oracle
+lowers `[T;N]` to a true inline `[N x T]` LLVM value (`src/codegen.ts` llvmType,
+`case "array"`), whereas milo0's `astTypeStr` Vec-lowers every fixed array to a
+`{ptr,len,cap}` heap header — index/iterate/len/init all reuse the Vec runtime. This is
+a milo0-WIDE representation divergence, not an extern-boundary detail: all 35 examples
+pass with the Vec representation, so it is behaviorally sound for milo0's own use. Only
+the 2 C-FFI fixtures that mix fixed arrays with the C ABI (externStructNested's array
+cases, externMutBuf) need inline value arrays, and they are not sweep-verifiable (no `.c`
+peer linked in the sweep). Making fixed arrays true inline value types (layout + index +
+iterate + init + zero-init, unwinding the Vec reuse) is a **major standalone project**
+that would risk the 35 passing examples, the 173-fixture manifest, and byte-identical
+convergence — disproportionate to 2 non-example fixtures. Deferred as its own track, not
+part of examples parity.
+
 ### Parity progress (2026-07-11, cont.46) — struct-by-value C ABI ported; extern bucket all but done
 
 Landed the native struct-by-value C ABI (`810ceb9`) + `offsetOf` builtin (`5c7eed4`).
