@@ -608,6 +608,13 @@ fn ensureExit(cg: &mut Cgen) {
     }
 }
 
+fn ensureStrlen(cg: &mut Cgen) {
+    if !cg.declaredStrlen {
+        emitG(cg, "declare i64 @strlen(ptr)\n")
+        cg.declaredStrlen = true
+    }
+}
+
 fn ensureStrtod(cg: &mut Cgen) {
     if !cg.declaredStrtod {
         emitG(cg, "declare double @strtod(ptr, ptr)\n")

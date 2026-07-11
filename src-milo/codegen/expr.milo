@@ -3,7 +3,7 @@ from "src-milo/ast.milo" import { Expr, Stmt, Pattern, StructLitField, Span }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
-    resolveEnumName, resolveFnName, resolveTyStr, ensureExit, ensureStrtod, astTypeStr,
+    resolveEnumName, resolveFnName, resolveTyStr, ensureExit, ensureStrtod, ensureStrlen, astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -906,6 +906,30 @@ fn genAsCast(cg: &mut Cgen, inner: &Expr, targetTy: &string, locs: &Vec<Local>, 
         emit(cg, "  " + ip + " = inttoptr i64 " + src + " to ptr\n")
         return Val { v: ip, ty: "ptr" }
     }
+    // int <-> float and float <-> float need real conversion ops, not a relabel.
+    let fromIsFloat = fromLl == "double" || fromLl == "float"
+    let toIsFloat = toLl == "double" || toLl == "float"
+    if fromBits > 0 && toIsFloat {
+        let cf = nextTemp(cg)
+        var op = "sitofp"
+        if isUnsigned(v.ty) { op = "uitofp" }
+        emit(cg, "  " + cf + " = " + op + " " + fromLl + " " + v.v + " to " + toLl + "\n")
+        return Val { v: cf, ty: toLl }
+    }
+    if fromIsFloat && toBits > 0 {
+        let ci = nextTemp(cg)
+        var op = "fptosi"
+        if isUnsigned(targetTy) { op = "fptoui" }
+        emit(cg, "  " + ci + " = " + op + " " + fromLl + " " + v.v + " to " + toLl + "\n")
+        return Val { v: ci, ty: toLl }
+    }
+    if fromIsFloat && toIsFloat {
+        let cff = nextTemp(cg)
+        var op = "fpext"
+        if fromLl == "double" && toLl == "float" { op = "fptrunc" }
+        emit(cg, "  " + cff + " = " + op + " " + fromLl + " " + v.v + " to " + toLl + "\n")
+        return Val { v: cff, ty: toLl }
+    }
     if fromBits == 0 || toBits == 0 {
         return Val { v: v.v, ty: toLl }
     }
@@ -1596,8 +1620,9 @@ fn genCstrToString(cg: &mut Cgen, pv: &string): Val {
     ensureStringTy(cg)
     ensureMalloc(cg)
     ensureMemcpy(cg)
-    // strlen is already declared by the stdlib's extern `fn strlen` — a second
-    // `declare` here would be an invalid redefinition, so don't emit one.
+    // strlen may or may not be declared by a stdlib extern the program imports;
+    // ensureStrlen dedups against genFn's extern-decl path via cg.declaredStrlen.
+    ensureStrlen(cg)
     let len = nextTemp(cg)
     emit(cg, "  " + len + " = call i64 @strlen(ptr " + pv + ")\n")
     let cap = nextTemp(cg)
@@ -1934,6 +1959,8 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     let isPrint = name == "print"
     let isPrintln = name == "println"
     var emitName = callName.clone()
+    // `exit` is an extern with no prelude body; ensure its declare is emitted.
+    if emitName == "exit" { ensureExit(cg) }
     if isPrint || isPrintln {
         emitName = "printf"
         sigStr = "i32 (ptr, ...)"
@@ -2194,6 +2221,28 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             }
             let t = nextTemp(cg)
             let unsigned = isUnsigned(lv.ty)
+            // Floating-point operands use f-instructions, not the integer ops.
+            if lvLl == "double" || lvLl == "float" {
+                if isArithOp(op) {
+                    var fop = "fadd"
+                    if op == "-" { fop = "fsub" }
+                    else if op == "*" { fop = "fmul" }
+                    else if op == "/" { fop = "fdiv" }
+                    else if op == "%" { fop = "frem" }
+                    emit(cg, "  " + t + " = " + fop + " " + lvLl + " " + lvv + ", " + rvv + "\n")
+                    return Val { v: t, ty: lv.ty }
+                }
+                if isCmpOp(op) {
+                    var fp = "oeq"
+                    if op == "!=" { fp = "one" }
+                    else if op == "<" { fp = "olt" }
+                    else if op == "<=" { fp = "ole" }
+                    else if op == ">" { fp = "ogt" }
+                    else if op == ">=" { fp = "oge" }
+                    emit(cg, "  " + t + " = fcmp " + fp + " " + lvLl + " " + lvv + ", " + rvv + "\n")
+                    return Val { v: t, ty: "bool" }
+                }
+            }
             if isArithOp(op) {
                 let opname = binOpInt(op, unsigned)
                 emit(cg, "  " + t + " = " + opname + " " + opLl + " " + lvv + ", " + rvv + "\n")

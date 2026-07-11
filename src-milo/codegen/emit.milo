@@ -76,6 +76,10 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
             if cg.declaredExit { return }
             cg.declaredExit = true
         }
+        if f.name == "strlen" {
+            if cg.declaredStrlen { return }
+            cg.declaredStrlen = true
+        }
         // astTypeStr, not .name: a `*u8` return must stay a pointer (`.name` alone
         // drops pointer-ness, declaring e.g. strerror as returning i8 → truncated
         // pointer → strlen on garbage in the self-compiled build).
