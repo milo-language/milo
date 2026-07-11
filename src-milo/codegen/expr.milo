@@ -12,6 +12,7 @@ from "src-milo/codegen/types.milo" import {
     lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
 }
 from "src-milo/codegen/stmt.milo" import { genClosure, genClosureCall }
+from "std/io" import { readFile }
 from "src-milo/codegen/strings.milo" import {
     genStringLit, genStringClone, genStringConcat, genStringEq, genStringCmp,
     genIntToString, genFloatToString, genStringIndex, genStringSlice, emitStringLit, genStringPush
@@ -1934,6 +1935,26 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     }
     if name == "jsonStringify" && args.len == 1 {
         return genJsonStringify(cg, *args[0], locs, sigs)
+    }
+    // embedFile("path"): read the file at compile time (relative to the source
+    // dir) and emit its contents as a string literal.
+    if name == "embedFile" && args.len == 1 {
+        var path = ""
+        match *args[0] {
+            Expr.StringLit(s, sp) => { path = s.clone() }
+            _ => {}
+        }
+        var full = path.clone()
+        if cg.sourceDir.len > 0 { full = cg.sourceDir.clone() + "/" + path.clone() }
+        var contents = ""
+        match readFile(full.clone()) {
+            Result.Ok(c) => { contents = c }
+            Result.Err(e) => {
+                eprint("error: embedFile cannot open '" + path + "'")
+                exit(1)
+            }
+        }
+        return genStringLit(cg, contents)
     }
     if name == "flush" {
         if !cg.declaredFflush {

@@ -77,8 +77,8 @@ fn compile(path: string): string {
     // Resolve imports
     let target = getHostTarget()
     let sourceDir = pathDirname(path.clone())
-    let stdlibDir = findStdlibRoot(sourceDir)
-    let resolved = resolveImports(program, sourceDir, stdlibDir, target.os)
+    let stdlibDir = findStdlibRoot(sourceDir.clone())
+    let resolved = resolveImports(program, sourceDir.clone(), stdlibDir, target.os)
 
     // Type check
     var checker = newChecker()
@@ -114,7 +114,7 @@ fn compile(path: string): string {
     for i in 0..checker.monomorphizedFns.len {
         finalProg.functions.push(checker.monomorphizedFns[i].clone())
     }
-    return genProgram(finalProg)
+    return genProgram(finalProg, sourceDir)
 }
 
 // Scan the emitted IR for extern symbols that need a link library, mirroring the

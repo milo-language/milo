@@ -184,8 +184,9 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
 }
 
 // Register structs, enums, functions in Cgen tables, then emit all functions.
-fn genProgram(prog: Program): string {
+fn genProgram(prog: Program, sourceDir: string): string {
     var cg = cgenNew()
+    cg.sourceDir = sourceDir
 
     // Runtime-support globals: argc/argv (read by _miloArgCount/_miloArgAt) and
     // the current green scheduler (read/written by _schedulerGet/_schedulerSet).

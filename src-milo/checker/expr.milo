@@ -511,6 +511,20 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
     if func == "flush" {
         return tyVoid()
     }
+    // embedFile("path"): compile-time file embed → string literal (codegen reads
+    // the file relative to the source dir). Argument must be a string literal.
+    if func == "embedFile" {
+        if args.len != 1 {
+            error(ck, "embedFile() expects 1 argument, got " + args.len.toString(), cloneSpan(span))
+        }
+        if args.len >= 1 {
+            match *args[0] {
+                Expr.StringLit(s, sp) => {}
+                _ => { error(ck, "embedFile() argument must be a string literal", cloneSpan(span)) }
+            }
+        }
+        return tyString()
+    }
 
     // print/println/eprint are compiler builtins (codegen/expr.milo genCall), not
     // prelude functions — the checker has to know them or every call is

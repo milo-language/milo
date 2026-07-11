@@ -92,6 +92,8 @@ struct Cgen {
     // return type recorded while emitting an unannotated closure body (its
     // `return <e>` uses the value's own type and stamps it here for the header)
     closureRetTy: string,
+    // directory of the source file, for embedFile() compile-time path resolution
+    sourceDir: string,
 }
 
 fn cgenNew(): Cgen {
@@ -125,6 +127,7 @@ fn cgenNew(): Cgen {
         declaredFflush: false,
         closureId: 0,
         closureRetTy: "",
+        sourceDir: "",
     }
 }
 
