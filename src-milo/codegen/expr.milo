@@ -2567,8 +2567,10 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             // Only integer hints apply to an int literal; a non-int hint (e.g. a
             // generic type param `A` passed as a call-arg hint) must not retype it.
             let isInt = ll.len > 0 && ll[0] == 105
-            if !isInt { ll = "i64" }
-            return Val { v: n.toString(), ty: ll }
+            if !isInt { return Val { v: n.toString(), ty: "i64" } }
+            // keep the SURFACE type (u8/i32/…), not the LLVM type, so unsigned-ness
+            // survives — otherwise `let b: u8 = 200; b as i32` sign-extends to -56.
+            return Val { v: n.toString(), ty: ty }
         }
         Expr.FloatLit(f, span) => {
             // f.toString() drops the decimal for whole values (0.0 -> "0"), which
