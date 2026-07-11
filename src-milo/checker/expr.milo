@@ -574,7 +574,17 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
                         var i: i64 = 0
                         while i < args.len && i < params.len {
                             let argType = checkExpr(ck, *args[i])
-                            if !typeEq(params[i], argType) && !typeEq(argType, tyUnknown()) {
+                            // a &T param auto-borrows a T argument, like a normal call
+                            var pMatch = typeEq(params[i], argType) || typeEq(argType, tyUnknown())
+                            if !pMatch {
+                                match params[i] {
+                                    TypeKind.TRef(inner, m) => {
+                                        if typeEq(*inner, argType) { pMatch = true }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            if !pMatch {
                                 error(ck, "closure argument " + (i + 1).toString() + ": expected " + typeName(params[i]) + ", got " + typeName(argType), cloneSpan(span))
                             }
                             i = i + 1
