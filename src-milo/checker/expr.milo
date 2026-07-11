@@ -1372,12 +1372,12 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
                 let paramType = sig.params[i + 1].ty
                 match paramType {
                     TypeKind.TRef(inner, mutable) => {
-                        if !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) {
+                        if !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(*inner, argType, *args[i]) {
                             error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
                         }
                     }
                     _ => {
-                        if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) {
+                        if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(paramType, argType, *args[i]) && !ptrCoercible(paramType, argType) {
                             error(ck, "argument " + (i + 1).toString() + " of '" + method.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
                         }
                         tryMove(ck, *args[i])
