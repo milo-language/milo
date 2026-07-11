@@ -1375,6 +1375,15 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         if args.len != 0 { error(ck, "'toString' takes no arguments", cloneSpan(span)) }
         return tyString()
     }
+    // x.checkedAdd/Sub/Mul(y) → Option<T>, None on overflow
+    if isInteger(objType) && (method == "checkedAdd" || method == "checkedSub" || method == "checkedMul") {
+        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span)) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        var oargs: Vec<TypeKind> = Vec.new()
+        oargs.push(objType.clone())
+        let mangled = monomorphizeEnum(ck, "Option", oargs)
+        return TypeKind.TEnum(mangled)
+    }
 
     // Vec methods
     match objType.clone() {

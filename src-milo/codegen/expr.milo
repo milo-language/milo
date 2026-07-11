@@ -1090,6 +1090,52 @@ fn genWrapSome(cg: &mut Cgen, innerVal: &Val, rEnum: &string): Val {
     return Val { v: loaded, ty: rEnum.clone() }
 }
 
+// x.checkedAdd/Sub/Mul(y) → Option<T> via an LLVM overflow intrinsic: Some(result)
+// on no overflow, None otherwise.
+fn genCheckedArith(cg: &mut Cgen, obj: &Val, method: &string, av: &Val): Val {
+    let lt = llType(obj.ty)
+    var op = "add"
+    if method == "checkedSub" { op = "sub" }
+    if method == "checkedMul" { op = "mul" }
+    var pfx = "s"
+    if isUnsigned(obj.ty) { pfx = "u" }
+    let intr = "llvm." + pfx + op + ".with.overflow." + lt
+    var declared = false
+    for i in 0..cg.emittedThunks.len { if cg.emittedThunks[i] == intr { declared = true } }
+    if !declared {
+        cg.emittedThunks.push(intr.clone())
+        emitG(cg, "declare {" + lt + ", i1} @" + intr + "(" + lt + ", " + lt + ")\n")
+    }
+    let cr = nextTemp(cg)
+    emit(cg, "  " + cr + " = call {" + lt + ", i1} @" + intr + "(" + lt + " " + obj.v + ", " + lt + " " + av.v + ")\n")
+    let val = nextTemp(cg)
+    emit(cg, "  " + val + " = extractvalue {" + lt + ", i1} " + cr + ", 0\n")
+    let flag = nextTemp(cg)
+    emit(cg, "  " + flag + " = extractvalue {" + lt + ", i1} " + cr + ", 1\n")
+    let optName = "Option_" + obj.ty.clone()
+    let optTy = "%" + optName.clone()
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = alloca " + optTy + "\n")
+    let okLbl = nextLabel(cg, "chk.ok")
+    let ovLbl = nextLabel(cg, "chk.ov")
+    let doneLbl = nextLabel(cg, "chk.done")
+    emit(cg, "  br i1 " + flag + ", label %" + ovLbl + ", label %" + okLbl + "\n")
+    emitLabel(cg, okLbl)
+    let someV = genWrapSome(cg, Val { v: val, ty: obj.ty.clone() }, optName)
+    emit(cg, "  store " + optTy + " " + someV.v + ", ptr " + slot + "\n")
+    emit(cg, "  br label %" + doneLbl + "\n")
+    emitLabel(cg, ovLbl)
+    let noneTag = lookupVariantTag(cg, optName, "None")
+    let tp = nextTemp(cg)
+    emit(cg, "  " + tp + " = getelementptr " + optTy + ", ptr " + slot + ", i32 0, i32 0\n")
+    emit(cg, "  store i32 " + noneTag.toString() + ", ptr " + tp + "\n")
+    emit(cg, "  br label %" + doneLbl + "\n")
+    emitLabel(cg, doneLbl)
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = load " + optTy + ", ptr " + slot + "\n")
+    return Val { v: r, ty: optName }
+}
+
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     // Generic enums are registered under their mangled name
     var rEnum = resolveEnumName(cg, enumName)
@@ -1627,6 +1673,10 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         let lenT = nextTemp(cg)
         emit(cg, "  " + lenT + " = extractvalue %String " + obj.v + ", 1\n")
         return Val { v: lenT, ty: "i64" }
+    }
+    if intBits(objTyLl) > 0 && (method == "checkedAdd" || method == "checkedSub" || method == "checkedMul") {
+        let av = genExpr(cg, *args[0], locs, sigs, obj.ty.clone())
+        return genCheckedArith(cg, obj, method, av)
     }
     if objTyLl == "i64" && method == "toString" {
         return genIntToString(cg, obj.v, isUnsigned(obj.ty))
