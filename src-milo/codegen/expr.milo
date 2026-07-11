@@ -1494,6 +1494,49 @@ fn genFormat(cg: &mut Cgen, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Ve
     return acc
 }
 
+// jsonStringify(struct) → `{"f1":v1,"f2":v2}` for scalar fields. Reuses
+// genDisplayString for the values (bool→true/false, int/float→number, string
+// as-is, wrapped in quotes). NOTE: string values are not yet RFC-escaped, so a
+// field containing a quote/backslash produces invalid JSON (the checker permits
+// only scalar fields; escaping is a follow-up).
+fn genJsonStringify(cg: &mut Cgen, arg: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let sv = genExpr(cg, arg, locs, sigs, "")
+    let structName = stripPercent(sv.ty)
+    let structTy = "%" + structName.clone()
+    let stage = nextTemp(cg)
+    emit(cg, "  " + stage + " = alloca " + structTy + "\n")
+    emit(cg, "  store " + structTy + " " + sv.v + ", ptr " + stage + "\n")
+    var acc = genStringLit(cg, "{")
+    let fields = cg.structs.get(structName.clone())!
+    for i in 0..fields.len {
+        if i > 0 {
+            let comma = genStringLit(cg, ",")
+            acc = genStringConcat(cg, acc.v, comma.v)
+        }
+        let key = genStringLit(cg, "\"" + fields[i].name.clone() + "\":")
+        acc = genStringConcat(cg, acc.v, key.v)
+        let fll = llType(fields[i].ty)
+        let fp = nextTemp(cg)
+        emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + stage + ", i32 0, i32 " + i.toString() + "\n")
+        let fv = nextTemp(cg)
+        emit(cg, "  " + fv + " = load " + fll + ", ptr " + fp + "\n")
+        let isStr = fll == "%String"
+        if isStr {
+            let q = genStringLit(cg, "\"")
+            acc = genStringConcat(cg, acc.v, q.v)
+        }
+        let disp = genDisplayString(cg, fv, fields[i].ty, locs, sigs)
+        acc = genStringConcat(cg, acc.v, disp.v)
+        if isStr {
+            let q2 = genStringLit(cg, "\"")
+            acc = genStringConcat(cg, acc.v, q2.v)
+        }
+    }
+    let close = genStringLit(cg, "}")
+    acc = genStringConcat(cg, acc.v, close.v)
+    return acc
+}
+
 // Copy a NUL-terminated C string at `pv` into an owned %String {buf,len,len+1}.
 fn genCstrToString(cg: &mut Cgen, pv: &string): Val {
     ensureStringTy(cg)
@@ -1523,6 +1566,9 @@ fn genCstrToString(cg: &mut Cgen, pv: &string): Val {
 fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     if name == "format" {
         return genFormat(cg, args, locs, sigs)
+    }
+    if name == "jsonStringify" && args.len == 1 {
+        return genJsonStringify(cg, *args[0], locs, sigs)
     }
     // sizeOf<T>() — byte size of the instantiated type
     if name == "sizeOf" && typeArgs.len == 1 {

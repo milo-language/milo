@@ -478,6 +478,33 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         return tyString()
     }
 
+    // jsonStringify(struct): compiler intrinsic → JSON string of a struct's
+    // scalar fields (string/bool/int/float). Not a prelude fn.
+    if func == "jsonStringify" {
+        if args.len != 1 {
+            error(ck, "jsonStringify() expects 1 argument, got " + args.len.toString(), cloneSpan(span))
+            return tyString()
+        }
+        let argType = checkExpr(ck, *args[0])
+        match argType {
+            TypeKind.TStruct(sname) => {
+                if ck.structs.contains(sname) {
+                    let sinfo = ck.structs.get(sname)!
+                    for fi in 0..sinfo.fields.len {
+                        let ft = sinfo.fields[fi].ty
+                        if !isInteger(ft) && !isFloat(ft) && !typeEq(ft, tyBool()) && !typeEq(ft, tyString()) {
+                            error(ck, "jsonStringify: field '" + sinfo.fields[fi].name.clone() + "' has unsupported type '" + typeName(ft) + "' (only string/bool/int/float)", cloneSpan(span))
+                        }
+                    }
+                }
+            }
+            _ => {
+                error(ck, "jsonStringify: unsupported type '" + typeName(argType) + "' (expects a struct)", cloneSpan(span))
+            }
+        }
+        return tyString()
+    }
+
     // print/println/eprint are compiler builtins (codegen/expr.milo genCall), not
     // prelude functions — the checker has to know them or every call is
     // "undefined function". Variadic; any displayable argument.
