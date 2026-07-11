@@ -679,7 +679,11 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
         for j in 0..info.fields.len {
             if info.fields[j].name == fields[i].name {
                 found = true
+                // the field's declared type is the expected type for its
+                // initializer (drives generic inference, e.g. `arena: arenaNew()`).
+                ck.expectedType = Option.Some(info.fields[j].ty.clone())
                 let valType = checkExpr(ck, *fields[i].value)
+                ck.expectedType = Option.None
                 if !typeEq(info.fields[j].ty, valType) && !containsUnknown(valType) &&
                     !(isConstIntExpr(*fields[i].value) && isInteger(info.fields[j].ty)) &&
                     !arrayIntCoercible(info.fields[j].ty, valType) {
