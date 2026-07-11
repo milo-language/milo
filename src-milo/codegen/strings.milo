@@ -139,8 +139,15 @@ fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
     emit(cg, "  " + aData + " = extractvalue %String " + av + ", 0\n")
     let bData = nextTemp(cg)
     emit(cg, "  " + bData + " = extractvalue %String " + bv + ", 0\n")
+    // memcmp runs unconditionally (its result is AND-ed with lenEq), so it must
+    // read only min(aLen,bLen) bytes — using aLen overflows the shorter buffer
+    // when lengths differ (a global-buffer-overflow; opt-level-sensitive UB).
+    let aLtB = nextTemp(cg)
+    emit(cg, "  " + aLtB + " = icmp ult i64 " + aLen + ", " + bLen + "\n")
+    let minLen = nextTemp(cg)
+    emit(cg, "  " + minLen + " = select i1 " + aLtB + ", i64 " + aLen + ", i64 " + bLen + "\n")
     let mc = nextTemp(cg)
-    emit(cg, "  " + mc + " = call i32 @memcmp(ptr " + aData + ", ptr " + bData + ", i64 " + aLen + ")\n")
+    emit(cg, "  " + mc + " = call i32 @memcmp(ptr " + aData + ", ptr " + bData + ", i64 " + minLen + ")\n")
     let mcZero = nextTemp(cg)
     emit(cg, "  " + mcZero + " = icmp eq i32 " + mc + ", 0\n")
     let combined = nextTemp(cg)
