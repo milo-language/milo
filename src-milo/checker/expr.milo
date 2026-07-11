@@ -1730,6 +1730,10 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
         if args.len >= 1 { checkExpr(ck, *args[0]) }
         return TypeKind.TVec(Heap(tyString()))
     }
+    if method == "splitWords" || method == "splitWhitespace" {
+        if args.len != 0 { error(ck, "'" + method.clone() + "' takes no arguments", cloneSpan(span)) }
+        return TypeKind.TVec(Heap(tyString()))
+    }
     if method == "trim" || method == "trimStart" || method == "trimEnd" ||
        method == "toLower" || method == "toUpper" {
         if args.len != 0 { error(ck, "'" + method.clone() + "' takes no arguments", cloneSpan(span)) }
