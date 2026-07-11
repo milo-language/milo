@@ -211,6 +211,42 @@ fn genStringAppendInPlace(cg: &mut Cgen, addr: &string, bv: &string) {
 }
 
 // String equality via length check + memcmp. Returns i1.
+// Lexicographic string comparison for < <= > >=. memcmp over min(len), then the
+// shorter string is "less" on a shared prefix. Returns i1.
+fn genStringCmp(cg: &mut Cgen, av: &string, bv: &string, op: &string): Val {
+    ensureMemcmp(cg)
+    let aData = nextTemp(cg)
+    emit(cg, "  " + aData + " = extractvalue %String " + av.clone() + ", 0\n")
+    let aLen = nextTemp(cg)
+    emit(cg, "  " + aLen + " = extractvalue %String " + av.clone() + ", 1\n")
+    let bData = nextTemp(cg)
+    emit(cg, "  " + bData + " = extractvalue %String " + bv.clone() + ", 0\n")
+    let bLen = nextTemp(cg)
+    emit(cg, "  " + bLen + " = extractvalue %String " + bv.clone() + ", 1\n")
+    let aLtB = nextTemp(cg)
+    emit(cg, "  " + aLtB + " = icmp ult i64 " + aLen + ", " + bLen + "\n")
+    let minLen = nextTemp(cg)
+    emit(cg, "  " + minLen + " = select i1 " + aLtB + ", i64 " + aLen + ", i64 " + bLen + "\n")
+    let mc = nextTemp(cg)
+    emit(cg, "  " + mc + " = call i32 @memcmp(ptr " + aData + ", ptr " + bData + ", i64 " + minLen + ")\n")
+    let mc64 = nextTemp(cg)
+    emit(cg, "  " + mc64 + " = sext i32 " + mc + " to i64\n")
+    let mcNZ = nextTemp(cg)
+    emit(cg, "  " + mcNZ + " = icmp ne i64 " + mc64 + ", 0\n")
+    let lenDiff = nextTemp(cg)
+    emit(cg, "  " + lenDiff + " = sub i64 " + aLen + ", " + bLen + "\n")
+    // effective sign: memcmp result if the prefix differs, else the length delta
+    let eff = nextTemp(cg)
+    emit(cg, "  " + eff + " = select i1 " + mcNZ + ", i64 " + mc64 + ", i64 " + lenDiff + "\n")
+    var pred = "slt"
+    if op == "<=" { pred = "sle" }
+    else if op == ">" { pred = "sgt" }
+    else if op == ">=" { pred = "sge" }
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = icmp " + pred + " i64 " + eff + ", 0\n")
+    return Val { v: r, ty: "bool" }
+}
+
 fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
     ensureMemcmp(cg)
     let aLen = nextTemp(cg)

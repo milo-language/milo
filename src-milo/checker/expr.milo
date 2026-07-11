@@ -360,8 +360,9 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
             error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), cloneSpan(span))
         }
         if op == "<" || op == ">" || op == "<=" || op == ">=" {
-            if !isNumeric(lt) && !typeEq(lt, tyUnknown()) {
-                error(ck, "operator '" + op.clone() + "' requires numeric type, got " + typeName(lt), cloneSpan(span))
+            // strings compare lexicographically (codegen emits a memcmp-based compare)
+            if !isNumeric(lt) && !typeEq(lt, tyString()) && !typeEq(lt, tyUnknown()) {
+                error(ck, "operator '" + op.clone() + "' requires numeric or string type, got " + typeName(lt), cloneSpan(span))
             }
         }
         return tyBool()

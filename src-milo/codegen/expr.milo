@@ -12,7 +12,7 @@ from "src-milo/codegen/types.milo" import {
     lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
 }
 from "src-milo/codegen/strings.milo" import {
-    genStringLit, genStringClone, genStringConcat, genStringEq,
+    genStringLit, genStringClone, genStringConcat, genStringEq, genStringCmp,
     genIntToString, genFloatToString, genStringIndex, genStringSlice, emitStringLit, genStringPush
 }
 
@@ -2207,6 +2207,9 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 if op == "+" { return genStringConcat(cg, lv.v, rv.v) }
                 if op == "==" || op == "!=" {
                     return genStringEq(cg, lv.v, rv.v, op == "==")
+                }
+                if op == "<" || op == "<=" || op == ">" || op == ">=" {
+                    return genStringCmp(cg, lv.v, rv.v, op)
                 }
             }
             // Enum tag compare
