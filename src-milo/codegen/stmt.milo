@@ -94,13 +94,23 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
         }
         Expr.FieldAccess(object, field, span) => {
             let lv = genLvalue(cg, *object, locs, sigs)
-            let rawName = stripPercent(lv.ty)
+            // `p.x = …` through a raw pointer: load the pointer to reach the struct,
+            // gep the pointee field; otherwise gep the struct lvalue directly.
+            var structAddr = lv.v.clone()
+            var rawName = stripPercent(lv.ty)
+            if lv.ty.len > 0 && lv.ty[0] == 42 {
+                let pointee = lv.ty[1..lv.ty.len].clone()
+                rawName = stripPercent(resolveTyStr(cg, pointee))
+                let sa = nextTemp(cg)
+                emit(cg, "  " + sa + " = load ptr, ptr " + lv.v + "\n")
+                structAddr = sa
+            }
             let idx = lookupFieldIndex(cg, rawName, field)
             let fty = lookupFieldType(cg, rawName, idx)
             let ftyLl = llType(fty)
             let structTy = "%" + rawName
             let fp = nextTemp(cg)
-            emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + lv.v + ", i32 0, i32 " + idx.toString() + "\n")
+            emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + structAddr + ", i32 0, i32 " + idx.toString() + "\n")
             let v = genExpr(cg, value, locs, sigs, ftyLl)
             emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
         }

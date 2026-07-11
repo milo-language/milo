@@ -124,6 +124,26 @@ fn genFieldAccess(cg: &mut Cgen, object: &Expr, field: &string, locs: &Vec<Local
         emit(cg, "  " + lenT + " = load i64, ptr " + lenPtr + "\n")
         return Val { v: lenT, ty: "i64" }
     }
+    // field access through a raw pointer (`p.x` on *Struct): load the pointer to get
+    // the struct address, then gep the pointee field.
+    if lv.ty.len > 0 && lv.ty[0] == 42 {
+        let pointee = lv.ty[1..lv.ty.len].clone()
+        let pn = stripPercent(resolveTyStr(cg, pointee))
+        let pidx = lookupFieldIndex(cg, pn, field)
+        if pidx < 0 {
+            eprint("codegen: no field '" + field.clone() + "' on " + lv.ty.clone())
+            exit(1)
+        }
+        let structAddr = nextTemp(cg)
+        emit(cg, "  " + structAddr + " = load ptr, ptr " + lv.v + "\n")
+        let pfty = lookupFieldType(cg, pn, pidx)
+        let pftyLl = llType(pfty)
+        let pfp = nextTemp(cg)
+        emit(cg, "  " + pfp + " = getelementptr %" + pn + ", ptr " + structAddr + ", i32 0, i32 " + pidx.toString() + "\n")
+        let ploaded = nextTemp(cg)
+        emit(cg, "  " + ploaded + " = load " + pftyLl + ", ptr " + pfp + "\n")
+        return Val { v: ploaded, ty: pfty }
+    }
     // resolve a still-generic type (`Handle<Node>` from a monomorphized/closure
     // context) to its mangled struct name before the field lookup.
     let rawName = stripPercent(resolveTyStr(cg, lv.ty))

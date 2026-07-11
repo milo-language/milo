@@ -42,7 +42,25 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
                 Option.None => { return false }
             }
         }
-        Expr.FieldAccess(obj, field, span) => { return isRootMutable(ck, *obj) }
+        Expr.FieldAccess(obj, field, span) => {
+            // `p.x = …` where p is a raw pointer is an unsafe-gated store THROUGH the
+            // pointer, not mutation of `p` — a `let p = buf as *Point` is a legal target
+            match *obj {
+                Expr.Ident(pname, pspan) => {
+                    match lookup(ck, pname) {
+                        Option.Some(v) => {
+                            match deref(v.ty) {
+                                TypeKind.TPtr(inner) => { return true }
+                                _ => {}
+                            }
+                        }
+                        Option.None => {}
+                    }
+                }
+                _ => {}
+            }
+            return isRootMutable(ck, *obj)
+        }
         Expr.IndexAccess(obj, idx, span) => {
             // writes through a raw-pointer index are unsafe-gated pointer
             // stores, not variable mutation — a `let p = buf as *i64` is a
@@ -837,9 +855,16 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
 
 fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
-    // auto-deref references
+    // auto-deref references; and raw pointers (`p.x` on a *Struct), which is an
+    // unsafe-gated deref-and-access
     match objType.clone() {
         TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
+        TypeKind.TPtr(inner) => {
+            if ck.unsafeDepth == 0 {
+                error(ck, "pointer field access requires 'unsafe' block", cloneSpan(span))
+            }
+            objType = inner.clone()
+        }
         _ => {}
     }
 
