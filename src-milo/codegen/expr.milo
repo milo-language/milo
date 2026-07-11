@@ -3260,8 +3260,20 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
             argPointees.push("")
         } else if isRefParam {
             let lv = genLvalue(cg, *args[i], locs, sigs)
-            argVals.push(Val { v: lv.v, ty: "ptr" })
-            argPointees.push(lv.ty.clone())
+            // A `&mut [u8;N]` (fixed arrays lower to a Vec {ptr,len,cap}) passed to a C
+            // extern must decay to its DATA pointer: the C side wants `u8*`, and writing
+            // through the header's address would clobber len/cap instead of the buffer.
+            if cg.externFns.contains(name) && isVecTy(lv.ty) {
+                let loaded = nextTemp(cg)
+                emit(cg, "  " + loaded + " = load %Vec, ptr " + lv.v + "\n")
+                let dp = nextTemp(cg)
+                emit(cg, "  " + dp + " = extractvalue %Vec " + loaded + ", 0\n")
+                argVals.push(Val { v: dp, ty: "ptr" })
+                argPointees.push("")
+            } else {
+                argVals.push(Val { v: lv.v, ty: "ptr" })
+                argPointees.push(lv.ty.clone())
+            }
         } else if cg.externFns.contains(name) && llType(hint) == "%Closure" && isBareFnName(cg, *args[i], locs) {
             // a bare fn name passed to a C extern's fn-ptr param is the RAW function
             // address (@cmpI32, C signature), NOT milo's %Closure/env thunk.
