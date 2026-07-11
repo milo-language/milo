@@ -40,7 +40,14 @@ fn lvalueMatches(a: &Expr, b: &Expr): bool {
 // gate on `string` before committing to the fast path).
 fn lvalueTypeStr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>): string {
     match e {
-        Expr.Ident(name, span) => { return findLocal(locs, name).ty.clone() }
+        Expr.Ident(name, span) => {
+            // a module global isn't in `locs`; findLocal would hit its locs[0]
+            // fallback (out-of-bounds when locs is empty, e.g. in a global-only fn)
+            if !hasLocal(locs, name) && cg.globalVars.contains(name) {
+                return cg.globalVars.get(name)!
+            }
+            return findLocal(locs, name).ty.clone()
+        }
         Expr.FieldAccess(object, field, span) => {
             let ot = lvalueTypeStr(cg, *object, locs)
             let rawName = stripPercent(ot)

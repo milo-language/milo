@@ -2303,7 +2303,9 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
                 emit(cg, "  " + p + " = extractvalue %String " + argVals[ai].v + ", 0\n")
                 argStr = argStr + ", ptr " + p
             } else if elemLl == "double" {
-                fmt = fmt + "%f"
+                // %g (not %f) to match the oracle: trims trailing zeros
+                // (3.141590 → 3.14159) and shares double.toString()'s format.
+                fmt = fmt + "%g"
                 argStr = argStr + ", double " + argVals[ai].v
             } else if elemLl == "i64" {
                 fmt = fmt + "%lld"
