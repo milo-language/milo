@@ -1348,6 +1348,17 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         }
         return elem.clone()
     }
+    if method == "remove" {
+        if args.len != 1 { error(ck, "'remove' expects 1 argument (index)", cloneSpan(span)) }
+        if args.len >= 1 {
+            let it = checkExpr(ck, *args[0])
+            if !isInteger(it) { error(ck, "'remove' index must be integer", cloneSpan(span)) }
+        }
+        if !isRootMutable(ck, obj) {
+            error(ck, "cannot remove from immutable Vec", cloneSpan(span))
+        }
+        return elem.clone()
+    }
     if method == "clone" {
         if args.len != 0 { error(ck, "'clone' takes no arguments", cloneSpan(span)) }
         return TypeKind.TVec(Heap(elem.clone()))
@@ -1385,6 +1396,18 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot swap in immutable Vec", cloneSpan(span))
+        }
+        return tyVoid()
+    }
+    if method == "insert" {
+        if args.len != 2 { error(ck, "'insert' expects 2 arguments (index, value)", cloneSpan(span)) }
+        if args.len >= 1 {
+            let it = checkExpr(ck, *args[0])
+            if !isInteger(it) { error(ck, "'insert' index must be integer", cloneSpan(span)) }
+        }
+        if args.len >= 2 { checkExpr(ck, *args[1]) }
+        if !isRootMutable(ck, obj) {
+            error(ck, "cannot insert into immutable Vec", cloneSpan(span))
         }
         return tyVoid()
     }

@@ -164,6 +164,143 @@ fn genVecPush(cg: &mut Cgen, addr: &string, vecTy: &string, elemVal: &Val): Val 
     return Val { v: "0", ty: "void" }
 }
 
+// insert-at-index: grow if full, shift [idx..len) right one (descending copy so
+// overlapping slots don't clobber), store elem at idx, len++.
+fn genVecInsert(cg: &mut Cgen, addr: &string, vecTy: &string, idx: &string, elemVal: &Val): Val {
+    ensureVecTy(cg)
+    ensureRealloc(cg)
+    let elemTy = unwrapVec(vecTy)
+    let elemLl = llType(elemTy)
+
+    let dPtr = nextTemp(cg)
+    emit(cg, "  " + dPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 0\n")
+    let lPtr = nextTemp(cg)
+    emit(cg, "  " + lPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 1\n")
+    let cPtr = nextTemp(cg)
+    emit(cg, "  " + cPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 2\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = load i64, ptr " + lPtr + "\n")
+    let cap = nextTemp(cg)
+    emit(cg, "  " + cap + " = load i64, ptr " + cPtr + "\n")
+
+    let full = nextTemp(cg)
+    emit(cg, "  " + full + " = icmp eq i64 " + l + ", " + cap + "\n")
+    let growLbl = nextLabel(cg, "vins.grow")
+    let shiftLbl = nextLabel(cg, "vins.shift")
+    emit(cg, "  br i1 " + full + ", label %" + growLbl + ", label %" + shiftLbl + "\n")
+    emit(cg, growLbl + ":\n")
+    let d0 = nextTemp(cg)
+    emit(cg, "  " + d0 + " = load ptr, ptr " + dPtr + "\n")
+    let isZero = nextTemp(cg)
+    emit(cg, "  " + isZero + " = icmp eq i64 " + cap + ", 0\n")
+    let dbl = nextTemp(cg)
+    emit(cg, "  " + dbl + " = mul i64 " + cap + ", 2\n")
+    let newCap = nextTemp(cg)
+    emit(cg, "  " + newCap + " = select i1 " + isZero + ", i64 4, i64 " + dbl + "\n")
+    let esz = genSizeOf(cg, elemLl)
+    let bytes = nextTemp(cg)
+    emit(cg, "  " + bytes + " = mul i64 " + newCap + ", " + esz + "\n")
+    let nd = nextTemp(cg)
+    emit(cg, "  " + nd + " = call ptr @realloc(ptr " + d0 + ", i64 " + bytes + ")\n")
+    emit(cg, "  store ptr " + nd + ", ptr " + dPtr + "\n")
+    emit(cg, "  store i64 " + newCap + ", ptr " + cPtr + "\n")
+    emit(cg, "  br label %" + shiftLbl + "\n")
+
+    emit(cg, shiftLbl + ":\n")
+    let dd = nextTemp(cg)
+    emit(cg, "  " + dd + " = load ptr, ptr " + dPtr + "\n")
+    let iAddr = nextTemp(cg)
+    emit(cg, "  " + iAddr + " = alloca i64\n")
+    let lm1 = nextTemp(cg)
+    emit(cg, "  " + lm1 + " = sub i64 " + l + ", 1\n")
+    emit(cg, "  store i64 " + lm1 + ", ptr " + iAddr + "\n")
+    let condLbl = nextLabel(cg, "vins.cond")
+    let bodyLbl = nextLabel(cg, "vins.body")
+    let doneLbl = nextLabel(cg, "vins.done")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, condLbl + ":\n")
+    let i = nextTemp(cg)
+    emit(cg, "  " + i + " = load i64, ptr " + iAddr + "\n")
+    let ge = nextTemp(cg)
+    emit(cg, "  " + ge + " = icmp sge i64 " + i + ", " + idx.clone() + "\n")
+    emit(cg, "  br i1 " + ge + ", label %" + bodyLbl + ", label %" + doneLbl + "\n")
+    emit(cg, bodyLbl + ":\n")
+    let src = nextTemp(cg)
+    emit(cg, "  " + src + " = getelementptr " + elemLl + ", ptr " + dd + ", i64 " + i + "\n")
+    let ip1 = nextTemp(cg)
+    emit(cg, "  " + ip1 + " = add i64 " + i + ", 1\n")
+    let dst = nextTemp(cg)
+    emit(cg, "  " + dst + " = getelementptr " + elemLl + ", ptr " + dd + ", i64 " + ip1 + "\n")
+    let ev = nextTemp(cg)
+    emit(cg, "  " + ev + " = load " + elemLl + ", ptr " + src + "\n")
+    emit(cg, "  store " + elemLl + " " + ev + ", ptr " + dst + "\n")
+    let im1 = nextTemp(cg)
+    emit(cg, "  " + im1 + " = sub i64 " + i + ", 1\n")
+    emit(cg, "  store i64 " + im1 + ", ptr " + iAddr + "\n")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, doneLbl + ":\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + dd + ", i64 " + idx.clone() + "\n")
+    emit(cg, "  store " + elemLl + " " + elemVal.v.clone() + ", ptr " + slot + "\n")
+    let l1 = nextTemp(cg)
+    emit(cg, "  " + l1 + " = add i64 " + l + ", 1\n")
+    emit(cg, "  store i64 " + l1 + ", ptr " + lPtr + "\n")
+    return Val { v: "0", ty: "void" }
+}
+
+// remove-at-index: load the elem to return, shift [idx+1..len) left one
+// (ascending copy, safe since dst<src for a left shift), len--.
+fn genVecRemove(cg: &mut Cgen, addr: &string, vecTy: &string, idx: &string): Val {
+    ensureVecTy(cg)
+    let elemTy = unwrapVec(vecTy)
+    let elemLl = llType(elemTy)
+
+    let dPtr = nextTemp(cg)
+    emit(cg, "  " + dPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 0\n")
+    let lPtr = nextTemp(cg)
+    emit(cg, "  " + lPtr + " = getelementptr %Vec, ptr " + addr.clone() + ", i32 0, i32 1\n")
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = load i64, ptr " + lPtr + "\n")
+
+    let rslot = nextTemp(cg)
+    emit(cg, "  " + rslot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + idx.clone() + "\n")
+    let rv = nextTemp(cg)
+    emit(cg, "  " + rv + " = load " + elemLl + ", ptr " + rslot + "\n")
+
+    let iAddr = nextTemp(cg)
+    emit(cg, "  " + iAddr + " = alloca i64\n")
+    emit(cg, "  store i64 " + idx.clone() + ", ptr " + iAddr + "\n")
+    let lm1 = nextTemp(cg)
+    emit(cg, "  " + lm1 + " = sub i64 " + l + ", 1\n")
+    let condLbl = nextLabel(cg, "vrm.cond")
+    let bodyLbl = nextLabel(cg, "vrm.body")
+    let doneLbl = nextLabel(cg, "vrm.done")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, condLbl + ":\n")
+    let i = nextTemp(cg)
+    emit(cg, "  " + i + " = load i64, ptr " + iAddr + "\n")
+    let lt = nextTemp(cg)
+    emit(cg, "  " + lt + " = icmp slt i64 " + i + ", " + lm1 + "\n")
+    emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + doneLbl + "\n")
+    emit(cg, bodyLbl + ":\n")
+    let ip1 = nextTemp(cg)
+    emit(cg, "  " + ip1 + " = add i64 " + i + ", 1\n")
+    let src = nextTemp(cg)
+    emit(cg, "  " + src + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + ip1 + "\n")
+    let dst = nextTemp(cg)
+    emit(cg, "  " + dst + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i + "\n")
+    let ev = nextTemp(cg)
+    emit(cg, "  " + ev + " = load " + elemLl + ", ptr " + src + "\n")
+    emit(cg, "  store " + elemLl + " " + ev + ", ptr " + dst + "\n")
+    emit(cg, "  store i64 " + ip1 + ", ptr " + iAddr + "\n")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emit(cg, doneLbl + ":\n")
+    emit(cg, "  store i64 " + lm1 + ", ptr " + lPtr + "\n")
+    return Val { v: rv, ty: elemTy }
+}
+
 // -- HashMap runtime: flat { K, V } entry array, linear scan --
 
 fn genHashMapNew(cg: &mut Cgen, hintTy: &string): Val {
@@ -1149,9 +1286,31 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
             return genVecPop(cg, lv.v, lv.ty)
         }
     }
-    // HashMap mutators also need the receiver's address, not a loaded copy
+    // insert/remove mutate the receiver in place → need its address, not a copy.
     if method == "insert" || method == "remove" {
         let lv = genLvalue(cg, object, locs, sigs)
+        if method == "insert" && isVecTy(lv.ty) {
+            let iv = genExpr(cg, *args[0], locs, sigs, "i64")
+            var iw = iv.v.clone()
+            if llType(iv.ty) != "i64" {
+                let ti = nextTemp(cg)
+                emit(cg, "  " + ti + " = sext " + llType(iv.ty) + " " + iv.v + " to i64\n")
+                iw = ti
+            }
+            let elemTy = unwrapVec(lv.ty)
+            let ev = genExpr(cg, *args[1], locs, sigs, elemTy)
+            return genVecInsert(cg, lv.v, lv.ty, iw, ev)
+        }
+        if method == "remove" && isVecTy(lv.ty) {
+            let iv = genExpr(cg, *args[0], locs, sigs, "i64")
+            var iw = iv.v.clone()
+            if llType(iv.ty) != "i64" {
+                let ti = nextTemp(cg)
+                emit(cg, "  " + ti + " = sext " + llType(iv.ty) + " " + iv.v + " to i64\n")
+                iw = ti
+            }
+            return genVecRemove(cg, lv.v, lv.ty, iw)
+        }
         if isHashMapTy(lv.ty) {
             let keyTy = hashMapKeyTy(lv.ty)
             let kv = genExpr(cg, *args[0], locs, sigs, keyTy)
