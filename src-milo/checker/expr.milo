@@ -11,7 +11,7 @@ from "src-milo/checker/state.milo" import {
     error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
     isCopyCk, normalizeEnumNames,
 }
-from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn, monomorphizeStruct }
+from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn, monomorphizeStruct, resolveMonoType }
 from "src-milo/checker/traits.milo" import { resolveMethod }
 
 // -- Move tracking --
@@ -1583,7 +1583,7 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
 
     var paramTypes: Vec<TypeKind> = Vec.new()
     for i in 0..params.len {
-        let pType = normalizeEnumNames(ck, typeFromAst(params[i].ty))
+        let pType = resolveMonoType(ck, params[i].ty)
         declare(ck, params[i].name.clone(), VarInfo {
             ty: pType.clone(),
             mutable: false,
@@ -1597,7 +1597,7 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
 
     var inferredRet = tyVoid()
     match retType {
-        Option.Some(rt) => { inferredRet = normalizeEnumNames(ck, typeFromAst(rt)) }
+        Option.Some(rt) => { inferredRet = resolveMonoType(ck, rt) }
         Option.None => {}
     }
 
