@@ -914,6 +914,39 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### ARENA BUCKET COMPLETE (2026-07-11): all 5 examples at parity ✓✓
+
+**minilang, depgraph, linkedList, htmlParse, domArena — all compile AND run byte-identical
+to the oracle** (manifest 173, byte-identical -O2 convergence throughout). Closures are
+fully implemented (expression- AND block-bodied, capturing + non-capturing). What it took,
+beyond the zero-capture foundation below:
+- **Checker walks closure bodies** via `checkStmt` (checker/expr.milo imports checker/
+  stmt.milo — milo0's resolver handles the circular import via flat-merge, confirmed).
+  Inner locals (`var updated = n`) get declared; unannotated return type is inferred via a
+  `pendingClosureRet` field stamped by `checkReturn` when the enclosing ret type is unknown.
+  `&mut T` closure params are mutable (pointee assignable through the ref).
+- **Codegen block bodies + captures** (in stmt.milo so it can call genStmt): by-ref env
+  (`{ptr,…}` of captured var addresses), loaded in the lifted body; capture analysis walks
+  the body for idents in the enclosing `locs` that aren't params. Unannotated return type
+  is inferred by emitting the body first (a `__closureinfer__` sentinel makes `return` use
+  the value's own type and record it) then prepending the `define` header.
+- **Generic-call disambiguation** (`disambiguateGenericCall`): when a generic like
+  `arenaWith` has >1 monomorphization, `resolveFnName` can't pick — so match the actual
+  arg LLVM types against each candidate's `paramTys` (ref params → `ptr`), and break the
+  closure-return ambiguity by matching the closure arg's carried return type (`Closure:R`)
+  against the candidate's `Option<R>` return (exact, after stripping `Option_`).
+- **Nested-generic mangling**: `resolveTyStr` recurses into `Vec<…>` elements; `genField
+  Access`/`genIndex`/`genVecPush` resolve their element type so no unsized `%Handle<Node>`
+  reaches `genSizeOf`. Added the `assert(cond[,msg])` builtin (branch + dprintf + exit).
+
+**New frontier (servers, now unblocked past closures):** serve/webserver hit the
+**Option auto-wrap** (`serve(port: u16?, …)` called with a bare `u16` → "expected
+Option_u16, got u16"). Fix: `optionWrapCoercible` in checkCall's arg check (paramType's
+`unwrapableInner` == argType) + codegen wraps the value in `Some` at the call site. weather/
+app hits `no method 'clone' on type <unknown>`; termpair/server `cannot assign to immutable
+variable` + embedFile. Libraries (gdbmi, termpair/{protocol,encryption}) have no `main` —
+not parity targets (link-fail under the oracle too).
+
 ### Closure codegen — LANDED (2026-07-11): expression-bodied, zero-capture ✓
 
 **Shipped green** (manifest 173, byte-identical -O2 convergence): first-class closures for
