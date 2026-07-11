@@ -8,7 +8,7 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
 }
 from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
-from "src-milo/codegen/strings.milo" import { genStringAppendInPlace }
+from "src-milo/codegen/strings.milo" import { genStringAppendInPlace, genStringEq, genStringLit }
 
 // -- Assignment --
 
@@ -446,8 +446,59 @@ fn genIfLet(cg: &mut Cgen, pattern: &Pattern, subject: &Expr, thenBody: &Vec<Hea
     return false
 }
 
+// `match s { "a" => …, _ => … }` on a string subject: a chain of string-eq
+// tests (literals are exclusive so a non-final wildcard is still the default).
+fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+    let endLbl = nextLabel(cg, "smatch.end")
+    var allTerminated = true
+    var wildIdx: i64 = -1
+    for ai in 0..arms.len {
+        match arms[ai].pattern {
+            Pattern.LiteralPattern(val, kind, span) => {
+                let litV = genStringLit(cg, val.clone())
+                let eq = genStringEq(cg, subjValV.clone(), litV.v, true)
+                let armLbl = nextLabel(cg, "smatch.arm")
+                let nextLbl = nextLabel(cg, "smatch.next")
+                emit(cg, "  br i1 " + eq.v + ", label %" + armLbl + ", label %" + nextLbl + "\n")
+                emit(cg, armLbl + ":\n")
+                var armTerm = false
+                for si in 0..arms[ai].body.len {
+                    if genStmt(cg, *arms[ai].body[si], locs, sigs, retTy) { armTerm = true }
+                }
+                if !armTerm {
+                    emit(cg, "  br label %" + endLbl + "\n")
+                    allTerminated = false
+                }
+                emit(cg, nextLbl + ":\n")
+            }
+            _ => { wildIdx = ai }
+        }
+    }
+    if wildIdx >= 0 {
+        var armTerm = false
+        for si in 0..arms[wildIdx].body.len {
+            if genStmt(cg, *arms[wildIdx].body[si], locs, sigs, retTy) { armTerm = true }
+        }
+        if !armTerm {
+            emit(cg, "  br label %" + endLbl + "\n")
+            allTerminated = false
+        }
+    } else {
+        emit(cg, "  br label %" + endLbl + "\n")
+        allTerminated = false
+    }
+    emit(cg, endLbl + ":\n")
+    if allTerminated { emit(cg, "  unreachable\n") }
+    return allTerminated
+}
+
 fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let subjLv = genLvalue(cg, subject, locs, sigs)
+    if llType(subjLv.ty) == "%String" {
+        let sv = nextTemp(cg)
+        emit(cg, "  " + sv + " = load %String, ptr " + subjLv.v + "\n")
+        return genStringMatch(cg, sv, arms, locs, sigs, retTy)
+    }
     let rawName = stripPercent(subjLv.ty)
     let structTy = "%" + rawName
     let tagPtr = nextTemp(cg)
