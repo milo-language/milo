@@ -368,13 +368,17 @@ fn genHashMapGet(cg: &mut Cgen, obj: &Val, keyVal: &Val): Val {
     emit(cg, "  " + vp + " = getelementptr " + entryTy + ", ptr " + slot + ", i32 0, i32 1\n")
     let fv = nextTemp(cg)
     emit(cg, "  " + fv + " = load " + valLl + ", ptr " + vp + "\n")
+    // DEEP-CLONE the value: a shallow load shares the value's Vec/String/HashMap
+    // buffers with the entry still in the map, so dropping the returned Option
+    // frees them out from under the map (later gets read freed memory → garbage).
+    let fvc = genCloneOfLoaded(cg, fv, valTy)
     emit(cg, "  store i32 " + someTag.toString() + ", ptr " + tagPtr + "\n")
     let payPtr = nextTemp(cg)
     emit(cg, "  " + payPtr + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 1\n")
     let pstructTy = "{ " + valLl + " }"
     let fp = nextTemp(cg)
     emit(cg, "  " + fp + " = getelementptr " + pstructTy + ", ptr " + payPtr + ", i32 0, i32 0\n")
-    emit(cg, "  store " + valLl + " " + fv + ", ptr " + fp + "\n")
+    emit(cg, "  store " + valLl + " " + fvc + ", ptr " + fp + "\n")
     emit(cg, "  br label %" + endLbl + "\n")
     emit(cg, endLbl + ":\n")
     let r = nextTemp(cg)
@@ -1001,8 +1005,13 @@ fn genCloneOfLoaded(cg: &mut Cgen, v: &string, ty: &string): string {
         }
     }
     if cloneFn.len > 0 {
+        // impl-Clone methods take `self: &Self` → a ptr, so materialize v to a
+        // temp and pass its address (not the value).
+        let slot = nextTemp(cg)
+        emit(cg, "  " + slot + " = alloca " + ll + "\n")
+        emit(cg, "  store " + ll + " " + v + ", ptr " + slot + "\n")
         let t = nextTemp(cg)
-        emit(cg, "  " + t + " = call " + ll + " @" + cloneFn + "(" + ll + " " + v + ")\n")
+        emit(cg, "  " + t + " = call " + ll + " @" + cloneFn + "(ptr " + slot + ")\n")
         return t
     }
     // Copy (ints/bool/ptr) or no clone helper: value copy is a faithful clone
