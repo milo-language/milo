@@ -1,0 +1,237 @@
+// Native C ABI classification for passing/returning structs by value across an
+// extern (C) boundary. Ports src/abi.ts. Covers AArch64 (AAPCS64) and x86_64
+// System V — the two ABIs Milo's hosted code targets.
+//
+// The classifier is pure over a struct's size/align + its flattened scalar leaves
+// (byte offset, size, int-vs-float), derived from Milo's manual layout (== LLVM's).
+// It returns a lowering plan; codegen (emit.milo/expr.milo) renders it into LLVM
+// declares AND matching call-site attributes — they MUST agree or x86_64 miscompiles.
+//
+// ArgClass/RetClass are kind-tagged plain structs (not payload enums) so the code
+// path stays on milo0 features that are already rock-solid — this module is compiled
+// by the very compiler it lives in.
+
+from "src-milo/codegen/types.milo" import { Cgen, FieldInfo, alignOf, payloadBytes, stripPercent }
+
+struct AbiLeaf {
+    offset: i64,
+    size: i64,
+    isFloat: bool,
+}
+
+// One register-sized piece of a coerced struct: an LLVM type loaded from `offset`.
+struct AbiReg {
+    ty: string,
+    offset: i64,
+}
+
+struct AbiStruct {
+    name: string,
+    size: i64,
+    align: i64,
+    leaves: Vec<AbiLeaf>,
+}
+
+// kind = "direct" (passed unchanged) | "coerce" (in regs; container = bytes to
+// stage in an alloca) | "indirect" (pass a pointer; byval attr only on SysV).
+struct ArgClass {
+    kind: string,
+    regs: Vec<AbiReg>,
+    container: i64,
+    byval: bool,
+    align: i64,
+    name: string,
+}
+
+// kind = "direct" | "coerce" (returned in register(s) as retTy) | "sret" (via a
+// caller-provided pointer).
+struct RetClass {
+    kind: string,
+    retTy: string,
+    container: i64,
+    align: i64,
+    name: string,
+}
+
+fn ceilDiv(a: i64, b: i64): i64 {
+    return (a + b - 1) / b
+}
+
+fn alignUp(off: i64, a: i64): i64 {
+    return ceilDiv(off, a) * a
+}
+
+// Flatten one field's scalar leaves at byte offset `off`. f32/f64 -> float leaf;
+// a nested struct recurses; everything else is one integer-class leaf of its size.
+fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
+    var out: Vec<AbiLeaf> = Vec.new()
+    if ty == "f32" {
+        out.push(AbiLeaf { offset: off, size: 4, isFloat: true })
+        return out
+    }
+    if ty == "f64" || ty == "double" {
+        out.push(AbiLeaf { offset: off, size: 8, isFloat: true })
+        return out
+    }
+    if ty == "float" {
+        out.push(AbiLeaf { offset: off, size: 4, isFloat: true })
+        return out
+    }
+    let raw = stripPercent(ty)
+    if cg.structs.contains(raw) {
+        return abiLeaves(cg, raw, off)
+    }
+    out.push(AbiLeaf { offset: off, size: payloadBytes(cg, ty), isFloat: false })
+    return out
+}
+
+// Flatten a struct's scalar leaves (offset/size/float-ness), in offset order,
+// laying fields out exactly as LLVM does (natural alignment, matching Milo).
+fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
+    var out: Vec<AbiLeaf> = Vec.new()
+    if !cg.structs.contains(name) { return out }
+    let fields = cg.structs.get(name)!
+    var off: i64 = 0
+    for i in 0..fields.len {
+        let fty = fields[i].ty.clone()
+        off = alignUp(off, alignOf(cg, fty))
+        let sub = leavesOf(cg, fty, base + off)
+        for j in 0..sub.len {
+            out.push(AbiLeaf { offset: sub[j].offset, size: sub[j].size, isFloat: sub[j].isFloat })
+        }
+        off = off + payloadBytes(cg, fty)
+    }
+    return out
+}
+
+fn abiStructOf(cg: &Cgen, name: &string): AbiStruct {
+    return AbiStruct {
+        name: name.clone(),
+        size: payloadBytes(cg, name),
+        align: alignOf(cg, name),
+        leaves: abiLeaves(cg, name, 0),
+    }
+}
+
+// AAPCS64 HFA: 1-4 leaves, all float, all the same size. Returns the element LLVM
+// type ("float"/"double") and count via a small struct; kind=="" means not an HFA.
+struct Hfa {
+    kind: string,
+    count: i64,
+    eltTy: string,
+}
+
+fn hfaOf(s: &AbiStruct): Hfa {
+    let n = s.leaves.len
+    if n < 1 || n > 4 { return Hfa { kind: "", count: 0, eltTy: "" } }
+    for i in 0..n {
+        if !s.leaves[i].isFloat { return Hfa { kind: "", count: 0, eltTy: "" } }
+    }
+    let sz = s.leaves[0].size
+    for i in 0..n {
+        if s.leaves[i].size != sz { return Hfa { kind: "", count: 0, eltTy: "" } }
+    }
+    let elt = if sz == 4 { "float" } else { "double" }
+    return Hfa { kind: "hfa", count: n, eltTy: elt }
+}
+
+fn hfaCoerceTy(h: &Hfa): string {
+    if h.count == 1 { return h.eltTy.clone() }
+    return "[" + h.count.toString() + " x " + h.eltTy.clone() + "]"
+}
+
+// SysV: type of one eightbyte [8k, 8k+8). SSE if every leaf in it is float; a lone
+// 4-byte float in an otherwise-empty eightbyte is `float`, else `double`; else i64.
+fn sysvEightbyteTy(s: &AbiStruct, k: i64): string {
+    let lo = k * 8
+    let hi = lo + 8
+    var count: i64 = 0
+    var allFloat = true
+    var loneSize: i64 = 0
+    for i in 0..s.leaves.len {
+        let lOff = s.leaves[i].offset
+        let lSz = s.leaves[i].size
+        if lOff < hi && lOff + lSz > lo {
+            count = count + 1
+            loneSize = lSz
+            if !s.leaves[i].isFloat { allFloat = false }
+        }
+    }
+    if count == 0 || !allFloat { return "i64" }
+    if count == 1 && loneSize == 4 { return "float" }
+    return "double"
+}
+
+fn sysvRegs(s: &AbiStruct): Vec<AbiReg> {
+    let n = ceilDiv(s.size, 8)
+    var regs: Vec<AbiReg> = Vec.new()
+    for k in 0..n {
+        regs.push(AbiReg { ty: sysvEightbyteTy(s, k), offset: k * 8 })
+    }
+    return regs
+}
+
+fn emptyRegs(): Vec<AbiReg> {
+    return Vec.new()
+}
+
+fn directArg(): ArgClass {
+    return ArgClass { kind: "direct", regs: emptyRegs(), container: 0, byval: false, align: 0, name: "" }
+}
+
+fn coerceArg(regs: Vec<AbiReg>, container: i64): ArgClass {
+    return ArgClass { kind: "coerce", regs: regs, container: container, byval: false, align: 0, name: "" }
+}
+
+fn indirectArg(byval: bool, align: i64, name: &string): ArgClass {
+    return ArgClass { kind: "indirect", regs: emptyRegs(), container: 0, byval: byval, align: align, name: name.clone() }
+}
+
+fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
+    if arch == "aarch64" {
+        let h = hfaOf(s)
+        if h.kind == "hfa" {
+            var regs: Vec<AbiReg> = Vec.new()
+            regs.push(AbiReg { ty: hfaCoerceTy(h), offset: 0 })
+            return coerceArg(regs, ceilDiv(s.size, 8) * 8)
+        }
+        if s.size > 16 { return indirectArg(false, s.align, s.name) }
+        var regs: Vec<AbiReg> = Vec.new()
+        if s.size <= 8 {
+            regs.push(AbiReg { ty: "i64", offset: 0 })
+            return coerceArg(regs, 8)
+        }
+        regs.push(AbiReg { ty: "[2 x i64]", offset: 0 })
+        return coerceArg(regs, 16)
+    }
+    // x86_64 System V
+    if s.size > 16 { return indirectArg(true, s.align, s.name) }
+    return coerceArg(sysvRegs(s), ceilDiv(s.size, 8) * 8)
+}
+
+fn classifyRet(arch: &string, s: &AbiStruct): RetClass {
+    if arch == "aarch64" {
+        let h = hfaOf(s)
+        if h.kind == "hfa" {
+            return RetClass { kind: "coerce", retTy: hfaCoerceTy(h), container: ceilDiv(s.size, 8) * 8, align: 0, name: "" }
+        }
+        if s.size > 16 { return RetClass { kind: "sret", retTy: "", container: 0, align: s.align, name: s.name.clone() } }
+        if s.size <= 8 {
+            return RetClass { kind: "coerce", retTy: "i64", container: 8, align: 0, name: "" }
+        }
+        return RetClass { kind: "coerce", retTy: "[2 x i64]", container: 16, align: 0, name: "" }
+    }
+    // x86_64 System V
+    if s.size > 16 { return RetClass { kind: "sret", retTy: "", container: 0, align: s.align, name: s.name.clone() } }
+    let regs = sysvRegs(s)
+    if regs.len == 1 {
+        return RetClass { kind: "coerce", retTy: regs[0].ty.clone(), container: ceilDiv(s.size, 8) * 8, align: 0, name: "" }
+    }
+    var rt = "{ "
+    for i in 0..regs.len {
+        if i > 0 { rt = rt + ", " }
+        rt = rt + regs[i].ty.clone()
+    }
+    rt = rt + " }"
+    return RetClass { kind: "coerce", retTy: rt, container: ceilDiv(s.size, 8) * 8, align: 0, name: "" }
+}

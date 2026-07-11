@@ -12,6 +12,7 @@ from "src-milo/codegen/types.milo" import {
     lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
 }
 from "src-milo/codegen/stmt.milo" import { genClosure, genClosureCall, widenToI64 }
+from "src-milo/codegen/abi.milo" import { AbiStruct, ArgClass, RetClass, AbiReg, abiStructOf, classifyArg, classifyRet }
 from "std/io" import { readFile }
 from "src-milo/codegen/strings.milo" import {
     genStringLit, genStringClone, genStringConcat, genStringEq, genStringCmp,
@@ -2863,6 +2864,113 @@ fn disambiguateByReturn(cg: &Cgen, base: &string, hint: &string): string {
     return base.clone()
 }
 
+// Emit an extern call whose signature crosses the C ABI with a by-value struct.
+// argVals hold the Milo-level arguments (struct args are whole %T values); here each
+// is reinterpreted into the register/indirect/sret form the ABI demands, matching the
+// lowered declare from emit.milo. Ports src/codegen.ts emitExternAbiCall.
+fn emitExternAbiCall(cg: &mut Cgen, name: &string, argVals: &Vec<Val>, paramHints: &Vec<string>, paramRefs: &Vec<bool>): Val {
+    let retSurface = resolveTyStr(cg, lookupFnRet(cg, name))
+    let retLl = llType(retSurface)
+    let retRaw = stripPercent(retLl)
+    var retKind = "direct"
+    var callRetTy = retLl.clone()   // the LLVM type the call itself returns
+    var retContainer: i64 = 0
+    var sretName = ""
+    var sretAlign: i64 = 0
+    if retLl.len > 0 && retLl[0] == 37 && cg.structs.contains(retRaw) && !cg.interfaces.contains(retRaw) {
+        let rc = classifyRet(cg.arch, abiStructOf(cg, retRaw))
+        retKind = rc.kind.clone()
+        if rc.kind == "sret" {
+            sretName = rc.name.clone()
+            sretAlign = rc.align
+            callRetTy = "void"
+        } else if rc.kind == "coerce" {
+            callRetTy = rc.retTy.clone()
+            retContainer = rc.container
+        }
+    }
+
+    var finalArgs: Vec<string> = Vec.new()
+    var sretAlloca = ""
+    if retKind == "sret" {
+        sretAlloca = nextTemp(cg)
+        emit(cg, "  " + sretAlloca + " = alloca %" + sretName.clone() + "\n")
+        finalArgs.push("ptr sret(%" + sretName.clone() + ") align " + sretAlign.toString() + " " + sretAlloca.clone())
+    }
+
+    for i in 0..argVals.len {
+        let avTy = argVals[i].ty.clone()
+        let avV = argVals[i].v.clone()
+        var structParam = false
+        if i < paramHints.len {
+            let pr = stripPercent(paramHints[i])
+            let isRef = i < paramRefs.len && paramRefs[i]
+            if !isRef && cg.structs.contains(pr) && !cg.interfaces.contains(pr) { structParam = true }
+        }
+        if !structParam {
+            finalArgs.push(llType(avTy) + " " + avV)
+            continue
+        }
+        let structLl = llType(avTy)
+        let sname = stripPercent(structLl)
+        let ac = classifyArg(cg.arch, abiStructOf(cg, sname))
+        if ac.kind == "coerce" {
+            let buf = nextTemp(cg)
+            emit(cg, "  " + buf + " = alloca [" + (ac.container / 8).toString() + " x i64]\n")
+            emit(cg, "  store " + structLl.clone() + " " + avV + ", ptr " + buf + "\n")
+            for r in 0..ac.regs.len {
+                var p = buf.clone()
+                if ac.regs[r].offset != 0 {
+                    p = nextTemp(cg)
+                    emit(cg, "  " + p + " = getelementptr i8, ptr " + buf + ", i64 " + ac.regs[r].offset.toString() + "\n")
+                }
+                let lv = nextTemp(cg)
+                emit(cg, "  " + lv + " = load " + ac.regs[r].ty.clone() + ", ptr " + p + "\n")
+                finalArgs.push(ac.regs[r].ty.clone() + " " + lv)
+            }
+        } else {
+            let buf = nextTemp(cg)
+            emit(cg, "  " + buf + " = alloca %" + ac.name.clone() + "\n")
+            emit(cg, "  store " + structLl.clone() + " " + avV + ", ptr " + buf + "\n")
+            if ac.byval {
+                finalArgs.push("ptr byval(%" + ac.name.clone() + ") align " + ac.align.toString() + " " + buf)
+            } else {
+                finalArgs.push("ptr " + buf)
+            }
+        }
+    }
+
+    var argStr = ""
+    for i in 0..finalArgs.len {
+        if i > 0 { argStr = argStr + ", " }
+        argStr = argStr + finalArgs[i].clone()
+    }
+
+    if retKind == "sret" {
+        emit(cg, "  call void @" + name.clone() + "(" + argStr + ")\n")
+        let v = nextTemp(cg)
+        emit(cg, "  " + v + " = load %" + sretName.clone() + ", ptr " + sretAlloca.clone() + "\n")
+        return Val { v: v, ty: retSurface }
+    }
+    if retKind == "coerce" {
+        let raw = nextTemp(cg)
+        emit(cg, "  " + raw + " = call " + callRetTy.clone() + " @" + name.clone() + "(" + argStr + ")\n")
+        let buf = nextTemp(cg)
+        emit(cg, "  " + buf + " = alloca [" + (retContainer / 8).toString() + " x i64]\n")
+        emit(cg, "  store " + callRetTy.clone() + " " + raw + ", ptr " + buf + "\n")
+        let v = nextTemp(cg)
+        emit(cg, "  " + v + " = load " + retLl.clone() + ", ptr " + buf + "\n")
+        return Val { v: v, ty: retSurface }
+    }
+    if callRetTy == "void" {
+        emit(cg, "  call void @" + name.clone() + "(" + argStr + ")\n")
+        return Val { v: "0", ty: "void" }
+    }
+    let t = nextTemp(cg)
+    emit(cg, "  " + t + " = call " + callRetTy.clone() + " @" + name.clone() + "(" + argStr + ")\n")
+    return Val { v: t, ty: retSurface }
+}
+
 fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     if name == "format" {
         return genFormat(cg, args, locs, sigs)
@@ -3168,6 +3276,12 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
             argVals.push(av)
             argPointees.push("")
         }
+    }
+
+    // struct-by-value extern: reinterpret struct args/return into the native ABI's
+    // register/byval/sret form (declares were lowered to match in emit.milo).
+    if cg.abiExterns.contains(name) {
+        return emitExternAbiCall(cg, name, argVals, paramHints, paramRefs)
     }
 
     let isEprint = name == "eprint"
@@ -3481,9 +3595,10 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             if !hasPoint { fs = fs + ".0" }
             // Honor an f32 field/arg hint: a bare float literal defaults to double,
             // but in `float` position LLVM needs a `float` constant (same decimal
-            // syntax) so the store into an f32 slot type-checks — mirrors IntLit.
+            // syntax). Carry the SURFACE type "f32" (not "float" — llType maps the
+            // surface alias "float"→double, which would re-widen the store).
             var fll = "double"
-            if hintTy.len > 0 && llType(hintTy) == "float" { fll = "float" }
+            if hintTy.len > 0 && llType(hintTy) == "float" { fll = "f32" }
             return Val { v: fs, ty: fll }
         }
         Expr.BoolLit(b, span) => {

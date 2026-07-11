@@ -73,6 +73,11 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     ensureStringTy, ensureVecTy,
 }
 from "src-milo/codegen/stmt.milo" import { genStmt, emitScopeDrops }
+from "src-milo/codegen/abi.milo" import {
+    AbiStruct, ArgClass, RetClass, AbiReg,
+    abiStructOf, classifyArg, classifyRet,
+}
+from "src-milo/target.milo" import { getHostTarget }
 
 // Build function signature table from program declarations.
 fn buildFnTable(prog: &Program): Vec<CgFnSig> {
@@ -98,19 +103,84 @@ fn buildFnTable(prog: &Program): Vec<CgFnSig> {
     return sigs
 }
 
+// True when `t` is a bare (non-ref, non-pointer, non-array) struct type — the only
+// shape that crosses a C extern boundary by value and needs ABI classification.
+fn isByValStruct(cg: &Cgen, t: &MiloType): bool {
+    if t.isPtr || t.isRef || t.isRefMut || t.isArray || t.isFn { return false }
+    let raw = stripPercent(resolveTyStr(cg, astTypeStr(t)))
+    if !cg.structs.contains(raw) { return false }
+    if cg.interfaces.contains(raw) { return false }
+    return true
+}
+
+// Lowered LLVM param/return signature for an extern with by-value struct params or
+// return. The SAME rendering must appear at the declare AND every call site (an
+// sret/byval attr on one but not the other silently miscompiles on x86_64), so both
+// go through this single source of truth. Returns (paramStrs, retStr).
+fn externLoweredParams(cg: &Cgen, f: &Function): Vec<string> {
+    var params: Vec<string> = Vec.new()
+    if isByValStruct(cg, f.retType) {
+        let rname = stripPercent(resolveTyStr(cg, astTypeStr(f.retType)))
+        let rc = classifyRet(cg.arch, abiStructOf(cg, rname))
+        if rc.kind == "sret" {
+            params.push("ptr sret(%" + rc.name.clone() + ") align " + rc.align.toString())
+        }
+    }
+    for i in 0..f.params.len {
+        if f.params[i].ty.isFn {
+            params.push("ptr")
+        } else if isByValStruct(cg, f.params[i].ty) {
+            let pname = stripPercent(resolveTyStr(cg, astTypeStr(f.params[i].ty)))
+            let ac = classifyArg(cg.arch, abiStructOf(cg, pname))
+            if ac.kind == "coerce" {
+                for r in 0..ac.regs.len { params.push(ac.regs[r].ty.clone()) }
+            } else {
+                if ac.byval {
+                    params.push("ptr byval(%" + ac.name.clone() + ") align " + ac.align.toString())
+                } else {
+                    params.push("ptr")
+                }
+            }
+        } else {
+            params.push(llType(astTypeStr(f.params[i].ty)))
+        }
+    }
+    return params
+}
+
+fn externLoweredRet(cg: &Cgen, f: &Function): string {
+    if isByValStruct(cg, f.retType) {
+        let rname = stripPercent(resolveTyStr(cg, astTypeStr(f.retType)))
+        let rc = classifyRet(cg.arch, abiStructOf(cg, rname))
+        if rc.kind == "sret" { return "void" }
+        if rc.kind == "coerce" { return rc.retTy.clone() }
+    }
+    return llType(astTypeStr(f.retType))
+}
+
 // Emit a single function definition or extern declaration.
 fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     if f.isExtern {
         cg.externFns.insert(f.name.clone(), true)
         var ps = ""
-        for i in 0..f.params.len {
-            if i > 0 { ps = ps + ", " }
-            // a fn-typed param of a C extern is a raw function pointer, not milo's
-            // %Closure fat pointer (qsort's cmp is `int(*)(…)`, no env).
-            if f.params[i].ty.isFn {
-                ps = ps + "ptr"
-            } else {
-                ps = ps + llType(astTypeStr(f.params[i].ty))
+        if cg.abiExterns.contains(f.name) {
+            // struct-by-value extern: emit the native-ABI-lowered param list (coerced
+            // register types / byval / sret) so it matches the C peer's calling convention.
+            let lp = externLoweredParams(cg, f)
+            for i in 0..lp.len {
+                if i > 0 { ps = ps + ", " }
+                ps = ps + lp[i].clone()
+            }
+        } else {
+            for i in 0..f.params.len {
+                if i > 0 { ps = ps + ", " }
+                // a fn-typed param of a C extern is a raw function pointer, not milo's
+                // %Closure fat pointer (qsort's cmp is `int(*)(…)`, no env).
+                if f.params[i].ty.isFn {
+                    ps = ps + "ptr"
+                } else {
+                    ps = ps + llType(astTypeStr(f.params[i].ty))
+                }
             }
         }
         if f.isVariadic {
@@ -158,7 +228,9 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
         // astTypeStr, not .name: a `*u8` return must stay a pointer (`.name` alone
         // drops pointer-ness, declaring e.g. strerror as returning i8 → truncated
         // pointer → strlen on garbage in the self-compiled build).
-        emitG(cg, "declare " + llType(astTypeStr(f.retType)) + " @" + f.name + "(" + ps + ")\n")
+        var declRet = llType(astTypeStr(f.retType))
+        if cg.abiExterns.contains(f.name) { declRet = externLoweredRet(cg, f) }
+        emitG(cg, "declare " + declRet + " @" + f.name + "(" + ps + ")\n")
         return
     }
 
@@ -331,6 +403,19 @@ fn genProgram(prog: Program, sourceDir: string): string {
             fields.push(FieldInfo { name: s.fields[fi].name.clone(), ty: resolveTyStr(cg, astTypeStr(s.fields[fi].ty)) })
         }
         cg.structs.insert(s.name.clone(), fields)
+    }
+
+    // Native struct-by-value C ABI: mark extern fns that pass/return a bare struct
+    // by value (a `&Struct`/`*Struct`/`[N]Struct` crosses by reference already). Their
+    // declares + call sites go through the abi.milo classifier (HFA/coerce/byval/sret).
+    cg.arch = getHostTarget().arch
+    for i in 0..prog.functions.len {
+        if !prog.functions[i].isExtern { continue }
+        var wantsAbi = isByValStruct(cg, prog.functions[i].retType)
+        for pi in 0..prog.functions[i].params.len {
+            if isByValStruct(cg, prog.functions[i].params[pi].ty) { wantsAbi = true }
+        }
+        if wantsAbi { cg.abiExterns.insert(prog.functions[i].name.clone(), true) }
     }
 
     // (3) size enums (payloadBytes sees all metadata now) + emit their decls

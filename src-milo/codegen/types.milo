@@ -103,6 +103,10 @@ struct Cgen {
     sourceDir: string,
     // names of fn->closure adapter thunks already emitted (dedup)
     emittedThunks: Vec<string>,
+    // host arch ("aarch64"/"x86_64") for native struct-by-value C ABI classification
+    arch: string,
+    // extern fns needing struct-by-value ABI lowering: name -> "1" (presence marker)
+    abiExterns: HashMap<string, bool>,
 }
 
 fn cgenNew(): Cgen {
@@ -142,6 +146,8 @@ fn cgenNew(): Cgen {
         closureRetTy: "",
         sourceDir: "",
         emittedThunks: Vec.new(),
+        arch: "aarch64",
+        abiExterns: HashMap.new(),
     }
 }
 
