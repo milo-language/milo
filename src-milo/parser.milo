@@ -1270,7 +1270,14 @@ fn parse(p: &mut Parser): Program {
             if attrs.len > 0 { e.attributes = attrs }
             enums.push(e)
         } else if at(p, TokKind.Extern) {
-            functions.push(parseExternFn(p))
+            // `extern struct` is a C-ABI struct — parse it as a normal struct
+            // (milo's manual layout already targets the C ABI).
+            if peekN(p, 1).kind == TokKind.Struct {
+                advance(p)
+                structs.push(parseStruct(p))
+            } else {
+                functions.push(parseExternFn(p))
+            }
         } else if at(p, TokKind.Fn) {
             functions.push(parseFn(p))
         } else if at(p, TokKind.Trait) {
