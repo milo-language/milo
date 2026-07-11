@@ -747,6 +747,25 @@ already mandates.
 
 (populate at M0 seed time)
 
+### Parity progress (2026-07-11, cont.48) — externMutBuf fixed (contained, not the array redesign)
+
+`b10d30a` — a `&mut/&[u8;N]` arg to a C extern now decays to its data pointer. Fixed
+arrays lower to a Vec `{ptr,len,cap}`, and the ref-array arg was passing the HEADER's
+address to the extern; a buffer-filling C fn (memcpy/read) then clobbered len/cap instead
+of the bytes → garbage reads (`0 0 0`). Now loads the Vec and passes field 0 when the
+callee is extern. Only `&[u8;N]`-to-extern hit this — std externs all take `*u8`, which
+was already decayed via the ptr-param path, so nothing else changed. externMutBuf passes;
+**sweep 327 → 328**; manifest 173 green; byte-identical -O2 convergence. (This was a
+contained ptr-decay bug, NOT the inline-array redesign — earlier notes conflated it with
+externStructNested.)
+
+Extern C-FFI status: **10/11 fixtures run correctly** end-to-end. The sole remainder,
+`externStructNested`'s array-in-struct cases (`sizeOf<WithArr>`, `offsetOf<WithArr>("arr")`
+with `WithArr = {i32, [i32;3]}`), genuinely needs true inline arrays: milo0's struct is
+`{i32, %Vec}` (32B) vs C's `{i32, [3 x i32]}` (16B). Faking sizeOf to report 16 would lie
+about milo0's actual layout — the correct fix is the value-type-array redesign below,
+disproportionate for one non-sweep-verifiable fixture. Deferred.
+
 ### Parity progress (2026-07-11, cont.47) — examples goal MET & re-verified; inline arrays is out of scope
 
 Re-ran the full 35-example RUN-parity check after the cont.46 ABI work: **33/35 exact
