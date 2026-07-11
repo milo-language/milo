@@ -914,6 +914,16 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.5 (2026-07-11) — global arrays + Vec.each, →260
+
+- **Fixed-array global initializers** (`var xs: [i32;5] = [10,…]`, `[3.14;3]`): materialize
+  the element data as a WRITABLE module global (`@xs_data = global [5 x i32] […]`) and
+  point a `%Vec` constant at it (`@xs = global %Vec { ptr @xs_data, i64 5, i64 5 }`).
+  Handles reads, mutation (`xs[2] = 999` writes the data global), and array-repeat.
+  Scalar element types only; struct-element arrays still zero-init. (globalArrayInit)
+- **`Vec.each(fn)`**: emit a loop calling the closure once per element with the element
+  address (uniform closure ABI). (vecEach)
+
 ### Fixture-sweep bug hunt cont.4 (2026-07-11) — generic-struct codegen + if-expr
 
 - **Multi-instantiation generic-struct literals** in codegen: `Pair { first: 10, second:
