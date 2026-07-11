@@ -914,6 +914,15 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.26 (2026-07-11) — generic-call ref-arg pointee disambig
+
+`getVal(w)` with `w: Wrapper<i64>` emitted a bare `@getVal` (→ genericRefInfer):
+`disambiguateGenericCall` forced every ref param to `ptr`, so `getVal_i64` and `getVal_string`
+(both `&Wrapper<T>` → ptr) matched any ptr arg → count>1 → fell back to the un-mangled base.
+genCall now keeps a parallel `argPointees` list (each ref arg's lvalue pointee type) and the
+disambiguator, for a ref param with a known pointee, matches on the POINTEE type instead of
+`ptr`. Completes the generic-monomorphization disambiguation started in cont.25.
+
 ### Fixture-sweep bug hunt cont.25 (2026-07-11) — no-hint generic enum literal mono
 
 `let a = Maybe.Just(42)` (no annotation) (→ genericEnumUser): base `Maybe` carries no variant
