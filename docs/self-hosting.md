@@ -914,6 +914,26 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.42 (2026-07-11) — promise scheduler shape-matrix
+
+Further bisection of the green-task capture bug (all probes reverted, tree green 173/0). Spawn a
+move-closure task, vary (generic?, capture shape, where the Channel is created):
+| context      | capture                    | Channel     | result        |
+| non-generic  | scalar                     | in-fn       | OK (runs once)|
+| non-generic  | Vec<i64>                   | in-fn       | OK (runs once)|
+| generic fn   | scalar                     | in-fn       | OK (runs once)|
+| generic fn   | Vec<Promise<T>>            | in-fn       | DOUBLE-RUN    |
+| generic fn   | Vec<T> + Channel PARAM     | passed in   | HANG          |
+So it's NOT double-flush (taskJoinGreen context-switches with no dup) — the task BODY runs twice
+in the generic + aggregate-capture case, and hangs in another. The move-env COPY codegen
+(genClosure isMove: malloc sizeof(envTy), load %Vec/%Channel by llType, store per slot) looks
+correct, so this isn't a simple env truncation. Symptoms are shape-dependent (works/double-run/
+hang) → a subtle interaction between the monomorphized closure's env layout/read and the
+makecontext/swapcontext green-task setup, likely memory corruption or a double-enqueue for these
+capture shapes. NEXT: dump the mono'd closure body IR for the `Vec<Promise<T>>`-capturing case
+and trace whether `_taskEntry`/`_callClosureVoid` is entered twice (double-enqueue in the
+scheduler) vs the closure body itself looping — that decides scheduler-fix vs closure-codegen-fix.
+
 ### Fixture-sweep bug hunt cont.41 (2026-07-11) — promise scheduler bug narrowed
 
 Drilled into the promise green-scheduler failure. Bisected (probes in std/runtime.milo +
