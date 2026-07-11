@@ -958,14 +958,23 @@ fn genClosureCall(cg: &mut Cgen, lc: &Local, args: &Vec<Heap<Expr>>, locs: &Vec<
         let alv = genLvalue(cg, *args[i], locs, sigs)
         argStr = argStr + ", ptr " + alv.v
     }
-    var retTyStr = retHint.clone()
+    // the closure param's own type carries R ("fn:Response" / "Closure:Response");
+    // it's the declared return type, so prefer it over the (often empty) call hint.
+    var retTyStr = ""
+    if lc.ty.len > 3 && lc.ty[0] == 102 && lc.ty[1] == 110 && lc.ty[2] == 58 {
+        retTyStr = lc.ty[3..lc.ty.len].clone()
+    } else if lc.ty.len > 8 && lc.ty[0] == 67 && lc.ty[7] == 58 {
+        retTyStr = lc.ty[8..lc.ty.len].clone()
+    }
+    if retTyStr.len == 0 { retTyStr = retHint.clone() }
     if retTyStr.len == 0 { retTyStr = "i64" }
-    let retLl = llType(retTyStr)
+    let retLl = llType(resolveTyStr(cg, retTyStr))
+    let retTyResolved = resolveTyStr(cg, retTyStr)
     if retLl == "void" {
         emit(cg, "  call void " + fp + "(" + argStr + ")\n")
         return Val { v: "0", ty: "void" }
     }
     let t = nextTemp(cg)
     emit(cg, "  " + t + " = call " + retLl + " " + fp + "(" + argStr + ")\n")
-    return Val { v: t, ty: retTyStr }
+    return Val { v: t, ty: retTyResolved }
 }

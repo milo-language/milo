@@ -197,8 +197,9 @@ fn llType(t: &string): string {
     if t == "ptr" { return "ptr" }
     if t == "string" { return "%String" }
     // closures/fn-typed values are a { fnptr, envptr } fat pointer ("Closure:R"
-    // carries the return type for call-site disambiguation)
+    // and "fn:R" carry the return type for call-site disambiguation / retTy)
     if t == "fn" || t == "Closure" { return "%Closure" }
+    if t.len >= 3 && t[0] == 102 && t[1] == 110 && t[2] == 58 { return "%Closure" }
     if t.len >= 8 && t[0] == 67 && t[1] == 108 && t[2] == 111 && t[3] == 115 && t[4] == 117 && t[5] == 114 && t[6] == 101 && t[7] == 58 { return "%Closure" }
     // Pointer types
     if t.len > 0 && t[0] == 42 { return "ptr" }
@@ -677,7 +678,12 @@ fn genSizeOf(cg: &mut Cgen, llTy: &string): string {
 // its elements would be sized as i64.
 fn astTypeStr(ty: &MiloType): string {
     if ty.isFn {
-        return "fn"
+        // carry the return type ("fn:Response") so an indirect closure call can
+        // recover it — a fn-typed param otherwise loses R and defaults to i64.
+        match ty.fnRet {
+            Option.Some(r) => { return "fn:" + astTypeStr(*r) }
+            Option.None => { return "fn" }
+        }
     }
     var base = ty.name.clone()
     if ty.typeArgs.len > 0 {
