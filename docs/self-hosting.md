@@ -914,6 +914,29 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### PARITY CONFIRMED (2026-07-11) — full RUN-parity sweep, only non-determinism left
+
+Ran a comprehensive self-vs-oracle diff (built both binaries, compared stdout+exit):
+- **`--help` on all 23 main examples**: identical, except sysmon (a live TUI — CPU%/PID
+  data differs per run, same format) and fetch (fixed below).
+- **cli-tool operations across varied inputs**: jq (`.`/`.a.b`/`.a` on nested json),
+  rg (regex `[0-9]+`, `-i`, `-c`), tree (`-L`), hex (binary/NUL bytes), wc (`-l`),
+  cat (`-n`), fmt (`-w`), timeout (`5 echo`, `1 true`), parallel (`echo` over stdin),
+  pkg — **all byte-identical**.
+- **Apps** (verified earlier): serve, weather, webserver (all JSON endpoints), kvstore,
+  flightController, calc, fib, fizzbuzz, hello, json, pidStep, gdbmiTest + all 5 arena.
+
+**Last diagnostic gap closed**: the `!` unwrap operator's panic (`error at L:C: <msg>`)
+reported `0:0` — the parser hardcoded `Option.None` for the Unwrap span. Now it carries
+the operand's start span (matching the oracle's column, not the `!` token). Verified:
+`jsonParse("{bad")!` → `error at 3:13: malformed json` on both.
+
+Remaining examples that can't be byte-compared are inherently non-deterministic or
+environment-bound: sysmon (live system data), httpClient/fetch (live network), splitPty +
+termpair/{server,client} (pty / live websocket). Their format and control flow match the
+oracle; only the runtime data differs. **The compile-AND-run parity goal is met for every
+deterministic example in the suite.**
+
 ### 🎯 ALL 35 REAL TARGETS COMPILE (2026-07-11) — servers included
 
 **Every example with a `main` now compiles via milo-self AND runs at oracle parity.** The
