@@ -914,6 +914,33 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### SERVERS: serve + weather at parity (2026-07-11) — 33/35 real targets compile
+
+After the arena/closure bucket, the server examples fell to four fixes (manifest 173 +
+byte-identical convergence each):
+- **Option auto-wrap**: a bare `T` arg coerces to an `Option<T>` param (`serve(port:
+  u16?, …)` with a plain u16) — checker `optionWrapCoercible` + codegen `genWrapSome`.
+- **fn-typed values carry their return type** (`fn:R` / `Closure:R` via astTypeStr): an
+  indirect closure call through a fn-typed PARAM (`let resp = handler(req)` inside serve's
+  socket loop) recovered R=Response instead of defaulting to i64 → **serve serves files
+  correctly** (was returning an empty/truncated Response). Verified: `curl` returns the
+  file; `--help` matches the oracle.
+- **embedFile intrinsic**: compile-time file read (sourceDir threaded through genProgram
+  → Cgen) emitting a string literal. **weather compiles AND serves its embedded
+  index.html**; `--help` matches.
+- **Mutable module globals** (`var` at top level): parser now accepts `var`/`let` globals
+  with a `mutable` flag (AST/checker); codegen stores through `@name`, aggregate globals
+  (`var xs: Vec<T> = []`, `var s: string = ""`) zero-init with `%String`/`%Vec` declared
+  first, and globals carry their SURFACE type so field/element resolution works
+  (`sessions[i].terminalId`, `sessions.push(...)`).
+
+**Remaining 2 real targets:** webserver (anonymous object literals `ctx.json({ query: q })`
+— a parser feature milo0 lacks) and termpair/server (needs `Channel<string>` type mangling
+in `resolveTyStr`/index — a green-channel concurrency type not registered as a struct; the
+mutable-globals work got it past parsing + embedFile but the channel Vec index still emits
+an unmangled `%Channel<string>`). Both are complex concurrent servers.
+Libraries (gdbmi, termpair/{protocol,encryption}) have no `main` → not parity targets.
+
 ### ARENA BUCKET COMPLETE (2026-07-11): all 5 examples at parity ✓✓
 
 **minilang, depgraph, linkedList, htmlParse, domArena — all compile AND run byte-identical
