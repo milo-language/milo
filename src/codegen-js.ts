@@ -7,6 +7,29 @@ export class CodegenJS {
   private indent = 0;
   private tempCounter = 0;
   private usedPropagate = false;
+  // Names boxed as `{v: …}` in the current function: JS-immutable values (numbers,
+  // strings, bools) that are taken by `&mut`/`&` must share mutations across the call,
+  // which JS by-value passing can't do. Ref params + ref-taken locals become boxes.
+  private boxed: Set<string> = new Set();
+
+  // JS-immutable primitive → needs a box to be shared by reference. Objects (struct/
+  // vec/map/enum) are already reference types, so a `&mut` to them works as-is.
+  private needsBox(t: any): boolean {
+    return !!t && (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "char" || t.tag === "string");
+  }
+
+  // Collect local names taken by-ref anywhere in a subtree (generic HIR walk: any
+  // HIRArg with passByRef whose expr is a primitive Ident).
+  private collectRefTaken(node: any, out: Set<string>) {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) { for (const x of node) this.collectRefTaken(x, out); return; }
+    // only `&mut` (mutation must write back) needs a box; a read-only `&` borrow of a
+    // primitive can pass by value.
+    if (node.refMut && node.expr && node.expr.kind === "Ident" && this.needsBox(node.expr.type)) {
+      out.add(node.expr.name);
+    }
+    for (const k of Object.keys(node)) this.collectRefTaken(node[k], out);
+  }
 
   private emit(line: string) {
     this.output.push("  ".repeat(this.indent) + line);
@@ -135,6 +158,13 @@ export class CodegenJS {
     const params = fn.params.map(p => p.name).join(", ");
     this.emit(`function ${fn.name}(${params}) {`);
     this.indent++;
+    // Boxed names for this function: ref/refMut primitive params (received as boxes)
+    // plus primitive locals whose address is taken by a callee. Read/written via `.v`.
+    const boxed = new Set<string>();
+    for (const p of fn.params) if (p.isRefMut && this.needsBox(p.type)) boxed.add(p.name);
+    this.collectRefTaken(fn.body, boxed);
+    const prevBoxed = this.boxed;
+    this.boxed = boxed;
     // Emit the body into a buffer so we know whether it used `?`; if so, wrap it in
     // try/catch that turns the propagate sentinel into an early Err/None return.
     const lines: string[] = [];
@@ -146,6 +176,7 @@ export class CodegenJS {
     const used = this.usedPropagate;
     this.usedPropagate = prevUsed;
     this.output = prevOutput;
+    this.boxed = prevBoxed;
     if (used) {
       this.emit("try {");
       for (const l of lines) this.output.push(l);
@@ -161,6 +192,11 @@ export class CodegenJS {
     switch (stmt.kind) {
       case "Let": {
         const val = this.genExpr(stmt.value);
+        if (this.boxed.has(stmt.name)) {
+          // ref-taken primitive local: box it so callees mutating `&mut name` write back.
+          this.emit(`const ${stmt.name} = {v: ${val}};`);
+          break;
+        }
         const kw = stmt.mutable ? "let" : "const";
         this.emit(`${kw} ${stmt.name} = ${val};`);
         break;
@@ -334,7 +370,7 @@ export class CodegenJS {
       case "StringLit":
         return JSON.stringify(expr.value);
       case "Ident":
-        return expr.name;
+        return this.boxed.has(expr.name) ? `${expr.name}.v` : expr.name;
       case "BinOp":
         return this.genBinOp(expr);
       case "UnaryOp":
@@ -448,7 +484,7 @@ export class CodegenJS {
         return this.genClosure(expr);
       case "ClosureCall": {
         const callee = this.genExpr(expr.callee);
-        const args = expr.args.map(a => this.genExpr(a.expr)).join(", ");
+        const args = expr.args.map(a => this.genArg(a)).join(", ");
         return `${callee}(${args})`;
       }
       case "VecMap":
@@ -473,7 +509,7 @@ export class CodegenJS {
       case "InterfaceMethodCall": {
         // dispatch via the concrete type's itable slot; pass the object as `self`.
         const obj = this.genExpr(expr.object);
-        const args = expr.args.map(a => this.genExpr(a.expr));
+        const args = expr.args.map(a => this.genArg(a));
         const iface = JSON.stringify(expr.ifaceName);
         const rest = args.length > 0 ? ", " + args.join(", ") : "";
         return `(__o => __itable[__o.constructor.name + ":" + ${iface}][${expr.methodIndex}](__o${rest}))(${obj})`;
@@ -537,8 +573,15 @@ export class CodegenJS {
     return `(${l} ${expr.op} ${r})`;
   }
 
+  // A by-ref arg that is a boxed primitive ident passes the BOX itself (so the callee
+  // shares mutations); everything else evaluates normally (objects are already refs).
+  private genArg(a: HIRArg): string {
+    if (a.refMut && a.expr.kind === "Ident" && this.boxed.has(a.expr.name)) return a.expr.name;
+    return this.genExpr(a.expr);
+  }
+
   private genCall(expr: HIRExpr & { kind: "Call" }): string {
-    const args = expr.args.map(a => this.genExpr(a.expr));
+    const args = expr.args.map(a => this.genArg(a));
 
     switch (expr.func) {
       case "print": {
@@ -634,7 +677,7 @@ export class CodegenJS {
   private genLValue(expr: HIRExpr): string {
     switch (expr.kind) {
       case "Ident":
-        return expr.name;
+        return this.boxed.has(expr.name) ? `${expr.name}.v` : expr.name;
       case "FieldAccess":
         return `${this.genLValue(expr.object)}.${expr.field}`;
       case "IndexAccess":
