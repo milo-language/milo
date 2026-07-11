@@ -90,6 +90,7 @@ export class CodegenJS {
     // output equals the compiled binary's.
     this.emit("function __fmtG(x) { if (!isFinite(x)) return String(x); if (x === 0) return '0'; let s = x.toPrecision(6); if (s.indexOf('e') >= 0) { s = Number(s).toExponential(); return s.replace(/e([+-])(\\d)$/, 'e$10$2'); } if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\\.$/, ''); return s; }");
     this.emit("function __propagate(r) { if (r.tag !== 0) throw { __milo_prop: r }; return r.data[0]; }");
+    this.emit("function __eprint(s) { if (typeof process !== 'undefined' && process.stderr) process.stderr.write(s); else if (typeof console !== 'undefined') console.error(s); }");
     // Display formatting to match native: structs as `Name { f: v, … }`, enums as
     // `Variant(a, …)`/`Variant`, strings quoted, floats via %g.
     this.emit("function __displayVal(v) { if (typeof v === 'string') return JSON.stringify(v); if (typeof v === 'boolean') return String(v); if (typeof v === 'number') return Number.isInteger(v) ? String(v) : __fmtG(v); if (v && typeof v === 'object' && v.constructor && v.constructor.name !== 'Object') return __displayStruct(v); return String(v); }");
@@ -545,8 +546,9 @@ export class CodegenJS {
         return `__print(${parts.join(" + ")} + "\\n")`;
       }
       case "eprint": {
+        // stderr, not stdout — else it pollutes captured program output.
         const parts = expr.args.map(a => this.coerceToString(a.expr));
-        return `__print(${parts.join(" + ")})`;
+        return `__eprint(${parts.join(" + ")})`;
       }
       case "format": {
         const parts = expr.args.map(a => this.coerceToString(a.expr));
