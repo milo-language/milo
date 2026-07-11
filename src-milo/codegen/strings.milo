@@ -118,6 +118,91 @@ fn genStringConcat(cg: &mut Cgen, av: &string, bv: &string): Val {
     return Val { v: s1, ty: "string" }
 }
 
+// Append `bv` (a %String value) onto the %String at `addr` in place, growing
+// with amortized doubling. Mirrors genStringPush but copies bLen bytes. Used by
+// the `place = place + rhs` assign optimization: the naive genStringConcat path
+// allocates a fresh buffer and leaks the old one every append, making an
+// accumulator like `cg.body = cg.body + s` O(n^2) in both time and memory.
+fn genStringAppendInPlace(cg: &mut Cgen, addr: &string, bv: &string) {
+    ensureStringTy(cg)
+    ensureRealloc(cg)
+    let dPtr = nextTemp(cg)
+    emit(cg, "  " + dPtr + " = getelementptr %String, ptr " + addr.clone() + ", i32 0, i32 0\n")
+    let lPtr = nextTemp(cg)
+    emit(cg, "  " + lPtr + " = getelementptr %String, ptr " + addr.clone() + ", i32 0, i32 1\n")
+    let cPtr = nextTemp(cg)
+    emit(cg, "  " + cPtr + " = getelementptr %String, ptr " + addr.clone() + ", i32 0, i32 2\n")
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+    let l = nextTemp(cg)
+    emit(cg, "  " + l + " = load i64, ptr " + lPtr + "\n")
+    let cap = nextTemp(cg)
+    emit(cg, "  " + cap + " = load i64, ptr " + cPtr + "\n")
+
+    let bData = nextTemp(cg)
+    emit(cg, "  " + bData + " = extractvalue %String " + bv.clone() + ", 0\n")
+    let bLen = nextTemp(cg)
+    emit(cg, "  " + bLen + " = extractvalue %String " + bv.clone() + ", 1\n")
+
+    let newLen = nextTemp(cg)
+    emit(cg, "  " + newLen + " = add i64 " + l + ", " + bLen + "\n")
+    let need = nextTemp(cg)
+    emit(cg, "  " + need + " = add i64 " + newLen + ", 1\n")
+    let small = nextTemp(cg)
+    emit(cg, "  " + small + " = icmp ult i64 " + cap + ", " + need + "\n")
+    let growLbl = nextLabel(cg, "strapp.grow")
+    let storeLbl = nextLabel(cg, "strapp.store")
+    emit(cg, "  br i1 " + small + ", label %" + growLbl + ", label %" + storeLbl + "\n")
+
+    emit(cg, growLbl + ":\n")
+    let dbl = nextTemp(cg)
+    emit(cg, "  " + dbl + " = mul i64 " + cap + ", 2\n")
+    let bigger = nextTemp(cg)
+    emit(cg, "  " + bigger + " = icmp ugt i64 " + dbl + ", " + need + "\n")
+    let newCap = nextTemp(cg)
+    emit(cg, "  " + newCap + " = select i1 " + bigger + ", i64 " + dbl + ", i64 " + need + "\n")
+    // cap == 0 means the buffer is a string literal in .rodata — realloc'ing it
+    // is an invalid free, so copy it out to a fresh heap block instead.
+    let isStatic = nextTemp(cg)
+    emit(cg, "  " + isStatic + " = icmp eq i64 " + cap + ", 0\n")
+    let copyLbl = nextLabel(cg, "strapp.copy")
+    let reallocLbl = nextLabel(cg, "strapp.realloc")
+    let grownLbl = nextLabel(cg, "strapp.grown")
+    emit(cg, "  br i1 " + isStatic + ", label %" + copyLbl + ", label %" + reallocLbl + "\n")
+
+    emit(cg, copyLbl + ":\n")
+    ensureMalloc(cg)
+    ensureMemcpy(cg)
+    let fresh = nextTemp(cg)
+    emit(cg, "  " + fresh + " = call ptr @malloc(i64 " + newCap + ")\n")
+    emit(cg, "  call ptr @memcpy(ptr " + fresh + ", ptr " + d + ", i64 " + l + ")\n")
+    emit(cg, "  br label %" + grownLbl + "\n")
+
+    emit(cg, reallocLbl + ":\n")
+    let grown = nextTemp(cg)
+    emit(cg, "  " + grown + " = call ptr @realloc(ptr " + d + ", i64 " + newCap + ")\n")
+    emit(cg, "  br label %" + grownLbl + "\n")
+
+    emit(cg, grownLbl + ":\n")
+    let nd = nextTemp(cg)
+    emit(cg, "  " + nd + " = phi ptr [ " + fresh + ", %" + copyLbl + " ], [ " + grown + ", %" + reallocLbl + " ]\n")
+    emit(cg, "  store ptr " + nd + ", ptr " + dPtr + "\n")
+    emit(cg, "  store i64 " + newCap + ", ptr " + cPtr + "\n")
+    emit(cg, "  br label %" + storeLbl + "\n")
+
+    emit(cg, storeLbl + ":\n")
+    ensureMemcpy(cg)
+    let dd = nextTemp(cg)
+    emit(cg, "  " + dd + " = load ptr, ptr " + dPtr + "\n")
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr i8, ptr " + dd + ", i64 " + l + "\n")
+    emit(cg, "  call ptr @memcpy(ptr " + slot + ", ptr " + bData + ", i64 " + bLen + ")\n")
+    emit(cg, "  store i64 " + newLen + ", ptr " + lPtr + "\n")
+    let nulSlot = nextTemp(cg)
+    emit(cg, "  " + nulSlot + " = getelementptr i8, ptr " + dd + ", i64 " + newLen + "\n")
+    emit(cg, "  store i8 0, ptr " + nulSlot + "\n")
+}
+
 // String equality via length check + memcmp. Returns i1.
 fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
     ensureMemcmp(cg)

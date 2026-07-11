@@ -8,10 +8,67 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
 }
 from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
+from "src-milo/codegen/strings.milo" import { genStringAppendInPlace }
 
 // -- Assignment --
 
+// Two lvalue exprs denote the same storage location (used to detect self-assign
+// and the `place = place + rhs` append pattern). Conservative: only Ident and
+// FieldAccess chains; anything else (index, deref) returns false.
+fn lvalueMatches(a: &Expr, b: &Expr): bool {
+    match a {
+        Expr.Ident(an, aspan) => {
+            match b {
+                Expr.Ident(bn, bspan) => { return an == bn }
+                _ => { return false }
+            }
+        }
+        Expr.FieldAccess(aobj, afield, aspan) => {
+            match b {
+                Expr.FieldAccess(bobj, bfield, bspan) => {
+                    if afield != bfield { return false }
+                    return lvalueMatches(*aobj, *bobj)
+                }
+                _ => { return false }
+            }
+        }
+        _ => { return false }
+    }
+}
+
+// Resolve an lvalue's declared type WITHOUT emitting IR (so the append-opt can
+// gate on `string` before committing to the fast path).
+fn lvalueTypeStr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>): string {
+    match e {
+        Expr.Ident(name, span) => { return findLocal(locs, name).ty.clone() }
+        Expr.FieldAccess(object, field, span) => {
+            let ot = lvalueTypeStr(cg, *object, locs)
+            let rawName = stripPercent(ot)
+            let idx = lookupFieldIndex(cg, rawName, field)
+            return lookupFieldType(cg, rawName, idx)
+        }
+        _ => { return "" }
+    }
+}
+
 fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>) {
+    // Fast path: `place = place + rhs` for strings → amortized in-place append.
+    // The naive store path re-concats (fresh alloc + leaked old buffer) every
+    // time, making an accumulator like `cg.body = cg.body + s` O(n^2) in time
+    // AND memory. Bail on `x = x + x` (overlapping copy — let the slow path own).
+    match value {
+        Expr.BinOp(op, left, right, bspan) => {
+            if op == "+" && lvalueMatches(target, *left) && !lvalueMatches(target, *right) {
+                if llType(lvalueTypeStr(cg, target, locs)) == "%String" {
+                    let bv = genExpr(cg, *right, locs, sigs, "%String")
+                    let lv = genLvalue(cg, target, locs, sigs)
+                    genStringAppendInPlace(cg, lv.v, bv.v)
+                    return
+                }
+            }
+        }
+        _ => {}
+    }
     match target {
         Expr.Ident(name, span) => {
             let local = findLocal(locs, name)
