@@ -914,6 +914,17 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.9 (2026-07-11) — generic-call/struct hint resolution
+
+Two codegen generic-resolution fixes that together pass arenaMethod (Arena API via
+methods, two element types → two Handle/Arena instantiations):
+- **No-arg generic call return inference**: `arenaNew<T>()` has no args to infer T from, so
+  codegen defaulted its return to i32. Now the expected-return-type hint is threaded into
+  `genCall` and disambiguates by matching each mono's return against the hint.
+- **Struct-literal hint disambiguation**: `Handle<T>`'s fields (index, generation) don't
+  mention T, so the field-category heuristic can't tell `Handle_i64` from `Handle_string`.
+  `genStructLit` now falls back to the annotation hint (`let h: Handle<i64> = Handle{…}`).
+
 ### Fixture-sweep bug hunt cont.8 (2026-07-11) — checked arithmetic
 
 - **`checkedAdd` / `checkedSub` / `checkedMul`** on integers — return `Option<T>` (None on
