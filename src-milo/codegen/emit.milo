@@ -192,6 +192,8 @@ fn genProgram(prog: Program): string {
     emitG(cg, "@_milo_argc_global = internal global i32 0\n")
     emitG(cg, "@_milo_argv_global = internal global ptr null\n")
     emitG(cg, "@_milo_scheduler = internal global ptr null\n")
+    // closure/fn value = { fn pointer, environment pointer }
+    emitG(cg, "%Closure = type { ptr, ptr }\n")
 
     // Module-level constants: `@name = global <ty> <const>`, loaded at each use.
     for gi in 0..prog.globals.len {

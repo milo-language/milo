@@ -87,6 +87,8 @@ struct Cgen {
     declaredStrlen: bool,
     declaredDprintf: bool,
     declaredFflush: bool,
+    // monotonic id for lifted closure function names (@__closure_N)
+    closureId: i64,
 }
 
 fn cgenNew(): Cgen {
@@ -118,6 +120,7 @@ fn cgenNew(): Cgen {
         declaredStrlen: false,
         declaredDprintf: false,
         declaredFflush: false,
+        closureId: 0,
     }
 }
 
@@ -189,6 +192,8 @@ fn llType(t: &string): string {
     if t == "void" { return "void" }
     if t == "ptr" { return "ptr" }
     if t == "string" { return "%String" }
+    // closures/fn-typed values are a { fnptr, envptr } fat pointer
+    if t == "fn" || t == "Closure" { return "%Closure" }
     // Pointer types
     if t.len > 0 && t[0] == 42 { return "ptr" }
     // Heap<T>, Vec<T>, etc. — all pointer-shaped
@@ -420,6 +425,15 @@ fn isCmpOp(op: &string): bool {
 }
 
 // -- Local variable lookup --
+
+fn hasLocal(locs: &Vec<Local>, name: &string): bool {
+    var i: i64 = locs.len - 1
+    while i >= 0 {
+        if locs[i].name == name { return true }
+        i = i - 1
+    }
+    return false
+}
 
 fn findLocal(locs: &Vec<Local>, name: &string): Local {
     var i: i64 = locs.len - 1

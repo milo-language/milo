@@ -1,13 +1,13 @@
 // Expression codegen: literals, binops, unary, calls, field access, enums, casts
-from "src-milo/ast.milo" import { Expr, Stmt, Pattern, StructLitField, Span }
+from "src-milo/ast.milo" import { Expr, Stmt, Pattern, StructLitField, Span, Param, MiloType }
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
-    resolveEnumName, resolveFnName, resolveTyStr, ensureExit, ensureStrtod, ensureStrlen, astTypeStr,
+    resolveEnumName, resolveFnName, resolveStructName, resolveTyStr, ensureExit, ensureStrtod, ensureStrlen, astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
-    findLocal, genLoad, ensureMalloc, ensureMemcpy,
+    findLocal, hasLocal, genLoad, ensureMalloc, ensureMemcpy,
     lookupFnRet, lookupFieldIndex, lookupFieldType,
     lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
 }
@@ -19,13 +19,16 @@ from "src-milo/codegen/strings.milo" import {
 // -- Struct literal --
 
 fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
-    let structTy = "%" + name
+    // a bare generic name (`Handle` from a monomorphized body) resolves to its
+    // sole instantiation (`Handle_Expr`); a concrete struct name passes through.
+    let rname = resolveStructName(cg, name)
+    let structTy = "%" + rname.clone()
     let alloc = nextTemp(cg)
     emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
     for fi in 0..fields.len {
         let ef = fields[fi].clone()
-        let idx = lookupFieldIndex(cg, name, ef.name)
-        let fty = lookupFieldType(cg, name, idx)
+        let idx = lookupFieldIndex(cg, rname, ef.name)
+        let fty = lookupFieldType(cg, rname, idx)
         let fv = genExpr(cg, *ef.value, locs, sigs, fty)
         let fp = nextTemp(cg)
         emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 " + idx.toString() + "\n")
@@ -1015,6 +1018,12 @@ fn genAsCast(cg: &mut Cgen, inner: &Expr, targetTy: &string, locs: &Vec<Local>, 
         if fromLl == "%Vec" || fromLl == "%String" {
             let d = nextTemp(cg)
             emit(cg, "  " + d + " = extractvalue " + fromLl + " " + v.v + ", 0\n")
+            return Val { v: d, ty: targetTy.clone() }
+        }
+        // a closure/fn value cast to a raw pointer yields its fnptr (field 0).
+        if fromLl == "%Closure" {
+            let d = nextTemp(cg)
+            emit(cg, "  " + d + " = extractvalue %Closure " + v.v + ", 0\n")
             return Val { v: d, ty: targetTy.clone() }
         }
         if fromLl == "ptr" || intBits(fromLl) == 0 {
@@ -2106,6 +2115,12 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
                 let p = nextTemp(cg)
                 emit(cg, "  " + p + " = extractvalue " + elemLl + " " + argVals[ai].v + ", 0\n")
                 argStr = argStr + "ptr " + p
+            } else if wantPtr && elemLl == "%Closure" {
+                // a closure passed where a raw fn pointer is expected (e.g.
+                // pthread_create's start_routine) decays to its fnptr field.
+                let p = nextTemp(cg)
+                emit(cg, "  " + p + " = extractvalue %Closure " + argVals[ai].v + ", 0\n")
+                argStr = argStr + "ptr " + p
             } else {
                 argStr = argStr + elemLl + " " + argVals[ai].v
             }
@@ -2264,6 +2279,119 @@ fn genLvalue(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): V
 
 // -- Main expression dispatch --
 
+// The result expression of an expression-bodied closure statement (`=> expr`
+// lowers to one Return/ExprStmt). Returns None when it isn't that shape.
+fn stmtResultExpr(s: &Stmt): Option<Heap<Expr>> {
+    match s {
+        Stmt.Return(value, span) => {
+            match value {
+                Option.Some(e) => { return Option.Some(Heap(e.clone())) }
+                Option.None => { return Option.None }
+            }
+        }
+        Stmt.ExprStmt(e, span) => { return Option.Some(Heap(e.clone())) }
+        _ => { return Option.None }
+    }
+}
+
+// Lift an (expression-bodied, non-capturing) closure to a top-level function
+// `@__closure_N(ptr %__env, params...)` and return a %Closure { fnptr, null }
+// value. Uniform ABI: every param arrives BY POINTER (see genClosureCall).
+fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, _locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let cname = "__closure_" + cg.closureId.toString()
+    cg.closureId = cg.closureId + 1
+
+    var retTyStr = "void"
+    match retType {
+        Option.Some(rt) => { retTyStr = resolveTyStr(cg, astTypeStr(rt)) }
+        Option.None => {}
+    }
+    let retLl = llType(retTyStr)
+
+    // swap the emit buffer so the lifted define lands at module scope, not
+    // spliced into the enclosing function we're mid-emitting.
+    let savedBody = cg.body.clone()
+    let savedTemp = cg.temp
+    let savedLabel = cg.label
+    let savedRet = cg.curRetTy.clone()
+    cg.body = ""
+    cg.temp = 0
+    cg.label = 0
+    cg.curRetTy = retTyStr.clone()
+
+    var hdr = "define " + retLl + " @" + cname + "(ptr %__env"
+    var clocs: Vec<Local> = Vec.new()
+    for pi in 0..params.len {
+        hdr = hdr + ", ptr %" + params[pi].name.clone()
+    }
+    hdr = hdr + ") {\n"
+    emit(cg, hdr)
+    emit(cg, "entry:\n")
+    for pj in 0..params.len {
+        let pty = resolveTyStr(cg, astTypeStr(params[pj].ty))
+        clocs.push(Local { name: params[pj].name.clone(), ty: pty, addr: "%" + params[pj].name.clone(), isRef: true })
+    }
+    var bodyExpr: Option<Heap<Expr>> = Option.None
+    if body.len == 1 { bodyExpr = stmtResultExpr(*body[0]) }
+    match bodyExpr {
+        Option.Some(be) => {
+            let rv = genExpr(cg, *be, clocs, sigs, retTyStr.clone())
+            if retLl == "void" {
+                emit(cg, "  ret void\n")
+            } else {
+                emit(cg, "  ret " + retLl + " " + rv.v + "\n")
+            }
+        }
+        Option.None => {
+            if retLl == "void" { emit(cg, "  ret void\n") }
+            else { emit(cg, "  ret " + retLl + " zeroinitializer\n") }
+        }
+    }
+    emit(cg, "}\n\n")
+
+    let closureIR = cg.body.clone()
+    cg.body = savedBody
+    cg.temp = savedTemp
+    cg.label = savedLabel
+    cg.curRetTy = savedRet
+    cg.globals = cg.globals + closureIR
+
+    let c0 = nextTemp(cg)
+    emit(cg, "  " + c0 + " = insertvalue %Closure undef, ptr @" + cname + ", 0\n")
+    let c1 = nextTemp(cg)
+    emit(cg, "  " + c1 + " = insertvalue %Closure " + c0 + ", ptr null, 1\n")
+    return Val { v: c1, ty: "Closure" }
+}
+
+// Indirect call of a %Closure-typed local: load { fnptr, env }, then
+// `call R fnptr(ptr env, args...)`. Every arg is passed BY POINTER (uniform ABI:
+// a fn-typed param's inner ref-ness is unrecoverable, so both sides use addresses).
+// retHint supplies R (fn types collapse to "fn", losing the return type).
+fn genClosureCall(cg: &mut Cgen, lc: &Local, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, retHint: &string): Val {
+    let clv = nextTemp(cg)
+    emit(cg, "  " + clv + " = load %Closure, ptr " + lc.addr.clone() + "\n")
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = extractvalue %Closure " + clv + ", 0\n")
+    let env = nextTemp(cg)
+    emit(cg, "  " + env + " = extractvalue %Closure " + clv + ", 1\n")
+
+    var argStr = "ptr " + env
+    for i in 0..args.len {
+        let alv = genLvalue(cg, *args[i], locs, sigs)
+        argStr = argStr + ", ptr " + alv.v
+    }
+    var retTyStr = retHint.clone()
+    if retTyStr.len == 0 { retTyStr = "i64" }
+    let retLl = llType(retTyStr)
+    if retLl == "void" {
+        emit(cg, "  call void " + fp + "(" + argStr + ")\n")
+        return Val { v: "0", ty: "void" }
+    }
+    let t = nextTemp(cg)
+    emit(cg, "  " + t + " = call " + retLl + " " + fp + "(" + argStr + ")\n")
+    return Val { v: t, ty: retTyStr }
+}
+
 fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: string): Val {
     match e {
         Expr.IntLit(n, span) => {
@@ -2323,6 +2451,16 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 let g = nextTemp(cg)
                 emit(cg, "  " + g + " = load " + gll + ", ptr @" + name.clone() + "\n")
                 return Val { v: g, ty: gll }
+            }
+            // A bare function name used as a value (`someFn` passed as a callback,
+            // `trampoline as *u8`) is a closure { @fn, null } — no captures. Without
+            // this it fell to findLocal's locs[0] fallback and loaded the wrong var.
+            if !isLocal && cg.fnRets.contains(name) {
+                let f0 = nextTemp(cg)
+                emit(cg, "  " + f0 + " = insertvalue %Closure undef, ptr @" + name.clone() + ", 0\n")
+                let f1 = nextTemp(cg)
+                emit(cg, "  " + f1 + " = insertvalue %Closure " + f0 + ", ptr null, 1\n")
+                return Val { v: f1, ty: "Closure" }
             }
             let local = findLocal(locs, name)
             let lt = llType(local.ty)
@@ -2483,6 +2621,13 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return Val { v: "0", ty: "i64" }
         }
         Expr.Call(name, args, typeArgs, span) => {
+            // a call whose callee is a %Closure-typed local is an indirect call
+            if hasLocal(locs, name) {
+                let lc = findLocal(locs, name)
+                if llType(lc.ty) == "%Closure" {
+                    return genClosureCall(cg, lc, args, locs, sigs, hintTy)
+                }
+            }
             return genCall(cg, name, args, typeArgs, locs, sigs)
         }
         Expr.StructLit(name, fields, span) => {
@@ -2490,6 +2635,9 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         }
         Expr.FieldAccess(object, field, span) => {
             return genFieldAccess(cg, *object, field, locs, sigs)
+        }
+        Expr.Closure(params, retType, body, isMove, span) => {
+            return genClosure(cg, params, retType, body, locs, sigs)
         }
         Expr.EnumLit(enumName, variant, args, span) => {
             if enumName == "Vec" && variant == "new" {
