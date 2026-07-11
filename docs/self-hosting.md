@@ -802,3 +802,43 @@ Remaining 12, bucketed:
   at module scope — needs GlobalDecl in AST/parser/checker/codegen).
 - **singles (4):** pkg (gep unsized), kvstore (string `<=`), serve (Option auto-wrap),
   webserver (embedFile).
+
+### Parity progress (2026-07-11) — kvstore RUN-parity, closure/coercion fixes
+
+Global consts + arena *inference* (expected-type hint) landed earlier this stretch;
+**kvstore now compiles AND runs byte-identical to the oracle**. This session's
+landings (each keeps manifest 173 green + byte-identical -O2 convergence):
+- **`Vec.insert(i,x)` / `Vec.remove(i)`** — index insert (shift right, grow if full)
+  and remove (return elem, shift left). checker methods + genVecInsert/genVecRemove.
+  → kvstore compiles; RUN output diffs identical to oracle.
+- **int-literal coercion for `??` and array literals** — `opt ?? 0` coerces the
+  bare-`0` default (i32) to the Option's i64 inner; `[i64;N] = [31, x, …]` adopts the
+  annotation's element type so int literals coerce instead of pinning to element 0's
+  width. Empty `[]` adopts the annotation's Vec/Array type. → termpair/client compiles.
+- **closure return-type inference** — `checkClosure` was a stub that never walked the
+  body, so every unannotated closure typed as `() => void`. Now infers the return type
+  from a `return <expr>`/trailing expr, rolling back capture moves during inference
+  (snapshot/restore). → fixes the serve middleware `(&mut Context) => Response` chain.
+
+Refined remaining buckets (12 → the hard cores):
+- **Response name collision (3):** serve, weather/app, webserver — `struct Response`
+  (std/net) and `enum Response` (std/http) share the name; milo0's checker uses a flat
+  global type table (no per-module import visibility), so `HandledResponse.response`
+  (http's enum) fails `typeEq` against net's struct → "expected Response, got Response".
+  Needs module-scoped name resolution (deep). Same collision hits the `(&Request) =>
+  Response` fn-type compares.
+- **arena closure codegen (4):** depgraph, domArena, htmlParse, linkedList — type-check
+  passes but codegen can't resolve the *monomorphized* name for a closure-returning
+  generic when >1 instantiation exists (`arenaWith_Node_{NodeKind,string,Handle}`):
+  `resolveFnName` prefix-matches, sees count>1, falls back to the bare generic name and
+  emits `call i32 @arenaWith(…, i64 0)` (closure lowered to `i64 0`, ret defaulted i32).
+  Needs codegen to re-derive type args from the call's arg types (checker already knows
+  the mangled name — the gap is codegen re-resolving independently).
+- **Option auto-wrap (serve:184):** passing `u16` where `Option<u16>` expected — wrap
+  bare value in `Some` at coercion sites.
+- **embedFile (webserver, termpair/server):** compile-time file-embed intrinsic.
+- **minilang:** closure arg `&mut Expr` vs `Expr` — closure param auto-borrow-mut.
+
+Note: termpair/protocol, termpair/encryption, gdbgui/gdbmi are **libraries (no `main`)**
+— they link-fail as standalone builds under both milo-self AND the oracle, so they are
+not parity targets. The termpair entrypoints are client.milo (compiles) + server.milo.
