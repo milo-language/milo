@@ -219,10 +219,23 @@ fn llTypeBytes(ll: &string): i64 {
 // fallback. Recursion terminates: recursive types go through Heap (a ptr, 8).
 fn payloadBytes(cg: &Cgen, pt: &string): i64 {
     let ll = llType(pt)
-    if ll != "%String" && ll != "%Vec" && ll != "%HashMap" && ll[0] == 37 {
+    if ll != "%String" && ll != "%Vec" && ll != "%HashMap" && ll.len > 0 && ll[0] == 37 {
         let raw = stripPercent(pt)
         if cg.enums.contains(raw) {
-            return lookupEnumPayloadSlots(cg, raw) * 8 + 8
+            // Recurse via variant payload TYPES (not the cached slot count) so this
+            // is independent of registration order: enum size = biggest variant
+            // payload rounded to a word, plus one tag word. Recursive types go
+            // through Heap → ptr (8), so this terminates.
+            let info = cg.enums.get(raw)!
+            var mx: i64 = 0
+            for vi in 0..info.variants.len {
+                var s: i64 = 0
+                for pi in 0..info.variants[vi].payloadTypes.len {
+                    s = s + payloadBytes(cg, info.variants[vi].payloadTypes[pi])
+                }
+                if s > mx { mx = s }
+            }
+            return ((mx + 7) / 8) * 8 + 8
         }
         if cg.structs.contains(raw) {
             var total: i64 = 0

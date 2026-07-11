@@ -168,62 +168,78 @@ fn genProgram(prog: Program): string {
         cg.fnRets.insert(prog.functions[i].name.clone(), astTypeStr(prog.functions[i].retType))
     }
 
-    // Register enums and emit %Name type declarations
+    // Enum/struct sizing needs ALL metadata registered first: an enum payload can
+    // be a struct (Option<Info>) and vice-versa, and mono enums are appended after
+    // the structs they wrap. So: (1) register enum variant metadata, (2) register
+    // struct fields, (3) size + emit enums, (4) emit structs. Sizing (payloadBytes)
+    // then sees every type regardless of declaration order.
+
+    // (1) enum metadata — slots filled in phase 3
     for ei in 0..prog.enums.len {
         if prog.enums[ei].typeParams.len > 0 { continue }
         let e = prog.enums[ei].clone()
         var variants: Vec<CgVariantInfo> = Vec.new()
-        var maxBytes: i64 = 0
         for vi in 0..e.variants.len {
             let v = e.variants[vi].clone()
             var payloadTypes: Vec<string> = Vec.new()
-            var vBytes: i64 = 0
             for fi in 0..v.fields.len {
-                // full type, not just .name (a `Vec<TypeKind>`/`Heap<Expr>` payload
-                // must keep its args). Store UNMANGLED — mono enums aren't all
-                // registered yet; lookupVariantPayload mangles at read-time.
-                let pt = astTypeStr(v.fields[fi])
-                payloadTypes.push(pt.clone())
-                vBytes = vBytes + payloadBytes(cg, resolveTyStr(cg, pt))
+                // full type, not just .name; store UNMANGLED (lookupVariantPayload
+                // mangles at read-time, once all mono decls exist).
+                payloadTypes.push(astTypeStr(v.fields[fi]))
             }
-            if vBytes > maxBytes { maxBytes = vBytes }
-            variants.push(CgVariantInfo {
-                name: v.name.clone(),
-                tag: vi as i32,
-                payloadTypes: payloadTypes,
-            })
+            variants.push(CgVariantInfo { name: v.name.clone(), tag: vi as i32, payloadTypes: payloadTypes })
         }
-        let slots = (maxBytes + 7) / 8
-        cg.enums.insert(e.name.clone(), CgEnumInfo {
-            name: e.name.clone(),
-            variants: variants,
-            payloadSlots: slots,
-        })
-        if slots > 0 {
-            emitG(cg, "%" + e.name + " = type { i32, [" + slots.toString() + " x i64] }\n")
-        } else {
-            emitG(cg, "%" + e.name + " = type { i32 }\n")
-        }
+        cg.enums.insert(e.name.clone(), CgEnumInfo { name: e.name.clone(), variants: variants, payloadSlots: 0 })
     }
 
-    // Register structs and emit %Name type declarations
+    // (2) struct metadata (mangling needs enum names, registered above)
     for si in 0..prog.structs.len {
         if prog.structs[si].typeParams.len > 0 { continue }
         let s = prog.structs[si].clone()
         var fields: Vec<FieldInfo> = Vec.new()
-        var llStruct = "{ "
         for fi in 0..s.fields.len {
-            let f = s.fields[fi].clone()
+            fields.push(FieldInfo { name: s.fields[fi].name.clone(), ty: resolveTyStr(cg, astTypeStr(s.fields[fi].ty)) })
+        }
+        cg.structs.insert(s.name.clone(), fields)
+    }
+
+    // (3) size enums (payloadBytes sees all metadata now) + emit their decls
+    for ei in 0..prog.enums.len {
+        if prog.enums[ei].typeParams.len > 0 { continue }
+        let ename = prog.enums[ei].name.clone()
+        if !cg.enums.contains(ename) { continue }
+        let einfo = cg.enums.get(ename)!
+        var maxBytes: i64 = 0
+        for vi in 0..einfo.variants.len {
+            var vBytes: i64 = 0
+            for pi in 0..einfo.variants[vi].payloadTypes.len {
+                vBytes = vBytes + payloadBytes(cg, resolveTyStr(cg, einfo.variants[vi].payloadTypes[pi]))
+            }
+            if vBytes > maxBytes { maxBytes = vBytes }
+        }
+        let slots = (maxBytes + 7) / 8
+        // move einfo's owned fields back in with the computed slot count (no clone)
+        cg.enums.insert(ename.clone(), CgEnumInfo { name: einfo.name, variants: einfo.variants, payloadSlots: slots })
+        if slots > 0 {
+            emitG(cg, "%" + ename + " = type { i32, [" + slots.toString() + " x i64] }\n")
+        } else {
+            emitG(cg, "%" + ename + " = type { i32 }\n")
+        }
+    }
+
+    // (4) emit struct decls (reference enum types emitted in phase 3)
+    for si in 0..prog.structs.len {
+        if prog.structs[si].typeParams.len > 0 { continue }
+        let sname = prog.structs[si].name.clone()
+        if !cg.structs.contains(sname) { continue }
+        let sfields = cg.structs.get(sname)!
+        var llStruct = "{ "
+        for fi in 0..sfields.len {
             if fi > 0 { llStruct = llStruct + ", " }
-            // mangle generic field types (Option<Span> -> Option_Span) so field
-            // access and match-on-field resolve the same mangled decl as locals do
-            let fty = resolveTyStr(cg, astTypeStr(f.ty))
-            llStruct = llStruct + llType(fty)
-            fields.push(FieldInfo { name: f.name.clone(), ty: fty })
+            llStruct = llStruct + llType(sfields[fi].ty)
         }
         llStruct = llStruct + " }"
-        emitG(cg, "%" + s.name + " = type " + llStruct + "\n")
-        cg.structs.insert(s.name.clone(), fields)
+        emitG(cg, "%" + sname + " = type " + llStruct + "\n")
     }
 
     // Emit all functions (generic templates excluded — see registration above)
