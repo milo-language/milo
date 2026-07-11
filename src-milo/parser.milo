@@ -10,10 +10,15 @@ from "src-milo/ast.milo" import {
 struct Parser {
     tokens: Vec<Token>,
     pos: i64,
+    // When true, `Name {` is NOT a struct literal — the `{` opens a block. Set
+    // while parsing an if/while/match condition so `if x == CONST {` doesn't
+    // consume the block brace as a struct-literal body (Rust's no-struct-literal
+    // restriction). Restored before the body is parsed.
+    noStructLit: bool,
 }
 
 fn newParser(tokens: Vec<Token>): Parser {
-    return Parser { tokens: tokens, pos: 0 }
+    return Parser { tokens: tokens, pos: 0, noStructLit: false }
 }
 
 // -- Navigation helpers --
@@ -524,7 +529,10 @@ fn parseIf(p: &mut Parser): Stmt {
     if at(p, TokKind.Let) {
         return parseIfLet(p, s)
     }
+    let savedNS = p.noStructLit
+    p.noStructLit = true
     let cond = parseExpr(p)
+    p.noStructLit = savedNS
     expect(p, TokKind.LBrace)
     let thenBody = parseStmts(p)
     expect(p, TokKind.RBrace)
@@ -563,7 +571,10 @@ fn parseIfLet(p: &mut Parser, s: Option<Span>): Stmt {
 fn parseWhile(p: &mut Parser): Stmt {
     let s = span(peek(p))
     expect(p, TokKind.While)
+    let savedNS = p.noStructLit
+    p.noStructLit = true
     let cond = parseExpr(p)
+    p.noStructLit = savedNS
     expect(p, TokKind.LBrace)
     let body = parseStmts(p)
     expect(p, TokKind.RBrace)
@@ -579,12 +590,15 @@ fn parseFor(p: &mut Parser): Stmt {
         varName2 = Option.Some(expect(p, TokKind.Ident).value)
     }
     expect(p, TokKind.In)
+    let savedNS = p.noStructLit
+    p.noStructLit = true
     let iterableOrStart = parseExpr(p)
     var iterable: Heap<Expr> = Heap(iterableOrStart.clone())
     if matchTok(p, TokKind.DotDot) {
         let end = parseExpr(p)
         iterable = Heap(Expr.RangeExpr(Heap(iterableOrStart), Heap(end), cloneSpan(s)))
     }
+    p.noStructLit = savedNS
     expect(p, TokKind.LBrace)
     let body = parseStmts(p)
     expect(p, TokKind.RBrace)
@@ -594,7 +608,10 @@ fn parseFor(p: &mut Parser): Stmt {
 fn parseMatch(p: &mut Parser): Stmt {
     let s = span(peek(p))
     expect(p, TokKind.Match)
+    let savedNS = p.noStructLit
+    p.noStructLit = true
     let subject = parseExpr(p)
+    p.noStructLit = savedNS
     expect(p, TokKind.LBrace)
     var arms: Vec<MatchArm> = Vec.new()
     while !at(p, TokKind.RBrace) {
@@ -1005,8 +1022,9 @@ fn parsePrimary(p: &mut Parser): Expr {
             }
             return Expr.EnumLit(tok.value, variant, args, s)
         }
-        // Struct literal: Name { ... }
-        if at(p, TokKind.LBrace) && tok.value[0] >= 65 && tok.value[0] <= 90 {
+        // Struct literal: Name { ... } — but not in condition position, where the
+        // `{` opens the if/while/match block, not a struct-literal body.
+        if at(p, TokKind.LBrace) && !p.noStructLit && tok.value[0] >= 65 && tok.value[0] <= 90 {
             return parseStructLit(p, tok.value, s)
         }
         // Function call: name(args) or name<T>(args). A '(' on a NEW line is
