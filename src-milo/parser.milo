@@ -322,8 +322,12 @@ fn parseEnum(p: &mut Parser): EnumDecl {
 
 fn parseParam(p: &mut Parser): Param {
     let name = expect(p, TokKind.Ident).value
-    expect(p, TokKind.Colon)
-    let ty = parseType(p)
+    // the type is optional for closure params (`(x) => …`) — inferred by the checker
+    var ty = simpleType("")
+    if at(p, TokKind.Colon) {
+        advance(p)
+        ty = parseType(p)
+    }
     return Param { name: name, ty: ty }
 }
 
@@ -913,28 +917,18 @@ fn parsePostfix(p: &mut Parser): Expr {
 
 // Lookahead: is this ( the start of an arrow closure?
 fn isArrowClosure(p: &mut Parser): bool {
-    let saved = p.pos
-    advance(p) // skip (
-    if at(p, TokKind.RParen) {
-        advance(p)
-        if at(p, TokKind.FatArrow) {
-            p.pos = saved
-            return true
-        }
-        if at(p, TokKind.Colon) {
-            p.pos = saved
-            return true
-        }
-        p.pos = saved
-        return false
+    // scan to the ) matching the ( at p.pos; a closure follows with `=>` (or a
+    // `:` return type then `=>`). Handles untyped params `(x) => …` too.
+    var i = p.pos + 1
+    var depth = 1
+    while depth > 0 && i < p.tokens.len {
+        if p.tokens[i].kind == TokKind.LParen { depth = depth + 1 }
+        else if p.tokens[i].kind == TokKind.RParen { depth = depth - 1 }
+        i = i + 1
     }
-    if at(p, TokKind.Ident) {
-        advance(p)
-        let isColon = at(p, TokKind.Colon)
-        p.pos = saved
-        return isColon
-    }
-    p.pos = saved
+    if i >= p.tokens.len { return false }
+    if p.tokens[i].kind == TokKind.FatArrow { return true }
+    if p.tokens[i].kind == TokKind.Colon { return true }
     return false
 }
 

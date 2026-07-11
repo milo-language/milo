@@ -1514,6 +1514,27 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyVoid()
     }
+    // map((T) => R): Vec<R>; filter((T) => bool): Vec<T>. The closure's param type
+    // is the element type (expectedType drives unannotated-param inference).
+    if method == "map" || method == "filter" {
+        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument (callback)", cloneSpan(span)) }
+        var fparams: Vec<TypeKind> = Vec.new()
+        fparams.push(elem.clone())
+        var fret = tyUnknown()
+        if method == "filter" { fret = tyBool() }
+        ck.expectedType = Option.Some(TypeKind.TFn(fparams, Heap(fret)))
+        var closureTy = tyUnknown()
+        if args.len >= 1 { closureTy = checkExpr(ck, *args[0]) }
+        ck.expectedType = Option.None
+        if method == "filter" { return TypeKind.TVec(Heap(elem.clone())) }
+        // map: element type is the closure's return type
+        var rTy = elem.clone()
+        match closureTy {
+            TypeKind.TFn(cp, cr) => { rTy = (*cr).clone() }
+            _ => {}
+        }
+        return TypeKind.TVec(Heap(rTy))
+    }
     if method == "len" {
         if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
         return TypeKind.TInt(64, true)
@@ -1771,7 +1792,23 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
 
     var paramTypes: Vec<TypeKind> = Vec.new()
     for i in 0..params.len {
-        let pType = resolveMonoType(ck, params[i].ty)
+        var pType = resolveMonoType(ck, params[i].ty)
+        // an unannotated closure param (`(x) => …`, an empty-name MiloType) infers
+        // its type from the expected fn type (e.g. Vec.map's `(T) => R`).
+        let unannotated = params[i].ty.name.len == 0 && params[i].ty.typeArgs.len == 0 && !params[i].ty.isFn
+        if unannotated || containsUnknown(pType) {
+            match ck.expectedType {
+                Option.Some(et) => {
+                    match et {
+                        TypeKind.TFn(fparams, fret) => {
+                            if i < fparams.len { pType = fparams[i].clone() }
+                        }
+                        _ => {}
+                    }
+                }
+                Option.None => {}
+            }
+        }
         // a `&mut T` closure param makes the pointee assignable through the ref
         var pMut = false
         match pType.clone() {
