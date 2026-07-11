@@ -86,7 +86,8 @@ fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs
         let ef = fields[fi].clone()
         let idx = lookupFieldIndex(cg, rname, ef.name)
         let fty = lookupFieldType(cg, rname, idx)
-        let fv = genExpr(cg, *ef.value, locs, sigs, fty)
+        let fv0 = genExpr(cg, *ef.value, locs, sigs, fty.clone())
+        let fv = genInterfaceCoerceIfNeeded(cg, fv0, fty)
         let fp = nextTemp(cg)
         emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 " + idx.toString() + "\n")
         emit(cg, "  store " + llType(fv.ty) + " " + fv.v + ", ptr " + fp + "\n")
@@ -1317,6 +1318,29 @@ fn genOptionWrapIfNeeded(cg: &mut Cgen, v: &Val, hintTy: &string): Val {
     return asis
 }
 
+// Coerce a Heap<Concrete> value (a heap ptr) into an interface fat pointer
+// %Iface{data, itable} when hintTy resolves to an interface. No-op otherwise.
+fn genInterfaceCoerceIfNeeded(cg: &mut Cgen, v: &Val, hintTy: &string): Val {
+    let asis = Val { v: v.v.clone(), ty: v.ty.clone() }
+    if hintTy.len == 0 { return asis }
+    let ib = stripPercent(resolveTyStr(cg, stripPercent(hintTy)))
+    if !cg.interfaces.contains(ib) { return asis }
+    if stripPercent(resolveTyStr(cg, stripPercent(v.ty))) == ib { return asis }
+    // data pointer + concrete type from the source value
+    var dataPtr = v.v.clone()
+    var concrete = ""
+    if unwrapHeap(v.ty).len > 0 { concrete = stripPercent(resolveTyStr(cg, unwrapHeap(v.ty))) }
+    else { concrete = stripPercent(resolveTyStr(cg, stripPercent(v.ty))) }
+    if concrete.len == 0 { return asis }
+    let itab = ensureItable(cg, concrete, ib)
+    let ifTy = "%" + ib.clone()
+    let w0 = nextTemp(cg)
+    emit(cg, "  " + w0 + " = insertvalue " + ifTy + " undef, ptr " + dataPtr + ", 0\n")
+    let w1 = nextTemp(cg)
+    emit(cg, "  " + w1 + " = insertvalue " + ifTy + " " + w0 + ", ptr " + itab + ", 1\n")
+    return Val { v: w1, ty: ib }
+}
+
 fn genWrapSome(cg: &mut Cgen, innerVal: &Val, rEnum: &string): Val {
     let tag = lookupVariantTag(cg, rEnum, "Some")
     let structTy = "%" + rEnum.clone()
@@ -1843,7 +1867,8 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         let lv = genLvalue(cg, object, locs, sigs)
         if isVecTy(lv.ty) {
             let elemTy = unwrapVec(lv.ty)
-            let ev = genExpr(cg, *args[0], locs, sigs, elemTy)
+            let ev0 = genExpr(cg, *args[0], locs, sigs, elemTy.clone())
+            let ev = genInterfaceCoerceIfNeeded(cg, ev0, elemTy)
             return genVecPush(cg, lv.v, lv.ty, ev)
         }
         if llType(lv.ty) == "%String" {

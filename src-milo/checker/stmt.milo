@@ -95,7 +95,7 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
     if hasHint {
         if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) &&
             !arrayIntCoercible(hint, valType) && !arrayToVecCoercible(hint, valType) &&
-            !optionIntWrapCoercible(ck, hint, valType) {
+            !optionIntWrapCoercible(ck, hint, valType) && !interfaceCoercible(ck, hint, valType) {
             error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
         }
         valType = hint
@@ -167,7 +167,7 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
                 ck.pendingClosureRet = Option.Some(valType.clone())
             }
             if !typeEq(fnRetType, valType) && !typeEq(valType, tyUnknown()) && !typeEq(fnRetType, tyUnknown())
-                && !intCoercible(fnRetType, valType, *expr) {
+                && !intCoercible(fnRetType, valType, *expr) && !interfaceCoercible(ck, fnRetType, valType) {
                 error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
             }
             // Deliberately no tryMove here: this checker is flow-insensitive, so
@@ -690,7 +690,15 @@ fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
             base = TypeKind.TVec(Heap(resolveAstType(ck, ty.typeArgs[0])))
             matched = true
         } else if ty.name == "Heap" && ty.typeArgs.len == 1 {
-            base = TypeKind.THeap(Heap(resolveAstType(ck, ty.typeArgs[0])))
+            let hinner = resolveAstType(ck, ty.typeArgs[0])
+            // Heap<Interface> collapses to the interface type (a trait object fat
+            // pointer whose data ptr is heap-allocated).
+            var isIface = false
+            match hinner.clone() {
+                TypeKind.TStruct(nm) => { if ck.traits.contains(nm) { isIface = true base = hinner.clone() } }
+                _ => {}
+            }
+            if !isIface { base = TypeKind.THeap(Heap(hinner)) }
             matched = true
         } else if ty.name == "HashMap" && ty.typeArgs.len == 2 {
             base = TypeKind.THashMap(Heap(resolveAstType(ck, ty.typeArgs[0])), Heap(resolveAstType(ck, ty.typeArgs[1])))
@@ -716,6 +724,27 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     // type aliases (`type Altitude = i32(0..N)`) resolve to their base type
     for ai in 0..program.typeAliases.len {
         ck.typeAliases.insert(program.typeAliases[ai].name.clone(), typeFromAst(program.typeAliases[ai].base))
+    }
+    // Register user-declared traits/interfaces BEFORE structs/fns so a trait name used
+    // as a type (`&Iface`, `Heap<Iface>` struct fields) resolves during registration.
+    for ti in 0..program.traits.len {
+        let td = program.traits[ti]
+        var tmethods: HashMap<string, TraitMethodInfo> = HashMap.new()
+        for mi in 0..td.methods.len {
+            var mparams: Vec<FnParam> = Vec.new()
+            for pi in 0..td.methods[mi].params.len {
+                mparams.push(FnParam { name: td.methods[mi].params[pi].name.clone(), ty: resolveAstType(ck, td.methods[mi].params[pi].ty) })
+            }
+            var hasDef = false
+            match td.methods[mi].body {
+                Option.Some(b) => { hasDef = true }
+                Option.None => {}
+            }
+            tmethods.insert(td.methods[mi].name.clone(), TraitMethodInfo { params: mparams, ret: resolveAstType(ck, td.methods[mi].retType), hasDefault: hasDef })
+        }
+        var stps: Vec<string> = Vec.new()
+        for si in 0..td.supertraits.len { stps.push(td.supertraits[si].clone()) }
+        ck.traits.insert(td.name.clone(), TraitInfo { name: td.name.clone(), supertraits: stps, methods: tmethods })
     }
 
     // Phase 1: register all declarations (generics park on ck.generic* until
@@ -796,28 +825,6 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
         }
         sInfo.fields = newFields
         ck.structs.insert(structNames[si].clone(), sInfo)
-    }
-
-    // Register user-declared traits/interfaces so `impl Trait for Struct` resolves
-    // (builtin traits were registered in phase 0). Must precede registerAllImpls.
-    for ti in 0..program.traits.len {
-        let td = program.traits[ti]
-        var tmethods: HashMap<string, TraitMethodInfo> = HashMap.new()
-        for mi in 0..td.methods.len {
-            var mparams: Vec<FnParam> = Vec.new()
-            for pi in 0..td.methods[mi].params.len {
-                mparams.push(FnParam { name: td.methods[mi].params[pi].name.clone(), ty: resolveAstType(ck, td.methods[mi].params[pi].ty) })
-            }
-            var hasDef = false
-            match td.methods[mi].body {
-                Option.Some(b) => { hasDef = true }
-                Option.None => {}
-            }
-            tmethods.insert(td.methods[mi].name.clone(), TraitMethodInfo { params: mparams, ret: resolveAstType(ck, td.methods[mi].retType), hasDefault: hasDef })
-        }
-        var stps: Vec<string> = Vec.new()
-        for si in 0..td.supertraits.len { stps.push(td.supertraits[si].clone()) }
-        ck.traits.insert(td.name.clone(), TraitInfo { name: td.name.clone(), supertraits: stps, methods: tmethods })
     }
 
     // Phase 2: register impls and derive macros

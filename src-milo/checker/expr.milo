@@ -347,6 +347,27 @@ fn opMethodName(op: &string): string {
     return ""
 }
 
+// True if a value of type `valType` (a concrete struct, or Heap<Concrete>) coerces
+// to interface `hint` — i.e. hint is an interface and the concrete implements it.
+fn interfaceCoercible(ck: &Checker, hint: &TypeKind, valType: &TypeKind): bool {
+    match hint {
+        TypeKind.TStruct(iface) => {
+            if !ck.traits.contains(iface) { return false }
+            match valType {
+                TypeKind.TStruct(cn) => { return structImplementsInterface(ck, cn, iface) }
+                TypeKind.THeap(inner) => {
+                    match *inner {
+                        TypeKind.TStruct(cn2) => { return structImplementsInterface(ck, cn2, iface) }
+                        _ => { return false }
+                    }
+                }
+                _ => { return false }
+            }
+        }
+        _ => { return false }
+    }
+}
+
 // True if `sname` (a concrete struct) implements every method of interface `iface`
 // (a registered trait) — the requirement to coerce it to an `&iface` trait object.
 fn structImplementsInterface(ck: &Checker, sname: &string, iface: &string): bool {
@@ -904,7 +925,7 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
                 ck.expectedType = Option.None
                 if !typeEq(info.fields[j].ty, valType) && !containsUnknown(valType) &&
                     !(isConstIntExpr(*fields[i].value) && isInteger(info.fields[j].ty)) &&
-                    !arrayIntCoercible(info.fields[j].ty, valType) {
+                    !arrayIntCoercible(info.fields[j].ty, valType) && !interfaceCoercible(ck, info.fields[j].ty, valType) {
                     error(ck, "field '" + fields[i].name.clone() + "' of '" + name.clone() + "': expected " + typeName(info.fields[j].ty) + ", got " + typeName(valType), cloneSpan(span))
                 }
                 tryMove(ck, *fields[i].value)
@@ -1611,7 +1632,7 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         }
         let argType = checkExpr(ck, *args[0])
         if !typeEq(elem, argType) && !typeEq(argType, tyUnknown()) &&
-            !(isConstIntExpr(*args[0]) && isInteger(elem)) {
+            !(isConstIntExpr(*args[0]) && isInteger(elem)) && !interfaceCoercible(ck, elem, argType) {
             error(ck, "push: expected " + typeName(elem) + ", got " + typeName(argType), cloneSpan(span))
         }
         tryMove(ck, *args[0])

@@ -607,7 +607,13 @@ fn resolveTyStr(cg: &Cgen, s: &string): string {
     }
     if lt <= 0 { return s.clone() }
     let base = s[0..lt].clone()
-    if base == "Heap" { return s.clone() }
+    if base == "Heap" {
+        // Heap<Interface> IS the interface fat pointer (data ptr is heap-allocated) —
+        // collapse it to the interface so llType gives %Iface, not a plain ptr.
+        let hinner = unwrapHeap(s)
+        if cg.interfaces.contains(hinner) { return hinner.clone() }
+        return s.clone()
+    }
     // Exact mangling first: "Result<i32,string>" → "Result_i32_string" is the
     // checker's mangling scheme, so a registered decl matches directly even
     // when several instantiations exist.

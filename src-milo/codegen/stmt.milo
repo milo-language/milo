@@ -7,7 +7,7 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload, lookupFnRet
 }
-from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy, genOptionWrapIfNeeded }
+from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy, genOptionWrapIfNeeded, genInterfaceCoerceIfNeeded }
 from "src-milo/codegen/strings.milo" import { genStringAppendInPlace, genStringEq, genStringLit }
 
 // -- Assignment --
@@ -402,7 +402,9 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
             var elemTy = "u8"
             var container = "%String"
             if isVecTy(obj.ty) {
-                elemTy = unwrapVec(obj.ty)
+                // resolveTyStr collapses Heap<Interface> → Interface, so the element
+                // is the %Iface fat pointer (16 bytes), not a plain ptr.
+                elemTy = unwrapVec(resolveTyStr(cg, obj.ty))
                 container = "%Vec"
             } else if objLl == "%String" {
                 elemTy = "u8"
@@ -804,7 +806,8 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 Option.None => {}
             }
             let v0 = genExpr(cg, *value, locs, sigs, hintTy.clone())
-            let v = genOptionWrapIfNeeded(cg, v0, hintTy)
+            let v1 = genOptionWrapIfNeeded(cg, v0, hintTy.clone())
+            let v = genInterfaceCoerceIfNeeded(cg, v1, hintTy)
             let vtyLl = llType(v.ty)
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
@@ -819,7 +822,8 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 Option.None => {}
             }
             let v0 = genExpr(cg, *value, locs, sigs, hintTy.clone())
-            let v = genOptionWrapIfNeeded(cg, v0, hintTy)
+            let v1 = genOptionWrapIfNeeded(cg, v0, hintTy.clone())
+            let v = genInterfaceCoerceIfNeeded(cg, v1, hintTy)
             let vtyLl = llType(v.ty)
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
@@ -845,7 +849,8 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
             }
             match value {
                 Option.Some(expr) => {
-                    let v = genExpr(cg, *expr, locs, sigs, retTy.clone())
+                    let v00 = genExpr(cg, *expr, locs, sigs, retTy.clone())
+                    let v = genInterfaceCoerceIfNeeded(cg, v00, retTy)
                     emitScopeDrops(cg, locs, 0, skipName)
                     // unannotated closure body: the return type IS the value's type;
                     // record it (genClosure reads it for the define header) and emit

@@ -279,6 +279,18 @@ fn genProgram(prog: Program, sourceDir: string): string {
         cg.fnRets.insert(prog.functions[i].name.clone(), astTypeStr(prog.functions[i].retType))
     }
 
+    // Register interfaces EARLY (name + itable-slot layout) so struct-field and other
+    // type resolution below collapses Heap<Interface> → the %Iface fat pointer.
+    for ti in 0..prog.traits.len {
+        let tn = prog.traits[ti].name.clone()
+        cg.interfaces.insert(tn.clone(), true)
+        var slots: Vec<FieldInfo> = Vec.new()
+        for mi in 0..prog.traits[ti].methods.len {
+            slots.push(FieldInfo { name: prog.traits[ti].methods[mi].name.clone(), ty: resolveTyStr(cg, astTypeStr(prog.traits[ti].methods[mi].retType)) })
+        }
+        cg.structs.insert(tn.clone(), slots)
+    }
+
     // Enum/struct sizing needs ALL metadata registered first: an enum payload can
     // be a struct (Option<Info>) and vice-versa, and mono enums are appended after
     // the structs they wrap. So: (1) register enum variant metadata, (2) register
@@ -361,19 +373,10 @@ fn genProgram(prog: Program, sourceDir: string): string {
     }
 
     // Interfaces (traits used as types) are trait objects — a fat pointer
-    // `%Iface = type { ptr data, ptr itable }`. Register the name + emit the type so
-    // `llType(Iface)` resolves and coercion/dispatch can build/read the fat pointer.
+    // `%Iface = type { ptr data, ptr itable }`. The name/slots were registered early
+    // (before struct fields, so Heap<Iface> fields collapse); emit the type decl now.
     for ti in 0..prog.traits.len {
-        let tn = prog.traits[ti].name.clone()
-        cg.interfaces.insert(tn.clone(), true)
-        // itable slot layout as a pseudo-struct: field i = method i, its `ty` = the
-        // method's RETURN type (so dispatch recovers the call's result type by slot).
-        var slots: Vec<FieldInfo> = Vec.new()
-        for mi in 0..prog.traits[ti].methods.len {
-            slots.push(FieldInfo { name: prog.traits[ti].methods[mi].name.clone(), ty: resolveTyStr(cg, astTypeStr(prog.traits[ti].methods[mi].retType)) })
-        }
-        cg.structs.insert(tn.clone(), slots)
-        emitG(cg, "%" + tn + " = type { ptr, ptr }\n")
+        emitG(cg, "%" + prog.traits[ti].name.clone() + " = type { ptr, ptr }\n")
     }
 
     // Module-level global initializers — emitted here so struct/enum/%Vec/%String
