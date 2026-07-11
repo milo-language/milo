@@ -1682,6 +1682,10 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         if args.len != 0 { error(ck, "'clone' takes no arguments", cloneSpan(span)) }
         return TypeKind.THashMap(Heap(key.clone()), Heap(val.clone()))
     }
+    if method == "len" {
+        if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
+        return TypeKind.TInt(64, true)
+    }
     error(ck, "no method '" + method.clone() + "' on HashMap", cloneSpan(span))
     return tyUnknown()
 }

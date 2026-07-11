@@ -551,8 +551,8 @@ fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<MatchArm>, locs: 
             allTerminated = false
         }
     } else {
-        emit(cg, "  br label %" + endLbl + "\n")
-        allTerminated = false
+        // exhaustive per the checker → no-match is unreachable (see genIntMatch)
+        emit(cg, "  unreachable\n")
     }
     emit(cg, endLbl + ":\n")
     if allTerminated { emit(cg, "  unreachable\n") }
@@ -602,8 +602,10 @@ fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<MatchA
         }
         if !armTerm { emit(cg, "  br label %" + endLbl + "\n") allTerminated = false }
     } else {
-        emit(cg, "  br label %" + endLbl + "\n")
-        allTerminated = false
+        // no wildcard: the checker proved the match exhaustive (e.g. bool true/false),
+        // so the fall-off-the-end path is unreachable — don't force a fallthrough that
+        // would hit the function's default `ret <T> 0` (invalid for aggregate returns).
+        emit(cg, "  unreachable\n")
     }
     emit(cg, endLbl + ":\n")
     if allTerminated { emit(cg, "  unreachable\n") }
