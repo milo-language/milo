@@ -6,6 +6,7 @@ export class CodegenJS {
   private output: string[] = [];
   private indent = 0;
   private tempCounter = 0;
+  private usedPropagate = false;
 
   private emit(line: string) {
     this.output.push("  ".repeat(this.indent) + line);
@@ -66,6 +67,7 @@ export class CodegenJS {
     // exp < -4 or >= 6 — matches native's float print (which uses %g), so playground
     // output equals the compiled binary's.
     this.emit("function __fmtG(x) { if (!isFinite(x)) return String(x); if (x === 0) return '0'; let s = x.toPrecision(6); if (s.indexOf('e') >= 0) { s = Number(s).toExponential(); return s.replace(/e([+-])(\\d)$/, 'e$10$2'); } if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\\.$/, ''); return s; }");
+    this.emit("function __propagate(r) { if (r.tag !== 0) throw { __milo_prop: r }; return r.data[0]; }");
     this.emit("function __clone(v) { if (v === null || typeof v !== 'object') return v; if (Array.isArray(v)) return v.map(__clone); const o = Object.create(Object.getPrototypeOf(v)); for (const k of Object.keys(v)) o[k] = __clone(v[k]); return o; }");
     this.emit("function __eq(a, b) { if (a === b) return true; if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return a === b; if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => __eq(v, b[i])); const ka = Object.keys(a), kb = Object.keys(b); return ka.length === kb.length && ka.every(k => __eq(a[k], b[k])); }");
     this.emit("");
@@ -105,8 +107,23 @@ export class CodegenJS {
     const params = fn.params.map(p => p.name).join(", ");
     this.emit(`function ${fn.name}(${params}) {`);
     this.indent++;
-    for (const stmt of fn.body) {
-      this.genStmt(stmt);
+    // Emit the body into a buffer so we know whether it used `?`; if so, wrap it in
+    // try/catch that turns the propagate sentinel into an early Err/None return.
+    const lines: string[] = [];
+    const prevOutput = this.output;
+    this.output = lines;
+    const prevUsed = this.usedPropagate;
+    this.usedPropagate = false;
+    for (const stmt of fn.body) this.genStmt(stmt);
+    const used = this.usedPropagate;
+    this.usedPropagate = prevUsed;
+    this.output = prevOutput;
+    if (used) {
+      this.emit("try {");
+      for (const l of lines) this.output.push(l);
+      this.emit("} catch (__e) { if (__e && __e.__milo_prop) return __e.__milo_prop; throw __e; }");
+    } else {
+      for (const l of lines) this.output.push(l);
     }
     this.indent--;
     this.emit("}");
@@ -296,8 +313,10 @@ export class CodegenJS {
       case "Unwrap":
         return `${this.genExpr(expr.operand)}.data[0]`;
       case "Propagate": {
-        // in JS playground we just unwrap — no real error propagation across async boundaries
-        return `${this.genExpr(expr.operand)}.data[0]`;
+        // `?`: on Err/None (tag !== 0) throw a sentinel caught at the function
+        // boundary (genFunction wraps propagating bodies), which returns the Err/None.
+        this.usedPropagate = true;
+        return `__propagate(${this.genExpr(expr.operand)})`;
       }
       case "DefaultValue": {
         const operand = this.genExpr(expr.operand);
