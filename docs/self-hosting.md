@@ -914,6 +914,14 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.21 (2026-07-11) — Vec slice v[a..b]
+
+`v[a..b]` non-owning view (→ vecSlice): parser already desugars index-range to `.slice(a,b)`.
+Added `slice` to checkVecMethod (→ `TVec(elem)`) and codegen that builds a `%Vec {data +
+start*esz, end-start, cap=0}`. The cap=0 alias is safe because milo0 never auto-frees Vec
+buffers — `emitScopeDrops` only calls user `Ty$Drop$drop` methods, so there's no
+double-free/mid-buffer-free risk from the shared data pointer.
+
 ### Fixture-sweep bug hunt cont.20 (2026-07-11) — string splitWords/splitWhitespace
 
 `s.splitWords()` / `s.splitWhitespace()` (→ stringSplitWords): added both to
