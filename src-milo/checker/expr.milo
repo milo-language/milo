@@ -804,13 +804,41 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
 
 fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if elements.len == 0 {
+        // an empty `[]` carries no element type — adopt the annotation's Vec/Array
+        // type from the enclosing let/assignment (`var xs: Vec<string> = []`).
+        match ck.expectedType {
+            Option.Some(et) => {
+                match et {
+                    TypeKind.TVec(ve) => { return et.clone() }
+                    TypeKind.TArray(ae, asz) => { return et.clone() }
+                    _ => {}
+                }
+            }
+            Option.None => {}
+        }
         error(ck, "cannot infer type of empty array literal", cloneSpan(span))
         return tyUnknown()
     }
-    let elemType = checkExpr(ck, *elements[0])
-    for i in 1..elements.len {
+    // an annotation (`[i64; N] = [...]`) fixes the element type up front, so
+    // int-literal elements coerce to it instead of pinning it to the first
+    // element's default width.
+    var elemType: TypeKind = tyUnknown()
+    var haveTarget = false
+    match ck.expectedType {
+        Option.Some(et) => {
+            match et {
+                TypeKind.TVec(ve) => { elemType = (*ve).clone() haveTarget = true }
+                TypeKind.TArray(ae, asz) => { elemType = (*ae).clone() haveTarget = true }
+                _ => {}
+            }
+        }
+        Option.None => {}
+    }
+    for i in 0..elements.len {
         let t = checkExpr(ck, *elements[i])
-        if !typeEq(elemType, t) && !typeEq(t, tyUnknown()) {
+        if !haveTarget && i == 0 { elemType = t.clone() }
+        if !typeEq(elemType, t) && !typeEq(t, tyUnknown()) &&
+            !(isConstIntExpr(*elements[i]) && isInteger(elemType)) {
             error(ck, "array element " + i.toString() + ": expected " + typeName(elemType) + ", got " + typeName(t), cloneSpan(span))
         }
     }
@@ -1188,7 +1216,10 @@ fn checkDefaultValue(ck: &mut Checker, operand: &Expr, default: &Expr, span: &Op
     match inner {
         Option.Some(t) => {
             let defaultType = checkExpr(ck, default)
-            if !typeEq(t, defaultType) && !typeEq(defaultType, tyUnknown()) {
+            // a bare int-literal default (`?? 0`) defaults to i32; coerce it to the
+            // Option's integer inner type rather than reject the width mismatch.
+            if !typeEq(t, defaultType) && !typeEq(defaultType, tyUnknown()) &&
+                !(isConstIntExpr(default) && isInteger(t)) {
                 error(ck, "'??' default type mismatch: expected " + typeName(t) + ", got " + typeName(defaultType), cloneSpan(span))
             }
             return t
