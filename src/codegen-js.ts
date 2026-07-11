@@ -45,6 +45,16 @@ export class CodegenJS {
       this.genEnum(e);
     }
 
+    // interface dispatch table: "<Concrete>:<Iface>" -> [method fns in slot order].
+    // Function declarations hoist, so referencing them here (before their defs) is fine.
+    if (module.itables && module.itables.length > 0) {
+      const entries = module.itables.map(
+        it => `  ${JSON.stringify(it.concreteType + ":" + it.ifaceName)}: [${it.methods.join(", ")}]`,
+      );
+      this.emit(`const __itable = {\n${entries.join(",\n")}\n};`);
+      this.emit("");
+    }
+
     // functions
     for (const fn of module.functions) {
       if (fn.isExtern) continue;
@@ -388,6 +398,18 @@ export class CodegenJS {
         return `${this.genExpr(expr.vec)}.some(${this.genExpr(expr.callback)})`;
       case "VecAll":
         return `${this.genExpr(expr.vec)}.every(${this.genExpr(expr.callback)})`;
+      case "InterfaceCoerce":
+        // JS is duck-typed: a trait object is just the concrete instance. Dispatch
+        // later reads its constructor.name, so no boxing needed.
+        return this.genExpr(expr.value);
+      case "InterfaceMethodCall": {
+        // dispatch via the concrete type's itable slot; pass the object as `self`.
+        const obj = this.genExpr(expr.object);
+        const args = expr.args.map(a => this.genExpr(a.expr));
+        const iface = JSON.stringify(expr.ifaceName);
+        const rest = args.length > 0 ? ", " + args.join(", ") : "";
+        return `(__o => __itable[__o.constructor.name + ":" + ${iface}][${expr.methodIndex}](__o${rest}))(${obj})`;
+      }
       case "IfExpr": {
         // JS has no block-valued if — emit an IIFE whose branches return their
         // trailing expression (the block's value).
