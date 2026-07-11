@@ -239,6 +239,13 @@ fn genProgram(prog: Program): string {
     }
 
     // (2) struct metadata (mangling needs enum names, registered above)
+    // Register all concrete struct NAMES first, so resolveTyStr can mangle a
+    // field that references a (monomorphized) struct defined later in the list
+    // (e.g. Dom { arena: Arena<Node> } before Arena_Node's own decl).
+    for si in 0..prog.structs.len {
+        if prog.structs[si].typeParams.len > 0 { continue }
+        cg.structs.insert(prog.structs[si].name.clone(), Vec.new())
+    }
     for si in 0..prog.structs.len {
         if prog.structs[si].typeParams.len > 0 { continue }
         let s = prog.structs[si].clone()
