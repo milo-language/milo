@@ -647,13 +647,14 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     registerBuiltinGenericEnums(ck)
 
     // Phase 1: register all declarations (generics park on ck.generic* until
-    // a use site provides concrete type args)
+    // a use site provides concrete type args). Register ALL generic structs/enums
+    // FIRST, so a concrete struct/enum whose field references a generic defined
+    // later (e.g. `arena: Arena<Node>`) resolves it to the monomorphized name
+    // rather than the flattened base.
     var i: i64 = 0
     while i < program.structs.len {
         if program.structs[i].typeParams.len > 0 {
             registerGenericStruct(ck, program.structs[i])
-        } else {
-            registerStruct(ck, program.structs[i])
         }
         i = i + 1
     }
@@ -661,7 +662,19 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     while i < program.enums.len {
         if program.enums[i].typeParams.len > 0 {
             registerGenericEnum(ck, program.enums[i])
-        } else {
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < program.structs.len {
+        if program.structs[i].typeParams.len == 0 {
+            registerStruct(ck, program.structs[i])
+        }
+        i = i + 1
+    }
+    i = 0
+    while i < program.enums.len {
+        if program.enums[i].typeParams.len == 0 {
             registerEnum(ck, program.enums[i])
         }
         i = i + 1
