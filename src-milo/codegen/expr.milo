@@ -2061,7 +2061,9 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         return Val { v: "0", ty: "void" }
     }
     // assert(cond[, msg]): on false, print to stderr and exit(1); no-op when true.
-    if name == "assert" {
+    // built-in assert only when no real `assert` is in scope (std/testing defines
+    // its own 1-arg assert with failure counting — don't shadow it).
+    if name == "assert" && !cg.fnRets.contains("assert") {
         let cv = genExpr(cg, *args[0], locs, sigs, "bool")
         let okLbl = nextLabel(cg, "assert.ok")
         let failLbl = nextLabel(cg, "assert.fail")
@@ -2682,7 +2684,12 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 emit(cg, "  " + out + " = load i1, ptr " + res + "\n")
                 return Val { v: out, ty: "bool" }
             }
-            let lv = genExpr(cg, *l, locs, sigs, hintTy)
+            // A comparison's RESULT is bool but its OPERANDS are the compared type —
+            // don't leak a "bool" hint onto them (`if 3 > 2` would make the int
+            // literals i1 and compare 1 > 0 signed = false).
+            var lHint = hintTy.clone()
+            if isCmpOp(op) { lHint = "" }
+            let lv = genExpr(cg, *l, locs, sigs, lHint)
             let rv = genExpr(cg, *r, locs, sigs, lv.ty.clone())
             let lvLl = llType(lv.ty)
             // String operations
