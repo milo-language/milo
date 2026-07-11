@@ -1154,7 +1154,7 @@ fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Hea
     // registered as `Type$method`; route it to the plain call path.
     if tag < 0 {
         var emptyTA: Vec<MiloType> = Vec.new()
-        return genCall(cg, rEnum + "$" + variant, args, emptyTA, locs, sigs)
+        return genCall(cg, rEnum + "$" + variant, args, emptyTA, locs, sigs, "")
     }
     let structTy = "%" + rEnum
     let alloc = nextTemp(cg)
@@ -2231,7 +2231,24 @@ fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, sigs: &
     return base.clone()
 }
 
-fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+// A no-arg generic call (`arenaNew<T>()`) can't be disambiguated by arg types —
+// pick the monomorphization whose return type matches the expected-type hint.
+fn disambiguateByReturn(cg: &Cgen, base: &string, hint: &string): string {
+    let want = resolveTyStr(cg, stripPercent(hint))
+    var result = base.clone()
+    var count = 0
+    for k, v in cg.fnRets {
+        if !nameHasMonoPrefix(k, base) { continue }
+        if resolveTyStr(cg, v) == want {
+            result = k.clone()
+            count = count + 1
+        }
+    }
+    if count == 1 { return result }
+    return base.clone()
+}
+
+fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     if name == "format" {
         return genFormat(cg, args, locs, sigs)
     }
@@ -2641,6 +2658,10 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     if callName == staticName && !cg.fnRets.contains(staticName) {
         callName = disambiguateGenericCall(cg, staticName, argVals, sigs)
     }
+    // still ambiguous (a no-arg generic like arenaNew) → use the return-type hint.
+    if callName == staticName && !cg.fnRets.contains(staticName) && hintTy.len > 0 {
+        callName = disambiguateByReturn(cg, staticName, hintTy)
+    }
     let retTy = resolveTyStr(cg, lookupFnRet(cg, callName))
     let retLl = llType(retTy)
     var sigStr = retLl.clone()
@@ -3014,7 +3035,7 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                     return genClosureCall(cg, lc, args, locs, sigs, hintTy)
                 }
             }
-            return genCall(cg, name, args, typeArgs, locs, sigs)
+            return genCall(cg, name, args, typeArgs, locs, sigs, hintTy)
         }
         Expr.StructLit(name, fields, span) => {
             return genStructLit(cg, name, fields, locs, sigs)
