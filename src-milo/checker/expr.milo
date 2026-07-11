@@ -960,10 +960,12 @@ fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argT
             var ii: i64 = 0
             while ii < ck.structInsts.len {
                 if ck.structInsts[ii].mangled == mangled {
-                    let instArgs = ck.structInsts[ii].args
+                    // Clone each arg; binding `let x = ck.structInsts[ii].args`
+                    // would move the Vec out and empty it for later lookups.
                     var ai: i64 = 0
-                    while ai < declAst.typeArgs.len && ai < instArgs.len {
-                        inferFromAst(ck, typeParams, declAst.typeArgs[ai], instArgs[ai], inferred)
+                    while ai < declAst.typeArgs.len && ai < ck.structInsts[ii].args.len {
+                        let ca = ck.structInsts[ii].args[ai].clone()
+                        inferFromAst(ck, typeParams, declAst.typeArgs[ai], ca, inferred)
                         ai = ai + 1
                     }
                     return
