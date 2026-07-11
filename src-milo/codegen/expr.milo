@@ -289,6 +289,109 @@ fn genVecMapFilter(cg: &mut Cgen, obj: &Val, resultVecTy: &string, resultElemTy:
     return Val { v: out, ty: resultVecTy.clone() }
 }
 
+// find((&T)=>bool): Option<T>; any/all((&T)=>bool): bool. Walks the Vec calling
+// the predicate per element; find deep-clones the first match into an Option, any
+// short-circuits on the first true, all short-circuits on the first false.
+fn genVecFindAnyAll(cg: &mut Cgen, obj: &Val, elemTy: &string, clv: &Val, mode: &string): Val {
+    let inElemLl = llType(unwrapVec(resolveTyStr(cg, obj.ty)))
+    let d = nextTemp(cg)
+    emit(cg, "  " + d + " = extractvalue %Vec " + obj.v + ", 0\n")
+    let len = nextTemp(cg)
+    emit(cg, "  " + len + " = extractvalue %Vec " + obj.v + ", 1\n")
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = extractvalue %Closure " + clv.v + ", 0\n")
+    let env = nextTemp(cg)
+    emit(cg, "  " + env + " = extractvalue %Closure " + clv.v + ", 1\n")
+
+    let isFind = mode == "find"
+    // result cell: Option<T> for find, i1 for any/all (any starts false, all true)
+    var optName = ""
+    var optTy = ""
+    var someTag = 0
+    let resAddr = nextTemp(cg)
+    if isFind {
+        optName = stripPercent(resolveTyStr(cg, "Option<" + elemTy.clone() + ">"))
+        optTy = "%" + optName
+        someTag = lookupVariantTag(cg, optName, "Some")
+        let noneTag = lookupVariantTag(cg, optName, "None")
+        emit(cg, "  " + resAddr + " = alloca " + optTy + "\n")
+        let tagPtr = nextTemp(cg)
+        emit(cg, "  " + tagPtr + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 0\n")
+        emit(cg, "  store i32 " + noneTag.toString() + ", ptr " + tagPtr + "\n")
+    } else {
+        emit(cg, "  " + resAddr + " = alloca i1\n")
+        var init = "0"
+        if mode == "all" { init = "1" }
+        emit(cg, "  store i1 " + init + ", ptr " + resAddr + "\n")
+    }
+
+    let iAddr = nextTemp(cg)
+    emit(cg, "  " + iAddr + " = alloca i64\n")
+    emit(cg, "  store i64 0, ptr " + iAddr + "\n")
+    let condLbl = nextLabel(cg, "fa.cond")
+    let bodyLbl = nextLabel(cg, "fa.body")
+    let contLbl = nextLabel(cg, "fa.cont")
+    let endLbl = nextLabel(cg, "fa.end")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emitLabel(cg, condLbl)
+    let i = nextTemp(cg)
+    emit(cg, "  " + i + " = load i64, ptr " + iAddr + "\n")
+    let lt = nextTemp(cg)
+    emit(cg, "  " + lt + " = icmp slt i64 " + i + ", " + len + "\n")
+    emit(cg, "  br i1 " + lt + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+    emitLabel(cg, bodyLbl)
+    let slot = nextTemp(cg)
+    emit(cg, "  " + slot + " = getelementptr " + inElemLl + ", ptr " + d + ", i64 " + i + "\n")
+    let pred = nextTemp(cg)
+    emit(cg, "  " + pred + " = call i1 " + fp + "(ptr " + env + ", ptr " + slot + ")\n")
+    if isFind {
+        let hitLbl = nextLabel(cg, "fa.hit")
+        emit(cg, "  br i1 " + pred + ", label %" + hitLbl + ", label %" + contLbl + "\n")
+        emitLabel(cg, hitLbl)
+        let ev = nextTemp(cg)
+        emit(cg, "  " + ev + " = load " + inElemLl + ", ptr " + slot + "\n")
+        let evc = genCloneOfLoaded(cg, ev, elemTy)
+        let tagPtr2 = nextTemp(cg)
+        emit(cg, "  " + tagPtr2 + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 0\n")
+        emit(cg, "  store i32 " + someTag.toString() + ", ptr " + tagPtr2 + "\n")
+        let payPtr = nextTemp(cg)
+        emit(cg, "  " + payPtr + " = getelementptr " + optTy + ", ptr " + resAddr + ", i32 0, i32 1\n")
+        let pfp = nextTemp(cg)
+        emit(cg, "  " + pfp + " = getelementptr { " + inElemLl + " }, ptr " + payPtr + ", i32 0, i32 0\n")
+        emit(cg, "  store " + inElemLl + " " + evc + ", ptr " + pfp + "\n")
+        emit(cg, "  br label %" + endLbl + "\n")
+    } else {
+        // any: break (store true) when pred true; all: break (store false) when pred false
+        var hitVal = pred.clone()
+        if mode == "all" {
+            let neg = nextTemp(cg)
+            emit(cg, "  " + neg + " = xor i1 " + pred + ", true\n")
+            hitVal = neg
+        }
+        let hitLbl = nextLabel(cg, "fa.hit")
+        emit(cg, "  br i1 " + hitVal + ", label %" + hitLbl + ", label %" + contLbl + "\n")
+        emitLabel(cg, hitLbl)
+        var stored = "1"
+        if mode == "all" { stored = "0" }
+        emit(cg, "  store i1 " + stored + ", ptr " + resAddr + "\n")
+        emit(cg, "  br label %" + endLbl + "\n")
+    }
+    emitLabel(cg, contLbl)
+    let i1v = nextTemp(cg)
+    emit(cg, "  " + i1v + " = add i64 " + i + ", 1\n")
+    emit(cg, "  store i64 " + i1v + ", ptr " + iAddr + "\n")
+    emit(cg, "  br label %" + condLbl + "\n")
+    emitLabel(cg, endLbl)
+    if isFind {
+        let r = nextTemp(cg)
+        emit(cg, "  " + r + " = load " + optTy + ", ptr " + resAddr + "\n")
+        return Val { v: r, ty: optName }
+    }
+    let rb = nextTemp(cg)
+    emit(cg, "  " + rb + " = load i1, ptr " + resAddr + "\n")
+    return Val { v: rb, ty: "bool" }
+}
+
 // insert-at-index: grow if full, shift [idx..len) right one (descending copy so
 // overlapping slots don't clobber), store elem at idx, len++.
 fn genVecInsert(cg: &mut Cgen, addr: &string, vecTy: &string, idx: &string, elemVal: &Val): Val {
@@ -1616,6 +1719,14 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
             // map: result element type = the closure's carried return type
             let r = closureRetOf(clv.ty)
             return genVecMapFilter(cg, ov, "Vec<" + r.clone() + ">", r, clv, false, locs, sigs)
+        }
+    }
+    if method == "find" || method == "any" || method == "all" {
+        let ov = genExpr(cg, object, locs, sigs, "")
+        if isVecTy(ov.ty) {
+            let elem = unwrapVec(resolveTyStr(cg, ov.ty))
+            let clv = genExpr(cg, *args[0], locs, sigs, "")
+            return genVecFindAnyAll(cg, ov, elem, clv, method)
         }
     }
     if method == "each" {

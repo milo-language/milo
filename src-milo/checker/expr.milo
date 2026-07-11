@@ -1535,6 +1535,22 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         }
         return TypeKind.TVec(Heap(rTy))
     }
+    // find((&T) => bool): Option<T>; any/all((&T) => bool): bool
+    if method == "find" || method == "any" || method == "all" {
+        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument (predicate)", cloneSpan(span)) }
+        var fparams: Vec<TypeKind> = Vec.new()
+        fparams.push(TypeKind.TRef(Heap(elem.clone()), false))
+        ck.expectedType = Option.Some(TypeKind.TFn(fparams, Heap(tyBool())))
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        ck.expectedType = Option.None
+        if method == "find" {
+            var optArgs: Vec<TypeKind> = Vec.new()
+            optArgs.push(elem.clone())
+            let mangled = monomorphizeEnum(ck, "Option", optArgs)
+            return TypeKind.TEnum(mangled)
+        }
+        return tyBool()
+    }
     if method == "len" {
         if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
         return TypeKind.TInt(64, true)
