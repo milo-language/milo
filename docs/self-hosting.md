@@ -914,6 +914,21 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.35 (2026-07-11) — C-extern fn-pointer params
+
+`extern fn qsort(…, cmp: (*u8,*u8)=>i32)` (→ typedFnPtr): milo0 declared the `cmp` param as
+`%Closure` (its 16-byte {fnptr,env} fat pointer) and passed `cmpI32` as a closure whose fnptr
+is the env-carrying `@__fnthunk_cmpI32` (3 params) — wrong C ABI, so qsort called garbage.
+Fix: a fn-typed param of a C extern declares as a raw `ptr`, and a bare fn-name arg passes as
+the RAW `@cmpI32` (2-param C signature). Tracks extern callees in `cg.externFns` (populated at
+declare emission); `isBareFnName` gates the raw-@name path so ordinary milo fn-value args still
+get a %Closure.
+
+Note: interfaceBasic now HANGS (SIGKILL) rather than crashing under milo-self — registering the
+interface-as-trait (cont.34) makes a trait-name-used-as-a-type loop somewhere in resolution.
+Dynamic dispatch (fat pointers + itables) remains the large deferred feature; the hang must be
+root-caused as part of that work.
+
 ### Fixture-sweep bug hunt cont.34 (2026-07-11) — user traits + default methods
 
 Trait bucket, STATIC dispatch parts (dynamic-dispatch/vtable parts still deferred):
