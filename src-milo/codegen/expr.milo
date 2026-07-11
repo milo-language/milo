@@ -840,7 +840,23 @@ fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Hea
             let fp = nextTemp(cg)
             emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 " + fi.toString() + "\n")
             let fv = genExpr(cg, *args[fi], locs, sigs, payloadTypes[fi].clone())
-            emit(cg, "  store " + ftyLl + " " + fv.v + ", ptr " + fp + "\n")
+            // Reconcile integer width: a payload slot of u32 fed an i64 value
+            // (e.g. Result.Ok(someI64) where Ok holds u32) must trunc, or clang
+            // rejects `store i32 <i64>`.
+            var storeVal = fv.v.clone()
+            let fvLl = llType(fv.ty)
+            if fvLl != ftyLl && intBits(fvLl) > 0 && intBits(ftyLl) > 0 {
+                let w = nextTemp(cg)
+                if intBits(fvLl) > intBits(ftyLl) {
+                    emit(cg, "  " + w + " = trunc " + fvLl + " " + fv.v + " to " + ftyLl + "\n")
+                } else {
+                    var ext = "sext"
+                    if isUnsigned(fv.ty) { ext = "zext" }
+                    emit(cg, "  " + w + " = " + ext + " " + fvLl + " " + fv.v + " to " + ftyLl + "\n")
+                }
+                storeVal = w
+            }
+            emit(cg, "  store " + ftyLl + " " + storeVal + ", ptr " + fp + "\n")
         }
     }
     let loaded = nextTemp(cg)
@@ -1106,7 +1122,16 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         }
         if llType(lv.ty) == "%String" {
             let ev = genExpr(cg, *args[0], locs, sigs, "u8")
-            return genStringPush(cg, lv.v, ev.v)
+            // The byte slot is i8; a wider value (e.g. a byte built via i64 bit-ops)
+            // must be truncated or clang rejects `store i8 <i64>`.
+            var bv = ev.v.clone()
+            let evLl = llType(ev.ty)
+            if evLl != "i8" && intBits(evLl) > 8 {
+                let tb = nextTemp(cg)
+                emit(cg, "  " + tb + " = trunc " + evLl + " " + ev.v + " to i8\n")
+                bv = tb
+            }
+            return genStringPush(cg, lv.v, bv)
         }
     }
     // Vec.reverse mutates in place → needs the receiver address. (String.reverse
