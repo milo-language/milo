@@ -914,6 +914,17 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.4 (2026-07-11) — generic-struct codegen + if-expr
+
+- **Multi-instantiation generic-struct literals** in codegen: `Pair { first: 10, second:
+  20 }` and `Pair { first: "hello", second: 99 }` both compile now — genStructLit
+  disambiguates `%Pair` by matching each literal field's coarse category (int/float/str,
+  from the AST — no evaluation) against each `Pair_*` candidate. (genericStructMulti)
+- **`else if` chains in if-expressions** (`let x = if a { … } else if b { … } else { … }`)
+  now parse, and their codegen uses correct phi predecessors: added `cg.curBlock` +
+  `emitLabel`, so the phi's incoming block is where control ACTUALLY is (a nested if-expr
+  in a branch ends in its own block, not the static then/else label). (if_expr)
+
 ### Fixture-sweep bug hunt cont.3 (2026-07-11) — generic structs + interface, →255
 
 - **Generic-struct literal inference**: `Heap { value: 42 }` (a user `struct Heap<T>`, no
