@@ -938,7 +938,9 @@ fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, bo
     emit(cg, "  " + c0 + " = insertvalue %Closure undef, ptr @" + cname + ", 0\n")
     let c1 = nextTemp(cg)
     emit(cg, "  " + c1 + " = insertvalue %Closure " + c0 + ", ptr " + envVal + ", 1\n")
-    return Val { v: c1, ty: "Closure" }
+    // carry the return type in the surface ty ("Closure:R") so a generic call site
+    // can disambiguate which monomorphization to invoke (arenaWith_T_R).
+    return Val { v: c1, ty: "Closure:" + retTyStr.clone() }
 }
 
 // Indirect call of a %Closure-typed local: load { fnptr, env }, pass every arg BY

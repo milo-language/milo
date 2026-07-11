@@ -196,8 +196,10 @@ fn llType(t: &string): string {
     if t == "void" { return "void" }
     if t == "ptr" { return "ptr" }
     if t == "string" { return "%String" }
-    // closures/fn-typed values are a { fnptr, envptr } fat pointer
+    // closures/fn-typed values are a { fnptr, envptr } fat pointer ("Closure:R"
+    // carries the return type for call-site disambiguation)
     if t == "fn" || t == "Closure" { return "%Closure" }
+    if t.len >= 8 && t[0] == 67 && t[1] == 108 && t[2] == 111 && t[3] == 115 && t[4] == 117 && t[5] == 114 && t[6] == 101 && t[7] == 58 { return "%Closure" }
     // Pointer types
     if t.len > 0 && t[0] == 42 { return "ptr" }
     // Heap<T>, Vec<T>, etc. — all pointer-shaped

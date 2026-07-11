@@ -3,7 +3,7 @@ from "src-milo/ast.milo" import { Expr, Stmt, Pattern, StructLitField, Span, Par
 from "src-milo/codegen/types.milo" import {
     isVecTy, unwrapVec, ensureVecTy, ensureRealloc, genSizeOf,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
-    resolveEnumName, resolveFnName, resolveStructName, resolveTyStr, ensureExit, ensureStrtod, ensureStrlen, astTypeStr,
+    resolveEnumName, resolveFnName, resolveStructName, resolveTyStr, nameHasMonoPrefix, ensureExit, ensureStrtod, ensureStrlen, astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo,
     nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
@@ -119,7 +119,9 @@ fn genVecNew(cg: &mut Cgen, hintTy: &string): Val {
 fn genVecPush(cg: &mut Cgen, addr: &string, vecTy: &string, elemVal: &Val): Val {
     ensureVecTy(cg)
     ensureRealloc(cg)
-    let elemTy = unwrapVec(vecTy)
+    // resolve so a still-generic element (Vec<Handle<Node>>) mangles before it
+    // reaches genSizeOf, which would otherwise emit an unsized `%Handle<Node>`.
+    let elemTy = unwrapVec(resolveTyStr(cg, vecTy))
     let elemLl = llType(elemTy)
 
     let dPtr = nextTemp(cg)
@@ -1566,7 +1568,7 @@ fn genIndex(cg: &mut Cgen, obj: &Expr, idx: &Expr, locs: &Vec<Local>, sigs: &Vec
         return genStringIndex(cg, o.v, i.v)
     }
     if isVecTy(o.ty) {
-        let elemTy = unwrapVec(o.ty)
+        let elemTy = unwrapVec(resolveTyStr(cg, o.ty))
         let elemLl = llType(elemTy)
         let d = nextTemp(cg)
         emit(cg, "  " + d + " = extractvalue %Vec " + o.v + ", 0\n")
@@ -1838,6 +1840,56 @@ fn genCstrToString(cg: &mut Cgen, pv: &string): Val {
     return Val { v: s2, ty: "string" }
 }
 
+// strip a leading "Option_" so a candidate's `Option<R>` return yields R
+fn stripOptionPrefix(s: &string): string {
+    if s.len > 7 && s[0] == 79 && s[1] == 112 && s[2] == 116 && s[3] == 105 && s[4] == 111 && s[5] == 110 && s[6] == 95 {
+        return s[7..s.len].clone()
+    }
+    return s.clone()
+}
+
+// return type suffix of a "Closure:R" surface type, else ""
+fn closureRetOf(ty: &string): string {
+    if ty.len < 9 { return "" }
+    // "Closure:" is 8 chars
+    if ty[0] == 67 && ty[7] == 58 { return ty[8..ty.len].clone() }
+    return ""
+}
+
+// A generic call whose base name has >1 monomorphization can't be resolved by
+// prefix alone. Pick the candidate whose param LLVM types match the actual args,
+// breaking a closure-return ambiguity (arenaWith_T_{NodeKind,string,…}) by
+// matching the closure arg's carried return type against the candidate's ret.
+fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, sigs: &Vec<CgFnSig>): string {
+    var result = base.clone()
+    var count = 0
+    for si in 0..sigs.len {
+        if !nameHasMonoPrefix(sigs[si].name, base) { continue }
+        if sigs[si].paramTys.len != argVals.len { continue }
+        var ok = true
+        for pi in 0..argVals.len {
+            var pll = llType(resolveTyStr(cg, sigs[si].paramTys[pi]))
+            // a ref param is passed as a bare pointer, so the arg's llType is "ptr"
+            if pi < sigs[si].paramRefs.len && sigs[si].paramRefs[pi] { pll = "ptr" }
+            let all = llType(resolveTyStr(cg, argVals[pi].ty))
+            if pll == "%Closure" && all == "%Closure" {
+                let cr = closureRetOf(argVals[pi].ty)
+                // arenaWith-style: candidate returns Option<R>; match R exactly
+                let candR = stripOptionPrefix(resolveTyStr(cg, sigs[si].retTy))
+                if cr.len > 0 && candR != cr { ok = false }
+            } else if pll != all {
+                ok = false
+            }
+        }
+        if ok {
+            result = sigs[si].name.clone()
+            count = count + 1
+        }
+    }
+    if count == 1 { return result }
+    return base.clone()
+}
+
 fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<MiloType>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     if name == "format" {
         return genFormat(cg, args, locs, sigs)
@@ -1852,6 +1904,33 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         }
         let fc = nextTemp(cg)
         emit(cg, "  " + fc + " = call i32 @fflush(ptr null)\n")
+        return Val { v: "0", ty: "void" }
+    }
+    // assert(cond[, msg]): on false, print to stderr and exit(1); no-op when true.
+    if name == "assert" {
+        let cv = genExpr(cg, *args[0], locs, sigs, "bool")
+        let okLbl = nextLabel(cg, "assert.ok")
+        let failLbl = nextLabel(cg, "assert.fail")
+        emit(cg, "  br i1 " + cv.v + ", label %" + okLbl + ", label %" + failLbl + "\n")
+        emit(cg, failLbl + ":\n")
+        if !cg.declaredDprintf {
+            emitG(cg, "declare i32 @dprintf(i32, ptr, ...)\n")
+            cg.declaredDprintf = true
+        }
+        if args.len >= 2 {
+            let mv = genExpr(cg, *args[1], locs, sigs, "string")
+            let mp = nextTemp(cg)
+            emit(cg, "  " + mp + " = extractvalue %String " + mv.v + ", 0\n")
+            let fl = emitStringLit(cg, "assertion failed: %s\n")
+            emit(cg, "  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr " + fl + ", ptr " + mp + ")\n")
+        } else {
+            let fl = emitStringLit(cg, "assertion failed\n")
+            emit(cg, "  call i32 (i32, ptr, ...) @dprintf(i32 2, ptr " + fl + ")\n")
+        }
+        ensureExit(cg)
+        emit(cg, "  call void @exit(i32 1)\n")
+        emit(cg, "  unreachable\n")
+        emit(cg, okLbl + ":\n")
         return Val { v: "0", ty: "void" }
     }
     // sizeOf<T>() — byte size of the instantiated type
@@ -2161,7 +2240,12 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         staticName = cand
     }
     // Generic fns are registered under their mangled name
-    let callName = resolveFnName(cg, staticName)
+    var callName = resolveFnName(cg, staticName)
+    // resolveFnName falls back to the bare name when >1 instantiation exists;
+    // disambiguate by the actual argument types (incl. a closure arg's return).
+    if callName == staticName && !cg.fnRets.contains(staticName) {
+        callName = disambiguateGenericCall(cg, staticName, argVals, sigs)
+    }
     let retTy = resolveTyStr(cg, lookupFnRet(cg, callName))
     let retLl = llType(retTy)
     var sigStr = retLl.clone()
