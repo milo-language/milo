@@ -914,6 +914,36 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### 🎯 ALL 35 REAL TARGETS COMPILE (2026-07-11) — servers included
+
+**Every example with a `main` now compiles via milo-self AND runs at oracle parity.** The
+sweep is 35/38; the 3 non-compiling files (gdbgui/gdbmi, termpair/{protocol,encryption})
+are **libraries with no `fn main`** — they link-fail under the ORACLE too, so they are not
+parity targets. Manifest 173 + byte-identical -O2 convergence held across every fix.
+
+The last two servers fell to:
+- **termpair/server**: `genLvalue`'s Vec-index path now resolves the generic element type
+  (`Vec<Channel<string>>` → `Channel_string`), so a method call on an indexed global
+  channel (`toTermChans[i].tryRecv()`) stops emitting an unsized `%Channel<string>`.
+  Compiles; `--help` matches the oracle.
+- **webserver**: two features —
+  1. **Anonymous JSON object literals** `{ k: v, … }` (`ctx.json({...})`): new
+     `Expr.JsonObject` through parser/AST/checker/codegen/mono; serializes to a JSON string
+     matching `jsonStringify`'s format.
+  2. **fn-name-as-closure adapter thunk**: a NAMED function passed as a handler
+     (`r.get("/json", jsonHandler)`) becomes `%Closure {@__fnthunk_jsonHandler, null}` — the
+     thunk drops the closure ABI's `env` param and adapts args (ref → pass ptr, value →
+     load) to the named fn's direct signature. (serve worked already because it passed a
+     closure *literal*, which carries the env param.) A fn-name **cast to a raw ptr**
+     (`trampoline as *u8`, spawn) still uses the real `@name` via `genAsCast`, not the thunk.
+  webserver now returns **byte-identical JSON on every endpoint** (`/json`, `/fib/:n`,
+  `/prime/:n`, `/collatz/:n`, `/fizzbuzz/:n`, `/search?q=`, `/hello`) vs the oracle.
+
+RUN-parity verified this stretch: all 13 cli-tools, all 5 arena examples, serve (serves
+files), weather (serves embedded assets), webserver (all JSON endpoints), calc, fib,
+fizzbuzz, hello, json, pidStep, gdbmiTest, kvstore, flightController. The parity goal —
+milo-self compiles AND correctly runs the full example suite — is essentially met.
+
 ### SERVERS: serve + weather at parity (2026-07-11) — 33/35 real targets compile
 
 After the arena/closure bucket, the server examples fell to four fixes (manifest 173 +
