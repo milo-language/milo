@@ -2667,7 +2667,11 @@ fn closureRetOf(ty: &string): string {
 // prefix alone. Pick the candidate whose param LLVM types match the actual args,
 // breaking a closure-return ambiguity (arenaWith_T_{NodeKind,string,…}) by
 // matching the closure arg's carried return type against the candidate's ret.
-fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &Vec<string>, sigs: &Vec<CgFnSig>): string {
+// One matching pass. `intLenient` allows an int-literal arg (defaults to i64) to
+// match a differently-sized int param; the strict pass (intLenient=false) is tried
+// first so `identity_i64` wins over `identity_i32` for an i64 arg instead of both
+// matching and going ambiguous.
+fn disambiguatePass(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &Vec<string>, sigs: &Vec<CgFnSig>, intLenient: bool): string {
     var result = base.clone()
     var count = 0
     for si in 0..sigs.len {
@@ -2694,9 +2698,8 @@ fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPoin
                 let candR = stripOptionPrefix(resolveTyStr(cg, sigs[si].retTy))
                 if cr.len > 0 && candR != cr { ok = false }
             } else if pll != all {
-                // an int-literal arg (defaults to i64) coerces to any-width int param
-                if isIntLlType(pll) && isIntLlType(all) {
-                    // ok — int coercion
+                if intLenient && isIntLlType(pll) && isIntLlType(all) {
+                    // ok — int coercion (lenient pass only)
                 } else {
                     ok = false
                 }
@@ -2709,6 +2712,13 @@ fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPoin
     }
     if count == 1 { return result }
     return base.clone()
+}
+
+fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &Vec<string>, sigs: &Vec<CgFnSig>): string {
+    // exact-type match first; only if that's ambiguous/absent try int-width coercion
+    let strict = disambiguatePass(cg, base, argVals, argPointees, sigs, false)
+    if strict != base { return strict }
+    return disambiguatePass(cg, base, argVals, argPointees, sigs, true)
 }
 
 // A no-arg generic call (`arenaNew<T>()`) can't be disambiguated by arg types —
