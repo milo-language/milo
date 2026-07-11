@@ -281,14 +281,16 @@ fn genStringEq(cg: &mut Cgen, av: &string, bv: &string, wantEq: bool): Val {
 }
 
 // Integer → string via snprintf (two-pass: measure then format).
-fn genIntToString(cg: &mut Cgen, val: &string): Val {
+fn genIntToString(cg: &mut Cgen, val: &string, unsigned: bool): Val {
     ensureStringTy(cg)
     ensureMalloc(cg)
     if !cg.declaredSnprintf {
         emitG(cg, "declare i32 @snprintf(ptr, i64, ptr, ...)\n")
         cg.declaredSnprintf = true
     }
-    let fmt = emitStringLit(cg, "%lld")
+    var fmtS = "%lld"
+    if unsigned { fmtS = "%llu" }
+    let fmt = emitStringLit(cg, fmtS)
     let len = nextTemp(cg)
     emit(cg, "  " + len + " = call i32 (ptr, i64, ptr, ...) @snprintf(ptr null, i64 0, ptr " + fmt + ", i64 " + val + ")\n")
     let len64 = nextTemp(cg)

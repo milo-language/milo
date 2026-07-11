@@ -1540,7 +1540,7 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         return Val { v: lenT, ty: "i64" }
     }
     if objTyLl == "i64" && method == "toString" {
-        return genIntToString(cg, obj.v)
+        return genIntToString(cg, obj.v, isUnsigned(obj.ty))
     }
     if objTyLl == "double" && method == "toString" {
         return genFloatToString(cg, obj.v)
@@ -1552,7 +1552,7 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         var op = "sext"
         if isUnsigned(obj.ty) { op = "zext" }
         emit(cg, "  " + w + " = " + op + " " + objTyLl + " " + obj.v + " to i64\n")
-        return genIntToString(cg, w)
+        return genIntToString(cg, w, false)
     }
     // User-defined methods via impl tables: Ty$m or Ty$Trait$m; the receiver
     // is passed by value first (milo0's ref-param convention)
@@ -1741,7 +1741,7 @@ fn genDisplayString(cg: &mut Cgen, val: &string, ty: &string, locs: &Vec<Local>,
             emit(cg, "  " + w + " = " + op + " " + ll + " " + val.clone() + " to i64\n")
             widened = w
         }
-        return genIntToString(cg, widened)
+        return genIntToString(cg, widened, isUnsigned(ty))
     }
     if ll.len > 0 && ll[0] == 37 {
         let raw = stripPercent(ty)
@@ -2310,13 +2310,14 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
                 fmt = fmt + "%g"
                 argStr = argStr + ", double " + argVals[ai].v
             } else if elemLl == "i64" {
-                fmt = fmt + "%lld"
+                // u64 prints unsigned (%llu) — else 18446744073709551615 → -1
+                if isUnsigned(argVals[ai].ty) { fmt = fmt + "%llu" } else { fmt = fmt + "%lld" }
                 argStr = argStr + ", i64 " + argVals[ai].v
             } else if elemLl == "ptr" {
                 fmt = fmt + "%p"
                 argStr = argStr + ", ptr " + argVals[ai].v
             } else if elemLl == "i32" {
-                fmt = fmt + "%d"
+                if isUnsigned(argVals[ai].ty) { fmt = fmt + "%u" } else { fmt = fmt + "%d" }
                 argStr = argStr + ", i32 " + argVals[ai].v
             } else if elemLl == "i1" {
                 // bool prints as true/false, matching the TS compiler
