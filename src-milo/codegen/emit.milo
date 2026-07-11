@@ -4,6 +4,9 @@ from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl, Expr 
 // Constant initializer text for a module-global's value expression. Globals must
 // be compile-time constants (int/bool/float/char literals, optionally negated).
 fn constInitOf(e: &Expr, llTy: &string): string {
+    // a pointer global can only be a compile-time-constant null (`0 as *T`); LLVM
+    // rejects `global ptr 0`, the null pointer constant is spelled `null`.
+    if llTy == "ptr" { return "null" }
     match e {
         Expr.IntLit(n, span) => {
             if llTy == "double" || llTy == "float" { return n.toString() + ".0" }
