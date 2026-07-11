@@ -1538,6 +1538,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     // resolves to the right instantiation instead of an unmangled Option$None.
     var paramHints: Vec<string> = Vec.new()
     var paramRefs: Vec<bool> = Vec.new()
+    var calleeVariadic = false
     for si in 0..sigs.len {
         if sigs[si].name == name {
             for pi in 0..sigs[si].paramTys.len {
@@ -1546,6 +1547,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
             for pi in 0..sigs[si].paramRefs.len {
                 paramRefs.push(sigs[si].paramRefs[pi])
             }
+            if sigs[si].isVariadic { calleeVariadic = true }
         }
     }
     var argVals: Vec<Val> = Vec.new()
@@ -1567,7 +1569,7 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     let isEprint = name == "eprint"
     let isPrintCall = name == "print" || name == "println" || isEprint
     let isVariadicExtern = name == "printf" || name == "fprintf" ||
-                           name == "snprintf" || isPrintCall
+                           name == "snprintf" || isPrintCall || calleeVariadic
 
     // Build argument string
     var argStr = ""
@@ -1695,6 +1697,20 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     }
     if name == "printf" || name == "fprintf" || name == "snprintf" {
         sigStr = "i32 (ptr, ...)"
+    }
+    // A variadic callee (e.g. `open(path, flags, ...)`) MUST be called through its
+    // full `(fixed…, ...)` function type, or LLVM lowers the trailing args as
+    // fixed register params instead of into the vararg region (stack on arm64)
+    // where the callee's va_arg reads them → garbage (e.g. open's mode).
+    if calleeVariadic && !isPrint && !isPrintln {
+        var vsig = retLl.clone() + " ("
+        for pi in 0..paramHints.len {
+            if pi > 0 { vsig = vsig + ", " }
+            vsig = vsig + llType(paramHints[pi])
+        }
+        if paramHints.len > 0 { vsig = vsig + ", " }
+        vsig = vsig + "...)"
+        sigStr = vsig
     }
 
     // A void call must NOT be named (`%t = call void ...` is invalid IR).
