@@ -653,6 +653,19 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
             if args.len >= 1 { checkExpr(ck, *args[0]) }
             return tyVoid()
         }
+        // Promise(fn) desugars to Promise<T>.run(fn) with T = the fn's return type.
+        if func == "Promise" && args.len == 1 && ck.genericStructs.contains("Promise") {
+            let argT = checkExpr(ck, *args[0])
+            var retT = tyUnknown()
+            match argT {
+                TypeKind.TFn(fparams, fret) => { retT = (*fret).clone() }
+                _ => { error(ck, "Promise() argument must be a function", cloneSpan(span)) }
+            }
+            var targs: Vec<TypeKind> = Vec.new()
+            targs.push(retT)
+            let mangled = monomorphizeStruct(ck, "Promise", targs)
+            return TypeKind.TStruct(mangled)
+        }
         error(ck, "undefined function '" + func.clone() + "'", cloneSpan(span))
         return tyUnknown()
     }

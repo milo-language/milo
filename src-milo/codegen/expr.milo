@@ -2149,6 +2149,19 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         emit(cg, "  " + fc + " = call i32 @fflush(ptr null)\n")
         return Val { v: "0", ty: "void" }
     }
+    // Promise(fn) → Promise_<R>$run(fn), R recovered from the closure's carried type.
+    if name == "Promise" && !cg.fnRets.contains("Promise") && args.len == 1 {
+        let clv = genExpr(cg, *args[0], locs, sigs, "")
+        let rt = closureRetOf(clv.ty)
+        if rt.len > 0 {
+            let runName = "Promise_" + rt + "$run"
+            let retTy = resolveTyStr(cg, lookupFnRet(cg, runName))
+            let retLl = llType(retTy)
+            let t = nextTemp(cg)
+            emit(cg, "  " + t + " = call " + retLl + " @" + runName + "(%Closure " + clv.v + ")\n")
+            return Val { v: t, ty: retTy }
+        }
+    }
     // assert(cond[, msg]): on false, print to stderr and exit(1); no-op when true.
     // built-in assert only when no real `assert` is in scope (std/testing defines
     // its own 1-arg assert with failure counting — don't shadow it).
