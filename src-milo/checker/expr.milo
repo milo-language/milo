@@ -304,6 +304,22 @@ fn arrayIntCoercible(to: &TypeKind, src: &TypeKind): bool {
     }
 }
 
+// `let v: Vec<T> = [a, b, c]` — an array literal coerces to a Vec when the
+// declared type is Vec<T> and element types match (incl. int-width coercion).
+fn arrayToVecCoercible(to: &TypeKind, src: &TypeKind): bool {
+    match to {
+        TypeKind.TVec(toElem) => {
+            match src {
+                TypeKind.TArray(srcElem, srcSize) => {
+                    return typeEq(*toElem, *srcElem) || (isInteger(*toElem) && isInteger(*srcElem))
+                }
+                _ => { return false }
+            }
+        }
+        _ => { return false }
+    }
+}
+
 fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &Option<Span>): TypeKind {
     // Logical operators
     if op == "&&" || op == "||" {

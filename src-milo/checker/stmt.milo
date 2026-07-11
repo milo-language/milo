@@ -94,7 +94,7 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
 
     if hasHint {
         if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) &&
-            !arrayIntCoercible(hint, valType) {
+            !arrayIntCoercible(hint, valType) && !arrayToVecCoercible(hint, valType) {
             error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
         }
         valType = hint

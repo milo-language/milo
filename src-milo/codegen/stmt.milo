@@ -368,12 +368,16 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
             emit(cg, "  " + elem + " = load " + elemLl + ", ptr " + slot + "\n")
             emit(cg, "  store " + elemLl + " " + elem + ", ptr " + elemAddr + "\n")
             let locsPreLen = locs.len
-            locs.push(Local { name: varName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false })
+            // two-var form is `for index, value in vec` (index first), matching the
+            // checker's binding order; single-var binds the element.
             match varName2 {
-                Option.Some(idxName) => {
-                    locs.push(Local { name: idxName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false })
+                Option.Some(valName) => {
+                    locs.push(Local { name: varName.clone(), ty: "i64", addr: idxAddr.clone(), isRef: false })
+                    locs.push(Local { name: valName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false })
                 }
-                Option.None => {}
+                Option.None => {
+                    locs.push(Local { name: varName.clone(), ty: elemTy.clone(), addr: elemAddr.clone(), isRef: false })
+                }
             }
             var bodyTerm = false
             for bi in 0..body.len {
