@@ -7,7 +7,7 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload, lookupFnRet
 }
-from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
+from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy, genOptionWrapIfNeeded }
 from "src-milo/codegen/strings.milo" import { genStringAppendInPlace, genStringEq, genStringLit }
 
 // -- Assignment --
@@ -81,11 +81,14 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
             // a module global (not shadowed by a local) stores through @name
             if !hasLocal(locs, name) && cg.globalVars.contains(name) {
                 let gty = cg.globalVars.get(name)!
-                let v = genExpr(cg, value, locs, sigs, gty.clone())
+                let v0 = genExpr(cg, value, locs, sigs, gty.clone())
+                let v = genOptionWrapIfNeeded(cg, v0, gty)
                 emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr @" + name.clone() + "\n")
             } else {
                 let local = findLocal(locs, name)
-                let v = genExpr(cg, value, locs, sigs, local.ty.clone())
+                let lty = local.ty.clone()
+                let v0 = genExpr(cg, value, locs, sigs, lty.clone())
+                let v = genOptionWrapIfNeeded(cg, v0, lty)
                 emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
             }
         }
@@ -737,7 +740,8 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 Option.Some(t) => { hintTy = astTypeStr(t) }
                 Option.None => {}
             }
-            let v = genExpr(cg, *value, locs, sigs, hintTy)
+            let v0 = genExpr(cg, *value, locs, sigs, hintTy.clone())
+            let v = genOptionWrapIfNeeded(cg, v0, hintTy)
             let vtyLl = llType(v.ty)
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")
@@ -751,7 +755,8 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 Option.Some(t) => { hintTy = astTypeStr(t) }
                 Option.None => {}
             }
-            let v = genExpr(cg, *value, locs, sigs, hintTy)
+            let v0 = genExpr(cg, *value, locs, sigs, hintTy.clone())
+            let v = genOptionWrapIfNeeded(cg, v0, hintTy)
             let vtyLl = llType(v.ty)
             let addr = nextTemp(cg)
             emit(cg, "  " + addr + " = alloca " + vtyLl + "\n")

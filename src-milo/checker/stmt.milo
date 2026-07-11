@@ -94,7 +94,8 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
 
     if hasHint {
         if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) &&
-            !arrayIntCoercible(hint, valType) && !arrayToVecCoercible(hint, valType) {
+            !arrayIntCoercible(hint, valType) && !arrayToVecCoercible(hint, valType) &&
+            !optionIntWrapCoercible(ck, hint, valType) {
             error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
         }
         valType = hint
@@ -133,7 +134,8 @@ fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span
         _ => { targetType = checkExpr(ck, target) }
     }
     let valType = checkExpr(ck, value)
-    if !typeEq(targetType, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(targetType, valType, value) {
+    if !typeEq(targetType, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(targetType, valType, value) &&
+        !optionIntWrapCoercible(ck, targetType, valType) {
         error(ck, "type mismatch: cannot assign " + typeName(valType) + " to " + typeName(targetType), cloneSpan(span))
     }
 

@@ -1224,6 +1224,27 @@ fn ensureFnThunk(cg: &mut Cgen, name: &string, sigs: &Vec<CgFnSig>): string {
     return thunkName
 }
 
+// If hintTy is an Option<T> enum and `v` is a bare payload value (not already the
+// Option), wrap it in Some — used for `let x: T? = <val>` and `x = <val>`. genWrapSome
+// int-coerces the payload, so a `42:i32` wraps cleanly into an Option<u16>.
+fn genOptionWrapIfNeeded(cg: &mut Cgen, v: &Val, hintTy: &string): Val {
+    let asis = Val { v: v.v.clone(), ty: v.ty.clone() }
+    if hintTy.len == 0 { return asis }
+    let rp = stripPercent(resolveTyStr(cg, stripPercent(hintTy)))
+    if !cg.enums.contains(rp) { return asis }
+    if llType(v.ty) == "%" + rp.clone() { return asis }
+    let stag = lookupVariantTag(cg, rp, "Some")
+    if stag < 0 { return asis }
+    let pl = lookupVariantPayload(cg, rp, "Some")
+    if pl.len != 1 { return asis }
+    let plLl = llType(pl[0])
+    let vLl = llType(v.ty)
+    if plLl == vLl || (intBits(plLl) > 0 && intBits(vLl) > 0) {
+        return genWrapSome(cg, v, rp)
+    }
+    return asis
+}
+
 fn genWrapSome(cg: &mut Cgen, innerVal: &Val, rEnum: &string): Val {
     let tag = lookupVariantTag(cg, rEnum, "Some")
     let structTy = "%" + rEnum.clone()

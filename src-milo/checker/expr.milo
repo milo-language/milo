@@ -1289,6 +1289,24 @@ fn optionWrapCoercible(ck: &Checker, paramType: &TypeKind, argType: &TypeKind): 
     }
 }
 
+// `let x: T? = <intlit>` / `x = <intlit>` — wrap a bare value into Option<T>, with
+// integer-width coercion of the payload (42:i32 into Option<u16>). Broader than
+// optionWrapCoercible (used at call sites where codegen requires an exact ll match).
+fn optionIntWrapCoercible(ck: &Checker, optType: &TypeKind, valType: &TypeKind): bool {
+    match optType {
+        TypeKind.TEnum(name) => {
+            if !ck.enums.contains(name) { return false }
+            let info = ck.enums.get(name)!
+            if !info.variants.contains("Some") { return false }
+            let sv = info.variants.get("Some")!
+            if sv.fields.len != 1 { return false }
+            if typeEq(sv.fields[0], valType) { return true }
+            return isInteger(sv.fields[0]) && isInteger(valType)
+        }
+        _ => { return false }
+    }
+}
+
 fn checkUnwrap(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind {
     let operandType = checkExpr(ck, operand)
     let inner = unwrapableInner(ck, operandType)
