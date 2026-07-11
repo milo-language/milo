@@ -155,7 +155,11 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
     match value {
         Option.Some(expr) => {
             ck.inReturn = true
+            // expose the declared return type so a bare generic struct/enum literal
+            // (`return HashSet { … }` in setNew<T>) resolves to the right instance
+            if !typeEq(fnRetType, tyUnknown()) { ck.expectedType = Option.Some(fnRetType.clone()) }
             let valType = checkExpr(ck, *expr)
+            ck.expectedType = Option.None
             ck.inReturn = false
             // inside an unannotated closure (fnRetType unknown) this Return's type
             // is the inferred closure return type.

@@ -2694,7 +2694,12 @@ fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPoin
                 let candR = stripOptionPrefix(resolveTyStr(cg, sigs[si].retTy))
                 if cr.len > 0 && candR != cr { ok = false }
             } else if pll != all {
-                ok = false
+                // an int-literal arg (defaults to i64) coerces to any-width int param
+                if isIntLlType(pll) && isIntLlType(all) {
+                    // ok — int coercion
+                } else {
+                    ok = false
+                }
             }
         }
         if ok {
