@@ -914,22 +914,19 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
-### Fixture-sweep bug hunt cont.30 (2026-07-11) — forIterator attempt (REVERTED, deferred)
+### Fixture-sweep bug hunt cont.30 (2026-07-11) — user iterator protocol (LANDED)
 
-Attempted the user-iterator protocol (`for i in c` where `c` has `next(&mut Self): Option<T>`):
-checker binds the loop var to the Some payload of `next`'s return; codegen drives `Type$next`
-until None. Both were written and REVERTED — a minimal repro (`struct C{n} impl{next} … for i
-in c`) makes **milo-self's own compile of that program NON-TERMINATE** (emit-ir SIGKILLs at
-55s; the TS oracle compiles + runs it fine). Bisected:
-- `impl C { next }` WITHOUT the for-loop compiles fine — so it's the `for i in c` path.
-- Hardcoding the checker's element type (bypassing `unwrapableInner`) still hangs → not the
-  Option-payload extraction.
-- Gating the codegen block off still hangs → the hang is triggered by the checker *accepting*
-  the for-in (before/independent of the new codegen), but neither the new checkForIn branch nor
-  the new genForIn block contains an obvious loop. Suspect a milo0 monomorphization/move-analysis
-  fixpoint that non-terminates once the struct for-in is accepted.
-Left GREEN at HEAD (manifest 173/0). Revisit with targeted logging in the milo0 checker's
-post-acceptance pass (mono worklist?) to find the non-terminating loop before re-landing.
+`for x in it` where `it` is a struct with `next(&mut Self): Option<T>` (→ forIterator): checker
+binds the loop var to `next`'s Some payload (via `unwrapableInner` on the method's return type);
+codegen `genForIn` drives `Type$next` until it yields None (mirrors the channel drain loop).
+
+Root-caused the cont.29 non-termination (`eprint` probes narrowed it between START and MID of
+the new checkForIn branch): the guard `ck.inherentImpls.contains(sname) &&
+ck.inherentImpls.get(sname)!.methods.contains("next")` chains `.get(sname)!` — each call CLONES
+the whole nested-Vec `ImplDecl`, and doing it inline (twice, in one `&&`) hangs milo0. Fix =
+extract `let implD = ck.inherentImpls.get(sname)!` ONCE, then `implD.methods.contains(...)`,
+exactly as checkStructMethod does. (This is the documented "repeated HashMap.get()! of a
+struct-with-nested-Vecs value" gotcha — it doesn't just crash, it can hang.) forIterator passes.
 
 ### Fixture-sweep bug hunt cont.29 (2026-07-11) — struct globals + struct-element arrays
 
