@@ -940,6 +940,29 @@ fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argT
         }
         return
     }
+    // Function-type param (`f: (&T) => R`): match against the closure's TFn to
+    // bind params + return (R from a closure's declared return type).
+    if declAst.isFn {
+        match concrete {
+            TypeKind.TFn(argParams, argRet) => {
+                var fi: i64 = 0
+                while fi < declAst.fnParams.len && fi < argParams.len {
+                    let cp = argParams[fi].clone()
+                    inferFromAst(ck, typeParams, declAst.fnParams[fi], cp, inferred)
+                    fi = fi + 1
+                }
+                match declAst.fnRet {
+                    Option.Some(dr) => {
+                        let cr = (*argRet).clone()
+                        inferFromAst(ck, typeParams, *dr, cr, inferred)
+                    }
+                    Option.None => {}
+                }
+            }
+            _ => {}
+        }
+        return
+    }
     if declAst.typeArgs.len == 0 { return }
     // Builtins carry their args structurally in TypeKind.
     match concrete {
@@ -1560,7 +1583,7 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
 
     var paramTypes: Vec<TypeKind> = Vec.new()
     for i in 0..params.len {
-        let pType = typeFromAst(params[i].ty)
+        let pType = normalizeEnumNames(ck, typeFromAst(params[i].ty))
         declare(ck, params[i].name.clone(), VarInfo {
             ty: pType.clone(),
             mutable: false,
@@ -1574,7 +1597,7 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
 
     var inferredRet = tyVoid()
     match retType {
-        Option.Some(rt) => { inferredRet = typeFromAst(rt) }
+        Option.Some(rt) => { inferredRet = normalizeEnumNames(ck, typeFromAst(rt)) }
         Option.None => {}
     }
 

@@ -10,7 +10,7 @@ from "src-milo/checker/types.milo" import {
 }
 from "src-milo/checker/state.milo" import {
     Checker, FnSig, FnParam, StructInfo, CkStructField,
-    EnumInfo, VariantInfo, error,
+    EnumInfo, VariantInfo, error, normalizeEnumNames,
     GenericFnInfo, GenericStructInfo, GenericEnumInfo, StructInst,
 }
 
@@ -541,7 +541,9 @@ fn resolveMonoType(ck: &mut Checker, ty: &MiloType): TypeKind {
             return base
         }
     }
-    return typeFromAst(ty)
+    // normalize so a bare enum name (NodeKind) becomes TEnum, not the uppercase
+    // TStruct fallback — otherwise Option<NodeKind>'s payload mismatches the enum.
+    return normalizeEnumNames(ck, typeFromAst(ty))
 }
 
 fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>): string {
