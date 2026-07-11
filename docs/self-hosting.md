@@ -914,6 +914,24 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.43 (2026-07-11) — promise double-eval FIXED (5 of 6)
+
+Root-caused the cont.42 mystery. Dumping the mono'd IR for `raceLike(ps).await()` showed
+`@raceLike_i64` CALLED TWICE (first result discarded, second awaited). Not a scheduler bug at all
+— **genMethodCall double-evaluates a non-lvalue receiver**: it computes `obj = genExpr(object)`
+early (for the receiver type) AND, for a `&Self` method, re-runs `genLvalue(object)` on the same
+expression. For a side-effecting receiver like `Promise.race(ps)` (which spawns a collector task),
+that spawned the collector TWICE → corrupted/deadlocked green scheduler (looked like double-run).
+Fix: for a non-lvalue receiver (not Ident/FieldAccess/IndexAccess), materialize the already-
+computed `obj` into an alloca instead of re-evaluating; lvalue receivers keep `genLvalue`. GENERAL
+correctness fix (any `foo(x).method()` with side effects). → promiseRace, promiseAll,
+promiseErgonomic, promiseBlockingAll, promiseSleep. Manifest 173/0, converged.
+
+STILL failing — promiseBlockingTask + channelCrossThreadPark + parkUnparkCrossThread: all
+CROSS-THREAD green-task wakeup (a parked green task woken by an OS worker's channel send through
+the scheduler's wakeup fd). A separate, deeper synchronization path in the milo0-compiled
+scheduler (eventfd/pipe cross-thread unpark) — consistent hang, not a flake.
+
 ### Fixture-sweep bug hunt cont.42 (2026-07-11) — promise scheduler shape-matrix
 
 Further bisection of the green-task capture bug (all probes reverted, tree green 173/0). Spawn a
