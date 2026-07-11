@@ -924,14 +924,17 @@ Pinned the cont.34 interface hang. Minimal repro: `interface G { fn greet(self:&
 - Reached checkCall's arg loop for sayHello; `checkExpr(d)` returns fine.
 - Narrowed to the `TRef` arg branch: `typeEq`×2 and `intCoercible(*inner,…)` all COMPLETE
   (so `*inner` is readable), but the very next call — **`typeName(paramType)` — hangs/OOMs**.
-- Since `typeName` only recurses via `typeName(*inner)`, `paramType`'s inner Heap must be a
-  self-referential/infinitely-nested `TRef` chain — yet `intCoercible` read `*inner` as a plain
-  non-integer moments earlier. Suggests a milo0 CLONE-ALIASING bug: cloning the `FnSig`
-  (`ck.functions.get(func)!` copies it) aliases the `Heap<TypeKind>` inside a `&Interface` param
-  so `inner` points back at itself. Only triggers for a trait-name-used-as-a-param-type.
-Next: dump `paramType`'s structure right before `typeName` (tag-by-tag) to confirm the cycle,
-then fix the FnSig/TypeKind clone for this shape. This unblocks dynamic dispatch (fat pointers
-+ itables), the remaining ~7 interface/trait-object fixtures.
+REFINED (cont.37 follow-up): NOT a cyclic type. A bounded `refDepthBounded` peeler shows
+`paramType` is a plain `TRef(TStruct("G"))` — **depth 1 at both registration AND use** (so the
+FnSig clone is fine, and the type traverses cleanly since the peeler never clones the name).
+The hang is specifically in `typeName`'s `TStruct` arm doing **`name.clone()`** — the struct-NAME
+STRING is corrupted, and cloning it hangs/OOMs (`refDepthBounded` skips the name → no hang;
+`intCoercible` only reads the top tag → no hang; `typeName` clones the name → hang). This is a
+milo0 **string use-after-free / corruption** on the trait-as-type param's name, not a logic loop.
+It predates cont.34 (interfaces SIGSEGV'd before; trait registration only changed the symptom to
+an OOM-clone). Root-causing needs memory-level analysis of the self-compiled binary — where the
+`&Interface` param's name-string buffer gets freed/aliased. Deferred with the dynamic-dispatch
+feature (which rebuilds &Interface handling and will likely sidestep it).
 
 ### Fixture-sweep bug hunt cont.35 (2026-07-11) — C-extern fn-pointer params
 
