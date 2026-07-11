@@ -107,16 +107,63 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
 
 // -- Type substitution in MiloType AST nodes --
 
+// Faithfully reconstruct a MiloType (AST form) from a resolved TypeKind so that
+// substituting a compound type param (T -> Vec<i64>) keeps a real nested type,
+// NOT a flattened name string. typeName() renders `Vec<i64>` with angle brackets,
+// which would corrupt both mangling (Channel_Vec<i64>) and re-resolution.
+fn typeKindToMiloType(t: &TypeKind): MiloType {
+    match t {
+        TypeKind.TVec(elem) => {
+            var r = simpleType("Vec")
+            r.typeArgs.push(typeKindToMiloType(*elem))
+            return r
+        }
+        TypeKind.THashMap(key, val) => {
+            var r = simpleType("HashMap")
+            r.typeArgs.push(typeKindToMiloType(*key))
+            r.typeArgs.push(typeKindToMiloType(*val))
+            return r
+        }
+        TypeKind.THeap(inner) => {
+            var r = simpleType("Heap")
+            r.typeArgs.push(typeKindToMiloType(*inner))
+            return r
+        }
+        TypeKind.TPtr(inner) => {
+            var r = typeKindToMiloType(*inner)
+            r.isPtr = true
+            return r
+        }
+        TypeKind.TRef(inner, mutable) => {
+            var r = typeKindToMiloType(*inner)
+            if mutable { r.isRefMut = true } else { r.isRef = true }
+            return r
+        }
+        TypeKind.TArray(elem, size) => {
+            var r = typeKindToMiloType(*elem)
+            r.isArray = true
+            r.arraySize = cloneOptI64(size)
+            return r
+        }
+        TypeKind.TStruct(name) => { return simpleType(name.clone()) }
+        TypeKind.TEnum(name) => { return simpleType(name.clone()) }
+        // scalars (int/float/bool/void/string) have no angle-bracket forms
+        _ => { return simpleType(typeName(t)) }
+    }
+}
+
 fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<TypeKind>): MiloType {
     // Check if this type name is a type parameter
     for i in 0..typeParams.len {
         if ty.name == typeParams[i] {
-            // Replace with the concrete type name. The mangled name subsumes
-            // any type args the source spelled (Box<T> -> Box_string, not
-            // Box_string<T>).
-            var result = ty.clone()
-            result.name = typeName(typeArgs[i])
-            result.typeArgs = Vec.new()
+            // Replace with the concrete type. For a compound arg (Vec<i64>) build a
+            // faithful nested MiloType; monomorphization then subsumes any user-generic
+            // args into the mangled name (Box<T> -> Box_string) via resolveMonoType.
+            var result = typeKindToMiloType(typeArgs[i])
+            // carry the spelled ptr/ref-ness of the param slot (`&T`, `*T`)
+            if ty.isPtr { result.isPtr = true }
+            if ty.isRef { result.isRef = true }
+            if ty.isRefMut { result.isRefMut = true }
             return result
         }
     }
