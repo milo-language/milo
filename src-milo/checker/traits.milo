@@ -195,6 +195,84 @@ fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
     return out
 }
 
+// For each `impl Trait for Struct` that does NOT override a trait method carrying a
+// default body, materialize `Struct$Trait$method` from the default (Self→Struct):
+// register its sig + a traitImpls entry (so `s.method()` resolves) + a codegen fn.
+fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
+    for ii in 0..program.impls.len {
+        if program.impls[ii].typeParams.len > 0 { continue }
+        let sname = program.impls[ii].typeName.clone()
+        match program.impls[ii].traitName {
+            Option.Some(tn2) => {
+                for ti in 0..program.traits.len {
+                    if program.traits[ti].name != tn2 { continue }
+                    for mi in 0..program.traits[ti].methods.len {
+                        let tm = program.traits[ti].methods[mi]
+                        var bodyStmts: Vec<Heap<Stmt>> = Vec.new()
+                        var hasBody = false
+                        match tm.body {
+                            Option.Some(b) => { hasBody = true bodyStmts = cloneStmts(b) }
+                            Option.None => {}
+                        }
+                        if !hasBody { continue }
+                        var overridden = false
+                        for imi in 0..program.impls[ii].methods.len {
+                            if program.impls[ii].methods[imi].name == tm.name { overridden = true }
+                        }
+                        if overridden { continue }
+                        let mangled = sname.clone() + "$" + tn2.clone() + "$" + tm.name.clone()
+                        if ck.functions.contains(mangled) { continue }
+                        var params: Vec<FnParam> = Vec.new()
+                        for pi in 0..tm.params.len {
+                            var pType = resolveAstType(ck, tm.params[pi].ty)
+                            match pType.clone() {
+                                TypeKind.TRef(inner, mutable) => {
+                                    match *inner {
+                                        TypeKind.TStruct(nm) => { if nm == "Self" { pType = TypeKind.TRef(Heap(TypeKind.TStruct(sname.clone())), mutable) } }
+                                        _ => {}
+                                    }
+                                }
+                                TypeKind.TStruct(nm) => { if nm == "Self" { pType = TypeKind.TStruct(sname.clone()) } }
+                                _ => {}
+                            }
+                            params.push(FnParam { name: tm.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
+                        }
+                        var retType = resolveAstType(ck, tm.retType)
+                        match retType.clone() {
+                            TypeKind.TStruct(nm) => { if nm == "Self" { retType = TypeKind.TStruct(sname.clone()) } }
+                            _ => {}
+                        }
+                        let sig = FnSig { params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false }
+                        ck.functions.insert(mangled.clone(), sig.clone())
+                        var methods: HashMap<string, FnSig> = HashMap.new()
+                        methods.insert(tm.name.clone(), sig)
+                        let info = ImplInfo { traitName: Option.Some(tn2.clone()), typeName: sname.clone(), methods: methods }
+                        if ck.traitImpls.contains(sname) {
+                            var list = ck.traitImpls.get(sname)!
+                            list.push(info)
+                            ck.traitImpls.insert(sname.clone(), list)
+                        } else {
+                            var list: Vec<ImplInfo> = Vec.new()
+                            list.push(info)
+                            ck.traitImpls.insert(sname.clone(), list)
+                        }
+                        ck.monomorphizedFns.push(Function {
+                            name: mangled,
+                            typeParams: Vec.new(),
+                            params: substSelfParams(tm.params, sname),
+                            retType: substSelfMiloType(tm.retType, sname),
+                            body: bodyStmts,
+                            isExtern: false,
+                            isVariadic: false,
+                        })
+                    }
+                }
+            }
+            Option.None => {}
+        }
+    }
+}
+
 fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
     // generic impls park until their type monomorphizes (see mono.milo);
     // types that already monomorphized replay immediately

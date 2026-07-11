@@ -14,7 +14,7 @@ from "src-milo/checker/state.milo" import {
     normalizeEnumNames, stmtTerminates, snapshotMoves, restoreMoves, orMoves,
 }
 from "src-milo/checker/expr.milo" import { intCoercible, arrayIntCoercible, checkExpr, tryMove, isRootMutable, deref }
-from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, processDerives, typeImplementsTrait, resolveMethod }
+from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, synthesizeDefaultMethods, processDerives, typeImplementsTrait, resolveMethod }
 from "src-milo/checker/mono.milo" import { registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum }
 
 // -- Statement checker --
@@ -822,6 +822,7 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
 
     // Phase 2: register impls and derive macros
     registerAllImpls(ck, program)
+    synthesizeDefaultMethods(ck, program)
     processDerives(ck, program)
 
     // Register module-level globals in a persistent scope below every function
