@@ -71,6 +71,10 @@ struct Cgen {
     // return from it
     curRetTy: string,
     curContLbl: string,
+    // the block label most recently opened via emitLabel — a branch value's phi
+    // predecessor is wherever control actually is, not the static then/else label
+    // (a nested if-expr in a branch ends in ITS own block).
+    curBlock: string,
     // Deduplication flags for extern declarations
     declaredPrintf: bool,
     declaredPutchar: bool,
@@ -112,6 +116,7 @@ fn cgenNew(): Cgen {
         curBreakLbl: "",
         curRetTy: "",
         curContLbl: "",
+        curBlock: "",
         declaredPrintf: false,
         declaredPutchar: false,
         declaredMalloc: false,
@@ -150,6 +155,12 @@ fn nextLabel(cg: &mut Cgen, base: string): string {
 
 fn emit(cg: &mut Cgen, s: &string) {
     cg.body = cg.body + s
+}
+
+// Open a basic block and record it as the current block (for phi predecessors).
+fn emitLabel(cg: &mut Cgen, lbl: &string) {
+    cg.body = cg.body + lbl.clone() + ":\n"
+    cg.curBlock = lbl.clone()
 }
 
 fn emitG(cg: &mut Cgen, s: &string) {

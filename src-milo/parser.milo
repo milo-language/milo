@@ -969,9 +969,15 @@ fn parsePrimary(p: &mut Parser): Expr {
         let thenE = parseExpr(p)
         expect(p, TokKind.RBrace)
         expect(p, TokKind.Else)
-        expect(p, TokKind.LBrace)
-        let elseE = parseExpr(p)
-        expect(p, TokKind.RBrace)
+        // `else if …` chains into another if-expression; otherwise `else { … }`
+        var elseE = Expr.IntLit(0, Option.None)
+        if at(p, TokKind.If) {
+            elseE = parsePrimary(p)
+        } else {
+            expect(p, TokKind.LBrace)
+            elseE = parseExpr(p)
+            expect(p, TokKind.RBrace)
+        }
         return Expr.IfExpr(Heap(cond), Heap(thenE), Heap(elseE), s)
     }
 

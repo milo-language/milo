@@ -5,7 +5,7 @@ from "src-milo/codegen/types.milo" import {
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy, ensureHashMapTy, nextLabel,
     resolveEnumName, resolveFnName, resolveStructName, resolveTyStr, nameHasMonoPrefix, ensureExit, ensureStrtod, ensureStrlen, astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo,
-    nextTemp, emit, emitG, llType, isUnsigned, llTypeBytes, intBits,
+    nextTemp, emit, emitLabel, emitG, llType, isUnsigned, llTypeBytes, intBits,
     unwrapHeap, stripPercent, binOpInt, cmpOpInt, isArithOp, isCmpOp,
     findLocal, hasLocal, genLoad, ensureMalloc, ensureMemcpy,
     lookupFnRet, lookupFieldIndex, lookupFieldType,
@@ -2888,16 +2888,20 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             let elseLbl = nextLabel(cg, "ifx.else")
             let endLbl = nextLabel(cg, "ifx.end")
             emit(cg, "  br i1 " + cv.v + ", label %" + thenLbl + ", label %" + elseLbl + "\n")
-            emit(cg, thenLbl + ":\n")
+            emitLabel(cg, thenLbl)
             let av = genExpr(cg, *thenE, locs, sigs, hintTy)
+            // the phi predecessor is wherever control actually is now — a nested
+            // if-expr (`else if …`) ends in its OWN block, not thenLbl/elseLbl.
+            let thenPred = cg.curBlock.clone()
             emit(cg, "  br label %" + endLbl + "\n")
-            emit(cg, elseLbl + ":\n")
+            emitLabel(cg, elseLbl)
             let bv = genExpr(cg, *elseE, locs, sigs, av.ty.clone())
+            let elsePred = cg.curBlock.clone()
             emit(cg, "  br label %" + endLbl + "\n")
-            emit(cg, endLbl + ":\n")
+            emitLabel(cg, endLbl)
             let r = nextTemp(cg)
             let ll = llType(av.ty)
-            emit(cg, "  " + r + " = phi " + ll + " [" + av.v + ", %" + thenLbl + "], [" + bv.v + ", %" + elseLbl + "]\n")
+            emit(cg, "  " + r + " = phi " + ll + " [" + av.v + ", %" + thenPred + "], [" + bv.v + ", %" + elsePred + "]\n")
             return Val { v: r, ty: av.ty.clone() }
         }
         Expr.ArrayLit(elems, span) => {
