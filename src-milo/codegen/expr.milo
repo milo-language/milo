@@ -11,7 +11,7 @@ from "src-milo/codegen/types.milo" import {
     lookupFnRet, lookupFieldIndex, lookupFieldType,
     lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
 }
-from "src-milo/codegen/stmt.milo" import { genClosure, genClosureCall }
+from "src-milo/codegen/stmt.milo" import { genClosure, genClosureCall, widenToI64 }
 from "std/io" import { readFile }
 from "src-milo/codegen/strings.milo" import {
     genStringLit, genStringClone, genStringConcat, genStringEq, genStringCmp,
@@ -1944,6 +1944,29 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         let a = genExpr(cg, *args[0], locs, sigs, "i64")
         let b = genExpr(cg, *args[1], locs, sigs, "i64")
         return genStringSlice(cg, obj.v, a.v, b.v)
+    }
+    // v[a..b] → v.slice(a,b): a non-owning %Vec view {data+a*esz, b-a, cap=0}. milo0
+    // never auto-frees Vec buffers (only user Drop$drop), so a cap=0 alias is safe.
+    if isVecTy(obj.ty) && method == "slice" {
+        let elemTy = unwrapVec(resolveTyStr(cg, obj.ty))
+        let elemLl = llType(elemTy)
+        let dataP = nextTemp(cg)
+        emit(cg, "  " + dataP + " = extractvalue %Vec " + obj.v + ", 0\n")
+        let a = genExpr(cg, *args[0], locs, sigs, "i64")
+        let aI = widenToI64(cg, a)
+        let b = genExpr(cg, *args[1], locs, sigs, "i64")
+        let bI = widenToI64(cg, b)
+        let off = nextTemp(cg)
+        emit(cg, "  " + off + " = getelementptr " + elemLl + ", ptr " + dataP + ", i64 " + aI + "\n")
+        let newLen = nextTemp(cg)
+        emit(cg, "  " + newLen + " = sub i64 " + bI + ", " + aI + "\n")
+        let v0 = nextTemp(cg)
+        emit(cg, "  " + v0 + " = insertvalue %Vec undef, ptr " + off + ", 0\n")
+        let v1 = nextTemp(cg)
+        emit(cg, "  " + v1 + " = insertvalue %Vec " + v0 + ", i64 " + newLen + ", 1\n")
+        let v2 = nextTemp(cg)
+        emit(cg, "  " + v2 + " = insertvalue %Vec " + v1 + ", i64 0, 2\n")
+        return Val { v: v2, ty: obj.ty.clone() }
     }
     if objTyLl == "%String" && method == "cstr" {
         let p = nextTemp(cg)
