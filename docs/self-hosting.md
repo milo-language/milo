@@ -866,3 +866,50 @@ should thread the monomorphized name to codegen, or codegen must re-derive it).
 
 calc verified at full RUN parity (earlier "tokenizer miscompile" note was stale — a prior
 float/int-width codegen fix cleared it; expressions + `--help` match the oracle exactly).
+
+### RUN-parity audit (2026-07-11) — the entire COMPILING set matches the oracle
+
+Built every compiling example via milo-self AND the oracle, diffed stdout+exit:
+- **13/13 cli-tools** — `--help` identical, and real ops identical (cat/wc/grep -i/hex/
+  jq `.`+`.name`/rg/tree/fmt on fixtures). (The parallel/timeout `--help` "diffs" were
+  only the oracle's compile-time `unnecessary 'unsafe'` warnings on stderr — a diagnostic
+  gap, not a RUN gap: milo-self doesn't emit that lint. Program stdout matches.)
+- **fib, fizzbuzz, hello, json, pidStep, gdbmiTest, kvstore, calc** — identical.
+- **flightController** — the 30000-tick TUI renders byte-identical; runs continuously so
+  the guard kills it (exit 137 both), first ~13k lines identical (frame-count only diff).
+
+Conclusion: there are **no hidden RUN bugs** in the compiling set. Every remaining parity
+gap is a COMPILE gap, and each traces to closures, the Response name-collision, or
+embedFile. Notably **serve/weather/webserver also pass handler closures**
+(`serve(port, (req: &Request) => { … })`), so **closure codegen actually blocks ~8
+examples** (5 arena + 3 servers), not 5 — decisively the top lever.
+
+### Closure codegen — implementation plan (next focused push; too big for one loop tick)
+
+milo0 `genExpr` has no `Expr.Closure` arm and `emit` writes a single stream (functions
+can't nest in LLVM), so this needs, in order:
+1. **Deferred body buffer.** Add `cg.pendingFns: Vec<string>` (or redirect `emit`).
+   genProgram flushes it after each function. Lets a closure body be emitted as a
+   sibling top-level `define`.
+2. **Closure value repr.** A closure = `%Closure = type { ptr, ptr }` (fnptr, env). The
+   fn-type param `(&T) => R` lowers to `%Closure`. Register `%Closure` once.
+3. **Capture analysis.** Free vars in the body = idents referenced that aren't params,
+   locals declared inside, globals, or fn names. Compute in codegen from `locs` in scope
+   (a name in `locs` but not a closure param ⇒ capture). By-ref default: env = struct of
+   `ptr` to each captured var's alloca.
+4. **genExpr Closure.** Assign `@__closure_N`; save/reset `cg.temp`/`cg.label`/`locs`;
+   emit `define R @__closure_N(ptr %env, <params>)` into `pendingFns`; inside, load each
+   capture from env (gep) as a ref-local, bind params like genFn; gen body. At the call
+   site: alloca env, store captured addresses, build the `{@__closure_N, %env}` pair.
+   Refactor genFn's param-binding + body loop into a shared helper to avoid duplication.
+5. **Indirect call.** In genCall, if the callee name is a local of `%Closure` type,
+   extract fnptr+env and `call R %fnptr(ptr %env, <args>)` instead of a named call.
+6. **Mono-name threading.** The call still carries the bare generic name (`arenaWith`)
+   while sigs/fnRets are keyed by the mangled `arenaWith_Node_Expr`, so `paramHints` is
+   empty and `resolveFnName` can't pick among >1 instantiations. Fix: have the checker
+   record each monomorphized call's resolved name (span-keyed side table read by codegen),
+   or have codegen re-derive it from the concrete arg types.
+
+Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)` captures
+nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
+closures (step 3), then the servers (which also need Response-collision + embedFile).
