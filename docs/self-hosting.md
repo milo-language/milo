@@ -914,6 +914,17 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.24 (2026-07-11) — i64 index widen + raw-ptr field access
+
+- **narrow index → i64 in genIndex** (→ stdSort): a gep index must be i64, but an i32 index
+  (e.g. a loop counter) emitted `getelementptr T, ptr d, i64 %i32val` — a type mismatch.
+  `widenToI64` now sexts it, matching the index-assign path. Shared root: any i32-indexed
+  Vec/ptr read.
+- **raw-pointer field access `p.x` on `*Struct`** (→ ptrFieldAccess): checker auto-derefs
+  `TPtr` (unsafe-gated) in checkFieldAccess, and isRootMutable treats `p.x = …` as a
+  store-through-pointer (not mutation of the `let p`). Codegen genFieldAccess and the assign
+  FieldAccess path load the pointer, then gep the pointee field.
+
 ### Fixture-sweep bug hunt cont.23 (2026-07-11) — string reverse + ptr-global null
 
 - **`s.reverse()`** (→ unicodeReverse): added `reverse` to checkStringMethod (→ string);
