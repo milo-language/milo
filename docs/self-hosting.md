@@ -914,6 +914,16 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.22 (2026-07-11) — `?` auto-From error conversion
+
+`?` propagating a `Result<_, IoError>` out of a fn returning `Result<_, AppError>` where
+`AppError` has a wrapping variant `Io(IoError)` (→ resultFromConversion). genPropagate
+handled only the matching-Err-type case; the mismatched branch was a fail-loud
+`eprint+exit`. Now it scans the ret Err enum's variants for the one whose single payload
+type equals the source Err type, builds that variant around the loaded source-error value
+(`AppError.Io(ev)`), and stores it as the ret Result's Err payload. Completes the typed-error
+`?` story ([[project_typed_errors]]) in milo0.
+
 ### Fixture-sweep bug hunt cont.21 (2026-07-11) — Vec slice v[a..b]
 
 `v[a..b]` non-owning view (→ vecSlice): parser already desugars index-range to `.slice(a,b)`.
