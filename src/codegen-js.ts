@@ -62,6 +62,10 @@ export class CodegenJS {
     this.emit("function __print(s) { __out.push(String(s)); }");
     this.emit("function __flush() { if (__out.length === 0) return; const text = __out.join(''); __out.length = 0; if (typeof process !== 'undefined') process.stdout.write(text); else if (typeof console !== 'undefined') console.log(text); }");
     this.emit("function __assert(cond, msg) { if (!cond) throw new Error('assertion failed: ' + msg); }");
+    // C printf %g: 6 significant digits, trailing zeros trimmed, exponent when
+    // exp < -4 or >= 6 — matches native's float print (which uses %g), so playground
+    // output equals the compiled binary's.
+    this.emit("function __fmtG(x) { if (!isFinite(x)) return String(x); if (x === 0) return '0'; let s = x.toPrecision(6); if (s.indexOf('e') >= 0) { s = Number(s).toExponential(); return s.replace(/e([+-])(\\d)$/, 'e$10$2'); } if (s.indexOf('.') >= 0) s = s.replace(/0+$/, '').replace(/\\.$/, ''); return s; }");
     this.emit("function __clone(v) { if (v === null || typeof v !== 'object') return v; if (Array.isArray(v)) return v.map(__clone); const o = Object.create(Object.getPrototypeOf(v)); for (const k of Object.keys(v)) o[k] = __clone(v[k]); return o; }");
     this.emit("function __eq(a, b) { if (a === b) return true; if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return a === b; if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => __eq(v, b[i])); const ka = Object.keys(a), kb = Object.keys(b); return ka.length === kb.length && ka.every(k => __eq(a[k], b[k])); }");
     this.emit("");
@@ -479,7 +483,8 @@ export class CodegenJS {
     if (expr.type.tag === "string") return val;
     if (expr.type.tag === "bool") return `(${val} ? "true" : "false")`;
     if (expr.type.tag === "char") return `String.fromCharCode(${val})`;
-    if (expr.type.tag === "int" || expr.type.tag === "float") return `String(${val})`;
+    if (expr.type.tag === "float") return `__fmtG(${val})`;
+    if (expr.type.tag === "int") return `String(${val})`;
     return `String(${val})`;
   }
 
