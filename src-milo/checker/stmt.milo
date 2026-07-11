@@ -490,7 +490,21 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
             if isChan {
                 declare(ck, varName.clone(), VarInfo { ty: elemTy, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
             } else {
-                error(ck, "cannot iterate over type '" + sname.clone() + "'", cloneSpan(span))
+                var iterElem: Option<TypeKind> = Option.None
+                if ck.inherentImpls.contains(sname) {
+                    let implD = ck.inherentImpls.get(sname)!
+                    if implD.methods.contains("next") {
+                        iterElem = unwrapableInner(ck, implD.methods.get("next")!.ret)
+                    }
+                }
+                match iterElem {
+                    Option.Some(t) => {
+                        declare(ck, varName.clone(), VarInfo { ty: t, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    }
+                    Option.None => {
+                        error(ck, "cannot iterate over type '" + sname.clone() + "'", cloneSpan(span))
+                    }
+                }
             }
         }
         _ => {

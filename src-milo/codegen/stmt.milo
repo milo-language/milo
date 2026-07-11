@@ -332,6 +332,59 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
                 cg.curContLbl = savedCont
                 return
             }
+            // iterator protocol: a struct with `Type$next(&mut Self): Option<T>` —
+            // drive next() until it yields None, binding the loop var to each Some(v).
+            let itRaw = stripPercent(resolveTyStr(cg, obj.ty))
+            let itNext = itRaw + "$next"
+            if cg.structs.contains(itRaw) && cg.fnRets.contains(itNext) {
+                let optTy = stripPercent(resolveTyStr(cg, lookupFnRet(cg, itNext)))
+                let optLl = "%" + optTy.clone()
+                let someTag = lookupVariantTag(cg, optTy, "Some")
+                let payTypes = lookupVariantPayload(cg, optTy, "Some")
+                let itElemTy = payTypes[0].clone()
+                let itElemLl = llType(itElemTy)
+                let itSlot = nextTemp(cg)
+                emit(cg, "  " + itSlot + " = alloca " + objLl + "\n")
+                emit(cg, "  store " + objLl + " " + obj.v + ", ptr " + itSlot + "\n")
+                let valAddr = nextTemp(cg)
+                emit(cg, "  " + valAddr + " = alloca " + itElemLl + "\n")
+                emit(cg, "  br label %" + condLbl + "\n")
+                emitLabel(cg, condLbl)
+                let r = nextTemp(cg)
+                emit(cg, "  " + r + " = call " + optLl + " @" + itNext + "(ptr " + itSlot + ")\n")
+                let rslot = nextTemp(cg)
+                emit(cg, "  " + rslot + " = alloca " + optLl + "\n")
+                emit(cg, "  store " + optLl + " " + r + ", ptr " + rslot + "\n")
+                let tagP = nextTemp(cg)
+                emit(cg, "  " + tagP + " = getelementptr " + optLl + ", ptr " + rslot + ", i32 0, i32 0\n")
+                let tag = nextTemp(cg)
+                emit(cg, "  " + tag + " = load i32, ptr " + tagP + "\n")
+                let isSome = nextTemp(cg)
+                emit(cg, "  " + isSome + " = icmp eq i32 " + tag + ", " + someTag.toString() + "\n")
+                emit(cg, "  br i1 " + isSome + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+                emitLabel(cg, bodyLbl)
+                let payP = nextTemp(cg)
+                emit(cg, "  " + payP + " = getelementptr " + optLl + ", ptr " + rslot + ", i32 0, i32 1\n")
+                let fp = nextTemp(cg)
+                emit(cg, "  " + fp + " = getelementptr { " + itElemLl + " }, ptr " + payP + ", i32 0, i32 0\n")
+                let pv = nextTemp(cg)
+                emit(cg, "  " + pv + " = load " + itElemLl + ", ptr " + fp + "\n")
+                emit(cg, "  store " + itElemLl + " " + pv + ", ptr " + valAddr + "\n")
+                let locsPre = locs.len
+                locs.push(Local { name: varName.clone(), ty: itElemTy.clone(), addr: valAddr.clone(), isRef: false })
+                var itTerm = false
+                for bi in 0..body.len {
+                    if genStmt(cg, *body[bi], locs, sigs, retTy) { itTerm = true }
+                }
+                while locs.len > locsPre { locs.pop() }
+                if !itTerm { emit(cg, "  br label %" + stepLbl + "\n") }
+                emitLabel(cg, stepLbl)
+                emit(cg, "  br label %" + condLbl + "\n")
+                emitLabel(cg, endLbl)
+                cg.curBreakLbl = savedBreak
+                cg.curContLbl = savedCont
+                return
+            }
             if isHashMapTy(obj.ty) {
                 genForInHashMap(cg, varName, varName2, obj, body, locs, sigs, retTy, condLbl, bodyLbl, stepLbl, endLbl, idxAddr)
                 emit(cg, stepLbl + ":\n")
