@@ -2246,6 +2246,11 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             }
             let t = nextTemp(cg)
             let unsigned = isUnsigned(lv.ty)
+            // If a narrower operand was widened, the RESULT value is the wider
+            // width — report that, not lv.ty. Otherwise `(u8 | i64shifted) as u8`
+            // sees u8->u8 (no-op) and never truncates the actually-i64 value.
+            var resTy = lv.ty.clone()
+            if opLl != lvLl { resTy = opLl.clone() }
             // Floating-point operands use f-instructions, not the integer ops.
             if lvLl == "double" || lvLl == "float" {
                 if isArithOp(op) {
@@ -2271,7 +2276,7 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             if isArithOp(op) {
                 let opname = binOpInt(op, unsigned)
                 emit(cg, "  " + t + " = " + opname + " " + opLl + " " + lvv + ", " + rvv + "\n")
-                return Val { v: t, ty: lv.ty }
+                return Val { v: t, ty: resTy }
             }
             if isCmpOp(op) {
                 let opname = cmpOpInt(op, unsigned)
