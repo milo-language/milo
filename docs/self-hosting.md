@@ -774,3 +774,31 @@ Remaining gaps, bucketed (each is one root cause, not per-example):
 Method: run milo-self over `examples/**`, bucket errors; fix the shared root, not the
 example. `.len` exists as both field (`.len`) and method (`.len()`) — a language wart
 matching the oracle, worth unifying.
+
+### Parity progress (2026-07-10, cont.) — 18/30 examples compile via milo-self
+
+RUN goal (examples must compile AND run correctly). Jumped 13→18 via a stack of
+codegen fixes surfaced by running calc + the json/net examples (all keep manifest
+173 green + byte-identical -O2 convergence):
+- **float codegen**: i8/i16 `.toString()`; int literal in float position → float const;
+  FloatLit always has a decimal (`0.0`→`"0"` was invalid); `as f64`/`as i64` casts
+  emit sitofp/fptosi/fpext etc (were relabels); BinOp on doubles uses fadd/fdiv/fcmp.
+- **extern declares**: `exit()` ensures `@exit`; `strlen` ensured + coordinated.
+- **integer width reconcile**: enum-literal payload store (`Result.Ok(i64)` into a
+  u32 slot) truncs; String.push of a wide byte truncs; **BinOp reports the widened
+  result type** when a narrow operand is extended (so `(u8 | i64shift) as u8` truncs
+  instead of seeing u8→u8 no-op) — this unblocked fetch/httpClient/json.
+
+Verified RUN parity: **json** emits `{"name":"Alice",...}` byte-identical to oracle;
+10/11 cli-tools' `--help` already match the oracle. calc compiles+runs but has a
+calc-specific tokenizer miscompile (outputs first number only) — deferred.
+
+Remaining 12, bucketed:
+- **arena generic inference (5):** minilang, depgraph, domArena, htmlParse, linkedList
+  — `arenaNew<T>()` has no args, so T must come from the expected return type (the
+  `let a: Arena<X> = arenaNew()` annotation); milo0's generic inference is arg-only.
+  Fix: propagate the let/return expected-type hint into checkCall's inference.
+- **global consts (3):** flightController, splitPty, sysmon (`let KEY_QUIT: i32 = 5`
+  at module scope — needs GlobalDecl in AST/parser/checker/codegen).
+- **singles (4):** pkg (gep unsized), kvstore (string `<=`), serve (Option auto-wrap),
+  webserver (embedFile).
