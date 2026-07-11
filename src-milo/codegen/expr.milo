@@ -2214,8 +2214,10 @@ fn genIndex(cg: &mut Cgen, obj: &Expr, idx: &Expr, locs: &Vec<Local>, sigs: &Vec
         let elemLl = llType(elemTy)
         let d = nextTemp(cg)
         emit(cg, "  " + d + " = extractvalue %Vec " + o.v + ", 0\n")
+        // a gep index must be i64; a narrower index (e.g. an i32 loop counter) is widened
+        let iw = widenToI64(cg, i)
         let slot = nextTemp(cg)
-        emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i.v + "\n")
+        emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + iw + "\n")
         let v = nextTemp(cg)
         emit(cg, "  " + v + " = load " + elemLl + ", ptr " + slot + "\n")
         return Val { v: v, ty: elemTy }
@@ -2224,8 +2226,9 @@ fn genIndex(cg: &mut Cgen, obj: &Expr, idx: &Expr, locs: &Vec<Local>, sigs: &Vec
     if o.ty.len > 0 && o.ty[0] == 42 {
         let elemTy = o.ty[1..o.ty.len].clone()
         let elemLl = llType(elemTy)
+        let iw = widenToI64(cg, i)
         let slot = nextTemp(cg)
-        emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + o.v + ", i64 " + i.v + "\n")
+        emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + o.v + ", i64 " + iw + "\n")
         let v = nextTemp(cg)
         emit(cg, "  " + v + " = load " + elemLl + ", ptr " + slot + "\n")
         return Val { v: v, ty: elemTy }
