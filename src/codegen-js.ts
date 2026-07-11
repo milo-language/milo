@@ -231,6 +231,18 @@ export class CodegenJS {
           const k = stmt.varName;
           const v = stmt.varName2 ?? "_";
           this.emit(`for (const [${k}, ${v}] of ${iter}) {`);
+        } else if (stmt.iterableKind === "string") {
+          // milo iterates a string by byte (u8); JS `of` yields chars.
+          const sv = this.nextTemp();
+          const ix = this.nextTemp();
+          this.emit(`const ${sv} = ${iter};`);
+          this.emit(`for (let ${ix} = 0; ${ix} < ${sv}.length; ${ix}++) {`);
+          this.indent++;
+          this.emit(`const ${stmt.varName} = ${sv}.charCodeAt(${ix});`);
+          for (const s of stmt.body) this.genStmt(s);
+          this.indent--;
+          this.emit("}");
+          break;
         } else {
           this.emit(`for (const ${stmt.varName} of ${iter}) {`);
         }
@@ -261,9 +273,19 @@ export class CodegenJS {
         if (arm.pattern.kind === "WildcardPattern") {
           this.emit(`${first ? "if (true" : "} else"} {`);
         } else if (arm.pattern.kind === "LiteralPattern") {
-          const val = typeof arm.pattern.value === "string"
-            ? JSON.stringify(arm.pattern.value)
-            : String(arm.pattern.value);
+          const p = arm.pattern;
+          let val: string;
+          if (p.literalKind === "string") {
+            val = JSON.stringify(p.value);
+          } else if (p.literalKind === "char") {
+            // char subject is a numeric byte (see CharLit) — compare numerically.
+            // pattern.value is the byte as a decimal ("97"); fall back to charCodeAt
+            // if it's an actual character.
+            const n = typeof p.value === "number" ? p.value : Number(p.value);
+            val = String(Number.isNaN(n) ? String(p.value).charCodeAt(0) : n);
+          } else {
+            val = String(p.value); // int/float/bool
+          }
           this.emit(`${first ? "" : "} else "}if (${tmp} === ${val}) {`);
         }
         this.indent++;
@@ -305,7 +327,9 @@ export class CodegenJS {
       case "BoolLit":
         return expr.value ? "true" : "false";
       case "CharLit":
-        return `String.fromCharCode(${expr.value})`;
+        // a char literal is a u8 byte value (65 for 'A'), not a 1-char string —
+        // match/comparison is numeric; coerceToString converts back for display.
+        return String(expr.value);
       case "StringLit":
         return JSON.stringify(expr.value);
       case "Ident":
@@ -327,6 +351,10 @@ export class CodegenJS {
         return `Array.from({length: ${expr.count}}, () => __clone(${val}))`;
       }
       case "IndexAccess":
+        // milo strings index by byte (u8); JS string[i] is a 1-char string.
+        // charCodeAt gives the byte for ASCII (multi-byte UTF-8 handled elsewhere).
+        if (expr.object.type.tag === "string")
+          return `${this.genExpr(expr.object)}.charCodeAt(${this.genExpr(expr.index)})`;
         return `${this.genExpr(expr.object)}[${this.genExpr(expr.index)}]`;
       case "EnumLit": {
         const args = expr.args.map(a => this.genExpr(a)).join(", ");
