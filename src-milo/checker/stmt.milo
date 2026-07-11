@@ -471,6 +471,22 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
                 }
             }
         }
+        TypeKind.TStruct(sname) => {
+            // Channel<T> is iterable — `for x in ch` drains via recv() until closed.
+            var isChan = false
+            var elemTy = tyUnknown()
+            for ii in 0..ck.structInsts.len {
+                if ck.structInsts[ii].mangled == sname && ck.structInsts[ii].base == "Channel" {
+                    isChan = true
+                    if ck.structInsts[ii].args.len > 0 { elemTy = ck.structInsts[ii].args[0].clone() }
+                }
+            }
+            if isChan {
+                declare(ck, varName.clone(), VarInfo { ty: elemTy, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+            } else {
+                error(ck, "cannot iterate over type '" + sname.clone() + "'", cloneSpan(span))
+            }
+        }
         _ => {
             if !typeEq(iterType, tyUnknown()) {
                 error(ck, "cannot iterate over type '" + typeName(iterType) + "'", cloneSpan(span))

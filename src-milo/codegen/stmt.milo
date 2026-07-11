@@ -2,10 +2,10 @@
 from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm, Param, MiloType, StructLitField, LiteralKind }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig,
-    nextTemp, nextLabel, emit, emitG, llType, stripPercent, resolveTyStr, ensureMalloc,
+    nextTemp, nextLabel, emit, emitG, emitLabel, llType, stripPercent, resolveTyStr, ensureMalloc,
     findLocal, hasLocal, genLoad, isVecTy, unwrapVec,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy,
-    lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
+    lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload, lookupFnRet
 }
 from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy }
 from "src-milo/codegen/strings.milo" import { genStringAppendInPlace, genStringEq, genStringLit }
@@ -270,6 +270,55 @@ fn genForIn(cg: &mut Cgen, varName: &string, varName2: &Option<string>, iterable
             // Vec, string, or HashMap: copy the 3-word header, walk by index.
             let obj = genExpr(cg, iterable, locs, sigs, "")
             let objLl = llType(obj.ty)
+            // `for x in channel` — drain via recv() until it returns Err (closed).
+            if obj.ty.len > 8 && obj.ty[0] == 67 && obj.ty[1] == 104 && obj.ty[2] == 97 && obj.ty[3] == 110 && obj.ty[4] == 110 && obj.ty[5] == 101 && obj.ty[6] == 108 && obj.ty[7] == 95 {
+                let elemLl = llType(obj.ty[8..obj.ty.len].clone())
+                let recvName = obj.ty.clone() + "$recv"
+                let resultTy = stripPercent(resolveTyStr(cg, lookupFnRet(cg, recvName)))
+                let resultLl = "%" + resultTy.clone()
+                let okTag = lookupVariantTag(cg, resultTy, "Ok")
+                let chSlot = nextTemp(cg)
+                emit(cg, "  " + chSlot + " = alloca " + objLl + "\n")
+                emit(cg, "  store " + objLl + " " + obj.v + ", ptr " + chSlot + "\n")
+                let valAddr = nextTemp(cg)
+                emit(cg, "  " + valAddr + " = alloca " + elemLl + "\n")
+                emit(cg, "  br label %" + condLbl + "\n")
+                emitLabel(cg, condLbl)
+                let r = nextTemp(cg)
+                emit(cg, "  " + r + " = call " + resultLl + " @" + recvName + "(ptr " + chSlot + ")\n")
+                let rslot = nextTemp(cg)
+                emit(cg, "  " + rslot + " = alloca " + resultLl + "\n")
+                emit(cg, "  store " + resultLl + " " + r + ", ptr " + rslot + "\n")
+                let tagP = nextTemp(cg)
+                emit(cg, "  " + tagP + " = getelementptr " + resultLl + ", ptr " + rslot + ", i32 0, i32 0\n")
+                let tag = nextTemp(cg)
+                emit(cg, "  " + tag + " = load i32, ptr " + tagP + "\n")
+                let isOk = nextTemp(cg)
+                emit(cg, "  " + isOk + " = icmp eq i32 " + tag + ", " + okTag.toString() + "\n")
+                emit(cg, "  br i1 " + isOk + ", label %" + bodyLbl + ", label %" + endLbl + "\n")
+                emitLabel(cg, bodyLbl)
+                let payP = nextTemp(cg)
+                emit(cg, "  " + payP + " = getelementptr " + resultLl + ", ptr " + rslot + ", i32 0, i32 1\n")
+                let fp = nextTemp(cg)
+                emit(cg, "  " + fp + " = getelementptr { " + elemLl + " }, ptr " + payP + ", i32 0, i32 0\n")
+                let pv = nextTemp(cg)
+                emit(cg, "  " + pv + " = load " + elemLl + ", ptr " + fp + "\n")
+                emit(cg, "  store " + elemLl + " " + pv + ", ptr " + valAddr + "\n")
+                let locsPre = locs.len
+                locs.push(Local { name: varName.clone(), ty: obj.ty[8..obj.ty.len].clone(), addr: valAddr.clone(), isRef: false })
+                var chTerm = false
+                for bi in 0..body.len {
+                    if genStmt(cg, *body[bi], locs, sigs, retTy) { chTerm = true }
+                }
+                while locs.len > locsPre { locs.pop() }
+                if !chTerm { emit(cg, "  br label %" + stepLbl + "\n") }
+                emitLabel(cg, stepLbl)
+                emit(cg, "  br label %" + condLbl + "\n")
+                emitLabel(cg, endLbl)
+                cg.curBreakLbl = savedBreak
+                cg.curContLbl = savedCont
+                return
+            }
             if isHashMapTy(obj.ty) {
                 genForInHashMap(cg, varName, varName2, obj, body, locs, sigs, retTy, condLbl, bodyLbl, stepLbl, endLbl, idxAddr)
                 emit(cg, stepLbl + ":\n")
