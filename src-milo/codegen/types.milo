@@ -176,6 +176,10 @@ fn llType(t: &string): string {
     if t == "i64" || t == "u64" || t == "int" { return "i64" }
     if t == "f32" { return "float" }
     if t == "f64" || t == "float" { return "double" }
+    // Idempotent on the LLVM float type: some Vals carry "double" directly (float
+    // literals, float-op results). Without this, llType("double") hit the i32
+    // fallback → a float arg emitted as `i32 3.5`.
+    if t == "double" { return "double" }
     if t == "bool" { return "i1" }
     if t == "void" { return "void" }
     if t == "ptr" { return "ptr" }
