@@ -118,6 +118,7 @@ fn keywordKind(s: &string): TokKind {
     if s == "continue" { return TokKind.Continue }
     if s == "as" { return TokKind.As }
     if s == "trait" { return TokKind.Trait }
+    if s == "interface" { return TokKind.Trait }
     if s == "impl" { return TokKind.Impl }
     if s == "for" { return TokKind.For }
     if s == "in" { return TokKind.In }
