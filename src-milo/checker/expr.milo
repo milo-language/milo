@@ -929,7 +929,8 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
     let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
     for i in 0..limit {
         let argType = checkExpr(ck, *args[i])
-        if !typeEq(variantInfo.fields[i], argType) && !containsUnknown(argType) {
+        if !typeEq(variantInfo.fields[i], argType) && !containsUnknown(argType) &&
+            !intCoercible(variantInfo.fields[i], argType, *args[i]) {
             error(ck, "argument " + (i + 1).toString() + " of '" + enumName.clone() + "." + variant.clone() + "': expected " + typeName(variantInfo.fields[i]) + ", got " + typeName(argType), cloneSpan(span))
         }
         tryMove(ck, *args[i])

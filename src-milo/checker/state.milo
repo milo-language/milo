@@ -319,6 +319,14 @@ fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
             }
             return TypeKind.TArray(Heap(normalizeEnumNames(ck, *elem)), sz)
         }
+        // recurse into fn types: a `(&Expr) => Expr` param built from a bare name
+        // otherwise keeps its inner Expr as the TStruct fallback and fails typeEq
+        // against a closure whose own type resolved the name to TEnum.
+        TypeKind.TFn(params, ret) => {
+            var nps: Vec<TypeKind> = Vec.new()
+            for i in 0..params.len { nps.push(normalizeEnumNames(ck, params[i])) }
+            return TypeKind.TFn(nps, Heap(normalizeEnumNames(ck, *ret)))
+        }
         _ => { return t.clone() }
     }
 }
