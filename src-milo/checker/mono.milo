@@ -253,6 +253,13 @@ fn substExpr(e: &Expr, tps: &Vec<string>, tas: &Vec<TypeKind>): Expr {
         Expr.StringLit(v, span) => { return Expr.StringLit(v.clone(), cloneSpan(span)) }
         Expr.CharLit(v, span) => { return Expr.CharLit(v, cloneSpan(span)) }
         Expr.Ident(name, span) => { return Expr.Ident(name.clone(), cloneSpan(span)) }
+        Expr.JsonObject(fields, span) => {
+            var fs: Vec<StructLitField> = Vec.new()
+            for i in 0..fields.len {
+                fs.push(StructLitField { name: fields[i].name.clone(), value: Heap(substExpr(*fields[i].value, tps, tas)) })
+            }
+            return Expr.JsonObject(fs, cloneSpan(span))
+        }
     }
 }
 

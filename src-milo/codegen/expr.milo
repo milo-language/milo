@@ -1814,6 +1814,35 @@ fn genFormat(cg: &mut Cgen, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Ve
 // as-is, wrapped in quotes). NOTE: string values are not yet RFC-escaped, so a
 // field containing a quote/backslash produces invalid JSON (the checker permits
 // only scalar fields; escaping is a follow-up).
+// Serialize an anonymous JSON object literal `{ k: v, … }` to a JSON string,
+// matching genJsonStringify's format (string values quoted; numbers/bools bare).
+fn genJsonObject(cg: &mut Cgen, fields: &Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    var acc = genStringLit(cg, "{")
+    for i in 0..fields.len {
+        if i > 0 {
+            let comma = genStringLit(cg, ",")
+            acc = genStringConcat(cg, acc.v, comma.v)
+        }
+        let key = genStringLit(cg, "\"" + fields[i].name.clone() + "\":")
+        acc = genStringConcat(cg, acc.v, key.v)
+        let fv = genExpr(cg, *fields[i].value, locs, sigs, "")
+        let isStr = llType(fv.ty) == "%String"
+        if isStr {
+            let q = genStringLit(cg, "\"")
+            acc = genStringConcat(cg, acc.v, q.v)
+        }
+        let disp = genDisplayString(cg, fv.v, fv.ty, locs, sigs)
+        acc = genStringConcat(cg, acc.v, disp.v)
+        if isStr {
+            let q2 = genStringLit(cg, "\"")
+            acc = genStringConcat(cg, acc.v, q2.v)
+        }
+    }
+    let close = genStringLit(cg, "}")
+    acc = genStringConcat(cg, acc.v, close.v)
+    return acc
+}
+
 fn genJsonStringify(cg: &mut Cgen, arg: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let sv = genExpr(cg, arg, locs, sigs, "")
     let structName = stripPercent(sv.ty)
@@ -2687,6 +2716,9 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         }
         Expr.StructLit(name, fields, span) => {
             return genStructLit(cg, name, fields, locs, sigs)
+        }
+        Expr.JsonObject(fields, span) => {
+            return genJsonObject(cg, fields, locs, sigs)
         }
         Expr.FieldAccess(object, field, span) => {
             return genFieldAccess(cg, *object, field, locs, sigs)

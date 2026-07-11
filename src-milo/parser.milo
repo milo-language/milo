@@ -1084,6 +1084,15 @@ fn parsePrimary(p: &mut Parser): Expr {
         return expr
     }
 
+    // Anonymous JSON object literal `{ key: value, … }` (or empty `{}`)
+    if tok.kind == TokKind.LBrace {
+        let n1 = peekN(p, 1)
+        let n2 = peekN(p, 2)
+        if n1.kind == TokKind.RBrace || (n1.kind == TokKind.Ident && n2.kind == TokKind.Colon) {
+            return parseJsonObject(p, s)
+        }
+    }
+
     // Fallback — should not reach here in valid input
     advance(p)
     return Expr.Ident("error_unexpected", s)
@@ -1101,6 +1110,23 @@ fn parseStructLit(p: &mut Parser, name: string, s: Option<Span>): Expr {
     }
     expect(p, TokKind.RBrace)
     return Expr.StructLit(name, fields, s)
+}
+
+// Anonymous JSON object literal `{ key: value, … }` (no type name). Serializes
+// to a JSON string; used by `ctx.json({...})`.
+fn parseJsonObject(p: &mut Parser, s: Option<Span>): Expr {
+    expect(p, TokKind.LBrace)
+    var fields: Vec<StructLitField> = Vec.new()
+    while !at(p, TokKind.RBrace) {
+        if at(p, TokKind.Eof) { break }
+        let fieldName = expect(p, TokKind.Ident).value
+        expect(p, TokKind.Colon)
+        let value = parseExpr(p)
+        fields.push(StructLitField { name: fieldName, value: Heap(value) })
+        matchTok(p, TokKind.Comma)
+    }
+    expect(p, TokKind.RBrace)
+    return Expr.JsonObject(fields, s)
 }
 
 fn parseCall(p: &mut Parser, name: string, s: Option<Span>): Expr {

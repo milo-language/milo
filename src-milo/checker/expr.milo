@@ -119,6 +119,16 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
         Expr.StructLit(name, fields, span) => {
             return checkStructLit(ck, name, fields, span)
         }
+        Expr.JsonObject(fields, span) => {
+            // a JSON object literal type-checks its field values and is a string
+            for i in 0..fields.len {
+                let ft = checkExpr(ck, *fields[i].value)
+                if !isNumeric(ft) && !typeEq(ft, tyString()) && !typeEq(ft, tyBool()) && !typeEq(ft, tyUnknown()) {
+                    error(ck, "JSON object field '" + fields[i].name.clone() + "' must be string/number/bool", cloneSpan(span))
+                }
+            }
+            return tyString()
+        }
         Expr.FieldAccess(obj, field, span) => {
             return checkFieldAccess(ck, *obj, field, span)
         }

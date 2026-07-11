@@ -100,6 +100,9 @@ enum Expr {
     RangeExpr(Heap<Expr>, Heap<Expr>, Option<Span>),
     IsExpr(Heap<Expr>, Heap<Pattern>, Option<Span>),
     IfExpr(Heap<Expr>, Heap<Expr>, Heap<Expr>, Option<Span>),
+    // anonymous JSON object literal `{ key: value, … }` — serializes to a JSON
+    // string (used by `ctx.json({...})`).
+    JsonObject(Vec<StructLitField>, Option<Span>),
 }
 
 // -- Patterns --
@@ -399,6 +402,13 @@ impl Clone for Expr {
                     fs.push(fields[i].clone())
                 }
                 return Expr.StructLit(name.clone(), fs, cloneSpan(span))
+            }
+            Expr.JsonObject(fields, span) => {
+                var fs: Vec<StructLitField> = Vec.new()
+                for i in 0..fields.len {
+                    fs.push(fields[i].clone())
+                }
+                return Expr.JsonObject(fs, cloneSpan(span))
             }
             Expr.FieldAccess(obj, field, span) => {
                 return Expr.FieldAccess(Heap((*obj).clone()), field.clone(), cloneSpan(span))
