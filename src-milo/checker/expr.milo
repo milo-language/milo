@@ -668,12 +668,35 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
 // -- Struct literals --
 
 fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>, span: &Option<Span>): TypeKind {
-    if !ck.structs.contains(name) {
-        error(ck, "unknown struct '" + name.clone() + "'", cloneSpan(span))
+    var structName = name.clone()
+    // A bare generic-struct literal (`Arena { ... }` inside arenaNew<T>) isn't a
+    // registered struct on its own; if the expected type is a monomorphized
+    // instance whose base is this name, use that instance (Arena → Arena_DLNode).
+    if !ck.structs.contains(structName) {
+        match ck.expectedType {
+            Option.Some(et) => {
+                match et {
+                    TypeKind.TStruct(mangled) => {
+                        var bi: i64 = 0
+                        while bi < ck.structInsts.len {
+                            if ck.structInsts[bi].mangled == mangled && ck.structInsts[bi].base == structName {
+                                structName = mangled.clone()
+                            }
+                            bi = bi + 1
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Option.None => {}
+        }
+    }
+    if !ck.structs.contains(structName) {
+        error(ck, "unknown struct '" + structName.clone() + "'", cloneSpan(span))
         return tyUnknown()
     }
 
-    let info = ck.structs.get(name)!
+    let info = ck.structs.get(structName)!
     for i in 0..fields.len {
         var found = false
         for j in 0..info.fields.len {
@@ -704,11 +727,11 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
             if fields[m].name == info.fields[k].name { present = true }
         }
         if !present {
-            error(ck, "missing field '" + info.fields[k].name.clone() + "' in struct '" + name.clone() + "'", cloneSpan(span))
+            error(ck, "missing field '" + info.fields[k].name.clone() + "' in struct '" + structName.clone() + "'", cloneSpan(span))
         }
     }
 
-    return TypeKind.TStruct(name.clone())
+    return TypeKind.TStruct(structName.clone())
 }
 
 // -- Field access --
