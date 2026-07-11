@@ -63,6 +63,8 @@ struct Cgen {
     fnRets: HashMap<string, string>,
     structs: HashMap<string, Vec<FieldInfo>>,
     enums: HashMap<string, CgEnumInfo>,
+    // module-level global constants: name -> llvm type (referenced via @name)
+    globalVars: HashMap<string, string>,
     // Loop labels for break/continue
     curBreakLbl: string,
     // enclosing fn's resolved return type string — `?` builds the early
@@ -96,6 +98,7 @@ fn cgenNew(): Cgen {
         fnRets: HashMap.new(),
         structs: HashMap.new(),
         enums: HashMap.new(),
+        globalVars: HashMap.new(),
         curBreakLbl: "",
         curRetTy: "",
         curContLbl: "",

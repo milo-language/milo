@@ -2145,6 +2145,17 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return Val { v: c.toString(), ty: "i8" }
         }
         Expr.Ident(name, span) => {
+            // A module global (unless a local shadows it): load @name.
+            var isLocal = false
+            for li in 0..locs.len {
+                if locs[li].name == name { isLocal = true }
+            }
+            if !isLocal && cg.globalVars.contains(name) {
+                let gll = cg.globalVars.get(name)!
+                let g = nextTemp(cg)
+                emit(cg, "  " + g + " = load " + gll + ", ptr @" + name.clone() + "\n")
+                return Val { v: g, ty: gll }
+            }
             let local = findLocal(locs, name)
             let lt = llType(local.ty)
             let loaded = genLoad(cg, local.addr, lt)

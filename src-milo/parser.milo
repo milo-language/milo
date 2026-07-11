@@ -4,7 +4,7 @@ from "src-milo/ast.milo" import {
     MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
     EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, TraitDecl,
     TraitMethod, ImplDecl, Attribute, TypeParam, StructLitField, LiteralKind,
-    simpleType, ptrType
+    GlobalDecl, simpleType, ptrType
 }
 
 struct Parser {
@@ -1221,6 +1221,7 @@ fn parse(p: &mut Parser): Program {
     var imports: Vec<ImportDecl> = Vec.new()
     var traits: Vec<TraitDecl> = Vec.new()
     var impls: Vec<ImplDecl> = Vec.new()
+    var globals: Vec<GlobalDecl> = Vec.new()
 
     while !at(p, TokKind.Eof) {
         // Collect attributes
@@ -1247,6 +1248,8 @@ fn parse(p: &mut Parser): Program {
             traits.push(parseTraitDecl(p))
         } else if at(p, TokKind.Impl) {
             impls.push(parseImplDecl(p))
+        } else if at(p, TokKind.Let) {
+            globals.push(parseGlobal(p))
         } else {
             // Skip unexpected token
             advance(p)
@@ -1260,5 +1263,20 @@ fn parse(p: &mut Parser): Program {
         imports: imports,
         traits: traits,
         impls: impls,
+        globals: globals,
     }
+}
+
+// Module-scope `let NAME[: T] = <const-expr>`.
+fn parseGlobal(p: &mut Parser): GlobalDecl {
+    let s = span(peek(p))
+    expect(p, TokKind.Let)
+    let name = expect(p, TokKind.Ident).value
+    var ty: Option<MiloType> = Option.None
+    if matchTok(p, TokKind.Colon) {
+        ty = Option.Some(parseType(p))
+    }
+    expect(p, TokKind.Eq)
+    let value = parseExpr(p)
+    return GlobalDecl { name: name, ty: ty, value: Heap(value), span: s }
 }

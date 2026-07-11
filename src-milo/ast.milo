@@ -202,6 +202,15 @@ struct ImplDecl {
     span: Option<Span>,
 }
 
+// Module-scope `let NAME: T = <const>` — a global constant. Codegen emits it as
+// an LLVM global with a constant initializer; references load it.
+struct GlobalDecl {
+    name: string,
+    ty: Option<MiloType>,
+    value: Heap<Expr>,
+    span: Option<Span>,
+}
+
 struct Program {
     structs: Vec<StructDecl>,
     enums: Vec<EnumDecl>,
@@ -209,6 +218,7 @@ struct Program {
     imports: Vec<ImportDecl>,
     traits: Vec<TraitDecl>,
     impls: Vec<ImplDecl>,
+    globals: Vec<GlobalDecl>,
 }
 
 // -- Clone impls --
@@ -220,6 +230,20 @@ fn cloneSpan(sp: &Option<Span>): Option<Span> {
     match sp {
         Option.Some(s) => { return Option.Some(s) }
         Option.None => { return Option.None }
+    }
+}
+
+fn cloneGlobal(g: &GlobalDecl): GlobalDecl {
+    var ty: Option<MiloType> = Option.None
+    match g.ty {
+        Option.Some(t) => { ty = Option.Some(t.clone()) }
+        Option.None => {}
+    }
+    return GlobalDecl {
+        name: g.name.clone(),
+        ty: ty,
+        value: Heap((*g.value).clone()),
+        span: cloneSpan(g.span),
     }
 }
 

@@ -707,6 +707,21 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     registerAllImpls(ck, program)
     processDerives(ck, program)
 
+    // Register module-level globals in a persistent scope below every function
+    // scope, so function bodies can reference them (e.g. `if key == KEY_QUIT`).
+    pushScope(ck)
+    for gi in 0..program.globals.len {
+        var gty = tyUnknown()
+        match program.globals[gi].ty {
+            Option.Some(t) => { gty = resolveAstType(ck, t) }
+            Option.None => { gty = checkExpr(ck, *program.globals[gi].value) }
+        }
+        declare(ck, program.globals[gi].name.clone(), VarInfo {
+            ty: gty, mutable: false, moved: false, borrowed: false, read: true,
+            span: cloneSpan(program.globals[gi].span),
+        })
+    }
+
     // Phase 3: check function bodies
     i = 0
     while i < program.functions.len {

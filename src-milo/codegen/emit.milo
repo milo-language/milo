@@ -1,5 +1,35 @@
 // Top-level codegen: function emission, program registration, IR assembly
-from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl }
+from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl, Expr }
+
+// Constant initializer text for a module-global's value expression. Globals must
+// be compile-time constants (int/bool/float/char literals, optionally negated).
+fn constInitOf(e: &Expr, llTy: &string): string {
+    match e {
+        Expr.IntLit(n, span) => {
+            if llTy == "double" || llTy == "float" { return n.toString() + ".0" }
+            return n.toString()
+        }
+        Expr.BoolLit(b, span) => {
+            if b { return "1" }
+            return "0"
+        }
+        Expr.CharLit(c, span) => { return c.toString() }
+        Expr.FloatLit(f, span) => {
+            var fs = f.toString()
+            var hasPt = false
+            for i in 0..fs.len {
+                if fs[i] == 46 || fs[i] == 101 || fs[i] == 69 { hasPt = true }
+            }
+            if !hasPt { fs = fs + ".0" }
+            return fs
+        }
+        Expr.UnaryOp(op, operand, span) => {
+            if op == "-" { return "-" + constInitOf(*operand, llTy) }
+            return "0"
+        }
+        _ => { return "0" }
+    }
+}
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
     cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, payloadBytes, resolveTyStr,
@@ -162,6 +192,18 @@ fn genProgram(prog: Program): string {
     emitG(cg, "@_milo_argc_global = internal global i32 0\n")
     emitG(cg, "@_milo_argv_global = internal global ptr null\n")
     emitG(cg, "@_milo_scheduler = internal global ptr null\n")
+
+    // Module-level constants: `@name = global <ty> <const>`, loaded at each use.
+    for gi in 0..prog.globals.len {
+        var gllTy = "i64"
+        match prog.globals[gi].ty {
+            Option.Some(t) => { gllTy = llType(astTypeStr(t)) }
+            Option.None => {}
+        }
+        let gval = constInitOf(*prog.globals[gi].value, gllTy)
+        emitG(cg, "@" + prog.globals[gi].name.clone() + " = global " + gllTy + " " + gval + "\n")
+        cg.globalVars.insert(prog.globals[gi].name.clone(), gllTy)
+    }
 
     // Register function return types. Generic templates never codegen — only
     // their monomorphized copies (appended to the program by main.milo) do.
