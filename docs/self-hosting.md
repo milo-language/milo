@@ -914,6 +914,20 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.33 (2026-07-11) — closure-arg disambiguation by param ret
+
+`arenaModify(self, h, f)` fell to a bare `@arenaModify` (→ arenaMethod): `disambiguateGenericCall`'s
+closure branch compared the arg closure's carried return against the FUNCTION's return — an
+arenaWith-only heuristic (arenaWith returns `Option<R>`, closure returns `R`). arenaModify's
+closure is `(T)=>T` but the fn returns `bool`, so the check wrongly rejected. Now it matches the
+CANDIDATE param's closure return (`arenaModify_string`'s `(string)=>string` vs `_i64`'s
+`(i64)=>i64`) when both are carried, falling back to the `Option<R>` fn-ret heuristic otherwise.
+
+Remaining buckets are all large/deferred: trait-object/interface dynamic dispatch (~9 — milo0
+has ZERO vtable support; `interface` parses as a trait and dispatch SIGSEGVs; needs fat pointers
+`{data,itable}` + itable globals + coerce/dispatch across checker/lower/codegen), extern-struct
+C-FFI (~10, needs peer `.c` objects), promise green-scheduler runtime (~6).
+
 ### Fixture-sweep bug hunt cont.32 (2026-07-11) — type aliases + ranged-int types
 
 `type Altitude = i32(0..50000)` (→ rangedIntegers, rangePropagation): milo0 had no top-level
