@@ -914,6 +914,21 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.29 (2026-07-11) — struct globals + struct-element arrays
+
+The previously-deferred "global consts / struct-array globals" bucket:
+- **struct-typed globals** (→ globalStructInit): the `@global = …` emission loop ran BEFORE the
+  struct/enum `%Name = type {…}` decls, so `var o: Point = …` forward-referenced an undeclared
+  `%Point` → "invalid type for null constant". Relocated the emission loop to AFTER the type
+  decls (global-var *type registration* stays early, for function refs). A struct global with an
+  all-const-scalar literal now emits an aggregate constant `%Point { i32 10, i32 20 }`.
+- **struct-element global arrays** (→ globalStructArray): `var xs: [S;N] = [S{…}; N]` now
+  materializes a writable `[N x %S]` data global of struct constants (`structLitConst` helper) and
+  points the `%Vec` at it, instead of zero-init (empty Vec). Extends the scalar-array-global path.
+
+Both are compile-time-constant only (all-const-scalar fields); a struct/array global with a
+non-const or aggregate field still zero-inits (milo0 has no startup global-init pass).
+
 ### Fixture-sweep bug hunt cont.28 (2026-07-11) — operator overloading (+,-,*,/)
 
 `a + b` on a struct with `impl Add for Vec2` (→ operatorOverload): checker allows the arith op
