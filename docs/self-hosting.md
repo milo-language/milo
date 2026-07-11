@@ -914,6 +914,13 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.10 (2026-07-11) — channel for-in iteration
+
+- **`for x in channel`** — drains the channel via `recv()` until it returns Err (closed).
+  Checker yields the element type from the `Channel<T>` `structInsts` record; codegen emits
+  a loop that calls `Channel_<T>$recv`, branches on the Result tag (Ok → bind + body, Err →
+  break). (channelIterator, channelCloseGreen)
+
 ### Fixture-sweep bug hunt cont.9 (2026-07-11) — generic-call/struct hint resolution
 
 Two codegen generic-resolution fixes that together pass arenaMethod (Arena API via
