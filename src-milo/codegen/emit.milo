@@ -237,7 +237,7 @@ fn genProgram(prog: Program, sourceDir: string): string {
     // the current green scheduler (read/written by _schedulerGet/_schedulerSet).
     emitG(cg, "@_milo_argc_global = internal global i32 0\n")
     emitG(cg, "@_milo_argv_global = internal global ptr null\n")
-    emitG(cg, "@_milo_scheduler = internal global ptr null\n")
+    emitG(cg, "@_milo_scheduler = internal thread_local global ptr null\n")
     // closure/fn value = { fn pointer, environment pointer }
     emitG(cg, "%Closure = type { ptr, ptr }\n")
 
