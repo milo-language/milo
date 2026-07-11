@@ -914,6 +914,21 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.12 (2026-07-11) — compound assign + Vec.find/any/all
+
+- **Compound assignment** `+= -= *= /= %= &= |= ^=` (→276): lexer two-char tokens (before
+  the single-char ops), 8 new TokKind variants, parser desugars `x op= v` → `x = x op v`
+  via a `compoundOp` map. (compoundAssign, compoundBitwise)
+- **`Vec.find` / `any` / `all`** closure predicates (→278): checker sets a `(&T)=>bool`
+  hint (find→`Option<T>`, any/all→`bool`); codegen `genVecFindAnyAll` walks the Vec calling
+  the predicate by-ptr, short-circuiting (find deep-clones the first match into an Option,
+  any breaks on first true, all breaks on first false). Reuses the map/filter closure ABI.
+  (vecFind, vecAnyAll)
+
+Remaining "other" bucket clusters (next targets): fnPtr dispatch (~8), promise* (~6),
+trait-objects/dynamic-dispatch (~9, deferred — vtables), extern-struct C-FFI ABI (~10,
+deferred — need peer .c objects), integer arith (saturating/wrapping/ranged).
+
 ### Fixture-sweep bug hunt cont.11 (2026-07-11) — untyped closures + Vec.map/filter
 
 Multi-part functional feature (→273, unlocked several untyped-closure fixtures):
