@@ -82,7 +82,11 @@ fn genStringClone(cg: &mut Cgen, sv: &string): Val {
     emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
     let s1 = nextTemp(cg)
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
-    return Val { v: s1, ty: "string" }
+    // cap = allocated bytes (sz), not undef: a later in-place append reads cap to
+    // decide whether to grow — leaving it undef risks writing past this buffer.
+    let s2 = nextTemp(cg)
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 " + sz + ", 2\n")
+    return Val { v: s2, ty: "string" }
 }
 
 // String concat: malloc(a.len + b.len + 1), memcpy both halves.
@@ -115,7 +119,10 @@ fn genStringConcat(cg: &mut Cgen, av: &string, bv: &string): Val {
     emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
     let s1 = nextTemp(cg)
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + total + ", 1\n")
-    return Val { v: s1, ty: "string" }
+    // cap = allocated bytes so a later in-place append knows the true capacity.
+    let s2 = nextTemp(cg)
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 " + allocSz + ", 2\n")
+    return Val { v: s2, ty: "string" }
 }
 
 // Append `bv` (a %String value) onto the %String at `addr` in place, growing
@@ -259,7 +266,10 @@ fn genIntToString(cg: &mut Cgen, val: &string): Val {
     emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
     let s1 = nextTemp(cg)
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len64 + ", 1\n")
-    return Val { v: s1, ty: "string" }
+    // cap = allocated bytes so a later in-place append knows the true capacity.
+    let s2 = nextTemp(cg)
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 " + sz + ", 2\n")
+    return Val { v: s2, ty: "string" }
 }
 
 // double.toString() — snprintf("%g") into an owned heap buffer
@@ -284,7 +294,10 @@ fn genFloatToString(cg: &mut Cgen, val: &string): Val {
     emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
     let s1 = nextTemp(cg)
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len64 + ", 1\n")
-    return Val { v: s1, ty: "string" }
+    // cap = allocated bytes so a later in-place append knows the true capacity.
+    let s2 = nextTemp(cg)
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 " + sz + ", 2\n")
+    return Val { v: s2, ty: "string" }
 }
 
 // String index: s[i] → load byte
@@ -320,7 +333,10 @@ fn genStringSlice(cg: &mut Cgen, sv: &string, av: &string, bv: &string): Val {
     emit(cg, "  " + s0 + " = insertvalue %String undef, ptr " + buf + ", 0\n")
     let s1 = nextTemp(cg)
     emit(cg, "  " + s1 + " = insertvalue %String " + s0 + ", i64 " + len + ", 1\n")
-    return Val { v: s1, ty: "string" }
+    // cap = allocated bytes so a later in-place append knows the true capacity.
+    let s2 = nextTemp(cg)
+    emit(cg, "  " + s2 + " = insertvalue %String " + s1 + ", i64 " + sz + ", 2\n")
+    return Val { v: s2, ty: "string" }
 }
 
 
