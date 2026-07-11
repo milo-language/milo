@@ -64,7 +64,7 @@ fn disambiguateStructLit(cg: &Cgen, base: &string, fields: &Vec<StructLitField>)
     return base.clone()
 }
 
-fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     // a bare generic name (`Handle` from a monomorphized body) resolves to its
     // sole instantiation (`Handle_Expr`); a concrete struct name passes through.
     var rname = resolveStructName(cg, name)
@@ -72,6 +72,12 @@ fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs
     // the literal field value categories.
     if rname == name && !cg.structs.contains(name) {
         rname = disambiguateStructLit(cg, name, fields)
+    }
+    // still ambiguous (Handle<T> — T isn't in the fields) → use the annotation hint
+    // (`let h: Handle<i64> = Handle {…}` → Handle_i64).
+    if rname == name && !cg.structs.contains(name) && hintTy.len > 0 {
+        let h = stripPercent(resolveTyStr(cg, stripPercent(hintTy)))
+        if cg.structs.contains(h) && nameHasMonoPrefix(h, name) { rname = h }
     }
     let structTy = "%" + rname.clone()
     let alloc = nextTemp(cg)
@@ -3038,7 +3044,7 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return genCall(cg, name, args, typeArgs, locs, sigs, hintTy)
         }
         Expr.StructLit(name, fields, span) => {
-            return genStructLit(cg, name, fields, locs, sigs)
+            return genStructLit(cg, name, fields, locs, sigs, hintTy)
         }
         Expr.JsonObject(fields, span) => {
             return genJsonObject(cg, fields, locs, sigs)
