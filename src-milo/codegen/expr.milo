@@ -2412,7 +2412,7 @@ fn genLvalue(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): V
             let o = genExpr(cg, *obj, locs, sigs, "")
             let iv = genExpr(cg, *idx, locs, sigs, "i64")
             if isVecTy(o.ty) {
-                let elemTy = unwrapVec(o.ty)
+                let elemTy = unwrapVec(resolveTyStr(cg, o.ty))
                 let elemLl = llType(elemTy)
                 let d = nextTemp(cg)
                 emit(cg, "  " + d + " = extractvalue %Vec " + o.v + ", 0\n")
