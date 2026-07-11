@@ -1287,6 +1287,13 @@ fn parse(p: &mut Parser): Program {
             if peekN(p, 1).kind == TokKind.Struct {
                 advance(p)
                 structs.push(parseStruct(p))
+            } else if peekN(p, 1).kind == TokKind.Ident && peekN(p, 1).value == "type" {
+                // `extern type Name` — an opaque C type, modeled as an empty struct
+                // used only through a pointer (`*Name`).
+                advance(p)
+                advance(p)
+                let tyName = expect(p, TokKind.Ident).value
+                structs.push(StructDecl { name: tyName, typeParams: Vec.new(), fields: Vec.new(), attributes: Vec.new() })
             } else {
                 functions.push(parseExternFn(p))
             }
