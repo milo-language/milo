@@ -52,9 +52,13 @@ Memory: mem
 - **GitHub Actions CI**: build + test on push/PR, release pipeline
 - **Playground**: browser-based compiler via JS backend (in progress)
 
-### Self-Hosting (Stage-0 Complete)
+### Self-Hosting — Bootstrap Converges
 
-`milo0` — a Milo compiler written in Milo — compiles a substantial subset: primitives, functions, let/var, if/else/while, structs (construct + field access + mutation), enums (payload-free + single/multi-field payloads + match), `Heap<T>` with deref, strings (literals, slice, index, concat, clone, len, eq), closures, `as` casts, bitwise ops. Verified on `examples/fib.milo`, `examples/fizzbuzz.milo`, `examples/hello.milo`.
+`milo0` (`src-milo/`, ~8.2K lines) — the Milo compiler written in Milo — compiles its own source and reaches a **byte-identical fixed point at the production `-O2` level**: `stage1 == stage2 == stage3`, 157K-line IR identical. Manifest-wide, 212/339 fixtures emit byte-identical IR between stage1 and stage2, zero divergences. See **[docs/self-hosting.md](self-hosting.md)** for the full milestone log (M0–M5) and the eight oracle miscompiles the self-compile exposed and fixed.
+
+Reproduce: `sh scripts/selfhost.sh` (builds stage1 via the oracle — required; `.selfhost/milo-self.bin` is gitignored), then `bun test tests/selfhost.test.ts`.
+
+Remaining (M6, incremental): grow the manifest toward full fixture parity. Expected gaps are the constructs bootstrap doesn't need — closures, user generics, traits beyond `impl Clone`, threads/green-runtime.
 
 ---
 

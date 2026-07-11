@@ -110,7 +110,7 @@ fn genVecNew(cg: &mut Cgen, hintTy: &string): Val {
 
 // Append to a Vec through its address: growth has to be visible to the caller,
 // so this takes the receiver as an lvalue rather than a loaded value.
-fn genVecPush(cg: &mut Cgen, addr: &string, vecTy: &string, elemVal: &Val, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+fn genVecPush(cg: &mut Cgen, addr: &string, vecTy: &string, elemVal: &Val): Val {
     ensureVecTy(cg)
     ensureRealloc(cg)
     let elemTy = unwrapVec(vecTy)
@@ -1078,7 +1078,7 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         if isVecTy(lv.ty) {
             let elemTy = unwrapVec(lv.ty)
             let ev = genExpr(cg, *args[0], locs, sigs, elemTy)
-            return genVecPush(cg, lv.v, lv.ty, ev, locs, sigs)
+            return genVecPush(cg, lv.v, lv.ty, ev)
         }
         if llType(lv.ty) == "%String" {
             let ev = genExpr(cg, *args[0], locs, sigs, "u8")
@@ -1331,25 +1331,165 @@ fn genSlice(cg: &mut Cgen, obj: &Expr, a: &Expr, b: &Expr, locs: &Vec<Local>, si
 
 // f-strings lower to `format(parts...)`. Fold the parts into one %String:
 // string parts pass through, integers go via genIntToString.
+fn isIntLlType(ll: &string): bool {
+    return ll == "i8" || ll == "i16" || ll == "i32" || ll == "i64"
+}
+
+// Display a value of any type as an owned %String (mirrors the oracle's
+// emitDisplayPart). Recurses for struct/enum payloads; recursive types bottom out
+// at Heap (a ptr → the "<ty>" fallback). Without this, an f-string part that
+// isn't a String or integer (e.g. `{e}` where e is an IoError enum) fell through
+// to genIntToString and emitted `sext %IoError to i64` — invalid IR.
+fn genDisplayString(cg: &mut Cgen, val: &string, ty: &string, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let ll = llType(ty)
+    if ll == "%String" { return Val { v: val.clone(), ty: "string" } }
+    if ll == "i1" {
+        let ts = genStringLit(cg, "true")
+        let fs = genStringLit(cg, "false")
+        let r = nextTemp(cg)
+        emit(cg, "  " + r + " = select i1 " + val.clone() + ", %String " + ts.v + ", %String " + fs.v + "\n")
+        return Val { v: r, ty: "string" }
+    }
+    if ll == "double" { return genFloatToString(cg, val.clone()) }
+    if isIntLlType(ll) {
+        var widened = val.clone()
+        if ll != "i64" {
+            let w = nextTemp(cg)
+            var op = "sext"
+            if isUnsigned(ty) { op = "zext" }
+            emit(cg, "  " + w + " = " + op + " " + ll + " " + val.clone() + " to i64\n")
+            widened = w
+        }
+        return genIntToString(cg, widened)
+    }
+    if ll.len > 0 && ll[0] == 37 {
+        let raw = stripPercent(ty)
+        if cg.structs.contains(raw) { return genStructDisplay(cg, val, raw, locs, sigs) }
+        if cg.enums.contains(raw) { return genEnumDisplay(cg, val, raw, locs, sigs) }
+    }
+    return genStringLit(cg, "<" + ty.clone() + ">")
+}
+
+fn genStructDisplay(cg: &mut Cgen, val: &string, structName: &string, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let structTy = "%" + structName.clone()
+    let stage = nextTemp(cg)
+    emit(cg, "  " + stage + " = alloca " + structTy + "\n")
+    emit(cg, "  store " + structTy + " " + val.clone() + ", ptr " + stage + "\n")
+    var acc = genStringLit(cg, structName.clone() + " { ")
+    let fields = cg.structs.get(structName.clone())!
+    for i in 0..fields.len {
+        if i > 0 {
+            let sep = genStringLit(cg, ", ")
+            acc = genStringConcat(cg, acc.v, sep.v)
+        }
+        let namePart = genStringLit(cg, fields[i].name.clone() + ": ")
+        acc = genStringConcat(cg, acc.v, namePart.v)
+        let fll = llType(fields[i].ty)
+        let fp = nextTemp(cg)
+        emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + stage + ", i32 0, i32 " + i.toString() + "\n")
+        let fv = nextTemp(cg)
+        emit(cg, "  " + fv + " = load " + fll + ", ptr " + fp + "\n")
+        let isStr = fll == "%String"
+        if isStr {
+            let q = genStringLit(cg, "\"")
+            acc = genStringConcat(cg, acc.v, q.v)
+        }
+        let disp = genDisplayString(cg, fv, fields[i].ty, locs, sigs)
+        acc = genStringConcat(cg, acc.v, disp.v)
+        if isStr {
+            let q2 = genStringLit(cg, "\"")
+            acc = genStringConcat(cg, acc.v, q2.v)
+        }
+    }
+    let close = genStringLit(cg, " }")
+    acc = genStringConcat(cg, acc.v, close.v)
+    return acc
+}
+
+fn genEnumDisplay(cg: &mut Cgen, val: &string, enumName: &string, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let enumTy = "%" + enumName.clone()
+    let stage = nextTemp(cg)
+    emit(cg, "  " + stage + " = alloca " + enumTy + "\n")
+    emit(cg, "  store " + enumTy + " " + val.clone() + ", ptr " + stage + "\n")
+    let tagPtr = nextTemp(cg)
+    emit(cg, "  " + tagPtr + " = getelementptr " + enumTy + ", ptr " + stage + ", i32 0, i32 0\n")
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = load i32, ptr " + tagPtr + "\n")
+    let resPtr = nextTemp(cg)
+    emit(cg, "  " + resPtr + " = alloca %String\n")
+    let endLbl = nextLabel(cg, "enum.disp.end")
+    let defaultLbl = nextLabel(cg, "enum.disp.default")
+    let info = cg.enums.get(enumName.clone())!
+    var caseLbls: Vec<string> = Vec.new()
+    for vi in 0..info.variants.len {
+        caseLbls.push(nextLabel(cg, "enum.disp.case"))
+    }
+    var sw = "  switch i32 " + tag + ", label %" + defaultLbl + " ["
+    for vi in 0..info.variants.len {
+        sw = sw + " i32 " + info.variants[vi].tag.toString() + ", label %" + caseLbls[vi]
+    }
+    sw = sw + " ]\n"
+    emit(cg, sw)
+    for vi in 0..info.variants.len {
+        emit(cg, caseLbls[vi] + ":\n")
+        var acc = genStringLit(cg, info.variants[vi].name.clone())
+        let np = info.variants[vi].payloadTypes.len
+        if np > 0 {
+            let op = genStringLit(cg, "(")
+            acc = genStringConcat(cg, acc.v, op.v)
+            let payPtr = nextTemp(cg)
+            emit(cg, "  " + payPtr + " = getelementptr " + enumTy + ", ptr " + stage + ", i32 0, i32 1\n")
+            var payStructTy = "{ "
+            for fi in 0..np {
+                if fi > 0 { payStructTy = payStructTy + ", " }
+                payStructTy = payStructTy + llType(info.variants[vi].payloadTypes[fi])
+            }
+            payStructTy = payStructTy + " }"
+            for fi in 0..np {
+                if fi > 0 {
+                    let sep = genStringLit(cg, ", ")
+                    acc = genStringConcat(cg, acc.v, sep.v)
+                }
+                let fll = llType(info.variants[vi].payloadTypes[fi])
+                let fp = nextTemp(cg)
+                emit(cg, "  " + fp + " = getelementptr " + payStructTy + ", ptr " + payPtr + ", i32 0, i32 " + fi.toString() + "\n")
+                let fv = nextTemp(cg)
+                emit(cg, "  " + fv + " = load " + fll + ", ptr " + fp + "\n")
+                let isStr = fll == "%String"
+                if isStr {
+                    let q = genStringLit(cg, "\"")
+                    acc = genStringConcat(cg, acc.v, q.v)
+                }
+                let disp = genDisplayString(cg, fv, info.variants[vi].payloadTypes[fi], locs, sigs)
+                acc = genStringConcat(cg, acc.v, disp.v)
+                if isStr {
+                    let q2 = genStringLit(cg, "\"")
+                    acc = genStringConcat(cg, acc.v, q2.v)
+                }
+            }
+            let cp = genStringLit(cg, ")")
+            acc = genStringConcat(cg, acc.v, cp.v)
+        }
+        emit(cg, "  store %String " + acc.v + ", ptr " + resPtr + "\n")
+        emit(cg, "  br label %" + endLbl + "\n")
+    }
+    emit(cg, defaultLbl + ":\n")
+    let fb = genStringLit(cg, "<" + enumName.clone() + ".?>")
+    emit(cg, "  store %String " + fb.v + ", ptr " + resPtr + "\n")
+    emit(cg, "  br label %" + endLbl + "\n")
+    emit(cg, endLbl + ":\n")
+    let out = nextTemp(cg)
+    emit(cg, "  " + out + " = load %String, ptr " + resPtr + "\n")
+    return Val { v: out, ty: "string" }
+}
+
 fn genFormat(cg: &mut Cgen, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     ensureStringTy(cg)
     var acc = genStringLit(cg, "")
     for i in 0..args.len {
         let part = genExpr(cg, *args[i], locs, sigs, "")
-        let partLl = llType(part.ty)
-        var sv = part.v.clone()
-        if partLl != "%String" {
-            var widened = part.v.clone()
-            if partLl != "i64" {
-                let w = nextTemp(cg)
-                let op = if isUnsigned(part.ty) { "zext" } else { "sext" }
-                emit(cg, "  " + w + " = " + op + " " + partLl + " " + part.v + " to i64\n")
-                widened = w
-            }
-            let st = genIntToString(cg, widened)
-            sv = st.v.clone()
-        }
-        acc = genStringConcat(cg, acc.v, sv)
+        let disp = genDisplayString(cg, part.v, part.ty, locs, sigs)
+        acc = genStringConcat(cg, acc.v, disp.v)
     }
     return acc
 }

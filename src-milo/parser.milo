@@ -64,7 +64,12 @@ fn matchTok(p: &mut Parser, kind: TokKind): bool {
 
 fn expect(p: &mut Parser, kind: TokKind): Token {
     let tok = advance(p)
-    // TODO: proper error reporting — for now, panic on mismatch
+    // Soft validation: the parser is expected to call with the right kind, so
+    // this never fires on well-formed input; on mismatch, surface a diagnostic
+    // rather than silently accepting (no recovery yet — parsing continues).
+    if !(tok.kind == kind) {
+        eprint("parse error: unexpected token at line " + tok.line.toString() + ":" + tok.col.toString())
+    }
     return tok
 }
 
@@ -978,7 +983,7 @@ fn parsePrimary(p: &mut Parser): Expr {
     }
     if tok.kind == TokKind.FString {
         advance(p)
-        return parseFString(p, tok.value, s)
+        return parseFString(tok.value, s)
     }
     if tok.kind == TokKind.Char {
         advance(p)
@@ -1140,7 +1145,7 @@ fn parseArrayLit(p: &mut Parser): Expr {
 }
 
 // F-string: $"hello {name}" → format("hello ", name)
-fn parseFString(p: &mut Parser, raw: string, s: Option<Span>): Expr {
+fn parseFString(raw: string, s: Option<Span>): Expr {
     var args: Vec<Heap<Expr>> = Vec.new()
     var lit = ""
     var i: i64 = 0

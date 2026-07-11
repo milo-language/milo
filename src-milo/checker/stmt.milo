@@ -43,7 +43,7 @@ fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
             checkExpr(ck, *expr)
         }
         Stmt.MatchStmt(subject, arms, span) => {
-            checkMatch(ck, *subject, arms, fnRetType, span)
+            checkMatch(ck, *subject, arms, fnRetType)
         }
         Stmt.BreakStmt(span) => {
             if ck.loopDepth == 0 {
@@ -56,7 +56,7 @@ fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
             }
         }
         Stmt.IfLetStmt(pattern, expr, thenBody, elseBody, span) => {
-            checkIfLet(ck, *pattern, *expr, thenBody, elseBody, fnRetType, span)
+            checkIfLet(ck, *pattern, *expr, thenBody, elseBody, fnRetType)
         }
         Stmt.UnsafeBlock(body, span) => {
             ck.unsafeDepth = ck.unsafeDepth + 1
@@ -220,7 +220,7 @@ fn checkWhile(ck: &mut Checker, cond: &Expr, body: &Vec<Heap<Stmt>>, fnRetType: 
 
 // -- Match statement --
 
-fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType: &TypeKind) {
     let subjType = checkExpr(ck, subject)
 
     // Arms are mutually exclusive: each checks from the pre-state, then the
@@ -231,7 +231,7 @@ fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType:
     var armTerms: Vec<bool> = Vec.new()
     for i in 0..arms.len {
         restoreMoves(ck, preSnap)
-        checkMatchArm(ck, arms[i], subjType, fnRetType, span)
+        checkMatchArm(ck, arms[i], subjType, fnRetType)
         armSnaps.push(snapshotMoves(ck))
         var term = false
         if arms[i].body.len > 0 { term = stmtTerminates(*arms[i].body[arms[i].body.len - 1]) }
@@ -243,7 +243,7 @@ fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType:
     }
 }
 
-fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetType: &TypeKind) {
     pushScope(ck)
 
     // Bind pattern variables into scope
@@ -293,7 +293,7 @@ fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetTyp
 
 // -- If-let statement --
 
-fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind, span: &Option<Span>) {
+fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: &Option<Vec<Heap<Stmt>>>, fnRetType: &TypeKind) {
     let exprType = checkExpr(ck, expr)
 
     pushScope(ck)

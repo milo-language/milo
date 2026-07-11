@@ -5,6 +5,22 @@ itself, and the bootstrap converges. This doc is written to be executable by an
 implementing agent with no other context: every milestone has a command-line
 acceptance test, and the rules in "Working Agreement" are mandatory.
 
+## STATUS: bootstrap converges at -O2 (M5 done)
+
+`milo0` compiles its own source to a byte-identical fixed point at the
+production `-O2` level: `stage1 == stage2 == stage3`. Verified empirically
+2026-07-10 (`b8e8acc`, payloadBytes alignment fix) and re-verified from the
+current tree: `stage1 emit-ir src-milo/main.milo` == `stage2 emit-ir …`,
+byte-identical. Manifest-wide: 212/339 fixtures emit identical IR stage1↔stage2,
+0 divergences. Reproduce: `sh scripts/selfhost.sh` (stage1 is gitignored — this
+is required), then `bun test tests/selfhost.test.ts`.
+
+**Everything below the "Current State (2026-07-08)" heading is the historical
+milestone log (M0→M5) — read it for the debugging record, not for current
+status.** The `-O2` saga in particular is RESOLVED: earlier sections describe it
+as open (last section "M5 follow-on: `-O2` miscompile — FIXED ✅" is the
+conclusion). M6 (fixture parity) is the only open track.
+
 ## Current State (verified empirically 2026-07-08)
 
 - `src-milo/` is ~8,220 lines across 18 files. Pipeline in `main.milo`:

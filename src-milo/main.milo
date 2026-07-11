@@ -34,9 +34,7 @@ fn tmpPath(stem: &string, ext: &string): string {
     var p = "/tmp/milo_"
     p = p + stem.clone()
     p = p + "_"
-    unsafe {
-        p = p + getpid().toString()
-    }
+    p = p + getpid().toString()
     return p + ext.clone()
 }
 
@@ -232,8 +230,8 @@ fn main() {
         }
         // Write IR to temp file, invoke clang
         let irFile = tmpPath("out", ".ll")
-        writeFile(irFile, ir)
-        let clangCmd = "clang -O2 -o " + output.clone() + " " + irFile + detectLibs(ir, getHostTarget().os)
+        let _ = writeFile(irFile, ir)
+        let clangCmd = "clang -Wno-override-module -O2 -o " + output.clone() + " " + irFile + detectLibs(ir, getHostTarget().os)
         var status: i32 = 127
         match run(clangCmd) {
             Result.Ok(c) => { status = c }
@@ -250,9 +248,9 @@ fn main() {
     if cmd == "run" {
         let ir = compile(source.clone())
         let irFile = tmpPath("out", ".ll")
-        writeFile(irFile, ir)
+        let _ = writeFile(irFile, ir)
         let binary = tmpPath("run", "")
-        let clangCmd = "clang -O2 -o " + binary + " " + irFile + detectLibs(ir, getHostTarget().os)
+        let clangCmd = "clang -Wno-override-module -O2 -o " + binary + " " + irFile + detectLibs(ir, getHostTarget().os)
         var status: i32 = 127
         match run(clangCmd) {
             Result.Ok(c) => { status = c }
@@ -262,8 +260,19 @@ fn main() {
             eprint("error: clang failed")
             exit(1)
         }
+        // Forward args after the source (skipping a `--` separator) to the child,
+        // so `milo run prog -- a b` reaches prog's argv — otherwise a program that
+        // reads its file arg falls through to blocking on stdin.
+        var childArgs = ""
+        var ai: i64 = 3
+        while ai < argv.len {
+            if argv[ai] != "--" {
+                childArgs = childArgs + " " + argv[ai].clone()
+            }
+            ai = ai + 1
+        }
         var runStatus: i32 = 127
-        match run(binary) {
+        match run(binary + childArgs) {
             Result.Ok(c) => { runStatus = c }
             Result.Err(e) => {}
         }

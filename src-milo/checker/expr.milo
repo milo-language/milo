@@ -150,7 +150,7 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
             return checkMethodCall(ck, *obj, method, args, span)
         }
         Expr.Closure(params, retType, body, isMove, span) => {
-            return checkClosure(ck, params, retType, body, span)
+            return checkClosure(ck, params, retType)
         }
         Expr.RangeExpr(start, end, span) => {
             let startType = checkExpr(ck, *start)
@@ -1111,7 +1111,7 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     // Struct/trait methods
     match objType.clone() {
         TypeKind.TStruct(name) => {
-            return checkStructMethod(ck, obj, name, method, args, span)
+            return checkStructMethod(ck, name, method, args, span)
         }
         _ => {}
     }
@@ -1119,7 +1119,7 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     // Enum methods resolve through the same name-keyed impl tables
     match objType.clone() {
         TypeKind.TEnum(name) => {
-            return checkStructMethod(ck, obj, name, method, args, span)
+            return checkStructMethod(ck, name, method, args, span)
         }
         _ => {}
     }
@@ -1129,10 +1129,10 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         TypeKind.THeap(inner) => {
             match *inner {
                 TypeKind.TStruct(name) => {
-                    return checkStructMethod(ck, obj, name, method, args, span)
+                    return checkStructMethod(ck, name, method, args, span)
                 }
                 TypeKind.TEnum(name) => {
-                    return checkStructMethod(ck, obj, name, method, args, span)
+                    return checkStructMethod(ck, name, method, args, span)
                 }
                 _ => {}
             }
@@ -1355,7 +1355,7 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
 
 // -- Struct/trait method calls --
 
-fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     // Look up inherent implDecl method
     if ck.inherentImpls.contains(structName) {
         let implDecl = ck.inherentImpls.get(structName)!
@@ -1421,7 +1421,7 @@ fn checkStructMethod(ck: &mut Checker, obj: &Expr, structName: &string, method: 
 
 // -- Closures --
 
-fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, span: &Option<Span>): TypeKind {
+fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>): TypeKind {
     pushScope(ck)
 
     var paramTypes: Vec<TypeKind> = Vec.new()

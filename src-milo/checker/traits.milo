@@ -16,8 +16,6 @@ from "src-milo/checker/state.milo" import {
 // -- Register builtin traits (Eq, Hash, Clone, Display, Add/Sub/Mul/Div, Drop) --
 
 fn registerBuiltinTraits(ck: &mut Checker) {
-    let selfRef = TypeKind.TRef(Heap(TypeKind.TStruct("Self")), false)
-    let selfRefMut = TypeKind.TRef(Heap(TypeKind.TStruct("Self")), true)
     let selfType = TypeKind.TStruct("Self")
 
     // Eq
@@ -356,7 +354,7 @@ fn registerAllImpls(ck: &mut Checker, program: &Program) {
 
 // -- Derive Eq for a struct --
 
-fn deriveEq(ck: &mut Checker, s: &StructDecl): Option<ImplDecl> {
+fn deriveEq(s: &StructDecl): Option<ImplDecl> {
     // Generate: fn eq(self: &Self, other: &Self): bool { self.f1 == other.f1 && ... }
     var selfParam = Param { name: "self", ty: simpleType("Self") }
     selfParam.ty.isRef = true
@@ -406,7 +404,7 @@ fn processDerives(ck: &mut Checker, program: &Program) {
             if s.attributes[j].name == "derive" {
                 for k in 0..s.attributes[j].args.len {
                     if s.attributes[j].args[k] == "Eq" {
-                        let implDecl = deriveEq(ck, s)
+                        let implDecl = deriveEq(s)
                         match implDecl {
                             Option.Some(decl) => { registerImpl(ck, decl) }
                             Option.None => {}
