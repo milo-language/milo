@@ -914,6 +914,23 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont. (2026-07-11) — move closures + derive, 232→250 pass
+
+- **Move closures (`move () => {…}`) heap-copy their captured values** (by-value env via
+  malloc) instead of pointing into the enclosing frame — so a closure that ESCAPES (runs
+  on another thread via `Promise.blocking`/`_spawnOsThreadDetached`, is returned from a
+  factory, or is stored) sees valid captures. This unblocked the whole green-thread path:
+  channelBasic/atomicsThreaded/autoMove/escapingClosures/closureCaptureClosure/
+  genericRefClosure all run correctly now (run-crashes 22→7). By-ref closures (arena,
+  router handlers) keep the stack-address env.
+- **`@derive(Eq)` was a stub returning `true`** — now generates the real
+  `self.f1 == other.f1 && …` field comparison. (traitDerive)
+
+Still open (fixture-only, none block an example): global fixed-array initializers
+(`var xs: [i32;5] = [10,…]` needs materialized data, not zeroinit), extern-struct parsing
+(~15 parse errors), JSON string escaping in jsonStringify, a few deep cross-thread-park
+concurrency cases.
+
 ### Fixture-sweep bug hunt (2026-07-11) — 6 real correctness fixes, 227→232 pass
 
 With every example at parity, ran `scripts/selfhost-sweep.ts` over all 339 fixtures and
