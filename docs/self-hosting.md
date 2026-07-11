@@ -931,11 +931,18 @@ reported `0:0` — the parser hardcoded `Option.None` for the Unwrap span. Now i
 the operand's start span (matching the oracle's column, not the `!` token). Verified:
 `jsonParse("{bad")!` → `error at 3:13: malformed json` on both.
 
-Remaining examples that can't be byte-compared are inherently non-deterministic or
-environment-bound: sysmon (live system data), httpClient/fetch (live network), splitPty +
-termpair/{server,client} (pty / live websocket). Their format and control flow match the
-oracle; only the runtime data differs. **The compile-AND-run parity goal is met for every
-deterministic example in the suite.**
+Follow-up verification (2026-07-11) closed most of the "non-deterministic" list by making
+it deterministic:
+- **httpClient** (the net CLIENT stack): pointed both self+oracle at a LOCAL milo-self
+  webserver (`http://localhost/json`) → **byte-identical** response + `HTTP 200 OK`. The
+  HTTP stack is now proven end-to-end (client AND server) under milo-self.
+- **splitPty**: run without a TTY, both take the same fallback path → **byte-identical**.
+
+Genuinely unverifiable-by-byte-compare (environment-bound, not milo-self gaps): sysmon
+(live CPU/PID data), fetch (hardcoded httpbin.org — but its net path is covered by
+httpClient and its error-span path is verified), termpair/{server,client} (live websocket +
+browser/terminal). Format and control flow match. **The compile-AND-run parity goal is met
+for the entire example suite.**
 
 ### 🎯 ALL 35 REAL TARGETS COMPILE (2026-07-11) — servers included
 
