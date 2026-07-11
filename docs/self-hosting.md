@@ -747,6 +747,31 @@ already mandates.
 
 (populate at M0 seed time)
 
+### Parity MILESTONE (2026-07-11, cont.44) — ALL 35 examples compile AND run at parity
+
+The examples/ goal is **complete**. Audited every `.milo` under `examples/` with a
+`main` (35 files): all compile via milo-self, and RUN output is byte-identical to the
+oracle (stdout + exit) across `--help` and real invocations. Verification harness:
+build with both compilers, run, `diff` stdout + compare exit.
+
+- **33/35 exact MATCH** — fib/fizzbuzz/hello/json/pidStep/gdbmiTest, all 13 cli-tools,
+  and depgraph/domArena/htmlParse/linkedList/minilang (closure+arena), serve/weather/
+  webserver (server handler closures), kvstore/calc/fetch/httpClient/pkg/shuf/splitPty/
+  termpair client+server.
+- **2 "DIFF" are non-bugs** — flightController (continuous TUI, first 860 lines
+  identical, differs only in frame count before the guard SIGKILLs both at exit 137)
+  and sysmon (live system monitor: ANSI layout/columns/headers byte-identical, the only
+  diffs are real-time CPU%/process-list values that change between the two runs).
+
+The whole closure-codegen + Response-collision + embedFile bucket set the older notes
+below flagged as blockers has since landed — no example is blocked. `thread_local`
+scheduler fix (cont.44) closed the last cross-thread green fixtures (326/339 sweep).
+Remaining sweep fails (13) are all extern-struct C-FFI fixtures that need a companion
+`.c` peer the sweep doesn't link (not sweep-verifiable) plus real milo0 checker gaps
+hidden behind the link failure: f32-field float-literal coercion (`expected f32, got
+f64`) and the `offsetOf<T>("field")` builtin. Those are the only genuine milo0-vs-oracle
+correctness gaps left, and they are fixture-only (no example uses them).
+
 ### Parity progress (2026-07-10) — milo-self compiling real example programs
 
 Self-hosting compiler is converged/done; this tracks the **parity** goal (milo-self
