@@ -1218,9 +1218,13 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     if objTyLl == "double" && method == "toString" {
         return genFloatToString(cg, obj.v)
     }
-    if objTyLl == "i32" && method == "toString" {
+    // i8/i16/i32 (and their unsigned forms) → widen to i64 then format. Unsigned
+    // types zero-extend so e.g. a u8 of 200 prints 200, not -56.
+    if method == "toString" && (objTyLl == "i8" || objTyLl == "i16" || objTyLl == "i32") {
         let w = nextTemp(cg)
-        emit(cg, "  " + w + " = sext i32 " + obj.v + " to i64\n")
+        var op = "sext"
+        if isUnsigned(obj.ty) { op = "zext" }
+        emit(cg, "  " + w + " = " + op + " " + objTyLl + " " + obj.v + " to i64\n")
         return genIntToString(cg, w)
     }
     // User-defined methods via impl tables: Ty$m or Ty$Trait$m; the receiver
@@ -2056,6 +2060,11 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 emit(cg, "  " + t + " = inttoptr i64 " + n.toString() + " to ptr\n")
                 return Val { v: t, ty: "ptr" }
             }
+            // An int literal in float position (`x: f64 = 0`, a zeroed float field)
+            // must be a floating constant — LLVM rejects `double 0`, needs `0.0`.
+            if ll == "double" || ll == "float" {
+                return Val { v: n.toString() + ".0", ty: ll }
+            }
             // Only integer hints apply to an int literal; a non-int hint (e.g. a
             // generic type param `A` passed as a call-arg hint) must not retype it.
             let isInt = ll.len > 0 && ll[0] == 105
@@ -2063,7 +2072,15 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return Val { v: n.toString(), ty: ll }
         }
         Expr.FloatLit(f, span) => {
-            return Val { v: f.toString(), ty: "double" }
+            // f.toString() drops the decimal for whole values (0.0 -> "0"), which
+            // LLVM rejects as a `double` constant. Ensure a '.' or exponent.
+            var fs = f.toString()
+            var hasPoint = false
+            for ci in 0..fs.len {
+                if fs[ci] == 46 || fs[ci] == 101 || fs[ci] == 69 { hasPoint = true }
+            }
+            if !hasPoint { fs = fs + ".0" }
+            return Val { v: fs, ty: "double" }
         }
         Expr.BoolLit(b, span) => {
             let v = if b { "1" } else { "0" }
