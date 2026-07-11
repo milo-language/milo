@@ -747,6 +747,41 @@ already mandates.
 
 (populate at M0 seed time)
 
+### Parity progress (2026-07-11, cont.46) — struct-by-value C ABI ported; extern bucket all but done
+
+Landed the native struct-by-value C ABI (`810ceb9`) + `offsetOf` builtin (`5c7eed4`).
+Manifest 173 green, byte-identical -O2 convergence, sweep 327 throughout.
+
+- **`src-milo/codegen/abi.milo`** (new) — pure AAPCS64/SysV classifier ported from
+  `src/abi.ts`: flattens a struct's scalar leaves (offset/size/float) and returns a
+  lowering plan. HFA (1-4 same-type floats → `[N x float]` SIMD), non-HFA ≤16B → GP
+  regs (`i64`/`[2 x i64]`), >16B → indirect/byval arg + sret return. Kind-tagged plain
+  structs (not payload enums) — this code is compiled by the very compiler it lives in.
+- **Wiring** — `emit.milo` `externLoweredParams/Ret` render the declare; `expr.milo`
+  `emitExternAbiCall` reinterprets each struct arg (alloca-stage → coerce-load regs, or
+  byval ptr, or sret buffer) at the call site. Gated on `cg.abiExterns` (extern fns with
+  a bare struct param/ret), so nothing else is touched. Arch from `getHostTarget()`.
+- **FloatLit surface-type fix** — a coerced f32 literal now carries ty `"f32"`, not
+  `"float"`: `llType` maps the surface alias `"float"`→`double`, which had re-widened
+  every f32 struct-field/arg store back to `store double` into a `float` slot (the real
+  reason cont.45's f32 coercion still produced 2.125 for `sum4(F4{1,2,3,4})`).
+- **`offsetOf<T>("field")`** — checker returns i64; codegen `structFieldOffset` walks
+  fields with natural alignment.
+
+Verified end-to-end (`milo-self emit-ir | clang + fixture.c`): **9/11 extern-struct
+fixtures now run byte-identical to the C peer** — HFA, HFANested, Large, Mixed, PtrField,
+SafeCall, SmallInt, TwoRegs, plus the scalar/nested-struct cases of Nested.
+
+**Last extern blocker — inline fixed arrays (2 fixtures).** `externStructNested`'s array
+cases and `externMutBuf` both fail for ONE root cause: milo0 lowers a fixed array
+`[T;N]` to a `Vec<T>` heap header (`{ptr,len,cap}`, 24B), not an inline `[N x T]` value
+(see `astTypeStr` — arrays reuse the Vec runtime for len/index/iterate). So a struct with
+an array field is sized/laid-out wrong vs C, and `memcpy(&mut [u8;16], …)` writes the Vec
+header instead of the buffer → `0 0 0`. Fixing needs true value-type fixed arrays
+(layout + index + iterate + init), a substantial architectural change — the next bucket
+after this. `externStructMixed` already passes, so the register/SSE classification is
+solid; only the array representation is missing.
+
 ### Parity progress (2026-07-11, cont.45) — f32 float-literal coercion; extern HFA ABI is the last codegen gap
 
 `09be940` — f32 float-literal coercion (manifest 173 green, byte-identical -O2
