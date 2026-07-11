@@ -914,6 +914,18 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.27 (2026-07-11) — return-type hint + int-lenient disambig
+
+`var s: HashSet<i32> = setNew()` (→ stdSet), two bugs:
+- checker: `setNew<T>`'s body `return HashSet { inner: HashMap.new() }` typed the bare generic
+  struct literal as `HashSet_unknown` (the field's `HashMap.new()` gives no T). checkReturn now
+  exposes the declared `fnRetType` as `ck.expectedType`, so checkStructLit resolves the literal
+  to the mono `HashSet_i32`.
+- codegen: `setContains(s, 2)` fell to a bare `@setContains` because the `val: i32` param didn't
+  match the int-literal arg `2` (defaults to i64) in `disambiguateGenericCall`. Now an
+  int-literal arg matches any-width int param (the ref-pointee match on param 0 from cont.26
+  still disambiguates `HashSet_i32` vs `HashSet_string`).
+
 ### Fixture-sweep bug hunt cont.26 (2026-07-11) — generic-call ref-arg pointee disambig
 
 `getVal(w)` with `w: Wrapper<i64>` emitted a bare `@getVal` (→ genericRefInfer):
