@@ -1082,6 +1082,58 @@ fn genPropagate(cg: &mut Cgen, inner: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnS
                 let rfp = nextTemp(cg)
                 emit(cg, "  " + rfp + " = getelementptr { " + errLl + " }, ptr " + rPay + ", i32 0, i32 0\n")
                 emit(cg, "  store " + errLl + " " + ev + ", ptr " + rfp + "\n")
+            } else if srcErrTypes.len == 1 && retErrTypes.len == 1 {
+                // auto-From: the ret Err type is an enum with a variant that wraps the
+                // src Err type (AppError.Io(IoError)). Build that variant around the
+                // src error value, then store it as the ret Result's Err payload.
+                let srcErrTy = srcErrTypes[0].clone()
+                let retErrTy = retErrTypes[0].clone()
+                let retErrName = resolveEnumName(cg, stripPercent(retErrTy))
+                let srcErrKey = stripPercent(resolveTyStr(cg, srcErrTy))
+                var wrapVar = ""
+                var wrapTag: i32 = 0
+                if cg.enums.contains(retErrName) {
+                    let ei = cg.enums.get(retErrName)!
+                    for vi in 0..ei.variants.len {
+                        let pt = ei.variants[vi].payloadTypes
+                        if pt.len == 1 && stripPercent(resolveTyStr(cg, pt[0])) == srcErrKey {
+                            wrapVar = ei.variants[vi].name.clone()
+                            wrapTag = ei.variants[vi].tag
+                        }
+                    }
+                }
+                if wrapVar.len == 0 {
+                    eprint("codegen: '?' error conversion (auto-From) not supported: " + srcEnum.clone() + " -> " + retEnum.clone())
+                    exit(1)
+                }
+                let srcErrLl = llType(srcErrTy)
+                let retErrLl = llType(retErrTy)
+                // load the src Err value (e.g. the IoError)
+                let sPay = nextTemp(cg)
+                emit(cg, "  " + sPay + " = getelementptr " + srcTy + ", ptr " + addr + ", i32 0, i32 1\n")
+                let sfp = nextTemp(cg)
+                emit(cg, "  " + sfp + " = getelementptr { " + srcErrLl + " }, ptr " + sPay + ", i32 0, i32 0\n")
+                let ev = nextTemp(cg)
+                emit(cg, "  " + ev + " = load " + srcErrLl + ", ptr " + sfp + "\n")
+                // build the wrapping variant value (AppError.Io(ev))
+                let weAddr = nextTemp(cg)
+                emit(cg, "  " + weAddr + " = alloca " + retErrLl + "\n")
+                let wtagPtr = nextTemp(cg)
+                emit(cg, "  " + wtagPtr + " = getelementptr " + retErrLl + ", ptr " + weAddr + ", i32 0, i32 0\n")
+                emit(cg, "  store i32 " + wrapTag.toString() + ", ptr " + wtagPtr + "\n")
+                let wpayPtr = nextTemp(cg)
+                emit(cg, "  " + wpayPtr + " = getelementptr " + retErrLl + ", ptr " + weAddr + ", i32 0, i32 1\n")
+                let wfp = nextTemp(cg)
+                emit(cg, "  " + wfp + " = getelementptr { " + srcErrLl + " }, ptr " + wpayPtr + ", i32 0, i32 0\n")
+                emit(cg, "  store " + srcErrLl + " " + ev + ", ptr " + wfp + "\n")
+                let weVal = nextTemp(cg)
+                emit(cg, "  " + weVal + " = load " + retErrLl + ", ptr " + weAddr + "\n")
+                // store the wrapped error as the ret Result's Err payload
+                let rPay = nextTemp(cg)
+                emit(cg, "  " + rPay + " = getelementptr " + retTy + ", ptr " + retAddr + ", i32 0, i32 1\n")
+                let rfp = nextTemp(cg)
+                emit(cg, "  " + rfp + " = getelementptr { " + retErrLl + " }, ptr " + rPay + ", i32 0, i32 0\n")
+                emit(cg, "  store " + retErrLl + " " + weVal + ", ptr " + rfp + "\n")
             } else {
                 eprint("codegen: '?' error conversion (auto-From) not supported: " + srcEnum.clone() + " -> " + retEnum.clone())
                 exit(1)
