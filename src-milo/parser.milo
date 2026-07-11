@@ -1148,9 +1148,11 @@ fn parseArrayLit(p: &mut Parser): Expr {
 fn parseFString(raw: string, s: Option<Span>): Expr {
     var args: Vec<Heap<Expr>> = Vec.new()
     var lit = ""
+    var hadInterp = false
     var i: i64 = 0
     while i < raw.len {
         if raw[i] == 123 {  // '{'
+            hadInterp = true
             if lit.len > 0 {
                 args.push(Heap(Expr.StringLit(lit, s)))
                 lit = ""
@@ -1182,7 +1184,10 @@ fn parseFString(raw: string, s: Option<Span>): Expr {
     if lit.len > 0 {
         args.push(Heap(Expr.StringLit(lit, s)))
     }
-    if args.len == 1 {
+    // Only short-circuit a pure-text f-string (`$"hello"` → "hello"). A single
+    // INTERPOLATION (`$"{x}"`) must still go through format() to stringify x —
+    // returning the raw expr yielded its own type (e.g. f64), not a string.
+    if args.len == 1 && !hadInterp {
         return *args[0]
     }
     var typeArgs: Vec<MiloType> = Vec.new()
