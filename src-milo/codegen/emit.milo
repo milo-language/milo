@@ -33,6 +33,7 @@ fn constInitOf(e: &Expr, llTy: &string): string {
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
     cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, payloadBytes, resolveTyStr,
+    ensureStringTy, ensureVecTy,
 }
 from "src-milo/codegen/stmt.milo" import { genStmt, emitScopeDrops }
 
@@ -196,16 +197,40 @@ fn genProgram(prog: Program, sourceDir: string): string {
     // closure/fn value = { fn pointer, environment pointer }
     emitG(cg, "%Closure = type { ptr, ptr }\n")
 
-    // Module-level constants: `@name = global <ty> <const>`, loaded at each use.
+    // An aggregate global (`var xs: Vec<T> = []`, `var s: string = ""`) zero-inits
+    // a %Vec/%String, so those type decls must precede it in the module text.
+    var hasAggGlobal = false
     for gi in 0..prog.globals.len {
-        var gllTy = "i64"
         match prog.globals[gi].ty {
-            Option.Some(t) => { gllTy = llType(astTypeStr(t)) }
+            Option.Some(t) => {
+                let gl = llType(astTypeStr(t))
+                if gl.len > 0 && gl[0] == 37 { hasAggGlobal = true }
+            }
             Option.None => {}
         }
-        let gval = constInitOf(*prog.globals[gi].value, gllTy)
+    }
+    if hasAggGlobal {
+        ensureStringTy(cg)
+        ensureVecTy(cg)
+    }
+
+    // Module-level constants: `@name = global <ty> <const>`, loaded at each use.
+    for gi in 0..prog.globals.len {
+        var surfaceTy = "i64"
+        match prog.globals[gi].ty {
+            Option.Some(t) => { surfaceTy = astTypeStr(t) }
+            Option.None => {}
+        }
+        let gllTy = llType(surfaceTy)
+        // aggregate globals (%String/%Vec/struct, e.g. `var xs: Vec<T> = []`) get a
+        // zeroinitializer and are filled at runtime; only scalars take a const init.
+        var gval = "zeroinitializer"
+        if !(gllTy.len > 0 && gllTy[0] == 37) {
+            gval = constInitOf(*prog.globals[gi].value, gllTy)
+        }
         emitG(cg, "@" + prog.globals[gi].name.clone() + " = global " + gllTy + " " + gval + "\n")
-        cg.globalVars.insert(prog.globals[gi].name.clone(), gllTy)
+        // store the SURFACE type so field/element resolution on the global works
+        cg.globalVars.insert(prog.globals[gi].name.clone(), surfaceTy)
     }
 
     // Register function return types. Generic templates never codegen — only

@@ -71,9 +71,16 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
     }
     match target {
         Expr.Ident(name, span) => {
-            let local = findLocal(locs, name)
-            let v = genExpr(cg, value, locs, sigs, local.ty.clone())
-            emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
+            // a module global (not shadowed by a local) stores through @name
+            if !hasLocal(locs, name) && cg.globalVars.contains(name) {
+                let gty = cg.globalVars.get(name)!
+                let v = genExpr(cg, value, locs, sigs, gty.clone())
+                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr @" + name.clone() + "\n")
+            } else {
+                let local = findLocal(locs, name)
+                let v = genExpr(cg, value, locs, sigs, local.ty.clone())
+                emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
+            }
         }
         Expr.FieldAccess(object, field, span) => {
             let lv = genLvalue(cg, *object, locs, sigs)

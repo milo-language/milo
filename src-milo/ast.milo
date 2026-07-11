@@ -208,6 +208,7 @@ struct GlobalDecl {
     name: string,
     ty: Option<MiloType>,
     value: Heap<Expr>,
+    mutable: bool,
     span: Option<Span>,
 }
 
@@ -243,6 +244,7 @@ fn cloneGlobal(g: &GlobalDecl): GlobalDecl {
         name: g.name.clone(),
         ty: ty,
         value: Heap((*g.value).clone()),
+        mutable: g.mutable,
         span: cloneSpan(g.span),
     }
 }

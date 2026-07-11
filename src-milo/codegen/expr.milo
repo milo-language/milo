@@ -2374,6 +2374,11 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
 fn genLvalue(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     match e {
         Expr.Ident(name, span) => {
+            // a module global's address is @name (used for push/field-store/etc.)
+            if !hasLocal(locs, name) && cg.globalVars.contains(name) {
+                let surf = cg.globalVars.get(name)!
+                return Val { v: "@" + name.clone(), ty: surf }
+            }
             let local = findLocal(locs, name)
             return Val { v: local.addr.clone(), ty: local.ty.clone() }
         }
@@ -2496,10 +2501,11 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 if locs[li].name == name { isLocal = true }
             }
             if !isLocal && cg.globalVars.contains(name) {
-                let gll = cg.globalVars.get(name)!
+                let surf = cg.globalVars.get(name)!
+                let gll = llType(resolveTyStr(cg, surf))
                 let g = nextTemp(cg)
                 emit(cg, "  " + g + " = load " + gll + ", ptr @" + name.clone() + "\n")
-                return Val { v: g, ty: gll }
+                return Val { v: g, ty: surf }
             }
             // A bare function name used as a value (`someFn` passed as a callback,
             // `trampoline as *u8`) is a closure { @fn, null } — no captures. Without

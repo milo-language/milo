@@ -1248,7 +1248,7 @@ fn parse(p: &mut Parser): Program {
             traits.push(parseTraitDecl(p))
         } else if at(p, TokKind.Impl) {
             impls.push(parseImplDecl(p))
-        } else if at(p, TokKind.Let) {
+        } else if at(p, TokKind.Let) || at(p, TokKind.Var) {
             globals.push(parseGlobal(p))
         } else {
             // Skip unexpected token
@@ -1270,7 +1270,13 @@ fn parse(p: &mut Parser): Program {
 // Module-scope `let NAME[: T] = <const-expr>`.
 fn parseGlobal(p: &mut Parser): GlobalDecl {
     let s = span(peek(p))
-    expect(p, TokKind.Let)
+    var mutable = false
+    if at(p, TokKind.Var) {
+        expect(p, TokKind.Var)
+        mutable = true
+    } else {
+        expect(p, TokKind.Let)
+    }
     let name = expect(p, TokKind.Ident).value
     var ty: Option<MiloType> = Option.None
     if matchTok(p, TokKind.Colon) {
@@ -1278,5 +1284,5 @@ fn parseGlobal(p: &mut Parser): GlobalDecl {
     }
     expect(p, TokKind.Eq)
     let value = parseExpr(p)
-    return GlobalDecl { name: name, ty: ty, value: Heap(value), span: s }
+    return GlobalDecl { name: name, ty: ty, value: Heap(value), mutable: mutable, span: s }
 }

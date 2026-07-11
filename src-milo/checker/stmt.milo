@@ -764,7 +764,7 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
             Option.None => { gty = checkExpr(ck, *program.globals[gi].value) }
         }
         declare(ck, program.globals[gi].name.clone(), VarInfo {
-            ty: gty, mutable: false, moved: false, borrowed: false, read: true,
+            ty: gty, mutable: program.globals[gi].mutable, moved: false, borrowed: false, read: true,
             span: cloneSpan(program.globals[gi].span),
         })
     }
