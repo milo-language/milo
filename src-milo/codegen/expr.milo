@@ -2197,8 +2197,18 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         if mRefs.len > 0 { selfIsRef = mRefs[0] }
         var argStr = ""
         if selfIsRef {
-            let slv = genLvalue(cg, object, locs, sigs)
-            argStr = "ptr " + slv.v
+            if isSimpleLvalue(object) {
+                let slv = genLvalue(cg, object, locs, sigs)
+                argStr = "ptr " + slv.v
+            } else {
+                // a non-lvalue receiver (e.g. `foo(x).method()`) was already evaluated
+                // into `obj`; materialize it rather than re-running the side-effecting
+                // receiver expression a second time.
+                let tmp = nextTemp(cg)
+                emit(cg, "  " + tmp + " = alloca " + llType(obj.ty) + "\n")
+                emit(cg, "  store " + llType(obj.ty) + " " + obj.v + ", ptr " + tmp + "\n")
+                argStr = "ptr " + tmp
+            }
         } else {
             argStr = llType(obj.ty) + " " + obj.v
         }
@@ -2809,6 +2819,17 @@ fn ensureItable(cg: &mut Cgen, concrete: &string, iface: &string): string {
     body = body + "]"
     emitG(cg, gname + " = private unnamed_addr constant [" + n.toString() + " x ptr] " + body + "\n")
     return gname
+}
+
+// A receiver that denotes storage (re-evaluating it is side-effect-free and yields
+// the same address). Anything else (a fn-call result, etc.) must NOT be re-evaluated.
+fn isSimpleLvalue(e: &Expr): bool {
+    match e {
+        Expr.Ident(nm, sp) => { return true }
+        Expr.FieldAccess(o, f, sp) => { return true }
+        Expr.IndexAccess(o, ix, sp) => { return true }
+        _ => { return false }
+    }
 }
 
 fn isBareFnName(cg: &Cgen, e: &Expr, locs: &Vec<Local>): bool {
