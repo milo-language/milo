@@ -1363,9 +1363,13 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
         if args.len >= 2 { checkExpr(ck, *args[1]) }
         return tyString()
     }
-    if method == "indexOf" {
-        if args.len != 1 { error(ck, "'indexOf' expects 1 argument", cloneSpan(span)) }
+    if method == "indexOf" || method == "lastIndexOf" {
+        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span)) }
         if args.len >= 1 { checkExpr(ck, *args[0]) }
+        return TypeKind.TInt(64, true)
+    }
+    if method == "len" {
+        if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
         return TypeKind.TInt(64, true)
     }
     if method == "replace" {
