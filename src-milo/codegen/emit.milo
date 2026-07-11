@@ -32,7 +32,7 @@ fn constInitOf(e: &Expr, llTy: &string): string {
 }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
-    cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, payloadBytes, resolveTyStr,
+    cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, payloadBytes, resolveTyStr, isVecTy, unwrapVec,
     ensureStringTy, ensureVecTy,
 }
 from "src-milo/codegen/stmt.milo" import { genStmt, emitScopeDrops }
@@ -222,15 +222,53 @@ fn genProgram(prog: Program, sourceDir: string): string {
             Option.None => {}
         }
         let gllTy = llType(surfaceTy)
-        // aggregate globals (%String/%Vec/struct, e.g. `var xs: Vec<T> = []`) get a
-        // zeroinitializer and are filled at runtime; only scalars take a const init.
-        var gval = "zeroinitializer"
-        if !(gllTy.len > 0 && gllTy[0] == 37) {
-            gval = constInitOf(*prog.globals[gi].value, gllTy)
+        let gname = prog.globals[gi].name.clone()
+        cg.globalVars.insert(gname.clone(), surfaceTy.clone())
+        // A fixed-array global with a literal initializer (`var xs: [i32;5] = [10,…]`)
+        // lowers to a %Vec — materialize the element data as a writable global and
+        // point the %Vec at it (zeroinit would leave it empty).
+        var arrayHandled = false
+        if isVecTy(surfaceTy) {
+            let elemLl = llType(unwrapVec(surfaceTy))
+            let scalarElem = elemLl == "i1" || elemLl == "i8" || elemLl == "i16" || elemLl == "i32" || elemLl == "i64" || elemLl == "double" || elemLl == "float"
+            if scalarElem {
+                var elems: Vec<string> = Vec.new()
+                match *prog.globals[gi].value {
+                    Expr.ArrayLit(elements, sp) => {
+                        for ei in 0..elements.len {
+                            elems.push(elemLl + " " + constInitOf(*elements[ei], elemLl))
+                        }
+                    }
+                    Expr.ArrayRepeat(val, count, sp) => {
+                        let one = constInitOf(*val, elemLl)
+                        for ci in 0..count {
+                            elems.push(elemLl + " " + one.clone())
+                        }
+                    }
+                    _ => {}
+                }
+                if elems.len > 0 {
+                    var dataC = "["
+                    for ei in 0..elems.len {
+                        if ei > 0 { dataC = dataC + ", " }
+                        dataC = dataC + elems[ei].clone()
+                    }
+                    dataC = dataC + "]"
+                    let n = elems.len.toString()
+                    emitG(cg, "@" + gname.clone() + "_data = global [" + n + " x " + elemLl + "] " + dataC + "\n")
+                    emitG(cg, "@" + gname.clone() + " = global %Vec { ptr @" + gname.clone() + "_data, i64 " + n + ", i64 " + n + " }\n")
+                    arrayHandled = true
+                }
+            }
         }
-        emitG(cg, "@" + prog.globals[gi].name.clone() + " = global " + gllTy + " " + gval + "\n")
-        // store the SURFACE type so field/element resolution on the global works
-        cg.globalVars.insert(prog.globals[gi].name.clone(), surfaceTy)
+        if !arrayHandled {
+            // aggregate globals (%String/%Vec/struct) zero-init; scalars take a const.
+            var gval = "zeroinitializer"
+            if !(gllTy.len > 0 && gllTy[0] == 37) {
+                gval = constInitOf(*prog.globals[gi].value, gllTy)
+            }
+            emitG(cg, "@" + gname.clone() + " = global " + gllTy + " " + gval + "\n")
+        }
     }
 
     // Register function return types. Generic templates never codegen — only
