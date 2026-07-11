@@ -798,6 +798,28 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
         ck.structs.insert(structNames[si].clone(), sInfo)
     }
 
+    // Register user-declared traits/interfaces so `impl Trait for Struct` resolves
+    // (builtin traits were registered in phase 0). Must precede registerAllImpls.
+    for ti in 0..program.traits.len {
+        let td = program.traits[ti]
+        var tmethods: HashMap<string, TraitMethodInfo> = HashMap.new()
+        for mi in 0..td.methods.len {
+            var mparams: Vec<FnParam> = Vec.new()
+            for pi in 0..td.methods[mi].params.len {
+                mparams.push(FnParam { name: td.methods[mi].params[pi].name.clone(), ty: resolveAstType(ck, td.methods[mi].params[pi].ty) })
+            }
+            var hasDef = false
+            match td.methods[mi].body {
+                Option.Some(b) => { hasDef = true }
+                Option.None => {}
+            }
+            tmethods.insert(td.methods[mi].name.clone(), TraitMethodInfo { params: mparams, ret: resolveAstType(ck, td.methods[mi].retType), hasDefault: hasDef })
+        }
+        var stps: Vec<string> = Vec.new()
+        for si in 0..td.supertraits.len { stps.push(td.supertraits[si].clone()) }
+        ck.traits.insert(td.name.clone(), TraitInfo { name: td.name.clone(), supertraits: stps, methods: tmethods })
+    }
+
     // Phase 2: register impls and derive macros
     registerAllImpls(ck, program)
     processDerives(ck, program)
