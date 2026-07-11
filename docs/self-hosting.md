@@ -914,6 +914,25 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.16 (2026-07-11) — nested-generic mangling fix
+
+`substituteMiloType` (checker/mono.milo) flattened a compound type-param arg via
+`typeName()`, which renders `Vec<i64>` WITH angle brackets — so `T=Vec<i64>` substituted
+into `Channel<T>` produced a MiloType literally named `"Vec<i64>"`. Result: `Channel<T>`
+monomorphized to `Channel_Vec<i64>` in `_fromChannel`'s signature but `Channel_Vec_i64`
+elsewhere → "expected Channel_Vec<i64>, got Channel_Vec_i64", and the Ok-payload of
+`Result<Vec<T>>` never resolved to a real `TVec` (the "cannot iterate over Vec<i64>"
+from cont.15). New `typeKindToMiloType` rebuilds a faithful nested MiloType
+(`name=Vec, typeArgs=[i64]`), which `resolveMonoType` then re-monomorphizes correctly.
+
+**Result**: promiseAll/Sleep/Ergonomic/BlockingAll now type-check + compile clean.
+STILL FAILING at RUNTIME (next bucket, NOT a type bug): they exit 0 with **empty stdout**
+(oracle prints "sum 120" etc). The base `Promise<T>.run(f).await()!` collector pattern
+(spawn task → send on channel → await recv) isn't delivering — main parks on await and the
+scheduler exits without the spawned task's result reaching it. promiseSleep instead HANGS
+(25s SIGKILL). Green runtime itself is fine (greenThreadMany prints). Suspect the nested
+`Channel<Vec<T>>` send/recv or Task.spawn-inside-generic-fn path. Manifest 173/0, converged.
+
 ### Fixture-sweep bug hunt cont.15 (2026-07-11) — nested generics + Promise.all/race
 
 - **Nested-generic static calls** (`Channel<Vec<T>>.new(1)`): `isTypeArgCall`'s inner-token
