@@ -217,61 +217,16 @@ fn genProgram(prog: Program, sourceDir: string): string {
         ensureVecTy(cg)
     }
 
-    // Module-level constants: `@name = global <ty> <const>`, loaded at each use.
+    // Register global var types NOW (functions reference them); the `@name = global`
+    // lines are EMITTED LATER, after struct/enum type decls, so a struct-typed global
+    // (`var o: Point = …`) doesn't forward-reference an as-yet-undeclared %Point.
     for gi in 0..prog.globals.len {
         var surfaceTy = "i64"
         match prog.globals[gi].ty {
             Option.Some(t) => { surfaceTy = astTypeStr(t) }
             Option.None => {}
         }
-        let gllTy = llType(surfaceTy)
-        let gname = prog.globals[gi].name.clone()
-        cg.globalVars.insert(gname.clone(), surfaceTy.clone())
-        // A fixed-array global with a literal initializer (`var xs: [i32;5] = [10,…]`)
-        // lowers to a %Vec — materialize the element data as a writable global and
-        // point the %Vec at it (zeroinit would leave it empty).
-        var arrayHandled = false
-        if isVecTy(surfaceTy) {
-            let elemLl = llType(unwrapVec(surfaceTy))
-            let scalarElem = elemLl == "i1" || elemLl == "i8" || elemLl == "i16" || elemLl == "i32" || elemLl == "i64" || elemLl == "double" || elemLl == "float"
-            if scalarElem {
-                var elems: Vec<string> = Vec.new()
-                match *prog.globals[gi].value {
-                    Expr.ArrayLit(elements, sp) => {
-                        for ei in 0..elements.len {
-                            elems.push(elemLl + " " + constInitOf(*elements[ei], elemLl))
-                        }
-                    }
-                    Expr.ArrayRepeat(val, count, sp) => {
-                        let one = constInitOf(*val, elemLl)
-                        for ci in 0..count {
-                            elems.push(elemLl + " " + one.clone())
-                        }
-                    }
-                    _ => {}
-                }
-                if elems.len > 0 {
-                    var dataC = "["
-                    for ei in 0..elems.len {
-                        if ei > 0 { dataC = dataC + ", " }
-                        dataC = dataC + elems[ei].clone()
-                    }
-                    dataC = dataC + "]"
-                    let n = elems.len.toString()
-                    emitG(cg, "@" + gname.clone() + "_data = global [" + n + " x " + elemLl + "] " + dataC + "\n")
-                    emitG(cg, "@" + gname.clone() + " = global %Vec { ptr @" + gname.clone() + "_data, i64 " + n + ", i64 " + n + " }\n")
-                    arrayHandled = true
-                }
-            }
-        }
-        if !arrayHandled {
-            // aggregate globals (%String/%Vec/struct) zero-init; scalars take a const.
-            var gval = "zeroinitializer"
-            if !(gllTy.len > 0 && gllTy[0] == 37) {
-                gval = constInitOf(*prog.globals[gi].value, gllTy)
-            }
-            emitG(cg, "@" + gname.clone() + " = global " + gllTy + " " + gval + "\n")
-        }
+        cg.globalVars.insert(prog.globals[gi].name.clone(), surfaceTy.clone())
     }
 
     // Register function return types. Generic templates never codegen — only
@@ -362,6 +317,101 @@ fn genProgram(prog: Program, sourceDir: string): string {
         }
         llStruct = llStruct + " }"
         emitG(cg, "%" + sname + " = type " + llStruct + "\n")
+    }
+
+    // Module-level global initializers — emitted here so struct/enum/%Vec/%String
+    // types they reference are already declared above.
+    for gi in 0..prog.globals.len {
+        var surfaceTy = "i64"
+        match prog.globals[gi].ty {
+            Option.Some(t) => { surfaceTy = astTypeStr(t) }
+            Option.None => {}
+        }
+        let gllTy = llType(surfaceTy)
+        let gname = prog.globals[gi].name.clone()
+        // A fixed-array global with a literal initializer (`var xs: [i32;5] = [10,…]`)
+        // lowers to a %Vec — materialize the element data as a writable global and
+        // point the %Vec at it (zeroinit would leave it empty).
+        var arrayHandled = false
+        if isVecTy(surfaceTy) {
+            let elemLl = llType(unwrapVec(surfaceTy))
+            let scalarElem = elemLl == "i1" || elemLl == "i8" || elemLl == "i16" || elemLl == "i32" || elemLl == "i64" || elemLl == "double" || elemLl == "float"
+            if scalarElem {
+                var elems: Vec<string> = Vec.new()
+                match *prog.globals[gi].value {
+                    Expr.ArrayLit(elements, sp) => {
+                        for ei in 0..elements.len {
+                            elems.push(elemLl + " " + constInitOf(*elements[ei], elemLl))
+                        }
+                    }
+                    Expr.ArrayRepeat(val, count, sp) => {
+                        let one = constInitOf(*val, elemLl)
+                        for ci in 0..count {
+                            elems.push(elemLl + " " + one.clone())
+                        }
+                    }
+                    _ => {}
+                }
+                if elems.len > 0 {
+                    var dataC = "["
+                    for ei in 0..elems.len {
+                        if ei > 0 { dataC = dataC + ", " }
+                        dataC = dataC + elems[ei].clone()
+                    }
+                    dataC = dataC + "]"
+                    let n = elems.len.toString()
+                    emitG(cg, "@" + gname.clone() + "_data = global [" + n + " x " + elemLl + "] " + dataC + "\n")
+                    emitG(cg, "@" + gname.clone() + " = global %Vec { ptr @" + gname.clone() + "_data, i64 " + n + ", i64 " + n + " }\n")
+                    arrayHandled = true
+                }
+            }
+        }
+        // A struct global with an all-const-scalar literal (`var o: Point = Point{x,y}`)
+        // becomes an aggregate constant; otherwise aggregates zero-init.
+        var structHandled = false
+        let isStructG = gllTy.len > 0 && gllTy[0] == 37 && cg.structs.contains(stripPercent(gllTy))
+        if !arrayHandled && isStructG {
+            let sname = stripPercent(gllTy)
+            let sfields = cg.structs.get(sname)!
+            match *prog.globals[gi].value {
+                Expr.StructLit(lname, litFields, sp) => {
+                    var parts: Vec<string> = Vec.new()
+                    var allConst = true
+                    // emit in declared field order, matching the literal by name
+                    for fi in 0..sfields.len {
+                        let fll = llType(sfields[fi].ty)
+                        let scalar = fll == "i1" || fll == "i8" || fll == "i16" || fll == "i32" || fll == "i64" || fll == "double" || fll == "float"
+                        if !scalar { allConst = false }
+                        var fval = "0"
+                        for lf in 0..litFields.len {
+                            if litFields[lf].name == sfields[fi].name {
+                                fval = constInitOf(*litFields[lf].value, fll)
+                            }
+                        }
+                        parts.push(fll + " " + fval)
+                    }
+                    if allConst {
+                        var body = "{ "
+                        for pi in 0..parts.len {
+                            if pi > 0 { body = body + ", " }
+                            body = body + parts[pi].clone()
+                        }
+                        body = body + " }"
+                        emitG(cg, "@" + gname.clone() + " = global " + gllTy + " " + body + "\n")
+                        structHandled = true
+                    }
+                }
+                _ => {}
+            }
+        }
+        if !arrayHandled && !structHandled {
+            // aggregate globals (%String/%Vec/struct) zero-init; scalars take a const.
+            var gval = "zeroinitializer"
+            if !(gllTy.len > 0 && gllTy[0] == 37) {
+                gval = constInitOf(*prog.globals[gi].value, gllTy)
+            }
+            emitG(cg, "@" + gname.clone() + " = global " + gllTy + " " + gval + "\n")
+        }
     }
 
     // Emit all functions (generic templates excluded — see registration above)
