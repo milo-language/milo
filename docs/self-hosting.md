@@ -547,6 +547,48 @@ buffers (`Option_Vec_Heap_Opti`) and produced phantom `undefined variable`
 errors. **Acceptance bar met: stage3 build + manifest-wide stage2-vs-stage3 diff
 from committed `f6b9784` after `sh scripts/selfhost.sh`.**
 
+### Reconciliation round 2 (2026-07-10 ~21:00): both results were real — the discriminator is CLANG OPT LEVEL, not a stale binary
+
+The stale-binary explanation above does not hold for the independent run: its
+stage1 was built fresh from `f6b9784` source (same command selfhost.sh runs,
+20:30), and a second stage2 was built via the post-selfhost.sh
+`.selfhost/milo-self.bin` (20:35) — both stage2s still exploded. Controlled
+experiment settles it — **the SAME stage2 IR** (`milo-self.bin emit-ir
+src-milo/main.milo`, 157161 lines), compiled twice:
+
+```
+clang -O0 A.ll → check src-milo/main.milo → exit 0, clean   (×2)
+clang -O2 A.ll → check src-milo/main.milo → exit 1, 436 errors / 438 errors (run-to-run drift)
+```
+
+So:
+- **The -O0 fixed point is real** — the convergence section above stands *as
+  measured*, because its chain hand-compiled stages with `clang -O0`.
+- **The self-IR still contains UB.** At -O2 the same compiler mis-typechecks its
+  own source, and the error count drifts between identical runs (434–438
+  observed across 8 runs) — classic optimizer-exposed undefined behavior, the
+  same "-O0 empty vs -O2 partial" signature already documented in M5 (earlier).
+- **milo0's own `build` command uses `clang -O2`** (`src-milo/main.milo:236,255`)
+  — so the NORMAL pipeline (`stage1 build src-milo/main.milo -o stage2`)
+  produces a miscompiled stage2 today. That is exactly how the independent
+  verification built its stage2s. Anyone reproducing convergence must currently
+  hand-compile the IR at -O0; that caveat belongs in any README/announcement.
+- Prime UB suspect is already on file: **Review lead #2** (shallow-get UAF for
+  every map value type without `impl Clone` — StructInfo/EnumInfo/TraitInfo/
+  ImplInfo/`Vec<ImplInfo>`/VarInfo). Use-after-free is precisely the bug class
+  that -O0 masks (spill/reload keeps stale values readable) and -O2 exposes
+  (reordered frees, dead-store elimination). Missing alloca hoisting (lead #7)
+  is the other candidate.
+
+Actions before announcing M5:
+1. Either fix lead #2 (structural deep-clone emitter) and re-test at -O2, or
+   interim: switch `src-milo/main.milo` build/run clang invocations to `-O0`
+   so the normal pipeline produces the binary the convergence claim describes.
+2. Add the **-O2 canary** to the acceptance bar: `clang -O2` the self-IR and
+   `check src-milo/main.milo` must exit 0 — run it 3×, error counts must be 0
+   and stable. Convergence at -O0 with UB at -O2 is a fixed point of a
+   miscompiled compiler pipeline, not yet a shippable milestone.
+
 ### Review leads (2026-07-10, code review of recent commits; round 2 same day)
 
 **1. ~~genHashMapGet shallow copy~~ — CONFIRMED AND FIXED** (`4f9d443` get,
