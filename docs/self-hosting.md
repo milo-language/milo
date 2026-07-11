@@ -914,6 +914,18 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.18 (2026-07-11) — HashMap.len + exhaustive match term
+
+- **`HashMap.len()`** (→ lenMethod): added `len` to `checkHashMapMethod` (returns i64);
+  codegen already handled it (extractvalue `%HashMap` field 1). TS models it as a `.len`
+  field, milo0 as a method — both fine.
+- **Wildcard-less exhaustive match termination** (→ matchLiterals): `match b { true => …,
+  false => … }` is exhaustive but has no `_`. `genIntMatch`/`genStringMatch` emitted a
+  fallthrough `br` (+ `allTerminated=false`) in the no-wildcard branch, so a String-returning
+  fn wasn't marked terminated and fell through to the function-default `ret %String 0`
+  (invalid — aggregate `0`). The checker proves exhaustiveness, so the no-match path is now
+  `unreachable`. Fixes any wildcard-less bool/enum literal match in a value-returning fn.
+
 ### Fixture-sweep bug hunt cont.17 (2026-07-11) — array→Vec coercion + for-in order
 
 - **`let v: Vec<T> = [a, b, c]`** (→ vecLiteral): checker's let/var mismatch guard now allows
