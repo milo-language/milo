@@ -914,6 +914,18 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.19 (2026-07-11) — Option auto-wrap at let/assign
+
+`let y: u16? = 100` and `x = 42` (assigning a bare value to an `Option<T>`) (→ optionAutoWrap):
+- checker `optionIntWrapCoercible` — like optionWrapCoercible but also accepts an int
+  payload vs int value (42:i32 into Option<u16>); added to the let/var and assign mismatch
+  guards. (The strict optionWrapCoercible stays for call sites where codegen needs an exact
+  ll match.)
+- codegen `genOptionWrapIfNeeded` — when the hint resolves to an Option enum and the value
+  isn't already that enum, wrap via `genWrapSome` (which already trunc/exts the payload).
+  Wired into genLetDecl/genVarDecl and the ident cases of genAssign. `null` still lowers to
+  None directly (already the Option type → not re-wrapped).
+
 ### Fixture-sweep bug hunt cont.18 (2026-07-11) — HashMap.len + exhaustive match term
 
 - **`HashMap.len()`** (→ lenMethod): added `len` to `checkHashMapMethod` (returns i64);
