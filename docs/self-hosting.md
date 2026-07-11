@@ -747,6 +747,36 @@ already mandates.
 
 (populate at M0 seed time)
 
+### Parity progress (2026-07-11, cont.45) — f32 float-literal coercion; extern HFA ABI is the last codegen gap
+
+`09be940` — f32 float-literal coercion (manifest 173 green, byte-identical -O2
+convergence, sweep 326 → 327):
+- **checker** `floatLitCoercible(to, src, srcExpr)` (mirrors `intCoercible`): a bare
+  float literal defaults to f64 but coerces into an f32 field/arg target. Wired into
+  the struct-lit field guard and the call-arg guard.
+- **codegen** `FloatLit` honors an f32 hint — emits a `float` constant instead of
+  always `double` (the struct-lit/call paths already thread the field/param type as the
+  hint). And `print()` now `fpext`s a `float` arg to double for `%g` instead of the
+  invalid `zext float to i32` fallthrough.
+
+This unblocked the *type-check + emit* of the extern-HFA fixtures, but they still run
+WRONG (`sum4(F4{1,2,3,4})` → 2.125, want 10) because **milo0 has no struct-by-value ABI
+classifier**. It passes aggregates naively as their LLVM struct type: correct by luck for
+`D2` (2×f64 → `{double,double}`), wrong for `F4` (4×f32 HFA — AAPCS64 wants `[4 x float]`
+in SIMD regs, not 4 GP-reg floats) and for >16B structs. These fixtures need a companion
+`.c` peer the sweep never links, so they can only be verified by hand
+(`milo-self emit-ir … | clang … fixture.c`).
+
+**Next dedicated bucket — port `src/abi.ts` (130-line pure classifier) into milo0 and
+wire it in.** The classifier is easy; the work is codegen consumption: at extern declares
+(`emit.milo`) and call sites (`expr.milo`), render the plan into LLVM declares + matching
+call-site attributes (must agree or x86_64 miscompiles), stage struct args in allocas,
+and coerce loads/stores. Handles HFA (1-4 same-type floats → SIMD), non-HFA ≤16B → GP
+regs (i64/[2×i64]), >16B → indirect/byval, and sret returns. Fixture-only (no example
+uses struct-by-value C FFI), not sweep-verifiable, but it is the last real
+milo0-vs-oracle codegen delta. `offsetOf<T>("field")` builtin (externStructNested) is a
+smaller adjacent gap.
+
 ### Parity MILESTONE (2026-07-11, cont.44) — ALL 35 examples compile AND run at parity
 
 The examples/ goal is **complete**. Audited every `.milo` under `examples/` with a
