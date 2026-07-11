@@ -486,6 +486,64 @@ while the language stagnates.
 | M5 (earlier) | **stage2 grind via ASan; UB fixes.** milo-self2 links + type-checks but MIScompiles: opt-level-sensitive **UB** (proven -O0 empty vs -O2 partial). **Working method: `clang -O0 -fsanitize=address` the milo-self self-IR, run it; ASan names the overflow.** Fixed #1 (`bf3f292`): `genStringEq` ran `memcmp(a,b,aLen)` unconditionally (result AND-ed with lenEq) → overflowed the shorter buffer → `min(aLen,bLen)`. **Open #2 (narrowed, NOT yet fixed): milo-self2's `readFd` returns -1/EBADF on the FIRST file read only** (stdlib reads 2..N succeed). Bisected with eprint probes down the stack: `compile→readFile→File.readAll→readFd→read(3,buf,65536)=-1 errno=9`. fd=3 is valid during `File.size()` (lseek returns 32) but EBADF at the very next `read` — **the fd is closed between size() and read()**, i.e. a File `Drop`(close) fires on a stale copy. So `source` comes back empty → 1 token (EOF) → 0 parsed fns → genProgram emits only globals (why "body is lost"). readFile/readAll IR *looks* correct on inspection (drop of `f` is correctly after readAll; no double-drop visible), so it's a drop-timing/aliasing UB, likely tied to the new ref-param path or genMethodCall's dead `%t0 = load %File, ptr %self` receiver-load. **Next: minimal repro compiled by milo-self.bin of `struct+impl Drop(close) / Type.openRead()? / &self method that reads fd` (the fdtest.milo attempt hit a resolver quirk with extern imports — build it using File from std/io instead of raw externs), then bisect which construct emits the early close.** Also backfill manifest fixtures for the behavioral fixes (Vec.pop panic, Heap.clone, ref-mut, short-circuit, string-eq-unequal-len). | 2026-07-10 |
 | M6 parity | not started | |
 
+### Review leads (2026-07-10, code review of recent commits — check these before the lldb/ulimit session)
+
+**1. PRIME SUSPECT for the vecJoin runaway + residual FnSig corruption:
+`genHashMapGet` returns a SHALLOW copy of the value** (`codegen/expr.milo:369-377`
+— raw `load valLl` stored into the Option payload, no `genCloneOfLoaded`). This is
+the stage2 mirror of oracle miscompile `1cd6e27` ("HashMap.get returned a shallow
+copy"). Mechanism: `checker/expr.milo:592` `let sig = ck.functions.get(func)!` —
+milo0 source (written against post-1cd6e27 oracle semantics) treats `sig` as an
+owned deep copy; at scope end its drop frees `params: Vec<FnParam>` buffers and
+`ret: TypeKind` Heap boxes **still owned by the map**. Every later `functions.get`
+of that fn reads freed memory → garbage `sig.params.len` (the observed
+`4343263508 args`) → one giant clone/alloc inside a single check call. Fits every
+datum: context-dependent (needs freed-page reuse — full prelude churn, vecJoin is
+prelude fn #24 so ~23 fn bodies of get+drop precede it), a SINGLE huge alloc, no
+op-counter trips, ASan-invisible in stage1 (the bug is in stage2's emitted code).
+Fix: in the found path, run the loaded value through `genCloneOfLoaded` before
+storing into the Option; same for `genHashMapGetOrDefault` (`expr.milo:410-412`).
+Validation is cheap — no lldb needed: patch, rebuild stage2, run
+`milo-self2 check` on prelude + the old `/tmp/req2.milo` shape.
+- **ABI check while there**: clone helpers are `impl Clone for FnSig { fn
+  clone(&self) }` — `&self` now lowers as `ptr`, but `genCloneOfLoaded`
+  (`expr.milo:1005`) calls `@Ty$clone(%Ty v)` **by value**. If helper defs take
+  ptr, that call is an ABI mismatch; verify against emitted IR (genHeapClone uses
+  the same path and works, so maybe clone defs are by-value — confirm which).
+
+**2. `genCloneOfLoaded` silently shallow-copies bare `Vec<T>`/`HashMap<K,V>`
+values** that lack a user `impl Clone` (`expr.milo:1008-1009` "value copy is a
+faithful clone" — false for Vec/HashMap/%String-containing aggregates without
+helpers). FnSig/TypeKind/FnParam have impl Clone so suspect #1's fix works, but
+any enum payload or struct cloned through this fallback with a builtin container
+inside aliases its buffer. Needs a real deep-clone emitter (oracle:
+`emitDeepCloneFromPtr`) or at minimum a fail-loud on %Vec/%HashMap here.
+
+**3. `payloadBytes` recursion drops `resolveTyStr`** (`codegen/types.milo:234`):
+the outer sizing loop resolves each payload (`emit.milo:216`) but the recursive
+call passes raw UNMANGLED payload types — `TArray(Heap<TypeKind>, Option<i64>)`
+recurses on `"Option<i64>"`, which isn't registered (mono name is `Option_i64`)
+→ 8-byte fallback (real: 16). Latent today only because TFn's 32B dominates
+TypeKind's max; same undersizing class dc68742 just fixed. One-line fix:
+`payloadBytes(cg, resolveTyStr(cg, …))` at the recursion site (struct-field
+branch is safe — fields are stored resolved at registration, `emit.milo:201`).
+
+**4. `payloadBytes` struct branch ignores LLVM field alignment padding**
+(`types.milo:240-247`): packed sum vs LLVM's aligned layout. `{i1, i64, i1, i64}`
+sums 18 → 24 slot bytes vs real 32. Current checker structs survive by rounding
+luck (verified FnSig 66→72 = real 72; VarInfo 68→72 = real 72) — one reordered
+field breaks it silently. Fix: align each field to `min(natural, 8)` while
+summing and round the total, mirroring LLVM struct layout.
+
+**5. Minor**: `genHashMapInsert` found-path overwrites the old value without
+dropping it (`expr.milo:263` — leak, not corruption); `findLocal` falls back to
+`locs[0]` on miss (`types.milo:387`) — violates the fail-loud rule, make it panic.
+
+**6. Safer tool than bare lldb for any future "one giant alloc"**: emit (or
+LD-interpose) a `_miloMallocChecked` wrapper that aborts with the requested size
+when it exceeds ~1GB — deterministic, OOM-safe, and the abort backtrace names the
+call site without a 1.5GB live process.
+
 ### Exclusion list (fixtures milo-self is not expected to pass yet)
 
 (populate at M0 seed time)
