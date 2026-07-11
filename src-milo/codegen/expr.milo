@@ -1969,6 +1969,72 @@ fn genFormat(cg: &mut Cgen, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Ve
 // as-is, wrapped in quotes). NOTE: string values are not yet RFC-escaped, so a
 // field containing a quote/backslash produces invalid JSON (the checker permits
 // only scalar fields; escaping is a follow-up).
+// Five IR lines that append one byte (a constant or an SSA i8 value) to the
+// escape buffer %out at index %oi, then bump %oi. `n` names its temps uniquely.
+fn jsonAppendIR(n: i64, byteVal: string): string {
+    let o = "%jo" + n.toString()
+    let p = "%jp" + n.toString()
+    let q = "%jq" + n.toString()
+    return "  " + o + " = load i64, ptr %oi\n" +
+           "  " + p + " = getelementptr i8, ptr %out, i64 " + o + "\n" +
+           "  store i8 " + byteVal + ", ptr " + p + "\n" +
+           "  " + q + " = add i64 " + o + ", 1\n" +
+           "  store i64 " + q + ", ptr %oi\n"
+}
+
+// Emit the JSON string-escaping runtime helper once:
+// `@__jsonEsc(%String) -> %String` — quotes/backslash/\n\t\r\b\f get a backslash
+// escape, other control chars become \u00XX (RFC 8259), everything else copies.
+fn ensureJsonEsc(cg: &mut Cgen) {
+    for i in 0..cg.emittedThunks.len {
+        if cg.emittedThunks[i] == "__jsonEsc" { return }
+    }
+    cg.emittedThunks.push("__jsonEsc")
+    ensureMalloc(cg)
+    var f = "define %String @__jsonEsc(%String %s) {\nentry:\n"
+    f = f + "  %data = extractvalue %String %s, 0\n"
+    f = f + "  %len = extractvalue %String %s, 1\n"
+    f = f + "  %sz = mul i64 %len, 6\n"
+    f = f + "  %sz1 = add i64 %sz, 1\n"
+    f = f + "  %out = call ptr @malloc(i64 %sz1)\n"
+    f = f + "  %oi = alloca i64\n  store i64 0, ptr %oi\n"
+    f = f + "  %ii = alloca i64\n  store i64 0, ptr %ii\n"
+    f = f + "  %escslot = alloca i8\n"
+    f = f + "  br label %jl\n"
+    f = f + "jl:\n  %i = load i64, ptr %ii\n  %done = icmp sge i64 %i, %len\n  br i1 %done, label %jf, label %jb\n"
+    f = f + "jb:\n  %cp = getelementptr i8, ptr %data, i64 %i\n  %c = load i8, ptr %cp\n"
+    f = f + "  switch i8 %c, label %jchk [ i8 34, label %j_dq i8 92, label %j_bs i8 10, label %j_nl i8 9, label %j_tb i8 13, label %j_cr i8 8, label %j_bb i8 12, label %j_ff ]\n"
+    f = f + "j_dq:\n  store i8 34, ptr %escslot\n  br label %jesc2\n"
+    f = f + "j_bs:\n  store i8 92, ptr %escslot\n  br label %jesc2\n"
+    f = f + "j_nl:\n  store i8 110, ptr %escslot\n  br label %jesc2\n"
+    f = f + "j_tb:\n  store i8 116, ptr %escslot\n  br label %jesc2\n"
+    f = f + "j_cr:\n  store i8 114, ptr %escslot\n  br label %jesc2\n"
+    f = f + "j_bb:\n  store i8 98, ptr %escslot\n  br label %jesc2\n"
+    f = f + "j_ff:\n  store i8 102, ptr %escslot\n  br label %jesc2\n"
+    f = f + "jesc2:\n" + jsonAppendIR(1, "92")
+    f = f + "  %ec = load i8, ptr %escslot\n" + jsonAppendIR(2, "%ec")
+    f = f + "  br label %jnext\n"
+    f = f + "jchk:\n  %isc = icmp ult i8 %c, 32\n  br i1 %isc, label %juni, label %jraw\n"
+    f = f + "jraw:\n" + jsonAppendIR(3, "%c") + "  br label %jnext\n"
+    f = f + "juni:\n" + jsonAppendIR(4, "92") + jsonAppendIR(5, "117") + jsonAppendIR(6, "48") + jsonAppendIR(7, "48")
+    f = f + "  %hi = lshr i8 %c, 4\n  %lo = and i8 %c, 15\n"
+    f = f + "  %hic = icmp ult i8 %hi, 10\n  %hid = add i8 %hi, 48\n  %hia = add i8 %hi, 87\n  %hich = select i1 %hic, i8 %hid, i8 %hia\n"
+    f = f + "  %loc = icmp ult i8 %lo, 10\n  %lod = add i8 %lo, 48\n  %loa = add i8 %lo, 87\n  %loch = select i1 %loc, i8 %lod, i8 %loa\n"
+    f = f + jsonAppendIR(8, "%hich") + jsonAppendIR(9, "%loch") + "  br label %jnext\n"
+    f = f + "jnext:\n  %i1 = add i64 %i, 1\n  store i64 %i1, ptr %ii\n  br label %jl\n"
+    f = f + "jf:\n  %olen = load i64, ptr %oi\n"
+    f = f + "  %r0 = insertvalue %String undef, ptr %out, 0\n  %r1 = insertvalue %String %r0, i64 %olen, 1\n  %r2 = insertvalue %String %r1, i64 %sz1, 2\n  ret %String %r2\n}\n\n"
+    cg.globals = cg.globals + f
+}
+
+// Escape a string Val for JSON, returning the escaped %String Val.
+fn genJsonEsc(cg: &mut Cgen, strVal: &string): Val {
+    ensureJsonEsc(cg)
+    let t = nextTemp(cg)
+    emit(cg, "  " + t + " = call %String @__jsonEsc(%String " + strVal.clone() + ")\n")
+    return Val { v: t, ty: "string" }
+}
+
 // Serialize an anonymous JSON object literal `{ k: v, … }` to a JSON string,
 // matching genJsonStringify's format (string values quoted; numbers/bools bare).
 fn genJsonObject(cg: &mut Cgen, fields: &Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
@@ -1985,12 +2051,13 @@ fn genJsonObject(cg: &mut Cgen, fields: &Vec<StructLitField>, locs: &Vec<Local>,
         if isStr {
             let q = genStringLit(cg, "\"")
             acc = genStringConcat(cg, acc.v, q.v)
-        }
-        let disp = genDisplayString(cg, fv.v, fv.ty, locs, sigs)
-        acc = genStringConcat(cg, acc.v, disp.v)
-        if isStr {
+            let esc = genJsonEsc(cg, fv.v)
+            acc = genStringConcat(cg, acc.v, esc.v)
             let q2 = genStringLit(cg, "\"")
             acc = genStringConcat(cg, acc.v, q2.v)
+        } else {
+            let disp = genDisplayString(cg, fv.v, fv.ty, locs, sigs)
+            acc = genStringConcat(cg, acc.v, disp.v)
         }
     }
     let close = genStringLit(cg, "}")
@@ -2023,12 +2090,13 @@ fn genJsonStringify(cg: &mut Cgen, arg: &Expr, locs: &Vec<Local>, sigs: &Vec<CgF
         if isStr {
             let q = genStringLit(cg, "\"")
             acc = genStringConcat(cg, acc.v, q.v)
-        }
-        let disp = genDisplayString(cg, fv, fields[i].ty, locs, sigs)
-        acc = genStringConcat(cg, acc.v, disp.v)
-        if isStr {
+            let esc = genJsonEsc(cg, fv)
+            acc = genStringConcat(cg, acc.v, esc.v)
             let q2 = genStringLit(cg, "\"")
             acc = genStringConcat(cg, acc.v, q2.v)
+        } else {
+            let disp = genDisplayString(cg, fv, fields[i].ty, locs, sigs)
+            acc = genStringConcat(cg, acc.v, disp.v)
         }
     }
     let close = genStringLit(cg, "}")
