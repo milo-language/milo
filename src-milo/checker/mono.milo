@@ -483,10 +483,20 @@ fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
 
     // Create concrete fields
     var fields: Vec<CkStructField> = Vec.new()
+    // Register the (empty) mangled struct first so a field that references it
+    // recursively resolves; fields are filled in below.
+    ck.structs.insert(mangled.clone(), StructInfo { fields: Vec.new(), baseName: baseName.clone() })
     for fi in 0..generic.fields.len {
+        // Resolve from the AST field type (which keeps `<T>`): substituteTypeKind on
+        // the stored TypeKind can't recover a user-generic arg (TStruct holds only a
+        // name), so `Channel<T>` would collapse to `Channel` instead of `Channel_i64`.
+        var fty = substituteTypeKind(generic.fields[fi].ty, typeMap)
+        if fi < generic.decl.fields.len {
+            fty = resolveMonoType(ck, substituteMiloType(generic.decl.fields[fi].ty, generic.typeParams, typeArgs))
+        }
         fields.push(CkStructField {
             name: generic.fields[fi].name.clone(),
-            ty: substituteTypeKind(generic.fields[fi].ty, typeMap),
+            ty: fty,
         })
     }
 
