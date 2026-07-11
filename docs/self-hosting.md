@@ -589,7 +589,26 @@ Actions before announcing M5:
    and stable. Convergence at -O0 with UB at -O2 is a fixed point of a
    miscompiled compiler pipeline, not yet a shippable milestone.
 
-### M5 follow-on: `-O2` uninitialized-HEAP miscompile (the last robustness gap)
+### M5 follow-on: `-O2` miscompile — FIXED ✅ (payloadBytes alignment)
+
+**Root cause found and fixed.** `payloadBytes` (codegen/types.milo) summed struct
+field sizes with **no inter-field alignment padding**, so `MiloType` (String, Vec,
+four `i1`s, then 8-aligned `Option_i64`/`Vec`/`Option_Heap_MiloType`) sized 109→112
+instead of 120. That undersized `Option<MiloType>`'s payload to `[14 x i64]` vs the
+oracle's `[15 x i64]`. Storing a `Some(MiloType)` overflowed the slot by 8 bytes —
+benign at `-O0` (aggregate store into adjacent slack), but at `-O2` the checker's
+`match` on a borrowed `&Option<MiloType>` (checkLetDecl's `typeAnno`) read an
+**undef tag → took the `None` arm** → the `: i64` annotation was silently dropped →
+`return type mismatch: i64 vs i32`. Found by eprint-probing checkLetDecl in a
+`-O2`-built self binary (probe showed `letdecl NONE` at `-O2` vs `SOME hint=i64` at
+`-O0`), then diffing `%Option_MiloType` milo0 `[14]` vs oracle `[15]`. Fix: added
+`alignOf` + aligned field offsets in both the struct branch and the enum-variant
+sum, matching LLVM's layout. **Now: `n3.milo` clean at `-O2`; stage2 built at `-O2`
+via the `build` command produces stage3 that runs programs and emits
+`stage2==stage3==stage4` byte-identical; manifest-wide 212/339 fixtures identical,
+0 diverge. Self-hosting converges at the production `-O2` level end-to-end.**
+
+### M5 follow-on (historical): `-O2` uninitialized-HEAP miscompile — how it was chased
 
 Convergence + build/run all verified at **`-O0`/`-O1`**. milo0's own `build`
 command defaults to **`-O2`** (`main.milo:236,255`), and a self-built binary at
