@@ -2799,7 +2799,7 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return genFieldAccess(cg, *object, field, locs, sigs)
         }
         Expr.Closure(params, retType, body, isMove, span) => {
-            return genClosure(cg, params, retType, body, locs, sigs)
+            return genClosure(cg, params, retType, body, isMove, locs, sigs)
         }
         Expr.EnumLit(enumName, variant, args, span) => {
             if enumName == "Vec" && variant == "new" {

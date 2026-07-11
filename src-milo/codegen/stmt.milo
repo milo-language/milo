@@ -2,7 +2,7 @@
 from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm, Param, MiloType, StructLitField }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig,
-    nextTemp, nextLabel, emit, emitG, llType, stripPercent, resolveTyStr,
+    nextTemp, nextLabel, emit, emitG, llType, stripPercent, resolveTyStr, ensureMalloc,
     findLocal, hasLocal, genLoad, isVecTy, unwrapVec,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
@@ -861,9 +861,21 @@ fn closureEnvTy(caps: &Vec<Local>): string {
     return ty + " }"
 }
 
+// A move closure's env holds COPIES of the captured values (by-value), so it can
+// outlive the spawning frame (e.g. run on another thread). By-ref env holds ptrs.
+fn closureMoveEnvTy(caps: &Vec<Local>): string {
+    if caps.len == 0 { return "{}" }
+    var ty = "{ "
+    for i in 0..caps.len {
+        if i > 0 { ty = ty + ", " }
+        ty = ty + llType(caps[i].ty)
+    }
+    return ty + " }"
+}
+
 // Lift a closure to a top-level `@__closure_N(ptr %__env, <ptr params>)` and return
 // a %Closure { fnptr, env }. Uniform ABI: params AND captures arrive by pointer.
-fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, isMove: bool, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     let cname = "__closure_" + cg.closureId.toString()
     cg.closureId = cg.closureId + 1
 
@@ -875,7 +887,10 @@ fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, bo
     }
 
     let caps = closureCaptures(params, body, locs)
-    let envTy = closureEnvTy(caps)
+    // move closures heap-copy their captures (survive an escaping/threaded call);
+    // by-ref closures point into the enclosing frame.
+    var envTy = closureEnvTy(caps)
+    if isMove { envTy = closureMoveEnvTy(caps) }
 
     // swap the emit buffer so the lifted define lands at module scope, not spliced
     // into the enclosing function we're mid-emitting. The `define` header needs the
@@ -894,13 +909,18 @@ fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, bo
 
     emit(cg, "entry:\n")
     var clocs: Vec<Local> = Vec.new()
-    // captures: load each address out of the env struct
     for ci in 0..caps.len {
         let gp = nextTemp(cg)
         emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr %__env, i32 0, i32 " + ci.toString() + "\n")
-        let ca = nextTemp(cg)
-        emit(cg, "  " + ca + " = load ptr, ptr " + gp + "\n")
-        clocs.push(Local { name: caps[ci].name.clone(), ty: caps[ci].ty.clone(), addr: ca, isRef: true })
+        if isMove {
+            // env slot holds the value directly — gp IS the local's storage
+            clocs.push(Local { name: caps[ci].name.clone(), ty: caps[ci].ty.clone(), addr: gp, isRef: true })
+        } else {
+            // env slot holds a pointer to the original variable
+            let ca = nextTemp(cg)
+            emit(cg, "  " + ca + " = load ptr, ptr " + gp + "\n")
+            clocs.push(Local { name: caps[ci].name.clone(), ty: caps[ci].ty.clone(), addr: ca, isRef: true })
+        }
     }
     for pj in 0..params.len {
         let pty = resolveTyStr(cg, astTypeStr(params[pj].ty))
@@ -936,15 +956,35 @@ fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, bo
     cg.closureRetTy = savedClosRet
     cg.globals = cg.globals + closureIR
 
-    // build the env at the call site (addresses of captured locals), then the pair
+    // build the env at the call site, then the { fnptr, env } pair
     var envVal = "null"
     if caps.len > 0 {
-        let ea = nextTemp(cg)
-        emit(cg, "  " + ea + " = alloca " + envTy + "\n")
-        for ci in 0..caps.len {
-            let gp = nextTemp(cg)
-            emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + ci.toString() + "\n")
-            emit(cg, "  store ptr " + caps[ci].addr.clone() + ", ptr " + gp + "\n")
+        var ea = ""
+        if isMove {
+            // heap-allocate and COPY each captured value in (outlives this frame)
+            ensureMalloc(cg)
+            let szp = nextTemp(cg)
+            emit(cg, "  " + szp + " = getelementptr " + envTy + ", ptr null, i32 1\n")
+            let szi = nextTemp(cg)
+            emit(cg, "  " + szi + " = ptrtoint ptr " + szp + " to i64\n")
+            ea = nextTemp(cg)
+            emit(cg, "  " + ea + " = call ptr @malloc(i64 " + szi + ")\n")
+            for ci in 0..caps.len {
+                let cll = llType(caps[ci].ty)
+                let cv = nextTemp(cg)
+                emit(cg, "  " + cv + " = load " + cll + ", ptr " + caps[ci].addr.clone() + "\n")
+                let gp = nextTemp(cg)
+                emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + ci.toString() + "\n")
+                emit(cg, "  store " + cll + " " + cv + ", ptr " + gp + "\n")
+            }
+        } else {
+            ea = nextTemp(cg)
+            emit(cg, "  " + ea + " = alloca " + envTy + "\n")
+            for ci in 0..caps.len {
+                let gp = nextTemp(cg)
+                emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + ci.toString() + "\n")
+                emit(cg, "  store ptr " + caps[ci].addr.clone() + ", ptr " + gp + "\n")
+            }
         }
         envVal = ea
     }
