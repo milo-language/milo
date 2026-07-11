@@ -3439,6 +3439,33 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 emit(cg, "  " + res + " = icmp " + opn + " i32 " + lt + ", " + rt + "\n")
                 return Val { v: res, ty: "bool" }
             }
+            // Operator overloading: struct <op> struct → the Type$..$<method> call
+            // (add/sub/mul/div); self and other are &Self, passed as pointers.
+            if op == "+" || op == "-" || op == "*" || op == "/" {
+                let rawName = stripPercent(resolveTyStr(cg, lv.ty))
+                if cg.structs.contains(rawName) {
+                    var opm = "add"
+                    if op == "-" { opm = "sub" }
+                    if op == "*" { opm = "mul" }
+                    if op == "/" { opm = "div" }
+                    var opFn = ""
+                    for opk, opv in cg.fnRets {
+                        if opk.startsWith(rawName + "$") && opk.endsWith("$" + opm) { opFn = opk.clone() }
+                    }
+                    if opFn.len > 0 {
+                        let structTy = "%" + rawName
+                        let la = nextTemp(cg)
+                        emit(cg, "  " + la + " = alloca " + structTy + "\n")
+                        emit(cg, "  store " + structTy + " " + lv.v + ", ptr " + la + "\n")
+                        let ra = nextTemp(cg)
+                        emit(cg, "  " + ra + " = alloca " + structTy + "\n")
+                        emit(cg, "  store " + structTy + " " + rv.v + ", ptr " + ra + "\n")
+                        let t = nextTemp(cg)
+                        emit(cg, "  " + t + " = call " + structTy + " @" + opFn + "(ptr " + la + ", ptr " + ra + ")\n")
+                        return Val { v: t, ty: lv.ty.clone() }
+                    }
+                }
+            }
             // Mixed integer widths (e.g. `i64Var < i32Param`): widen the narrower
             // operand so the op has one type. i1 is excluded (bool, not arithmetic).
             var lvv = lv.v.clone()

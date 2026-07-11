@@ -338,6 +338,30 @@ fn arrayToVecCoercible(to: &TypeKind, src: &TypeKind): bool {
     }
 }
 
+// operator → overload method name (Add/Sub/Mul/Div traits), or "" if not overloadable
+fn opMethodName(op: &string): string {
+    if op == "+" { return "add" }
+    if op == "-" { return "sub" }
+    if op == "*" { return "mul" }
+    if op == "/" { return "div" }
+    return ""
+}
+
+// does struct `sname` define method `method` via an inherent or trait impl?
+fn structHasMethod(ck: &Checker, sname: &string, method: &string): bool {
+    if method.len == 0 { return false }
+    if ck.inherentImpls.contains(sname) {
+        if ck.inherentImpls.get(sname)!.methods.contains(method) { return true }
+    }
+    if ck.traitImpls.contains(sname) {
+        let impls = ck.traitImpls.get(sname)!
+        for i in 0..impls.len {
+            if impls[i].methods.contains(method) { return true }
+        }
+    }
+    return false
+}
+
 fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &Option<Span>): TypeKind {
     // Logical operators
     if op == "&&" || op == "||" {
@@ -362,6 +386,20 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
     // String equality
     if (op == "==" || op == "!=") && typeEq(lt, tyString()) && typeEq(rt, tyString()) {
         return tyBool()
+    }
+
+    // Operator overloading: `a + b` on a struct implementing Add/Sub/Mul/Div
+    // desugars to a.<op>(b); the result is the struct type.
+    if op == "+" || op == "-" || op == "*" || op == "/" {
+        let opm = opMethodName(op)
+        match lt.clone() {
+            TypeKind.TStruct(sname) => {
+                if structHasMethod(ck, sname, opm) {
+                    return lt.clone()
+                }
+            }
+            _ => {}
+        }
     }
 
     // Arithmetic
