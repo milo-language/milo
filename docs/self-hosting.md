@@ -914,6 +914,18 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.20 (2026-07-11) — string splitWords/splitWhitespace
+
+`s.splitWords()` / `s.splitWhitespace()` (→ stringSplitWords): added both to
+`checkStringMethod` (0 args → `Vec<string>`). Codegen needed nothing — the existing
+`str`+Capitalize(method) mapping already routes them to the prelude's `strSplitWords`/
+`strSplitWhitespace` free fns.
+
+NEXT probe — vecSlice (`v[a..b]` non-owning view): parser desugars index-range to a
+`.slice()` call, so it needs (1) `slice` in checkVecMethod → `TVec(elem)`, (2) codegen to
+build a `%Vec {data+start*esz, end-start, 0}` (cap=0 = non-owning), and (3) confirm the
+Vec drop glue skips `free` when cap==0 (else it frees mid-buffer). Moderate; deferred.
+
 ### Fixture-sweep bug hunt cont.19 (2026-07-11) — Option auto-wrap at let/assign
 
 `let y: u16? = 100` and `x = 42` (assigning a bare value to an `Option<T>`) (→ optionAutoWrap):
