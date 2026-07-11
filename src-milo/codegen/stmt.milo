@@ -1,9 +1,9 @@
 // Statement codegen: let/var, assign, if, while, for, match, break/continue
-from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm }
+from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm, Param, MiloType, StructLitField }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig,
-    nextTemp, nextLabel, emit, llType, stripPercent,
-    findLocal, genLoad, isVecTy, unwrapVec,
+    nextTemp, nextLabel, emit, emitG, llType, stripPercent, resolveTyStr,
+    findLocal, hasLocal, genLoad, isVecTy, unwrapVec,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload
 }
@@ -652,6 +652,15 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 Option.Some(expr) => {
                     let v = genExpr(cg, *expr, locs, sigs, retTy.clone())
                     emitScopeDrops(cg, locs, 0, skipName)
+                    // unannotated closure body: the return type IS the value's type;
+                    // record it (genClosure reads it for the define header) and emit
+                    // the ret with no coercion.
+                    if retTy == "__closureinfer__" {
+                        let vll = llType(v.ty)
+                        cg.closureRetTy = v.ty.clone()
+                        emit(cg, "  ret " + vll + " " + v.v + "\n")
+                        return true
+                    }
                     let fnRetLl = llType(retTy)
                     let valLl = llType(v.ty)
                     if valLl == fnRetLl {
@@ -720,4 +729,241 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
             return genIfLet(cg, *pattern, *subject, thenBody, elseBody, locs, sigs, retTy)
         }
     }
+}
+
+// -- Closures --
+
+// Collect every identifier name referenced in an expression (over-approximate:
+// the caller filters against the enclosing scope to find true captures).
+fn collectIdentsExpr(e: &Expr, out: &mut Vec<string>) {
+    match e {
+        Expr.Ident(name, span) => { out.push(name.clone()) }
+        Expr.BinOp(op, l, r, span) => { collectIdentsExpr(*l, out) collectIdentsExpr(*r, out) }
+        Expr.UnaryOp(op, x, span) => { collectIdentsExpr(*x, out) }
+        Expr.Call(name, args, targs, span) => {
+            out.push(name.clone())
+            for i in 0..args.len { collectIdentsExpr(*args[i], out) }
+        }
+        Expr.StructLit(name, fields, span) => {
+            for i in 0..fields.len { collectIdentsExpr(*fields[i].value, out) }
+        }
+        Expr.FieldAccess(obj, field, span) => { collectIdentsExpr(*obj, out) }
+        Expr.ArrayLit(elems, span) => { for i in 0..elems.len { collectIdentsExpr(*elems[i], out) } }
+        Expr.ArrayRepeat(x, n, span) => { collectIdentsExpr(*x, out) }
+        Expr.IndexAccess(obj, idx, span) => { collectIdentsExpr(*obj, out) collectIdentsExpr(*idx, out) }
+        Expr.EnumLit(en, va, args, span) => { for i in 0..args.len { collectIdentsExpr(*args[i], out) } }
+        Expr.Unwrap(x, span) => { collectIdentsExpr(*x, out) }
+        Expr.Propagate(x, span) => { collectIdentsExpr(*x, out) }
+        Expr.DefaultValue(x, d, span) => { collectIdentsExpr(*x, out) collectIdentsExpr(*d, out) }
+        Expr.CastExpr(x, ty, span) => { collectIdentsExpr(*x, out) }
+        Expr.MethodCall(obj, m, args, span) => {
+            collectIdentsExpr(*obj, out)
+            for i in 0..args.len { collectIdentsExpr(*args[i], out) }
+        }
+        Expr.Closure(params, rt, body, isMove, span) => {
+            for i in 0..body.len { collectIdentsStmt(*body[i], out) }
+        }
+        Expr.RangeExpr(a, b, span) => { collectIdentsExpr(*a, out) collectIdentsExpr(*b, out) }
+        Expr.IsExpr(x, pat, span) => { collectIdentsExpr(*x, out) }
+        Expr.IfExpr(c, t, f, span) => { collectIdentsExpr(*c, out) collectIdentsExpr(*t, out) collectIdentsExpr(*f, out) }
+        _ => {}
+    }
+}
+
+fn collectIdentsStmt(s: &Stmt, out: &mut Vec<string>) {
+    match s {
+        Stmt.LetDecl(name, ty, val, span) => { collectIdentsExpr(*val, out) }
+        Stmt.VarDecl(name, ty, val, span) => { collectIdentsExpr(*val, out) }
+        Stmt.Assign(target, val, span) => { collectIdentsExpr(*target, out) collectIdentsExpr(*val, out) }
+        Stmt.Return(value, span) => {
+            match value { Option.Some(e) => { collectIdentsExpr(*e, out) } Option.None => {} }
+        }
+        Stmt.IfStmt(cond, thenB, elseB, span) => {
+            collectIdentsExpr(*cond, out)
+            for i in 0..thenB.len { collectIdentsStmt(*thenB[i], out) }
+            match elseB {
+                Option.Some(eb) => { for i in 0..eb.len { collectIdentsStmt(*eb[i], out) } }
+                Option.None => {}
+            }
+        }
+        Stmt.WhileStmt(cond, body, span) => {
+            collectIdentsExpr(*cond, out)
+            for i in 0..body.len { collectIdentsStmt(*body[i], out) }
+        }
+        Stmt.ExprStmt(e, span) => { collectIdentsExpr(*e, out) }
+        Stmt.MatchStmt(subj, arms, span) => {
+            collectIdentsExpr(*subj, out)
+            for i in 0..arms.len {
+                for j in 0..arms[i].body.len { collectIdentsStmt(*arms[i].body[j], out) }
+            }
+        }
+        Stmt.IfLetStmt(pat, val, thenB, elseB, span) => {
+            collectIdentsExpr(*val, out)
+            for i in 0..thenB.len { collectIdentsStmt(*thenB[i], out) }
+            match elseB {
+                Option.Some(eb) => { for i in 0..eb.len { collectIdentsStmt(*eb[i], out) } }
+                Option.None => {}
+            }
+        }
+        Stmt.UnsafeBlock(body, span) => { for i in 0..body.len { collectIdentsStmt(*body[i], out) } }
+        Stmt.ForInStmt(v, idx, iter, body, span) => {
+            collectIdentsExpr(*iter, out)
+            for i in 0..body.len { collectIdentsStmt(*body[i], out) }
+        }
+        _ => {}
+    }
+}
+
+// Free variables of a closure body: referenced idents that live in the enclosing
+// scope and aren't the closure's own params. By-reference capture (env holds the
+// address of each), which is sound because these closures don't escape their call.
+fn closureCaptures(params: &Vec<Param>, body: &Vec<Heap<Stmt>>, locs: &Vec<Local>): Vec<Local> {
+    var idents: Vec<string> = Vec.new()
+    for i in 0..body.len { collectIdentsStmt(*body[i], idents) }
+    var caps: Vec<Local> = Vec.new()
+    var seen: Vec<string> = Vec.new()
+    for i in 0..idents.len {
+        let nm = idents[i].clone()
+        var skip = false
+        for pj in 0..params.len { if params[pj].name == nm { skip = true } }
+        if skip { continue }
+        if !hasLocal(locs, nm) { continue }
+        var dup = false
+        for sj in 0..seen.len { if seen[sj] == nm { dup = true } }
+        if dup { continue }
+        seen.push(nm.clone())
+        caps.push(findLocal(locs, nm))
+    }
+    return caps
+}
+
+fn closureEnvTy(caps: &Vec<Local>): string {
+    if caps.len == 0 { return "{}" }
+    var ty = "{ "
+    for i in 0..caps.len {
+        if i > 0 { ty = ty + ", " }
+        ty = ty + "ptr"
+    }
+    return ty + " }"
+}
+
+// Lift a closure to a top-level `@__closure_N(ptr %__env, <ptr params>)` and return
+// a %Closure { fnptr, env }. Uniform ABI: params AND captures arrive by pointer.
+fn genClosure(cg: &mut Cgen, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    let cname = "__closure_" + cg.closureId.toString()
+    cg.closureId = cg.closureId + 1
+
+    var annotated = false
+    var retTyStr = "void"
+    match retType {
+        Option.Some(rt) => { retTyStr = resolveTyStr(cg, astTypeStr(rt)) annotated = true }
+        Option.None => {}
+    }
+
+    let caps = closureCaptures(params, body, locs)
+    let envTy = closureEnvTy(caps)
+
+    // swap the emit buffer so the lifted define lands at module scope, not spliced
+    // into the enclosing function we're mid-emitting. The `define` header needs the
+    // return type up front, but an unannotated closure only learns it from its
+    // `return` — so emit the body first, then prepend the header.
+    let savedBody = cg.body.clone()
+    let savedTemp = cg.temp
+    let savedLabel = cg.label
+    let savedRet = cg.curRetTy.clone()
+    let savedClosRet = cg.closureRetTy.clone()
+    cg.body = ""
+    cg.temp = 0
+    cg.label = 0
+    cg.curRetTy = retTyStr.clone()
+    cg.closureRetTy = "void"
+
+    emit(cg, "entry:\n")
+    var clocs: Vec<Local> = Vec.new()
+    // captures: load each address out of the env struct
+    for ci in 0..caps.len {
+        let gp = nextTemp(cg)
+        emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr %__env, i32 0, i32 " + ci.toString() + "\n")
+        let ca = nextTemp(cg)
+        emit(cg, "  " + ca + " = load ptr, ptr " + gp + "\n")
+        clocs.push(Local { name: caps[ci].name.clone(), ty: caps[ci].ty.clone(), addr: ca, isRef: true })
+    }
+    for pj in 0..params.len {
+        let pty = resolveTyStr(cg, astTypeStr(params[pj].ty))
+        clocs.push(Local { name: params[pj].name.clone(), ty: pty, addr: "%" + params[pj].name.clone(), isRef: true })
+    }
+
+    // annotated → gen against the annotation; unannotated → sentinel so `return`
+    // uses (and records) the value's own type.
+    var walkRet = retTyStr.clone()
+    if !annotated { walkRet = "__closureinfer__" }
+    var term = false
+    for si in 0..body.len {
+        if genStmt(cg, *body[si], clocs, sigs, walkRet) { term = true }
+    }
+    if !annotated { retTyStr = cg.closureRetTy.clone() }
+    let retLl = llType(retTyStr)
+    if !term {
+        if retLl == "void" { emit(cg, "  ret void\n") }
+        else { emit(cg, "  ret " + retLl + " zeroinitializer\n") }
+    }
+
+    // now that retTyStr is settled, prepend the define header to the emitted body.
+    var hdr = "define " + retLl + " @" + cname + "(ptr %__env"
+    for pi in 0..params.len {
+        hdr = hdr + ", ptr %" + params[pi].name.clone()
+    }
+    hdr = hdr + ") {\n"
+    let closureIR = hdr + cg.body.clone() + "}\n\n"
+    cg.body = savedBody
+    cg.temp = savedTemp
+    cg.label = savedLabel
+    cg.curRetTy = savedRet
+    cg.closureRetTy = savedClosRet
+    cg.globals = cg.globals + closureIR
+
+    // build the env at the call site (addresses of captured locals), then the pair
+    var envVal = "null"
+    if caps.len > 0 {
+        let ea = nextTemp(cg)
+        emit(cg, "  " + ea + " = alloca " + envTy + "\n")
+        for ci in 0..caps.len {
+            let gp = nextTemp(cg)
+            emit(cg, "  " + gp + " = getelementptr " + envTy + ", ptr " + ea + ", i32 0, i32 " + ci.toString() + "\n")
+            emit(cg, "  store ptr " + caps[ci].addr.clone() + ", ptr " + gp + "\n")
+        }
+        envVal = ea
+    }
+    let c0 = nextTemp(cg)
+    emit(cg, "  " + c0 + " = insertvalue %Closure undef, ptr @" + cname + ", 0\n")
+    let c1 = nextTemp(cg)
+    emit(cg, "  " + c1 + " = insertvalue %Closure " + c0 + ", ptr " + envVal + ", 1\n")
+    return Val { v: c1, ty: "Closure" }
+}
+
+// Indirect call of a %Closure-typed local: load { fnptr, env }, pass every arg BY
+// POINTER (uniform ABI). retHint supplies R since "fn" drops the return type.
+fn genClosureCall(cg: &mut Cgen, lc: &Local, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, retHint: &string): Val {
+    let clv = nextTemp(cg)
+    emit(cg, "  " + clv + " = load %Closure, ptr " + lc.addr.clone() + "\n")
+    let fp = nextTemp(cg)
+    emit(cg, "  " + fp + " = extractvalue %Closure " + clv + ", 0\n")
+    let env = nextTemp(cg)
+    emit(cg, "  " + env + " = extractvalue %Closure " + clv + ", 1\n")
+
+    var argStr = "ptr " + env
+    for i in 0..args.len {
+        let alv = genLvalue(cg, *args[i], locs, sigs)
+        argStr = argStr + ", ptr " + alv.v
+    }
+    var retTyStr = retHint.clone()
+    if retTyStr.len == 0 { retTyStr = "i64" }
+    let retLl = llType(retTyStr)
+    if retLl == "void" {
+        emit(cg, "  call void " + fp + "(" + argStr + ")\n")
+        return Val { v: "0", ty: "void" }
+    }
+    let t = nextTemp(cg)
+    emit(cg, "  " + t + " = call " + retLl + " " + fp + "(" + argStr + ")\n")
+    return Val { v: t, ty: retTyStr }
 }

@@ -13,6 +13,7 @@ from "src-milo/checker/state.milo" import {
 }
 from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn, monomorphizeStruct, resolveMonoType }
 from "src-milo/checker/traits.milo" import { resolveMethod }
+from "src-milo/checker/stmt.milo" import { checkStmt }
 
 // -- Move tracking --
 
@@ -1666,22 +1667,8 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
 
 // -- Closures --
 
-// A closure's return type: an annotation wins; otherwise infer it from a
-// `return <expr>` (or a trailing expression) in the body. Moves triggered while
-// typing the return expr are rolled back so captured vars aren't poisoned.
-fn stmtReturnType(ck: &mut Checker, s: &Stmt): Option<TypeKind> {
-    match s {
-        Stmt.Return(value, span) => {
-            match value {
-                Option.Some(expr) => { return Option.Some(checkExpr(ck, *expr)) }
-                Option.None => { return Option.Some(tyVoid()) }
-            }
-        }
-        Stmt.ExprStmt(e, span) => { return Option.Some(checkExpr(ck, *e)) }
-        _ => { return Option.None }
-    }
-}
-
+// A closure's return type: an annotation wins; otherwise it's inferred from a
+// `return <expr>` in the body (captured via ck.pendingClosureRet while walking).
 fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>): TypeKind {
     pushScope(ck)
 
@@ -1700,17 +1687,27 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
     }
 
     var inferredRet = tyVoid()
+    var annotated = false
     match retType {
-        Option.Some(rt) => { inferredRet = resolveMonoType(ck, rt) }
-        Option.None => {
-            let snap = snapshotMoves(ck)
-            for i in 0..body.len {
-                match stmtReturnType(ck, *body[i]) {
-                    Option.Some(t) => { inferredRet = t }
-                    Option.None => {}
-                }
-            }
-            restoreMoves(ck, snap)
+        Option.Some(rt) => { inferredRet = resolveMonoType(ck, rt) annotated = true }
+        Option.None => {}
+    }
+
+    // Walk the body so inner locals (`var updated = n`) are declared and checked.
+    // Unannotated closures pass an unknown return type so `return` statements don't
+    // mismatch and instead record their value type into ck.pendingClosureRet.
+    var walkRet = inferredRet.clone()
+    if !annotated { walkRet = tyUnknown() }
+    ck.pendingClosureRet = Option.None
+    let snap = snapshotMoves(ck)
+    for i in 0..body.len {
+        checkStmt(ck, *body[i], walkRet)
+    }
+    restoreMoves(ck, snap)
+    if !annotated {
+        match ck.pendingClosureRet {
+            Option.Some(t) => { inferredRet = t.clone() }
+            Option.None => {}
         }
     }
 

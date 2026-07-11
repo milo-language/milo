@@ -89,6 +89,9 @@ struct Cgen {
     declaredFflush: bool,
     // monotonic id for lifted closure function names (@__closure_N)
     closureId: i64,
+    // return type recorded while emitting an unannotated closure body (its
+    // `return <e>` uses the value's own type and stamps it here for the header)
+    closureRetTy: string,
 }
 
 fn cgenNew(): Cgen {
@@ -121,6 +124,7 @@ fn cgenNew(): Cgen {
         declaredDprintf: false,
         declaredFflush: false,
         closureId: 0,
+        closureRetTy: "",
     }
 }
 
@@ -561,7 +565,13 @@ fn resolveStructName(cg: &Cgen, base: &string): string {
 // resolves to the registered mangled decl. Vec/HashMap/Heap keep their
 // built-in lowering; everything else falls through unchanged.
 fn resolveTyStr(cg: &Cgen, s: &string): string {
-    if isVecTy(s) || isHashMapTy(s) { return s.clone() }
+    // Vec/HashMap keep their built-in lowering, but their element types must still
+    // mangle (Vec<Handle<Node>> → Vec<Handle_Node>) so unwrapVec/genSizeOf don't
+    // later emit an unregistered `%Handle<Node>`.
+    if isVecTy(s) {
+        return "Vec<" + resolveTyStr(cg, unwrapVec(s)) + ">"
+    }
+    if isHashMapTy(s) { return s.clone() }
     var lt: i64 = -1
     for i in 0..s.len {
         if s[i] == 60 {

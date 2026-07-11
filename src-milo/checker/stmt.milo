@@ -155,6 +155,11 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
             ck.inReturn = true
             let valType = checkExpr(ck, *expr)
             ck.inReturn = false
+            // inside an unannotated closure (fnRetType unknown) this Return's type
+            // is the inferred closure return type.
+            if typeEq(fnRetType, tyUnknown()) {
+                ck.pendingClosureRet = Option.Some(valType.clone())
+            }
             if !typeEq(fnRetType, valType) && !typeEq(valType, tyUnknown()) && !typeEq(fnRetType, tyUnknown())
                 && !intCoercible(fnRetType, valType, *expr) {
                 error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
