@@ -1,8 +1,42 @@
 // Top-level codegen: function emission, program registration, IR assembly
-from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl, Expr }
+from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl, Expr, StructLitField }
 
 // Constant initializer text for a module-global's value expression. Globals must
 // be compile-time constants (int/bool/float/char literals, optionally negated).
+// Aggregate constant `%Struct { <f0>, <f1>, … }` for a struct literal whose fields
+// are all const scalars (int/float/bool). Returns "" if the value isn't such a
+// struct literal, or any field is non-scalar (String/Vec/nested struct).
+fn structLitConst(cg: &Cgen, gllTy: &string, value: &Expr): string {
+    if !(gllTy.len > 0 && gllTy[0] == 37) { return "" }
+    let sname = stripPercent(gllTy)
+    if !cg.structs.contains(sname) { return "" }
+    let sfields = cg.structs.get(sname)!
+    match value {
+        Expr.StructLit(lname, litFields, sp) => {
+            var parts: Vec<string> = Vec.new()
+            for fi in 0..sfields.len {
+                let fll = llType(sfields[fi].ty)
+                let scalar = fll == "i1" || fll == "i8" || fll == "i16" || fll == "i32" || fll == "i64" || fll == "double" || fll == "float"
+                if !scalar { return "" }
+                var fval = "0"
+                for lf in 0..litFields.len {
+                    if litFields[lf].name == sfields[fi].name {
+                        fval = constInitOf(*litFields[lf].value, fll)
+                    }
+                }
+                parts.push(fll + " " + fval)
+            }
+            var body = "{ "
+            for pi in 0..parts.len {
+                if pi > 0 { body = body + ", " }
+                body = body + parts[pi].clone()
+            }
+            return body + " }"
+        }
+        _ => { return "" }
+    }
+}
+
 fn constInitOf(e: &Expr, llTy: &string): string {
     // a pointer global can only be a compile-time-constant null (`0 as *T`); LLVM
     // rejects `global ptr 0`, the null pointer constant is spelled `null`.
@@ -336,22 +370,36 @@ fn genProgram(prog: Program, sourceDir: string): string {
         if isVecTy(surfaceTy) {
             let elemLl = llType(unwrapVec(surfaceTy))
             let scalarElem = elemLl == "i1" || elemLl == "i8" || elemLl == "i16" || elemLl == "i32" || elemLl == "i64" || elemLl == "double" || elemLl == "float"
-            if scalarElem {
+            let structElem = elemLl.len > 0 && elemLl[0] == 37 && cg.structs.contains(stripPercent(elemLl))
+            if scalarElem || structElem {
                 var elems: Vec<string> = Vec.new()
+                var elemOk = true
                 match *prog.globals[gi].value {
                     Expr.ArrayLit(elements, sp) => {
                         for ei in 0..elements.len {
-                            elems.push(elemLl + " " + constInitOf(*elements[ei], elemLl))
+                            if structElem {
+                                let sc = structLitConst(cg, elemLl, *elements[ei])
+                                if sc.len == 0 { elemOk = false } else { elems.push(elemLl + " " + sc) }
+                            } else {
+                                elems.push(elemLl + " " + constInitOf(*elements[ei], elemLl))
+                            }
                         }
                     }
                     Expr.ArrayRepeat(val, count, sp) => {
-                        let one = constInitOf(*val, elemLl)
+                        var one = ""
+                        if structElem {
+                            one = structLitConst(cg, elemLl, *val)
+                            if one.len == 0 { elemOk = false }
+                        } else {
+                            one = constInitOf(*val, elemLl)
+                        }
                         for ci in 0..count {
                             elems.push(elemLl + " " + one.clone())
                         }
                     }
                     _ => {}
                 }
+                if !elemOk { elems = Vec.new() }
                 if elems.len > 0 {
                     var dataC = "["
                     for ei in 0..elems.len {
