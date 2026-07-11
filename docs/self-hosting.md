@@ -914,6 +914,20 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.32 (2026-07-11) — type aliases + ranged-int types
+
+`type Altitude = i32(0..50000)` (→ rangedIntegers, rangePropagation): milo0 had no top-level
+`type` alias parse (skipped it). Added:
+- AST `TypeAlias {name, base}` + `Program.typeAliases`, threaded through parser + resolver
+  (prelude/program/imports merge).
+- Parser: top-level `type Name = <type>` case; the optional refinement range `(min..max)` is
+  consumed + DISCARDED **in the alias parse only** — an earlier attempt to handle it inside
+  `parseType` misfired on ordinary annotations (a type followed by `(` elsewhere), regressing
+  the manifest to 169/4 + breaking convergence. Keep range parsing out of the hot path.
+- Checker: `ck.typeAliases` (name→base TypeKind) registered in checkProgram; `resolveAstType`
+  resolves an alias name to its base (preserving &/&mut/* wrappers). No codegen change needed —
+  the HIR carries the resolved base int type. Range bounds are advisory (not yet enforced).
+
 ### Fixture-sweep bug hunt cont.31 (2026-07-11) — exact-first generic-call disambiguation
 
 Regression fix (→ genericFn): cont.27's int-leniency in `disambiguateGenericCall` let an i64
