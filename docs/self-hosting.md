@@ -913,3 +913,47 @@ can't nest in LLVM), so this needs, in order:
 Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)` captures
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
+
+### Closure codegen — PROTOTYPED & VALIDATED (2026-07-11), reverted for one blocker
+
+Built the full zero-capture path and **minilang ran byte-identical to the oracle**
+(`42/100/3/100/25`, exit 0). What worked, to re-apply verbatim next push:
+- `%Closure = type { ptr, ptr }` in the preamble; `llType("fn")→"%Closure"`;
+  `closureId` counter on Cgen.
+- `genClosure` (expression-bodied only): buffer-swap trick — save `cg.body`/`temp`/
+  `label`/`curRetTy`, set `cg.body=""`, emit `define R @__closure_N(ptr %__env, <ptr
+  params>)`, gen the single Return/ExprStmt via genExpr (NO genStmt → avoids the
+  expr↔stmt circular import), then `cg.globals += closureIR` and restore. Returns
+  `insertvalue %Closure {@__closure_N, null}`.
+- **Uniform "args-by-pointer" ABI** (the key design call): a fn-typed param loses its
+  inner ref-ness, so the call site can't know whether to pass value or address. Fix:
+  closures ALWAYS take args by pointer — `genClosure` headers every param as `ptr %p`
+  and binds it `isRef:true`; `genClosureCall` passes each arg via `genLvalue` (address).
+  This handles `(&T)`, `(&mut T)`, and read-only `(T)` uniformly. (Without it, arenaWith
+  passed `%Expr` by value into a `ptr %e` param → garbage ptr → cloneExpr looped/hung.)
+- `genClosureCall`: load `%Closure` from the local's addr, `extractvalue` fnptr(0)+env(1),
+  `call R %fnptr(ptr %env, <ptr args>)`. R comes from the enclosing `hintTy` (dispatched
+  from the genExpr Call arm, which has it) since "fn" drops the return type.
+- `genStructLit` must `resolveStructName(name)` first: a monomorphized body builds a bare
+  `Handle {…}` that has to resolve to the sole instantiation `Handle_Expr` (else
+  `alloca %Handle` is unsized). Independent, correct, low-risk — keep it.
+- For minilang, arenaWith has ONE instantiation so `resolveFnName` prefix-match already
+  resolves `arenaWith_Expr_Expr` — step 6 (mono-name threading) is NOT needed until an
+  example instantiates the same closure-taking generic at >1 type.
+
+**THE ONE BLOCKER (why it was reverted):** `llType("fn")→"%Closure"` regressed 12
+thread/promise fixtures (arenaContracts, eventLoop, poolAlloc, dateTime, …). Their spawn
+stdlib fn takes `f: () => void` and calls `pthread_create(thread, null, f, env)` treating
+`f` as the raw start_routine **fn pointer** (`ptr`). With `f` now `%Closure`, clang
+rejects `pthread_create(…, ptr <%Closure>, …)`. (In the pre-change build `f` was the `i32`
+fallback, so the stdlib's `malloc(16)+memcpy(f_addr,16)` already read 12 bytes past a
+4-byte alloca — a latent bug that only "passes" because the manifest checks BUILD success,
+not spawn runtime.)
+
+**THE FIX (do this first next time):** add a `%Closure → ptr` decay in genCall's arg loop,
+mirroring the existing String/Vec→ptr decay (~line 2105): when an arg's llType is
+`%Closure` and the param/extern wants `ptr`, emit `extractvalue %Closure <v>, 0` (the
+fnptr) and pass `ptr`. That satisfies pthread_create's start_routine and keeps the 12
+fixtures building, while arena closures (called through genClosureCall, not decayed) keep
+the full pair. Re-apply the 8 edits above + this decay, then verify: minilang runs at
+parity AND manifest stays 173 AND -O2 convergence byte-identical.
