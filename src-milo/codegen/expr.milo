@@ -952,6 +952,59 @@ fn genIsExpr(cg: &mut Cgen, subject: &Expr, pattern: &Pattern, locs: &Vec<Local>
 
 // Wrap an already-computed value in `Some` for an `Option<T>` param (auto-wrap at
 // a call site). rEnum is the mangled option name (e.g. "Option_u16").
+// A named fn used as a closure value needs an adapter: the closure ABI calls
+// `fn(ptr env, ptr args…)` but the named fn has no env param and takes its args
+// directly. Emit (once) a thunk `@__fnthunk_<name>(ptr env, ptr a0, …)` that drops
+// env, adapts each arg (ref → pass ptr; value → load), and calls the real fn.
+fn ensureFnThunk(cg: &mut Cgen, name: &string, sigs: &Vec<CgFnSig>): string {
+    let thunkName = "__fnthunk_" + name.clone()
+    for i in 0..cg.emittedThunks.len {
+        if cg.emittedThunks[i] == thunkName { return thunkName }
+    }
+    cg.emittedThunks.push(thunkName.clone())
+
+    var pTys: Vec<string> = Vec.new()
+    var pRefs: Vec<bool> = Vec.new()
+    var retTy = "void"
+    for si in 0..sigs.len {
+        if sigs[si].name == name {
+            for pi in 0..sigs[si].paramTys.len { pTys.push(sigs[si].paramTys[pi].clone()) }
+            for pi in 0..sigs[si].paramRefs.len { pRefs.push(sigs[si].paramRefs[pi]) }
+            retTy = sigs[si].retTy.clone()
+        }
+    }
+    let retLl = llType(resolveTyStr(cg, retTy))
+
+    var hdr = "define " + retLl + " @" + thunkName + "(ptr %__env"
+    for pi in 0..pTys.len { hdr = hdr + ", ptr %a" + pi.toString() }
+    hdr = hdr + ") {\nentry:\n"
+
+    var body = ""
+    var callArgs = ""
+    var tctr = 0
+    for pi in 0..pTys.len {
+        if pi > 0 { callArgs = callArgs + ", " }
+        var isRef = false
+        if pi < pRefs.len { isRef = pRefs[pi] }
+        if isRef {
+            callArgs = callArgs + "ptr %a" + pi.toString()
+        } else {
+            let pll = llType(resolveTyStr(cg, pTys[pi]))
+            let t = "%tk" + tctr.toString()
+            tctr = tctr + 1
+            body = body + "  " + t + " = load " + pll + ", ptr %a" + pi.toString() + "\n"
+            callArgs = callArgs + pll + " " + t
+        }
+    }
+    if retLl == "void" {
+        body = body + "  call void @" + name.clone() + "(" + callArgs + ")\n  ret void\n"
+    } else {
+        body = body + "  %tkr = call " + retLl + " @" + name.clone() + "(" + callArgs + ")\n  ret " + retLl + " %tkr\n"
+    }
+    cg.globals = cg.globals + hdr + body + "}\n\n"
+    return thunkName
+}
+
 fn genWrapSome(cg: &mut Cgen, innerVal: &Val, rEnum: &string): Val {
     let tag = lookupVariantTag(cg, rEnum, "Some")
     let structTy = "%" + rEnum.clone()
@@ -1051,6 +1104,19 @@ fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Hea
 // -- Cast --
 
 fn genAsCast(cg: &mut Cgen, inner: &Expr, targetTy: &string, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    // A bare fn name cast to a raw pointer (`_osThreadTrampoline as *u8`) is the
+    // fn's own address, NOT a closure thunk — pass @name directly.
+    let toPtr = (targetTy.len > 0 && targetTy[0] == 42) || llType(targetTy) == "ptr"
+    if toPtr {
+        match inner {
+            Expr.Ident(nm, isp) => {
+                if !hasLocal(locs, nm) && cg.fnRets.contains(nm) {
+                    return Val { v: "@" + nm.clone(), ty: targetTy.clone() }
+                }
+            }
+            _ => {}
+        }
+    }
     let v = genExpr(cg, inner, locs, sigs, targetTy.clone())
     let fromLl = llType(v.ty)
     let toLl = llType(targetTy)
@@ -2536,12 +2602,14 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
                 emit(cg, "  " + g + " = load " + gll + ", ptr @" + name.clone() + "\n")
                 return Val { v: g, ty: surf }
             }
-            // A bare function name used as a value (`someFn` passed as a callback,
-            // `trampoline as *u8`) is a closure { @fn, null } — no captures. Without
-            // this it fell to findLocal's locs[0] fallback and loaded the wrong var.
+            // A bare function name used as a closure value → { @thunk, null }, where
+            // the thunk adapts the named fn to the closure ABI (env + by-ptr args).
+            // (A fn-name cast to a raw ptr — `trampoline as *u8` — is handled in
+            // genAsCast, which uses the fn's real address, not the thunk.)
             if !isLocal && cg.fnRets.contains(name) {
+                let thunk = ensureFnThunk(cg, name, sigs)
                 let f0 = nextTemp(cg)
-                emit(cg, "  " + f0 + " = insertvalue %Closure undef, ptr @" + name.clone() + ", 0\n")
+                emit(cg, "  " + f0 + " = insertvalue %Closure undef, ptr @" + thunk + ", 0\n")
                 let f1 = nextTemp(cg)
                 emit(cg, "  " + f1 + " = insertvalue %Closure " + f0 + ", ptr null, 1\n")
                 return Val { v: f1, ty: "Closure" }

@@ -94,6 +94,8 @@ struct Cgen {
     closureRetTy: string,
     // directory of the source file, for embedFile() compile-time path resolution
     sourceDir: string,
+    // names of fn->closure adapter thunks already emitted (dedup)
+    emittedThunks: Vec<string>,
 }
 
 fn cgenNew(): Cgen {
@@ -128,6 +130,7 @@ fn cgenNew(): Cgen {
         closureId: 0,
         closureRetTy: "",
         sourceDir: "",
+        emittedThunks: Vec.new(),
     }
 }
 
