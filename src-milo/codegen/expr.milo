@@ -1306,6 +1306,75 @@ fn genCheckedArith(cg: &mut Cgen, obj: &Val, method: &string, av: &Val): Val {
     return Val { v: r, ty: optName }
 }
 
+// x.wrapping{Add,Sub,Mul}(y): plain add/sub/mul (two's-complement wraps by def).
+// x.saturating{Add,Sub,Mul}(y): clamp on overflow. add/sub use llvm.*.sat; mul has
+// no sat intrinsic so it uses *.with.overflow + select-to-max.
+fn genWrapSatArith(cg: &mut Cgen, obj: &Val, method: &string, av: &Val): Val {
+    let lt = llType(obj.ty)
+    var op = "add"
+    if method.endsWith("Sub") { op = "sub" }
+    if method.endsWith("Mul") { op = "mul" }
+    var pfx = "s"
+    if isUnsigned(obj.ty) { pfx = "u" }
+
+    if method.startsWith("wrapping") {
+        let r = nextTemp(cg)
+        emit(cg, "  " + r + " = " + op + " " + lt + " " + obj.v + ", " + av.v + "\n")
+        return Val { v: r, ty: obj.ty.clone() }
+    }
+
+    // saturating mul: overflow intrinsic + clamp to type max
+    if op == "mul" {
+        let intr = "llvm." + pfx + "mul.with.overflow." + lt
+        var declared = false
+        for i in 0..cg.emittedThunks.len { if cg.emittedThunks[i] == intr { declared = true } }
+        if !declared {
+            cg.emittedThunks.push(intr.clone())
+            emitG(cg, "declare {" + lt + ", i1} @" + intr + "(" + lt + ", " + lt + ")\n")
+        }
+        let cr = nextTemp(cg)
+        emit(cg, "  " + cr + " = call {" + lt + ", i1} @" + intr + "(" + lt + " " + obj.v + ", " + lt + " " + av.v + ")\n")
+        let val = nextTemp(cg)
+        emit(cg, "  " + val + " = extractvalue {" + lt + ", i1} " + cr + ", 0\n")
+        let flag = nextTemp(cg)
+        emit(cg, "  " + flag + " = extractvalue {" + lt + ", i1} " + cr + ", 1\n")
+        let bits = intBits(lt)
+        var clampVal = "0"
+        if isUnsigned(obj.ty) { clampVal = uMax(bits) } else { clampVal = sMax(bits) }
+        let r = nextTemp(cg)
+        emit(cg, "  " + r + " = select i1 " + flag + ", " + lt + " " + clampVal + ", " + lt + " " + val + "\n")
+        return Val { v: r, ty: obj.ty.clone() }
+    }
+
+    // saturating add/sub via llvm.{s,u}{add,sub}.sat
+    let intr = "llvm." + pfx + op + ".sat." + lt
+    var declared = false
+    for i in 0..cg.emittedThunks.len { if cg.emittedThunks[i] == intr { declared = true } }
+    if !declared {
+        cg.emittedThunks.push(intr.clone())
+        emitG(cg, "declare " + lt + " @" + intr + "(" + lt + ", " + lt + ")\n")
+    }
+    let r = nextTemp(cg)
+    emit(cg, "  " + r + " = call " + lt + " @" + intr + "(" + lt + " " + obj.v + ", " + lt + " " + av.v + ")\n")
+    return Val { v: r, ty: obj.ty.clone() }
+}
+
+// largest unsigned value for a bit width, as a decimal string (2^bits - 1)
+fn uMax(bits: i64): string {
+    if bits == 8 { return "255" }
+    if bits == 16 { return "65535" }
+    if bits == 32 { return "4294967295" }
+    return "18446744073709551615"
+}
+
+// largest signed value for a bit width, as a decimal string (2^(bits-1) - 1)
+fn sMax(bits: i64): string {
+    if bits == 8 { return "127" }
+    if bits == 16 { return "32767" }
+    if bits == 32 { return "2147483647" }
+    return "9223372036854775807"
+}
+
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     // Generic enums are registered under their mangled name
     var rEnum = resolveEnumName(cg, enumName)
@@ -1868,6 +1937,10 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     if intBits(objTyLl) > 0 && (method == "checkedAdd" || method == "checkedSub" || method == "checkedMul") {
         let av = genExpr(cg, *args[0], locs, sigs, obj.ty.clone())
         return genCheckedArith(cg, obj, method, av)
+    }
+    if intBits(objTyLl) > 0 && (method == "wrappingAdd" || method == "wrappingSub" || method == "wrappingMul" || method == "saturatingAdd" || method == "saturatingSub" || method == "saturatingMul") {
+        let av = genExpr(cg, *args[0], locs, sigs, obj.ty.clone())
+        return genWrapSatArith(cg, obj, method, av)
     }
     if objTyLl == "i64" && method == "toString" {
         return genIntToString(cg, obj.v, isUnsigned(obj.ty))

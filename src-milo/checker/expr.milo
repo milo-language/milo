@@ -1384,6 +1384,12 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         let mangled = monomorphizeEnum(ck, "Option", oargs)
         return TypeKind.TEnum(mangled)
     }
+    // x.wrapping{Add,Sub,Mul}/saturating{Add,Sub,Mul}(y) → T (same int type)
+    if isInteger(objType) && (method == "wrappingAdd" || method == "wrappingSub" || method == "wrappingMul" || method == "saturatingAdd" || method == "saturatingSub" || method == "saturatingMul") {
+        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span)) }
+        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        return objType.clone()
+    }
 
     // Vec methods
     match objType.clone() {
