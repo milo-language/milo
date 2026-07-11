@@ -2721,6 +2721,15 @@ fn disambiguatePass(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &
     return base.clone()
 }
 
+// True if `e` is a bare top-level function name (not a local variable) — i.e. a
+// value that denotes a function, eligible to pass as a raw fn pointer.
+fn isBareFnName(cg: &Cgen, e: &Expr, locs: &Vec<Local>): bool {
+    match e {
+        Expr.Ident(nm, sp) => { return !hasLocal(locs, nm) && cg.fnRets.contains(nm) }
+        _ => { return false }
+    }
+}
+
 fn disambiguateGenericCall(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &Vec<string>, sigs: &Vec<CgFnSig>): string {
     // exact-type match first; only if that's ambiguous/absent try int-width coercion
     let strict = disambiguatePass(cg, base, argVals, argPointees, sigs, false)
@@ -3006,6 +3015,13 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
             let lv = genLvalue(cg, *args[i], locs, sigs)
             argVals.push(Val { v: lv.v, ty: "ptr" })
             argPointees.push(lv.ty.clone())
+        } else if cg.externFns.contains(name) && llType(hint) == "%Closure" && isBareFnName(cg, *args[i], locs) {
+            // a bare fn name passed to a C extern's fn-ptr param is the RAW function
+            // address (@cmpI32, C signature), NOT milo's %Closure/env thunk.
+            var fnm = ""
+            match *args[i] { Expr.Ident(nm, sp) => { fnm = nm.clone() } _ => {} }
+            argVals.push(Val { v: "@" + fnm, ty: "ptr" })
+            argPointees.push("")
         } else {
             var av = genExpr(cg, *args[i], locs, sigs, hint)
             // auto-wrap a bare T argument into an Option<T> param

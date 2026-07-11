@@ -101,10 +101,17 @@ fn buildFnTable(prog: &Program): Vec<CgFnSig> {
 // Emit a single function definition or extern declaration.
 fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     if f.isExtern {
+        cg.externFns.insert(f.name.clone(), true)
         var ps = ""
         for i in 0..f.params.len {
             if i > 0 { ps = ps + ", " }
-            ps = ps + llType(astTypeStr(f.params[i].ty))
+            // a fn-typed param of a C extern is a raw function pointer, not milo's
+            // %Closure fat pointer (qsort's cmp is `int(*)(…)`, no env).
+            if f.params[i].ty.isFn {
+                ps = ps + "ptr"
+            } else {
+                ps = ps + llType(astTypeStr(f.params[i].ty))
+            }
         }
         if f.isVariadic {
             if f.params.len > 0 { ps = ps + ", " }
