@@ -366,9 +366,22 @@ fn deriveEq(s: &StructDecl): Option<ImplDecl> {
     params.push(otherParam)
 
     // Build body: return self.f1 == other.f1 && self.f2 == other.f2 && ...
-    // For now, generate a placeholder that returns true (full AST generation is complex)
     var body: Vec<Heap<Stmt>> = Vec.new()
-    body.push(Heap(Stmt.Return(Option.Some(Heap(Expr.BoolLit(true, Option.None))), Option.None)))
+    var cond: Expr = Expr.BoolLit(true, Option.None)
+    var first = true
+    for fi in 0..s.fields.len {
+        let fname = s.fields[fi].name.clone()
+        let lhs = Expr.FieldAccess(Heap(Expr.Ident("self", Option.None)), fname.clone(), Option.None)
+        let rhs = Expr.FieldAccess(Heap(Expr.Ident("other", Option.None)), fname.clone(), Option.None)
+        let cmp = Expr.BinOp("==", Heap(lhs), Heap(rhs), Option.None)
+        if first {
+            cond = cmp
+            first = false
+        } else {
+            cond = Expr.BinOp("&&", Heap(cond), Heap(cmp), Option.None)
+        }
+    }
+    body.push(Heap(Stmt.Return(Option.Some(Heap(cond)), Option.None)))
 
     var methods: Vec<Function> = Vec.new()
     methods.push(Function {
