@@ -914,10 +914,30 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
-### Closure codegen — PROTOTYPED & VALIDATED (2026-07-11), reverted for one blocker
+### Closure codegen — LANDED (2026-07-11): expression-bodied, zero-capture ✓
 
-Built the full zero-capture path and **minilang ran byte-identical to the oracle**
-(`42/100/3/100/25`, exit 0). What worked, to re-apply verbatim next push:
+**Shipped green** (manifest 173, byte-identical -O2 convergence): first-class closures for
+the expression-bodied, non-capturing case. **minilang compiles AND runs byte-identical to
+the oracle** (`42/100/3/100/25`, exit 0) — the first arena example at parity. The one
+blocker from the earlier revert (fn-typed values vs the raw-fnptr spawn path) is resolved:
+a bare **function name used as a value** now lowers to `%Closure {@fn, null}` (it was
+hitting `findLocal`'s `locs[0]` fallback and loading the wrong var — a latent bug the
+`%Closure` typing surfaced), and `%Closure` **decays to its fnptr (field 0)** on cast-to-ptr
+(`genAsCast`) and when passed to a `ptr` param (`genCall` arg loop, like Vec/String decay).
+That keeps all 12 thread/promise fixtures building.
+
+**Next increment (the other 4 arena examples):** depgraph/linkedList/htmlParse/domArena use
+**block-bodied, capturing** closures (`arenaModify(g.arena, src, (n: Node) => { … })`;
+`(n: &Node): Handle<Node> => n.children[i]` captures `i`). They now fail with
+`undefined variable 'updated'` / clang errors because `genClosure` only handles a single
+Return/ExprStmt with no captures. Needed: (a) walk a multi-stmt body — but genStmt is in
+stmt.milo and expr.milo can't import it (circular); options: move genClosure into stmt.milo
+(it already imports genExpr) or factor the body loop into a shared module; (b) capture
+analysis — scan the body for idents that are in the enclosing `locs` but aren't closure
+params/globals; build an env struct of their addresses; in the lifted body load them from
+`%__env` as ref-locals (the uniform-pointer ABI already threads `%__env`).
+
+Recipe that shipped (for extending):
 - `%Closure = type { ptr, ptr }` in the preamble; `llType("fn")→"%Closure"`;
   `closureId` counter on Cgen.
 - `genClosure` (expression-bodied only): buffer-swap trick — save `cg.body`/`temp`/
