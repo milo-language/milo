@@ -914,6 +914,24 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.39 (2026-07-11) — interface bucket COMPLETE (all 7)
+
+Finished the trait-object bucket — coercion at every site (→ interfaceHeap, interfaceVecHeap,
+traitObjectVec, structFieldTraitObject, returnInterfaceCoerce; +interfaceBasic/MultiMethod from
+cont.38):
+- **`Heap<Interface>` == the `%Iface` fat pointer** (data ptr is heap-allocated). `resolveTyStr`
+  (codegen) and `resolveAstType` (checker) collapse `Heap<Iface>` → `Iface`.
+- `interfaceCoercible(hint, val)` accepts a concrete struct OR `Heap<concrete>` for an interface
+  target; wired into let/var-decl, `Vec.push`, struct-literal field, and return mismatch guards.
+- `genInterfaceCoerceIfNeeded(v, hint)` builds `%Iface{dataPtr, itable}` from a `Heap<concrete>`
+  (or concrete) value; wired into genLetDecl/VarDecl, push, genStructLit field store, and return.
+- for-in over `Vec<Heap<Iface>>`: elem type via `resolveTyStr` so elements are 16-byte fat
+  pointers (not 8-byte ptrs) — fixed the gep stride + load.
+- **Ordering**: register user traits + `cg.interfaces` in PHASE 0 (before struct/field
+  registration) in both checker and codegen, so `Heap<Iface>` STRUCT FIELD types collapse at
+  registration (else they stay `Heap<Iface>` and field access loads a ptr, not the fat pointer).
+Manifest 173/0, converged. Interface/trait-object bucket DONE.
+
 ### Fixture-sweep bug hunt cont.38 (2026-07-11) — interface dynamic dispatch (CORE)
 
 Trait objects / dynamic dispatch — the core landed (→ interfaceBasic, interfaceMultiMethod):
