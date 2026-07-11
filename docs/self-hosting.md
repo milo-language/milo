@@ -914,6 +914,21 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.7 (2026-07-11) — extern type
+
+- **`extern type Name`** — an opaque C type (used only through `*Name`), now parses as an
+  empty struct; was a parse error. (externType still needs its C peer + unsafe to fully
+  run — an FFI test-harness concern, not a compiler gap.)
+
+Note on the remaining failing fixtures (all fixture-only, none block an example): they are
+now dominated by items that need a big feature or a test-harness change, NOT small bug
+fixes — C-FFI fixtures (need companion `.c` peer objects linked), dynamic dispatch / trait
+objects (need vtables/itables), struct-element global arrays (need the global-emission
+loop moved after struct decls + struct constants — a fragile reorder), JSON string
+escaping (a ~70-line hand-emitted runtime helper), and deep cross-thread-park concurrency.
+The primary parity goal (all examples compile + run at oracle parity) has been met for
+many iterations; the sweep climbed ~226→261 by fixing real correctness bugs along the way.
+
 ### Fixture-sweep bug hunt cont.6 (2026-07-11) — Promise sugar + loop invariants
 
 - **`Promise(fn)` constructor sugar** — checker desugars to `Promise<T>.run(fn)` (T = the
