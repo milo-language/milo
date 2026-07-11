@@ -914,6 +914,23 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.15 (2026-07-11) — nested generics + Promise.all/race
+
+- **Nested-generic static calls** (`Channel<Vec<T>>.new(1)`): `isTypeArgCall`'s inner-token
+  allowlist rejected `Lt`/`Gt`, so the nested `<` in `Vec<T>` failed the type-arg lookahead
+  and the whole thing parsed as a comparison chain (`Channel < Vec < T >> …`). Now allows
+  Lt/Gt inside the brackets. General fix for any `Type<Generic<A>>.method` form; it was
+  latent because the only nested-generic static call in the tree, `promiseAll`'s body, was
+  never monomorphized until now.
+- **`Promise.all`/`Promise.race`**: these parse as `EnumLit("Promise", "all"/"race")`; checker
+  + codegen now route them to the generic free fns `promiseAll`/`promiseRace` (T inferred from
+  the `Vec<Promise<T>>` arg). **promiseRace passes.**
+- STILL FAILING (next): `promiseAll`/`promiseSleep`/`promiseErgonomic`/`promiseBlockingAll` —
+  `for r in Promise.all(v).await()!` reports "cannot iterate over Vec<i64>". The `Result<Vec<T>>`
+  Ok-payload recovered by `unwrapableInner` (checker/expr.milo) isn't a `TVec`, so
+  `checkForIn` drops to its `_` arm. Fix = make the mono'd `Vec<T>` payload resolve to `TVec`
+  (or teach checkForIn to recognize the mangled `Vec_*` struct form as iterable).
+
 ### Fixture-sweep bug hunt cont.14 (2026-07-11) — wrapping/saturating int arith
 
 `x.wrapping{Add,Sub,Mul}(y)` and `x.saturating{Add,Sub,Mul}(y)` (→286), siblings of the
