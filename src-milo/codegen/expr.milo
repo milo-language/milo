@@ -3194,6 +3194,12 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
                 // (3.141590 → 3.14159) and shares double.toString()'s format.
                 fmt = fmt + "%g"
                 argStr = argStr + ", double " + argVals[ai].v
+            } else if elemLl == "float" {
+                // printf varargs promote float→double; fpext so the %g matches.
+                let fd = nextTemp(cg)
+                emit(cg, "  " + fd + " = fpext float " + argVals[ai].v + " to double\n")
+                fmt = fmt + "%g"
+                argStr = argStr + ", double " + fd
             } else if elemLl == "i64" {
                 // u64 prints unsigned (%llu) — else 18446744073709551615 → -1
                 if isUnsigned(argVals[ai].ty) { fmt = fmt + "%llu" } else { fmt = fmt + "%lld" }
@@ -3466,14 +3472,19 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
         }
         Expr.FloatLit(f, span) => {
             // f.toString() drops the decimal for whole values (0.0 -> "0"), which
-            // LLVM rejects as a `double` constant. Ensure a '.' or exponent.
+            // LLVM rejects as a `double`/`float` constant. Ensure a '.' or exponent.
             var fs = f.toString()
             var hasPoint = false
             for ci in 0..fs.len {
                 if fs[ci] == 46 || fs[ci] == 101 || fs[ci] == 69 { hasPoint = true }
             }
             if !hasPoint { fs = fs + ".0" }
-            return Val { v: fs, ty: "double" }
+            // Honor an f32 field/arg hint: a bare float literal defaults to double,
+            // but in `float` position LLVM needs a `float` constant (same decimal
+            // syntax) so the store into an f32 slot type-checks — mirrors IntLit.
+            var fll = "double"
+            if hintTy.len > 0 && llType(hintTy) == "float" { fll = "float" }
+            return Val { v: fs, ty: fll }
         }
         Expr.BoolLit(b, span) => {
             let v = if b { "1" } else { "0" }
