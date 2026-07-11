@@ -2694,9 +2694,16 @@ fn disambiguatePass(cg: &Cgen, base: &string, argVals: &Vec<Val>, argPointees: &
             let all = llType(resolveTyStr(cg, argVals[pi].ty))
             if pll == "%Closure" && all == "%Closure" {
                 let cr = closureRetOf(argVals[pi].ty)
-                // arenaWith-style: candidate returns Option<R>; match R exactly
-                let candR = stripOptionPrefix(resolveTyStr(cg, sigs[si].retTy))
-                if cr.len > 0 && candR != cr { ok = false }
+                let pr = closureRetOf(sigs[si].paramTys[pi])
+                if cr.len > 0 && pr.len > 0 {
+                    // match the candidate's closure-PARAM return against the arg's —
+                    // distinguishes arenaModify_string ((string)=>string) from _i64.
+                    if resolveTyStr(cg, pr) != resolveTyStr(cg, cr) { ok = false }
+                } else {
+                    // fallback (arenaWith-style): candidate returns Option<R>; match R
+                    let candR = stripOptionPrefix(resolveTyStr(cg, sigs[si].retTy))
+                    if cr.len > 0 && candR != cr { ok = false }
+                }
             } else if pll != all {
                 if intLenient && isIntLlType(pll) && isIntLlType(all) {
                     // ok — int coercion (lenient pass only)
