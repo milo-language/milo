@@ -2110,7 +2110,9 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         let boxPtr = nextTemp(cg)
         emit(cg, "  " + boxPtr + " = call ptr @malloc(i64 " + szInt + ")\n")
         emit(cg, "  store " + innerLl + " " + inner.v + ", ptr " + boxPtr + "\n")
-        return Val { v: boxPtr, ty: "ptr" }
+        // carry the element type so `*box` derefs to the right type (was "ptr",
+        // which made a string box's deref load an i64 and print the data pointer)
+        return Val { v: boxPtr, ty: "Heap<" + inner.ty + ">" }
     }
 
     // _cstrToString(ptr): copy a NUL-terminated C string into an owned %String.
