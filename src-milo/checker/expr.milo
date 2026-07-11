@@ -726,6 +726,41 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
             Option.None => {}
         }
     }
+    // A generic-struct literal with no annotation (`Heap { value: 42 }`) infers its
+    // type args from the field values, then monomorphizes (Heap → Heap_i32).
+    if !ck.structs.contains(structName) && ck.genericStructs.contains(structName) {
+        let g = ck.genericStructs.get(structName)!
+        var tparams: Vec<string> = Vec.new()
+        var declNames: Vec<string> = Vec.new()
+        var declTys: Vec<MiloType> = Vec.new()
+        for ti in 0..g.typeParams.len {
+            tparams.push(g.typeParams[ti].clone())
+        }
+        for fi in 0..g.decl.fields.len {
+            declNames.push(g.decl.fields[fi].name.clone())
+            declTys.push(g.decl.fields[fi].ty.clone())
+        }
+        var inferred: HashMap<string, TypeKind> = HashMap.new()
+        let snap = snapshotMoves(ck)
+        for di in 0..declNames.len {
+            for lf in 0..fields.len {
+                if fields[lf].name == declNames[di] {
+                    let vt = checkExpr(ck, *fields[lf].value)
+                    inferFromAst(ck, tparams, declTys[di], vt, inferred)
+                }
+            }
+        }
+        restoreMoves(ck, snap)
+        var typeArgs: Vec<TypeKind> = Vec.new()
+        for tp in 0..tparams.len {
+            match inferred.get(tparams[tp]) {
+                Option.Some(t) => { typeArgs.push(t) }
+                Option.None => { typeArgs.push(tyUnknown()) }
+            }
+        }
+        structName = monomorphizeStruct(ck, structName, typeArgs)
+    }
+
     if !ck.structs.contains(structName) {
         error(ck, "unknown struct '" + structName.clone() + "'", cloneSpan(span))
         return tyUnknown()
