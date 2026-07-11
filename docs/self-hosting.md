@@ -914,6 +914,25 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.36 (2026-07-11) — interface-hang root-cause (investigation)
+
+Pinned the cont.34 interface hang. Minimal repro: `interface G { fn greet(self:&Self):i32 }`
++ `struct Dog{}` + `impl Dog{greet}` + `fn sayHello(g: &G){}` + `main{ let d=Dog{}; sayHello(d) }`
+— just the struct→interface CALL hangs (empty body; dispatch not needed). `eprint` bisection
+(all probes throwaway, tree left clean/green 173/0):
+- Codegen never starts → the hang is in the CHECKER.
+- Reached checkCall's arg loop for sayHello; `checkExpr(d)` returns fine.
+- Narrowed to the `TRef` arg branch: `typeEq`×2 and `intCoercible(*inner,…)` all COMPLETE
+  (so `*inner` is readable), but the very next call — **`typeName(paramType)` — hangs/OOMs**.
+- Since `typeName` only recurses via `typeName(*inner)`, `paramType`'s inner Heap must be a
+  self-referential/infinitely-nested `TRef` chain — yet `intCoercible` read `*inner` as a plain
+  non-integer moments earlier. Suggests a milo0 CLONE-ALIASING bug: cloning the `FnSig`
+  (`ck.functions.get(func)!` copies it) aliases the `Heap<TypeKind>` inside a `&Interface` param
+  so `inner` points back at itself. Only triggers for a trait-name-used-as-a-param-type.
+Next: dump `paramType`'s structure right before `typeName` (tag-by-tag) to confirm the cycle,
+then fix the FnSig/TypeKind clone for this shape. This unblocks dynamic dispatch (fat pointers
++ itables), the remaining ~7 interface/trait-object fixtures.
+
 ### Fixture-sweep bug hunt cont.35 (2026-07-11) — C-extern fn-pointer params
 
 `extern fn qsort(…, cmp: (*u8,*u8)=>i32)` (→ typedFnPtr): milo0 declared the `cmp` param as
