@@ -914,6 +914,28 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.38 (2026-07-11) — interface dynamic dispatch (CORE)
+
+Trait objects / dynamic dispatch — the core landed (→ interfaceBasic, interfaceMultiMethod):
+- **Model**: an interface (a trait used as a type) is a fat pointer `%Iface = type {ptr data,
+  ptr itable}`. Per (concrete, iface) coercion emits `@itable.<Concrete>.<Iface> = constant
+  [N x ptr] [ptr @m0, …]` with method pointers in the trait's declared order.
+- **Checker**: `g.method()` on an interface-typed receiver resolves against the trait (returns
+  the trait method's ret type); a concrete struct coerces to `&Interface` when it implements
+  every interface method (`structImplementsInterface`).
+- **Codegen**: emit `%Iface` type + register method-slot layout (`cg.structs[iface]`, field
+  ty = method ret type). At an `&Interface` call arg, build the fat pointer {&concrete, itable}
+  and pass it via the REF ABI (alloca + store, pass address — the callee's `ptr %g` loads the
+  fat pointer). `g.method()` extracts data+itable, loads the itable slot, calls `m(data, …)`.
+- Also fixed a hang: `structHasMethod`'s inline `ck.inherentImpls.get(sname)!.methods.contains()`
+  cloned the nested-Vec ImplDecl on the temporary and hung (the cont.30 gotcha) — extract once.
+
+STILL failing (need coercion at MORE sites): interfaceHeap/VecHeap, traitObjectVec (`Heap<Iface>`
+= `Heap<Concrete>` coercion + `Vec.push`), structFieldTraitObject (interface struct field),
+returnInterfaceCoerce (return-position coercion). These reuse the itable/fat-pointer machinery
+but need the coercion wired into Heap-wrapping, push, field-store, and return. Manifest 173/0,
+converged.
+
 ### Fixture-sweep bug hunt cont.37 (2026-07-11) — interface hang FIXED (checkCall aliasing/move)
 
 Root-caused + fixed the cont.36 interface hang. `eprint` bisection under no memory pressure
