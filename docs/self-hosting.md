@@ -747,6 +747,23 @@ already mandates.
 
 (populate at M0 seed time)
 
+### Parity progress (2026-07-11, cont.49) — deep RUN-parity stress test: no hidden bugs
+
+Went past `--help` and diffed real-workload output (oracle vs milo-self) to confirm
+"normal program operation" parity, not just help text:
+- **cli-tools with real data**: cat/wc/grep (incl. `-i`, no-match, `-l`, `-n`)/hex/jq
+  (`.`, `.name`, `.tags`, deep `.a.b.c`, negatives, floats)/rg/fmt/tree on real files —
+  all MATCH.
+- **numeric edge cases**: calc `1000000 * 1000000` (i64), `7 / 2`, `-5 + 3`, `2 * -3`,
+  precedence + parens — all MATCH.
+- **scale**: 500-line inputs (wc/grep) — MATCH.
+- **interpreters/apps**: minilang (arena + closures) → `42|100|3|100|25`, kvstore full
+  stdout — MATCH.
+
+Conclusion: the compiling set has **no hidden RUN bugs** — the earlier 35/35 result holds
+under real workloads. Every remaining parity gap is the single deferred
+inline-fixed-array redesign (externStructNested array-in-struct only).
+
 ### Parity progress (2026-07-11, cont.48) — externMutBuf fixed (contained, not the array redesign)
 
 `b10d30a` — a `&mut/&[u8;N]` arg to a C extern now decays to its data pointer. Fixed
