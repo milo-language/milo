@@ -24,6 +24,9 @@ function resolveImportsPlayground(program: Program): Program {
   const functions: typeof program.functions = [];
   const traits: typeof program.traits = [];
   const impls: typeof program.impls = [];
+  const typeAliases: typeof program.typeAliases = [];
+  const interfaces: typeof program.interfaces = [];
+  const globals: typeof program.globals = [];
 
   function processImports(prog: Program) {
     for (const imp of prog.imports) {
@@ -61,6 +64,9 @@ function resolveImportsPlayground(program: Program): Program {
       functions.push(...imported.functions);
       traits.push(...imported.traits);
       impls.push(...imported.impls);
+      typeAliases.push(...imported.typeAliases);
+      interfaces.push(...imported.interfaces);
+      globals.push(...imported.globals);
       processImports(imported);
     }
   }
@@ -75,6 +81,9 @@ function resolveImportsPlayground(program: Program): Program {
     functions.push(...prelude.functions);
     traits.push(...prelude.traits);
     impls.push(...prelude.impls);
+    typeAliases.push(...prelude.typeAliases);
+    interfaces.push(...prelude.interfaces);
+    globals.push(...prelude.globals);
     processImports(prelude);
   }
 
@@ -83,6 +92,9 @@ function resolveImportsPlayground(program: Program): Program {
   functions.push(...program.functions);
   traits.push(...program.traits);
   impls.push(...program.impls);
+  typeAliases.push(...program.typeAliases);
+  interfaces.push(...program.interfaces);
+  globals.push(...program.globals);
   processImports(program);
 
   function dedup<T extends { name: string }>(arr: T[]): T[] {
@@ -97,7 +109,7 @@ function resolveImportsPlayground(program: Program): Program {
     return result;
   }
 
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals };
 }
 
 export interface CompileResult {

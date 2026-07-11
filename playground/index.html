@@ -130,7 +130,9 @@ const examples = {
     }
     return 0
 }`,
-  structs: `struct Point {
+  structs: `from "std/math" import { sqrt }
+
+struct Point {
     x: f64,
     y: f64,
 }
@@ -144,7 +146,7 @@ fn distance(a: &Point, b: &Point): f64 {
 fn main(): i32 {
     let p1 = Point { x: 0.0, y: 0.0 }
     let p2 = Point { x: 3.0, y: 4.0 }
-    print("distance: ", distance(&p1, &p2))
+    print("distance: ", distance(p1, p2))
     return 0
 }`,
   enums: `enum Shape {
@@ -166,8 +168,8 @@ fn area(s: &Shape): f64 {
 fn main(): i32 {
     let c = Shape.Circle(5.0)
     let r = Shape.Rect(3.0, 4.0)
-    print("circle area: ", area(&c))
-    print("rect area: ", area(&r))
+    print("circle area: ", area(c))
+    print("rect area: ", area(r))
     return 0
 }`,
   closures: `fn main(): i32 {
