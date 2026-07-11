@@ -1616,9 +1616,16 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         for ai in 0..argVals.len {
             if ai > 0 { argStr = argStr + ", " }
             let elemLl = llType(argVals[ai].ty)
-            if elemLl == "%String" && isVariadicExtern {
+            // A string/Vec passed to a pointer param (`open(path: *u8, …)`) or to a
+            // variadic extern decays to its data pointer (field 0). Without this the
+            // whole %String struct is passed, shifting the ABI so later args (open's
+            // flags) get garbage → wrong open mode → EBADF on read.
+            var paramLl = ""
+            if ai < paramHints.len { paramLl = llType(paramHints[ai]) }
+            let wantPtr = isVariadicExtern || paramLl == "ptr"
+            if wantPtr && (elemLl == "%String" || elemLl == "%Vec") {
                 let p = nextTemp(cg)
-                emit(cg, "  " + p + " = extractvalue %String " + argVals[ai].v + ", 0\n")
+                emit(cg, "  " + p + " = extractvalue " + elemLl + " " + argVals[ai].v + ", 0\n")
                 argStr = argStr + "ptr " + p
             } else {
                 argStr = argStr + elemLl + " " + argVals[ai].v

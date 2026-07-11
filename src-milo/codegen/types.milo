@@ -207,7 +207,33 @@ fn llTypeBytes(ll: &string): i64 {
     if ll == "i16" { return 2 }
     if ll == "i32" { return 4 }
     if ll == "i64" || ll == "ptr" { return 8 }
+    // %String/%Vec/%HashMap are 3-word {ptr,i64,i64} = 24 bytes, NOT 8. Sizing
+    // them as 8 undersizes any enum payload holding one (e.g. Result<string>),
+    // truncating the string's len/cap → it reads back empty.
+    if ll == "%String" || ll == "%Vec" || ll == "%HashMap" { return 24 }
     return 8
+}
+
+// Byte size of a payload type for enum-slot sizing — cg-aware so nested enums and
+// structs (which llTypeBytes can't measure) get their real size, not the 8-byte
+// fallback. Recursion terminates: recursive types go through Heap (a ptr, 8).
+fn payloadBytes(cg: &Cgen, pt: &string): i64 {
+    let ll = llType(pt)
+    if ll != "%String" && ll != "%Vec" && ll != "%HashMap" && ll[0] == 37 {
+        let raw = stripPercent(pt)
+        if cg.enums.contains(raw) {
+            return lookupEnumPayloadSlots(cg, raw) * 8 + 8
+        }
+        if cg.structs.contains(raw) {
+            var total: i64 = 0
+            let fields = cg.structs.get(raw)!
+            for i in 0..fields.len {
+                total = total + payloadBytes(cg, fields[i].ty)
+            }
+            return total
+        }
+    }
+    return llTypeBytes(ll)
 }
 
 fn intBits(t: &string): i64 {

@@ -2,7 +2,7 @@
 from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
-    cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, resolveTyStr,
+    cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, payloadBytes, resolveTyStr,
 }
 from "src-milo/codegen/stmt.milo" import { genStmt, emitScopeDrops }
 
@@ -184,7 +184,7 @@ fn genProgram(prog: Program): string {
                 // registered yet; lookupVariantPayload mangles at read-time.
                 let pt = astTypeStr(v.fields[fi])
                 payloadTypes.push(pt.clone())
-                vBytes = vBytes + llTypeBytes(llType(pt))
+                vBytes = vBytes + payloadBytes(cg, resolveTyStr(cg, pt))
             }
             if vBytes > maxBytes { maxBytes = vBytes }
             variants.push(CgVariantInfo {
