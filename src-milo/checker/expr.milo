@@ -1675,9 +1675,15 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
     var paramTypes: Vec<TypeKind> = Vec.new()
     for i in 0..params.len {
         let pType = resolveMonoType(ck, params[i].ty)
+        // a `&mut T` closure param makes the pointee assignable through the ref
+        var pMut = false
+        match pType.clone() {
+            TypeKind.TRef(inner, m) => { pMut = m }
+            _ => {}
+        }
         declare(ck, params[i].name.clone(), VarInfo {
             ty: pType.clone(),
-            mutable: false,
+            mutable: pMut,
             moved: false,
             borrowed: false,
             read: false,
