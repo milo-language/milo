@@ -369,6 +369,37 @@ export class CodegenJS {
         return `${this.genExpr(expr.vec)}.some(${this.genExpr(expr.callback)})`;
       case "VecAll":
         return `${this.genExpr(expr.vec)}.every(${this.genExpr(expr.callback)})`;
+      case "IfExpr": {
+        // JS has no block-valued if — emit an IIFE whose branches return their
+        // trailing expression (the block's value).
+        const lines: string[] = [];
+        const prev = this.output;
+        this.output = lines;
+        this.emit(`if (${this.genExpr(expr.cond)}) {`);
+        this.indent++;
+        this.emitBlockReturn(expr.thenBody);
+        this.indent--;
+        this.emit("} else {");
+        this.indent++;
+        this.emitBlockReturn(expr.elseBody);
+        this.indent--;
+        this.emit("}");
+        this.output = prev;
+        return `(() => {\n${lines.join("\n")}\n${"  ".repeat(this.indent)}})()`;
+      }
+    }
+  }
+
+  // Emit a block's statements, turning its trailing expression-statement into a
+  // `return` so the enclosing IIFE yields the block value.
+  private emitBlockReturn(body: HIRStmt[]) {
+    for (let i = 0; i < body.length; i++) {
+      const s = body[i];
+      if (i === body.length - 1 && s.kind === "ExprStmt") {
+        this.emit(`return ${this.genExpr(s.expr)};`);
+      } else {
+        this.genStmt(s);
+      }
     }
   }
 
