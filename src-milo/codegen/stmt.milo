@@ -1,5 +1,5 @@
 // Statement codegen: let/var, assign, if, while, for, match, break/continue
-from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm, Param, MiloType, StructLitField }
+from "src-milo/ast.milo" import { Expr, Stmt, Pattern, MatchArm, Param, MiloType, StructLitField, LiteralKind }
 from "src-milo/codegen/types.milo" import { astTypeStr,
     Cgen, Val, Local, CgFnSig,
     nextTemp, nextLabel, emit, emitG, llType, stripPercent, resolveTyStr, ensureMalloc,
@@ -506,12 +506,70 @@ fn genStringMatch(cg: &mut Cgen, subjValV: &string, arms: &Vec<MatchArm>, locs: 
     return allTerminated
 }
 
+// The integer constant for a literal pattern (char code / int / bool → 0/1).
+fn litIntConst(val: &string, kind: &LiteralKind): string {
+    match kind {
+        LiteralKind.LitBool => {
+            if val == "true" { return "1" }
+            return "0"
+        }
+        _ => { return val.clone() }
+    }
+}
+
+// match on an integer/char/bool subject: compare the value against each literal
+// pattern (a switch would also work, but a compare chain handles any width).
+fn genIntMatch(cg: &mut Cgen, subjV: &string, subjLl: &string, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
+    let endLbl = nextLabel(cg, "imatch.end")
+    var allTerminated = true
+    var wildIdx: i64 = -1
+    for ai in 0..arms.len {
+        match arms[ai].pattern {
+            Pattern.LiteralPattern(val, kind, span) => {
+                let eq = nextTemp(cg)
+                emit(cg, "  " + eq + " = icmp eq " + subjLl.clone() + " " + subjV.clone() + ", " + litIntConst(val, kind) + "\n")
+                let armLbl = nextLabel(cg, "imatch.arm")
+                let nextLbl = nextLabel(cg, "imatch.next")
+                emit(cg, "  br i1 " + eq + ", label %" + armLbl + ", label %" + nextLbl + "\n")
+                emit(cg, armLbl + ":\n")
+                var armTerm = false
+                for si in 0..arms[ai].body.len {
+                    if genStmt(cg, *arms[ai].body[si], locs, sigs, retTy) { armTerm = true }
+                }
+                if !armTerm { emit(cg, "  br label %" + endLbl + "\n") allTerminated = false }
+                emit(cg, nextLbl + ":\n")
+            }
+            _ => { wildIdx = ai }
+        }
+    }
+    if wildIdx >= 0 {
+        var armTerm = false
+        for si in 0..arms[wildIdx].body.len {
+            if genStmt(cg, *arms[wildIdx].body[si], locs, sigs, retTy) { armTerm = true }
+        }
+        if !armTerm { emit(cg, "  br label %" + endLbl + "\n") allTerminated = false }
+    } else {
+        emit(cg, "  br label %" + endLbl + "\n")
+        allTerminated = false
+    }
+    emit(cg, endLbl + ":\n")
+    if allTerminated { emit(cg, "  unreachable\n") }
+    return allTerminated
+}
+
 fn genMatch(cg: &mut Cgen, subject: &Expr, arms: &Vec<MatchArm>, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string): bool {
     let subjLv = genLvalue(cg, subject, locs, sigs)
     if llType(subjLv.ty) == "%String" {
         let sv = nextTemp(cg)
         emit(cg, "  " + sv + " = load %String, ptr " + subjLv.v + "\n")
         return genStringMatch(cg, sv, arms, locs, sigs, retTy)
+    }
+    // integer/char/bool subject → compare against literal patterns
+    let subjLl0 = llType(subjLv.ty)
+    if subjLl0.len > 0 && subjLl0[0] == 105 {
+        let iv = nextTemp(cg)
+        emit(cg, "  " + iv + " = load " + subjLl0 + ", ptr " + subjLv.v + "\n")
+        return genIntMatch(cg, iv, subjLl0, arms, locs, sigs, retTy)
     }
     let rawName = stripPercent(subjLv.ty)
     let structTy = "%" + rawName
