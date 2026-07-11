@@ -1468,6 +1468,22 @@ fn sMax(bits: i64): string {
     return "9223372036854775807"
 }
 
+// Best-effort surface type of a simple payload arg WITHOUT emitting IR — used to
+// disambiguate which monomorphization of a generic enum literal to build.
+fn peekArgTy(e: &Expr, locs: &Vec<Local>): string {
+    match e {
+        Expr.IntLit(n, s) => { return "i64" }
+        Expr.FloatLit(f, s) => { return "double" }
+        Expr.BoolLit(b, s) => { return "bool" }
+        Expr.StringLit(v, s) => { return "string" }
+        Expr.Ident(name, s) => {
+            if hasLocal(locs, name) { return findLocal(locs, name).ty.clone() }
+            return ""
+        }
+        _ => { return "" }
+    }
+}
+
 fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hintTy: &string): Val {
     // Generic enums are registered under their mangled name
     var rEnum = resolveEnumName(cg, enumName)
@@ -1479,6 +1495,33 @@ fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Hea
         if he.startsWith(enumName + "_") && lookupVariantTag(cg, he, variant) >= 0 {
             rEnum = he.clone()
             tag = lookupVariantTag(cg, he, variant)
+        }
+    }
+    // No hint (`let a = Maybe.Just(42)`): pick the monomorphization of this generic
+    // enum that carries the variant — the sole one, or (if several) the one whose
+    // variant payload type matches the first payload argument.
+    if tag < 0 {
+        var cands: Vec<string> = Vec.new()
+        for k, v in cg.enums {
+            if k.startsWith(enumName + "_") && lookupVariantTag(cg, k, variant) >= 0 {
+                cands.push(k.clone())
+            }
+        }
+        var chosen = ""
+        if cands.len == 1 {
+            chosen = cands[0].clone()
+        } else if cands.len > 1 && args.len > 0 {
+            let argKey = llType(peekArgTy(*args[0], locs))
+            if argKey.len > 0 {
+                for ci in 0..cands.len {
+                    let pl = lookupVariantPayload(cg, cands[ci], variant)
+                    if pl.len >= 1 && llType(pl[0]) == argKey { chosen = cands[ci].clone() }
+                }
+            }
+        }
+        if chosen.len > 0 {
+            rEnum = chosen
+            tag = lookupVariantTag(cg, rEnum, variant)
         }
     }
     // `Type.method(...)` with no matching variant is a static method on a struct
