@@ -914,6 +914,25 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.40 (2026-07-11) — remaining buckets triaged
+
+Interface bucket done (cont.39). Triaged what's left (sweep 319/339):
+- **Sweep flakes, NOT real failures**: arenaContracts, greenThreadMany (and intermittently
+  channelCrossThreadPark, parkUnparkCrossThread) PASS when run directly — they time out only
+  under the concurrent sweep's load. Real pass count is effectively higher than 319.
+- **extern-struct C-FFI (~10)**: UNWINNABLE in the sweep — the fixtures need a peer `.c` (e.g.
+  `add_pts`) that the sweep never links (only run.test.ts links `<name>.c`), and several have no
+  `.c` at all. Separately, milo0's ABI is wrong vs the oracle (`declare %P @add_pts(%P,%P)` vs
+  oracle's register-coerced `declare i64 @add_pts(i64,i64)`) — needs the `abi.ts` struct-by-value
+  ABI (small→int regs, HFA→float regs, large→byval) ported to milo0. Large + not sweep-verifiable.
+- **promise green-scheduler (~6)**: the ONLY sweep-improvable remainder. Characterized: a
+  `Promise.race/all(...).await()` on the main thread exits 0 with EMPTY stdout — even a
+  `print("before await")` placed BEFORE the await is lost. So main parks on await, the spawned
+  promise tasks never deliver their channel result, the scheduler detects deadlock and `_exit(0)`
+  WITHOUT flushing stdout. greenThreadMany (Task.spawn + join, no await) flushes fine, so it's
+  specific to the spawn→channel→await collector delivery. Deep green-scheduler runtime bug (task
+  execution / cross-task channel wakeup as compiled by milo0) — a focused multi-iteration effort.
+
 ### Fixture-sweep bug hunt cont.39 (2026-07-11) — interface bucket COMPLETE (all 7)
 
 Finished the trait-object bucket — coercion at every site (→ interfaceHeap, interfaceVecHeap,
