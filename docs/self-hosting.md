@@ -914,6 +914,15 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.6 (2026-07-11) — Promise sugar + loop invariants
+
+- **`Promise(fn)` constructor sugar** — checker desugars to `Promise<T>.run(fn)` (T = the
+  closure's return type, via `monomorphizeStruct`); codegen routes to `Promise_<R>$run`
+  using the closure's carried `Closure:R` return type. Runs on the (now-working) green
+  thread path. (promiseConstructor)
+- **`while … invariant …` clauses** — parsed past like fn `requires`/`ensures` (verification
+  hints, no runtime effect). (loopInvariant)
+
 ### Fixture-sweep bug hunt cont.5 (2026-07-11) — global arrays + Vec.each, →260
 
 - **Fixed-array global initializers** (`var xs: [i32;5] = [10,…]`, `[3.14;3]`): materialize
