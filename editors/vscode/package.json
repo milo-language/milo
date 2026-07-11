@@ -25,6 +25,16 @@
         "editor.formatOnSave": true,
         "editor.defaultFormatter": "milo.milo-lang"
       }
+    },
+    "configuration": {
+      "title": "Milo",
+      "properties": {
+        "milo.compilerRoot": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the Milo compiler repo (the dir containing `src/main.ts`). Set this when editing `.milo` files outside the Milo repo — otherwise the extension auto-detects the root and disables the LSP if it can't."
+        }
+      }
     }
   },
   "scripts": {

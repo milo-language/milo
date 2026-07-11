@@ -70,7 +70,22 @@ function findBun(): string | null {
   return "bun"; // last resort: rely on PATH
 }
 
+function isMiloRoot(dir: string): boolean {
+  try {
+    const pkg = require(path.join(dir, "package.json"));
+    return pkg.name === "milo" && fs.statSync(path.join(dir, "src", "main.ts")).isFile();
+  } catch { return false; }
+}
+
 function findMiloRoot(extensionPath: string): string | null {
+  // Explicit override wins — needed when editing .milo files outside the milo repo.
+  const configured = workspace.getConfiguration("milo").get<string>("compilerRoot")?.trim();
+  if (configured) {
+    if (isMiloRoot(configured)) return configured;
+    window.showWarningMessage(`Milo: milo.compilerRoot="${configured}" is not a Milo repo (no src/main.ts or wrong package name).`);
+    return null;
+  }
+
   // Extension lives at <milo>/editors/vscode
   const candidate = path.resolve(extensionPath, "..", "..");
   try {

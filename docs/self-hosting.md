@@ -589,6 +589,35 @@ Actions before announcing M5:
    and stable. Convergence at -O0 with UB at -O2 is a fixed point of a
    miscompiled compiler pipeline, not yet a shippable milestone.
 
+### M5 follow-on: `-O2` uninitialized-HEAP miscompile (the last robustness gap)
+
+Convergence + build/run all verified at **`-O0`/`-O1`**. milo0's own `build`
+command defaults to **`-O2`** (`main.milo:236,255`), and a self-built binary at
+`-O2` **miscompiles**: `/tmp/n3.milo` (`fn f(): i64 { var x: i64 = 0; return x }`)
+→ `return type mismatch: expected i64, got i32` — the checker's `VarInfo.ty` for
+an annotated `i64` local reads back as `i32`. Characterized (does NOT block M5,
+which is `-O0`-converged; the deployed `milo-self.bin` is oracle-built and fine):
+
+- `-O1` clean; `-O2` fails deterministically. `clang -O0 -g -fsanitize=address,undefined`
+  on the self-IR is **clean** (no report) → not a heap-overflow / signed-overflow.
+- IR has **zero `nsw`/`inbounds`** → not a strict-overflow assumption.
+- `-ftrivial-auto-var-init=zero` and `=pattern` at `-O2` **do NOT fix it** → it is
+  **not** an uninitialized *stack/alloca* read. That leaves **uninitialized HEAP**
+  (a malloc'd slot read before it's fully written) — which auto-var-init doesn't
+  cover and ASan can't catch; MSan is unavailable on arm64-darwin.
+- The value is a `TypeKind` enum payload (`TInt(bits, signed)`, `bits` in payload
+  slot 0). Isolated repros of enum-payload reassignment AND match-arm reassignment
+  of an outer enum var both round-trip 64 correctly at `-O2` — so the bug is in the
+  fuller path `checkLetDecl` walks: `valType = hint` → `VarInfo{ty: valType}` →
+  `declare` into a scope HashMap (malloc'd) → later `lookup`/clone-out → `.ty` read.
+  Suspect: a `TypeKind`/`VarInfo` copy that writes the tag + slot 1 but leaves
+  payload slot 0 holding the *prior* `TInt(32)` bits, benign at `-O0` (full
+  aggregate store) but exposed at `-O2` (store-forwarding reads the stale slot).
+- **Next**: bisect the enum→struct-field→HashMap→clone store chain; check whether
+  `zeroed<T>`/enum-lit construction leaves payload slots undef and whether a
+  malloc'd VarInfo slot is memset before the aggregate store. Interim mitigation
+  if needed: milo0 `build` at `-O1` (proven clean) until the heap-init is found.
+
 ### Review leads (2026-07-10, code review of recent commits; round 2 same day)
 
 **1. ~~genHashMapGet shallow copy~~ — CONFIRMED AND FIXED** (`4f9d443` get,
