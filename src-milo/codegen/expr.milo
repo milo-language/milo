@@ -20,10 +20,59 @@ from "src-milo/codegen/strings.milo" import {
 
 // -- Struct literal --
 
+// Coarse type category of a literal field expression (no evaluation).
+fn exprCategory(e: &Expr): string {
+    match e {
+        Expr.IntLit(n, s) => { return "int" }
+        Expr.CharLit(c, s) => { return "int" }
+        Expr.BoolLit(b, s) => { return "int" }
+        Expr.FloatLit(f, s) => { return "float" }
+        Expr.StringLit(v, s) => { return "str" }
+        _ => { return "" }
+    }
+}
+
+fn llCategory(ll: &string): string {
+    if ll == "%String" { return "str" }
+    if ll == "double" || ll == "float" { return "float" }
+    if ll.len > 0 && ll[0] == 105 { return "int" }
+    return ""
+}
+
+// A struct literal `Pair { … }` whose base has >1 monomorphization (Pair_i32_i32
+// vs Pair_string_i32) picks the candidate whose field categories match the literal
+// field values (which the checker already resolved, but the AST keeps the bare name).
+fn disambiguateStructLit(cg: &Cgen, base: &string, fields: &Vec<StructLitField>): string {
+    var result = base.clone()
+    var count = 0
+    for k, v in cg.structs {
+        if !nameHasMonoPrefix(k, base) { continue }
+        var ok = true
+        for fi in 0..fields.len {
+            let cat = exprCategory(*fields[fi].value)
+            if cat.len == 0 { continue }
+            let idx = lookupFieldIndex(cg, k, fields[fi].name)
+            if idx < 0 { ok = false }
+            else {
+                let fcat = llCategory(llType(lookupFieldType(cg, k, idx)))
+                if fcat.len > 0 && fcat != cat { ok = false }
+            }
+        }
+        if ok { result = k.clone() count = count + 1 }
+    }
+    if count == 1 { return result }
+    return base.clone()
+}
+
 fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
     // a bare generic name (`Handle` from a monomorphized body) resolves to its
     // sole instantiation (`Handle_Expr`); a concrete struct name passes through.
-    let rname = resolveStructName(cg, name)
+    var rname = resolveStructName(cg, name)
+    // >1 instantiation → resolveStructName returns the bare name; disambiguate by
+    // the literal field value categories.
+    if rname == name && !cg.structs.contains(name) {
+        rname = disambiguateStructLit(cg, name, fields)
+    }
     let structTy = "%" + rname.clone()
     let alloc = nextTemp(cg)
     emit(cg, "  " + alloc + " = alloca " + structTy + "\n")
