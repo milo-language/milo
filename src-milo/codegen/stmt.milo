@@ -485,13 +485,9 @@ fn emitScopeDrops(cg: &mut Cgen, locs: &Vec<Local>, fromLen: i64, skipName: &str
         if locs[i].name == skipName { continue }
         let dropFn = stripPercent(locs[i].ty) + "$Drop$drop"
         if cg.fnRets.contains(dropFn) {
-            // milo0 lowers &mut self by value (astTypeStr strips ref-ness), so
-            // the hook is called with a loaded copy — fine for observable
-            // side effects, which is all the drop hook contributes here
-            let structLl = llType(locs[i].ty)
-            let loaded = nextTemp(cg)
-            emit(cg, "  " + loaded + " = load " + structLl + ", ptr " + locs[i].addr + "\n")
-            emit(cg, "  call void @" + dropFn + "(" + structLl + " " + loaded + ")\n")
+            // Drop$drop takes `&mut self` → a `ptr` param, so pass the local's
+            // address directly (mutation-through-ref is now honored).
+            emit(cg, "  call void @" + dropFn + "(ptr " + locs[i].addr + ")\n")
         }
     }
 }

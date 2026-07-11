@@ -26,6 +26,7 @@ struct CgFnSig {
     name: string,
     retTy: string,
     paramTys: Vec<string>,
+    paramRefs: Vec<bool>,
     isVariadic: bool,
 }
 

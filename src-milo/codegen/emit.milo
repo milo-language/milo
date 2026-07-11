@@ -14,13 +14,16 @@ fn buildFnTable(prog: &Program): Vec<CgFnSig> {
         // copy which is dropped at scope exit, freeing the AST `prog` still owns.
         // Read the fields through the borrow instead.
         var pts: Vec<string> = Vec.new()
+        var prefs: Vec<bool> = Vec.new()
         for j in 0..prog.functions[i].params.len {
             pts.push(astTypeStr(prog.functions[i].params[j].ty))
+            prefs.push(prog.functions[i].params[j].ty.isRef || prog.functions[i].params[j].ty.isRefMut)
         }
         sigs.push(CgFnSig {
             name: prog.functions[i].name.clone(),
             retTy: astTypeStr(prog.functions[i].retType),
             paramTys: pts,
+            paramRefs: prefs,
             isVariadic: prog.functions[i].isVariadic,
         })
     }
@@ -96,7 +99,12 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     }
     for pi in 0..f.params.len {
         if pi > 0 || isMain { hdr = hdr + ", " }
-        hdr = hdr + llType(resolveTyStr(cg, astTypeStr(f.params[pi].ty))) + " %" + f.params[pi].name
+        // A `&T`/`&mut T` param is lowered as a `ptr` to the pointee, so mutations
+        // through it are visible to the caller (milo threads `&mut Cgen` etc.).
+        let piRef = f.params[pi].ty.isRef || f.params[pi].ty.isRefMut
+        var pLl = "ptr"
+        if !piRef { pLl = llType(resolveTyStr(cg, astTypeStr(f.params[pi].ty))) }
+        hdr = hdr + pLl + " %" + f.params[pi].name
     }
     hdr = hdr + ") {\n"
     emit(cg, hdr)
@@ -106,15 +114,22 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
         emit(cg, "  store ptr %_milo_argv, ptr @_milo_argv_global\n")
     }
 
-    // Spill parameters to allocas
+    // Bind parameters. A ref param arrives as a `ptr` to the pointee, so it IS
+    // already the local's address — use it directly (no alloca/copy), which is
+    // what makes mutation-through-&mut visible to the caller. Value params spill
+    // to a fresh alloca as usual.
     for pj in 0..f.params.len {
         let pTyStr = resolveTyStr(cg, astTypeStr(f.params[pj].ty))
-        let llt = llType(pTyStr)
-        let addr = "%" + f.params[pj].name + "_addr"
-        emit(cg, "  " + addr + " = alloca " + llt + "\n")
-        emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
         let pIsRef = f.params[pj].ty.isRef || f.params[pj].ty.isRefMut
-        locs.push(Local { name: f.params[pj].name.clone(), ty: pTyStr, addr: addr, isRef: pIsRef })
+        if pIsRef {
+            locs.push(Local { name: f.params[pj].name.clone(), ty: pTyStr, addr: "%" + f.params[pj].name, isRef: true })
+        } else {
+            let llt = llType(pTyStr)
+            let addr = "%" + f.params[pj].name + "_addr"
+            emit(cg, "  " + addr + " = alloca " + llt + "\n")
+            emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
+            locs.push(Local { name: f.params[pj].name.clone(), ty: pTyStr, addr: addr, isRef: false })
+        }
     }
 
     var terminated = false

@@ -1174,10 +1174,33 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         }
     }
     if cg.fnRets.contains(userFn) {
-        var argStr = llType(obj.ty) + " " + obj.v
+        // The method's param ref-ness decides which args (incl. self) pass by
+        // address vs value — self is param 0.
+        var mRefs: Vec<bool> = Vec.new()
+        for si in 0..sigs.len {
+            if sigs[si].name == userFn {
+                for pi in 0..sigs[si].paramRefs.len { mRefs.push(sigs[si].paramRefs[pi]) }
+            }
+        }
+        var selfIsRef = false
+        if mRefs.len > 0 { selfIsRef = mRefs[0] }
+        var argStr = ""
+        if selfIsRef {
+            let slv = genLvalue(cg, object, locs, sigs)
+            argStr = "ptr " + slv.v
+        } else {
+            argStr = llType(obj.ty) + " " + obj.v
+        }
         for ai in 0..args.len {
-            let av = genExpr(cg, *args[ai], locs, sigs, "")
-            argStr = argStr + ", " + llType(av.ty) + " " + av.v
+            var aRef = false
+            if (ai + 1) < mRefs.len { aRef = mRefs[ai + 1] }
+            if aRef {
+                let alv = genLvalue(cg, *args[ai], locs, sigs)
+                argStr = argStr + ", ptr " + alv.v
+            } else {
+                let av = genExpr(cg, *args[ai], locs, sigs, "")
+                argStr = argStr + ", " + llType(av.ty) + " " + av.v
+            }
         }
         let retTy = resolveTyStr(cg, lookupFnRet(cg, userFn))
         let retLl = llType(retTy)
@@ -1213,10 +1236,26 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
             sfn = sfn + method[1..method.len].clone()
         }
         if cg.fnRets.contains(sfn) {
-            var argStr = "%String " + obj.v
+            // strXxx take `&string` (and sometimes `&string`) params → ptr. The
+            // receiver (self) is always a ref; other args follow the sig.
+            var sRefs: Vec<bool> = Vec.new()
+            for si in 0..sigs.len {
+                if sigs[si].name == sfn {
+                    for pi in 0..sigs[si].paramRefs.len { sRefs.push(sigs[si].paramRefs[pi]) }
+                }
+            }
+            let recvLv = genLvalue(cg, object, locs, sigs)
+            var argStr = "ptr " + recvLv.v
             for ai in 0..args.len {
-                let av = genExpr(cg, *args[ai], locs, sigs, "")
-                argStr = argStr + ", " + llType(av.ty) + " " + av.v
+                var aRef = false
+                if (ai + 1) < sRefs.len { aRef = sRefs[ai + 1] }
+                if aRef {
+                    let alv = genLvalue(cg, *args[ai], locs, sigs)
+                    argStr = argStr + ", ptr " + alv.v
+                } else {
+                    let av = genExpr(cg, *args[ai], locs, sigs, "")
+                    argStr = argStr + ", " + llType(av.ty) + " " + av.v
+                }
             }
             let retTy = resolveTyStr(cg, lookupFnRet(cg, sfn))
             let retLl = llType(retTy)
@@ -1487,10 +1526,14 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     // generic enum literal in argument position (`error(_, _, Option.None)`)
     // resolves to the right instantiation instead of an unmangled Option$None.
     var paramHints: Vec<string> = Vec.new()
+    var paramRefs: Vec<bool> = Vec.new()
     for si in 0..sigs.len {
         if sigs[si].name == name {
             for pi in 0..sigs[si].paramTys.len {
                 paramHints.push(resolveTyStr(cg, sigs[si].paramTys[pi]))
+            }
+            for pi in 0..sigs[si].paramRefs.len {
+                paramRefs.push(sigs[si].paramRefs[pi])
             }
         }
     }
@@ -1498,7 +1541,16 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     for i in 0..args.len {
         var hint = ""
         if i < paramHints.len { hint = paramHints[i].clone() }
-        argVals.push(genExpr(cg, *args[i], locs, sigs, hint))
+        // A ref param takes the argument's ADDRESS (auto-borrow of an lvalue), so
+        // the callee mutates the caller's storage rather than a copy.
+        var isRefParam = false
+        if i < paramRefs.len { isRefParam = paramRefs[i] }
+        if isRefParam {
+            let lv = genLvalue(cg, *args[i], locs, sigs)
+            argVals.push(Val { v: lv.v, ty: "ptr" })
+        } else {
+            argVals.push(genExpr(cg, *args[i], locs, sigs, hint))
+        }
     }
 
     let isEprint = name == "eprint"
@@ -1777,6 +1829,29 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             return v
         }
         Expr.BinOp(op, l, r, span) => {
+            // Short-circuit && / || — the RHS must NOT be evaluated eagerly (it may
+            // have side effects). Store into a slot to avoid phi/current-block bookkeeping.
+            if op == "&&" || op == "||" {
+                let res = nextTemp(cg)
+                emit(cg, "  " + res + " = alloca i1\n")
+                let lhs = genExpr(cg, *l, locs, sigs, "bool")
+                emit(cg, "  store i1 " + lhs.v + ", ptr " + res + "\n")
+                let rhsLbl = nextLabel(cg, "sc.rhs")
+                let endLbl = nextLabel(cg, "sc.end")
+                if op == "&&" {
+                    emit(cg, "  br i1 " + lhs.v + ", label %" + rhsLbl + ", label %" + endLbl + "\n")
+                } else {
+                    emit(cg, "  br i1 " + lhs.v + ", label %" + endLbl + ", label %" + rhsLbl + "\n")
+                }
+                emit(cg, rhsLbl + ":\n")
+                let rhs = genExpr(cg, *r, locs, sigs, "bool")
+                emit(cg, "  store i1 " + rhs.v + ", ptr " + res + "\n")
+                emit(cg, "  br label %" + endLbl + "\n")
+                emit(cg, endLbl + ":\n")
+                let out = nextTemp(cg)
+                emit(cg, "  " + out + " = load i1, ptr " + res + "\n")
+                return Val { v: out, ty: "bool" }
+            }
             let lv = genExpr(cg, *l, locs, sigs, hintTy)
             let rv = genExpr(cg, *r, locs, sigs, lv.ty.clone())
             let lvLl = llType(lv.ty)
