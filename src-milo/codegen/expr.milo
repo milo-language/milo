@@ -1935,6 +1935,44 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         return Val { v: t, ty: retTy }
     }
 
+    // fn-typed struct field called like a method: h.apply(x). The field holds a
+    // %Closure {fnptr, env}; extract and do an indirect call (uniform args-by-ptr).
+    if cg.structs.contains(recvName) {
+        let fields = cg.structs.get(recvName)!
+        var fidx: i64 = -1
+        var fieldTy = ""
+        for fi in 0..fields.len {
+            if fields[fi].name == method {
+                fidx = fi
+                fieldTy = fields[fi].ty.clone()
+            }
+        }
+        if fidx >= 0 && llType(fieldTy) == "%Closure" {
+            let clv = nextTemp(cg)
+            emit(cg, "  " + clv + " = extractvalue " + llType(obj.ty) + " " + obj.v + ", " + fidx.toString() + "\n")
+            let fp = nextTemp(cg)
+            emit(cg, "  " + fp + " = extractvalue %Closure " + clv + ", 0\n")
+            let env = nextTemp(cg)
+            emit(cg, "  " + env + " = extractvalue %Closure " + clv + ", 1\n")
+            var argStr = "ptr " + env
+            for ai in 0..args.len {
+                let alv = genLvalue(cg, *args[ai], locs, sigs)
+                argStr = argStr + ", ptr " + alv.v
+            }
+            var retTyStr = closureRetOf(fieldTy)
+            if retTyStr.len == 0 { retTyStr = "i64" }
+            let retTyResolved = resolveTyStr(cg, retTyStr)
+            let retLl = llType(retTyResolved)
+            if retLl == "void" {
+                emit(cg, "  call void " + fp + "(" + argStr + ")\n")
+                return Val { v: "0", ty: "void" }
+            }
+            let t = nextTemp(cg)
+            emit(cg, "  " + t + " = call " + retLl + " " + fp + "(" + argStr + ")\n")
+            return Val { v: t, ty: retTyResolved }
+        }
+    }
+
     // String methods are sugar for std/string free functions (`s.trim()` ->
     // `strTrim(s)`): the name is `str` + Capitalized(method), receiver passed as
     // the first arg. parseInt/toInt alias strParseInt; parseF64 is a strtod call.
@@ -2382,6 +2420,8 @@ fn stripOptionPrefix(s: &string): string {
 
 // return type suffix of a "Closure:R" surface type, else ""
 fn closureRetOf(ty: &string): string {
+    // "fn:R" (f=102,n=110,:=58) — fn-typed struct fields/params carry R this way
+    if ty.len > 3 && ty[0] == 102 && ty[1] == 110 && ty[2] == 58 { return ty[3..ty.len].clone() }
     if ty.len < 9 { return "" }
     // "Closure:" is 8 chars
     if ty[0] == 67 && ty[7] == 58 { return ty[8..ty.len].clone() }

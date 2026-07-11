@@ -1795,6 +1795,29 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
         return TypeKind.TStruct(structName.clone())
     }
 
+    // fn-typed struct field called like a method: h.apply(x) where apply: (T)=>R
+    if ck.structs.contains(structName) {
+        let sinfo = ck.structs.get(structName)!
+        for fi in 0..sinfo.fields.len {
+            if sinfo.fields[fi].name == method {
+                match sinfo.fields[fi].ty {
+                    TypeKind.TFn(fparams, fret) => {
+                        if args.len != fparams.len {
+                            error(ck, "'" + method.clone() + "' expects " + fparams.len.toString() + " argument(s), got " + args.len.toString(), cloneSpan(span))
+                        }
+                        var ai: i64 = 0
+                        while ai < args.len && ai < fparams.len {
+                            checkExpr(ck, *args[ai])
+                            ai = ai + 1
+                        }
+                        return (*fret).clone()
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     error(ck, "no method '" + method.clone() + "' on struct '" + structName.clone() + "'", cloneSpan(span))
     return tyUnknown()
 }
