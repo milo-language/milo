@@ -914,6 +914,25 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.37 (2026-07-11) — interface hang FIXED (checkCall aliasing/move)
+
+Root-caused + fixed the cont.36 interface hang. `eprint` bisection under no memory pressure
+found TWO bugs in checkCall's arg loop, both on the type-MISMATCH error path (so only fired when
+an arg didn't match its param — e.g. a concrete struct vs a `&Interface` param):
+1. **Shallow-copy dangle**: `ck.functions.get(func)!` returns a shallow copy whose nested
+   Heap/string buffers alias the map's storage. `checkExpr(arg)` below can insert into
+   `ck.functions` (checking a struct that impls an interface registers its impl method),
+   rehashing the map and freeing that storage → `sig` dangled (`PRE-CE[G]`→`POST-CE[]`). Fix:
+   deep-copy param types + ret into owned locals BEFORE the loop (TypeKind.clone is deep).
+2. **Match moves the payload**: `match paramType { TRef(inner,…) => … }` MOVES the inner Heap
+   into `inner`, leaving `paramType` with a moved-out inner; `typeName(paramType)` in the error
+   then read the freed buffer and ran away allocating (OOM → guard SIGKILL, looked like a hang).
+   Fix: precompute `let ptName = typeName(paramType)` BEFORE the match.
+Both are GENERAL (any `&T` param mismatch), not interface-specific. interfaceBasic/etc now error
+cleanly ("expected &Greeter, got Dog") instead of OOM-hanging — the checker correctly rejects the
+concrete→interface arg since milo0 has no interface coercion yet. Manifest 173/0, converged.
+This unblocks the dynamic-dispatch feature (fat pointers + itables) for the ~7 interface fixtures.
+
 ### Fixture-sweep bug hunt cont.36 (2026-07-11) — interface-hang root-cause (investigation)
 
 Pinned the cont.34 interface hang. Minimal repro: `interface G { fn greet(self:&Self):i32 }`
