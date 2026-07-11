@@ -661,6 +661,14 @@ fn registerBuiltinGenericEnums(ck: &mut Checker) {
 // Annotation-side generic instantiation: `Option<i32>` must resolve to the
 // monomorphized enum/struct, not TStruct("Option").
 fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
+    // resolve a type alias name to its base (preserving any &/&mut/* wrapper)
+    if !ty.isFn && ty.typeArgs.len == 0 && ck.typeAliases.contains(ty.name) {
+        let base = ck.typeAliases.get(ty.name)!
+        if ty.isPtr { return TypeKind.TPtr(Heap(base)) }
+        if ty.isRef { return TypeKind.TRef(Heap(base), false) }
+        if ty.isRefMut { return TypeKind.TRef(Heap(base), true) }
+        return base
+    }
     if ty.typeArgs.len > 0 && !ty.isFn {
         var base = tyUnknown()
         var matched = false
@@ -705,6 +713,10 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     // Phase 0: register builtin traits and generic types
     registerBuiltinTraits(ck)
     registerBuiltinGenericEnums(ck)
+    // type aliases (`type Altitude = i32(0..N)`) resolve to their base type
+    for ai in 0..program.typeAliases.len {
+        ck.typeAliases.insert(program.typeAliases[ai].name.clone(), typeFromAst(program.typeAliases[ai].base))
+    }
 
     // Phase 1: register all declarations (generics park on ck.generic* until
     // a use site provides concrete type args). Register ALL generic structs/enums

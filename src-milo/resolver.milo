@@ -18,6 +18,7 @@ struct ResolverState {
     traits: Vec<TraitDecl>,
     impls: Vec<ImplDecl>,
     globals: Vec<GlobalDecl>,
+    typeAliases: Vec<TypeAlias>,
     stdlibDir: string,
     targetOs: string,
 }
@@ -31,6 +32,7 @@ fn newResolver(stdlibDir: string, targetOs: string): ResolverState {
         traits: Vec.new(),
         impls: Vec.new(),
         globals: Vec.new(),
+        typeAliases: Vec.new(),
         stdlibDir: stdlibDir,
         targetOs: targetOs,
     }
@@ -116,6 +118,9 @@ fn processImports(rs: &mut ResolverState, prog: &Program, dir: &string) {
             for gi in 0..imported.globals.len {
                 rs.globals.push(cloneGlobal(imported.globals[gi]))
             }
+            for ai in 0..imported.typeAliases.len {
+                rs.typeAliases.push(TypeAlias { name: imported.typeAliases[ai].name.clone(), base: imported.typeAliases[ai].base.clone() })
+            }
 
             // Recurse into this module's imports
             let importDir = pathDirname(absPath)
@@ -200,6 +205,7 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
         for ti in 0..prelude.traits.len { rs.traits.push(prelude.traits[ti].clone()) }
         for ii in 0..prelude.impls.len { rs.impls.push(prelude.impls[ii].clone()) }
         for gi in 0..prelude.globals.len { rs.globals.push(cloneGlobal(prelude.globals[gi])) }
+        for ai in 0..prelude.typeAliases.len { rs.typeAliases.push(TypeAlias { name: prelude.typeAliases[ai].name.clone(), base: prelude.typeAliases[ai].base.clone() }) }
         let preludeDir = pathDirname(preludePath)
         processImports(rs, prelude, preludeDir)
     }
@@ -211,6 +217,7 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
     for ti in 0..program.traits.len { rs.traits.push(program.traits[ti].clone()) }
     for ii in 0..program.impls.len { rs.impls.push(program.impls[ii].clone()) }
     for gi in 0..program.globals.len { rs.globals.push(cloneGlobal(program.globals[gi])) }
+    for ai in 0..program.typeAliases.len { rs.typeAliases.push(TypeAlias { name: program.typeAliases[ai].name.clone(), base: program.typeAliases[ai].base.clone() }) }
 
     // Process user program's imports
     processImports(rs, program, sourceDir)
@@ -224,5 +231,6 @@ fn resolveImports(program: Program, sourceDir: string, stdlibDir: string, target
         traits: dedupTraits(rs.traits),
         impls: rs.impls,
         globals: rs.globals,
+        typeAliases: rs.typeAliases,
     }
 }

@@ -1282,6 +1282,7 @@ fn parse(p: &mut Parser): Program {
     var traits: Vec<TraitDecl> = Vec.new()
     var impls: Vec<ImplDecl> = Vec.new()
     var globals: Vec<GlobalDecl> = Vec.new()
+    var typeAliases: Vec<TypeAlias> = Vec.new()
 
     while !at(p, TokKind.Eof) {
         // Collect attributes
@@ -1324,6 +1325,24 @@ fn parse(p: &mut Parser): Program {
             impls.push(parseImplDecl(p))
         } else if at(p, TokKind.Let) || at(p, TokKind.Var) {
             globals.push(parseGlobal(p))
+        } else if at(p, TokKind.Ident) && peek(p).value == "type" {
+            // `type Name = <type>` — a type alias (incl. ranged `i32(min..max)`).
+            advance(p)
+            let aliasName = expect(p, TokKind.Ident).value
+            expect(p, TokKind.Eq)
+            let base = parseType(p)
+            // optional refinement range `(min..max)` — parsed then discarded here
+            // (kept out of parseType so it can't misfire on ordinary annotations)
+            if at(p, TokKind.LParen) {
+                advance(p)
+                if at(p, TokKind.Minus) { advance(p) }
+                expect(p, TokKind.Int)
+                expect(p, TokKind.DotDot)
+                if at(p, TokKind.Minus) { advance(p) }
+                expect(p, TokKind.Int)
+                expect(p, TokKind.RParen)
+            }
+            typeAliases.push(TypeAlias { name: aliasName, base: base })
         } else {
             // Skip unexpected token
             advance(p)
@@ -1338,6 +1357,7 @@ fn parse(p: &mut Parser): Program {
         traits: traits,
         impls: impls,
         globals: globals,
+        typeAliases: typeAliases,
     }
 }
 

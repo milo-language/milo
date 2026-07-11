@@ -215,6 +215,13 @@ struct GlobalDecl {
     span: Option<Span>,
 }
 
+// `type Name = i32(min..max)` — a named refinement alias over a base int type.
+// The range is advisory (parsed, not yet enforced); the alias resolves to `base`.
+struct TypeAlias {
+    name: string,
+    base: MiloType,
+}
+
 struct Program {
     structs: Vec<StructDecl>,
     enums: Vec<EnumDecl>,
@@ -223,6 +230,7 @@ struct Program {
     traits: Vec<TraitDecl>,
     impls: Vec<ImplDecl>,
     globals: Vec<GlobalDecl>,
+    typeAliases: Vec<TypeAlias>,
 }
 
 // -- Clone impls --
