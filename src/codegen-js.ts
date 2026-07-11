@@ -365,6 +365,20 @@ export class CodegenJS {
         return `${this.genExpr(expr.vec)}.push(${this.genExpr(expr.value)})`;
       case "VecPop":
         return `${this.genExpr(expr.vec)}.pop()`;
+      case "VecReverse":
+        return `${this.genExpr(expr.object)}.reverse()`;
+      case "VecSwap": {
+        const v = this.genExpr(expr.object);
+        const a = this.genExpr(expr.indexA);
+        const b = this.genExpr(expr.indexB);
+        return `((_v, _a, _b) => { const _t = _v[_a]; _v[_a] = _v[_b]; _v[_b] = _t; })(${v}, ${a}, ${b})`;
+      }
+      case "VecInsert":
+        // Vec.insert(i, x): shift right — JS splice inserts at i, no removal.
+        return `${this.genExpr(expr.object)}.splice(${this.genExpr(expr.index)}, 0, ${this.genExpr(expr.value)})`;
+      case "VecRemove":
+        // Vec.remove(i): returns the removed element (splice yields an array).
+        return `${this.genExpr(expr.object)}.splice(${this.genExpr(expr.index)}, 1)[0]`;
       case "HashMapNew":
         return "new Map()";
       case "HashMapInsert":
@@ -373,6 +387,11 @@ export class CodegenJS {
         const m = this.genExpr(expr.map);
         const k = this.genExpr(expr.key);
         return `(${m}.has(${k}) ? ${expr.optionEnumName}.Some(${m}.get(${k})) : ${expr.optionEnumName}.None())`;
+      }
+      case "HashMapGetOrDefault": {
+        const m = this.genExpr(expr.map);
+        const k = this.genExpr(expr.key);
+        return `(${m}.has(${k}) ? ${m}.get(${k}) : ${this.genExpr(expr.default)})`;
       }
       case "HashMapContains":
         return `${this.genExpr(expr.map)}.has(${this.genExpr(expr.key)})`;
