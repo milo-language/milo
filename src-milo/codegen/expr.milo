@@ -1841,6 +1841,14 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
                 let b = nextTemp(cg)
                 emit(cg, "  " + b + " = select i1 " + argVals[ai].v + ", ptr " + ts + ", ptr " + fs + "\n")
                 argStr = argStr + ", ptr " + b
+            } else if elemLl.len > 0 && elemLl[0] == 37 {
+                // struct/enum (%Name) → Display it as %s. Without this the branch
+                // below zext'd the aggregate (`zext %IoError to i32`) → invalid IR.
+                fmt = fmt + "%s"
+                let ds = genDisplayString(cg, argVals[ai].v, argVals[ai].ty, locs, sigs)
+                let dp = nextTemp(cg)
+                emit(cg, "  " + dp + " = extractvalue %String " + ds.v + ", 0\n")
+                argStr = argStr + ", ptr " + dp
             } else {
                 // i8/i16 — printf varargs promote to int
                 fmt = fmt + "%d"
