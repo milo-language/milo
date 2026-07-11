@@ -136,6 +136,10 @@ struct Checker {
     // exits, so a flow-insensitive walk must not carry them forward (mirrors
     // the TS checker's returnOnlyMoves)
     inReturn: bool,
+    // Expected type at the current expression (from a let annotation), used to
+    // infer a generic call's type params when the args don't determine them
+    // (`let a: Arena<X> = arenaNew()`).
+    expectedType: Option<TypeKind>,
 }
 
 fn newChecker(): Checker {
@@ -161,6 +165,7 @@ fn newChecker(): Checker {
         genericImpls: Vec.new(),
         structInsts: Vec.new(),
         inReturn: false,
+        expectedType: Option.None,
     }
 }
 

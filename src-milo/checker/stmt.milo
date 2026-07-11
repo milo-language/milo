@@ -76,18 +76,28 @@ fn checkStmt(ck: &mut Checker, stmt: &Stmt, fnRetType: &TypeKind) {
 // -- Let/Var declarations --
 
 fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, value: &Expr, mutable: bool, span: &Option<Span>) {
-    var valType = checkExpr(ck, value)
-
+    // Resolve the annotation first and expose it as the expected type, so a
+    // generic call whose type params aren't determined by args can infer from it
+    // (`let a: Arena<X> = arenaNew()`).
+    var hasHint = false
+    var hint = tyUnknown()
     match typeAnno {
         Option.Some(ty) => {
-            let hint = resolveAstType(ck, ty)
-            if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) &&
-                !arrayIntCoercible(hint, valType) {
-                error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
-            }
-            valType = hint
+            hint = resolveAstType(ck, ty)
+            hasHint = true
         }
         Option.None => {}
+    }
+    if hasHint { ck.expectedType = Option.Some(hint.clone()) }
+    var valType = checkExpr(ck, value)
+    ck.expectedType = Option.None
+
+    if hasHint {
+        if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) &&
+            !arrayIntCoercible(hint, valType) {
+            error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
+        }
+        valType = hint
     }
 
     declare(ck, name.clone(), VarInfo {

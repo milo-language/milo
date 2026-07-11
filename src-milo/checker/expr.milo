@@ -914,6 +914,64 @@ fn inferInto(typeParams: &Vec<string>, declTy: &TypeKind, argTy: &TypeKind, infe
     }
 }
 
+// AST-driven inference: walks the param's declared MiloType (which still carries
+// user-generic type args like `Arena<T>`, unlike the arg-only inferInto whose
+// typeFromAst drops them) against the concrete argument type. A generic struct
+// `Arena<T>` matched against a monomorphized `Arena_DLNode` recovers T via the
+// structInsts (base/mangled/args) recorded at monomorphization.
+fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argTy: &TypeKind, inferred: &mut HashMap<string, TypeKind>) {
+    // Unwrap a declared ref (&Arena<T>) against a possibly-TRef argument.
+    var concrete = argTy.clone()
+    if declAst.isRef || declAst.isRefMut || declAst.isPtr {
+        match argTy {
+            TypeKind.TRef(inner, m) => { concrete = (*inner).clone() }
+            TypeKind.TPtr(inner) => { concrete = (*inner).clone() }
+            _ => {}
+        }
+    }
+    // A bare type parameter (`T`) binds directly.
+    if typeParamIndex(typeParams, declAst.name) >= 0 {
+        if !inferred.contains(declAst.name) && !typeEq(concrete, tyUnknown()) {
+            inferred.insert(declAst.name.clone(), concrete.clone())
+        }
+        return
+    }
+    if declAst.typeArgs.len == 0 { return }
+    // Builtins carry their args structurally in TypeKind.
+    match concrete {
+        TypeKind.TVec(elem) => {
+            if declAst.name == "Vec" && declAst.typeArgs.len == 1 {
+                inferFromAst(ck, typeParams, declAst.typeArgs[0], *elem, inferred)
+            }
+            return
+        }
+        TypeKind.THeap(inner) => {
+            if declAst.name == "Heap" && declAst.typeArgs.len == 1 {
+                inferFromAst(ck, typeParams, declAst.typeArgs[0], *inner, inferred)
+            }
+            return
+        }
+        TypeKind.TStruct(mangled) => {
+            // Look up the monomorphized instance's concrete args.
+            var ii: i64 = 0
+            while ii < ck.structInsts.len {
+                if ck.structInsts[ii].mangled == mangled {
+                    let instArgs = ck.structInsts[ii].args
+                    var ai: i64 = 0
+                    while ai < declAst.typeArgs.len && ai < instArgs.len {
+                        inferFromAst(ck, typeParams, declAst.typeArgs[ai], instArgs[ai], inferred)
+                        ai = ai + 1
+                    }
+                    return
+                }
+                ii = ii + 1
+            }
+            return
+        }
+        _ => {}
+    }
+}
+
 fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     let generic = ck.genericFns.get(func)!
     if args.len != generic.decl.params.len {
@@ -928,11 +986,29 @@ fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, spa
     for i in 0..args.len {
         let argType = checkExpr(ck, *args[i])
         inferInto(generic.typeParams, declParams[i], argType, inferred)
+        // Also try AST-driven inference, which recovers T from user-generic args
+        // (`&Arena<T>`) that typeFromAst flattened for inferInto.
+        inferFromAst(ck, generic.typeParams, generic.decl.params[i].ty, argType, inferred)
         match declParams[i] {
             TypeKind.TRef(inner, m) => {}
             _ => { tryMove(ck, *args[i]) }
         }
     }
+    // Params not fixed by args: infer from the expected type (a let annotation)
+    // against the declared return type — e.g. `let a: Arena<X> = arenaNew()`.
+    var anyUnbound = false
+    for i in 0..generic.typeParams.len {
+        if !inferred.contains(generic.typeParams[i]) { anyUnbound = true }
+    }
+    if anyUnbound {
+        match ck.expectedType {
+            Option.Some(et) => {
+                inferFromAst(ck, generic.typeParams, generic.decl.retType, et, inferred)
+            }
+            Option.None => {}
+        }
+    }
+
     var typeArgs: Vec<TypeKind> = Vec.new()
     for i in 0..generic.typeParams.len {
         if inferred.contains(generic.typeParams[i]) {
