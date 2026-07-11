@@ -914,6 +914,18 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### milo-self IS FASTER than the bun/TS oracle (2026-07-11)
+
+The whole point of shipping the self-built binary: it's faster. Measured `emit-ir` wall
+time (compiler only, no clang), best of 3, milo-self running THROUGH the guard wrapper
+(which adds bun-startup — so the raw native compiler is faster still):
+- webserver: **milo-self 0.04s vs oracle 0.07s** (~1.75×)
+- whole compiler graph (`src-milo/main.milo`): **milo-self 0.14s vs oracle 0.23s** (~1.6×)
+
+So the self-hosted native binary already beats the bun/TS compiler on the same inputs,
+with parity output. Shipping `.selfhost/milo-self.bin` (guarded) as the default compiler is
+now a speed win as well as a self-hosting milestone.
+
 ### PARITY CONFIRMED (2026-07-11) — full RUN-parity sweep, only non-determinism left
 
 Ran a comprehensive self-vs-oracle diff (built both binaries, compared stdout+exit):
