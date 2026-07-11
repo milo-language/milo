@@ -2182,7 +2182,14 @@ fn genExpr(cg: &mut Cgen, e: &Expr, locs: &Vec<Local>, sigs: &Vec<CgFnSig>, hint
             let v = genExpr(cg, *inner, locs, sigs, hintTy)
             let t = nextTemp(cg)
             if op == "-" {
-                emit(cg, "  " + t + " = sub " + llType(v.ty) + " 0, " + v.v + "\n")
+                let vll = llType(v.ty)
+                // Float negation uses fneg — `sub double 0, x` has an invalid
+                // integer `0` operand for a double.
+                if vll == "double" || vll == "float" {
+                    emit(cg, "  " + t + " = fneg " + vll + " " + v.v + "\n")
+                    return Val { v: t, ty: v.ty }
+                }
+                emit(cg, "  " + t + " = sub " + vll + " 0, " + v.v + "\n")
                 return Val { v: t, ty: v.ty }
             }
             if op == "!" {
