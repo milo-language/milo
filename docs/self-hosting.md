@@ -827,18 +827,42 @@ Refined remaining buckets (12 → the hard cores):
   (http's enum) fails `typeEq` against net's struct → "expected Response, got Response".
   Needs module-scoped name resolution (deep). Same collision hits the `(&Request) =>
   Response` fn-type compares.
-- **arena closure codegen (4):** depgraph, domArena, htmlParse, linkedList — type-check
-  passes but codegen can't resolve the *monomorphized* name for a closure-returning
-  generic when >1 instantiation exists (`arenaWith_Node_{NodeKind,string,Handle}`):
-  `resolveFnName` prefix-matches, sees count>1, falls back to the bare generic name and
-  emits `call i32 @arenaWith(…, i64 0)` (closure lowered to `i64 0`, ret defaulted i32).
-  Needs codegen to re-derive type args from the call's arg types (checker already knows
-  the mangled name — the gap is codegen re-resolving independently).
 - **Option auto-wrap (serve:184):** passing `u16` where `Option<u16>` expected — wrap
   bare value in `Some` at coercion sites.
 - **embedFile (webserver, termpair/server):** compile-time file-embed intrinsic.
-- **minilang:** closure arg `&mut Expr` vs `Expr` — closure param auto-borrow-mut.
 
 Note: termpair/protocol, termpair/encryption, gdbgui/gdbmi are **libraries (no `main`)**
 — they link-fail as standalone builds under both milo-self AND the oracle, so they are
 not parity targets. The termpair entrypoints are client.milo (compiles) + server.milo.
+
+### Parity progress (2026-07-11, cont.) — the arena bucket is really CLOSURE CODEGEN
+
+Two checker fixes landed (manifest 173 green, byte-identical -O2 convergence):
+- **`normalizeEnumNames` recurses into `TFn`** — a `(&Expr) => Expr` param built from
+  a bare type name kept its inner `Expr` as the uppercase `TStruct` fallback, so it
+  failed `typeEq` against a closure whose own type resolved the name to `TEnum` →
+  "expected Expr, got Expr". Shared root; also relevant to serve's `(&Request) =>
+  Response` fn-type compares.
+- **int-literal coercion in enum-variant construction args** (`Expr.Num(i32-lit)` into
+  an i64 field) — mirrors the same coercion already in call/push/`??`/array sites.
+
+With those, **minilang type-checks fully** — its only remaining error is codegen. That
+reframes the "arena generic inference" bucket: **inference is solved; the real blocker
+is that milo0 codegen has NO closure support.** `genExpr` has no `Expr.Closure` arm, so
+every closure value falls through to the `_ => Val{v:"0", ty:"i64"}` default and is
+emitted as `i64 0`. That is why `arenaWith` is called as `call i32 @arenaWith(…, i64 0)`
+with a defaulted i32 return and the closure lowered to a null.
+
+**The single biggest remaining feature = first-class closure codegen** (blocks all 5:
+minilang, depgraph, domArena, htmlParse, linkedList). It is NOT a non-capturing shortcut
+— the example closures capture (`(n: &Node): Handle<Node> => n.children[i]` captures `i`;
+the `arenaModifyMut(…, (n: &mut Node) => { … })` bodies capture outer locals). Needs the
+full oracle approach (src/codegen.ts: `closureBodies`/`closureCounter`): lift each
+closure body to a top-level function, capture the environment as a struct, represent the
+closure as a fat pointer `{fnptr, env}`, and lower calls through it. Also fixes the
+downstream `resolveFnName` >1-instantiation fallback and the empty `paramHints` (sigs are
+keyed by the mangled name but the call still carries the bare generic name — the checker
+should thread the monomorphized name to codegen, or codegen must re-derive it).
+
+calc verified at full RUN parity (earlier "tokenizer miscompile" note was stale — a prior
+float/int-width codegen fix cleared it; expressions + `--help` match the oracle exactly).
