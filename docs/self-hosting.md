@@ -914,7 +914,15 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
-### Fixture-sweep bug hunt cont.7 (2026-07-11) — extern type
+### Fixture-sweep bug hunt cont.7 (2026-07-11) — extern type + JSON escaping
+
+- **JSON string escaping** — `jsonStringify` and anonymous `{…}` JSON objects now escape
+  `"` `\` `\n` `\t` `\r` `\b` `\f` and other control chars (`\u00XX`, RFC 8259) via a
+  runtime `@__jsonEsc(%String)→%String` helper emitted once. Was producing INVALID JSON
+  for any string value containing a quote/newline — a latent bug in webserver's `/json`
+  too, not just the fixture. (jsonStringifyEscape)
+- **`extern type Name`** — an opaque C type (used only through `*Name`), now parses as an
+  empty struct; was a parse error.
 
 - **`extern type Name`** — an opaque C type (used only through `*Name`), now parses as an
   empty struct; was a parse error. (externType still needs its C peer + unsafe to fully
