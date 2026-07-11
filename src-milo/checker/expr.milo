@@ -743,29 +743,42 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
     }
 
     let sig = ck.functions.get(func)!
-    if sig.variadic {
-        if args.len < sig.params.len {
-            error(ck, "function '" + func.clone() + "' expects at least " + sig.params.len.toString() + " args, got " + args.len.toString(), cloneSpan(span))
+    // Deep-copy param types + ret NOW: `ck.functions.get` returns a shallow copy
+    // whose nested Heap/string buffers alias the map's storage, and checking an
+    // argument below can insert into ck.functions (e.g. registering a struct's
+    // interface impl), rehashing the map and dangling `sig`. TypeKind.clone is deep.
+    var ownedParams: Vec<TypeKind> = Vec.new()
+    for pci in 0..sig.params.len { ownedParams.push(sig.params[pci].ty.clone()) }
+    let ownedRet = sig.ret.clone()
+    let paramCount = sig.params.len
+    let isVariadicSig = sig.variadic
+    if isVariadicSig {
+        if args.len < paramCount {
+            error(ck, "function '" + func.clone() + "' expects at least " + paramCount.toString() + " args, got " + args.len.toString(), cloneSpan(span))
         }
-    } else if args.len != sig.params.len {
-        error(ck, "function '" + func.clone() + "' expects " + sig.params.len.toString() + " args, got " + args.len.toString(), cloneSpan(span))
+    } else if args.len != paramCount {
+        error(ck, "function '" + func.clone() + "' expects " + paramCount.toString() + " args, got " + args.len.toString(), cloneSpan(span))
     }
 
     var i: i64 = 0
-    while i < args.len && i < sig.params.len {
-        let paramType = sig.params[i].ty
+    while i < args.len && i < paramCount {
+        let paramType = ownedParams[i].clone()
+        // compute the param's display name BEFORE matching: destructuring the TRef
+        // arm below MOVES its inner Heap into `inner`, leaving `paramType` unusable
+        // (typeName on it then reads a moved-out buffer → runaway alloc).
+        let ptName = typeName(paramType)
         let argType = checkExpr(ck, *args[i])
         match paramType {
             TypeKind.TRef(inner, mutable) => {
                 // auto-borrow: don't type-error, just check inner matches
                 if !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(*inner, argType, *args[i]) {
-                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
+                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + ptName + ", got " + typeName(argType), cloneSpan(span))
                 }
             }
             _ => {
                 if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(paramType, argType, *args[i]) &&
                     !ptrCoercible(paramType, argType) && !optionWrapCoercible(ck, paramType, argType) {
-                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + typeName(paramType) + ", got " + typeName(argType), cloneSpan(span))
+                    error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + ptName + ", got " + typeName(argType), cloneSpan(span))
                 }
                 // pointer decay borrows the buffer; it must not move it
                 if !ptrCoercible(paramType, argType) {
@@ -782,7 +795,7 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         i = i + 1
     }
 
-    return sig.ret.clone()
+    return ownedRet
 }
 
 // -- Struct literals --
