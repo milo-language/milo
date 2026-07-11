@@ -914,6 +914,19 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.13 (2026-07-11) — fn-typed struct field calls
+
+`h.apply(x)` where `apply: (T)=>R` is a struct FIELD, not a method (→284):
+- checker: after impl/trait method lookup misses, match the field's `TFn` type, check
+  arg count, return `fnRet`.
+- codegen: extract the field's `%Closure {fnptr, env}` and emit an indirect call with the
+  uniform args-by-ptr ABI (same shape as a stored-closure call).
+- `closureRetOf` now also parses the `fn:R` field-type string (astTypeStr emits `fn:R`
+  for fn-typed fields/params) — it only understood `Closure:R` before, so field calls
+  defaulted their return to i64 and a negative i32 return printed as u32 (fnPtrVec's
+  `negate(5)` → 4294967291). (fnPtrStruct, fnPtrDispatch, fnPtrVec, fnPtrDispatch2-4,
+  fnInStruct)
+
 ### Fixture-sweep bug hunt cont.12 (2026-07-11) — compound assign + Vec.find/any/all
 
 - **Compound assignment** `+= -= *= /= %= &= |= ^=` (→276): lexer two-char tokens (before
