@@ -914,6 +914,16 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.31 (2026-07-11) — exact-first generic-call disambiguation
+
+Regression fix (→ genericFn): cont.27's int-leniency in `disambiguateGenericCall` let an i64
+literal arg match BOTH `identity_i32` and `identity_i64` → ambiguous → bare `@identity`
+(undefined). Split into `disambiguatePass(…, intLenient)` called twice: a STRICT pass (exact
+llType) first, then a LENIENT pass (int-width coercion) only if strict is ambiguous/absent.
+`identity_i64` now wins the strict pass for an i64 arg; stdSet's `setContains(s, 2)` (param0
+ref-pointee exact, param1 int-lenient) still resolves via the lenient pass. General rule:
+exact type matches beat coerced ones.
+
 ### Fixture-sweep bug hunt cont.30 (2026-07-11) — user iterator protocol (LANDED)
 
 `for x in it` where `it` is a struct with `next(&mut Self): Option<T>` (→ forIterator): checker
