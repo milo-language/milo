@@ -914,6 +914,20 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.2 (2026-07-11) — match/compare/assert, 250→254 pass
+
+- **`if 3 > 2` compared as i1** — a comparison's bool result-hint leaked onto its
+  OPERANDS, so int literals became i1 and `1 > 0` signed = `-1 > 0` = false. Now
+  comparison operands don't inherit the hint. Real bug (any literal-vs-literal compare in
+  a condition/bool-arg); examples with variable operands were unaffected.
+- **Match on integer/char/bool subject** (`match ch { 'a' => … }`) — genMatch assumed an
+  enum and `getelementptr %u8` (unsized). New genIntMatch compares the value against each
+  literal pattern. (charLiterals — common tokenizer pattern.)
+- **Built-in `assert` no longer shadows an imported one** — `std/testing`'s failure-
+  counting `assert(cond)` was intercepted by the codegen builtin; now the builtin only
+  fires when no real `assert` is in scope. (testingAsserts)
+- **`extern struct`** parses (C-ABI struct → normal struct); was a parse error.
+
 ### Fixture-sweep bug hunt cont. (2026-07-11) — move closures + derive, 232→250 pass
 
 - **Move closures (`move () => {…}`) heap-copy their captured values** (by-value env via
