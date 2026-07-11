@@ -26,13 +26,35 @@ browser target. (LLVM-in-browser is impractical; JS backend is the right call.)
 - **Float formatting**: `codegen-js` printed floats with JS `String()` (`78.53975`); now
   uses a `__fmtG` C-`%g` emulation (`78.5397`), matching the native binary. (`9b3fdb9`)
 
-## Next steps
-1. **codegen-js coverage sweep** — run diverse programs through `emit-js`, diff vs native,
-   find backend gaps (HashMap, Result/`?`, string methods, match guards, generics edge
-   cases). Each gap fixed = more programs the playground can run.
-2. Real-browser smoke test (bun test uses `process`; browser falls back to console — the
+## codegen-js coverage — `bun scripts/js-sweep.ts` (mirrors run.test.ts)
+
+**231 / 339 fixtures run byte-identical to native** (0 compile-err). Widened from 183 by
+fixing, in order: if-expressions, `?` propagation, interface/trait dispatch, struct/enum
+Display, Vec/HashMap ops (swap/insert/remove/reverse/getOrDefault), char/string byte
+semantics (ASCII), `String.withCapacity`, `eprint`→stderr, and `&mut`-primitive boxing
+(the big one — the JSON parser threads `&mut i64 pos`; JS passes primitives by value, so
+mutations were lost until locals/params became `{v:…}` boxes). The other ~95 "run-err"
+fixtures use unsafe/systems/thread/C-FFI features that are out of playground scope by
+design (and BLOCKED in `compiler.ts`).
+
+The 13 remaining DIFFs are all **fundamental or disproportionate**, deliberately deferred:
+- **Deterministic Drop (5)** — dropUser/WithFields/EarlyReturn/ZeroFirstField,
+  moveVarIntoEnumReturn. JS is GC'd; no destructor timing. Fundamental.
+- **64-bit / unsigned integer (5)** — intLiteral64, u64Arithmetic, unsigned,
+  wrapping/saturatingArith. JS numbers are f64; needs BigInt. Fundamental (per loop scope).
+- **Multibyte UTF-8 (2)** — unicodeCodepoints, hexEscape. milo strings are UTF-8 byte
+  buffers; JS strings are UTF-16. Byte-accurate `.len()`/index/build needs a Uint8Array
+  string representation (a full rewrite of every string op); doing it per-op via
+  TextEncoder is O(n²) and risks timeouts. Disproportionate for 2 fixtures.
+- **Custom iterators (1)** — forIterator. `for x in c` over a user type with `next()`
+  lowers (in lower.ts, shared with native) to a "vec"-fallback ForEach with no
+  custom-iterator signal; codegen-js can't distinguish it. A frontend/lowering concern,
+  not codegen-js.
+
+## Other next steps
+1. Real-browser smoke test (bun test uses `process`; browser falls back to console — the
    captured runtime avoids both, but verify in a live page + serve `python3 -m http.server`).
-3. UX: "show JS" toggle, shareable URLs via hash, error-panel formatting, minify bundle.
+2. UX: "show JS" toggle, shareable URLs via hash, error-panel formatting, minify bundle.
 
 ## Milo syntax reminders (for examples)
 - Closures: `(x: i32): i32 => x * 2` (NOT `|x| x*2`).
