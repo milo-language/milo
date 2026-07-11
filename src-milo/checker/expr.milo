@@ -1,5 +1,5 @@
 // Expression type checking
-from "src-milo/ast.milo" import { Expr, Param, MiloType, Span, StructLitField, Pattern }
+from "src-milo/ast.milo" import { Expr, Param, MiloType, Span, StructLitField, Pattern, Stmt }
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName,
     tyI32, tyI64, tyU8, tyBool, tyVoid, tyString, tyUnknown,
@@ -9,7 +9,7 @@ from "src-milo/checker/state.milo" import {
     Checker, VarInfo, FnSig, FnParam, StructInfo, CkStructField,
     EnumInfo, VariantInfo, Diagnostic,
     error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
-    isCopyCk, normalizeEnumNames,
+    isCopyCk, normalizeEnumNames, snapshotMoves, restoreMoves,
 }
 from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn, monomorphizeStruct, resolveMonoType }
 from "src-milo/checker/traits.milo" import { resolveMethod }
@@ -150,7 +150,7 @@ fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
             return checkMethodCall(ck, *obj, method, args, span)
         }
         Expr.Closure(params, retType, body, isMove, span) => {
-            return checkClosure(ck, params, retType)
+            return checkClosure(ck, params, retType, body)
         }
         Expr.RangeExpr(start, end, span) => {
             let startType = checkExpr(ck, *start)
@@ -1665,7 +1665,23 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
 
 // -- Closures --
 
-fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>): TypeKind {
+// A closure's return type: an annotation wins; otherwise infer it from a
+// `return <expr>` (or a trailing expression) in the body. Moves triggered while
+// typing the return expr are rolled back so captured vars aren't poisoned.
+fn stmtReturnType(ck: &mut Checker, s: &Stmt): Option<TypeKind> {
+    match s {
+        Stmt.Return(value, span) => {
+            match value {
+                Option.Some(expr) => { return Option.Some(checkExpr(ck, *expr)) }
+                Option.None => { return Option.Some(tyVoid()) }
+            }
+        }
+        Stmt.ExprStmt(e, span) => { return Option.Some(checkExpr(ck, *e)) }
+        _ => { return Option.None }
+    }
+}
+
+fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType>, body: &Vec<Heap<Stmt>>): TypeKind {
     pushScope(ck)
 
     var paramTypes: Vec<TypeKind> = Vec.new()
@@ -1685,15 +1701,17 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
     var inferredRet = tyVoid()
     match retType {
         Option.Some(rt) => { inferredRet = resolveMonoType(ck, rt) }
-        Option.None => {}
+        Option.None => {
+            let snap = snapshotMoves(ck)
+            for i in 0..body.len {
+                match stmtReturnType(ck, *body[i]) {
+                    Option.Some(t) => { inferredRet = t }
+                    Option.None => {}
+                }
+            }
+            restoreMoves(ck, snap)
+        }
     }
-
-    let savedRetType = ck.currentFnRetType.clone()
-    ck.currentFnRetType = inferredRet.clone()
-
-    // Check body statements (would call checkStmt for each)
-    // For now, mark the return type from annotation or void
-    ck.currentFnRetType = savedRetType
 
     popScope(ck)
     return TypeKind.TFn(paramTypes, Heap(inferredRet))
