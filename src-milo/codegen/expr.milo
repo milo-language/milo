@@ -12,7 +12,7 @@ from "src-milo/codegen/types.milo" import {
     lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
 }
 from "src-milo/codegen/stmt.milo" import { genClosure, genClosureCall, widenToI64 }
-from "src-milo/codegen/abi.milo" import { AbiStruct, ArgClass, RetClass, AbiReg, abiStructOf, classifyArg, classifyRet }
+from "src-milo/codegen/abi.milo" import { AbiStruct, ArgClass, RetClass, AbiReg, abiStructOf, classifyArg, classifyRet, structFieldOffset }
 from "std/io" import { readFile }
 from "src-milo/codegen/strings.milo" import {
     genStringLit, genStringClone, genStringConcat, genStringEq, genStringCmp,
@@ -3054,6 +3054,17 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         let ll = llType(resolveTyStr(cg, astTypeStr(typeArgs[0])))
         let sz = genSizeOf(cg, ll)
         return Val { v: sz, ty: "i64" }
+    }
+    // offsetOf<T>("field") — byte offset of a field within a struct type
+    if name == "offsetOf" && typeArgs.len == 1 && args.len == 1 {
+        let sname = stripPercent(resolveTyStr(cg, astTypeStr(typeArgs[0])))
+        var fieldName = ""
+        match *args[0] {
+            Expr.StringLit(s, sp) => { fieldName = s.clone() }
+            _ => {}
+        }
+        let off = structFieldOffset(cg, sname, fieldName)
+        return Val { v: off.toString(), ty: "i64" }
     }
     // zeroed<T>() — llvm zeroinitializer of the instantiated type
     if name == "zeroed" && typeArgs.len == 1 {

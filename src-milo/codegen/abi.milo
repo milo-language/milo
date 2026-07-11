@@ -104,6 +104,21 @@ fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
     return out
 }
 
+// Byte offset of `fieldName` within struct `name`, laid out as LLVM does (natural
+// alignment). Drives the offsetOf<T>("field") builtin.
+fn structFieldOffset(cg: &Cgen, name: &string, fieldName: &string): i64 {
+    if !cg.structs.contains(name) { return 0 }
+    let fields = cg.structs.get(name)!
+    var off: i64 = 0
+    for i in 0..fields.len {
+        let fty = fields[i].ty.clone()
+        off = alignUp(off, alignOf(cg, fty))
+        if fields[i].name == fieldName { return off }
+        off = off + payloadBytes(cg, fty)
+    }
+    return off
+}
+
 fn abiStructOf(cg: &Cgen, name: &string): AbiStruct {
     return AbiStruct {
         name: name.clone(),

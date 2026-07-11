@@ -752,6 +752,11 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         if func == "sizeOf" {
             return tyI64()
         }
+        // offsetOf<T>("field") — byte offset of a field within a struct type
+        if func == "offsetOf" {
+            if args.len >= 1 { checkExpr(ck, *args[0]) }
+            return tyI64()
+        }
         // zeroed<T>() — a zero value of the instantiated type
         if func == "zeroed" && typeArgs.len == 1 {
             return normalizeEnumNames(ck, typeFromAst(typeArgs[0]))
