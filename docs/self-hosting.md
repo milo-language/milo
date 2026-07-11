@@ -914,6 +914,25 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.41 (2026-07-11) — promise scheduler bug narrowed
+
+Drilled into the promise green-scheduler failure. Bisected (probes in std/runtime.milo +
+fixtures-dir test files, all reverted; tree green 173/0):
+- single `Promise.run(f).await()` WORKS (task runs, delivers, prints).
+- generic fn spawning a capturing move-closure task WORKS (scalar + `Channel<T>` capture).
+- generic fn spawning a task that captures a `Vec<Promise<T>>` WORKS — BUT the task body prints
+  TWICE → the spawned task's body is EXECUTED TWICE (a scheduler double-run bug).
+- the real `promiseRace`/`promiseAll` collector adds a `while true { tryRecv(inner._ch);
+  schedulerYield }` poll loop over the inner promises AND destroys their channels; combined with
+  the double-execution it deadlocks (`COLLECTOR-START` never prints, exits 0 with empty stdout —
+  the deadlock `_exit(0)` doesn't flush).
+LEAD for the future effort: root-cause the spawned-task DOUBLE-EXECUTION (a task capturing a Vec
+runs its body twice) — likely a green-task context-switch / re-entry bug in the milo0-compiled
+scheduler when the captured env contains a heap aggregate. Fixing the double-run + confirming the
+collector's yield actually schedules the sibling inner-promise tasks should unblock all 6 promise
+fixtures (the only sweep-improvable bucket left). Non-generic captures (spawnMoveClosures,
+taskJoinGreen) do NOT double-run, so it's tied to the Vec-of-promises capture shape.
+
 ### Fixture-sweep bug hunt cont.40 (2026-07-11) — remaining buckets triaged
 
 Interface bucket done (cont.39). Triaged what's left (sweep 319/339):
