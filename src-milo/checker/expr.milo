@@ -1229,6 +1229,21 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         if args.len >= 1 { checkExpr(ck, *args[0]) }
         return tyVoid()
     }
+    if method == "len" {
+        if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
+        return TypeKind.TInt(64, true)
+    }
+    if method == "swap" {
+        if args.len != 2 { error(ck, "'swap' expects 2 arguments (indices)", cloneSpan(span)) }
+        for si in 0..args.len {
+            let it = checkExpr(ck, *args[si])
+            if !isInteger(it) { error(ck, "'swap' indices must be integer", cloneSpan(span)) }
+        }
+        if !isRootMutable(ck, obj) {
+            error(ck, "cannot swap in immutable Vec", cloneSpan(span))
+        }
+        return tyVoid()
+    }
     error(ck, "no method '" + method.clone() + "' on Vec", cloneSpan(span))
     return tyUnknown()
 }

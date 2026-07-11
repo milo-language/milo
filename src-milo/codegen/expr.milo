@@ -1114,6 +1114,56 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
             return genHashMapRemove(cg, lv.v, lv.ty, kv)
         }
     }
+    // `.len()` — the length word of the receiver's 3-word header (same slot the
+    // `.len` field reads, exposed as a method for `vec.len()` call syntax).
+    if method == "len" {
+        let ov = genExpr(cg, object, locs, sigs, "")
+        let oll = llType(ov.ty)
+        if isVecTy(ov.ty) || oll == "%String" || isHashMapTy(ov.ty) {
+            var container = "%Vec"
+            if oll == "%String" { container = "%String" }
+            if isHashMapTy(ov.ty) { container = "%HashMap" }
+            let r = nextTemp(cg)
+            emit(cg, "  " + r + " = extractvalue " + container + " " + ov.v + ", 1\n")
+            return Val { v: r, ty: "i64" }
+        }
+    }
+    // `.swap(i, j)` mutates in place → needs the receiver address.
+    if method == "swap" {
+        let lv = genLvalue(cg, object, locs, sigs)
+        if isVecTy(lv.ty) {
+            let elemLl = llType(unwrapVec(lv.ty))
+            let ia = genExpr(cg, *args[0], locs, sigs, "i64")
+            let ib = genExpr(cg, *args[1], locs, sigs, "i64")
+            var iaw = ia.v.clone()
+            if llType(ia.ty) != "i64" {
+                let ta = nextTemp(cg)
+                emit(cg, "  " + ta + " = sext " + llType(ia.ty) + " " + ia.v + " to i64\n")
+                iaw = ta
+            }
+            var ibw = ib.v.clone()
+            if llType(ib.ty) != "i64" {
+                let tb = nextTemp(cg)
+                emit(cg, "  " + tb + " = sext " + llType(ib.ty) + " " + ib.v + " to i64\n")
+                ibw = tb
+            }
+            let dPtr = nextTemp(cg)
+            emit(cg, "  " + dPtr + " = getelementptr %Vec, ptr " + lv.v + ", i32 0, i32 0\n")
+            let d = nextTemp(cg)
+            emit(cg, "  " + d + " = load ptr, ptr " + dPtr + "\n")
+            let slotA = nextTemp(cg)
+            emit(cg, "  " + slotA + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + iaw + "\n")
+            let slotB = nextTemp(cg)
+            emit(cg, "  " + slotB + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + ibw + "\n")
+            let va = nextTemp(cg)
+            emit(cg, "  " + va + " = load " + elemLl + ", ptr " + slotA + "\n")
+            let vb = nextTemp(cg)
+            emit(cg, "  " + vb + " = load " + elemLl + ", ptr " + slotB + "\n")
+            emit(cg, "  store " + elemLl + " " + vb + ", ptr " + slotA + "\n")
+            emit(cg, "  store " + elemLl + " " + va + ", ptr " + slotB + "\n")
+            return Val { v: "0", ty: "void" }
+        }
+    }
 
     let obj = genExpr(cg, object, locs, sigs, "")
     let objTyLl = llType(obj.ty)
