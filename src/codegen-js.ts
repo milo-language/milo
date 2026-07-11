@@ -436,6 +436,9 @@ export class CodegenJS {
         return `parseFloat(${this.genExpr(expr.str)})`;
       case "StringClone":
         return this.genExpr(expr.str);
+      case "StringWithCapacity":
+        // capacity is a native allocation hint; JS strings need none.
+        return `""`;
       case "NumberToString":
         return `String(${this.genExpr(expr.value)})`;
       case "JsonStringify":
