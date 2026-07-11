@@ -214,9 +214,37 @@ fn llTypeBytes(ll: &string): i64 {
     return 8
 }
 
+// Natural alignment of a type — needed so struct/enum payload sizing inserts the
+// same inter-field padding LLVM does. Structs align to their widest field; enums
+// have an i64-array payload so align 8; scalars per their width.
+fn alignOf(cg: &Cgen, pt: &string): i64 {
+    let ll = llType(pt)
+    if ll == "i1" || ll == "i8" { return 1 }
+    if ll == "i16" { return 2 }
+    if ll == "i32" { return 4 }
+    if ll == "%String" || ll == "%Vec" || ll == "%HashMap" { return 8 }
+    if ll.len > 0 && ll[0] == 37 {
+        let raw = stripPercent(pt)
+        if cg.enums.contains(raw) { return 8 }
+        if cg.structs.contains(raw) {
+            var a: i64 = 1
+            let fields = cg.structs.get(raw)!
+            for i in 0..fields.len {
+                let fa = alignOf(cg, fields[i].ty)
+                if fa > a { a = fa }
+            }
+            return a
+        }
+    }
+    return 8
+}
+
 // Byte size of a payload type for enum-slot sizing — cg-aware so nested enums and
 // structs (which llTypeBytes can't measure) get their real size, not the 8-byte
 // fallback. Recursion terminates: recursive types go through Heap (a ptr, 8).
+// Field offsets are aligned exactly as LLVM lays them out — summing raw field
+// sizes undersizes any struct with mixed alignment (e.g. MiloType's i1s before an
+// 8-aligned field), which overflows the enum payload slot and reads undef at -O2.
 fn payloadBytes(cg: &Cgen, pt: &string): i64 {
     let ll = llType(pt)
     if ll != "%String" && ll != "%Vec" && ll != "%HashMap" && ll.len > 0 && ll[0] == 37 {
@@ -230,20 +258,29 @@ fn payloadBytes(cg: &Cgen, pt: &string): i64 {
             var mx: i64 = 0
             for vi in 0..info.variants.len {
                 var s: i64 = 0
+                var va: i64 = 1
                 for pi in 0..info.variants[vi].payloadTypes.len {
+                    let fa = alignOf(cg, info.variants[vi].payloadTypes[pi])
+                    if fa > va { va = fa }
+                    s = ((s + fa - 1) / fa) * fa
                     s = s + payloadBytes(cg, info.variants[vi].payloadTypes[pi])
                 }
+                s = ((s + va - 1) / va) * va
                 if s > mx { mx = s }
             }
             return ((mx + 7) / 8) * 8 + 8
         }
         if cg.structs.contains(raw) {
             var total: i64 = 0
+            var maxAlign: i64 = 1
             let fields = cg.structs.get(raw)!
             for i in 0..fields.len {
+                let fa = alignOf(cg, fields[i].ty)
+                if fa > maxAlign { maxAlign = fa }
+                total = ((total + fa - 1) / fa) * fa
                 total = total + payloadBytes(cg, fields[i].ty)
             }
-            return total
+            return ((total + maxAlign - 1) / maxAlign) * maxAlign
         }
     }
     return llTypeBytes(ll)
