@@ -914,6 +914,22 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.28 (2026-07-11) — operator overloading (+,-,*,/)
+
+`a + b` on a struct with `impl Add for Vec2` (→ operatorOverload): checker allows the arith op
+when the struct defines the matching method (opMethodName maps +/-/*// → add/sub/mul/div;
+structHasMethod scans inherent + trait impls), returning the struct type; codegen genBinOp
+routes struct operands to the `Type$..$<method>` call, materializing both operands to allocas
+and passing them as the `&Self` self/other pointers.
+
+Note: `==`/`!=` on structs still lower to a tag-compare (extractvalue field 0), which passes
+operatorOverload's `derive(Eq)` cases by luck (differing first field) but is NOT a real
+field-wise equality — a future fix should emit/​call a derived per-field eq.
+
+milo0 gotchas hit this round: `fn` is a keyword (can't name a var `fn`); a `for k, v in map`
+loop var collides with any other `v` local in the same function (`%v.addr` multiply defined) —
+use unique loop-var names; `match x` on a non-Copy value moves it (clone if used after).
+
 ### Fixture-sweep bug hunt cont.27 (2026-07-11) — return-type hint + int-lenient disambig
 
 `var s: HashSet<i32> = setNew()` (→ stdSet), two bugs:
