@@ -86,6 +86,7 @@ struct Cgen {
     declaredStrtod: bool,
     declaredStrlen: bool,
     declaredDprintf: bool,
+    declaredFflush: bool,
 }
 
 fn cgenNew(): Cgen {
@@ -116,6 +117,7 @@ fn cgenNew(): Cgen {
         declaredStrtod: false,
         declaredStrlen: false,
         declaredDprintf: false,
+        declaredFflush: false,
     }
 }
 

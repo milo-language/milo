@@ -1674,6 +1674,15 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
     if name == "jsonStringify" && args.len == 1 {
         return genJsonStringify(cg, *args[0], locs, sigs)
     }
+    if name == "flush" {
+        if !cg.declaredFflush {
+            emitG(cg, "declare i32 @fflush(ptr)\n")
+            cg.declaredFflush = true
+        }
+        let fc = nextTemp(cg)
+        emit(cg, "  " + fc + " = call i32 @fflush(ptr null)\n")
+        return Val { v: "0", ty: "void" }
+    }
     // sizeOf<T>() — byte size of the instantiated type
     if name == "sizeOf" && typeArgs.len == 1 {
         let ll = llType(resolveTyStr(cg, astTypeStr(typeArgs[0])))

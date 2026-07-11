@@ -506,6 +506,11 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         return tyString()
     }
 
+    // flush() — flush stdout (fflush(null)); a void builtin.
+    if func == "flush" {
+        return tyVoid()
+    }
+
     // print/println/eprint are compiler builtins (codegen/expr.milo genCall), not
     // prelude functions — the checker has to know them or every call is
     // "undefined function". Variadic; any displayable argument.
