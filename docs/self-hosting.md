@@ -914,6 +914,25 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.34 (2026-07-11) — user traits + default methods
+
+Trait bucket, STATIC dispatch parts (dynamic-dispatch/vtable parts still deferred):
+- **User trait registration** (→ traitBounds, traitSupertrait): only builtin traits
+  (Eq/Clone/…) were in `ck.traits`, so `impl HasValue for Box99` errored "unknown trait" and
+  never attached the method. checkProgram now converts each `program.traits` `TraitDecl` →
+  `TraitInfo` (methods→`TraitMethodInfo` with resolved param/ret types, `hasDefault` from body,
+  supertraits) before registerAllImpls. Unblocks `<T: Trait>` generic-bound dispatch (static
+  monomorphization) + supertrait bounds.
+- **Default trait methods** (→ traitDefault): `synthesizeDefaultMethods` materializes
+  `Struct$Trait$method` from a trait method's default body (Self→Struct) for any impl that
+  doesn't override it — registers the sig, a `traitImpls` entry (so `s.method()` resolves), and
+  a codegen fn (pushed to `monomorphizedFns`).
+
+Still failing (DYNAMIC dispatch — needs vtables/fat-pointers): interfaceBasic/MultiMethod/Heap/
+VecHeap, traitObjectVec, structFieldTraitObject, returnInterfaceCoerce. milo0 has no interface
+TypeKind or itable codegen; a `&Interface`/`Vec<Heap<Interface>>` value must become a fat
+pointer `{data, itable}` with dispatch through the itable — a larger coherent feature.
+
 ### Fixture-sweep bug hunt cont.33 (2026-07-11) — closure-arg disambiguation by param ret
 
 `arenaModify(self, h, f)` fell to a bare `@arenaModify` (→ arenaMethod): `disambiguateGenericCall`'s
