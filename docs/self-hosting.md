@@ -914,6 +914,13 @@ Target order: minilang first (its lone closure `(e: &Expr): Expr => cloneExpr(e)
 nothing → validates steps 1,2,4,5,6 without capture analysis), then the capturing arena
 closures (step 3), then the servers (which also need Response-collision + embedFile).
 
+### Fixture-sweep bug hunt cont.8 (2026-07-11) — checked arithmetic
+
+- **`checkedAdd` / `checkedSub` / `checkedMul`** on integers — return `Option<T>` (None on
+  overflow) via the LLVM `@llvm.<s|u><op>.with.overflow.<ty>` intrinsics; checker returns
+  `Option<recvType>`, codegen branches on the overflow flag into Some(result)/None. A real
+  safe-arithmetic feature. (checkedArith)
+
 ### Fixture-sweep bug hunt cont.7 (2026-07-11) — extern type + JSON escaping
 
 - **JSON string escaping** — `jsonStringify` and anonymous `{…}` JSON objects now escape
