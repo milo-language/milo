@@ -1,0 +1,357 @@
+// NES PPU (2C02): VRAM/OAM/palette memory, CPU register interface ($2000-$2007),
+// dot/scanline timing with vblank + NMI, and a background+sprite framebuffer
+// renderer. Ref: https://www.nesdev.org/wiki/PPU
+//
+// Simplifications (good enough for mapper-0 titles; refined later):
+//   - frame rendered in one shot at vblank start (no mid-frame scroll splits)
+//   - coarse + fine scroll from the v register; no cycle-exact fetch pipeline
+
+from "./cartridge" import {
+    Cartridge
+}
+
+struct Ppu {
+    chr: Vec<u8> // pattern tables ($0000-$1FFF)
+    vram: [u8; 2048] // 2 physical nametables ($2000-$2FFF, mirrored)
+    palette: [u8; 32] // palette RAM ($3F00-$3F1F)
+    oam: [u8; 256] // 64 sprites x 4 bytes
+
+    mirrorVertical: bool // nametable mirroring from the cartridge
+
+    ctrl: u8 // $2000 PPUCTRL
+    mask: u8 // $2001 PPUMASK
+    status: u8 // $2002 PPUSTATUS
+    oamAddr: u8 // $2003
+
+    // Loopy scroll registers
+    v: u16 // current VRAM address
+    t: u16 // temp VRAM address
+    fineX: u8 // fine X scroll (0-7)
+    w: u8 // write toggle (0/1)
+    readBuffer: u8 // $2007 buffered-read latch
+
+    scanline: i64 // 0-261
+    dot: i64 // 0-340
+    frame: i64
+    nmiPending: bool // set at vblank when NMI enabled; consumed by CPU
+
+    fb: [u32; 61440] // 256x240 ARGB/ABGR framebuffer (R,G,B,A byte order)
+}
+
+fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
+    // CHR-RAM carts report 0 CHR banks; give them 8 KiB of zeroed RAM.
+    var c = chr
+    if c.len == 0 {
+        var i: i64 = 0
+        while i < 8192 {
+            c.push(0) i = i + 1
+        }
+    }
+    return Ppu {
+        chr: c, vram: [0; 2048], palette: [0; 32], oam: [0; 256],
+        mirrorVertical: mirrorVertical,
+        ctrl: 0, mask: 0, status: 0, oamAddr: 0,
+        v: 0, t: 0, fineX: 0, w: 0, readBuffer: 0,
+        scanline: 0, dot: 0, frame: 0, nmiPending: false,
+        fb: [0; 61440],
+    }
+}
+
+// --- nametable mirroring: map a $2000-$2FFF address into the 2 KiB VRAM ---
+fn mirrorNT(ppu: &Ppu, addr: i64): i64 {
+    let a = addr & 0x0FFF // offset within nametable region
+    let table = a / 0x0400 // which of the 4 logical nametables (0-3)
+    let off = a & 0x03FF
+    var phys: i64 = 0
+    if ppu.mirrorVertical {
+        // vertical: NT0/NT2 share, NT1/NT3 share  -> use bit 0x400
+        phys = (table & 1) * 0x0400 + off
+    } else {
+        // horizontal: NT0/NT1 share, NT2/NT3 share -> use bit 0x800
+        phys = (table / 2) * 0x0400 + off
+    }
+    return phys
+}
+
+fn ppuMemRead(ppu: &Ppu, addr: u16): u8 {
+    let a = (addr as i64) & 0x3FFF
+    if a < 0x2000 {
+        return ppu.chr[a % ppu.chr.len]
+    }
+    if a < 0x3F00 {
+        return ppu.vram[mirrorNT(ppu, a)]
+    }
+    // palette: $3F00-$3F1F mirrored through $3FFF; $3F10/14/18/1C mirror $3F00/...
+    var p = a & 0x1F
+    if p == 0x10 {
+        p = 0x00
+    }
+    if p == 0x14 {
+        p = 0x04
+    }
+    if p == 0x18 {
+        p = 0x08
+    }
+    if p == 0x1C {
+        p = 0x0C
+    }
+    return ppu.palette[p]
+}
+
+fn ppuMemWrite(ppu: &mut Ppu, addr: u16, val: u8): void {
+    let a = (addr as i64) & 0x3FFF
+    if a < 0x2000 {
+        ppu.chr[a % ppu.chr.len] = val // CHR-RAM (no-op effect for CHR-ROM carts)
+        return
+    }
+    if a < 0x3F00 {
+        ppu.vram[mirrorNT(ppu, a)] = val
+        return
+    }
+    var p = a & 0x1F
+    if p == 0x10 {
+        p = 0x00
+    }
+    if p == 0x14 {
+        p = 0x04
+    }
+    if p == 0x18 {
+        p = 0x08
+    }
+    if p == 0x1C {
+        p = 0x0C
+    }
+    ppu.palette[p] = val
+}
+
+// --- CPU-facing register interface ($2000-$2007, mirrored every 8) ---
+fn ppuRegRead(ppu: &mut Ppu, reg: i64): u8 {
+    if reg == 2 {
+        // PPUSTATUS: top 3 bits + stale buffer; reading clears vblank and w latch
+        let r = (ppu.status & 0xE0) | (ppu.readBuffer & 0x1F)
+        ppu.status = ppu.status & 0x7F
+        ppu.w = 0
+        return r
+    }
+    if reg == 4 {
+        return ppu.oam[ppu.oamAddr as i64]
+    }
+    if reg == 7 {
+        let a = ppu.v
+        var result: u8 = ppu.readBuffer
+        ppu.readBuffer = ppuMemRead(ppu, a)
+        // palette reads are not buffered
+        if ((a as i64) & 0x3FFF) >= 0x3F00 {
+            result = ppu.readBuffer
+        }
+        let inc: i64 = if (ppu.ctrl & 0x04) != 0 {
+            32 as i64
+        } else {
+            1 as i64
+        }
+        ppu.v = ((ppu.v as i64 + inc) & 0x7FFF) as u16
+        return result
+    }
+    return 0
+}
+
+fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
+    if reg == 0 {
+        ppu.ctrl = val
+        // t: nametable select bits 10-11
+        ppu.t = (((ppu.t as i64) & 0x73FF) | (((val as i64) & 0x03) << 10)) as u16
+        return
+    }
+    if reg == 1 {
+        ppu.mask = val return
+    }
+    if reg == 3 {
+        ppu.oamAddr = val return
+    }
+    if reg == 4 {
+        ppu.oam[ppu.oamAddr as i64] = val
+        ppu.oamAddr = ((ppu.oamAddr as i64 + 1) & 0xFF) as u8
+        return
+    }
+    if reg == 5 {
+        if ppu.w == 0 {
+            ppu.fineX = (val & 0x07)
+            ppu.t = (((ppu.t as i64) & 0x7FE0) | ((val as i64) >> 3)) as u16
+            ppu.w = 1
+        } else {
+            let hi = ((val as i64) & 0x07) << 12
+            let lo = ((val as i64) & 0xF8) << 2
+            ppu.t = (((ppu.t as i64) & 0x0C1F) | hi | lo) as u16
+            ppu.w = 0
+        }
+        return
+    }
+    if reg == 6 {
+        if ppu.w == 0 {
+            ppu.t = (((ppu.t as i64) & 0x00FF) | (((val as i64) & 0x3F) << 8)) as u16
+            ppu.w = 1
+        } else {
+            ppu.t = (((ppu.t as i64) & 0x7F00) | (val as i64)) as u16
+            ppu.v = ppu.t
+            ppu.w = 0
+        }
+        return
+    }
+    if reg == 7 {
+        ppuMemWrite(ppu, ppu.v, val)
+        let inc: i64 = if (ppu.ctrl & 0x04) != 0 {
+            32 as i64
+        } else {
+            1 as i64
+        }
+        ppu.v = ((ppu.v as i64 + inc) & 0x7FFF) as u16
+        return
+    }
+}
+
+// Advance one PPU dot. Returns true if an NMI should fire this tick.
+fn ppuStep(ppu: &mut Ppu): void {
+    ppu.dot = ppu.dot + 1
+    if ppu.dot > 340 {
+        ppu.dot = 0
+        ppu.scanline = ppu.scanline + 1
+        if ppu.scanline > 261 {
+            ppu.scanline = 0
+            ppu.frame = ppu.frame + 1
+        }
+    }
+    if ppu.scanline == 241 && ppu.dot == 1 {
+        ppu.status = ppu.status | 0x80 // set vblank
+        if (ppu.ctrl & 0x80) != 0 {
+            ppu.nmiPending = true
+        }
+    }
+    if ppu.scanline == 261 && ppu.dot == 1 {
+        ppu.status = ppu.status & 0x1F // clear vblank, sprite0, overflow
+    }
+}
+
+// --- NES master palette (0xRRGGBB), 2C02 canonical set ---
+let NESPAL: [u32; 64] = [
+0x545454, 0x001E74, 0x081090, 0x300088, 0x440064, 0x5C0030, 0x540400, 0x3C1800,
+0x202A00, 0x083A00, 0x004000, 0x003C00, 0x00323C, 0x000000, 0x000000, 0x000000,
+0x989698, 0x084CC4, 0x3032EC, 0x5C1EE4, 0x8814B0, 0xA01464, 0x982220, 0x783C00,
+0x545A00, 0x287200, 0x087C00, 0x007628, 0x006678, 0x000000, 0x000000, 0x000000,
+0xECEEEC, 0x4C9AEC, 0x787CEC, 0xB062EC, 0xE454EC, 0xEC58B4, 0xEC6A64, 0xD48820,
+0xA0AA00, 0x74C400, 0x4CD020, 0x38CC6C, 0x38B4CC, 0x3C3C3C, 0x000000, 0x000000,
+0xECEEEC, 0xA8CCEC, 0xBCBCEC, 0xD4B2EC, 0xECAEEC, 0xECAED4, 0xECB4B0, 0xE4C490,
+0xCCD278, 0xB4DE78, 0xA8E290, 0x98E2B4, 0xA0D6E4, 0xA0A2A0, 0x000000, 0x000000,
+]
+
+// Convert a 6-bit NES color index to a framebuffer u32 (R,G,B,A byte order).
+fn nesColor(idx: i64): u32 {
+    let c = NESPAL[idx & 0x3F]as i64
+    let r = (c >> 16) & 0xFF
+    let g = (c >> 8) & 0xFF
+    let b = c & 0xFF
+    return (r | (g << 8) | (b << 16) | 0xFF000000) as u32
+}
+
+// Full-frame background render from the base nametable (no fine scroll yet).
+fn renderBackground(ppu: &mut Ppu): void {
+    if (ppu.mask & 0x08) == 0 {
+        return
+    }
+    let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
+        0x1000 as i64
+    } else {
+        0 as i64
+    }
+    let baseNT: i64 = 0x2000 + (((ppu.ctrl as i64) & 0x03) * 0x400)
+    let universal = ppuMemRead(ppu, 0x3F00) as i64
+    var row: i64 = 0
+    while row < 30 {
+        var col: i64 = 0
+        while col < 32 {
+            let tile = ppuMemRead(ppu, (baseNT + row * 32 + col) as u16) as i64
+            let atAddr = baseNT + 0x3C0 + (row / 4) * 8 + (col / 4)
+            let at = ppuMemRead(ppu, atAddr as u16) as i64
+            let shift = ((row & 2) * 2) + (col & 2)
+            let palGroup = (at >> shift) & 0x03
+            var fy: i64 = 0
+            while fy < 8 {
+                let lo = ppuMemRead(ppu, (bgTable + tile * 16 + fy) as u16) as i64
+                let hi = ppuMemRead(ppu, (bgTable + tile * 16 + fy + 8) as u16) as i64
+                var fx: i64 = 0
+                while fx < 8 {
+                    let bit = 7 - fx
+                    let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
+                    var colorIdx = universal
+                    if px != 0 {
+                        colorIdx = ppuMemRead(ppu, (0x3F00 + palGroup * 4 + px) as u16) as i64
+                    }
+                    let x = col * 8 + fx
+                    let y = row * 8 + fy
+                    ppu.fb[y * 256 + x] = nesColor(colorIdx)
+                    fx = fx + 1
+                }
+                fy = fy + 1
+            }
+            col = col + 1
+        }
+        row = row + 1
+    }
+}
+
+// Basic 8x8 sprite render (OAM), front priority only, no sprite-0 hit yet.
+fn renderSprites(ppu: &mut Ppu): void {
+    if (ppu.mask & 0x10) == 0 {
+        return
+    }
+    let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
+        0x1000 as i64
+    } else {
+        0 as i64
+    }
+    var i: i64 = 63
+    while i >= 0 { // draw back-to-front so sprite 0 wins
+        let base = i * 4
+        let sy = ppu.oam[base]as i64
+        let tile = ppu.oam[base + 1]as i64
+        let attr = ppu.oam[base + 2]as i64
+        let sx = ppu.oam[base + 3]as i64
+        let palGroup = attr & 0x03
+        let flipH = (attr & 0x40) != 0
+        let flipV = (attr & 0x80) != 0
+        var fy: i64 = 0
+        while fy < 8 {
+            let ry = if flipV {
+                7 - fy
+            } else {
+                fy
+            }
+            let lo = ppuMemRead(ppu, (sprTable + tile * 16 + ry) as u16) as i64
+            let hi = ppuMemRead(ppu, (sprTable + tile * 16 + ry + 8) as u16) as i64
+            var fx: i64 = 0
+            while fx < 8 {
+                let rx = if flipH {
+                    fx
+                } else {
+                    7 - fx
+                }
+                let px = ((lo >> rx) & 1) | (((hi >> rx) & 1) << 1)
+                if px != 0 {
+                    let x = sx + fx
+                    let y = sy + 1 + fy // OAM Y is top-1
+                    if x < 256 && y < 240 {
+                        let colorIdx = ppuMemRead(ppu, (0x3F10 + palGroup * 4 + px) as u16) as i64
+                        ppu.fb[y * 256 + x] = nesColor(colorIdx)
+                    }
+                }
+                fx = fx + 1
+            }
+            fy = fy + 1
+        }
+        i = i - 1
+    }
+}
+
+fn renderFrame(ppu: &mut Ppu): void {
+    renderBackground(ppu)
+    renderSprites(ppu)
+}

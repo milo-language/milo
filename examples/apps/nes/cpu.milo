@@ -5,6 +5,9 @@
 from "./cartridge" import {
     Cartridge
 }
+from "./ppu" import {
+    Ppu, newPpu, ppuRegRead, ppuRegWrite
+}
 
 // --- status flag bit masks (P register) ---
 let FC: u8 = 0x01 // carry
@@ -16,11 +19,14 @@ let FU: u8 = 0x20 // unused, always 1
 let FV: u8 = 0x40 // overflow
 let FN: u8 = 0x80 // negative
 
-// CPU-visible address space. Owns PRG-ROM so it can outlive the Cartridge.
+// CPU-visible address space. Owns PRG-ROM and the PPU (which owns CHR/VRAM).
 struct Bus {
     ram: [u8; 2048] // $0000-$07FF, mirrored through $1FFF
     prg: Vec<u8> // mapper-0 PRG, 16K or 32K
     prgMask: i64 // 0x3FFF (16K) or 0x7FFF (32K)
+    ppu: Ppu
+    ctrl1: u8 // $4016 controller-1 shift register (input, wired in M3)
+    strobe: u8 // $4016 strobe latch
 }
 
 fn newBus(cart: Cartridge): Bus {
@@ -31,20 +37,31 @@ fn newBus(cart: Cartridge): Bus {
     } else {
         0x7FFF as i64
     }
+    // Move CHR + mirroring into the PPU; PRG into the bus. (cart consumed.)
+    let ppu = newPpu(cart.chr, cart.mirrorVertical)
     return Bus {
-        ram: [0; 2048], prg: cart.prg, prgMask: mask
+        ram: [0; 2048], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0
     }
 }
 
-fn busRead(bus: &Bus, addr: u16): u8 {
+fn busRead(bus: &mut Bus, addr: u16): u8 {
     let a: i64 = addr as i64
     if a < 0x2000 {
         return bus.ram[a & 0x07FF]
     }
+    if a < 0x4000 {
+        // $2000-$3FFF: 8 PPU registers, mirrored every 8 bytes
+        return ppuRegRead(bus.ppu, a & 0x07)
+    }
+    if a == 0x4016 {
+        // controller 1: serial shift-out of the button state, LSB first
+        let bit = bus.ctrl1 & 0x01
+        bus.ctrl1 = (((bus.ctrl1 as i64) >> 1) as u8) | 0x80
+        return bit | 0x40 // open-bus high bits read as 0x40 on real HW
+    }
     if a >= 0x8000 {
         return bus.prg[(a - 0x8000) & bus.prgMask]
     }
-    // PPU ($2000-$3FFF) and APU/IO ($4000-$401F) not modeled yet.
     return 0
 }
 
@@ -52,8 +69,28 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
     let a: i64 = addr as i64
     if a < 0x2000 {
         bus.ram[a & 0x07FF] = val
+        return
     }
-    // writes outside RAM ignored until PPU/APU exist
+    if a < 0x4000 {
+        ppuRegWrite(bus.ppu, a & 0x07, val)
+        return
+    }
+    if a == 0x4014 {
+        // OAMDMA: copy 256 bytes from CPU page $xx00 into PPU OAM
+        let page = (val as i64) << 8
+        var i: i64 = 0
+        while i < 256 {
+            let b = busRead(bus, (page + i) as u16)
+            ppuRegWrite(bus.ppu, 4, b) // write through OAMDATA (advances oamAddr)
+            i = i + 1
+        }
+        return
+    }
+    if a == 0x4016 {
+        bus.strobe = val & 0x01
+        return
+    }
+    // other APU/IO writes ignored until modeled
 }
 
 struct Cpu {
@@ -97,14 +134,14 @@ fn wrap16(v: i64): u16 {
     return (v & 0xFFFF) as u16
 }
 
-fn read16(bus: &Bus, addr: u16): u16 {
+fn read16(bus: &mut Bus, addr: u16): u16 {
     let lo: i64 = busRead(bus, addr) as i64
     let hi: i64 = busRead(bus, wrap16((addr as i64) + 1)) as i64
     return wrap16(lo | (hi << 8))
 }
 
 // 6502 indirect-JMP page-wrap bug: high byte reads from ($xxFF & $xx00), not +1 page.
-fn read16Bug(bus: &Bus, addr: u16): u16 {
+fn read16Bug(bus: &mut Bus, addr: u16): u16 {
     let a: i64 = addr as i64
     let lo: i64 = busRead(bus, addr) as i64
     let hiAddr: i64 = (a & 0xFF00) | ((a + 1) & 0x00FF)
@@ -112,13 +149,13 @@ fn read16Bug(bus: &Bus, addr: u16): u16 {
     return wrap16(lo | (hi << 8))
 }
 
-fn fetch8(cpu: &mut Cpu, bus: &Bus): u8 {
+fn fetch8(cpu: &mut Cpu, bus: &mut Bus): u8 {
     let v = busRead(bus, cpu.pc)
     cpu.pc = wrap16((cpu.pc as i64) + 1)
     return v
 }
 
-fn fetch16(cpu: &mut Cpu, bus: &Bus): u16 {
+fn fetch16(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let v = read16(bus, cpu.pc)
     cpu.pc = wrap16((cpu.pc as i64) + 2)
     return v
@@ -154,7 +191,7 @@ fn pageCrossed(base: u16, eff: u16): bool {
 // --- addressing-mode resolvers: advance PC past operand, return effective addr.
 // Indexed read modes stash a page-cross penalty in cpu.extraCycles only the
 // read opcodes honor it (stores/RMW take fixed cycles).
-fn read16ZP(bus: &Bus, z: i64): u16 {
+fn read16ZP(bus: &mut Bus, z: i64): u16 {
     let lo: i64 = busRead(bus, (z & 0xFF) as u16) as i64
     let hi: i64 = busRead(bus, ((z + 1) & 0xFF) as u16) as i64
     return wrap16(lo | (hi << 8))
@@ -166,23 +203,23 @@ fn aImm(cpu: &mut Cpu): u16 {
     return a
 }
 
-fn aZp(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aZp(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return fetch8(cpu, bus) as u16
 }
 
-fn aZpX(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aZpX(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return (((fetch8(cpu, bus) as i64) + (cpu.x as i64)) & 0xFF) as u16
 }
 
-fn aZpY(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aZpY(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return (((fetch8(cpu, bus) as i64) + (cpu.y as i64)) & 0xFF) as u16
 }
 
-fn aAbs(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aAbs(cpu: &mut Cpu, bus: &mut Bus): u16 {
     return fetch16(cpu, bus)
 }
 
-fn aAbsX(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aAbsX(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let base = fetch16(cpu, bus)
     let eff = wrap16((base as i64) + (cpu.x as i64))
     if pageCrossed(base, eff) {
@@ -191,7 +228,7 @@ fn aAbsX(cpu: &mut Cpu, bus: &Bus): u16 {
     return eff
 }
 
-fn aAbsY(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aAbsY(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let base = fetch16(cpu, bus)
     let eff = wrap16((base as i64) + (cpu.y as i64))
     if pageCrossed(base, eff) {
@@ -200,12 +237,12 @@ fn aAbsY(cpu: &mut Cpu, bus: &Bus): u16 {
     return eff
 }
 
-fn aIndX(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aIndX(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let z = ((fetch8(cpu, bus) as i64) + (cpu.x as i64)) & 0xFF
     return read16ZP(bus, z)
 }
 
-fn aIndY(cpu: &mut Cpu, bus: &Bus): u16 {
+fn aIndY(cpu: &mut Cpu, bus: &mut Bus): u16 {
     let z = fetch8(cpu, bus) as i64
     let base = read16ZP(bus, z)
     let eff = wrap16((base as i64) + (cpu.y as i64))
@@ -288,7 +325,7 @@ fn rorV(cpu: &mut Cpu, m: u8): u8 {
 }
 
 // Conditional branch with taken/page-cross cycle penalties base 2 added by caller.
-fn branch(cpu: &mut Cpu, bus: &Bus, cond: bool): void {
+fn branch(cpu: &mut Cpu, bus: &mut Bus, cond: bool): void {
     var off: i64 = fetch8(cpu, bus) as i64
     if off >= 128 {
         off = off - 256
@@ -357,7 +394,7 @@ fn formatState(cpu: &Cpu): string {
 }
 
 // --- unofficial ("illegal") opcode helpers, addr pre-resolved by caller ---
-fn lax(cpu: &mut Cpu, bus: &Bus, addr: u16): void {
+fn lax(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     let v = busRead(bus, addr)
     cpu.a = v
     cpu.x = v

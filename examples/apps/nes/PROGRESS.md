@@ -20,8 +20,15 @@ against `nestest.log` before any pixels.
       unofficial SBC (EB). **Full 8991/8991 nestest match** — the entire 6502
       (official + illegal) is byte-exact vs the golden log, registers AND cycles.
       6502 CPU is DONE and reference-validated.
-- [ ] **M2 — PPU**: background tiles, then sprites, then scrolling. Feeds the
-      same RGBA framebuffer M0 already renders.
+- [~] **M2 — PPU** (`ppu.milo`):
+  - [x] **M2a** — state + VRAM/OAM/palette memory (nametable + palette mirroring),
+        CPU register interface ($2000-$2007 + $4014 OAMDMA), dot/scanline timing,
+        vblank + NMI flag. Wired into the bus (`busRead`/`busWrite` now `&mut`).
+        **nestest still 8991/8991** — no CPU regression. NES 64-color palette +
+        background + basic sprite renderer written (not yet visually driven).
+  - [ ] **M2d** — SDL frontend: step CPU+PPU (3 dots/cycle), service NMI, blit
+        `ppu.fb` each frame. First pixels from a real ROM.
+  - [ ] refine: fine-scroll from v/t, sprite-0 hit, 8x16 sprites, mid-frame splits.
 - [ ] **M3 — controller input**: SDL key events → $4016 shift register.
 - [ ] **M4 — playable**: wire SDL frontend + PPU + input; boot Super Mario Bros.
 - [ ] later: APU audio · terminal backend (diff-based truecolor blit, same fb) ·
@@ -54,3 +61,7 @@ milo run   examples/apps/nes/testCartridge.milo
   don't hand-compute. ABGR8888 = 0x16762004 (memory byte order R,G,B,A).
 - `print` appends a newline per call — the nestest harness needs a
   no-newline writer (`writeStdout`) for exact line formatting.
+- **Compile time**: `-O2` on the ~250-arm `step()` match takes >3min (LLVM opt
+  blowup). `--debug` (`-O0`) builds in ~6s. All CPU/PPU arithmetic is explicit-
+  masked i64, so `-O0` overflow traps don't fire — use `-O0` for iteration.
+  Test whether the SDL demo needs `-O2` for 60fps before eating that compile cost.
