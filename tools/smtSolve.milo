@@ -1,0 +1,97 @@
+// smtSolve — native front end for std/smt. Reads a whitespace-separated integer
+// DSL of proof obligations from stdin and prints one verdict per problem. Built
+// once and cached by `milo prove`, which pipes each contract's verification
+// conditions here — so obligations are discharged by a native Milo binary, no
+// per-proof compile and no external solver.
+//
+// DSL grammar (all tokens are integers):
+//   P                                  number of problems
+//   repeat P times:
+//     nvars natoms
+//     repeat natoms: strict c0 .. c(nvars-1) konst      (atom: row·x + konst <op> 0)
+//     nnodes
+//     repeat nnodes, in creation order (children first):
+//       0 atomIdx                      atom node
+//       1 childIdx                     not
+//       2 nkids kid0 ..                and
+//       3 nkids kid0 ..                or
+//     rootIdx
+// Output: one line per problem, "<index> <proven|violated|unknown>".
+
+from "std/io" import { readStdin }
+from "std/smt" import { newProblem, addAtom, nAtom, nNot, nAnd, nOr, decide, verdictName }
+
+fn main(): i32 {
+    let s = readStdin()
+    let toks = strSplitWhitespace(s)
+    var pos: i64 = 0
+
+    let nprob = strParseInt(toks[pos])
+    pos = pos + 1
+
+    var pi: i64 = 0
+    while pi < nprob {
+        let nvars = strParseInt(toks[pos])
+        pos = pos + 1
+        let natoms = strParseInt(toks[pos])
+        pos = pos + 1
+        var p = newProblem(nvars)
+
+        var a: i64 = 0
+        while a < natoms {
+            let strict = strParseInt(toks[pos])
+            pos = pos + 1
+            var row: Vec<i64> = []
+            var c: i64 = 0
+            while c < nvars {
+                row.push(strParseInt(toks[pos]))
+                pos = pos + 1
+                c = c + 1
+            }
+            let konst = strParseInt(toks[pos])
+            pos = pos + 1
+            // atoms are created in order, so atom index == a
+            let _ai = addAtom(p, row, konst, strict == 1)
+            a = a + 1
+        }
+
+        let nnodes = strParseInt(toks[pos])
+        pos = pos + 1
+        var nd: i64 = 0
+        while nd < nnodes {
+            let kind = strParseInt(toks[pos])
+            pos = pos + 1
+            if kind == 0 {
+                let ai = strParseInt(toks[pos])
+                pos = pos + 1
+                let _n = nAtom(p, ai)
+            } else if kind == 1 {
+                let ch = strParseInt(toks[pos])
+                pos = pos + 1
+                let _n = nNot(p, ch)
+            } else {
+                let nk = strParseInt(toks[pos])
+                pos = pos + 1
+                var kids: Vec<i64> = []
+                var kk: i64 = 0
+                while kk < nk {
+                    kids.push(strParseInt(toks[pos]))
+                    pos = pos + 1
+                    kk = kk + 1
+                }
+                if kind == 2 {
+                    let _n = nAnd(p, kids)
+                } else {
+                    let _n = nOr(p, kids)
+                }
+            }
+            nd = nd + 1
+        }
+
+        let root = strParseInt(toks[pos])
+        pos = pos + 1
+        print(pi, " ", verdictName(decide(p, root)))
+        pi = pi + 1
+    }
+    return 0
+}

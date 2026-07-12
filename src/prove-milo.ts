@@ -1,12 +1,13 @@
 // Milo-native proof engine: discharge verification conditions with std/smt (a
-// QF_LIA decision procedure written in Milo) instead of z3. Each VC's SMT-LIB
-// is parsed into a linear boolean formula, a Milo program is generated that
-// rebuilds it through the std/smt builder API and calls decide(), and that
-// program is compiled+run — so Milo's own compiler and prover discharge the
-// obligation end to end. VCs outside the linear fragment fall to "unknown",
-// exactly where z3 would give up on the theories std/smt doesn't model.
+// QF_LIA decision procedure written in Milo) instead of z3. Each VC's SMT-LIB is
+// parsed into a linear boolean formula and serialized to the integer DSL that
+// tools/smtSolve.milo reads on stdin; that solver is compiled once to a cached
+// native binary and reused, so obligations are discharged by a native Milo
+// binary — no per-proof compile, no external solver. VCs outside the linear
+// fragment fall to "unknown", exactly where z3 gives up on theories std/smt
+// doesn't model.
 import { spawnSync } from "child_process";
-import { writeFileSync, mkdtempSync } from "fs";
+import { existsSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { VerifyResult, ProveResult, SolverResult } from "./verify";
@@ -180,67 +181,74 @@ function vcToFormula(smtlib: string): { vars: string[]; root: FNode } | null {
   return { vars, root };
 }
 
-// ---- Milo program generation ----
+// ---- DSL serialization (see tools/smtSolve.milo for the grammar) ----
 
-function miloRow(lin: Lin, idx: Map<string, number>, nvars: number): string {
-  const row = new Array(nvars).fill(0);
-  for (const [k, v] of lin.coeffs) row[idx.get(k)!] = v;
-  return `[${row.join(", ")}]`;
-}
+interface SNode { kind: 0 | 1 | 2 | 3; atom?: number; kids?: number[]; }
 
-// Emit builder calls for a formula, returning the Milo variable holding its node
-// index. `lines` accumulates statements; `ctr` hands out fresh names.
-function emitNode(f: FNode, pv: string, idx: Map<string, number>, nvars: number, lines: string[], ctr: { n: number }): string {
-  const fresh = () => `t${ctr.n++}`;
-  if (f.op === "true") { const v = fresh(); lines.push(`    var ${v}k: Vec<i64> = []`); lines.push(`    let ${v} = nAnd(${pv}, ${v}k)`); return v; }
-  if (f.op === "false") { const v = fresh(); lines.push(`    var ${v}k: Vec<i64> = []`); lines.push(`    let ${v} = nOr(${pv}, ${v}k)`); return v; }
+// Flatten a formula into (atoms, nodes) in creation order — children before
+// parents, matching how std/smt assigns node indices. Returns the root index.
+function serialize(f: FNode, idx: Map<string, number>, nvars: number, atoms: string[], nodes: SNode[]): number {
+  if (f.op === "true") { nodes.push({ kind: 2, kids: [] }); return nodes.length - 1; }
+  if (f.op === "false") { nodes.push({ kind: 3, kids: [] }); return nodes.length - 1; }
   if (f.op === "atom") {
-    const v = fresh();
-    lines.push(`    let ${v} = nAtom(${pv}, addAtom(${pv}, ${miloRow(f.lin, idx, nvars)}, ${f.lin.konst}, ${f.strict ? "true" : "false"}))`);
-    return v;
+    const row = new Array(nvars).fill(0);
+    for (const [k, v] of f.lin.coeffs) row[idx.get(k)!] = v;
+    const ai = atoms.length;
+    atoms.push(`${f.strict ? 1 : 0} ${row.join(" ")} ${f.lin.konst}`);
+    nodes.push({ kind: 0, atom: ai });
+    return nodes.length - 1;
   }
   if (f.op === "not") {
-    const c = emitNode(f.k, pv, idx, nvars, lines, ctr);
-    const v = fresh();
-    lines.push(`    let ${v} = nNot(${pv}, ${c})`);
-    return v;
+    const c = serialize(f.k, idx, nvars, atoms, nodes);
+    nodes.push({ kind: 1, kids: [c] });
+    return nodes.length - 1;
   }
-  // and / or
-  const childVars = f.ks.map(k => emitNode(k, pv, idx, nvars, lines, ctr));
-  const v = fresh();
-  lines.push(`    var ${v}k: Vec<i64> = []`);
-  for (const cv of childVars) lines.push(`    ${v}k.push(${cv})`);
-  lines.push(`    let ${v} = ${f.op === "and" ? "nAnd" : "nOr"}(${pv}, ${v}k)`);
-  return v;
+  const kids = f.ks.map(k => serialize(k, idx, nvars, atoms, nodes));
+  nodes.push({ kind: f.op === "and" ? 2 : 3, kids });
+  return nodes.length - 1;
 }
 
-interface PreparedVC { index: number; program: string; }
-
-function generateProgram(prepared: { index: number; vars: string[]; root: FNode }[]): string {
-  const fns: string[] = [];
-  const calls: string[] = [];
-  for (const p of prepared) {
-    const idx = new Map<string, number>();
-    p.vars.forEach((v, i) => idx.set(v, i));
-    const nvars = p.vars.length;
-    const lines: string[] = [];
-    lines.push(`    var pr = newProblem(${nvars})`);
-    const ctr = { n: 0 };
-    const rootVar = emitNode(p.root, "pr", idx, nvars, lines, ctr);
-    lines.push(`    print("${p.index} ", verdictName(decide(pr, ${rootVar})))`);
-    fns.push(`fn vc${p.index}(): void {\n${lines.join("\n")}\n}`);
-    calls.push(`    vc${p.index}()`);
+function encodeProblem(vars: string[], root: FNode): string {
+  const idx = new Map<string, number>();
+  vars.forEach((v, i) => idx.set(v, i));
+  const atoms: string[] = [];
+  const nodes: SNode[] = [];
+  const rootIdx = serialize(root, idx, vars.length, atoms, nodes);
+  const lines = [`${vars.length} ${atoms.length}`, ...atoms, `${nodes.length}`];
+  for (const n of nodes) {
+    if (n.kind === 0) lines.push(`0 ${n.atom}`);
+    else if (n.kind === 1) lines.push(`1 ${n.kids![0]}`);
+    else lines.push(`${n.kind} ${n.kids!.length} ${n.kids!.join(" ")}`);
   }
-  return [
-    `from "std/smt" import { SmtProblem, Verdict, newProblem, addAtom, nAtom, nNot, nAnd, nOr, decide, verdictName }`,
-    "",
-    ...fns,
-    "",
-    `fn main(): i32 {`,
-    ...calls,
-    `    return 0`,
-    `}`,
-  ].join("\n");
+  lines.push(`${rootIdx}`);
+  return lines.join("\n");
+}
+
+// ---- cached native solver binary ----
+
+function newestMtime(...paths: string[]): number {
+  return Math.max(...paths.map(p => { try { return statSync(p).mtimeMs; } catch { return 0; } }));
+}
+
+// Build tools/smtSolve.milo once and cache the binary, rebuilding only when the
+// solver or std/smt sources change. Returns the binary path, or null on failure.
+function ensureSolverBinary(): string | null {
+  const root = join(import.meta.dir, "..");
+  const solverSrc = join(root, "tools", "smtSolve.milo");
+  const smtLib = join(root, "std", "smt.milo");
+  const cacheDir = join(tmpdir(), "milo-smt-cache");
+  mkdirSync(cacheDir, { recursive: true });
+  const bin = join(cacheDir, "smtSolve");
+
+  if (existsSync(bin) && statSync(bin).mtimeMs >= newestMtime(solverSrc, smtLib)) return bin;
+
+  const mainTs = join(import.meta.dir, "main.ts");
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const b = spawnSync("bun", ["run", mainTs, "build", solverSrc, "-o", bin], { encoding: "utf-8", timeout: 120000 });
+    if (b.status === 0 && existsSync(bin)) return bin;
+    if (!/memory pressure/.test((b.stderr ?? "") + (b.stdout ?? ""))) break; // real error, don't retry
+  }
+  return null;
 }
 
 // Discharge all VCs via std/smt. Mirrors proveWithZ3's ProveResult shape.
@@ -258,31 +266,26 @@ export function proveWithMilo(result: VerifyResult): ProveResult {
   });
 
   if (prepared.length > 0) {
-    const program = generateProgram(prepared);
-    const dir = mkdtempSync(join(tmpdir(), "milo-prove-"));
-    const src = join(dir, "prove.milo");
-    writeFileSync(src, program);
-    const mainTs = join(import.meta.dir, "main.ts");
-    // Run the generated prover through the JS backend, not native: it's pure
-    // integer logic, so emit-js + bun avoids a clang compile that would nest
-    // under the outer `prove` and trip the memory guard (fail-closed shed).
-    const emit = spawnSync("bun", ["run", mainTs, "emit-js", src], { encoding: "utf-8", timeout: 60000 });
-    const js = join(dir, "prove.js");
-    writeFileSync(js, emit.stdout ?? "");
-    const proc = spawnSync("bun", [js], { encoding: "utf-8", timeout: 60000 });
-    const out = (proc.stdout ?? "").trim();
-    const verdicts = new Map<number, string>();
-    for (const line of out.split("\n")) {
-      const m = line.trim().match(/^(\d+)\s+(proven|violated|unknown)$/);
-      if (m) verdicts.set(parseInt(m[1], 10), m[2]);
-    }
-    for (const p of prepared) {
-      const vc = result.conditions[p.index];
-      const verdict = verdicts.get(p.index);
-      if (verdict === "proven") results[p.index] = { vc, status: "proven" };
-      else if (verdict === "violated") results[p.index] = { vc, status: "failed", detail: "counterexample exists" };
-      else if (verdict === "unknown") results[p.index] = { vc, status: "unknown", detail: "no integer witness (rational-only)" };
-      else results[p.index] = { vc, status: "error", detail: (proc.stderr || "std/smt run produced no verdict").split("\n")[0] };
+    const bin = ensureSolverBinary();
+    if (!bin) {
+      for (const p of prepared) results[p.index] = { vc: result.conditions[p.index], status: "error", detail: "could not build std/smt solver binary" };
+    } else {
+      // One problem per prepared VC, in order; smtSolve prints "<k> <verdict>".
+      const dsl = [`${prepared.length}`, ...prepared.map(p => encodeProblem(p.vars, p.root))].join("\n") + "\n";
+      const proc = spawnSync(bin, [], { input: dsl, encoding: "utf-8", timeout: 60000 });
+      const verdicts = new Map<number, string>();
+      for (const line of (proc.stdout ?? "").split("\n")) {
+        const m = line.trim().match(/^(\d+)\s+(proven|violated|unknown)$/);
+        if (m) verdicts.set(parseInt(m[1], 10), m[2]);
+      }
+      prepared.forEach((p, k) => {
+        const vc = result.conditions[p.index];
+        const verdict = verdicts.get(k);
+        if (verdict === "proven") results[p.index] = { vc, status: "proven" };
+        else if (verdict === "violated") results[p.index] = { vc, status: "failed", detail: "counterexample exists" };
+        else if (verdict === "unknown") results[p.index] = { vc, status: "unknown", detail: "no integer witness (rational-only)" };
+        else results[p.index] = { vc, status: "error", detail: (proc.stderr || "std/smt solver produced no verdict").split("\n")[0] };
+      });
     }
   }
 
