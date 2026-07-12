@@ -499,6 +499,12 @@ fn stepZ80(cpu: &mut Z80): bool {
     if op == 0xED {
         return execED(cpu)
     }
+    if op == 0xDD {
+        return execIndex(cpu, false)
+    }
+    if op == 0xFD {
+        return execIndex(cpu, true)
+    }
     if x == 1 {
         setReg(cpu, y, getReg(cpu, z)) // LD r, r'
         return true
@@ -745,6 +751,187 @@ fn signExt8(v: i64): i64 {
         return v - 256
     }
     return v
+}
+
+// INC/DEC on an arbitrary 8-bit value with flag effects, returning the result.
+fn incVal(cpu: &mut Z80, v: i64): i64 {
+    let res = (v + 1) & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, (v & 0xF) == 0xF)
+    setFlag(cpu, FPV, v == 0x7F)
+    setFlag(cpu, FN, false)
+    return res
+}
+
+fn decVal(cpu: &mut Z80, v: i64): i64 {
+    let res = (v - 1) & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, (v & 0xF) == 0)
+    setFlag(cpu, FPV, v == 0x80)
+    setFlag(cpu, FN, true)
+    return res
+}
+
+// DD/FD prefix: IX/IY variants. Handles (index+d) memory ops, the 16-bit index
+// ops, and DDCB/FDCB. The undocumented IXh/IXl split-register ops are not needed
+// by the Genesis sound driver and are left unimplemented.
+fn execIndex(cpu: &mut Z80, isIY: bool): bool {
+    var base = if isIY {
+        cpu.iy
+    } else {
+        cpu.ix
+    }
+    let op = fetchOp(cpu)
+
+    if op == 0xCB {
+        let d = signExt8(fetch8(cpu))
+        let addr = (base + d) & 0xFFFF
+        return execDDCB(cpu, addr)
+    }
+    // ADD IX, rp  (rp p==2 is IX itself)
+    if op == 0x09 || op == 0x19 || op == 0x29 || op == 0x39 {
+        let p = (op >> 4) & 0x3
+        var rp = getRP(cpu, p)
+        if p == 2 {
+            rp = base
+        }
+        base = add16(cpu, base, rp)
+        return storeIndex(cpu, isIY, base)
+    }
+    if op == 0x21 {
+        base = fetch16(cpu) // LD IX, nn
+        return storeIndex(cpu, isIY, base)
+    }
+    if op == 0x22 {
+        let nn = fetch16(cpu) // LD (nn), IX
+        wr(cpu, nn, base & 0xFF)
+        wr(cpu, nn + 1, (base >> 8) & 0xFF)
+        return true
+    }
+    if op == 0x2A {
+        let nn = fetch16(cpu) // LD IX, (nn)
+        base = rd(cpu, nn) | (rd(cpu, nn + 1) << 8)
+        return storeIndex(cpu, isIY, base)
+    }
+    if op == 0x23 {
+        base = (base + 1) & 0xFFFF // INC IX
+        return storeIndex(cpu, isIY, base)
+    }
+    if op == 0x2B {
+        base = (base - 1) & 0xFFFF // DEC IX
+        return storeIndex(cpu, isIY, base)
+    }
+    if op == 0xE5 {
+        push16(cpu, base) // PUSH IX
+        return true
+    }
+    if op == 0xE1 {
+        base = pop16(cpu) // POP IX
+        return storeIndex(cpu, isIY, base)
+    }
+    if op == 0xE3 {
+        // EX (SP), IX
+        let lo = rd(cpu, cpu.sp)
+        let hi = rd(cpu, cpu.sp + 1)
+        wr(cpu, cpu.sp, base & 0xFF)
+        wr(cpu, cpu.sp + 1, (base >> 8) & 0xFF)
+        base = (hi << 8) | lo
+        return storeIndex(cpu, isIY, base)
+    }
+    if op == 0xE9 {
+        cpu.pc = base // JP (IX)
+        return true
+    }
+    if op == 0xF9 {
+        cpu.sp = base // LD SP, IX
+        return true
+    }
+    if op == 0x34 {
+        let d = signExt8(fetch8(cpu)) // INC (IX+d)
+        let a = (base + d) & 0xFFFF
+        wr(cpu, a, incVal(cpu, rd(cpu, a)))
+        return true
+    }
+    if op == 0x35 {
+        let d = signExt8(fetch8(cpu)) // DEC (IX+d)
+        let a = (base + d) & 0xFFFF
+        wr(cpu, a, decVal(cpu, rd(cpu, a)))
+        return true
+    }
+    if op == 0x36 {
+        let d = signExt8(fetch8(cpu)) // LD (IX+d), n
+        let n = fetch8(cpu)
+        wr(cpu, (base + d) & 0xFFFF, n)
+        return true
+    }
+
+    let x = (op >> 6) & 0x3
+    let y = (op >> 3) & 0x7
+    let z = op & 0x7
+    // LD r,(IX+d) / LD (IX+d),r  (x==1 with a memory operand)
+    if x == 1 && op != 0x76 && (y == 6 || z == 6) {
+        let d = signExt8(fetch8(cpu))
+        let a = (base + d) & 0xFFFF
+        if z == 6 {
+            setReg(cpu, y, rd(cpu, a)) // LD y, (IX+d)  — y is a real register
+        } else {
+            wr(cpu, a, getReg(cpu, z)) // LD (IX+d), z
+        }
+        return true
+    }
+    // ALU A, (IX+d)
+    if x == 2 && z == 6 {
+        let d = signExt8(fetch8(cpu))
+        doAlu(cpu, y, rd(cpu, (base + d) & 0xFFFF))
+        return true
+    }
+    // Any other opcode: the prefix is inert here (IXh/IXl split not modelled).
+    return false
+}
+
+fn storeIndex(cpu: &mut Z80, isIY: bool, v: i64): bool {
+    if isIY {
+        cpu.iy = v & 0xFFFF
+    } else {
+        cpu.ix = v & 0xFFFF
+    }
+    return true
+}
+
+// DDCB/FDCB: rotate/shift/bit/res/set on (index+d). Non-BIT ops also copy the
+// result into register z (undocumented) unless z selects (HL)/memory.
+fn execDDCB(cpu: &mut Z80, addr: i64): bool {
+    let op = fetch8(cpu) // final byte does not bump R
+    let x = (op >> 6) & 0x3
+    let y = (op >> 3) & 0x7
+    let z = op & 0x7
+    let v = rd(cpu, addr)
+
+    if x == 1 {
+        // BIT y, (index+d): X/Y from the address high byte
+        let bitset = ((v >> y) & 1) != 0
+        setFlag(cpu, FZ,!bitset)
+        setFlag(cpu, FPV,!bitset)
+        setFlag(cpu, FH, true)
+        setFlag(cpu, FN, false)
+        setFlag(cpu, FS, y == 7 && bitset)
+        setFlag(cpu, FY, ((addr >> 8) & 0x20) != 0)
+        setFlag(cpu, FX, ((addr >> 8) & 0x08) != 0)
+        return true
+    }
+    var res: i64 = 0
+    if x == 0 {
+        res = shiftOp(cpu, y, v)
+    } else if x == 2 {
+        res = v & ~(1 << y) // RES
+    } else {
+        res = v | (1 << y) // SET
+    }
+    wr(cpu, addr, res)
+    if z != 6 {
+        setReg(cpu, z, res) // undocumented register copy
+    }
+    return true
 }
 
 // CB prefix: rotates/shifts (x=0), BIT (x=1), RES (x=2), SET (x=3) on reg z.
