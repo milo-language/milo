@@ -628,6 +628,174 @@ fn sbcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
     let v = readMval(cpu, m, addr, wrap) doSBC(cpu, v)
 }
 
+// --- RMW value transforms (accumulator width; set C + N/Z) ---
+fn accMask(cpu: &Cpu): i64 {
+    if m8(cpu) {
+        return 0xFF
+    }
+    return 0xFFFF
+}
+
+fn aslVal(cpu: &mut Cpu, v: i64): i64 {
+    let mask = accMask(cpu)
+    let signbit: i64 = if m8(cpu) {
+        0x80
+    } else {
+        0x8000
+    }
+    setBit(cpu, FC, (v & signbit) != 0)
+    let r = (v << 1) & mask
+    setNZa(cpu, r)
+    return r
+}
+
+fn lsrVal(cpu: &mut Cpu, v: i64): i64 {
+    let mask = accMask(cpu)
+    setBit(cpu, FC, (v & 1) != 0)
+    let r = (v & mask) >> 1
+    setNZa(cpu, r)
+    return r
+}
+
+fn rolVal(cpu: &mut Cpu, v: i64): i64 {
+    let mask = accMask(cpu)
+    let signbit: i64 = if m8(cpu) {
+        0x80
+    } else {
+        0x8000
+    }
+    let oldC = cpu.p & FC
+    setBit(cpu, FC, (v & signbit) != 0)
+    let r = ((v << 1) | oldC) & mask
+    setNZa(cpu, r)
+    return r
+}
+
+fn rorVal(cpu: &mut Cpu, v: i64): i64 {
+    let mask = accMask(cpu)
+    let topbit: i64 = if m8(cpu) {
+        0x80
+    } else {
+        0x8000
+    }
+    let oldC = cpu.p & FC
+    setBit(cpu, FC, (v & 1) != 0)
+    var r = (v & mask) >> 1
+    if oldC != 0 {
+        r = r | topbit
+    }
+    setNZa(cpu, r)
+    return r
+}
+
+fn incVal(cpu: &mut Cpu, v: i64): i64 {
+    let mask = accMask(cpu)
+    let r = (v + 1) & mask
+    setNZa(cpu, r)
+    return r
+}
+
+fn decVal(cpu: &mut Cpu, v: i64): i64 {
+    let mask = accMask(cpu)
+    let r = (v - 1) & mask
+    setNZa(cpu, r)
+    return r
+}
+
+fn writeAccW(cpu: &mut Cpu, r: i64): void {
+    if m8(cpu) {
+        cpu.a = (cpu.a & 0xFF00) | (r & 0xFF)
+    } else {
+        cpu.a = r & 0xFFFF
+    }
+}
+
+fn accASL(cpu: &mut Cpu): void {
+    let v = cpu.a & accMask(cpu) let r = aslVal(cpu, v) writeAccW(cpu, r)
+}
+
+fn accLSR(cpu: &mut Cpu): void {
+    let v = cpu.a & accMask(cpu) let r = lsrVal(cpu, v) writeAccW(cpu, r)
+}
+
+fn accROL(cpu: &mut Cpu): void {
+    let v = cpu.a & accMask(cpu) let r = rolVal(cpu, v) writeAccW(cpu, r)
+}
+
+fn accROR(cpu: &mut Cpu): void {
+    let v = cpu.a & accMask(cpu) let r = rorVal(cpu, v) writeAccW(cpu, r)
+}
+
+fn rmwWrite(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool, r: i64): void {
+    if m8(cpu) {
+        memWrite(m, addr, r & 0xFF)
+    } else {
+        write16w(m, addr, r, wrap)
+    }
+}
+
+// Read-modify-write on memory. kind: 0 ASL 1 LSR 2 ROL 3 ROR 4 INC 5 DEC.
+fn rmwMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool, kind: i64): void {
+    let v = readMval(cpu, m, addr, wrap)
+    var r: i64 = 0
+    if kind == 0 {
+        r = aslVal(cpu, v)
+    } 
+    else if kind == 1 {
+        r = lsrVal(cpu, v)
+    } 
+    else if kind == 2 {
+        r = rolVal(cpu, v)
+    } 
+    else if kind == 3 {
+        r = rorVal(cpu, v)
+    } 
+    else if kind == 4 {
+        r = incVal(cpu, v)
+    } 
+    else {
+        r = decVal(cpu, v)
+    }
+    rmwWrite(cpu, m, addr, wrap, r)
+}
+
+// TSB/TRB: Z from (A & M); write A|M (set) or M&~A (reset).
+fn tsbMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap)
+    let a = cpu.a & accMask(cpu)
+    setBit(cpu, FZ, (a & v) == 0)
+    rmwWrite(cpu, m, addr, wrap, v | a)
+}
+
+fn trbMem(cpu: &mut Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap)
+    let a = cpu.a & accMask(cpu)
+    setBit(cpu, FZ, (a & v) == 0)
+    rmwWrite(cpu, m, addr, wrap, v & (~a))
+}
+
+// BIT: Z from (A & M); N/V from M's top two bits. Immediate form sets only Z.
+fn bitMem(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap)
+    let signbit: i64 = if m8(cpu) {
+        0x80
+    } else {
+        0x8000
+    }
+    let ovbit: i64 = if m8(cpu) {
+        0x40
+    } else {
+        0x4000
+    }
+    setBit(cpu, FZ, ((cpu.a & accMask(cpu)) & v) == 0)
+    setBit(cpu, FN, (v & signbit) != 0)
+    setBit(cpu, FV, (v & ovbit) != 0)
+}
+
+fn bitImm(cpu: &mut Cpu, v: i64): void {
+    setBit(cpu, FZ, ((cpu.a & accMask(cpu)) & v) == 0)
+}
+
 // Execute one instruction. Register/flag/transfer/immediate + stack push/pull
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
@@ -1276,6 +1444,125 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         }
         0xF3 => {
             let a = aSrY(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+
+        // ---- ASL / LSR / ROL / ROR (accumulator + memory) ----
+        0x0A => {
+            accASL(cpu)
+        }
+        0x06 => {
+            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 0)
+        }
+        0x16 => {
+            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 0)
+        }
+        0x0E => {
+            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 0)
+        }
+        0x1E => {
+            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 0)
+        }
+        0x4A => {
+            accLSR(cpu)
+        }
+        0x46 => {
+            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 1)
+        }
+        0x56 => {
+            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 1)
+        }
+        0x4E => {
+            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 1)
+        }
+        0x5E => {
+            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 1)
+        }
+        0x2A => {
+            accROL(cpu)
+        }
+        0x26 => {
+            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 2)
+        }
+        0x36 => {
+            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 2)
+        }
+        0x2E => {
+            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 2)
+        }
+        0x3E => {
+            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 2)
+        }
+        0x6A => {
+            accROR(cpu)
+        }
+        0x66 => {
+            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 3)
+        }
+        0x76 => {
+            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 3)
+        }
+        0x6E => {
+            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 3)
+        }
+        0x7E => {
+            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 3)
+        }
+
+        // ---- INC / DEC memory (accumulator forms 0x1A/0x3A handled above) ----
+        0xE6 => {
+            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 4)
+        }
+        0xF6 => {
+            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 4)
+        }
+        0xEE => {
+            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 4)
+        }
+        0xFE => {
+            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 4)
+        }
+        0xC6 => {
+            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 5)
+        }
+        0xD6 => {
+            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 5)
+        }
+        0xCE => {
+            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 5)
+        }
+        0xDE => {
+            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 5)
+        }
+
+        // ---- TSB / TRB ----
+        0x04 => {
+            let a = aDp(cpu, m) tsbMem(cpu, m, a, true)
+        }
+        0x0C => {
+            let a = aAbs(cpu, m) tsbMem(cpu, m, a, false)
+        }
+        0x14 => {
+            let a = aDp(cpu, m) trbMem(cpu, m, a, true)
+        }
+        0x1C => {
+            let a = aAbs(cpu, m) trbMem(cpu, m, a, false)
+        }
+
+        // ---- BIT ----
+        0x89 => {
+            let v = immM(cpu, m) bitImm(cpu, v)
+        }
+        0x24 => {
+            let a = aDp(cpu, m) bitMem(cpu, m, a, true)
+        }
+        0x34 => {
+            let a = aDpX(cpu, m) bitMem(cpu, m, a, true)
+        }
+        0x2C => {
+            let a = aAbs(cpu, m) bitMem(cpu, m, a, false)
+        }
+        0x3C => {
+            let a = aAbsX(cpu, m) bitMem(cpu, m, a, false)
         }
 
         // ---- stack push/pull ----

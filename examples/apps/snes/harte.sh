@@ -19,7 +19,9 @@ D=roms/harte-65816/v1
   e0 e4 ec c0 c4 cc a6 b6 ae be a4 b4 ac bc \
   86 96 8e 84 94 8c 64 74 9c 9e \
   69 65 75 6d 7d 79 6f 7f 61 71 67 77 63 73 \
-  e9 e5 f5 ed fd f9 ef ff e1 f1 e7 f7 e3 f3)
+  e9 e5 f5 ed fd f9 ef ff e1 f1 e7 f7 e3 f3 \
+  0a 06 16 0e 1e 4a 46 56 4e 5e 2a 26 36 2e 3e 6a 66 76 6e 7e \
+  e6 f6 ee fe c6 d6 ce de 04 0c 14 1c 89 24 34 2c 3c)
 pass=0; fail=0
 for op in "${OPS[@]}"; do
   for mode in e n; do
