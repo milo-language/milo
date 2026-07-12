@@ -42,6 +42,15 @@ struct Z80 {
     wz: i64 // internal MEMPTR
     halted: bool
     mem: Vec<u8>
+    // --- Genesis integration (gen=true routes device accesses; the Harte harness
+    // leaves it false so mem stays a flat 64 KB array) ---
+    gen: bool
+    bank: i64 // $6000 bank register: top 9 bits of the 68k window base
+    ymAddr0: i64 // YM2612 part-I latched register address ($4000)
+    ymAddr1: i64 // YM2612 part-II latched register address ($4002)
+    ym: [i64; 512] // YM2612 register file (part I 0..255, part II 256..511)
+    psgLatch: i64 // last SN76489 latched channel/type
+    psg: [i64; 8] // PSG registers (4 channels x tone/vol)
 }
 
 fn newZ80(): Z80 {
@@ -55,18 +64,86 @@ fn newZ80(): Z80 {
         a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, i: 0, r: 0,
         pc: 0, sp: 0, ix: 0, iy: 0, af_: 0, bc_: 0, de_: 0, hl_: 0,
         iff1: false, iff2: false, im: 0, wz: 0, halted: false, mem: mem,
+        gen: false, bank: 0, ymAddr0: 0, ymAddr1: 0, ym: [0; 512],
+        psgLatch: 0, psg: [0; 8],
     }
 }
 
 fn rd(cpu: &Z80, addr: i64): i64 {
-    return cpu.mem[addr & 0xFFFF]as i64
+    let a = addr & 0xFFFF
+    if cpu.gen && a >= 0x4000 {
+        // Device reads: YM2612 status ($4000-$4003) reads "not busy"; the 68k bank
+        // window ($8000+) is not backed yet (DAC sample fetch deferred).
+        return 0
+    }
+    if cpu.gen {
+        return cpu.mem[a & 0x1FFF]as i64 // 8 KB RAM mirrored across $0000-$3FFF
+    }
+    return cpu.mem[a]as i64
 }
 
 fn wr(cpu: &mut Z80, addr: i64, val: i64) {
-    cpu.mem[addr & 0xFFFF] = (val & 0xFF) as u8
+    let a = addr & 0xFFFF
+    if cpu.gen {
+        z80DevWrite(cpu, a, val & 0xFF)
+        return
+    }
+    cpu.mem[a] = (val & 0xFF) as u8
 }
 
-// Opcode/operand fetch. Only opcode fetches bump R; use fetch8 for operands.
+// Z80-side Genesis memory map: 8 KB RAM ($0000-$1FFF, mirrored to $3FFF),
+// YM2612 ($4000-$4003), bank register ($6000), PSG ($7F11).
+fn z80DevWrite(cpu: &mut Z80, a: i64, val: i64) {
+    if a < 0x4000 {
+        cpu.mem[a & 0x1FFF] = val as u8
+        return
+    }
+    if a == 0x4000 {
+        cpu.ymAddr0 = val
+        return
+    }
+    if a == 0x4001 {
+        cpu.ym[cpu.ymAddr0 & 0xFF] = val
+        return
+    }
+    if a == 0x4002 {
+        cpu.ymAddr1 = val
+        return
+    }
+    if a == 0x4003 {
+        cpu.ym[256 + (cpu.ymAddr1 & 0xFF)] = val
+        return
+    }
+    if a == 0x6000 {
+        // serial bank register: shift the low bit into the 68k window base
+        cpu.bank = ((cpu.bank >> 1) | ((val & 1) << 8)) & 0x1FF
+        return
+    }
+    if a == 0x7F11 {
+        psgWrite(cpu, val)
+        return
+    }
+}
+
+// SN76489 PSG register write (latch/data protocol).
+fn psgWrite(cpu: &mut Z80, val: i64) {
+    if (val & 0x80) != 0 {
+        // latch byte %1cctdddd
+        let reg = (val >> 4) & 0x7
+        cpu.psgLatch = reg
+        cpu.psg[reg] = (cpu.psg[reg] & 0x3F0) | (val & 0xF)
+    } else {
+        // data byte %0.dddddd
+        let reg = cpu.psgLatch
+        if (reg & 1) == 0 {
+            cpu.psg[reg] = (cpu.psg[reg] & 0xF) | ((val & 0x3F) << 4)
+        } else {
+            cpu.psg[reg] = val & 0xF
+        }
+    }
+}
+
+// Opcode/operand fetch. Only opcode fetches bump R; use zfetch8 for operands.
 fn fetchOp(cpu: &mut Z80): i64 {
     let op = rd(cpu, cpu.pc)
     cpu.pc = (cpu.pc + 1) & 0xFFFF
@@ -74,15 +151,15 @@ fn fetchOp(cpu: &mut Z80): i64 {
     return op
 }
 
-fn fetch8(cpu: &mut Z80): i64 {
+fn zfetch8(cpu: &mut Z80): i64 {
     let v = rd(cpu, cpu.pc)
     cpu.pc = (cpu.pc + 1) & 0xFFFF
     return v
 }
 
-fn fetch16(cpu: &mut Z80): i64 {
-    let lo = fetch8(cpu)
-    let hi = fetch8(cpu)
+fn zfetch16(cpu: &mut Z80): i64 {
+    let lo = zfetch8(cpu)
+    let hi = zfetch8(cpu)
     return (hi << 8) | lo
 }
 
@@ -531,7 +608,7 @@ fn execX0(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
             cpu.af_ = t
             return true
         }
-        let d = signExt8(fetch8(cpu))
+        let d = signExt8(zfetch8(cpu))
         if y == 2 {
             // DJNZ
             cpu.b = (cpu.b - 1) & 0xFF
@@ -552,7 +629,7 @@ fn execX0(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
     }
     if z == 1 {
         if q == 0 {
-            setRP(cpu, p, fetch16(cpu)) // LD rp, nn
+            setRP(cpu, p, zfetch16(cpu)) // LD rp, nn
         } else {
             setHL(cpu, add16(cpu, getHL(cpu), getRP(cpu, p))) // ADD HL, rp
         }
@@ -578,7 +655,7 @@ fn execX0(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
         return true
     }
     if z == 6 {
-        setReg(cpu, y, fetch8(cpu)) // LD r, n
+        setReg(cpu, y, zfetch8(cpu)) // LD r, n
         return true
     }
     // z == 7: RLCA/RRCA/RLA/RRA/DAA/CPL/SCF/CCF
@@ -619,11 +696,11 @@ fn execIndirect(cpu: &mut Z80, p: i64, q: i64): bool {
         } else if p == 1 {
             wr(cpu, getDE(cpu), cpu.a) // LD (DE), A
         } else if p == 2 {
-            let nn = fetch16(cpu) // LD (nn), HL
+            let nn = zfetch16(cpu) // LD (nn), HL
             wr(cpu, nn, cpu.l)
             wr(cpu, nn + 1, cpu.h)
         } else {
-            wr(cpu, fetch16(cpu), cpu.a) // LD (nn), A
+            wr(cpu, zfetch16(cpu), cpu.a) // LD (nn), A
         }
     } else {
         if p == 0 {
@@ -631,11 +708,11 @@ fn execIndirect(cpu: &mut Z80, p: i64, q: i64): bool {
         } else if p == 1 {
             cpu.a = rd(cpu, getDE(cpu)) // LD A, (DE)
         } else if p == 2 {
-            let nn = fetch16(cpu) // LD HL, (nn)
+            let nn = zfetch16(cpu) // LD HL, (nn)
             cpu.l = rd(cpu, nn)
             cpu.h = rd(cpu, nn + 1)
         } else {
-            cpu.a = rd(cpu, fetch16(cpu)) // LD A, (nn)
+            cpu.a = rd(cpu, zfetch16(cpu)) // LD A, (nn)
         }
     }
     return true
@@ -675,7 +752,7 @@ fn execX3(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
         return true
     }
     if z == 2 {
-        let nn = fetch16(cpu) // JP cc, nn
+        let nn = zfetch16(cpu) // JP cc, nn
         if testCC(cpu, y) {
             cpu.pc = nn
         }
@@ -683,7 +760,7 @@ fn execX3(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
     }
     if z == 3 {
         if y == 0 {
-            cpu.pc = fetch16(cpu) // JP nn
+            cpu.pc = zfetch16(cpu) // JP nn
             return true
         }
         if y == 4 {
@@ -716,7 +793,7 @@ fn execX3(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
         return false // CB prefix / IN / OUT — deferred
     }
     if z == 4 {
-        let nn = fetch16(cpu) // CALL cc, nn
+        let nn = zfetch16(cpu) // CALL cc, nn
         if testCC(cpu, y) {
             push16(cpu, cpu.pc)
             cpu.pc = nn
@@ -729,7 +806,7 @@ fn execX3(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
             return true
         }
         if p == 0 {
-            let nn = fetch16(cpu) // CALL nn
+            let nn = zfetch16(cpu) // CALL nn
             push16(cpu, cpu.pc)
             cpu.pc = nn
             return true
@@ -737,7 +814,7 @@ fn execX3(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
         return false // DD / ED / FD prefixes — deferred
     }
     if z == 6 {
-        doAlu(cpu, y, fetch8(cpu)) // ALU A, n
+        doAlu(cpu, y, zfetch8(cpu)) // ALU A, n
         return true
     }
     // z == 7: RST
@@ -784,7 +861,7 @@ fn execIndex(cpu: &mut Z80, isIY: bool): bool {
     let op = fetchOp(cpu)
 
     if op == 0xCB {
-        let d = signExt8(fetch8(cpu))
+        let d = signExt8(zfetch8(cpu))
         let addr = (base + d) & 0xFFFF
         return execDDCB(cpu, addr)
     }
@@ -799,17 +876,17 @@ fn execIndex(cpu: &mut Z80, isIY: bool): bool {
         return storeIndex(cpu, isIY, base)
     }
     if op == 0x21 {
-        base = fetch16(cpu) // LD IX, nn
+        base = zfetch16(cpu) // LD IX, nn
         return storeIndex(cpu, isIY, base)
     }
     if op == 0x22 {
-        let nn = fetch16(cpu) // LD (nn), IX
+        let nn = zfetch16(cpu) // LD (nn), IX
         wr(cpu, nn, base & 0xFF)
         wr(cpu, nn + 1, (base >> 8) & 0xFF)
         return true
     }
     if op == 0x2A {
-        let nn = fetch16(cpu) // LD IX, (nn)
+        let nn = zfetch16(cpu) // LD IX, (nn)
         base = rd(cpu, nn) | (rd(cpu, nn + 1) << 8)
         return storeIndex(cpu, isIY, base)
     }
@@ -847,20 +924,20 @@ fn execIndex(cpu: &mut Z80, isIY: bool): bool {
         return true
     }
     if op == 0x34 {
-        let d = signExt8(fetch8(cpu)) // INC (IX+d)
+        let d = signExt8(zfetch8(cpu)) // INC (IX+d)
         let a = (base + d) & 0xFFFF
         wr(cpu, a, incVal(cpu, rd(cpu, a)))
         return true
     }
     if op == 0x35 {
-        let d = signExt8(fetch8(cpu)) // DEC (IX+d)
+        let d = signExt8(zfetch8(cpu)) // DEC (IX+d)
         let a = (base + d) & 0xFFFF
         wr(cpu, a, decVal(cpu, rd(cpu, a)))
         return true
     }
     if op == 0x36 {
-        let d = signExt8(fetch8(cpu)) // LD (IX+d), n
-        let n = fetch8(cpu)
+        let d = signExt8(zfetch8(cpu)) // LD (IX+d), n
+        let n = zfetch8(cpu)
         wr(cpu, (base + d) & 0xFFFF, n)
         return true
     }
@@ -870,7 +947,7 @@ fn execIndex(cpu: &mut Z80, isIY: bool): bool {
     let z = op & 0x7
     // LD r,(IX+d) / LD (IX+d),r  (x==1 with a memory operand)
     if x == 1 && op != 0x76 && (y == 6 || z == 6) {
-        let d = signExt8(fetch8(cpu))
+        let d = signExt8(zfetch8(cpu))
         let a = (base + d) & 0xFFFF
         if z == 6 {
             setReg(cpu, y, rd(cpu, a)) // LD y, (IX+d)  — y is a real register
@@ -881,7 +958,7 @@ fn execIndex(cpu: &mut Z80, isIY: bool): bool {
     }
     // ALU A, (IX+d)
     if x == 2 && z == 6 {
-        let d = signExt8(fetch8(cpu))
+        let d = signExt8(zfetch8(cpu))
         doAlu(cpu, y, rd(cpu, (base + d) & 0xFFFF))
         return true
     }
@@ -901,7 +978,7 @@ fn storeIndex(cpu: &mut Z80, isIY: bool, v: i64): bool {
 // DDCB/FDCB: rotate/shift/bit/res/set on (index+d). Non-BIT ops also copy the
 // result into register z (undocumented) unless z selects (HL)/memory.
 fn execDDCB(cpu: &mut Z80, addr: i64): bool {
-    let op = fetch8(cpu) // final byte does not bump R
+    let op = zfetch8(cpu) // final byte does not bump R
     let x = (op >> 6) & 0x3
     let y = (op >> 3) & 0x7
     let z = op & 0x7
@@ -1064,7 +1141,7 @@ fn execED(cpu: &mut Z80): bool {
             return true
         }
         if z == 3 {
-            let nn = fetch16(cpu)
+            let nn = zfetch16(cpu)
             if q == 0 {
                 let v = getRP(cpu, p) // LD (nn), rp
                 wr(cpu, nn, v & 0xFF)

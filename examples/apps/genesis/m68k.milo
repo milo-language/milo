@@ -12,6 +12,10 @@
 // demoscene-timing tail, deferred exactly like the NES PPU-cycle tail).
 // Ref: Motorola M68000PRM; https://github.com/TomHarte/ProcessorTests (680x0).
 
+from "./z80" import {
+    Z80, newZ80, stepZ80
+}
+
 // --- status register bit masks ---
 let SR_C: i64 = 0x0001
 let SR_V: i64 = 0x0002
@@ -45,7 +49,8 @@ struct Mem {
     vdpLine: i64 // current scanline (drives the vblank status bit)
     // --- I/O ---
     z80Busreq: bool
-    z80Reset: bool
+    z80Reset: bool // true = Z80 held in reset (not running)
+    z80: Z80
     ctrl1: i64
     tmssUnlocked: bool
     // Controller 1: pressed-button bitmask (bit0 Up,1 Down,2 Left,3 Right,4 A,
@@ -65,9 +70,14 @@ fn newMem(): Mem {
         ram: ram, touched: Vec.new(), genesis: false,
         vram: Vec.new(), cram: [0; 64], vsram: [0; 40], vdpRegs: [0; 24],
         vdpAddr: 0, vdpCode: 0, vdpFirst: 0, vdpPending: false, vdpLine: 0,
-        z80Busreq: false, z80Reset: false, ctrl1: 0, tmssUnlocked: false,
+        z80Busreq: false, z80Reset: true, z80: newZ80(), ctrl1: 0, tmssUnlocked: false,
         pad1: 0, padTh: false,
     }
+}
+
+// The Z80 runs when it is out of reset and the 68k is not holding its bus.
+fn z80Running(m: &Mem): bool {
+    return !m.z80Reset && !m.z80Busreq
 }
 
 // 3-button pad read (active low). TH=1 exposes Up/Down/Left/Right/B/C; TH=0
@@ -127,10 +137,11 @@ fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
             return // ROM read-only
         }
         if isDevice(a) {
-            if a >= 0xA14000 && a <= 0xA14003 {
+            if a >= 0xA00000 && a <= 0xA0FFFF {
+                m.z80.mem[a & 0x1FFF] = (val & 0xFF) as u8 // 68k byte write to Z80 RAM
+            } else if a >= 0xA14000 && a <= 0xA14003 {
                 m.tmssUnlocked = true // 'SEGA' TMSS unlock bytes
-            }
-            if a == 0xA10003 {
+            } else if a == 0xA10003 {
                 m.padTh = (val & 0x40) != 0 // TH multiplex select
             }
             return
@@ -201,6 +212,12 @@ fn devRead16(m: &Mem, a: i64): i64 {
 }
 
 fn devRead8(m: &Mem, a: i64): i64 {
+    if a >= 0xA00000 && a <= 0xA0FFFF {
+        // The 68k<->Z80 sound handshake polls a flag it wrote to Z80 RAM, waiting
+        // for the Z80 to clear it. Our cores aren't cycle-synced, so return 0
+        // ("ready") to avoid a boot deadlock; the Z80 still runs its own RAM.
+        return 0
+    }
     if a == 0xA10001 {
         return 0xA0 // version byte: overseas NTSC, no expansion
     }
@@ -218,6 +235,13 @@ fn devRead8(m: &Mem, a: i64): i64 {
 }
 
 fn devWrite16(m: &mut Mem, a: i64, val: i64) {
+    if a >= 0xA00000 && a <= 0xA0FFFF {
+        // 68k word write into Z80 space (bytes go high-then-low). Only RAM is
+        // wired here; the 68k mostly uploads the sound driver as bytes.
+        m.z80.mem[(a & 0x1FFF)] = ((val >> 8) & 0xFF) as u8
+        m.z80.mem[((a + 1) & 0x1FFF)] = (val & 0xFF) as u8
+        return
+    }
     if a == 0xC00000 || a == 0xC00002 {
         vdpDataWrite(m, val)
         return
@@ -227,11 +251,11 @@ fn devWrite16(m: &mut Mem, a: i64, val: i64) {
         return
     }
     if a == 0xA11100 {
-        m.z80Busreq = (val & 0x0100) != 0
+        m.z80Busreq = (val & 0x0100) != 0 // bus request: 68k takes the Z80 bus
         return
     }
     if a == 0xA11200 {
-        m.z80Reset = (val & 0x0100) != 0
+        m.z80Reset = (val & 0x0100) == 0 // bit8 set = release reset (Z80 runs)
         return
     }
     if a == 0xA14000 {
