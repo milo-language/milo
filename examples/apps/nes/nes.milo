@@ -9,6 +9,15 @@
 from "std/args" import {
     args
 }
+from "std/io" import {
+    readLine, writeStdout
+}
+from "std/fs" import {
+    readDir
+}
+from "std/string" import {
+    strEndsWith
+}
 from "./cartridge" import {
     Cartridge, loadCartridge
 }
@@ -83,11 +92,109 @@ fn scancodeToButton(sc: i64): u8 {
     return 0
 }
 
+// Recursively collect every *.nes path under `dir` into `out`.
+fn collectRoms(dir: string, out: &mut Vec<string>): void {
+    let entries = readDir(dir)
+    var i: i64 = 0
+    while i < entries.len {
+        let name = entries[i].name
+        let full = dir + "/" + name
+        if entries[i].isDir {
+            collectRoms(full, out)
+        } else {
+            if strEndsWith(full, ".nes") || strEndsWith(full, ".NES") {
+                out.push(full)
+            }
+        }
+        i = i + 1
+    }
+}
+
+fn intToStr(n: i64): string {
+    if n == 0 {
+        return "0"
+    }
+    var digits: Vec<u8> = []
+    var v = n
+    while v > 0 {
+        digits.push((48 + (v % 10)) as u8)
+        v = v / 10
+    }
+    var s: string = ""
+    var i = digits.len - 1
+    while i >= 0 {
+        s.push(digits[i])
+        i = i - 1
+    }
+    return s
+}
+
+// Read leading decimal digits from a line (tolerates a trailing newline).
+fn parseIndex(s: &string): i64 {
+    var n: i64 = 0
+    var seen = false
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i]as i64
+        if c >= 48 && c <= 57 {
+            n = n * 10 + (c - 48)
+            seen = true
+        } else {
+            break
+        }
+        i = i + 1
+    }
+    if seen {
+        return n
+    }
+    return -1
+}
+
+// Terminal ROM picker: list every ROM under roms/, prompt for a number.
+// Returns the chosen path, or "" if none found / invalid selection.
+fn pickRom(): string {
+    var roms: Vec<string> = []
+    collectRoms("roms", roms)
+    if roms.len == 0 {
+        print("no .nes ROMs found under ./roms")
+        return ""
+    }
+    print("Pick a ROM:")
+    var i: i64 = 0
+    while i < roms.len {
+        writeStdout("  [")
+        writeStdout(intToStr(i))
+        writeStdout("] ")
+        writeStdout(roms[i])
+        writeStdout("\n")
+        i = i + 1
+    }
+    writeStdout("Enter number: ")
+    match readLine() {
+        Option.Some(line) => {
+            let idx = parseIndex(line)
+            if idx >= 0 && idx < roms.len {
+                return roms[idx]
+            }
+            print("invalid selection")
+            return ""
+        }
+        Option.None => {
+            return ""
+        }
+    }
+}
+
 fn main(): i32 {
     let argv = args()
-    var romPath = "roms/nes-test-roms/full_palette/full_palette.nes"
+    var romPath = ""
     if argv.len > 1 {
         romPath = argv[1]
+    } else {
+        romPath = pickRom()
+        if romPath == "" {
+            return 1
+        }
     }
 
     // match is statement-only in Milo, so the whole run lives in the Ok arm.
