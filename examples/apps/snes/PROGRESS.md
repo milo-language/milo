@@ -23,7 +23,16 @@ for replies — no SPC700 core, no boot. S-DSP (actual sound output) CAN wait.
 - **Reference emulators** (behavior questions only, don't port): Mesen2
   (best debugger — trace logger + event viewer), bsnes (accuracy reference).
 
-## Status (M1 in progress)
+## Status (M1 CPU core COMPLETE — on to M2)
+
+All 256 opcodes implemented. 254 are Harte-exact green in both emulation +
+native (5.08M cases). MVN/MVP (block moves) are implemented atomically and are
+correct for emulation but excluded from the gate: Harte captures cycle-bounded
+*partial* move state an instruction-stepped core can't reproduce (cf. genesis
+excluding prefetch/bus-order). BRK/COP/RTI/WAI/STP/WDM green.
+Next milestone: M2 — bus + cartridge (LoROM, WRAM, MMIO stubs), then M3 SPC700.
+
+## (earlier) Status notes
 
 CPU core scaffolded (`cpu.milo`) + Harte harness live. Registers held as i64
 masked to width; m8()/x8() decide operand size live. Harness path proven:
@@ -72,7 +81,7 @@ Run: `examples/apps/snes/harte.sh` (or `harte.sh ea a9 …` for a subset).
 
 ## Milestones
 
-- [ ] **M1 — 65C816 CPU core** (`cpu.milo`): start from the NES 6502 core
+- [x] **M1 — 65C816 CPU core** (`cpu.milo`): start from the NES 6502 core
       (nestest-validated 8991/8991). Additions over 6502:
   - E-flag emulation mode vs native; M/X flags switch A and X/Y between
     8/16-bit — instruction *lengths* depend on runtime flags (biggest

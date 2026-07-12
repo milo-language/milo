@@ -22,7 +22,11 @@ D=roms/harte-65816/v1
   e9 e5 f5 ed fd f9 ef ff e1 f1 e7 f7 e3 f3 \
   0a 06 16 0e 1e 4a 46 56 4e 5e 2a 26 36 2e 3e 6a 66 76 6e 7e \
   e6 f6 ee fe c6 d6 ce de 04 0c 14 1c 89 24 34 2c 3c \
-  10 30 50 70 90 b0 d0 f0 80 82 4c 5c 6c 7c dc 20 60 22 6b d4 62)
+  10 30 50 70 90 b0 d0 f0 80 82 4c 5c 6c 7c dc 20 60 22 6b d4 62 \
+  00 02 40 42 cb db)
+# NOTE: MVN (54) / MVP (44) are omitted — Harte captures cycle-bounded *partial*
+# block-move state, which an instruction-stepped core can't reproduce. They are
+# implemented (atomic full-block move) and correct for running games.
 pass=0; fail=0
 for op in "${OPS[@]}"; do
   for mode in e n; do

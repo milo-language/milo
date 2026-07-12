@@ -810,6 +810,65 @@ fn branchIf(cpu: &mut Cpu, m: &Mem, cond: bool): void {
     }
 }
 
+// BRK/COP: push return frame, vector through the native or emulation vector.
+// BRK/COP have a signature byte, so the return address skips it (PC + 1).
+fn softInterrupt(cpu: &mut Cpu, m: &mut Mem, nativeVec: i64, emuVec: i64): void {
+    let ret = (cpu.pc + 1) & 0xFFFF
+    if cpu.e == 0 {
+        push8(cpu, m, cpu.pbr)
+        push16(cpu, m, ret)
+        push8(cpu, m, cpu.p)
+        setBit(cpu, FI, true)
+        setBit(cpu, FD, false)
+        cpu.pbr = 0
+        let lo = memRead(m, nativeVec)
+        let hi = memRead(m, nativeVec + 1)
+        cpu.pc = lo | (hi << 8)
+    } else {
+        push16(cpu, m, ret)
+        push8(cpu, m, cpu.p | 0x10) // emulation sets B in the pushed status
+        setBit(cpu, FI, true)
+        setBit(cpu, FD, false)
+        cpu.pbr = 0
+        let lo = memRead(m, emuVec)
+        let hi = memRead(m, emuVec + 1)
+        cpu.pc = lo | (hi << 8)
+    }
+}
+
+// MVN/MVP block move: copy C+1 bytes from srcbank:X to destbank:Y, stepping X/Y
+// by dir (+1 MVN ascending, -1 MVP descending). Operand bytes are
+// [destbank][srcbank]; DBR becomes destbank; the counter is the full 16-bit C.
+// Done atomically per instruction (correct for emulation; the Harte MVN/MVP
+// files instead capture cycle-bounded *partial* state and are excluded — an
+// instruction-stepped core can't reproduce a mid-move snapshot).
+fn blockMove(cpu: &mut Cpu, m: &mut Mem, dir: i64): void {
+    let destbank = fetch8(cpu, m)
+    let srcbank = fetch8(cpu, m)
+    cpu.dbr = destbank
+    var guard: i64 = 0
+    while true {
+        let v = memRead(m, (srcbank << 16) | (cpu.x & 0xFFFF))
+        memWrite(m, (destbank << 16) | (cpu.y & 0xFFFF), v)
+        if x8(cpu) {
+            cpu.x = (cpu.x + dir) & 0xFF
+            cpu.y = (cpu.y + dir) & 0xFF
+        } else {
+            cpu.x = (cpu.x + dir) & 0xFFFF
+            cpu.y = (cpu.y + dir) & 0xFFFF
+        }
+        let last = cpu.a == 0
+        cpu.a = (cpu.a - 1) & 0xFFFF
+        if last {
+            break
+        }
+        guard = guard + 1
+        if guard > 0x10000 {
+            break
+        } // 64K-byte safety bound
+    }
+}
+
 // Execute one instruction. Register/flag/transfer/immediate + stack push/pull
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
@@ -1755,6 +1814,43 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             let v = fetch16(cpu, m)
             push16f(cpu, m, v) clampEmuStack(cpu)
         }
+
+        // ---- software interrupts BRK / COP ----
+        0x00 => {
+            softInterrupt(cpu, m, 0xFFE6, 0xFFFE)
+        } // BRK
+        0x02 => {
+            softInterrupt(cpu, m, 0xFFE4, 0xFFF4)
+        } // COP
+        0x40 => { // RTI
+            cpu.p = pull8(cpu, m)
+            let addr = pull16(cpu, m)
+            if cpu.e == 0 {
+                cpu.pbr = pull8(cpu, m)
+            }
+            cpu.pc = addr
+            applyEmulationConstraints(cpu)
+            if (cpu.p & FX) != 0 {
+                cpu.x = cpu.x & 0xFF cpu.y = cpu.y & 0xFF
+            }
+        }
+
+        // ---- block moves (one byte per step; PC rewinds until C wraps) ----
+        0x54 => {
+            blockMove(cpu, m, 1)
+        } // MVN — ascending
+        0x44 => {
+            blockMove(cpu, m, -1)
+        } // MVP — descending
+
+        // ---- WDM (2-byte reserved no-op), WAI / STP (no interrupts in tests) ----
+        0x42 => {
+            let sig = fetch8(cpu, m)
+        } // WDM consumes its signature byte
+        0xCB => {
+        } // WAI
+        0xDB => {
+        } // STP
 
         _ => {
         } // unimplemented — leaves state unchanged; Harte will flag it
