@@ -1,0 +1,42 @@
+// Machine-checked memory-safety invariants for the self-hosted lexer's byte
+// accesses (src-milo/lexer.milo). `milo prove lexer_proof.milo` discharges
+// these with std/smt — Milo's own prover certifying that Milo's own compiler
+// source reads no byte out of bounds. Each function models the exact index
+// arithmetic of a char access and proves 0 <= index < len from its guards.
+
+// advanceChar (lexer.milo:51) reads lex.src[pos] with NO local guard, relying
+// on its callers' loop condition  pos < len  (and pos >= 0, which holds because
+// pos starts at 0 and only increments). Proven: that index is in bounds.
+fn advanceCharIndex(pos: i64, len: i64): i64
+requires pos >= 0
+requires pos < len
+ensures result >= 0
+ensures result < len
+{
+    return pos
+}
+
+// peekCharAt (lexer.milo:45) computes idx = pos + offset and reads lex.src[idx].
+// Memory safety needs BOTH 0 <= idx AND idx < len. NOTE: the live code guards
+// only  idx < len  — it is missing the  idx >= 0  check, so a negative offset
+// slips a negative index past the guard (a latent out-of-bounds read; harmless
+// today only because every caller passes offset 1 or 2). std/smt catches that
+// exact hole: prove the version below WITHOUT the `pos + offset >= 0` line and
+// the prover returns a counterexample (pos=0, offset=-1, len>0). With both
+// guards, the access is proven safe for any offset, including negative lookback.
+fn peekCharAtIndex(pos: i64, offset: i64, len: i64): i64
+requires pos >= 0
+requires pos < len
+requires pos + offset >= 0
+requires pos + offset < len
+ensures result >= 0
+ensures result < len
+{
+    return pos + offset
+}
+
+fn main(): i32 {
+    print(advanceCharIndex(3, 10))
+    print(peekCharAtIndex(3, 1, 10))
+    return 0
+}

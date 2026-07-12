@@ -1044,7 +1044,7 @@ async function main() {
     let program = new Parser(tokens, src).parse();
     program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
-    const result = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: resolve(source!) });
+    const result = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
     console.log(formatVerifyReport(result));
     return;
   }
@@ -1097,7 +1097,7 @@ async function main() {
     let program = new Parser(tokens, src).parse();
     program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
-    const vcs = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: resolve(source!) });
+    const vcs = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: source! });
     // Default engine is std/smt (the prover written in Milo itself); --solver=z3
     // opts into z3 for the theories std/smt doesn't yet model.
     const useZ3 = rest.includes("--solver=z3") || rest.includes("--z3");
