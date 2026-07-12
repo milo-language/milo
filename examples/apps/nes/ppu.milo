@@ -41,6 +41,11 @@ struct Ppu {
     spr0Line: i64 // scanline of the hit, or -1 if disarmed this frame
     spr0Dot: i64 // dot of the hit
 
+    // Frame scroll, snapshotted from the loopy `t` register + fineX at frame
+    // start. The whole frame renders at vblank, so we can't read live v/t.
+    scrollX: i64 // 0-511 pixel offset into the 2-wide nametable map
+    scrollY: i64 // 0-479 pixel offset into the 2-tall nametable map
+
     fb: [u32; 61440] // 256x240 ARGB/ABGR framebuffer (R,G,B,A byte order)
 }
 
@@ -60,6 +65,7 @@ fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
         v: 0, t: 0, fineX: 0, w: 0, readBuffer: 0,
         scanline: 0, dot: 0, frame: 0, nmiPending: false,
         spr0Line: -1, spr0Dot: 0,
+        scrollX: 0, scrollY: 0,
         fb: [0; 61440],
     }
 }
@@ -216,26 +222,57 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
     }
 }
 
-// Is the background pixel at screen (x,y) opaque? (No scroll — see renderBackground.)
-fn bgOpaqueAt(ppu: &Ppu, x: i64, y: i64): bool {
-    if (ppu.mask & 0x08) == 0 {
-        return false
-    }
+// Snapshot the frame's scroll from the loopy t register + fineX.
+fn snapshotScroll(ppu: &mut Ppu): void {
+    let t = ppu.t as i64
+    let coarseX = t & 0x1F
+    let coarseY = (t >> 5) & 0x1F
+    let ntX = (t >> 10) & 1
+    let ntY = (t >> 11) & 1
+    let fineY = (t >> 12) & 7
+    ppu.scrollX = ntX * 256 + coarseX * 8 + (ppu.fineX as i64)
+    ppu.scrollY = ntY * 240 + coarseY * 8 + fineY
+}
+
+// 2-bit background pixel at screen (x,y), honoring the frame's scroll. The two
+// nametables tile a 512x480 logical map; addresses wrap through mirrorNT.
+fn bgPixelAt(ppu: &Ppu, x: i64, y: i64): i64 {
     let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
         0x1000 as i64
     } else {
         0 as i64
     }
-    let baseNT: i64 = 0x2000 + (((ppu.ctrl as i64) & 0x03) * 0x400)
-    let col = x / 8
-    let row = y / 8
-    let fx = x & 7
-    let fy = y & 7
-    let tile = ppuMemRead(ppu, (baseNT + row * 32 + col) as u16) as i64
+    let wx = (ppu.scrollX + x) & 0x1FF // wrap 512
+    var wy = ppu.scrollY + y
+    while wy >= 480 {
+        wy = wy - 480
+    }
+    let ntX = wx / 256
+    let ntY = wy / 240
+    let ntBase = 0x2000 + (ntY * 2 + ntX) * 0x400
+    let lx = wx & 0xFF
+    let ly = wy - ntY * 240
+    let col = lx / 8
+    let row = ly / 8
+    let tile = ppuMemRead(ppu, (ntBase + row * 32 + col) as u16) as i64
+    let atAddr = ntBase + 0x3C0 + (row / 4) * 8 + (col / 4)
+    let at = ppuMemRead(ppu, atAddr as u16) as i64
+    let shift = ((row & 2) * 2) + (col & 2)
+    let palGroup = (at >> shift) & 0x03
+    let fy = ly & 7
     let lo = ppuMemRead(ppu, (bgTable + tile * 16 + fy) as u16) as i64
     let hi = ppuMemRead(ppu, (bgTable + tile * 16 + fy + 8) as u16) as i64
-    let bit = 7 - fx
-    return (((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)) != 0
+    let bit = 7 - (lx & 7)
+    let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
+    // pack palette group in bits 2-3 so callers can pick the palette entry
+    return px | (palGroup << 2)
+}
+
+fn bgOpaqueAt(ppu: &Ppu, x: i64, y: i64): bool {
+    if (ppu.mask & 0x08) == 0 {
+        return false
+    }
+    return (bgPixelAt(ppu, x, y) & 0x03) != 0
 }
 
 // Arm the sprite-0 hit for this frame: find the topmost/leftmost pixel where an
@@ -325,6 +362,7 @@ fn ppuStep(ppu: &mut Ppu): void {
     }
     if ppu.scanline == 261 && ppu.dot == 1 {
         ppu.status = ppu.status & 0x1F // clear vblank, sprite0, overflow
+        snapshotScroll(ppu) // capture t/fineX before the frame renders
         computeSprite0Hit(ppu) // arm for the upcoming frame (OAM set during vblank)
     }
     // Raise sprite-0 hit when rendering reaches the armed pixel.
@@ -356,49 +394,27 @@ ensures(result & 0xFF000000) == 0xFF000000 // every emitted pixel is fully opaqu
     return (r | (g << 8) | (b << 16) | 0xFF000000) as u32
 }
 
-// Full-frame background render from the base nametable (no fine scroll yet).
+// Full-frame scrolling background render (coarse + fine X/Y from the snapshot).
 fn renderBackground(ppu: &mut Ppu): void {
     if (ppu.mask & 0x08) == 0 {
         return
     }
-    let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
-        0x1000 as i64
-    } else {
-        0 as i64
-    }
-    let baseNT: i64 = 0x2000 + (((ppu.ctrl as i64) & 0x03) * 0x400)
     let universal = ppuMemRead(ppu, 0x3F00) as i64
-    var row: i64 = 0
-    while row < 30 {
-        var col: i64 = 0
-        while col < 32 {
-            let tile = ppuMemRead(ppu, (baseNT + row * 32 + col) as u16) as i64
-            let atAddr = baseNT + 0x3C0 + (row / 4) * 8 + (col / 4)
-            let at = ppuMemRead(ppu, atAddr as u16) as i64
-            let shift = ((row & 2) * 2) + (col & 2)
-            let palGroup = (at >> shift) & 0x03
-            var fy: i64 = 0
-            while fy < 8 {
-                let lo = ppuMemRead(ppu, (bgTable + tile * 16 + fy) as u16) as i64
-                let hi = ppuMemRead(ppu, (bgTable + tile * 16 + fy + 8) as u16) as i64
-                var fx: i64 = 0
-                while fx < 8 {
-                    let bit = 7 - fx
-                    let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
-                    var colorIdx = universal
-                    if px != 0 {
-                        colorIdx = ppuMemRead(ppu, (0x3F00 + palGroup * 4 + px) as u16) as i64
-                    }
-                    let x = col * 8 + fx
-                    let y = row * 8 + fy
-                    ppu.fb[y * 256 + x] = nesColor(colorIdx)
-                    fx = fx + 1
-                }
-                fy = fy + 1
+    var y: i64 = 0
+    while y < 240 {
+        var x: i64 = 0
+        while x < 256 {
+            let packed = bgPixelAt(ppu, x, y)
+            let px = packed & 0x03
+            var colorIdx = universal
+            if px != 0 {
+                let palGroup = (packed >> 2) & 0x03
+                colorIdx = ppuMemRead(ppu, (0x3F00 + palGroup * 4 + px) as u16) as i64
             }
-            col = col + 1
+            ppu.fb[y * 256 + x] = nesColor(colorIdx)
+            x = x + 1
         }
-        row = row + 1
+        y = y + 1
     }
 }
 
