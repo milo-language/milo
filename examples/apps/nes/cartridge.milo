@@ -1,0 +1,94 @@
+// iNES (.nes) ROM container — parses the 16-byte header plus PRG/CHR banks.
+// Format ref: https://www.nesdev.org/wiki/INES
+//
+// Header layout:
+//   0-3  "NES\x1a" magic
+//   4    PRG-ROM size in 16 KiB units
+//   5    CHR-ROM size in 8 KiB units (0 => board uses CHR-RAM)
+//   6    flags6: mapper low nibble, mirroring, battery, trainer
+//   7    flags7: mapper high nibble
+//   8-15 (iNES 1.0 fields we don't need yet)
+
+from "std/io" import {
+    readFile
+}
+
+struct Cartridge {
+    prg: Vec<u8> // program ROM (CPU $8000-$FFFF space)
+    chr: Vec<u8> // pattern-table ROM (PPU $0000-$1FFF)
+    mapper: u8
+    mirrorVertical: bool // false => horizontal mirroring
+    hasBattery: bool
+    prg16kBanks: u8
+    chr8kBanks: u8
+}
+
+let PRG_BANK: i64 = 16384 // 16 KiB
+let CHR_BANK: i64 = 8192 // 8 KiB
+let HEADER: i64 = 16
+let TRAINER: i64 = 512
+
+// Copy `len` bytes out of `src` starting at `off` into a fresh Vec<u8>.
+fn sliceBytes(src: &string, off: i64, len: i64): Vec<u8> {
+    var out: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < len {
+        out.push(src[off + i])
+        i = i + 1
+    }
+    return out
+}
+
+fn loadCartridge(path: &string): Result<Cartridge, string> {
+    var raw = ""
+    match readFile(path) {
+        Result.Ok(s) => {
+            raw = s
+        }
+        Result.Err(e) => {
+            return Result.Err("cannot read ROM file")
+        }
+    }
+
+    if raw.len < HEADER {
+        return Result.Err("file too small for iNES header")
+    }
+    // Magic "NES\x1a" = 0x4E 0x45 0x53 0x1A.
+    if raw[0] != 0x4E || raw[1] != 0x45 || raw[2] != 0x53 || raw[3] != 0x1A {
+        return Result.Err("bad iNES magic")
+    }
+
+    let prg16k: u8 = raw[4]
+    let chr8k: u8 = raw[5]
+    let flags6: u8 = raw[6]
+    let flags7: u8 = raw[7]
+
+    let mapper: u8 = (flags7 & 0xF0) | ((flags6 >> 4) & 0x0F)
+    let mirrorVertical: bool = (flags6 & 0x01) != 0
+    let hasBattery: bool = (flags6 & 0x02) != 0
+    let hasTrainer: bool = (flags6 & 0x04) != 0
+
+    // PRG starts after the header (and the optional 512-byte trainer).
+    var prgOff: i64 = HEADER
+    if hasTrainer {
+        prgOff = prgOff + TRAINER
+    }
+    let prgLen: i64 = (prg16k as i64) * PRG_BANK
+    let chrOff: i64 = prgOff + prgLen
+    let chrLen: i64 = (chr8k as i64) * CHR_BANK
+
+    if raw.len < chrOff + chrLen {
+        return Result.Err("file truncated: PRG/CHR banks exceed file size")
+    }
+
+    return Result.Ok(Cartridge {
+        prg: sliceBytes(raw, prgOff, prgLen),
+        chr: sliceBytes(raw, chrOff, chrLen),
+        mapper: mapper,
+        mirrorVertical: mirrorVertical,
+        hasBattery: hasBattery,
+        prg16kBanks: prg16k,
+        chr8kBanks: chr8k,
+    }
+    )
+}
