@@ -1,0 +1,338 @@
+// Zilog Z80 CPU core (Genesis sound CPU). Functional, validated against the
+// SingleStepTests z80 vectors. 8-bit data, 16-bit address (64 KB). Flags F:
+// bit7 S, 6 Z, 5 Y, 4 H, 3 X, 2 P/V, 1 N, 0 C. The undocumented X/Y bits copy
+// bits 5/3 of the result. R (refresh) increments its low 7 bits on each fetch.
+//
+// This is the first slice: register file, memory, the 8-bit LD matrix, the ALU
+// group (ADD/ADC/SUB/SBC/AND/XOR/OR/CP), INC/DEC r, immediate loads, NOP/HALT.
+// Prefixes (CB/ED/DD/FD), 16-bit ops, block ops, I/O, and interrupts follow.
+
+// --- flag bit masks ---
+let FC: i64 = 0x01
+let FN: i64 = 0x02
+let FPV: i64 = 0x04
+let FX: i64 = 0x08
+let FH: i64 = 0x10
+let FY: i64 = 0x20
+let FZ: i64 = 0x40
+let FS: i64 = 0x80
+
+struct Z80 {
+    a: i64
+    b: i64
+    c: i64
+    d: i64
+    e: i64
+    h: i64
+    l: i64
+    f: i64
+    i: i64
+    r: i64
+    pc: i64
+    sp: i64
+    ix: i64
+    iy: i64
+    af_: i64 // shadow AF'
+    bc_: i64
+    de_: i64
+    hl_: i64
+    iff1: bool
+    iff2: bool
+    im: i64
+    wz: i64 // internal MEMPTR
+    halted: bool
+    mem: Vec<u8>
+}
+
+fn newZ80(): Z80 {
+    var mem: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < 0x10000 {
+        mem.push(0)
+        i = i + 1
+    }
+    return Z80 {
+        a: 0, b: 0, c: 0, d: 0, e: 0, h: 0, l: 0, f: 0, i: 0, r: 0,
+        pc: 0, sp: 0, ix: 0, iy: 0, af_: 0, bc_: 0, de_: 0, hl_: 0,
+        iff1: false, iff2: false, im: 0, wz: 0, halted: false, mem: mem,
+    }
+}
+
+fn rd(cpu: &Z80, addr: i64): i64 {
+    return cpu.mem[addr & 0xFFFF]as i64
+}
+
+fn wr(cpu: &mut Z80, addr: i64, val: i64) {
+    cpu.mem[addr & 0xFFFF] = (val & 0xFF) as u8
+}
+
+// Opcode/operand fetch. Only opcode fetches bump R; use fetch8 for operands.
+fn fetchOp(cpu: &mut Z80): i64 {
+    let op = rd(cpu, cpu.pc)
+    cpu.pc = (cpu.pc + 1) & 0xFFFF
+    cpu.r = (cpu.r & 0x80) | ((cpu.r + 1) & 0x7F)
+    return op
+}
+
+fn fetch8(cpu: &mut Z80): i64 {
+    let v = rd(cpu, cpu.pc)
+    cpu.pc = (cpu.pc + 1) & 0xFFFF
+    return v
+}
+
+fn fetch16(cpu: &mut Z80): i64 {
+    let lo = fetch8(cpu)
+    let hi = fetch8(cpu)
+    return (hi << 8) | lo
+}
+
+// --- 16-bit register pair accessors ---
+fn getHL(cpu: &Z80): i64 {
+    return (cpu.h << 8) | cpu.l
+}
+
+fn setHL(cpu: &mut Z80, v: i64) {
+    cpu.h = (v >> 8) & 0xFF
+    cpu.l = v & 0xFF
+}
+
+fn getBC(cpu: &Z80): i64 {
+    return (cpu.b << 8) | cpu.c
+}
+
+fn getDE(cpu: &Z80): i64 {
+    return (cpu.d << 8) | cpu.e
+}
+
+fn setFlag(cpu: &mut Z80, bit: i64, on: bool) {
+    if on {
+        cpu.f = cpu.f | bit
+    } else {
+        cpu.f = cpu.f & ~bit
+    }
+}
+
+fn parityEven(v: i64): bool {
+    var x = v & 0xFF
+    var count: i64 = 0
+    var i: i64 = 0
+    while i < 8 {
+        if (x & 1) != 0 {
+            count = count + 1
+        }
+        x = x >> 1
+        i = i + 1
+    }
+    return (count & 1) == 0
+}
+
+// Set S,Z,Y,X from an 8-bit result (caller sets H,P/V,N,C).
+fn setSZYX(cpu: &mut Z80, r: i64) {
+    let v = r & 0xFF
+    setFlag(cpu, FS, (v & 0x80) != 0)
+    setFlag(cpu, FZ, v == 0)
+    setFlag(cpu, FY, (v & 0x20) != 0)
+    setFlag(cpu, FX, (v & 0x08) != 0)
+}
+
+// --- register-index access (Z80 encoding 0..7 = B,C,D,E,H,L,(HL),A) ---
+fn getReg(cpu: &mut Z80, idx: i64): i64 {
+    if idx == 0 {
+        return cpu.b
+    }
+    if idx == 1 {
+        return cpu.c
+    }
+    if idx == 2 {
+        return cpu.d
+    }
+    if idx == 3 {
+        return cpu.e
+    }
+    if idx == 4 {
+        return cpu.h
+    }
+    if idx == 5 {
+        return cpu.l
+    }
+    if idx == 6 {
+        return rd(cpu, getHL(cpu))
+    }
+    return cpu.a
+}
+
+fn setReg(cpu: &mut Z80, idx: i64, val: i64) {
+    let v = val & 0xFF
+    if idx == 0 {
+        cpu.b = v
+    } else if idx == 1 {
+        cpu.c = v
+    } else if idx == 2 {
+        cpu.d = v
+    } else if idx == 3 {
+        cpu.e = v
+    } else if idx == 4 {
+        cpu.h = v
+    } else if idx == 5 {
+        cpu.l = v
+    } else if idx == 6 {
+        wr(cpu, getHL(cpu), v)
+    } else {
+        cpu.a = v
+    }
+}
+
+// --- ALU on the accumulator ---
+fn aluAdd(cpu: &mut Z80, val: i64, carry: i64) {
+    let a = cpu.a
+    let r = a + val + carry
+    let res = r & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, ((a & 0xF) + (val & 0xF) + carry) > 0xF)
+    setFlag(cpu, FPV, (((a ^ ~val) & (a ^ res)) & 0x80) != 0)
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FC, r > 0xFF)
+    cpu.a = res
+}
+
+fn aluSub(cpu: &mut Z80, val: i64, carry: i64, store: bool) {
+    let a = cpu.a
+    let r = a - val - carry
+    let res = r & 0xFF
+    // CP uses operand bits 3/5 for X/Y; SUB/SBC use the result.
+    setFlag(cpu, FS, (res & 0x80) != 0)
+    setFlag(cpu, FZ, res == 0)
+    setFlag(cpu, FH, ((a & 0xF) - (val & 0xF) - carry) < 0)
+    setFlag(cpu, FPV, (((a ^ val) & (a ^ res)) & 0x80) != 0)
+    setFlag(cpu, FN, true)
+    setFlag(cpu, FC, r < 0)
+    if store {
+        setFlag(cpu, FY, (res & 0x20) != 0)
+        setFlag(cpu, FX, (res & 0x08) != 0)
+        cpu.a = res
+    } else {
+        // CP: undocumented flags come from the operand
+        setFlag(cpu, FY, (val & 0x20) != 0)
+        setFlag(cpu, FX, (val & 0x08) != 0)
+    }
+}
+
+fn aluAnd(cpu: &mut Z80, val: i64) {
+    let res = cpu.a & val & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, true)
+    setFlag(cpu, FPV, parityEven(res))
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FC, false)
+    cpu.a = res
+}
+
+fn aluXor(cpu: &mut Z80, val: i64) {
+    let res = (cpu.a ^ val) & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, false)
+    setFlag(cpu, FPV, parityEven(res))
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FC, false)
+    cpu.a = res
+}
+
+fn aluOr(cpu: &mut Z80, val: i64) {
+    let res = (cpu.a | val) & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, false)
+    setFlag(cpu, FPV, parityEven(res))
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FC, false)
+    cpu.a = res
+}
+
+fn doAlu(cpu: &mut Z80, op: i64, val: i64) {
+    let cf = cpu.f & FC
+    if op == 0 {
+        aluAdd(cpu, val, 0)
+    } else if op == 1 {
+        aluAdd(cpu, val, cf)
+    } else if op == 2 {
+        aluSub(cpu, val, 0, true)
+    } else if op == 3 {
+        aluSub(cpu, val, cf, true)
+    } else if op == 4 {
+        aluAnd(cpu, val)
+    } else if op == 5 {
+        aluXor(cpu, val)
+    } else if op == 6 {
+        aluOr(cpu, val)
+    } else {
+        aluSub(cpu, val, 0, false) // CP
+    }
+}
+
+fn incReg(cpu: &mut Z80, idx: i64) {
+    let v = getReg(cpu, idx)
+    let res = (v + 1) & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, (v & 0xF) == 0xF)
+    setFlag(cpu, FPV, v == 0x7F)
+    setFlag(cpu, FN, false)
+    setReg(cpu, idx, res)
+}
+
+fn decReg(cpu: &mut Z80, idx: i64) {
+    let v = getReg(cpu, idx)
+    let res = (v - 1) & 0xFF
+    setSZYX(cpu, res)
+    setFlag(cpu, FH, (v & 0xF) == 0)
+    setFlag(cpu, FPV, v == 0x80)
+    setFlag(cpu, FN, true)
+    setReg(cpu, idx, res)
+}
+
+// Execute one instruction. Returns false on an opcode not yet implemented.
+fn stepZ80(cpu: &mut Z80): bool {
+    let op = fetchOp(cpu)
+    let x = (op >> 6) & 0x3
+    let y = (op >> 3) & 0x7
+    let z = op & 0x7
+
+    if op == 0x00 {
+        return true // NOP
+    }
+    if op == 0x76 {
+        cpu.halted = true // HALT
+        return true
+    }
+    if x == 1 {
+        // LD r, r'  (0x40-0x7F, excluding 0x76 handled above)
+        setReg(cpu, y, getReg(cpu, z))
+        return true
+    }
+    if x == 2 {
+        // ALU A, r  (0x80-0xBF)
+        doAlu(cpu, y, getReg(cpu, z))
+        return true
+    }
+    if x == 0 {
+        if z == 6 {
+            // LD r, n
+            setReg(cpu, y, fetch8(cpu))
+            return true
+        }
+        if z == 4 {
+            incReg(cpu, y)
+            return true
+        }
+        if z == 5 {
+            decReg(cpu, y)
+            return true
+        }
+    }
+    if x == 3 {
+        if z == 6 {
+            // ALU A, n
+            doAlu(cpu, y, fetch8(cpu))
+            return true
+        }
+    }
+    return false
+}
