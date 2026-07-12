@@ -10,6 +10,9 @@
 from "./spc" import {
     Spc, SpcMem, spcMemNew, spcMemReal, spcReset, spcStep, apuReadPort, apuWritePort
 }
+from "./ppu" import {
+    Ppu, newPpu, ppuRegWrite, ppuRegReadPure, ppuCgram, ppuVram
+}
 
 // --- P status-register bit masks ---
 let FC: i64 = 0x01 // carry
@@ -61,6 +64,7 @@ struct Mem {
     // Audio subsystem (SPC700 + its RAM). $2140-$2143 bridge to its port latches.
     apuSpc: Spc
     apuMem: SpcMem
+    ppu: Ppu // video memory + $2100-$213F registers
 }
 
 fn newApuSpc(): Spc {
@@ -74,7 +78,7 @@ fn memNew(): Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         wram: Vec.new(), rom: Vec.new(), romMask: 0, mapMode: 0, mmio: Vec.new(),
         nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
-        apuSpc: newApuSpc(), apuMem: spcMemNew()
+        apuSpc: newApuSpc(), apuMem: spcMemNew(), ppu: newPpu()
     }
 }
 
@@ -100,7 +104,7 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
         wram: vecZeros(0x20000), rom: rom, romMask: mask, mapMode: mapMode,
         mmio: vecZeros(0x4000),
         nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
-        apuSpc: newApuSpc(), apuMem: spcMemReal()
+        apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu()
     }
     // Boot the SPC into its IPL. The reset vector ($FFFE) is fixed at $FFC0;
     // set it directly to avoid a split &mut/& borrow of two `mem` fields.
@@ -122,11 +126,96 @@ fn runApu(m: &mut Mem, n: i64): void {
     }
 }
 
+// Peek loaded video memory (tests / future renderer).
+fn busReadCgram(m: &Mem, a: i64): i64 {
+    return ppuCgram(m.ppu, a)
+}
+
+fn busReadVram(m: &Mem, a: i64): i64 {
+    return ppuVram(m.ppu, a)
+}
+
+fn scratch(m: &Mem, addr: i64): i64 {
+    return m.mmio[addr - 0x2000]as i64
+}
+
+fn setScratch(m: &mut Mem, addr: i64, v: i64): void {
+    m.mmio[addr - 0x2000] = (v & 0xFF) as u8
+}
+
+// B-bus register offset within a DMA transfer (fullsnes transfer patterns).
+fn dmaPatternOffset(pattern: i64, count: i64): i64 {
+    if pattern == 0 {
+        return 0
+    }
+    if pattern == 1 {
+        return count & 1
+    }
+    if pattern == 2 {
+        return 0
+    }
+    if pattern == 3 {
+        return (count & 3) >> 1
+    }
+    if pattern == 4 {
+        return count & 3
+    }
+    return count & 1
+}
+
+// General-purpose DMA: for each enabled channel, transfer DAS bytes between the
+// A-bus (CPU memory bank:addr) and a B-bus PPU register ($2100|BBAD).
+fn runDMA(m: &mut Mem, channels: i64): void {
+    var ch: i64 = 0
+    while ch < 8 {
+        if ((channels >> ch) & 1) != 0 {
+            let base = 0x4300 + ch * 0x10
+            let dmap = scratch(m, base + 0)
+            let bbad = scratch(m, base + 1)
+            var aaddr = scratch(m, base + 2) | (scratch(m, base + 3) << 8)
+            let abank = scratch(m, base + 4)
+            var size = scratch(m, base + 5) | (scratch(m, base + 6) << 8)
+            if size == 0 {
+                size = 0x10000
+            }
+            let dir = (dmap >> 7) & 1 // 0 = A->B, 1 = B->A
+            let pattern = dmap & 7
+            let amode = (dmap >> 3) & 3
+            let astep: i64 = if amode == 0 {
+                1
+            } else if amode == 2 {
+                -1
+            } else {
+                0
+            }
+            var count: i64 = 0
+            while count < size {
+                let bAddr = 0x2100 | ((bbad + dmaPatternOffset(pattern, count)) & 0xFF)
+                let aFull = (abank << 16) | (aaddr & 0xFFFF)
+                if dir == 0 {
+                    let v = memRead(m, aFull) memWrite(m, bAddr, v)
+                } else {
+                    let v = memRead(m, bAddr) memWrite(m, aFull, v)
+                }
+                aaddr = (aaddr + astep) & 0xFFFF
+                count = count + 1
+            }
+            setScratch(m, base + 2, aaddr & 0xFF)
+            setScratch(m, base + 3, (aaddr >> 8) & 0xFF)
+            setScratch(m, base + 5, 0) setScratch(m, base + 6, 0)
+        }
+        ch = ch + 1
+    }
+}
+
 // CPU-side MMIO read ($2000-$5FFF). Pure (no read side effects yet): mul/div
 // results, NMI/vblank status, auto-read joypad. Falls back to the scratch store.
 // vblankToggle is driven by the system frame loop, not by reads (accurate
 // RDNMI clear-on-read arrives with PPU timing in M4).
 fn mmioRead(m: &Mem, off: i64): i64 {
+    if off >= 0x2100 && off <= 0x213F {
+        return ppuRegReadPure(m.ppu, off - 0x2100) // PPU registers
+    }
     if off >= 0x2140 && off <= 0x2143 {
         return apuReadPort(m.apuMem, off - 0x2140) // APU ports $2140-$2143
     }
@@ -162,8 +251,15 @@ fn mmioRead(m: &Mem, off: i64): i64 {
 
 // CPU-side MMIO write ($2000-$5FFF). Writing $4203/$4206 latches mul/div results.
 fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
+    if off >= 0x2100 && off <= 0x213F {
+        ppuRegWrite(m.ppu, off - 0x2100, val) return // PPU registers
+    }
     if off >= 0x2140 && off <= 0x2143 {
         apuWritePort(m.apuMem, off - 0x2140, val) return // APU ports $2140-$2143
+    }
+    if off == 0x420B {
+        m.mmio[off - 0x2000] = (val & 0xFF) as u8
+        runDMA(m, val) return // MDMAEN: start general-purpose DMA on set channels
     }
     if off == 0x4200 {
         m.nmitimen = val return

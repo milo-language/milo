@@ -1,0 +1,231 @@
+// SNES S-PPU — video memory + register interface. This first slice is the
+// memory model and the $2100-$213F register path (VRAM/CGRAM/OAM ports, scroll,
+// BG/OBJ control) that DMA and CPU writes push graphics data through. Actual
+// scanline rendering (Mode 1 backgrounds + sprites) lands next. Ref: fullsnes.
+
+struct Ppu {
+    vram: Vec<u8> // 64 KiB (32K 16-bit words)
+    cgram: Vec<u8> // 512 bytes = 256 BGR555 colors
+    oam: Vec<u8> // 544 bytes (512 + 32 high table)
+
+    inidisp: i64 // $2100: bit7 force-blank, bits0-3 master brightness
+    obsel: i64 // $2101: OBJ size + name base
+    oamaddr: i64 // $2102/$2103 word address (byte addr = oamaddr*2)
+    oamLatch: i64
+    oamHi: bool // writing the high (odd) byte of an OAM word
+
+    bgmode: i64 // $2105
+    bgsc0: i64 bgsc1: i64 bgsc2: i64 bgsc3: i64 // $2107-$210A tilemap base/size
+    bg12nba: i64 bg34nba: i64 // $210B/$210C char base
+
+    // BG1-4 H/V scroll ($210D-$2114), each written twice (low then high 3 bits)
+    bghofs: Vec<i64>
+    bgvofs: Vec<i64>
+    scrollLatch: i64
+    scrollHi: i64
+
+    vmain: i64 // $2115 increment mode
+    vmaddr: i64 // $2116/$2117 word address
+    vmLatch: i64
+
+    cgaddr: i64 // $2121 color word address
+    cgLatch: i64
+    cgHi: bool // writing the high byte of a color word
+}
+
+fn ppuZeros(n: i64): Vec<u8> {
+    var v: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < n {
+        v.push(0) i = i + 1
+    }
+    return v
+}
+
+fn ppuZerosI64(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < n {
+        v.push(0) i = i + 1
+    }
+    return v
+}
+
+fn newPpu(): Ppu {
+    return Ppu {
+        vram: ppuZeros(0x10000), cgram: ppuZeros(0x200), oam: ppuZeros(0x220),
+        inidisp: 0, obsel: 0, oamaddr: 0, oamLatch: 0, oamHi: false,
+        bgmode: 0, bgsc0: 0, bgsc1: 0, bgsc2: 0, bgsc3: 0, bg12nba: 0, bg34nba: 0,
+        bghofs: ppuZerosI64(4), bgvofs: ppuZerosI64(4), scrollLatch: 0, scrollHi: 0,
+        vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false
+    }
+}
+
+// VRAM address increment after a data-port access (VMAIN bits 0-1: 1/32/128).
+fn vramStep(p: &Ppu): i64 {
+    let s = p.vmain & 0x03
+    if s == 0 {
+        return 1
+    }
+    if s == 1 {
+        return 32
+    }
+    return 128
+}
+
+// Register write for $2100-$213F (reg = low byte of the address).
+fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
+    let v = val & 0xFF
+    if reg == 0x00 {
+        p.inidisp = v return
+    }
+    if reg == 0x01 {
+        p.obsel = v return
+    }
+    if reg == 0x02 {
+        p.oamaddr = (p.oamaddr & 0x100) | v p.oamHi = false return
+    }
+    if reg == 0x03 {
+        p.oamaddr = ((v & 1) << 8) | (p.oamaddr & 0xFF) p.oamHi = false return
+    }
+    if reg == 0x04 { // OAMDATA — 16-bit latch on even, commit on odd
+        let a = (p.oamaddr * 2) & 0x3FF
+        if !p.oamHi {
+            p.oamLatch = v
+            p.oam[a] = v as u8
+            p.oamHi = true
+        } else {
+            p.oam[(a + 1) & 0x3FF] = v as u8
+            p.oamaddr = (p.oamaddr + 1) & 0x1FF
+            p.oamHi = false
+        }
+        return
+    }
+    if reg == 0x05 {
+        p.bgmode = v return
+    }
+    if reg == 0x07 {
+        p.bgsc0 = v return
+    }
+    if reg == 0x08 {
+        p.bgsc1 = v return
+    }
+    if reg == 0x09 {
+        p.bgsc2 = v return
+    }
+    if reg == 0x0A {
+        p.bgsc3 = v return
+    }
+    if reg == 0x0B {
+        p.bg12nba = v return
+    }
+    if reg == 0x0C {
+        p.bg34nba = v return
+    }
+    if reg >= 0x0D && reg <= 0x14 {
+        let idx = (reg - 0x0D) / 2
+        let isV = ((reg - 0x0D) & 1) == 1
+        // write-twice: low byte then high 3 bits (shared BG scroll latch)
+        if isV {
+            p.bgvofs[idx] = ((v << 8) | (p.scrollLatch & 0xF8) | (p.scrollHi & 0x07)) & 0x3FF
+        } else {
+            p.bghofs[idx] = ((v << 8) | (p.scrollLatch & 0xF8) | (p.scrollHi & 0x07)) & 0x3FF
+        }
+        p.scrollHi = p.scrollLatch
+        p.scrollLatch = v
+        return
+    }
+    if reg == 0x15 {
+        p.vmain = v return
+    }
+    if reg == 0x16 {
+        p.vmaddr = (p.vmaddr & 0x7F00) | v return
+    }
+    if reg == 0x17 {
+        p.vmaddr = ((v & 0x7F) << 8) | (p.vmaddr & 0xFF) return
+    }
+    if reg == 0x18 { // VMDATAL
+        let a = (p.vmaddr * 2) & 0xFFFF
+        p.vram[a] = v as u8
+        if (p.vmain & 0x80) == 0 {
+            p.vmaddr = (p.vmaddr + vramStep(p)) & 0x7FFF
+        }
+        return
+    }
+    if reg == 0x19 { // VMDATAH
+        let a = ((p.vmaddr * 2) + 1) & 0xFFFF
+        p.vram[a] = v as u8
+        if (p.vmain & 0x80) != 0 {
+            p.vmaddr = (p.vmaddr + vramStep(p)) & 0x7FFF
+        }
+        return
+    }
+    if reg == 0x21 {
+        p.cgaddr = v p.cgHi = false return
+    }
+    if reg == 0x22 { // CGDATA — low byte then high byte, then addr++
+        if !p.cgHi {
+            p.cgLatch = v
+            p.cgHi = true
+        } else {
+            let a = (p.cgaddr * 2) & 0x1FF
+            p.cgram[a] = p.cgLatch as u8
+            p.cgram[(a + 1) & 0x1FF] = v as u8
+            p.cgaddr = (p.cgaddr + 1) & 0xFF
+            p.cgHi = false
+        }
+        return
+    }
+    // remaining regs (windows, color math, mosaic, mode7, ...) modeled later
+}
+
+// Register read for $2134-$213F (readable PPU registers). Data ports auto-inc.
+fn ppuRegRead(p: &mut Ppu, reg: i64): i64 {
+    if reg == 0x38 { // OAMDATAREAD
+        let a = (p.oamaddr * 2) & 0x3FF
+        let r = p.oam[a]as i64
+        p.oamaddr = (p.oamaddr + 1) & 0x1FF
+        return r
+    }
+    if reg == 0x39 { // VMDATALREAD
+        let a = (p.vmaddr * 2) & 0xFFFF
+        return p.vram[a]as i64
+    }
+    if reg == 0x3A { // VMDATAHREAD
+        let a = ((p.vmaddr * 2) + 1) & 0xFFFF
+        return p.vram[a]as i64
+    }
+    if reg == 0x3B { // CGDATAREAD
+        let a = (p.cgaddr * 2) & 0x1FF
+        let r = p.cgram[a]as i64
+        p.cgaddr = (p.cgaddr + 1) & 0xFF
+        return r
+    }
+    return 0
+}
+
+// Pure register read (no auto-increment) for the CPU's &Mem read path.
+fn ppuRegReadPure(p: &Ppu, reg: i64): i64 {
+    if reg == 0x38 {
+        return p.oam[(p.oamaddr * 2) & 0x3FF]as i64
+    }
+    if reg == 0x39 {
+        return p.vram[(p.vmaddr * 2) & 0xFFFF]as i64
+    }
+    if reg == 0x3A {
+        return p.vram[((p.vmaddr * 2) + 1) & 0xFFFF]as i64
+    }
+    if reg == 0x3B {
+        return p.cgram[(p.cgaddr * 2) & 0x1FF]as i64
+    }
+    return 0
+}
+
+// Direct byte accessors (used by DMA / tests to peek loaded graphics memory).
+fn ppuVram(p: &Ppu, a: i64): i64 {
+    return p.vram[a & 0xFFFF]as i64
+}
+
+fn ppuCgram(p: &Ppu, a: i64): i64 {
+    return p.cgram[a & 0x1FF]as i64
+}
