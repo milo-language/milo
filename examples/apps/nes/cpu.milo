@@ -80,6 +80,9 @@ fn newBus(cart: Cartridge): Bus {
     if bus.mapper == 9 {
         mmc2InitMapper(bus.ppu) // latch-driven CHR banking lives in the PPU
     }
+    if bus.mapper == 227 {
+        bus.m227Hi = bus.prg.len / 0x4000 - 1 // menu boots from the last bank at $C000
+    }
     return bus
 }
 
@@ -224,24 +227,22 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
 }
 
 // Mapper 227 (multicart, e.g. 1200-in-1): the *write address* is the register.
-// Address bits A9..A0 = M S O P P P P P Q L. PRG is banked in 16 KiB units.
+// Address bits: A2-A6 = PRG bank low, A7 = PRG bank high, A8 = 32 KiB mode, A9 =
+// mirroring. In 16 KiB mode $8000 switches and $C000 stays fixed to the last bank
+// (where the multicart menu lives, so its own bank-select writes don't unmap it).
 fn mapper227Write(bus: &mut Bus, a: i64): void {
-    let L = a & 1
     let p = (a >> 2) & 0x1F
     let o = (a >> 7) & 1
-    let s = (a >> 8) & 1 // 0 = 16 KiB (NROM-128) mode, 1 = 32 KiB
+    let s = (a >> 8) & 1 // 1 = 32 KiB (NROM-256), 0 = 16 KiB (NROM-128)
     let m = (a >> 9) & 1 // mirroring: 1 = horizontal, 0 = vertical
     let prg16 = (o << 5) | p
+    let last = bus.prg.len / 0x4000 - 1
     if s == 1 {
         bus.m227Lo = prg16 & 0x3E
         bus.m227Hi = (prg16 & 0x3E) | 1
     } else {
         bus.m227Lo = prg16
-        if L == 0 {
-            bus.m227Hi = prg16 // NROM-128: $C000 mirrors $8000 (menu boots here)
-        } else {
-            bus.m227Hi = prg16 | 0x07 // $C000 fixed to last bank of the 128 KiB block
-        }
+        bus.m227Hi = last // $C000 fixed to the menu's bank
     }
     bus.ppu.mirrorVertical = m == 0
 }
