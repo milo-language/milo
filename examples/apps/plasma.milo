@@ -27,7 +27,7 @@ from "std/strconv" import {
     formatFloat
 }
 from "std/ansi" import {
-    cursorTo, fg24, bg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+    cursorTo, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
 }
 from "std/color" import {
     bold, gray
@@ -68,6 +68,37 @@ fn emit(buf: &mut string, s: &string): void {
     }
 }
 
+// Append a 0–255 integer as decimal digits straight into buf — no temporary
+// string, no interpolation. This is the hot path: ~12k of these per frame.
+fn pushU8(buf: &mut string, n: i64): void {
+    if n >= 100 {
+        let h = n / 100
+        let rem = n - h * 100
+        let t = rem / 10
+        buf.push((48 + h) as u8)
+        buf.push((48 + t) as u8)
+        buf.push((48 + (rem - t * 10)) as u8)
+    } else if n >= 10 {
+        let t = n / 10
+        buf.push((48 + t) as u8)
+        buf.push((48 + (n - t * 10)) as u8)
+    } else {
+        buf.push((48 + n) as u8)
+    }
+}
+
+// Write a full 24-bit SGR (`lead` is the static "\x1b[38;2;" or "\x1b[48;2;")
+// followed by r;g;b m — all pushed directly, zero allocation per cell.
+fn pushColor(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
+    emit(buf, lead)
+    pushU8(buf, r)
+    buf.push(59 as u8) // ';'
+    pushU8(buf, g)
+    buf.push(59 as u8)
+    pushU8(buf, b)
+    buf.push(109 as u8) // 'm'
+}
+
 // Sum of a few travelling sine waves + a centered radial ripple, mapped to an
 // RGB rainbow via three phase-shifted sines (120° apart). out is r,g,b in 0–255.
 fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3]): void {
@@ -89,7 +120,7 @@ fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3]): vo
 
 // Draw one full plasma frame (rows 2..) into buf. Returns the frame's byte size.
 fn drawPlasma(buf: &mut string, cols: i64, pRows: i64, cx: f64, cy: f64, t: f64,
-              top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
+top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
     for r in 0..pRows {
         emit(buf, cursorTo(r + 2, 1))
         let yTop = (r * 2) as f64
@@ -98,8 +129,8 @@ fn drawPlasma(buf: &mut string, cols: i64, pRows: i64, cx: f64, cy: f64, t: f64,
             let px = c as f64
             plasmaRGB(px, yTop, cx, cy, t, top)
             plasmaRGB(px, yBot, cx, cy, t, bot)
-            emit(buf, fg24(top[0], top[1], top[2]))
-            emit(buf, bg24(bot[0], bot[1], bot[2]))
+            pushColor(buf, "\x1b[38;2;", top[0], top[1], top[2])
+            pushColor(buf, "\x1b[48;2;", bot[0], bot[1], bot[2])
             emit(buf, "▀")
         }
     }
@@ -133,7 +164,7 @@ fn runBench(): void {
     let start = epochMillis()
     var now = start
     while now - start < 2000 {
-        var buf = ""
+        var buf = String.withCapacity(262144)
         bytes = bytes + drawPlasma(buf, cols, pRows, cx, cy, t, top, bot)
         writeStdout(buf)
         t = t + 0.06
@@ -173,7 +204,7 @@ fn runInteractive(): void {
 
     while !quit {
         let frameStart = epochMillis()
-        var buf = ""
+        var buf = String.withCapacity(262144)
         let bytes = drawPlasma(buf, cols, pRows, cx, cy, t, top, bot)
 
         let frameMs = (epochMillis() - frameStart) as f64
