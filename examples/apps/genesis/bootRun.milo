@@ -16,6 +16,9 @@ from "./cart68k" import {
 from "./m68k" import {
     M68k, Mem, newCpu, newMem, step, deliverInterrupt
 }
+from "std/fs" import {
+    writeFile
+}
 
 fn loadRom(m: &mut Mem, cart: &Cart) {
     var i: i64 = 0
@@ -111,7 +114,120 @@ fn main(): i32 {
     print("frames=" + itoa(frames) + " vblank-ints=" + itoa(vints) + " vdpLine=" + itoa(m.vdpLine))
     printVdpRegs(m)
     printCram(m)
+    renderPpm(m, "/tmp/sonic.ppm")
+    print("wrote /tmp/sonic.ppm")
     return 0
+}
+
+// Read a byte from VRAM (only as much as was written is stored).
+fn vram8(m: &Mem, addr: i64): i64 {
+    let a = addr & 0xFFFF
+    if a < m.vram.len {
+        return m.vram[a]as i64
+    }
+    return 0
+}
+
+// Genesis 9-bit CRAM entry (----bbb-ggg-rrr-) to an 8-bit RGB triple.
+fn cramR(e: i64): i64 {
+    return ((e >> 1) & 0x7) * 36
+}
+
+fn cramG(e: i64): i64 {
+    return ((e >> 5) & 0x7) * 36
+}
+
+fn cramB(e: i64): i64 {
+    return ((e >> 9) & 0x7) * 36
+}
+
+// Sample one background plane at screen pixel (px,py). Returns the 6-bit CRAM
+// index, or -1 if the pixel is transparent (tile colour 0).
+fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
+    let cellX = (px / 8) % pw
+    let cellY = (py / 8) % ph
+    let entryAddr = base + (cellY * pw + cellX) * 2
+    let entry = (vram8(m, entryAddr) << 8) | vram8(m, entryAddr + 1)
+    let tileIdx = entry & 0x7FF
+    let palLine = (entry >> 13) & 0x3
+    let hflip = (entry & 0x0800) != 0
+    let vflip = (entry & 0x1000) != 0
+    var fx = px % 8
+    var fy = py % 8
+    if hflip {
+        fx = 7 - fx
+    }
+    if vflip {
+        fy = 7 - fy
+    }
+    // 8x8 4bpp tile: 32 bytes, row = 4 bytes, each byte two pixels (hi nibble first)
+    let rowAddr = tileIdx * 32 + fy * 4 + (fx / 2)
+    let byte = vram8(m, rowAddr)
+    var color: i64 = 0
+    if (fx & 1) == 0 {
+        color = (byte >> 4) & 0xF
+    } else {
+        color = byte & 0xF
+    }
+    if color == 0 {
+        return -1
+    }
+    return palLine * 16 + color
+}
+
+// Render background planes B (behind) then A (front) to a PPM. Scroll, window,
+// sprites, and priority are not applied yet — this is the first raw look.
+fn renderPpm(m: &Mem, path: &string) {
+    let width: i64 = if (m.vdpRegs[12] & 0x1) != 0 {
+        320
+    } else {
+        256
+    }
+    let height: i64 = 224
+    let planeW = planeCells(m.vdpRegs[16] & 0x3)
+    let planeH = planeCells((m.vdpRegs[16] >> 4) & 0x3)
+    let baseA = (m.vdpRegs[2] & 0x38) << 10
+    let baseB = (m.vdpRegs[4] & 0x7) << 13
+    let backdrop = m.vdpRegs[7] & 0x3F
+
+    var out = "P6\n"
+    out = out + itoa(width) + " " + itoa(height) + "\n255\n"
+    var y: i64 = 0
+    while y < height {
+        var x: i64 = 0
+        while x < width {
+            var idx = samplePlane(m, baseA, planeW, planeH, x, y)
+            if idx < 0 {
+                idx = samplePlane(m, baseB, planeW, planeH, x, y)
+            }
+            if idx < 0 {
+                idx = backdrop
+            }
+            let e = m.cram[idx & 0x3F]
+            out.push(cramR(e) as u8)
+            out.push(cramG(e) as u8)
+            out.push(cramB(e) as u8)
+            x = x + 1
+        }
+        y = y + 1
+    }
+    match writeFile(path, out) {
+        Result.Ok(n) => {
+        }
+        Result.Err(e) => {
+            print("ppm write failed")
+        }
+    }
+}
+
+fn planeCells(code: i64): i64 {
+    if code == 0 {
+        return 32
+    }
+    if code == 1 {
+        return 64
+    }
+    return 128 // code 3 (2 is invalid, treat as 128)
 }
 
 fn printVdpRegs(m: &Mem) {

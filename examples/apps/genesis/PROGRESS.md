@@ -30,6 +30,16 @@ many games run without a live Z80, some need it).
 
 ### Status (in progress)
 
+**🎉 Sonic boots and renders the SEGA screen** (blue "SEGA™" on white, pixel-correct).
+Full pipeline working: 68000 core → bus → VDP regs → 68k→VDP DMA (palette into
+CRAM 64/64, tiles into VRAM) → VBlank interrupts (autovec L6) → background tile
+renderer → PPM. Run: `milo run examples/apps/genesis/bootRun.milo roms/games/sonic1.md 5000000`
+then `sips -s format png /tmp/sonic.ppm --out /tmp/sonic.png`.
+68000 ran 5M instrs of real game code with ZERO unimplemented opcodes.
+Renderer M3 v1 = planes A/B only (no scroll/window/sprites/priority yet).
+Next: run to title screen + add sprites + hscroll/vscroll → full title w/ Sonic.
+
+
 **M1 underway.** Files: `cart68k.milo` (flat ROM loader), `m68k.milo`
 (functional core), `runHarte.milo` + `harteConv.ts` + `harte.sh` (Harte gate).
 Sonic 1 ROM at `roms/games/sonic1.md` (gitignored). Harte tests sparse-cloned to
