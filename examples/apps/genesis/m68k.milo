@@ -1,0 +1,878 @@
+// Motorola 68000 CPU core (functional, big-endian).
+// Decode is by bit-field (size / EA-mode / EA-reg / register selectors), not a
+// 64K match — the ISA is regular, so one resolveEa + per-family handlers cover
+// almost everything. Registers/effective-address math are kept in i64 and masked
+// to the relevant width (8/16/32) after each op; the host is little-endian, so
+// all bus word/long access assembles bytes big-endian explicitly.
+//
+// Prefetch is NOT modelled as a 2-word queue: pc == address of the next opcode
+// word, and instructions consume extension words by advancing pc. This matches
+// the Harte SingleStepTests for every register / RAM / final-pc field (the only
+// thing skipped is the exact prefetch[] pipe + bus-transaction order — the
+// demoscene-timing tail, deferred exactly like the NES PPU-cycle tail).
+// Ref: Motorola M68000PRM; https://github.com/TomHarte/ProcessorTests (680x0).
+
+// --- status register bit masks ---
+let SR_C: i64 = 0x0001
+let SR_V: i64 = 0x0002
+let SR_Z: i64 = 0x0004
+let SR_N: i64 = 0x0008
+let SR_X: i64 = 0x0010
+let SR_S: i64 = 0x2000
+let SR_T: i64 = 0x8000
+
+// 24-bit external address space (A1..A23; A0 is internal to the word bus).
+let ADDR_MASK: i64 = 0x00FFFFFF
+
+// Flat 16 MB memory with a touched-address log so the Harte harness can reset
+// only the bytes a case dirtied instead of reallocating 16 MB per case.
+struct Mem {
+    ram: Vec<u8>
+    touched: Vec<i64>
+}
+
+fn newMem(): Mem {
+    var ram: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < 0x1000000 {
+        ram.push(0)
+        i = i + 1
+    }
+    return Mem {
+        ram: ram, touched: Vec.new()
+    }
+}
+
+fn memRead8(m: &Mem, addr: i64): i64 {
+    return m.ram[addr & ADDR_MASK]as i64
+}
+
+fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
+    let a = addr & ADDR_MASK
+    m.ram[a] = (val & 0xFF) as u8
+    m.touched.push(a)
+}
+
+fn memRead16(m: &Mem, addr: i64): i64 {
+    let a = addr & ADDR_MASK
+    return ((m.ram[a]as i64) << 8) | (m.ram[(a + 1) & ADDR_MASK]as i64)
+}
+
+fn memWrite16(m: &mut Mem, addr: i64, val: i64) {
+    memWrite8(m, addr, (val >> 8) & 0xFF)
+    memWrite8(m, addr + 1, val & 0xFF)
+}
+
+fn memRead32(m: &Mem, addr: i64): i64 {
+    return (memRead16(m, addr) << 16) | memRead16(m, addr + 2)
+}
+
+fn memWrite32(m: &mut Mem, addr: i64, val: i64) {
+    memWrite16(m, addr, (val >> 16) & 0xFFFF)
+    memWrite16(m, addr + 2, val & 0xFFFF)
+}
+
+struct M68k {
+    d: [i64; 8] // data registers D0-D7 (32-bit each)
+    a: [i64; 8] // address registers A0-A7; a[7] is the ACTIVE stack pointer
+    otherSp: i64 // the inactive stack pointer (USP when supervisor, else SSP)
+    pc: i64
+    sr: i64
+    halted: bool // set by STOP / an unhandled condition
+}
+
+fn newCpu(): M68k {
+    return M68k {
+        d: [0, 0, 0, 0, 0, 0, 0, 0],
+        a: [0, 0, 0, 0, 0, 0, 0, 0],
+        otherSp: 0,
+        pc: 0,
+        sr: 0x2700, // supervisor, interrupts masked (reset default)
+        halted: false,
+    }
+}
+
+fn isSuper(cpu: &M68k): bool {
+    return (cpu.sr & SR_S) != 0
+}
+
+// --- width helpers: size is 0=byte, 1=word, 2=long ---
+fn sizeMask(size: i64): i64 {
+    if size == 0 {
+        return 0xFF
+    }
+    if size == 1 {
+        return 0xFFFF
+    }
+    return 0xFFFFFFFF
+}
+
+fn sizeMsb(size: i64): i64 {
+    if size == 0 {
+        return 0x80
+    }
+    if size == 1 {
+        return 0x8000
+    }
+    return 0x80000000
+}
+
+fn sizeBytes(size: i64): i64 {
+    if size == 0 {
+        return 1
+    }
+    if size == 1 {
+        return 2
+    }
+    return 4
+}
+
+fn signExtend(val: i64, size: i64): i64 {
+    let m = sizeMask(size)
+    let v = val & m
+    let msb = sizeMsb(size)
+    if (v & msb) != 0 {
+        return v - (m + 1)
+    }
+    return v
+}
+
+// --- register access at a given width (byte/word leave the high bits intact) ---
+fn getD(cpu: &M68k, n: i64, size: i64): i64 {
+    return cpu.d[n] & sizeMask(size)
+}
+
+fn setD(cpu: &mut M68k, n: i64, size: i64, val: i64) {
+    let m = sizeMask(size)
+    cpu.d[n] = (cpu.d[n] & ~m) | (val & m)
+}
+
+// Address registers are never partially written: byte/word ops don't target An,
+// and any long/word write to An sign-extends to the full 32 bits.
+fn setA(cpu: &mut M68k, n: i64, size: i64, val: i64) {
+    if size == 1 {
+        cpu.a[n] = signExtend(val, 1) & 0xFFFFFFFF
+    } else {
+        cpu.a[n] = val & 0xFFFFFFFF
+    }
+}
+
+// --- instruction / extension-word fetch (pc is the next-word address) ---
+fn fetch16(cpu: &mut M68k, m: &Mem): i64 {
+    let w = memRead16(m, cpu.pc)
+    cpu.pc = (cpu.pc + 2) & 0xFFFFFFFF
+    return w
+}
+
+fn fetch32(cpu: &mut M68k, m: &Mem): i64 {
+    let hi = fetch16(cpu, m)
+    let lo = fetch16(cpu, m)
+    return (hi << 16) | lo
+}
+
+// --- effective address ---
+// A resolved EA is one of: a data reg, an addr reg, a memory address, or an
+// immediate. Post-increment / pre-decrement mutate An here (as on real HW).
+enum Ea {
+    DReg(i64)
+    AReg(i64)
+    MemAddr(i64)
+    Imm(i64)
+}
+
+// Increment/decrement step for (An)+ / -(An): byte access on A7 still moves the
+// stack pointer by 2 to keep it word-aligned.
+fn incrStep(reg: i64, size: i64): i64 {
+    let b = sizeBytes(size)
+    if reg == 7 && b == 1 {
+        return 2
+    }
+    return b
+}
+
+fn briefIndex(cpu: &M68k, ext: i64): i64 {
+    let ri = (ext >> 12) & 0x7
+    let isAddr = (ext & 0x8000) != 0
+    var idx = if isAddr {
+        cpu.a[ri]
+    } else {
+        cpu.d[ri]
+    }
+    if (ext & 0x0800) == 0 {
+        // word index — sign-extend the low 16 bits
+        return signExtend(idx, 1)
+    }
+    return signExtend(idx, 2)
+}
+
+fn resolveEa(cpu: &mut M68k, m: &Mem, mode: i64, reg: i64, size: i64): Ea {
+    if mode == 0 {
+        return Ea.DReg(reg)
+    }
+    if mode == 1 {
+        return Ea.AReg(reg)
+    }
+    if mode == 2 {
+        return Ea.MemAddr(cpu.a[reg] & 0xFFFFFFFF)
+    }
+    if mode == 3 {
+        let addr = cpu.a[reg] & 0xFFFFFFFF
+        cpu.a[reg] = (cpu.a[reg] + incrStep(reg, size)) & 0xFFFFFFFF
+        return Ea.MemAddr(addr)
+    }
+    if mode == 4 {
+        cpu.a[reg] = (cpu.a[reg] - incrStep(reg, size)) & 0xFFFFFFFF
+        return Ea.MemAddr(cpu.a[reg] & 0xFFFFFFFF)
+    }
+    if mode == 5 {
+        let d16 = signExtend(fetch16(cpu, m), 1)
+        return Ea.MemAddr((cpu.a[reg] + d16) & 0xFFFFFFFF)
+    }
+    if mode == 6 {
+        let base = cpu.a[reg]
+        let ext = fetch16(cpu, m)
+        let disp = signExtend(ext & 0xFF, 0)
+        return Ea.MemAddr((base + disp + briefIndex(cpu, ext)) & 0xFFFFFFFF)
+    }
+    // mode == 7: reg selects the sub-mode
+    if reg == 0 {
+        return Ea.MemAddr(signExtend(fetch16(cpu, m), 1) & 0xFFFFFFFF)
+    }
+    if reg == 1 {
+        return Ea.MemAddr(fetch32(cpu, m) & 0xFFFFFFFF)
+    }
+    if reg == 2 {
+        let base = cpu.pc // PC-relative base = address of the extension word
+        let d16 = signExtend(fetch16(cpu, m), 1)
+        return Ea.MemAddr((base + d16) & 0xFFFFFFFF)
+    }
+    if reg == 3 {
+        let base = cpu.pc
+        let ext = fetch16(cpu, m)
+        let disp = signExtend(ext & 0xFF, 0)
+        return Ea.MemAddr((base + disp + briefIndex(cpu, ext)) & 0xFFFFFFFF)
+    }
+    // reg == 4: immediate
+    if size == 2 {
+        return Ea.Imm(fetch32(cpu, m))
+    }
+    return Ea.Imm(fetch16(cpu, m) & sizeMask(size))
+}
+
+fn eaLoad(cpu: &mut M68k, m: &Mem, ea: &Ea, size: i64): i64 {
+    match ea {
+        Ea.DReg(n) => {
+            return getD(cpu, n, size)
+        }
+        Ea.AReg(n) => {
+            return signExtend(cpu.a[n], size) & sizeMask(size)
+        }
+        Ea.MemAddr(addr) => {
+            if size == 0 {
+                return memRead8(m, addr)
+            }
+            if size == 1 {
+                return memRead16(m, addr)
+            }
+            return memRead32(m, addr)
+        }
+        Ea.Imm(v) => {
+            return v & sizeMask(size)
+        }
+    }
+}
+
+fn eaStore(cpu: &mut M68k, m: &mut Mem, ea: &Ea, size: i64, val: i64) {
+    match ea {
+        Ea.DReg(n) => {
+            setD(cpu, n, size, val)
+        }
+        Ea.AReg(n) => {
+            setA(cpu, n, size, val)
+        }
+        Ea.MemAddr(addr) => {
+            if size == 0 {
+                memWrite8(m, addr, val)
+            } else if size == 1 {
+                memWrite16(m, addr, val)
+            } else {
+                memWrite32(m, addr, val)
+            }
+        }
+        Ea.Imm(v) => {
+            // unreachable for well-formed opcodes
+        }
+    }
+}
+
+// --- flag helpers ---
+fn setBit(cpu: &mut M68k, bit: i64, on: bool) {
+    if on {
+        cpu.sr = cpu.sr | bit
+    } else {
+        cpu.sr = cpu.sr & ~bit
+    }
+}
+
+fn getBit(cpu: &M68k, bit: i64): bool {
+    return (cpu.sr & bit) != 0
+}
+
+// N and Z from a result; caller sets V/C/X per operation.
+fn setNZ(cpu: &mut M68k, size: i64, res: i64) {
+    let r = res & sizeMask(size)
+    setBit(cpu, SR_N, (r & sizeMsb(size)) != 0)
+    setBit(cpu, SR_Z, r == 0)
+}
+
+// logical / move: N,Z from result, V=C=0, X untouched.
+fn setLogicalFlags(cpu: &mut M68k, size: i64, res: i64) {
+    setNZ(cpu, size, res)
+    setBit(cpu, SR_V, false)
+    setBit(cpu, SR_C, false)
+}
+
+fn addFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
+    let mask = sizeMask(size)
+    let msb = sizeMsb(size)
+    let ua = a & mask
+    let ub = b & mask
+    let r = res & mask
+    let carry = (ua + ub) > mask
+    let overflow = ((~(a ^ b)) & (a ^ res) & msb) != 0
+    setNZ(cpu, size, r)
+    setBit(cpu, SR_V, overflow)
+    setBit(cpu, SR_C, carry)
+    if withX {
+        setBit(cpu, SR_X, carry)
+    }
+}
+
+fn subFlags(cpu: &mut M68k, size: i64, a: i64, b: i64, res: i64, withX: bool) {
+    // computes a - b
+    let mask = sizeMask(size)
+    let msb = sizeMsb(size)
+    let ua = a & mask
+    let ub = b & mask
+    let r = res & mask
+    let borrow = ub > ua
+    let overflow = ((a ^ b) & (a ^ res) & msb) != 0
+    setNZ(cpu, size, r)
+    setBit(cpu, SR_V, overflow)
+    setBit(cpu, SR_C, borrow)
+    if withX {
+        setBit(cpu, SR_X, borrow)
+    }
+}
+
+// --- condition codes (Bcc / Scc / DBcc) ---
+fn testCond(cpu: &M68k, cond: i64): bool {
+    let c = getBit(cpu, SR_C)
+    let v = getBit(cpu, SR_V)
+    let z = getBit(cpu, SR_Z)
+    let n = getBit(cpu, SR_N)
+    if cond == 0 {
+        return true // T
+    }
+    if cond == 1 {
+        return false // F
+    }
+    if cond == 2 {
+        return !c && !z // HI
+    }
+    if cond == 3 {
+        return c || z // LS
+    }
+    if cond == 4 {
+        return !c // CC/HS
+    }
+    if cond == 5 {
+        return c // CS/LO
+    }
+    if cond == 6 {
+        return !z // NE
+    }
+    if cond == 7 {
+        return z // EQ
+    }
+    if cond == 8 {
+        return !v // VC
+    }
+    if cond == 9 {
+        return v // VS
+    }
+    if cond == 10 {
+        return !n // PL
+    }
+    if cond == 11 {
+        return n // MI
+    }
+    if cond == 12 {
+        return n == v // GE
+    }
+    if cond == 13 {
+        return n != v // LT
+    }
+    if cond == 14 {
+        return !z && (n == v) // GT
+    }
+    return z || (n != v) // LE (cond == 15)
+}
+
+// --- stack helpers (push/pop long, active SP = a[7]) ---
+fn pushLong(cpu: &mut M68k, m: &mut Mem, val: i64) {
+    cpu.a[7] = (cpu.a[7] - 4) & 0xFFFFFFFF
+    memWrite32(m, cpu.a[7], val)
+}
+
+fn popLong(cpu: &mut M68k, m: &Mem): i64 {
+    let v = memRead32(m, cpu.a[7])
+    cpu.a[7] = (cpu.a[7] + 4) & 0xFFFFFFFF
+    return v
+}
+
+// Execute exactly one instruction. Returns false if the CPU cannot proceed
+// (halted / opcode not yet implemented) so the harness can report it.
+fn step(cpu: &mut M68k, m: &mut Mem): bool {
+    if cpu.halted {
+        return false
+    }
+    let op = fetch16(cpu, m)
+    let top = (op >> 12) & 0xF
+
+    if top == 0x1 {
+        return execMove(cpu, m, op, 0)
+    }
+    if top == 0x3 {
+        return execMove(cpu, m, op, 1)
+    }
+    if top == 0x2 {
+        return execMove(cpu, m, op, 2)
+    }
+    if top == 0x7 {
+        // MOVEQ: bit 8 must be 0
+        if (op & 0x0100) == 0 {
+            let reg = (op >> 9) & 0x7
+            let val = signExtend(op & 0xFF, 0)
+            setD(cpu, reg, 2, val & 0xFFFFFFFF)
+            setLogicalFlags(cpu, 2, val)
+            return true
+        }
+        return false
+    }
+    if top == 0x6 {
+        return execBranch(cpu, m, op)
+    }
+    if top == 0x5 {
+        return execAddqSubq(cpu, m, op)
+    }
+    if top == 0xD {
+        return execAddSub(cpu, m, op, true)
+    }
+    if top == 0x9 {
+        return execAddSub(cpu, m, op, false)
+    }
+    if top == 0xB {
+        return execCmpEor(cpu, m, op)
+    }
+    if top == 0xC {
+        return execAnd(cpu, m, op)
+    }
+    if top == 0x8 {
+        return execOr(cpu, m, op)
+    }
+    if top == 0x4 {
+        return execMisc(cpu, m, op)
+    }
+    return false
+}
+
+// MOVE.b/.w/.l — the workhorse. Also MOVEA when the destination mode is An.
+fn execMove(cpu: &mut M68k, m: &mut Mem, op: i64, size: i64): bool {
+    let srcMode = (op >> 3) & 0x7
+    let srcReg = op & 0x7
+    let dstMode = (op >> 6) & 0x7
+    let dstReg = (op >> 9) & 0x7
+
+    let srcEa = resolveEa(cpu, m, srcMode, srcReg, size)
+    let val = eaLoad(cpu, m, srcEa, size)
+
+    if dstMode == 1 {
+        // MOVEA: sign-extend to 32 bits, no flag change (byte size illegal, ignore)
+        setA(cpu, dstReg, size, signExtend(val, size))
+        return true
+    }
+    let dstEa = resolveEa(cpu, m, dstMode, dstReg, size)
+    eaStore(cpu, m, dstEa, size, val)
+    setLogicalFlags(cpu, size, val)
+    return true
+}
+
+fn execBranch(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let cond = (op >> 8) & 0xF
+    let disp8 = op & 0xFF
+    let base = cpu.pc // address of the word after the opcode
+    var disp = signExtend(disp8, 0)
+    if disp8 == 0 {
+        disp = signExtend(fetch16(cpu, m), 1)
+    }
+    let target = (base + disp) & 0xFFFFFFFF
+    if cond == 1 {
+        // BSR
+        pushLong(cpu, m, cpu.pc)
+        cpu.pc = target
+        return true
+    }
+    if cond == 0 {
+        // BRA
+        cpu.pc = target
+        return true
+    }
+    if testCond(cpu, cond) {
+        cpu.pc = target
+    }
+    return true
+}
+
+// ADDQ / SUBQ / Scc / DBcc (top nibble 5)
+fn execAddqSubq(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+    let size = (op >> 6) & 0x3
+    if size == 3 {
+        // Scc (mode!=1) or DBcc (mode==1)
+        let cond = (op >> 8) & 0xF
+        if mode == 1 {
+            // DBcc Dn — the displacement word is ALWAYS consumed, even when the
+            // condition is true (branch not taken, counter untouched, pc advances).
+            let base = cpu.pc // displacement is relative to the ext-word address
+            let disp = signExtend(fetch16(cpu, m), 1)
+            if testCond(cpu, cond) {
+                return true
+            }
+            let cnt = (getD(cpu, reg, 1) - 1) & 0xFFFF
+            setD(cpu, reg, 1, cnt)
+            if cnt != 0xFFFF {
+                cpu.pc = (base + disp) & 0xFFFFFFFF
+            }
+            return true
+        }
+        // Scc: set byte to FF/00
+        let ea = resolveEa(cpu, m, mode, reg, 0)
+        let v: i64 = if testCond(cpu, cond) {
+            0xFF
+        } else {
+            0x00
+        }
+        eaStore(cpu, m, ea, 0, v)
+        return true
+    }
+    var data = (op >> 9) & 0x7
+    if data == 0 {
+        data = 8
+    }
+    let isSub = (op & 0x0100) != 0
+    let ea = resolveEa(cpu, m, mode, reg, size)
+    // ADDQ/SUBQ on An affects the whole 32-bit reg and sets NO flags.
+    if mode == 1 {
+        let cur = cpu.a[reg]
+        let res = if isSub {
+            cur - data
+        } else {
+            cur + data
+        }
+        cpu.a[reg] = res & 0xFFFFFFFF
+        return true
+    }
+    let cur = eaLoad(cpu, m, ea, size)
+    if isSub {
+        let res = (cur - data) & sizeMask(size)
+        subFlags(cpu, size, cur, data, res, true)
+        eaStore(cpu, m, ea, size, res)
+    } else {
+        let res = (cur + data) & sizeMask(size)
+        addFlags(cpu, size, cur, data, res, true)
+        eaStore(cpu, m, ea, size, res)
+    }
+    return true
+}
+
+// ADD/ADDA (top D) and SUB/SUBA (top 9). ADDX/SUBX deferred.
+fn execAddSub(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool): bool {
+    let dn = (op >> 9) & 0x7
+    let opmode = (op >> 6) & 0x7
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+
+    if opmode == 3 || opmode == 7 {
+        // ADDA/SUBA: opmode 3 = word, 7 = long
+        let size: i64 = if opmode == 3 {
+            1
+        } else {
+            2
+        }
+        let ea = resolveEa(cpu, m, mode, reg, size)
+        let src = signExtend(eaLoad(cpu, m, ea, size), size)
+        let cur = cpu.a[dn]
+        let res = if isAdd {
+            cur + src
+        } else {
+            cur - src
+        }
+        cpu.a[dn] = res & 0xFFFFFFFF
+        return true
+    }
+
+    let size = opmode & 0x3
+    let toEa = (opmode & 0x4) != 0
+    let ea = resolveEa(cpu, m, mode, reg, size)
+    if toEa {
+        // <ea> = <ea> op Dn
+        let a = eaLoad(cpu, m, ea, size)
+        let b = getD(cpu, dn, size)
+        if isAdd {
+            let res = (a + b) & sizeMask(size)
+            addFlags(cpu, size, a, b, res, true)
+            eaStore(cpu, m, ea, size, res)
+        } else {
+            let res = (a - b) & sizeMask(size)
+            subFlags(cpu, size, a, b, res, true)
+            eaStore(cpu, m, ea, size, res)
+        }
+    } else {
+        // Dn = Dn op <ea>
+        let a = getD(cpu, dn, size)
+        let b = eaLoad(cpu, m, ea, size)
+        if isAdd {
+            let res = (a + b) & sizeMask(size)
+            addFlags(cpu, size, a, b, res, true)
+            setD(cpu, dn, size, res)
+        } else {
+            let res = (a - b) & sizeMask(size)
+            subFlags(cpu, size, a, b, res, true)
+            setD(cpu, dn, size, res)
+        }
+    }
+    return true
+}
+
+// CMP / CMPA / EOR / CMPM (top B)
+fn execCmpEor(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let dn = (op >> 9) & 0x7
+    let opmode = (op >> 6) & 0x7
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+
+    if opmode == 3 || opmode == 7 {
+        // CMPA
+        let size: i64 = if opmode == 3 {
+            1
+        } else {
+            2
+        }
+        let ea = resolveEa(cpu, m, mode, reg, size)
+        let src = signExtend(eaLoad(cpu, m, ea, size), size)
+        let a = cpu.a[dn]
+        let res = (a - src) & 0xFFFFFFFF
+        subFlags(cpu, 2, a, src, res, false)
+        return true
+    }
+
+    let size = opmode & 0x3
+    if (opmode & 0x4) == 0 {
+        // CMP: Dn - <ea>
+        let ea = resolveEa(cpu, m, mode, reg, size)
+        let b = eaLoad(cpu, m, ea, size)
+        let a = getD(cpu, dn, size)
+        let res = (a - b) & sizeMask(size)
+        subFlags(cpu, size, a, b, res, false)
+        return true
+    }
+    // opmode 4/5/6 with mode==1 is CMPM; otherwise EOR <ea> = <ea> ^ Dn
+    if mode == 1 {
+        // CMPM (Ay)+,(Ax)+
+        let ea1 = resolveEa(cpu, m, 3, reg, size)
+        let ea2 = resolveEa(cpu, m, 3, dn, size)
+        let s = eaLoad(cpu, m, ea1, size)
+        let d = eaLoad(cpu, m, ea2, size)
+        let res = (d - s) & sizeMask(size)
+        subFlags(cpu, size, d, s, res, false)
+        return true
+    }
+    let ea = resolveEa(cpu, m, mode, reg, size)
+    let a = eaLoad(cpu, m, ea, size)
+    let res = (a ^ getD(cpu, dn, size)) & sizeMask(size)
+    eaStore(cpu, m, ea, size, res)
+    setLogicalFlags(cpu, size, res)
+    return true
+}
+
+// AND / MULU / MULS / ABCD / EXG (top C)
+fn execAnd(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let dn = (op >> 9) & 0x7
+    let opmode = (op >> 6) & 0x7
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+    let size = opmode & 0x3
+    if size == 3 {
+        return false // MUL — deferred
+    }
+    let ea = resolveEa(cpu, m, mode, reg, size)
+    if (opmode & 0x4) == 0 {
+        let res = (getD(cpu, dn, size) & eaLoad(cpu, m, ea, size)) & sizeMask(size)
+        setD(cpu, dn, size, res)
+        setLogicalFlags(cpu, size, res)
+    } else {
+        let res = (eaLoad(cpu, m, ea, size) & getD(cpu, dn, size)) & sizeMask(size)
+        eaStore(cpu, m, ea, size, res)
+        setLogicalFlags(cpu, size, res)
+    }
+    return true
+}
+
+// OR / DIVU / DIVS / SBCD (top 8)
+fn execOr(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let dn = (op >> 9) & 0x7
+    let opmode = (op >> 6) & 0x7
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+    let size = opmode & 0x3
+    if size == 3 {
+        return false // DIV — deferred
+    }
+    let ea = resolveEa(cpu, m, mode, reg, size)
+    if (opmode & 0x4) == 0 {
+        let res = (getD(cpu, dn, size) | eaLoad(cpu, m, ea, size)) & sizeMask(size)
+        setD(cpu, dn, size, res)
+        setLogicalFlags(cpu, size, res)
+    } else {
+        let res = (eaLoad(cpu, m, ea, size) | getD(cpu, dn, size)) & sizeMask(size)
+        eaStore(cpu, m, ea, size, res)
+        setLogicalFlags(cpu, size, res)
+    }
+    return true
+}
+
+// Misc group (top 4): LEA, CLR, TST, NEG, NOT, JMP, JSR, RTS, SWAP, EXT, NOP, PEA.
+fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    if op == 0x4E71 {
+        return true // NOP
+    }
+    if op == 0x4E75 {
+        cpu.pc = popLong(cpu, m) // RTS
+        return true
+    }
+    if op == 0x4E77 {
+        // RTR: pop CCR then PC
+        let ccr = popLong(cpu, m)
+        cpu.sr = (cpu.sr & 0xFF00) | (ccr & 0xFF)
+        return true
+    }
+
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+
+    // LEA An,<ea>  — 0100 aaa1 11mm mrrr
+    if (op & 0xF1C0) == 0x41C0 {
+        let an = (op >> 9) & 0x7
+        let ea = resolveEa(cpu, m, mode, reg, 2)
+        match ea {
+            Ea.MemAddr(addr) => {
+                cpu.a[an] = addr & 0xFFFFFFFF
+                return true
+            }
+            _ => {
+                return false
+            }
+        }
+    }
+    // SWAP Dn — 0100 1000 0100 0rrr (must precede PEA: both share base 0x4840,
+    // SWAP is the mode-000 sub-encoding that PEA's mask would otherwise swallow).
+    if (op & 0xFFF8) == 0x4840 {
+        let v = cpu.d[reg] & 0xFFFFFFFF
+        let sw = ((v >> 16) & 0xFFFF) | ((v << 16) & 0xFFFF0000)
+        cpu.d[reg] = sw
+        setLogicalFlags(cpu, 2, sw)
+        return true
+    }
+    // PEA <ea> — 0100 1000 01mm mrrr
+    if (op & 0xFFC0) == 0x4840 {
+        let ea = resolveEa(cpu, m, mode, reg, 2)
+        match ea {
+            Ea.MemAddr(addr) => {
+                pushLong(cpu, m, addr & 0xFFFFFFFF)
+                return true
+            }
+            _ => {
+                return false
+            }
+        }
+    }
+    // EXT — 0100 1000 1s00 0rrr (s: 10=word from byte, 11=long from word)
+    if (op & 0xFFB8) == 0x4880 {
+        let longMode = (op & 0x0040) != 0
+        if longMode {
+            let v = signExtend(cpu.d[reg], 1) & 0xFFFFFFFF
+            cpu.d[reg] = v
+            setLogicalFlags(cpu, 2, v)
+        } else {
+            let v = signExtend(cpu.d[reg], 0) & 0xFFFF
+            setD(cpu, reg, 1, v)
+            setLogicalFlags(cpu, 1, v)
+        }
+        return true
+    }
+
+    let sub = (op >> 8) & 0xF
+    let size = (op >> 6) & 0x3
+
+    // CLR — 0100 0010 ssmm mrrr
+    if sub == 0x2 && size != 3 {
+        let ea = resolveEa(cpu, m, mode, reg, size)
+        eaStore(cpu, m, ea, size, 0)
+        setLogicalFlags(cpu, size, 0)
+        return true
+    }
+    // NOT — 0100 0110 ssmm mrrr
+    if sub == 0x6 && size != 3 {
+        let ea = resolveEa(cpu, m, mode, reg, size)
+        let res = (~eaLoad(cpu, m, ea, size)) & sizeMask(size)
+        eaStore(cpu, m, ea, size, res)
+        setLogicalFlags(cpu, size, res)
+        return true
+    }
+    // NEG — 0100 0100 ssmm mrrr
+    if sub == 0x4 && size != 3 {
+        let ea = resolveEa(cpu, m, mode, reg, size)
+        let v = eaLoad(cpu, m, ea, size)
+        let res = (0 - v) & sizeMask(size)
+        subFlags(cpu, size, 0, v, res, true)
+        eaStore(cpu, m, ea, size, res)
+        return true
+    }
+    // TST — 0100 1010 ssmm mrrr
+    if sub == 0xA && size != 3 {
+        let ea = resolveEa(cpu, m, mode, reg, size)
+        let v = eaLoad(cpu, m, ea, size)
+        setLogicalFlags(cpu, size, v)
+        return true
+    }
+    // JMP — 0100 1110 11mm mrrr ; JSR — 0100 1110 10mm mrrr
+    if (op & 0xFFC0) == 0x4EC0 || (op & 0xFFC0) == 0x4E80 {
+        let isJsr = (op & 0x0040) == 0
+        let ea = resolveEa(cpu, m, mode, reg, 2)
+        match ea {
+            Ea.MemAddr(addr) => {
+                if isJsr {
+                    pushLong(cpu, m, cpu.pc)
+                }
+                cpu.pc = addr & 0xFFFFFFFF
+                return true
+            }
+            _ => {
+                return false
+            }
+        }
+    }
+    return false
+}

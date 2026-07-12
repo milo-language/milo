@@ -1,0 +1,72 @@
+// Sega Genesis / Mega Drive cartridge loader.
+// Carts are flat ROM (up to 4 MB) mapped at $000000 — no iNES-style header
+// wrangling, no mappers for the common case. The 512-byte "header" at $000100
+// is metadata (console name, region, RAM info), not a load-affecting container.
+// Ref: https://plutiedev.com/rom-header  — big-endian throughout (68000 is BE).
+
+from "std/io" import {
+    readFile
+}
+
+struct Cart {
+    rom: Vec<u8> // full ROM image, byte-addressable at $000000
+    name: string // domestic game name ($000120, 48 bytes, space-padded)
+    romEnd: i64 // last ROM address from header ($0001A4)
+}
+
+fn romByte(rom: &Vec<u8>, addr: i64): u8 {
+    if addr < rom.len {
+        return rom[addr]
+    }
+    return 0
+}
+
+fn loadCart(path: &string): Result<Cart, string> {
+    var raw = ""
+    match readFile(path) {
+        Result.Ok(s) => {
+            raw = s
+        }
+        Result.Err(e) => {
+            return Result.Err("cannot read ROM file")
+        }
+    }
+    if raw.len < 0x200 {
+        return Result.Err("file too small to be a Genesis ROM")
+    }
+
+    var rom: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < raw.len {
+        rom.push(raw[i])
+        i = i + 1
+    }
+
+    // Domestic name at $120, 48 bytes; trim trailing spaces.
+    var name = ""
+    var end: i64 = 0x120 + 48
+    while end > 0x120 && rom[end - 1] == 0x20 {
+        end = end - 1
+    }
+    var j: i64 = 0x120
+    while j < end {
+        name = name + charFromByte(rom[j])
+        j = j + 1
+    }
+
+    // ROM end address is a big-endian long at $1A4.
+    let romEnd = ((rom[0x1A4]as i64) << 24) | ((rom[0x1A5]as i64) << 16) | ((rom[0x1A6]as i64) << 8) | (rom[0x1A7]as i64)
+
+    return Result.Ok(Cart {
+        rom: rom,
+        name: name,
+        romEnd: romEnd,
+    }
+    )
+}
+
+fn charFromByte(b: u8): string {
+    var s = ""
+    s.push(b)
+    return s
+}
