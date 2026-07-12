@@ -31,15 +31,19 @@ masked to width; m8()/x8() decide operand size live. Harness path proven:
 clones the 3.8 MB source per accessor and OOMs — see genesis/), `runHarte.milo`
 tokenizes it, `harte.sh` runs one process per opcode (both e/n modes).
 
-Green so far (306/306 files = 3.06M cases, both emulation + native):
+Green so far (362/362 files = 3.62M cases, both emulation + native):
   NOP; flags CLC/SEC/CLI/SEI/CLV/CLD/SED; XCE; REP/SEP; all transfers
   (TAX/TAY/TXA/TYA/TSX/TXS/TXY/TYX/TCS/TSC/TCD/TDC); XBA; INX/INY/DEX/DEY;
   INC/DEC A; stack PHA/PLA/PHP/PLP/PHX/PLX/PHY/PLY/PHB/PLB/PHK/PHD/PLD/PEA;
-  LDA/STA/ORA/AND/EOR/CMP across ALL 14 addressing modes (imm/dp/dp,X/abs/
-  abs,X/abs,Y/long/long,X/(dp,X)/(dp),Y/[dp]/[dp],Y/sr,S/(sr,S),Y);
+  LDA/STA/ORA/AND/EOR/CMP/ADC/SBC across ALL 14 addressing modes (imm/dp/dp,X/
+  abs/abs,X/abs,Y/long/long,X/(dp,X)/(dp),Y/[dp]/[dp],Y/sr,S/(sr,S),Y);
   CPX/CPY (imm/dp/abs); LDX/LDY/STX/STY (+ STZ) across their modes.
 Op dispatch factored: readMval/readXval/immM/immX + setA/setXreg/setYreg +
-  compareVals + per-op *From helpers → each new family is ~14 one-line arms.
+  compareVals + doADC/doSBC + per-op *From helpers → each family is ~14 arms.
+ADC/SBC gotchas (Harte-driven): decimal BCD must be per-nibble with carry
+  capped at 1 (invalid input like 0xA+0xF can't carry 2) and lower nibbles
+  preserved; on 65C816 N/Z come from the final BCD result, V from the
+  pre-high-adjust top nibble, and SBC keeps binary C/V.
 Addressing infra now proven (aDp/aDpX/aAbs/aAbsX/aAbsY/aLong/aLongX/aDpIndX/
   aDpIndY/aDpLong/aDpLongY/aSr/aSrY + read16w/write16w) — reusable for the rest
   of the load/store/ALU/RMW families.
@@ -53,9 +57,9 @@ Key gotchas found:
   - 16-bit mem access +1 wraps in bank 0 for dp/sr modes, linear 24-bit else
     (read16w/write16w bank0wrap flag). Never differs by M-width in emulation
     (emulation is always 8-bit), only matters native.
-Next: ADC/SBC (decimal-mode BCD paths + overflow) — the last big ALU family;
-  RMW INC/DEC/ASL/LSR/ROL/ROR (mem + accumulator), TSB/TRB, BIT; then branches
-  (Bcc/BRA/BRL), JMP/JSR/RTS/RTL/JML/JSL, MVN/MVP, PEI/PER, BRK/COP/RTI.
+Next: RMW INC/DEC/ASL/LSR/ROL/ROR (mem + accumulator), TSB/TRB, BIT; then
+  branches (Bcc/BRA/BRL), JMP/JSR/RTS/RTL/JML/JSL, MVN/MVP, PEI/PER, BRK/COP/RTI,
+  WAI/STP/WDM. ~181/256 opcodes done.
 Harte full-suite is ~336 interpreter launches (~5-6 min); for iteration, run
   subsets: harte.sh <op ...>. Consider pointing harte.sh at the prebuilt binary
   instead of `bun run ... run` to ~10x the sweep later.

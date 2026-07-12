@@ -478,6 +478,156 @@ fn stzTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
     }
 }
 
+// --- ADC/SBC (binary + decimal BCD, 8/16-bit) ---
+// Decimal paths use Bruce Clark's nibble-adjust algorithm; on the 65C816 (unlike
+// NMOS) N/V/Z are valid in decimal too. For SBC the flags come from the binary
+// subtraction while only the stored result is BCD-adjusted.
+fn doADC(cpu: &mut Cpu, v: i64): void {
+    let wide = !m8(cpu)
+    let mask: i64 = if wide {
+        0xFFFF
+    } else {
+        0xFF
+    }
+    let signbit: i64 = if wide {
+        0x8000
+    } else {
+        0x80
+    }
+    let carrybit: i64 = if wide {
+        0x10000
+    } else {
+        0x100
+    }
+    let a = cpu.a & mask
+    let b = v & mask
+    let c = cpu.p & FC
+    if (cpu.p & FD) != 0 {
+        // Per-nibble BCD add: each nibble carries at most 1 (invalid input like
+        // 0xA+0xF can't produce a carry of 2), and lower nibbles are preserved.
+        let nib: i64 = if wide {
+            4
+        } else {
+            2
+        }
+        var carry = c
+        var r: i64 = 0
+        var sTop: i64 = 0 // top-nibble raw sum, before its adjust, for V
+        var i: i64 = 0
+        while i < nib {
+            let sh = i * 4
+            var d = ((a >> sh) & 0xF) + ((b >> sh) & 0xF) + carry
+            if i == nib - 1 {
+                sTop = d
+            }
+            if d >= 0x0A {
+                d = (d + 0x06) & 0xF
+                carry = 1
+            } else {
+                carry = 0
+            }
+            r = r | (d << sh)
+            i = i + 1
+        }
+        let topsh = (nib - 1) * 4
+        let sV = (r & ((1 << topsh) - 1)) | (sTop << topsh)
+        setBit(cpu, FV, ((~(a ^ b)) & (a ^ sV) & signbit) != 0)
+        setBit(cpu, FC, carry != 0)
+        let rr = r & mask
+        setBit(cpu, FN, (rr & signbit) != 0) // N/Z from the final BCD result (65C816)
+        setBit(cpu, FZ, rr == 0)
+        if wide {
+            cpu.a = rr
+        } else {
+            cpu.a = (cpu.a & 0xFF00) | rr
+        }
+    } else {
+        let sum = a + b + c
+        let r = sum & mask
+        setBit(cpu, FC, sum >= carrybit)
+        setBit(cpu, FV, ((a ^ r) & (b ^ r) & signbit) != 0)
+        setBit(cpu, FZ, r == 0)
+        setBit(cpu, FN, (r & signbit) != 0)
+        if wide {
+            cpu.a = r
+        } else {
+            cpu.a = (cpu.a & 0xFF00) | r
+        }
+    }
+}
+
+fn doSBC(cpu: &mut Cpu, v: i64): void {
+    let wide = !m8(cpu)
+    let mask: i64 = if wide {
+        0xFFFF
+    } else {
+        0xFF
+    }
+    let signbit: i64 = if wide {
+        0x8000
+    } else {
+        0x80
+    }
+    let carrybit: i64 = if wide {
+        0x10000
+    } else {
+        0x100
+    }
+    let a = cpu.a & mask
+    let b = v & mask
+    let c = cpu.p & FC
+    // Binary subtraction sets all flags (valid for decimal too on 65C816).
+    let comp = b ^ mask
+    let sum = a + comp + c
+    let rbin = sum & mask
+    setBit(cpu, FC, sum >= carrybit)
+    setBit(cpu, FV, ((a ^ rbin) & (comp ^ rbin) & signbit) != 0)
+    setBit(cpu, FN, (rbin & signbit) != 0)
+    setBit(cpu, FZ, rbin == 0)
+    var r = rbin
+    if (cpu.p & FD) != 0 {
+        // Per-nibble BCD subtract; flags stay from the binary result above except
+        // N/Z, which reflect the BCD result on the 65C816.
+        let nib: i64 = if wide {
+            4
+        } else {
+            2
+        }
+        var borrow = 1 - c
+        var dr: i64 = 0
+        var i: i64 = 0
+        while i < nib {
+            let sh = i * 4
+            var d = ((a >> sh) & 0xF) - ((b >> sh) & 0xF) - borrow
+            if d < 0 {
+                d = (d - 0x06) & 0xF
+                borrow = 1
+            } else {
+                d = d & 0xF
+                borrow = 0
+            }
+            dr = dr | (d << sh)
+            i = i + 1
+        }
+        r = dr & mask
+        setBit(cpu, FN, (r & signbit) != 0)
+        setBit(cpu, FZ, r == 0)
+    }
+    if wide {
+        cpu.a = r
+    } else {
+        cpu.a = (cpu.a & 0xFF00) | r
+    }
+}
+
+fn adcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap) doADC(cpu, v)
+}
+
+fn sbcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap) doSBC(cpu, v)
+}
+
 // Execute one instruction. Register/flag/transfer/immediate + stack push/pull
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
@@ -1038,6 +1188,94 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         }
         0x9E => {
             let a = aAbsX(cpu, m) stzTo(cpu, m, a, false)
+        }
+
+        // ---- ADC ----
+        0x69 => {
+            let v = immM(cpu, m) doADC(cpu, v)
+        }
+        0x65 => {
+            let a = aDp(cpu, m) adcFrom(cpu, m, a, true)
+        }
+        0x75 => {
+            let a = aDpX(cpu, m) adcFrom(cpu, m, a, true)
+        }
+        0x6D => {
+            let a = aAbs(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x7D => {
+            let a = aAbsX(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x79 => {
+            let a = aAbsY(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x6F => {
+            let a = aLong(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x7F => {
+            let a = aLongX(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x61 => {
+            let a = aDpIndX(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x71 => {
+            let a = aDpIndY(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x67 => {
+            let a = aDpLong(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x77 => {
+            let a = aDpLongY(cpu, m) adcFrom(cpu, m, a, false)
+        }
+        0x63 => {
+            let a = aSr(cpu, m) adcFrom(cpu, m, a, true)
+        }
+        0x73 => {
+            let a = aSrY(cpu, m) adcFrom(cpu, m, a, false)
+        }
+
+        // ---- SBC ----
+        0xE9 => {
+            let v = immM(cpu, m) doSBC(cpu, v)
+        }
+        0xE5 => {
+            let a = aDp(cpu, m) sbcFrom(cpu, m, a, true)
+        }
+        0xF5 => {
+            let a = aDpX(cpu, m) sbcFrom(cpu, m, a, true)
+        }
+        0xED => {
+            let a = aAbs(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xFD => {
+            let a = aAbsX(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xF9 => {
+            let a = aAbsY(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xEF => {
+            let a = aLong(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xFF => {
+            let a = aLongX(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xE1 => {
+            let a = aDpIndX(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xF1 => {
+            let a = aDpIndY(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xE7 => {
+            let a = aDpLong(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xF7 => {
+            let a = aDpLongY(cpu, m) sbcFrom(cpu, m, a, false)
+        }
+        0xE3 => {
+            let a = aSr(cpu, m) sbcFrom(cpu, m, a, true)
+        }
+        0xF3 => {
+            let a = aSrY(cpu, m) sbcFrom(cpu, m, a, false)
         }
 
         // ---- stack push/pull ----
