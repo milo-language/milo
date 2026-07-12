@@ -1,9 +1,10 @@
-// chihuahua — a DVD-logo-style bouncing screensaver. A little ASCII chihuahua
-// head drifts around the terminal, flips off every wall, and changes color on
-// each bounce. Landing exactly in a corner is the rare win — it flashes.
+// chihuahua — a DVD-logo-style bouncing screensaver, now a shaded truecolor
+// pixel-art head. The sprite is a small bitmap of palette chars; it's drawn with
+// the half-block trick (▀/▄) so each character cell packs two vertically-stacked
+// RGB pixels, giving smooth fur shading, dark eyes with a glint, a cream muzzle,
+// and pink inner ears. It bounces off the walls and flashes on a corner hit.
 //
-// Only the sprite's old cells are erased each frame (not a full clear), so it
-// glides without flicker. q or ctrl-c quits.
+// Only the sprite's footprint is repainted each frame, so it glides. q/ctrl-c quits.
 //
 //   milo build examples/apps/chihuahua.milo -o chihuahua && ./chihuahua
 
@@ -17,7 +18,7 @@ from "std/time" import {
     sleepMs
 }
 from "std/ansi" import {
-    cursorTo, fg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+    cursorTo, pushFg24, pushBg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
 }
 from "std/color" import {
     bold, gray
@@ -29,51 +30,88 @@ from "std/pty" import {
     WinSize
 }
 
-let SPR_W: i64 = 7
-let SPR_H: i64 = 3
+let SPR_W: i64 = 18
+let SPR_ROWS: i64 = 18 // pixel rows (even → SPR_ROWS/2 terminal rows tall)
 
-fn spriteLine(i: i64): string {
+// Pixel-art bitmap. Legend: space/'.'=transparent  d=dark-brown  b=brown-shadow
+// t=tan  l=light-tan  w=cream  W=white-highlight  k=eye/nose  g=eye-glint  p=pink
+fn spriteRow(i: i64): string {
     if i == 0 {
-        return " /\\_/\\ "
+        return "  dd          dd  "
+    } else if i == 1 {
+        return " dddd        dddd "
+    } else if i == 2 {
+        return " dpdd        ddpd "
+    } else if i == 3 {
+        return " ddpdb      bdpdd "
+    } else if i == 4 {
+        return "  ddbtttttttttbdd "
+    } else if i == 5 {
+        return "   btttttttttttb  "
+    } else if i == 6 {
+        return "  bttlllllllllttb "
+    } else if i == 7 {
+        return " bttllllllllllllb "
+    } else if i == 8 {
+        return " btllkkllllkkllltb"
+    } else if i == 9 {
+        return " btllkgllllkglltb "
+    } else if i == 10 {
+        return " bttllllllllllttb "
+    } else if i == 11 {
+        return " bbttttwwwwttttbb "
+    } else if i == 12 {
+        return "  bttwwwwwwwwttb  "
+    } else if i == 13 {
+        return "  bttwwwkkwwwttb  "
+    } else if i == 14 {
+        return "   bttwwkkwwttb   "
+    } else if i == 15 {
+        return "   bbttwppwttbb   "
+    } else if i == 16 {
+        return "    bttwwwwttb    "
     }
-    if i == 1 {
-        return "( o.o )"
-    }
-    return " > w < "
+    return "     bbtttbb      "
 }
 
-fn setRGB(out: &mut [i64; 3], r: i64, g: i64, b: i64): void {
+fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
     out[0] = r
     out[1] = g
     out[2] = b
+    out[3] = 1
 }
 
-// eight bright hues; the sprite steps through them on every bounce
-fn paletteRGB(i: i64, out: &mut [i64; 3]): void {
-    var k = i
-    while k >= 8 {
-        k = k - 8
-    }
-    while k < 0 {
-        k = k + 8
-    }
-    if k == 0 {
-        setRGB(out, 255, 85, 85)
-    } else if k == 1 {
-        setRGB(out, 255, 160, 60)
-    } else if k == 2 {
-        setRGB(out, 240, 240, 90)
-    } else if k == 3 {
-        setRGB(out, 100, 230, 120)
-    } else if k == 4 {
-        setRGB(out, 80, 230, 230)
-    } else if k == 5 {
-        setRGB(out, 110, 150, 255)
-    } else if k == 6 {
-        setRGB(out, 200, 120, 255)
+// Map a palette char to an RGB color; out[3]=0 marks a transparent pixel.
+fn charRGB(ch: u8, out: &mut [i64; 4]): void {
+    let c = ch as i64
+    if c == 100 {
+        setC(out, 96, 60, 38) // d  dark brown (ear/outline)
+    } else if c == 98 {
+        setC(out, 145, 96, 58) // b  brown shadow
+    } else if c == 116 {
+        setC(out, 200, 152, 104) // t  tan
+    } else if c == 108 {
+        setC(out, 226, 192, 150) // l  light tan
+    } else if c == 119 {
+        setC(out, 240, 226, 206) // w  cream muzzle
+    } else if c == 87 {
+        setC(out, 255, 250, 245) // W  white highlight
+    } else if c == 107 {
+        setC(out, 34, 28, 24) // k  eye / nose
+    } else if c == 103 {
+        setC(out, 255, 255, 255) // g  eye glint
+    } else if c == 112 {
+        setC(out, 226, 150, 162) // p  pink inner ear
     } else {
-        setRGB(out, 255, 120, 200)
+        out[3] = 0 // space / '.' → transparent
     }
+}
+
+fn charAt(row: &string, c: i64): u8 {
+    if c < row.len {
+        return row[c]
+    }
+    return 32 as u8
 }
 
 fn emit(buf: &mut string, s: &string): void {
@@ -91,14 +129,60 @@ fn termSize(out: &mut [i64; 2]): void {
     }
     var rows = ws.rows as i64
     var cols = ws.cols as i64
-    if rows < 6 {
+    if rows < 12 {
         rows = 24
     }
-    if cols < 10 {
+    if cols < 20 {
         cols = 80
     }
     out[0] = rows
     out[1] = cols
+}
+
+// Render the sprite at terminal position (row0, col0) into buf. Two pixel rows
+// per terminal row via half-blocks: ▀ (fg=top,bg=bottom), or ▄/▀ with a default
+// bg when only one half is opaque.
+fn drawSprite(buf: &mut string, row0: i64, col0: i64): void {
+    let hc = SPR_ROWS / 2
+    var tcol: [i64; 4] = [0; 4]
+    var bcol: [i64; 4] = [0; 4]
+    for tr in 0..hc {
+        emit(buf, cursorTo(row0 + tr, col0))
+        let rowTop = spriteRow(tr * 2)
+        let rowBot = spriteRow(tr * 2 + 1)
+        for c in 0..SPR_W {
+            charRGB(charAt(rowTop, c), tcol)
+            charRGB(charAt(rowBot, c), bcol)
+            let topOp = tcol[3] == 1
+            let botOp = bcol[3] == 1
+            if topOp && botOp {
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                pushBg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▀")
+            } else if topOp {
+                emit(buf, "\x1b[49m") // default bg for the empty lower half
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                emit(buf, "▀")
+            } else if botOp {
+                emit(buf, "\x1b[49m")
+                pushFg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▄")
+            } else {
+                emit(buf, "\x1b[49m")
+                buf.push(32 as u8)
+            }
+        }
+    }
+}
+
+fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64): void {
+    emit(buf, ansiReset())
+    for r in 0..h {
+        emit(buf, cursorTo(row0 + r, col0))
+        for c in 0..w {
+            buf.push(32 as u8)
+        }
+    }
 }
 
 fn main(): i32 {
@@ -110,11 +194,10 @@ fn main(): i32 {
     let rows = size[0]
     let cols = size[1]
 
-    // play area: rows 2..rows (row 1 is the HUD). Sprite top-left (x,y) is
-    // 0-based within it; drawn at terminal row y+2, col x+1.
-    let playH = rows - 1
+    let sprH = SPR_ROWS / 2 // terminal rows tall
+    let playTop: i64 = 2 // row 1 is the HUD
     let maxX = cols - SPR_W
-    let maxY = playH - SPR_H
+    let maxY = (rows - 1) - sprH
 
     var x: i64 = maxX / 2
     var y: i64 = maxY / 2
@@ -122,14 +205,10 @@ fn main(): i32 {
     var vy: i64 = 1
     var prevX = x
     var prevY = y
-    var color: i64 = 0
     var bounces: i64 = 0
-
-    var rgb: [i64; 3] = [0; 3]
     var quit = false
 
     while !quit {
-        // advance + reflect off the walls
         var bx = false
         var by = false
         x = x + vx
@@ -154,28 +233,14 @@ fn main(): i32 {
         }
         if bx || by {
             bounces = bounces + 1
-            color = color + 1
         }
         let corner = bx && by
 
-        paletteRGB(color, rgb)
-        let tint = fg24(rgb[0], rgb[1], rgb[2])
+        var buf = String.withCapacity(16384)
+        eraseRect(buf, prevY + playTop, prevX + 1, SPR_W, sprH)
+        drawSprite(buf, y + playTop, x + 1)
+        emit(buf, ansiReset())
 
-        var buf = ""
-        // erase the sprite's previous footprint (spaces where it used to be)
-        for i in 0..SPR_H {
-            emit(buf, cursorTo(prevY + 2 + i, prevX + 1))
-            emit(buf, "       ") // SPR_W spaces
-        }
-        // draw the sprite at its new spot
-        for i in 0..SPR_H {
-            emit(buf, cursorTo(y + 2 + i, x + 1))
-            emit(buf, tint)
-            emit(buf, spriteLine(i))
-            emit(buf, ansiReset())
-        }
-
-        // HUD
         emit(buf, cursorTo(1, 1))
         emit(buf, bold(" chihuahua "))
         emit(buf, gray($" bounces: {bounces}  "))
@@ -188,7 +253,7 @@ fn main(): i32 {
         prevX = x
         prevY = y
 
-        sleepMs(45)
+        sleepMs(55)
 
         var k = readKey()
         while k != KEY_NONE {
