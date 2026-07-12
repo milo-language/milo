@@ -310,44 +310,6 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
     }
 }
 
-// 2-bit background pixel at screen (x,y), honoring the frame's scroll. The two
-// nametables tile a 512x480 logical map; addresses wrap through mirrorNT.
-fn bgPixelAt(ppu: &mut Ppu, x: i64, y: i64): i64 {
-    let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
-        0x1000
-    } else {
-        0
-    }
-    let wx = (ppu.scrollX + x) & 0x1FF // wrap 512
-    var wy = ppu.scrollY + y
-    while wy >= 480 {
-        wy = wy - 480
-    }
-    let ntX = wx / 256
-    let ntY = wy / 240
-    let ntBase = 0x2000 + (ntY * 2 + ntX) * 0x400
-    let lx = wx & 0xFF
-    let ly = wy - ntY * 240
-    let col = lx / 8
-    let row = ly / 8
-    let tile = ppuMemRead(ppu, (ntBase + row * 32 + col) as u16) as i64
-    let atAddr = ntBase + 0x3C0 + (row / 4) * 8 + (col / 4)
-    let at = ppuMemRead(ppu, atAddr as u16) as i64
-    let shift = ((row & 2) * 2) + (col & 2)
-    let palGroup = (at >> shift) & 0x03
-    let fy = ly & 7
-    let patAddr = bgTable + tile * 16 + fy
-    let lo = ppuMemRead(ppu, patAddr as u16) as i64
-    let hi = ppuMemRead(ppu, (patAddr + 8) as u16) as i64
-    if ppu.mmc2 {
-        mmc2Latch(ppu, patAddr + 8) // tile $FD/$FE high plane flips the CHR latch
-    }
-    let bit = 7 - (lx & 7)
-    let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
-    // pack palette group in bits 2-3 so callers can pick the palette entry
-    return px | (palGroup << 2)
-}
-
 // Advance the loopy v register vertically at the end of a scanline (fine Y rolls
 // into coarse Y; coarse Y wraps at 29, flipping the vertical nametable).
 fn incrementY(ppu: &mut Ppu): void {
@@ -443,13 +405,50 @@ fn renderScanline(ppu: &mut Ppu, sl: i64): void {
         let v = ppu.v as i64
         ppu.scrollX = ((t >> 10) & 1) * 256 + (t & 0x1F) * 8 + (ppu.fineX as i64)
         ppu.scrollY = ((v >> 11) & 1) * 240 + ((v >> 5) & 0x1F) * 8 + ((v >> 12) & 7)
+        let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
+            0x1000
+        } else {
+            0
+        }
+        // Fetch one tile at a time (not per pixel): each tile's pattern is read
+        // once with the current CHR bank, then the MMC2 latch flips for the NEXT
+        // tile — the only order that renders the mid-frame bank splits correctly.
+        var lo: i64 = 0
+        var hi: i64 = 0
+        var palGroup: i64 = 0
         var x: i64 = 0
         while x < 256 {
-            let packed = bgPixelAt(ppu, x, 0)
-            let px = packed & 0x03
+            let wx = (ppu.scrollX + x) & 0x1FF
+            if (wx & 7) == 0 || x == 0 {
+                var wy = ppu.scrollY
+                while wy >= 480 {
+                    wy = wy - 480
+                }
+                let ntX = wx / 256
+                let ntY = wy / 240
+                let ntBase = 0x2000 + (ntY * 2 + ntX) * 0x400
+                let lx = wx & 0xFF
+                let ly = wy - ntY * 240
+                let col = lx / 8
+                let row = ly / 8
+                let tile = ppuMemRead(ppu, (ntBase + row * 32 + col) as u16) as i64
+                let atAddr = ntBase + 0x3C0 + (row / 4) * 8 + (col / 4)
+                let at = ppuMemRead(ppu, atAddr as u16) as i64
+                let shift = ((row & 2) * 2) + (col & 2)
+                palGroup = (at >> shift) & 0x03
+                let fy = ly & 7
+                let patAddr = bgTable + tile * 16 + fy
+                lo = ppuMemRead(ppu, patAddr as u16) as i64
+                hi = ppuMemRead(ppu, (patAddr + 8) as u16) as i64
+                if ppu.mmc2 {
+                    mmc2Latch(ppu, patAddr + 8) // tile $FD/$FE high plane flips the latch
+                }
+            }
+            let bit = 7 - (wx & 7)
+            let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
             var colorIdx = universal
             if px != 0 {
-                colorIdx = ppuMemRead(ppu, (0x3F00 + ((packed >> 2) & 0x03) * 4 + px) as u16) as i64
+                colorIdx = ppuMemRead(ppu, (0x3F00 + palGroup * 4 + px) as u16) as i64
                 bgOpaque[x] = 1
             }
             ppu.fb[sl * 256 + x] = nesColor(colorIdx)
