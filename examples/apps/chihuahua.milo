@@ -1,0 +1,206 @@
+// chihuahua — a DVD-logo-style bouncing screensaver. A little ASCII chihuahua
+// head drifts around the terminal, flips off every wall, and changes color on
+// each bounce. Landing exactly in a corner is the rare win — it flashes.
+//
+// Only the sprite's old cells are erased each frame (not a full clear), so it
+// glides without flicker. q or ctrl-c quits.
+//
+//   milo build examples/apps/chihuahua.milo -o chihuahua && ./chihuahua
+
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey, KEY_NONE, KEY_QUIT
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs
+}
+from "std/ansi" import {
+    cursorTo, fg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+}
+from "std/color" import {
+    bold, gray
+}
+from "std/os" import {
+    ioctl
+}
+from "std/pty" import {
+    WinSize
+}
+
+let SPR_W: i64 = 7
+let SPR_H: i64 = 3
+
+fn spriteLine(i: i64): string {
+    if i == 0 {
+        return " /\\_/\\ "
+    }
+    if i == 1 {
+        return "( o.o )"
+    }
+    return " > w < "
+}
+
+fn setRGB(out: &mut [i64; 3], r: i64, g: i64, b: i64): void {
+    out[0] = r
+    out[1] = g
+    out[2] = b
+}
+
+// eight bright hues; the sprite steps through them on every bounce
+fn paletteRGB(i: i64, out: &mut [i64; 3]): void {
+    var k = i
+    while k >= 8 {
+        k = k - 8
+    }
+    while k < 0 {
+        k = k + 8
+    }
+    if k == 0 {
+        setRGB(out, 255, 85, 85)
+    } else if k == 1 {
+        setRGB(out, 255, 160, 60)
+    } else if k == 2 {
+        setRGB(out, 240, 240, 90)
+    } else if k == 3 {
+        setRGB(out, 100, 230, 120)
+    } else if k == 4 {
+        setRGB(out, 80, 230, 230)
+    } else if k == 5 {
+        setRGB(out, 110, 150, 255)
+    } else if k == 6 {
+        setRGB(out, 200, 120, 255)
+    } else {
+        setRGB(out, 255, 120, 200)
+    }
+}
+
+fn emit(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+fn termSize(out: &mut [i64; 2]): void {
+    var ws = WinSize {
+        rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
+    unsafe {
+        ioctl(1, 1074295912, (&ws) as *u8)
+    }
+    var rows = ws.rows as i64
+    var cols = ws.cols as i64
+    if rows < 6 {
+        rows = 24
+    }
+    if cols < 10 {
+        cols = 80
+    }
+    out[0] = rows
+    out[1] = cols
+}
+
+fn main(): i32 {
+    let termState = enableRawMode()
+    writeStdout(hideCursor() + clearScreen())
+
+    var size: [i64; 2] = [0; 2]
+    termSize(size)
+    let rows = size[0]
+    let cols = size[1]
+
+    // play area: rows 2..rows (row 1 is the HUD). Sprite top-left (x,y) is
+    // 0-based within it; drawn at terminal row y+2, col x+1.
+    let playH = rows - 1
+    let maxX = cols - SPR_W
+    let maxY = playH - SPR_H
+
+    var x: i64 = maxX / 2
+    var y: i64 = maxY / 2
+    var vx: i64 = 1
+    var vy: i64 = 1
+    var prevX = x
+    var prevY = y
+    var color: i64 = 0
+    var bounces: i64 = 0
+
+    var rgb: [i64; 3] = [0; 3]
+    var quit = false
+
+    while !quit {
+        // advance + reflect off the walls
+        var bx = false
+        var by = false
+        x = x + vx
+        if x < 0 {
+            x = 0
+            vx = -vx
+            bx = true
+        } else if x > maxX {
+            x = maxX
+            vx = -vx
+            bx = true
+        }
+        y = y + vy
+        if y < 0 {
+            y = 0
+            vy = -vy
+            by = true
+        } else if y > maxY {
+            y = maxY
+            vy = -vy
+            by = true
+        }
+        if bx || by {
+            bounces = bounces + 1
+            color = color + 1
+        }
+        let corner = bx && by
+
+        paletteRGB(color, rgb)
+        let tint = fg24(rgb[0], rgb[1], rgb[2])
+
+        var buf = ""
+        // erase the sprite's previous footprint (spaces where it used to be)
+        for i in 0..SPR_H {
+            emit(buf, cursorTo(prevY + 2 + i, prevX + 1))
+            emit(buf, "       ") // SPR_W spaces
+        }
+        // draw the sprite at its new spot
+        for i in 0..SPR_H {
+            emit(buf, cursorTo(y + 2 + i, x + 1))
+            emit(buf, tint)
+            emit(buf, spriteLine(i))
+            emit(buf, ansiReset())
+        }
+
+        // HUD
+        emit(buf, cursorTo(1, 1))
+        emit(buf, bold(" chihuahua "))
+        emit(buf, gray($" bounces: {bounces}  "))
+        if corner {
+            emit(buf, bold("★ CORNER! ★"))
+        }
+        emit(buf, gray("  ·  q quit          "))
+
+        writeStdout(buf)
+        prevX = x
+        prevY = y
+
+        sleepMs(45)
+
+        var k = readKey()
+        while k != KEY_NONE {
+            if k == KEY_QUIT {
+                quit = true
+            }
+            k = readKey()
+        }
+    }
+
+    writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
+    restoreTerminal(termState)
+    print("bye from the milo chihuahua ♥  https://cs01.github.io/milo/")
+    return 0
+}
