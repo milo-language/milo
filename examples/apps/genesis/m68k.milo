@@ -79,6 +79,14 @@ struct M68k {
     pc: i64
     sr: i64
     halted: bool // set by STOP / an unhandled condition
+    // Address-error latch: a word/long access to an odd address faults. The
+    // faulting access is abandoned and the current instruction aborts; step()
+    // then raises the group-0 exception. faultRW: true=read. faultIN: true=the
+    // access was an instruction fetch (vs a data access).
+    fault: bool
+    faultAddr: i64
+    faultRW: bool
+    faultIN: bool
 }
 
 fn newCpu(): M68k {
@@ -89,7 +97,24 @@ fn newCpu(): M68k {
         pc: 0,
         sr: 0x2700, // supervisor, interrupts masked (reset default)
         halted: false,
+        fault: false,
+        faultAddr: 0,
+        faultRW: true,
+        faultIN: false,
     }
+}
+
+// Latch an address error for a word/long access to an odd address. Returns true
+// if the access faults (caller must abort), false if aligned.
+fn checkAlign(cpu: &mut M68k, addr: i64, size: i64, isRead: bool, isFetch: bool): bool {
+    if size != 0 && (addr & 1) != 0 && !cpu.fault {
+        cpu.fault = true
+        cpu.faultAddr = addr & 0xFFFFFFFF
+        cpu.faultRW = isRead
+        cpu.faultIN = isFetch
+        return true
+    }
+    return cpu.fault
 }
 
 fn isSuper(cpu: &M68k): bool {
@@ -268,6 +293,9 @@ fn eaLoad(cpu: &mut M68k, m: &Mem, ea: &Ea, size: i64): i64 {
             return signExtend(cpu.a[n], size) & sizeMask(size)
         }
         Ea.MemAddr(addr) => {
+            if checkAlign(cpu, addr, size, true, false) {
+                return 0
+            }
             if size == 0 {
                 return memRead8(m, addr)
             }
@@ -291,6 +319,9 @@ fn eaStore(cpu: &mut M68k, m: &mut Mem, ea: &Ea, size: i64, val: i64) {
             setA(cpu, n, size, val)
         }
         Ea.MemAddr(addr) => {
+            if checkAlign(cpu, addr, size, false, false) {
+                return
+            }
             if size == 0 {
                 memWrite8(m, addr, val)
             } else if size == 1 {
@@ -425,10 +456,75 @@ fn pushLong(cpu: &mut M68k, m: &mut Mem, val: i64) {
     memWrite32(m, cpu.a[7], val)
 }
 
+fn pushWord(cpu: &mut M68k, m: &mut Mem, val: i64) {
+    cpu.a[7] = (cpu.a[7] - 2) & 0xFFFFFFFF
+    memWrite16(m, cpu.a[7], val & 0xFFFF)
+}
+
+// Raise a group-0 address/bus error (vector 3). Switches to supervisor and
+// pushes the 7-word frame: [SSW, faultAddr(long), IR, oldSR, PC(long)] from low
+// to high address. SSW = function-code | (read?0x10) | (data-access?0x08).
+// The pushed PC is the pc reached when the fault was detected (prefetch offset
+// not modelled) — refine against the Harte RAM-frame diff.
+fn raiseAddressError(cpu: &mut M68k, m: &mut Mem, ir: i64) {
+    let oldSr = cpu.sr
+    let wasSuper = (oldSr & SR_S) != 0
+    cpu.sr = (cpu.sr | SR_S) & ~SR_T
+    if !wasSuper {
+        // switch to the supervisor stack
+        let tmp = cpu.a[7]
+        cpu.a[7] = cpu.otherSp
+        cpu.otherSp = tmp
+    }
+    var fc: i64 = 1
+    if cpu.faultIN {
+        if wasSuper {
+            fc = 6
+        } else {
+            fc = 2
+        }
+    } else {
+        if wasSuper {
+            fc = 5
+        } else {
+            fc = 1
+        }
+    }
+    var ssw = fc
+    if cpu.faultRW {
+        ssw = ssw | 0x10
+    }
+    if !cpu.faultIN {
+        ssw = ssw | 0x08
+    }
+    let faultPc = cpu.pc
+    // clear the latch before the frame writes (they are aligned by construction)
+    cpu.fault = false
+    pushLong(cpu, m, faultPc)
+    pushWord(cpu, m, oldSr)
+    pushWord(cpu, m, ir)
+    pushLong(cpu, m, cpu.faultAddr)
+    pushWord(cpu, m, ssw)
+    cpu.pc = memRead32(m, 3 * 4) & 0xFFFFFFFF
+}
+
 fn popLong(cpu: &mut M68k, m: &Mem): i64 {
     let v = memRead32(m, cpu.a[7])
     cpu.a[7] = (cpu.a[7] + 4) & 0xFFFFFFFF
     return v
+}
+
+// Redirect PC to target; an odd target is an instruction-fetch address error
+// (step() raises it after the instruction). Used by JMP/JSR/Bcc/BSR/RTS/DBcc.
+fn setPc(cpu: &mut M68k, target: i64) {
+    let t = target & 0xFFFFFFFF
+    cpu.pc = t
+    if (t & 1) != 0 && !cpu.fault {
+        cpu.fault = true
+        cpu.faultAddr = t
+        cpu.faultRW = true
+        cpu.faultIN = true
+    }
 }
 
 // Execute exactly one instruction. Returns false if the CPU cannot proceed
@@ -437,7 +533,27 @@ fn step(cpu: &mut M68k, m: &mut Mem): bool {
     if cpu.halted {
         return false
     }
+    // Instruction fetch from an odd PC is itself an address error.
+    if (cpu.pc & 1) != 0 {
+        cpu.fault = true
+        cpu.faultAddr = cpu.pc & 0xFFFFFFFF
+        cpu.faultRW = true
+        cpu.faultIN = true
+        raiseAddressError(cpu, m, memRead16(m, cpu.pc & ~1))
+        return true
+    }
     let op = fetch16(cpu, m)
+    let ran = decode(cpu, m, op)
+    // An address error latched during EA access aborts the instruction and
+    // raises the group-0 exception, with the opcode as the frame's IR.
+    if cpu.fault {
+        raiseAddressError(cpu, m, op)
+        return true
+    }
+    return ran
+}
+
+fn decode(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let top = (op >> 12) & 0xF
 
     if top == 0x1 {
@@ -520,16 +636,16 @@ fn execBranch(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     if cond == 1 {
         // BSR
         pushLong(cpu, m, cpu.pc)
-        cpu.pc = target
+        setPc(cpu, target)
         return true
     }
     if cond == 0 {
         // BRA
-        cpu.pc = target
+        setPc(cpu, target)
         return true
     }
     if testCond(cpu, cond) {
-        cpu.pc = target
+        setPc(cpu, target)
     }
     return true
 }
@@ -553,7 +669,7 @@ fn execAddqSubq(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
             let cnt = (getD(cpu, reg, 1) - 1) & 0xFFFF
             setD(cpu, reg, 1, cnt)
             if cnt != 0xFFFF {
-                cpu.pc = (base + disp) & 0xFFFFFFFF
+                setPc(cpu, base + disp)
             }
             return true
         }
@@ -759,7 +875,7 @@ fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
         return true // NOP
     }
     if op == 0x4E75 {
-        cpu.pc = popLong(cpu, m) // RTS
+        setPc(cpu, popLong(cpu, m)) // RTS
         return true
     }
     if op == 0x4E77 {
@@ -866,7 +982,7 @@ fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
                 if isJsr {
                     pushLong(cpu, m, cpu.pc)
                 }
-                cpu.pc = addr & 0xFFFFFFFF
+                setPc(cpu, addr)
                 return true
             }
             _ => {
