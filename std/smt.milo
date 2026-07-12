@@ -1,0 +1,375 @@
+// std/smt — a quantifier-free linear integer arithmetic (QF_LIA) decision
+// procedure written in Milo itself. The fragment `milo prove` emits for
+// contract discharge, decided without any external solver (no z3).
+//
+// Method: a boolean formula over linear atoms is decided by enumerating truth
+// assignments of the atoms (2^k, k small for contracts); each satisfying
+// assignment induces a conjunction of linear constraints whose feasibility
+// over the rationals is settled by Fourier–Motzkin elimination. A bounded
+// integer search reconstructs a concrete counterexample when one exists.
+//
+// Deliberately NOT z3: no bitvectors, no nonlinear arithmetic, no exact
+// integer hull. When a system is feasible over the rationals but has no small
+// integer witness, decide() honestly returns Unknown rather than guessing.
+
+from "std/math" import {
+    absI64
+}
+
+// A row asserts  (sum coeffs[j]*x_j) + konst  <op>  0, strict picking < vs <=.
+struct Constraint {
+    coeffs: Vec<i64>,
+    konst: i64,
+    strict: bool,
+}
+
+// Node kinds in the flat formula tree: 0=atom, 1=not, 2=and, 3=or.
+struct SmtProblem {
+    nvars: i64,
+    atomCoeffs: Vec<Vec<i64>>,
+    atomKonst: Vec<i64>,
+    atomStrict: Vec<bool>,
+    nodeKind: Vec<i64>,
+    nodeAtom: Vec<i64>,
+    nodeKids: Vec<Vec<i64>>,
+}
+
+enum Verdict {
+    Proven,
+    Violated(Vec<i64>),
+    Unknown,
+}
+
+fn newProblem(nvars: i64): SmtProblem {
+    return SmtProblem {
+        nvars: nvars,
+        atomCoeffs: [],
+        atomKonst: [],
+        atomStrict: [],
+        nodeKind: [],
+        nodeAtom: [],
+        nodeKids: [],
+    }
+}
+
+// Register an atom  row·x + konst <op> 0 ; returns its atom index.
+fn addAtom(p: &mut SmtProblem, row: Vec<i64>, konst: i64, strict: bool): i64 {
+    p.atomCoeffs.push(row)
+    p.atomKonst.push(konst)
+    p.atomStrict.push(strict)
+    return p.atomKonst.len - 1
+}
+
+fn nAtom(p: &mut SmtProblem, atomIdx: i64): i64 {
+    p.nodeKind.push(0)
+    p.nodeAtom.push(atomIdx)
+    var empty: Vec<i64> = []
+    p.nodeKids.push(empty)
+    return p.nodeKind.len - 1
+}
+
+fn nNot(p: &mut SmtProblem, kid: i64): i64 {
+    p.nodeKind.push(1)
+    p.nodeAtom.push(-1)
+    var kids: Vec<i64> = []
+    kids.push(kid)
+    p.nodeKids.push(kids)
+    return p.nodeKind.len - 1
+}
+
+fn nAnd(p: &mut SmtProblem, kids: Vec<i64>): i64 {
+    p.nodeKind.push(2)
+    p.nodeAtom.push(-1)
+    p.nodeKids.push(kids)
+    return p.nodeKind.len - 1
+}
+
+fn nOr(p: &mut SmtProblem, kids: Vec<i64>): i64 {
+    p.nodeKind.push(3)
+    p.nodeAtom.push(-1)
+    p.nodeKids.push(kids)
+    return p.nodeKind.len - 1
+}
+
+fn gcd2(a: i64, b: i64): i64 {
+    var x = absI64(a)
+    var y = absI64(b)
+    while y != 0 {
+        let t = x % y
+        x = y
+        y = t
+    }
+    return x
+}
+
+// Divide a row by the gcd of its entries — bounds Fourier–Motzkin coefficient
+// growth so i64 doesn't overflow on the small systems contracts produce.
+fn reduceConstraint(c: &Constraint): Constraint {
+    var g: i64 = 0
+    var j: i64 = 0
+    while j < c.coeffs.len {
+        g = gcd2(g, c.coeffs[j])
+        j = j + 1
+    }
+    g = gcd2(g, c.konst)
+    if g < 1 {
+        g = 1
+    }
+    var nc: Vec<i64> = []
+    j = 0
+    while j < c.coeffs.len {
+        nc.push(c.coeffs[j] / g)
+        j = j + 1
+    }
+    return Constraint {
+        coeffs: nc, konst: c.konst / g, strict: c.strict
+    }
+}
+
+fn cloneRow(row: &Vec<i64>): Vec<i64> {
+    var out: Vec<i64> = []
+    var j: i64 = 0
+    while j < row.len {
+        out.push(row[j])
+        j = j + 1
+    }
+    return out
+}
+
+// Combine upper row p (coeff +a on x_k) with lower row n (coeff -b): b*p + a*n.
+fn combine(p: &Constraint, n: &Constraint, k: i64): Constraint {
+    let a = p.coeffs[k]
+    let b = -n.coeffs[k]
+    var nc: Vec<i64> = []
+    var j: i64 = 0
+    while j < p.coeffs.len {
+        if j == k {
+            nc.push(0)
+        } else {
+            nc.push(b * p.coeffs[j] + a * n.coeffs[j])
+        }
+        j = j + 1
+    }
+    let c = Constraint {
+        coeffs: nc, konst: b * p.konst + a * n.konst, strict: p.strict || n.strict
+    }
+    return reduceConstraint(c)
+}
+
+fn eliminateVar(cs: &Vec<Constraint>, k: i64): Vec<Constraint> {
+    var out: Vec<Constraint> = []
+    var i: i64 = 0
+    while i < cs.len {
+        if cs[i].coeffs[k] == 0 {
+            out.push(reduceConstraint(cs[i]))
+        }
+        i = i + 1
+    }
+    var p: i64 = 0
+    while p < cs.len {
+        if cs[p].coeffs[k] > 0 {
+            var n: i64 = 0
+            while n < cs.len {
+                if cs[n].coeffs[k] < 0 {
+                    out.push(combine(cs[p], cs[n], k))
+                }
+                n = n + 1
+            }
+        }
+        p = p + 1
+    }
+    return out
+}
+
+// Feasible over the rationals? Eliminate every variable; a surviving constant
+// row that is violated proves the system UNSAT.
+fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): bool {
+    var cs: Vec<Constraint> = []
+    var i0: i64 = 0
+    while i0 < cs0.len {
+        cs.push(reduceConstraint(cs0[i0]))
+        i0 = i0 + 1
+    }
+    var k: i64 = 0
+    while k < nvars {
+        cs = eliminateVar(cs, k)
+        k = k + 1
+    }
+    var i: i64 = 0
+    while i < cs.len {
+        let kon = cs[i].konst
+        if cs[i].strict {
+            if kon >= 0 {
+                return false
+            }
+        } else {
+            if kon > 0 {
+                return false
+            }
+        }
+        i = i + 1
+    }
+    return true
+}
+
+fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool {
+    var i: i64 = 0
+    while i < cs.len {
+        var s: i64 = cs[i].konst
+        var j: i64 = 0
+        while j < cs[i].coeffs.len {
+            s = s + cs[i].coeffs[j] * x[j]
+            j = j + 1
+        }
+        if cs[i].strict {
+            if s >= 0 {
+                return false
+            }
+        } else {
+            if s > 0 {
+                return false
+            }
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// Odometer search over [-bound, bound]^nvars for a concrete integer witness.
+// Empty result means no witness in the box.
+fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64): Vec<i64> {
+    var x: Vec<i64> = []
+    var j: i64 = 0
+    while j < nvars {
+        x.push(-bound)
+        j = j + 1
+    }
+    var done: bool = false
+    while !done {
+        if satisfiesAll(cs, x) {
+            return x
+        }
+        var idx: i64 = 0
+        while idx < nvars {
+            x[idx] = x[idx] + 1
+            if x[idx] <= bound {
+                break
+            }
+            x[idx] = -bound
+            idx = idx + 1
+        }
+        if idx == nvars {
+            done = true
+        }
+    }
+    var empty: Vec<i64> = []
+    return empty
+}
+
+fn evalNode(p: &SmtProblem, node: i64, mask: i64): bool {
+    let kind = p.nodeKind[node]
+    if kind == 0 {
+        let a = p.nodeAtom[node]
+        return ((mask >> a) & 1) == 1
+    }
+    if kind == 1 {
+        return !evalNode(p, p.nodeKids[node][0], mask)
+    }
+    if kind == 2 {
+        var i: i64 = 0
+        while i < p.nodeKids[node].len {
+            if !evalNode(p, p.nodeKids[node][i], mask) {
+                return false
+            }
+            i = i + 1
+        }
+        return true
+    }
+    // or
+    var i: i64 = 0
+    while i < p.nodeKids[node].len {
+        if evalNode(p, p.nodeKids[node][i], mask) {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Build the conjunction induced by a truth assignment: atom i as-is when its
+// bit is set, negated otherwise.
+fn inducedConstraints(p: &SmtProblem, mask: i64): Vec<Constraint> {
+    var cs: Vec<Constraint> = []
+    var a: i64 = 0
+    while a < p.atomKonst.len {
+        let bit = (mask >> a) & 1
+        let row = cloneRow(p.atomCoeffs[a])
+        if bit == 1 {
+            cs.push(Constraint {
+                coeffs: row, konst: p.atomKonst[a], strict: p.atomStrict[a]
+            }
+            )
+        } else {
+            // ¬(L <= 0) is (-L < 0); ¬(L < 0) is (-L <= 0)
+            var nr: Vec<i64> = []
+            var j: i64 = 0
+            while j < row.len {
+                nr.push(-row[j])
+                j = j + 1
+            }
+            cs.push(Constraint {
+                coeffs: nr, konst: -p.atomKonst[a], strict:!p.atomStrict[a]
+            }
+            )
+        }
+        a = a + 1
+    }
+    return cs
+}
+
+// Decide SAT of the formula rooted at `root`. In a proof obligation the root is
+// (assumptions ∧ body-paths ∧ ¬goal), so:
+//   Proven      = UNSAT (no assignment yields a feasible conjunction)
+//   Violated(w) = SAT with a concrete integer counterexample w
+//   Unknown     = rational-feasible but no integer witness in the search box
+//                 (the QF_LIA integer gap this Tier-1 core doesn't close)
+fn verdictName(v: &Verdict): string {
+    match v {
+        Verdict.Proven => {
+            return "proven"
+        }
+        Verdict.Violated(_) => {
+            return "violated"
+        }
+        Verdict.Unknown => {
+            return "unknown"
+        }
+    }
+}
+
+fn decide(p: &SmtProblem, root: i64): Verdict {
+    let natoms = p.atomKonst.len
+    if natoms > 20 {
+        return Verdict.Unknown
+    }
+    let total: i64 = 1 << natoms
+    var sawRationalOnly: bool = false
+    var mask: i64 = 0
+    while mask < total {
+        if evalNode(p, root, mask) {
+            let cs = inducedConstraints(p, mask)
+            if feasibleRational(cs, p.nvars) {
+                let w = findWitness(cs, p.nvars, 64)
+                if w.len > 0 {
+                    return Verdict.Violated(w)
+                }
+                sawRationalOnly = true
+            }
+        }
+        mask = mask + 1
+    }
+    if sawRationalOnly {
+        return Verdict.Unknown
+    }
+    return Verdict.Proven
+}

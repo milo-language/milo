@@ -1,284 +1,19 @@
 // @expect: transitivity: proven
 // @expect: clamp: proven
+// @expect: case-split: proven
 // @expect: bound: violated x0=0
 // @expect: strict-int-gap: unknown
 //
-// A quantifier-free linear integer arithmetic (QF_LIA) decision procedure,
-// written in Milo — the fragment `milo prove` emits for contract discharge.
-// Feasibility over the rationals via Fourier–Motzkin elimination; a bounded
-// integer search reconstructs a concrete counterexample when a goal is violable.
-// Deliberately NOT z3: no bitvectors, no nonlinear, no exact integer hull.
-// Constraints are normalized to  (sum coeffs[j]*x_j) + konst  <op>  0.
+// Exercises std/smt — the QF_LIA decision procedure written in Milo — through
+// its public builder API. Each case builds the SAT query for a proof
+// obligation (assumptions ∧ ¬goal) and asks decide() whether it is UNSAT
+// (goal proven), SAT with a witness (goal violated), or rational-only (unknown).
 
+from "std/smt" import {
+    SmtProblem, Verdict, newProblem, addAtom, nAtom, nNot, nAnd, nOr, decide
+}
 from "std/math" import {
     absI64
-}
-
-// strict=true means the row asserts L < 0; strict=false means L <= 0.
-struct Constraint {
-    coeffs: Vec<i64>,
-    konst: i64,
-    strict: bool,
-}
-
-enum Verdict {
-    Proven,
-    Violated(Vec<i64>),
-    Unknown,
-}
-
-fn gcd2(a: i64, b: i64): i64 {
-    var x = absI64(a)
-    var y = absI64(b)
-    while y != 0 {
-        let t = x % y
-        x = y
-        y = t
-    }
-    return x
-}
-
-// Divide a row through by the gcd of all its entries — keeps Fourier–Motzkin
-// coefficient growth bounded so i64 doesn't overflow on small problems.
-fn reduceConstraint(c: &Constraint): Constraint {
-    var g: i64 = 0
-    var j: i64 = 0
-    while j < c.coeffs.len {
-        g = gcd2(g, c.coeffs[j])
-        j = j + 1
-    }
-    g = gcd2(g, c.konst)
-    if g < 1 {
-        g = 1
-    }
-    var nc: Vec<i64> = []
-    j = 0
-    while j < c.coeffs.len {
-        nc.push(c.coeffs[j] / g)
-        j = j + 1
-    }
-    return Constraint {
-        coeffs: nc, konst: c.konst / g, strict: c.strict
-    }
-}
-
-// ¬(L <= 0) is (L > 0) is (-L < 0); ¬(L < 0) is (-L <= 0). Flip sign + strictness.
-fn negateConstraint(c: &Constraint): Constraint {
-    var nc: Vec<i64> = []
-    var j: i64 = 0
-    while j < c.coeffs.len {
-        nc.push(-c.coeffs[j])
-        j = j + 1
-    }
-    return Constraint {
-        coeffs: nc, konst: -c.konst, strict:!c.strict
-    }
-}
-
-fn cloneSet(cs: &Vec<Constraint>): Vec<Constraint> {
-    var out: Vec<Constraint> = []
-    var i: i64 = 0
-    while i < cs.len {
-        out.push(reduceConstraint(cs[i]))
-        i = i + 1
-    }
-    return out
-}
-
-// Combine an upper row p (coeff on x_k is +a) with a lower row n (coeff -b)
-// to cancel x_k: b*p + a*n. Strictness is disjunctive.
-fn combine(p: &Constraint, n: &Constraint, k: i64): Constraint {
-    let a = p.coeffs[k]
-    let b = -n.coeffs[k]
-    var nc: Vec<i64> = []
-    var j: i64 = 0
-    while j < p.coeffs.len {
-        if j == k {
-            nc.push(0)
-        } else {
-            nc.push(b * p.coeffs[j] + a * n.coeffs[j])
-        }
-        j = j + 1
-    }
-    let c = Constraint {
-        coeffs: nc, konst: b * p.konst + a * n.konst, strict: p.strict || n.strict
-    }
-    return reduceConstraint(c)
-}
-
-// Eliminate x_k: carry rows with zero coeff, cross every upper×lower pair.
-fn eliminateVar(cs: &Vec<Constraint>, k: i64): Vec<Constraint> {
-    var out: Vec<Constraint> = []
-    var i: i64 = 0
-    while i < cs.len {
-        if cs[i].coeffs[k] == 0 {
-            out.push(reduceConstraint(cs[i]))
-        }
-        i = i + 1
-    }
-    var p: i64 = 0
-    while p < cs.len {
-        if cs[p].coeffs[k] > 0 {
-            var n: i64 = 0
-            while n < cs.len {
-                if cs[n].coeffs[k] < 0 {
-                    out.push(combine(cs[p], cs[n], k))
-                }
-                n = n + 1
-            }
-        }
-        p = p + 1
-    }
-    return out
-}
-
-// Feasible over the rationals? Eliminate every variable, then every row is a
-// constant assertion; a violated constant means the system is UNSAT.
-fn feasible(cs0: &Vec<Constraint>, nvars: i64): bool {
-    var cs: Vec<Constraint> = cloneSet(cs0)
-    var k: i64 = 0
-    while k < nvars {
-        cs = eliminateVar(cs, k)
-        k = k + 1
-    }
-    var i: i64 = 0
-    while i < cs.len {
-        let kon = cs[i].konst
-        if cs[i].strict {
-            if kon >= 0 {
-                return false
-            }
-        } else {
-            if kon > 0 {
-                return false
-            }
-        }
-        i = i + 1
-    }
-    return true
-}
-
-fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool {
-    var i: i64 = 0
-    while i < cs.len {
-        var s: i64 = cs[i].konst
-        var j: i64 = 0
-        while j < cs[i].coeffs.len {
-            s = s + cs[i].coeffs[j] * x[j]
-            j = j + 1
-        }
-        if cs[i].strict {
-            if s >= 0 {
-                return false
-            }
-        } else {
-            if s > 0 {
-                return false
-            }
-        }
-        i = i + 1
-    }
-    return true
-}
-
-// Bounded integer search for a concrete point satisfying cs (an odometer over
-// [-bound, bound]^nvars). Empty result = no witness in the box.
-fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64): Vec<i64> {
-    var x: Vec<i64> = []
-    var j: i64 = 0
-    while j < nvars {
-        x.push(-bound)
-        j = j + 1
-    }
-    var done: bool = false
-    while !done {
-        if satisfiesAll(cs, x) {
-            return x
-        }
-        var idx: i64 = 0
-        while idx < nvars {
-            x[idx] = x[idx] + 1
-            if x[idx] <= bound {
-                break
-            }
-            x[idx] = -bound
-            idx = idx + 1
-        }
-        if idx == nvars {
-            done = true
-        }
-    }
-    var empty: Vec<i64> = []
-    return empty
-}
-
-// Prove  assumptions |- goal , where goal is a conjunction of rows. The
-// implication holds iff no assumption-consistent point violates any goal row.
-fn proveObligation(assumptions: &Vec<Constraint>, goal: &Vec<Constraint>, nvars: i64): Verdict {
-    var i: i64 = 0
-    while i < goal.len {
-        var clause: Vec<Constraint> = cloneSet(assumptions)
-        clause.push(negateConstraint(goal[i]))
-        if feasible(clause, nvars) {
-            let w = findWitness(clause, nvars, 32)
-            if w.len == 0 {
-                return Verdict.Unknown
-            }
-            return Verdict.Violated(w)
-        }
-        i = i + 1
-    }
-    return Verdict.Proven
-}
-
-// --- constraint builders (all normalize to  L <op> 0) ---
-
-fn zeros(nvars: i64): Vec<i64> {
-    var v: Vec<i64> = []
-    var j: i64 = 0
-    while j < nvars {
-        v.push(0)
-        j = j + 1
-    }
-    return v
-}
-
-// x_i - x_j <= 0   (i.e. x_i <= x_j)
-fn leVars(nvars: i64, i: i64, j: i64): Constraint {
-    var c = zeros(nvars)
-    c[i] = 1
-    c[j] = c[j] - 1
-    return Constraint {
-        coeffs: c, konst: 0, strict: false
-    }
-}
-
-// x_i - k <= 0   (x_i <= k)
-fn leConst(nvars: i64, i: i64, k: i64): Constraint {
-    var c = zeros(nvars)
-    c[i] = 1
-    return Constraint {
-        coeffs: c, konst: -k, strict: false
-    }
-}
-
-// k - x_i <= 0   (x_i >= k)
-fn geConst(nvars: i64, i: i64, k: i64): Constraint {
-    var c = zeros(nvars)
-    c[i] = -1
-    return Constraint {
-        coeffs: c, konst: k, strict: false
-    }
-}
-
-// x_i - x_j < 0   (x_i < x_j, strict)
-fn ltVars(nvars: i64, i: i64, j: i64): Constraint {
-    var c = zeros(nvars)
-    c[i] = 1
-    c[j] = c[j] - 1
-    return Constraint {
-        coeffs: c, konst: 0, strict: true
-    }
 }
 
 fn reportVerdict(label: &string, v: &Verdict) {
@@ -308,12 +43,11 @@ fn i64ToString(n: i64): string {
     if n == 0 {
         return "0"
     }
-    var neg: bool = n < 0
+    let neg: bool = n < 0
     var m = absI64(n)
     var digits: string = ""
     while m > 0 {
-        let d = m % 10
-        digits = charFromDigit(d) + digits
+        digits = digitChar(m % 10) + digits
         m = m / 10
     }
     if neg {
@@ -322,7 +56,7 @@ fn i64ToString(n: i64): string {
     return digits
 }
 
-fn charFromDigit(d: i64): string {
+fn digitChar(d: i64): string {
     if d == 1 {
         return "1"
     }
@@ -354,46 +88,60 @@ fn charFromDigit(d: i64): string {
 }
 
 fn main(): i32 {
-    // 1) transitivity: a<=b, b<=c |- a<=c    (vars a=0 b=1 c=2)
-    var tAssume: Vec<Constraint> = []
-    tAssume.push(leVars(3, 0, 1))
-    tAssume.push(leVars(3, 1, 2))
-    var tGoal: Vec<Constraint> = []
-    tGoal.push(leVars(3, 0, 2))
-    reportVerdict("transitivity: ", proveObligation(tAssume, tGoal, 3))
+    // 1) transitivity: a<=b, b<=c |- a<=c   (vars a=0 b=1 c=2)
+    //    query: (a-b<=0) & (b-c<=0) & !(a-c<=0)
+    var t = newProblem(3)
+    let tA = nAtom(t, addAtom(t, [1, -1, 0], 0, false))
+    let tB = nAtom(t, addAtom(t, [0, 1, -1], 0, false))
+    let tGoal = addAtom(t, [1, 0, -1], 0, false)
+    var tKids: Vec<i64> = []
+    tKids.push(tA)
+    tKids.push(tB)
+    tKids.push(nNot(t, nAtom(t, tGoal)))
+    reportVerdict("transitivity: ", decide(t, nAnd(t, tKids)))
 
-    // 2) clamp pass-through: lo<=hi, value>=lo, value<=hi |- lo<=value<=hi
+    // 2) clamp pass-through: lo<=hi, lo<=value, value<=hi |- lo<=value & value<=hi
     //    (vars lo=0 hi=1 value=2)
-    var cAssume: Vec<Constraint> = []
-    cAssume.push(leVars(3, 0, 1))
-    cAssume.push(leVars(3, 0, 2))
-    cAssume.push(leVars(3, 2, 1))
-    var cGoal: Vec<Constraint> = []
-    cGoal.push(leVars(3, 0, 2))
-    cGoal.push(leVars(3, 2, 1))
-    reportVerdict("clamp: ", proveObligation(cAssume, cGoal, 3))
+    var c = newProblem(3)
+    let cLoHi = nAtom(c, addAtom(c, [1, -1, 0], 0, false))
+    let aLoV = addAtom(c, [1, 0, -1], 0, false)
+    let aVHi = addAtom(c, [0, -1, 1], 0, false)
+    var negGoal: Vec<i64> = []
+    negGoal.push(nNot(c, nAtom(c, aLoV)))
+    negGoal.push(nNot(c, nAtom(c, aVHi)))
+    var cKids: Vec<i64> = []
+    cKids.push(cLoHi)
+    cKids.push(nAtom(c, aLoV))
+    cKids.push(nAtom(c, aVHi))
+    cKids.push(nOr(c, negGoal))
+    reportVerdict("clamp: ", decide(c, nAnd(c, cKids)))
 
-    // 3) violable: x>=0 |- x>=5     (var x=0)
-    var bAssume: Vec<Constraint> = []
-    bAssume.push(geConst(1, 0, 0))
-    var bGoal: Vec<Constraint> = []
-    bGoal.push(geConst(1, 0, 5))
-    reportVerdict("bound: ", proveObligation(bAssume, bGoal, 1))
+    // 3) case-split: (x<=-1 | x>=1) |- x != 0    (var x=0)
+    //    query: (x+1<=0 | 1-x<=0) & (x<=0) & (-x<=0)   [x==0 as x<=0 & x>=0]
+    var s = newProblem(1)
+    var branch: Vec<i64> = []
+    branch.push(nAtom(s, addAtom(s, [1], 1, false)))
+    branch.push(nAtom(s, addAtom(s, [-1], 1, false)))
+    var sKids: Vec<i64> = []
+    sKids.push(nOr(s, branch))
+    sKids.push(nAtom(s, addAtom(s, [1], 0, false)))
+    sKids.push(nAtom(s, addAtom(s, [-1], 0, false)))
+    reportVerdict("case-split: ", decide(s, nAnd(s, sKids)))
 
-    // 4) x<y |- x+1<=y holds over integers but NOT rationals — Tier 1 finds the
-    //    rational witness x=0,y=0.5-ish; the box search lands x=0 (int gap).
-    //    (vars x=0 y=1) goal x+1<=y  ==  x - y + 1 <= 0
-    var sAssume: Vec<Constraint> = []
-    sAssume.push(ltVars(2, 0, 1))
-    var sGoalC = zeros(2)
-    sGoalC[0] = 1
-    sGoalC[1] = -1
-    var sGoal: Vec<Constraint> = []
-    sGoal.push(Constraint {
-        coeffs: sGoalC, konst: 1, strict: false
-    }
-    )
-    reportVerdict("strict-int-gap: ", proveObligation(sAssume, sGoal, 2))
+    // 4) violable: x>=0 |- x>=5   (var x=0)  -> counterexample x=0
+    var b = newProblem(1)
+    var bKids: Vec<i64> = []
+    bKids.push(nAtom(b, addAtom(b, [-1], 0, false)))
+    bKids.push(nNot(b, nAtom(b, addAtom(b, [-1], 5, false))))
+    reportVerdict("bound: ", decide(b, nAnd(b, bKids)))
+
+    // 5) x<y |- x+1<=y : holds over integers but not rationals; Tier 1 finds no
+    //    integer witness in the box and honestly returns unknown. (vars x=0 y=1)
+    var g = newProblem(2)
+    var gKids: Vec<i64> = []
+    gKids.push(nAtom(g, addAtom(g, [1, -1], 0, true)))
+    gKids.push(nNot(g, nAtom(g, addAtom(g, [1, -1], 1, false))))
+    reportVerdict("strict-int-gap: ", decide(g, nAnd(g, gKids)))
 
     return 0
 }
