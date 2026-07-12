@@ -187,6 +187,33 @@ fn spcBranch(spc: &mut Spc, m: &SpcMem, cond: bool): void {
     }
 }
 
+// --- shifts/rotates (8-bit; set C + N/Z) ---
+fn spcAsl(spc: &mut Spc, v: i64): i64 {
+    spcSetBit(spc, PC_, (v & 0x80) != 0)
+    let r = (v << 1) & 0xFF spcNZ(spc, r) return r
+}
+
+fn spcLsr(spc: &mut Spc, v: i64): i64 {
+    spcSetBit(spc, PC_, (v & 1) != 0)
+    let r = (v & 0xFF) >> 1 spcNZ(spc, r) return r
+}
+
+fn spcRol(spc: &mut Spc, v: i64): i64 {
+    let oldC = spc.psw & PC_
+    spcSetBit(spc, PC_, (v & 0x80) != 0)
+    let r = ((v << 1) | oldC) & 0xFF spcNZ(spc, r) return r
+}
+
+fn spcRor(spc: &mut Spc, v: i64): i64 {
+    let oldC = spc.psw & PC_
+    spcSetBit(spc, PC_, (v & 1) != 0)
+    var r = (v & 0xFF) >> 1
+    if oldC != 0 {
+        r = r | 0x80
+    }
+    spcNZ(spc, r) return r
+}
+
 fn spcNZ16(spc: &mut Spc, w: i64): void {
     spcSetBit(spc, PZ, (w & 0xFFFF) == 0)
     spcSetBit(spc, PN, (w & 0x8000) != 0)
@@ -474,6 +501,47 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x50 => {
             spcBranch(spc, m, (spc.psw & PV) == 0)
         } // BVC
+
+        // ---- shifts/rotates (A / dp / abs) ----
+        0x1C => {
+            spc.a = spcAsl(spc, spc.a)
+        } // ASL A
+        0x0B => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcAsl(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        } // ASL dp
+        0x0C => {
+            let ad = spcFetch16(spc, m) let r = spcAsl(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        } // ASL abs
+        0x5C => {
+            spc.a = spcLsr(spc, spc.a)
+        } // LSR A
+        0x4B => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcLsr(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        }
+        0x4C => {
+            let ad = spcFetch16(spc, m) let r = spcLsr(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        }
+        0x3C => {
+            spc.a = spcRol(spc, spc.a)
+        } // ROL A
+        0x2B => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcRol(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        }
+        0x2C => {
+            let ad = spcFetch16(spc, m) let r = spcRol(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        }
+        0x7C => {
+            spc.a = spcRor(spc, spc.a)
+        } // ROR A
+        0x6B => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcRor(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        }
+        0x6C => {
+            let ad = spcFetch16(spc, m) let r = spcRor(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        }
+        0x9F => { // XCN A — swap nibbles
+            spc.a = ((spc.a >> 4) | (spc.a << 4)) & 0xFF spcNZ(spc, spc.a)
+        }
 
         // ---- 16-bit word ops (YA / dp) ----
         0xBA => { // MOVW YA,dp
