@@ -26,9 +26,28 @@ let ADDR_MASK: i64 = 0x00FFFFFF
 
 // Flat 16 MB memory with a touched-address log so the Harte harness can reset
 // only the bytes a case dirtied instead of reallocating 16 MB per case.
+// In `genesis` mode the device regions ($A0xxxx I/O, $C0xxxx VDP) dispatch to
+// register/VDP handlers instead of the flat array; ROM ($000000+) and work RAM
+// ($FF0000+) live in the flat array directly (both fit in the 24-bit space).
 struct Mem {
     ram: Vec<u8>
     touched: Vec<i64>
+    genesis: bool
+    // --- VDP (minimal: enough to boot past register setup + vblank waits) ---
+    vram: Vec<u8> // 64 KB tile/name/sprite memory
+    cram: [i64; 64] // colour RAM (9-bit BGR entries)
+    vsram: [i64; 40] // vertical scroll RAM
+    vdpRegs: [i64; 24] // VDP register file
+    vdpAddr: i64 // current VRAM/CRAM/VSRAM address
+    vdpCode: i64 // access code (read/write + target)
+    vdpFirst: i64 // first control word (pending second word)
+    vdpPending: bool // control port expecting the second word
+    vdpLine: i64 // current scanline (drives the vblank status bit)
+    // --- I/O ---
+    z80Busreq: bool
+    z80Reset: bool
+    ctrl1: i64
+    tmssUnlocked: bool
 }
 
 fn newMem(): Mem {
@@ -39,28 +58,177 @@ fn newMem(): Mem {
         i = i + 1
     }
     return Mem {
-        ram: ram, touched: Vec.new()
+        ram: ram, touched: Vec.new(), genesis: false,
+        vram: Vec.new(), cram: [0; 64], vsram: [0; 40], vdpRegs: [0; 24],
+        vdpAddr: 0, vdpCode: 0, vdpFirst: 0, vdpPending: false, vdpLine: 0,
+        z80Busreq: false, z80Reset: false, ctrl1: 0, tmssUnlocked: false,
     }
 }
 
 fn memRead8(m: &Mem, addr: i64): i64 {
-    return m.ram[addr & ADDR_MASK]as i64
+    let a = addr & ADDR_MASK
+    if m.genesis && isDevice(a) {
+        return devRead8(m, a)
+    }
+    return m.ram[a]as i64
 }
 
 fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
     let a = addr & ADDR_MASK
+    if m.genesis {
+        if a < 0x400000 {
+            return // ROM read-only
+        }
+        if isDevice(a) {
+            if a >= 0xA14000 && a <= 0xA14003 {
+                m.tmssUnlocked = true // 'SEGA' TMSS unlock bytes
+            }
+            return
+        }
+    }
     m.ram[a] = (val & 0xFF) as u8
     m.touched.push(a)
 }
 
 fn memRead16(m: &Mem, addr: i64): i64 {
     let a = addr & ADDR_MASK
+    if m.genesis && isDevice(a) {
+        return devRead16(m, a)
+    }
     return ((m.ram[a]as i64) << 8) | (m.ram[(a + 1) & ADDR_MASK]as i64)
 }
 
 fn memWrite16(m: &mut Mem, addr: i64, val: i64) {
+    let a = addr & ADDR_MASK
+    if m.genesis {
+        if a < 0x400000 {
+            return // ROM is read-only
+        }
+        if isDevice(a) {
+            devWrite16(m, a, val & 0xFFFF)
+            return
+        }
+    }
     memWrite8(m, addr, (val >> 8) & 0xFF)
     memWrite8(m, addr + 1, val & 0xFF)
+}
+
+// Device address space: $A0xxxx (Z80/I/O/control) and $C0000x (VDP ports).
+fn isDevice(a: i64): bool {
+    return a >= 0xA00000 && a < 0xC00010
+}
+
+// VDP status word: FIFO-empty base + vblank flag derived from the line counter the
+// boot runner advances. Games spin on the vblank bit (0x0008).
+fn vdpStatus(m: &Mem): i64 {
+    var s: i64 = 0x3400 // FIFO empty, no DMA
+    if m.vdpLine >= 224 {
+        s = s | 0x0008 // vblank
+    }
+    return s
+}
+
+fn devRead16(m: &Mem, a: i64): i64 {
+    if a == 0xC00004 || a == 0xC00006 {
+        return vdpStatus(m)
+    }
+    if a == 0xC00008 || a == 0xC0000A {
+        return (m.vdpLine & 0xFF) << 8 // HV counter (H approx 0)
+    }
+    if a == 0xC00000 || a == 0xC00002 {
+        return 0 // VDP data read (stub)
+    }
+    if a == 0xA11100 {
+        return 0 // Z80 bus granted immediately (bit8 clear)
+    }
+    if a == 0xA10000 {
+        return 0x00A0 // version reg (US NTSC, no expansion)
+    }
+    if a >= 0xA10002 && a <= 0xA1000F {
+        return 0xFFFF // controller/ctrl ports: no buttons
+    }
+    return 0
+}
+
+fn devRead8(m: &Mem, a: i64): i64 {
+    if a == 0xA10001 {
+        return 0xA0 // version byte: overseas NTSC, no expansion
+    }
+    if a == 0xA10003 || a == 0xA10005 {
+        return 0x7F // controller data: nothing pressed
+    }
+    let w = devRead16(m, a & ~1)
+    if (a & 1) == 0 {
+        return (w >> 8) & 0xFF
+    }
+    return w & 0xFF
+}
+
+fn devWrite16(m: &mut Mem, a: i64, val: i64) {
+    if a == 0xC00000 || a == 0xC00002 {
+        vdpDataWrite(m, val)
+        return
+    }
+    if a == 0xC00004 || a == 0xC00006 {
+        vdpControlWrite(m, val)
+        return
+    }
+    if a == 0xA11100 {
+        m.z80Busreq = (val & 0x0100) != 0
+        return
+    }
+    if a == 0xA11200 {
+        m.z80Reset = (val & 0x0100) != 0
+        return
+    }
+    if a == 0xA14000 {
+        m.tmssUnlocked = true // TMSS unlock ('SEGA' write)
+        return
+    }
+    if a == 0xA10002 {
+        m.ctrl1 = val & 0xFFFF // controller-1 direction latch
+    }
+}
+
+// VDP control port: a register write (top bits 10) sets vdpRegs[r]; otherwise it
+// is one of the two address-setup words giving the 17-bit address + 6-bit code.
+fn vdpControlWrite(m: &mut Mem, val: i64) {
+    if m.vdpPending {
+        m.vdpPending = false
+        let first = m.vdpFirst
+        m.vdpAddr = (first & 0x3FFF) | ((val & 0x3) << 14)
+        m.vdpCode = ((first >> 14) & 0x3) | ((val >> 2) & 0x3C)
+        return
+    }
+    if (val & 0xC000) == 0x8000 {
+        let reg = (val >> 8) & 0x1F
+        if reg < 24 {
+            m.vdpRegs[reg] = val & 0xFF
+        }
+        return
+    }
+    m.vdpFirst = val
+    m.vdpPending = true
+}
+
+fn vdpDataWrite(m: &mut Mem, val: i64) {
+    let target = m.vdpCode & 0xF
+    let a = m.vdpAddr
+    if target == 1 {
+        // VRAM: byte-swapped word write
+        while m.vram.len <= (a | 1) {
+            m.vram.push(0)
+        }
+        m.vram[a & 0xFFFE] = ((val >> 8) & 0xFF) as u8
+        m.vram[(a & 0xFFFE) + 1] = (val & 0xFF) as u8
+    } else if target == 3 {
+        let idx = (a >> 1) & 0x3F
+        m.cram[idx] = val & 0x0EEE
+    } else if target == 5 {
+        let idx = (a >> 1) % 40
+        m.vsram[idx] = val & 0x7FF
+    }
+    m.vdpAddr = (a + m.vdpRegs[15]) & 0x1FFFF
 }
 
 fn memRead32(m: &Mem, addr: i64): i64 {
