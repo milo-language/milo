@@ -16,6 +16,7 @@ import { generateHeader } from "./headergen";
 import { formatDiagnostic, ParseError, RESET, BOLD, GREEN, DIM, type WarningConfig } from "./diagnostics";
 import { type TargetInfo, getHostTarget, resolveTarget, listTargets } from "./target";
 import { generateVerificationConditions, formatVerifyReport, proveWithZ3, formatProveReport } from "./verify";
+import { proveWithMilo } from "./prove-milo";
 import { parseSafetyLevel, checkSafetyCompliance, formatSafetyReport, listSafetyLevels } from "./safety";
 import { extractFlowFacts, formatFlowFacts } from "./wcet";
 import { estimateLoopCycles, formatCycleEstimate } from "./wcet-cycles";
@@ -901,7 +902,7 @@ async function main() {
     console.log("  emit-js <file>         emit JavaScript (playground target)");
     console.log("  fmt <file...>          format source files (-w to write in place)");
     console.log("  verify <file>          generate SMT-LIB2 verification conditions (--all: include imported stdlib)");
-    console.log("  prove <file>           verify contracts via z3 solver (--all: include imported stdlib)");
+    console.log("  prove <file>           verify contracts via std/smt, the milo-native prover (--solver=z3 to use z3; --all: include imported stdlib)");
     console.log("  safety <file>          check safety profile compliance");
     console.log("  safety --list          list available safety profiles");
     console.log("  wcet <file>            emit OTAWA flow facts (loop bounds) for WCET analysis");
@@ -1097,7 +1098,10 @@ async function main() {
     program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
     const vcs = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: resolve(source!) });
-    const pr = proveWithZ3(vcs);
+    // Default engine is std/smt (the prover written in Milo itself); --solver=z3
+    // opts into z3 for the theories std/smt doesn't yet model.
+    const useZ3 = rest.includes("--solver=z3") || rest.includes("--z3");
+    const pr = useZ3 ? proveWithZ3(vcs) : proveWithMilo(vcs);
     console.log(formatProveReport(pr));
     if (pr.failed > 0) process.exit(1);
     return;
