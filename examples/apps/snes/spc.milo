@@ -1,0 +1,184 @@
+// Sony SPC700 — SNES audio CPU. 8-bit core, 16-bit PC, own 64 KiB RAM. Bring-up
+// mirrors the 65816: validate per-opcode against Harte spc700 SingleStepTests
+// (roms/harte-spc700) before wiring it to the S-DSP. Ref: fullsnes SPC700 section.
+//
+// Simpler than the 65816: fixed 8-bit A/X/Y/SP, no width flags. The P flag picks
+// the direct page ($00xx vs $01xx). YA is the 16-bit {Y:A} pair for MUL/DIV/16-bit.
+
+// PSW status bits
+let PC_: i64 = 0x01 // carry
+let PZ: i64 = 0x02 // zero
+let PI: i64 = 0x04 // interrupt enable
+let PH: i64 = 0x08 // half-carry
+let PB: i64 = 0x10 // break
+let PP: i64 = 0x20 // direct-page selector (0 = $00xx, 1 = $01xx)
+let PV: i64 = 0x40 // overflow
+let PN: i64 = 0x80 // negative
+
+struct Spc {
+    a: i64
+    x: i64
+    y: i64
+    sp: i64
+    pc: i64
+    psw: i64
+}
+
+// Sparse 64 KiB RAM for the Harte harness (same rationale as the 65816 Mem).
+struct SpcMem {
+    addr: Vec<i64>
+    val: Vec<i64>
+}
+
+fn spcMemNew(): SpcMem {
+    return SpcMem {
+        addr: Vec.new(), val: Vec.new()
+    }
+}
+
+fn spcMemReset(m: &mut SpcMem): void {
+    m.addr = Vec.new()
+    m.val = Vec.new()
+}
+
+fn spcRead(m: &SpcMem, a: i64): i64 {
+    var i: i64 = 0
+    while i < m.addr.len {
+        if m.addr[i] == (a & 0xFFFF) {
+            return m.val[i]
+        }
+        i = i + 1
+    }
+    return 0
+}
+
+fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
+    let addr = a & 0xFFFF
+    var i: i64 = 0
+    while i < m.addr.len {
+        if m.addr[i] == addr {
+            m.val[i] = v & 0xFF
+            return
+        }
+        i = i + 1
+    }
+    m.addr.push(addr)
+    m.val.push(v & 0xFF)
+}
+
+fn spcSetBit(spc: &mut Spc, mask: i64, on: bool): void {
+    if on {
+        spc.psw = spc.psw | mask
+    } else {
+        spc.psw = spc.psw & (~mask)
+    }
+}
+
+fn spcNZ(spc: &mut Spc, v: i64): void {
+    spcSetBit(spc, PZ, (v & 0xFF) == 0)
+    spcSetBit(spc, PN, (v & 0x80) != 0)
+}
+
+fn spcFetch(spc: &mut Spc, m: &SpcMem): i64 {
+    let v = spcRead(m, spc.pc)
+    spc.pc = (spc.pc + 1) & 0xFFFF
+    return v
+}
+
+// Direct-page effective address for a dp operand byte (P flag picks the page).
+fn dpAddr(spc: &Spc, dp: i64): i64 {
+    if (spc.psw & PP) != 0 {
+        return 0x100 | (dp & 0xFF)
+    }
+    return dp & 0xFF
+}
+
+// Execute one instruction. First batch: flag ops, immediate/register MOVs,
+// register INC/DEC. Memory-operand opcodes land in the no-op default until wired.
+fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
+    let op = spcFetch(spc, m)
+    match op {
+        0x00 => {
+        } // NOP
+
+        // ---- flag ops ----
+        0x20 => {
+            spcSetBit(spc, PP, false)
+        } // CLRP
+        0x40 => {
+            spcSetBit(spc, PP, true)
+        } // SETP
+        0x60 => {
+            spcSetBit(spc, PC_, false)
+        } // CLRC
+        0x80 => {
+            spcSetBit(spc, PC_, true)
+        } // SETC
+        0xE0 => {
+            spcSetBit(spc, PV, false) spcSetBit(spc, PH, false)
+        } // CLRV (V + H)
+        0xED => {
+            spcSetBit(spc, PC_, (spc.psw & PC_) == 0)
+        } // NOTC
+        0xA0 => {
+            spcSetBit(spc, PI, true)
+        } // EI
+        0xC0 => {
+            spcSetBit(spc, PI, false)
+        } // DI
+
+        // ---- immediate loads ----
+        0xE8 => {
+            let v = spcFetch(spc, m) spc.a = v spcNZ(spc, v)
+        } // MOV A,#imm
+        0xCD => {
+            let v = spcFetch(spc, m) spc.x = v spcNZ(spc, v)
+        } // MOV X,#imm
+        0x8D => {
+            let v = spcFetch(spc, m) spc.y = v spcNZ(spc, v)
+        } // MOV Y,#imm
+
+        // ---- register-to-register moves ----
+        0x7D => {
+            spc.a = spc.x spcNZ(spc, spc.a)
+        } // MOV A,X
+        0xDD => {
+            spc.a = spc.y spcNZ(spc, spc.a)
+        } // MOV A,Y
+        0x5D => {
+            spc.x = spc.a spcNZ(spc, spc.x)
+        } // MOV X,A
+        0xFD => {
+            spc.y = spc.a spcNZ(spc, spc.y)
+        } // MOV Y,A
+        0x9D => {
+            spc.x = spc.sp spcNZ(spc, spc.x)
+        } // MOV X,SP
+        0xBD => {
+            spc.sp = spc.x
+        } // MOV SP,X (no flags)
+
+        // ---- register INC/DEC ----
+        0xBC => {
+            spc.a = (spc.a + 1) & 0xFF spcNZ(spc, spc.a)
+        } // INC A
+        0x3D => {
+            spc.x = (spc.x + 1) & 0xFF spcNZ(spc, spc.x)
+        } // INC X
+        0xFC => {
+            spc.y = (spc.y + 1) & 0xFF spcNZ(spc, spc.y)
+        } // INC Y
+        0x9C => {
+            spc.a = (spc.a - 1) & 0xFF spcNZ(spc, spc.a)
+        } // DEC A
+        0x1D => {
+            spc.x = (spc.x - 1) & 0xFF spcNZ(spc, spc.x)
+        } // DEC X
+        0xDC => {
+            spc.y = (spc.y - 1) & 0xFF spcNZ(spc, spc.y)
+        } // DEC Y
+
+        _ => {
+        } // unimplemented — Harte will flag it
+    }
+}

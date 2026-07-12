@@ -42,8 +42,16 @@ poll these constantly), $4210/$4212 NMI/vblank status (vblankToggle driven by
 the future frame loop, not on-read — accurate RDNMI-clear waits for M4 timing),
 $4218/$4219 auto-joypad. mmioSmoke.milo verifies mul (12*10) + div (100/7) green.
 Reads are pure (no cascade to &mut memRead). PPU regs $2100-$213F still scratch.
-Next: PPU-register write path scaffolding + the system frame loop (scanline
-counter driving vblank), then M3 SPC700 (boot blocks on its handshake).
+M3 (started): SPC700 core scaffold `spc.milo` (8-bit A/X/Y/SP, 16-bit PC, PSW;
+P flag picks the direct page). Harte spc700 harness mirrors the 65816 one:
+harteConvSpc.ts + runHarteSpc.milo + harteSpc.sh (single file per opcode, 256
+total). First 24 opcodes green (NOP, flag ops CLRP/SETP/CLRC/SETC/CLRV/NOTC/EI/
+DI, MOV A/X/Y #imm, register MOVs, INC/DEC A/X/Y). Next: dp/abs/indirect
+addressing + ADC/SBC/CMP/AND/OR/EOR/MOV memory forms, then CPU<->APU handshake
+ports $2140-$2143 + IPL boot ROM so a commercial ROM clears its audio-upload
+spin-loop. S-DSP stubbed silent for now.
+Also still open on M2: PPU-register write path + system frame loop (scanline
+counter driving vblank).
 
 ## (earlier) Status notes
 
