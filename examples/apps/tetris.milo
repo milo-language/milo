@@ -25,7 +25,7 @@ from "std/random" import {
     randInt
 }
 from "std/runtime" import {
-    Task, schedulerRunToCompletion
+    Task
 }
 from "std/select" import {
     Select
@@ -504,13 +504,10 @@ fn main(): i32 {
     let termState = enableRawMode()
     writeStdout("\x1b[?25l\x1b[2J")
 
-    // Go exit semantics: if main just called runGame() and returned, the process
-    // would exit. Run the game as a green task and block here until it finishes.
-    Task.spawn(move(): void => {
-        runGame()
-    }
-    )
-    schedulerRunToCompletion()
+    // select() needs the green scheduler, so the game runs as a task; join()
+    // blocks main here and drives the scheduler until it finishes. (Go-style:
+    // like `go run()` + wait — no manual scheduler pumping.)
+    Task.spawn(runGame).join()
 
     writeStdout("\x1b[?25h\x1b[2J\x1b[H\x1b[0m")
     restoreTerminal(termState)
