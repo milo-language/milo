@@ -356,8 +356,56 @@ fn formatState(cpu: &Cpu): string {
     return s
 }
 
-// Read-modify-write helper: apply f-style op already done by caller write back.
-// (Milo has no fn-pointer-through-&mut sugar here, so RMW opcodes inline instead.)
+// --- unofficial ("illegal") opcode helpers, addr pre-resolved by caller ---
+fn lax(cpu: &mut Cpu, bus: &Bus, addr: u16): void {
+    let v = busRead(bus, addr)
+    cpu.a = v
+    cpu.x = v
+    setZN(cpu, v)
+}
+
+fn sax(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    busWrite(bus, addr, cpu.a & cpu.x)
+}
+
+fn dcp(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    let m = (((busRead(bus, addr) as i64) - 1) & 0xFF) as u8
+    busWrite(bus, addr, m)
+    compare(cpu, cpu.a, m)
+}
+
+fn isb(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    let m = (((busRead(bus, addr) as i64) + 1) & 0xFF) as u8
+    busWrite(bus, addr, m)
+    sbc(cpu, m)
+}
+
+fn slo(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    let m = aslV(cpu, busRead(bus, addr))
+    busWrite(bus, addr, m)
+    cpu.a = cpu.a | m
+    setZN(cpu, cpu.a)
+}
+
+fn rla(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    let m = rolV(cpu, busRead(bus, addr))
+    busWrite(bus, addr, m)
+    cpu.a = cpu.a & m
+    setZN(cpu, cpu.a)
+}
+
+fn sre(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    let m = lsrV(cpu, busRead(bus, addr))
+    busWrite(bus, addr, m)
+    cpu.a = cpu.a ^ m
+    setZN(cpu, cpu.a)
+}
+
+fn rra(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    let m = rorV(cpu, busRead(bus, addr))
+    busWrite(bus, addr, m)
+    adc(cpu, m)
+}
 
 // Execute one instruction, advancing cyc by its total cost.
 fn step(cpu: &mut Cpu, bus: &mut Bus): void {
@@ -833,6 +881,262 @@ fn step(cpu: &mut Cpu, bus: &mut Bus): void {
         // ---- NOP ----
         0xEA => {
             cpu.cyc = cpu.cyc + 2
+        }
+        // ---- unofficial NOPs ----
+        // 1-byte implied NOPs (2 cyc)
+        0x1A => {
+            cpu.cyc = cpu.cyc + 2
+        }
+        0x3A => {
+            cpu.cyc = cpu.cyc + 2
+        }
+        0x5A => {
+            cpu.cyc = cpu.cyc + 2
+        }
+        0x7A => {
+            cpu.cyc = cpu.cyc + 2
+        }
+        0xDA => {
+            cpu.cyc = cpu.cyc + 2
+        }
+        0xFA => {
+            cpu.cyc = cpu.cyc + 2
+        }
+        // 2-byte immediate NOPs (2 cyc): consume operand, discard
+        0x80 => {
+            let a = aImm(cpu) cpu.cyc = cpu.cyc + 2
+        }
+        0x82 => {
+            let a = aImm(cpu) cpu.cyc = cpu.cyc + 2
+        }
+        0x89 => {
+            let a = aImm(cpu) cpu.cyc = cpu.cyc + 2
+        }
+        0xC2 => {
+            let a = aImm(cpu) cpu.cyc = cpu.cyc + 2
+        }
+        0xE2 => {
+            let a = aImm(cpu) cpu.cyc = cpu.cyc + 2
+        }
+        // 2-byte zeropage NOPs (3 cyc)
+        0x04 => {
+            let a = aZp(cpu, bus) cpu.cyc = cpu.cyc + 3
+        }
+        0x44 => {
+            let a = aZp(cpu, bus) cpu.cyc = cpu.cyc + 3
+        }
+        0x64 => {
+            let a = aZp(cpu, bus) cpu.cyc = cpu.cyc + 3
+        }
+        // 2-byte zeropage,X NOPs (4 cyc)
+        0x14 => {
+            let a = aZpX(cpu, bus) cpu.cyc = cpu.cyc + 4
+        }
+        0x34 => {
+            let a = aZpX(cpu, bus) cpu.cyc = cpu.cyc + 4
+        }
+        0x54 => {
+            let a = aZpX(cpu, bus) cpu.cyc = cpu.cyc + 4
+        }
+        0x74 => {
+            let a = aZpX(cpu, bus) cpu.cyc = cpu.cyc + 4
+        }
+        0xD4 => {
+            let a = aZpX(cpu, bus) cpu.cyc = cpu.cyc + 4
+        }
+        0xF4 => {
+            let a = aZpX(cpu, bus) cpu.cyc = cpu.cyc + 4
+        }
+        // 3-byte absolute NOP (4 cyc)
+        0x0C => {
+            let a = aAbs(cpu, bus) cpu.cyc = cpu.cyc + 4
+        }
+        // 3-byte absolute,X NOPs (4 cyc + page cross) — a read access
+        0x1C => {
+            let a = aAbsX(cpu, bus) let v = busRead(bus, a) cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        0x3C => {
+            let a = aAbsX(cpu, bus) let v = busRead(bus, a) cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        0x5C => {
+            let a = aAbsX(cpu, bus) let v = busRead(bus, a) cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        0x7C => {
+            let a = aAbsX(cpu, bus) let v = busRead(bus, a) cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        0xDC => {
+            let a = aAbsX(cpu, bus) let v = busRead(bus, a) cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        0xFC => {
+            let a = aAbsX(cpu, bus) let v = busRead(bus, a) cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        // ---- LAX (load A and X) ----
+        0xA7 => {
+            lax(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 3
+        }
+        0xB7 => {
+            lax(cpu, bus, aZpY(cpu, bus)) cpu.cyc = cpu.cyc + 4
+        }
+        0xAF => {
+            lax(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 4
+        }
+        0xBF => {
+            lax(cpu, bus, aAbsY(cpu, bus)) cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        0xA3 => {
+            lax(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0xB3 => {
+            lax(cpu, bus, aIndY(cpu, bus)) cpu.cyc = cpu.cyc + 5 + cpu.extraCycles
+        }
+        // ---- SAX (store A & X) ----
+        0x87 => {
+            sax(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 3
+        }
+        0x97 => {
+            sax(cpu, bus, aZpY(cpu, bus)) cpu.cyc = cpu.cyc + 4
+        }
+        0x8F => {
+            sax(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 4
+        }
+        0x83 => {
+            sax(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        // ---- unofficial SBC (== official SBC imm) ----
+        0xEB => {
+            let v = busRead(bus, aImm(cpu)) sbc(cpu, v) cpu.cyc = cpu.cyc + 2
+        }
+        // ---- DCP (DEC + CMP) — RMW, fixed cycles (no page-cross add) ----
+        0xC7 => {
+            dcp(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 5
+        }
+        0xD7 => {
+            dcp(cpu, bus, aZpX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0xCF => {
+            dcp(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0xDF => {
+            dcp(cpu, bus, aAbsX(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0xDB => {
+            dcp(cpu, bus, aAbsY(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0xC3 => {
+            dcp(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        0xD3 => {
+            dcp(cpu, bus, aIndY(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        // ---- ISB/ISC (INC + SBC) ----
+        0xE7 => {
+            isb(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 5
+        }
+        0xF7 => {
+            isb(cpu, bus, aZpX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0xEF => {
+            isb(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0xFF => {
+            isb(cpu, bus, aAbsX(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0xFB => {
+            isb(cpu, bus, aAbsY(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0xE3 => {
+            isb(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        0xF3 => {
+            isb(cpu, bus, aIndY(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        // ---- SLO (ASL + ORA) ----
+        0x07 => {
+            slo(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 5
+        }
+        0x17 => {
+            slo(cpu, bus, aZpX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x0F => {
+            slo(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x1F => {
+            slo(cpu, bus, aAbsX(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x1B => {
+            slo(cpu, bus, aAbsY(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x03 => {
+            slo(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        0x13 => {
+            slo(cpu, bus, aIndY(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        // ---- RLA (ROL + AND) ----
+        0x27 => {
+            rla(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 5
+        }
+        0x37 => {
+            rla(cpu, bus, aZpX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x2F => {
+            rla(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x3F => {
+            rla(cpu, bus, aAbsX(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x3B => {
+            rla(cpu, bus, aAbsY(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x23 => {
+            rla(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        0x33 => {
+            rla(cpu, bus, aIndY(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        // ---- SRE (LSR + EOR) ----
+        0x47 => {
+            sre(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 5
+        }
+        0x57 => {
+            sre(cpu, bus, aZpX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x4F => {
+            sre(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x5F => {
+            sre(cpu, bus, aAbsX(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x5B => {
+            sre(cpu, bus, aAbsY(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x43 => {
+            sre(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        0x53 => {
+            sre(cpu, bus, aIndY(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        // ---- RRA (ROR + ADC) ----
+        0x67 => {
+            rra(cpu, bus, aZp(cpu, bus)) cpu.cyc = cpu.cyc + 5
+        }
+        0x77 => {
+            rra(cpu, bus, aZpX(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x6F => {
+            rra(cpu, bus, aAbs(cpu, bus)) cpu.cyc = cpu.cyc + 6
+        }
+        0x7F => {
+            rra(cpu, bus, aAbsX(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x7B => {
+            rra(cpu, bus, aAbsY(cpu, bus)) cpu.cyc = cpu.cyc + 7
+        }
+        0x63 => {
+            rra(cpu, bus, aIndX(cpu, bus)) cpu.cyc = cpu.cyc + 8
+        }
+        0x73 => {
+            rra(cpu, bus, aIndY(cpu, bus)) cpu.cyc = cpu.cyc + 8
         }
         _ => {
             // Unimplemented opcode: halt-ish. Caller detects no PC progress.

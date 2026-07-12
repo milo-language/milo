@@ -16,9 +16,10 @@ against `nestest.log` before any pixels.
       headless from $C000, diffs PC/A/X/Y/P/SP/CYC vs the golden log.
       **5004/8991 instructions match exactly** (registers AND cycles). Divergence
       at 5005 is the first *unofficial* opcode (`04 A9 *NOP`) — official set done.
-- [ ] **M1d — unofficial opcodes**: NOP variants (04/44/64/0C/14../80/82..),
-      LAX/SAX/DCP/ISB/SLO/RLA/SRE/RRA, unofficial SBC (EB). Target: full 8991-line
-      match. Then blargg `instr_test-v5` for deeper coverage.
+- [x] **M1d — unofficial opcodes**: NOP variants, LAX/SAX/DCP/ISB/SLO/RLA/SRE/RRA,
+      unofficial SBC (EB). **Full 8991/8991 nestest match** — the entire 6502
+      (official + illegal) is byte-exact vs the golden log, registers AND cycles.
+      6502 CPU is DONE and reference-validated.
 - [ ] **M2 — PPU**: background tiles, then sprites, then scrolling. Feeds the
       same RGBA framebuffer M0 already renders.
 - [ ] **M3 — controller input**: SDL key events → $4016 shift register.
