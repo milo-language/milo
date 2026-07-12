@@ -6,8 +6,8 @@
 // Build + run (SDL2 via homebrew, -O0 for fast compile):
 //   milo build examples/apps/nes/nes.milo -o /tmp/nes --debug -- -L/opt/homebrew/lib -lSDL2
 //   /tmp/nes roms/nes-test-roms/full_palette/full_palette.nes
-from "std/args" import {
-    args
+from "std/argparse" import {
+    newParser
 }
 from "std/io" import {
     readLine, writeStdout
@@ -174,13 +174,24 @@ fn pickRom(): string {
     }
 }
 
+// Print the keyboard controls to the terminal at launch.
+fn printControls(): void {
+    print("Milo NES — controls:")
+    print("  Arrow keys : D-pad          Z : A        X : B")
+    print("  Enter      : Start          Right Shift : Select")
+    print("  P          : dump frame to /tmp/nes_dump.rgb")
+    print("  Close the window to quit.")
+    print("")
+}
+
 fn main(): i32 {
-    let argv = args()
-    var romPath = ""
-    if argv.len > 1 {
-        romPath = argv[1]
-    } else {
-        romPath = pickRom()
+    var parser = newParser("nes", "Milo NES emulator (SDL2) — plays iNES (.nes) ROMs.")
+    parser.addOptionalPositional("rom", "path to a .nes ROM (omit to pick from roms/games/)")
+    let pargs = parser.parse() // auto-handles --help / -h
+
+    var romPath = pargs.getString("rom")
+    if romPath == "" {
+        romPath = pickRom() // interactive picker when no ROM given
         if romPath == "" {
             return 1
         }
@@ -189,11 +200,13 @@ fn main(): i32 {
     // match is statement-only in Milo, so the whole run lives in the Ok arm.
     match loadCartridge(romPath) {
         Result.Ok(cart) => {
+            printControls()
             return runNes(cart)
         }
         Result.Err(e) => {
             print("failed to load ROM: ")
             print(e)
+            print("run with --help for usage")
             return 1
         }
     }
