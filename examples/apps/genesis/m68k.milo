@@ -542,11 +542,28 @@ fn step(cpu: &mut M68k, m: &mut Mem): bool {
         raiseAddressError(cpu, m, memRead16(m, cpu.pc & ~1))
         return true
     }
+    // Snapshot data registers + SR: on an address error the faulting instruction
+    // aborts BEFORE writing its result/flags (those writes happen after the
+    // faulting bus cycle), so they must be rolled back. Address-register pre/post
+    // modifications DO commit on real HW, so a[] is deliberately NOT restored.
+    var savedD: [i64; 8] = [0, 0, 0, 0, 0, 0, 0, 0]
+    var si: i64 = 0
+    while si < 8 {
+        savedD[si] = cpu.d[si]
+        si = si + 1
+    }
+    let savedSr = cpu.sr
     let op = fetch16(cpu, m)
     let ran = decode(cpu, m, op)
     // An address error latched during EA access aborts the instruction and
     // raises the group-0 exception, with the opcode as the frame's IR.
     if cpu.fault {
+        si = 0
+        while si < 8 {
+            cpu.d[si] = savedD[si]
+            si = si + 1
+        }
+        cpu.sr = savedSr
         raiseAddressError(cpu, m, op)
         return true
     }
@@ -600,7 +617,249 @@ fn decode(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     if top == 0x4 {
         return execMisc(cpu, m, op)
     }
+    if top == 0xE {
+        return execShift(cpu, m, op)
+    }
+    if top == 0x0 {
+        return execImmediate(cpu, m, op)
+    }
     return false
+}
+
+// Shift/rotate core: shift `val` (width size) by cnt positions, updating N/Z/V/C/X
+// per 68000 rules. sty: 0=arith(ASx) 1=logical(LSx) 2=extend(ROXx) 3=rotate(ROx).
+fn doShift(cpu: &mut M68k, val: i64, size: i64, cnt: i64, sty: i64, left: bool): i64 {
+    let mask = sizeMask(size)
+    let msb = sizeMsb(size)
+    var v = val & mask
+    var carry = false
+    var overflow = false
+    var xf = getBit(cpu, SR_X)
+    var i: i64 = 0
+    while i < cnt {
+        if left {
+            let msbBit = (v & msb) != 0
+            var newLsb = false
+            if sty == 2 {
+                newLsb = xf
+                carry = msbBit
+                xf = msbBit
+            } else if sty == 3 {
+                carry = msbBit
+                newLsb = msbBit
+            } else {
+                carry = msbBit
+                xf = msbBit
+            }
+            v = ((v << 1) | (if newLsb {
+                1
+            } else {
+                0
+            }
+            )) & mask
+            if sty == 0 && (((v & msb) != 0) != msbBit) {
+                overflow = true
+            }
+        } else {
+            let lsbBit = (v & 1) != 0
+            var newMsb = false
+            if sty == 0 {
+                newMsb = (v & msb) != 0 // ASR preserves sign
+                carry = lsbBit
+                xf = lsbBit
+            } else if sty == 1 {
+                carry = lsbBit
+                xf = lsbBit
+            } else if sty == 3 {
+                carry = lsbBit
+                newMsb = lsbBit
+            } else {
+                newMsb = xf
+                carry = lsbBit
+                xf = lsbBit
+            }
+            v = ((v >> 1) | (if newMsb {
+                msb
+            } else {
+                0
+            }
+            )) & mask
+        }
+        i = i + 1
+    }
+    setNZ(cpu, size, v)
+    setBit(cpu, SR_V, sty == 0 && left && overflow)
+    if cnt == 0 {
+        // no shift: C cleared, except ROX where C follows X; X and (rotate) untouched
+        if sty == 2 {
+            setBit(cpu, SR_C, getBit(cpu, SR_X))
+        } else {
+            setBit(cpu, SR_C, false)
+        }
+    } else {
+        setBit(cpu, SR_C, carry)
+        if sty != 3 {
+            setBit(cpu, SR_X, xf) // AS/LS/ROX update X; RO leaves it
+        }
+    }
+    return v
+}
+
+// Shift/rotate dispatch (top nibble E): register form (count in opcode or Dn) and
+// memory form (shift a memory word by 1). bits 7-6 == 11 selects the memory form.
+fn execShift(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let left = (op & 0x0100) != 0
+    if (op & 0x00C0) == 0x00C0 {
+        // memory form: word, count 1, sty in bits 10-9
+        let sty = (op >> 9) & 0x3
+        let mode = (op >> 3) & 0x7
+        let reg = op & 0x7
+        let ea = resolveEa(cpu, m, mode, reg, 1)
+        let v = eaLoad(cpu, m, ea, 1)
+        let r = doShift(cpu, v, 1, 1, sty, left)
+        eaStore(cpu, m, ea, 1, r)
+        return true
+    }
+    let size = (op >> 6) & 0x3
+    let sty = (op >> 3) & 0x3
+    let ir = (op >> 5) & 1
+    let reg = op & 0x7
+    var cnt = (op >> 9) & 0x7
+    if ir == 0 {
+        if cnt == 0 {
+            cnt = 8 // immediate count 0 means 8
+        }
+    } else {
+        cnt = getD(cpu, (op >> 9) & 0x7, 2) & 63 // register count mod 64
+    }
+    let v = getD(cpu, reg, size)
+    let r = doShift(cpu, v, size, cnt, sty, left)
+    setD(cpu, reg, size, r)
+    return true
+}
+
+// Immediate group (top nibble 0): ORI/ANDI/SUBI/ADDI/EORI/CMPI, the ...toCCR/SR
+// forms, and static/dynamic bit ops (BTST/BCHG/BCLR/BSET).
+fn execImmediate(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    // Bit ops: dynamic (Dn source) have bit 8 set; static (immediate) are 0000 1000.
+    let dynamicBit = (op & 0x0100) != 0
+    let staticBit = (op & 0xFF00) == 0x0800
+    if dynamicBit || staticBit {
+        return execBitOp(cpu, m, op, staticBit)
+    }
+
+    let which = (op >> 9) & 0x7 // 0 ORI,1 ANDI,2 SUBI,3 ADDI,5 EORI,6 CMPI
+    let size = (op >> 6) & 0x3
+    if size == 3 {
+        return false
+    }
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+
+    // ...toCCR (mode 7 reg 4, size byte) / ...toSR (size word) for ORI/ANDI/EORI
+    if mode == 7 && reg == 4 && (which == 0 || which == 1 || which == 5) {
+        let imm = fetch16(cpu, m)
+        if size == 0 {
+            let ccr = cpu.sr & 0x1F
+            let r = applyLogic(which, ccr, imm & 0x1F) & 0x1F
+            cpu.sr = (cpu.sr & ~0x1F) | r
+            return true
+        }
+        // toSR (privileged — assume supervisor in tests). Only defined SR bits
+        // exist; the rest read as 0 (mask 0xA71F = T,S,I2-0,X,N,Z,V,C).
+        let oldS = (cpu.sr & SR_S) != 0
+        let r = applyLogic(which, cpu.sr, imm) & 0xA71F
+        cpu.sr = r
+        // Changing the S bit swaps the active stack pointer with the inactive one.
+        if oldS != ((r & SR_S) != 0) {
+            let tmp = cpu.a[7]
+            cpu.a[7] = cpu.otherSp
+            cpu.otherSp = tmp
+        }
+        return true
+    }
+
+    let imm: i64 = if size == 2 {
+        fetch32(cpu, m)
+    } else {
+        fetch16(cpu, m) & sizeMask(size)
+    }
+    let ea = resolveEa(cpu, m, mode, reg, size)
+    let cur = eaLoad(cpu, m, ea, size)
+    if which == 2 {
+        // SUBI
+        let res = (cur - imm) & sizeMask(size)
+        subFlags(cpu, size, cur, imm, res, true)
+        eaStore(cpu, m, ea, size, res)
+    } else if which == 3 {
+        // ADDI
+        let res = (cur + imm) & sizeMask(size)
+        addFlags(cpu, size, cur, imm, res, true)
+        eaStore(cpu, m, ea, size, res)
+    } else if which == 6 {
+        // CMPI — compare only, no writeback, X untouched
+        let res = (cur - imm) & sizeMask(size)
+        subFlags(cpu, size, cur, imm, res, false)
+    } else {
+        // ORI / ANDI / EORI
+        let res = applyLogic(which, cur, imm) & sizeMask(size)
+        eaStore(cpu, m, ea, size, res)
+        setLogicalFlags(cpu, size, res)
+    }
+    return true
+}
+
+fn applyLogic(which: i64, a: i64, b: i64): i64 {
+    if which == 0 {
+        return a | b // ORI
+    }
+    if which == 1 {
+        return a & b // ANDI
+    }
+    return a ^ b // EORI (which == 5)
+}
+
+// BTST/BCHG/BCLR/BSET — static (immediate bit number) or dynamic (Dn). Bit index
+// is mod 32 for a data register (long), mod 8 for a memory byte.
+fn execBitOp(cpu: &mut M68k, m: &mut Mem, op: i64, isStatic: bool): bool {
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+    var bitNum: i64 = 0
+    if isStatic {
+        bitNum = fetch16(cpu, m) & 0xFF
+    } else {
+        bitNum = getD(cpu, (op >> 9) & 0x7, 2) & 0xFF
+    }
+    let opType = (op >> 6) & 0x3 // 0 BTST,1 BCHG,2 BCLR,3 BSET
+    if mode == 0 {
+        // data register: long, bit mod 32
+        let b = bitNum & 31
+        let v = cpu.d[reg] & 0xFFFFFFFF
+        let bit = (v >> b) & 1
+        setBit(cpu, SR_Z, bit == 0)
+        if opType == 1 {
+            cpu.d[reg] = v ^ (1 << b)
+        } else if opType == 2 {
+            cpu.d[reg] = v & ~(1 << b)
+        } else if opType == 3 {
+            cpu.d[reg] = v | (1 << b)
+        }
+        return true
+    }
+    // memory: byte, bit mod 8
+    let b = bitNum & 7
+    let ea = resolveEa(cpu, m, mode, reg, 0)
+    let v = eaLoad(cpu, m, ea, 0)
+    let bit = (v >> b) & 1
+    setBit(cpu, SR_Z, bit == 0)
+    if opType == 1 {
+        eaStore(cpu, m, ea, 0, v ^ (1 << b))
+    } else if opType == 2 {
+        eaStore(cpu, m, ea, 0, v & ~(1 << b))
+    } else if opType == 3 {
+        eaStore(cpu, m, ea, 0, v | (1 << b))
+    }
+    return true
 }
 
 // MOVE.b/.w/.l — the workhorse. Also MOVEA when the destination mode is An.
