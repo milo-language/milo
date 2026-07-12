@@ -4647,10 +4647,33 @@ export class TypeChecker {
         for (const [info, m] of afterThen) { if (m) info.moved = true; }
         for (const [info, m] of afterElse) { if (m) info.moved = true; }
 
-        if (thenType.tag !== "unknown" && elseType.tag !== "unknown" && !typeEq(thenType, elseType)) {
-          this.error(`if-else branches have mismatched types: '${typeName(thenType)}' vs '${typeName(elseType)}'`, sp);
+        // As-a-value if: coerce a const-int arm to the expected width so
+        // `let h: i64 = if c { 16 } else { 8 }` doesn't leave both arms at the
+        // i32 literal default and then error on the binding. Target is the outer
+        // int hint if present, else the concrete non-literal arm's type (so
+        // `if c { u8var } else { 0 }` unifies with no annotation). Same const-int
+        // retype machinery as enum payloads / struct fields / return.
+        const [thenTail, elseTail] = [this.tailExprOf(expr.thenBody), this.tailExprOf(expr.elseBody)];
+        const hint = this.returnHint;
+        let target: TypeKind | null = hint?.tag === "int" ? hint : null;
+        if (!target && thenType.tag === "int" && elseType.tag === "int" && !typeEq(thenType, elseType)) {
+          if (thenTail && this.isConstIntExpr(thenTail) && !(elseTail && this.isConstIntExpr(elseTail))) target = elseType;
+          else if (elseTail && this.isConstIntExpr(elseTail) && !(thenTail && this.isConstIntExpr(thenTail))) target = thenType;
         }
-        return this.setType(expr, thenType.tag !== "unknown" ? thenType : elseType);
+        let finalThen = thenType, finalElse = elseType;
+        if (target) {
+          if (thenTail && thenType.tag === "int" && !typeEq(thenType, target) && this.isConstIntExpr(thenTail)) {
+            this.retypeConstInt(thenTail, target); finalThen = target;
+          }
+          if (elseTail && elseType.tag === "int" && !typeEq(elseType, target) && this.isConstIntExpr(elseTail)) {
+            this.retypeConstInt(elseTail, target); finalElse = target;
+          }
+        }
+
+        if (finalThen.tag !== "unknown" && finalElse.tag !== "unknown" && !typeEq(finalThen, finalElse)) {
+          this.error(`if-else branches have mismatched types: '${typeName(finalThen)}' vs '${typeName(finalElse)}'`, sp);
+        }
+        return this.setType(expr, finalThen.tag !== "unknown" ? finalThen : finalElse);
       }
     }
   }
@@ -4660,6 +4683,13 @@ export class TypeChecker {
     const last = body[body.length - 1];
     if (last.kind === "ExprStmt") return this.exprTypes.get(last.expr) ?? { tag: "void" };
     return { tag: "void" };
+  }
+
+  // Tail (value) expression of a block, or null if it doesn't end in one.
+  private tailExprOf(body: Stmt[]): Expr | null {
+    if (body.length === 0) return null;
+    const last = body[body.length - 1];
+    return last.kind === "ExprStmt" ? last.expr : null;
   }
 
   private validateHashableKey(t: TypeKind, span?: Span) {

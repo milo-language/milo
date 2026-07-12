@@ -1,0 +1,9 @@
+// A coerced if-arm still range-checks each literal against the target width.
+fn main(): void {
+    let h: u8 = if true {
+        300
+    } else {
+        0
+    } // @error: overflows u8
+    print(h.toString())
+}

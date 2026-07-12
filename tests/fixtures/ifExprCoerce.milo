@@ -1,0 +1,68 @@
+// If-as-value: a const-int arm coerces to the expected integer width, so an
+// annotated binding (or return) doesn't get stuck at the i32 literal default.
+// @expect: 16
+// @expect: 12
+// @expect: 4096
+// @expect: 2
+// @expect: 16
+// @expect: 5
+// @expect: 16
+fn pick(t: bool): i64 {
+    return if t {
+        16
+    } else {
+        8
+    }
+}
+
+fn main(): void {
+    let h: i64 = if true {
+        16
+    } else {
+        8
+    }
+    print(h.toString())
+
+    let u: u8 = if false {
+        200
+    } else {
+        12
+    }
+    print(u.toString())
+
+    let addr: u16 = if true {
+        0x1000
+    } else {
+        0
+    }
+    print(addr.toString())
+
+    // else-if chain: inner if coerces via the same ambient hint.
+    let g: i64 = if false {
+        1
+    } else if true {
+        2
+    } else {
+        3
+    }
+    print(g.toString())
+
+    // const binop arm.
+    let k: u8 = if true {
+        8 * 2
+    } else {
+        0
+    }
+    print(k.toString())
+
+    // concrete non-literal arm + literal arm unify with no annotation.
+    var v: u8 = 5
+    let w = if true {
+        v
+    } else {
+        0
+    }
+    print(w.toString())
+
+    print(pick(true).toString())
+}
