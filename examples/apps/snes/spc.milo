@@ -236,6 +236,23 @@ fn readDpX(spc: &mut Spc, m: &SpcMem): i64 {
     return spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF))
 }
 
+// (X): direct page at register X. [dp+X]: 16-bit pointer at dp+X. [dp]+Y:
+// 16-bit pointer at dp, then +Y.
+fn readIndX(spc: &Spc, m: &SpcMem): i64 {
+    return spcRead(m, dpAddr(spc, spc.x))
+}
+
+fn readIndDpX(spc: &mut Spc, m: &SpcMem): i64 {
+    let d = (spcFetch(spc, m) + spc.x) & 0xFF
+    return spcRead(m, readDpWord(spc, m, d))
+}
+
+fn readIndDpY(spc: &mut Spc, m: &SpcMem): i64 {
+    let d = spcFetch(spc, m)
+    let ptr = readDpWord(spc, m, d)
+    return spcRead(m, (ptr + spc.y) & 0xFFFF)
+}
+
 // --- 16-bit YA arithmetic (word from dp) ---
 fn spcAddw(spc: &mut Spc, w: i64): void {
     let ya = ((spc.y << 8) | spc.a) & 0xFFFF
@@ -532,6 +549,72 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x50 => {
             spcBranch(spc, m, (spc.psw & PV) == 0)
         } // BVC
+
+        // ---- A-form ALU, (X) indirect ----
+        0x06 => {
+            let v = readIndX(spc, m) spcOr(spc, v)
+        } // OR A,(X)
+        0x26 => {
+            let v = readIndX(spc, m) spcAnd(spc, v)
+        }
+        0x46 => {
+            let v = readIndX(spc, m) spcEor(spc, v)
+        }
+        0x66 => {
+            let v = readIndX(spc, m) spcCmp(spc, spc.a, v)
+        }
+        0x86 => {
+            let v = readIndX(spc, m) spcAdc(spc, v)
+        }
+        0xA6 => {
+            let v = readIndX(spc, m) spcSbc(spc, v)
+        }
+
+        // ---- A-form ALU, [dp+X] indexed-indirect ----
+        0x07 => {
+            let v = readIndDpX(spc, m) spcOr(spc, v)
+        } // OR A,[dp+X]
+        0x27 => {
+            let v = readIndDpX(spc, m) spcAnd(spc, v)
+        }
+        0x47 => {
+            let v = readIndDpX(spc, m) spcEor(spc, v)
+        }
+        0x67 => {
+            let v = readIndDpX(spc, m) spcCmp(spc, spc.a, v)
+        }
+        0x87 => {
+            let v = readIndDpX(spc, m) spcAdc(spc, v)
+        }
+        0xA7 => {
+            let v = readIndDpX(spc, m) spcSbc(spc, v)
+        }
+
+        // ---- A-form ALU, [dp]+Y indirect-indexed ----
+        0x17 => {
+            let v = readIndDpY(spc, m) spcOr(spc, v)
+        } // OR A,[dp]+Y
+        0x37 => {
+            let v = readIndDpY(spc, m) spcAnd(spc, v)
+        }
+        0x57 => {
+            let v = readIndDpY(spc, m) spcEor(spc, v)
+        }
+        0x77 => {
+            let v = readIndDpY(spc, m) spcCmp(spc, spc.a, v)
+        }
+        0x97 => {
+            let v = readIndDpY(spc, m) spcAdc(spc, v)
+        }
+        0xB7 => {
+            let v = readIndDpY(spc, m) spcSbc(spc, v)
+        }
+
+        // ---- MUL YA = Y * A (N/Z from high byte) ----
+        0xCF => {
+            let r = (spc.y * spc.a) & 0xFFFF
+            spc.a = r & 0xFF spc.y = (r >> 8) & 0xFF spcNZ(spc, spc.y)
+        }
 
         // ---- 16-bit ADDW/SUBW/CMPW YA,dp ----
         0x7A => {
