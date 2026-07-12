@@ -13,7 +13,7 @@ from "std/io" import {
     readLine, writeStdout
 }
 from "std/fs" import {
-    readDir, isDir
+    readDir, isDir, writeFile
 }
 from "std/string" import {
     strEndsWith
@@ -200,6 +200,28 @@ fn main(): i32 {
     return 0
 }
 
+// Debug: write the current 256x240 framebuffer as raw RGB24 to /tmp/nes_dump.rgb.
+// View: ffmpeg -f rawvideo -pixel_format rgb24 -video_size 256x240 -i /tmp/nes_dump.rgb -y dump.png
+fn dumpFrame(bus: &Bus): void {
+    var data: string = ""
+    var i: i64 = 0
+    while i < 61440 {
+        let px = bus.ppu.fb[i]as i64
+        data.push((px & 0xFF) as u8)
+        data.push(((px >> 8) & 0xFF) as u8)
+        data.push(((px >> 16) & 0xFF) as u8)
+        i = i + 1
+    }
+    match writeFile("/tmp/nes_dump.rgb", data) {
+        Result.Ok(n) => {
+            print("dumped frame to /tmp/nes_dump.rgb")
+        }
+        Result.Err(e) => {
+            print("frame dump failed")
+        }
+    }
+}
+
 fn runNes(cart: Cartridge): i32 {
     var bus = newBus(cart)
     var cpu = newCpuReset(bus)
@@ -237,6 +259,7 @@ fn runNes(cart: Cartridge): i32 {
 
         var ev: [u8; 64] = [0; 64]
         var quit = false
+        var dumpPrev = false // edge-detect the P (frame-dump) key
         while !quit {
             // Run the system until the PPU completes one video frame.
             let startFrame = bus.ppu.frame
@@ -314,6 +337,12 @@ fn runNes(cart: Cartridge): i32 {
                 b = b | 0x04 // Right Shift -> Select
             }
             bus.buttons = b
+            // Debug: press P (scancode 19) to snapshot the current frame.
+            let dumpNow = ks[19] != 0
+            if dumpNow && !dumpPrev {
+                dumpFrame(bus)
+            }
+            dumpPrev = dumpNow
             // Pace to audio when active (drain to ~4 frames latency); else fixed 60Hz.
             if audioDev != 0 {
                 while SDL_GetQueuedAudioSize(audioDev) > (735 * 2 * 4) as u32 {
