@@ -1,0 +1,17 @@
+// @proven: 2
+// @failed: 0
+// Two postconditions, both discharged: the sum of two non-negatives dominates
+// each operand.
+fn addNonneg(a: i64, b: i64): i64
+requires a >= 0
+requires b >= 0
+ensures result >= a
+ensures result >= b
+{
+    return a + b
+}
+
+fn main(): i32 {
+    print(addNonneg(3, 4))
+    return 0
+}

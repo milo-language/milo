@@ -1,0 +1,21 @@
+// @proven: 2
+// @failed: 0
+// Memory-safety of a substring search's inner access haystack[i+j]: the outer
+// loop guard (i <= hayLen - needleLen) and inner guard (0 <= j < needleLen)
+// prove 0 <= i+j < hayLen. (Modeled from the DAP framing scanner.)
+fn searchIndex(hayLen: i64, needleLen: i64, i: i64, j: i64): i64
+requires needleLen >= 1
+requires i >= 0
+requires i <= hayLen - needleLen
+requires j >= 0
+requires j < needleLen
+ensures result >= 0
+ensures result < hayLen
+{
+    return i + j
+}
+
+fn main(): i32 {
+    print(searchIndex(10, 3, 7, 2))
+    return 0
+}

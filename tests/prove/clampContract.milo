@@ -1,0 +1,16 @@
+// @proven: 1
+// @failed: 0
+// clamp's result is provably within [lo, hi] on every path.
+fn clamp(value: i64, lo: i64, hi: i64): i64
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    if value < lo { return lo }
+    if value > hi { return hi }
+    return value
+}
+
+fn main(): i32 {
+    print(clamp(5, 0, 9))
+    return 0
+}
