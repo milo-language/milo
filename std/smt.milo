@@ -235,20 +235,23 @@ fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool {
     return true
 }
 
-// Odometer search over [-bound, bound]^nvars for a concrete integer witness.
-// Empty result means no witness in the box.
-fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64): Vec<i64> {
+// Odometer search over [-bound, bound]^nvars for a concrete integer witness,
+// capped at maxIters so a high-dimensional box can't blow up (129^5 etc.).
+// Empty result means no witness found within the budget.
+fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64, maxIters: i64): Vec<i64> {
     var x: Vec<i64> = []
     var j: i64 = 0
     while j < nvars {
         x.push(-bound)
         j = j + 1
     }
+    var iters: i64 = 0
     var done: bool = false
-    while !done {
+    while !done && iters < maxIters {
         if satisfiesAll(cs, x) {
             return x
         }
+        iters = iters + 1
         var idx: i64 = 0
         while idx < nvars {
             x[idx] = x[idx] + 1
@@ -264,6 +267,27 @@ fn findWitness(cs: &Vec<Constraint>, nvars: i64, bound: i64): Vec<i64> {
     }
     var empty: Vec<i64> = []
     return empty
+}
+
+// Per-variable box radius so the total search (2b+1)^nvars stays near a few
+// million points — wide in low dimensions, tight in high ones.
+fn witnessBound(nvars: i64): i64 {
+    if nvars <= 1 {
+        return 1000000
+    }
+    if nvars == 2 {
+        return 700
+    }
+    if nvars == 3 {
+        return 60
+    }
+    if nvars == 4 {
+        return 20
+    }
+    if nvars == 5 {
+        return 9
+    }
+    return 5
 }
 
 fn evalNode(p: &SmtProblem, node: i64, mask: i64): bool {
@@ -359,7 +383,7 @@ fn decide(p: &SmtProblem, root: i64): Verdict {
         if evalNode(p, root, mask) {
             let cs = inducedConstraints(p, mask)
             if feasibleRational(cs, p.nvars) {
-                let w = findWitness(cs, p.nvars, 64)
+                let w = findWitness(cs, p.nvars, witnessBound(p.nvars), 8000000)
                 if w.len > 0 {
                     return Verdict.Violated(w)
                 }

@@ -263,7 +263,13 @@ export function proveWithMilo(result: VerifyResult): ProveResult {
     const src = join(dir, "prove.milo");
     writeFileSync(src, program);
     const mainTs = join(import.meta.dir, "main.ts");
-    const proc = spawnSync("bun", ["run", mainTs, "run", src], { encoding: "utf-8", timeout: 60000 });
+    // Run the generated prover through the JS backend, not native: it's pure
+    // integer logic, so emit-js + bun avoids a clang compile that would nest
+    // under the outer `prove` and trip the memory guard (fail-closed shed).
+    const emit = spawnSync("bun", ["run", mainTs, "emit-js", src], { encoding: "utf-8", timeout: 60000 });
+    const js = join(dir, "prove.js");
+    writeFileSync(js, emit.stdout ?? "");
+    const proc = spawnSync("bun", [js], { encoding: "utf-8", timeout: 60000 });
     const out = (proc.stdout ?? "").trim();
     const verdicts = new Map<number, string>();
     for (const line of out.split("\n")) {

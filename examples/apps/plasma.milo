@@ -89,7 +89,7 @@ fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3]): vo
 
 // Draw one full plasma frame (rows 2..) into buf. Returns the frame's byte size.
 fn drawPlasma(buf: &mut string, cols: i64, pRows: i64, cx: f64, cy: f64, t: f64,
-top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
+              top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
     for r in 0..pRows {
         emit(buf, cursorTo(r + 2, 1))
         let yTop = (r * 2) as f64
