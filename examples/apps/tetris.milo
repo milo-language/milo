@@ -30,6 +30,12 @@ from "std/runtime" import {
 from "std/select" import {
     Select
 }
+from "std/ansi" import {
+    cursorTo, fg256, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+}
+from "std/color" import {
+    gray, cyan, bold, red, yellow
+}
 
 let W: i64 = 10
 let H: i64 = 20
@@ -61,11 +67,12 @@ fn emit(buf: &mut string, s: &string): void {
 }
 
 fn cursor(buf: &mut string, row: i64, col: i64): void {
-    emit(buf, $"\x1b[{row};{col}H")
+    emit(buf, cursorTo(row, col))
 }
 
+// a solid 2-wide cell in the piece's color
 fn blockStr(code: i64): string {
-    return $"\x1b[38;5;{code}m██\x1b[0m"
+    return fg256(code) + "██" + ansiReset()
 }
 
 // ── tetromino geometry ──
@@ -283,17 +290,23 @@ score: i64, lines: i64, nextKind: i64): void {
         pcy[i] = py + cells[i * 2 + 1]
     }
 
-    // top border
-    cursor(buf, 1, 2)
-    emit(buf, "\x1b[90m┌")
+    // top / bottom borders — build the run of box chars, then dim it once
+    var top = "┌"
+    var bottom = "└"
     for x in 0..W {
-        emit(buf, "──")
+        top = top + "──"
+        bottom = bottom + "──"
     }
-    emit(buf, "┐\x1b[0m")
+    top = top + "┐"
+    bottom = bottom + "┘"
 
+    cursor(buf, 1, 2)
+    emit(buf, gray(top))
+
+    let bar = gray("│")
     for y in 0..H {
         cursor(buf, 2 + y, 2)
-        emit(buf, "\x1b[90m│\x1b[0m")
+        emit(buf, bar)
         for x in 0..W {
             var c: i64 = board[y * W + x]as i64
             var hit = false
@@ -311,51 +324,47 @@ score: i64, lines: i64, nextKind: i64): void {
                 emit(buf, blockStr(c))
             }
         }
-        emit(buf, "\x1b[90m│\x1b[0m")
+        emit(buf, bar)
     }
 
     cursor(buf, 2 + H, 2)
-    emit(buf, "\x1b[90m└")
-    for x in 0..W {
-        emit(buf, "──")
-    }
-    emit(buf, "┘\x1b[0m")
+    emit(buf, gray(bottom))
 
     // sidebar
     let sx = 2 + W * 2 + 5
     cursor(buf, 1, sx)
-    emit(buf, "\x1b[1;36mMILO TETRIS\x1b[0m")
+    emit(buf, bold(cyan("MILO TETRIS")))
     cursor(buf, 2, sx)
-    emit(buf, "\x1b[90ma tetris written in Milo\x1b[0m")
+    emit(buf, gray("a tetris written in Milo"))
     cursor(buf, 3, sx)
-    emit(buf, $"score  \x1b[1m{score}\x1b[0m   ")
+    emit(buf, "score  " + bold($"{score}") + "   ")
     cursor(buf, 4, sx)
-    emit(buf, $"lines  \x1b[1m{lines}\x1b[0m   ")
+    emit(buf, "lines  " + bold($"{lines}") + "   ")
     cursor(buf, 6, sx)
     emit(buf, "next")
     renderNext(buf, nextKind, 7, sx)
     cursor(buf, 11, sx)
-    emit(buf, "\x1b[90m<- ->  move\x1b[0m")
+    emit(buf, gray("<- ->  move"))
     cursor(buf, 12, sx)
-    emit(buf, "\x1b[90m  ^    rotate\x1b[0m")
+    emit(buf, gray("  ^    rotate"))
     cursor(buf, 13, sx)
-    emit(buf, "\x1b[90m  v    soft drop\x1b[0m")
+    emit(buf, gray("  v    soft drop"))
     cursor(buf, 14, sx)
-    emit(buf, "\x1b[90mspace  hard drop\x1b[0m")
+    emit(buf, gray("space  hard drop"))
     cursor(buf, 15, sx)
-    emit(buf, "\x1b[90mq/^C   quit\x1b[0m")
+    emit(buf, gray("q/^C   quit"))
 
     // pitch: this is a real program in a real systems language, not a toy
     cursor(buf, 18, sx)
-    emit(buf, "\x1b[1;36mmemory-safe systems lang\x1b[0m")
+    emit(buf, bold(cyan("memory-safe systems lang")))
     cursor(buf, 19, sx)
-    emit(buf, "\x1b[90mnative via LLVM · no GC · no\x1b[0m")
+    emit(buf, gray("native via LLVM · no GC · no"))
     cursor(buf, 20, sx)
-    emit(buf, "\x1b[90mpolling — one green task on\x1b[0m")
+    emit(buf, gray("polling — one green task on"))
     cursor(buf, 21, sx)
-    emit(buf, "\x1b[90mselect(keys, gravity timer)\x1b[0m")
+    emit(buf, gray("select(keys, gravity timer)"))
     cursor(buf, 23, sx)
-    emit(buf, "\x1b[1;33m★ github.com/cs01/milo\x1b[0m")
+    emit(buf, bold(yellow("★ github.com/cs01/milo")))
 }
 
 fn drawFrame(board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64,
@@ -490,11 +499,11 @@ fn runGame(): void {
     if gameOver {
         var buf = ""
         cursor(buf, 10, 6)
-        emit(buf, "\x1b[1;31m GAME OVER \x1b[0m")
+        emit(buf, bold(red(" GAME OVER ")))
         cursor(buf, 11, 6)
-        emit(buf, $"\x1b[1m score {score} \x1b[0m")
+        emit(buf, bold($" score {score} "))
         cursor(buf, 12, 6)
-        emit(buf, "\x1b[90m press q \x1b[0m")
+        emit(buf, gray(" press q "))
         writeStdout(buf)
         waitForQuit()
     }
@@ -502,14 +511,14 @@ fn runGame(): void {
 
 fn main(): i32 {
     let termState = enableRawMode()
-    writeStdout("\x1b[?25l\x1b[2J")
+    writeStdout(hideCursor() + clearScreen())
 
     // select() needs the green scheduler, so the game runs as a task; join()
     // blocks main here and drives the scheduler until it finishes. (Go-style:
     // like `go run()` + wait — no manual scheduler pumping.)
     Task.spawn(runGame).join()
 
-    writeStdout("\x1b[?25h\x1b[2J\x1b[H\x1b[0m")
+    writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
     restoreTerminal(termState)
     print("thanks for playing milo tetris ♥")
     print("built with milo — docs & playground: https://cs01.github.io/milo/")

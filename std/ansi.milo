@@ -1,0 +1,50 @@
+// std/ansi — cursor movement, screen control, and xterm-256 color SGR codes.
+//
+// Complements std/color (named 16-color text wrappers) with the lower-level
+// primitives a full-screen TUI needs: absolute cursor positioning, the 256-color
+// palette, and screen/cursor visibility control. Each returns an escape string to
+// emit; build a frame in one buffer and write it once to avoid flicker.
+
+// Move the cursor to a 1-based (row, col).
+fn cursorTo(row: i64, col: i64): string {
+    return $"\x1b[{row};{col}H"
+}
+
+// Cursor to home (row 1, col 1).
+fn cursorHome(): string {
+    return "\x1b[H"
+}
+
+// xterm-256 foreground select-graphic-rendition for a palette index (0–255).
+fn fg256(code: i64): string {
+    return $"\x1b[38;5;{code}m"
+}
+
+// xterm-256 background SGR.
+fn bg256(code: i64): string {
+    return $"\x1b[48;5;{code}m"
+}
+
+// Reset all attributes to the terminal default.
+fn ansiReset(): string {
+    return "\x1b[0m"
+}
+
+// Erase the entire screen.
+fn clearScreen(): string {
+    return "\x1b[2J"
+}
+
+// Erase from the cursor to the end of the line.
+fn clearLine(): string {
+    return "\x1b[K"
+}
+
+// Hide / show the cursor — hide while drawing a full-screen UI, show on exit.
+fn hideCursor(): string {
+    return "\x1b[?25l"
+}
+
+fn showCursor(): string {
+    return "\x1b[?25h"
+}
