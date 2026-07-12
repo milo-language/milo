@@ -136,9 +136,84 @@ fn applyEmulationConstraints(cpu: &mut Cpu): void {
     }
 }
 
-// Execute one instruction. Only the register/flag/transfer/immediate batch is
-// wired so far — memory-operand opcodes fall through to the no-op default and
-// register as failures against Harte until implemented.
+// --- stack (bank 0; emulation keeps S in page 1) ---
+fn spDec(cpu: &mut Cpu): void {
+    if cpu.e == 1 {
+        cpu.s = 0x0100 | ((cpu.s - 1) & 0xFF)
+    } else {
+        cpu.s = (cpu.s - 1) & 0xFFFF
+    }
+}
+
+fn spInc(cpu: &mut Cpu): void {
+    if cpu.e == 1 {
+        cpu.s = 0x0100 | ((cpu.s + 1) & 0xFF)
+    } else {
+        cpu.s = (cpu.s + 1) & 0xFFFF
+    }
+}
+
+fn push8(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+    memWrite(m, cpu.s, v & 0xFF)
+    spDec(cpu)
+}
+
+fn pull8(cpu: &mut Cpu, m: &mut Mem): i64 {
+    spInc(cpu)
+    return memRead(m, cpu.s)
+}
+
+// 16-bit push writes high byte first, so the low byte lands at the lower address.
+fn push16(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+    push8(cpu, m, (v >> 8) & 0xFF)
+    push8(cpu, m, v & 0xFF)
+}
+
+fn pull16(cpu: &mut Cpu, m: &mut Mem): i64 {
+    let lo = pull8(cpu, m)
+    let hi = pull8(cpu, m)
+    return lo | (hi << 8)
+}
+
+fn fetch16(cpu: &mut Cpu, m: &Mem): i64 {
+    let lo = fetch8(cpu, m)
+    let hi = fetch8(cpu, m)
+    return lo | (hi << 8)
+}
+
+// "New" 65816 stack ops (PEA/PEI/PER/PHD/PLD, and the bank pushes/pulls) use a
+// full 16-bit stack pointer even in emulation — the byte accesses can leave page
+// 1 — and only clamp SH back to 01 once the instruction finishes.
+fn push8f(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+    memWrite(m, cpu.s, v & 0xFF)
+    cpu.s = (cpu.s - 1) & 0xFFFF
+}
+
+fn pull8f(cpu: &mut Cpu, m: &mut Mem): i64 {
+    cpu.s = (cpu.s + 1) & 0xFFFF
+    return memRead(m, cpu.s)
+}
+
+fn push16f(cpu: &mut Cpu, m: &mut Mem, v: i64): void {
+    push8f(cpu, m, (v >> 8) & 0xFF)
+    push8f(cpu, m, v & 0xFF)
+}
+
+fn pull16f(cpu: &mut Cpu, m: &mut Mem): i64 {
+    let lo = pull8f(cpu, m)
+    let hi = pull8f(cpu, m)
+    return lo | (hi << 8)
+}
+
+fn clampEmuStack(cpu: &mut Cpu): void {
+    if cpu.e == 1 {
+        cpu.s = 0x0100 | (cpu.s & 0xFF)
+    }
+}
+
+// Execute one instruction. Register/flag/transfer/immediate + stack push/pull
+// batches are wired; other memory-operand opcodes fall through to the no-op
+// default and register as failures against Harte until implemented.
 fn step(cpu: &mut Cpu, m: &mut Mem): void {
     let op = fetch8(cpu, m)
     match op {
@@ -360,6 +435,81 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
                 let hi = fetch8(cpu, m)
                 cpu.y = lo | (hi << 8) setNZ16(cpu, cpu.y)
             }
+        }
+
+        // ---- stack push/pull ----
+        0x48 => { // PHA
+            if m8(cpu) {
+                push8(cpu, m, cpu.a)
+            } else {
+                push16(cpu, m, cpu.a)
+            }
+        }
+        0x68 => { // PLA
+            if m8(cpu) {
+                let v = pull8(cpu, m)
+                cpu.a = (cpu.a & 0xFF00) | v setNZ8(cpu, v)
+            } else {
+                cpu.a = pull16(cpu, m) setNZ16(cpu, cpu.a)
+            }
+        }
+        0xDA => { // PHX
+            if x8(cpu) {
+                push8(cpu, m, cpu.x)
+            } else {
+                push16(cpu, m, cpu.x)
+            }
+        }
+        0xFA => { // PLX
+            if x8(cpu) {
+                cpu.x = pull8(cpu, m) setNZ8(cpu, cpu.x)
+            } else {
+                cpu.x = pull16(cpu, m) setNZ16(cpu, cpu.x)
+            }
+        }
+        0x5A => { // PHY
+            if x8(cpu) {
+                push8(cpu, m, cpu.y)
+            } else {
+                push16(cpu, m, cpu.y)
+            }
+        }
+        0x7A => { // PLY
+            if x8(cpu) {
+                cpu.y = pull8(cpu, m) setNZ8(cpu, cpu.y)
+            } else {
+                cpu.y = pull16(cpu, m) setNZ16(cpu, cpu.y)
+            }
+        }
+        0x08 => { // PHP — status pushed as-is (8-bit)
+            push8(cpu, m, cpu.p)
+        }
+        0x28 => { // PLP
+            cpu.p = pull8(cpu, m)
+            applyEmulationConstraints(cpu) // e forces M/X set + truncates
+            if (cpu.p & FX) != 0 { // native X=1 narrows index registers
+                cpu.x = cpu.x & 0xFF
+                cpu.y = cpu.y & 0xFF
+            }
+        }
+        0x8B => { // PHB — data bank (full-stack op)
+            push8f(cpu, m, cpu.dbr) clampEmuStack(cpu)
+        }
+        0xAB => { // PLB
+            cpu.dbr = pull8f(cpu, m) clampEmuStack(cpu) setNZ8(cpu, cpu.dbr)
+        }
+        0x4B => { // PHK — program bank (full-stack op)
+            push8f(cpu, m, cpu.pbr) clampEmuStack(cpu)
+        }
+        0x0B => { // PHD — direct-page register (always 16-bit, full stack)
+            push16f(cpu, m, cpu.d) clampEmuStack(cpu)
+        }
+        0x2B => { // PLD
+            cpu.d = pull16f(cpu, m) clampEmuStack(cpu) setNZ16(cpu, cpu.d)
+        }
+        0xF4 => { // PEA — push a 16-bit immediate (full stack)
+            let v = fetch16(cpu, m)
+            push16f(cpu, m, v) clampEmuStack(cpu)
         }
 
         _ => {

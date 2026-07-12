@@ -31,13 +31,18 @@ masked to width; m8()/x8() decide operand size live. Harness path proven:
 clones the 3.8 MB source per accessor and OOMs — see genesis/), `runHarte.milo`
 tokenizes it, `harte.sh` runs one process per opcode (both e/n modes).
 
-Green so far (66/66 files = 660k cases, both emulation + native):
+Green so far (94/94 files = 940k cases, both emulation + native):
   NOP; flags CLC/SEC/CLI/SEI/CLV/CLD/SED; XCE; REP/SEP; all transfers
   (TAX/TAY/TXA/TYA/TSX/TXS/TXY/TYX/TCS/TSC/TCD/TDC); XBA; INX/INY/DEX/DEY;
-  INC/DEC A; LDA/LDX/LDY immediate.
-Key gotcha found: emulation mode forces stack high byte to 01 — mask S on load.
-Next: stack ops (PHA/PLA/PHP/PLP…, emulation-wrap), then memory addressing
-modes (dp/abs/long/[dp]/indexed) for the load/store/ALU families.
+  INC/DEC A; LDA/LDX/LDY immediate; stack PHA/PLA/PHP/PLP/PHX/PLX/PHY/PLY/
+  PHB/PLB/PHK/PHD/PLD/PEA.
+Key gotchas found:
+  - Emulation forces stack high byte to 01 — mask S on load.
+  - Stack page-1 wrap is per-instruction: classic ops (PHA/PLA/PHP/PLP/PHX/PLX/
+    PHY/PLY) wrap each byte within page 1; "new" ops (PEA/PHD/PLD/PHB/PLB/PHK)
+    use a full 16-bit S (can leave page 1) and only clamp SH=01 at the end.
+Next: memory addressing modes (dp/abs/long/[dp]/indexed) for load/store/ALU
+families; then PEI/PER/stack-relative, MVN/MVP block moves, branches, JMP/JSR/RTx.
 
 Run: `examples/apps/snes/harte.sh` (or `harte.sh ea a9 …` for a subset).
 
