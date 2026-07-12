@@ -78,12 +78,17 @@ fn hscrollFor(m: &Mem, y: i64, planeB: bool): i64 {
     return (vram8(m, off) << 8) | vram8(m, off + 1)
 }
 
-// Vertical scroll for plane P from VSRAM (full-screen mode: entry 0=A, 1=B).
-fn vscrollFor(m: &Mem, planeB: bool): i64 {
-    if planeB {
-        return m.vsram[1]
+// Vertical scroll for plane P from VSRAM. Full-screen mode (reg11 bit2 clear):
+// entry 0=A, 1=B. Per-column mode: one entry per 16px column (2 cells).
+fn vscrollFor(m: &Mem, planeB: bool, colPair: i64): i64 {
+    var idx: i64 = 0
+    if (m.vdpRegs[11] & 0x4) != 0 {
+        idx = (colPair * 2) % 40
     }
-    return m.vsram[0]
+    if planeB {
+        return m.vsram[(idx + 1) % 40]
+    }
+    return m.vsram[idx]
 }
 
 // A sampled pixel is packed: -1 = transparent, else bit8 = priority, bits5-0 =
@@ -195,12 +200,12 @@ fn renderIndexed(m: &Mem): Vec<i64> {
     while y < height {
         let hA = hscrollFor(m, y, false)
         let hB = hscrollFor(m, y, true)
-        let vA = vscrollFor(m, false)
-        let vB = vscrollFor(m, true)
-        let pyA = wrapCoord(y + vA, spanAy)
-        let pyB = wrapCoord(y + vB, spanAy)
         var x: i64 = 0
         while x < width {
+            // Per-column vertical scroll (constant within a 16px column).
+            let colPair = x / 16
+            let pyA = wrapCoord(y + vscrollFor(m, false, colPair), spanAy)
+            let pyB = wrapCoord(y + vscrollFor(m, true, colPair), spanAy)
             var aVal: i64 = -1
             if inWindow(m, x, y) {
                 aVal = sampleWindow(m, x, y, width)
