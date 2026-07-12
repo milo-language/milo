@@ -608,6 +608,38 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
             let v = readAbsY(spc, m) spcSbc(spc, v)
         }
 
+        // ---- RMW on dp+X ----
+        0x1B => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcAsl(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        } // ASL dp+X
+        0x5B => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcLsr(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        } // LSR dp+X
+        0x3B => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcRol(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        } // ROL dp+X
+        0x7B => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcRor(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+        } // ROR dp+X
+        0xBB => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = (spcRead(m, ad) + 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+        } // INC dp+X
+        0x9B => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = (spcRead(m, ad) - 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+        } // DEC dp+X
+        0xDE => { // CBNE dp+X,rel — branch if A != (dp+X); no flags
+            let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF))
+            let off = spcFetch(spc, m)
+            let soff: i64 = if off >= 0x80 {
+                off - 0x100
+            } else {
+                off
+            }
+            if (spc.a & 0xFF) != v {
+                spc.pc = (spc.pc + soff) & 0xFFFF
+            }
+        }
+
         // ---- remaining MOV loads/stores ----
         0xF5 => {
             let v = readAbsX(spc, m) spc.a = v spcNZ(spc, v)
