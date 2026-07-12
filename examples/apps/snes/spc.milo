@@ -163,6 +163,30 @@ fn spcPull(spc: &mut Spc, m: &SpcMem): i64 {
     return spcRead(m, 0x100 | (spc.sp & 0xFF))
 }
 
+fn spcPush16(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
+    spcPush(spc, m, (v >> 8) & 0xFF)
+    spcPush(spc, m, v & 0xFF)
+}
+
+fn spcPull16(spc: &mut Spc, m: &SpcMem): i64 {
+    let lo = spcPull(spc, m)
+    let hi = spcPull(spc, m)
+    return lo | (hi << 8)
+}
+
+// Relative branch: signed 8-bit offset applied if cond (PC already past it).
+fn spcBranch(spc: &mut Spc, m: &SpcMem, cond: bool): void {
+    let off = spcFetch(spc, m)
+    let soff: i64 = if off >= 0x80 {
+        off - 0x100
+    } else {
+        off
+    }
+    if cond {
+        spc.pc = (spc.pc + soff) & 0xFFFF
+    }
+}
+
 // Execute one instruction. Batches: flag ops, MOVs, INC/DEC, and A-form ALU
 // (OR/AND/EOR/CMP/ADC/SBC) over immediate/dp/abs.
 fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
@@ -404,6 +428,48 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x8C => {
             let ad = spcFetch16(spc, m) let r = (spcRead(m, ad) - 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
         } // DEC abs
+
+        // ---- branches (relative) ----
+        0x2F => {
+            spcBranch(spc, m, true)
+        } // BRA
+        0xF0 => {
+            spcBranch(spc, m, (spc.psw & PZ) != 0)
+        } // BEQ
+        0xD0 => {
+            spcBranch(spc, m, (spc.psw & PZ) == 0)
+        } // BNE
+        0xB0 => {
+            spcBranch(spc, m, (spc.psw & PC_) != 0)
+        } // BCS
+        0x90 => {
+            spcBranch(spc, m, (spc.psw & PC_) == 0)
+        } // BCC
+        0x30 => {
+            spcBranch(spc, m, (spc.psw & PN) != 0)
+        } // BMI
+        0x10 => {
+            spcBranch(spc, m, (spc.psw & PN) == 0)
+        } // BPL
+        0x70 => {
+            spcBranch(spc, m, (spc.psw & PV) != 0)
+        } // BVS
+        0x50 => {
+            spcBranch(spc, m, (spc.psw & PV) == 0)
+        } // BVC
+
+        // ---- jump / call / return ----
+        0x5F => {
+            spc.pc = spcFetch16(spc, m)
+        } // JMP !abs
+        0x3F => { // CALL !abs
+            let target = spcFetch16(spc, m)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = target
+        }
+        0x6F => {
+            spc.pc = spcPull16(spc, m)
+        } // RET
 
         _ => {
         } // unimplemented — Harte will flag it
