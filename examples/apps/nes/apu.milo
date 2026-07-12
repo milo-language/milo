@@ -25,6 +25,11 @@ let TRIANGLE_SEQ: [i64; 32] = [
 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
 ]
 
+// DMC timer periods (NTSC), in CPU cycles, indexed by the low nibble of $4010.
+let DMC_RATE: [i64; 16] = [
+428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
+]
+
 // Four duty waveforms x 8 steps, flattened: index = duty*8 + dutyPos.
 let DUTY_TABLE: [i64; 32] = [
 0, 1, 0, 0, 0, 0, 0, 0, // 12.5%
@@ -82,11 +87,44 @@ struct Noise {
     shift: i64 // 15-bit LFSR, powers up as 1
 }
 
+// Delta Modulation Channel: plays 1-bit-delta samples read from CPU memory.
+// Memory fetches are deferred (needsFetch) and serviced by the bus, which has the
+// read path; everything else clocks here.
+struct Dmc {
+    enabled: bool
+    irqEnabled: bool
+    loopFlag: bool
+    rate: i64 // timer reload (CPU cycles)
+    timer: i64
+    output: i64 // 7-bit DAC level (0-127)
+    sampleAddr: i64 // $4012 start ($C000 + val*64)
+    sampleLen: i64 // $4013 length (val*16 + 1)
+    curAddr: i64 // current fetch address
+    bytesRemaining: i64
+    shiftReg: i64 // byte currently shifting out
+    bitsRemaining: i64
+    bufferByte: i64 // last fetched sample byte
+    bufferEmpty: bool
+    silence: bool
+    needsFetch: bool // DMA request for the bus to service
+    irqFlag: bool
+}
+
+fn newDmc(): Dmc {
+    return Dmc {
+        enabled: false, irqEnabled: false, loopFlag: false, rate: DMC_RATE[0], timer: DMC_RATE[0],
+        output: 0, sampleAddr: 0xC000, sampleLen: 1, curAddr: 0xC000, bytesRemaining: 0,
+        shiftReg: 0, bitsRemaining: 8, bufferByte: 0, bufferEmpty: true, silence: true,
+        needsFetch: false, irqFlag: false
+    }
+}
+
 struct Apu {
     pulse1: Pulse
     pulse2: Pulse
     triangle: Triangle
     noise: Noise
+    dmc: Dmc
     frameMode: i64 // 0 = 4-step, 1 = 5-step
     frameInhibit: bool
     frameIrq: bool
@@ -142,6 +180,7 @@ fn newApu(): Apu {
     var samples: Vec<i16> = []
     return Apu {
         pulse1: newPulse(false), pulse2: newPulse(true), triangle: newTriangle(), noise: newNoise(),
+        dmc: newDmc(),
         frameMode: 0, frameInhibit: false, frameIrq: false, frameCycle: 0, cpuParity: 0,
         sampleAccum: 0.0, samples: samples, pulseTable: pt, tndTable: tt,
         hpPrevIn: 0.0, hpPrevOut: 0.0
@@ -161,7 +200,7 @@ fn apuWrite(apu: &mut Apu, reg: i64, val: u8): void {
     } else if reg <= 0x0F {
         writeNoise(apu.noise, reg - 0x0C, v)
     } else if reg <= 0x13 {
-        // DMC ($4010-$4013): not modeled
+        writeDmc(apu.dmc, reg - 0x10, v)
     } else if reg == 0x15 {
         writeStatus(apu, v)
     } else if reg == 0x17 {
@@ -224,6 +263,23 @@ fn writeNoise(n: &mut Noise, idx: i64, v: i64): void {
     }
 }
 
+fn writeDmc(d: &mut Dmc, idx: i64, v: i64): void {
+    if idx == 0 {
+        d.irqEnabled = (v & 0x80) != 0
+        d.loopFlag = (v & 0x40) != 0
+        d.rate = DMC_RATE[v & 0x0F]
+        if !d.irqEnabled {
+            d.irqFlag = false
+        }
+    } else if idx == 1 {
+        d.output = v & 0x7F // direct DAC load (also used for raw PCM)
+    } else if idx == 2 {
+        d.sampleAddr = 0xC000 + (v * 64)
+    } else {
+        d.sampleLen = (v * 16) + 1
+    }
+}
+
 // $4015: channel enables. Clearing a bit forces that length counter to 0.
 fn writeStatus(apu: &mut Apu, v: i64): void {
     apu.pulse1.enabled = (v & 0x01) != 0
@@ -241,6 +297,18 @@ fn writeStatus(apu: &mut Apu, v: i64): void {
     apu.noise.enabled = (v & 0x08) != 0
     if !apu.noise.enabled {
         apu.noise.length = 0
+    }
+    // DMC: bit 4 starts/stops sample playback. Any $4015 write clears its IRQ.
+    apu.dmc.irqFlag = false
+    apu.dmc.enabled = (v & 0x10) != 0
+    if !apu.dmc.enabled {
+        apu.dmc.bytesRemaining = 0
+    } else if apu.dmc.bytesRemaining == 0 {
+        apu.dmc.curAddr = apu.dmc.sampleAddr
+        apu.dmc.bytesRemaining = apu.dmc.sampleLen
+        if apu.dmc.bufferEmpty {
+            apu.dmc.needsFetch = true
+        }
     }
 }
 
@@ -274,10 +342,16 @@ fn apuReadStatus(apu: &mut Apu): u8 {
     if apu.noise.length > 0 {
         r = r | 0x08
     }
+    if apu.dmc.bytesRemaining > 0 {
+        r = r | 0x10
+    }
     if apu.frameIrq {
         r = r | 0x40
     }
-    apu.frameIrq = false
+    if apu.dmc.irqFlag {
+        r = r | 0x80
+    }
+    apu.frameIrq = false // DMC IRQ is NOT cleared by reads, only by $4015/$4010 writes
     return r as u8
 }
 
@@ -287,6 +361,7 @@ fn apuStep(apu: &mut Apu, cycles: i64): void {
     var c: i64 = 0
     while c < cycles {
         clockTriangleTimer(apu.triangle) // triangle timer runs at the CPU rate
+        clockDmc(apu.dmc) // DMC timer runs at the CPU rate
         if apu.cpuParity == 0 {
             // pulse/noise timers run at half the CPU rate (one APU cycle)
             clockPulseTimer(apu.pulse1)
@@ -370,6 +445,62 @@ fn clockPulseTimer(p: &mut Pulse): void {
         p.dutyPos = (p.dutyPos + 1) & 7
     } else {
         p.timerVal = p.timerVal - 1
+    }
+}
+
+// DMC: advance the output timer; on underflow, shift out one delta bit and, when
+// a byte is exhausted, pull the next from the sample buffer (refilled by the bus).
+fn clockDmc(d: &mut Dmc): void {
+    d.timer = d.timer - 1
+    if d.timer > 0 {
+        return
+    }
+    d.timer = d.rate
+    if !d.silence {
+        if (d.shiftReg & 1) == 1 {
+            if d.output <= 125 {
+                d.output = d.output + 2
+            }
+        } else {
+            if d.output >= 2 {
+                d.output = d.output - 2
+            }
+        }
+    }
+    d.shiftReg = d.shiftReg >> 1
+    d.bitsRemaining = d.bitsRemaining - 1
+    if d.bitsRemaining <= 0 {
+        d.bitsRemaining = 8
+        if d.bufferEmpty {
+            d.silence = true
+        } else {
+            d.silence = false
+            d.shiftReg = d.bufferByte
+            d.bufferEmpty = true
+            if d.bytesRemaining > 0 {
+                d.needsFetch = true // pull the next byte via the bus
+            }
+        }
+    }
+}
+
+// Supply a byte fetched from CPU memory (called by the bus after a needsFetch).
+fn dmcFill(d: &mut Dmc, byte: i64): void {
+    d.bufferByte = byte
+    d.bufferEmpty = false
+    d.needsFetch = false
+    d.curAddr = d.curAddr + 1
+    if d.curAddr > 0xFFFF {
+        d.curAddr = 0x8000 // DMC sample space wraps within $8000-$FFFF
+    }
+    d.bytesRemaining = d.bytesRemaining - 1
+    if d.bytesRemaining <= 0 {
+        if d.loopFlag {
+            d.curAddr = d.sampleAddr
+            d.bytesRemaining = d.sampleLen
+        } else if d.irqEnabled {
+            d.irqFlag = true
+        }
     }
 }
 
@@ -515,7 +646,7 @@ fn emitSample(apu: &mut Apu): void {
     let p2 = pulseOutput(apu.pulse2)
     let tri = triangleOutput(apu.triangle)
     let noi = noiseOutput(apu.noise)
-    let mixed = apu.pulseTable[p1 + p2] + apu.tndTable[3 * tri + 2 * noi]
+    let mixed = apu.pulseTable[p1 + p2] + apu.tndTable[3 * tri + 2 * noi + apu.dmc.output]
     // one-pole DC-blocking high-pass: y = x - x_prev + 0.9995*y_prev
     let hp = mixed - apu.hpPrevIn + 0.9995 * apu.hpPrevOut
     apu.hpPrevIn = mixed

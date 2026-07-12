@@ -22,13 +22,10 @@ from "./cartridge" import {
     Cartridge, loadCartridge
 }
 from "./cpu" import {
-    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag
+    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag, clockApu
 }
 from "./ppu" import {
     renderFrame
-}
-from "./apu" import {
-    apuStep
 }
 
 extern fn SDL_Init(flags: u32): i32
@@ -252,16 +249,16 @@ fn runNes(cart: Cartridge): i32 {
                     clockPpu(bus)
                     k = k + 1
                 }
-                apuStep(bus.apu, used)
+                clockApu(bus, used)
                 if bus.ppu.nmiPending {
                     bus.ppu.nmiPending = false
                     nmi(cpu, bus)
                 }
-                // APU frame IRQ is level-triggered: OR it into the line at check
-                // time rather than latching bus.irqPending (which is MMC3's edge
-                // latch — latching the APU flag there leaves a phantom pending IRQ
-                // after the game acks $4015, desyncing MMC3 scanline splits).
-                if (bus.irqPending || bus.apu.frameIrq) && !cpuFlag(cpu, 0x04) {
+                // APU frame IRQ + DMC IRQ are level-triggered: OR them into the line
+                // at check time rather than latching bus.irqPending (which is MMC3's
+                // edge latch — latching there leaves a phantom pending IRQ after the
+                // game acks, desyncing MMC3 scanline splits).
+                if (bus.irqPending || bus.apu.frameIrq || bus.apu.dmc.irqFlag) && !cpuFlag(cpu, 0x04) {
                     bus.irqPending = false
                     irq(cpu, bus)
                 }

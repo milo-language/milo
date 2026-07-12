@@ -9,7 +9,7 @@ from "./ppu" import {
     Ppu, newPpu, ppuRegRead, ppuRegWrite, mmc2InitMapper, mmc2SetChr
 }
 from "./apu" import {
-    Apu, newApu, apuWrite, apuReadStatus
+    Apu, newApu, apuWrite, apuReadStatus, apuStep, dmcFill
 }
 
 // --- status flag bit masks (P register) ---
@@ -37,6 +37,8 @@ struct Bus {
     prgBanks: i64 // number of 16 KiB PRG banks
     prgBank: i64 // UxROM: switchable 16 KiB bank mapped at $8000-$BFFF
     mmc2Prg: i64 // MMC2 (mapper 9): switchable 8 KiB bank at $8000-$9FFF
+    m227Lo: i64 // mapper 227 (multicart): 16 KiB bank at $8000-$BFFF
+    m227Hi: i64 // mapper 227: 16 KiB bank at $C000-$FFFF
 
     // MMC3 (mapper 4): 8 bank registers, PRG/CHR modes, and a scanline IRQ.
     mmcSelect: i64 // last $8000 (even) write: bank index (0-7) + mode bits 6/7
@@ -68,7 +70,7 @@ fn newBus(cart: Cartridge): Bus {
     let banks = cart.prg16kBanks as i64
     var bus = Bus {
         ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, apu: newApu(), ctrl1: 0, strobe: 0, buttons: 0,
-        mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0, mmc2Prg: 0,
+        mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0, mmc2Prg: 0, m227Lo: 0, m227Hi: 0,
         mmcSelect: 0, mmcR0: 0, mmcR1: 0, mmcR2: 0, mmcR3: 0, mmcR4: 0, mmcR5: 0, mmcR6: 0, mmcR7: 0,
         irqLatch: 0, irqCounter: 0, irqReload: false, irqEnabled: false, irqPending: false
     }
@@ -124,6 +126,13 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
                 return bus.prg[(n8k - 2) * 0x2000 + (a - 0xC000)]
             }
             return bus.prg[(n8k - 1) * 0x2000 + (a - 0xE000)]
+        }
+        if bus.mapper == 227 {
+            let n16 = bus.prg.len / 0x4000
+            if a < 0xC000 {
+                return bus.prg[(bus.m227Lo % n16) * 0x4000 + (a - 0x8000)]
+            }
+            return bus.prg[(bus.m227Hi % n16) * 0x4000 + (a - 0xC000)]
         }
         if bus.mapper == 2 {
             // UxROM: $8000-$BFFF = switchable bank, $C000-$FFFF = fixed last bank.
@@ -205,9 +214,36 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
             }
             return
         }
+        if bus.mapper == 227 {
+            mapper227Write(bus, a)
+            return
+        }
         return
     }
     // other APU/IO writes ignored until modeled
+}
+
+// Mapper 227 (multicart, e.g. 1200-in-1): the *write address* is the register.
+// Address bits A9..A0 = M S O P P P P P Q L. PRG is banked in 16 KiB units.
+fn mapper227Write(bus: &mut Bus, a: i64): void {
+    let L = a & 1
+    let p = (a >> 2) & 0x1F
+    let o = (a >> 7) & 1
+    let s = (a >> 8) & 1 // 0 = 16 KiB (NROM-128) mode, 1 = 32 KiB
+    let m = (a >> 9) & 1 // mirroring: 1 = horizontal, 0 = vertical
+    let prg16 = (o << 5) | p
+    if s == 1 {
+        bus.m227Lo = prg16 & 0x3E
+        bus.m227Hi = (prg16 & 0x3E) | 1
+    } else {
+        bus.m227Lo = prg16
+        if L == 0 {
+            bus.m227Hi = prg16 // NROM-128: $C000 mirrors $8000 (menu boots here)
+        } else {
+            bus.m227Hi = prg16 | 0x07 // $C000 fixed to last bank of the 128 KiB block
+        }
+    }
+    bus.ppu.mirrorVertical = m == 0
 }
 
 // MMC3 register file: even/odd address within each $2000 block selects the pair.
@@ -403,6 +439,17 @@ fn mmc3ClockIrq(bus: &mut Bus): void {
 
 // Advance the PPU one dot and, for MMC3, clock its scanline IRQ at a fixed dot
 // of each visible line while rendering is enabled.
+// Advance the APU by `cycles` CPU cycles, then service any DMC sample-fetch it
+// requested (the DMC reads CPU memory, which only the bus can do).
+fn clockApu(bus: &mut Bus, cycles: i64): void {
+    apuStep(bus.apu, cycles)
+    if bus.apu.dmc.needsFetch {
+        let addr = bus.apu.dmc.curAddr
+        let b = busRead(bus, addr as u16)
+        dmcFill(bus.apu.dmc, b as i64)
+    }
+}
+
 fn clockPpu(bus: &mut Bus): void {
     ppuStep(bus.ppu)
     if bus.mapper == 4 && bus.ppu.dot == 260 && bus.ppu.scanline < 240 && (bus.ppu.mask & 0x18) != 0 {

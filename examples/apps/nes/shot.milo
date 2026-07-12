@@ -12,13 +12,10 @@ from "./cartridge" import {
     Cartridge, loadCartridge
 }
 from "./cpu" import {
-    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag
+    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag, clockApu
 }
 from "./ppu" import {
     renderFrame
-}
-from "./apu" import {
-    apuStep
 }
 
 fn main(): i32 {
@@ -66,12 +63,12 @@ fn run(cart: Cartridge, frames: i64, out: string): i32 {
                 clockPpu(bus)
                 k = k + 1
             }
-            apuStep(bus.apu, used)
+            clockApu(bus, used)
             if bus.ppu.nmiPending {
                 bus.ppu.nmiPending = false
                 nmi(cpu, bus)
             }
-            if (bus.irqPending || bus.apu.frameIrq) && !cpuFlag(cpu, 0x04) {
+            if (bus.irqPending || bus.apu.frameIrq || bus.apu.dmc.irqFlag) && !cpuFlag(cpu, 0x04) {
                 bus.irqPending = false
                 irq(cpu, bus)
             }
