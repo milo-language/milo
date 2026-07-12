@@ -9,12 +9,16 @@ against `nestest.log` before any pixels.
       at 60fps, verified visually. FFI/link path proven.
 - [x] **M1a — iNES loader**: `cartridge.milo` + `testCartridge.milo`. Parses
       nestest.nes (mapper 0, 16K PRG, 8K CHR). Tested.
-- [ ] **M1b — 6502 CPU core**: registers (A/X/Y/P/SP/PC), flags, memory bus
-      (2K RAM + mirroring, cartridge PRG map), addressing modes, official opcodes.
-- [ ] **M1c — nestest harness**: run headless from PC=$C000, emit a trace line
-      per instruction, diff against `roms/nes-test-roms/other/nestest.log`
-      (8991 lines: `PC bytes disasm A/X/Y/P/SP PPU:sl,dot CYC:total`). Validates
-      registers AND cycle timing from day one.
+- [x] **M1b — 6502 CPU core**: `cpu.milo`. Registers, flags, bus (2K RAM +
+      mirroring, mapper-0 PRG map), all addressing modes, full **official**
+      opcode set with cycle-accurate timing.
+- [x] **M1c — nestest harness**: `runNestest.milo` + `nestestDiff.ts`. Runs
+      headless from $C000, diffs PC/A/X/Y/P/SP/CYC vs the golden log.
+      **5004/8991 instructions match exactly** (registers AND cycles). Divergence
+      at 5005 is the first *unofficial* opcode (`04 A9 *NOP`) — official set done.
+- [ ] **M1d — unofficial opcodes**: NOP variants (04/44/64/0C/14../80/82..),
+      LAX/SAX/DCP/ISB/SLO/RLA/SRE/RRA, unofficial SBC (EB). Target: full 8991-line
+      match. Then blargg `instr_test-v5` for deeper coverage.
 - [ ] **M2 — PPU**: background tiles, then sprites, then scrolling. Feeds the
       same RGBA framebuffer M0 already renders.
 - [ ] **M3 — controller input**: SDL key events → $4016 shift register.
