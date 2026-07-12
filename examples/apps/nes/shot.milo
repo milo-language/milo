@@ -12,10 +12,10 @@ from "./cartridge" import {
     Cartridge, loadCartridge
 }
 from "./cpu" import {
-    Cpu, Bus, newBus, newCpuReset, step, nmi
+    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag
 }
 from "./ppu" import {
-    ppuStep, renderFrame
+    renderFrame
 }
 
 fn main(): i32 {
@@ -60,12 +60,16 @@ fn run(cart: Cartridge, frames: i64, out: string): i32 {
             let used = cpu.cyc - before
             var k: i64 = 0
             while k < used * 3 {
-                ppuStep(bus.ppu)
+                clockPpu(bus)
                 k = k + 1
             }
             if bus.ppu.nmiPending {
                 bus.ppu.nmiPending = false
                 nmi(cpu, bus)
+            }
+            if bus.irqPending && !cpuFlag(cpu, 0x04) {
+                bus.irqPending = false
+                irq(cpu, bus)
             }
         }
         f = f + 1

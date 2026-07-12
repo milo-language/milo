@@ -22,15 +22,32 @@ let FN: u8 = 0x80 // negative
 // CPU-visible address space. Owns PRG-ROM and the PPU (which owns CHR/VRAM).
 struct Bus {
     ram: [u8; 2048] // $0000-$07FF, mirrored through $1FFF
+    wram: [u8; 8192] // $6000-$7FFF cartridge PRG-RAM (MMC3 scratch, etc.)
     prg: Vec<u8> // mapper-0 PRG, 16K or 32K
     prgMask: i64 // 0x3FFF (16K) or 0x7FFF (32K)
     ppu: Ppu
     ctrl1: u8 // $4016 controller-1 shift register (serial, drained LSB-first)
     strobe: u8 // $4016 strobe latch
     buttons: u8 // live controller-1 state: bit0 A,1 B,2 Select,3 Start,4 Up,5 Down,6 Left,7 Right
-    mapper: i64 // iNES mapper number (0 = NROM, 2 = UxROM)
+    mapper: i64 // iNES mapper number (0 = NROM, 2 = UxROM, 4 = MMC3)
     prgBanks: i64 // number of 16 KiB PRG banks
     prgBank: i64 // UxROM: switchable 16 KiB bank mapped at $8000-$BFFF
+
+    // MMC3 (mapper 4): 8 bank registers, PRG/CHR modes, and a scanline IRQ.
+    mmcSelect: i64 // last $8000 (even) write: bank index (0-7) + mode bits 6/7
+    mmcR0: i64
+    mmcR1: i64
+    mmcR2: i64
+    mmcR3: i64
+    mmcR4: i64
+    mmcR5: i64
+    mmcR6: i64
+    mmcR7: i64
+    irqLatch: i64
+    irqCounter: i64
+    irqReload: bool
+    irqEnabled: bool
+    irqPending: bool // set when the scanline counter hits 0; consumed by the CPU
 }
 
 fn newBus(cart: Cartridge): Bus {
@@ -44,10 +61,16 @@ fn newBus(cart: Cartridge): Bus {
     // Move CHR + mirroring into the PPU; PRG into the bus. (cart consumed.)
     let ppu = newPpu(cart.chr, cart.mirrorVertical)
     let banks = cart.prg16kBanks as i64
-    return Bus {
-        ram: [0; 2048], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0, buttons: 0,
-        mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0
+    var bus = Bus {
+        ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0, buttons: 0,
+        mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0,
+        mmcSelect: 0, mmcR0: 0, mmcR1: 0, mmcR2: 0, mmcR3: 0, mmcR4: 0, mmcR5: 0, mmcR6: 0, mmcR7: 0,
+        irqLatch: 0, irqCounter: 0, irqReload: false, irqEnabled: false, irqPending: false
     }
+    if bus.mapper == 4 {
+        mmc3UpdateChr(bus) // establish the initial CHR window mapping
+    }
+    return bus
 }
 
 fn busRead(bus: &mut Bus, addr: u16): u8 {
@@ -70,7 +93,13 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
         bus.ctrl1 = (((bus.ctrl1 as i64) >> 1) as u8) | 0x80
         return bit | 0x40 // open-bus high bits read as 0x40 on real HW
     }
+    if a >= 0x6000 && a < 0x8000 {
+        return bus.wram[a - 0x6000]
+    }
     if a >= 0x8000 {
+        if bus.mapper == 4 {
+            return bus.prg[mmc3PrgOffset(bus, a)]
+        }
         if bus.mapper == 2 {
             // UxROM: $8000-$BFFF = switchable bank, $C000-$FFFF = fixed last bank.
             if a < 0xC000 {
@@ -112,14 +141,79 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
         }
         return
     }
+    if a >= 0x6000 && a < 0x8000 {
+        bus.wram[a - 0x6000] = val
+        return
+    }
     if a >= 0x8000 {
         // UxROM bank select: low bits pick the 16 KiB bank at $8000-$BFFF.
         if bus.mapper == 2 {
             bus.prgBank = (val as i64) & (bus.prgBanks - 1)
+            return
+        }
+        if bus.mapper == 4 {
+            mmc3Write(bus, a, val)
+            return
         }
         return
     }
     // other APU/IO writes ignored until modeled
+}
+
+// MMC3 register file: even/odd address within each $2000 block selects the pair.
+fn mmc3Write(bus: &mut Bus, a: i64, val: u8): void {
+    let even = (a & 1) == 0
+    let v = val as i64
+    if a < 0xA000 {
+        if even {
+            bus.mmcSelect = v // bank select + PRG/CHR mode bits
+        } else {
+            let r = bus.mmcSelect & 7 // bank data -> selected register
+            if r == 0 {
+                bus.mmcR0 = v
+            }
+            if r == 1 {
+                bus.mmcR1 = v
+            }
+            if r == 2 {
+                bus.mmcR2 = v
+            }
+            if r == 3 {
+                bus.mmcR3 = v
+            }
+            if r == 4 {
+                bus.mmcR4 = v
+            }
+            if r == 5 {
+                bus.mmcR5 = v
+            }
+            if r == 6 {
+                bus.mmcR6 = v
+            }
+            if r == 7 {
+                bus.mmcR7 = v
+            }
+            mmc3UpdateChr(bus)
+        }
+    } else if a < 0xC000 {
+        if even {
+            bus.ppu.mirrorVertical = (v & 1) == 0 // $A000 bit0: 0=vertical,1=horizontal
+        }
+        // odd ($A001): PRG-RAM protect — unmodeled
+    } else if a < 0xE000 {
+        if even {
+            bus.irqLatch = v // $C000: IRQ reload value
+        } else {
+            bus.irqReload = true // $C001: reload on next clock
+        }
+    } else {
+        if even {
+            bus.irqEnabled = false // $E000: disable + acknowledge
+            bus.irqPending = false
+        } else {
+            bus.irqEnabled = true // $E001: enable
+        }
+    }
 }
 
 struct Cpu {
@@ -158,6 +252,112 @@ fn nmi(cpu: &mut Cpu, bus: &mut Bus): void {
     let hi = busRead(bus, 0xFFFB) as i64
     cpu.pc = wrap16(lo | (hi << 8))
     cpu.cyc = cpu.cyc + 7
+}
+
+// Maskable interrupt (MMC3 scanline IRQ): like nmi but gated on the I flag,
+// vectored through $FFFE. The caller checks I; this always takes the interrupt.
+fn irq(cpu: &mut Cpu, bus: &mut Bus): void {
+    push16(cpu, bus, cpu.pc)
+    push8(cpu, bus, (cpu.p & (~FB)) | FU)
+    setFlag(cpu, FI, true)
+    let lo = busRead(bus, 0xFFFE) as i64
+    let hi = busRead(bus, 0xFFFF) as i64
+    cpu.pc = wrap16(lo | (hi << 8))
+    cpu.cyc = cpu.cyc + 7
+}
+
+// --- MMC3 (mapper 4) ---
+
+// Recompute the eight 1 KiB CHR window offsets from R0-R5 and the CHR mode bit.
+fn mmc3UpdateChr(bus: &mut Bus): void {
+    let num1k = bus.ppu.chr.len / 0x400
+    let mode = (bus.mmcSelect >> 7) & 1
+    var w0: i64 = 0
+    var w1: i64 = 0
+    var w2: i64 = 0
+    var w3: i64 = 0
+    var w4: i64 = 0
+    var w5: i64 = 0
+    var w6: i64 = 0
+    var w7: i64 = 0
+    if mode == 0 {
+        // $0000=R0(2K) $0800=R1(2K) $1000=R2 $1400=R3 $1800=R4 $1C00=R5 (1K)
+        w0 = bus.mmcR0 & 0xFE
+        w1 = (bus.mmcR0 & 0xFE) + 1
+        w2 = bus.mmcR1 & 0xFE
+        w3 = (bus.mmcR1 & 0xFE) + 1
+        w4 = bus.mmcR2
+        w5 = bus.mmcR3
+        w6 = bus.mmcR4
+        w7 = bus.mmcR5
+    } else {
+        // $0000=R2 $0400=R3 $0800=R4 $0C00=R5 (1K) $1000=R0(2K) $1800=R1(2K)
+        w0 = bus.mmcR2
+        w1 = bus.mmcR3
+        w2 = bus.mmcR4
+        w3 = bus.mmcR5
+        w4 = bus.mmcR0 & 0xFE
+        w5 = (bus.mmcR0 & 0xFE) + 1
+        w6 = bus.mmcR1 & 0xFE
+        w7 = (bus.mmcR1 & 0xFE) + 1
+    }
+    bus.ppu.chrBankOffset[0] = (w0 % num1k) * 0x400
+    bus.ppu.chrBankOffset[1] = (w1 % num1k) * 0x400
+    bus.ppu.chrBankOffset[2] = (w2 % num1k) * 0x400
+    bus.ppu.chrBankOffset[3] = (w3 % num1k) * 0x400
+    bus.ppu.chrBankOffset[4] = (w4 % num1k) * 0x400
+    bus.ppu.chrBankOffset[5] = (w5 % num1k) * 0x400
+    bus.ppu.chrBankOffset[6] = (w6 % num1k) * 0x400
+    bus.ppu.chrBankOffset[7] = (w7 % num1k) * 0x400
+}
+
+// Byte offset into PRG for a $8000-$FFFF address under the current PRG mode.
+// Windows: two switchable (R6,R7) and two fixed (second-last, last 8 KiB bank).
+fn mmc3PrgOffset(bus: &Bus, a: i64): i64 {
+    let num8k = bus.prg.len / 0x2000
+    let last = num8k - 1
+    let mode = (bus.mmcSelect >> 6) & 1
+    var bank: i64 = 0
+    if a < 0xA000 {
+        bank = if mode == 0 {
+            bus.mmcR6
+        } else {
+            last - 1
+        }
+    } else if a < 0xC000 {
+        bank = bus.mmcR7
+    } else if a < 0xE000 {
+        bank = if mode == 0 {
+            last - 1
+        } else {
+            bus.mmcR6
+        }
+    } else {
+        bank = last
+    }
+    return (bank % num8k) * 0x2000 + (a & 0x1FFF)
+}
+
+// Clock the scanline IRQ counter once per rendered scanline (A12 approximation).
+fn mmc3ClockIrq(bus: &mut Bus): void {
+    if bus.irqCounter == 0 || bus.irqReload {
+        bus.irqCounter = bus.irqLatch
+        bus.irqReload = false
+    } else {
+        bus.irqCounter = bus.irqCounter - 1
+    }
+    if bus.irqCounter == 0 && bus.irqEnabled {
+        bus.irqPending = true
+    }
+}
+
+// Advance the PPU one dot and, for MMC3, clock its scanline IRQ at a fixed dot
+// of each visible line while rendering is enabled.
+fn clockPpu(bus: &mut Bus): void {
+    ppuStep(bus.ppu)
+    if bus.mapper == 4 && bus.ppu.dot == 260 && bus.ppu.scanline < 240 && (bus.ppu.mask & 0x18) != 0 {
+        mmc3ClockIrq(bus)
+    }
 }
 
 // --- flag helpers ---

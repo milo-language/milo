@@ -12,6 +12,7 @@ from "./cartridge" import {
 
 struct Ppu {
     chr: Vec<u8> // pattern tables ($0000-$1FFF)
+    chrBankOffset: [i64; 8] // byte offset into chr for each 1 KiB window (mapper CHR banking)
     vram: [u8; 2048] // 2 physical nametables ($2000-$2FFF, mirrored)
     palette: [u8; 32] // palette RAM ($3F00-$3F1F)
     oam: [u8; 256] // 64 sprites x 4 bytes
@@ -59,7 +60,8 @@ fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
         }
     }
     return Ppu {
-        chr: c, vram: [0; 2048], palette: [0; 32], oam: [0; 256],
+        chr: c, chrBankOffset: [0, 1024, 2048, 3072, 4096, 5120, 6144, 7168],
+        vram: [0; 2048], palette: [0; 32], oam: [0; 256],
         mirrorVertical: mirrorVertical,
         ctrl: 0, mask: 0, status: 0, oamAddr: 0,
         v: 0, t: 0, fineX: 0, w: 0, readBuffer: 0,
@@ -86,10 +88,15 @@ fn mirrorNT(ppu: &Ppu, addr: i64): i64 {
     return phys
 }
 
+// Map a $0000-$1FFF pattern address through the 1 KiB CHR bank windows.
+fn chrPhys(ppu: &Ppu, a: i64): i64 {
+    return (ppu.chrBankOffset[a / 0x400] + (a & 0x3FF)) % ppu.chr.len
+}
+
 fn ppuMemRead(ppu: &Ppu, addr: u16): u8 {
     let a = (addr as i64) & 0x3FFF
     if a < 0x2000 {
-        return ppu.chr[a % ppu.chr.len]
+        return ppu.chr[chrPhys(ppu, a)]
     }
     if a < 0x3F00 {
         return ppu.vram[mirrorNT(ppu, a)]
@@ -114,7 +121,7 @@ fn ppuMemRead(ppu: &Ppu, addr: u16): u8 {
 fn ppuMemWrite(ppu: &mut Ppu, addr: u16, val: u8): void {
     let a = (addr as i64) & 0x3FFF
     if a < 0x2000 {
-        ppu.chr[a % ppu.chr.len] = val // CHR-RAM (no-op effect for CHR-ROM carts)
+        ppu.chr[chrPhys(ppu, a)] = val // CHR-RAM (no-op effect for CHR-ROM carts)
         return
     }
     if a < 0x3F00 {
