@@ -353,20 +353,11 @@ function onTab(e) {
 function reset() { src.value = concepts[cur.value].code; nextTick(sizeTextarea) }
 
 function showOutput(lines, isErr, tag) {
+  // instant — compile+run is sub-10ms; render the whole block at once (a single
+  // CSS fade on the terminal, no per-line stagger that reads as lag).
   outErr.value = isErr
   outTag.value = tag
-  outLines.value = []
-  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches
-  let k = 0
-  const step = () => {
-    if (k >= lines.length) return
-    outLines.value = [...outLines.value, lines[k]]
-    k++
-    if (k < lines.length && !reduce) setTimeout(step, 200)
-    else if (!reduce) {}
-  }
-  if (reduce) outLines.value = lines.slice()
-  else step()
+  outLines.value = lines.slice()
 }
 
 function run() {
@@ -521,7 +512,9 @@ onMounted(() => {
 .term { padding: 14px 16px; font-family: var(--vp-font-family-mono); font-size: 12.5px; line-height: 1.7; min-height: 120px; color: var(--con-text); }
 .idle { color: var(--c-com); }
 .ttag { font-family: var(--vp-font-family-mono); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--c-com); margin-bottom: 9px; }
-.oline { color: #7bd88f; white-space: pre-wrap; word-break: break-word; }
+.oline { color: #7bd88f; white-space: pre-wrap; word-break: break-word; animation: fadein .14s ease both; }
+@media (prefers-reduced-motion: reduce) { .oline { animation: none; } }
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 .oline.err { color: #f2828a; }
 .arrow { color: var(--c-com); }
 
