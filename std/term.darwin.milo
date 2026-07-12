@@ -64,7 +64,10 @@ fn readKey(): i32 {
         if n <= 0 {
             return KEY_NONE
         }
-        if buf[0] == 113 {
+        // 'q' or ctrl-c (byte 3 / ETX). ISIG is cleared in raw mode, so ctrl-c
+        // arrives as a raw byte rather than a signal — treat it as a clean quit
+        // so callers can restore the terminal on the way out.
+        if buf[0] == 113 || buf[0] == 3 {
             return KEY_QUIT
         }
         if buf[0] == 32 {

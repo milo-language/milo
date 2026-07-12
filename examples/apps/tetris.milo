@@ -343,7 +343,7 @@ score: i64, lines: i64, nextKind: i64): void {
     cursor(buf, 14, sx)
     emit(buf, "\x1b[90mspace  hard drop\x1b[0m")
     cursor(buf, 15, sx)
-    emit(buf, "\x1b[90mq      quit\x1b[0m")
+    emit(buf, "\x1b[90mq/^C   quit\x1b[0m")
 
     // pitch: this is a real program in a real systems language, not a toy
     cursor(buf, 18, sx)
