@@ -244,7 +244,9 @@ let NESPAL: [u32; 64] = [
 ]
 
 // Convert a 6-bit NES color index to a framebuffer u32 (R,G,B,A byte order).
-fn nesColor(idx: i64): u32 {
+fn nesColor(idx: i64): u32
+ensures(result & 0xFF000000) == 0xFF000000 // every emitted pixel is fully opaque
+{
     let c = NESPAL[idx & 0x3F]as i64
     let r = (c >> 16) & 0xFF
     let g = (c >> 8) & 0xFF

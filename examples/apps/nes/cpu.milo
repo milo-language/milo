@@ -160,7 +160,9 @@ fn setZN(cpu: &mut Cpu, v: u8): void {
 }
 
 // --- 16-bit / pc helpers (explicit masking NES arithmetic wraps) ---
-fn wrap16(v: i64): u16 {
+fn wrap16(v: i64): u16
+ensures(result as i64) == (v & 0xFFFF)
+{
     return (v & 0xFFFF) as u16
 }
 
@@ -221,7 +223,9 @@ fn pageCrossed(base: u16, eff: u16): bool {
 // --- addressing-mode resolvers: advance PC past operand, return effective addr.
 // Indexed read modes stash a page-cross penalty in cpu.extraCycles only the
 // read opcodes honor it (stores/RMW take fixed cycles).
-fn read16ZP(bus: &mut Bus, z: i64): u16 {
+fn read16ZP(bus: &mut Bus, z: i64): u16
+requires 0 <= z && z <= 255 // zero-page pointer index; callers must pre-mask
+{
     let lo: i64 = busRead(bus, (z & 0xFF) as u16) as i64
     let hi: i64 = busRead(bus, ((z + 1) & 0xFF) as u16) as i64
     return wrap16(lo | (hi << 8))
