@@ -1,0 +1,48 @@
+// M3 end-to-end: the main 65816 CPU polls APU port 0 ($2140) for the SPC700
+// IPL's $AA ready byte, while the SPC runs concurrently through the bus bridge.
+// When it sees $AA it writes a marker — proving a commercial ROM's audio-upload
+// spin-loop would now clear.  milo run examples/apps/snes/systemBoot.milo
+
+from "./cpu" import {
+    Cpu, Mem, busNew, newCpuReset, step, runApu, memRead, vecZeros
+}
+
+fn main(): i32 {
+    var rom = vecZeros(0x8000)
+    // $8000: poll $2140 until it reads $AA, then store $42 to WRAM $0000.
+    let prog = [
+    0xAD, 0x40, 0x21, // LDA $2140
+    0xC9, 0xAA, // CMP #$AA
+    0xD0, 0xF9, // BNE -7  (back to LDA)
+    0xA9, 0x42, // LDA #$42
+    0x8D, 0x00, 0x00, // STA $0000
+    0x80, 0xFE // BRA -2  (halt)
+    ]
+    var i: i64 = 0
+    while i < (prog.len as i64) {
+        rom[i] = prog[i]as u8 i = i + 1
+    }
+    rom[0x7FFC] = 0x00 as u8 // reset vector -> $8000
+    rom[0x7FFD] = 0x80 as u8
+
+    var m = busNew(rom, 0) // boots the SPC into its IPL
+    var cpu = newCpuReset(m)
+
+    var done = false
+    var n: i64 = 0
+    while n < 20000 {
+        step(cpu, m)
+        runApu(m, 8) // co-run the SPC ~8 instructions per main step
+        if memRead(m, 0x000000) == 0x42 {
+            done = true break
+        }
+        n = n + 1
+    }
+
+    if done {
+        print("OK: main CPU saw APU $AA handshake and proceeded (marker written)")
+        return 0
+    }
+    print("FAIL: handshake did not complete")
+    return 1
+}

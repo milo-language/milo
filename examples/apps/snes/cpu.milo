@@ -7,6 +7,10 @@
 // M/X flags make A and X/Y switch between 8- and 16-bit at runtime, so operand
 // width (and thus instruction length) is decided live via m8()/x8().
 
+from "./spc" import {
+    Spc, SpcMem, spcMemNew, spcMemReal, spcReset, spcStep, apuReadPort, apuWritePort
+}
+
 // --- P status-register bit masks ---
 let FC: i64 = 0x01 // carry
 let FZ: i64 = 0x02 // zero
@@ -53,13 +57,24 @@ struct Mem {
     rdmpy: i64 // $4216/$4217 product (after mul) or remainder (after div)
     vblankToggle: i64 // stub: flips so $4210/$4212 vblank-wait loops progress
     joy1: i64 // $4218/$4219 auto-read pad 1 (0 = nothing pressed)
+
+    // Audio subsystem (SPC700 + its RAM). $2140-$2143 bridge to its port latches.
+    apuSpc: Spc
+    apuMem: SpcMem
+}
+
+fn newApuSpc(): Spc {
+    return Spc {
+        a: 0, x: 0, y: 0, sp: 0, pc: 0, psw: 0
+    }
 }
 
 fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         wram: Vec.new(), rom: Vec.new(), romMask: 0, mapMode: 0, mmio: Vec.new(),
-        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0
+        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
+        apuSpc: newApuSpc(), apuMem: spcMemNew()
     }
 }
 
@@ -80,11 +95,30 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
         mask = mask << 1
     }
     mask = mask - 1 // next-pow2 minus 1; ROM offsets are wrapped by this
-    return Mem {
+    var mem = Mem {
         addr: Vec.new(), val: Vec.new(), testMode: false,
         wram: vecZeros(0x20000), rom: rom, romMask: mask, mapMode: mapMode,
         mmio: vecZeros(0x4000),
-        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0
+        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
+        apuSpc: newApuSpc(), apuMem: spcMemReal()
+    }
+    // Boot the SPC into its IPL. The reset vector ($FFFE) is fixed at $FFC0;
+    // set it directly to avoid a split &mut/& borrow of two `mem` fields.
+    mem.apuSpc.pc = 0xFFC0
+    mem.apuSpc.sp = 0xEF
+    mem.apuSpc.psw = 0x02
+    return mem
+}
+
+// Co-run the SPC700 for n instructions (called from the system step loop).
+fn runApu(m: &mut Mem, n: i64): void {
+    if m.testMode {
+        return
+    }
+    var i: i64 = 0
+    while i < n {
+        spcStep(m.apuSpc, m.apuMem)
+        i = i + 1
     }
 }
 
@@ -93,6 +127,9 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
 // vblankToggle is driven by the system frame loop, not by reads (accurate
 // RDNMI clear-on-read arrives with PPU timing in M4).
 fn mmioRead(m: &Mem, off: i64): i64 {
+    if off >= 0x2140 && off <= 0x2143 {
+        return apuReadPort(m.apuMem, off - 0x2140) // APU ports $2140-$2143
+    }
     if off == 0x4210 {
         return m.vblankToggle | 0x02
     } // RDNMI: bit7 NMI, low = version 2
@@ -125,6 +162,9 @@ fn mmioRead(m: &Mem, off: i64): i64 {
 
 // CPU-side MMIO write ($2000-$5FFF). Writing $4203/$4206 latches mul/div results.
 fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
+    if off >= 0x2140 && off <= 0x2143 {
+        apuWritePort(m.apuMem, off - 0x2140, val) return // APU ports $2140-$2143
+    }
     if off == 0x4200 {
         m.nmitimen = val return
     }

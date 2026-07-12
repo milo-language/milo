@@ -42,16 +42,20 @@ poll these constantly), $4210/$4212 NMI/vblank status (vblankToggle driven by
 the future frame loop, not on-read — accurate RDNMI-clear waits for M4 timing),
 $4218/$4219 auto-joypad. mmioSmoke.milo verifies mul (12*10) + div (100/7) green.
 Reads are pure (no cascade to &mut memRead). PPU regs $2100-$213F still scratch.
-M3 (started): SPC700 core scaffold `spc.milo` (8-bit A/X/Y/SP, 16-bit PC, PSW;
-P flag picks the direct page). Harte spc700 harness mirrors the 65816 one:
-harteConvSpc.ts + runHarteSpc.milo + harteSpc.sh (single file per opcode, 256
-total). First 24 opcodes green (NOP, flag ops CLRP/SETP/CLRC/SETC/CLRV/NOTC/EI/
-DI, MOV A/X/Y #imm, register MOVs, INC/DEC A/X/Y). Next: dp/abs/indirect
-addressing + ADC/SBC/CMP/AND/OR/EOR/MOV memory forms, then CPU<->APU handshake
-ports $2140-$2143 + IPL boot ROM so a commercial ROM clears its audio-upload
-spin-loop. S-DSP stubbed silent for now.
-Also still open on M2: PPU-register write path + system frame loop (scanline
-counter driving vblank).
+M3 (SPC700 + boot handshake — DONE for boot; S-DSP audio deferred to M7):
+  - `spc.milo`: full SPC700 core, ALL 256 opcodes Harte-exact green (0 failures,
+    full-suite verified). Includes DIV's quirky overflow path, DAA/DAS decimal
+    adjust, BBS/BBC bit-branches, TCALL table, BRK/RETI, (X),(Y) ALU.
+  - Real-mode SpcMem: 64 KiB RAM + 64-byte IPL boot ROM at $FFC0 + $F4-$F7
+    CPU<->SPC port latches + $F1 control (testMode keeps the Harte path).
+  - Bus bridge: main $2140-$2143 <-> apuReadPort/apuWritePort; Mem owns the
+    Spc + SpcMem; runApu() co-runs the SPC from the system step loop.
+  - spcHandshake.milo: SPC boots IPL, posts $AA/$BB. systemBoot.milo: the main
+    65816 polls $2140, sees the SPC's $AA through the bridge, and proceeds — the
+    exact spin-loop every commercial ROM blocks on. Both green.
+  S-DSP (actual sound synthesis) stubbed silent; belongs to M7.
+Still open on M2: PPU-register write path + system frame loop (scanline counter
+driving vblank/NMI). Next big piece: M4 PPU (first pixels) + SDL frontend.
 
 ## (earlier) Status notes
 
@@ -118,7 +122,7 @@ Run: `examples/apps/snes/harte.sh` (or `harte.sh ea a9 …` for a subset).
 - [ ] **M2 — bus + cartridge**: LoROM first (HiROM after; detect via header
       checksum at $7FC0/$FFC0). WRAM 128K, open bus, MDR. NO enhancement
       chips (SuperFX/SA-1/DSP-1) — huge library without them.
-- [ ] **M3 — SPC700 core + handshake** (`spc.milo`): full second CPU, own
+- [x] **M3 — SPC700 core + handshake** (`spc.milo`): full second CPU, own
       64KB RAM, IPL boot ROM (64 bytes, embed as data). CPU↔APU ports
       $2140-$2143. **Gate: Harte spc700 SingleStepTests**, then: commercial
       ROM gets past its audio-driver upload spin-loop (log port traffic).
