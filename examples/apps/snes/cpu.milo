@@ -1,0 +1,368 @@
+// WDC 65C816 CPU core — SNES main CPU. Bring-up mirrors the NES 6502 build:
+// validate per-opcode against Harte SingleStepTests (roms/harte-65816/v1) before
+// any pixels. Ref: fullsnes (problemkaputt.de/fullsnes.htm), 65816 datasheet.
+//
+// Registers are held as i64 masked to their real width — sidesteps u8/u16
+// wrapping-op friction and matches Harte's JSON (which gives plain ints). The
+// M/X flags make A and X/Y switch between 8- and 16-bit at runtime, so operand
+// width (and thus instruction length) is decided live via m8()/x8().
+
+// --- P status-register bit masks ---
+let FC: i64 = 0x01 // carry
+let FZ: i64 = 0x02 // zero
+let FI: i64 = 0x04 // irq disable
+let FD: i64 = 0x08 // decimal
+let FX: i64 = 0x10 // index width: 1 = 8-bit X/Y (also B/break in emulation)
+let FM: i64 = 0x20 // accumulator width: 1 = 8-bit A (also unused in emulation)
+let FV: i64 = 0x40 // overflow
+let FN: i64 = 0x80 // negative
+
+struct Cpu {
+    a: i64 // 16-bit accumulator (low byte = A, high byte = B when M=1)
+    x: i64 // 16-bit index
+    y: i64 // 16-bit index
+    s: i64 // 16-bit stack pointer (high byte forced 01 in emulation)
+    d: i64 // 16-bit direct-page register
+    pc: i64 // 16-bit program counter within pbr bank
+    p: i64 // status flags
+    dbr: i64 // data bank
+    pbr: i64 // program bank
+    e: i64 // emulation-mode latch (1 = 6502 emulation)
+}
+
+// Sparse 24-bit memory. Harte tests touch only a handful of addresses per case,
+// so a linear-scan assoc list is faster than a 16 MiB flat buffer (and Vec has
+// no bulk-fill primitive). Rebuilt fresh from `initial.ram` for every test.
+struct Mem {
+    addr: Vec<i64>
+    val: Vec<i64>
+}
+
+fn memNew(): Mem {
+    return Mem {
+        addr: Vec.new(), val: Vec.new()
+    }
+}
+
+// Clear all entries between test cases (reused across a whole file).
+fn memReset(m: &mut Mem): void {
+    m.addr = Vec.new()
+    m.val = Vec.new()
+}
+
+fn memRead(m: &Mem, a: i64): i64 {
+    var i: i64 = 0
+    while i < m.addr.len {
+        if m.addr[i] == a {
+            return m.val[i]
+        }
+        i = i + 1
+    }
+    return 0 // open bus modeled as 0; unlisted reads shouldn't occur for valid tests
+}
+
+fn memWrite(m: &mut Mem, a: i64, v: i64): void {
+    var i: i64 = 0
+    while i < m.addr.len {
+        if m.addr[i] == a {
+            m.val[i] = v & 0xFF
+            return
+        }
+        i = i + 1
+    }
+    m.addr.push(a)
+    m.val.push(v & 0xFF)
+}
+
+// --- register-width predicates (emulation forces both to 8-bit) ---
+fn m8(cpu: &Cpu): bool {
+    return cpu.e == 1 || (cpu.p & FM) != 0
+}
+
+fn x8(cpu: &Cpu): bool {
+    return cpu.e == 1 || (cpu.p & FX) != 0
+}
+
+fn setBit(cpu: &mut Cpu, mask: i64, on: bool): void {
+    if on {
+        cpu.p = cpu.p | mask
+    } else {
+        cpu.p = cpu.p & (~mask)
+    }
+}
+
+fn setNZ8(cpu: &mut Cpu, v: i64): void {
+    setBit(cpu, FZ, (v & 0xFF) == 0)
+    setBit(cpu, FN, (v & 0x80) != 0)
+}
+
+fn setNZ16(cpu: &mut Cpu, v: i64): void {
+    setBit(cpu, FZ, (v & 0xFFFF) == 0)
+    setBit(cpu, FN, (v & 0x8000) != 0)
+}
+
+// N/Z for a value in the accumulator's current width.
+fn setNZa(cpu: &mut Cpu, v: i64): void {
+    if m8(cpu) {
+        setNZ8(cpu, v)
+    } else {
+        setNZ16(cpu, v)
+    }
+}
+
+// N/Z for a value in the index registers' current width.
+fn setNZx(cpu: &mut Cpu, v: i64): void {
+    if x8(cpu) {
+        setNZ8(cpu, v)
+    } else {
+        setNZ16(cpu, v)
+    }
+}
+
+fn fetch8(cpu: &mut Cpu, m: &Mem): i64 {
+    let a = (cpu.pbr << 16) | cpu.pc
+    let v = memRead(m, a)
+    cpu.pc = (cpu.pc + 1) & 0xFFFF // PC wraps within the program bank on fetch
+    return v
+}
+
+// XCE aftermath and SEP/REP can force emulation constraints; apply them here.
+fn applyEmulationConstraints(cpu: &mut Cpu): void {
+    if cpu.e == 1 {
+        cpu.p = cpu.p | FM | FX // M/X forced 8-bit
+        cpu.x = cpu.x & 0xFF // index high bytes cleared
+        cpu.y = cpu.y & 0xFF
+        cpu.s = 0x0100 | (cpu.s & 0xFF) // stack fixed to page 1
+    }
+}
+
+// Execute one instruction. Only the register/flag/transfer/immediate batch is
+// wired so far — memory-operand opcodes fall through to the no-op default and
+// register as failures against Harte until implemented.
+fn step(cpu: &mut Cpu, m: &mut Mem): void {
+    let op = fetch8(cpu, m)
+    match op {
+        // ---- NOP ----
+        0xEA => {
+        }
+
+        // ---- flag set/clear ----
+        0x18 => {
+            setBit(cpu, FC, false)
+        }
+        0x38 => {
+            setBit(cpu, FC, true)
+        }
+        0x58 => {
+            setBit(cpu, FI, false)
+        }
+        0x78 => {
+            setBit(cpu, FI, true)
+        }
+        0xB8 => {
+            setBit(cpu, FV, false)
+        }
+        0xD8 => {
+            setBit(cpu, FD, false)
+        }
+        0xF8 => {
+            setBit(cpu, FD, true)
+        }
+
+        // ---- XCE: swap carry and emulation latches ----
+        0xFB => {
+            let oldC = cpu.p & FC
+            let oldE = cpu.e
+            cpu.e = oldC
+            setBit(cpu, FC, oldE != 0)
+            applyEmulationConstraints(cpu)
+        }
+
+        // ---- REP / SEP: clear / set P bits from an immediate mask ----
+        0xC2 => {
+            let mask = fetch8(cpu, m)
+            cpu.p = cpu.p & (~mask)
+            applyEmulationConstraints(cpu) // can't clear M/X while emulating
+        }
+        0xE2 => {
+            let mask = fetch8(cpu, m)
+            cpu.p = cpu.p | mask
+            if (cpu.p & FX) != 0 { // narrowing X → truncate index high bytes
+                cpu.x = cpu.x & 0xFF
+                cpu.y = cpu.y & 0xFF
+            }
+        }
+
+        // ---- register-to-register transfers ----
+        0xAA => { // TAX
+            let v = if x8(cpu) {
+                cpu.a & 0xFF
+            } else {
+                cpu.a & 0xFFFF
+            }
+            cpu.x = v setNZx(cpu, v)
+        }
+        0xA8 => { // TAY
+            let v = if x8(cpu) {
+                cpu.a & 0xFF
+            } else {
+                cpu.a & 0xFFFF
+            }
+            cpu.y = v setNZx(cpu, v)
+        }
+        0x8A => { // TXA
+            if m8(cpu) {
+                cpu.a = (cpu.a & 0xFF00) | (cpu.x & 0xFF) setNZ8(cpu, cpu.x)
+            } else {
+                cpu.a = cpu.x & 0xFFFF setNZ16(cpu, cpu.x)
+            }
+        }
+        0x98 => { // TYA
+            if m8(cpu) {
+                cpu.a = (cpu.a & 0xFF00) | (cpu.y & 0xFF) setNZ8(cpu, cpu.y)
+            } else {
+                cpu.a = cpu.y & 0xFFFF setNZ16(cpu, cpu.y)
+            }
+        }
+        0xBA => { // TSX
+            let v = if x8(cpu) {
+                cpu.s & 0xFF
+            } else {
+                cpu.s & 0xFFFF
+            }
+            cpu.x = v setNZx(cpu, v)
+        }
+        0x9A => { // TXS — no flags; emulation forces SH=01
+            if cpu.e == 1 {
+                cpu.s = 0x0100 | (cpu.x & 0xFF)
+            } else {
+                cpu.s = cpu.x & 0xFFFF
+            }
+        }
+        0x9B => { // TXY
+            let v = if x8(cpu) {
+                cpu.x & 0xFF
+            } else {
+                cpu.x & 0xFFFF
+            }
+            cpu.y = v setNZx(cpu, v)
+        }
+        0xBB => { // TYX
+            let v = if x8(cpu) {
+                cpu.y & 0xFF
+            } else {
+                cpu.y & 0xFFFF
+            }
+            cpu.x = v setNZx(cpu, v)
+        }
+        0x1B => { // TCS — 16-bit C→S always; emulation forces SH=01, no flags
+            if cpu.e == 1 {
+                cpu.s = 0x0100 | (cpu.a & 0xFF)
+            } else {
+                cpu.s = cpu.a & 0xFFFF
+            }
+        }
+        0x3B => { // TSC — 16-bit S→C, 16-bit flags
+            cpu.a = cpu.s & 0xFFFF setNZ16(cpu, cpu.a)
+        }
+        0x5B => { // TCD — 16-bit A→D, 16-bit flags
+            cpu.d = cpu.a & 0xFFFF setNZ16(cpu, cpu.d)
+        }
+        0x7B => { // TDC — 16-bit D→C, 16-bit flags
+            cpu.a = cpu.d & 0xFFFF setNZ16(cpu, cpu.a)
+        }
+
+        // ---- XBA: swap A's two bytes; N/Z from the new low byte (8-bit) ----
+        0xEB => {
+            let lo = cpu.a & 0xFF
+            let hi = (cpu.a >> 8) & 0xFF
+            cpu.a = (lo << 8) | hi
+            setNZ8(cpu, hi)
+        }
+
+        // ---- INC/DEC on registers ----
+        0xE8 => { // INX
+            if x8(cpu) {
+                cpu.x = (cpu.x + 1) & 0xFF
+            } else {
+                cpu.x = (cpu.x + 1) & 0xFFFF
+            }
+            setNZx(cpu, cpu.x)
+        }
+        0xC8 => { // INY
+            if x8(cpu) {
+                cpu.y = (cpu.y + 1) & 0xFF
+            } else {
+                cpu.y = (cpu.y + 1) & 0xFFFF
+            }
+            setNZx(cpu, cpu.y)
+        }
+        0xCA => { // DEX
+            if x8(cpu) {
+                cpu.x = (cpu.x - 1) & 0xFF
+            } else {
+                cpu.x = (cpu.x - 1) & 0xFFFF
+            }
+            setNZx(cpu, cpu.x)
+        }
+        0x88 => { // DEY
+            if x8(cpu) {
+                cpu.y = (cpu.y - 1) & 0xFF
+            } else {
+                cpu.y = (cpu.y - 1) & 0xFFFF
+            }
+            setNZx(cpu, cpu.y)
+        }
+        0x1A => { // INC A
+            if m8(cpu) {
+                let lo = (cpu.a + 1) & 0xFF
+                cpu.a = (cpu.a & 0xFF00) | lo setNZ8(cpu, lo)
+            } else {
+                cpu.a = (cpu.a + 1) & 0xFFFF setNZ16(cpu, cpu.a)
+            }
+        }
+        0x3A => { // DEC A
+            if m8(cpu) {
+                let lo = (cpu.a - 1) & 0xFF
+                cpu.a = (cpu.a & 0xFF00) | lo setNZ8(cpu, lo)
+            } else {
+                cpu.a = (cpu.a - 1) & 0xFFFF setNZ16(cpu, cpu.a)
+            }
+        }
+
+        // ---- immediate loads (operand width = register width) ----
+        0xA9 => { // LDA #
+            if m8(cpu) {
+                let v = fetch8(cpu, m)
+                cpu.a = (cpu.a & 0xFF00) | v setNZ8(cpu, v)
+            } else {
+                let lo = fetch8(cpu, m)
+                let hi = fetch8(cpu, m)
+                cpu.a = lo | (hi << 8) setNZ16(cpu, cpu.a)
+            }
+        }
+        0xA2 => { // LDX #
+            if x8(cpu) {
+                let v = fetch8(cpu, m)
+                cpu.x = v setNZ8(cpu, v)
+            } else {
+                let lo = fetch8(cpu, m)
+                let hi = fetch8(cpu, m)
+                cpu.x = lo | (hi << 8) setNZ16(cpu, cpu.x)
+            }
+        }
+        0xA0 => { // LDY #
+            if x8(cpu) {
+                let v = fetch8(cpu, m)
+                cpu.y = v setNZ8(cpu, v)
+            } else {
+                let lo = fetch8(cpu, m)
+                let hi = fetch8(cpu, m)
+                cpu.y = lo | (hi << 8) setNZ16(cpu, cpu.y)
+            }
+        }
+
+        _ => {
+        } // unimplemented — leaves state unchanged; Harte will flag it
+    }
+}
