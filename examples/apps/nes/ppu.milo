@@ -165,9 +165,9 @@ fn ppuRegRead(ppu: &mut Ppu, reg: i64): u8 {
             result = ppu.readBuffer
         }
         let inc: i64 = if (ppu.ctrl & 0x04) != 0 {
-            32 as i64
+            32
         } else {
-            1 as i64
+            1
         }
         ppu.v = ((ppu.v as i64 + inc) & 0x7FFF) as u16
         return result
@@ -220,9 +220,9 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
     if reg == 7 {
         ppuMemWrite(ppu, ppu.v, val)
         let inc: i64 = if (ppu.ctrl & 0x04) != 0 {
-            32 as i64
+            32
         } else {
-            1 as i64
+            1
         }
         ppu.v = ((ppu.v as i64 + inc) & 0x7FFF) as u16
         return
@@ -245,9 +245,9 @@ fn snapshotScroll(ppu: &mut Ppu): void {
 // nametables tile a 512x480 logical map; addresses wrap through mirrorNT.
 fn bgPixelAt(ppu: &Ppu, x: i64, y: i64): i64 {
     let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
-        0x1000 as i64
+        0x1000
     } else {
-        0 as i64
+        0
     }
     let wx = (ppu.scrollX + x) & 0x1FF // wrap 512
     var wy = ppu.scrollY + y
@@ -298,9 +298,9 @@ fn computeSprite0Hit(ppu: &mut Ppu): void {
     let flipV = (attr & 0x80) != 0
     let tall = (ppu.ctrl & 0x20) != 0
     let h: i64 = if tall {
-        16 as i64
+        16
     } else {
-        8 as i64
+        8
     }
     var by: i64 = 0
     while by < h { // raster order: top row first
@@ -317,9 +317,9 @@ fn computeSprite0Hit(ppu: &mut Ppu): void {
             patAddr = bank + (tile + half) * 16 + (ry & 7)
         } else {
             let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
-                0x1000 as i64
+                0x1000
             } else {
-                0 as i64
+                0
             }
             patAddr = sprTable + rawTile * 16 + ry
         }
@@ -433,9 +433,9 @@ fn renderSprites(ppu: &mut Ppu): void {
     }
     let tall = (ppu.ctrl & 0x20) != 0
     let h: i64 = if tall {
-        16 as i64
+        16
     } else {
-        8 as i64
+        8
     }
     var i: i64 = 63
     while i >= 0 { // draw back-to-front so sprite 0 wins
@@ -464,9 +464,9 @@ fn renderSprites(ppu: &mut Ppu): void {
                 patAddr = bank + (tile + (ry / 8)) * 16 + (ry & 7)
             } else {
                 let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
-                    0x1000 as i64
+                    0x1000
                 } else {
-                    0 as i64
+                    0
                 }
                 patAddr = sprTable + rawTile * 16 + ry
             }
