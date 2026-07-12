@@ -211,6 +211,142 @@ fn clampEmuStack(cpu: &mut Cpu): void {
     }
 }
 
+fn fetch24(cpu: &mut Cpu, m: &Mem): i64 {
+    let lo = fetch8(cpu, m)
+    let mid = fetch8(cpu, m)
+    let hi = fetch8(cpu, m)
+    return lo | (mid << 8) | (hi << 16)
+}
+
+// --- effective-address resolvers (advance PC past the operand) ---
+// Direct-page modes live in bank 0 and wrap within it; DBR-relative and long
+// modes are linear 24-bit.
+fn aDp(cpu: &mut Cpu, m: &Mem): i64 {
+    return (cpu.d + fetch8(cpu, m)) & 0xFFFF
+}
+
+// Direct-page indexed base. Emulation quirk: when DL (D low byte) is 0 the index
+// wraps within the zero page instead of across bank 0.
+fn dpIndexed(cpu: &Cpu, dp: i64, idx: i64): i64 {
+    if cpu.e == 1 && (cpu.d & 0xFF) == 0 {
+        return (cpu.d & 0xFF00) | ((dp + idx) & 0xFF)
+    }
+    return (cpu.d + dp + idx) & 0xFFFF
+}
+
+fn aDpX(cpu: &mut Cpu, m: &Mem): i64 {
+    return dpIndexed(cpu, fetch8(cpu, m), cpu.x)
+}
+
+fn aDpY(cpu: &mut Cpu, m: &Mem): i64 {
+    return dpIndexed(cpu, fetch8(cpu, m), cpu.y)
+}
+
+fn aAbs(cpu: &mut Cpu, m: &Mem): i64 {
+    return (cpu.dbr << 16) | fetch16(cpu, m)
+}
+
+fn aAbsX(cpu: &mut Cpu, m: &Mem): i64 {
+    return (((cpu.dbr << 16) | fetch16(cpu, m)) + cpu.x) & 0xFFFFFF
+}
+
+fn aAbsY(cpu: &mut Cpu, m: &Mem): i64 {
+    return (((cpu.dbr << 16) | fetch16(cpu, m)) + cpu.y) & 0xFFFFFF
+}
+
+fn aLong(cpu: &mut Cpu, m: &Mem): i64 {
+    return fetch24(cpu, m)
+}
+
+fn aLongX(cpu: &mut Cpu, m: &Mem): i64 {
+    return (fetch24(cpu, m) + cpu.x) & 0xFFFFFF
+}
+
+// Read a 16-/24-bit pointer from bank 0 (direct-page/stack pointer storage),
+// wrapping the increments within bank 0.
+fn readPtr16(m: &Mem, addr: i64): i64 {
+    let lo = memRead(m, addr & 0xFFFF)
+    let hi = memRead(m, (addr + 1) & 0xFFFF)
+    return lo | (hi << 8)
+}
+
+fn readPtr24(m: &Mem, addr: i64): i64 {
+    let lo = memRead(m, addr & 0xFFFF)
+    let mid = memRead(m, (addr + 1) & 0xFFFF)
+    let hi = memRead(m, (addr + 2) & 0xFFFF)
+    return lo | (mid << 8) | (hi << 16)
+}
+
+fn aDpIndX(cpu: &mut Cpu, m: &Mem): i64 { // (dp,X)
+    let ptr = readPtr16(m, dpIndexed(cpu, fetch8(cpu, m), cpu.x))
+    return (cpu.dbr << 16) | ptr
+}
+
+fn aDpIndY(cpu: &mut Cpu, m: &Mem): i64 { // (dp),Y
+    let ptr = readPtr16(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF)
+    return (((cpu.dbr << 16) | ptr) + cpu.y) & 0xFFFFFF
+}
+
+fn aDpLong(cpu: &mut Cpu, m: &Mem): i64 { // [dp]
+    return readPtr24(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF)
+}
+
+fn aDpLongY(cpu: &mut Cpu, m: &Mem): i64 { // [dp],Y
+    return (readPtr24(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF) + cpu.y) & 0xFFFFFF
+}
+
+fn aSr(cpu: &mut Cpu, m: &Mem): i64 { // sr,S — bank 0
+    return (cpu.s + fetch8(cpu, m)) & 0xFFFF
+}
+
+fn aSrY(cpu: &mut Cpu, m: &Mem): i64 { // (sr,S),Y
+    let ptr = readPtr16(m, (cpu.s + fetch8(cpu, m)) & 0xFFFF)
+    return (((cpu.dbr << 16) | ptr) + cpu.y) & 0xFFFFFF
+}
+
+// Read a 16-bit operand. bank0wrap: dp/stack modes keep the +1 inside bank 0;
+// linear modes (abs/long) advance the full 24-bit address.
+fn read16w(m: &Mem, addr: i64, bank0wrap: bool): i64 {
+    let lo = memRead(m, addr)
+    let hiAddr = if bank0wrap {
+        (addr & 0xFF0000) | ((addr + 1) & 0xFFFF)
+    } else {
+        (addr + 1) & 0xFFFFFF
+    }
+    let hi = memRead(m, hiAddr)
+    return lo | (hi << 8)
+}
+
+fn write16w(m: &mut Mem, addr: i64, v: i64, bank0wrap: bool): void {
+    memWrite(m, addr, v & 0xFF)
+    let hiAddr = if bank0wrap {
+        (addr & 0xFF0000) | ((addr + 1) & 0xFFFF)
+    } else {
+        (addr + 1) & 0xFFFFFF
+    }
+    memWrite(m, hiAddr, (v >> 8) & 0xFF)
+}
+
+// Store accumulator to a resolved address at the current width.
+fn staTo(cpu: &Cpu, m: &mut Mem, addr: i64, bank0wrap: bool): void {
+    if m8(cpu) {
+        memWrite(m, addr, cpu.a & 0xFF)
+    } else {
+        write16w(m, addr, cpu.a, bank0wrap)
+    }
+}
+
+// Load accumulator from a resolved address at the current width.
+fn ldaFrom(cpu: &mut Cpu, m: &Mem, addr: i64, bank0wrap: bool): void {
+    if m8(cpu) {
+        let v = memRead(m, addr)
+        cpu.a = (cpu.a & 0xFF00) | v setNZ8(cpu, v)
+    } else {
+        let v = read16w(m, addr, bank0wrap)
+        cpu.a = v setNZ16(cpu, v)
+    }
+}
+
 // Execute one instruction. Register/flag/transfer/immediate + stack push/pull
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
@@ -435,6 +571,88 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
                 let hi = fetch8(cpu, m)
                 cpu.y = lo | (hi << 8) setNZ16(cpu, cpu.y)
             }
+        }
+
+        // ---- LDA (memory addressing modes; immediate A9 handled above) ----
+        0xA5 => {
+            ldaFrom(cpu, m, aDp(cpu, m), true)
+        } // dp
+        0xB5 => {
+            ldaFrom(cpu, m, aDpX(cpu, m), true)
+        } // dp,X
+        0xAD => {
+            ldaFrom(cpu, m, aAbs(cpu, m), false)
+        } // abs
+        0xBD => {
+            ldaFrom(cpu, m, aAbsX(cpu, m), false)
+        } // abs,X
+        0xB9 => {
+            ldaFrom(cpu, m, aAbsY(cpu, m), false)
+        } // abs,Y
+        0xAF => {
+            ldaFrom(cpu, m, aLong(cpu, m), false)
+        } // long
+        0xBF => {
+            ldaFrom(cpu, m, aLongX(cpu, m), false)
+        } // long,X
+        0xA1 => {
+            ldaFrom(cpu, m, aDpIndX(cpu, m), false)
+        } // (dp,X)
+        0xB1 => {
+            ldaFrom(cpu, m, aDpIndY(cpu, m), false)
+        } // (dp),Y
+        0xA7 => {
+            ldaFrom(cpu, m, aDpLong(cpu, m), false)
+        } // [dp]
+        0xB7 => {
+            ldaFrom(cpu, m, aDpLongY(cpu, m), false)
+        } // [dp],Y
+        0xA3 => {
+            ldaFrom(cpu, m, aSr(cpu, m), true)
+        } // sr,S
+        0xB3 => {
+            ldaFrom(cpu, m, aSrY(cpu, m), false)
+        } // (sr,S),Y
+
+        // ---- STA (store A; address resolved first to sequence the borrows) ----
+        0x85 => {
+            let a = aDp(cpu, m) staTo(cpu, m, a, true)
+        }
+        0x95 => {
+            let a = aDpX(cpu, m) staTo(cpu, m, a, true)
+        }
+        0x8D => {
+            let a = aAbs(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x9D => {
+            let a = aAbsX(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x99 => {
+            let a = aAbsY(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x8F => {
+            let a = aLong(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x9F => {
+            let a = aLongX(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x81 => {
+            let a = aDpIndX(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x91 => {
+            let a = aDpIndY(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x87 => {
+            let a = aDpLong(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x97 => {
+            let a = aDpLongY(cpu, m) staTo(cpu, m, a, false)
+        }
+        0x83 => {
+            let a = aSr(cpu, m) staTo(cpu, m, a, true)
+        }
+        0x93 => {
+            let a = aSrY(cpu, m) staTo(cpu, m, a, false)
         }
 
         // ---- stack push/pull ----

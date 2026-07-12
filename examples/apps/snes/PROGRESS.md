@@ -31,18 +31,28 @@ masked to width; m8()/x8() decide operand size live. Harness path proven:
 clones the 3.8 MB source per accessor and OOMs — see genesis/), `runHarte.milo`
 tokenizes it, `harte.sh` runs one process per opcode (both e/n modes).
 
-Green so far (94/94 files = 940k cases, both emulation + native):
+Green so far (146/146 files = 1.46M cases, both emulation + native):
   NOP; flags CLC/SEC/CLI/SEI/CLV/CLD/SED; XCE; REP/SEP; all transfers
   (TAX/TAY/TXA/TYA/TSX/TXS/TXY/TYX/TCS/TSC/TCD/TDC); XBA; INX/INY/DEX/DEY;
-  INC/DEC A; LDA/LDX/LDY immediate; stack PHA/PLA/PHP/PLP/PHX/PLX/PHY/PLY/
-  PHB/PLB/PHK/PHD/PLD/PEA.
+  INC/DEC A; stack PHA/PLA/PHP/PLP/PHX/PLX/PHY/PLY/PHB/PLB/PHK/PHD/PLD/PEA;
+  LDA + STA across ALL addressing modes (imm/dp/dp,X/abs/abs,X/abs,Y/long/
+  long,X/(dp,X)/(dp),Y/[dp]/[dp],Y/sr,S/(sr,S),Y); LDX/LDY immediate.
+Addressing infra now proven (aDp/aDpX/aAbs/aAbsX/aAbsY/aLong/aLongX/aDpIndX/
+  aDpIndY/aDpLong/aDpLongY/aSr/aSrY + read16w/write16w) — reusable for the rest
+  of the load/store/ALU/RMW families.
 Key gotchas found:
   - Emulation forces stack high byte to 01 — mask S on load.
   - Stack page-1 wrap is per-instruction: classic ops (PHA/PLA/PHP/PLP/PHX/PLX/
     PHY/PLY) wrap each byte within page 1; "new" ops (PEA/PHD/PLD/PHB/PLB/PHK)
     use a full 16-bit S (can leave page 1) and only clamp SH=01 at the end.
-Next: memory addressing modes (dp/abs/long/[dp]/indexed) for load/store/ALU
-families; then PEI/PER/stack-relative, MVN/MVP block moves, branches, JMP/JSR/RTx.
+  - Direct-page indexed: emulation + DL==0 wraps the index within the zero page
+    (D&0xFF00)|((dp+idx)&0xFF), not across bank 0 (dpIndexed()).
+  - 16-bit mem access +1 wraps in bank 0 for dp/sr modes, linear 24-bit else
+    (read16w/write16w bank0wrap flag). Never differs by M-width in emulation
+    (emulation is always 8-bit), only matters native.
+Next: LDX/LDY/STX/STY/STZ mem modes; logical ORA/AND/EOR + CMP/CPX/CPY (reuse
+  resolvers); then ADC/SBC (decimal-mode BCD paths), INC/DEC/ASL/LSR/ROL/ROR
+  RMW, BIT; branches, JMP/JSR/RTS/RTL, MVN/MVP.
 
 Run: `examples/apps/snes/harte.sh` (or `harte.sh ea a9 …` for a subset).
 

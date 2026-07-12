@@ -9,7 +9,9 @@ cd "$(dirname "$0")/../../.."
 D=roms/harte-65816/v1
 [ $# -gt 0 ] && OPS=("$@") || OPS=(ea 18 38 58 78 b8 d8 f8 fb c2 e2 \
   aa a8 8a 98 ba 9a 9b bb 1b 3b 5b 7b eb e8 c8 ca 88 1a 3a a9 a2 a0 \
-  48 68 da fa 5a 7a 08 28 8b ab 4b 0b 2b f4)
+  48 68 da fa 5a 7a 08 28 8b ab 4b 0b 2b f4 \
+  a5 b5 ad bd b9 af bf a1 b1 a7 b7 a3 b3 \
+  85 95 8d 9d 99 8f 9f 81 91 87 97 83 93)
 pass=0; fail=0
 for op in "${OPS[@]}"; do
   for mode in e n; do
