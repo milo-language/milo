@@ -86,19 +86,21 @@ fn vscrollFor(m: &Mem, planeB: bool): i64 {
     return m.vsram[0]
 }
 
-// Sample one background plane at absolute plane pixel (px,py). Returns the 6-bit
-// CRAM index, or -1 if transparent (tile colour 0).
-fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
-    let cellX = (px / 8) % pw
-    let cellY = (py / 8) % ph
-    let entryAddr = base + (cellY * pw + cellX) * 2
+// A sampled pixel is packed: -1 = transparent, else bit8 = priority, bits5-0 =
+// the 6-bit CRAM index.
+let PRI: i64 = 0x100
+
+// Sample one nametable cell at absolute plane pixel (px,py). `cellStride` is the
+// nametable width in cells. Returns the packed value (priority + index) or -1.
+fn sampleNametable(m: &Mem, base: i64, stride: i64, cellX: i64, cellY: i64, fxIn: i64, fyIn: i64): i64 {
+    let entryAddr = base + (cellY * stride + cellX) * 2
     let entry = (vram8(m, entryAddr) << 8) | vram8(m, entryAddr + 1)
     let tileIdx = entry & 0x7FF
     let palLine = (entry >> 13) & 0x3
     let hflip = (entry & 0x0800) != 0
     let vflip = (entry & 0x1000) != 0
-    var fx = px % 8
-    var fy = py % 8
+    var fx = fxIn
+    var fy = fyIn
     if hflip {
         fx = 7 - fx
     }
@@ -115,7 +117,53 @@ fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
     if color == 0 {
         return -1
     }
-    return palLine * 16 + color
+    var packed = palLine * 16 + color
+    if (entry & 0x8000) != 0 {
+        packed = packed | PRI
+    }
+    return packed
+}
+
+// Scrolling background plane sample at absolute plane pixel (px,py).
+fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
+    return sampleNametable(m, base, pw, (px / 8) % pw, (py / 8) % ph, px % 8, py % 8)
+}
+
+// True where the window plane replaces plane A (reg17 horizontal, reg18 vertical
+// boundaries; the window covers the union of the two spans).
+fn inWindow(m: &Mem, x: i64, y: i64): bool {
+    let rv = m.vdpRegs[18]
+    let vval = (rv & 0x1F) * 8
+    var yin = false
+    if (rv & 0x80) != 0 {
+        yin = y >= vval
+    } else {
+        yin = y < vval
+    }
+    let rh = m.vdpRegs[17]
+    let hval = (rh & 0x1F) * 16
+    var xin = false
+    if (rh & 0x80) != 0 {
+        xin = x >= hval
+    } else {
+        xin = x < hval
+    }
+    return yin || xin
+}
+
+// Window plane sample (no scroll). Nametable width is 64 cells for H40, else 32.
+fn sampleWindow(m: &Mem, x: i64, y: i64, width: i64): i64 {
+    let stride: i64 = if width == 320 {
+        64
+    } else {
+        32
+    }
+    let base: i64 = if width == 320 {
+        (m.vdpRegs[3] & 0x3E) << 10
+    } else {
+        (m.vdpRegs[3] & 0x3F) << 10
+    }
+    return sampleNametable(m, base, stride, x / 8, y / 8, x % 8, y % 8)
 }
 
 // Build the full frame as a Vec<i64> of CRAM indices: planes B then A, sprites on top.
@@ -130,10 +178,21 @@ fn renderIndexed(m: &Mem): Vec<i64> {
 
     let spanAx = planeW * 8
     let spanAy = planeH * 8
+
+    // Sprite layer: packed value per pixel (-1 transparent, PRI bit + index).
+    var spr: Vec<i64> = Vec.new()
+    var s: i64 = 0
+    while s < width * height {
+        spr.push(-1)
+        s = s + 1
+    }
+    drawSprites(m, spr, width, height)
+
+    // Composite per the Genesis layer order (front to back): sprite-hi, A-hi,
+    // B-hi, sprite-lo, A-lo, B-lo, backdrop. The window plane replaces A.
     var fb: Vec<i64> = Vec.new()
     var y: i64 = 0
     while y < height {
-        // Scroll is constant across a scanline (per-line hscroll, full vscroll).
         let hA = hscrollFor(m, y, false)
         let hB = hscrollFor(m, y, true)
         let vA = vscrollFor(m, false)
@@ -142,19 +201,34 @@ fn renderIndexed(m: &Mem): Vec<i64> {
         let pyB = wrapCoord(y + vB, spanAy)
         var x: i64 = 0
         while x < width {
-            var idx = samplePlane(m, baseA, planeW, planeH, wrapCoord(x - hA, spanAx), pyA)
-            if idx < 0 {
-                idx = samplePlane(m, baseB, planeW, planeH, wrapCoord(x - hB, spanAx), pyB)
+            var aVal: i64 = -1
+            if inWindow(m, x, y) {
+                aVal = sampleWindow(m, x, y, width)
+            } else {
+                aVal = samplePlane(m, baseA, planeW, planeH, wrapCoord(x - hA, spanAx), pyA)
             }
-            if idx < 0 {
-                idx = backdrop
+            let bVal = samplePlane(m, baseB, planeW, planeH, wrapCoord(x - hB, spanAx), pyB)
+            let sVal = spr[y * width + x]
+
+            var pick = backdrop
+            if sVal >= 0 && (sVal & PRI) != 0 {
+                pick = sVal & 0x3F
+            } else if aVal >= 0 && (aVal & PRI) != 0 {
+                pick = aVal & 0x3F
+            } else if bVal >= 0 && (bVal & PRI) != 0 {
+                pick = bVal & 0x3F
+            } else if sVal >= 0 {
+                pick = sVal & 0x3F
+            } else if aVal >= 0 {
+                pick = aVal & 0x3F
+            } else if bVal >= 0 {
+                pick = bVal & 0x3F
             }
-            fb.push(idx & 0x3F)
+            fb.push(pick & 0x3F)
             x = x + 1
         }
         y = y + 1
     }
-    drawSprites(m, fb, width, height)
     return fb
 }
 
@@ -177,6 +251,7 @@ fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
         let pal = (attr >> 13) & 0x3
         let hflip = (attr & 0x0800) != 0
         let vflip = (attr & 0x1000) != 0
+        let pri = (attr & 0x8000) != 0
         let sx = xraw - 128
         let sy = yraw - 128
 
@@ -195,7 +270,7 @@ fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
                 } else {
                     row
                 }
-                drawSprTile(m, fb, width, height, tile, sx + destCol * 8, sy + destRow * 8, pal, hflip, vflip)
+                drawSprTile(m, fb, width, height, tile, sx + destCol * 8, sy + destRow * 8, pal, hflip, vflip, pri)
                 row = row + 1
             }
             col = col + 1
@@ -209,7 +284,7 @@ fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
     }
 }
 
-fn drawSprTile(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64, tile: i64, ox: i64, oy: i64, pal: i64, hflip: bool, vflip: bool) {
+fn drawSprTile(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64, tile: i64, ox: i64, oy: i64, pal: i64, hflip: bool, vflip: bool, pri: bool) {
     var py: i64 = 0
     while py < 8 {
         var px: i64 = 0
@@ -217,23 +292,31 @@ fn drawSprTile(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64, tile: i64, o
             let dx = ox + px
             let dy = oy + py
             if dx >= 0 && dx < width && dy >= 0 && dy < height {
-                var fx = px
-                var fy = py
-                if hflip {
-                    fx = 7 - px
-                }
-                if vflip {
-                    fy = 7 - py
-                }
-                let byte = vram8(m, tile * 32 + fy * 4 + (fx / 2))
-                var color: i64 = 0
-                if (fx & 1) == 0 {
-                    color = (byte >> 4) & 0xF
-                } else {
-                    color = byte & 0xF
-                }
-                if color != 0 {
-                    fb[dy * width + dx] = pal * 16 + color
+                let slot = dy * width + dx
+                // Earliest sprite in the link list wins on overlap.
+                if fb[slot] < 0 {
+                    var fx = px
+                    var fy = py
+                    if hflip {
+                        fx = 7 - px
+                    }
+                    if vflip {
+                        fy = 7 - py
+                    }
+                    let byte = vram8(m, tile * 32 + fy * 4 + (fx / 2))
+                    var color: i64 = 0
+                    if (fx & 1) == 0 {
+                        color = (byte >> 4) & 0xF
+                    } else {
+                        color = byte & 0xF
+                    }
+                    if color != 0 {
+                        var packed = pal * 16 + color
+                        if pri {
+                            packed = packed | PRI
+                        }
+                        fb[slot] = packed
+                    }
                 }
             }
             px = px + 1
