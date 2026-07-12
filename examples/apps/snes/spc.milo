@@ -24,15 +24,69 @@ struct Spc {
     psw: i64
 }
 
-// Sparse 64 KiB RAM for the Harte harness (same rationale as the 65816 Mem).
+// SPC700 address space. testMode (Harte): sparse assoc list. Real mode: 64 KiB
+// RAM + the 64-byte IPL boot ROM at $FFC0-$FFFF (when enabled) + the four
+// CPU<->APU port latches at $F4-$F7. inPort = what the main CPU wrote (SPC
+// reads it); outPort = what the SPC wrote (main CPU reads it at $2140-$2143).
 struct SpcMem {
-    addr: Vec<i64>
+    addr: Vec<i64> // test-mode sparse RAM
     val: Vec<i64>
+    testMode: bool
+    ram: Vec<u8> // 64 KiB (empty in test mode)
+    ipl: Vec<u8> // 64-byte boot ROM
+    iplEnabled: bool
+    inPort: Vec<i64> // [4] CPU->SPC
+    outPort: Vec<i64> // [4] SPC->CPU
 }
 
 fn spcMemNew(): SpcMem {
     return SpcMem {
-        addr: Vec.new(), val: Vec.new()
+        addr: Vec.new(), val: Vec.new(), testMode: true,
+        ram: Vec.new(), ipl: Vec.new(), iplEnabled: false,
+        inPort: Vec.new(), outPort: Vec.new()
+    }
+}
+
+fn spcZeros(n: i64): Vec<u8> {
+    var v: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < n {
+        v.push(0) i = i + 1
+    }
+    return v
+}
+
+// Canonical SNES SPC700 IPL boot ROM ($FFC0-$FFFF): posts $AA/$BB to ports 0/1
+// then runs the upload handshake. Reset vector ($FFFE) = $FFC0.
+fn iplRom(): Vec<u8> {
+    let b = [
+    0xCD, 0xEF, 0xBD, 0xE8, 0x00, 0xC6, 0x1D, 0xD0, 0xFC, 0x8F, 0xAA, 0xF4, 0x8F, 0xBB, 0xF5, 0x78,
+    0xCC, 0xF4, 0xD0, 0xFB, 0x2F, 0x19, 0xEB, 0xF4, 0xD0, 0xFC, 0x7E, 0xF4, 0xD0, 0x0B, 0xE4, 0xF5,
+    0xCB, 0xF4, 0xD7, 0x00, 0xFC, 0xD0, 0xF3, 0xAB, 0x01, 0x10, 0xEF, 0x7E, 0xF4, 0x10, 0xEB, 0xBA,
+    0xF6, 0xDA, 0x00, 0xBA, 0xF4, 0xC4, 0xF4, 0xDD, 0x5D, 0xD0, 0xDB, 0x1F, 0x00, 0x00, 0xC0, 0xFF
+    ]
+    var v: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < 64 {
+        v.push(b[i]as u8) i = i + 1
+    }
+    return v
+}
+
+fn spcZerosI64(n: i64): Vec<i64> {
+    var v: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < n {
+        v.push(0) i = i + 1
+    }
+    return v
+}
+
+fn spcMemReal(): SpcMem {
+    return SpcMem {
+        addr: Vec.new(), val: Vec.new(), testMode: false,
+        ram: spcZeros(0x10000), ipl: iplRom(), iplEnabled: true,
+        inPort: spcZerosI64(4), outPort: spcZerosI64(4)
     }
 }
 
@@ -42,28 +96,77 @@ fn spcMemReset(m: &mut SpcMem): void {
 }
 
 fn spcRead(m: &SpcMem, a: i64): i64 {
-    var i: i64 = 0
-    while i < m.addr.len {
-        if m.addr[i] == (a & 0xFFFF) {
-            return m.val[i]
+    if m.testMode {
+        var i: i64 = 0
+        while i < m.addr.len {
+            if m.addr[i] == (a & 0xFFFF) {
+                return m.val[i]
+            }
+            i = i + 1
         }
-        i = i + 1
+        return 0
     }
-    return 0
+    let addr = a & 0xFFFF
+    if addr >= 0xF4 && addr <= 0xF7 {
+        return m.inPort[addr - 0xF4] // read the CPU->SPC latch
+    }
+    if m.iplEnabled && addr >= 0xFFC0 {
+        return m.ipl[addr - 0xFFC0]as i64
+    }
+    return m.ram[addr]as i64
 }
 
 fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
-    let addr = a & 0xFFFF
-    var i: i64 = 0
-    while i < m.addr.len {
-        if m.addr[i] == addr {
-            m.val[i] = v & 0xFF
-            return
+    if m.testMode {
+        let addr = a & 0xFFFF
+        var i: i64 = 0
+        while i < m.addr.len {
+            if m.addr[i] == addr {
+                m.val[i] = v & 0xFF
+                return
+            }
+            i = i + 1
         }
-        i = i + 1
+        m.addr.push(addr)
+        m.val.push(v & 0xFF)
+        return
     }
-    m.addr.push(addr)
-    m.val.push(v & 0xFF)
+    let addr = a & 0xFFFF
+    let bv = v & 0xFF
+    if addr == 0xF1 {
+        m.iplEnabled = (bv & 0x80) != 0 // control: bit7 maps the IPL ROM
+        // bits 4/5 clear the input port latches
+        if (bv & 0x20) != 0 {
+            m.inPort[2] = 0 m.inPort[3] = 0
+        }
+        if (bv & 0x10) != 0 {
+            m.inPort[0] = 0 m.inPort[1] = 0
+        }
+        m.ram[addr] = bv as u8
+        return
+    }
+    if addr >= 0xF4 && addr <= 0xF7 {
+        m.outPort[addr - 0xF4] = bv // SPC->CPU latch
+        m.ram[addr] = bv as u8 // also visible in RAM readback
+        return
+    }
+    m.ram[addr] = bv as u8
+}
+
+// Main-CPU side of the APU ports ($2140-$2143 <-> $F4-$F7).
+fn apuReadPort(m: &SpcMem, i: i64): i64 {
+    return m.outPort[i & 3]
+}
+
+fn apuWritePort(m: &mut SpcMem, i: i64, v: i64): void {
+    m.inPort[i & 3] = v & 0xFF
+}
+
+// Reset the SPC into the IPL: PC from the reset vector at $FFFE.
+fn spcReset(spc: &mut Spc, m: &SpcMem): void {
+    spc.pc = spcRead16(m, 0xFFFE)
+    spc.sp = 0xEF
+    spc.psw = 0x02
 }
 
 fn spcSetBit(spc: &mut Spc, mask: i64, on: bool): void {
