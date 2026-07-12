@@ -6,7 +6,7 @@ from "./cartridge" import {
     Cartridge
 }
 from "./ppu" import {
-    Ppu, newPpu, ppuRegRead, ppuRegWrite
+    Ppu, newPpu, ppuRegRead, ppuRegWrite, mmc2InitMapper, mmc2SetChr
 }
 from "./apu" import {
     Apu, newApu, apuWrite, apuReadStatus
@@ -36,6 +36,7 @@ struct Bus {
     mapper: i64 // iNES mapper number (0 = NROM, 2 = UxROM, 4 = MMC3)
     prgBanks: i64 // number of 16 KiB PRG banks
     prgBank: i64 // UxROM: switchable 16 KiB bank mapped at $8000-$BFFF
+    mmc2Prg: i64 // MMC2 (mapper 9): switchable 8 KiB bank at $8000-$9FFF
 
     // MMC3 (mapper 4): 8 bank registers, PRG/CHR modes, and a scanline IRQ.
     mmcSelect: i64 // last $8000 (even) write: bank index (0-7) + mode bits 6/7
@@ -67,12 +68,15 @@ fn newBus(cart: Cartridge): Bus {
     let banks = cart.prg16kBanks as i64
     var bus = Bus {
         ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, apu: newApu(), ctrl1: 0, strobe: 0, buttons: 0,
-        mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0,
+        mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0, mmc2Prg: 0,
         mmcSelect: 0, mmcR0: 0, mmcR1: 0, mmcR2: 0, mmcR3: 0, mmcR4: 0, mmcR5: 0, mmcR6: 0, mmcR7: 0,
         irqLatch: 0, irqCounter: 0, irqReload: false, irqEnabled: false, irqPending: false
     }
     if bus.mapper == 4 {
         mmc3UpdateChr(bus) // establish the initial CHR window mapping
+    }
+    if bus.mapper == 9 {
+        mmc2InitMapper(bus.ppu) // latch-driven CHR banking lives in the PPU
     }
     return bus
 }
@@ -106,6 +110,20 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
     if a >= 0x8000 {
         if bus.mapper == 4 {
             return bus.prg[mmc3PrgOffset(bus, a)]
+        }
+        if bus.mapper == 9 {
+            // MMC2: $8000-$9FFF switchable 8 KiB; $A000-$FFFF = fixed last three.
+            let n8k = bus.prg.len / 0x2000
+            if a < 0xA000 {
+                return bus.prg[bus.mmc2Prg * 0x2000 + (a - 0x8000)]
+            }
+            if a < 0xC000 {
+                return bus.prg[(n8k - 3) * 0x2000 + (a - 0xA000)]
+            }
+            if a < 0xE000 {
+                return bus.prg[(n8k - 2) * 0x2000 + (a - 0xC000)]
+            }
+            return bus.prg[(n8k - 1) * 0x2000 + (a - 0xE000)]
         }
         if bus.mapper == 2 {
             // UxROM: $8000-$BFFF = switchable bank, $C000-$FFFF = fixed last bank.
@@ -165,6 +183,26 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
         }
         if bus.mapper == 4 {
             mmc3Write(bus, a, val)
+            return
+        }
+        if bus.mapper == 9 {
+            // MMC2 registers (only $A000-$FFFF; $8000-$9FFF is unmapped).
+            if a < 0xA000 {
+                return
+            }
+            if a < 0xB000 {
+                bus.mmc2Prg = (val as i64) & 0x0F // PRG select
+            } else if a < 0xC000 {
+                mmc2SetChr(bus.ppu, 0, (val as i64) & 0x1F) // CHR $0xxx / FD
+            } else if a < 0xD000 {
+                mmc2SetChr(bus.ppu, 1, (val as i64) & 0x1F) // CHR $0xxx / FE
+            } else if a < 0xE000 {
+                mmc2SetChr(bus.ppu, 2, (val as i64) & 0x1F) // CHR $1xxx / FD
+            } else if a < 0xF000 {
+                mmc2SetChr(bus.ppu, 3, (val as i64) & 0x1F) // CHR $1xxx / FE
+            } else {
+                bus.ppu.mirrorVertical = (val & 1) == 0 // $F000: 0=vert,1=horiz
+            }
             return
         }
         return

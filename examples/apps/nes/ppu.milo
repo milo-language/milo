@@ -41,6 +41,17 @@ struct Ppu {
     scrollX: i64 // 0-511 pixel offset into the 2-wide nametable map
     scrollY: i64 // 0-479 pixel offset into the 2-tall nametable map
 
+    // MMC2 (mapper 9): CHR banks are picked by a latch that flips when the PPU
+    // fetches tile $FD or $FE from each pattern table — so the bank state lives
+    // here where the fetches happen. latch = 0 (FD) or 1 (FE) per 4 KiB half.
+    mmc2: bool
+    mmc2Latch0: i64
+    mmc2Latch1: i64
+    mmc2ChrFD0: i64 // 4 KiB CHR bank for $0000-$0FFF when latch0 = FD
+    mmc2ChrFE0: i64 // ... when latch0 = FE
+    mmc2ChrFD1: i64 // 4 KiB CHR bank for $1000-$1FFF when latch1 = FD
+    mmc2ChrFE1: i64 // ... when latch1 = FE
+
     fb: [u32; 61440] // 256x240 ARGB/ABGR framebuffer (R,G,B,A byte order)
 }
 
@@ -61,7 +72,84 @@ fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
         v: 0, t: 0, fineX: 0, w: 0, readBuffer: 0,
         scanline: 0, dot: 0, frame: 0, nmiPending: false,
         scrollX: 0, scrollY: 0,
+        mmc2: false, mmc2Latch0: 0, mmc2Latch1: 0,
+        mmc2ChrFD0: 0, mmc2ChrFE0: 0, mmc2ChrFD1: 0, mmc2ChrFE1: 0,
         fb: [0; 61440],
+    }
+}
+
+// --- MMC2 (mapper 9) CHR banking ---
+// Recompute the 1 KiB CHR windows from the two 4 KiB bank selects (each chosen by
+// its latch). Windows 0-3 cover $0000-$0FFF, windows 4-7 cover $1000-$1FFF.
+fn mmc2UpdateChr(ppu: &mut Ppu): void {
+    let n4k = ppu.chr.len / 4096
+    let b0 = if ppu.mmc2Latch0 == 0 {
+        ppu.mmc2ChrFD0
+    } else {
+        ppu.mmc2ChrFE0
+    }
+    let b1 = if ppu.mmc2Latch1 == 0 {
+        ppu.mmc2ChrFD1
+    } else {
+        ppu.mmc2ChrFE1
+    }
+    var w: i64 = 0
+    while w < 4 {
+        ppu.chrBankOffset[w] = (b0 % n4k) * 4096 + w * 1024
+        w = w + 1
+    }
+    while w < 8 {
+        ppu.chrBankOffset[w] = (b1 % n4k) * 4096 + (w - 4) * 1024
+        w = w + 1
+    }
+}
+
+fn mmc2InitMapper(ppu: &mut Ppu): void {
+    ppu.mmc2 = true
+    mmc2UpdateChr(ppu)
+}
+
+// CPU-side CHR bank register write: which = 0:FD0 1:FE0 2:FD1 3:FE1.
+fn mmc2SetChr(ppu: &mut Ppu, which: i64, bank: i64): void {
+    if which == 0 {
+        ppu.mmc2ChrFD0 = bank
+    } else if which == 1 {
+        ppu.mmc2ChrFE0 = bank
+    } else if which == 2 {
+        ppu.mmc2ChrFD1 = bank
+    } else {
+        ppu.mmc2ChrFE1 = bank
+    }
+    mmc2UpdateChr(ppu)
+}
+
+// Flip a latch when the PPU reads the high plane of tile $FD/$FE ($xFD8-$xFDF /
+// $xFE8-$xFEF). The new bank affects subsequent fetches; recompute on change.
+fn mmc2Latch(ppu: &mut Ppu, a: i64): void {
+    var changed = false
+    if a >= 0x0FD8 && a <= 0x0FDF {
+        if ppu.mmc2Latch0 != 0 {
+            ppu.mmc2Latch0 = 0
+            changed = true
+        }
+    } else if a >= 0x0FE8 && a <= 0x0FEF {
+        if ppu.mmc2Latch0 != 1 {
+            ppu.mmc2Latch0 = 1
+            changed = true
+        }
+    } else if a >= 0x1FD8 && a <= 0x1FDF {
+        if ppu.mmc2Latch1 != 0 {
+            ppu.mmc2Latch1 = 0
+            changed = true
+        }
+    } else if a >= 0x1FE8 && a <= 0x1FEF {
+        if ppu.mmc2Latch1 != 1 {
+            ppu.mmc2Latch1 = 1
+            changed = true
+        }
+    }
+    if changed {
+        mmc2UpdateChr(ppu)
     }
 }
 
@@ -224,7 +312,7 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
 
 // 2-bit background pixel at screen (x,y), honoring the frame's scroll. The two
 // nametables tile a 512x480 logical map; addresses wrap through mirrorNT.
-fn bgPixelAt(ppu: &Ppu, x: i64, y: i64): i64 {
+fn bgPixelAt(ppu: &mut Ppu, x: i64, y: i64): i64 {
     let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
         0x1000
     } else {
@@ -248,8 +336,12 @@ fn bgPixelAt(ppu: &Ppu, x: i64, y: i64): i64 {
     let shift = ((row & 2) * 2) + (col & 2)
     let palGroup = (at >> shift) & 0x03
     let fy = ly & 7
-    let lo = ppuMemRead(ppu, (bgTable + tile * 16 + fy) as u16) as i64
-    let hi = ppuMemRead(ppu, (bgTable + tile * 16 + fy + 8) as u16) as i64
+    let patAddr = bgTable + tile * 16 + fy
+    let lo = ppuMemRead(ppu, patAddr as u16) as i64
+    let hi = ppuMemRead(ppu, (patAddr + 8) as u16) as i64
+    if ppu.mmc2 {
+        mmc2Latch(ppu, patAddr + 8) // tile $FD/$FE high plane flips the CHR latch
+    }
     let bit = 7 - (lx & 7)
     let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
     // pack palette group in bits 2-3 so callers can pick the palette entry
@@ -416,6 +508,9 @@ fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
             }
             let lo = ppuMemRead(ppu, patAddr as u16) as i64
             let hi = ppuMemRead(ppu, (patAddr + 8) as u16) as i64
+            if ppu.mmc2 {
+                mmc2Latch(ppu, patAddr + 8)
+            }
             var fx: i64 = 0
             while fx < 8 {
                 let rx = if flipH {
