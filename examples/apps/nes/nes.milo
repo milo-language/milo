@@ -49,6 +49,8 @@ extern fn SDL_RenderPresent(ren: *u8): void
 
 extern fn SDL_PollEvent(event: *u8): i32
 
+extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+
 extern fn SDL_Delay(ms: u32): void
 
 extern fn SDL_DestroyWindow(win: *u8): void
@@ -73,36 +75,8 @@ let SDL_QUIT: u32 = 0x100
 let SDL_KEYDOWN: u32 = 0x300
 let SDL_KEYUP: u32 = 0x301
 
-// SDL scancode -> NES controller-1 bit (0 = unmapped).
-// Bits: A 0x01, B 0x02, Select 0x04, Start 0x08, Up 0x10, Down 0x20, Left 0x40, Right 0x80.
-// Keys: arrows = dpad, Z = A, X = B, Return = Start, Right Shift = Select.
-fn scancodeToButton(sc: i64): u8 {
-    if sc == 82 {
-        return 0x10
-    } // Up
-    if sc == 81 {
-        return 0x20
-    } // Down
-    if sc == 80 {
-        return 0x40
-    } // Left
-    if sc == 79 {
-        return 0x80
-    } // Right
-    if sc == 29 {
-        return 0x01
-    } // Z -> A
-    if sc == 27 {
-        return 0x02
-    } // X -> B
-    if sc == 40 {
-        return 0x08
-    } // Return -> Start
-    if sc == 229 {
-        return 0x04
-    } // Right Shift -> Select
-    return 0
-}
+// Controller keys (SDL scancodes): arrows = D-pad, Z = A, X = B, Return = Start,
+// Right Shift = Select. Sampled live from SDL_GetKeyboardState in the run loop.
 
 // Recursively collect every *.nes path under `dir` into `out`.
 fn collectRoms(dir: string, out: &mut Vec<string>): void {
@@ -305,24 +279,44 @@ fn runNes(cart: Cartridge): i32 {
                 bus.apu.samples = []
             }
 
+            // Pump the event queue (also refreshes keyboard state); only QUIT is
+            // handled as an event.
             while SDL_PollEvent((&ev[0]) as *u8) != 0 {
                 let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
                 }
-                if evType == SDL_KEYDOWN || evType == SDL_KEYUP {
-                    // SDL_KeyboardEvent.keysym.scancode is an i32 at byte offset 16.
-                    let sc: i64 = (ev[16]as i64) | ((ev[17]as i64) << 8)
-                    let mask = scancodeToButton(sc)
-                    if mask != 0 {
-                        if evType == SDL_KEYDOWN {
-                            bus.buttons = bus.buttons | mask
-                        } else {
-                            bus.buttons = bus.buttons & (mask ^ 0xFF)
-                        }
-                    }
-                }
             }
+            // Sample the live keyboard state each frame rather than tracking key
+            // up/down edges — a quick tap (down+up between two polls) would cancel
+            // to "not pressed" and be lost, which broke menu D-pad taps.
+            let ks = SDL_GetKeyboardState(0 as *i32)
+            var b: u8 = 0
+            if ks[82] != 0 {
+                b = b | 0x10 // Up
+            }
+            if ks[81] != 0 {
+                b = b | 0x20 // Down
+            }
+            if ks[80] != 0 {
+                b = b | 0x40 // Left
+            }
+            if ks[79] != 0 {
+                b = b | 0x80 // Right
+            }
+            if ks[29] != 0 {
+                b = b | 0x01 // Z -> A
+            }
+            if ks[27] != 0 {
+                b = b | 0x02 // X -> B
+            }
+            if ks[40] != 0 {
+                b = b | 0x08 // Return -> Start
+            }
+            if ks[229] != 0 {
+                b = b | 0x04 // Right Shift -> Select
+            }
+            bus.buttons = b
             // Pace to audio when active (drain to ~4 frames latency); else fixed 60Hz.
             if audioDev != 0 {
                 while SDL_GetQueuedAudioSize(audioDev) > (735 * 2 * 4) as u32 {
