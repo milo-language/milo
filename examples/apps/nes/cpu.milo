@@ -28,6 +28,9 @@ struct Bus {
     ctrl1: u8 // $4016 controller-1 shift register (serial, drained LSB-first)
     strobe: u8 // $4016 strobe latch
     buttons: u8 // live controller-1 state: bit0 A,1 B,2 Select,3 Start,4 Up,5 Down,6 Left,7 Right
+    mapper: i64 // iNES mapper number (0 = NROM, 2 = UxROM)
+    prgBanks: i64 // number of 16 KiB PRG banks
+    prgBank: i64 // UxROM: switchable 16 KiB bank mapped at $8000-$BFFF
 }
 
 fn newBus(cart: Cartridge): Bus {
@@ -40,8 +43,10 @@ fn newBus(cart: Cartridge): Bus {
     }
     // Move CHR + mirroring into the PPU; PRG into the bus. (cart consumed.)
     let ppu = newPpu(cart.chr, cart.mirrorVertical)
+    let banks = cart.prg16kBanks as i64
     return Bus {
-        ram: [0; 2048], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0, buttons: 0
+        ram: [0; 2048], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0, buttons: 0,
+        mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0
     }
 }
 
@@ -66,7 +71,14 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
         return bit | 0x40 // open-bus high bits read as 0x40 on real HW
     }
     if a >= 0x8000 {
-        return bus.prg[(a - 0x8000) & bus.prgMask]
+        if bus.mapper == 2 {
+            // UxROM: $8000-$BFFF = switchable bank, $C000-$FFFF = fixed last bank.
+            if a < 0xC000 {
+                return bus.prg[bus.prgBank * 0x4000 + (a - 0x8000)]
+            }
+            return bus.prg[(bus.prgBanks - 1) * 0x4000 + (a - 0xC000)]
+        }
+        return bus.prg[(a - 0x8000) & bus.prgMask] // NROM
     }
     return 0
 }
@@ -97,6 +109,13 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
         // Strobe going (or held) high latches the live button state for shift-out.
         if bus.strobe == 1 {
             bus.ctrl1 = bus.buttons
+        }
+        return
+    }
+    if a >= 0x8000 {
+        // UxROM bank select: low bits pick the 16 KiB bank at $8000-$BFFF.
+        if bus.mapper == 2 {
+            bus.prgBank = (val as i64) & (bus.prgBanks - 1)
         }
         return
     }
