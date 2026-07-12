@@ -25,8 +25,9 @@ struct Bus {
     prg: Vec<u8> // mapper-0 PRG, 16K or 32K
     prgMask: i64 // 0x3FFF (16K) or 0x7FFF (32K)
     ppu: Ppu
-    ctrl1: u8 // $4016 controller-1 shift register (input, wired in M3)
+    ctrl1: u8 // $4016 controller-1 shift register (serial, drained LSB-first)
     strobe: u8 // $4016 strobe latch
+    buttons: u8 // live controller-1 state: bit0 A,1 B,2 Select,3 Start,4 Up,5 Down,6 Left,7 Right
 }
 
 fn newBus(cart: Cartridge): Bus {
@@ -40,7 +41,7 @@ fn newBus(cart: Cartridge): Bus {
     // Move CHR + mirroring into the PPU; PRG into the bus. (cart consumed.)
     let ppu = newPpu(cart.chr, cart.mirrorVertical)
     return Bus {
-        ram: [0; 2048], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0
+        ram: [0; 2048], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0, buttons: 0
     }
 }
 
@@ -54,7 +55,12 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
         return ppuRegRead(bus.ppu, a & 0x07)
     }
     if a == 0x4016 {
-        // controller 1: serial shift-out of the button state, LSB first
+        // controller 1: serial shift-out of the button state, LSB first.
+        // While strobe is high the register is continuously reloaded from the
+        // live state, so reads keep returning button A (bit 0).
+        if (bus.strobe & 0x01) == 1 {
+            bus.ctrl1 = bus.buttons
+        }
         let bit = bus.ctrl1 & 0x01
         bus.ctrl1 = (((bus.ctrl1 as i64) >> 1) as u8) | 0x80
         return bit | 0x40 // open-bus high bits read as 0x40 on real HW
@@ -88,6 +94,10 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
     }
     if a == 0x4016 {
         bus.strobe = val & 0x01
+        // Strobe going (or held) high latches the live button state for shift-out.
+        if bus.strobe == 1 {
+            bus.ctrl1 = bus.buttons
+        }
         return
     }
     // other APU/IO writes ignored until modeled
@@ -111,8 +121,28 @@ fn newCpuNestest(): Cpu {
     }
 }
 
+// Power-on / reset: PC from the reset vector at $FFFC/$FFFD.
+fn newCpuReset(bus: &mut Bus): Cpu {
+    let lo = busRead(bus, 0xFFFC) as i64
+    let hi = busRead(bus, 0xFFFD) as i64
+    return Cpu {
+        a: 0, x: 0, y: 0, sp: 0xFD, p: 0x24, pc: wrap16(lo | (hi << 8)), cyc: 0, extraCycles: 0
+    }
+}
+
+// Non-maskable interrupt (PPU vblank): push PC + P, jump to $FFFA vector.
+fn nmi(cpu: &mut Cpu, bus: &mut Bus): void {
+    push16(cpu, bus, cpu.pc)
+    push8(cpu, bus, (cpu.p & (~FB)) | FU)
+    setFlag(cpu, FI, true)
+    let lo = busRead(bus, 0xFFFA) as i64
+    let hi = busRead(bus, 0xFFFB) as i64
+    cpu.pc = wrap16(lo | (hi << 8))
+    cpu.cyc = cpu.cyc + 7
+}
+
 // --- flag helpers ---
-fn getFlag(cpu: &Cpu, mask: u8): bool {
+fn cpuFlag(cpu: &Cpu, mask: u8): bool {
     return (cpu.p & mask) != 0
 }
 
@@ -255,7 +285,7 @@ fn aIndY(cpu: &mut Cpu, bus: &mut Bus): u16 {
 // --- ALU primitives ---
 fn adc(cpu: &mut Cpu, m: u8): void {
     let a: i64 = cpu.a as i64
-    let carry: i64 = if getFlag(cpu, FC) {
+    let carry: i64 = if cpuFlag(cpu, FC) {
         1 as i64
     } else {
         0 as i64
@@ -301,7 +331,7 @@ fn lsrV(cpu: &mut Cpu, m: u8): u8 {
 }
 
 fn rolV(cpu: &mut Cpu, m: u8): u8 {
-    let cin: i64 = if getFlag(cpu, FC) {
+    let cin: i64 = if cpuFlag(cpu, FC) {
         1 as i64
     } else {
         0 as i64
@@ -313,7 +343,7 @@ fn rolV(cpu: &mut Cpu, m: u8): u8 {
 }
 
 fn rorV(cpu: &mut Cpu, m: u8): u8 {
-    let cin: i64 = if getFlag(cpu, FC) {
+    let cin: i64 = if cpuFlag(cpu, FC) {
         0x80 as i64
     } else {
         0 as i64
@@ -870,28 +900,28 @@ fn step(cpu: &mut Cpu, bus: &mut Bus): void {
         }
         // ---- branches (base 2 branch() adds taken/page-cross) ----
         0x90 => {
-            branch(cpu, bus,!getFlag(cpu, FC)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus,!cpuFlag(cpu, FC)) cpu.cyc = cpu.cyc + 2
         }
         0xB0 => {
-            branch(cpu, bus, getFlag(cpu, FC)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus, cpuFlag(cpu, FC)) cpu.cyc = cpu.cyc + 2
         }
         0xD0 => {
-            branch(cpu, bus,!getFlag(cpu, FZ)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus,!cpuFlag(cpu, FZ)) cpu.cyc = cpu.cyc + 2
         }
         0xF0 => {
-            branch(cpu, bus, getFlag(cpu, FZ)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus, cpuFlag(cpu, FZ)) cpu.cyc = cpu.cyc + 2
         }
         0x10 => {
-            branch(cpu, bus,!getFlag(cpu, FN)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus,!cpuFlag(cpu, FN)) cpu.cyc = cpu.cyc + 2
         }
         0x30 => {
-            branch(cpu, bus, getFlag(cpu, FN)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus, cpuFlag(cpu, FN)) cpu.cyc = cpu.cyc + 2
         }
         0x50 => {
-            branch(cpu, bus,!getFlag(cpu, FV)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus,!cpuFlag(cpu, FV)) cpu.cyc = cpu.cyc + 2
         }
         0x70 => {
-            branch(cpu, bus, getFlag(cpu, FV)) cpu.cyc = cpu.cyc + 2
+            branch(cpu, bus, cpuFlag(cpu, FV)) cpu.cyc = cpu.cyc + 2
         }
         // ---- flag ops ----
         0x18 => {
