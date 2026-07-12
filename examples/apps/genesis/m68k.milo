@@ -87,6 +87,10 @@ struct M68k {
     faultAddr: i64
     faultRW: bool
     faultIN: bool
+    // true when the fault is a control-flow target fetch (the instruction already
+    // completed and committed its effects) rather than a mid-instruction EA access.
+    // Controls whether step() rolls back data-register/flag writes.
+    faultCommit: bool
 }
 
 fn newCpu(): M68k {
@@ -101,6 +105,7 @@ fn newCpu(): M68k {
         faultAddr: 0,
         faultRW: true,
         faultIN: false,
+        faultCommit: false,
     }
 }
 
@@ -112,6 +117,7 @@ fn checkAlign(cpu: &mut M68k, addr: i64, size: i64, isRead: bool, isFetch: bool)
         cpu.faultAddr = addr & 0xFFFFFFFF
         cpu.faultRW = isRead
         cpu.faultIN = isFetch
+        cpu.faultCommit = false
         return true
     }
     return cpu.fault
@@ -514,6 +520,36 @@ fn popLong(cpu: &mut M68k, m: &Mem): i64 {
     return v
 }
 
+fn popWord(cpu: &mut M68k, m: &Mem): i64 {
+    let v = memRead16(m, cpu.a[7])
+    cpu.a[7] = (cpu.a[7] + 2) & 0xFFFFFFFF
+    return v
+}
+
+// Privilege check for supervisor-only instructions. In user mode, raises a
+// privilege-violation trap (vector 8) whose pushed PC points at the faulting
+// instruction (opcode start = pc-2, since the opcode word was already fetched).
+fn privViolation(cpu: &mut M68k, m: &mut Mem): bool {
+    if (cpu.sr & SR_S) == 0 {
+        cpu.pc = (cpu.pc - 2) & 0xFFFFFFFF
+        raiseException(cpu, m, 8)
+        return true
+    }
+    return false
+}
+
+// Write the full status register, swapping the active/inactive stack pointer when
+// the S bit changes (a[7] always holds the currently-selected SP).
+fn setSr(cpu: &mut M68k, newSr: i64) {
+    let oldS = (cpu.sr & SR_S) != 0
+    cpu.sr = newSr & 0xFFFF
+    if oldS != ((cpu.sr & SR_S) != 0) {
+        let tmp = cpu.a[7]
+        cpu.a[7] = cpu.otherSp
+        cpu.otherSp = tmp
+    }
+}
+
 // Group 1/2 exception (TRAP, zero-divide, CHK, TRAPV, privilege, illegal, line-A/F).
 // Short 3-word frame: [SR, PC]. Enters supervisor, clears trace, vectors via the
 // low vector table. pc must already point at the return address.
@@ -541,6 +577,7 @@ fn setPc(cpu: &mut M68k, target: i64) {
         cpu.faultAddr = t
         cpu.faultRW = true
         cpu.faultIN = true
+        cpu.faultCommit = true
     }
 }
 
@@ -575,12 +612,14 @@ fn step(cpu: &mut M68k, m: &mut Mem): bool {
     // An address error latched during EA access aborts the instruction and
     // raises the group-0 exception, with the opcode as the frame's IR.
     if cpu.fault {
-        si = 0
-        while si < 8 {
-            cpu.d[si] = savedD[si]
-            si = si + 1
+        if !cpu.faultCommit {
+            si = 0
+            while si < 8 {
+                cpu.d[si] = savedD[si]
+                si = si + 1
+            }
+            cpu.sr = savedSr
         }
-        cpu.sr = savedSr
         raiseAddressError(cpu, m, op)
         return true
     }
@@ -1319,19 +1358,112 @@ fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     if op == 0x4E71 {
         return true // NOP
     }
+    if op == 0x4E70 {
+        return true // RESET — asserts the external reset line; no CPU-state change
+    }
+    if op == 0x4E73 {
+        // RTE: pop SR (word) then PC (long). Privileged; handles the SP swap when
+        // the popped SR clears the S bit.
+        if privViolation(cpu, m) {
+            return true
+        }
+        let newSr = popWord(cpu, m) & 0xA71F
+        let pc = popLong(cpu, m)
+        setSr(cpu, newSr)
+        setPc(cpu, pc)
+        return true
+    }
     if op == 0x4E75 {
         setPc(cpu, popLong(cpu, m)) // RTS
         return true
     }
     if op == 0x4E77 {
-        // RTR: pop CCR then PC
-        let ccr = popLong(cpu, m)
-        cpu.sr = (cpu.sr & 0xFF00) | (ccr & 0xFF)
+        // RTR: pop CCR (word) then PC (long); supervisor bits untouched
+        let ccr = popWord(cpu, m)
+        cpu.sr = (cpu.sr & 0xFF00) | (ccr & 0x1F)
+        setPc(cpu, popLong(cpu, m))
+        return true
+    }
+    if op == 0x4E76 {
+        // TRAPV: trap (vector 7) if overflow set, else nothing
+        if getBit(cpu, SR_V) {
+            raiseException(cpu, m, 7)
+        }
+        return true
+    }
+    if op == 0x4E72 {
+        // STOP #imm: load SR then halt until an interrupt (modelled as halt)
+        let imm = fetch16(cpu, m) & 0xA71F
+        setSr(cpu, imm)
+        cpu.halted = true
+        return true
+    }
+    if (op & 0xFFF0) == 0x4E40 {
+        // TRAP #vector — vectors 32..47
+        raiseException(cpu, m, 32 + (op & 0xF))
         return true
     }
 
     let mode = (op >> 3) & 0x7
     let reg = op & 0x7
+
+    // LINK An,#disp — 0100 1110 0101 0rrr: push An, An=SP, SP += signExt(disp16)
+    if (op & 0xFFF8) == 0x4E50 {
+        let disp = signExtend(fetch16(cpu, m), 1)
+        pushLong(cpu, m, cpu.a[reg])
+        cpu.a[reg] = cpu.a[7]
+        cpu.a[7] = (cpu.a[7] + disp) & 0xFFFFFFFF
+        return true
+    }
+    // UNLK An — 0100 1110 0101 1rrr: SP=An, An=popLong
+    if (op & 0xFFF8) == 0x4E58 {
+        cpu.a[7] = cpu.a[reg]
+        cpu.a[reg] = popLong(cpu, m)
+        return true
+    }
+    // MOVE An,USP / MOVE USP,An — 0100 1110 0110 drrr (d: 0 to-USP, 1 from-USP).
+    // USP is the inactive SP while supervisor (cpu.otherSp).
+    if (op & 0xFFF0) == 0x4E60 {
+        if (op & 0x8) == 0 {
+            cpu.otherSp = cpu.a[reg] & 0xFFFFFFFF
+        } else {
+            cpu.a[reg] = cpu.otherSp & 0xFFFFFFFF
+        }
+        return true
+    }
+    // MOVE from SR — 0100 0000 11 mmm rrr: dst.w = SR
+    if (op & 0xFFC0) == 0x40C0 {
+        let ea = resolveEa(cpu, m, mode, reg, 1)
+        eaStore(cpu, m, ea, 1, cpu.sr & 0xFFFF)
+        return true
+    }
+    // MOVE to CCR — 0100 0100 11 mmm rrr: CCR = src.w low 5 bits
+    if (op & 0xFFC0) == 0x44C0 {
+        let ea = resolveEa(cpu, m, mode, reg, 1)
+        let v = eaLoad(cpu, m, ea, 1)
+        cpu.sr = (cpu.sr & 0xFF00) | (v & 0x1F)
+        return true
+    }
+    // MOVE to SR — 0100 0110 11 mmm rrr: SR = src.w (privileged)
+    if (op & 0xFFC0) == 0x46C0 {
+        if privViolation(cpu, m) {
+            return true
+        }
+        let ea = resolveEa(cpu, m, mode, reg, 1)
+        let v = eaLoad(cpu, m, ea, 1)
+        setSr(cpu, v & 0xA71F)
+        return true
+    }
+    // TAS <ea> — 0100 1010 11 mmm rrr: test byte, set N/Z, then set bit 7
+    if (op & 0xFFC0) == 0x4AC0 {
+        let ea = resolveEa(cpu, m, mode, reg, 0)
+        let v = eaLoad(cpu, m, ea, 0)
+        setNZ(cpu, 0, v)
+        setBit(cpu, SR_V, false)
+        setBit(cpu, SR_C, false)
+        eaStore(cpu, m, ea, 0, v | 0x80)
+        return true
+    }
 
     // LEA An,<ea>  — 0100 aaa1 11mm mrrr
     if (op & 0xF1C0) == 0x41C0 {
