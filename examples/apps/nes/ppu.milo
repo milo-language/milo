@@ -35,6 +35,12 @@ struct Ppu {
     frame: i64
     nmiPending: bool // set at vblank when NMI enabled; consumed by CPU
 
+    // Sprite-0 hit is armed once per frame (topmost/leftmost opaque overlap of
+    // sprite 0 with the background) and the flag is raised when ppuStep reaches
+    // that dot — so a CPU polling $2002 mid-frame sees it at the right time.
+    spr0Line: i64 // scanline of the hit, or -1 if disarmed this frame
+    spr0Dot: i64 // dot of the hit
+
     fb: [u32; 61440] // 256x240 ARGB/ABGR framebuffer (R,G,B,A byte order)
 }
 
@@ -53,6 +59,7 @@ fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
         ctrl: 0, mask: 0, status: 0, oamAddr: 0,
         v: 0, t: 0, fineX: 0, w: 0, readBuffer: 0,
         scanline: 0, dot: 0, frame: 0, nmiPending: false,
+        spr0Line: -1, spr0Dot: 0,
         fb: [0; 61440],
     }
 }
@@ -209,6 +216,96 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
     }
 }
 
+// Is the background pixel at screen (x,y) opaque? (No scroll — see renderBackground.)
+fn bgOpaqueAt(ppu: &Ppu, x: i64, y: i64): bool {
+    if (ppu.mask & 0x08) == 0 {
+        return false
+    }
+    let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
+        0x1000 as i64
+    } else {
+        0 as i64
+    }
+    let baseNT: i64 = 0x2000 + (((ppu.ctrl as i64) & 0x03) * 0x400)
+    let col = x / 8
+    let row = y / 8
+    let fx = x & 7
+    let fy = y & 7
+    let tile = ppuMemRead(ppu, (baseNT + row * 32 + col) as u16) as i64
+    let lo = ppuMemRead(ppu, (bgTable + tile * 16 + fy) as u16) as i64
+    let hi = ppuMemRead(ppu, (bgTable + tile * 16 + fy + 8) as u16) as i64
+    let bit = 7 - fx
+    return (((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)) != 0
+}
+
+// Arm the sprite-0 hit for this frame: find the topmost/leftmost pixel where an
+// opaque sprite-0 pixel overlaps an opaque background pixel. ppuStep raises the
+// flag when it reaches that dot, so a mid-frame $2002 poll sees it in time.
+fn computeSprite0Hit(ppu: &mut Ppu): void {
+    ppu.spr0Line = -1
+    if (ppu.mask & 0x18) != 0x18 { // needs both bg + sprite rendering
+        return
+    }
+    let sy = ppu.oam[0]as i64
+    let rawTile = ppu.oam[1]as i64
+    let attr = ppu.oam[2]as i64
+    let sx = ppu.oam[3]as i64
+    let flipH = (attr & 0x40) != 0
+    let flipV = (attr & 0x80) != 0
+    let tall = (ppu.ctrl & 0x20) != 0
+    let h: i64 = if tall {
+        16 as i64
+    } else {
+        8 as i64
+    }
+    var by: i64 = 0
+    while by < h { // raster order: top row first
+        let ry = if flipV {
+            h - 1 - by
+        } else {
+            by
+        }
+        var patAddr: i64 = 0
+        if tall {
+            let bank = (rawTile & 1) * 0x1000
+            let tile = rawTile & 0xFE
+            let half = ry / 8
+            patAddr = bank + (tile + half) * 16 + (ry & 7)
+        } else {
+            let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
+                0x1000 as i64
+            } else {
+                0 as i64
+            }
+            patAddr = sprTable + rawTile * 16 + ry
+        }
+        let lo = ppuMemRead(ppu, patAddr as u16) as i64
+        let hi = ppuMemRead(ppu, (patAddr + 8) as u16) as i64
+        var bx: i64 = 0
+        while bx < 8 { // leftmost first
+            let rx = if flipH {
+                7 - bx
+            } else {
+                bx
+            }
+            let bit = 7 - rx
+            let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
+            if px != 0 {
+                let x = sx + bx
+                let y = sy + 1 + by // OAM Y is top-minus-1
+                // Sprite-0 hit never fires at x==255 on real hardware.
+                if x < 255 && y < 240 && bgOpaqueAt(ppu, x, y) {
+                    ppu.spr0Line = y
+                    ppu.spr0Dot = x + 1
+                    return
+                }
+            }
+            bx = bx + 1
+        }
+        by = by + 1
+    }
+}
+
 // Advance one PPU dot. Returns true if an NMI should fire this tick.
 fn ppuStep(ppu: &mut Ppu): void {
     ppu.dot = ppu.dot + 1
@@ -228,6 +325,11 @@ fn ppuStep(ppu: &mut Ppu): void {
     }
     if ppu.scanline == 261 && ppu.dot == 1 {
         ppu.status = ppu.status & 0x1F // clear vblank, sprite0, overflow
+        computeSprite0Hit(ppu) // arm for the upcoming frame (OAM set during vblank)
+    }
+    // Raise sprite-0 hit when rendering reaches the armed pixel.
+    if ppu.spr0Line >= 0 && ppu.scanline == ppu.spr0Line && ppu.dot == ppu.spr0Dot {
+        ppu.status = ppu.status | 0x40
     }
 }
 
@@ -300,35 +402,53 @@ fn renderBackground(ppu: &mut Ppu): void {
     }
 }
 
-// Basic 8x8 sprite render (OAM), front priority only, no sprite-0 hit yet.
+// Sprite render (OAM): 8x8 or 8x16 (PPUCTRL bit 5), H/V flip, and priority —
+// a "behind background" sprite (attr bit 5) is hidden where the bg is opaque.
 fn renderSprites(ppu: &mut Ppu): void {
     if (ppu.mask & 0x10) == 0 {
         return
     }
-    let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
-        0x1000 as i64
+    let tall = (ppu.ctrl & 0x20) != 0
+    let h: i64 = if tall {
+        16 as i64
     } else {
-        0 as i64
+        8 as i64
     }
     var i: i64 = 63
     while i >= 0 { // draw back-to-front so sprite 0 wins
         let base = i * 4
         let sy = ppu.oam[base]as i64
-        let tile = ppu.oam[base + 1]as i64
+        let rawTile = ppu.oam[base + 1]as i64
         let attr = ppu.oam[base + 2]as i64
         let sx = ppu.oam[base + 3]as i64
         let palGroup = attr & 0x03
         let flipH = (attr & 0x40) != 0
         let flipV = (attr & 0x80) != 0
+        let behind = (attr & 0x20) != 0
         var fy: i64 = 0
-        while fy < 8 {
+        while fy < h {
             let ry = if flipV {
-                7 - fy
+                h - 1 - fy
             } else {
                 fy
             }
-            let lo = ppuMemRead(ppu, (sprTable + tile * 16 + ry) as u16) as i64
-            let hi = ppuMemRead(ppu, (sprTable + tile * 16 + ry + 8) as u16) as i64
+            // 8x16 sprites pick the pattern table from tile bit 0 and stack two
+            // 8x8 tiles; 8x8 sprites use PPUCTRL bit 3.
+            var patAddr: i64 = 0
+            if tall {
+                let bank = (rawTile & 1) * 0x1000
+                let tile = rawTile & 0xFE
+                patAddr = bank + (tile + (ry / 8)) * 16 + (ry & 7)
+            } else {
+                let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
+                    0x1000 as i64
+                } else {
+                    0 as i64
+                }
+                patAddr = sprTable + rawTile * 16 + ry
+            }
+            let lo = ppuMemRead(ppu, patAddr as u16) as i64
+            let hi = ppuMemRead(ppu, (patAddr + 8) as u16) as i64
             var fx: i64 = 0
             while fx < 8 {
                 let rx = if flipH {
@@ -340,7 +460,7 @@ fn renderSprites(ppu: &mut Ppu): void {
                 if px != 0 {
                     let x = sx + fx
                     let y = sy + 1 + fy // OAM Y is top-1
-                    if x < 256 && y < 240 {
+                    if x < 256 && y < 240 && !(behind && bgOpaqueAt(ppu, x, y)) {
                         let colorIdx = ppuMemRead(ppu, (0x3F10 + palGroup * 4 + px) as u16) as i64
                         ppu.fb[y * 256 + x] = nesColor(colorIdx)
                     }

@@ -1,0 +1,91 @@
+// Headless renderer: run a ROM for N frames, dump the framebuffer as raw RGB24.
+// Convert to PNG:  ffmpeg -f rawvideo -pixel_format rgb24 -video_size 256x240 -i out.rgb -y out.png
+//   milo build examples/apps/nes/shot.milo -o /tmp/shot --debug
+//   /tmp/shot <rom> <frames> <out.rgb>
+from "std/args" import {
+    args
+}
+from "std/fs" import {
+    writeFile
+}
+from "./cartridge" import {
+    Cartridge, loadCartridge
+}
+from "./cpu" import {
+    Cpu, Bus, newBus, newCpuReset, step, nmi
+}
+from "./ppu" import {
+    ppuStep, renderFrame
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 4 {
+        print("usage: shot <rom> <frames> <out.rgb>")
+        return 1
+    }
+    match loadCartridge(argv[1]) {
+        Result.Ok(cart) => {
+            return run(cart, strToInt(argv[2]), argv[3])
+        }
+        Result.Err(e) => {
+            print("load failed: ") print(e) return 1
+        }
+    }
+    return 0
+}
+
+fn strToInt(s: string): i64 {
+    var n: i64 = 0
+    var i: i64 = 0
+    while i < s.len {
+        let c = s[i]as i64
+        if c >= 48 && c <= 57 {
+            n = n * 10 + (c - 48)
+        }
+        i = i + 1
+    }
+    return n
+}
+
+fn run(cart: Cartridge, frames: i64, out: string): i32 {
+    var bus = newBus(cart)
+    var cpu = newCpuReset(bus)
+    var f: i64 = 0
+    while f < frames {
+        let startFrame = bus.ppu.frame
+        while bus.ppu.frame == startFrame {
+            let before = cpu.cyc
+            step(cpu, bus)
+            let used = cpu.cyc - before
+            var k: i64 = 0
+            while k < used * 3 {
+                ppuStep(bus.ppu)
+                k = k + 1
+            }
+            if bus.ppu.nmiPending {
+                bus.ppu.nmiPending = false
+                nmi(cpu, bus)
+            }
+        }
+        f = f + 1
+    }
+    renderFrame(bus.ppu)
+    var data: string = ""
+    var i: i64 = 0
+    while i < 61440 {
+        let px = bus.ppu.fb[i]as i64
+        data.push((px & 0xFF) as u8)
+        data.push(((px >> 8) & 0xFF) as u8)
+        data.push(((px >> 16) & 0xFF) as u8)
+        i = i + 1
+    }
+    match writeFile(out, data) {
+        Result.Ok(n) => {
+            print("wrote bytes: ") print(n) return 0
+        }
+        Result.Err(e) => {
+            print("write failed") return 1
+        }
+    }
+}
