@@ -514,6 +514,7 @@ fn main(): i32 {
 
     writeStdout("\x1b[?25h\x1b[2J\x1b[H\x1b[0m")
     restoreTerminal(termState)
-    print("thanks for playing milo tetris")
+    print("thanks for playing milo tetris ♥")
+    print("built with milo — docs & playground: https://cs01.github.io/milo/")
     return 0
 }
