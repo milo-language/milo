@@ -288,51 +288,455 @@ fn decReg(cpu: &mut Z80, idx: i64) {
     setReg(cpu, idx, res)
 }
 
+fn getAF(cpu: &Z80): i64 {
+    return (cpu.a << 8) | cpu.f
+}
+
+fn setAF(cpu: &mut Z80, v: i64) {
+    cpu.a = (v >> 8) & 0xFF
+    cpu.f = v & 0xFF
+}
+
+fn setBC(cpu: &mut Z80, v: i64) {
+    cpu.b = (v >> 8) & 0xFF
+    cpu.c = v & 0xFF
+}
+
+fn setDE(cpu: &mut Z80, v: i64) {
+    cpu.d = (v >> 8) & 0xFF
+    cpu.e = v & 0xFF
+}
+
+// rp table (p: 0 BC, 1 DE, 2 HL, 3 SP)
+fn getRP(cpu: &Z80, p: i64): i64 {
+    if p == 0 {
+        return getBC(cpu)
+    }
+    if p == 1 {
+        return getDE(cpu)
+    }
+    if p == 2 {
+        return getHL(cpu)
+    }
+    return cpu.sp
+}
+
+fn setRP(cpu: &mut Z80, p: i64, v: i64) {
+    if p == 0 {
+        setBC(cpu, v)
+    } else if p == 1 {
+        setDE(cpu, v)
+    } else if p == 2 {
+        setHL(cpu, v)
+    } else {
+        cpu.sp = v & 0xFFFF
+    }
+}
+
+// rp2 table (p: 0 BC, 1 DE, 2 HL, 3 AF)
+fn getRP2(cpu: &Z80, p: i64): i64 {
+    if p == 3 {
+        return getAF(cpu)
+    }
+    return getRP(cpu, p)
+}
+
+fn setRP2(cpu: &mut Z80, p: i64, v: i64) {
+    if p == 3 {
+        setAF(cpu, v)
+    } else {
+        setRP(cpu, p, v)
+    }
+}
+
+fn push16(cpu: &mut Z80, v: i64) {
+    cpu.sp = (cpu.sp - 1) & 0xFFFF
+    wr(cpu, cpu.sp, (v >> 8) & 0xFF)
+    cpu.sp = (cpu.sp - 1) & 0xFFFF
+    wr(cpu, cpu.sp, v & 0xFF)
+}
+
+fn pop16(cpu: &mut Z80): i64 {
+    let lo = rd(cpu, cpu.sp)
+    cpu.sp = (cpu.sp + 1) & 0xFFFF
+    let hi = rd(cpu, cpu.sp)
+    cpu.sp = (cpu.sp + 1) & 0xFFFF
+    return (hi << 8) | lo
+}
+
+// Condition codes (y 0-7): NZ,Z,NC,C,PO,PE,P,M.
+fn testCC(cpu: &Z80, y: i64): bool {
+    if y == 0 {
+        return (cpu.f & FZ) == 0
+    }
+    if y == 1 {
+        return (cpu.f & FZ) != 0
+    }
+    if y == 2 {
+        return (cpu.f & FC) == 0
+    }
+    if y == 3 {
+        return (cpu.f & FC) != 0
+    }
+    if y == 4 {
+        return (cpu.f & FPV) == 0
+    }
+    if y == 5 {
+        return (cpu.f & FPV) != 0
+    }
+    if y == 6 {
+        return (cpu.f & FS) == 0
+    }
+    return (cpu.f & FS) != 0
+}
+
+// ADD HL, rr: H from bit-11 carry, C from bit-15, N=0; X/Y from result high byte;
+// S/Z/P-V unaffected.
+fn add16(cpu: &mut Z80, a: i64, b: i64): i64 {
+    let r = a + b
+    let res = r & 0xFFFF
+    setFlag(cpu, FH, ((a & 0xFFF) + (b & 0xFFF)) > 0xFFF)
+    setFlag(cpu, FC, r > 0xFFFF)
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FY, (res & 0x2000) != 0)
+    setFlag(cpu, FX, (res & 0x0800) != 0)
+    return res
+}
+
+// Accumulator rotates (RLCA/RRCA/RLA/RRA): C from the rotated bit, H=N=0,
+// X/Y from the result; S/Z/P-V unaffected.
+fn rotAcc(cpu: &mut Z80, kind: i64) {
+    let a = cpu.a
+    var res: i64 = 0
+    var carry = false
+    if kind == 0 {
+        // RLCA
+        carry = (a & 0x80) != 0
+        res = ((a << 1) | (if carry {
+            1
+        } else {
+            0
+        }
+        )) & 0xFF
+    } else if kind == 1 {
+        // RRCA
+        carry = (a & 0x01) != 0
+        res = ((a >> 1) | (if carry {
+            0x80
+        } else {
+            0
+        }
+        )) & 0xFF
+    } else if kind == 2 {
+        // RLA (through carry)
+        let cin = (cpu.f & FC) != 0
+        carry = (a & 0x80) != 0
+        res = ((a << 1) | (if cin {
+            1
+        } else {
+            0
+        }
+        )) & 0xFF
+    } else {
+        // RRA
+        let cin = (cpu.f & FC) != 0
+        carry = (a & 0x01) != 0
+        res = ((a >> 1) | (if cin {
+            0x80
+        } else {
+            0
+        }
+        )) & 0xFF
+    }
+    cpu.a = res
+    setFlag(cpu, FC, carry)
+    setFlag(cpu, FH, false)
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FY, (res & 0x20) != 0)
+    setFlag(cpu, FX, (res & 0x08) != 0)
+}
+
+fn doDaa(cpu: &mut Z80) {
+    var a = cpu.a
+    var adjust: i64 = 0
+    let n = (cpu.f & FN) != 0
+    var carry = (cpu.f & FC) != 0
+    if (cpu.f & FH) != 0 || (a & 0xF) > 9 {
+        adjust = adjust | 0x06
+    }
+    if carry || a > 0x99 {
+        adjust = adjust | 0x60
+        carry = true
+    }
+    if n {
+        a = (a - adjust) & 0xFF
+    } else {
+        a = (a + adjust) & 0xFF
+    }
+    setFlag(cpu, FH, (((cpu.a ^ a) & 0x10) != 0))
+    cpu.a = a
+    setSZYX(cpu, a)
+    setFlag(cpu, FPV, parityEven(a))
+    setFlag(cpu, FC, carry)
+}
+
 // Execute one instruction. Returns false on an opcode not yet implemented.
 fn stepZ80(cpu: &mut Z80): bool {
     let op = fetchOp(cpu)
     let x = (op >> 6) & 0x3
     let y = (op >> 3) & 0x7
     let z = op & 0x7
+    let p = y >> 1
+    let q = y & 1
 
-    if op == 0x00 {
-        return true // NOP
-    }
     if op == 0x76 {
         cpu.halted = true // HALT
         return true
     }
     if x == 1 {
-        // LD r, r'  (0x40-0x7F, excluding 0x76 handled above)
-        setReg(cpu, y, getReg(cpu, z))
+        setReg(cpu, y, getReg(cpu, z)) // LD r, r'
         return true
     }
     if x == 2 {
-        // ALU A, r  (0x80-0xBF)
-        doAlu(cpu, y, getReg(cpu, z))
+        doAlu(cpu, y, getReg(cpu, z)) // ALU A, r
         return true
     }
     if x == 0 {
-        if z == 6 {
-            // LD r, n
-            setReg(cpu, y, fetch8(cpu))
+        return execX0(cpu, op, y, z, p, q)
+    }
+    return execX3(cpu, op, y, z, p, q)
+}
+
+fn execX0(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
+    if z == 0 {
+        if y == 0 {
+            return true // NOP
+        }
+        if y == 1 {
+            // EX AF, AF'
+            let t = getAF(cpu)
+            setAF(cpu, cpu.af_)
+            cpu.af_ = t
             return true
         }
-        if z == 4 {
-            incReg(cpu, y)
+        let d = signExt8(fetch8(cpu))
+        if y == 2 {
+            // DJNZ
+            cpu.b = (cpu.b - 1) & 0xFF
+            if cpu.b != 0 {
+                cpu.pc = (cpu.pc + d) & 0xFFFF
+            }
             return true
         }
-        if z == 5 {
-            decReg(cpu, y)
+        if y == 3 {
+            cpu.pc = (cpu.pc + d) & 0xFFFF // JR
             return true
+        }
+        // JR cc, d  (y 4-7 -> cc 0-3)
+        if testCC(cpu, y - 4) {
+            cpu.pc = (cpu.pc + d) & 0xFFFF
+        }
+        return true
+    }
+    if z == 1 {
+        if q == 0 {
+            setRP(cpu, p, fetch16(cpu)) // LD rp, nn
+        } else {
+            setHL(cpu, add16(cpu, getHL(cpu), getRP(cpu, p))) // ADD HL, rp
+        }
+        return true
+    }
+    if z == 2 {
+        return execIndirect(cpu, p, q)
+    }
+    if z == 3 {
+        if q == 0 {
+            setRP(cpu, p, (getRP(cpu, p) + 1) & 0xFFFF) // INC rp
+        } else {
+            setRP(cpu, p, (getRP(cpu, p) - 1) & 0xFFFF) // DEC rp
+        }
+        return true
+    }
+    if z == 4 {
+        incReg(cpu, y)
+        return true
+    }
+    if z == 5 {
+        decReg(cpu, y)
+        return true
+    }
+    if z == 6 {
+        setReg(cpu, y, fetch8(cpu)) // LD r, n
+        return true
+    }
+    // z == 7: RLCA/RRCA/RLA/RRA/DAA/CPL/SCF/CCF
+    if y < 4 {
+        rotAcc(cpu, y)
+    } else if y == 4 {
+        doDaa(cpu)
+    } else if y == 5 {
+        cpu.a = (~cpu.a) & 0xFF // CPL
+        setFlag(cpu, FH, true)
+        setFlag(cpu, FN, true)
+        setFlag(cpu, FY, (cpu.a & 0x20) != 0)
+        setFlag(cpu, FX, (cpu.a & 0x08) != 0)
+    } else if y == 6 {
+        // SCF
+        setFlag(cpu, FC, true)
+        setFlag(cpu, FH, false)
+        setFlag(cpu, FN, false)
+        setFlag(cpu, FY, (cpu.a & 0x20) != 0)
+        setFlag(cpu, FX, (cpu.a & 0x08) != 0)
+    } else {
+        // CCF
+        let oldC = (cpu.f & FC) != 0
+        setFlag(cpu, FH, oldC)
+        setFlag(cpu, FC,!oldC)
+        setFlag(cpu, FN, false)
+        setFlag(cpu, FY, (cpu.a & 0x20) != 0)
+        setFlag(cpu, FX, (cpu.a & 0x08) != 0)
+    }
+    return true
+}
+
+// z==2 in x==0: indirect accumulator / HL loads.
+fn execIndirect(cpu: &mut Z80, p: i64, q: i64): bool {
+    if q == 0 {
+        if p == 0 {
+            wr(cpu, getBC(cpu), cpu.a) // LD (BC), A
+        } else if p == 1 {
+            wr(cpu, getDE(cpu), cpu.a) // LD (DE), A
+        } else if p == 2 {
+            let nn = fetch16(cpu) // LD (nn), HL
+            wr(cpu, nn, cpu.l)
+            wr(cpu, nn + 1, cpu.h)
+        } else {
+            wr(cpu, fetch16(cpu), cpu.a) // LD (nn), A
+        }
+    } else {
+        if p == 0 {
+            cpu.a = rd(cpu, getBC(cpu)) // LD A, (BC)
+        } else if p == 1 {
+            cpu.a = rd(cpu, getDE(cpu)) // LD A, (DE)
+        } else if p == 2 {
+            let nn = fetch16(cpu) // LD HL, (nn)
+            cpu.l = rd(cpu, nn)
+            cpu.h = rd(cpu, nn + 1)
+        } else {
+            cpu.a = rd(cpu, fetch16(cpu)) // LD A, (nn)
         }
     }
-    if x == 3 {
-        if z == 6 {
-            // ALU A, n
-            doAlu(cpu, y, fetch8(cpu))
+    return true
+}
+
+fn execX3(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
+    if z == 0 {
+        // RET cc
+        if testCC(cpu, y) {
+            cpu.pc = pop16(cpu)
+        }
+        return true
+    }
+    if z == 1 {
+        if q == 0 {
+            setRP2(cpu, p, pop16(cpu)) // POP rp2
             return true
         }
+        if p == 0 {
+            cpu.pc = pop16(cpu) // RET
+        } else if p == 1 {
+            // EXX
+            let b = getBC(cpu)
+            let d = getDE(cpu)
+            let h = getHL(cpu)
+            setBC(cpu, cpu.bc_)
+            setDE(cpu, cpu.de_)
+            setHL(cpu, cpu.hl_)
+            cpu.bc_ = b
+            cpu.de_ = d
+            cpu.hl_ = h
+        } else if p == 2 {
+            cpu.pc = getHL(cpu) // JP HL
+        } else {
+            cpu.sp = getHL(cpu) // LD SP, HL
+        }
+        return true
     }
-    return false
+    if z == 2 {
+        let nn = fetch16(cpu) // JP cc, nn
+        if testCC(cpu, y) {
+            cpu.pc = nn
+        }
+        return true
+    }
+    if z == 3 {
+        if y == 0 {
+            cpu.pc = fetch16(cpu) // JP nn
+            return true
+        }
+        if y == 4 {
+            // EX (SP), HL
+            let lo = rd(cpu, cpu.sp)
+            let hi = rd(cpu, cpu.sp + 1)
+            wr(cpu, cpu.sp, cpu.l)
+            wr(cpu, cpu.sp + 1, cpu.h)
+            cpu.l = lo
+            cpu.h = hi
+            return true
+        }
+        if y == 5 {
+            // EX DE, HL
+            let d = getDE(cpu)
+            setDE(cpu, getHL(cpu))
+            setHL(cpu, d)
+            return true
+        }
+        if y == 6 {
+            cpu.iff1 = false // DI
+            cpu.iff2 = false
+            return true
+        }
+        if y == 7 {
+            cpu.iff1 = true // EI
+            cpu.iff2 = true
+            return true
+        }
+        return false // CB prefix / IN / OUT — deferred
+    }
+    if z == 4 {
+        let nn = fetch16(cpu) // CALL cc, nn
+        if testCC(cpu, y) {
+            push16(cpu, cpu.pc)
+            cpu.pc = nn
+        }
+        return true
+    }
+    if z == 5 {
+        if q == 0 {
+            push16(cpu, getRP2(cpu, p)) // PUSH rp2
+            return true
+        }
+        if p == 0 {
+            let nn = fetch16(cpu) // CALL nn
+            push16(cpu, cpu.pc)
+            cpu.pc = nn
+            return true
+        }
+        return false // DD / ED / FD prefixes — deferred
+    }
+    if z == 6 {
+        doAlu(cpu, y, fetch8(cpu)) // ALU A, n
+        return true
+    }
+    // z == 7: RST
+    push16(cpu, cpu.pc)
+    cpu.pc = y * 8
+    return true
+}
+
+fn signExt8(v: i64): i64 {
+    if (v & 0x80) != 0 {
+        return v - 256
+    }
+    return v
 }
