@@ -3980,7 +3980,19 @@ export class Codegen {
     if (fromKind.tag === "ptr" && (toKind.tag === "int" || toKind.tag === "bool")) {
       lines.push(`  ${tmp} = ptrtoint ${fromTy} ${ov} to ${toTy}`);
     } else if ((fromKind.tag === "int" || fromKind.tag === "bool") && toKind.tag === "ptr") {
-      lines.push(`  ${tmp} = inttoptr ${fromTy} ${ov} to ${toTy}`);
+      // Pointers are 64-bit; inttoptr from a narrower int (e.g. `0 as *u8` where
+      // the literal defaults to i32) crashes AArch64 ISel. Widen to i64 first.
+      const fromBits = this.bitWidth(fromKind);
+      let intVal = ov;
+      let intTy = fromTy;
+      if (fromBits < 64) {
+        const wide = this.nextTemp();
+        const ext = fromKind.tag === "int" && fromKind.signed ? "sext" : "zext";
+        lines.push(`  ${wide} = ${ext} ${fromTy} ${ov} to i64`);
+        intVal = wide;
+        intTy = "i64";
+      }
+      lines.push(`  ${tmp} = inttoptr ${intTy} ${intVal} to ${toTy}`);
     } else if (fromFloat && toFloat) {
       const op = this.bitWidth(toKind) > this.bitWidth(fromKind) ? "fpext" : "fptrunc";
       lines.push(`  ${tmp} = ${op} ${fromTy} ${ov} to ${toTy}`);
