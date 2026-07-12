@@ -104,7 +104,7 @@ const concepts = [
     let name = "Milo"        // immutable
     var count = 0            // mutable
     count = count + 3
-    print("hello from ", name, ", count = ", count)
+    print($"hello from {name}, count = {count}")
     return 0
 }` },
   { title: 'Structs and borrows', file: 'geometry.milo',
@@ -124,7 +124,7 @@ fn dist(a: &Point, b: &Point): f64 {
 fn main(): i32 {
     let origin = Point { x: 0.0, y: 0.0 }
     let p = Point { x: 3.0, y: 4.0 }
-    print("distance = ", dist(origin, p))
+    print($"distance = {dist(origin, p)}")
     return 0
 }` },
   { title: 'Enums and exhaustive match', file: 'shapes.milo',
@@ -144,8 +144,8 @@ fn area(s: &Shape): f64 {
 }
 
 fn main(): i32 {
-    print("circle: ", area(Shape.Circle(2.0)))
-    print("rect:   ", area(Shape.Rect(3.0, 4.0)))
+    print($"circle: {area(Shape.Circle(2.0))}")
+    print($"rect:   {area(Shape.Rect(3.0, 4.0))}")
     return 0
 }` },
   { title: 'Say what must be true — the compiler proves it', file: 'clamp.milo', native: true,
@@ -181,12 +181,12 @@ fn nextYear(s: string): Result<i32> {
 
 fn main(): i32 {
     match nextYear("hi") {
-        Result.Ok(v)  => { print("next year: ", v) }
-        Result.Err(e) => { print("error: ", e) }
+        Result.Ok(v)  => { print($"next year: {v}") }
+        Result.Err(e) => { print($"error: {e}") }
     }
     match nextYear("") {
-        Result.Ok(v)  => { print("next year: ", v) }
-        Result.Err(e) => { print("error: ", e) }
+        Result.Ok(v)  => { print($"next year: {v}") }
+        Result.Err(e) => { print($"error: {e}") }
     }
     return 0
 }` },
@@ -217,7 +217,7 @@ fn swap<A, B>(p: Pair<A, B>): Pair<B, A> {
 
 fn main(): i32 {
     let p = swap(Pair { first: 42, second: "milo" })
-    print(p.first, " ", p.second)
+    print($"{p.first} {p.second}")
     return 0
 }` },
   { title: 'Interfaces and dynamic dispatch', file: 'traits.milo',
@@ -253,10 +253,10 @@ fn main(): i32 {
     scores.insert("bob", 87)
 
     match scores.get("alice") {
-        Option.Some(s) => { print("alice scored ", s) }
+        Option.Some(s) => { print($"alice scored {s}") }
         Option.None    => { print("no score") }
     }
-    print("players: ", scores.len)
+    print($"players: {scores.len}")
     return 0
 }` },
   { title: 'Ownership — you choose the cost', file: 'ownership.milo', err: true,
@@ -285,7 +285,7 @@ fn main(): i32 {
         var i: i64 = 1
         while i <= 5 {
             ch.send(i)!                      // blocks once 2 are buffered
-            print("sent ", i)
+            print($"sent {i}")
             i = i + 1
         }
         return 0
@@ -295,7 +295,7 @@ fn main(): i32 {
     while got < 5 {
         sleepMs(20)                          // slow consumer
         let v = ch.recv()!
-        print("      recv ", v)
+        print($"      recv {v}")
         got = got + 1
     }
     producer.await()!
