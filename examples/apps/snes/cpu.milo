@@ -44,12 +44,22 @@ struct Mem {
     romMask: i64
     mapMode: i64 // 0 = LoROM, 1 = HiROM
     mmio: Vec<u8> // $2000-$5FFF scratch (0x4000 bytes)
+
+    // CPU-side MMIO ($42xx) modeled state:
+    nmitimen: i64 // $4200 NMI/IRQ/auto-joypad enable
+    wrmpya: i64 // $4202 multiplicand
+    wrdiv: i64 // $4204/$4205 16-bit dividend
+    rddiv: i64 // $4214/$4215 quotient
+    rdmpy: i64 // $4216/$4217 product (after mul) or remainder (after div)
+    vblankToggle: i64 // stub: flips so $4210/$4212 vblank-wait loops progress
+    joy1: i64 // $4218/$4219 auto-read pad 1 (0 = nothing pressed)
 }
 
 fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
-        wram: Vec.new(), rom: Vec.new(), romMask: 0, mapMode: 0, mmio: Vec.new()
+        wram: Vec.new(), rom: Vec.new(), romMask: 0, mapMode: 0, mmio: Vec.new(),
+        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0
     }
 }
 
@@ -73,8 +83,73 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: false,
         wram: vecZeros(0x20000), rom: rom, romMask: mask, mapMode: mapMode,
-        mmio: vecZeros(0x4000)
+        mmio: vecZeros(0x4000),
+        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0
     }
+}
+
+// CPU-side MMIO read ($2000-$5FFF). Pure (no read side effects yet): mul/div
+// results, NMI/vblank status, auto-read joypad. Falls back to the scratch store.
+// vblankToggle is driven by the system frame loop, not by reads (accurate
+// RDNMI clear-on-read arrives with PPU timing in M4).
+fn mmioRead(m: &Mem, off: i64): i64 {
+    if off == 0x4210 {
+        return m.vblankToggle | 0x02
+    } // RDNMI: bit7 NMI, low = version 2
+    if off == 0x4211 {
+        return 0
+    } // TIMEUP (IRQ flag) — none pending
+    if off == 0x4212 {
+        return m.vblankToggle
+    } // HVBJOY: bit7 vblank
+    if off == 0x4214 {
+        return m.rddiv & 0xFF
+    }
+    if off == 0x4215 {
+        return (m.rddiv >> 8) & 0xFF
+    }
+    if off == 0x4216 {
+        return m.rdmpy & 0xFF
+    }
+    if off == 0x4217 {
+        return (m.rdmpy >> 8) & 0xFF
+    }
+    if off == 0x4218 {
+        return m.joy1 & 0xFF
+    }
+    if off == 0x4219 {
+        return (m.joy1 >> 8) & 0xFF
+    }
+    return m.mmio[off - 0x2000]as i64
+}
+
+// CPU-side MMIO write ($2000-$5FFF). Writing $4203/$4206 latches mul/div results.
+fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
+    if off == 0x4200 {
+        m.nmitimen = val return
+    }
+    if off == 0x4202 {
+        m.wrmpya = val return
+    }
+    if off == 0x4203 {
+        m.rdmpy = (m.wrmpya * val) & 0xFFFF return
+    } // 8x8 -> 16 product
+    if off == 0x4204 {
+        m.wrdiv = (m.wrdiv & 0xFF00) | val return
+    }
+    if off == 0x4205 {
+        m.wrdiv = (m.wrdiv & 0x00FF) | (val << 8) return
+    }
+    if off == 0x4206 { // 16/8 divide -> quotient + remainder
+        if val == 0 {
+            m.rddiv = 0xFFFF m.rdmpy = m.wrdiv
+        } else {
+            m.rddiv = (m.wrdiv / val) & 0xFFFF
+            m.rdmpy = (m.wrdiv % val) & 0xFFFF
+        }
+        return
+    }
+    m.mmio[off - 0x2000] = (val & 0xFF) as u8
 }
 
 // Clear all entries between test cases (reused across a whole file).
@@ -125,7 +200,7 @@ fn memRead(m: &Mem, a: i64): i64 {
             return m.wram[off]as i64 // low WRAM mirror
         }
         if off < 0x6000 {
-            return m.mmio[off - 0x2000]as i64 // MMIO stub
+            return mmioRead(m, off)
         }
         if off < 0x8000 {
             return 0 // SRAM / unused (stub)
@@ -164,7 +239,7 @@ fn memWrite(m: &mut Mem, a: i64, v: i64): void {
             m.wram[off] = bv return
         }
         if off < 0x6000 {
-            m.mmio[off - 0x2000] = bv return // MMIO stub store
+            mmioWrite(m, off, v) return
         }
         return // SRAM/unused/ROM writes ignored
     }

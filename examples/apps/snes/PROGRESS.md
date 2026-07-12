@@ -36,8 +36,14 @@ stubbed to a scratch store for readback. `busNew(rom, map)` + `newCpuReset(m)`
 .sfc/.smc, strips 512-byte SMC header, scores $7FC0/$FFC0 to pick LoROM/HiROM.
 systemSmoke.milo: synthesizes a LoROM, boots from reset, runs LDA/STA/LDX/INX —
 green (ROM fetch + WRAM store verified). Harte still green (testMode intact).
-Next: real MMIO ($2100 PPU regs, $4200 NMI/IRQ enables, $42xx mul/div, joypad),
-then M3 SPC700 (boot blocks on its handshake).
+CPU-side MMIO now modeled (mmioRead/mmioWrite): $4200 NMITIMEN, $4202-$4206
+multiply/divide -> $4214/$4215 quotient + $4216/$4217 product/remainder (games
+poll these constantly), $4210/$4212 NMI/vblank status (vblankToggle driven by
+the future frame loop, not on-read — accurate RDNMI-clear waits for M4 timing),
+$4218/$4219 auto-joypad. mmioSmoke.milo verifies mul (12*10) + div (100/7) green.
+Reads are pure (no cascade to &mut memRead). PPU regs $2100-$213F still scratch.
+Next: PPU-register write path scaffolding + the system frame loop (scanline
+counter driving vblank), then M3 SPC700 (boot blocks on its handshake).
 
 ## (earlier) Status notes
 
