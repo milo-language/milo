@@ -27,7 +27,7 @@ from "std/strconv" import {
     formatFloat
 }
 from "std/ansi" import {
-    cursorTo, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+    cursorTo, pushFg24, pushBg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
 }
 from "std/color" import {
     bold, gray
@@ -68,37 +68,6 @@ fn emit(buf: &mut string, s: &string): void {
     }
 }
 
-// Append a 0–255 integer as decimal digits straight into buf — no temporary
-// string, no interpolation. This is the hot path: ~12k of these per frame.
-fn pushU8(buf: &mut string, n: i64): void {
-    if n >= 100 {
-        let h = n / 100
-        let rem = n - h * 100
-        let t = rem / 10
-        buf.push((48 + h) as u8)
-        buf.push((48 + t) as u8)
-        buf.push((48 + (rem - t * 10)) as u8)
-    } else if n >= 10 {
-        let t = n / 10
-        buf.push((48 + t) as u8)
-        buf.push((48 + (n - t * 10)) as u8)
-    } else {
-        buf.push((48 + n) as u8)
-    }
-}
-
-// Write a full 24-bit SGR (`lead` is the static "\x1b[38;2;" or "\x1b[48;2;")
-// followed by r;g;b m — all pushed directly, zero allocation per cell.
-fn pushColor(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
-    emit(buf, lead)
-    pushU8(buf, r)
-    buf.push(59 as u8) // ';'
-    pushU8(buf, g)
-    buf.push(59 as u8)
-    pushU8(buf, b)
-    buf.push(109 as u8) // 'm'
-}
-
 // Sum of a few travelling sine waves + a centered radial ripple, mapped to an
 // RGB rainbow via three phase-shifted sines (120° apart). out is r,g,b in 0–255.
 fn plasmaRGB(px: f64, py: f64, cx: f64, cy: f64, t: f64, out: &mut [i64; 3]): void {
@@ -129,8 +98,8 @@ top: &mut [i64; 3], bot: &mut [i64; 3]): i64 {
             let px = c as f64
             plasmaRGB(px, yTop, cx, cy, t, top)
             plasmaRGB(px, yBot, cx, cy, t, bot)
-            pushColor(buf, "\x1b[38;2;", top[0], top[1], top[2])
-            pushColor(buf, "\x1b[48;2;", bot[0], bot[1], bot[2])
+            pushFg24(buf, top[0], top[1], top[2])
+            pushBg24(buf, bot[0], bot[1], bot[2])
             emit(buf, "▀")
         }
     }

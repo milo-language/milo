@@ -35,6 +35,54 @@ fn bg24(r: i64, g: i64, b: i64): string {
     return $"\x1b[48;2;{r};{g};{b}m"
 }
 
+// ── allocation-free variants for hot render loops ──
+//
+// fg24/bg24 return a freshly-allocated string; in a per-cell loop that
+// allocation dominates. These append the same bytes straight into a caller's
+// buffer with zero allocation — the fast path behind full-screen animation.
+
+fn _ansiPushU8(buf: &mut string, n: i64): void {
+    if n >= 100 {
+        let h = n / 100
+        let rem = n - h * 100
+        let t = rem / 10
+        buf.push((48 + h) as u8)
+        buf.push((48 + t) as u8)
+        buf.push((48 + (rem - t * 10)) as u8)
+    } else if n >= 10 {
+        let t = n / 10
+        buf.push((48 + t) as u8)
+        buf.push((48 + (n - t * 10)) as u8)
+    } else {
+        buf.push((48 + n) as u8)
+    }
+}
+
+fn _ansiPushRaw(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+fn _ansiPush24(buf: &mut string, lead: &string, r: i64, g: i64, b: i64): void {
+    _ansiPushRaw(buf, lead)
+    _ansiPushU8(buf, r)
+    buf.push(59 as u8) // ';'
+    _ansiPushU8(buf, g)
+    buf.push(59 as u8)
+    _ansiPushU8(buf, b)
+    buf.push(109 as u8) // 'm'
+}
+
+// Append a 24-bit foreground / background SGR directly into buf (no allocation).
+fn pushFg24(buf: &mut string, r: i64, g: i64, b: i64): void {
+    _ansiPush24(buf, "\x1b[38;2;", r, g, b)
+}
+
+fn pushBg24(buf: &mut string, r: i64, g: i64, b: i64): void {
+    _ansiPush24(buf, "\x1b[48;2;", r, g, b)
+}
+
 // Reset all attributes to the terminal default.
 fn ansiReset(): string {
     return "\x1b[0m"
