@@ -187,6 +187,23 @@ fn spcBranch(spc: &mut Spc, m: &SpcMem, cond: bool): void {
     }
 }
 
+fn spcNZ16(spc: &mut Spc, w: i64): void {
+    spcSetBit(spc, PZ, (w & 0xFFFF) == 0)
+    spcSetBit(spc, PN, (w & 0x8000) != 0)
+}
+
+// 16-bit direct-page word (second byte wraps within the page).
+fn readDpWord(spc: &Spc, m: &SpcMem, d: i64): i64 {
+    let lo = spcRead(m, dpAddr(spc, d))
+    let hi = spcRead(m, dpAddr(spc, (d + 1) & 0xFF))
+    return lo | (hi << 8)
+}
+
+fn writeDpWord(spc: &Spc, m: &mut SpcMem, d: i64, w: i64): void {
+    spcWrite(m, dpAddr(spc, d), w & 0xFF)
+    spcWrite(m, dpAddr(spc, (d + 1) & 0xFF), (w >> 8) & 0xFF)
+}
+
 // Execute one instruction. Batches: flag ops, MOVs, INC/DEC, and A-form ALU
 // (OR/AND/EOR/CMP/ADC/SBC) over immediate/dp/abs.
 fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
@@ -457,6 +474,67 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x50 => {
             spcBranch(spc, m, (spc.psw & PV) == 0)
         } // BVC
+
+        // ---- 16-bit word ops (YA / dp) ----
+        0xBA => { // MOVW YA,dp
+            let d = spcFetch(spc, m)
+            let w = readDpWord(spc, m, d)
+            spc.a = w & 0xFF spc.y = (w >> 8) & 0xFF spcNZ16(spc, w)
+        }
+        0xDA => { // MOVW dp,YA (no flags)
+            let d = spcFetch(spc, m)
+            writeDpWord(spc, m, d, (spc.y << 8) | spc.a)
+        }
+        0x3A => { // INCW dp
+            let d = spcFetch(spc, m)
+            let w = (readDpWord(spc, m, d) + 1) & 0xFFFF
+            writeDpWord(spc, m, d, w) spcNZ16(spc, w)
+        }
+        0x1A => { // DECW dp
+            let d = spcFetch(spc, m)
+            let w = (readDpWord(spc, m, d) - 1) & 0xFFFF
+            writeDpWord(spc, m, d, w) spcNZ16(spc, w)
+        }
+
+        // ---- loop branches ----
+        0xFE => { // DBNZ Y,rel
+            let off = spcFetch(spc, m)
+            spc.y = (spc.y - 1) & 0xFF
+            let soff: i64 = if off >= 0x80 {
+                off - 0x100
+            } else {
+                off
+            }
+            if spc.y != 0 {
+                spc.pc = (spc.pc + soff) & 0xFFFF
+            }
+        }
+        0x6E => { // DBNZ dp,rel
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let off = spcFetch(spc, m)
+            let v = (spcRead(m, ad) - 1) & 0xFF
+            spcWrite(m, ad, v)
+            let soff: i64 = if off >= 0x80 {
+                off - 0x100
+            } else {
+                off
+            }
+            if v != 0 {
+                spc.pc = (spc.pc + soff) & 0xFFFF
+            }
+        }
+        0x2E => { // CBNE dp,rel — branch if A != (dp); no flags
+            let v = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let off = spcFetch(spc, m)
+            let soff: i64 = if off >= 0x80 {
+                off - 0x100
+            } else {
+                off
+            }
+            if (spc.a & 0xFF) != v {
+                spc.pc = (spc.pc + soff) & 0xFFFF
+            }
+        }
 
         // ---- jump / call / return ----
         0x5F => {
