@@ -36,14 +36,8 @@ struct Ppu {
     frame: i64
     nmiPending: bool // set at vblank when NMI enabled; consumed by CPU
 
-    // Sprite-0 hit is armed once per frame (topmost/leftmost opaque overlap of
-    // sprite 0 with the background) and the flag is raised when ppuStep reaches
-    // that dot — so a CPU polling $2002 mid-frame sees it at the right time.
-    spr0Line: i64 // scanline of the hit, or -1 if disarmed this frame
-    spr0Dot: i64 // dot of the hit
-
-    // Frame scroll, snapshotted from the loopy `t` register + fineX at frame
-    // start. The whole frame renders at vblank, so we can't read live v/t.
+    // Per-scanline scroll origin, set as each line is rendered (X from t, Y from
+    // the live v register) so mid-frame scroll and CHR-bank splits are honored.
     scrollX: i64 // 0-511 pixel offset into the 2-wide nametable map
     scrollY: i64 // 0-479 pixel offset into the 2-tall nametable map
 
@@ -66,7 +60,6 @@ fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
         ctrl: 0, mask: 0, status: 0, oamAddr: 0,
         v: 0, t: 0, fineX: 0, w: 0, readBuffer: 0,
         scanline: 0, dot: 0, frame: 0, nmiPending: false,
-        spr0Line: -1, spr0Dot: 0,
         scrollX: 0, scrollY: 0,
         fb: [0; 61440],
     }
@@ -229,18 +222,6 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
     }
 }
 
-// Snapshot the frame's scroll from the loopy t register + fineX.
-fn snapshotScroll(ppu: &mut Ppu): void {
-    let t = ppu.t as i64
-    let coarseX = t & 0x1F
-    let coarseY = (t >> 5) & 0x1F
-    let ntX = (t >> 10) & 1
-    let ntY = (t >> 11) & 1
-    let fineY = (t >> 12) & 7
-    ppu.scrollX = ntX * 256 + coarseX * 8 + (ppu.fineX as i64)
-    ppu.scrollY = ntY * 240 + coarseY * 8 + fineY
-}
-
 // 2-bit background pixel at screen (x,y), honoring the frame's scroll. The two
 // nametables tile a 512x480 logical map; addresses wrap through mirrorNT.
 fn bgPixelAt(ppu: &Ppu, x: i64, y: i64): i64 {
@@ -275,82 +256,31 @@ fn bgPixelAt(ppu: &Ppu, x: i64, y: i64): i64 {
     return px | (palGroup << 2)
 }
 
-fn bgOpaqueAt(ppu: &Ppu, x: i64, y: i64): bool {
-    if (ppu.mask & 0x08) == 0 {
-        return false
-    }
-    return (bgPixelAt(ppu, x, y) & 0x03) != 0
-}
-
-// Arm the sprite-0 hit for this frame: find the topmost/leftmost pixel where an
-// opaque sprite-0 pixel overlaps an opaque background pixel. ppuStep raises the
-// flag when it reaches that dot, so a mid-frame $2002 poll sees it in time.
-fn computeSprite0Hit(ppu: &mut Ppu): void {
-    ppu.spr0Line = -1
-    if (ppu.mask & 0x18) != 0x18 { // needs both bg + sprite rendering
-        return
-    }
-    let sy = ppu.oam[0]as i64
-    let rawTile = ppu.oam[1]as i64
-    let attr = ppu.oam[2]as i64
-    let sx = ppu.oam[3]as i64
-    let flipH = (attr & 0x40) != 0
-    let flipV = (attr & 0x80) != 0
-    let tall = (ppu.ctrl & 0x20) != 0
-    let h: i64 = if tall {
-        16
+// Advance the loopy v register vertically at the end of a scanline (fine Y rolls
+// into coarse Y; coarse Y wraps at 29, flipping the vertical nametable).
+fn incrementY(ppu: &mut Ppu): void {
+    var v = ppu.v as i64
+    if (v & 0x7000) != 0x7000 {
+        v = v + 0x1000 // increment fine Y
     } else {
-        8
-    }
-    var by: i64 = 0
-    while by < h { // raster order: top row first
-        let ry = if flipV {
-            h - 1 - by
+        v = v & (~0x7000) // fine Y = 0
+        var y = (v >> 5) & 0x1F // coarse Y
+        if y == 29 {
+            y = 0
+            v = v ^ 0x0800 // switch vertical nametable
+        } else if y == 31 {
+            y = 0
         } else {
-            by
+            y = y + 1
         }
-        var patAddr: i64 = 0
-        if tall {
-            let bank = (rawTile & 1) * 0x1000
-            let tile = rawTile & 0xFE
-            let half = ry / 8
-            patAddr = bank + (tile + half) * 16 + (ry & 7)
-        } else {
-            let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
-                0x1000
-            } else {
-                0
-            }
-            patAddr = sprTable + rawTile * 16 + ry
-        }
-        let lo = ppuMemRead(ppu, patAddr as u16) as i64
-        let hi = ppuMemRead(ppu, (patAddr + 8) as u16) as i64
-        var bx: i64 = 0
-        while bx < 8 { // leftmost first
-            let rx = if flipH {
-                7 - bx
-            } else {
-                bx
-            }
-            let bit = 7 - rx
-            let px = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1)
-            if px != 0 {
-                let x = sx + bx
-                let y = sy + 1 + by // OAM Y is top-minus-1
-                // Sprite-0 hit never fires at x==255 on real hardware.
-                if x < 255 && y < 240 && bgOpaqueAt(ppu, x, y) {
-                    ppu.spr0Line = y
-                    ppu.spr0Dot = x + 1
-                    return
-                }
-            }
-            bx = bx + 1
-        }
-        by = by + 1
+        v = (v & (~0x03E0)) | (y << 5)
     }
+    ppu.v = (v & 0x7FFF) as u16
 }
 
-// Advance one PPU dot. Returns true if an NMI should fire this tick.
+// Advance one PPU dot. Renders the just-fetched visible scanline near the end of
+// its fetch window using the *live* scroll (X from t, Y from v) and CHR banks, so
+// mid-frame IRQ splits (scroll changes + CHR bank swaps) land on the right rows.
 fn ppuStep(ppu: &mut Ppu): void {
     ppu.dot = ppu.dot + 1
     if ppu.dot > 340 {
@@ -361,6 +291,19 @@ fn ppuStep(ppu: &mut Ppu): void {
             ppu.frame = ppu.frame + 1
         }
     }
+    let rendering = (ppu.mask & 0x18) != 0
+    if ppu.dot == 256 && ppu.scanline < 240 {
+        renderScanline(ppu, ppu.scanline)
+        if rendering {
+            incrementY(ppu)
+        }
+    }
+    // Pre-render line: reload v's vertical bits from t for the coming frame.
+    if ppu.scanline == 261 && ppu.dot == 280 && rendering {
+        let keepHoriz = (ppu.v as i64) & 0x041F
+        let vert = (ppu.t as i64) & 0x7BE0
+        ppu.v = (keepHoriz | vert) as u16
+    }
     if ppu.scanline == 241 && ppu.dot == 1 {
         ppu.status = ppu.status | 0x80 // set vblank
         if (ppu.ctrl & 0x80) != 0 {
@@ -369,12 +312,6 @@ fn ppuStep(ppu: &mut Ppu): void {
     }
     if ppu.scanline == 261 && ppu.dot == 1 {
         ppu.status = ppu.status & 0x1F // clear vblank, sprite0, overflow
-        snapshotScroll(ppu) // capture t/fineX before the frame renders
-        computeSprite0Hit(ppu) // arm for the upcoming frame (OAM set during vblank)
-    }
-    // Raise sprite-0 hit when rendering reaches the armed pixel.
-    if ppu.spr0Line >= 0 && ppu.scanline == ppu.spr0Line && ppu.dot == ppu.spr0Dot {
-        ppu.status = ppu.status | 0x40
     }
 }
 
@@ -401,33 +338,45 @@ ensures(result & 0xFF000000) == 0xFF000000 // every emitted pixel is fully opaqu
     return (r | (g << 8) | (b << 16) | 0xFF000000) as u32
 }
 
-// Full-frame scrolling background render (coarse + fine X/Y from the snapshot).
-fn renderBackground(ppu: &mut Ppu): void {
-    if (ppu.mask & 0x08) == 0 {
-        return
-    }
+// Render one scanline: background (live scroll from t/v) then the sprites that
+// intersect this line, with priority + sprite-0 hit resolved against the line's
+// per-pixel background opacity.
+fn renderScanline(ppu: &mut Ppu, sl: i64): void {
+    var bgOpaque: [u8; 256] = [0; 256]
     let universal = ppuMemRead(ppu, 0x3F00) as i64
-    var y: i64 = 0
-    while y < 240 {
+    if (ppu.mask & 0x08) != 0 {
+        // X scroll comes from t (constant per line); Y from the live v register
+        // (advanced by incrementY each line, reloaded from t at pre-render).
+        let t = ppu.t as i64
+        let v = ppu.v as i64
+        ppu.scrollX = ((t >> 10) & 1) * 256 + (t & 0x1F) * 8 + (ppu.fineX as i64)
+        ppu.scrollY = ((v >> 11) & 1) * 240 + ((v >> 5) & 0x1F) * 8 + ((v >> 12) & 7)
         var x: i64 = 0
         while x < 256 {
-            let packed = bgPixelAt(ppu, x, y)
+            let packed = bgPixelAt(ppu, x, 0)
             let px = packed & 0x03
             var colorIdx = universal
             if px != 0 {
-                let palGroup = (packed >> 2) & 0x03
-                colorIdx = ppuMemRead(ppu, (0x3F00 + palGroup * 4 + px) as u16) as i64
+                colorIdx = ppuMemRead(ppu, (0x3F00 + ((packed >> 2) & 0x03) * 4 + px) as u16) as i64
+                bgOpaque[x] = 1
             }
-            ppu.fb[y * 256 + x] = nesColor(colorIdx)
+            ppu.fb[sl * 256 + x] = nesColor(colorIdx)
             x = x + 1
         }
-        y = y + 1
+    } else {
+        var x: i64 = 0
+        while x < 256 {
+            ppu.fb[sl * 256 + x] = nesColor(universal)
+            x = x + 1
+        }
     }
+    renderSpriteLine(ppu, sl, bgOpaque)
 }
 
-// Sprite render (OAM): 8x8 or 8x16 (PPUCTRL bit 5), H/V flip, and priority —
-// a "behind background" sprite (attr bit 5) is hidden where the bg is opaque.
-fn renderSprites(ppu: &mut Ppu): void {
+// Draw the sprites covering scanline sl. Back-to-front so lower OAM index wins;
+// "behind background" sprites hide under opaque bg; sprite-0 opaque-on-opaque
+// overlap raises the sprite-0 hit flag.
+fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
     if (ppu.mask & 0x10) == 0 {
         return
     }
@@ -438,30 +387,25 @@ fn renderSprites(ppu: &mut Ppu): void {
         8
     }
     var i: i64 = 63
-    while i >= 0 { // draw back-to-front so sprite 0 wins
+    while i >= 0 {
         let base = i * 4
-        let sy = ppu.oam[base]as i64
-        let rawTile = ppu.oam[base + 1]as i64
-        let attr = ppu.oam[base + 2]as i64
-        let sx = ppu.oam[base + 3]as i64
-        let palGroup = attr & 0x03
-        let flipH = (attr & 0x40) != 0
-        let flipV = (attr & 0x80) != 0
-        let behind = (attr & 0x20) != 0
-        var fy: i64 = 0
-        while fy < h {
+        let row = sl - (ppu.oam[base]as i64 + 1) // OAM Y is top-minus-1
+        if row >= 0 && row < h {
+            let rawTile = ppu.oam[base + 1]as i64
+            let attr = ppu.oam[base + 2]as i64
+            let sx = ppu.oam[base + 3]as i64
+            let palGroup = attr & 0x03
+            let flipH = (attr & 0x40) != 0
+            let flipV = (attr & 0x80) != 0
+            let behind = (attr & 0x20) != 0
             let ry = if flipV {
-                h - 1 - fy
+                h - 1 - row
             } else {
-                fy
+                row
             }
-            // 8x16 sprites pick the pattern table from tile bit 0 and stack two
-            // 8x8 tiles; 8x8 sprites use PPUCTRL bit 3.
             var patAddr: i64 = 0
             if tall {
-                let bank = (rawTile & 1) * 0x1000
-                let tile = rawTile & 0xFE
-                patAddr = bank + (tile + (ry / 8)) * 16 + (ry & 7)
+                patAddr = (rawTile & 1) * 0x1000 + ((rawTile & 0xFE) + (ry / 8)) * 16 + (ry & 7)
             } else {
                 let sprTable: i64 = if (ppu.ctrl & 0x08) != 0 {
                     0x1000
@@ -482,21 +426,26 @@ fn renderSprites(ppu: &mut Ppu): void {
                 let px = ((lo >> rx) & 1) | (((hi >> rx) & 1) << 1)
                 if px != 0 {
                     let x = sx + fx
-                    let y = sy + 1 + fy // OAM Y is top-1
-                    if x < 256 && y < 240 && !(behind && bgOpaqueAt(ppu, x, y)) {
-                        let colorIdx = ppuMemRead(ppu, (0x3F10 + palGroup * 4 + px) as u16) as i64
-                        ppu.fb[y * 256 + x] = nesColor(colorIdx)
+                    if x < 256 {
+                        let bgHere = bgOpaque[x] != 0
+                        // Sprite-0 hit: opaque sprite-0 over opaque bg (never x==255).
+                        if i == 0 && bgHere && x < 255 {
+                            ppu.status = ppu.status | 0x40
+                        }
+                        if !(behind && bgHere) {
+                            let colorIdx = ppuMemRead(ppu, (0x3F10 + palGroup * 4 + px) as u16) as i64
+                            ppu.fb[sl * 256 + x] = nesColor(colorIdx)
+                        }
                     }
                 }
                 fx = fx + 1
             }
-            fy = fy + 1
         }
         i = i - 1
     }
 }
 
-fn renderFrame(ppu: &mut Ppu): void {
-    renderBackground(ppu)
-    renderSprites(ppu)
+// Background + sprites now render per-scanline inside ppuStep; the frame is
+// already in fb by vblank, so this is a no-op kept for the frontend call site.
+fn renderFrame(_ppu: &mut Ppu): void {
 }
