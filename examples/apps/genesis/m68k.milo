@@ -514,6 +514,23 @@ fn popLong(cpu: &mut M68k, m: &Mem): i64 {
     return v
 }
 
+// Group 1/2 exception (TRAP, zero-divide, CHK, TRAPV, privilege, illegal, line-A/F).
+// Short 3-word frame: [SR, PC]. Enters supervisor, clears trace, vectors via the
+// low vector table. pc must already point at the return address.
+fn raiseException(cpu: &mut M68k, m: &mut Mem, vec: i64) {
+    let oldSr = cpu.sr
+    let wasSuper = (oldSr & SR_S) != 0
+    cpu.sr = (cpu.sr | SR_S) & ~SR_T
+    if !wasSuper {
+        let tmp = cpu.a[7]
+        cpu.a[7] = cpu.otherSp
+        cpu.otherSp = tmp
+    }
+    pushLong(cpu, m, cpu.pc)
+    pushWord(cpu, m, oldSr)
+    cpu.pc = memRead32(m, vec * 4) & 0xFFFFFFFF
+}
+
 // Redirect PC to target; an odd target is an instruction-fetch address error
 // (step() raises it after the instruction). Used by JMP/JSR/Bcc/BSR/RTS/DBcc.
 fn setPc(cpu: &mut M68k, target: i64) {
@@ -1090,7 +1107,18 @@ fn execAnd(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let reg = op & 0x7
     let size = opmode & 0x3
     if size == 3 {
-        return false // MUL — deferred
+        // MULU (opmode 011) / MULS (opmode 111): 16x16 -> 32 into Dn.
+        let ea = resolveEa(cpu, m, mode, reg, 1)
+        let src = eaLoad(cpu, m, ea, 1) & 0xFFFF
+        var res: i64 = 0
+        if (opmode & 0x4) == 0 {
+            res = (getD(cpu, dn, 1) & 0xFFFF) * src
+        } else {
+            res = (signExtend(getD(cpu, dn, 1), 1) * signExtend(src, 1)) & 0xFFFFFFFF
+        }
+        setD(cpu, dn, 2, res & 0xFFFFFFFF)
+        setLogicalFlags(cpu, 2, res)
+        return true
     }
     let ea = resolveEa(cpu, m, mode, reg, size)
     if (opmode & 0x4) == 0 {
@@ -1113,7 +1141,50 @@ fn execOr(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let reg = op & 0x7
     let size = opmode & 0x3
     if size == 3 {
-        return false // DIV — deferred
+        // DIVU (opmode 011) / DIVS (opmode 111): 32 / 16 -> quotient(lo) + rem(hi).
+        let signed = (opmode & 0x4) != 0
+        let ea = resolveEa(cpu, m, mode, reg, 1)
+        let divisorRaw = eaLoad(cpu, m, ea, 1) & 0xFFFF
+        if cpu.fault {
+            return true // odd-address EA: let step() raise the address error
+        }
+        if divisorRaw == 0 {
+            raiseException(cpu, m, 5) // integer divide-by-zero
+            return true
+        }
+        let dividend = cpu.d[dn] & 0xFFFFFFFF
+        if signed {
+            let dv = signExtend(dividend, 2)
+            let ds = signExtend(divisorRaw, 1)
+            let q = quotTrunc(dv, ds)
+            let r = dv - q * ds
+            if q > 32767 || q < -32768 {
+                setBit(cpu, SR_V, true)
+                setBit(cpu, SR_C, false)
+                return true
+            }
+            let packed = ((r & 0xFFFF) << 16) | (q & 0xFFFF)
+            cpu.d[dn] = packed & 0xFFFFFFFF
+            setBit(cpu, SR_N, (q & 0x8000) != 0)
+            setBit(cpu, SR_Z, (q & 0xFFFF) == 0)
+            setBit(cpu, SR_V, false)
+            setBit(cpu, SR_C, false)
+        } else {
+            let q = dividend / divisorRaw
+            let r = dividend % divisorRaw
+            if q > 0xFFFF {
+                setBit(cpu, SR_V, true)
+                setBit(cpu, SR_C, false)
+                return true
+            }
+            let packed = ((r & 0xFFFF) << 16) | (q & 0xFFFF)
+            cpu.d[dn] = packed & 0xFFFFFFFF
+            setBit(cpu, SR_N, (q & 0x8000) != 0)
+            setBit(cpu, SR_Z, (q & 0xFFFF) == 0)
+            setBit(cpu, SR_V, false)
+            setBit(cpu, SR_C, false)
+        }
+        return true
     }
     let ea = resolveEa(cpu, m, mode, reg, size)
     if (opmode & 0x4) == 0 {
@@ -1124,6 +1195,121 @@ fn execOr(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
         let res = (eaLoad(cpu, m, ea, size) | getD(cpu, dn, size)) & sizeMask(size)
         eaStore(cpu, m, ea, size, res)
         setLogicalFlags(cpu, size, res)
+    }
+    return true
+}
+
+// Signed integer division truncating toward zero (Milo '/' on i64 already does,
+// but keep an explicit chokepoint in case that ever changes).
+fn quotTrunc(a: i64, b: i64): i64 {
+    return a / b
+}
+
+// MOVEM — bulk register <-> memory transfer. Register-list mask follows the
+// opcode. Predecrement store walks A7..A0,D7..D0 with decreasing addresses;
+// every other form walks D0..D7,A0..A7 with increasing addresses. Word transfers
+// into registers sign-extend to 32 bits.
+fn execMovem(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let toReg = (op & 0x0400) != 0
+    let long = (op & 0x0040) != 0
+    let sz: i64 = if long {
+        2
+    } else {
+        1
+    }
+    let bytes: i64 = if long {
+        4
+    } else {
+        2
+    }
+    let mask = fetch16(cpu, m)
+    let mode = (op >> 3) & 0x7
+    let reg = op & 0x7
+
+    if !toReg && mode == 4 {
+        // reg -> mem, predecrement: mask bit 0 = A7 ... 7 = A0, 8 = D7 ... 15 = D0
+        // All transfers share the base parity, so an odd base faults on the first
+        // access before any register is touched.
+        if (cpu.a[reg] & 1) != 0 {
+            checkAlign(cpu, (cpu.a[reg] - bytes) & 0xFFFFFFFF, sz, false, false)
+            return true
+        }
+        var addr = cpu.a[reg] & 0xFFFFFFFF
+        var i: i64 = 0
+        while i < 16 {
+            if ((mask >> i) & 1) != 0 {
+                addr = (addr - bytes) & 0xFFFFFFFF
+                var val: i64 = 0
+                if i < 8 {
+                    val = cpu.a[7 - i]
+                } else {
+                    val = cpu.d[15 - i]
+                }
+                if long {
+                    memWrite32(m, addr, val)
+                } else {
+                    memWrite16(m, addr, val & 0xFFFF)
+                }
+            }
+            i = i + 1
+        }
+        cpu.a[reg] = addr
+        return true
+    }
+
+    var addr: i64 = 0
+    if toReg && mode == 3 {
+        addr = cpu.a[reg] & 0xFFFFFFFF // postincrement source
+    } else {
+        let ea = resolveEa(cpu, m, mode, reg, sz)
+        match ea {
+            Ea.MemAddr(a) => {
+                addr = a
+            }
+            _ => {
+                return false
+            }
+        }
+    }
+    if (addr & 1) != 0 {
+        checkAlign(cpu, addr, sz, toReg, false)
+        return true
+    }
+    // mask bit 0 = D0 ... 7 = D7, 8 = A0 ... 15 = A7; addresses increase
+    var i: i64 = 0
+    while i < 16 {
+        if ((mask >> i) & 1) != 0 {
+            if toReg {
+                var v: i64 = 0
+                if long {
+                    v = memRead32(m, addr)
+                } else {
+                    v = signExtend(memRead16(m, addr), 1) & 0xFFFFFFFF
+                }
+                if i < 8 {
+                    cpu.d[i] = v & 0xFFFFFFFF
+                } else {
+                    cpu.a[i - 8] = v & 0xFFFFFFFF
+                }
+            } else {
+                var val: i64 = 0
+                if i < 8 {
+                    val = cpu.d[i]
+                } else {
+                    val = cpu.a[i - 8]
+                }
+                if long {
+                    memWrite32(m, addr, val)
+                } else {
+                    memWrite16(m, addr, val & 0xFFFF)
+                }
+            }
+            addr = (addr + bytes) & 0xFFFFFFFF
+        }
+        i = i + 1
+    }
+    if toReg && mode == 3 {
+        cpu.a[reg] = addr & 0xFFFFFFFF // update postincrement pointer
     }
     return true
 }
@@ -1196,6 +1382,10 @@ fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
             setLogicalFlags(cpu, 1, v)
         }
         return true
+    }
+    // MOVEM — 0100 1D00 1S mmm rrr (checked after EXT, which owns mode-field 000)
+    if (op & 0xFB80) == 0x4880 {
+        return execMovem(cpu, m, op)
     }
 
     let sub = (op >> 8) & 0xF
