@@ -152,6 +152,14 @@ fn readAbs(spc: &mut Spc, m: &SpcMem): i64 {
     return spcRead(m, spcFetch16(spc, m))
 }
 
+fn readAbsX(spc: &mut Spc, m: &SpcMem): i64 {
+    return spcRead(m, (spcFetch16(spc, m) + spc.x) & 0xFFFF)
+}
+
+fn readAbsY(spc: &mut Spc, m: &SpcMem): i64 {
+    return spcRead(m, (spcFetch16(spc, m) + spc.y) & 0xFFFF)
+}
+
 // Stack lives in page 1 ($0100-$01FF), grows downward.
 fn spcPush(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
     spcWrite(m, 0x100 | (spc.sp & 0xFF), v)
@@ -561,6 +569,52 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x50 => {
             spcBranch(spc, m, (spc.psw & PV) == 0)
         } // BVC
+
+        // ---- A-form ALU, abs+X / abs+Y ----
+        0x15 => {
+            let v = readAbsX(spc, m) spcOr(spc, v)
+        }
+        0x16 => {
+            let v = readAbsY(spc, m) spcOr(spc, v)
+        }
+        0x35 => {
+            let v = readAbsX(spc, m) spcAnd(spc, v)
+        }
+        0x36 => {
+            let v = readAbsY(spc, m) spcAnd(spc, v)
+        }
+        0x55 => {
+            let v = readAbsX(spc, m) spcEor(spc, v)
+        }
+        0x56 => {
+            let v = readAbsY(spc, m) spcEor(spc, v)
+        }
+        0x75 => {
+            let v = readAbsX(spc, m) spcCmp(spc, spc.a, v)
+        }
+        0x76 => {
+            let v = readAbsY(spc, m) spcCmp(spc, spc.a, v)
+        }
+        0x95 => {
+            let v = readAbsX(spc, m) spcAdc(spc, v)
+        }
+        0x96 => {
+            let v = readAbsY(spc, m) spcAdc(spc, v)
+        }
+        0xB5 => {
+            let v = readAbsX(spc, m) spcSbc(spc, v)
+        }
+        0xB6 => {
+            let v = readAbsY(spc, m) spcSbc(spc, v)
+        }
+
+        // ---- TSET1 / TCLR1 !abs (flags from A - M) ----
+        0x0E => {
+            let ad = spcFetch16(spc, m) let v = spcRead(m, ad) spcNZ(spc, (spc.a - v) & 0xFF) spcWrite(m, ad, v | spc.a)
+        } // TSET1
+        0x4E => {
+            let ad = spcFetch16(spc, m) let v = spcRead(m, ad) spcNZ(spc, (spc.a - v) & 0xFF) spcWrite(m, ad, v & (~spc.a))
+        } // TCLR1
 
         // ---- ALU dp,#imm  (operands: imm then dp) ----
         0x18 => {
