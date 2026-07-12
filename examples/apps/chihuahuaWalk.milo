@@ -1,0 +1,280 @@
+// chihuahuaWalk — a side-view chihuahua trotting across the terminal, truecolor
+// pixel-art with an animated 2-frame leg cycle. Body/head/tail are shared; only
+// the legs swap, giving a little trot. Loops across the screen. q/ctrl-c quits.
+// `chihuahuaWalk --ascii` prints both animation frames as raw art (for tuning).
+//
+//   milo build examples/apps/chihuahuaWalk.milo -o chihuahuaWalk && ./chihuahuaWalk
+
+from "std/term" import {
+    enableRawMode, restoreTerminal, readKey, KEY_NONE, KEY_QUIT
+}
+from "std/io" import {
+    writeStdout
+}
+from "std/time" import {
+    sleepMs
+}
+from "std/ansi" import {
+    cursorTo, pushFg24, pushBg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
+}
+from "std/color" import {
+    bold, gray
+}
+from "std/args" import {
+    hasFlag
+}
+from "std/os" import {
+    ioctl
+}
+from "std/pty" import {
+    WinSize
+}
+
+let SPR_W: i64 = 26
+let SPR_ROWS: i64 = 14 // even → 7 terminal rows
+
+// Two frames. Rows 0..10 (body/head/tail) are identical; rows 11..13 (legs)
+// differ to make the trot. Legend: d dark-brown  b brown-shadow  t tan
+// l light-tan  w cream  k eye/nose  p pink  space transparent.
+fn frameRow(frame: i64, i: i64): string {
+    // shared upper body (head on the right, curled tail on the left)
+    if i == 0 {
+        return "                    dd    "
+    } else if i == 1 {
+        return "                   ddld   "
+    } else if i == 2 {
+        return "          ttttttttddll    "
+    } else if i == 3 {
+        return "       tttttttttttttll    "
+    } else if i == 4 {
+        return "   dd ttttttttttttttllk   "
+    } else if i == 5 {
+        return "  ddddtttttttttttttl lw   "
+    } else if i == 6 {
+        return "  dddtttttttttttkttllkw   "
+    } else if i == 7 {
+        return "   d tttttttttttttttlww   "
+    } else if i == 8 {
+        return "     bttttttttttttttlw    "
+    } else if i == 9 {
+        return "     bbtttttttttttttb     "
+    } else if i == 10 {
+        return "      bbttttttttttbb      "
+    }
+    // legs
+    if frame == 0 {
+        if i == 11 {
+            return "      b  b      b  b      "
+        } else if i == 12 {
+            return "      b   b    b    b     "
+        }
+        return "      d   d    d    d     "
+    }
+    if i == 11 {
+        return "       bb        bb       "
+    } else if i == 12 {
+        return "       bb        bb       "
+    }
+    return "      dd        dd        "
+}
+
+fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
+    out[0] = r
+    out[1] = g
+    out[2] = b
+    out[3] = 1
+}
+
+fn charRGB(ch: u8, out: &mut [i64; 4]): void {
+    let c = ch as i64
+    if c == 100 {
+        setC(out, 96, 60, 38) // d
+    } else if c == 98 {
+        setC(out, 145, 96, 58) // b
+    } else if c == 116 {
+        setC(out, 200, 152, 104) // t
+    } else if c == 108 {
+        setC(out, 226, 192, 150) // l
+    } else if c == 119 {
+        setC(out, 240, 226, 206) // w
+    } else if c == 107 {
+        setC(out, 34, 28, 24) // k
+    } else if c == 112 {
+        setC(out, 226, 150, 162) // p
+    } else {
+        out[3] = 0
+    }
+}
+
+fn charAt(row: &string, c: i64): u8 {
+    if c < row.len {
+        return row[c]
+    }
+    return 32 as u8
+}
+
+fn emit(buf: &mut string, s: &string): void {
+    for i in 0..s.len {
+        buf.push(s[i])
+    }
+}
+
+fn termSize(out: &mut [i64; 2]): void {
+    var ws = WinSize {
+        rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
+    unsafe {
+        ioctl(1, 1074295912, (&ws) as *u8)
+    }
+    var rows = ws.rows as i64
+    var cols = ws.cols as i64
+    if rows < 10 {
+        rows = 24
+    }
+    if cols < 20 {
+        cols = 80
+    }
+    out[0] = rows
+    out[1] = cols
+}
+
+// col0 is the 1-based screen column of sprite column 0; may be off-screen on
+// either side. Only the visible column span is drawn so the dog slides cleanly
+// on and off the edges.
+fn drawSprite(buf: &mut string, frame: i64, row0: i64, col0: i64, cols: i64): void {
+    let hc = SPR_ROWS / 2
+    var tcol: [i64; 4] = [0; 4]
+    var bcol: [i64; 4] = [0; 4]
+    var cStart: i64 = 0
+    if col0 < 1 {
+        cStart = 1 - col0
+    }
+    var cEnd = SPR_W
+    if col0 + SPR_W - 1 > cols {
+        cEnd = cols - col0 + 1
+    }
+    if cStart >= cEnd {
+        return
+    }
+    for tr in 0..hc {
+        let tri = tr as i64
+        emit(buf, cursorTo(row0 + tri, col0 + cStart))
+        let rowTop = frameRow(frame, tri * 2)
+        let rowBot = frameRow(frame, tri * 2 + 1)
+        for c in cStart..cEnd {
+            charRGB(charAt(rowTop, c), tcol)
+            charRGB(charAt(rowBot, c), bcol)
+            let topOn = tcol[3] == 1
+            let botOn = bcol[3] == 1
+            if topOn && botOn {
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                pushBg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▀")
+            } else if topOn {
+                emit(buf, "\x1b[49m")
+                pushFg24(buf, tcol[0], tcol[1], tcol[2])
+                emit(buf, "▀")
+            } else if botOn {
+                emit(buf, "\x1b[49m")
+                pushFg24(buf, bcol[0], bcol[1], bcol[2])
+                emit(buf, "▄")
+            } else {
+                emit(buf, "\x1b[49m")
+                buf.push(32 as u8)
+            }
+        }
+    }
+}
+
+fn eraseRect(buf: &mut string, row0: i64, col0: i64, w: i64, h: i64, cols: i64): void {
+    emit(buf, ansiReset())
+    var s = col0
+    if s < 1 {
+        s = 1
+    }
+    var e = col0 + w - 1
+    if e > cols {
+        e = cols
+    }
+    if s > e {
+        return
+    }
+    for r in 0..h {
+        emit(buf, cursorTo(row0 + r, s))
+        for c in s..(e + 1) {
+            buf.push(32 as u8)
+        }
+    }
+}
+
+fn printAscii(): void {
+    for fr in 0..2 {
+        print($"── frame {fr} ──")
+        for i in 0..SPR_ROWS {
+            print(frameRow(fr as i64, i as i64))
+        }
+    }
+}
+
+fn runInteractive(): void {
+    let termState = enableRawMode()
+    writeStdout(hideCursor() + clearScreen())
+
+    var size: [i64; 2] = [0; 2]
+    termSize(size)
+    let rows = size[0]
+    let cols = size[1]
+
+    let sprH = SPR_ROWS / 2
+    let groundRow = rows - 2 - sprH // sit the dog near the bottom
+
+    var x: i64 = 0 - SPR_W
+    var prevX = x
+    var frame: i64 = 0
+    var tick: i64 = 0
+    var quit = false
+
+    while !quit {
+        var buf = String.withCapacity(16384)
+        eraseRect(buf, groundRow, prevX + 1, SPR_W, sprH, cols)
+        drawSprite(buf, frame, groundRow, x + 1, cols)
+        emit(buf, ansiReset())
+        emit(buf, cursorTo(1, 1))
+        emit(buf, bold(" milo chihuahua "))
+        emit(buf, gray("trotting  ·  q quit "))
+        writeStdout(buf)
+
+        prevX = x
+        x = x + 2
+        if x > cols {
+            x = 0 - SPR_W
+        }
+        tick = tick + 1
+        if tick % 3 == 0 {
+            frame = 1 - frame
+        }
+
+        sleepMs(90)
+
+        var k = readKey()
+        while k != KEY_NONE {
+            if k == KEY_QUIT {
+                quit = true
+            }
+            k = readKey()
+        }
+    }
+
+    writeStdout(showCursor() + clearScreen() + cursorHome() + ansiReset())
+    restoreTerminal(termState)
+    print("bye from the trotting milo chihuahua ♥  https://cs01.github.io/milo/")
+}
+
+fn main(): i32 {
+    if hasFlag("ascii") {
+        printAscii()
+    } else {
+        runInteractive()
+    }
+    return 0
+}
