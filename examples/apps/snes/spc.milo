@@ -253,6 +253,18 @@ fn readIndDpY(spc: &mut Spc, m: &SpcMem): i64 {
     return spcRead(m, (ptr + spc.y) & 0xFFFF)
 }
 
+// SET1/CLR1 dp.bit — set or clear one bit of a direct-page byte (no flags).
+fn setBitMem(spc: &mut Spc, m: &mut SpcMem, bit: i64, set: bool): void {
+    let ad = dpAddr(spc, spcFetch(spc, m))
+    var v = spcRead(m, ad)
+    if set {
+        v = v | (1 << bit)
+    } else {
+        v = v & (~(1 << bit))
+    }
+    spcWrite(m, ad, v)
+}
+
 // --- 16-bit YA arithmetic (word from dp) ---
 fn spcAddw(spc: &mut Spc, w: i64): void {
     let ya = ((spc.y << 8) | spc.a) & 0xFFFF
@@ -549,6 +561,64 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x50 => {
             spcBranch(spc, m, (spc.psw & PV) == 0)
         } // BVC
+
+        // ---- SET1 / CLR1 dp.bit ----
+        0x02 => {
+            setBitMem(spc, m, 0, true)
+        }
+        0x22 => {
+            setBitMem(spc, m, 1, true)
+        }
+        0x42 => {
+            setBitMem(spc, m, 2, true)
+        }
+        0x62 => {
+            setBitMem(spc, m, 3, true)
+        }
+        0x82 => {
+            setBitMem(spc, m, 4, true)
+        }
+        0xA2 => {
+            setBitMem(spc, m, 5, true)
+        }
+        0xC2 => {
+            setBitMem(spc, m, 6, true)
+        }
+        0xE2 => {
+            setBitMem(spc, m, 7, true)
+        }
+        0x12 => {
+            setBitMem(spc, m, 0, false)
+        }
+        0x32 => {
+            setBitMem(spc, m, 1, false)
+        }
+        0x52 => {
+            setBitMem(spc, m, 2, false)
+        }
+        0x72 => {
+            setBitMem(spc, m, 3, false)
+        }
+        0x92 => {
+            setBitMem(spc, m, 4, false)
+        }
+        0xB2 => {
+            setBitMem(spc, m, 5, false)
+        }
+        0xD2 => {
+            setBitMem(spc, m, 6, false)
+        }
+        0xF2 => {
+            setBitMem(spc, m, 7, false)
+        }
+
+        // ---- auto-increment (X) MOVs ----
+        0xBF => {
+            spc.a = spcRead(m, dpAddr(spc, spc.x)) spcNZ(spc, spc.a) spc.x = (spc.x + 1) & 0xFF
+        } // MOV A,(X)+
+        0xAF => {
+            spcWrite(m, dpAddr(spc, spc.x), spc.a) spc.x = (spc.x + 1) & 0xFF
+        } // MOV (X)+,A (no flags)
 
         // ---- A-form ALU, (X) indirect ----
         0x06 => {
