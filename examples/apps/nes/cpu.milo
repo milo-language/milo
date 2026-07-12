@@ -8,6 +8,9 @@ from "./cartridge" import {
 from "./ppu" import {
     Ppu, newPpu, ppuRegRead, ppuRegWrite
 }
+from "./apu" import {
+    Apu, newApu, apuWrite, apuReadStatus
+}
 
 // --- status flag bit masks (P register) ---
 let FC: u8 = 0x01 // carry
@@ -26,6 +29,7 @@ struct Bus {
     prg: Vec<u8> // mapper-0 PRG, 16K or 32K
     prgMask: i64 // 0x3FFF (16K) or 0x7FFF (32K)
     ppu: Ppu
+    apu: Apu
     ctrl1: u8 // $4016 controller-1 shift register (serial, drained LSB-first)
     strobe: u8 // $4016 strobe latch
     buttons: u8 // live controller-1 state: bit0 A,1 B,2 Select,3 Start,4 Up,5 Down,6 Left,7 Right
@@ -62,7 +66,7 @@ fn newBus(cart: Cartridge): Bus {
     let ppu = newPpu(cart.chr, cart.mirrorVertical)
     let banks = cart.prg16kBanks as i64
     var bus = Bus {
-        ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, ctrl1: 0, strobe: 0, buttons: 0,
+        ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, apu: newApu(), ctrl1: 0, strobe: 0, buttons: 0,
         mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0,
         mmcSelect: 0, mmcR0: 0, mmcR1: 0, mmcR2: 0, mmcR3: 0, mmcR4: 0, mmcR5: 0, mmcR6: 0, mmcR7: 0,
         irqLatch: 0, irqCounter: 0, irqReload: false, irqEnabled: false, irqPending: false
@@ -92,6 +96,9 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
         let bit = bus.ctrl1 & 0x01
         bus.ctrl1 = (bus.ctrl1 >> 1) | 0x80
         return bit | 0x40 // open-bus high bits read as 0x40 on real HW
+    }
+    if a == 0x4015 {
+        return apuReadStatus(bus.apu)
     }
     if a >= 0x6000 && a < 0x8000 {
         return bus.wram[a - 0x6000]
@@ -139,6 +146,11 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
         if bus.strobe == 1 {
             bus.ctrl1 = bus.buttons
         }
+        return
+    }
+    // APU + frame counter: $4000-$4013, $4015, $4017 ($4014/$4016 handled above).
+    if a >= 0x4000 && a <= 0x4017 {
+        apuWrite(bus.apu, a - 0x4000, val)
         return
     }
     if a >= 0x6000 && a < 0x8000 {

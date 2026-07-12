@@ -33,10 +33,10 @@ against `nestest.log` before any pixels.
       then `SDL_GameController` for real pads.
 - [ ] **M4 — playable**: wire SDL frontend + PPU + input; boot Super Mario Bros
       (mapper 0). Validate with blargg `ppu_vbl_nmi` + `sprite_hit_tests`.
-- [ ] **M5 — APU audio**: 2× pulse, triangle, noise, DMC; frame counter IRQ.
-      Output via `SDL_QueueAudio` (~48kHz, downsampled from ~1.79MHz APU ticks).
-      A/V sync: NES is 60.0988Hz vs TV 59.94/60 — sync to audio, video follows
-      (avoids crackle).
+- [~] **M5 — APU audio** (`apu.milo`): 2× pulse, triangle, noise + frame-counter
+      sequencer/IRQ done. Nonlinear mix LUTs → i16 PCM, one-pole DC high-pass,
+      `SDL_QueueAudio` @44100Hz mono, video paced to the audio queue (~4-frame
+      latency). Contra/SMB3 audible. DMC (sampled) channel deferred.
 - [ ] **M6 — mappers**: UxROM (2: Contra/Mega Man, trivial) → MMC1 (1:
       Zelda/Metroid) → battery saves (PRG-RAM → `.sav`, Zelda needs it) →
       MMC3 (4: SMB3/Kirby, needs scanline IRQ). Mappers 0+1+2+4 ≈ 70% of
@@ -98,3 +98,10 @@ milo run   examples/apps/nes/testCartridge.milo
 - **If-as-value coercion**: `let h: i64 = if c { 16 } else { 8 }` — const-int
   arms now adopt the annotated/inferred width, no `16 as i64` on each arm
   (checker fix 89812bf).
+- **APU frame IRQ must be level-ORed, not latched**: APU frame IRQ + MMC3 scanline
+  IRQ share the CPU line. Latching the APU flag into `bus.irqPending` (MMC3's *edge*
+  latch) leaves a phantom pending bit after the game acks $4015 → consumed as a
+  spurious MMC3 IRQ, desyncing SMB3's mid-frame splits (curtain never raises). Fix:
+  OR at check time — `if (bus.irqPending || bus.apu.frameIrq) && !I` — never latch.
+- **Top-level `let: f64` needs a literal**, not a const expr: `1789773.0 / 44100.0`
+  emits `double 0` (initializer not folded). Precompute the literal.

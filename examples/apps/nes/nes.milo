@@ -27,6 +27,9 @@ from "./cpu" import {
 from "./ppu" import {
     renderFrame
 }
+from "./apu" import {
+    apuStep
+}
 
 extern fn SDL_Init(flags: u32): i32
 
@@ -52,7 +55,16 @@ extern fn SDL_DestroyWindow(win: *u8): void
 
 extern fn SDL_Quit(): void
 
+extern fn SDL_OpenAudioDevice(device: *u8, iscapture: i32, desired: *u8, obtained: *u8, allowed: i32): u32
+
+extern fn SDL_QueueAudio(dev: u32, data: *u8, len: u32): i32
+
+extern fn SDL_PauseAudioDevice(dev: u32, pause_on: i32): void
+
+extern fn SDL_GetQueuedAudioSize(dev: u32): u32
+
 let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_INIT_AUDIO: u32 = 0x10
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
 let SDL_TEXTUREACCESS_STREAMING: i32 = 1
@@ -221,7 +233,7 @@ fn runNes(cart: Cartridge): i32 {
     var bus = newBus(cart)
     var cpu = newCpuReset(bus)
 
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
+    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0 {
         print("SDL_Init failed")
         return 1
     }
@@ -234,6 +246,22 @@ fn runNes(cart: Cartridge): i32 {
         if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
             print("SDL setup failed")
             return 2
+        }
+
+        // SDL_AudioSpec (32 bytes): freq=44100, format=AUDIO_S16LSB(0x8010),
+        // channels=1, samples=1024, callback=NULL (queue-based). allowed=0 forces format.
+        var want: [u8; 32] = [0; 32]
+        want[0] = 0x44
+        want[1] = 0xAC // freq 44100 (0xAC44) LE
+        want[4] = 0x10
+        want[5] = 0x80 // format 0x8010
+        want[6] = 1 // channels
+        want[8] = 0x00
+        want[9] = 0x04 // samples 1024 (0x0400) LE
+        var got: [u8; 32] = [0; 32]
+        let audioDev = SDL_OpenAudioDevice(0 as *u8, 0, (&want[0]) as *u8, (&got[0]) as *u8, 0)
+        if audioDev != 0 {
+            SDL_PauseAudioDevice(audioDev, 0) // unpause: start pulling from the queue
         }
 
         var ev: [u8; 64] = [0; 64]
@@ -250,11 +278,16 @@ fn runNes(cart: Cartridge): i32 {
                     clockPpu(bus)
                     k = k + 1
                 }
+                apuStep(bus.apu, used)
                 if bus.ppu.nmiPending {
                     bus.ppu.nmiPending = false
                     nmi(cpu, bus)
                 }
-                if bus.irqPending && !cpuFlag(cpu, 0x04) {
+                // APU frame IRQ is level-triggered: OR it into the line at check
+                // time rather than latching bus.irqPending (which is MMC3's edge
+                // latch — latching the APU flag there leaves a phantom pending IRQ
+                // after the game acks $4015, desyncing MMC3 scanline splits).
+                if (bus.irqPending || bus.apu.frameIrq) && !cpuFlag(cpu, 0x04) {
                     bus.irqPending = false
                     irq(cpu, bus)
                 }
@@ -265,6 +298,12 @@ fn runNes(cart: Cartridge): i32 {
             SDL_RenderClear(ren)
             SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
             SDL_RenderPresent(ren)
+
+            // Push this frame's samples (i16 = 2 bytes) and reset the buffer.
+            if audioDev != 0 && bus.apu.samples.len > 0 {
+                SDL_QueueAudio(audioDev, (&bus.apu.samples[0]) as *u8, (bus.apu.samples.len * 2) as u32)
+                bus.apu.samples = []
+            }
 
             while SDL_PollEvent((&ev[0]) as *u8) != 0 {
                 let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
@@ -284,7 +323,14 @@ fn runNes(cart: Cartridge): i32 {
                     }
                 }
             }
-            SDL_Delay(16)
+            // Pace to audio when active (drain to ~4 frames latency); else fixed 60Hz.
+            if audioDev != 0 {
+                while SDL_GetQueuedAudioSize(audioDev) > (735 * 2 * 4) as u32 {
+                    SDL_Delay(1)
+                }
+            } else {
+                SDL_Delay(16)
+            }
         }
 
         SDL_DestroyWindow(win)

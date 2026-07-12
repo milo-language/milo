@@ -1,0 +1,531 @@
+// NES APU (audio): 2x pulse, triangle, noise + frame-counter sequencer.
+// Clocked by CPU cycles (apuStep). Channels are mixed through the standard
+// nonlinear NES lookup tables into i16 PCM samples, DC-blocked with a one-pole
+// high-pass, and accumulated in `samples` for the frontend to SDL_QueueAudio
+// once per frame. DMC (sampled) channel is not modeled yet.
+
+// NTSC CPU clock / audio sample rate: how many CPU cycles per output sample
+// (1789773 / 44100).
+let CYCLES_PER_SAMPLE: f64 = 40.58442176870748
+
+// Length-counter load values, indexed by the 5-bit field in $4003/$400B/$400F.
+let LENGTH_TABLE: [i64; 32] = [
+10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14,
+12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30
+]
+
+// Noise timer periods (NTSC), indexed by the low nibble of $400E.
+let NOISE_PERIOD: [i64; 16] = [
+4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068
+]
+
+// Triangle 32-step sequence (15..0, 0..15).
+let TRIANGLE_SEQ: [i64; 32] = [
+15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+]
+
+// Four duty waveforms x 8 steps, flattened: index = duty*8 + dutyPos.
+let DUTY_TABLE: [i64; 32] = [
+0, 1, 0, 0, 0, 0, 0, 0, // 12.5%
+0, 1, 1, 0, 0, 0, 0, 0, // 25%
+0, 1, 1, 1, 1, 0, 0, 0, // 50%
+1, 0, 0, 1, 1, 1, 1, 1 // 25% negated
+]
+
+struct Pulse {
+    enabled: bool
+    duty: i64
+    dutyPos: i64
+    lengthHalt: bool // also the envelope loop flag
+    constant: bool // constant volume vs. envelope
+    volume: i64 // 0-15: constant level, or envelope divider period
+    timerPeriod: i64 // 11-bit
+    timerVal: i64
+    length: i64
+    envStart: bool
+    envDivider: i64
+    envDecay: i64
+    sweepEnabled: bool
+    sweepPeriod: i64
+    sweepNegate: bool
+    sweepShift: i64
+    sweepReload: bool
+    sweepDivider: i64
+    isPulse2: bool // pulse1 uses ones'-complement (extra -1) on negate; pulse2 two's
+}
+
+struct Triangle {
+    enabled: bool
+    control: bool // $4008 bit7: length-halt + holds linear-reload flag
+    length: i64
+    linearReload: i64
+    linearCounter: i64
+    linearReloadFlag: bool
+    timerPeriod: i64
+    timerVal: i64
+    seqPos: i64
+}
+
+struct Noise {
+    enabled: bool
+    lengthHalt: bool
+    constant: bool
+    volume: i64
+    length: i64
+    envStart: bool
+    envDivider: i64
+    envDecay: i64
+    mode: bool // bit6 feedback tap vs. bit1
+    timerPeriod: i64
+    timerVal: i64
+    shift: i64 // 15-bit LFSR, powers up as 1
+}
+
+struct Apu {
+    pulse1: Pulse
+    pulse2: Pulse
+    triangle: Triangle
+    noise: Noise
+    frameMode: i64 // 0 = 4-step, 1 = 5-step
+    frameInhibit: bool
+    frameIrq: bool
+    frameCycle: i64 // CPU cycles into the current sequence
+    cpuParity: i64 // toggles each CPU cycle; pulse/noise clock on the 0 phase (APU cycle)
+    sampleAccum: f64
+    samples: Vec<i16>
+    pulseTable: [f64; 31]
+    tndTable: [f64; 203]
+    hpPrevIn: f64
+    hpPrevOut: f64
+}
+
+fn newPulse(isPulse2: bool): Pulse {
+    return Pulse {
+        enabled: false, duty: 0, dutyPos: 0, lengthHalt: false, constant: false, volume: 0,
+        timerPeriod: 0, timerVal: 0, length: 0,
+        envStart: false, envDivider: 0, envDecay: 0,
+        sweepEnabled: false, sweepPeriod: 0, sweepNegate: false, sweepShift: 0,
+        sweepReload: false, sweepDivider: 0, isPulse2: isPulse2
+    }
+}
+
+fn newTriangle(): Triangle {
+    return Triangle {
+        enabled: false, control: false, length: 0, linearReload: 0, linearCounter: 0,
+        linearReloadFlag: false, timerPeriod: 0, timerVal: 0, seqPos: 0
+    }
+}
+
+fn newNoise(): Noise {
+    return Noise {
+        enabled: false, lengthHalt: false, constant: false, volume: 0, length: 0,
+        envStart: false, envDivider: 0, envDecay: 0, mode: false,
+        timerPeriod: 0, timerVal: 0, shift: 1
+    }
+}
+
+fn newApu(): Apu {
+    // Precompute the two nonlinear mixer lookup tables (nesdev formulas).
+    var pt: [f64; 31] = [0.0; 31]
+    var i: i64 = 1
+    while i < 31 {
+        pt[i] = 95.52 / (8128.0 / (i as f64) + 100.0)
+        i = i + 1
+    }
+    var tt: [f64; 203] = [0.0; 203]
+    i = 1
+    while i < 203 {
+        tt[i] = 163.67 / (24329.0 / (i as f64) + 100.0)
+        i = i + 1
+    }
+    var samples: Vec<i16> = []
+    return Apu {
+        pulse1: newPulse(false), pulse2: newPulse(true), triangle: newTriangle(), noise: newNoise(),
+        frameMode: 0, frameInhibit: false, frameIrq: false, frameCycle: 0, cpuParity: 0,
+        sampleAccum: 0.0, samples: samples, pulseTable: pt, tndTable: tt,
+        hpPrevIn: 0.0, hpPrevOut: 0.0
+    }
+}
+
+// ---- register writes ($4000-$4017, reg = addr - 0x4000) ----
+
+fn apuWrite(apu: &mut Apu, reg: i64, val: u8): void {
+    let v = val as i64
+    if reg <= 0x03 {
+        writePulse(apu.pulse1, reg, v)
+    } else if reg <= 0x07 {
+        writePulse(apu.pulse2, reg - 0x04, v)
+    } else if reg <= 0x0B {
+        writeTriangle(apu.triangle, reg - 0x08, v)
+    } else if reg <= 0x0F {
+        writeNoise(apu.noise, reg - 0x0C, v)
+    } else if reg <= 0x13 {
+        // DMC ($4010-$4013): not modeled
+    } else if reg == 0x15 {
+        writeStatus(apu, v)
+    } else if reg == 0x17 {
+        writeFrameCounter(apu, v)
+    }
+}
+
+fn writePulse(p: &mut Pulse, idx: i64, v: i64): void {
+    if idx == 0 {
+        p.duty = (v >> 6) & 3
+        p.lengthHalt = (v & 0x20) != 0
+        p.constant = (v & 0x10) != 0
+        p.volume = v & 0x0F
+    } else if idx == 1 {
+        p.sweepEnabled = (v & 0x80) != 0
+        p.sweepPeriod = (v >> 4) & 7
+        p.sweepNegate = (v & 0x08) != 0
+        p.sweepShift = v & 7
+        p.sweepReload = true
+    } else if idx == 2 {
+        p.timerPeriod = (p.timerPeriod & 0x700) | v
+    } else {
+        p.timerPeriod = (p.timerPeriod & 0xFF) | ((v & 7) << 8)
+        if p.enabled {
+            p.length = LENGTH_TABLE[(v >> 3) & 0x1F]
+        }
+        p.dutyPos = 0
+        p.envStart = true
+    }
+}
+
+fn writeTriangle(t: &mut Triangle, idx: i64, v: i64): void {
+    if idx == 0 {
+        t.control = (v & 0x80) != 0
+        t.linearReload = v & 0x7F
+    } else if idx == 2 {
+        t.timerPeriod = (t.timerPeriod & 0x700) | v
+    } else if idx == 3 {
+        t.timerPeriod = (t.timerPeriod & 0xFF) | ((v & 7) << 8)
+        if t.enabled {
+            t.length = LENGTH_TABLE[(v >> 3) & 0x1F]
+        }
+        t.linearReloadFlag = true
+    }
+}
+
+fn writeNoise(n: &mut Noise, idx: i64, v: i64): void {
+    if idx == 0 {
+        n.lengthHalt = (v & 0x20) != 0
+        n.constant = (v & 0x10) != 0
+        n.volume = v & 0x0F
+    } else if idx == 2 {
+        n.mode = (v & 0x80) != 0
+        n.timerPeriod = NOISE_PERIOD[v & 0x0F]
+    } else if idx == 3 {
+        if n.enabled {
+            n.length = LENGTH_TABLE[(v >> 3) & 0x1F]
+        }
+        n.envStart = true
+    }
+}
+
+// $4015: channel enables. Clearing a bit forces that length counter to 0.
+fn writeStatus(apu: &mut Apu, v: i64): void {
+    apu.pulse1.enabled = (v & 0x01) != 0
+    if !apu.pulse1.enabled {
+        apu.pulse1.length = 0
+    }
+    apu.pulse2.enabled = (v & 0x02) != 0
+    if !apu.pulse2.enabled {
+        apu.pulse2.length = 0
+    }
+    apu.triangle.enabled = (v & 0x04) != 0
+    if !apu.triangle.enabled {
+        apu.triangle.length = 0
+    }
+    apu.noise.enabled = (v & 0x08) != 0
+    if !apu.noise.enabled {
+        apu.noise.length = 0
+    }
+}
+
+// $4017: frame-counter mode + IRQ inhibit.
+fn writeFrameCounter(apu: &mut Apu, v: i64): void {
+    apu.frameMode = (v >> 7) & 1
+    apu.frameInhibit = (v & 0x40) != 0
+    if apu.frameInhibit {
+        apu.frameIrq = false
+    }
+    apu.frameCycle = 0
+    // 5-step mode immediately clocks a quarter + half frame.
+    if apu.frameMode == 1 {
+        quarterFrame(apu)
+        halfFrame(apu)
+    }
+}
+
+// $4015 read: channel-active + frame-IRQ status; reading clears the frame IRQ.
+fn apuReadStatus(apu: &mut Apu): u8 {
+    var r: i64 = 0
+    if apu.pulse1.length > 0 {
+        r = r | 0x01
+    }
+    if apu.pulse2.length > 0 {
+        r = r | 0x02
+    }
+    if apu.triangle.length > 0 {
+        r = r | 0x04
+    }
+    if apu.noise.length > 0 {
+        r = r | 0x08
+    }
+    if apu.frameIrq {
+        r = r | 0x40
+    }
+    apu.frameIrq = false
+    return r as u8
+}
+
+// ---- clocking ----
+
+fn apuStep(apu: &mut Apu, cycles: i64): void {
+    var c: i64 = 0
+    while c < cycles {
+        clockTriangleTimer(apu.triangle) // triangle timer runs at the CPU rate
+        if apu.cpuParity == 0 {
+            // pulse/noise timers run at half the CPU rate (one APU cycle)
+            clockPulseTimer(apu.pulse1)
+            clockPulseTimer(apu.pulse2)
+            clockNoiseTimer(apu.noise)
+        }
+        apu.cpuParity = apu.cpuParity ^ 1
+        stepFrameCounter(apu)
+
+        apu.sampleAccum = apu.sampleAccum + 1.0
+        if apu.sampleAccum >= CYCLES_PER_SAMPLE {
+            apu.sampleAccum = apu.sampleAccum - CYCLES_PER_SAMPLE
+            emitSample(apu)
+        }
+        c = c + 1
+    }
+}
+
+// Frame sequencer thresholds in CPU cycles (NTSC). Quarter-frame clocks the
+// envelopes + triangle linear counter; half-frame also clocks length + sweep.
+fn stepFrameCounter(apu: &mut Apu): void {
+    apu.frameCycle = apu.frameCycle + 1
+    let fc = apu.frameCycle
+    if apu.frameMode == 0 {
+        if fc == 7457 {
+            quarterFrame(apu)
+        } else if fc == 14913 {
+            quarterFrame(apu)
+            halfFrame(apu)
+        } else if fc == 22371 {
+            quarterFrame(apu)
+        } else if fc == 29829 {
+            quarterFrame(apu)
+            halfFrame(apu)
+            if !apu.frameInhibit {
+                apu.frameIrq = true
+            }
+        } else if fc >= 29830 {
+            apu.frameCycle = 0
+        }
+    } else {
+        if fc == 7457 {
+            quarterFrame(apu)
+        } else if fc == 14913 {
+            quarterFrame(apu)
+            halfFrame(apu)
+        } else if fc == 22371 {
+            quarterFrame(apu)
+        } else if fc == 37281 {
+            quarterFrame(apu)
+            halfFrame(apu)
+        } else if fc >= 37282 {
+            apu.frameCycle = 0
+        }
+    }
+}
+
+fn quarterFrame(apu: &mut Apu): void {
+    clockPulseEnvelope(apu.pulse1)
+    clockPulseEnvelope(apu.pulse2)
+    clockNoiseEnvelope(apu.noise)
+    clockTriangleLinear(apu.triangle)
+}
+
+fn halfFrame(apu: &mut Apu): void {
+    clockPulseLength(apu.pulse1)
+    clockPulseLength(apu.pulse2)
+    clockPulseSweep(apu.pulse1)
+    clockPulseSweep(apu.pulse2)
+    if !apu.triangle.control && apu.triangle.length > 0 {
+        apu.triangle.length = apu.triangle.length - 1
+    }
+    if !apu.noise.lengthHalt && apu.noise.length > 0 {
+        apu.noise.length = apu.noise.length - 1
+    }
+}
+
+fn clockPulseTimer(p: &mut Pulse): void {
+    if p.timerVal == 0 {
+        p.timerVal = p.timerPeriod
+        p.dutyPos = (p.dutyPos + 1) & 7
+    } else {
+        p.timerVal = p.timerVal - 1
+    }
+}
+
+fn clockTriangleTimer(t: &mut Triangle): void {
+    if t.timerVal == 0 {
+        t.timerVal = t.timerPeriod
+        // sequencer only advances while both gates are open
+        if t.length > 0 && t.linearCounter > 0 {
+            t.seqPos = (t.seqPos + 1) & 31
+        }
+    } else {
+        t.timerVal = t.timerVal - 1
+    }
+}
+
+fn clockNoiseTimer(n: &mut Noise): void {
+    if n.timerVal == 0 {
+        n.timerVal = n.timerPeriod
+        let bit0 = n.shift & 1
+        let tap = if n.mode {
+            (n.shift >> 6) & 1
+        } else {
+            (n.shift >> 1) & 1
+        }
+        let fb = bit0 ^ tap
+        n.shift = (n.shift >> 1) | (fb << 14)
+    } else {
+        n.timerVal = n.timerVal - 1
+    }
+}
+
+fn clockPulseEnvelope(p: &mut Pulse): void {
+    if p.envStart {
+        p.envStart = false
+        p.envDecay = 15
+        p.envDivider = p.volume
+    } else if p.envDivider == 0 {
+        p.envDivider = p.volume
+        if p.envDecay > 0 {
+            p.envDecay = p.envDecay - 1
+        } else if p.lengthHalt {
+            p.envDecay = 15
+        }
+    } else {
+        p.envDivider = p.envDivider - 1
+    }
+}
+
+fn clockNoiseEnvelope(n: &mut Noise): void {
+    if n.envStart {
+        n.envStart = false
+        n.envDecay = 15
+        n.envDivider = n.volume
+    } else if n.envDivider == 0 {
+        n.envDivider = n.volume
+        if n.envDecay > 0 {
+            n.envDecay = n.envDecay - 1
+        } else if n.lengthHalt {
+            n.envDecay = 15
+        }
+    } else {
+        n.envDivider = n.envDivider - 1
+    }
+}
+
+fn clockPulseLength(p: &mut Pulse): void {
+    if !p.lengthHalt && p.length > 0 {
+        p.length = p.length - 1
+    }
+}
+
+fn clockTriangleLinear(t: &mut Triangle): void {
+    if t.linearReloadFlag {
+        t.linearCounter = t.linearReload
+    } else if t.linearCounter > 0 {
+        t.linearCounter = t.linearCounter - 1
+    }
+    if !t.control {
+        t.linearReloadFlag = false
+    }
+}
+
+fn clockPulseSweep(p: &mut Pulse): void {
+    if p.sweepReload {
+        p.sweepDivider = p.sweepPeriod
+        p.sweepReload = false
+        return
+    }
+    if p.sweepDivider > 0 {
+        p.sweepDivider = p.sweepDivider - 1
+        return
+    }
+    p.sweepDivider = p.sweepPeriod
+    if p.sweepEnabled && p.sweepShift > 0 && !pulseMuted(p) {
+        let change = p.timerPeriod >> p.sweepShift
+        if p.sweepNegate {
+            var d = change
+            if !p.isPulse2 {
+                d = d + 1 // pulse1 ones'-complement negate
+            }
+            p.timerPeriod = p.timerPeriod - d
+        } else {
+            p.timerPeriod = p.timerPeriod + change
+        }
+    }
+}
+
+// ---- outputs + mixing ----
+
+fn pulseMuted(p: &Pulse): bool {
+    return p.timerPeriod < 8 || p.timerPeriod > 0x7FF
+}
+
+fn pulseOutput(p: &Pulse): i64 {
+    if !p.enabled || p.length == 0 || pulseMuted(p) {
+        return 0
+    }
+    if DUTY_TABLE[p.duty * 8 + p.dutyPos] == 0 {
+        return 0
+    }
+    if p.constant {
+        return p.volume
+    }
+    return p.envDecay
+}
+
+fn triangleOutput(t: &Triangle): i64 {
+    return TRIANGLE_SEQ[t.seqPos]
+}
+
+fn noiseOutput(n: &Noise): i64 {
+    if !n.enabled || n.length == 0 || (n.shift & 1) == 1 {
+        return 0
+    }
+    if n.constant {
+        return n.volume
+    }
+    return n.envDecay
+}
+
+fn emitSample(apu: &mut Apu): void {
+    let p1 = pulseOutput(apu.pulse1)
+    let p2 = pulseOutput(apu.pulse2)
+    let tri = triangleOutput(apu.triangle)
+    let noi = noiseOutput(apu.noise)
+    let mixed = apu.pulseTable[p1 + p2] + apu.tndTable[3 * tri + 2 * noi]
+    // one-pole DC-blocking high-pass: y = x - x_prev + 0.9995*y_prev
+    let hp = mixed - apu.hpPrevIn + 0.9995 * apu.hpPrevOut
+    apu.hpPrevIn = mixed
+    apu.hpPrevOut = hp
+    var v = hp * 28000.0
+    if v > 32000.0 {
+        v = 32000.0
+    }
+    if v < -32000.0 {
+        v = -32000.0
+    }
+    apu.samples.push((v as i64) as i16)
+}
