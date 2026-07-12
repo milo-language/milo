@@ -13,7 +13,7 @@ from "std/io" import {
     readLine, writeStdout
 }
 from "std/fs" import {
-    readDir
+    readDir, isDir
 }
 from "std/string" import {
     strEndsWith
@@ -153,10 +153,16 @@ fn parseIndex(s: &string): i64 {
 // Terminal ROM picker: list every ROM under roms/, prompt for a number.
 // Returns the chosen path, or "" if none found / invalid selection.
 fn pickRom(): string {
+    // Prefer a curated roms/games/ folder; fall back to the whole roms/ tree.
+    var scanDir = "roms"
+    if isDir("roms/games") {
+        scanDir = "roms/games"
+    }
     var roms: Vec<string> = []
-    collectRoms("roms", roms)
+    collectRoms(scanDir.clone(), roms)
     if roms.len == 0 {
-        print("no .nes ROMs found under ./roms")
+        print("no .nes ROMs found under ./")
+        print(scanDir)
         return ""
     }
     print("Pick a ROM:")
