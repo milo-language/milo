@@ -23,14 +23,21 @@ for replies — no SPC700 core, no boot. S-DSP (actual sound output) CAN wait.
 - **Reference emulators** (behavior questions only, don't port): Mesen2
   (best debugger — trace logger + event viewer), bsnes (accuracy reference).
 
-## Status (M1 CPU core COMPLETE — on to M2)
+## Status (M1 done; M2 bus+cartridge underway)
 
-All 256 opcodes implemented. 254 are Harte-exact green in both emulation +
-native (5.08M cases). MVN/MVP (block moves) are implemented atomically and are
-correct for emulation but excluded from the gate: Harte captures cycle-bounded
-*partial* move state an instruction-stepped core can't reproduce (cf. genesis
-excluding prefetch/bus-order). BRK/COP/RTI/WAI/STP/WDM green.
-Next milestone: M2 — bus + cartridge (LoROM, WRAM, MMIO stubs), then M3 SPC700.
+M1 CPU: all 256 opcodes; 254 Harte-exact green (e+n). MVN/MVP atomic (excluded
+from gate — cycle-bounded partial state). BRK/COP/RTI/WAI/STP/WDM green.
+
+M2 (in progress): `Mem` is now the real SNES bus with a `testMode` flag that
+preserves the Harte flat-RAM path. Real path: 128 KiB WRAM ($7E-$7F + $00-$3F/
+$80-$BF low mirror), LoROM/HiROM cartridge fetch (romOffset), MMIO $2000-$5FFF
+stubbed to a scratch store for readback. `busNew(rom, map)` + `newCpuReset(m)`
+(vectors through $00:FFFC, boots in emulation mode). `cartridge.milo` loads
+.sfc/.smc, strips 512-byte SMC header, scores $7FC0/$FFC0 to pick LoROM/HiROM.
+systemSmoke.milo: synthesizes a LoROM, boots from reset, runs LDA/STA/LDX/INX —
+green (ROM fetch + WRAM store verified). Harte still green (testMode intact).
+Next: real MMIO ($2100 PPU regs, $4200 NMI/IRQ enables, $42xx mul/div, joypad),
+then M3 SPC700 (boot blocks on its handshake).
 
 ## (earlier) Status notes
 

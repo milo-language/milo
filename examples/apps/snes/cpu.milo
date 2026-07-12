@@ -30,17 +30,50 @@ struct Cpu {
     e: i64 // emulation-mode latch (1 = 6502 emulation)
 }
 
-// Sparse 24-bit memory. Harte tests touch only a handful of addresses per case,
-// so a linear-scan assoc list is faster than a 16 MiB flat buffer (and Vec has
-// no bulk-fill primitive). Rebuilt fresh from `initial.ram` for every test.
+// CPU-visible 24-bit memory. Two backings behind one interface:
+//  - testMode (Harte): sparse linear-scan assoc list, arbitrary read/write.
+//  - real bus: 128 KiB WRAM ($7E-$7F + low mirror), LoROM/HiROM cartridge, and
+//    an MMIO scratch store ($2000-$5FFF) stubbed for readback until the PPU/DMA
+//    modules land.
 struct Mem {
-    addr: Vec<i64>
+    addr: Vec<i64> // test-mode sparse RAM
     val: Vec<i64>
+    testMode: bool
+    wram: Vec<u8> // 128 KiB; empty in test mode
+    rom: Vec<u8>
+    romMask: i64
+    mapMode: i64 // 0 = LoROM, 1 = HiROM
+    mmio: Vec<u8> // $2000-$5FFF scratch (0x4000 bytes)
 }
 
 fn memNew(): Mem {
     return Mem {
-        addr: Vec.new(), val: Vec.new()
+        addr: Vec.new(), val: Vec.new(), testMode: true,
+        wram: Vec.new(), rom: Vec.new(), romMask: 0, mapMode: 0, mmio: Vec.new()
+    }
+}
+
+fn vecZeros(n: i64): Vec<u8> {
+    var v: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < n {
+        v.push(0) i = i + 1
+    }
+    return v
+}
+
+// Real-hardware bus over a loaded cartridge. mapMode: 0 LoROM, 1 HiROM.
+fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
+    let len = rom.len
+    var mask: i64 = 1
+    while mask < len {
+        mask = mask << 1
+    }
+    mask = mask - 1 // next-pow2 minus 1; ROM offsets are wrapped by this
+    return Mem {
+        addr: Vec.new(), val: Vec.new(), testMode: false,
+        wram: vecZeros(0x20000), rom: rom, romMask: mask, mapMode: mapMode,
+        mmio: vecZeros(0x4000)
     }
 }
 
@@ -50,28 +83,103 @@ fn memReset(m: &mut Mem): void {
     m.val = Vec.new()
 }
 
-fn memRead(m: &Mem, a: i64): i64 {
-    var i: i64 = 0
-    while i < m.addr.len {
-        if m.addr[i] == a {
-            return m.val[i]
-        }
-        i = i + 1
+// LoROM: each bank maps $8000-$FFFF to a 32 KiB ROM page.
+// HiROM: each bank maps its full 64 KiB linearly from bank*0x10000.
+fn romOffset(m: &Mem, bank: i64, off: i64): i64 {
+    if m.mapMode == 1 {
+        return (((bank & 0x3F) << 16) | off) & m.romMask
     }
-    return 0 // open bus modeled as 0; unlisted reads shouldn't occur for valid tests
+    return (((bank & 0x7F) << 15) | (off & 0x7FFF)) & m.romMask
+}
+
+fn romByte(m: &Mem, bank: i64, off: i64): i64 {
+    let o = romOffset(m, bank, off)
+    if o < m.rom.len {
+        return m.rom[o]as i64
+    }
+    return 0
+}
+
+fn memRead(m: &Mem, a: i64): i64 {
+    if m.testMode {
+        var i: i64 = 0
+        while i < m.addr.len {
+            if m.addr[i] == a {
+                return m.val[i]
+            }
+            i = i + 1
+        }
+        return 0 // open bus modeled as 0; unlisted reads shouldn't occur in tests
+    }
+    let bank = (a >> 16) & 0xFF
+    let off = a & 0xFFFF
+    if bank == 0x7E {
+        return m.wram[off]as i64
+    }
+    if bank == 0x7F {
+        return m.wram[0x10000 + off]as i64
+    }
+    let b = bank & 0x7F
+    if b <= 0x3F {
+        if off < 0x2000 {
+            return m.wram[off]as i64 // low WRAM mirror
+        }
+        if off < 0x6000 {
+            return m.mmio[off - 0x2000]as i64 // MMIO stub
+        }
+        if off < 0x8000 {
+            return 0 // SRAM / unused (stub)
+        }
+        return romByte(m, bank, off)
+    }
+    return romByte(m, bank, off) // banks 40-7D / C0-FF: ROM
 }
 
 fn memWrite(m: &mut Mem, a: i64, v: i64): void {
-    var i: i64 = 0
-    while i < m.addr.len {
-        if m.addr[i] == a {
-            m.val[i] = v & 0xFF
-            return
+    if m.testMode {
+        var i: i64 = 0
+        while i < m.addr.len {
+            if m.addr[i] == a {
+                m.val[i] = v & 0xFF
+                return
+            }
+            i = i + 1
         }
-        i = i + 1
+        m.addr.push(a)
+        m.val.push(v & 0xFF)
+        return
     }
-    m.addr.push(a)
-    m.val.push(v & 0xFF)
+    let bank = (a >> 16) & 0xFF
+    let off = a & 0xFFFF
+    let bv = (v & 0xFF) as u8
+    if bank == 0x7E {
+        m.wram[off] = bv return
+    }
+    if bank == 0x7F {
+        m.wram[0x10000 + off] = bv return
+    }
+    let b = bank & 0x7F
+    if b <= 0x3F {
+        if off < 0x2000 {
+            m.wram[off] = bv return
+        }
+        if off < 0x6000 {
+            m.mmio[off - 0x2000] = bv return // MMIO stub store
+        }
+        return // SRAM/unused/ROM writes ignored
+    }
+    // ROM banks: writes ignored
+}
+
+// Power-on / reset: enter emulation mode, stack at $01FF, PC from the reset
+// vector at $00:FFFC. P = M|X|I (emulation forces the 8-bit widths).
+fn newCpuReset(m: &Mem): Cpu {
+    let lo = memRead(m, 0xFFFC)
+    let hi = memRead(m, 0xFFFD)
+    return Cpu {
+        a: 0, x: 0, y: 0, s: 0x01FF, d: 0, pc: lo | (hi << 8),
+        p: 0x34, dbr: 0, pbr: 0, e: 1
+    }
 }
 
 // --- register-width predicates (emulation forces both to 8-bit) ---
