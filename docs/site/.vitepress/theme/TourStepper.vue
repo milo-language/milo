@@ -148,6 +148,23 @@ fn main(): i32 {
     print("rect:   ", area(Shape.Rect(3.0, 4.0)))
     return 0
 }` },
+  { title: 'Say what must be true — the compiler proves it', file: 'clamp.milo', native: true,
+    desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. With no solver installed, each becomes a checked runtime assertion. With <code>z3</code>, <code>milo prove</code> discharges them at compile time and deletes the check.',
+    take: 'Gradual verification: proven conditions cost nothing at runtime, the rest fall back to runtime checks — you are never forced to hand-write a proof the way Lean or Dafny demand. When <code>prove</code> can’t discharge a condition it hands you the failing input, not a proof obligation.',
+    out: ['$ milo prove clamp.milo', '  ✓ [postcondition] clamp: proven', '', '$ milo run clamp.milo', '10'],
+    code: `fn clamp(value: i64, lo: i64, hi: i64): i64
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    if value < lo { return lo }
+    if value > hi { return hi }
+    return value
+}
+
+fn main(): i32 {
+    print(clamp(42, 0, 10))
+    return 0
+}` },
   { title: 'Errors are values, not exceptions', file: 'errors.milo',
     desc: 'Fallible functions return <code>Result</code>. The <code>?</code> operator unwraps success and returns the error early.',
     take: 'Every failure is in the type signature; <code>?</code> keeps the happy path readable.',

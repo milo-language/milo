@@ -247,12 +247,16 @@ function exprToSmtWithEnv(expr: Expr, env: Map<string, string>): string {
   return exprToSmt(expr);
 }
 
-export function generateVerificationConditions(program: Program): VerifyResult {
+// onlyFile: restrict VCs to functions declared in that absolute path (the entry
+// file). Functions with no sourceFile (single-file program, no imports) are always
+// kept. Without it, imported stdlib contracts flood the report with unmodeled-theory noise.
+export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string }): VerifyResult {
   const conditions: VerificationCondition[] = [];
   let contractCount = 0;
   let loopCount = 0;
 
   for (const fn of program.functions) {
+    if (opts?.onlyFile && fn.sourceFile && fn.sourceFile !== opts.onlyFile) continue;
     if (fn.contracts.length === 0 && !hasLoopInvariants(fn.body)) continue;
 
     const requires = fn.contracts.filter(c => c.kind === "requires");

@@ -900,8 +900,8 @@ async function main() {
     console.log("  build-lib <files...>   compile to static library (.a)");
     console.log("  emit-js <file>         emit JavaScript (playground target)");
     console.log("  fmt <file...>          format source files (-w to write in place)");
-    console.log("  verify <file>          generate SMT-LIB2 verification conditions");
-    console.log("  prove <file>           verify contracts via z3 solver");
+    console.log("  verify <file>          generate SMT-LIB2 verification conditions (--all: include imported stdlib)");
+    console.log("  prove <file>           verify contracts via z3 solver (--all: include imported stdlib)");
     console.log("  safety <file>          check safety profile compliance");
     console.log("  safety --list          list available safety profiles");
     console.log("  wcet <file>            emit OTAWA flow facts (loop bounds) for WCET analysis");
@@ -1043,7 +1043,7 @@ async function main() {
     let program = new Parser(tokens, src).parse();
     program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
-    const result = generateVerificationConditions(program);
+    const result = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: resolve(source!) });
     console.log(formatVerifyReport(result));
     return;
   }
@@ -1096,7 +1096,7 @@ async function main() {
     let program = new Parser(tokens, src).parse();
     program = resolveImports(program, sourceDir, target, source);
     new TypeChecker(warningConfig).check(program);
-    const vcs = generateVerificationConditions(program);
+    const vcs = generateVerificationConditions(program, rest.includes("--all") ? undefined : { onlyFile: resolve(source!) });
     const pr = proveWithZ3(vcs);
     console.log(formatProveReport(pr));
     if (pr.failed > 0) process.exit(1);
