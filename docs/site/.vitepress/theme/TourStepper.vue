@@ -242,14 +242,15 @@ fn main(): i32 {
     print("players: ", scores.len)
     return 0
 }` },
-  { title: 'Ownership — the compiler says no', file: 'ownership.milo', err: true,
-    desc: 'Each value has one owner. Assigning <code>a</code> to <code>b</code> <em>moves</em> it; using <code>a</code> after is a compile error. Run it — the checker rejects it.',
-    take: 'No garbage collector, no dangling pointers: the move checker rejects the program before it runs.',
-    out: ['error: use of moved variable \'a\'', '  --> ownership.milo:4:11', '', '  this value was moved on line 3 and can’t be used again'],
+  { title: 'Ownership — you choose the cost', file: 'ownership.milo', err: true,
+    desc: 'A heap value like <code>string</code> has one owner. <code>let b = a</code> <em>moves</em> it, so using <code>a</code> after is a compile error. Run it as-is — then change line 3 to <code>a.clone()</code> and run again.',
+    take: 'Small types (<code>i32</code>, <code>f64</code>) copy automatically. For heap values you pick: <code>.clone()</code> for a real copy, or <code>&a</code> to borrow and just read it. Copies are never silent, and there’s no GC cleaning up behind you.',
+    out: ['error: use of moved variable \'a\'', '  --> ownership.milo:4:11', '', '  moved on line 3; use a.clone() for a copy, or &a to borrow it'],
     code: `fn main(): i32 {
     let a = "owned string"
-    let b = a            // ownership moves: a -> b
-    print(a)             // a is gone — try deleting this line
+    let b = a            // moves a -> b   (try: let b = a.clone())
+    print(a)             // error: a was moved away
+    print(b)
     return 0
 }` },
   { title: 'Concurrency with backpressure', file: 'backpressure.milo', native: true,
@@ -512,9 +513,7 @@ onMounted(() => {
 .term { padding: 14px 16px; font-family: var(--vp-font-family-mono); font-size: 12.5px; line-height: 1.7; min-height: 120px; color: var(--con-text); }
 .idle { color: var(--c-com); }
 .ttag { font-family: var(--vp-font-family-mono); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; color: var(--c-com); margin-bottom: 9px; }
-.oline { color: #7bd88f; white-space: pre-wrap; word-break: break-word; animation: fadein .14s ease both; }
-@media (prefers-reduced-motion: reduce) { .oline { animation: none; } }
-@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+.oline { color: #7bd88f; white-space: pre-wrap; word-break: break-word; }
 .oline.err { color: #f2828a; }
 .arrow { color: var(--c-com); }
 
