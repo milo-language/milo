@@ -33,10 +33,13 @@ against `nestest.log` before any pixels.
       then `SDL_GameController` for real pads.
 - [ ] **M4 — playable**: wire SDL frontend + PPU + input; boot Super Mario Bros
       (mapper 0). Validate with blargg `ppu_vbl_nmi` + `sprite_hit_tests`.
-- [~] **M5 — APU audio** (`apu.milo`): 2× pulse, triangle, noise + frame-counter
-      sequencer/IRQ done. Nonlinear mix LUTs → i16 PCM, one-pole DC high-pass,
-      `SDL_QueueAudio` @44100Hz mono, video paced to the audio queue (~4-frame
-      latency). Contra/SMB3 audible. DMC (sampled) channel deferred.
+- [x] **M5 — APU audio** (`apu.milo`): all 5 channels — 2× pulse, triangle, noise,
+      DMC (sampled, w/ IRQ) + frame-counter sequencer/IRQ. Nonlinear mix LUTs → i16
+      PCM, one-pole DC high-pass, `SDL_QueueAudio` @44100Hz mono, video paced to the
+      audio queue (~4-frame latency). DMC memory fetch is deferred (`needsFetch`) and
+      serviced by the bus via `clockApu`. Contra/Punch-Out full audio incl. drums.
+      Note: SMB3's *title* is silent — SMB3 triggers no music engine there (game-state
+      quirk, not an APU gap); in-game music is full.
 - [ ] **M6 — mappers**: UxROM (2: Contra/Mega Man, trivial) → MMC1 (1:
       Zelda/Metroid) → battery saves (PRG-RAM → `.sav`, Zelda needs it) →
       MMC3 (4: SMB3/Kirby, needs scanline IRQ). Mappers 0+1+2+4 ≈ 70% of
