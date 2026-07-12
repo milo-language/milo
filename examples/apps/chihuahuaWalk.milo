@@ -37,47 +37,47 @@ let SPR_ROWS: i64 = 14 // even → 7 terminal rows
 // differ to make the trot. Legend: d dark-brown  b brown-shadow  t tan
 // l light-tan  w cream  k eye/nose  p pink  space transparent.
 fn frameRow(frame: i64, i: i64): string {
-    // shared upper body. Head projects up-and-right with an ear, a snout that
-    // sticks out past the body, one eye, and a black nose at the tip; curled
-    // tail on the left.
+    // shared upper body — a SOLID silhouette (no internal gaps, they read as
+    // black holes). Head bump + ear on the right, one eye, nose at the snout
+    // tip, curled tail on the left.
     if i == 0 {
-        return "                   dd     "
+        return "                 dd       "
     } else if i == 1 {
-        return "                  ddtl    "
+        return "               lttttl     "
     } else if i == 2 {
-        return "                 dttll    "
+        return "              lttttttl    "
     } else if i == 3 {
-        return "        ttttt   ttttlk    "
+        return "       tttttttttttttlk    "
     } else if i == 4 {
-        return "      tttttttt ttttl kw   "
+        return "     tttttttttttkttttl    "
     } else if i == 5 {
-        return "    dttttttttttttk   lww  "
+        return "   dtttttttttttttttll     "
     } else if i == 6 {
-        return "  ddtttttttttttttll llw   "
+        return "  ddttttttttttttttttl     "
     } else if i == 7 {
-        return "  dttttttttttttttttlww    "
+        return "  dbtttttttttttttttt      "
     } else if i == 8 {
-        return "   btttttttttttttttl      "
+        return "   btttttttttttttttb      "
     } else if i == 9 {
         return "    bbttttttttttttb       "
     } else if i == 10 {
-        return "      bbtttttttttb        "
+        return "      bbtttttttttbb       "
     }
     // legs
     if frame == 0 {
         if i == 11 {
-            return "      b  b      b  b      "
+            return "      tt  tt   tt  tt     "
         } else if i == 12 {
-            return "      b   b    b    b     "
+            return "      b    b   b    b     "
         }
-        return "      d   d    d    d     "
+        return "      d    d   d    d     "
     }
     if i == 11 {
-        return "       bb        bb       "
+        return "       tttt     tttt      "
     } else if i == 12 {
-        return "       bb        bb       "
+        return "       b  b     b  b      "
     }
-    return "      dd        dd        "
+    return "       d  d     d  d      "
 }
 
 fn setC(out: &mut [i64; 4], r: i64, g: i64, b: i64): void {
