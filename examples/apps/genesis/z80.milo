@@ -496,6 +496,9 @@ fn stepZ80(cpu: &mut Z80): bool {
     if op == 0xCB {
         return execCB(cpu)
     }
+    if op == 0xED {
+        return execED(cpu)
+    }
     if x == 1 {
         setReg(cpu, y, getReg(cpu, z)) // LD r, r'
         return true
@@ -782,6 +785,209 @@ fn execCB(cpu: &mut Z80): bool {
     }
     setReg(cpu, z, getReg(cpu, z) | (1 << y)) // SET
     return true
+}
+
+// 16-bit ADC/SBC HL,rp. S/Z from bit15, H from bit12, PV overflow, N, C, Y/X from
+// the result high byte.
+fn adcHL(cpu: &mut Z80, rp: i64) {
+    let hl = getHL(cpu)
+    let c = cpu.f & FC
+    let r = hl + rp + c
+    let res = r & 0xFFFF
+    setFlag(cpu, FS, (res & 0x8000) != 0)
+    setFlag(cpu, FZ, res == 0)
+    setFlag(cpu, FH, ((hl & 0xFFF) + (rp & 0xFFF) + c) > 0xFFF)
+    setFlag(cpu, FPV, (((~(hl ^ rp)) & (hl ^ res)) & 0x8000) != 0)
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FC, r > 0xFFFF)
+    setFlag(cpu, FY, (res & 0x2000) != 0)
+    setFlag(cpu, FX, (res & 0x0800) != 0)
+    setHL(cpu, res)
+}
+
+fn sbcHL(cpu: &mut Z80, rp: i64) {
+    let hl = getHL(cpu)
+    let c = cpu.f & FC
+    let r = hl - rp - c
+    let res = r & 0xFFFF
+    setFlag(cpu, FS, (res & 0x8000) != 0)
+    setFlag(cpu, FZ, res == 0)
+    setFlag(cpu, FH, ((hl & 0xFFF) - (rp & 0xFFF) - c) < 0)
+    setFlag(cpu, FPV, (((hl ^ rp) & (hl ^ res)) & 0x8000) != 0)
+    setFlag(cpu, FN, true)
+    setFlag(cpu, FC, r < 0)
+    setFlag(cpu, FY, (res & 0x2000) != 0)
+    setFlag(cpu, FX, (res & 0x0800) != 0)
+    setHL(cpu, res)
+}
+
+// One LDI/LDD block transfer step (dir +1 or -1).
+fn blockLd(cpu: &mut Z80, dir: i64) {
+    let v = rd(cpu, getHL(cpu))
+    wr(cpu, getDE(cpu), v)
+    setDE(cpu, (getDE(cpu) + dir) & 0xFFFF)
+    setHL(cpu, (getHL(cpu) + dir) & 0xFFFF)
+    setBC(cpu, (getBC(cpu) - 1) & 0xFFFF)
+    let n = (v + cpu.a) & 0xFF
+    setFlag(cpu, FH, false)
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FPV, getBC(cpu) != 0)
+    setFlag(cpu, FY, (n & 0x02) != 0)
+    setFlag(cpu, FX, (n & 0x08) != 0)
+}
+
+// One CPI/CPD block compare step.
+fn blockCp(cpu: &mut Z80, dir: i64) {
+    let v = rd(cpu, getHL(cpu))
+    let r = (cpu.a - v) & 0xFF
+    let hcarry = ((cpu.a & 0xF) - (v & 0xF)) < 0
+    setHL(cpu, (getHL(cpu) + dir) & 0xFFFF)
+    setBC(cpu, (getBC(cpu) - 1) & 0xFFFF)
+    setFlag(cpu, FS, (r & 0x80) != 0)
+    setFlag(cpu, FZ, r == 0)
+    setFlag(cpu, FH, hcarry)
+    setFlag(cpu, FN, true)
+    setFlag(cpu, FPV, getBC(cpu) != 0)
+    var hb: i64 = 0
+    if hcarry {
+        hb = 1
+    }
+    let n = (r - hb) & 0xFF
+    setFlag(cpu, FY, (n & 0x02) != 0)
+    setFlag(cpu, FX, (n & 0x08) != 0)
+}
+
+// ED prefix. IN/OUT (and block I/O) are deferred — Genesis maps the YM2612 into
+// memory, not Z80 ports, so the sound driver does not use them.
+fn execED(cpu: &mut Z80): bool {
+    let op = fetchOp(cpu)
+    let x = (op >> 6) & 0x3
+    let y = (op >> 3) & 0x7
+    let z = op & 0x7
+    let p = y >> 1
+    let q = y & 1
+
+    if x == 1 {
+        if z == 2 {
+            if q == 0 {
+                sbcHL(cpu, getRP(cpu, p))
+            } else {
+                adcHL(cpu, getRP(cpu, p))
+            }
+            return true
+        }
+        if z == 3 {
+            let nn = fetch16(cpu)
+            if q == 0 {
+                let v = getRP(cpu, p) // LD (nn), rp
+                wr(cpu, nn, v & 0xFF)
+                wr(cpu, nn + 1, (v >> 8) & 0xFF)
+            } else {
+                let lo = rd(cpu, nn) // LD rp, (nn)
+                let hi = rd(cpu, nn + 1)
+                setRP(cpu, p, (hi << 8) | lo)
+            }
+            return true
+        }
+        if z == 4 {
+            // NEG
+            let a = cpu.a
+            cpu.a = (0 - a) & 0xFF
+            setSZYX(cpu, cpu.a)
+            setFlag(cpu, FH, (a & 0xF) != 0)
+            setFlag(cpu, FPV, a == 0x80)
+            setFlag(cpu, FN, true)
+            setFlag(cpu, FC, a != 0)
+            return true
+        }
+        if z == 5 {
+            // RETN / RETI: pop PC, restore iff1 from iff2
+            cpu.pc = pop16(cpu)
+            cpu.iff1 = cpu.iff2
+            return true
+        }
+        if z == 6 {
+            // IM: y 0/4 -> 0, 2/6 -> 1, 3/7 -> 2 (1/5 -> 0 on this Z80)
+            if y == 2 || y == 6 {
+                cpu.im = 1
+            } else if y == 3 || y == 7 {
+                cpu.im = 2
+            } else {
+                cpu.im = 0
+            }
+            return true
+        }
+        if z == 7 {
+            if y == 0 {
+                cpu.i = cpu.a // LD I, A
+            } else if y == 1 {
+                cpu.r = cpu.a // LD R, A
+            } else if y == 2 || y == 3 {
+                // LD A, I / LD A, R
+                cpu.a = if y == 2 {
+                    cpu.i
+                } else {
+                    cpu.r
+                }
+                setFlag(cpu, FS, (cpu.a & 0x80) != 0)
+                setFlag(cpu, FZ, cpu.a == 0)
+                setFlag(cpu, FY, (cpu.a & 0x20) != 0)
+                setFlag(cpu, FX, (cpu.a & 0x08) != 0)
+                setFlag(cpu, FH, false)
+                setFlag(cpu, FN, false)
+                setFlag(cpu, FPV, cpu.iff2)
+            } else if y == 4 {
+                // RRD
+                let m = rd(cpu, getHL(cpu))
+                let newM = ((m >> 4) | ((cpu.a & 0xF) << 4)) & 0xFF
+                cpu.a = (cpu.a & 0xF0) | (m & 0xF)
+                wr(cpu, getHL(cpu), newM)
+                setSZYX(cpu, cpu.a)
+                setFlag(cpu, FPV, parityEven(cpu.a))
+                setFlag(cpu, FH, false)
+                setFlag(cpu, FN, false)
+            } else if y == 5 {
+                // RLD
+                let m = rd(cpu, getHL(cpu))
+                let newM = ((m << 4) | (cpu.a & 0xF)) & 0xFF
+                cpu.a = (cpu.a & 0xF0) | ((m >> 4) & 0xF)
+                wr(cpu, getHL(cpu), newM)
+                setSZYX(cpu, cpu.a)
+                setFlag(cpu, FPV, parityEven(cpu.a))
+                setFlag(cpu, FH, false)
+                setFlag(cpu, FN, false)
+            }
+            return true
+        }
+        // z 0/1: IN/OUT (C) — deferred
+        return false
+    }
+    if x == 2 {
+        // block ops: y 4-7 x z 0-3
+        if y >= 4 && z < 4 {
+            var dir: i64 = -1
+            if y == 4 || y == 6 {
+                dir = 1
+            }
+            if z == 0 {
+                blockLd(cpu, dir)
+                if (y == 6 || y == 7) && getBC(cpu) != 0 {
+                    cpu.pc = (cpu.pc - 2) & 0xFFFF // LDIR/LDDR repeat
+                }
+                return true
+            }
+            if z == 1 {
+                blockCp(cpu, dir)
+                if (y == 6 || y == 7) && getBC(cpu) != 0 && (cpu.f & FZ) == 0 {
+                    cpu.pc = (cpu.pc - 2) & 0xFFFF // CPIR/CPDR repeat
+                }
+                return true
+            }
+            return false // INI/OUTI family — deferred
+        }
+        return true // undefined ED in this block acts as NOP
+    }
+    return true // x 0/3: undefined ED = NOP (pc/R already advanced)
 }
 
 // One shift/rotate (CB x=0): sets S,Z,Y,X,P,H=0,N=0,C. Returns the result.
