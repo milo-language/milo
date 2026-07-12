@@ -608,6 +608,44 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
             let v = readAbsY(spc, m) spcSbc(spc, v)
         }
 
+        // ---- remaining MOV loads/stores ----
+        0xF5 => {
+            let v = readAbsX(spc, m) spc.a = v spcNZ(spc, v)
+        } // MOV A,abs+X
+        0xF6 => {
+            let v = readAbsY(spc, m) spc.a = v spcNZ(spc, v)
+        } // MOV A,abs+Y
+        0xE7 => {
+            let v = readIndDpX(spc, m) spc.a = v spcNZ(spc, v)
+        } // MOV A,[dp+X]
+        0xF7 => {
+            let v = readIndDpY(spc, m) spc.a = v spcNZ(spc, v)
+        } // MOV A,[dp]+Y
+        0xD5 => {
+            let ad = (spcFetch16(spc, m) + spc.x) & 0xFFFF spcWrite(m, ad, spc.a)
+        } // MOV abs+X,A
+        0xD6 => {
+            let ad = (spcFetch16(spc, m) + spc.y) & 0xFFFF spcWrite(m, ad, spc.a)
+        } // MOV abs+Y,A
+        0xC7 => {
+            let ptr = readDpWord(spc, m, (spcFetch(spc, m) + spc.x) & 0xFF) spcWrite(m, ptr, spc.a)
+        } // MOV [dp+X],A
+        0xD7 => {
+            let ptr = readDpWord(spc, m, spcFetch(spc, m)) spcWrite(m, (ptr + spc.y) & 0xFFFF, spc.a)
+        } // MOV [dp]+Y,A
+        0xF9 => {
+            let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.y) & 0xFF)) spc.x = v spcNZ(spc, v)
+        } // MOV X,dp+Y
+        0xFB => {
+            let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)) spc.y = v spcNZ(spc, v)
+        } // MOV Y,dp+X
+        0xDB => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) spcWrite(m, ad, spc.y)
+        } // MOV dp+X,Y
+        0xD9 => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.y) & 0xFF) spcWrite(m, ad, spc.x)
+        } // MOV dp+Y,X
+
         // ---- carry <-> memory bit (operand: low 13 = addr, high 3 = bit) ----
         0x0A => {
             let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) || (b != 0))
