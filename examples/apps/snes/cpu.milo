@@ -347,6 +347,137 @@ fn ldaFrom(cpu: &mut Cpu, m: &Mem, addr: i64, bank0wrap: bool): void {
     }
 }
 
+// --- generic operand readers + result writers at register width ---
+fn readMval(cpu: &Cpu, m: &Mem, addr: i64, bank0wrap: bool): i64 {
+    if m8(cpu) {
+        return memRead(m, addr)
+    }
+    return read16w(m, addr, bank0wrap)
+}
+
+fn readXval(cpu: &Cpu, m: &Mem, addr: i64, bank0wrap: bool): i64 {
+    if x8(cpu) {
+        return memRead(m, addr)
+    }
+    return read16w(m, addr, bank0wrap)
+}
+
+fn immM(cpu: &mut Cpu, m: &Mem): i64 {
+    if m8(cpu) {
+        return fetch8(cpu, m)
+    }
+    return fetch16(cpu, m)
+}
+
+fn immX(cpu: &mut Cpu, m: &Mem): i64 {
+    if x8(cpu) {
+        return fetch8(cpu, m)
+    }
+    return fetch16(cpu, m)
+}
+
+// Write a result into A at accumulator width (high byte preserved when 8-bit).
+fn setA(cpu: &mut Cpu, r: i64): void {
+    if m8(cpu) {
+        cpu.a = (cpu.a & 0xFF00) | (r & 0xFF) setNZ8(cpu, r)
+    } else {
+        cpu.a = r & 0xFFFF setNZ16(cpu, r)
+    }
+}
+
+fn setXreg(cpu: &mut Cpu, r: i64): void {
+    if x8(cpu) {
+        cpu.x = r & 0xFF setNZ8(cpu, r)
+    } else {
+        cpu.x = r & 0xFFFF setNZ16(cpu, r)
+    }
+}
+
+fn setYreg(cpu: &mut Cpu, r: i64): void {
+    if x8(cpu) {
+        cpu.y = r & 0xFF setNZ8(cpu, r)
+    } else {
+        cpu.y = r & 0xFFFF setNZ16(cpu, r)
+    }
+}
+
+// Compare reg vs value: C if reg>=v, N/Z from the (masked) difference.
+fn compareVals(cpu: &mut Cpu, reg: i64, v: i64, wide: bool): void {
+    let mask: i64 = if wide {
+        0xFFFF
+    } else {
+        0xFF
+    }
+    let signbit: i64 = if wide {
+        0x8000
+    } else {
+        0x80
+    }
+    let a = reg & mask
+    let b = v & mask
+    setBit(cpu, FC, a >= b)
+    let r = (a - b) & mask
+    setBit(cpu, FZ, r == 0)
+    setBit(cpu, FN, (r & signbit) != 0)
+}
+
+// --- op-from-resolved-address helpers (reuse for every addressing mode) ---
+fn oraFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap) setA(cpu, cpu.a | v)
+}
+
+fn andFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap) setA(cpu, cpu.a & v)
+}
+
+fn eorFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap) setA(cpu, cpu.a ^ v)
+}
+
+fn cmpFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readMval(cpu, m, addr, wrap) compareVals(cpu, cpu.a, v,!m8(cpu))
+}
+
+fn cpxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readXval(cpu, m, addr, wrap) compareVals(cpu, cpu.x, v,!x8(cpu))
+}
+
+fn cpyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readXval(cpu, m, addr, wrap) compareVals(cpu, cpu.y, v,!x8(cpu))
+}
+
+fn ldxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readXval(cpu, m, addr, wrap) setXreg(cpu, v)
+}
+
+fn ldyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
+    let v = readXval(cpu, m, addr, wrap) setYreg(cpu, v)
+}
+
+fn stxTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+    if x8(cpu) {
+        memWrite(m, addr, cpu.x & 0xFF)
+    } else {
+        write16w(m, addr, cpu.x, wrap)
+    }
+}
+
+fn styTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+    if x8(cpu) {
+        memWrite(m, addr, cpu.y & 0xFF)
+    } else {
+        write16w(m, addr, cpu.y, wrap)
+    }
+}
+
+fn stzTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
+    if m8(cpu) {
+        memWrite(m, addr, 0)
+    } else {
+        write16w(m, addr, 0, wrap)
+    }
+}
+
 // Execute one instruction. Register/flag/transfer/immediate + stack push/pull
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
@@ -653,6 +784,260 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         }
         0x93 => {
             let a = aSrY(cpu, m) staTo(cpu, m, a, false)
+        }
+
+        // ---- ORA ----
+        0x09 => {
+            let v = immM(cpu, m) setA(cpu, cpu.a | v)
+        }
+        0x05 => {
+            let a = aDp(cpu, m) oraFrom(cpu, m, a, true)
+        }
+        0x15 => {
+            let a = aDpX(cpu, m) oraFrom(cpu, m, a, true)
+        }
+        0x0D => {
+            let a = aAbs(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x1D => {
+            let a = aAbsX(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x19 => {
+            let a = aAbsY(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x0F => {
+            let a = aLong(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x1F => {
+            let a = aLongX(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x01 => {
+            let a = aDpIndX(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x11 => {
+            let a = aDpIndY(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x07 => {
+            let a = aDpLong(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x17 => {
+            let a = aDpLongY(cpu, m) oraFrom(cpu, m, a, false)
+        }
+        0x03 => {
+            let a = aSr(cpu, m) oraFrom(cpu, m, a, true)
+        }
+        0x13 => {
+            let a = aSrY(cpu, m) oraFrom(cpu, m, a, false)
+        }
+
+        // ---- AND ----
+        0x29 => {
+            let v = immM(cpu, m) setA(cpu, cpu.a & v)
+        }
+        0x25 => {
+            let a = aDp(cpu, m) andFrom(cpu, m, a, true)
+        }
+        0x35 => {
+            let a = aDpX(cpu, m) andFrom(cpu, m, a, true)
+        }
+        0x2D => {
+            let a = aAbs(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x3D => {
+            let a = aAbsX(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x39 => {
+            let a = aAbsY(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x2F => {
+            let a = aLong(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x3F => {
+            let a = aLongX(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x21 => {
+            let a = aDpIndX(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x31 => {
+            let a = aDpIndY(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x27 => {
+            let a = aDpLong(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x37 => {
+            let a = aDpLongY(cpu, m) andFrom(cpu, m, a, false)
+        }
+        0x23 => {
+            let a = aSr(cpu, m) andFrom(cpu, m, a, true)
+        }
+        0x33 => {
+            let a = aSrY(cpu, m) andFrom(cpu, m, a, false)
+        }
+
+        // ---- EOR ----
+        0x49 => {
+            let v = immM(cpu, m) setA(cpu, cpu.a ^ v)
+        }
+        0x45 => {
+            let a = aDp(cpu, m) eorFrom(cpu, m, a, true)
+        }
+        0x55 => {
+            let a = aDpX(cpu, m) eorFrom(cpu, m, a, true)
+        }
+        0x4D => {
+            let a = aAbs(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x5D => {
+            let a = aAbsX(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x59 => {
+            let a = aAbsY(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x4F => {
+            let a = aLong(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x5F => {
+            let a = aLongX(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x41 => {
+            let a = aDpIndX(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x51 => {
+            let a = aDpIndY(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x47 => {
+            let a = aDpLong(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x57 => {
+            let a = aDpLongY(cpu, m) eorFrom(cpu, m, a, false)
+        }
+        0x43 => {
+            let a = aSr(cpu, m) eorFrom(cpu, m, a, true)
+        }
+        0x53 => {
+            let a = aSrY(cpu, m) eorFrom(cpu, m, a, false)
+        }
+
+        // ---- CMP ----
+        0xC9 => {
+            let v = immM(cpu, m) compareVals(cpu, cpu.a, v,!m8(cpu))
+        }
+        0xC5 => {
+            let a = aDp(cpu, m) cmpFrom(cpu, m, a, true)
+        }
+        0xD5 => {
+            let a = aDpX(cpu, m) cmpFrom(cpu, m, a, true)
+        }
+        0xCD => {
+            let a = aAbs(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xDD => {
+            let a = aAbsX(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xD9 => {
+            let a = aAbsY(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xCF => {
+            let a = aLong(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xDF => {
+            let a = aLongX(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xC1 => {
+            let a = aDpIndX(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xD1 => {
+            let a = aDpIndY(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xC7 => {
+            let a = aDpLong(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xD7 => {
+            let a = aDpLongY(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+        0xC3 => {
+            let a = aSr(cpu, m) cmpFrom(cpu, m, a, true)
+        }
+        0xD3 => {
+            let a = aSrY(cpu, m) cmpFrom(cpu, m, a, false)
+        }
+
+        // ---- CPX / CPY ----
+        0xE0 => {
+            let v = immX(cpu, m) compareVals(cpu, cpu.x, v,!x8(cpu))
+        }
+        0xE4 => {
+            let a = aDp(cpu, m) cpxFrom(cpu, m, a, true)
+        }
+        0xEC => {
+            let a = aAbs(cpu, m) cpxFrom(cpu, m, a, false)
+        }
+        0xC0 => {
+            let v = immX(cpu, m) compareVals(cpu, cpu.y, v,!x8(cpu))
+        }
+        0xC4 => {
+            let a = aDp(cpu, m) cpyFrom(cpu, m, a, true)
+        }
+        0xCC => {
+            let a = aAbs(cpu, m) cpyFrom(cpu, m, a, false)
+        }
+
+        // ---- LDX / LDY (immediate A2/A0 handled above) ----
+        0xA6 => {
+            let a = aDp(cpu, m) ldxFrom(cpu, m, a, true)
+        }
+        0xB6 => {
+            let a = aDpY(cpu, m) ldxFrom(cpu, m, a, true)
+        }
+        0xAE => {
+            let a = aAbs(cpu, m) ldxFrom(cpu, m, a, false)
+        }
+        0xBE => {
+            let a = aAbsY(cpu, m) ldxFrom(cpu, m, a, false)
+        }
+        0xA4 => {
+            let a = aDp(cpu, m) ldyFrom(cpu, m, a, true)
+        }
+        0xB4 => {
+            let a = aDpX(cpu, m) ldyFrom(cpu, m, a, true)
+        }
+        0xAC => {
+            let a = aAbs(cpu, m) ldyFrom(cpu, m, a, false)
+        }
+        0xBC => {
+            let a = aAbsX(cpu, m) ldyFrom(cpu, m, a, false)
+        }
+
+        // ---- STX / STY / STZ ----
+        0x86 => {
+            let a = aDp(cpu, m) stxTo(cpu, m, a, true)
+        }
+        0x96 => {
+            let a = aDpY(cpu, m) stxTo(cpu, m, a, true)
+        }
+        0x8E => {
+            let a = aAbs(cpu, m) stxTo(cpu, m, a, false)
+        }
+        0x84 => {
+            let a = aDp(cpu, m) styTo(cpu, m, a, true)
+        }
+        0x94 => {
+            let a = aDpX(cpu, m) styTo(cpu, m, a, true)
+        }
+        0x8C => {
+            let a = aAbs(cpu, m) styTo(cpu, m, a, false)
+        }
+        0x64 => {
+            let a = aDp(cpu, m) stzTo(cpu, m, a, true)
+        }
+        0x74 => {
+            let a = aDpX(cpu, m) stzTo(cpu, m, a, true)
+        }
+        0x9C => {
+            let a = aAbs(cpu, m) stzTo(cpu, m, a, false)
+        }
+        0x9E => {
+            let a = aAbsX(cpu, m) stzTo(cpu, m, a, false)
         }
 
         // ---- stack push/pull ----
