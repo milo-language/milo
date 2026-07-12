@@ -608,6 +608,40 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
             let v = readAbsY(spc, m) spcSbc(spc, v)
         }
 
+        // ---- carry <-> memory bit (operand: low 13 = addr, high 3 = bit) ----
+        0x0A => {
+            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) || (b != 0))
+        } // OR1 C,m.b
+        0x2A => {
+            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) || (b == 0))
+        } // OR1 C,/m.b
+        0x4A => {
+            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) && (b != 0))
+        } // AND1 C,m.b
+        0x6A => {
+            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) && (b == 0))
+        } // AND1 C,/m.b
+        0x8A => {
+            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) != (b != 0))
+        } // EOR1 C,m.b
+        0xAA => {
+            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, b != 0)
+        } // MOV1 C,m.b
+        0xCA => { // MOV1 m.b,C
+            let mb = spcFetch16(spc, m) let ad = mb & 0x1FFF let bit = (mb >> 13) & 7
+            var v = spcRead(m, ad)
+            if (spc.psw & PC_) != 0 {
+                v = v | (1 << bit)
+            } else {
+                v = v & (~(1 << bit))
+            }
+            spcWrite(m, ad, v)
+        }
+        0xEA => { // NOT1 m.b
+            let mb = spcFetch16(spc, m) let ad = mb & 0x1FFF let bit = (mb >> 13) & 7
+            spcWrite(m, ad, spcRead(m, ad) ^ (1 << bit))
+        }
+
         // ---- TSET1 / TCLR1 !abs (flags from A - M) ----
         0x0E => {
             let ad = spcFetch16(spc, m) let v = spcRead(m, ad) spcNZ(spc, (spc.a - v) & 0xFF) spcWrite(m, ad, v | spc.a)
