@@ -1,0 +1,204 @@
+// Milo Genesis / Mega Drive emulator — live SDL2 frontend.
+// Loads a cart, runs the 68000 + VDP, streams a per-frame RGBA framebuffer to an
+// SDL texture, and maps the keyboard to controller 1. Same SDL pipeline as the
+// NES frontend (examples/apps/nes/nes.milo).
+//
+// Build (SDL2 via homebrew):
+//   milo build examples/apps/genesis/genesis.milo -o /tmp/genesis -- -L/opt/homebrew/lib -lSDL2
+//   /tmp/genesis roms/games/sonic1.md
+// Keys: arrows = D-pad, Z=A, X=B, C=C, Enter=Start, Esc=quit.
+
+from "./cart68k" import {
+    Cart, loadCart
+}
+from "./m68k" import {
+    M68k, Mem, newCpu, newMem, step, deliverInterrupt
+}
+from "./render" import {
+    renderIndexed, frameWidth, frameHeight, cramR, cramG, cramB
+}
+from "std/args" import {
+    args
+}
+
+extern fn SDL_Init(flags: u32): i32
+
+extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
+
+extern fn SDL_CreateRenderer(win: *u8, index: i32, flags: u32): *u8
+
+extern fn SDL_CreateTexture(ren: *u8, format: u32, access: i32, w: i32, h: i32): *u8
+
+extern fn SDL_UpdateTexture(tex: *u8, rect: *u8, pixels: *u8, pitch: i32): i32
+
+extern fn SDL_RenderClear(ren: *u8): i32
+
+extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
+
+extern fn SDL_RenderPresent(ren: *u8): void
+
+extern fn SDL_PollEvent(event: *u8): i32
+
+extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
+
+extern fn SDL_Delay(ms: u32): void
+
+extern fn SDL_Quit(): void
+
+let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
+let SDL_WINDOW_SHOWN: u32 = 0x4
+let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
+let SDL_TEXTUREACCESS_STREAMING: i32 = 1
+let SDL_QUIT: u32 = 0x100
+
+fn loadRom(m: &mut Mem, cart: &Cart) {
+    var i: i64 = 0
+    while i < cart.rom.len && i < 0x400000 {
+        m.ram[i] = cart.rom[i]
+        i = i + 1
+    }
+}
+
+// Run the 68000 for one video frame (262 scanlines), delivering the VBlank
+// interrupt at the start of vblank when enabled.
+fn runFrame(cpu: &mut M68k, m: &mut Mem) {
+    var line: i64 = 0
+    while line < 262 {
+        m.vdpLine = line
+        // ~130 instructions per scanline (synthetic pacing)
+        var k: i64 = 0
+        while k < 130 {
+            if !cpu.halted {
+                step(cpu, m)
+            }
+            k = k + 1
+        }
+        if line == 224 && (m.vdpRegs[1] & 0x20) != 0 {
+            deliverInterrupt(cpu, m, 6)
+        }
+        line = line + 1
+    }
+}
+
+// Convert the CRAM-index framebuffer to an RGBA byte buffer for SDL.
+fn blit(m: &Mem, fb: &Vec<i64>, rgba: &mut Vec<u8>) {
+    var i: i64 = 0
+    while i < fb.len {
+        let e = m.cram[fb[i] & 0x3F]
+        rgba[i * 4] = cramR(e) as u8
+        rgba[i * 4 + 1] = cramG(e) as u8
+        rgba[i * 4 + 2] = cramB(e) as u8
+        rgba[i * 4 + 3] = 255
+        i = i + 1
+    }
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: genesis <rom>")
+        return 1
+    }
+    var cart = Cart {
+        rom: Vec.new(), name: "", romEnd: 0
+    }
+    match loadCart(argv[1]) {
+        Result.Ok(c) => {
+            cart = c
+        }
+        Result.Err(e) => {
+            print("load failed: " + e)
+            return 1
+        }
+    }
+    print("ROM: " + cart.name)
+
+    var m = newMem()
+    m.genesis = true
+    loadRom(m, cart)
+    let sp = ((m.ram[0]as i64) << 24) | ((m.ram[1]as i64) << 16) | ((m.ram[2]as i64) << 8) | (m.ram[3]as i64)
+    let pc = ((m.ram[4]as i64) << 24) | ((m.ram[5]as i64) << 16) | ((m.ram[6]as i64) << 8) | (m.ram[7]as i64)
+    var cpu = newCpu()
+    cpu.a[7] = sp & 0xFFFFFFFF
+    cpu.pc = pc & 0xFFFFFFFF
+    cpu.sr = 0x2700
+
+    let w = frameWidth(m)
+    let h = frameHeight(m)
+    var rgba: Vec<u8> = Vec.new()
+    var t: i64 = 0
+    while t < w * h * 4 {
+        rgba.push(0)
+        t = t + 1
+    }
+
+    if SDL_Init(SDL_INIT_VIDEO) != 0 {
+        print("SDL_Init failed")
+        return 1
+    }
+    unsafe {
+        let title = "Milo Genesis"
+        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+        (w * 3) as i32, (h * 3) as i32, SDL_WINDOW_SHOWN)
+        let ren = SDL_CreateRenderer(win, -1, 0)
+        let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w as i32, h as i32)
+        if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
+            print("SDL setup failed")
+            return 2
+        }
+
+        var ev: [u8; 64] = [0; 64]
+        var quit = false
+        while !quit {
+            runFrame(cpu, m)
+            let fb = renderIndexed(m)
+            blit(m, fb, rgba)
+            SDL_UpdateTexture(tex, 0 as *u8, (&rgba[0]) as *u8, (w * 4) as i32)
+            SDL_RenderClear(ren)
+            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
+            SDL_RenderPresent(ren)
+
+            while SDL_PollEvent((&ev[0]) as *u8) != 0 {
+                let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
+                if evType == SDL_QUIT {
+                    quit = true
+                }
+            }
+            // Live keyboard -> controller-1 bitmask (bit0 Up..7 Start).
+            let ks = SDL_GetKeyboardState(0 as *i32)
+            var p: i64 = 0
+            if ks[82] != 0 {
+                p = p | 0x01 // Up
+            }
+            if ks[81] != 0 {
+                p = p | 0x02 // Down
+            }
+            if ks[80] != 0 {
+                p = p | 0x04 // Left
+            }
+            if ks[79] != 0 {
+                p = p | 0x08 // Right
+            }
+            if ks[29] != 0 {
+                p = p | 0x10 // Z -> A
+            }
+            if ks[27] != 0 {
+                p = p | 0x20 // X -> B
+            }
+            if ks[6] != 0 {
+                p = p | 0x40 // C -> C
+            }
+            if ks[40] != 0 {
+                p = p | 0x80 // Enter -> Start
+            }
+            m.pad1 = p
+            if ks[41] != 0 {
+                quit = true // Esc
+            }
+            SDL_Delay(16)
+        }
+        SDL_Quit()
+    }
+    return 0
+}

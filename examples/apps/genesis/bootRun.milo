@@ -19,6 +19,9 @@ from "./m68k" import {
 from "std/fs" import {
     writeFile
 }
+from "./render" import {
+    renderIndexed, frameWidth, frameHeight, cramR, cramG, cramB
+}
 
 fn loadRom(m: &mut Mem, cart: &Cart) {
     var i: i64 = 0
@@ -119,100 +122,12 @@ fn main(): i32 {
     return 0
 }
 
-// Read a byte from VRAM (only as much as was written is stored).
-fn vram8(m: &Mem, addr: i64): i64 {
-    let a = addr & 0xFFFF
-    if a < m.vram.len {
-        return m.vram[a]as i64
-    }
-    return 0
-}
-
-// Genesis 9-bit CRAM entry (----bbb-ggg-rrr-) to an 8-bit RGB triple.
-fn cramR(e: i64): i64 {
-    return ((e >> 1) & 0x7) * 36
-}
-
-fn cramG(e: i64): i64 {
-    return ((e >> 5) & 0x7) * 36
-}
-
-fn cramB(e: i64): i64 {
-    return ((e >> 9) & 0x7) * 36
-}
-
-// Sample one background plane at screen pixel (px,py). Returns the 6-bit CRAM
-// index, or -1 if the pixel is transparent (tile colour 0).
-fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
-    let cellX = (px / 8) % pw
-    let cellY = (py / 8) % ph
-    let entryAddr = base + (cellY * pw + cellX) * 2
-    let entry = (vram8(m, entryAddr) << 8) | vram8(m, entryAddr + 1)
-    let tileIdx = entry & 0x7FF
-    let palLine = (entry >> 13) & 0x3
-    let hflip = (entry & 0x0800) != 0
-    let vflip = (entry & 0x1000) != 0
-    var fx = px % 8
-    var fy = py % 8
-    if hflip {
-        fx = 7 - fx
-    }
-    if vflip {
-        fy = 7 - fy
-    }
-    // 8x8 4bpp tile: 32 bytes, row = 4 bytes, each byte two pixels (hi nibble first)
-    let rowAddr = tileIdx * 32 + fy * 4 + (fx / 2)
-    let byte = vram8(m, rowAddr)
-    var color: i64 = 0
-    if (fx & 1) == 0 {
-        color = (byte >> 4) & 0xF
-    } else {
-        color = byte & 0xF
-    }
-    if color == 0 {
-        return -1
-    }
-    return palLine * 16 + color
-}
-
-// Render background planes B (behind) then A (front) to a PPM. Scroll, window,
-// sprites, and priority are not applied yet — this is the first raw look.
+// Render the current frame to a binary PPM via the shared renderer.
 fn renderPpm(m: &Mem, path: &string) {
-    let width: i64 = if (m.vdpRegs[12] & 0x1) != 0 {
-        320
-    } else {
-        256
-    }
-    let height: i64 = 224
-    let planeW = planeCells(m.vdpRegs[16] & 0x3)
-    let planeH = planeCells((m.vdpRegs[16] >> 4) & 0x3)
-    let baseA = (m.vdpRegs[2] & 0x38) << 10
-    let baseB = (m.vdpRegs[4] & 0x7) << 13
-    let backdrop = m.vdpRegs[7] & 0x3F
-
-    // framebuffer of CRAM indices so sprites can composite over the planes
-    var fb: Vec<i64> = Vec.new()
-    var y: i64 = 0
-    while y < height {
-        var x: i64 = 0
-        while x < width {
-            var idx = samplePlane(m, baseA, planeW, planeH, x, y)
-            if idx < 0 {
-                idx = samplePlane(m, baseB, planeW, planeH, x, y)
-            }
-            if idx < 0 {
-                idx = backdrop
-            }
-            fb.push(idx & 0x3F)
-            x = x + 1
-        }
-        y = y + 1
-    }
-
-    drawSprites(m, fb, width, height)
-
-    var out = "P6\n"
-    out = out + itoa(width) + " " + itoa(height) + "\n255\n"
+    let width = frameWidth(m)
+    let height = frameHeight(m)
+    let fb = renderIndexed(m)
+    var out = "P6\n" + itoa(width) + " " + itoa(height) + "\n255\n"
     var i: i64 = 0
     while i < fb.len {
         let e = m.cram[fb[i] & 0x3F]
@@ -228,100 +143,6 @@ fn renderPpm(m: &Mem, path: &string) {
             print("ppm write failed")
         }
     }
-}
-
-// Walk the sprite attribute table via its link list, drawing each sprite's cells
-// (tiles are column-major within a sprite). Colour 0 is transparent.
-fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
-    let satBase = (m.vdpRegs[5] & 0x7F) << 9
-    var sprIdx: i64 = 0
-    var guard: i64 = 0
-    while guard < 80 {
-        let o = satBase + sprIdx * 8
-        let yraw = ((vram8(m, o) << 8) | vram8(m, o + 1)) & 0x3FF
-        let sizeByte = vram8(m, o + 2)
-        let hs = ((sizeByte >> 2) & 0x3) + 1
-        let vs = (sizeByte & 0x3) + 1
-        let link = vram8(m, o + 3) & 0x7F
-        let attr = (vram8(m, o + 4) << 8) | vram8(m, o + 5)
-        let xraw = ((vram8(m, o + 6) << 8) | vram8(m, o + 7)) & 0x1FF
-        let tileBase = attr & 0x7FF
-        let pal = (attr >> 13) & 0x3
-        let hflip = (attr & 0x0800) != 0
-        let vflip = (attr & 0x1000) != 0
-        let sx = xraw - 128
-        let sy = yraw - 128
-
-        var col: i64 = 0
-        while col < hs {
-            var row: i64 = 0
-            while row < vs {
-                let tile = tileBase + col * vs + row
-                let destCol = if hflip {
-                    hs - 1 - col
-                } else {
-                    col
-                }
-                let destRow = if vflip {
-                    vs - 1 - row
-                } else {
-                    row
-                }
-                drawSprTile(m, fb, width, height, tile, sx + destCol * 8, sy + destRow * 8, pal, hflip, vflip)
-                row = row + 1
-            }
-            col = col + 1
-        }
-
-        if link == 0 {
-            return
-        }
-        sprIdx = link
-        guard = guard + 1
-    }
-}
-
-fn drawSprTile(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64, tile: i64, ox: i64, oy: i64, pal: i64, hflip: bool, vflip: bool) {
-    var py: i64 = 0
-    while py < 8 {
-        var px: i64 = 0
-        while px < 8 {
-            let dx = ox + px
-            let dy = oy + py
-            if dx >= 0 && dx < width && dy >= 0 && dy < height {
-                var fx = px
-                var fy = py
-                if hflip {
-                    fx = 7 - px
-                }
-                if vflip {
-                    fy = 7 - py
-                }
-                let byte = vram8(m, tile * 32 + fy * 4 + (fx / 2))
-                var color: i64 = 0
-                if (fx & 1) == 0 {
-                    color = (byte >> 4) & 0xF
-                } else {
-                    color = byte & 0xF
-                }
-                if color != 0 {
-                    fb[dy * width + dx] = pal * 16 + color
-                }
-            }
-            px = px + 1
-        }
-        py = py + 1
-    }
-}
-
-fn planeCells(code: i64): i64 {
-    if code == 0 {
-        return 32
-    }
-    if code == 1 {
-        return 64
-    }
-    return 128 // code 3 (2 is invalid, treat as 128)
 }
 
 fn printVdpRegs(m: &Mem) {
