@@ -30,6 +30,12 @@ many games run without a live Z80, some need it).
 
 ### Status (in progress)
 
+**🎉🎉🎉 GREEN HILL ZONE renders** — demo auto-play shows GHZ Act 1: HUD
+(SCORE/TIME/RINGS/lives), palm trees, checkered ground, water, rings, Sonic
+sprite, with hscroll/vscroll scrolling. Real Sonic gameplay rendering. Reached
+via `/tmp/bootrun roms/games/sonic1.md 40000000` (auto-demo after title).
+Renderer now: planes A/B + per-line hscroll + full vscroll + sprites.
+
 **🎉🎉 Sonic renders the full TITLE SCREEN** — "SONIC THE HEDGEHOG" winged-star
 logo + background + "©SEGA 1991", sprites composited over planes. ~352 frames in.
 Run: `milo build examples/apps/genesis/bootRun.milo -o /tmp/bootrun` then

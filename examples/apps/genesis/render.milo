@@ -49,8 +49,45 @@ fn vram8(m: &Mem, addr: i64): i64 {
     return 0
 }
 
-// Sample one background plane at screen pixel (px,py). Returns the 6-bit CRAM
-// index, or -1 if transparent (tile colour 0).
+// Wrap a (possibly negative) plane coordinate into [0, span).
+fn wrapCoord(v: i64, span: i64): i64 {
+    let r = v % span
+    if r < 0 {
+        return r + span
+    }
+    return r
+}
+
+// Horizontal scroll for plane P (0=A, 1=B) on scanline y, per the HSCROLL table in
+// VRAM (reg13). Modes (reg11 bits 1-0): 00 full-screen, 10 per-8px-cell, 11 per-line.
+fn hscrollFor(m: &Mem, y: i64, planeB: bool): i64 {
+    let hbase = (m.vdpRegs[13] & 0x3F) << 10
+    let mode = m.vdpRegs[11] & 0x3
+    var row: i64 = 0
+    if mode == 3 {
+        row = y // per line
+    } else if mode == 2 {
+        row = y & ~0x7 // per cell (8 lines)
+    }
+    let planeOff: i64 = if planeB {
+        2
+    } else {
+        0
+    }
+    let off = hbase + row * 4 + planeOff
+    return (vram8(m, off) << 8) | vram8(m, off + 1)
+}
+
+// Vertical scroll for plane P from VSRAM (full-screen mode: entry 0=A, 1=B).
+fn vscrollFor(m: &Mem, planeB: bool): i64 {
+    if planeB {
+        return m.vsram[1]
+    }
+    return m.vsram[0]
+}
+
+// Sample one background plane at absolute plane pixel (px,py). Returns the 6-bit
+// CRAM index, or -1 if transparent (tile colour 0).
 fn samplePlane(m: &Mem, base: i64, pw: i64, ph: i64, px: i64, py: i64): i64 {
     let cellX = (px / 8) % pw
     let cellY = (py / 8) % ph
@@ -91,14 +128,23 @@ fn renderIndexed(m: &Mem): Vec<i64> {
     let baseB = (m.vdpRegs[4] & 0x7) << 13
     let backdrop = m.vdpRegs[7] & 0x3F
 
+    let spanAx = planeW * 8
+    let spanAy = planeH * 8
     var fb: Vec<i64> = Vec.new()
     var y: i64 = 0
     while y < height {
+        // Scroll is constant across a scanline (per-line hscroll, full vscroll).
+        let hA = hscrollFor(m, y, false)
+        let hB = hscrollFor(m, y, true)
+        let vA = vscrollFor(m, false)
+        let vB = vscrollFor(m, true)
+        let pyA = wrapCoord(y + vA, spanAy)
+        let pyB = wrapCoord(y + vB, spanAy)
         var x: i64 = 0
         while x < width {
-            var idx = samplePlane(m, baseA, planeW, planeH, x, y)
+            var idx = samplePlane(m, baseA, planeW, planeH, wrapCoord(x - hA, spanAx), pyA)
             if idx < 0 {
-                idx = samplePlane(m, baseB, planeW, planeH, x, y)
+                idx = samplePlane(m, baseB, planeW, planeH, wrapCoord(x - hB, spanAx), pyB)
             }
             if idx < 0 {
                 idx = backdrop
