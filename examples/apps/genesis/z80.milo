@@ -493,6 +493,9 @@ fn stepZ80(cpu: &mut Z80): bool {
         cpu.halted = true // HALT
         return true
     }
+    if op == 0xCB {
+        return execCB(cpu)
+    }
     if x == 1 {
         setReg(cpu, y, getReg(cpu, z)) // LD r, r'
         return true
@@ -739,4 +742,102 @@ fn signExt8(v: i64): i64 {
         return v - 256
     }
     return v
+}
+
+// CB prefix: rotates/shifts (x=0), BIT (x=1), RES (x=2), SET (x=3) on reg z.
+fn execCB(cpu: &mut Z80): bool {
+    let op = fetchOp(cpu) // the CB byte already bumped R; the operand op bumps again
+    let x = (op >> 6) & 0x3
+    let y = (op >> 3) & 0x7
+    let z = op & 0x7
+
+    if x == 0 {
+        let v = getReg(cpu, z)
+        let res = shiftOp(cpu, y, v)
+        setReg(cpu, z, res)
+        return true
+    }
+    if x == 1 {
+        // BIT y, r
+        let v = getReg(cpu, z)
+        let bitset = ((v >> y) & 1) != 0
+        setFlag(cpu, FZ,!bitset)
+        setFlag(cpu, FPV,!bitset)
+        setFlag(cpu, FH, true)
+        setFlag(cpu, FN, false)
+        setFlag(cpu, FS, y == 7 && bitset)
+        // undocumented X/Y: from the operand, except (HL) uses WZ high byte
+        if z == 6 {
+            setFlag(cpu, FY, ((cpu.wz >> 8) & 0x20) != 0)
+            setFlag(cpu, FX, ((cpu.wz >> 8) & 0x08) != 0)
+        } else {
+            setFlag(cpu, FY, (v & 0x20) != 0)
+            setFlag(cpu, FX, (v & 0x08) != 0)
+        }
+        return true
+    }
+    if x == 2 {
+        setReg(cpu, z, getReg(cpu, z) & ~(1 << y)) // RES
+        return true
+    }
+    setReg(cpu, z, getReg(cpu, z) | (1 << y)) // SET
+    return true
+}
+
+// One shift/rotate (CB x=0): sets S,Z,Y,X,P,H=0,N=0,C. Returns the result.
+fn shiftOp(cpu: &mut Z80, kind: i64, v: i64): i64 {
+    let oldC = (cpu.f & FC) != 0
+    var res: i64 = 0
+    var carry = false
+    if kind == 0 {
+        carry = (v & 0x80) != 0
+        res = ((v << 1) | (if carry {
+            1
+        } else {
+            0
+        }
+        )) & 0xFF // RLC
+    } else if kind == 1 {
+        carry = (v & 0x01) != 0
+        res = ((v >> 1) | (if carry {
+            0x80
+        } else {
+            0
+        }
+        )) & 0xFF // RRC
+    } else if kind == 2 {
+        carry = (v & 0x80) != 0
+        res = ((v << 1) | (if oldC {
+            1
+        } else {
+            0
+        }
+        )) & 0xFF // RL
+    } else if kind == 3 {
+        carry = (v & 0x01) != 0
+        res = ((v >> 1) | (if oldC {
+            0x80
+        } else {
+            0
+        }
+        )) & 0xFF // RR
+    } else if kind == 4 {
+        carry = (v & 0x80) != 0
+        res = (v << 1) & 0xFF // SLA
+    } else if kind == 5 {
+        carry = (v & 0x01) != 0
+        res = ((v >> 1) | (v & 0x80)) & 0xFF // SRA
+    } else if kind == 6 {
+        carry = (v & 0x80) != 0
+        res = ((v << 1) | 1) & 0xFF // SLL (undocumented)
+    } else {
+        carry = (v & 0x01) != 0
+        res = (v >> 1) & 0xFF // SRL
+    }
+    setSZYX(cpu, res)
+    setFlag(cpu, FPV, parityEven(res))
+    setFlag(cpu, FH, false)
+    setFlag(cpu, FN, false)
+    setFlag(cpu, FC, carry)
+    return res
 }
