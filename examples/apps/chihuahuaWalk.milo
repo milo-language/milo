@@ -37,29 +37,31 @@ let SPR_ROWS: i64 = 14 // even → 7 terminal rows
 // differ to make the trot. Legend: d dark-brown  b brown-shadow  t tan
 // l light-tan  w cream  k eye/nose  p pink  space transparent.
 fn frameRow(frame: i64, i: i64): string {
-    // shared upper body (head on the right, curled tail on the left)
+    // shared upper body. Head projects up-and-right with an ear, a snout that
+    // sticks out past the body, one eye, and a black nose at the tip; curled
+    // tail on the left.
     if i == 0 {
-        return "                    dd    "
+        return "                   dd     "
     } else if i == 1 {
-        return "                   ddld   "
+        return "                  ddtl    "
     } else if i == 2 {
-        return "          ttttttttddll    "
+        return "                 dttll    "
     } else if i == 3 {
-        return "       tttttttttttttll    "
+        return "        ttttt   ttttlk    "
     } else if i == 4 {
-        return "   dd ttttttttttttttllk   "
+        return "      tttttttt ttttl kw   "
     } else if i == 5 {
-        return "  ddddtttttttttttttl lw   "
+        return "    dttttttttttttk   lww  "
     } else if i == 6 {
-        return "  dddtttttttttttkttllkw   "
+        return "  ddtttttttttttttll llw   "
     } else if i == 7 {
-        return "   d tttttttttttttttlww   "
+        return "  dttttttttttttttttlww    "
     } else if i == 8 {
-        return "     bttttttttttttttlw    "
+        return "   btttttttttttttttl      "
     } else if i == 9 {
-        return "     bbtttttttttttttb     "
+        return "    bbttttttttttttb       "
     } else if i == 10 {
-        return "      bbttttttttttbb      "
+        return "      bbtttttttttb        "
     }
     // legs
     if frame == 0 {
