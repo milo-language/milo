@@ -19,6 +19,9 @@ from "std/time" import {
 from "std/math" import {
     mathSin, mathCos
 }
+from "std/strconv" import {
+    formatFloat
+}
 from "std/ansi" import {
     cursorTo, pushFg24, pushBg24, ansiReset, clearScreen, cursorHome, hideCursor, showCursor
 }
@@ -195,7 +198,7 @@ fn runInteractive(): void {
         emit(buf, ansiReset())
         emit(buf, cursorTo(1, 1))
         emit(buf, bold(" milo donut "))
-        emit(buf, gray("  ·  q quit "))
+        emit(buf, gray($"  {formatFloat(fps, 0)} fps  ·  q quit "))
         writeStdout(buf)
 
         a = a + 0.045
