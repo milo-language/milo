@@ -182,6 +182,73 @@ fn spcPull16(spc: &mut Spc, m: &SpcMem): i64 {
     return lo | (hi << 8)
 }
 
+fn spcRead16(m: &SpcMem, addr: i64): i64 {
+    return spcRead(m, addr) | (spcRead(m, (addr + 1) & 0xFFFF) << 8)
+}
+
+// DAA/DAS: decimal-adjust A after add/subtract using current C/H.
+fn spcDaa(spc: &mut Spc): void {
+    let oldA = spc.a & 0xFF
+    var carry = (spc.psw & PC_) != 0
+    var a = oldA
+    if carry || oldA > 0x99 {
+        a = a + 0x60 carry = true
+    }
+    if (spc.psw & PH) != 0 || (oldA & 0x0F) > 0x09 {
+        a = a + 0x06
+    }
+    spc.a = a & 0xFF
+    spcSetBit(spc, PC_, carry)
+    spcNZ(spc, spc.a)
+}
+
+fn spcDas(spc: &mut Spc): void {
+    let oldA = spc.a & 0xFF
+    var carry = (spc.psw & PC_) != 0
+    var a = oldA
+    if !carry || oldA > 0x99 {
+        a = a - 0x60 carry = false
+    }
+    if (spc.psw & PH) == 0 || (oldA & 0x0F) > 0x09 {
+        a = a - 0x06
+    }
+    spc.a = a & 0xFF
+    spcSetBit(spc, PC_, carry)
+    spcNZ(spc, spc.a)
+}
+
+// DIV YA / X → A quotient, Y remainder. Models the SPC700's quirky overflow path.
+fn spcDiv(spc: &mut Spc): void {
+    let ya = ((spc.y << 8) | spc.a) & 0xFFFF
+    let x = spc.x & 0xFF
+    spcSetBit(spc, PH, (x & 0x0F) <= (spc.y & 0x0F))
+    spcSetBit(spc, PV, spc.y >= x) // overflow when quotient would exceed 8 bits
+    if spc.y < (x << 1) {
+        spc.a = ya / x
+        spc.y = ya % x
+    } else {
+        spc.a = 255 - (ya - (x << 9)) / (256 - x)
+        spc.y = x + (ya - (x << 9)) % (256 - x)
+    }
+    spc.a = spc.a & 0xFF spc.y = spc.y & 0xFF
+    spcNZ(spc, spc.a)
+}
+
+// BBS/BBC dp.bit,rel — branch if a direct-page bit matches wantSet.
+fn bbTest(spc: &mut Spc, m: &SpcMem, bit: i64, wantSet: bool): void {
+    let v = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+    let off = spcFetch(spc, m)
+    let soff: i64 = if off >= 0x80 {
+        off - 0x100
+    } else {
+        off
+    }
+    let bitset = ((v >> bit) & 1) != 0
+    if bitset == wantSet {
+        spc.pc = (spc.pc + soff) & 0xFFFF
+    }
+}
+
 // Relative branch: signed 8-bit offset applied if cond (PC already past it).
 fn spcBranch(spc: &mut Spc, m: &SpcMem, cond: bool): void {
     let off = spcFetch(spc, m)
@@ -1038,6 +1105,179 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x6F => {
             spc.pc = spcPull16(spc, m)
         } // RET
+
+        // ---- TCALL n (vector table $FFDE - n*2) ----
+        0x01 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFDE)
+        }
+        0x11 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFDC)
+        }
+        0x21 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFDA)
+        }
+        0x31 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD8)
+        }
+        0x41 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD6)
+        }
+        0x51 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD4)
+        }
+        0x61 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD2)
+        }
+        0x71 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD0)
+        }
+        0x81 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFCE)
+        }
+        0x91 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFCC)
+        }
+        0xA1 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFCA)
+        }
+        0xB1 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC8)
+        }
+        0xC1 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC6)
+        }
+        0xD1 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC4)
+        }
+        0xE1 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC2)
+        }
+        0xF1 => {
+            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC0)
+        }
+
+        // ---- PCALL u (target $FF00|u) ----
+        0x4F => {
+            let u = spcFetch(spc, m) spcPush16(spc, m, spc.pc) spc.pc = 0xFF00 | u
+        }
+
+        // ---- JMP [!abs+X] ----
+        0x1F => {
+            let addr = (spcFetch16(spc, m) + spc.x) & 0xFFFF spc.pc = spcRead16(m, addr)
+        }
+
+        // ---- BRK / RETI ----
+        0x0F => { // BRK
+            spcPush16(spc, m, spc.pc)
+            spcPush(spc, m, spc.psw)
+            spcSetBit(spc, PB, true) spcSetBit(spc, PI, false)
+            spc.pc = spcRead16(m, 0xFFDE)
+        }
+        0x7F => { // RET1 (RETI): pull PSW then PC
+            spc.psw = spcPull(spc, m)
+            spc.pc = spcPull16(spc, m)
+        }
+
+        // ---- decimal adjust / divide ----
+        0xDF => {
+            spcDaa(spc)
+        } // DAA
+        0xBE => {
+            spcDas(spc)
+        } // DAS
+        0x9E => {
+            spcDiv(spc)
+        } // DIV YA,X
+
+        // ---- CMP X / CMP Y (dp / abs) ----
+        0x3E => {
+            let v = readDp(spc, m) spcCmp(spc, spc.x, v)
+        } // CMP X,dp
+        0x1E => {
+            let v = readAbs(spc, m) spcCmp(spc, spc.x, v)
+        } // CMP X,abs
+        0x7E => {
+            let v = readDp(spc, m) spcCmp(spc, spc.y, v)
+        } // CMP Y,dp
+        0x5E => {
+            let v = readAbs(spc, m) spcCmp(spc, spc.y, v)
+        } // CMP Y,abs
+
+        // ---- BBS / BBC dp.bit,rel ----
+        0x03 => {
+            bbTest(spc, m, 0, true)
+        }
+        0x23 => {
+            bbTest(spc, m, 1, true)
+        }
+        0x43 => {
+            bbTest(spc, m, 2, true)
+        }
+        0x63 => {
+            bbTest(spc, m, 3, true)
+        }
+        0x83 => {
+            bbTest(spc, m, 4, true)
+        }
+        0xA3 => {
+            bbTest(spc, m, 5, true)
+        }
+        0xC3 => {
+            bbTest(spc, m, 6, true)
+        }
+        0xE3 => {
+            bbTest(spc, m, 7, true)
+        }
+        0x13 => {
+            bbTest(spc, m, 0, false)
+        }
+        0x33 => {
+            bbTest(spc, m, 1, false)
+        }
+        0x53 => {
+            bbTest(spc, m, 2, false)
+        }
+        0x73 => {
+            bbTest(spc, m, 3, false)
+        }
+        0x93 => {
+            bbTest(spc, m, 4, false)
+        }
+        0xB3 => {
+            bbTest(spc, m, 5, false)
+        }
+        0xD3 => {
+            bbTest(spc, m, 6, false)
+        }
+        0xF3 => {
+            bbTest(spc, m, 7, false)
+        }
+
+        // ---- ALU (X),(Y) indirect-to-indirect ----
+        0x19 => {
+            let a1 = dpAddr(spc, spc.x) let r = (spcRead(m, a1) | spcRead(m, dpAddr(spc, spc.y))) & 0xFF spcWrite(m, a1, r) spcNZ(spc, r)
+        } // OR (X),(Y)
+        0x39 => {
+            let a1 = dpAddr(spc, spc.x) let r = (spcRead(m, a1) & spcRead(m, dpAddr(spc, spc.y))) & 0xFF spcWrite(m, a1, r) spcNZ(spc, r)
+        } // AND
+        0x59 => {
+            let a1 = dpAddr(spc, spc.x) let r = (spcRead(m, a1) ^ spcRead(m, dpAddr(spc, spc.y))) & 0xFF spcWrite(m, a1, r) spcNZ(spc, r)
+        } // EOR
+        0x79 => {
+            let v1 = spcRead(m, dpAddr(spc, spc.x)) let v2 = spcRead(m, dpAddr(spc, spc.y)) spcCmp(spc, v1, v2)
+        } // CMP
+        0x99 => {
+            let a1 = dpAddr(spc, spc.x) let r = aluAdcVal(spc, spcRead(m, a1), spcRead(m, dpAddr(spc, spc.y))) spcWrite(m, a1, r)
+        } // ADC
+        0xB9 => {
+            let a1 = dpAddr(spc, spc.x) let r = aluSbcVal(spc, spcRead(m, a1), spcRead(m, dpAddr(spc, spc.y))) spcWrite(m, a1, r)
+        } // SBC
+
+        // ---- halt (no interrupts in tests: advance past opcode) ----
+        0xEF => {
+        } // SLEEP
+        0xFF => {
+        } // STOP
 
         _ => {
         } // unimplemented — Harte will flag it
