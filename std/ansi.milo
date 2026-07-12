@@ -25,6 +25,16 @@ fn bg256(code: i64): string {
     return $"\x1b[48;5;{code}m"
 }
 
+// Truecolor (24-bit) foreground / background — smooth gradients on terminals
+// that support it (most modern ones). r/g/b are 0–255.
+fn fg24(r: i64, g: i64, b: i64): string {
+    return $"\x1b[38;2;{r};{g};{b}m"
+}
+
+fn bg24(r: i64, g: i64, b: i64): string {
+    return $"\x1b[48;2;{r};{g};{b}m"
+}
+
 // Reset all attributes to the terminal default.
 fn ansiReset(): string {
     return "\x1b[0m"
