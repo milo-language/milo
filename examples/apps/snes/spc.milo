@@ -152,6 +152,17 @@ fn readAbs(spc: &mut Spc, m: &SpcMem): i64 {
     return spcRead(m, spcFetch16(spc, m))
 }
 
+// Stack lives in page 1 ($0100-$01FF), grows downward.
+fn spcPush(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
+    spcWrite(m, 0x100 | (spc.sp & 0xFF), v)
+    spc.sp = (spc.sp - 1) & 0xFF
+}
+
+fn spcPull(spc: &mut Spc, m: &SpcMem): i64 {
+    spc.sp = (spc.sp + 1) & 0xFF
+    return spcRead(m, 0x100 | (spc.sp & 0xFF))
+}
+
 // Execute one instruction. Batches: flag ops, MOVs, INC/DEC, and A-form ALU
 // (OR/AND/EOR/CMP/ADC/SBC) over immediate/dp/abs.
 fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
@@ -314,6 +325,85 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0xC5 => {
             let ad = spcFetch16(spc, m) spcWrite(m, ad, spc.a)
         } // MOV abs,A
+
+        // ---- MOV X/Y <-> memory ----
+        0xF8 => {
+            let v = readDp(spc, m) spc.x = v spcNZ(spc, v)
+        } // MOV X,dp
+        0xE9 => {
+            let v = readAbs(spc, m) spc.x = v spcNZ(spc, v)
+        } // MOV X,abs
+        0xD8 => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) spcWrite(m, ad, spc.x)
+        } // MOV dp,X
+        0xC9 => {
+            let ad = spcFetch16(spc, m) spcWrite(m, ad, spc.x)
+        } // MOV abs,X
+        0xEB => {
+            let v = readDp(spc, m) spc.y = v spcNZ(spc, v)
+        } // MOV Y,dp
+        0xEC => {
+            let v = readAbs(spc, m) spc.y = v spcNZ(spc, v)
+        } // MOV Y,abs
+        0xCB => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) spcWrite(m, ad, spc.y)
+        } // MOV dp,Y
+        0xCC => {
+            let ad = spcFetch16(spc, m) spcWrite(m, ad, spc.y)
+        } // MOV abs,Y
+
+        // ---- MOV (X) indirect, MOV dp,#imm ----
+        0xE6 => {
+            spc.a = spcRead(m, dpAddr(spc, spc.x)) spcNZ(spc, spc.a)
+        } // MOV A,(X)
+        0xC6 => {
+            spcWrite(m, dpAddr(spc, spc.x), spc.a)
+        } // MOV (X),A
+        0x8F => { // MOV dp,#imm  (operands: imm then dp)
+            let imm = spcFetch(spc, m)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            spcWrite(m, ad, imm)
+        }
+
+        // ---- push / pull ----
+        0x2D => {
+            spcPush(spc, m, spc.a)
+        } // PUSH A
+        0x4D => {
+            spcPush(spc, m, spc.x)
+        } // PUSH X
+        0x6D => {
+            spcPush(spc, m, spc.y)
+        } // PUSH Y
+        0x0D => {
+            spcPush(spc, m, spc.psw)
+        } // PUSH PSW
+        0xAE => {
+            spc.a = spcPull(spc, m)
+        } // POP A (no flags)
+        0xCE => {
+            spc.x = spcPull(spc, m)
+        } // POP X
+        0xEE => {
+            spc.y = spcPull(spc, m)
+        } // POP Y
+        0x8E => {
+            spc.psw = spcPull(spc, m)
+        } // POP PSW
+
+        // ---- INC/DEC memory ----
+        0xAB => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) + 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+        } // INC dp
+        0xAC => {
+            let ad = spcFetch16(spc, m) let r = (spcRead(m, ad) + 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+        } // INC abs
+        0x8B => {
+            let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) - 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+        } // DEC dp
+        0x8C => {
+            let ad = spcFetch16(spc, m) let r = (spcRead(m, ad) - 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+        } // DEC abs
 
         _ => {
         } // unimplemented — Harte will flag it
