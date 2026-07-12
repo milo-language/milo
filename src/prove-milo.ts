@@ -251,6 +251,13 @@ function ensureSolverBinary(): string | null {
   return null;
 }
 
+// Render a witness (values in variable-declaration order) as the failing input,
+// e.g. "counterexample: value = -1, result = -1".
+function counterexampleDetail(vars: string[], witness: number[]): string {
+  if (!witness.length || witness.length !== vars.length) return "counterexample exists";
+  return "counterexample: " + vars.map((name, j) => `${name} = ${witness[j]}`).join(", ");
+}
+
 // Discharge all VCs via std/smt. Mirrors proveWithZ3's ProveResult shape.
 export function proveWithMilo(result: VerifyResult): ProveResult {
   const results: SolverResult[] = new Array(result.conditions.length);
@@ -273,17 +280,22 @@ export function proveWithMilo(result: VerifyResult): ProveResult {
       // One problem per prepared VC, in order; smtSolve prints "<k> <verdict>".
       const dsl = [`${prepared.length}`, ...prepared.map(p => encodeProblem(p.vars, p.root))].join("\n") + "\n";
       const proc = spawnSync(bin, [], { input: dsl, encoding: "utf-8", timeout: 60000 });
-      const verdicts = new Map<number, string>();
+      // "<k> proven" | "<k> unknown" | "<k> violated <w0> <w1> ..." (witness in
+      // variable-declaration order).
+      const verdicts = new Map<number, { verdict: string; witness: number[] }>();
       for (const line of (proc.stdout ?? "").split("\n")) {
-        const m = line.trim().match(/^(\d+)\s+(proven|violated|unknown)$/);
-        if (m) verdicts.set(parseInt(m[1], 10), m[2]);
+        const m = line.trim().match(/^(\d+)\s+(proven|violated|unknown)(.*)$/);
+        if (m) verdicts.set(parseInt(m[1], 10), {
+          verdict: m[2],
+          witness: m[3].trim() ? m[3].trim().split(/\s+/).map(Number) : [],
+        });
       }
       prepared.forEach((p, k) => {
         const vc = result.conditions[p.index];
-        const verdict = verdicts.get(k);
-        if (verdict === "proven") results[p.index] = { vc, status: "proven" };
-        else if (verdict === "violated") results[p.index] = { vc, status: "failed", detail: "counterexample exists" };
-        else if (verdict === "unknown") results[p.index] = { vc, status: "unknown", detail: "no integer witness (rational-only)" };
+        const v = verdicts.get(k);
+        if (v?.verdict === "proven") results[p.index] = { vc, status: "proven" };
+        else if (v?.verdict === "violated") results[p.index] = { vc, status: "failed", detail: counterexampleDetail(p.vars, v.witness) };
+        else if (v?.verdict === "unknown") results[p.index] = { vc, status: "unknown", detail: "no integer witness (rational-only)" };
         else results[p.index] = { vc, status: "error", detail: (proc.stderr || "std/smt solver produced no verdict").split("\n")[0] };
       });
     }
