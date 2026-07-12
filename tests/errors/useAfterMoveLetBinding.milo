@@ -1,0 +1,9 @@
+// @error: use of moved variable 'a'
+
+fn main(): i32 {
+    let a = "owned string"
+    let b = a
+    print(a)
+    print(b)
+    return 0
+}

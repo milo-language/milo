@@ -245,7 +245,7 @@ fn main(): i32 {
   { title: 'Ownership — you choose the cost', file: 'ownership.milo', err: true,
     desc: 'A heap value like <code>string</code> has one owner. <code>let b = a</code> <em>moves</em> it, so using <code>a</code> after is a compile error. Run it as-is — then change line 3 to <code>a.clone()</code> and run again.',
     take: 'Small types (<code>i32</code>, <code>f64</code>) copy automatically. For heap values you pick: <code>.clone()</code> for a real copy, or <code>&a</code> to borrow and just read it. Copies are never silent, and there’s no GC cleaning up behind you.',
-    out: ['error: use of moved variable \'a\'', '  --> ownership.milo:4:11', '', '  moved on line 3; use a.clone() for a copy, or &a to borrow it'],
+    out: ['error: use of moved variable \'a\'', '  ──> ownership.milo:4:11', '  │', '4 │     print(a)             // error: a was moved away', '  │           ^', '  hint: ownership of \'a\' was transferred earlier and it can no longer be used here. To keep it alive, clone it at the point of transfer: \'a.clone()\'.'],
     code: `fn main(): i32 {
     let a = "owned string"
     let b = a            // moves a -> b   (try: let b = a.clone())
