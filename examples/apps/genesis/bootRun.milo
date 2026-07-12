@@ -14,7 +14,7 @@ from "./cart68k" import {
     Cart, loadCart
 }
 from "./m68k" import {
-    M68k, Mem, newCpu, newMem, step
+    M68k, Mem, newCpu, newMem, step, deliverInterrupt
 }
 
 fn loadRom(m: &mut Mem, cart: &Cart) {
@@ -65,8 +65,11 @@ fn main(): i32 {
 
     var steps: i64 = 0
     var stopped = ""
+    var frames: i64 = 0
+    var vints: i64 = 0
     // synthetic scanline clock: ~1 line per 130 instructions, 262 lines/frame
     var lineClock: i64 = 0
+    var wasVblank = false
     while steps < maxSteps {
         let okPc = cpu.pc
         let okOp = memRead16Pub(m, cpu.pc)
@@ -74,8 +77,8 @@ fn main(): i32 {
             stopped = "unimplemented opcode " + hex4(okOp) + " at PC=" + hex8(okPc)
             break
         }
-        if cpu.halted {
-            stopped = "halted (STOP) at PC=" + hex8(cpu.pc)
+        if cpu.halted && (cpu.sr & 0x0700) == 0x0700 {
+            stopped = "halted (STOP, ints masked) at PC=" + hex8(cpu.pc)
             break
         }
         lineClock = lineClock + 1
@@ -84,8 +87,18 @@ fn main(): i32 {
             m.vdpLine = m.vdpLine + 1
             if m.vdpLine >= 262 {
                 m.vdpLine = 0
+                frames = frames + 1
             }
         }
+        // VBlank interrupt on the rising edge of the vblank region, when enabled
+        // by VDP reg1 bit5 (0x20).
+        let inVblank = m.vdpLine >= 224
+        if inVblank && !wasVblank && (m.vdpRegs[1] & 0x20) != 0 {
+            if deliverInterrupt(cpu, m, 6) {
+                vints = vints + 1
+            }
+        }
+        wasVblank = inVblank
         steps = steps + 1
     }
 
@@ -95,7 +108,7 @@ fn main(): i32 {
     print("stop: " + stopped)
     print("steps executed: " + itoa(steps))
     print("final PC=" + hex8(cpu.pc) + " SR=" + hex4(cpu.sr) + " A7=" + hex8(cpu.a[7]))
-    print("TMSS unlocked: " + boolStr(m.tmssUnlocked) + "  vdpLine=" + itoa(m.vdpLine))
+    print("frames=" + itoa(frames) + " vblank-ints=" + itoa(vints) + " vdpLine=" + itoa(m.vdpLine))
     printVdpRegs(m)
     printCram(m)
     return 0

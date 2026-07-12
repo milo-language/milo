@@ -198,6 +198,10 @@ fn vdpControlWrite(m: &mut Mem, val: i64) {
         let first = m.vdpFirst
         m.vdpAddr = (first & 0x3FFF) | ((val & 0x3) << 14)
         m.vdpCode = ((first >> 14) & 0x3) | ((val >> 2) & 0x3C)
+        // CD5 set => this control write triggers a DMA.
+        if (m.vdpCode & 0x20) != 0 {
+            vdpDma(m)
+        }
         return
     }
     if (val & 0xC000) == 0x8000 {
@@ -209,6 +213,29 @@ fn vdpControlWrite(m: &mut Mem, val: i64) {
     }
     m.vdpFirst = val
     m.vdpPending = true
+}
+
+// 68000 -> VDP DMA (instant model). Source is a 68k byte address from regs
+// 21/22/23; length in words from regs 19/20; destination + target from the
+// current VDP address/code. Fill/copy modes (reg23 bit7 set) not yet handled.
+fn vdpDma(m: &mut Mem) {
+    let mode = (m.vdpRegs[23] >> 6) & 0x3
+    if mode == 2 || mode == 3 {
+        return // VRAM fill / copy — deferred
+    }
+    var src = ((m.vdpRegs[23] & 0x7F) << 17) | (m.vdpRegs[22] << 9) | (m.vdpRegs[21] << 1)
+    var len = (m.vdpRegs[20] << 8) | m.vdpRegs[19]
+    if len == 0 {
+        len = 0x10000
+    }
+    var i: i64 = 0
+    while i < len {
+        let a = src & 0xFFFFFF
+        let w = ((m.ram[a]as i64) << 8) | (m.ram[(a + 1) & 0xFFFFFF]as i64)
+        vdpDataWrite(m, w)
+        src = (src + 2) & 0xFFFFFF
+        i = i + 1
+    }
 }
 
 fn vdpDataWrite(m: &mut Mem, val: i64) {
@@ -716,6 +743,31 @@ fn setSr(cpu: &mut M68k, newSr: i64) {
         cpu.a[7] = cpu.otherSp
         cpu.otherSp = tmp
     }
+}
+
+// Deliver an autovectored interrupt of the given level (1-7) if it is not masked
+// by SR bits 8-10 (level 7 is non-maskable). Pushes the [SR, PC] frame, raises the
+// SR mask to `level`, enters supervisor, wakes from STOP, and vectors via
+// autovector 24+level. Returns true if taken.
+fn deliverInterrupt(cpu: &mut M68k, m: &mut Mem, level: i64): bool {
+    let curMask = (cpu.sr >> 8) & 0x7
+    if level != 7 && level <= curMask {
+        return false
+    }
+    let oldSr = cpu.sr
+    let wasSuper = (oldSr & SR_S) != 0
+    cpu.sr = (cpu.sr & ~0x0700) | ((level & 0x7) << 8)
+    cpu.sr = (cpu.sr | SR_S) & ~SR_T
+    if !wasSuper {
+        let tmp = cpu.a[7]
+        cpu.a[7] = cpu.otherSp
+        cpu.otherSp = tmp
+    }
+    cpu.halted = false
+    pushLong(cpu, m, cpu.pc)
+    pushWord(cpu, m, oldSr)
+    cpu.pc = memRead32(m, (24 + level) * 4) & 0xFFFFFFFF
+    return true
 }
 
 // Group 1/2 exception (TRAP, zero-divide, CHK, TRAPV, privilege, illegal, line-A/F).
