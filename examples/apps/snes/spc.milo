@@ -231,6 +231,37 @@ fn writeDpWord(spc: &Spc, m: &mut SpcMem, d: i64, w: i64): void {
     spcWrite(m, dpAddr(spc, (d + 1) & 0xFF), (w >> 8) & 0xFF)
 }
 
+// dp indexed by X (byte, wraps within the direct page).
+fn readDpX(spc: &mut Spc, m: &SpcMem): i64 {
+    return spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF))
+}
+
+// --- 16-bit YA arithmetic (word from dp) ---
+fn spcAddw(spc: &mut Spc, w: i64): void {
+    let ya = ((spc.y << 8) | spc.a) & 0xFFFF
+    let r = ya + w
+    spcSetBit(spc, PC_, r > 0xFFFF)
+    spcSetBit(spc, PH, ((ya & 0xFFF) + (w & 0xFFF)) > 0xFFF)
+    spcSetBit(spc, PV, ((~(ya ^ w)) & (ya ^ r) & 0x8000) != 0)
+    spc.a = r & 0xFF spc.y = (r >> 8) & 0xFF spcNZ16(spc, r)
+}
+
+fn spcSubw(spc: &mut Spc, w: i64): void {
+    let ya = ((spc.y << 8) | spc.a) & 0xFFFF
+    let comp = (~w) & 0xFFFF
+    let r = ya + comp + 1
+    spcSetBit(spc, PC_, r > 0xFFFF)
+    spcSetBit(spc, PH, ((ya & 0xFFF) + (comp & 0xFFF) + 1) > 0xFFF)
+    spcSetBit(spc, PV, ((~(ya ^ comp)) & (ya ^ r) & 0x8000) != 0)
+    spc.a = r & 0xFF spc.y = (r >> 8) & 0xFF spcNZ16(spc, r)
+}
+
+fn spcCmpw(spc: &mut Spc, w: i64): void {
+    let ya = ((spc.y << 8) | spc.a) & 0xFFFF
+    spcSetBit(spc, PC_, ya >= (w & 0xFFFF))
+    spcNZ16(spc, (ya - w) & 0xFFFF)
+}
+
 // Execute one instruction. Batches: flag ops, MOVs, INC/DEC, and A-form ALU
 // (OR/AND/EOR/CMP/ADC/SBC) over immediate/dp/abs.
 fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
@@ -501,6 +532,43 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x50 => {
             spcBranch(spc, m, (spc.psw & PV) == 0)
         } // BVC
+
+        // ---- 16-bit ADDW/SUBW/CMPW YA,dp ----
+        0x7A => {
+            let d = spcFetch(spc, m) spcAddw(spc, readDpWord(spc, m, d))
+        } // ADDW YA,dp
+        0x9A => {
+            let d = spcFetch(spc, m) spcSubw(spc, readDpWord(spc, m, d))
+        } // SUBW YA,dp
+        0x5A => {
+            let d = spcFetch(spc, m) spcCmpw(spc, readDpWord(spc, m, d))
+        } // CMPW YA,dp
+
+        // ---- A-form ALU, dp+X indexed ----
+        0x14 => {
+            let v = readDpX(spc, m) spcOr(spc, v)
+        } // OR A,dp+X
+        0x34 => {
+            let v = readDpX(spc, m) spcAnd(spc, v)
+        } // AND A,dp+X
+        0x54 => {
+            let v = readDpX(spc, m) spcEor(spc, v)
+        } // EOR A,dp+X
+        0x74 => {
+            let v = readDpX(spc, m) spcCmp(spc, spc.a, v)
+        } // CMP A,dp+X
+        0x94 => {
+            let v = readDpX(spc, m) spcAdc(spc, v)
+        } // ADC A,dp+X
+        0xB4 => {
+            let v = readDpX(spc, m) spcSbc(spc, v)
+        } // SBC A,dp+X
+        0xF4 => {
+            let v = readDpX(spc, m) spc.a = v spcNZ(spc, v)
+        } // MOV A,dp+X
+        0xD4 => {
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) spcWrite(m, ad, spc.a)
+        } // MOV dp+X,A
 
         // ---- shifts/rotates (A / dp / abs) ----
         0x1C => {

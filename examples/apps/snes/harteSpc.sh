@@ -11,7 +11,8 @@ D=roms/harte-spc700/v1
   f8 e9 d8 c9 eb ec cb cc e6 c6 8f 2d 4d 6d 0d ae ce ee 8e ab ac 8b 8c \
   2f f0 d0 b0 90 30 10 70 50 5f 3f 6f \
   ba da 3a 1a fe 6e 2e \
-  1c 0b 0c 5c 4b 4c 3c 2b 2c 7c 6b 6c 9f)
+  1c 0b 0c 5c 4b 4c 3c 2b 2c 7c 6b 6c 9f \
+  7a 9a 5a 14 34 54 74 94 b4 f4 d4)
 pass=0; fail=0
 for op in "${OPS[@]}"; do
   js="$D/$op.json"
