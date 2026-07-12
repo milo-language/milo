@@ -31,7 +31,7 @@ masked to width; m8()/x8() decide operand size live. Harness path proven:
 clones the 3.8 MB source per accessor and OOMs — see genesis/), `runHarte.milo`
 tokenizes it, `harte.sh` runs one process per opcode (both e/n modes).
 
-Green so far (436/436 files = 4.36M cases, both emulation + native):
+Green so far (510/510 files = 5.10M cases, both emulation + native):
   NOP; flags CLC/SEC/CLI/SEI/CLV/CLD/SED; XCE; REP/SEP; all transfers
   (TAX/TAY/TXA/TYA/TSX/TXS/TXY/TYX/TCS/TSC/TCD/TDC); XBA; INX/INY/DEX/DEY;
   stack PHA/PLA/PHP/PLP/PHX/PLX/PHY/PLY/PHB/PLB/PHK/PHD/PLD/PEA;
@@ -39,7 +39,9 @@ Green so far (436/436 files = 4.36M cases, both emulation + native):
   abs/abs,X/abs,Y/long/long,X/(dp,X)/(dp),Y/[dp]/[dp],Y/sr,S/(sr,S),Y);
   CPX/CPY (imm/dp/abs); LDX/LDY/STX/STY (+ STZ) across their modes;
   RMW ASL/LSR/ROL/ROR + INC/DEC (accumulator + dp/dp,X/abs/abs,X); TSB/TRB
-  (dp/abs); BIT (imm sets only Z; dp/dp,X/abs/abs,X set N/V/Z).
+  (dp/abs); BIT (imm sets only Z; dp/dp,X/abs/abs,X set N/V/Z);
+  branches (BPL/BMI/BVC/BVS/BCC/BCS/BNE/BEQ/BRA/BRL); jumps JMP abs/long/(abs)/
+  (abs,X)/[abs]; JSR/RTS, JSL/RTL; PEI/PER.
 Op dispatch factored: readMval/readXval/immM/immX + setA/setXreg/setYreg +
   compareVals + doADC/doSBC + per-op *From helpers → each family is ~14 arms.
 ADC/SBC gotchas (Harte-driven): decimal BCD must be per-nibble with carry
@@ -61,7 +63,7 @@ Key gotchas found:
     (emulation is always 8-bit), only matters native.
 Next: control flow — branches (Bcc/BRA/BRL), JMP/JSR/RTS/RTL/JML/JSL and their
   indirect forms; then PEI/PER, MVN/MVP block moves, BRK/COP/RTI, WAI/STP/WDM.
-  ~218/256 opcodes done — control flow is the gate to running actual ROM code.
+  ~239/256 opcodes done. Remaining: BRK/COP/RTI, MVN/MVP block moves, WAI/STP/WDM.
 Harte full-suite is ~336 interpreter launches (~5-6 min); for iteration, run
   subsets: harte.sh <op ...>. Consider pointing harte.sh at the prebuilt binary
   instead of `bun run ... run` to ~10x the sweep later.

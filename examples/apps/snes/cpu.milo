@@ -796,6 +796,20 @@ fn bitImm(cpu: &mut Cpu, v: i64): void {
     setBit(cpu, FZ, ((cpu.a & accMask(cpu)) & v) == 0)
 }
 
+// --- control flow ---
+// Relative 8-bit branch: fetch signed offset, apply if cond (PC already past it).
+fn branchIf(cpu: &mut Cpu, m: &Mem, cond: bool): void {
+    let off = fetch8(cpu, m)
+    let soff: i64 = if off >= 0x80 {
+        off - 0x100
+    } else {
+        off
+    }
+    if cond {
+        cpu.pc = (cpu.pc + soff) & 0xFFFF
+    }
+}
+
 // Execute one instruction. Register/flag/transfer/immediate + stack push/pull
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
@@ -1563,6 +1577,108 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         }
         0x3C => {
             let a = aAbsX(cpu, m) bitMem(cpu, m, a, false)
+        }
+
+        // ---- branches ----
+        0x10 => {
+            branchIf(cpu, m, (cpu.p & FN) == 0)
+        } // BPL
+        0x30 => {
+            branchIf(cpu, m, (cpu.p & FN) != 0)
+        } // BMI
+        0x50 => {
+            branchIf(cpu, m, (cpu.p & FV) == 0)
+        } // BVC
+        0x70 => {
+            branchIf(cpu, m, (cpu.p & FV) != 0)
+        } // BVS
+        0x90 => {
+            branchIf(cpu, m, (cpu.p & FC) == 0)
+        } // BCC
+        0xB0 => {
+            branchIf(cpu, m, (cpu.p & FC) != 0)
+        } // BCS
+        0xD0 => {
+            branchIf(cpu, m, (cpu.p & FZ) == 0)
+        } // BNE
+        0xF0 => {
+            branchIf(cpu, m, (cpu.p & FZ) != 0)
+        } // BEQ
+        0x80 => {
+            branchIf(cpu, m, true)
+        } // BRA
+        0x82 => { // BRL — 16-bit relative
+            let off = fetch16(cpu, m)
+            let soff: i64 = if off >= 0x8000 {
+                off - 0x10000
+            } else {
+                off
+            }
+            cpu.pc = (cpu.pc + soff) & 0xFFFF
+        }
+
+        // ---- jumps ----
+        0x4C => {
+            cpu.pc = fetch16(cpu, m)
+        } // JMP abs
+        0x5C => { // JML/JMP long
+            let t = fetch24(cpu, m)
+            cpu.pc = t & 0xFFFF cpu.pbr = (t >> 16) & 0xFF
+        }
+        0x6C => {
+            let ptr = fetch16(cpu, m) cpu.pc = readPtr16(m, ptr)
+        } // JMP (abs), ptr in bank 0
+        0x7C => { // JMP (abs,X) — pointer read within the program bank
+            let base = fetch16(cpu, m)
+            let a0 = (base + cpu.x) & 0xFFFF
+            let lo = memRead(m, (cpu.pbr << 16) | a0)
+            let hi = memRead(m, (cpu.pbr << 16) | ((a0 + 1) & 0xFFFF))
+            cpu.pc = lo | (hi << 8)
+        }
+        0xDC => { // JML [abs] — 24-bit pointer in bank 0
+            let ptr = fetch16(cpu, m)
+            let t = readPtr24(m, ptr)
+            cpu.pc = t & 0xFFFF cpu.pbr = (t >> 16) & 0xFF
+        }
+
+        // ---- subroutine call/return ----
+        0x20 => { // JSR abs — push PC of last operand byte (return - 1)
+            let target = fetch16(cpu, m)
+            push16(cpu, m, (cpu.pc - 1) & 0xFFFF)
+            cpu.pc = target
+        }
+        0x60 => { // RTS
+            let addr = pull16(cpu, m)
+            cpu.pc = (addr + 1) & 0xFFFF
+        }
+        0x22 => { // JSL long — push PBR then PC-1 (full 16-bit stack)
+            let target = fetch24(cpu, m)
+            push8f(cpu, m, cpu.pbr)
+            push16f(cpu, m, (cpu.pc - 1) & 0xFFFF)
+            clampEmuStack(cpu)
+            cpu.pc = target & 0xFFFF cpu.pbr = (target >> 16) & 0xFF
+        }
+        0x6B => { // RTL — pull PC then PBR (full stack)
+            let addr = pull16f(cpu, m)
+            let bank = pull8f(cpu, m)
+            clampEmuStack(cpu)
+            cpu.pc = (addr + 1) & 0xFFFF cpu.pbr = bank & 0xFF
+        }
+
+        // ---- PEI / PER (push effective address; full 16-bit stack) ----
+        0xD4 => { // PEI — push the 16-bit word at a direct-page pointer
+            let ad = aDp(cpu, m)
+            let v = readPtr16(m, ad)
+            push16f(cpu, m, v) clampEmuStack(cpu)
+        }
+        0x62 => { // PER — push PC + 16-bit relative
+            let off = fetch16(cpu, m)
+            let soff: i64 = if off >= 0x8000 {
+                off - 0x10000
+            } else {
+                off
+            }
+            push16f(cpu, m, (cpu.pc + soff) & 0xFFFF) clampEmuStack(cpu)
         }
 
         // ---- stack push/pull ----
