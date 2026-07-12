@@ -23,7 +23,7 @@ export default defineConfig({
     },
 
     nav: [
-      { text: 'Tour', link: '/tour.html' },
+      { text: 'Tour', link: '/#tour' },
       { text: 'Docs', link: '/getting-started/installation' },
       { text: 'Language', link: '/language/' },
       { text: 'Standard Library', link: '/stdlib/' },

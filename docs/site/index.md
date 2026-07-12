@@ -30,6 +30,10 @@ hero:
 
 <div class="section-break"></div>
 
+<TourStepper />
+
+<div class="section-break"></div>
+
 ### Simple, familiar syntax
 
 ```milo
