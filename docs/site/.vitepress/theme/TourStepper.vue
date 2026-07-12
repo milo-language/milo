@@ -37,6 +37,10 @@
               <span class="tri">{{ running ? '▶' : (ran[cur] ? '↻' : '▶') }}</span>
               {{ running ? 'Running' : (ran[cur] ? 'Run again' : 'Run') }}
             </button>
+            <transition name="pop">
+              <button v-if="ran[cur] && cur < concepts.length - 1" class="btn next-cta" @click="next">Next →</button>
+              <button v-else-if="ran[cur]" class="btn next-cta" @click="finish">Finish ✓</button>
+            </transition>
           </div>
           <div class="editor" ref="edEl">
             <pre aria-hidden="true"><code v-html="highlighted"></code></pre>
@@ -74,10 +78,7 @@
       <div class="foot">
         <button class="nav" :disabled="cur === 0" @click="go(cur - 1)">← Back</button>
         <span class="prog"><b>{{ ranCount }}</b> / {{ concepts.length }} run</span>
-        <button v-if="cur < concepts.length - 1" class="nav next" :class="{ ready: ran[cur] }" :disabled="!ran[cur]" @click="next">
-          {{ ran[cur] ? 'Next →' : 'Run to continue' }}
-        </button>
-        <button v-else class="nav next" :class="{ ready: ran[cur] }" :disabled="!ran[cur]" @click="finish">Finish ✓</button>
+        <span v-if="!ran[cur]" class="foot-hint">Run the program to unlock the next step</span>
       </div>
     </div>
 
@@ -477,6 +478,24 @@ onMounted(() => {
 .btn.ghost:hover { color: var(--con-text); }
 .tri { font-size: 10px; }
 
+/* Next lives right beside Run; after a successful run it becomes the obvious CTA */
+.btn.next-cta {
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+  color: var(--brand); border: 1px solid var(--brand); font-weight: 700;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent);
+  animation: cta 1.8s ease-in-out infinite;
+}
+.btn.next-cta:hover { background: var(--brand); color: #fff; }
+@media (prefers-reduced-motion: reduce) { .btn.next-cta { animation: none; } }
+@keyframes cta {
+  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 45%, transparent); }
+  50% { box-shadow: 0 0 0 6px transparent; }
+}
+.pop-enter-active { transition: transform .28s cubic-bezier(.2,1.3,.5,1), opacity .28s ease; }
+.pop-leave-active { transition: opacity .12s ease; }
+.pop-enter-from { transform: scale(.6) translateX(-6px); opacity: 0; }
+.pop-leave-to { opacity: 0; }
+
 .editor { position: relative; }
 .editor pre, .editor textarea {
   margin: 0; padding: 16px; border: 0; font-family: var(--vp-font-family-mono);
@@ -490,8 +509,14 @@ onMounted(() => {
   -webkit-text-fill-color: transparent;
 }
 .editor textarea::selection { background: color-mix(in srgb, var(--brand) 30%, transparent); -webkit-text-fill-color: transparent; }
-.c-kw { color: var(--c-kw); } .c-ty { color: var(--c-ty); } .c-str { color: var(--c-str); }
-.c-num { color: var(--c-num); } .c-fn { color: var(--c-fn); } .c-com { color: var(--c-com); font-style: italic; } .c-pu { color: var(--c-pu); }
+/* highlighted code is injected via v-html; scoped styles need :deep() to reach it */
+.editor :deep(.c-kw) { color: var(--c-kw); }
+.editor :deep(.c-ty) { color: var(--c-ty); }
+.editor :deep(.c-str) { color: var(--c-str); }
+.editor :deep(.c-num) { color: var(--c-num); }
+.editor :deep(.c-fn) { color: var(--c-fn); }
+.editor :deep(.c-com) { color: var(--c-com); font-style: italic; }
+.editor :deep(.c-pu) { color: var(--c-pu); }
 
 .term { padding: 14px 16px; font-family: var(--vp-font-family-mono); font-size: 12.5px; line-height: 1.7; min-height: 120px; color: var(--con-text); }
 .idle { color: var(--c-com); }
@@ -507,12 +532,9 @@ onMounted(() => {
 .nav { font-family: var(--vp-font-family-base); font-size: 13.5px; font-weight: 600; border: 1px solid var(--edge); background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); border-radius: 8px; padding: 8px 16px; cursor: pointer; }
 .nav:disabled { opacity: .45; cursor: default; }
 .nav:not(:disabled):hover { border-color: var(--brand); }
-.nav.next { margin-left: auto; }
-.nav.next.ready { background: var(--brand); color: #fff; border-color: var(--brand); animation: pulse 1.6s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .nav.next.ready { animation: none; } }
-@keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--brand) 40%, transparent); } 50% { box-shadow: 0 0 0 6px transparent; } }
 .prog { color: var(--vp-c-text-2); font-size: 13px; }
 .prog b { color: var(--vp-c-text-1); }
+.foot-hint { margin-left: auto; color: var(--vp-c-text-3); font-size: 13px; }
 
 .done { margin-top: 18px; text-align: center; padding: 16px; border: 1px solid var(--edge); border-radius: 12px; background: var(--vp-c-bg-soft); color: var(--vp-c-text-1); }
 .done a { color: var(--brand); font-weight: 600; }
