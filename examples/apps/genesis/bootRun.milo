@@ -190,8 +190,8 @@ fn renderPpm(m: &Mem, path: &string) {
     let baseB = (m.vdpRegs[4] & 0x7) << 13
     let backdrop = m.vdpRegs[7] & 0x3F
 
-    var out = "P6\n"
-    out = out + itoa(width) + " " + itoa(height) + "\n255\n"
+    // framebuffer of CRAM indices so sprites can composite over the planes
+    var fb: Vec<i64> = Vec.new()
     var y: i64 = 0
     while y < height {
         var x: i64 = 0
@@ -203,13 +203,23 @@ fn renderPpm(m: &Mem, path: &string) {
             if idx < 0 {
                 idx = backdrop
             }
-            let e = m.cram[idx & 0x3F]
-            out.push(cramR(e) as u8)
-            out.push(cramG(e) as u8)
-            out.push(cramB(e) as u8)
+            fb.push(idx & 0x3F)
             x = x + 1
         }
         y = y + 1
+    }
+
+    drawSprites(m, fb, width, height)
+
+    var out = "P6\n"
+    out = out + itoa(width) + " " + itoa(height) + "\n255\n"
+    var i: i64 = 0
+    while i < fb.len {
+        let e = m.cram[fb[i] & 0x3F]
+        out.push(cramR(e) as u8)
+        out.push(cramG(e) as u8)
+        out.push(cramB(e) as u8)
+        i = i + 1
     }
     match writeFile(path, out) {
         Result.Ok(n) => {
@@ -217,6 +227,90 @@ fn renderPpm(m: &Mem, path: &string) {
         Result.Err(e) => {
             print("ppm write failed")
         }
+    }
+}
+
+// Walk the sprite attribute table via its link list, drawing each sprite's cells
+// (tiles are column-major within a sprite). Colour 0 is transparent.
+fn drawSprites(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64) {
+    let satBase = (m.vdpRegs[5] & 0x7F) << 9
+    var sprIdx: i64 = 0
+    var guard: i64 = 0
+    while guard < 80 {
+        let o = satBase + sprIdx * 8
+        let yraw = ((vram8(m, o) << 8) | vram8(m, o + 1)) & 0x3FF
+        let sizeByte = vram8(m, o + 2)
+        let hs = ((sizeByte >> 2) & 0x3) + 1
+        let vs = (sizeByte & 0x3) + 1
+        let link = vram8(m, o + 3) & 0x7F
+        let attr = (vram8(m, o + 4) << 8) | vram8(m, o + 5)
+        let xraw = ((vram8(m, o + 6) << 8) | vram8(m, o + 7)) & 0x1FF
+        let tileBase = attr & 0x7FF
+        let pal = (attr >> 13) & 0x3
+        let hflip = (attr & 0x0800) != 0
+        let vflip = (attr & 0x1000) != 0
+        let sx = xraw - 128
+        let sy = yraw - 128
+
+        var col: i64 = 0
+        while col < hs {
+            var row: i64 = 0
+            while row < vs {
+                let tile = tileBase + col * vs + row
+                let destCol = if hflip {
+                    hs - 1 - col
+                } else {
+                    col
+                }
+                let destRow = if vflip {
+                    vs - 1 - row
+                } else {
+                    row
+                }
+                drawSprTile(m, fb, width, height, tile, sx + destCol * 8, sy + destRow * 8, pal, hflip, vflip)
+                row = row + 1
+            }
+            col = col + 1
+        }
+
+        if link == 0 {
+            return
+        }
+        sprIdx = link
+        guard = guard + 1
+    }
+}
+
+fn drawSprTile(m: &Mem, fb: &mut Vec<i64>, width: i64, height: i64, tile: i64, ox: i64, oy: i64, pal: i64, hflip: bool, vflip: bool) {
+    var py: i64 = 0
+    while py < 8 {
+        var px: i64 = 0
+        while px < 8 {
+            let dx = ox + px
+            let dy = oy + py
+            if dx >= 0 && dx < width && dy >= 0 && dy < height {
+                var fx = px
+                var fy = py
+                if hflip {
+                    fx = 7 - px
+                }
+                if vflip {
+                    fy = 7 - py
+                }
+                let byte = vram8(m, tile * 32 + fy * 4 + (fx / 2))
+                var color: i64 = 0
+                if (fx & 1) == 0 {
+                    color = (byte >> 4) & 0xF
+                } else {
+                    color = byte & 0xF
+                }
+                if color != 0 {
+                    fb[dy * width + dx] = pal * 16 + color
+                }
+            }
+            px = px + 1
+        }
+        py = py + 1
     }
 }
 

@@ -30,7 +30,15 @@ many games run without a live Z80, some need it).
 
 ### Status (in progress)
 
-**🎉 Sonic boots and renders the SEGA screen** (blue "SEGA™" on white, pixel-correct).
+**🎉🎉 Sonic renders the full TITLE SCREEN** — "SONIC THE HEDGEHOG" winged-star
+logo + background + "©SEGA 1991", sprites composited over planes. ~352 frames in.
+Run: `milo build examples/apps/genesis/bootRun.milo -o /tmp/bootrun` then
+`/tmp/bootrun roms/games/sonic1.md 12000000`; `sips -s format png /tmp/sonic.ppm --out /tmp/sonic.png`.
+Renderer now: planes A/B + sprites (link list, column-major tiles, flip). TODO
+polish: sprite masking (top-corner tile garbage), hscroll/vscroll, priority,
+window plane. Then SDL live display + input + PSG/YM sound.
+
+**🎉 Sonic also renders the SEGA screen** (blue "SEGA™" on white, pixel-correct).
 Full pipeline working: 68000 core → bus → VDP regs → 68k→VDP DMA (palette into
 CRAM 64/64, tiles into VRAM) → VBlank interrupts (autovec L6) → background tile
 renderer → PPM. Run: `milo run examples/apps/genesis/bootRun.milo roms/games/sonic1.md 5000000`
