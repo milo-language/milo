@@ -121,6 +121,24 @@
   .tok-com { color: var(--c-com); font-style: italic; }
   .tok-punc { color: var(--c-punc); }
 
+  /* editable code: transparent textarea over a highlighted <pre> (metrics must match) */
+  .editor { position: relative; }
+  .editor pre, .editor textarea {
+    margin: 0; padding: 18px 16px; border: 0;
+    font-family: var(--mono); font-size: 13px; line-height: 1.62; tab-size: 4;
+    white-space: pre; letter-spacing: 0;
+  }
+  .editor pre { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--c-text); }
+  .editor textarea {
+    position: relative; display: block; width: 100%; background: transparent;
+    color: transparent; caret-color: var(--accent); resize: none; overflow: auto;
+    outline: none; -webkit-text-fill-color: transparent;
+  }
+  .editor textarea::selection { background: rgba(240,169,48,.28); -webkit-text-fill-color: transparent; }
+  .editor textarea:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-soft); }
+  .edited-tag { font-family: var(--mono); font-size: 11px; color: var(--accent); }
+  .badge-native { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--c-com); border: 1px solid var(--c-border); border-radius: 999px; padding: 3px 9px; }
+
   .term { display: flex; flex-direction: column; min-height: 100%; }
   .term-body { padding: 16px; font-family: var(--mono); font-size: 12.8px; line-height: 1.7; flex: 1; }
   .term-idle { color: var(--c-com); }
@@ -174,7 +192,7 @@
     </div>
   </header>
 
-  <div class="sectlead"><h2>Every snippet below is a real program. Press Run to see its actual output.</h2></div>
+  <div class="sectlead"><h2 id="sectlead">Every snippet is a real program — <b style="color:var(--text);font-weight:600">edit it</b>, then Run it. Milo compiles to JavaScript right here in your browser.</h2></div>
 
   <main id="tour"></main>
 </div>
@@ -482,6 +500,7 @@ fn main(): i32 {
     var sec = document.createElement('section');
     sec.className = 'concept';
     var isErr = !!c.err;
+    c.native = (c.file === 'backpressure.milo'); // green threads need the native runtime
     sec.innerHTML =
       '<div class="chead">' +
         '<div class="cnum">' + n + '</div>' +
@@ -495,51 +514,126 @@ fn main(): i32 {
             '<span class="dot" style="background:#7bd88f"></span>' +
             '<span class="tabname">' + c.file + '</span>' +
             '<span class="spacer"></span>' +
-            '<button class="runbtn" data-i="' + i + '"><span class="tri">▶</span> Run</button>' +
+            '<span class="edited-tag" id="edit-' + i + '" hidden>edited</span>' +
+            '<button class="runbtn ghost" data-act="reset" data-i="' + i + '" title="Restore original" hidden>reset</button>' +
+            '<button class="runbtn" data-act="run" data-i="' + i + '"><span class="tri">&#9654;</span> Run</button>' +
           '</div>' +
-          '<pre><code>' + highlight(c.code) + '</code></pre>' +
+          '<div class="editor" id="ed-' + i + '">' +
+            '<pre aria-hidden="true"><code>' + highlight(c.code) + '</code></pre>' +
+            '<textarea spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="source">' + esc(c.code) + '</textarea>' +
+          '</div>' +
         '</div>' +
-        '<div class="code term-wrap" style="border-right:none">' +
-          '<div class="pane-head"><span class="tabname" style="color:var(--c-com)">output</span></div>' +
+        '<div class="code" style="border-right:none">' +
+          '<div class="pane-head"><span class="tabname" style="color:var(--c-com)">output</span>' +
+            '<span class="spacer"></span>' + (c.native ? '<span class="badge-native">native runtime</span>' : '') +
+          '</div>' +
           '<div class="term"><div class="term-body" id="term-' + i + '">' +
-            '<span class="term-idle">// press Run to execute<span class="caret"></span></span>' +
+            '<span class="term-idle">// edit the code, then Run<span class="caret"></span></span>' +
           '</div></div>' +
         '</div>' +
       '</div>' +
-      '<div class="takeaway"><span class="k">' + (isErr ? 'safety' : 'takeaway') + '</span><span>' + c.take[1] + '</span></div>';
+      '<div class="takeaway"><span class="k">' + (isErr ? 'safety' : (c.native ? 'note' : 'takeaway')) + '</span><span>' + c.take[1] + '</span></div>';
     tour.appendChild(sec);
+    wireEditor(sec, c, i);
   });
 
-  // ----- run interaction -----
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var stripAnsi = function (s) { return s.replace(/\x1b\[[0-9;]*m/g, ''); };
+  var haveCompiler = function () { return typeof window.MiloPlayground !== 'undefined'; };
+
+  // ----- editable code: highlight underlay, auto-grow, scroll sync, tab -> spaces -----
+  function wireEditor(sec, c, i) {
+    var ed = sec.querySelector('#ed-' + i);
+    var ta = ed.querySelector('textarea');
+    var pre = ed.querySelector('pre');
+    var codeEl = pre.querySelector('code');
+    var editTag = sec.querySelector('#edit-' + i);
+    var resetBtn = sec.querySelector('[data-act="reset"]');
+    function sizeTo() { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 'px'; }
+    function sync() { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; }
+    ta.addEventListener('input', function () {
+      codeEl.innerHTML = highlight(ta.value);
+      sizeTo(); sync();
+      var dirty = ta.value !== c.code;
+      editTag.hidden = !dirty; resetBtn.hidden = !dirty;
+    });
+    ta.addEventListener('scroll', sync);
+    ta.addEventListener('keydown', function (e) {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        var s = ta.selectionStart, en = ta.selectionEnd;
+        ta.value = ta.value.slice(0, s) + '    ' + ta.value.slice(en);
+        ta.selectionStart = ta.selectionEnd = s + 4;
+        ta.dispatchEvent(new Event('input'));
+      }
+    });
+    requestAnimationFrame(sizeTo);
+  }
+
+  // ----- run -----
+  function renderOutput(term, lines, isErr, tag) {
+    term.innerHTML = '<div class="term-tag">' + tag + '</div>';
+    var delay = reduce ? 0 : 220;
+    return new Promise(function (resolve) {
+      (function emit(k) {
+        if (k >= lines.length) { resolve(); return; }
+        var div = document.createElement('div');
+        div.className = 'oline reveal' + (isErr ? ' err' : '');
+        var txt = lines[k];
+        div.innerHTML = (isErr || txt === '') ? esc(txt || ' ') : '<span class="arrow">› </span>' + esc(txt);
+        term.appendChild(div);
+        setTimeout(function () { emit(k + 1); }, delay);
+      })(0);
+    });
+  }
+
   tour.addEventListener('click', function (e) {
     var btn = e.target.closest('.runbtn');
     if (!btn) return;
     var i = +btn.dataset.i;
     var c = CONCEPTS[i];
-    var term = document.getElementById('term-' + i);
-    btn.disabled = true;
-    btn.innerHTML = '<span class="tri">▶</span> Running';
-    term.innerHTML = '<div class="term-tag">' + c.file + (c.err ? ' · compile' : ' · exit 0') + '</div>';
+    var ed = document.getElementById('ed-' + i);
+    var ta = ed.querySelector('textarea');
 
-    var lines = c.out;
-    var delay = reduce ? 0 : 260;
-    function emit(k) {
-      if (k >= lines.length) {
-        btn.innerHTML = '<span class="tri">↻</span> Run again';
-        btn.disabled = false;
-        return;
+    if (btn.dataset.act === 'reset') { ta.value = c.code; ta.dispatchEvent(new Event('input')); return; }
+
+    var runBtn = btn;
+    var term = document.getElementById('term-' + i);
+    runBtn.disabled = true;
+    runBtn.innerHTML = '<span class="tri">▶</span> Running';
+    var done = function () { runBtn.innerHTML = '<span class="tri">↻</span> Run again'; runBtn.disabled = false; };
+    var src = ta.value;
+
+    if (haveCompiler() && !c.native) {
+      var r;
+      try { r = window.MiloPlayground.compileAndRun(src); }
+      catch (ex) { r = { ok: false, error: String((ex && ex.message) || ex) }; }
+      if (r.ok) {
+        var out = (r.output == null) ? '' : r.output;
+        var lines = out === '' ? ['(no output)'] : out.replace(/\n$/, '').split('\n');
+        renderOutput(term, lines, false, c.file + ' · compiled to JS · exit 0').then(done);
+      } else {
+        var errLines = stripAnsi(r.error || 'error').replace(/\s+$/, '').split('\n');
+        renderOutput(term, errLines, true, c.file + ' · rejected by the checker').then(done);
       }
-      var div = document.createElement('div');
-      div.className = 'oline reveal' + (c.err ? ' err' : '');
-      var txt = lines[k];
-      div.innerHTML = (c.err || txt === '') ? esc(txt || ' ')
-                        : '<span class="arrow">› </span>' + esc(txt);
-      term.appendChild(div);
-      setTimeout(function () { emit(k + 1); }, delay);
+      return;
     }
-    if (reduce) { lines.forEach(function (_, k) { emit(k); }); btn.innerHTML = '<span class="tri">↻</span> Run again'; btn.disabled = false; }
-    else emit(0);
+    if (c.native) {
+      renderOutput(term, c.out, false, c.file + ' · native binary · exit 0').then(done);
+    } else {
+      renderOutput(term, c.out, !!c.err, c.file + (c.err ? ' · compile' : ' · exit 0')).then(done);
+    }
   });
+
+  // ----- load the in-browser Milo compiler (playground bundle) if reachable -----
+  (function () {
+    var s = document.createElement('script');
+    s.src = 'playground/compiler.js';
+    s.onerror = function () {
+      var sl = document.getElementById('sectlead');
+      if (sl) sl.innerHTML = 'Every snippet is a real program with its actual compiler output. Press Run to see it.';
+    };
+    document.head.appendChild(s);
+  })();
 })();
 </script>
