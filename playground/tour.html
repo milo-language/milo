@@ -435,39 +435,43 @@ fn main(): i32 {
       take: ['caught at compile time', 'No garbage collector and no dangling pointers: the move checker rejects the program before it ever runs.']
     },
     {
-      title: 'Concurrency without data races',
-      desc: 'Spawn lightweight green tasks and hand data between them over a typed <code>Channel</code>. Ownership moves across the channel, so two tasks never touch the same value at once.',
-      file: 'pipeline.milo',
+      title: 'Concurrency with backpressure',
+      desc: 'Spawn a lightweight green task and hand data over a <em>bounded</em> <code>Channel</code>. A capacity of 2 means the sender may run only two items ahead — <code>send</code> blocks when the buffer is full, so a fast producer can’t outrun a slow consumer or pile up unbounded memory.',
+      file: 'backpressure.milo',
       code:
 `from "std/runtime" import { Promise }
 from "std/sync" import { Channel }
+from "std/time" import { sleepMs }
 
 fn main(): i32 {
-    let ch = Channel<i64>.new(8)!
+    // capacity 2: the sender can run just 2 ahead of the receiver
+    let ch = Channel<i64>.new(2)!
 
     let producer = Promise<i64>.blocking(move(): i64 => {
         var i: i64 = 1
-        while i <= 3 {
-            ch.send(i * 10)!
+        while i <= 5 {
+            ch.send(i)!               // blocks here once 2 are buffered
+            print("sent ", i)
             i = i + 1
         }
-        ch.send(0)!          // sentinel
         return 0
     })
 
-    while true {
+    // slow consumer: one item every 20ms
+    var got: i64 = 0
+    while got < 5 {
+        sleepMs(20)
         let v = ch.recv()!
-        if v == 0 { break }
-        print("got ", v)
+        print("      recv ", v)
+        got = got + 1
     }
 
     producer.await()!
     ch.destroy()
-    print("done")
     return 0
 }`,
-      out: ['got 10', 'got 20', 'got 30', 'done'],
-      take: ['share by moving', 'Values move through the channel instead of being aliased, so “data race” isn’t a category of bug you can write.']
+      out: ['sent 1', 'sent 2', '      recv 1', 'sent 3', '      recv 2', 'sent 4', '      recv 3', 'sent 5', '      recv 4', '      recv 5'],
+      take: ['the sender waits', 'After <code>sent 2</code> the buffer is full, so the producer pauses until a <code>recv</code> frees a slot — backpressure you get for free from a bounded channel.']
     }
   ];
 
