@@ -51,6 +51,7 @@ struct Z80 {
     ym: [i64; 512] // YM2612 register file (part I 0..255, part II 256..511)
     psgLatch: i64 // last SN76489 latched channel/type
     psg: [i64; 8] // PSG registers (4 channels x tone/vol)
+    fmKey: [bool; 6] // per-FM-channel key-on, latched on every $28 write
 }
 
 fn newZ80(): Z80 {
@@ -65,7 +66,7 @@ fn newZ80(): Z80 {
         pc: 0, sp: 0, ix: 0, iy: 0, af_: 0, bc_: 0, de_: 0, hl_: 0,
         iff1: false, iff2: false, im: 0, wz: 0, halted: false, mem: mem,
         gen: false, bank: 0, ymAddr0: 0, ymAddr1: 0, ym: [0; 512],
-        psgLatch: 0, psg: [0; 8],
+        psgLatch: 0, psg: [0; 8], fmKey: [false, false, false, false, false, false],
     }
 }
 
@@ -103,7 +104,19 @@ fn z80DevWrite(cpu: &mut Z80, a: i64, val: i64) {
         return
     }
     if a == 0x4001 {
-        cpu.ym[cpu.ymAddr0 & 0xFF] = val
+        let reg = cpu.ymAddr0 & 0xFF
+        cpu.ym[reg] = val
+        if reg == 0x28 {
+            // key on/off: %oooo0ccc (op mask + channel; ccc: 0-2 = ch0-2, 4-6 = ch3-5)
+            let sel = val & 0x7
+            var ch = sel
+            if sel >= 4 {
+                ch = sel - 1
+            }
+            if ch < 6 {
+                cpu.fmKey[ch] = (val & 0xF0) != 0
+            }
+        }
         return
     }
     if a == 0x4002 {
