@@ -197,10 +197,13 @@ fn isDevice(a: i64): bool {
     return a >= 0xA00000 && a < 0xC00010
 }
 
-// VDP status word: FIFO-empty base + vblank flag derived from the line counter the
-// boot runner advances. Games spin on the vblank bit (0x0008).
+// VDP status word. Bits: 9=FIFO empty, 8=FIFO full, 7=vint pending, 6=sprite
+// overflow, 5=sprite collision, 4=odd frame, 3=vblank, 2=hblank, 1=DMA busy,
+// 0=PAL. We model an instant FIFO/DMA, so FIFO-empty is always set and FIFO-full/
+// DMA-busy always clear — some games spin on FIFO-empty before bulk VRAM writes.
+// Bits 10/12/13 read as open-bus 1s on real hardware (0x3400).
 fn vdpStatus(m: &Mem): i64 {
-    var s: i64 = 0x3400 // FIFO empty, no DMA
+    var s: i64 = 0x3400 | 0x0200 // open-bus 1s + FIFO empty
     if m.vdpLine >= 224 {
         s = s | 0x0008 // vblank
     }
@@ -326,18 +329,12 @@ fn vdpControlWrite(m: &mut Mem, val: i64) {
 fn vdpDma(m: &mut Mem) {
     let mode = (m.vdpRegs[23] >> 6) & 0x3
     if mode == 2 {
-        // VRAM fill. Latch address/increment/length NOW — the game can reprogram
-        // the VDP address/auto-increment registers before writing the fill data,
-        // and the fill must use the arm-time values (else it lands at the wrong
-        // address, e.g. GA's char-select plane clears). If a previously-armed fill
-        // is still pending (game armed several clears back-to-back with a single
-        // fill-data write), flush it now using the last data-port byte so every
-        // armed region is actually cleared.
-        // VRAM fill executes immediately on the DMA-trigger control write, using
+        // VRAM fill executes immediately on this DMA-trigger control write, using
         // the fill byte from the most recent data-port write (the game programs the
         // fill value there before arming). Games clear several regions with
         // back-to-back fill arms and only ONE data write, so deferring the fill to
-        // the next data-port write would drop all but the last region.
+        // the next data-port write would drop all but the last region. Address/
+        // increment/length are read from the just-set VDP registers here.
         var flen = (m.vdpRegs[20] << 8) | m.vdpRegs[19]
         if flen == 0 {
             flen = 0x10000
@@ -365,6 +362,14 @@ fn vdpDma(m: &mut Mem) {
         src = (src + 2) & 0xFFFFFF
         i = i + 1
     }
+    // Hardware advances the source address registers (21/22, in words) and drains
+    // the length counter to 0 as the transfer runs; games that chain DMAs read the
+    // updated source back.
+    let srcWord = (src >> 1) & 0xFFFF
+    m.vdpRegs[21] = srcWord & 0xFF
+    m.vdpRegs[22] = (srcWord >> 8) & 0xFF
+    m.vdpRegs[19] = 0
+    m.vdpRegs[20] = 0
 }
 
 // VRAM->VRAM copy DMA (mode 3): copy `len` bytes from the source (regs 21/22) to

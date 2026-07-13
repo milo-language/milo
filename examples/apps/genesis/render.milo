@@ -213,6 +213,17 @@ fn renderIndexed(m: &Mem): Vec<i64> {
     let backdrop = m.vdpRegs[7] & 0x3F
     let sh = (m.vdpRegs[12] & 0x08) != 0 // shadow/highlight mode
 
+    // Display disabled (reg1 bit6 clear): the whole screen shows only the backdrop.
+    if (m.vdpRegs[1] & 0x40) == 0 {
+        var blank: Vec<i64> = Vec.new()
+        var bi: i64 = 0
+        while bi < width * height {
+            blank.push(backdrop & 0x3F)
+            bi = bi + 1
+        }
+        return blank
+    }
+
     let spanAx = planeW * 8
     let spanAy = planeH * 8
 
