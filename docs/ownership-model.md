@@ -32,42 +32,44 @@ A tempting misreading is "Milo's borrow model is more powerful than Rust's." It 
 
 ```milo
 // Milo
-fn step(cpu: &mut Cpu, bus: &mut Bus): void { ... }
+fn render(doc: &mut Document, out: &mut Buffer): void { ... }
 ```
 ```rust
 // Rust — same shape, no <'a> required
-fn step(cpu: &mut Cpu, bus: &mut Bus) { ... }
+fn render(doc: &mut Document, out: &mut Buffer) { ... }
 ```
 
-The difference is not what the clean code looks like. It's what the language *lets you do instead*.
+The difference is not what the clean code looks like. It's what the language *lets you build instead*.
 
-Consider a mutable object graph — say an emulator where the CPU drives the PPU through a bus, and the PPU raises an interrupt back at the CPU. The **beginner's instinct** is to store a back-reference:
+Suppose you want to **store** a reference. The classic case is a tree whose child nodes each keep a link back to their parent — a `parent` pointer, the kind you reach for in trees, UI layouts, and document models. Rust lets you store that reference, and it has a cost:
 
 ```rust
-// Rust — lets you try this, and it costs you
-struct Cpu<'a> {
-    bus: &'a mut Bus,   // storing a ref infects Cpu with a lifetime...
+// Rust permits this — and the lifetime spreads
+struct Node<'a> {
+    parent: &'a Node<'a>,       // storing a reference adds a lifetime parameter...
+    children: Vec<Node<'a>>,    // ...that every type touching Node must now carry
 }
-struct System<'a> { cpu: Cpu<'a> }   // ...which propagates outward like a virus
 ```
 
-and when the graph is genuinely cyclic (CPU ↔ PPU both mutable), the borrow checker rejects it outright, so the undisciplined escape hatch is **interior mutability**:
+When the links form a cycle (parent → child → parent, both mutable), the borrow checker rejects the aliasing outright — so the usual way to keep that shape is interior mutability:
 
 ```rust
-struct Cpu { bus: Rc<RefCell<Bus>> }   // heap alloc + refcount + runtime borrow flags
-// self.bus.borrow_mut()...            // moves the borrow check to RUNTIME — can PANIC
+struct Node { parent: Option<Weak<RefCell<Node>>>, children: Vec<Rc<RefCell<Node>>> }
+// node.borrow_mut()...  // safety check moved to RUNTIME — can panic; heap + refcount per node
 ```
 
-Both of these *compile* in Rust. Both are worse: the first spreads `<'a>` through every type that touches `Cpu`; the second trades compile-time safety for runtime `borrow_mut()` panics and per-node heap overhead. The clean Rust design also exists —
+Both compile. Both carry a cost: the first spreads `<'a>` through every type that touches `Node`; the second moves the safety check to runtime (`borrow_mut()` can panic) and adds a heap allocation per node.
+
+The design Rust programmers most often settle on for this is **neither** — it's to stop storing references and refer by *index* instead: put the nodes in one owner (a `Vec` or arena) and store a plain id for the parent link.
 
 ```rust
-struct System { cpu: Cpu, bus: Bus }        // own everything in one place
-fn step(cpu: &mut Cpu, bus: &mut Bus) { }   // pass &mut down — no 'a, no Rc
+struct Node { parent: usize, children: Vec<usize> }   // ids, not references — no 'a, no Rc
+struct Tree { nodes: Vec<Node> }
 ```
 
-— but Rust only *offers* it; it doesn't *insist* on it. A disciplined Rust programmer converges here. An undisciplined one reaches for `Rc<RefCell>` and ships the spaghetti.
+Rust *offers* all three; it doesn't insist on any one. Milo offers only the last: `struct Node { parent: &Node }` won't compile, and there is no `Rc<RefCell>` to reach for, so referring by index/handle (or passing `&mut` down a call tree) is the only path available.
 
-**Milo makes the clean design the only representable one.** `struct Cpu { bus: &Bus }` won't compile, and there is no `Rc<RefCell>` to fall back to, so the only path is "own the data in one place and pass `&mut` down." Milo isn't doing something Rust can't. It's **removing the wrong options** so that a beginner writes expert-shaped code by default. Guardrails, not magic.
+This isn't about programmer skill — it's about what the language **enforces** versus merely **permits**. Milo leaves out the options that carry a hidden cost, so the version you write is the one both languages consider clean. Milo isn't doing something Rust can't; it's **removing the costly alternatives**. Guardrails, not magic.
 
 ## The honest cost — and how to pay it
 
