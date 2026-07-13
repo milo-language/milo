@@ -28,7 +28,6 @@ impl Drop for Pool {
 
 // Create a pool of `count` blocks, each `size` bytes (minimum 8 for free-list pointer).
 // Single malloc at init — no further heap allocation.
-
 fn poolNew(size: i64, count: i64): Result<Pool>
 requires size >= 8
 requires count > 0
@@ -65,7 +64,6 @@ requires count > 0
 }
 
 // Allocate one block. O(1). Returns Err when pool is exhausted.
-
 fn poolAlloc(p: &mut Pool): Result<i64>
 ensures p.liveCount <= p.blockCount
 {
@@ -83,7 +81,6 @@ ensures p.liveCount <= p.blockCount
 
 // Free one block back to pool. O(1).
 // Caller must pass a pointer previously returned by poolAlloc.
-
 fn poolFree(p: &mut Pool, block: i64): void
 requires block >= p.base
 requires p.liveCount > 0
@@ -98,7 +95,6 @@ ensures p.liveCount >= 0
 }
 
 // Number of blocks currently in use.
-
 fn poolLive(p: &Pool): i64
 requires p.liveCount >= 0
 requires p.liveCount <= p.blockCount
@@ -109,7 +105,6 @@ ensures result <= p.blockCount
 }
 
 // Number of blocks available.
-
 fn poolAvailable(p: &Pool): i64
 requires p.liveCount >= 0
 requires p.liveCount <= p.blockCount
@@ -120,20 +115,17 @@ ensures result <= p.blockCount
 }
 
 // Check if pool is fully exhausted.
-
 fn poolFull(p: &Pool): bool {
     return p.liveCount == p.blockCount
 }
 
 // Check if pool has no live allocations.
-
 fn poolEmpty(p: &Pool): bool {
     return p.liveCount == 0
 }
 
 // Reset pool to initial state — all blocks free.
 // Existing pointers become invalid.
-
 fn poolReset(p: &mut Pool): void
 ensures p.liveCount == 0
 {

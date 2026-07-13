@@ -35,7 +35,6 @@ enum NetError {
 // ── TcpStream ──
 
 // TCP connection handle. Automatically closes the fd when dropped.
-
 struct TcpStream {
     fd: i32,
 }
@@ -52,7 +51,6 @@ impl Drop for TcpStream {
 
 // Construct an IPv4 address from four octets.
 // Example: ip4(127, 0, 0, 1) for localhost.
-
 fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     let a32 = a as u32
     let b32 = b as u32
@@ -135,7 +133,6 @@ impl TcpStream {
 
 // Listening TCP socket. Accepts inbound connections; closes the fd on drop.
 // Server counterpart to TcpStream.connect — no raw syscalls required in user code.
-
 struct TcpListener {
     fd: i32,
 }
@@ -202,7 +199,6 @@ impl TcpListener {
 // ── TLS Stream ──
 
 // TLS/SSL connection handle. Frees SSL context and closes fd on drop.
-
 struct TlsStream {
     fd: i32,
     ssl: i64,
@@ -382,7 +378,6 @@ fn resolve(hostname: &string): Result<u32, NetError> {
 // ── HTTP Response ──
 
 // HTTP response with status code, headers, and body.
-
 struct Response {
     status: i32,
     headers: string,
@@ -637,7 +632,6 @@ fn parsePath(url: &string): string {
 // ── FetchOptions ──
 
 // HTTP request configuration: method, headers, and body.
-
 struct FetchOptions {
     method: string,
     headers: string,

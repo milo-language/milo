@@ -273,7 +273,6 @@ impl Json {
     // materialize (just that one string). Start at `curRoot()` and chain:
     //   let user = doc.curField(doc.curChild(doc.curRoot(), 0), "name")
     //   match doc.curStr(user) { Option.Some(s) => ..., Option.None => ... }
-
     fn curRoot(self: &Self): i64 {
         return self.root
     }
@@ -1332,7 +1331,6 @@ fn jsonEscapeStr(s: &string): string {
 // Serialization — JsonVal value tree + fluent builders.
 // Complements the flat-pool parser above: parse with jsonParse, build with
 // jsonObj()/jsonArr(), serialize with .build() / jsonSer.
-
 enum JsonVal {
     JNull,
     JBool(bool),
@@ -1630,7 +1628,6 @@ impl JsonArr {
 // Emits one event at a time and never materializes the tree — O(depth) memory,
 // for documents too large to hold as a flat pool (cf. Go json.Decoder.Token /
 // Rust StreamDeserializer). jsonPull(src).next() yields tokens until End.
-
 enum JsonEvent {
     StartObject,
     EndObject,

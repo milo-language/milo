@@ -10,7 +10,6 @@ from "std/math" import {
 }
 
 // Tokenizer
-
 enum CalcTok {
     Num,
     Plus,
@@ -131,7 +130,6 @@ fn tokenize(input: &string): Vec<CalcToken> {
 // power    = unary ('**' power)?
 // unary    = '-' unary | primary
 // primary  = NUM | '(' expr ')'
-
 struct Parser {
     tokens: Vec<CalcToken>,
     pos: i64,

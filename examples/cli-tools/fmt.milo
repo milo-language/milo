@@ -609,7 +609,6 @@ fn isSpacedOp(kind: TokKind): bool {
 
 // Whether the comment block starting at i introduces a top-level declaration.
 // Such a comment is that decl's doc comment, so no blank line may separate them.
-
 fn commentLeadsTopLevel(tokens: &Vec<Token>, i: i64): bool {
     var j: i64 = i
     while j < tokens.len {
@@ -626,7 +625,6 @@ fn commentLeadsTopLevel(tokens: &Vec<Token>, i: i64): bool {
 // Whether the token before position i is a value, i.e. something a `*`, `&` or
 // `-` at i could be the right-hand side of. Distinguishes binary `a - b` from
 // unary `n: -7`, and binary `a * b` from a pointer type `*u8`.
-
 fn prevIsValue(tokens: &Vec<Token>, i: i64): bool {
     if i <= 0 {
         return false
@@ -642,7 +640,6 @@ fn isValueTok(kind: TokKind): bool {
 }
 
 // Is the < at position i a generic type bracket (not a comparison)?
-
 fn isGenericOpen(tokens: &Vec<Token>, i: i64): bool {
     if i <= 0 {
         return false
@@ -675,7 +672,6 @@ fn isGenericOpen(tokens: &Vec<Token>, i: i64): bool {
 }
 
 // Is the > at position i closing a generic bracket?
-
 fn isInsideGeneric(tokens: &Vec<Token>, i: i64): bool {
     var depth: i64 = 0
     var j = i

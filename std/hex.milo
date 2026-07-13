@@ -21,7 +21,6 @@ fn _hexVal(ch: u8): u8 {
 }
 
 // Encode a string as hex (each byte becomes two hex chars).
-
 fn hexEncode(input: &string): string {
     var result = ""
     for b in input {
@@ -32,7 +31,6 @@ fn hexEncode(input: &string): string {
 }
 
 // Decode a hex string back to bytes.
-
 fn hexDecode(input: &string): string {
     var result = ""
     var i: i64 = 0

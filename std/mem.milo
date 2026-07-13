@@ -10,7 +10,6 @@ from "std/platform" import {
 // ── MappedMemory ──
 
 // Memory-mapped region. Automatically unmapped on drop.
-
 struct MappedMemory {
     ptr: i64,
     len: i64,
@@ -27,7 +26,6 @@ impl Drop for MappedMemory {
 }
 
 // Allocate an anonymous (non-file-backed) memory-mapped region.
-
 fn mmapAnon(size: i64): Result<MappedMemory> {
     let PROT_RW: i32 = 3
     var addr: i64 = 0
@@ -46,7 +44,6 @@ fn mmapAnon(size: i64): Result<MappedMemory> {
 }
 
 // Memory-map a file descriptor for reading.
-
 fn mmapFile(fFd: i32, size: i64): Result<MappedMemory> {
     let PROT_READ: i32 = 1
     let MAP_PRIVATE: i32 = 2
@@ -69,7 +66,6 @@ fn mmapFile(fFd: i32, size: i64): Result<MappedMemory> {
 
 // Bump allocator with automatic cleanup.
 // All allocations are 8-byte aligned. Use arenaReset() to reclaim without freeing.
-
 struct Arena {
     base: i64,
     cap: i64,
@@ -87,7 +83,6 @@ impl Drop for Arena {
 }
 
 // Create a new arena with the given capacity in bytes.
-
 fn arenaNew(capacity: i64): Result<Arena>
 requires capacity > 0
 {
@@ -106,7 +101,6 @@ requires capacity > 0
 
 // Allocate size bytes from the arena (8-byte aligned).
 // Returns Err if the arena doesn't have enough space.
-
 fn arenaAlloc(a: &mut Arena, size: i64): Result<i64>
 requires size > 0
 ensures a.used <= a.cap
@@ -123,7 +117,6 @@ ensures a.used <= a.cap
 }
 
 // Reset the arena, making all previously allocated memory available for reuse.
-
 fn arenaReset(a: &mut Arena): void
 ensures a.used == 0
 {

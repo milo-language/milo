@@ -61,7 +61,6 @@ fn nodeName(g: &DepGraph, h: Handle<Node>): string {
 }
 
 // Kahn's algorithm
-
 fn topoSort(g: &DepGraph): Vec<string> {
     var order: Vec<string> = Vec.new()
     let n = g.nodes.len

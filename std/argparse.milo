@@ -22,7 +22,6 @@ struct PositionalDef {
 // Declarative command-line argument parser with auto-generated --help.
 // Create with newParser(), add flags with addString/addBool/addRequired,
 // then call .parse() to get a ParsedArgs.
-
 struct ArgParser {
     name: string,
     description: string,
@@ -36,7 +35,6 @@ struct ArgParser {
 // Parsed command-line arguments.
 // Access values with .getString(), .getI64(), .getU16(), .getBool().
 // Check presence with .has(). Positional args in .positional field.
-
 struct ParsedArgs {
     prog: string,
     entries: Vec<ArgEntry>,
@@ -50,7 +48,6 @@ struct ArgEntry {
 }
 
 // Create a new argument parser with a program name and description.
-
 fn newParser(name: string, description: string): ArgParser {
     return ArgParser {
         name: name,

@@ -36,7 +36,6 @@ fn _bytesToHex(buf: &[u8; 32], n: i64): string {
 }
 
 // Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.
-
 fn sha256(input: &string): string {
     var hash: [u8; 32] = [0; 32]
     unsafe {
@@ -46,7 +45,6 @@ fn sha256(input: &string): string {
 }
 
 // Compute MD5 hash of a string. Returns 32-char lowercase hex string.
-
 fn md5(input: &string): string {
     var hash: [u8; 32] = [0; 32]
     unsafe {
@@ -56,7 +54,6 @@ fn md5(input: &string): string {
 }
 
 // Compute SHA-1 hash. Returns 40-char lowercase hex string.
-
 fn sha1(input: &string): string {
     var hash: [u8; 32] = [0; 32]
     unsafe {
@@ -66,7 +63,6 @@ fn sha1(input: &string): string {
 }
 
 // Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
-
 fn sha1Bytes(input: &string): string {
     var hash: [u8; 32] = [0; 32]
     unsafe {
@@ -87,7 +83,6 @@ struct AesGcmResult {
 }
 
 // Encrypt with AES-256-GCM. Key must be 32 bytes, IV should be 12 bytes.
-
 fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
 requires key.len == 32
 requires iv.len == 12
@@ -140,7 +135,6 @@ requires iv.len == 12
 }
 
 // Decrypt with AES-256-GCM. Key must be 32 bytes, IV 12 bytes, tag 16 bytes.
-
 fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
 requires key.len == 32
 requires iv.len == 12
@@ -183,7 +177,6 @@ requires tag.len == 16
 }
 
 // Encrypt with AES-128-GCM. Key must be 16 bytes, IV 12 bytes. (termpair uses AES-128.)
-
 fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
 requires key.len == 16
 requires iv.len == 12
@@ -236,7 +229,6 @@ requires iv.len == 12
 }
 
 // Decrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes, tag 16 bytes.
-
 fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
 requires key.len == 16
 requires iv.len == 12

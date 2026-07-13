@@ -93,20 +93,17 @@ fn _computeAcceptKey(clientKey: &string): string {
 }
 
 // Check if raw HTTP request bytes contain a WebSocket upgrade request.
-
 fn isWsUpgrade(raw: &string): bool {
     return _headerContains(raw, "Upgrade", "websocket")
 }
 
 // Extract Sec-WebSocket-Key from raw HTTP request.
-
 fn extractWsKey(raw: &string): string {
     return _findHeaderValue(raw, "Sec-WebSocket-Key")
 }
 
 // Accept a WebSocket upgrade on an already-accepted TCP fd.
 // Pass the raw HTTP request bytes so the handshake can be completed.
-
 fn wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string> {
     if !isWsUpgrade(rawRequest) {
         return Result.Err("not a WebSocket upgrade request")
@@ -170,7 +167,6 @@ fn _readExact(fd: i32, ssl: i64, buf: *u8, needed: i64): bool {
 
 impl WsConn {
     // Read next WebSocket message. Handles fragmentation, responds to ping automatically.
-
     fn recv(self: &mut Self): Result<WsMessage, string> {
         var resultPayload: string = ""
         var resultOpcode: u8 = 0
@@ -268,25 +264,21 @@ impl WsConn {
     }
 
     // Send a text message.
-
     fn sendText(self: &Self, msg: &string): Result<i32, string> {
         return self._sendFrame(WS_TEXT(), msg, true)
     }
 
     // Send a binary message.
-
     fn sendBinary(self: &Self, data: &string): Result<i32, string> {
         return self._sendFrame(WS_BINARY(), data, true)
     }
 
     // Send a ping.
-
     fn ping(self: &Self): Result<i32, string> {
         return self._sendFrame(WS_PING(), "", true)
     }
 
     // Send close frame and mark connection closed.
-
     fn close(self: &mut Self): void {
         if !self._closed {
             let _ = self._sendFrame(WS_CLOSE(), "", true)
@@ -406,7 +398,6 @@ impl WsConn {
 
 // Connect to a WebSocket server. Performs TCP connect + HTTP upgrade handshake.
 // Returns a WsConn on successful 101 response.
-
 fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
@@ -478,7 +469,6 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
 // handshake (blocking — call before setting fds nonblocking), then the HTTP
 // upgrade handshake over the encrypted channel. `hostname` is used for SNI,
 // certificate validation, and the Host header.
-
 fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1

@@ -19,7 +19,6 @@ from "std/runtime" import {
 //   let val = ch.recv()!
 //   p.await()!
 //   ch.destroy()
-
 struct ChannelInner {
     mtx: *u8,
     condNotEmpty: *u8,
@@ -39,7 +38,6 @@ struct ChannelInner {
 // Waiter nodes use the unified 48-byte runtime layout (see std/runtime): plain
 // channel waiters are kind 0 with the task ptr at nodeA; Select arms (kind 1/2)
 // carry a SelectState ptr + arm index and take the claim path when woken.
-
 fn _nodeLoadPtr(node: *u8, off: i64): *u8 {
     unsafe {
         var v: *u8 = 0 as *u8

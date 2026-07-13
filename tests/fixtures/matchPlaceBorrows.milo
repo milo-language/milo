@@ -5,7 +5,6 @@
 // keeps ownership and the same place can be matched again. Consuming it used to
 // zero the slot behind the checker's back — the second match then saw tag 0
 // with empty payloads and no diagnostic.
-
 enum Pat {
     E(string, Vec<string>),
     W,

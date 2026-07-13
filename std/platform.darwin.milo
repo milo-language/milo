@@ -51,13 +51,11 @@ fn oWriteCreateAppend(): i32 {
 }
 
 // offset of aiAddr field in struct addrinfo
-
 fn addrinfoAddrOffset(): i64 {
     return 32
 }
 
 // struct stat layout (macOS aarch64/x8664)
-
 fn statModeOffset(): i64 {
     return 4
 }
@@ -71,7 +69,6 @@ fn statBufSize(): i64 {
 }
 
 // struct dirent layout
-
 fn direntTypeOffset(): i64 {
     return 20
 }
@@ -81,7 +78,6 @@ fn direntNameOffset(): i64 {
 }
 
 // errno access — macOS uses __error() to get errno pointer
-
 extern fn __error(): *u8
 
 fn getErrno(): i32 {

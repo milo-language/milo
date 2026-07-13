@@ -111,7 +111,6 @@ fn eventPoll(el: &EventLoop, readyFds: *i32, maxEvents: i32, timeoutMs: i32): i3
 
 // ── wakeup event (cross-thread poll interruption) ──
 // eventfd registered for read; a write from any thread makes epoll_wait return.
-
 extern fn eventfd(initval: u32, flags: i32): i32
 
 fn efdNonblock(): i32 {

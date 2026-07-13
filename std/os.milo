@@ -263,7 +263,6 @@ extern fn pthread_rwlock_destroy(rwlock: *u8): i32
 // IO in std should go through these instead of per-call-site EAGAIN loops.
 
 // One read(2). Returns bytes read, 0 at EOF, <0 on error.
-
 fn readFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
@@ -283,7 +282,6 @@ fn readFd(fd: i32, buf: *u8, len: i64): i64 {
 }
 
 // Write all len bytes (loops over partial writes). Returns len or <0 on error.
-
 fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
@@ -309,7 +307,6 @@ fn writeFd(fd: i32, buf: *u8, len: i64): i64 {
 // Accept one connection; returns the client fd (<0 on error). In a green task
 // the client fd is left nonblocking so later readFd/writeFd calls skip a
 // redundant fcntl round-trip.
-
 fn acceptFd(fd: i32): i32 {
     let inGreen = schedulerCurrent() as i64 != 0
     if inGreen {
@@ -335,7 +332,6 @@ fn acceptFd(fd: i32): i32 {
 
 // connect(2). In a green task: nonblocking connect, park until writable,
 // then check SO_ERROR. Returns 0 on success, <0 on failure.
-
 fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
     unsafe {
         if schedulerCurrent() as i64 == 0 {
@@ -366,7 +362,6 @@ fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
 // SSL_* on a nonblocking fd reports WANT_READ/WANT_WRITE; these park the
 // green task until the fd is ready and retry. On a plain OS thread (blocking
 // fd) the WANT codes never occur and these reduce to one SSL call.
-
 fn _sslWantRead(): i32 {
     return 2
 }
@@ -376,7 +371,6 @@ fn _sslWantWrite(): i32 {
 }
 
 // Drive SSL_connect to completion. Returns 1 on success (SSL_connect result otherwise).
-
 fn sslConnectFd(ssl: *u8, fd: i32): i32 {
     unsafe {
         while true {
@@ -403,7 +397,6 @@ fn sslConnectFd(ssl: *u8, fd: i32): i32 {
 }
 
 // One SSL_read. Returns bytes read (>0), or <=0 on close/error.
-
 fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     unsafe {
         while true {
@@ -430,7 +423,6 @@ fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
 }
 
 // One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
-
 fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32 {
     unsafe {
         while true {

@@ -68,7 +68,6 @@ fn looksLikeJson(s: &string): bool {
 }
 
 // indent-only JSON pretty printer (no colors)
-
 fn prettyJson(input: &string): string {
     var result: string = ""
     var pos: i64 = 0

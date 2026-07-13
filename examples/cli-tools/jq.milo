@@ -22,7 +22,6 @@ fn skipWs(s: &string, start: i64): i64 {
 }
 
 // parse digits from string into an integer
-
 fn parseI64(s: &string, start: i64, end: i64): i64 {
     var result: i64 = 0
     var i: i64 = start
@@ -34,7 +33,6 @@ fn parseI64(s: &string, start: i64, end: i64): i64 {
 }
 
 // find matching } or ] accounting for nesting and strings
-
 fn findMatchingBrace(s: &string, start: i64): i64 {
     let open = s[start]
     var close: u8 = 125
@@ -67,7 +65,6 @@ fn findMatchingBrace(s: &string, start: i64): i64 {
 }
 
 // extract decoded content of a JSON string (starting at the opening quote)
-
 fn extractStringValue(s: &string, start: i64): string {
     var pos: i64 = start + 1
     var result: string = ""
@@ -101,7 +98,6 @@ fn extractStringValue(s: &string, start: i64): string {
 }
 
 // skip past a JSON string starting at the opening quote
-
 fn skipString(s: &string, start: i64): i64 {
     var pos: i64 = start + 1
     while pos < s.len {
@@ -118,7 +114,6 @@ fn skipString(s: &string, start: i64): i64 {
 }
 
 // skip past any JSON value (string, object, array, or primitive)
-
 fn skipValue(s: &string, pos: i64): i64 {
     let ch = s[pos]
     if ch == 34 {
@@ -139,7 +134,6 @@ fn skipValue(s: &string, pos: i64): i64 {
 }
 
 // extract raw JSON text for the value at pos
-
 fn extractRaw(s: &string, pos: i64): string {
     var p: i64 = skipWs(s, pos)
     if p >= s.len {
@@ -150,7 +144,6 @@ fn extractRaw(s: &string, pos: i64): string {
 }
 
 // find a field in a JSON object, return its raw value
-
 fn findField(json: &string, field: &string): string {
     var pos: i64 = skipWs(json, 0 as i64)
     if pos >= json.len || json[pos] != 123 {
@@ -187,7 +180,6 @@ fn findField(json: &string, field: &string): string {
 }
 
 // collect all elements of a JSON array as raw value strings
-
 fn collectArray(json: &string, out: &mut Vec<string>): bool {
     var pos: i64 = skipWs(json, 0 as i64)
     if pos >= json.len || json[pos] != 91 {
@@ -212,7 +204,6 @@ fn collectArray(json: &string, out: &mut Vec<string>): bool {
 }
 
 // index into a JSON array, return raw value at idx
-
 fn indexArray(json: &string, idx: i64): string {
     var pos: i64 = skipWs(json, 0 as i64)
     if pos >= json.len || json[pos] != 91 {
@@ -240,7 +231,6 @@ fn indexArray(json: &string, idx: i64): string {
 }
 
 // step appliers — extracted to avoid a codegen bug with nested loops in main
-
 fn applyFields(values: &Vec<string>, field: &string): Vec<string> {
     var next: Vec<string> = Vec.new()
     for vi in 0..values.len {
@@ -272,7 +262,6 @@ fn applyIndex(values: &Vec<string>, idx: i64): Vec<string> {
 }
 
 // parse ".foo.bar[].baz[0]" into steps: ["foo", "bar", "[]", "baz", "[0]"]
-
 fn parseFilter(filter: &string): Vec<string> {
     var steps: Vec<string> = Vec.new()
     var fpos: i64 = 0

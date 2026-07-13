@@ -28,7 +28,6 @@ struct Instant {
 }
 
 // Capture the current wall-clock time.
-
 fn now(): Instant {
     var tv: [u8; 16] = [0; 16]
     unsafe {
@@ -42,14 +41,12 @@ fn now(): Instant {
 }
 
 // Milliseconds since Unix epoch.
-
 fn epochMillis(): i64 {
     let t = now()
     return t.sec * 1000 + t.usec / 1000
 }
 
 // Seconds since Unix epoch.
-
 fn epochSecs(): i64 {
     let t = now()
     return t.sec
@@ -62,7 +59,6 @@ struct Duration {
 }
 
 // Elapsed time between two instants.
-
 fn elapsed(start: Instant, end: Instant): Duration {
     let usec = (end.sec - start.sec) * 1000000 + (end.usec - start.usec)
     return Duration {
@@ -71,13 +67,11 @@ fn elapsed(start: Instant, end: Instant): Duration {
 }
 
 // Elapsed time since an instant.
-
 fn since(start: Instant): Duration {
     return elapsed(start, now())
 }
 
 // Duration accessors.
-
 fn durationSecs(d: &Duration): i64 {
     return d.totalUsec / 1000000
 }
@@ -94,7 +88,6 @@ fn durationMicros(d: &Duration): i64 {
 
 // Sleep for the given number of milliseconds.
 // Inside a green thread, yields cooperatively so other tasks keep running.
-
 fn sleepMs(ms: i64): void {
     if schedulerCurrent() as i64 != 0 {
         let deadline = epochMillis() + ms
@@ -109,7 +102,6 @@ fn sleepMs(ms: i64): void {
 }
 
 // Sleep for the given number of seconds.
-
 fn sleepSecs(secs: i64): void {
     sleepMs(secs * 1000)
 }

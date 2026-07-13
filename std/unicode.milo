@@ -1,7 +1,6 @@
 // std/unicode — character classification, case conversion, and UTF-8 decoding
 
 // Classify ASCII bytes.
-
 fn isAscii(ch: u8): bool {
     return ch < 128
 }
@@ -47,7 +46,6 @@ fn isControl(ch: u8): bool {
 }
 
 // Case conversion for ASCII bytes.
-
 fn toLowerChar(ch: u8): u8 {
     if isUpper(ch) {
         return ch + 32
@@ -63,7 +61,6 @@ fn toUpperChar(ch: u8): u8 {
 }
 
 // Check if an entire string is numeric (all digits).
-
 fn isNumeric(s: &string): bool {
     if s.len == 0 {
         return false
@@ -79,7 +76,6 @@ fn isNumeric(s: &string): bool {
 }
 
 // Check if an entire string is alphabetic.
-
 fn isAlphaStr(s: &string): bool {
     if s.len == 0 {
         return false
@@ -95,7 +91,6 @@ fn isAlphaStr(s: &string): bool {
 }
 
 // Decode UTF-8 string into Unicode codepoints.
-
 fn codepoints(s: &string): Vec<i32> {
     var result: Vec<i32> = Vec.new()
     var i: i64 = 0
@@ -122,7 +117,6 @@ fn codepoints(s: &string): Vec<i32> {
 }
 
 // Number of Unicode codepoints in a string (not bytes).
-
 fn codepointCount(s: &string): i64 {
     var count: i64 = 0
     var i: i64 = 0

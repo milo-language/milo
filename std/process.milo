@@ -15,7 +15,6 @@ from "std/sync" import {
 
 // Execute a shell command and return its exit code.
 // Example: let code = run("ls -la")!
-
 fn run(cmd: &string): Result<i32> {
     unsafe {
         let status = system(cmd)
@@ -31,7 +30,6 @@ fn run(cmd: &string): Result<i32> {
 // ── Process with lifecycle management ──
 
 // Handle to a spawned child process.
-
 struct Process {
     pid: i32,
 }
@@ -86,7 +84,6 @@ impl Process {
 // Reads are blocking. When mergeStderr is false the caller MUST drain both
 // stdout and stderr or the child can deadlock filling an unread pipe; DAP puts
 // protocol on stdout and logs on stderr, so mergeStderr=true is the safe default.
-
 struct Child {
     pid: i32,
     stdinFd: i32, // parent → child stdin

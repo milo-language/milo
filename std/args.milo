@@ -2,7 +2,6 @@
 
 // Return all command-line arguments as a Vec<string>.
 // Index 0 is the program name.
-
 fn args(): Vec<string> {
     var result: Vec<string> = Vec.new()
     let n = _miloArgCount()
@@ -15,7 +14,6 @@ fn args(): Vec<string> {
 // Get the value following a --name flag.
 // Returns null if the flag is not present.
 // Example: getFlag("port") returns the value after --port.
-
 fn getFlag(name: &string): string? {
     let all = args()
     let flag = "--" + name
@@ -30,7 +28,6 @@ fn getFlag(name: &string): string? {
 }
 
 // Check if a --name flag is present in the arguments.
-
 fn hasFlag(name: &string): bool {
     let all = args()
     let flag = "--" + name

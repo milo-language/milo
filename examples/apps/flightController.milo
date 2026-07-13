@@ -99,7 +99,6 @@ requires thrust >= 0.0 && thrust <= 1.0
 
 // ── TUI rendering ──
 // pure ASCII + ANSI background colors only — no box-drawing or unicode
-
 fn cl(s: &string): void
 requires s.len >= 0
 {

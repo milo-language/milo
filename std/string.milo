@@ -337,25 +337,21 @@ fn strReplace(s: &string, old: &string, newVal: &string): string {
 }
 
 // Check if a byte is ASCII whitespace.
-
 fn charIsWhitespace(ch: u8): bool {
     return ch == 32 || ch == 9 || ch == 10 || ch == 13
 }
 
 // Check if a byte is an ASCII digit.
-
 fn charIsDigit(ch: u8): bool {
     return ch >= 48 && ch <= 57
 }
 
 // Check if a byte is an ASCII letter.
-
 fn charIsAlpha(ch: u8): bool {
     return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122)
 }
 
 // Check if a byte is an ASCII letter or digit.
-
 fn charIsAlphanumeric(ch: u8): bool {
     return charIsAlpha(ch) || charIsDigit(ch)
 }
@@ -413,7 +409,6 @@ fn strSplitWhitespace(s: &string): Vec<string> {
 }
 
 // Remove leading and trailing whitespace (spaces, tabs, newlines, carriage returns).
-
 fn trim(s: &string): string {
     var start: i64 = 0
     while start < s.len {

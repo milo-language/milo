@@ -15,7 +15,6 @@ struct Regex {
 }
 
 // Compile a POSIX extended regex with explicit cflags. REG_EXTENDED=1, REG_ICASE=2.
-
 fn regexNewFlags(pattern: string, cflags: i32): Option<Regex> {
     var r = Regex {
         _preg: [0; 64], _valid: false
@@ -31,7 +30,6 @@ fn regexNewFlags(pattern: string, cflags: i32): Option<Regex> {
 }
 
 // Compile a POSIX extended regular expression. Returns None on invalid pattern.
-
 fn regexNew(pattern: string): Option<Regex> {
     return regexNewFlags(pattern, 1)
 }
@@ -48,7 +46,6 @@ fn _readMatchI32(buf: &[u8; 80], off: i64): i32 {
 }
 
 // Test if a string matches the pattern.
-
 fn regexMatch(re: &Regex, input: &string): bool {
     unsafe {
         return regexec(re._preg, input, 0, 0 as *u8, 0) == 0
@@ -56,14 +53,12 @@ fn regexMatch(re: &Regex, input: &string): bool {
 }
 
 // Match result: start and end byte offsets.
-
 struct RegexMatch {
     start: i64,
     end: i64,
 }
 
 // Find the first match in a string. Returns None if no match.
-
 fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
     // regmatch_t on Linux: {rm_so: i32, rm_eo: i32} = 8 bytes each
     var pmatch: [u8; 80] = [0; 80]
@@ -82,7 +77,6 @@ fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
 }
 
 // Find all non-overlapping matches in a string.
-
 fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
     var matches: Vec<RegexMatch> = Vec.new()
     var offset: i64 = 0

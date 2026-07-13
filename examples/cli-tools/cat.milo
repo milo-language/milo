@@ -141,7 +141,6 @@ fn isKeyword(word: &string, kwList: &Vec<string>): bool {
 }
 
 // comment-start detection for a language
-
 fn isLineComment(lang: &string, line: &string, pos: i64): bool {
     if pos + 1 < line.len && line[pos] == 47 && line[pos + 1] == 47 {
         // "//" for c-like langs

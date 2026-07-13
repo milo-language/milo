@@ -80,7 +80,6 @@ fn blockStr(code: i64): string {
 // Each piece is 4 cells in an NxN box; rotation is (x,y) -> (N-1-y, x) applied
 // `rot` times, which is exact on the integer grid for every piece (O maps onto
 // itself). N is 4 for I, 2 for O, 3 for the rest.
-
 fn pieceN(kind: i64): i64 {
     if kind == KIND_I {
         return 4

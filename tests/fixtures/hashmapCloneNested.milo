@@ -5,7 +5,6 @@
 // A shallow copy shared the entry buffer; the clone's drop freed it under the
 // original, and the next probe loop walked freed memory forever (found via
 // self-hosting: milo-self checking any enum match hung on EnumInfo.variants).
-
 struct Info {
     variants: HashMap<string, i64>,
 }

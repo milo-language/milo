@@ -177,7 +177,6 @@ fn newApu(): Apu {
 }
 
 // ---- register writes ($4000-$4017, reg = addr - 0x4000) ----
-
 fn apuWrite(apu: &mut Apu, reg: i64, val: u8): void {
     let v = val as i64
     if reg <= 0x03 {
@@ -345,7 +344,6 @@ fn apuReadStatus(apu: &mut Apu): u8 {
 }
 
 // ---- clocking ----
-
 fn apuStep(apu: &mut Apu, cycles: i64): void {
     var c: i64 = 0
     while c < cycles {
@@ -598,7 +596,6 @@ fn clockPulseSweep(p: &mut Pulse): void {
 }
 
 // ---- outputs + mixing ----
-
 fn pulseMuted(p: &Pulse): bool {
     return p.timerPeriod < 8 || p.timerPeriod > 0x7FF
 }

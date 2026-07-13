@@ -44,7 +44,6 @@ fn lineMatches(line: &string, pattern: &string, ignoreCase: bool): bool {
 }
 
 // highlight all occurrences of pattern in a line
-
 fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string, reset: &string): string {
     var result: string = ""
     var pos: i64 = 0
@@ -83,7 +82,6 @@ fn highlight(line: &string, pattern: &string, ignoreCase: bool, red: &string, re
 }
 
 // write the prefix (filename + line number) for a matching line
-
 fn writePrefix(filePath: &string, lineNum: i64, opts: &GrepOpts): void {
     if opts.showFilename {
         if !opts.noColor {
@@ -111,7 +109,6 @@ fn writePrefix(filePath: &string, lineNum: i64, opts: &GrepOpts): void {
 }
 
 // print a matching line with optional highlighting
-
 fn printMatch(line: &string, filePath: &string, lineNum: i64, opts: &GrepOpts): void {
     writePrefix(filePath, lineNum, opts)
     if !opts.noColor && !opts.invert {

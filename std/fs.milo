@@ -14,7 +14,6 @@ from "std/platform" import {
 }
 
 // File metadata from stat().
-
 struct FileInfo {
     size: i64,
     mode: i32,
@@ -22,7 +21,6 @@ struct FileInfo {
 }
 
 // Get file metadata. Returns FileInfo with exists=false if path doesn't exist.
-
 fn fileInfo(path: &string): FileInfo {
     var buf: [u8; 144] = [0; 144]
     unsafe {
@@ -51,7 +49,6 @@ fn fileInfo(path: &string): FileInfo {
 }
 
 // Check if a path exists.
-
 fn pathExists(path: &string): bool {
     unsafe {
         return access(path, 0) == 0
@@ -59,7 +56,6 @@ fn pathExists(path: &string): bool {
 }
 
 // Check if a path is a directory.
-
 fn isDir(path: &string): bool {
     let info = fileInfo(path)
     if !info.exists {
@@ -70,7 +66,6 @@ fn isDir(path: &string): bool {
 }
 
 // Check if a path is a regular file.
-
 fn isFile(path: &string): bool {
     let info = fileInfo(path)
     if !info.exists {
@@ -81,7 +76,6 @@ fn isFile(path: &string): bool {
 }
 
 // Get file size in bytes. Returns -1 if file doesn't exist.
-
 fn fileSizePath(path: &string): i64 {
     let info = fileInfo(path)
     var negOne: i64 = 0
@@ -93,7 +87,6 @@ fn fileSizePath(path: &string): i64 {
 }
 
 // Directory entry from readDir().
-
 struct DirEntry {
     name: string,
     isDir: bool,
@@ -101,7 +94,6 @@ struct DirEntry {
 }
 
 // List directory contents. Returns empty vec on error.
-
 fn readDir(path: &string): Vec<DirEntry> {
     var entries: Vec<DirEntry> = Vec.new()
     unsafe {
@@ -138,7 +130,6 @@ fn readDir(path: &string): Vec<DirEntry> {
 }
 
 // Write a string to a file, creating or truncating it.
-
 fn writeFile(path: &string, data: &string): Result<i64, IoError> {
     let f = File.openWrite(path)?
     return f.writeAll(data)
@@ -146,7 +137,6 @@ fn writeFile(path: &string, data: &string): Result<i64, IoError> {
 
 // ── Safe wrappers around POSIX fs operations ──
 // Return Result<bool, IoError> for operations with no meaningful return value.
-
 fn _ok(): Result<bool, IoError> {
     return Result.Ok(true)
 }

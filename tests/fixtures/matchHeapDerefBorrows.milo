@@ -4,7 +4,6 @@
 // match on *h through a borrowed Heap reads the pointee in place; it must not
 // consume it. The owned-match path used to zero the pointee through the
 // borrow, so a second read saw an empty payload (silently).
-
 enum Ex {
     Name(string),
     Nil,

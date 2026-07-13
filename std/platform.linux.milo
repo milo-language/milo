@@ -49,13 +49,11 @@ fn oWriteCreateAppend(): i32 {
 }
 
 // offset of aiAddr field in struct addrinfo (swapped with aiCanonname vs macOS)
-
 fn addrinfoAddrOffset(): i64 {
     return 24
 }
 
 // struct stat layout (Linux x8664)
-
 fn statModeOffset(): i64 {
     return 24
 }
@@ -69,7 +67,6 @@ fn statBufSize(): i64 {
 }
 
 // struct dirent layout
-
 fn direntTypeOffset(): i64 {
     return 18
 }
@@ -79,7 +76,6 @@ fn direntNameOffset(): i64 {
 }
 
 // errno access — glibc uses __errno_location() to get errno pointer
-
 extern fn __errno_location(): *u8
 
 fn getErrno(): i32 {

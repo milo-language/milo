@@ -1,25 +1,21 @@
 // std/sort — in-place sorting for Vec types
 
 // Sort Vec<i64> in ascending order.
-
 fn sortI64(v: &mut Vec<i64>): void {
     _qsortI64(v, 0, v.len - 1)
 }
 
 // Sort Vec<i32> in ascending order.
-
 fn sortI32(v: &mut Vec<i32>): void {
     _qsortI32(v, 0 as i32, (v.len - 1) as i32)
 }
 
 // Sort Vec<string> in lexicographic order.
-
 fn sortStrings(v: &mut Vec<string>): void {
     _isortStrings(v, 0, v.len - 1)
 }
 
 // Reverse a Vec<i64> in place.
-
 fn reverseI64(v: &mut Vec<i64>): void {
     var lo: i64 = 0
     var hi = v.len - 1
@@ -87,7 +83,6 @@ requires lo >= 0 as i32
 }
 
 // Sort Vec<string> + parallel Vec<i64> by values descending, then keys ascending (for top-N).
-
 fn sortStringsByFreq(keys: &mut Vec<string>, vals: &mut Vec<i64>): void {
     let n = keys.len
     if n <= 1 {

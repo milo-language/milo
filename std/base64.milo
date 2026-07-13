@@ -36,7 +36,6 @@ fn _b64DecodeChar(ch: u8): u8 {
 }
 
 // Encode a string to base64.
-
 fn base64Encode(input: &string): string {
     var result = ""
     var i: i64 = 0
@@ -71,7 +70,6 @@ fn base64Encode(input: &string): string {
 
 // URL-safe base64, no padding (RFC 4648 §5): '+' → '-', '/' → '_', drop '='.
 // Used for embedding binary data in URL fragments.
-
 fn base64UrlEncode(input: &string): string {
     let std = base64Encode(input)
     var result = ""
@@ -89,7 +87,6 @@ fn base64UrlEncode(input: &string): string {
 }
 
 // Decode a base64 string.
-
 fn base64Decode(input: &string): string {
     var result = ""
     var i: i64 = 0
