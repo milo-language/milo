@@ -56,6 +56,10 @@ struct Mem {
 
     // CPU-side MMIO ($42xx) modeled state:
     nmitimen: i64 // $4200 NMI/IRQ/auto-joypad enable
+    htime: i64 // $4207/$4208 H-counter IRQ target (0-339)
+    vtime: i64 // $4209/$420A V-counter IRQ target (0-261)
+    timeup: i64 // $4211 TIMEUP: bit7 = IRQ fired (cleared on read)
+    wmadd: i64 // $2181-$2183 17-bit WRAM address for the $2180 data port
     wrmpya: i64 // $4202 multiplicand
     wrdiv: i64 // $4204/$4205 16-bit dividend
     rddiv: i64 // $4214/$4215 quotient
@@ -79,7 +83,7 @@ fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         wram: Vec.new(), rom: Vec.new(), romMask: 0, sram: Vec.new(), sramMask: 0, mapMode: 0, mmio: Vec.new(),
-        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
         apuSpc: newApuSpc(), apuMem: spcMemNew(), ppu: newPpu()
     }
 }
@@ -106,7 +110,7 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
         wram: vecZeros(0x20000), rom: rom, romMask: mask,
         sram: vecZeros(0x8000), sramMask: 0x7FFF, mapMode: mapMode,
         mmio: vecZeros(0x4000),
-        nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
         apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu()
     }
     // Boot the SPC into its IPL. The reset vector ($FFFE) is fixed at $FFC0;
@@ -222,12 +226,15 @@ fn mmioRead(m: &Mem, off: i64): i64 {
     if off >= 0x2140 && off <= 0x2143 {
         return apuReadPort(m.apuMem, off - 0x2140) // APU ports $2140-$2143
     }
+    if off == 0x2180 {
+        return m.wram[m.wmadd & 0x1FFFF]as i64
+    } // WMDATA read (auto-inc omitted on the &Mem read path)
     if off == 0x4210 {
         return m.vblankToggle | 0x02
     } // RDNMI: bit7 NMI, low = version 2
     if off == 0x4211 {
-        return 0
-    } // TIMEUP (IRQ flag) — none pending
+        return m.timeup
+    } // TIMEUP (IRQ flag); cleared per-frame in stepFrame (read-clear needs &mut)
     if off == 0x4212 {
         return m.vblankToggle
     } // HVBJOY: bit7 vblank
@@ -264,6 +271,19 @@ fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
         m.mmio[off - 0x2000] = (val & 0xFF) as u8
         runDMA(m, val) return // MDMAEN: start general-purpose DMA on set channels
     }
+    if off == 0x2180 { // WMDATA: write WRAM at the auto-incrementing address
+        m.wram[m.wmadd & 0x1FFFF] = (val & 0xFF) as u8
+        m.wmadd = (m.wmadd + 1) & 0x1FFFF return
+    }
+    if off == 0x2181 {
+        m.wmadd = (m.wmadd & 0x1FF00) | val return
+    }
+    if off == 0x2182 {
+        m.wmadd = (m.wmadd & 0x100FF) | (val << 8) return
+    }
+    if off == 0x2183 {
+        m.wmadd = (m.wmadd & 0x0FFFF) | ((val & 1) << 16) return
+    }
     if off == 0x4200 {
         m.nmitimen = val return
     }
@@ -287,6 +307,18 @@ fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
             m.rdmpy = (m.wrdiv % val) & 0xFFFF
         }
         return
+    }
+    if off == 0x4207 {
+        m.htime = (m.htime & 0x100) | val return
+    }
+    if off == 0x4208 {
+        m.htime = ((val & 1) << 8) | (m.htime & 0xFF) return
+    }
+    if off == 0x4209 {
+        m.vtime = (m.vtime & 0x100) | val return
+    }
+    if off == 0x420A {
+        m.vtime = ((val & 1) << 8) | (m.vtime & 0xFF) return
     }
     m.mmio[off - 0x2000] = (val & 0xFF) as u8
 }
@@ -458,6 +490,38 @@ fn nmi(cpu: &mut Cpu, m: &mut Mem): void {
     }
 }
 
+// Maskable interrupt (H/V IRQ). Vectors through $FFEE (native) / $FFFE
+// (emulation). Only taken when the I flag is clear.
+fn irq(cpu: &mut Cpu, m: &mut Mem): void {
+    if cpu.e == 0 {
+        push8(cpu, m, cpu.pbr)
+        push16(cpu, m, cpu.pc)
+        push8(cpu, m, cpu.p)
+        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        cpu.pbr = 0
+        cpu.pc = memRead(m, 0xFFEE) | (memRead(m, 0xFFEF) << 8)
+    } else {
+        push16(cpu, m, cpu.pc)
+        push8(cpu, m, cpu.p & (~0x10))
+        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        cpu.pbr = 0
+        cpu.pc = memRead(m, 0xFFFE) | (memRead(m, 0xFFFF) << 8)
+    }
+}
+
+// Fire an H/V IRQ if $4200 enables it (bits 4/5) and the I flag is clear. Our
+// frame has no real scanline counter, so a per-frame V-timed IRQ is raised once
+// at the VTIME-proportional point during active display (below). Sets TIMEUP.
+fn maybeIrq(cpu: &mut Cpu, m: &mut Mem): void {
+    if (m.nmitimen & 0x30) == 0 {
+        return
+    }
+    m.timeup = 0x80
+    if (cpu.p & FI) == 0 {
+        irq(cpu, m)
+    }
+}
+
 // Run one video frame: the CPU during active display, then vblank (set the
 // vblank flag, fire NMI if enabled, run the vblank handler), then clear it.
 // Instruction budgets stand in for cycle-accurate scanline timing for now.
@@ -468,8 +532,23 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     // the SPC every few CPU steps so uploads complete in a frame, not thousands.
     // ~9k instrs/frame approximates the 65816's real per-frame work (was 2600,
     // which ran game logic ~4x too slow); ~6:1 active:vblank matches 224:38 lines.
+    m.timeup = 0 // TIMEUP is read-cleared on hardware; approximate by per-frame reset
+    // Scanline where a V-timed IRQ should fire, mapped into the 7600-instr active
+    // window (VTIME 0-224 visible; clamp so it lands during active display).
+    var irqAt: i64 = -1
+    if (m.nmitimen & 0x30) != 0 {
+        var vt = m.vtime
+        if vt > 224 {
+            vt = 224
+        }
+        irqAt = (vt * 7600) / 224
+    }
+    var fired = false
     var i: i64 = 0
     while i < 7600 {
+        if !fired && irqAt >= 0 && i >= irqAt {
+            maybeIrq(cpu, m) fired = true
+        }
         step(cpu, m)
         if (i & 3) == 0 {
             runApu(m, 2)
