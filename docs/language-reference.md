@@ -2290,6 +2290,7 @@ The parser auto-handles `--help`/`-h` and validates required args, integer forma
 | Embed file | `embedFile("path")` |
 | JSON serialize | `jsonStringify(struct_val)` |
 | String slice | `s[start..end]` |
+| Vec / array slice | `v[start..end]` (non-owning `&[T]` view; works on `Vec` and fixed arrays) |
 | Number to string | `n.toString()` |
 | Bitwise | `& \| ^ << >> ~` |
 | Hex / binary literal | `0xFF`, `0b1010` |

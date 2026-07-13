@@ -662,7 +662,7 @@ class LowerCtx {
         }
         // slice creation (v[a..b] desugar) and slice methods — slices are arrays
         // with size null whose runtime rep is a non-owning %Vec
-        if ((objType?.tag === "vec" || (objType?.tag === "array" && objType.size === null)) && expr.method === "slice") {
+        if ((objType?.tag === "vec" || objType?.tag === "array") && expr.method === "slice") {
           const elementType = objType.element;
           return { kind: "VecSlice", vec: this.lowerExpr(expr.object), start: this.lowerExpr(expr.args[0]), end: this.lowerExpr(expr.args[1]), elementType, type, span: expr.span };
         }

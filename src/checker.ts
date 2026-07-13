@@ -4080,10 +4080,8 @@ export class TypeChecker {
         // slices: `v[a..b]` desugars to `.slice(a,b)`; a slice is `&[T]` — a ref to an
         // unsized array, runtime rep = non-owning %Vec (cap=0, drop glue skips free)
         if ((objType.tag === "vec" || objType.tag === "array") && expr.method === "slice") {
-          if (objType.tag === "array" && objType.size !== null) {
-            this.error(`cannot slice a fixed-size array yet`, sp, `copy the elements into a Vec first`);
-            return this.setType(expr, { tag: "unknown" });
-          }
+          // fixed-size arrays slice into their own storage (view built in codegen);
+          // the frozen-source rule below keeps the array alive for the view's life
           const refSlice: TypeKind = { tag: "ref", inner: { tag: "array", element: objType.element, size: null }, mutable: false };
           if (expr.args.length !== 2) { this.error(`'slice' expects 2 arguments, got ${expr.args.length}`, sp); return this.setType(expr, refSlice); }
           const startType = this.checkExpr(expr.args[0]);

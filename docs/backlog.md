@@ -17,6 +17,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 - **`checkedDiv/Rem`, `wrapping/checkedNeg`** — arithmetic suite completion.
 - **`countOnes/leadingZeros/trailingZeros`** — bit intrinsics (LLVM ctpop/ctlz/cttz), return `i64`.
 - **`rotateLeft/rotateRight/reverseBits`** — funnel-shift + bitreverse, return receiver width.
+- **Fixed-size array slicing** (Tier-2 #6) — `arr[a..b]` view into array storage, no copy.
 - **JSON `strOpt/intOpt/floatOpt/boolOpt`** — optional fields stay in the fluent chain.
 
 ## Tier 1 — quick wins (high ROI, low effort) — do first
@@ -33,7 +34,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 
 | # | Item | ROI | Effort | Why / unblocks | Ref |
 |---|------|-----|--------|----------------|-----|
-| 6 | **Borrowed slices / byte views** `&[T]` — *partially shipped* | H | M→H | Vec/string slicing already works: `v[a..b]` → `&[T]` (non-owning `%Vec`, `checker.ts` slice path). **Gaps:** fixed-size arrays (`"cannot slice a fixed-size array yet"`) and generalized byte views for I/O/`Buffer`. Unblocks the zero-copy form of #7. | roadmap.md:109 |
+| 6 | **Borrowed slices / byte views** `&[T]` — *mostly shipped* | H | M | Vec/string slicing works; ✅ 2026-07-13 **fixed-size array slicing** (`arr[a..b]` / `arr.slice(a,b)` → non-owning `%Vec` view into the array's own storage, bound against static N, `codegen genArraySlice`). **Remaining:** generalized byte views for I/O/`Buffer`/`ArrayBuffer` interop. Unblocks zero-copy form of #7. | roadmap.md:109 |
 | 7 | **JSON streaming / pull parser** | H | M | Unbounded / multi-GB / NDJSON input has no path today (whole-doc-only, offsets into resident source). Separate state-machine tokenizer; `src-milo/lexer.milo` pattern. Zero-copy variant wants #6. | roadmap: Standard Library |
 | 8 | **Iterators** — `.map().filter().collect()` | H | H | Ergonomics everywhere; kills manual index loops. Needs associated types. | roadmap.md:115 |
 | 9 | **Doc comments + `milo doc`** | H | M | `///` + generator. DX + real docs; incentivizes the docstrings #2 adds by hand. | roadmap.md:123 |

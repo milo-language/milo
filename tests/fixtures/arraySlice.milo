@@ -1,0 +1,30 @@
+// @expect: 3
+// @expect: 20
+// @expect: 30
+// @expect: 40
+// @expect: 10
+// @expect: 50
+
+fn main(): i32 {
+    let arr: [i64; 5] = [10, 20, 30, 40, 50]
+
+    // .slice(a,b) view into the array's own storage — no copy
+    let s = arr.slice(1, 4)
+    print(s.len()) // 3
+    for x in s {
+        print(x) // 20 30 40
+    }
+
+    // arr[a..b] range sugar
+    let head = arr[0..1]
+    for x in head {
+        print(x)
+    } // 10
+
+    let tail = arr[4..5]
+    for x in tail {
+        print(x)
+    } // 50
+
+    return 0
+}

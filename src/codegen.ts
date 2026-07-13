@@ -5708,6 +5708,12 @@ export class Codegen {
     this.hasVecType = true;
     const elemTy = this.llvmType(expr.elementType);
 
+    // fixed-size array source: the view points into the array's own storage, and
+    // the length bound is the static extent N (there is no %Vec len field to read)
+    if (expr.vec.type.tag === "array" && expr.vec.type.size !== null) {
+      return this.genArraySlice(expr, lines);
+    }
+
     const [vLines, vVal] = this.genExpr(expr.vec);
     lines.push(...vLines);
     const [startLines, startVal] = this.genExpr(expr.start);
@@ -5758,6 +5764,59 @@ export class Codegen {
     const s2 = this.nextTemp();
     lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
 
+    return [lines, s2, "%Vec"];
+  }
+
+  // Slice a fixed-size array into a non-owning %Vec view (cap=0) pointing at the
+  // array's own storage. Bound is the static extent N parsed from its [N x T] type.
+  private genArraySlice(expr: HIRExpr & { kind: "VecSlice" }, lines: string[]): [string[], string, string] {
+    const [aLines, arrPtr, arrTy] = this.genLValue(expr.vec);
+    lines.push(...aLines);
+    const [startLines, startVal] = this.genExpr(expr.start);
+    lines.push(...startLines);
+    const [endLines, endVal] = this.genExpr(expr.end);
+    lines.push(...endLines);
+
+    const match = arrTy.match(/\[(\d+) x .+\]/);
+    const size = match ? parseInt(match[1]) : 0;
+
+    this.needsPrintf = true;
+    this.needsExit = true;
+    const badStart = this.nextTemp();
+    lines.push(`  ${badStart} = icmp slt i64 ${startVal}, 0`);
+    const badOrder = this.nextTemp();
+    lines.push(`  ${badOrder} = icmp slt i64 ${endVal}, ${startVal}`);
+    const badEnd = this.nextTemp();
+    lines.push(`  ${badEnd} = icmp sgt i64 ${endVal}, ${size}`);
+    const bad0 = this.nextTemp();
+    lines.push(`  ${bad0} = or i1 ${badStart}, ${badOrder}`);
+    const bad = this.nextTemp();
+    lines.push(`  ${bad} = or i1 ${bad0}, ${badEnd}`);
+    const panicLabel = this.nextLabel("arrslice.panic");
+    const okLabel = this.nextLabel("arrslice.ok");
+    lines.push(`  br i1 ${bad}, label %${panicLabel}, label %${okLabel}`);
+    lines.push(`${panicLabel}:`);
+    const { label: errLabel, length: errLen } = this.addString(
+      `milo: slice range out of bounds: %lld..%lld (len ${size}) at ${expr.span?.line ?? 0}:${expr.span?.col ?? 0}\n`,
+    );
+    const errPtr = this.nextTemp();
+    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
+    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr}, i64 ${startVal}, i64 ${endVal})`);
+    lines.push(`  call void @exit(i32 1)`);
+    lines.push(`  unreachable`);
+    lines.push(`${okLabel}:`);
+
+    this.hasVecType = true;
+    const subLen = this.nextTemp();
+    lines.push(`  ${subLen} = sub i64 ${endVal}, ${startVal}`);
+    const slicePtr = this.nextTemp();
+    lines.push(`  ${slicePtr} = getelementptr ${arrTy}, ptr ${arrPtr}, i64 0, i64 ${startVal}`);
+    const s0 = this.nextTemp();
+    lines.push(`  ${s0} = insertvalue %Vec undef, ptr ${slicePtr}, 0`);
+    const s1 = this.nextTemp();
+    lines.push(`  ${s1} = insertvalue %Vec ${s0}, i64 ${subLen}, 1`);
+    const s2 = this.nextTemp();
+    lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
     return [lines, s2, "%Vec"];
   }
 
