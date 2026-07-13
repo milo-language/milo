@@ -13,15 +13,15 @@ import { dirname, resolve } from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, readFileSync, readdirSync } from "fs";
 import { STDLIB_DIR, stdExists, readStd, materializeStd } from "./stdlibBundle";
-import { format as tsFormat } from "./formatter";
 import { spawnSync } from "child_process";
 
 const hostTarget = getHostTarget();
 
 // ── Formatter ──
 // bin/milo-fmt is the source of truth (same binary `milo fmt` uses); build it on
-// first use rather than silently formatting differently from the CLI. tsFormat
-// remains a last resort so format-on-save degrades instead of failing.
+// first use rather than silently formatting differently from the CLI. If it can't
+// be built we leave the document untouched — never fall back to a divergent
+// formatter, which would silently rewrite the file (e.g. hex→decimal) on save.
 const lspRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fmtBinaryPath = resolve(lspRoot, "bin", "milo-fmt");
 let fmtBinaryReady: boolean | null = null;
@@ -34,7 +34,7 @@ function ensureMiloFmt(): boolean {
     resolve(lspRoot, "examples", "cli-tools", "fmt.milo"), "-o", fmtBinaryPath,
   ], { encoding: "utf-8" });
   fmtBinaryReady = build.status === 0 && existsSync(fmtBinaryPath);
-  if (!fmtBinaryReady) process.stderr.write("milod: could not build bin/milo-fmt; falling back to the TS formatter\n");
+  if (!fmtBinaryReady) process.stderr.write("milod: could not build bin/milo-fmt; formatting disabled\n");
   return fmtBinaryReady;
 }
 
@@ -43,7 +43,7 @@ function formatSource(source: string): string {
     const result = spawnSync(fmtBinaryPath, [], { input: source, encoding: "utf-8", timeout: 30000 });
     if (result.status === 0 && result.stdout) return result.stdout;
   }
-  return tsFormat(source);
+  return source; // native binary unavailable → no-op (formatting handler emits no edits)
 }
 
 // ── JSON-RPC transport ──

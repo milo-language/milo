@@ -87,6 +87,16 @@ fn isTopLevel(s: &string): bool {
     s == "trait" || s == "extern"
 }
 
+// A keyword that can begin a statement. Used to detect statement boundaries when
+// two statements share a source line with no ';' between them (e.g. a crammed
+// `let v = read() a = v`), so each is reflowed onto its own line. `as`/`in`/`mut`
+// etc. are excluded — they continue an expression, never start a statement.
+fn isStmtLeadKeyword(s: &string): bool {
+    return s == "let" || s == "var" || s == "return" || s == "if" ||
+    s == "while" || s == "for" || s == "match" || s == "break" ||
+    s == "continue" || s == "unsafe"
+}
+
 // ── Lexer ──
 
 struct Lexer {
@@ -423,8 +433,7 @@ impl Lexer {
         }
         // Compound assignment: += -= *= /= %= &= |= ^=
         // Must follow the ==/!=/<=/>= cases above, which share the trailing '='.
-        if ch2 == 61 && (ch == 43 || ch == 45 || ch == 42 || ch == 47 ||
-        ch == 37 || ch == 38 || ch == 124 || ch == 94) {
+        if ch2 == 61 && (ch == 43 || ch == 45 || ch == 42 || ch == 47 || ch == 37 || ch == 38 || ch == 124 || ch == 94) {
             self.advance()
             self.advance()
             var op: string = ""
@@ -798,6 +807,12 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     tk != TokKind.Dot && tk != TokKind.Bang && tk != TokKind.Question {
         return true
     }
+    // Space after ] before a value/keyword (e.g. `prog[i] as u8`). Tight before
+    // chained index/call and punctuation: `a[i][j]`, `a[i](x)`, `a[i].f`, `a[i],`.
+    if pk == TokKind.RBracket && (isValueTok(tk) || tk == TokKind.LBrace) &&
+    tk != TokKind.LBracket && tk != TokKind.LParen {
+        return true
+    }
     // Space after } (but not before else — format engine handles } else)
     if pk == TokKind.RBrace && tk != TokKind.Comma && tk != TokKind.RParen &&
     tk != TokKind.Dot && tk != TokKind.Keyword {
@@ -813,16 +828,42 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
 // ── Formatter ──
 
 fn formatSource(src: string): string {
-    let tokens = tokenize(src)
+    // Drop Newline tokens up front: line breaks are derived from each token's
+    // source `.line` (blank line = a gap of 2+ lines), and reflow re-decides them
+    // structurally. Keeping them in the stream would make `tokens[i-1]` a Newline
+    // for the first token of a wrapped line, breaking spacing lookbehind once that
+    // line is collapsed onto the previous one.
+    let rawTokens = tokenize(src)
+    var tokens: Vec<Token> = Vec.new()
+    for ri in 0..rawTokens.len {
+        let rt = rawTokens[ri]
+        if rt.kind != TokKind.Newline {
+            tokens.push(Token {
+                kind: rt.kind, text: rt.text.clone(), line: rt.line
+            }
+            )
+        }
+    }
     var out: string = ""
     var depth: i64 = 0
     var atLineStart: bool = true
 
     var lastLine: i64 = 1
-    var blankCount: i64 = 0
     // Depth of `[ ]` nesting — the ';' in `[T; N]` array types is load-bearing
     // and must be kept, while statement-level ';' is dropped as cosmetic.
     var bracketDepth: i64 = 0
+    // `( )` nesting. Together with bracketDepth this is the "statement level"
+    // guard: source line breaks inside ( ) or [ ] are dropped (params/args/array
+    // literals collapse onto one line — reflow), and statement-boundary splitting
+    // only fires at depth 0 of both. Both are block-local: a `{` saves and resets
+    // them so a closure body inside a call (`spawn(|| { ... })`) still reflows as
+    // its own block rather than being collapsed with the enclosing arg list.
+    var parenDepth: i64 = 0
+    var parenStack: Vec<i64> = Vec.new()
+    var bracketStack: Vec<i64> = Vec.new()
+    // Kind of the last emitted real token (skips newlines/comments/dropped ';'),
+    // for detecting a statement boundary against the current token.
+    var prevKind: TokKind = TokKind.Eof
     // Tracks whether the last emitted real token was `extern`, so a following
     // `fn` can be glued to it as `extern fn` even if the source split them.
     var lastWasExtern: bool = false
@@ -832,28 +873,24 @@ fn formatSource(src: string): string {
     for i in 0..tokens.len {
         let tok = tokens[i]
 
-        // Skip newlines — we track line breaks via tok.line
-        if tok.kind == TokKind.Newline {
-            blankCount = blankCount + 1
-            continue
-        }
-
         if tok.kind == TokKind.Eof {
             break
         }
 
-        if tok.kind == TokKind.LBracket {
-            bracketDepth = bracketDepth + 1
-        } else if tok.kind == TokKind.RBracket {
-            if bracketDepth > 0 {
-                bracketDepth = bracketDepth - 1
-            }
-        }
+        // A blank line in the source is a line gap of 2+ between this token and the
+        // previous real token. (Newline tokens were stripped above.)
+        let blank = tok.line - lastLine >= 2
 
-        // ';' is cosmetic in Milo (statements are newline/grammar-delimited). Drop a
-        // statement-level ';'; if another statement follows it on the same line, put
-        // that one on its own line — the canonical newline-separated form.
-        if tok.kind == TokKind.Semi && bracketDepth == 0 {
+        // Paren/bracket depth is updated at the END of the loop body so that this
+        // token still sees the depth it lives at — the line break *before* a
+        // closing ) or ] must be treated as inside the group (and suppressed).
+
+        // ';' is cosmetic ONLY at statement level (Milo is newline/grammar-delimited).
+        // Drop it there; if another statement follows on the same line, put it on its
+        // own line. A ';' inside ( ) or [ ] is NOT a statement separator — it's either
+        // load-bearing (`[T; N]`) or a syntax error the formatter must preserve
+        // (stripping it would silently turn invalid code into valid) — so leave it.
+        if tok.kind == TokKind.Semi && bracketDepth == 0 && parenDepth == 0 {
             if !atLineStart {
                 var j: i64 = i + 1
                 var nextKind: TokKind = TokKind.Eof
@@ -884,6 +921,13 @@ fn formatSource(src: string): string {
             if depth > 0 {
                 depth = depth - 1
             }
+            // Restore the enclosing block's paren/bracket nesting (see parenStack).
+            if parenStack.len > 0 {
+                parenDepth = parenStack.pop()
+            }
+            if bracketStack.len > 0 {
+                bracketDepth = bracketStack.pop()
+            }
             if !atLineStart {
                 out = out + "\n"
                 atLineStart = true
@@ -893,7 +937,7 @@ fn formatSource(src: string): string {
         // A doc comment sits directly above its decl. The separating blank line
         // belongs above the comment block, not between the comment and the decl
         // — inserting it there detaches the doc from what it documents.
-        let attachedDoc = lastWasOwnLineComment && blankCount <= 1
+        let attachedDoc = lastWasOwnLineComment && !blank
 
         // Blank line before top-level decls
         if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) && !hugExtern && !attachedDoc {
@@ -918,15 +962,16 @@ fn formatSource(src: string): string {
             }
         }
 
-        // Preserve one blank line between sections (when source had 2+ newlines)
-        if blankCount >= 2 && !atLineStart && !hugExtern {
+        // Preserve one blank line between sections (when source had 2+ newlines).
+        // Not inside ( ) or [ ] — there the whole group reflows onto one line.
+        let atStmtLevel = parenDepth == 0 && bracketDepth == 0
+        if blank && atStmtLevel && !atLineStart && !hugExtern {
             out = out + "\n"
             atLineStart = true
         }
-        if blankCount >= 2 && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern {
+        if blank && atStmtLevel && atLineStart && out.len > 0 && !out.endsWith("\n\n") && !hugExtern {
             out = out + "\n"
         }
-        blankCount = 0
 
         // Comment on its own line
         if tok.kind == TokKind.Comment {
@@ -945,18 +990,38 @@ fn formatSource(src: string): string {
                 out = out + " "
             }
             out = out + tok.text
-            // Trailing comment stays on line, leading comment gets newline
-            if ownLine || tok.line > lastLine {
-                out = out + "\n"
-                atLineStart = true
-            }
+            // A `//` comment runs to end of line, so the next token MUST start a new
+            // line — even inside ( ) or [ ], where reflow would otherwise collapse
+            // it up and swallow that token into the comment text.
+            out = out + "\n"
+            atLineStart = true
             lastLine = tok.line
             lastWasOwnLineComment = ownLine
             continue
         }
 
-        // New source line → new output line
-        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern {
+        // Statement-boundary reflow: split two statements that share a source line
+        // with no ';' or brace between them (e.g. `let v = read() a = v`). Only at
+        // statement level (depth > 0, outside ( ) and [ ]) and only where the prev
+        // token ends a statement and the current one begins a new one. Runs before
+        // the source-newline rule so it also fires when the author did wrap.
+        if !atLineStart && depth > 0 && atStmtLevel {
+            let prevEndsStmt = prevKind == TokKind.Ident || prevKind == TokKind.Int ||
+            prevKind == TokKind.Float || prevKind == TokKind.Str ||
+            prevKind == TokKind.Char || prevKind == TokKind.RParen ||
+            prevKind == TokKind.RBracket
+            let curStartsStmt = tok.kind == TokKind.Ident ||
+            (tok.kind == TokKind.Keyword && isStmtLeadKeyword(tok.text))
+            if prevEndsStmt && curStartsStmt {
+                out = out + "\n"
+                atLineStart = true
+            }
+        }
+
+        // New source line → new output line. Suppressed inside ( ) and [ ] so a
+        // param list / call args / array literal split across source lines reflows
+        // onto one line.
+        if tok.line > lastLine && !atLineStart && tok.kind != TokKind.RBrace && !hugExtern && atStmtLevel {
             out = out + "\n"
             atLineStart = true
         }
@@ -976,10 +1041,18 @@ fn formatSource(src: string): string {
         lastLine = tok.line
         lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
         lastWasOwnLineComment = false
+        prevKind = tok.kind
 
         // { increases indent and forces newline
         if tok.kind == TokKind.LBrace {
             depth = depth + 1
+            // The body is a fresh statement context: save the enclosing paren/
+            // bracket nesting and reset, so reflow inside this block is independent
+            // of an unclosed ( around it (e.g. a closure passed as a call arg).
+            parenStack.push(parenDepth)
+            bracketStack.push(bracketDepth)
+            parenDepth = 0
+            bracketDepth = 0
             var nextIsTrailing: bool = false
             if i + 1 < tokens.len {
                 let nt = tokens[i + 1]
@@ -1016,6 +1089,23 @@ fn formatSource(src: string): string {
             } else {
                 out = out + "\n"
                 atLineStart = true
+            }
+        }
+
+        // Apply this token's paren/bracket delta now (see the note where these are
+        // declared): deferring it to here keeps a closing ) or ] "inside" its group
+        // for the line-break decisions above.
+        if tok.kind == TokKind.LParen {
+            parenDepth = parenDepth + 1
+        } else if tok.kind == TokKind.RParen {
+            if parenDepth > 0 {
+                parenDepth = parenDepth - 1
+            }
+        } else if tok.kind == TokKind.LBracket {
+            bracketDepth = bracketDepth + 1
+        } else if tok.kind == TokKind.RBracket {
+            if bracketDepth > 0 {
+                bracketDepth = bracketDepth - 1
             }
         }
     }

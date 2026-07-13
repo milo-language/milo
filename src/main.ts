@@ -980,10 +980,9 @@ async function main() {
     const files = fmtArgs.filter(a => a !== "-w");
     if (files.length === 0) { console.error("error: no files to format"); process.exit(1); }
 
-    // bin/milo-fmt is the source of truth for formatting. src/formatter.ts is a
-    // reference impl whose output differs (it rewrites hex literals to decimal,
-    // among others), so falling back to it would make `milo fmt` produce
-    // different bytes depending on whether the binary happened to be built.
+    // bin/milo-fmt (built from examples/cli-tools/fmt.milo) is the sole formatter.
+    // Build it on first use rather than fall back to anything divergent, so
+    // `milo fmt` always produces the same bytes.
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
     const fmtBin = resolve(root, "bin", "milo-fmt");
     if (!existsSync(fmtBin)) {
