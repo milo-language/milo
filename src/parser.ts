@@ -652,6 +652,24 @@ export class Parser {
   private parseWhile(): Stmt {
     const s = this.span(this.peek());
     this.expect(TokenKind.While);
+    // `while let P = subj { body }` desugars to
+    //   `while true { if let P = subj { body } else { break } }`
+    // so the existing if-let + while machinery handles binding and exhaustion.
+    if (this.at(TokenKind.Let)) {
+      this.expect(TokenKind.Let);
+      const pattern = this.parsePattern();
+      this.expect(TokenKind.Eq);
+      const subject = this.parseExpr();
+      const invariants = this.parseContracts().filter(c => c.kind === "invariant");
+      this.expect(TokenKind.LBrace);
+      const body = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+      const ifLet: Stmt = {
+        kind: "IfLetStmt", pattern, subject, thenBody: body,
+        elseBody: [{ kind: "BreakStmt", span: s }], span: s,
+      };
+      return { kind: "WhileStmt", cond: { kind: "BoolLit", value: true, span: s }, invariants, body: [ifLet], span: s };
+    }
     const cond = this.parseExpr();
     const invariants = this.parseContracts().filter(c => c.kind === "invariant");
     this.expect(TokenKind.LBrace);

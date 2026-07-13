@@ -2887,6 +2887,30 @@ export class TypeChecker {
       this.exprTypes.set(expr, hint);
       return hint;
     }
+    if (expr.kind === "EnumLit" && expr.enumName === "Vec" && expr.variant === "withCapacity" && hint?.tag === "vec") {
+      if (expr.args.length !== 1) { this.error(`'Vec.withCapacity' expects 1 argument (capacity), got ${expr.args.length}`, expr.span); }
+      else {
+        const c = this.checkExpr(expr.args[0]);
+        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.withCapacity': capacity must be an integer, got ${typeName(c)}`, expr.span);
+      }
+      this.exprTypes.set(expr, hint);
+      return hint;
+    }
+    if (expr.kind === "EnumLit" && expr.enumName === "Vec" && expr.variant === "filled" && hint?.tag === "vec") {
+      if (expr.args.length !== 2) { this.error(`'Vec.filled' expects 2 arguments (count, value), got ${expr.args.length}`, expr.span); }
+      else {
+        const c = this.checkExpr(expr.args[0]);
+        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.filled': count must be an integer, got ${typeName(c)}`, expr.span);
+        this.checkExprWithHint(expr.args[1], hint.element);
+        // The value is copied into every slot, so it must be Copy — otherwise
+        // N slots would alias one heap buffer and free it N times.
+        if (!isCopy(hint.element, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+          this.error(`'Vec.filled' requires a Copy element type (got ${typeName(hint.element)}) — the fill value is duplicated into every slot; build a non-Copy Vec with a push loop`, expr.span);
+        }
+      }
+      this.exprTypes.set(expr, hint);
+      return hint;
+    }
     if (expr.kind === "EnumLit" && expr.enumName === "HashMap" && expr.variant === "new" && hint?.tag === "hashmap") {
       if (expr.args.length !== 0) { this.error(`'HashMap.new' takes no arguments`, sp); }
       this.exprTypes.set(expr, hint);
@@ -3746,6 +3770,10 @@ export class TypeChecker {
         if (expr.enumName === "Vec" && expr.variant === "new") {
           if (expr.args.length !== 0) this.error(`'Vec.new' takes no arguments`, sp);
           this.error(`cannot infer Vec element type — add a type annotation: 'let v: Vec<T> = Vec.new()'`, sp);
+          return this.setType(expr, { tag: "unknown" });
+        }
+        if (expr.enumName === "Vec" && (expr.variant === "withCapacity" || expr.variant === "filled")) {
+          this.error(`cannot infer Vec element type — add a type annotation: 'let v: Vec<T> = Vec.${expr.variant}(...)'`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
         if (expr.enumName === "HashMap" && expr.variant === "new") {

@@ -3228,6 +3228,71 @@ export class Codegen {
         lines.push(`  ${s2} = insertvalue %Vec ${s1}, i64 0, 2`);
         return [lines, s2, "%Vec"];
       }
+      case "VecWithCapacity": {
+        this.hasVecType = true;
+        this.needsMalloc = true;
+        const elemSize = this.typeSizeOf(expr.elementType);
+        const [capLines, capVal] = this.genExpr(expr.capacity);
+        lines.push(...capLines);
+        // malloc(cap * elemSize); empty (len=0) but pre-sized so pushes up to
+        // cap don't realloc. cap==0 still allocates 0 bytes — harmless, matches
+        // the "buffer or null" invariant push checks (null only when cap==0).
+        const bytes = this.nextTemp();
+        lines.push(`  ${bytes} = mul i64 ${capVal}, ${elemSize}`);
+        const buf = this.nextTemp();
+        lines.push(`  ${buf} = call ptr @malloc(i64 ${bytes})`);
+        const v0 = this.nextTemp();
+        lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
+        const v1 = this.nextTemp();
+        lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 0, 1`);
+        const v2 = this.nextTemp();
+        lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${capVal}, 2`);
+        return [lines, v2, "%Vec"];
+      }
+      case "VecFilled": {
+        this.hasVecType = true;
+        this.needsMalloc = true;
+        const elemSize = this.typeSizeOf(expr.elementType);
+        const elemTy = this.llvmType(expr.elementType);
+        const [cntLines, cntVal] = this.genExpr(expr.count);
+        lines.push(...cntLines);
+        const [valLines, valVal] = this.genExpr(expr.value);
+        lines.push(...valLines);
+        const bytes = this.nextTemp();
+        lines.push(`  ${bytes} = mul i64 ${cntVal}, ${elemSize}`);
+        const buf = this.nextTemp();
+        lines.push(`  ${buf} = call ptr @malloc(i64 ${bytes})`);
+        // fill loop: for i in 0..count { buf[i] = value }
+        const idxSlot = this.nextTemp();
+        lines.push(`  ${idxSlot} = alloca i64`);
+        lines.push(`  store i64 0, ptr ${idxSlot}`);
+        const condL = this.nextLabel("vecfill.cond");
+        const bodyL = this.nextLabel("vecfill.body");
+        const endL = this.nextLabel("vecfill.end");
+        lines.push(`  br label %${condL}`);
+        lines.push(`${condL}:`);
+        const iv = this.nextTemp();
+        lines.push(`  ${iv} = load i64, ptr ${idxSlot}`);
+        const more = this.nextTemp();
+        lines.push(`  ${more} = icmp ult i64 ${iv}, ${cntVal}`);
+        lines.push(`  br i1 ${more}, label %${bodyL}, label %${endL}`);
+        lines.push(`${bodyL}:`);
+        const slot = this.nextTemp();
+        lines.push(`  ${slot} = getelementptr ${elemTy}, ptr ${buf}, i64 ${iv}`);
+        lines.push(`  store ${elemTy} ${valVal}, ptr ${slot}`);
+        const inc = this.nextTemp();
+        lines.push(`  ${inc} = add i64 ${iv}, 1`);
+        lines.push(`  store i64 ${inc}, ptr ${idxSlot}`);
+        lines.push(`  br label %${condL}`);
+        lines.push(`${endL}:`);
+        const v0 = this.nextTemp();
+        lines.push(`  ${v0} = insertvalue %Vec undef, ptr ${buf}, 0`);
+        const v1 = this.nextTemp();
+        lines.push(`  ${v1} = insertvalue %Vec ${v0}, i64 ${cntVal}, 1`);
+        const v2 = this.nextTemp();
+        lines.push(`  ${v2} = insertvalue %Vec ${v1}, i64 ${cntVal}, 2`);
+        return [lines, v2, "%Vec"];
+      }
       case "VecPush":
         return this.genVecPush(expr, lines);
       case "VecPop":

@@ -1,0 +1,22 @@
+// @expect: 3
+// @expect: 2
+// @expect: 1
+// @expect: done
+// `while let P = subj { body }` loops while subj matches P, binding the payload
+// each iteration; desugars to `while true { if let P = subj {..} else break }`.
+fn next(n: i64): Option<i64> {
+    if n > 0 {
+        return Option.Some(n)
+    }
+    return Option.None
+}
+
+fn main(): i32 {
+    var i: i64 = 3
+    while let Option.Some(x) = next(i) {
+        print($"{x}")
+        i = i - 1
+    }
+    print("done")
+    return 0
+}

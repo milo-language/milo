@@ -1,0 +1,11 @@
+// @expect: 1 7 5 3 3 4 0
+// Vec.withCapacity(n) pre-sizes an empty Vec; Vec.filled(n, v) builds a Vec of
+// n copies of a Copy value (the zeroed-buffer pattern emulators kept hand-rolling).
+fn main(): i32 {
+    var a: Vec<i64> = Vec.withCapacity(100)
+    a.push(7)
+    var b: Vec<i64> = Vec.filled(5, 3)
+    var c: Vec<u8> = Vec.filled(4, 0)
+    print($"{a.len} {a[0]} {b.len} {b[0]} {b[4]} {c.len} {c[2]}")
+    return 0
+}

@@ -520,6 +520,12 @@ class LowerCtx {
         if (expr.enumName === "Vec" && expr.variant === "new" && type.tag === "vec") {
           return { kind: "VecNew", elementType: type.element, type, span: expr.span };
         }
+        if (expr.enumName === "Vec" && expr.variant === "withCapacity" && type.tag === "vec") {
+          return { kind: "VecWithCapacity", capacity: this.lowerExpr(expr.args[0]), elementType: type.element, type, span: expr.span };
+        }
+        if (expr.enumName === "Vec" && expr.variant === "filled" && type.tag === "vec") {
+          return { kind: "VecFilled", count: this.lowerExpr(expr.args[0]), value: this.lowerExpr(expr.args[1]), elementType: type.element, type, span: expr.span };
+        }
         if (expr.enumName === "HashMap" && expr.variant === "new" && type.tag === "hashmap") {
           return { kind: "HashMapNew", keyType: type.key, valueType: type.value, type, span: expr.span };
         }
