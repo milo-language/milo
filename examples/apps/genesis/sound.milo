@@ -15,15 +15,26 @@ let SAMPLE_RATE: i64 = 44100
 let FM_SCALE_1E6: i64 = 50808 // (53267 / 2^20) * 1e6, rounded
 
 struct Synth {
-    phase: [i64; 10] // fixed-point phase per voice (6 FM + 3 PSG + 1 noise), 16.16
+    phase: [i64; 10] // carrier phase per voice (6 FM + 3 PSG + 1 noise), 8.16 fixed
+    modPhase: [i64; 6] // FM modulator (op3) phase per channel
     noiseLfsr: i64
 }
 
 fn newSynth(): Synth {
     return Synth {
         phase: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        modPhase: [0, 0, 0, 0, 0, 0],
         noiseLfsr: 0x8000,
     }
+}
+
+// Operator frequency multiple (reg 0x30 low nibble): 0 => x0.5, else xN. Returns x2.
+fn opMulX2(z: &Z80, part: i64, slotOff: i64, ci: i64): i64 {
+    let mul = z.ym[part + 0x30 + slotOff + ci] & 0xF
+    if mul == 0 {
+        return 1 // x0.5
+    }
+    return mul * 2
 }
 
 // FM channel c (0-5): frequency in Hz*1000 from its fnum/block registers.
@@ -72,14 +83,30 @@ fn synthSample(s: &mut Synth, z: &Z80): i64 {
     var c: i64 = 0
     while c < 6 {
         let fMilli = fmFreqMilli(z, c)
-        if fMilli > 0 {
-            // phase increment (16.16) = freq * 65536 / sampleRate
-            let inc = (fMilli * 65536) / (SAMPLE_RATE * 1000)
-            s.phase[c] = (s.phase[c] + inc) & 0xFFFFFF
-            if z.fmKey[c] {
-                let amp = fmAmp(z, c)
-                acc = acc + sineLut((s.phase[c] >> 8) & 0xFF) * amp / 255
+        if fMilli > 0 && z.fmKey[c] {
+            let part: i64 = if c < 3 {
+                0
+            } else {
+                256
             }
+            let ci = c % 3
+            // base carrier phase inc (8.16) then per-operator MUL (op4=carrier +0xC,
+            // op3=modulator +0x4 in the register slot layout).
+            let baseInc = (fMilli * 65536) / (SAMPLE_RATE * 1000)
+            let carInc = baseInc * opMulX2(z, part, 0xC, ci) / 2
+            let modInc = baseInc * opMulX2(z, part, 0x4, ci) / 2
+            s.phase[c] = (s.phase[c] + carInc) & 0xFFFFFF
+            s.modPhase[c] = (s.modPhase[c] + modInc) & 0xFFFFFF
+            // modulator level from its total level (0x40+0x4); low TL => deep FM
+            let modTl = z.ym[part + 0x44 + ci] & 0x7F
+            let modDepth = 96 - (modTl * 3) / 4
+            var modOut: i64 = 0
+            if modDepth > 0 {
+                modOut = sineLut((s.modPhase[c] >> 8) & 0xFF) * modDepth / 64
+            }
+            let amp = fmAmp(z, c)
+            let ph = ((s.phase[c] >> 8) + modOut) & 0xFF
+            acc = acc + sineLut(ph) * amp / 255
         }
         c = c + 1
     }
