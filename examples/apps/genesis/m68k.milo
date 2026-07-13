@@ -396,12 +396,21 @@ fn vdpDataWrite(m: &mut Mem, val: i64) {
     let target = m.vdpCode & 0xF
     let a = m.vdpAddr
     if target == 1 {
-        // VRAM: byte-swapped word write
+        // VRAM word write. The two bytes are swapped when the address is odd
+        // (VDP quirk); games rely on it for some uploads.
         while m.vram.len <= (a | 1) {
             m.vram.push(0)
         }
-        m.vram[a & 0xFFFE] = ((val >> 8) & 0xFF) as u8
-        m.vram[(a & 0xFFFE) + 1] = (val & 0xFF) as u8
+        let base = a & 0xFFFE
+        let hi = ((val >> 8) & 0xFF) as u8
+        let lo = (val & 0xFF) as u8
+        if (a & 1) == 0 {
+            m.vram[base] = hi
+            m.vram[base + 1] = lo
+        } else {
+            m.vram[base] = lo
+            m.vram[base + 1] = hi
+        }
     } else if target == 3 {
         let idx = (a >> 1) & 0x3F
         m.cram[idx] = val & 0x0EEE
