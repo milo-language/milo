@@ -81,11 +81,22 @@ tiles are clean, coherent art). Chain of evidence (via bootRun on goldenaxe.md):
     GA is self-consistent): (a) SAT-build emits pal0 where HW emits pal1, or
     (b) the fade caller sets A1 to line1 where HW sets line0. Both are 68k data/
     control divergences; render/compositor/CRAM/DMA paths are all verified correct.
-  NEXT: to pick (a) vs (b) needs a reference 68k trace to diff against (e.g. run
-  goldenaxe.md in a known-good MD emulator, dump SAT@VRAM 0xA800 + palette buffer
-  0xFFC080 at the resting title, compare). Then trace the single diverging Bcc/EA
-  in either the SAT-build or the fade caller (who loads A1 before BSR to 0x31b8).
-  Do NOT guess-fix — the fade loop is shared with Sonic; a blind change risks it.
+  RESOLVED the (a)/(b) question via a reference-diff harness (ref/, Musashi 68k +
+  a C port of THIS bus — see ref/ref.c, build with ref/build.sh -> /tmp/ga-ref):
+  * Reference boots GA identically — same final PC (0x0DB4), same frames (469),
+    and BYTE-IDENTICAL CRAM (gold in line1, line0 idx2-5=0). So the palette build
+    is CORRECT; neither (a) nor (b) — the palette was a red herring all along.
+  * The ONLY divergence is the SPRITE TILE NUMBER in the SAT: reference spr4
+    attr=0x8162 (tile 0x162), ours=0x8062 (tile 0x062); spr0 ref 0x1e6 vs ours
+    0x0e6; etc. Our 68k CORE drops BIT 8 (0x100) from the sprite tile field, so
+    the logo/character sprites point at the wrong (garbage) tiles -> noise.
+  * Isolated to the CPU CORE: identical bus, only the 68k differs. NOT VDP/render/
+    palette. Bit-8 drop does not affect control flow (PC stays in lockstep), so
+    it's a data-path bug in some instruction GA uses to build the tile number.
+  NEXT: add a lockstep per-instruction PC+D0-7/A0-7 trace to BOTH cores over a
+  windowed range, diff to find the first instruction whose register result differs
+  (the bit-8 drop). Likely a byte-op/MOVE/OR/ext that clobbers or fails to preserve
+  bit 8. Then fix that opcode in m68k.milo + add a Harte-style regression.
 
 Undocumented CPU-flag corners
 (68000 SSW, Z80 SCF/CCF + block-op X/Y), SSF2 mapper for >4MB carts.
