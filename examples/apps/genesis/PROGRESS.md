@@ -48,7 +48,10 @@ CPUs run tens of millions of instructions with zero unimplemented opcodes.
 
 Deferred refinements (non-blocking): full 4-op FM + envelopes (current = 2-op,
 melody+timbre correct), ch6 DAC drums (needs Z80 bank-window ROM access + sample-
-rate capture), GA title multi-cell sprite artifact, undocumented CPU-flag corners
+rate capture), GA title sprite garble (ISOLATED: a solid-fill test proved sprite positions/sizes
+are perfect — the bug is wrong TILE DATA in VRAM at the sprite tile addresses, i.e.
+a DMA/VRAM-population issue in how GA uploads sprite graphics, NOT a rendering bug;
+Sonic populates VRAM correctly. Fix = trace GA's VDP DMA/data-port writes), undocumented CPU-flag corners
 (68000 SSW, Z80 SCF/CCF + block-op X/Y), SSF2 mapper for >4MB carts.
 
 ### Original milestone notes
