@@ -18,6 +18,8 @@ struct Synth {
     phase: [i64; 10] // carrier phase per voice (6 FM + 3 PSG + 1 noise), 8.16 fixed
     modPhase: [i64; 6] // FM modulator (op3) phase per channel
     envLevel: [i64; 6] // per-channel amplitude envelope (0..255), smooths note gates
+    opPhase: [i64; 24] // 4-op FM: phase per operator (6ch x 4op), 8.16 fixed
+    fbMem: [i64; 6] // op1 feedback memory per channel
     noiseLfsr: i64
 }
 
@@ -26,8 +28,94 @@ fn newSynth(): Synth {
         phase: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         modPhase: [0, 0, 0, 0, 0, 0],
         envLevel: [0, 0, 0, 0, 0, 0],
+        opPhase: [0; 24],
+        fbMem: [0, 0, 0, 0, 0, 0],
         noiseLfsr: 0x8000,
     }
+}
+
+// Register offset (0x30/0x40/... base) for operator opNum (1-4) of channel index
+// ci: the four operators sit at +0(op1),+8(op2),+4(op3),+C(op4).
+fn opOff(opNum: i64): i64 {
+    if opNum == 1 {
+        return 0
+    }
+    if opNum == 2 {
+        return 8
+    }
+    if opNum == 3 {
+        return 4
+    }
+    return 12
+}
+
+// One operator: advance its phase, return sin(phase + modIn) attenuated by its TL.
+// modIn is a phase offset (0..255 units) from the modulating operator(s).
+fn operatorOut(s: &mut Synth, z: &Z80, c: i64, part: i64, ci: i64, opNum: i64, baseInc: i64, modIn: i64): i64 {
+    let off = opOff(opNum)
+    let idx = c * 4 + (opNum - 1)
+    let inc = baseInc * opMulX2(z, part, off, ci) / 2
+    s.opPhase[idx] = (s.opPhase[idx] + inc) & 0xFFFFFF
+    let tl = z.ym[part + 0x40 + off + ci] & 0x7F
+    let atten = 127 - tl // 0..127 loudness
+    if atten <= 0 {
+        return 0
+    }
+    let ph = ((s.opPhase[idx] >> 8) + modIn) & 0xFF
+    return sineLut(ph) * atten / 127 // -64..64 scaled by loudness
+}
+
+// Full 4-operator FM for one channel per the algorithm (reg $B0 bits 0-2) and
+// feedback (bits 3-5). Returns the channel's carrier-sum sample (pre-envelope).
+fn fmChannel4op(s: &mut Synth, z: &Z80, c: i64, part: i64, ci: i64, baseInc: i64): i64 {
+    let alg = z.ym[part + 0xB0 + ci] & 0x7
+    let fb = (z.ym[part + 0xB0 + ci] >> 3) & 0x7
+    // op1 with self-feedback (averaged previous output, shifted by fb amount)
+    var fbIn: i64 = 0
+    if fb > 0 {
+        fbIn = (s.fbMem[c] >> (9 - fb))
+    }
+    let o1 = operatorOut(s, z, c, part, ci, 1, baseInc, fbIn)
+    s.fbMem[c] = o1
+    var out: i64 = 0
+    if alg == 0 {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, o1)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, o2)
+        out = operatorOut(s, z, c, part, ci, 4, baseInc, o3)
+    } else if alg == 1 {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, 0)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, o1 + o2)
+        out = operatorOut(s, z, c, part, ci, 4, baseInc, o3)
+    } else if alg == 2 {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, 0)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, o2)
+        out = operatorOut(s, z, c, part, ci, 4, baseInc, o1 + o3)
+    } else if alg == 3 {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, o1)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, 0)
+        out = operatorOut(s, z, c, part, ci, 4, baseInc, o2 + o3)
+    } else if alg == 4 {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, o1)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, 0)
+        let o4 = operatorOut(s, z, c, part, ci, 4, baseInc, o3)
+        out = o2 + o4
+    } else if alg == 5 {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, o1)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, o1)
+        let o4 = operatorOut(s, z, c, part, ci, 4, baseInc, o1)
+        out = o2 + o3 + o4
+    } else if alg == 6 {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, o1)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, 0)
+        let o4 = operatorOut(s, z, c, part, ci, 4, baseInc, 0)
+        out = o2 + o3 + o4
+    } else {
+        let o2 = operatorOut(s, z, c, part, ci, 2, baseInc, 0)
+        let o3 = operatorOut(s, z, c, part, ci, 3, baseInc, 0)
+        let o4 = operatorOut(s, z, c, part, ci, 4, baseInc, 0)
+        out = o1 + o2 + o3 + o4
+    }
+    return out
 }
 
 // Operator frequency multiple (reg 0x30 low nibble): 0 => x0.5, else xN. Returns x2.
@@ -123,18 +211,8 @@ fn synthSample(s: &mut Synth, z: &mut Z80): i64 {
             let fMilli = fmFreqMilli(z, c)
             if fMilli > 0 && s.envLevel[c] > 0 {
                 let baseInc = (fMilli * 65536) / (SAMPLE_RATE * 1000)
-                let carInc = baseInc * opMulX2(z, part, 0xC, ci) / 2
-                let modInc = baseInc * opMulX2(z, part, 0x4, ci) / 2
-                s.phase[c] = (s.phase[c] + carInc) & 0xFFFFFF
-                s.modPhase[c] = (s.modPhase[c] + modInc) & 0xFFFFFF
-                let modTl = z.ym[part + 0x44 + ci] & 0x7F
-                let modDepth = 96 - (modTl * 3) / 4
-                var modOut: i64 = 0
-                if modDepth > 0 {
-                    modOut = sineLut((s.modPhase[c] >> 8) & 0xFF) * modDepth / 64
-                }
-                let ph = ((s.phase[c] >> 8) + modOut) & 0xFF
-                acc = acc + sineLut(ph) * s.envLevel[c] / 255
+                let chOut = fmChannel4op(s, z, c, part, ci, baseInc)
+                acc = acc + chOut * s.envLevel[c] / 255
             }
         }
         c = c + 1
