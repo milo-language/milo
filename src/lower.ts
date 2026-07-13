@@ -619,6 +619,12 @@ class LowerCtx {
           return { kind: "BoolToString", value: this.lowerExpr(expr.object), type, span: expr.span };
         }
         if (objType?.tag === "int") {
+          const bitIntrinsics: Record<string, string> = {
+            countOnes: "ctpop", leadingZeros: "ctlz", trailingZeros: "cttz",
+          };
+          if (bitIntrinsics[expr.method]) {
+            return { kind: "BitIntrinsic", intrinsic: bitIntrinsics[expr.method], value: this.lowerExpr(expr.object), type, span: expr.span };
+          }
           // x.wrappingNeg() / x.checkedNeg() → wrapping/checked sub(0, x)
           if (expr.method === "wrappingNeg" || expr.method === "checkedNeg") {
             const right = this.lowerExpr(expr.object);

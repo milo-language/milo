@@ -12,6 +12,12 @@ A **do-next ordering** across the open work. Status source of truth is [roadmap.
 
 ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters: ship Tier 1 first (cheap + high payoff), invest deliberately in Tier 2, let Tier 3 wait.
 
+## Shipped this loop (2026-07-13)
+
+- **`checkedDiv/Rem`, `wrapping/checkedNeg`** — arithmetic suite completion.
+- **`countOnes/leadingZeros/trailingZeros`** — bit intrinsics (LLVM ctpop/ctlz/cttz), return `i64`.
+- **JSON `strOpt/intOpt/floatOpt/boolOpt`** — optional fields stay in the fluent chain.
+
 ## Tier 1 — quick wins (high ROI, low effort) — do first
 
 | # | Item | ROI | Effort | Why / unblocks | Ref |

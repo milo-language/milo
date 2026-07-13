@@ -3597,6 +3597,8 @@ export class Codegen {
         return this.genSaturatingArith(expr, lines);
       case "CheckedArith":
         return this.genCheckedArith(expr, lines);
+      case "BitIntrinsic":
+        return this.genBitIntrinsic(expr, lines);
       case "JsonStringify":
         return this.genJsonStringify(expr, lines);
       case "Closure": {
@@ -8143,6 +8145,27 @@ export class Codegen {
     const result = this.nextTemp();
     lines.push(`  ${result} = phi ${optionTy} [ ${someVal}, %${okLabel} ], [ ${noneVal}, %${overflowLabel} ]`);
     return [lines, result, optionTy];
+  }
+
+  // x.countOnes()/leadingZeros()/trailingZeros() — LLVM ctpop/ctlz/cttz.
+  // Count fits any width, so the iN result is zero-extended to the i64 return.
+  private genBitIntrinsic(expr: HIRExpr & { kind: "BitIntrinsic" }, lines: string[]): [string[], string, string] {
+    const [vl, vv, vt] = this.genExpr(expr.value);
+    lines.push(...vl);
+    const name = `@llvm.${expr.intrinsic}.${vt}`;
+    const raw = this.nextTemp();
+    if (expr.intrinsic === "ctpop") {
+      this.usedOverflowIntrinsics.add(`declare ${vt} ${name}(${vt})`);
+      lines.push(`  ${raw} = call ${vt} ${name}(${vt} ${vv})`);
+    } else {
+      // ctlz/cttz take an i1 "is-zero-poison" flag; false = defined for 0 (returns bit width)
+      this.usedOverflowIntrinsics.add(`declare ${vt} ${name}(${vt}, i1)`);
+      lines.push(`  ${raw} = call ${vt} ${name}(${vt} ${vv}, i1 false)`);
+    }
+    if (vt === "i64") return [lines, raw, "i64"];
+    const wide = this.nextTemp();
+    lines.push(`  ${wide} = zext ${vt} ${raw} to i64`);
+    return [lines, wide, "i64"];
   }
 
   private usedSatIntrinsics?: Set<string>;

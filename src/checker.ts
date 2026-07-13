@@ -4049,6 +4049,12 @@ export class TypeChecker {
             if (expr.args.length !== 0) { this.error(`'checkedNeg' takes no arguments`, sp); }
             return this.setType(expr, this.resolveOptionForValue(objType, sp));
           }
+          // bit-counting intrinsics — 0-arg, count fits any width so result is i64
+          const bitCountMethods = ["countOnes", "leadingZeros", "trailingZeros"];
+          if (bitCountMethods.includes(expr.method)) {
+            if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "int", bits: 64, signed: true });
+          }
         }
         // frozen-collection guard: reject realloc/free-capable builtins on a borrowed receiver
         if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")

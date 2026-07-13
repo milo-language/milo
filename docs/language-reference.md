@@ -124,6 +124,8 @@ q.checkedRem(0)      // Option.None — None on divide-by-zero
 Available: `wrappingAdd/Sub/Mul/Neg`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul/Div/Rem/Neg`.
 `checkedDiv`/`checkedRem` also return `None` on signed `INT_MIN / -1` overflow; `checkedNeg` returns `None` at signed `INT_MIN`.
 
+Bit intrinsics (return `i64` count): `countOnes`, `leadingZeros`, `trailingZeros` — LLVM `ctpop`/`ctlz`/`cttz`; zero-count equals the type's bit width.
+
 ### Ranged Integer Types
 
 Type aliases with range constraints, inspired by Ada/SPARK. Range checks are always-on in all build modes.

@@ -1,0 +1,20 @@
+// @expect: 5
+// @expect: 4
+// @expect: 2
+// @expect: 8
+
+fn main(): i32 {
+    let a: u8 = 0b10110101 // five 1 bits
+    print(a.countOnes()) // 5
+
+    let b: u32 = 0x0F000000 // top nibble of byte 3 set → 4 leading zeros
+    print(b.leadingZeros()) // 4
+
+    let c: u8 = 0b11000100 // lowest set bit at index 2
+    print(c.trailingZeros()) // 2
+
+    let z: u8 = 0 // all zero → count == bit width
+    print(z.trailingZeros()) // 8
+
+    return 0
+}
