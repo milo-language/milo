@@ -1,0 +1,22 @@
+// @expect: {"name":"milo","stars":42}
+
+from "std/json" import {
+    jsonObj
+}
+
+fn main(): i32 {
+    let name: Option<string> = Option.Some("milo")
+    let missing: Option<string> = Option.None
+    let stars: Option<i64> = Option.Some(42)
+    let rating: Option<f64> = Option.None
+
+    // present fields land in the chain; None fields are silently skipped
+    let out = jsonObj()
+    .strOpt("name", name)
+    .strOpt("skip", missing)
+    .intOpt("stars", stars)
+    .floatOpt("rating", rating)
+    .build()
+    print(out)
+    return 0
+}

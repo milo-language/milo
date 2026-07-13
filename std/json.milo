@@ -1484,6 +1484,65 @@ impl JsonObj {
         )
         return m
     }
+    // Optional-field helpers: add the key only when the Option is Some, so a
+    // conditional field stays inside the fluent chain instead of breaking out
+    // to an `if` around each call.
+    fn strOpt(self: Self, key: string, val: Option<string>): Self {
+        var m = self
+        match val {
+            Option.Some(v) => {
+                m.members.push(JsonMember {
+                    key: key, val: JsonVal.JStr(v)
+                }
+                )
+            }
+            Option.None => {
+            }
+        }
+        return m
+    }
+    fn intOpt(self: Self, key: string, val: Option<i64>): Self {
+        var m = self
+        match val {
+            Option.Some(v) => {
+                m.members.push(JsonMember {
+                    key: key, val: JsonVal.JInt(v)
+                }
+                )
+            }
+            Option.None => {
+            }
+        }
+        return m
+    }
+    fn floatOpt(self: Self, key: string, val: Option<f64>): Self {
+        var m = self
+        match val {
+            Option.Some(v) => {
+                m.members.push(JsonMember {
+                    key: key, val: JsonVal.JFloat(v)
+                }
+                )
+            }
+            Option.None => {
+            }
+        }
+        return m
+    }
+    fn boolOpt(self: Self, key: string, val: Option<bool>): Self {
+        var m = self
+        match val {
+            Option.Some(v) => {
+                m.members.push(JsonMember {
+                    key: key, val: JsonVal.JBool(v)
+                }
+                )
+            }
+            Option.None => {
+            }
+        }
+        return m
+    }
     fn build(self: &Self): string {
         var out = "{"
         for i in 0..self.members.len {

@@ -18,8 +18,8 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 |---|------|-----|--------|----------------|-----|
 | 1 | ~~**`checkedDiv/checkedRem`** → `Option`~~ ✅ shipped 2026-07-13 (None on div-by-zero / signed `INT_MIN`/-1). | M | L | Safe division; mirrored the `checkedAdd` path. `overflowingAdd/Sub/Mul` (→ `(val,bool)`) still **blocked on tuple support** — no tuples in the language yet. | `checker.ts`, `lower.ts`, `codegen.ts genCheckedDivRem` |
 | 2 | **Struct-field + fn docstring pass** on hot modules | M | L | Bare 6502 register fields (`a/x/y/p`) and un-doc'd fns (`busRead`) read as opaque to newcomers. One-line labels close it. Also seeds `milo doc` (#9). | this session |
-| 3 | **JSON builder ergonomics** | M | L→M | Read side is clean; hand-building docs (`jsonObj().str().build()`) is clunky. Self-contained, daily-use API. | roadmap: Standard Library |
-| 4 | **Unused import warnings** | M | L | Kills the "import just to link" noise; small compiler pass. | roadmap.md:108 |
+| 3 | **JSON builder ergonomics** — *mostly done* | M | L | Builder was already complete + symmetric (`str/int/float/bool/nil/obj/arr/val/raw` on both `JsonObj`/`JsonArr`). ✅ 2026-07-13 added `strOpt/intOpt/floatOpt/boolOpt` to `JsonObj` — optional fields now stay in the fluent chain instead of breaking to an `if`. Remaining: `build()` emits `string` not `Json` (read/write paths disjoint) — bridge later. | `std/json.milo` |
+| 4 | **Unused import warnings** — *deferred, not loop-sized* | M | M | Resolver strips imports (`resolveImports` returns `imports: []`), so the checker never sees them — needs threading entry-file imports + used-name collection across resolver→checker, **and** still false-positives on node-milo's link-only imports. Wants a real design pass, not a quick pass. | roadmap.md:108 |
 | 5 | **`std`-shadows-local fix** | M | L→M | Papercut: a local can be silently shadowed by a std symbol. Correctness + clarity. | memory: papercuts-from-hades |
 
 ## Tier 2 — strategic (high ROI, higher effort) — plan & invest
