@@ -71,13 +71,21 @@ tiles are clean, coherent art). Chain of evidence (via bootRun on goldenaxe.md):
     gradient lives in CRAM LINE 1 (idx2-6). So pal0 sprites render black/noise.
   * The game writes 0x0000 to CRAM line0 idx2-5 EVERY frame while the logo shows,
     so the logo genuinely does NOT use line0 → it SHOULD be pal=1 (line1 gold).
-  * Conclusion: the 68k writes the WRONG palette bit into the SAT (0x8062/pal0 where
-    real HW would have 0xa062/pal1) for the resting title. During the earlier
-    flying-in intro the SAME tile 0x62 IS written 0xa062 (pal1), so the core can
-    produce it — the divergence is context-specific in the title-setup routine.
-  NEXT: trace the 68k routine that builds the resting-title SAT (find where bit
-  0x2000 of the attr word is lost), OR rule in a CRAM-DMA source mixup. This is a
-  CPU/DMA data-divergence, not a VDP-render bug — render/compositor are correct.
+  * Deeper trace (round 2): CRAM loads via ONE 68k->CRAM DMA (ctrl c000/0080,
+    code 0x23) from RAM palette buffer 0xFFC080 — copied faithfully. The buffer
+    ITSELF has gold in line1 (0xFFC0A4=0aee) and 0 in line0 idx2 (0xFFC084). So
+    the 68k BUILT the buffer with gold in line1. The gold fade-in is a generic
+    palette-fade loop at ROM 0x31b8 (`MOVE.w D2,(A1)+ ; ADDQ #2,A1/A0 ; DBRA D0`)
+    whose A1 = destination line; for the logo it runs with A1 in LINE 1.
+  * So EXACTLY ONE of these diverged from real HW (the other is correct, since real
+    GA is self-consistent): (a) SAT-build emits pal0 where HW emits pal1, or
+    (b) the fade caller sets A1 to line1 where HW sets line0. Both are 68k data/
+    control divergences; render/compositor/CRAM/DMA paths are all verified correct.
+  NEXT: to pick (a) vs (b) needs a reference 68k trace to diff against (e.g. run
+  goldenaxe.md in a known-good MD emulator, dump SAT@VRAM 0xA800 + palette buffer
+  0xFFC080 at the resting title, compare). Then trace the single diverging Bcc/EA
+  in either the SAT-build or the fade caller (who loads A1 before BSR to 0x31b8).
+  Do NOT guess-fix — the fade loop is shared with Sonic; a blind change risks it.
 
 Undocumented CPU-flag corners
 (68000 SSW, Z80 SCF/CCF + block-op X/Y), SSF2 mapper for >4MB carts.
