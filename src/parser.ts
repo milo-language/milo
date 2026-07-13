@@ -741,6 +741,34 @@ export class Parser {
     return { kind: "MatchStmt", subject, arms, span: s };
   }
 
+  // Expression-position match: each arm yields a value. Accepts both a braced
+  // block (`P => { stmts; value }`) and a bare expression (`P => value`) with an
+  // optional trailing comma, so `match o { Some(x) => x, None => 0 }` works.
+  private parseMatchExpr(s: Span): Expr {
+    this.expect(TokenKind.Match);
+    const subject = this.parseExpr();
+    this.expect(TokenKind.LBrace);
+    const arms: MatchArm[] = [];
+    while (!this.at(TokenKind.RBrace)) {
+      const pattern = this.parsePattern();
+      this.expect(TokenKind.FatArrow);
+      let body: Stmt[];
+      if (this.at(TokenKind.LBrace)) {
+        this.expect(TokenKind.LBrace);
+        body = this.parseStmts();
+        this.expect(TokenKind.RBrace);
+        this.valueTailToExpr(body);
+      } else {
+        const es = this.span(this.peek());
+        body = [{ kind: "ExprStmt", expr: this.parseExpr(), span: es }];
+      }
+      arms.push({ pattern, body });
+      this.match(TokenKind.Comma); // optional separator between arms
+    }
+    this.expect(TokenKind.RBrace);
+    return { kind: "MatchExpr", subject, arms, span: s };
+  }
+
   private parsePattern(): Pattern {
     const tok = this.peek();
     const s = this.span(tok);
@@ -1103,6 +1131,10 @@ export class Parser {
 
     if (tok.kind === TokenKind.If) {
       return this.parseIfExpr(s);
+    }
+
+    if (tok.kind === TokenKind.Match) {
+      return this.parseMatchExpr(s);
     }
 
     this.error(`unexpected token '${tok.kind}'`, tok);

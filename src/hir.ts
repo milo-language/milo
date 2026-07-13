@@ -33,6 +33,7 @@ export type HIRExpr =
   | { kind: "HeapCreate"; value: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "HeapDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "PtrDeref"; operand: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "MatchExpr"; subject: HIRExpr; arms: HIRMatchArm[]; enumName: string; subjectIsRef?: boolean; type: TypeKind; span?: Span }
   | { kind: "VecNew"; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecWithCapacity"; capacity: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "VecFilled"; count: HIRExpr; value: HIRExpr; elementType: TypeKind; type: TypeKind; span?: Span }

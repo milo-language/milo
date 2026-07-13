@@ -1,4 +1,4 @@
-import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl } from "./ast";
+import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, MatchArm } from "./ast";
 import { simpleType } from "./ast";
 import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
@@ -2270,141 +2270,7 @@ export class TypeChecker {
         break;
       }
       case "MatchStmt": {
-        const rawSubjType = this.checkExpr(stmt.subject);
-        // Matching on a borrowed enum (`&Enum`) reads the pointee without moving
-        // it. Payload bindings become borrows (see below), so nothing is consumed.
-        // Reading a ref Ident auto-derefs, so also consult its declared type.
-        let subjIsRef = rawSubjType.tag === "ref" && rawSubjType.inner.tag === "enum";
-        let subjType = subjIsRef && rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
-        if (!subjIsRef && stmt.subject.kind === "Ident") {
-          const info = this.lookup(stmt.subject.name);
-          if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") {
-            subjIsRef = true;
-            subjType = info.type.inner;
-          }
-        }
-        // Matching on a place (s.field, v[i], *heapBox) also borrows: the
-        // container keeps ownership, so consuming the subject would zero data
-        // the checker cannot track (a second `match v[i].f` read a zeroed enum;
-        // `match *h` through a &Heap zeroed the pointee in place — both silent).
-        // Bindings become borrows below.
-        const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
-          (stmt.subject.kind === "FieldAccess" || stmt.subject.kind === "IndexAccess" ||
-           (stmt.subject.kind === "UnaryOp" && stmt.subject.op === "*"));
-        const subjBorrows = subjIsRef || subjIsPlace;
-        if (subjBorrows) this.matchSubjectRef.add(stmt.subject);
-        const isEnum = subjType.tag === "enum";
-        const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";
-        if (!isEnum && !isLiteralType && subjType.tag !== "unknown") {
-          this.error(`match subject must be an enum, integer, float, string, or bool, got ${typeName(subjType)}`, sp);
-          break;
-        }
-        if (isLiteralType) {
-          let hasWildcard = false;
-          const preMoves = this.snapshotMoveState();
-          const mergedMoves = new Map<typeof preMoves extends Map<infer K, infer V> ? K : never, boolean>();
-          for (const arm of stmt.arms) {
-            if (arm.pattern.kind === "WildcardPattern") {
-              hasWildcard = true;
-            } else if (arm.pattern.kind === "LiteralPattern") {
-              const ps = arm.pattern.span;
-              if (subjType.tag === "int" && arm.pattern.literalKind !== "int" && arm.pattern.literalKind !== "char") {
-                // char literals are integer-valued (u8); allow them against any int subject
-                this.error(`expected integer literal in match arm`, ps);
-              } else if (subjType.tag === "float" && arm.pattern.literalKind !== "float" && arm.pattern.literalKind !== "int") {
-                this.error(`expected numeric literal in match arm`, ps);
-              } else if (subjType.tag === "string" && arm.pattern.literalKind !== "string") {
-                this.error(`expected string literal in match arm`, ps);
-              } else if (subjType.tag === "bool" && arm.pattern.literalKind !== "bool") {
-                this.error(`expected bool literal in match arm`, ps);
-              }
-            } else if (arm.pattern.kind === "EnumPattern") {
-              this.error(`cannot use enum pattern when matching on ${typeName(subjType)}`, arm.pattern.span);
-            }
-            this.restoreMoveState(preMoves);
-            this.pushScope();
-            for (const s of arm.body) this.checkStmt(s, fnRetType);
-            this.popScope();
-            for (const [info, moved] of this.snapshotMoveState()) {
-              if (moved) mergedMoves.set(info, true);
-            }
-          }
-          this.restoreMoveState(preMoves);
-          for (const [info] of mergedMoves) info.moved = true;
-          if (!hasWildcard && subjType.tag === "bool") {
-            const hasTrueArm = stmt.arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === true);
-            const hasFalseArm = stmt.arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === false);
-            if (!hasTrueArm || !hasFalseArm) {
-              this.error(`non-exhaustive match on bool`, sp);
-            }
-          } else if (!hasWildcard) {
-            this.error(`match on ${typeName(subjType)} requires a wildcard '_' arm`, sp);
-          }
-        } else if (isEnum) {
-          const enumInfo = this.enums.get(subjType.name)!;
-          const covered = new Set<string>();
-          let hasWildcard = false;
-          const preMoves = this.snapshotMoveState();
-          const mergedMoves = new Map<typeof preMoves extends Map<infer K, infer V> ? K : never, boolean>();
-          for (const arm of stmt.arms) {
-            if (arm.pattern.kind === "WildcardPattern") {
-              hasWildcard = true;
-            } else if (arm.pattern.kind === "EnumPattern") {
-              const ps = arm.pattern.span;
-              if (arm.pattern.enumName !== subjType.name && enumInfo.baseName !== arm.pattern.enumName) {
-                this.error(`pattern enum '${arm.pattern.enumName}' does not match subject type '${subjType.name}'`, ps);
-              }
-              const variant = enumInfo.variants.get(arm.pattern.variant);
-              if (!variant) {
-                this.error(`enum '${subjType.name}' has no variant '${arm.pattern.variant}'`, ps);
-                continue;
-              }
-              if (covered.has(arm.pattern.variant)) {
-                this.error(`duplicate match arm for '${arm.pattern.variant}'`, ps);
-              }
-              covered.add(arm.pattern.variant);
-              if (arm.pattern.bindings.length !== variant.fields.length) {
-                this.error(`variant '${arm.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${arm.pattern.bindings.length} bindings`, ps);
-              }
-            } else if (arm.pattern.kind === "LiteralPattern") {
-              this.error(`cannot use literal pattern when matching on enum`, arm.pattern.span);
-            }
-            this.restoreMoveState(preMoves);
-            this.pushScope();
-            if (arm.pattern.kind === "EnumPattern") {
-              const variant = enumInfo.variants.get(arm.pattern.variant);
-              if (variant) {
-                for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
-                  let bt = variant.fields[i];
-                  // Ref- or place-match: a non-Copy payload binds as a borrow
-                  // (`&T`) — a view into the still-owned subject, so it can't be
-                  // moved out or dropped. Copy payloads bind by value.
-                  if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
-                    bt = { tag: "ref", inner: bt, mutable: false };
-                  }
-                  this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false });
-                }
-              }
-            }
-            for (const s of arm.body) this.checkStmt(s, fnRetType);
-            this.popScope();
-            for (const [info, moved] of this.snapshotMoveState()) {
-              if (moved) mergedMoves.set(info, true);
-            }
-          }
-          this.restoreMoveState(preMoves);
-          for (const [info] of mergedMoves) info.moved = true;
-          if (!hasWildcard) {
-            for (const [name] of enumInfo.variants) {
-              if (!covered.has(name)) {
-                this.error(`non-exhaustive match: missing variant '${name}'`, sp);
-              }
-            }
-          }
-        }
-        // A ref- or place-match borrows the subject (payload bindings are
-        // borrows); it is not consumed, so don't move it.
-        if (!subjBorrows) this.tryMove(stmt.subject);
+        this.checkMatchLike(stmt.subject, stmt.arms, sp, fnRetType);
         break;
       }
       case "IfLetStmt": {
@@ -4712,7 +4578,190 @@ export class TypeChecker {
         }
         return this.setType(expr, finalThen.tag !== "unknown" ? finalThen : finalElse);
       }
+      case "MatchExpr": {
+        const armTypes = this.checkMatchLike(expr.subject, expr.arms, sp, this.currentFnRetType);
+        // Unify arm value types. Coerce const-int arms to an int target (the
+        // outer hint, else the first concrete non-literal arm) so
+        // `match x { A => 1, B => 2 }` in an i64 slot doesn't stall at i32 —
+        // same const-int retype path as if-expression arms.
+        const armTails = expr.arms.map(a => this.tailExprOf(a.body));
+        const hint = this.returnHint;
+        let target: TypeKind | null = hint?.tag === "int" ? hint : null;
+        if (!target) {
+          for (let i = 0; i < armTypes.length; i++) {
+            const tail = armTails[i];
+            if (armTypes[i].tag === "int" && !(tail && this.isConstIntExpr(tail))) { target = armTypes[i]; break; }
+          }
+        }
+        const finalTypes: TypeKind[] = [];
+        for (let i = 0; i < armTypes.length; i++) {
+          let t = armTypes[i];
+          const tail = armTails[i];
+          if (target && t.tag === "int" && !typeEq(t, target) && tail && this.isConstIntExpr(tail)) {
+            this.retypeConstInt(tail, target); t = target;
+          }
+          finalTypes.push(t);
+        }
+        // Result is the first concrete (non-unknown) arm type; report a mismatch
+        // if a later concrete arm disagrees.
+        let result: TypeKind = { tag: "unknown" };
+        for (const t of finalTypes) {
+          if (t.tag === "unknown" || t.tag === "void") continue;
+          if (result.tag === "unknown") { result = t; continue; }
+          if (!typeEq(result, t)) {
+            this.error(`match arms have mismatched types: '${typeName(result)}' vs '${typeName(t)}'`, sp);
+          }
+        }
+        if (result.tag === "unknown" && finalTypes.some(t => t.tag === "void")) result = { tag: "void" };
+        return this.setType(expr, result);
+      }
     }
+  }
+
+  // Shared checking for `match` in both statement and expression position:
+  // pattern validation, payload binding (borrow vs by-value), move merging, and
+  // exhaustiveness. Returns each arm's block value type in arm order (used by
+  // MatchExpr to unify; MatchStmt ignores it).
+  private checkMatchLike(subject: Expr, arms: MatchArm[], sp: Span | undefined, fnRetType: TypeKind): TypeKind[] {
+    const armTypes: TypeKind[] = [];
+    const rawSubjType = this.checkExpr(subject);
+    // Matching on a borrowed enum (`&Enum`) reads the pointee without moving
+    // it. Payload bindings become borrows (see below), so nothing is consumed.
+    // Reading a ref Ident auto-derefs, so also consult its declared type.
+    let subjIsRef = rawSubjType.tag === "ref" && rawSubjType.inner.tag === "enum";
+    let subjType = subjIsRef && rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
+    if (!subjIsRef && subject.kind === "Ident") {
+      const info = this.lookup(subject.name);
+      if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") {
+        subjIsRef = true;
+        subjType = info.type.inner;
+      }
+    }
+    // Matching on a place (s.field, v[i], *heapBox) also borrows: the
+    // container keeps ownership, so consuming the subject would zero data
+    // the checker cannot track (a second `match v[i].f` read a zeroed enum;
+    // `match *h` through a &Heap zeroed the pointee in place — both silent).
+    // Bindings become borrows below.
+    const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
+      (subject.kind === "FieldAccess" || subject.kind === "IndexAccess" ||
+       (subject.kind === "UnaryOp" && subject.op === "*"));
+    const subjBorrows = subjIsRef || subjIsPlace;
+    if (subjBorrows) this.matchSubjectRef.add(subject);
+    const isEnum = subjType.tag === "enum";
+    const isLiteralType = subjType.tag === "int" || subjType.tag === "float" || subjType.tag === "string" || subjType.tag === "bool";
+    if (!isEnum && !isLiteralType && subjType.tag !== "unknown") {
+      this.error(`match subject must be an enum, integer, float, string, or bool, got ${typeName(subjType)}`, sp);
+      return armTypes;
+    }
+    if (isLiteralType) {
+      let hasWildcard = false;
+      const preMoves = this.snapshotMoveState();
+      const mergedMoves = new Map<typeof preMoves extends Map<infer K, infer V> ? K : never, boolean>();
+      for (const arm of arms) {
+        if (arm.pattern.kind === "WildcardPattern") {
+          hasWildcard = true;
+        } else if (arm.pattern.kind === "LiteralPattern") {
+          const ps = arm.pattern.span;
+          if (subjType.tag === "int" && arm.pattern.literalKind !== "int" && arm.pattern.literalKind !== "char") {
+            // char literals are integer-valued (u8); allow them against any int subject
+            this.error(`expected integer literal in match arm`, ps);
+          } else if (subjType.tag === "float" && arm.pattern.literalKind !== "float" && arm.pattern.literalKind !== "int") {
+            this.error(`expected numeric literal in match arm`, ps);
+          } else if (subjType.tag === "string" && arm.pattern.literalKind !== "string") {
+            this.error(`expected string literal in match arm`, ps);
+          } else if (subjType.tag === "bool" && arm.pattern.literalKind !== "bool") {
+            this.error(`expected bool literal in match arm`, ps);
+          }
+        } else if (arm.pattern.kind === "EnumPattern") {
+          this.error(`cannot use enum pattern when matching on ${typeName(subjType)}`, arm.pattern.span);
+        }
+        this.restoreMoveState(preMoves);
+        this.pushScope();
+        for (const s of arm.body) this.checkStmt(s, fnRetType);
+        armTypes.push(this.blockExprType(arm.body));
+        this.popScope();
+        for (const [info, moved] of this.snapshotMoveState()) {
+          if (moved) mergedMoves.set(info, true);
+        }
+      }
+      this.restoreMoveState(preMoves);
+      for (const [info] of mergedMoves) info.moved = true;
+      if (!hasWildcard && subjType.tag === "bool") {
+        const hasTrueArm = arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === true);
+        const hasFalseArm = arms.some(a => a.pattern.kind === "LiteralPattern" && a.pattern.value === false);
+        if (!hasTrueArm || !hasFalseArm) {
+          this.error(`non-exhaustive match on bool`, sp);
+        }
+      } else if (!hasWildcard) {
+        this.error(`match on ${typeName(subjType)} requires a wildcard '_' arm`, sp);
+      }
+    } else if (isEnum) {
+      const enumInfo = this.enums.get(subjType.name)!;
+      const covered = new Set<string>();
+      let hasWildcard = false;
+      const preMoves = this.snapshotMoveState();
+      const mergedMoves = new Map<typeof preMoves extends Map<infer K, infer V> ? K : never, boolean>();
+      for (const arm of arms) {
+        if (arm.pattern.kind === "WildcardPattern") {
+          hasWildcard = true;
+        } else if (arm.pattern.kind === "EnumPattern") {
+          const ps = arm.pattern.span;
+          if (arm.pattern.enumName !== subjType.name && enumInfo.baseName !== arm.pattern.enumName) {
+            this.error(`pattern enum '${arm.pattern.enumName}' does not match subject type '${subjType.name}'`, ps);
+          }
+          const variant = enumInfo.variants.get(arm.pattern.variant);
+          if (!variant) {
+            this.error(`enum '${subjType.name}' has no variant '${arm.pattern.variant}'`, ps);
+            continue;
+          }
+          if (covered.has(arm.pattern.variant)) {
+            this.error(`duplicate match arm for '${arm.pattern.variant}'`, ps);
+          }
+          covered.add(arm.pattern.variant);
+          if (arm.pattern.bindings.length !== variant.fields.length) {
+            this.error(`variant '${arm.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${arm.pattern.bindings.length} bindings`, ps);
+          }
+        } else if (arm.pattern.kind === "LiteralPattern") {
+          this.error(`cannot use literal pattern when matching on enum`, arm.pattern.span);
+        }
+        this.restoreMoveState(preMoves);
+        this.pushScope();
+        if (arm.pattern.kind === "EnumPattern") {
+          const variant = enumInfo.variants.get(arm.pattern.variant);
+          if (variant) {
+            for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
+              let bt = variant.fields[i];
+              // Ref- or place-match: a non-Copy payload binds as a borrow
+              // (`&T`) — a view into the still-owned subject, so it can't be
+              // moved out or dropped. Copy payloads bind by value.
+              if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+                bt = { tag: "ref", inner: bt, mutable: false };
+              }
+              this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false });
+            }
+          }
+        }
+        for (const s of arm.body) this.checkStmt(s, fnRetType);
+        armTypes.push(this.blockExprType(arm.body));
+        this.popScope();
+        for (const [info, moved] of this.snapshotMoveState()) {
+          if (moved) mergedMoves.set(info, true);
+        }
+      }
+      this.restoreMoveState(preMoves);
+      for (const [info] of mergedMoves) info.moved = true;
+      if (!hasWildcard) {
+        for (const [name] of enumInfo.variants) {
+          if (!covered.has(name)) {
+            this.error(`non-exhaustive match: missing variant '${name}'`, sp);
+          }
+        }
+      }
+    }
+    // A ref- or place-match borrows the subject (payload bindings are
+    // borrows); it is not consumed, so don't move it.
+    if (!subjBorrows) this.tryMove(subject);
+    return armTypes;
   }
 
   private blockExprType(body: Stmt[]): TypeKind {

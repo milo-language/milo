@@ -73,7 +73,7 @@ export interface IsExpr { kind: "IsExpr"; operand: Expr; pattern: Pattern; span?
 export interface IfExpr { kind: "IfExpr"; cond: Expr; thenBody: Stmt[]; elseBody: Stmt[]; span?: Span }
 
 export type Expr = IntLit | FloatLit | BoolLit | StringLit | CharLit | Ident | BinOp | UnaryOp | Call
-  | StructLit | FieldAccess | ArrayLit | ArrayRepeat | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr | RangeExpr | IsExpr | IfExpr;
+  | StructLit | FieldAccess | ArrayLit | ArrayRepeat | IndexAccess | EnumLit | Unwrap | Propagate | DefaultValue | CastExpr | MethodCall | ClosureExpr | RangeExpr | IsExpr | IfExpr | MatchExpr;
 
 // ── Statements ──
 
@@ -94,6 +94,7 @@ export type Pattern =
 
 export interface MatchArm { pattern: Pattern; body: Stmt[] }
 export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[]; span?: Span }
+export interface MatchExpr { kind: "MatchExpr"; subject: Expr; arms: MatchArm[]; span?: Span }
 export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
 
 export interface UnsafeBlock { kind: "UnsafeBlock"; body: Stmt[]; span?: Span }

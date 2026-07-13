@@ -2121,13 +2121,45 @@ export class Codegen {
     return [lines, false];
   }
 
-  private genMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
+  private genMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
     const hasLiteralPattern = stmt.arms.some(a => a.pattern.kind === "LiteralPattern");
-    if (hasLiteralPattern) return this.genLiteralMatch(stmt);
-    return this.genEnumMatch(stmt);
+    if (hasLiteralPattern) return this.genLiteralMatch(stmt, resultSlot);
+    return this.genEnumMatch(stmt, resultSlot);
   }
 
-  private genLiteralMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
+  // Emit a match arm's body. In statement mode (no resultSlot) every stmt runs
+  // as-is. In value mode (match-expression) all but the tail run as stmts and
+  // the tail ExprStmt's value is stored into resultSlot — same shape as IfExpr.
+  private emitMatchArmBody(lines: string[], body: HIRStmt[], resultSlot?: { addr: string; ty: string }): boolean {
+    if (!resultSlot) {
+      for (const s of body) {
+        const [sl, t] = this.genStmt(s);
+        lines.push(...sl);
+        if (t) return true;
+      }
+      return false;
+    }
+    for (let i = 0; i < body.length - 1; i++) {
+      const [sl, t] = this.genStmt(body[i]);
+      lines.push(...sl);
+      if (t) return true;
+    }
+    if (body.length > 0) {
+      const last = body[body.length - 1];
+      if (last.kind === "ExprStmt") {
+        const [vl, vv] = this.genExpr(last.expr);
+        lines.push(...vl);
+        if (vv !== "void") lines.push(`  store ${resultSlot.ty} ${vv}, ptr ${resultSlot.addr}`);
+      } else {
+        const [sl, t] = this.genStmt(last);
+        lines.push(...sl);
+        if (t) return true;
+      }
+    }
+    return false;
+  }
+
+  private genLiteralMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
     const lines: string[] = [];
     const [subjLines, subjVal, subjTy] = this.genExpr(stmt.subject);
     lines.push(...subjLines);
@@ -2187,12 +2219,7 @@ export class Codegen {
 
       // arm body
       lines.push(`${literalArms[i].label}:`);
-      let armTerminated = false;
-      for (const s of literalArms[i].arm.body) {
-        const [sl, t] = this.genStmt(s);
-        lines.push(...sl);
-        if (t) { armTerminated = true; break; }
-      }
+      const armTerminated = this.emitMatchArmBody(lines, literalArms[i].arm.body, resultSlot);
       if (!armTerminated) lines.push(`  br label %${endLabel}`);
       if (!armTerminated) allArmsTerminated = false;
 
@@ -2209,12 +2236,7 @@ export class Codegen {
         lines.push(`  br label %${lastNext}`);
       }
       lines.push(`${lastNext}:`);
-      let wcTerminated = false;
-      for (const s of wildcardArm.body) {
-        const [sl, t] = this.genStmt(s);
-        lines.push(...sl);
-        if (t) { wcTerminated = true; break; }
-      }
+      const wcTerminated = this.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
       if (!wcTerminated) lines.push(`  br label %${endLabel}`);
       if (!wcTerminated) allArmsTerminated = false;
     } else {
@@ -2230,7 +2252,7 @@ export class Codegen {
     return [lines, allArmsTerminated];
   }
 
-  private genEnumMatch(stmt: HIRStmt & { kind: "Match" }): [string[], boolean] {
+  private genEnumMatch(stmt: HIRStmt & { kind: "Match" }, resultSlot?: { addr: string; ty: string }): [string[], boolean] {
     const lines: string[] = [];
     let subjAddr: string;
     let subjTy: string;
@@ -2291,24 +2313,14 @@ export class Codegen {
         const variant = layout.variants.get(arm.pattern.variant)!;
         this.extractBindings(lines, subjAddr, subjTy, variant, arm.pattern, !!stmt.subjectIsRef);
       }
-      let armTerminated = false;
-      for (const s of arm.body) {
-        const [sl, t] = this.genStmt(s);
-        lines.push(...sl);
-        if (t) { armTerminated = true; break; }
-      }
+      const armTerminated = this.emitMatchArmBody(lines, arm.body, resultSlot);
       if (!armTerminated) lines.push(`  br label %${endLabel}`);
       if (!armTerminated) allArmsTerminated = false;
     }
 
     if (wildcardArm) {
       lines.push(`${defaultTarget}:`);
-      let wcTerminated = false;
-      for (const s of wildcardArm.body) {
-        const [sl, t] = this.genStmt(s);
-        lines.push(...sl);
-        if (t) { wcTerminated = true; break; }
-      }
+      const wcTerminated = this.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
       if (!wcTerminated) lines.push(`  br label %${endLabel}`);
       if (!wcTerminated) allArmsTerminated = false;
     }
@@ -3681,6 +3693,30 @@ export class Codegen {
           lines.push(`  unreachable`);
           return [lines, "void", "void"];
         }
+        const result = this.nextTemp();
+        lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
+        return [lines, result, resultTy];
+      }
+      case "MatchExpr": {
+        const resultTy = this.llvmType(expr.type);
+        const resultAddr = `%__matchexpr.${this.scopeCounter++}.addr`;
+        this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
+        // Reuse the statement match generator, passing a result slot so each
+        // arm's tail value is stored instead of discarded.
+        const asStmt = {
+          kind: "Match" as const,
+          subject: expr.subject,
+          arms: expr.arms,
+          enumName: expr.enumName,
+          subjectIsRef: expr.subjectIsRef,
+          span: expr.span,
+        };
+        const [ml, allTerminated] = this.genMatch(asStmt, { addr: resultAddr, ty: resultTy });
+        lines.push(...ml);
+        // Every arm diverged (return/break) — genMatch already closed endLabel
+        // with `unreachable`, so a load here would follow a terminator. The
+        // value is never observed; hand back a poison of the right type.
+        if (allTerminated) return [lines, `poison`, resultTy];
         const result = this.nextTemp();
         lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
         return [lines, result, resultTy];

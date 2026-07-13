@@ -895,6 +895,26 @@ class LowerCtx {
           span: expr.span,
         };
       }
+      case "MatchExpr": {
+        const fnRetType = this.currentRetType;
+        let subjType = this.typeOf(expr.subject);
+        const subjectIsRef = this.c.matchSubjectRef.has(expr.subject);
+        if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
+        const enumName = subjType?.tag === "enum" ? subjType.name : "";
+        const enumInfo = this.c.enums.get(enumName);
+        return {
+          kind: "MatchExpr",
+          subject: this.lowerExpr(expr.subject),
+          arms: expr.arms.map(arm => ({
+            pattern: this.lowerPattern(arm.pattern, enumInfo),
+            body: arm.body.map(s => this.lowerStmt(s, fnRetType)),
+          })),
+          enumName,
+          subjectIsRef,
+          type,
+          span: expr.span,
+        };
+      }
     }
   }
 

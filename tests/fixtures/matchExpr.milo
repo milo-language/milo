@@ -1,0 +1,34 @@
+// @expect: 42
+// @expect: zero
+// @expect: many
+// @expect: 14
+// match in expression position: arms yield values, both bare (`P => v`) and
+// braced (`P => { .. v }`). Reuses statement-match exhaustiveness, binding, and
+// move checking; const-int arms coerce to an int target like if-expression arms.
+fn pick(n: i64): string {
+    return match n {
+        0 => "zero",
+        1 => "one",
+        _ => "many"
+    }
+}
+
+fn main(): i32 {
+    let o: Option<i64> = Option.Some(42)
+    let v = match o {
+        Option.Some(x) => x, Option.None => 0
+    }
+    print($"{v}")
+    print(pick(0))
+    print(pick(9))
+
+    let r: Result<i64, string> = Result.Ok(7)
+    let msg = match r {
+        Result.Ok(n) => {
+            let d = n * 2 d
+        }
+        Result.Err(e) => 0
+    }
+    print($"{msg}")
+    return 0
+}
