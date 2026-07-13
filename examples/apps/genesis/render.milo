@@ -41,6 +41,37 @@ fn cramB(e: i64): i64 {
     return ((e >> 9) & 0x7) * 36
 }
 
+// Apply a shadow/highlight brightness mode (0 normal, 1 shadow, 2 highlight) to a
+// single 0-252 colour component. Shadow halves it; highlight lifts it into the
+// upper half of the range.
+fn shComp(c: i64, mode: i64): i64 {
+    if mode == 1 {
+        return c / 2
+    }
+    if mode == 2 {
+        let v = c / 2 + 128
+        if v > 255 {
+            return 255
+        }
+        return v
+    }
+    return c
+}
+
+// Decode a packed framebuffer pixel (index in bits 0-5, brightness mode in bits
+// 6-7) into 8-bit R/G/B via CRAM.
+fn pixelR(m: &Mem, packed: i64): i64 {
+    return shComp(cramR(m.cram[packed & 0x3F]), (packed >> 6) & 0x3)
+}
+
+fn pixelG(m: &Mem, packed: i64): i64 {
+    return shComp(cramG(m.cram[packed & 0x3F]), (packed >> 6) & 0x3)
+}
+
+fn pixelB(m: &Mem, packed: i64): i64 {
+    return shComp(cramB(m.cram[packed & 0x3F]), (packed >> 6) & 0x3)
+}
+
 fn vram8(m: &Mem, addr: i64): i64 {
     let a = addr & 0xFFFF
     if a < m.vram.len {
@@ -180,6 +211,7 @@ fn renderIndexed(m: &Mem): Vec<i64> {
     let baseA = (m.vdpRegs[2] & 0x38) << 10
     let baseB = (m.vdpRegs[4] & 0x7) << 13
     let backdrop = m.vdpRegs[7] & 0x3F
+    let sh = (m.vdpRegs[12] & 0x08) != 0 // shadow/highlight mode
 
     let spanAx = planeW * 8
     let spanAy = planeH * 8
@@ -213,23 +245,61 @@ fn renderIndexed(m: &Mem): Vec<i64> {
                 aVal = samplePlane(m, baseA, planeW, planeH, wrapCoord(x - hA, spanAx), pyA)
             }
             let bVal = samplePlane(m, baseB, planeW, planeH, wrapCoord(x - hB, spanAx), pyB)
-            let sVal = spr[y * width + x]
+            var sVal = spr[y * width + x]
+
+            // Shadow/highlight (reg12 bit3): areas backed only by low-priority
+            // layers are shadowed; sprite palette-3 colors 14/15 are transparent
+            // operators that highlight/shadow the pixel beneath. Normal sprite
+            // pixels always draw at normal brightness.
+            var shadowed = false
+            var highlighted = false
+            if sh {
+                let hiPlane = (aVal >= 0 && (aVal & PRI) != 0) || (bVal >= 0 && (bVal & PRI) != 0)
+                shadowed = !hiPlane
+                if sVal >= 0 {
+                    let sc = sVal & 0x3F
+                    if sc == 0x3F {
+                        shadowed = true // shadow operator
+                        sVal = -1
+                    } else if sc == 0x3E {
+                        if shadowed {
+                            shadowed = false // highlight cancels shadow -> normal
+                        } else {
+                            highlighted = true
+                        }
+                        sVal = -1
+                    }
+                }
+            }
 
             var pick = backdrop
+            var winSprite = false
             if sVal >= 0 && (sVal & PRI) != 0 {
                 pick = sVal & 0x3F
+                winSprite = true
             } else if aVal >= 0 && (aVal & PRI) != 0 {
                 pick = aVal & 0x3F
             } else if bVal >= 0 && (bVal & PRI) != 0 {
                 pick = bVal & 0x3F
             } else if sVal >= 0 {
                 pick = sVal & 0x3F
+                winSprite = true
             } else if aVal >= 0 {
                 pick = aVal & 0x3F
             } else if bVal >= 0 {
                 pick = bVal & 0x3F
             }
-            fb.push(pick & 0x3F)
+            // Brightness mode in bits 6-7: 0 normal, 1 shadow, 2 highlight. A drawn
+            // normal sprite pixel is always normal brightness.
+            var mode: i64 = 0
+            if sh && !winSprite {
+                if highlighted {
+                    mode = 2
+                } else if shadowed {
+                    mode = 1
+                }
+            }
+            fb.push((pick & 0x3F) | (mode << 6))
             x = x + 1
         }
         y = y + 1

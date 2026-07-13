@@ -16,7 +16,7 @@ from "./sound" import {
     Synth, newSynth, synthSample
 }
 from "./render" import {
-    renderIndexed, frameWidth, frameHeight, cramR, cramG, cramB
+    renderIndexed, frameWidth, frameHeight, pixelR, pixelG, pixelB
 }
 
 // Fixed max frame width (H40); H32 (256px) frames render into the left columns and
@@ -136,10 +136,9 @@ fn stepFrame(h: &mut GenHandle): void {
         let row = i / srcW
         let col = i % srcW
         let dst = (row * MAXW + col) * 4
-        let e = h.m.cram[fb[i] & 0x3F]
-        h.rgba[dst] = cramR(e) as u8
-        h.rgba[dst + 1] = cramG(e) as u8
-        h.rgba[dst + 2] = cramB(e) as u8
+        h.rgba[dst] = pixelR(h.m, fb[i]) as u8
+        h.rgba[dst + 1] = pixelG(h.m, fb[i]) as u8
+        h.rgba[dst + 2] = pixelB(h.m, fb[i]) as u8
         h.rgba[dst + 3] = 255
         i = i + 1
     }

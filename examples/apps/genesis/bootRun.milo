@@ -29,7 +29,7 @@ from "std/fs" import {
     writeFile
 }
 from "./render" import {
-    renderIndexed, frameWidth, frameHeight, cramR, cramG, cramB
+    renderIndexed, frameWidth, frameHeight, pixelR, pixelG, pixelB
 }
 
 fn loadRom(m: &mut Mem, cart: &Cart) {
@@ -248,10 +248,9 @@ fn renderPpm(m: &Mem, path: &string) {
     let fb = renderIndexed(m)
     var out = "P6\n" + itoa(width) + " " + itoa(height) + "\n255\n"
     for px in fb {
-        let e = m.cram[px & 0x3F]
-        out.push(cramR(e) as u8)
-        out.push(cramG(e) as u8)
-        out.push(cramB(e) as u8)
+        out.push(pixelR(m, px) as u8)
+        out.push(pixelG(m, px) as u8)
+        out.push(pixelB(m, px) as u8)
     }
     match writeFile(path, out) {
         Result.Ok(n) => {

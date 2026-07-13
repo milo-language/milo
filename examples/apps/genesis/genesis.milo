@@ -24,7 +24,7 @@ from "./sound" import {
     Synth, newSynth, synthSample
 }
 from "./render" import {
-    renderIndexed, frameWidth, frameHeight, cramR, cramG, cramB
+    renderIndexed, frameWidth, frameHeight, pixelR, pixelG, pixelB
 }
 from "std/args" import {
     args
@@ -134,10 +134,9 @@ fn blit(m: &Mem, fb: &Vec<i64>, srcW: i64, stride: i64, rgba: &mut Vec<u8>) {
         let row = i / srcW
         let col = i % srcW
         let dst = (row * stride + col) * 4
-        let e = m.cram[fb[i] & 0x3F]
-        rgba[dst] = cramR(e) as u8
-        rgba[dst + 1] = cramG(e) as u8
-        rgba[dst + 2] = cramB(e) as u8
+        rgba[dst] = pixelR(m, fb[i]) as u8
+        rgba[dst + 1] = pixelG(m, fb[i]) as u8
+        rgba[dst + 2] = pixelB(m, fb[i]) as u8
         rgba[dst + 3] = 255
         i = i + 1
     }
@@ -239,14 +238,17 @@ fn main(): i32 {
             if ks[79] != 0 {
                 p = p | 0x08 // Right
             }
+            // Z is the primary action key (attack in most games = Genesis B); X is
+            // the secondary (A), C is jump/C. Genesis physical order is A B C, but
+            // mapping attack onto Z matches the keyboard instinct.
             if ks[29] != 0 {
-                p = p | 0x10 // Z -> A
+                p = p | 0x20 // Z -> B (attack)
             }
             if ks[27] != 0 {
-                p = p | 0x20 // X -> B
+                p = p | 0x10 // X -> A (magic/secondary)
             }
             if ks[6] != 0 {
-                p = p | 0x40 // C -> C
+                p = p | 0x40 // C -> C (jump)
             }
             if ks[40] != 0 {
                 p = p | 0x80 // Enter -> Start
