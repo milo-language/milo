@@ -1482,6 +1482,127 @@ fn execAddSubX(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool, size: i64) {
     }
 }
 
+// EXG — exchange two 32-bit registers (no flags). opmode 5 = D,D (mode 0) or
+// A,A (mode 1); opmode 6 = D,A (mode 1). Rx = bits 11-9, Ry = bits 2-0.
+fn execExg(cpu: &mut M68k, op: i64, opmode: i64, mode: i64) {
+    let rx = (op >> 9) & 0x7
+    let ry = op & 0x7
+    if opmode == 5 && mode == 0 {
+        let t = cpu.d[rx]
+        cpu.d[rx] = cpu.d[ry]
+        cpu.d[ry] = t
+    } else if opmode == 5 && mode == 1 {
+        let t = cpu.a[rx]
+        cpu.a[rx] = cpu.a[ry]
+        cpu.a[ry] = t
+    } else if opmode == 6 && mode == 1 {
+        let t = cpu.d[rx]
+        cpu.d[rx] = cpu.a[ry]
+        cpu.a[ry] = t
+    }
+}
+
+// BCD add/subtract of two bytes with the X flag, replicating real-68000
+// (Musashi) semantics including the "undefined" N/V bits and sticky Z. All
+// intermediate math is kept in 32-bit-unsigned form so borrow wrap matches HW.
+fn bcdAdd(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
+    let x: i64 = if getBit(cpu, SR_X) {
+        1
+    } else {
+        0
+    }
+    var res = (srcB & 0x0F) + (dstB & 0x0F) + x
+    var v = (~res) & 0xFFFFFFFF
+    if res > 9 {
+        res = res + 6
+    }
+    res = res + (srcB & 0xF0) + (dstB & 0xF0)
+    let c = res > 0x99
+    if c {
+        res = res - 0xA0
+    }
+    res = res & 0xFFFFFFFF
+    v = v & res // undefined-V behavior, matched to real HW (Musashi)
+    let res8 = res & 0xFF
+    setBit(cpu, SR_N, (res & 0x80) != 0)
+    setBit(cpu, SR_V, (v & 0x80) != 0)
+    setBit(cpu, SR_C, c)
+    setBit(cpu, SR_X, c)
+    if res8 != 0 {
+        setBit(cpu, SR_Z, false)
+    }
+    return res8
+}
+
+fn bcdSub(cpu: &mut M68k, srcB: i64, dstB: i64): i64 {
+    let x: i64 = if getBit(cpu, SR_X) {
+        1
+    } else {
+        0
+    }
+    var res = ((dstB & 0x0F) - (srcB & 0x0F) - x) & 0xFFFFFFFF
+    var v = (~res) & 0xFFFFFFFF
+    if res > 9 {
+        res = (res - 6) & 0xFFFFFFFF
+    }
+    res = (res + (dstB & 0xF0) - (srcB & 0xF0)) & 0xFFFFFFFF
+    let c = res > 0x99
+    if c {
+        res = (res + 0xA0) & 0xFFFFFFFF
+    }
+    v = v & res // undefined-V behavior, matched to real HW (Musashi)
+    let res8 = res & 0xFF
+    setBit(cpu, SR_N, (res & 0x80) != 0)
+    setBit(cpu, SR_V, (v & 0x80) != 0)
+    setBit(cpu, SR_C, c)
+    setBit(cpu, SR_X, c)
+    if res8 != 0 {
+        setBit(cpu, SR_Z, false)
+    }
+    return res8
+}
+
+// ABCD/SBCD: register form (Dy,Dx) or memory predecrement form (-(Ay),-(Ax)),
+// selected by bit 3. Byte operands.
+fn execBcdRM(cpu: &mut M68k, m: &mut Mem, op: i64, isSub: bool) {
+    let rx = (op >> 9) & 0x7
+    let ry = op & 0x7
+    let mem = (op & 0x08) != 0
+    var srcB: i64 = 0
+    var dstB: i64 = 0
+    var addr: i64 = 0
+    if mem {
+        let decY: i64 = if ry == 7 {
+            2
+        } else {
+            1
+        }
+        cpu.a[ry] = (cpu.a[ry] - decY) & 0xFFFFFFFF
+        srcB = memRead8(m, cpu.a[ry])
+        let decX: i64 = if rx == 7 {
+            2
+        } else {
+            1
+        }
+        cpu.a[rx] = (cpu.a[rx] - decX) & 0xFFFFFFFF
+        addr = cpu.a[rx]
+        dstB = memRead8(m, addr)
+    } else {
+        srcB = cpu.d[ry] & 0xFF
+        dstB = cpu.d[rx] & 0xFF
+    }
+    let res = if isSub {
+        bcdSub(cpu, srcB, dstB)
+    } else {
+        bcdAdd(cpu, srcB, dstB)
+    }
+    if mem {
+        memWrite8(m, addr, res)
+    } else {
+        setD(cpu, rx, 0, res)
+    }
+}
+
 fn readSized(m: &Mem, addr: i64, size: i64): i64 {
     if size == 0 {
         return memRead8(m, addr)
@@ -1625,6 +1746,16 @@ fn execAnd(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let mode = (op >> 3) & 0x7
     let reg = op & 0x7
     let size = opmode & 0x3
+    // Data/addr-reg <ea> in the "op -> <ea>" slot is illegal for AND — those
+    // encodings are ABCD (opmode 4) and EXG (opmode 5/6).
+    if (mode == 0 || mode == 1) && (opmode == 4 || opmode == 5 || opmode == 6) {
+        if opmode == 4 {
+            execBcdRM(cpu, m, op, false) // ABCD
+        } else {
+            execExg(cpu, op, opmode, mode)
+        }
+        return true
+    }
     if size == 3 {
         // MULU (opmode 011) / MULS (opmode 111): 16x16 -> 32 into Dn.
         let ea = resolveEa(cpu, m, mode, reg, 1)
@@ -1659,6 +1790,12 @@ fn execOr(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     let mode = (op >> 3) & 0x7
     let reg = op & 0x7
     let size = opmode & 0x3
+    // Data/addr-reg <ea> in the "op -> <ea>" slot is illegal for OR — opmode 4
+    // with mode 0/1 is SBCD.
+    if (mode == 0 || mode == 1) && opmode == 4 {
+        execBcdRM(cpu, m, op, true) // SBCD
+        return true
+    }
     if size == 3 {
         // DIVU (opmode 011) / DIVS (opmode 111): 32 / 16 -> quotient(lo) + rem(hi).
         let signed = (opmode & 0x4) != 0

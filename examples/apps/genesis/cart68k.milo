@@ -40,16 +40,43 @@ fn loadCart(path: &string): Result<Cart, string> {
         rom.push(b)
     }
 
-    // Domestic name at $120, 48 bytes; trim trailing spaces.
-    var name = ""
+    // Domestic name at $120, 48 bytes. Many Japanese carts store the title in
+    // Shift-JIS fullwidth Latin (lead byte $81/$82) rather than ASCII — decode
+    // those to plain ASCII so e.g. Golden Axe reads "GOLDEN AXE" not garbage.
     var end: i64 = 0x120 + 48
-    while end > 0x120 && rom[end - 1] == 0x20 {
+    while end > 0x120 && (rom[end - 1]as i64) == 0x20 {
         end = end - 1
     }
+    while end >= 0x122 && (rom[end - 2]as i64) == 0x81 && (rom[end - 1]as i64) == 0x40 {
+        end = end - 2 // trailing fullwidth spaces
+    }
+    var name = ""
     var j: i64 = 0x120
     while j < end {
-        name = name + charFromByte(rom[j])
-        j = j + 1
+        let b = rom[j]as i64
+        if b == 0x81 && j + 1 < end && (rom[j + 1]as i64) == 0x40 {
+            name = name + " "
+            j = j + 2
+        } else if b == 0x82 && j + 1 < end {
+            let c = rom[j + 1]as i64
+            var out: i64 = -1
+            if c >= 0x4F && c <= 0x58 {
+                out = 0x30 + (c - 0x4F) // fullwidth 0-9
+            } else if c >= 0x60 && c <= 0x79 {
+                out = 0x41 + (c - 0x60) // fullwidth A-Z
+            } else if c >= 0x81 && c <= 0x9A {
+                out = 0x61 + (c - 0x81) // fullwidth a-z
+            }
+            if out >= 0 {
+                name = name + charFromByte(out as u8)
+            }
+            j = j + 2
+        } else if b >= 0x20 && b <= 0x7E {
+            name = name + charFromByte(rom[j])
+            j = j + 1
+        } else {
+            j = j + 1 // skip other non-ASCII bytes
+        }
     }
 
     // ROM end address is a big-endian long at $1A4.
