@@ -733,6 +733,10 @@ fn wantSpaceBefore(tokens: &Vec<Token>, i: i64): bool {
     let pk = prev.kind
     let tk = tok.kind
 
+    // Attribute name hugs its `@`: emit `@derive(...)`, not `@ derive(...)`.
+    if isAtToken(prev) {
+        return false
+    }
     // Never space after ( [ . ::
     if pk == TokKind.LParen || pk == TokKind.LBracket ||
     pk == TokKind.Dot || pk == TokKind.ColonColon {

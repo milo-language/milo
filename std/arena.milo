@@ -10,7 +10,7 @@
 
 // Opaque handle to an arena slot. Safe to copy, store, and return.
 // T is phantom — not stored, only used for type-checking handle/arena pairs.
-@ derive(Eq)
+@derive(Eq)
 struct Handle<T> {
     index: i32,
     generation: i32,

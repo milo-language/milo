@@ -107,12 +107,12 @@ test("a closure body inside a call still reflows as its own block", () => {
   expect(out).toContain("let b = 2\n");
 });
 
-test("an attribute attaches to its decl (no blank inserted between them)", () => {
+test("an attribute attaches to its decl (no blank between, name hugs @)", () => {
   const out = format(`// doc for handle\n@ derive(Eq)\nstruct Handle {\n    index: i32,\n}\n`);
-  // doc, attribute, and struct stay contiguous — the blank goes above the doc, not
-  // between the attribute and the struct (which would detach the derive).
-  expect(out).toContain("// doc for handle\n@ derive(Eq)\nstruct Handle {");
-  expect(out).not.toMatch(/@ derive\(Eq\)\n\nstruct/);
+  // doc, attribute, and struct stay contiguous; the blank goes above the doc, not
+  // between the attribute and the struct. The name hugs `@` → `@derive`, not `@ derive`.
+  expect(out).toContain("// doc for handle\n@derive(Eq)\nstruct Handle {");
+  expect(out).not.toMatch(/@derive\(Eq\)\n\nstruct/);
   // idempotent
   expect(format(out)).toBe(out);
 });
