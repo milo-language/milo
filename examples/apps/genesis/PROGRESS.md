@@ -28,7 +28,30 @@ many games run without a live Z80, some need it).
 
 ## Milestones
 
-### Status (in progress)
+### Status — playable with picture + sound
+
+**The emulator boots Sonic to Green Hill Zone gameplay with video AND music.**
+Pipeline: 68000 (Harte-validated) + Z80 (Harte-validated) co-running -> bus/DMA/
+interrupts -> VDP (planes, scroll, sprites, priority, window) -> YM2612 2-op FM +
+PSG synthesis -> SDL window with video + audio + controller input.
+
+Run it:
+```
+milo build examples/apps/genesis/genesis.milo -o /tmp/genesis -- -L/opt/homebrew/lib -lSDL2
+/tmp/genesis roms/games/sonic1.md      # playable, with music
+```
+Offline (dumps /tmp/sonic.ppm + /tmp/sonic.wav): `bootRun.milo <rom> <maxSteps>`.
+
+Verified: **3/3 games boot+render** (Sonic GHZ, Golden Axe title 戦斧, SoR3 title);
+**2/3 play music** (Sonic GHZ theme + SoR3; GA title silent — driver differs).
+CPUs run tens of millions of instructions with zero unimplemented opcodes.
+
+Deferred refinements (non-blocking): full 4-op FM + envelopes (current = 2-op,
+melody+timbre correct), ch6 DAC drums (needs Z80 bank-window ROM access + sample-
+rate capture), GA title multi-cell sprite artifact, undocumented CPU-flag corners
+(68000 SSW, Z80 SCF/CCF + block-op X/Y), SSF2 mapper for >4MB carts.
+
+### Original milestone notes
 
 **Sound drivers now PLAY** — the "68k<->z80 deadlock" was a red herring: the real
 bug was the 68k's YM2612 busy-poll at $A04000 being misrouted to Z80 RAM (bit7
