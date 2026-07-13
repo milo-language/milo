@@ -216,10 +216,9 @@ fn devRead16(m: &Mem, a: i64): i64 {
 
 fn devRead8(m: &Mem, a: i64): i64 {
     if a >= 0xA00000 && a <= 0xA0FFFF {
-        // Returning real Z80 RAM makes the 68k upload the full sound driver but
-        // then its VBlank handler hangs on the 68k<->Z80 handshake (our cores are
-        // not cycle-synced). Returning 0 ("Z80 ready") keeps boot + video working;
-        // in-game music needs proper bus-sync — a known TODO.
+        // Return 0 ("Z80 ready"): keeps boot + video working. Real read-back
+        // uploads the full sound driver but hangs the VBlank handler on the
+        // un-cycle-synced 68k<->Z80 handshake (in-game music = TODO).
         return 0
     }
     if a == 0xA10001 {

@@ -81,15 +81,20 @@ fn runFrame(cpu: &mut M68k, m: &mut Mem) {
     }
 }
 
-// Convert the CRAM-index framebuffer to an RGBA byte buffer for SDL.
-fn blit(m: &Mem, fb: &Vec<i64>, rgba: &mut Vec<u8>) {
+// Convert the CRAM-index framebuffer to RGBA. `srcW` is the frame's actual width
+// (256 for H32, 320 for H40); pixels are placed row-padded into a fixed `stride`-
+// wide buffer so a mid-run H32<->H40 switch never overflows.
+fn blit(m: &Mem, fb: &Vec<i64>, srcW: i64, stride: i64, rgba: &mut Vec<u8>) {
     var i: i64 = 0
     while i < fb.len {
+        let row = i / srcW
+        let col = i % srcW
+        let dst = (row * stride + col) * 4
         let e = m.cram[fb[i] & 0x3F]
-        rgba[i * 4] = cramR(e) as u8
-        rgba[i * 4 + 1] = cramG(e) as u8
-        rgba[i * 4 + 2] = cramB(e) as u8
-        rgba[i * 4 + 3] = 255
+        rgba[dst] = cramR(e) as u8
+        rgba[dst + 1] = cramG(e) as u8
+        rgba[dst + 2] = cramB(e) as u8
+        rgba[dst + 3] = 255
         i = i + 1
     }
 }
@@ -124,11 +129,13 @@ fn main(): i32 {
     cpu.pc = pc & 0xFFFFFFFF
     cpu.sr = 0x2700
 
-    let w = frameWidth(m)
+    // Fixed max-size buffer/texture (320x224) so the H32<->H40 width switch during
+    // boot cannot overflow. H32 frames render into the left 256 columns.
+    let maxW: i64 = 320
     let h = frameHeight(m)
     var rgba: Vec<u8> = Vec.new()
     var t: i64 = 0
-    while t < w * h * 4 {
+    while t < maxW * h * 4 {
         rgba.push(0)
         t = t + 1
     }
@@ -140,9 +147,9 @@ fn main(): i32 {
     unsafe {
         let title = "Milo Genesis"
         let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        (w * 3) as i32, (h * 3) as i32, SDL_WINDOW_SHOWN)
+        (maxW * 3) as i32, (h * 3) as i32, SDL_WINDOW_SHOWN)
         let ren = SDL_CreateRenderer(win, -1, 0)
-        let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, w as i32, h as i32)
+        let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, maxW as i32, h as i32)
         if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
             print("SDL setup failed")
             return 2
@@ -153,8 +160,9 @@ fn main(): i32 {
         while !quit {
             runFrame(cpu, m)
             let fb = renderIndexed(m)
-            blit(m, fb, rgba)
-            SDL_UpdateTexture(tex, 0 as *u8, (&rgba[0]) as *u8, (w * 4) as i32)
+            let w = frameWidth(m)
+            blit(m, fb, w, maxW, rgba)
+            SDL_UpdateTexture(tex, 0 as *u8, (&rgba[0]) as *u8, (maxW * 4) as i32)
             SDL_RenderClear(ren)
             SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
             SDL_RenderPresent(ren)
