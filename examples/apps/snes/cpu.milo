@@ -420,8 +420,10 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     // in-game audio commands) round-trips through $2140-$2143 many times, and a
     // handshake-locked transfer only advances one byte per CPU<->SPC switch. Run
     // the SPC every few CPU steps so uploads complete in a frame, not thousands.
+    // ~9k instrs/frame approximates the 65816's real per-frame work (was 2600,
+    // which ran game logic ~4x too slow); ~6:1 active:vblank matches 224:38 lines.
     var i: i64 = 0
-    while i < 2000 {
+    while i < 7600 {
         step(cpu, m)
         if (i & 3) == 0 {
             runApu(m, 2)
@@ -433,7 +435,7 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
         nmi(cpu, m)
     }
     i = 0
-    while i < 600 {
+    while i < 1400 {
         step(cpu, m)
         if (i & 3) == 0 {
             runApu(m, 2)
