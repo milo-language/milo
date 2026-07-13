@@ -221,6 +221,84 @@ fn ppuRegReadPure(p: &Ppu, reg: i64): i64 {
     return 0
 }
 
+fn vramWord(p: &Ppu, waddr: i64): i64 {
+    let b = (waddr * 2) & 0xFFFF
+    return (p.vram[b]as i64) | ((p.vram[(b + 1) & 0xFFFF]as i64) << 8)
+}
+
+// 4bpp planar tile pixel (0-15). charBase/tileNum in words; px/py 0-7.
+fn tile4bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
+    let tb = ((charBase + tileNum * 16) * 2) & 0xFFFF // 16 words = 32 bytes/tile
+    let r0 = (tb + py * 2) & 0xFFFF
+    let p0 = p.vram[r0]as i64
+    let p1 = p.vram[(r0 + 1) & 0xFFFF]as i64
+    let p2 = p.vram[(r0 + 16) & 0xFFFF]as i64
+    let p3 = p.vram[(r0 + 17) & 0xFFFF]as i64
+    let bit = 7 - px
+    return ((p0 >> bit) & 1) | (((p1 >> bit) & 1) << 1) | (((p2 >> bit) & 1) << 2) | (((p3 >> bit) & 1) << 3)
+}
+
+// CGRAM BGR555 color -> 0xRRGGBB, scaled by master brightness (0-15).
+fn cgToRgb(p: &Ppu, idx: i64, bright: i64): i64 {
+    let a = (idx * 2) & 0x1FF
+    let w = (p.cgram[a]as i64) | ((p.cgram[(a + 1) & 0x1FF]as i64) << 8)
+    var r = (w & 0x1F) << 3
+    var g = ((w >> 5) & 0x1F) << 3
+    var b = ((w >> 10) & 0x1F) << 3
+    r = (r * bright) / 15
+    g = (g * bright) / 15
+    b = (b * bright) / 15
+    return (r << 16) | (g << 8) | b
+}
+
+// Render BG1 (Mode 1, 4bpp, 32x32 tilemap) into a 256x224 RGB framebuffer.
+// First rendering slice — more layers/BG modes/priority/sprites follow.
+fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
+    let bright = p.inidisp & 0x0F
+    let forceBlank = (p.inidisp & 0x80) != 0
+    let tmBase = (p.bgsc0 & 0xFC) << 8 // BG1 tilemap base (word)
+    let chBase = (p.bg12nba & 0x0F) << 12 // BG1 char base (word)
+    let hofs = p.bghofs[0]
+    let vofs = p.bgvofs[0]
+    let backdrop = cgToRgb(p, 0, bright)
+
+    var y: i64 = 0
+    while y < 224 {
+        var x: i64 = 0
+        while x < 256 {
+            var rgb = backdrop
+            if !forceBlank {
+                let ex = (x + hofs) & 0xFF
+                let ey = (y + vofs) & 0xFF
+                let tcol = ex >> 3
+                let trow = ey >> 3
+                let entry = vramWord(p, tmBase + trow * 32 + tcol)
+                let tileNum = entry & 0x3FF
+                let pal = (entry >> 10) & 0x07
+                let flipX = (entry >> 14) & 1
+                let flipY = (entry >> 15) & 1
+                var px = ex & 7
+                var py = ey & 7
+                if flipX != 0 {
+                    px = 7 - px
+                }
+                if flipY != 0 {
+                    py = 7 - py
+                }
+                let ci = tile4bpp(p, chBase, tileNum, px, py)
+                if ci != 0 {
+                    rgb = cgToRgb(p, pal * 16 + ci, bright)
+                }
+            } else {
+                rgb = 0
+            }
+            fb[y * 256 + x] = rgb
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
 // Direct byte accessors (used by DMA / tests to peek loaded graphics memory).
 fn ppuVram(p: &Ppu, a: i64): i64 {
     return p.vram[a & 0xFFFF]as i64
