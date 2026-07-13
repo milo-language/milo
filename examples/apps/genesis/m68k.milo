@@ -90,7 +90,11 @@ fn newMem(): Mem {
 // the 68k spins waiting for a Z80-cleared flag deadlocks. Letting the Z80 keep
 // executing (it shares z80.mem with the 68k window) lets the handshake complete.
 fn z80Running(m: &Mem): bool {
-    return !m.z80Reset
+    // The Z80 executes only when it is out of reset AND the 68k does not hold its
+    // bus (BUSREQ). While the 68k has the bus — e.g. writing a sound command into
+    // Z80 RAM — the Z80 must be paused; running it then lets the sound driver read
+    // a half-written command and stall (freezes games that wait on the ack).
+    return !m.z80Reset && !m.z80Busreq
 }
 
 // 3-button pad read (active low). TH=1 exposes Up/Down/Left/Right/B/C; TH=0
