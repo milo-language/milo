@@ -35,6 +35,12 @@ struct Ppu {
     tm: i64 // $212C main-screen layer enable (bit0-3 = BG1-4, bit4 = OBJ)
     ts: i64 // $212D sub-screen layer enable
 
+    // Color math ($2131 CGADSUB: bit7 sub/add, bit6 half, bit5 backdrop, bit4 OBJ,
+    // bits0-3 BG1-4) + fixed color ($2132 COLDATA, 5-bit BGR). SMW paints level
+    // skies by adding the fixed color to the (black) backdrop.
+    cgadsub: i64
+    coldR: i64 coldG: i64 coldB: i64
+
     // Mode 7 affine state. Matrix A/D/B/C are signed 8.8 fixed ($211B-$211E);
     // center X/Y ($211F/$2120) and scroll ($210D/$210E) are 13-bit signed. All
     // write-twice (low then high) through the shared m7Latch byte.
@@ -69,7 +75,8 @@ fn newPpu(): Ppu {
         bghofs: ppuZerosI64(4), bgvofs: ppuZerosI64(4), scrollLatch: 0, scrollHi: 0,
         vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false, tm: 0x1F, ts: 0,
         m7a: 0x100, m7b: 0, m7c: 0, m7d: 0x100, m7x: 0, m7y: 0, m7hofs: 0, m7vofs: 0,
-        m7sel: 0, m7Latch: 0
+        m7sel: 0, m7Latch: 0,
+        cgadsub: 0, coldR: 0, coldG: 0, coldB: 0
     }
 }
 
@@ -222,6 +229,22 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
     if reg == 0x2D {
         p.ts = v return
     } // sub-screen layer enable
+    if reg == 0x31 {
+        p.cgadsub = v return
+    } // color math control
+    if reg == 0x32 { // COLDATA: bit7=B bit6=G bit5=R select, bits0-4 intensity
+        let inten = v & 0x1F
+        if (v & 0x20) != 0 {
+            p.coldR = inten
+        }
+        if (v & 0x40) != 0 {
+            p.coldG = inten
+        }
+        if (v & 0x80) != 0 {
+            p.coldB = inten
+        }
+        return
+    }
     // remaining regs (windows, color math, mosaic, mode7, ...) modeled later
 }
 
@@ -570,17 +593,52 @@ fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64): void {
     }
 }
 
+// Clamp a 5-bit color component to 0-31.
+fn clamp5(v: i64): i64 {
+    if v < 0 {
+        return 0
+    }
+    if v > 31 {
+        return 31
+    }
+    return v
+}
+
+// Backdrop color (CGRAM index 0) with color math ($2131 bit5) applied: add or
+// subtract the fixed COLDATA color, optionally halved. This is how SMW fills a
+// level's sky — the raw backdrop is black and the fixed color paints it.
+fn backdropColor(p: &Ppu, bright: i64): i64 {
+    let w = (p.cgram[0]as i64) | ((p.cgram[1]as i64) << 8)
+    var r = w & 0x1F
+    var g = (w >> 5) & 0x1F
+    var b = (w >> 10) & 0x1F
+    if (p.cgadsub & 0x20) != 0 {
+        if (p.cgadsub & 0x80) != 0 {
+            r = clamp5(r - p.coldR) g = clamp5(g - p.coldG) b = clamp5(b - p.coldB)
+        } else {
+            r = clamp5(r + p.coldR) g = clamp5(g + p.coldG) b = clamp5(b + p.coldB)
+        }
+        if (p.cgadsub & 0x40) != 0 {
+            r = r >> 1 g = g >> 1 b = b >> 1
+        }
+    }
+    let rr = (((r << 3) * bright) / 15) & 0xFF
+    let gg = (((g << 3) * bright) / 15) & 0xFF
+    let bb = (((b << 3) * bright) / 15) & 0xFF
+    return (rr << 16) | (gg << 8) | bb
+}
+
 // Render a full frame. The sub-screen ($212D TS) layers are drawn first as the
 // base and the main-screen ($212C TM) layers on top — an approximation of color
-// math (no add/half blending) that at least surfaces backgrounds games place on
-// the sub-screen (e.g. SMW's overworld map behind a windowed main-screen border).
+// math (no per-pixel add/half blending on layers yet, but the backdrop gets it
+// via backdropColor). Surfaces sub-screen backgrounds (SMW overworld map) too.
 fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     let bright = p.inidisp & 0x0F
     let forceBlank = (p.inidisp & 0x80) != 0
     let backdrop: i64 = if forceBlank {
         0
     } else {
-        cgToRgb(p, 0, bright)
+        backdropColor(p, bright)
     }
 
     var i: i64 = 0
