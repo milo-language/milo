@@ -390,7 +390,16 @@ export class Parser {
   }
 
   private parseAttribute(): Attribute {
-    this.expect(TokenKind.At);
+    const at = this.expect(TokenKind.At);
+    // The name must hug the '@' — `@derive`, not `@ derive`. Whitespace between
+    // them is a mistake, not insignificant spacing, so reject it up front.
+    const nameTok = this.peek();
+    if (nameTok.kind === TokenKind.Ident && (nameTok.line !== at.line || nameTok.col !== at.col + 1)) {
+      this.error(
+        `no whitespace allowed between '@' and attribute name — write '@${nameTok.value}'`,
+        nameTok, undefined, `attributes bind tightly: '@derive(...)', not '@ derive(...)'`,
+      );
+    }
     const name = this.expect(TokenKind.Ident).value;
     const args: string[] = [];
     if (this.match(TokenKind.LParen)) {

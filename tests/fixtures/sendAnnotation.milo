@@ -4,7 +4,7 @@ from "std/runtime" import {
     Promise
 }
 
-@ send
+@send
 
 struct SafeHandle {
     _ptr: *u8,

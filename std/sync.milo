@@ -208,8 +208,8 @@ fn channelUnarmSend(ptr: *u8, node: *u8): void {
     }
 }
 
-@ send
-@ sync
+@send
+@sync
 
 struct Channel<T> {
     _ptr: *u8,
@@ -459,8 +459,8 @@ impl Channel<T> {
 
 // ── AtomicI64 ──
 
-@ send
-@ sync
+@send
+@sync
 
 struct AtomicI64 {
     _ptr: *u8,
@@ -516,8 +516,8 @@ impl AtomicI64 {
 
 // ── AtomicBool ──
 
-@ send
-@ sync
+@send
+@sync
 
 struct AtomicBool {
     _ptr: *u8,
@@ -572,8 +572,8 @@ impl AtomicBool {
 //   wg.wait()
 
 // heap layout (32 bytes): 0 mtx, 8 cond, 16 count (i64), 24 greenWaitHead (*u8)
-@ send
-@ sync
+@send
+@sync
 
 struct WaitGroup {
     _p: *u8,

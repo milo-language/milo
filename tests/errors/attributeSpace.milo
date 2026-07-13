@@ -1,0 +1,11 @@
+// @error: no whitespace allowed between '@' and attribute name
+// An attribute name must hug its '@' — `@derive`, never `@ derive`.
+@ derive(Eq)
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main(): i32 {
+    return 0
+}

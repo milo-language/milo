@@ -5,7 +5,7 @@
 // @expect: equal: true
 // @expect: not equal: true
 
-@ derive(Eq)
+@derive(Eq)
 
 struct Vec2 {
     x: i32,

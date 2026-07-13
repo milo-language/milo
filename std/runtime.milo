@@ -486,8 +486,8 @@ fn _spawnOsThreadDetached(f: () => void): void {
 
 // ── Promise<T> — a task that returns a value ──
 
-@ send
-@ sync
+@send
+@sync
 
 struct Promise<T> {
     _ch: Channel<T>,

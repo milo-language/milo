@@ -1,7 +1,7 @@
 // @expect: 1
 // @expect: 0
 
-@ derive(Eq)
+@derive(Eq)
 
 struct Point {
     x: i32, y: i32
