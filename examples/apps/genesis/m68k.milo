@@ -1180,6 +1180,12 @@ fn execShift(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
 // Immediate group (top nibble 0): ORI/ANDI/SUBI/ADDI/EORI/CMPI, the ...toCCR/SR
 // forms, and static/dynamic bit ops (BTST/BCHG/BCLR/BSET).
 fn execImmediate(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    // MOVEP — 0000 ddd1 mm00 1aaa: register<->alternate-byte memory. Shares the
+    // dynamic-bit-op encoding (bit 8 set) but is disambiguated by mode field 001,
+    // which is illegal for bit ops, so it must be intercepted before them.
+    if (op & 0xF138) == 0x0108 {
+        return execMovep(cpu, m, op)
+    }
     // Bit ops: dynamic (Dn source) have bit 8 set; static (immediate) are 0000 1000.
     let dynamicBit = (op & 0x0100) != 0
     let staticBit = (op & 0xFF00) == 0x0800
@@ -1244,6 +1250,41 @@ fn execImmediate(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
         let res = applyLogic(which, cur, imm) & sizeMask(size)
         eaStore(cpu, m, ea, size, res)
         setLogicalFlags(cpu, size, res)
+    }
+    return true
+}
+
+// MOVEP Dx,(d16,Ay) / MOVEP (d16,Ay),Dx — moves 2 or 4 bytes between a data
+// register and every-other byte of memory (for byte-wide peripherals on a 16-bit
+// bus). High byte first. opmode: 4 w mem->reg, 5 l mem->reg, 6 w reg->mem, 7 l
+// reg->mem. No flags affected.
+fn execMovep(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
+    let dreg = (op >> 9) & 0x7
+    let areg = op & 0x7
+    let opmode = (op >> 6) & 0x7
+    let disp = signExtend(fetch16(cpu, m), 1)
+    let addr = (cpu.a[areg] + disp) & 0xFFFFFFFF
+    let isLong = (opmode & 0x1) != 0
+    let toMem = (opmode & 0x2) != 0
+    if toMem {
+        let d = cpu.d[dreg] & 0xFFFFFFFF
+        if isLong {
+            memWrite8(m, addr, (d >> 24) & 0xFF)
+            memWrite8(m, (addr + 2) & 0xFFFFFFFF, (d >> 16) & 0xFF)
+            memWrite8(m, (addr + 4) & 0xFFFFFFFF, (d >> 8) & 0xFF)
+            memWrite8(m, (addr + 6) & 0xFFFFFFFF, d & 0xFF)
+        } else {
+            memWrite8(m, addr, (d >> 8) & 0xFF)
+            memWrite8(m, (addr + 2) & 0xFFFFFFFF, d & 0xFF)
+        }
+    } else {
+        if isLong {
+            let v = ((memRead8(m, addr) << 24) | (memRead8(m, (addr + 2) & 0xFFFFFFFF) << 16) | (memRead8(m, (addr + 4) & 0xFFFFFFFF) << 8) | memRead8(m, (addr + 6) & 0xFFFFFFFF)) & 0xFFFFFFFF
+            cpu.d[dreg] = v
+        } else {
+            let v = ((memRead8(m, addr) << 8) | memRead8(m, (addr + 2) & 0xFFFFFFFF)) & 0xFFFF
+            setD(cpu, dreg, 1, v)
+        }
     }
     return true
 }
@@ -2095,6 +2136,16 @@ fn execMisc(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
                 return false
             }
         }
+    }
+    // NBCD <ea> — 0100 1000 00mm mrrr: BCD negate (0 - dst - X), byte only.
+    // Reuses the SBCD subtract path (dst - src, here 0 - dstByte) so the carry/
+    // digit-adjust matches real HW exactly like SBCD; V/N stay HW-undefined.
+    if (op & 0xFFC0) == 0x4800 {
+        let ea = resolveEa(cpu, m, mode, reg, 0)
+        let dst = eaLoad(cpu, m, ea, 0) & 0xFF
+        let res = bcdSub(cpu, dst, 0)
+        eaStore(cpu, m, ea, 0, res)
+        return true
     }
     // SWAP Dn — 0100 1000 0100 0rrr (must precede PEA: both share base 0x4840,
     // SWAP is the mode-000 sub-encoding that PEA's mask would otherwise swallow).
