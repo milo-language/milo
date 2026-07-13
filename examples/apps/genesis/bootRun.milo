@@ -141,6 +141,9 @@ fn main(): i32 {
                 z80Interrupt(m.z80)
             }
         }
+        if steps > maxSteps - 40000 {
+            m.dbgArm = true // capture CRAM writes of the final ~1 frame
+        }
         wasVblank = inVblank
         steps = steps + 1
     }
@@ -172,6 +175,12 @@ fn main(): i32 {
     print("ym-nonzero=" + itoa(ymNz) + "/512  psg-nonzero=" + itoa(psgNz) + "/8")
     printVdpRegs(m)
     printCram(m)
+    // Final-frame CRAM writes landing in line0/line1 low entries (logo palette).
+    var dwi: i64 = 0
+    while dwi + 2 < m.dbgWrites.len {
+        print("PALw pc=" + hex8(m.dbgWrites[dwi]) + " addr=" + hex8(m.dbgWrites[dwi + 1]) + " val=" + hex4(m.dbgWrites[dwi + 2]) + " (line=" + itoa((((m.dbgWrites[dwi + 1] - 0xFFC080) / 2) / 16)) + " idx=" + itoa((((m.dbgWrites[dwi + 1] - 0xFFC080) / 2) % 16)) + ")")
+        dwi = dwi + 3
+    }
     renderPpm(m, "/tmp/sonic.ppm")
     print("wrote /tmp/sonic.ppm")
     writeWav(wav, "/tmp/sonic.wav")
@@ -210,10 +219,8 @@ fn writeWav(samples: &Vec<u8>, path: &string) {
     out = pushLE16(out, 16) // bits
     out = out + "data"
     out = pushLE32(out, dataLen)
-    var i: i64 = 0
-    while i < samples.len {
-        out.push(samples[i])
-        i = i + 1
+    for s in samples {
+        out.push(s)
     }
     match writeFile(path, out) {
         Result.Ok(nn) => {
@@ -246,13 +253,11 @@ fn renderPpm(m: &Mem, path: &string) {
     let height = frameHeight(m)
     let fb = renderIndexed(m)
     var out = "P6\n" + itoa(width) + " " + itoa(height) + "\n255\n"
-    var i: i64 = 0
-    while i < fb.len {
-        let e = m.cram[fb[i] & 0x3F]
+    for px in fb {
+        let e = m.cram[px & 0x3F]
         out.push(cramR(e) as u8)
         out.push(cramG(e) as u8)
         out.push(cramB(e) as u8)
-        i = i + 1
     }
     match writeFile(path, out) {
         Result.Ok(n) => {
@@ -299,13 +304,11 @@ fn boolStr(b: bool): string {
 
 fn strToI(s: &string): i64 {
     var v: i64 = 0
-    var i: i64 = 0
-    while i < s.len {
-        let c = s[i]as i64
+    for ch in s {
+        let c = ch as i64
         if c >= 48 && c <= 57 {
             v = v * 10 + (c - 48)
         }
-        i = i + 1
     }
     return v
 }

@@ -692,9 +692,8 @@ fn branch(cpu: &mut Cpu, bus: &mut Bus, cond: bool): void {
 
 // --- trace formatting (self-contained strconv lacks decimal int->string) ---
 fn appendStr(dst: &mut string, src: &string): void {
-    var i: i64 = 0
-    while i < src.len {
-        dst.push(src[i]) i = i + 1
+    for b in src {
+        dst.push(b)
     }
 }
 

@@ -1,3 +1,4 @@
+// @run: 2 echo hi
 // timeout — run a command with a time limit (GNU timeout for macOS)
 from "std/os" import {
     fork, waitpid, kill, exit, system
@@ -215,16 +216,14 @@ fn main(): i32 {
         }
         let arg = argv[i].clone()
         cmd = cmd + "'"
-        var j: i64 = 0
-        while j < arg.len {
-            if arg[j] == 39 {
+        for c in arg {
+            if c == 39 {
                 cmd = cmd + "'\\''"
             } else {
                 var ch: string = ""
-                ch.push(arg[j])
+                ch.push(c)
                 cmd = cmd + ch
             }
-            j = j + 1
         }
         cmd = cmd + "'"
         i = i + 1

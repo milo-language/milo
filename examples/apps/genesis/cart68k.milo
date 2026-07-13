@@ -36,10 +36,8 @@ fn loadCart(path: &string): Result<Cart, string> {
     }
 
     var rom: Vec<u8> = Vec.new()
-    var i: i64 = 0
-    while i < raw.len {
-        rom.push(raw[i])
-        i = i + 1
+    for b in raw {
+        rom.push(b)
     }
 
     // Domestic name at $120, 48 bytes; trim trailing spaces.

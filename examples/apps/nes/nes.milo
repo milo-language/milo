@@ -78,18 +78,16 @@ let SDL_KEYUP: u32 = 0x301
 // Recursively collect every *.nes path under `dir` into `out`.
 fn collectRoms(dir: string, out: &mut Vec<string>): void {
     let entries = readDir(dir)
-    var i: i64 = 0
-    while i < entries.len {
-        let name = entries[i].name
+    for entry in entries {
+        let name = entry.name
         let full = dir + "/" + name
-        if entries[i].isDir {
+        if entry.isDir {
             collectRoms(full, out)
         } else {
             if strEndsWith(full, ".nes") || strEndsWith(full, ".NES") {
                 out.push(full)
             }
         }
-        i = i + 1
     }
 }
 
@@ -116,16 +114,14 @@ fn intToStr(n: i64): string {
 fn parseIndex(s: &string): i64 {
     var n: i64 = 0
     var seen = false
-    var i: i64 = 0
-    while i < s.len {
-        let c = s[i]as i64
+    for ch in s {
+        let c = ch as i64
         if c >= 48 && c <= 57 {
             n = n * 10 + (c - 48)
             seen = true
         } else {
             break
         }
-        i = i + 1
     }
     if seen {
         return n

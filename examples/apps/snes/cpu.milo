@@ -366,9 +366,8 @@ fn sramIndex(m: &Mem, bank: i64, off: i64): i64 {
 // Serialize SRAM to a byte string for a .srm file.
 fn sramToString(m: &Mem): string {
     var s = String.withCapacity(m.sram.len + 16)
-    var i: i64 = 0
-    while i < m.sram.len {
-        s.push(m.sram[i]) i = i + 1
+    for b in m.sram {
+        s.push(b)
     }
     return s
 }

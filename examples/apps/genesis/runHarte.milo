@@ -173,10 +173,8 @@ fn checkFinal(cpu: &M68k, m: &Mem, t: &mut Toks): string {
 }
 
 fn resetTouched(m: &mut Mem) {
-    var i: i64 = 0
-    while i < m.touched.len {
-        m.ram[m.touched[i]] = 0
-        i = i + 1
+    for t in m.touched {
+        m.ram[t] = 0
     }
     m.touched = Vec.new()
 }
@@ -300,13 +298,11 @@ fn hexNib(n: i64): string {
 
 fn strToI(s: &string): i64 {
     var v: i64 = 0
-    var i: i64 = 0
-    while i < s.len {
-        let c = s[i]as i64
+    for ch in s {
+        let c = ch as i64
         if c >= 48 && c <= 57 {
             v = v * 10 + (c - 48)
         }
-        i = i + 1
     }
     return v
 }

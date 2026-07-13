@@ -37,13 +37,11 @@ fn main(): i32 {
 
 fn strToInt(s: string): i64 {
     var n: i64 = 0
-    var i: i64 = 0
-    while i < s.len {
-        let c = s[i]as i64
+    for ch in s {
+        let c = ch as i64
         if c >= 48 && c <= 57 {
             n = n * 10 + (c - 48)
         }
-        i = i + 1
     }
     return n
 }
