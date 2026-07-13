@@ -393,6 +393,45 @@ fn newCpuReset(m: &Mem): Cpu {
     }
 }
 
+// Non-maskable interrupt (vblank). Pushes the return frame and vectors through
+// $FFEA (native) / $FFFA (emulation). Cleared D + set I like a hardware IRQ.
+fn nmi(cpu: &mut Cpu, m: &mut Mem): void {
+    if cpu.e == 0 {
+        push8(cpu, m, cpu.pbr)
+        push16(cpu, m, cpu.pc)
+        push8(cpu, m, cpu.p)
+        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        cpu.pbr = 0
+        cpu.pc = memRead(m, 0xFFEA) | (memRead(m, 0xFFEB) << 8)
+    } else {
+        push16(cpu, m, cpu.pc)
+        push8(cpu, m, cpu.p & (~0x10)) // hardware interrupt pushes break (bit4) clear
+        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        cpu.pbr = 0
+        cpu.pc = memRead(m, 0xFFFA) | (memRead(m, 0xFFFB) << 8)
+    }
+}
+
+// Run one video frame: the CPU during active display, then vblank (set the
+// vblank flag, fire NMI if enabled, run the vblank handler), then clear it.
+// Instruction budgets stand in for cycle-accurate scanline timing for now.
+fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
+    var i: i64 = 0
+    while i < 2000 {
+        step(cpu, m) i = i + 1
+    }
+    m.vblankToggle = 0x80
+    if (m.nmitimen & 0x80) != 0 {
+        nmi(cpu, m)
+    }
+    i = 0
+    while i < 600 {
+        step(cpu, m) i = i + 1
+    }
+    m.vblankToggle = 0
+    runApu(m, 400) // co-run the audio CPU across the frame
+}
+
 // --- register-width predicates (emulation forces both to 8-bit) ---
 fn m8(cpu: &Cpu): bool {
     return cpu.e == 1 || (cpu.p & FM) != 0
