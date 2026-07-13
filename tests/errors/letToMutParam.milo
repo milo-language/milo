@@ -1,0 +1,14 @@
+// @error: cannot pass immutable 'x' as a '&mut' argument
+
+// A 'let' claims immutability + SSA-register storage; passing it to a '&mut'
+// param would mutate it through the call and force a spill. Rejected — same as
+// method receivers (v.push on an immutable Vec). Declare 'var' to allow it.
+fn bump(a: &mut i64): void {
+    a = a + 1
+}
+
+fn main(): i32 {
+    let x: i64 = 5
+    bump(x)
+    return x as i32
+}

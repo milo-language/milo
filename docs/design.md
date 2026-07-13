@@ -36,6 +36,19 @@ struct Bad { ref: &string }     // COMPILE ERROR: can't store a reference
 
 **Why not lifetimes?** We studied ~1,200 lifetime annotations across ripgrep and deno. Roughly 70% were zero-copy views into owned data — slicing a string, iterating a vec, passing a buffer. Second-class refs + zero-copy slices + `for` loops cover all of those. The remaining 30% (structs holding borrowed fields like `Parser<'a>`, iterators yielding borrows, `Cow<'a, T>`) cannot be expressed. Milo's answer: restructure around functions (pass `&string` as a param instead of storing it) or own the data. The tradeoff is real — no `struct LineIter { source: &string }` — but the workaround (a function taking `&string` plus a callback, or a `for` loop) is a 2–3 line difference, and well-structured Rust code gravitates toward this style anyway.
 
+**No `&mut` at the callsite.** Milo auto-borrows arguments — you write `f(x)`, not `f(&mut x)`, even when `f` takes `&mut T`. Rust requires the callsite marker because `&mut` is an *exclusive* borrow and the marker is load-bearing for aliasing analysis. Milo's references are second-class — never stored, returned, or aliased — so an exclusive borrow cannot escape a call or overlap another live reference. The aliasing danger that makes Rust's marker earn its keep cannot occur here, so the marker would be pure ceremony. Mutation intent is carried by the function signature and name; reader-side visibility is delegated to the LSP, which will render the elided `&mut` as an inlay hint at the callsite (planned) rather than baking it into the syntax.
+
+**But immutable bindings still can't be passed to `&mut`.** The one real hazard the callsite marker would have caught is *evolution*: a function that switches `&T` → `&mut T` starts mutating its caller's data with no callsite change. Milo closes this at the binding, not the callsite — a `let` binding (or any immutable binding: a `for` variable, a match-arm payload) **cannot** be passed to a `&mut` parameter:
+
+```
+let x = 5
+bump(x)          // COMPILE ERROR: cannot pass immutable 'x' as a '&mut' argument
+var x = 5
+bump(x)          // ok — 'x' is declared mutable
+```
+
+This is a soundness rule, not a style choice: `let` means *immutable, SSA-register*, and taking its address for a `&mut` write would silently spill it to memory and mutate it — breaking both halves of what `let` promises. It also mirrors what method receivers already enforce (`v.push(...)` on a `let` Vec is rejected). So an `&T` → `&mut T` change is loud exactly for the callers who declared their data immutable, and silent only for those who already opted into mutation with `var` — the safety of the marker, without the ceremony.
+
 ### 3. Bounds-checked arrays
 
 Array access is checked at runtime. Out-of-bounds = clear panic, not silent corruption.

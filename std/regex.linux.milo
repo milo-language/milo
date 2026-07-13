@@ -49,7 +49,7 @@ fn _readMatchI32(buf: &[u8; 80], off: i64): i32 {
 
 // Test if a string matches the pattern.
 
-fn regexMatch(re: &mut Regex, input: &string): bool {
+fn regexMatch(re: &Regex, input: &string): bool {
     unsafe {
         return regexec(re._preg, input, 0, 0 as *u8, 0) == 0
     }
@@ -64,7 +64,7 @@ struct RegexMatch {
 
 // Find the first match in a string. Returns None if no match.
 
-fn regexFind(re: &mut Regex, input: &string): Option<RegexMatch> {
+fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
     // regmatch_t on Linux: {rm_so: i32, rm_eo: i32} = 8 bytes each
     var pmatch: [u8; 80] = [0; 80]
     unsafe {
@@ -83,7 +83,7 @@ fn regexFind(re: &mut Regex, input: &string): Option<RegexMatch> {
 
 // Find all non-overlapping matches in a string.
 
-fn regexFindAll(re: &mut Regex, input: &string): Vec<RegexMatch> {
+fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
     var matches: Vec<RegexMatch> = Vec.new()
     var offset: i64 = 0
     var pmatch: [u8; 80] = [0; 80]

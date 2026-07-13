@@ -2732,7 +2732,23 @@ export class TypeChecker {
   // Auto-borrow a call argument; passing a frozen var by mutable ref is the same
   // hazard as calling a mutating method on it (the callee may realloc/free it).
   private setAutoBorrowChecked(arg: Expr, mutable: boolean, sp?: Span) {
-    if (mutable) this.errorIfFrozen(arg, "pass", sp);
+    if (mutable) {
+      this.errorIfFrozen(arg, "pass", sp);
+      // Passing an immutable binding to a '&mut' param mutates it through the
+      // call — the same hazard method receivers already reject ("cannot push to
+      // immutable Vec"). A 'let' claims immutability *and* SSA-register storage;
+      // taking its address for '&mut' forces a spill and silently breaks both.
+      // Free-function '&mut' args were the one path that skipped this check.
+      let root: Expr = arg;
+      while (root.kind === "FieldAccess" || root.kind === "IndexAccess") root = root.object;
+      if (root.kind === "Ident") {
+        const info = this.lookup(root.name);
+        if (info && !info.mutable && info.type.tag !== "ref") {
+          this.error(`cannot pass immutable '${this.describeExpr(arg)}' as a '&mut' argument`, sp,
+            `declare with 'var' to make it mutable`);
+        }
+      }
+    }
     this.autoBorrowed.set(arg, { mutable });
   }
 
