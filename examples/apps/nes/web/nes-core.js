@@ -2787,8 +2787,9 @@ function renderSpriteLine(ppu, sl, bgOpaque) {
     return 8;
   }
   })();
-  let i = 63;
-  while ((i >= 0)) {
+  let sprClaimed = Array.from({length: 256}, () => __clone(0));
+  let i = 0;
+  while ((i < 64)) {
     const base = Math.trunc((i * 4));
     const row = Math.trunc((sl - Math.trunc((Math.trunc(ppu.oam[base]) + 1))));
     if (((row >= 0) && (row < h))) {
@@ -2841,16 +2842,19 @@ function renderSpriteLine(ppu, sl, bgOpaque) {
             if ((((i == 0) && bgHere) && (x < 255))) {
               ppu.status = ((ppu.status | 64) & 0xFF);
             }
-            if ((!(behind && bgHere))) {
-              const colorIdx = Math.trunc(ppuMemRead(ppu, (Math.trunc((Math.trunc((16144 + Math.trunc((palGroup * 4)))) + px)) & 0xFFFF)));
-              ppu.fb[Math.trunc((Math.trunc((sl * 256)) + x))] = nesColor(colorIdx);
+            if ((sprClaimed[x] == 0)) {
+              sprClaimed[x] = 1;
+              if ((!(behind && bgHere))) {
+                const colorIdx = Math.trunc(ppuMemRead(ppu, (Math.trunc((Math.trunc((16144 + Math.trunc((palGroup * 4)))) + px)) & 0xFFFF)));
+                ppu.fb[Math.trunc((Math.trunc((sl * 256)) + x))] = nesColor(colorIdx);
+              }
             }
           }
         }
         fx = Math.trunc((fx + 1));
       }
     }
-    i = Math.trunc((i - 1));
+    i = Math.trunc((i + 1));
   }
 }
 

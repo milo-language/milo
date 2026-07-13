@@ -471,8 +471,17 @@ fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
     } else {
         8
     }
-    var i: i64 = 63
-    while i >= 0 {
+    // Iterate OAM in ascending order — the order the PPU *fetches* sprite
+    // patterns on hardware. This matters for MMC2 (mapper 9): fetching a tile
+    // $FD/$FE flips the CHR latch, so each sprite must render with the bank left
+    // by the *previous* (lower-index) sprite. Drawing back-to-front would flip
+    // the latch in reverse and pull every sprite from the wrong bank (Punch-Out's
+    // crowd/opponent turn to garbage). Priority is preserved via sprClaimed:
+    // the first (lowest-index) opaque sprite pixel wins each x, so lower index
+    // still draws on top.
+    var sprClaimed: [u8; 256] = [0; 256]
+    var i: i64 = 0
+    while i < 64 {
         let base = i * 4
         let row = sl - (ppu.oam[base] as i64 + 1) // OAM Y is top-minus-1
         if row >= 0 && row < h {
@@ -520,16 +529,21 @@ fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
                         if i == 0 && bgHere && x < 255 {
                             ppu.status = ppu.status | 0x40
                         }
-                        if !(behind && bgHere) {
-                            let colorIdx = ppuMemRead(ppu, (0x3F10 + palGroup * 4 + px) as u16) as i64
-                            ppu.fb[sl * 256 + x] = nesColor(colorIdx)
+                        // Lowest-index opaque sprite wins this pixel (sprite-vs-sprite
+                        // priority); it still claims the slot even when hidden behind bg.
+                        if sprClaimed[x] == 0 {
+                            sprClaimed[x] = 1
+                            if !(behind && bgHere) {
+                                let colorIdx = ppuMemRead(ppu, (0x3F10 + palGroup * 4 + px) as u16) as i64
+                                ppu.fb[sl * 256 + x] = nesColor(colorIdx)
+                            }
                         }
                     }
                 }
                 fx = fx + 1
             }
         }
-        i = i - 1
+        i = i + 1
     }
 }
 
