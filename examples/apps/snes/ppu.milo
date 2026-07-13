@@ -6,7 +6,8 @@
 struct Ppu {
     vram: Vec<u8> // 64 KiB (32K 16-bit words)
     cgram: Vec<u8> // 512 bytes = 256 BGR555 colors
-    oam: Vec<u8> // 544 bytes (512 + 32 high table)
+    oam: Vec<u8> // real OAM is 544B (512 + 32 high); over-allocated to 0x400 so the
+    // 9-bit word address (byte addr masked &0x3FF) can't index out of bounds
 
     inidisp: i64 // $2100: bit7 force-blank, bits0-3 master brightness
     obsel: i64 // $2101: OBJ size + name base
@@ -62,7 +63,7 @@ fn ppuZerosI64(n: i64): Vec<i64> {
 
 fn newPpu(): Ppu {
     return Ppu {
-        vram: ppuZeros(0x10000), cgram: ppuZeros(0x200), oam: ppuZeros(0x220),
+        vram: ppuZeros(0x10000), cgram: ppuZeros(0x200), oam: ppuZeros(0x400),
         inidisp: 0, obsel: 0, oamaddr: 0, oamLatch: 0, oamHi: false,
         bgmode: 0, bgsc0: 0, bgsc1: 0, bgsc2: 0, bgsc3: 0, bg12nba: 0, bg34nba: 0,
         bghofs: ppuZerosI64(4), bgvofs: ppuZerosI64(4), scrollLatch: 0, scrollHi: 0,
