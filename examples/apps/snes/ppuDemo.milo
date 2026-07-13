@@ -4,7 +4,7 @@
 //   milo run examples/apps/snes/ppuDemo.milo   then open /tmp/snes.ppm
 
 from "std/fs" import {
-    writeFile
+    writeFile, makeDir
 }
 from "./ppu" import {
     Ppu, newPpu, ppuRegWrite, renderFrame
@@ -84,9 +84,15 @@ fn main(): i32 {
         out.push((px & 0xFF) as u8)
         i = i + 1
     }
-    match writeFile("/tmp/snes.ppm", out) {
+    match makeDir("/tmp/snes", 493) {
+        Result.Ok(x) => {
+        }
+        Result.Err(e) => {
+        }
+    }
+    match writeFile("/tmp/snes/bands.ppm", out) {
         Result.Ok(n) => {
-            print("wrote /tmp/snes.ppm (8 color bands, 256x224) — open it to view") return 0
+            print("wrote /tmp/snes/bands.ppm (8 color bands, 256x224) — open it to view") return 0
         }
         Result.Err(e) => {
             print("write failed") return 1

@@ -4,7 +4,7 @@
 //   milo run examples/apps/snes/romGfxDemo.milo   then open /tmp/snes_rom.ppm
 
 from "std/fs" import {
-    writeFile
+    writeFile, makeDir
 }
 from "./cpu" import {
     Cpu, Mem, busNew, newCpuReset, stepFrame, vecZeros
@@ -119,9 +119,15 @@ fn main(): i32 {
         out.push(((px >> 16) & 0xFF) as u8) out.push(((px >> 8) & 0xFF) as u8) out.push((px & 0xFF) as u8)
         i = i + 1
     }
-    match writeFile("/tmp/snes_rom.ppm", out) {
+    match makeDir("/tmp/snes", 493) {
+        Result.Ok(x) => {
+        }
+        Result.Err(e) => {
+        }
+    }
+    match writeFile("/tmp/snes/frame.ppm", out) {
         Result.Ok(n) => {
-            print("OK: ran a ROM (CPU->DMA->PPU->frame) -> /tmp/snes_rom.ppm") return 0
+            print("OK: ran a ROM (CPU->DMA->PPU->frame) -> /tmp/snes/frame.ppm") return 0
         }
         Result.Err(e) => {
             print("write failed") return 1

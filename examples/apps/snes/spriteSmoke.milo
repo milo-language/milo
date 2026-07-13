@@ -1,0 +1,65 @@
+// M4 sprite smoke: place one 8x8 sprite at (16,16) over a blank BG and confirm
+// the OBJ pixels render (and only there).  milo run examples/apps/snes/spriteSmoke.milo
+
+from "./ppu" import {
+    Ppu, newPpu, ppuRegWrite, renderFrame
+}
+
+fn hex6(v: i64): string {
+    let d = "0123456789ABCDEF"
+    var s = ""
+    var i: i64 = 20
+    while i >= 0 {
+        s.push(d[(v >> i) & 0xF]) i = i - 4
+    }
+    return s
+}
+
+fn vword(p: &mut Ppu, w: i64): void {
+    ppuRegWrite(p, 0x18, w & 0xFF) ppuRegWrite(p, 0x19, (w >> 8) & 0xFF)
+}
+
+fn main(): i32 {
+    var p = newPpu()
+    ppuRegWrite(p, 0x00, 0x0F) // brightness
+    ppuRegWrite(p, 0x05, 0x01) // Mode 1 (BG blank: tilemap/char are zero)
+    ppuRegWrite(p, 0x01, 0x01) // OBSEL: obj char base word $2000, size sel 0 (8/16)
+    ppuRegWrite(p, 0x15, 0x80) // VMAIN
+
+    // Sprite tile 0 (solid index 1) at obj char base word $2000.
+    ppuRegWrite(p, 0x16, 0x00) ppuRegWrite(p, 0x17, 0x20) // VMADDR = $2000
+    var r: i64 = 0
+    while r < 8 {
+        vword(p, 0x00FF) r = r + 1
+    }
+    r = 0
+    while r < 8 {
+        vword(p, 0x0000) r = r + 1
+    }
+
+    // OBJ palette 0, color 1 = green -> CGRAM 129 (obj colors start at 128).
+    ppuRegWrite(p, 0x21, 129)
+    ppuRegWrite(p, 0x22, 0xE0) ppuRegWrite(p, 0x22, 0x03)
+
+    // OAM sprite 0: x=16, y=16, tile 0, attr 0.
+    ppuRegWrite(p, 0x02, 0x00) ppuRegWrite(p, 0x03, 0x00) // OAMADDR = 0
+    ppuRegWrite(p, 0x04, 16) ppuRegWrite(p, 0x04, 16) // x, y
+    ppuRegWrite(p, 0x04, 0) ppuRegWrite(p, 0x04, 0) // tile, attr
+
+    var fb: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < 256 * 224 {
+        fb.push(0) i = i + 1
+    }
+    renderFrame(p, fb)
+
+    let onSprite = fb[20 * 256 + 20] // inside the 8x8 at (16..23)
+    let offSprite = fb[100 * 256 + 100]
+    print("sprite px=$" + hex6(onSprite) + " (want 00F800)  bg px=$" + hex6(offSprite) + " (want 000000)")
+    if onSprite == 0x00F800 && offSprite == 0x000000 {
+        print("OK: OBJ sprite renders over a blank background")
+        return 0
+    }
+    print("FAIL")
+    return 1
+}

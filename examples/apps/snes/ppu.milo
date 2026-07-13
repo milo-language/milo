@@ -251,8 +251,70 @@ fn cgToRgb(p: &Ppu, idx: i64, bright: i64): i64 {
     return (r << 16) | (g << 8) | b
 }
 
-// Render BG1 (Mode 1, 4bpp, 32x32 tilemap) into a 256x224 RGB framebuffer.
-// First rendering slice — more layers/BG modes/priority/sprites follow.
+// Render OBJ (sprites) on top of the background. 4bpp, palettes 8-15 (CGRAM
+// 128-255). Supports 8x8 / 16x16 (OBSEL size selector 0). Drawn back-to-front so
+// low sprite indices win. Priority-vs-BG not yet modeled (sprites over BG).
+fn renderSprites(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
+    let objBase = (p.obsel & 0x07) << 13 // name base (words)
+    var s: i64 = 127
+    while s >= 0 {
+        let oa = s * 4
+        let xl = p.oam[oa]as i64
+        let y = p.oam[oa + 1]as i64
+        let tileL = p.oam[oa + 2]as i64
+        let attr = p.oam[oa + 3]as i64
+        let ht = p.oam[0x200 + (s >> 2)]as i64
+        let shift = (s & 3) * 2
+        let xhi = (ht >> shift) & 1
+        let large = (ht >> (shift + 1)) & 1
+        var sx = xl | (xhi << 8)
+        if sx >= 256 {
+            sx = sx - 512
+        } // 9-bit signed X
+        let dim: i64 = if large != 0 {
+            16
+        } else {
+            8
+        }
+        let pal = (attr >> 1) & 0x07
+        let hflip = (attr >> 6) & 1
+        let vflip = (attr >> 7) & 1
+        let tileNum = tileL | ((attr & 1) << 8)
+
+        var oy: i64 = 0
+        while oy < dim {
+            let scrY = y + oy
+            if scrY >= 0 && scrY < 224 {
+                var ox: i64 = 0
+                while ox < dim {
+                    let scrX = sx + ox
+                    if scrX >= 0 && scrX < 256 {
+                        var tx = ox
+                        var ty = oy
+                        if hflip != 0 {
+                            tx = dim - 1 - ox
+                        }
+                        if vflip != 0 {
+                            ty = dim - 1 - oy
+                        }
+                        // 16x16 = 2x2 tiles laid out 16-wide in VRAM.
+                        let t = tileNum + (ty >> 3) * 16 + (tx >> 3)
+                        let ci = tile4bpp(p, objBase, t & 0x1FF, tx & 7, ty & 7)
+                        if ci != 0 {
+                            fb[scrY * 256 + scrX] = cgToRgb(p, 128 + pal * 16 + ci, bright)
+                        }
+                    }
+                    ox = ox + 1
+                }
+            }
+            oy = oy + 1
+        }
+        s = s - 1
+    }
+}
+
+// Render BG1 (Mode 1, 4bpp, 32x32 tilemap) + sprites into a 256x224 RGB
+// framebuffer. First rendering slice — more BG layers/modes/priority follow.
 fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     let bright = p.inidisp & 0x0F
     let forceBlank = (p.inidisp & 0x80) != 0
@@ -296,6 +358,9 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
             x = x + 1
         }
         y = y + 1
+    }
+    if !forceBlank {
+        renderSprites(p, fb, bright)
     }
 }
 
