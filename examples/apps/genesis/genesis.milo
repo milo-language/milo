@@ -215,26 +215,14 @@ fn main(): i32 {
         var ev: [u8; 64] = [0; 64]
         var quit = false
         while !quit {
-            runFrame(cpu, m)
-            // Keep at most ~4 frames of audio queued so video/audio stay in step.
-            if audioDev != 0 && SDL_GetQueuedAudioSize(audioDev) < 12000 {
-                queueAudio(synth, m, audioDev)
-            }
-            let fb = renderIndexed(m)
-            let w = frameWidth(m)
-            blit(m, fb, w, maxW, rgba)
-            SDL_UpdateTexture(tex, 0 as *u8, (&rgba[0]) as *u8, (maxW * 4) as i32)
-            SDL_RenderClear(ren)
-            SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
-            SDL_RenderPresent(ren)
-
+            // Input first, every iteration, so the window stays responsive even
+            // while we're pacing on audio.
             while SDL_PollEvent((&ev[0]) as *u8) != 0 {
                 let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
                 }
             }
-            // Live keyboard -> controller-1 bitmask (bit0 Up..7 Start).
             let ks = SDL_GetKeyboardState(0 as *i32)
             var p: i64 = 0
             if ks[82] != 0 {
@@ -265,7 +253,29 @@ fn main(): i32 {
             if ks[41] != 0 {
                 quit = true // Esc
             }
-            SDL_Delay(16)
+
+            // Audio-mastered pacing: the SDL queue is the clock. Run frames until
+            // ~5 frames (24 KB stereo) are buffered, then idle. This keeps a
+            // cushion so a backgrounded / throttled window doesn't starve the
+            // audio and stutter. No audio device => cap at ~60 fps by delay.
+            if audioDev != 0 && SDL_GetQueuedAudioSize(audioDev) >= 24000 {
+                SDL_Delay(1)
+            } else {
+                runFrame(cpu, m)
+                if audioDev != 0 {
+                    queueAudio(synth, m, audioDev)
+                }
+                let fb = renderIndexed(m)
+                let w = frameWidth(m)
+                blit(m, fb, w, maxW, rgba)
+                SDL_UpdateTexture(tex, 0 as *u8, (&rgba[0]) as *u8, (maxW * 4) as i32)
+                SDL_RenderClear(ren)
+                SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
+                SDL_RenderPresent(ren)
+                if audioDev == 0 {
+                    SDL_Delay(16)
+                }
+            }
         }
         SDL_Quit()
     }
