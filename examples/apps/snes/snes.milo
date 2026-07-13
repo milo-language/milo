@@ -10,7 +10,13 @@ from "std/args" import {
     args
 }
 from "./cpu" import {
-    Cpu, Mem, busNew, newCpuReset, stepFrame, vecZeros
+    Cpu, Mem, busNew, newCpuReset, stepFrame, vecZeros, sramToString, sramFromString
+}
+from "std/io" import {
+    readFile
+}
+from "std/fs" import {
+    writeFile
 }
 from "./ppu" import {
     renderFrame
@@ -136,6 +142,20 @@ fn main(): i32 {
     var m = busNew(rom, mapMode)
     var cpu = newCpuReset(m)
 
+    // Battery save: <rom>.srm holds the cartridge SRAM across runs. Load it now;
+    // it's written back on quit so the game's own saves survive shutdown.
+    var srmPath = ""
+    if argv.len >= 2 {
+        srmPath = argv[1] + ".srm"
+        match readFile(srmPath) {
+            Result.Ok(data) => {
+                sramFromString(m, data) print("loaded save: " + srmPath)
+            }
+            Result.Err(e) => {
+            }
+        }
+    }
+
     if SDL_Init(SDL_INIT_VIDEO) != 0 {
         print("SDL_Init failed") return 1
     }
@@ -226,6 +246,17 @@ fn main(): i32 {
             } // W -> R
             m.joy1 = j
             SDL_Delay(16) // ~60 fps pacing
+        }
+    }
+    // Persist cartridge SRAM on exit so in-game saves survive.
+    if srmPath.len > 0 {
+        match writeFile(srmPath, sramToString(m)) {
+            Result.Ok(n) => {
+                print("wrote save: " + srmPath)
+            }
+            Result.Err(e) => {
+                print("save write failed")
+            }
         }
     }
     SDL_Quit()

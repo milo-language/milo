@@ -49,6 +49,8 @@ struct Mem {
     wram: Vec<u8> // 128 KiB; empty in test mode
     rom: Vec<u8>
     romMask: i64
+    sram: Vec<u8> // battery-backed save RAM (LoROM $70-7D:0-7FFF / HiROM $20-3F:6000-7FFF)
+    sramMask: i64
     mapMode: i64 // 0 = LoROM, 1 = HiROM
     mmio: Vec<u8> // $2000-$5FFF scratch (0x4000 bytes)
 
@@ -76,7 +78,7 @@ fn newApuSpc(): Spc {
 fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
-        wram: Vec.new(), rom: Vec.new(), romMask: 0, mapMode: 0, mmio: Vec.new(),
+        wram: Vec.new(), rom: Vec.new(), romMask: 0, sram: Vec.new(), sramMask: 0, mapMode: 0, mmio: Vec.new(),
         nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
         apuSpc: newApuSpc(), apuMem: spcMemNew(), ppu: newPpu()
     }
@@ -101,7 +103,8 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
     mask = mask - 1 // next-pow2 minus 1; ROM offsets are wrapped by this
     var mem = Mem {
         addr: Vec.new(), val: Vec.new(), testMode: false,
-        wram: vecZeros(0x20000), rom: rom, romMask: mask, mapMode: mapMode,
+        wram: vecZeros(0x20000), rom: rom, romMask: mask,
+        sram: vecZeros(0x8000), sramMask: 0x7FFF, mapMode: mapMode,
         mmio: vecZeros(0x4000),
         nmitimen: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
         apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu()
@@ -311,6 +314,41 @@ fn romByte(m: &Mem, bank: i64, off: i64): i64 {
     return 0
 }
 
+// Linear SRAM index for a bank:offset, or -1 if the address isn't SRAM. LoROM
+// maps SRAM into banks $70-$7D (mirror $F0-$FD), offset $0000-$7FFF; HiROM into
+// banks $20-$3F (mirror $A0-$BF), offset $6000-$7FFF.
+fn sramIndex(m: &Mem, bank: i64, off: i64): i64 {
+    let b = bank & 0x7F
+    if m.mapMode == 0 {
+        if b >= 0x70 && b <= 0x7D && off < 0x8000 {
+            return (((b - 0x70) << 15) | off) & m.sramMask
+        }
+        return -1
+    }
+    if b >= 0x20 && b <= 0x3F && off >= 0x6000 && off < 0x8000 {
+        return (((b - 0x20) << 13) | (off - 0x6000)) & m.sramMask
+    }
+    return -1
+}
+
+// Serialize SRAM to a byte string for a .srm file.
+fn sramToString(m: &Mem): string {
+    var s = String.withCapacity(m.sram.len + 16)
+    var i: i64 = 0
+    while i < m.sram.len {
+        s.push(m.sram[i]) i = i + 1
+    }
+    return s
+}
+
+// Load a .srm byte string back into SRAM (truncated/padded to SRAM size).
+fn sramFromString(m: &mut Mem, data: &string): void {
+    var i: i64 = 0
+    while i < m.sram.len && i < data.len {
+        m.sram[i] = data[i]i = i + 1
+    }
+}
+
 fn memRead(m: &Mem, a: i64): i64 {
     if m.testMode {
         var i: i64 = 0
@@ -330,6 +368,10 @@ fn memRead(m: &Mem, a: i64): i64 {
     if bank == 0x7F {
         return m.wram[0x10000 + off]as i64
     }
+    let si = sramIndex(m, bank, off)
+    if si >= 0 {
+        return m.sram[si]as i64
+    }
     let b = bank & 0x7F
     if b <= 0x3F {
         if off < 0x2000 {
@@ -339,7 +381,7 @@ fn memRead(m: &Mem, a: i64): i64 {
             return mmioRead(m, off)
         }
         if off < 0x8000 {
-            return 0 // SRAM / unused (stub)
+            return 0 // unused
         }
         return romByte(m, bank, off)
     }
@@ -369,6 +411,10 @@ fn memWrite(m: &mut Mem, a: i64, v: i64): void {
     if bank == 0x7F {
         m.wram[0x10000 + off] = bv return
     }
+    let si = sramIndex(m, bank, off)
+    if si >= 0 {
+        m.sram[si] = bv return
+    }
     let b = bank & 0x7F
     if b <= 0x3F {
         if off < 0x2000 {
@@ -377,7 +423,7 @@ fn memWrite(m: &mut Mem, a: i64, v: i64): void {
         if off < 0x6000 {
             mmioWrite(m, off, v) return
         }
-        return // SRAM/unused/ROM writes ignored
+        return // unused/ROM writes ignored
     }
     // ROM banks: writes ignored
 }
