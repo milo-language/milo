@@ -141,9 +141,6 @@ fn main(): i32 {
                 z80Interrupt(m.z80)
             }
         }
-        if steps > maxSteps - 40000 {
-            m.dbgArm = true // capture CRAM writes of the final ~1 frame
-        }
         wasVblank = inVblank
         steps = steps + 1
     }
@@ -175,12 +172,6 @@ fn main(): i32 {
     print("ym-nonzero=" + itoa(ymNz) + "/512  psg-nonzero=" + itoa(psgNz) + "/8")
     printVdpRegs(m)
     printCram(m)
-    // Final-frame CRAM writes landing in line0/line1 low entries (logo palette).
-    var dwi: i64 = 0
-    while dwi + 2 < m.dbgWrites.len {
-        print("PALw pc=" + hex8(m.dbgWrites[dwi]) + " addr=" + hex8(m.dbgWrites[dwi + 1]) + " val=" + hex4(m.dbgWrites[dwi + 2]) + " (line=" + itoa((((m.dbgWrites[dwi + 1] - 0xFFC080) / 2) / 16)) + " idx=" + itoa((((m.dbgWrites[dwi + 1] - 0xFFC080) / 2) % 16)) + ")")
-        dwi = dwi + 3
-    }
     renderPpm(m, "/tmp/sonic.ppm")
     print("wrote /tmp/sonic.ppm")
     writeWav(wav, "/tmp/sonic.wav")
