@@ -1,0 +1,12 @@
+// @error: type mismatch in '&': i64 vs i32
+// A flexible const-int binding locks to its default width at its first read.
+// Here `m` is first read as i32 (`let a: i32 = m`), so the later i64 use must be
+// rejected — never silently widened after the i32 use was committed.
+fn main(): i32 {
+    let m = 5
+    let a: i32 = m
+    let reg: i64 = 8
+    let b: i64 = reg & m
+    print($"{a} {b}")
+    return 0
+}

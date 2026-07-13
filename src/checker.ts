@@ -14,6 +14,15 @@ export interface VarInfo {
   // Released (borrowed=false) when the binding's scope pops, so a slice in an
   // inner block doesn't freeze its source for the rest of the function.
   freezes?: VarInfo[];
+  // An unannotated `let x = <const-int-value>` whose width is still adaptable:
+  // its value is built entirely from integer literals (directly, or as the arm
+  // tails of an if/match expression), so it can be re-typed to a wider int on
+  // first use without any runtime conversion. `leaves` are those literal exprs
+  // and `valueExpr` the whole initializer (whose node type is also retyped).
+  // Cleared the moment the binding is resolved (widened) or locked (its
+  // statement ends) — so a binding can only ever adopt a width at its FIRST
+  // read, never retroactively after an i32 use was already committed.
+  flexInt?: { leaves: Expr[]; valueExpr: Expr };
 }
 
 // Builtins that may realloc, free, or shift collection memory — illegal on a
@@ -1818,6 +1827,19 @@ export class TypeChecker {
   }
 
   private checkStmt(stmt: Stmt, fnRetType: TypeKind) {
+    this.checkStmtBody(stmt, fnRetType);
+    // Lock any flexible const-int binding that was read but not widened during
+    // this statement: its width is now fixed at the default. This is what keeps
+    // widening sound — a binding can only adopt a wider width at its FIRST read
+    // (within one statement), never retroactively after an i32 use committed.
+    for (const scope of this.scopes) {
+      for (const [, vi] of scope) {
+        if (vi.flexInt && vi.read) vi.flexInt = undefined;
+      }
+    }
+  }
+
+  private checkStmtBody(stmt: Stmt, fnRetType: TypeKind) {
     const sp = stmt.span;
     switch (stmt.kind) {
       case "LetDecl": {
@@ -1859,6 +1881,16 @@ export class TypeChecker {
         const bindingType = hint ?? valType;
         if (bindingType.tag !== "ref") for (const vi of newlyFrozen) vi.borrowed = false;
         this.declare(stmt.name, { type: bindingType, mutable: false, moved: false, borrowed: false, read: false, span: sp, ...(bindingType.tag === "ref" && newlyFrozen.length > 0 && { freezes: newlyFrozen }) });
+        // An unannotated `let x = <const-int-value>` stays width-adaptable until
+        // its first use (see VarInfo.flexInt): its default i32 can widen to an
+        // i64 (etc.) context without an `as` cast, since the value is literals.
+        if (!hint && valType.tag === "int") {
+          const leaves = this.flexIntLeaves(stmt.value);
+          if (leaves) {
+            const info = this.lookup(stmt.name);
+            if (info) info.flexInt = { leaves, valueExpr: stmt.value };
+          }
+        }
         this.tryMove(stmt.value);
         break;
       }
@@ -2936,6 +2968,14 @@ export class TypeChecker {
           } else if (this.isConstIntExpr(expr.left)) {
             this.retypeConstInt(expr.left, rt);
             lt = rt;
+          } else {
+            // A flexible const-int binding (`let m = if.. { const arms }`) used
+            // against a concrete int of another width adopts that width here —
+            // this is its first read, so nothing was committed at the default.
+            const rInfo = this.flexIntBinding(expr.right);
+            const lInfo = this.flexIntBinding(expr.left);
+            if (rInfo && this.resolveFlexInt(rInfo, lt, expr.right)) rt = lt;
+            else if (lInfo && this.resolveFlexInt(lInfo, rt, expr.left)) lt = rt;
           }
         }
         const arithOps = ["+", "-", "*", "/", "%"];
@@ -3367,8 +3407,12 @@ export class TypeChecker {
             // T auto-wraps to Option<T> (Some(value))
             const optInner = this.optionInnerType(paramType);
             const isOptionWrap = optInner !== null && typeEq(optInner, argType);
+            // A flexible const-int binding adopts the param's int width (first use).
+            const flexInfo = paramType.tag === "int" ? this.flexIntBinding(expr.args[i]) : null;
             if (isOptionWrap) {
               this.autoWrappedOption.set(expr.args[i], paramType.name);
+            } else if (flexInfo && this.resolveFlexInt(flexInfo, paramType, expr.args[i])) {
+              // resolved
             } else if (!isStringToPtr && !isArrayToPtr) {
               if (!this.tryInterfaceCoercion(expr.args[i], argType, paramType)) {
                 this.error(`argument ${i + 1} of '${expr.func}': expected ${typeName(paramType)}, got ${typeName(argType)}`, expr.args[i].span);
@@ -4776,6 +4820,56 @@ export class TypeChecker {
     if (body.length === 0) return null;
     const last = body[body.length - 1];
     return last.kind === "ExprStmt" ? last.expr : null;
+  }
+
+  // The integer-literal leaf expressions an expression's value is built from —
+  // the expr itself if it's an all-literal int subexpr, or every arm tail of an
+  // if/match expression (recursively). Null if any part isn't a const-int leaf,
+  // meaning the value isn't width-adaptable.
+  private flexIntLeaves(e: Expr): Expr[] | null {
+    if (this.isConstIntExpr(e)) return [e];
+    if (e.kind === "IfExpr") {
+      const t = this.tailFlexLeaves(e.thenBody);
+      const el = this.tailFlexLeaves(e.elseBody);
+      return t && el ? [...t, ...el] : null;
+    }
+    if (e.kind === "MatchExpr") {
+      const all: Expr[] = [];
+      for (const arm of e.arms) {
+        const l = this.tailFlexLeaves(arm.body);
+        if (!l) return null;
+        all.push(...l);
+      }
+      return all.length > 0 ? all : null;
+    }
+    return null;
+  }
+
+  private tailFlexLeaves(body: Stmt[]): Expr[] | null {
+    const tail = this.tailExprOf(body);
+    return tail ? this.flexIntLeaves(tail) : null;
+  }
+
+  // Widen a still-flexible const-int binding to `target` (a wider int) at its
+  // first use. Retypes every literal leaf and the initializer's node type, so
+  // codegen emits the binding's slot and all leaves at the new width — no
+  // runtime sext/zext, because the value is entirely literals.
+  private resolveFlexInt(info: VarInfo, target: TypeKind, useExpr: Expr): boolean {
+    if (!info.flexInt || target.tag !== "int") return false;
+    for (const leaf of info.flexInt.leaves) this.retypeConstInt(leaf, target);
+    this.setType(info.flexInt.valueExpr, target);
+    info.type = target;
+    info.flexInt = undefined;
+    this.setType(useExpr, target);
+    return true;
+  }
+
+  // If `e` is an identifier bound to a still-flexible const-int `let`, return
+  // its VarInfo (so a use site can widen it); otherwise null.
+  private flexIntBinding(e: Expr): VarInfo | null {
+    if (e.kind !== "Ident") return null;
+    const info = this.lookup(e.name);
+    return info?.flexInt ? info : null;
   }
 
   private validateHashableKey(t: TypeKind, span?: Span) {

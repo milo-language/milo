@@ -1,0 +1,34 @@
+// @expect: 5
+// @expect: 1
+// @expect: 5 6
+// An unannotated `let x = <int literals>` (directly, or as if/match arms) keeps
+// its width adaptable until first use, so it widens to an i64 context without an
+// `as i64` cast. Widening is locked in at the first read (see the adversarial
+// error fixtures), so it can never retroactively change a committed i32 use.
+fn take(x: i64): i64 {
+    return x
+}
+
+fn main(): i32 {
+    let wide = true
+    let mask = if wide {
+        0xFFFF
+    } else {
+        0xFF
+    }
+    let reg: i64 = 5
+    print($"{reg & mask}") // if-expr binding widens for i64 '&'
+
+    let size = if wide {
+        1
+    } else {
+        2
+    }
+    print($"{take(size)}") // if-expr binding widens for i64 param
+
+    let m = 5
+    let a: i64 = reg & m // plain literal binding widens
+    let b: i64 = m + 1 // and stays i64 on reuse
+    print($"{a} {b}")
+    return 0
+}
