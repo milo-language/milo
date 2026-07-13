@@ -52,7 +52,7 @@ struct Mem {
     fillAddr: i64 // VRAM fill: address latched at arm time (regs can change before the data write)
     fillInc: i64 // VRAM fill: auto-increment latched at arm time
     fillLen: i64 // VRAM fill: length latched at arm time
-    lastDataByte: i64 // last byte written to the VDP data port (fill byte when a fill is flushed)
+    lastDataByte: i64 // last byte written to the VDP data port (the fill byte a fill DMA uses)
     z80Busreq: bool
     z80Reset: bool // true = Z80 held in reset (not running)
     z80: Z80
@@ -333,9 +333,11 @@ fn vdpDma(m: &mut Mem) {
         // is still pending (game armed several clears back-to-back with a single
         // fill-data write), flush it now using the last data-port byte so every
         // armed region is actually cleared.
-        if m.dmaFillPending {
-            doFill(m, m.lastDataByte)
-        }
+        // VRAM fill executes immediately on the DMA-trigger control write, using
+        // the fill byte from the most recent data-port write (the game programs the
+        // fill value there before arming). Games clear several regions with
+        // back-to-back fill arms and only ONE data write, so deferring the fill to
+        // the next data-port write would drop all but the last region.
         var flen = (m.vdpRegs[20] << 8) | m.vdpRegs[19]
         if flen == 0 {
             flen = 0x10000
@@ -343,7 +345,7 @@ fn vdpDma(m: &mut Mem) {
         m.fillAddr = m.vdpAddr
         m.fillInc = m.vdpRegs[15]
         m.fillLen = flen
-        m.dmaFillPending = true
+        doFill(m, m.lastDataByte)
         return
     }
     if mode == 3 {
@@ -417,11 +419,6 @@ fn vdpDataWrite(m: &mut Mem, val: i64) {
     // The data byte (high byte of the word) is what a fill would use; remember it
     // so a fill flushed by a subsequent arm can find its fill value.
     m.lastDataByte = (val >> 8) & 0xFF
-    if m.dmaFillPending {
-        // VRAM fill triggered by this data write: fill with this word's high byte.
-        doFill(m, (val >> 8) & 0xFF)
-        return
-    }
     let target = m.vdpCode & 0xF
     let a = m.vdpAddr
     if target == 1 {
