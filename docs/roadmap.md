@@ -117,6 +117,11 @@ Runtime pressure from `node-milo` changes the order here: binary data and FFI sa
 - [ ] **Ranged integers L3** — branch narrowing: after `if x < 50`, x is known `(min..49)` in the then-branch.
 - [ ] **MIR** — lower-level IR for optimization passes (post self-hosting)
 
+### Standard Library
+
+- [ ] **JSON streaming / pull parser** — `std/json` today is whole-document only: `jsonParse` loads the full source and stores values as offsets into a resident `source` buffer (~6 allocs, zero-copy — great when it fits). No path for unbounded / multi-GB / NDJSON-over-socket input. Fix is a *separate* pull tokenizer (state machine over a byte reader, emitting `StartObject`/`Key`/`Value`/… events, never retaining the whole doc — cf. Go `json.Decoder.Token`, Rust `StreamDeserializer`). No language blocker; it's the `src-milo/lexer.milo` pattern. Zero-copy variant wants **Borrowed slices / byte views** (above) to hand out spans instead of copies.
+- [ ] **JSON builder ergonomics** — the *read* side is clean; constructing a document by hand (`jsonObj().str(k,v).int(k,n).build()` chains) is clunky vs the fluent parse API. Flagged from Hades. Wants nicer literal/builder sugar for the write path.
+
 ### Tooling
 
 - [ ] **LSP: rename + find references**
