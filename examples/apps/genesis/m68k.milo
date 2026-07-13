@@ -141,7 +141,12 @@ fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
         }
         if isDevice(a) {
             if a >= 0xA00000 && a <= 0xA0FFFF {
-                m.z80.mem[a & 0x1FFF] = (val & 0xFF) as u8 // 68k byte write to Z80 RAM
+                let za = a & 0xFFFF
+                if za < 0x2000 {
+                    m.z80.mem[za] = (val & 0xFF) as u8 // Z80 RAM
+                } else {
+                    z80DevWrite(m.z80, za, val & 0xFF) // YM2612 / bank / PSG (68k side)
+                }
             } else if a >= 0xA14000 && a <= 0xA14003 {
                 m.tmssUnlocked = true // 'SEGA' TMSS unlock bytes
             } else if a == 0xA10003 {
@@ -216,9 +221,12 @@ fn devRead16(m: &Mem, a: i64): i64 {
 
 fn devRead8(m: &Mem, a: i64): i64 {
     if a >= 0xA00000 && a <= 0xA0FFFF {
-        // Return 0 ("Z80 ready"): keeps boot + video working. Real read-back
-        // uploads the full sound driver but hangs the VBlank handler on the
-        // un-cycle-synced 68k<->Z80 handshake (in-game music = TODO).
+        let za = a & 0xFFFF
+        if za < 0x2000 {
+            return m.z80.mem[za]as i64 // Z80 8 KB RAM
+        }
+        // $A04000-$A04003 is the YM2612 (68k side): bit7 = busy. Return 0 = ready.
+        // Everything else in the window (bank/PSG/unused) reads back 0.
         return 0
     }
     if a == 0xA10001 {
@@ -239,10 +247,16 @@ fn devRead8(m: &Mem, a: i64): i64 {
 
 fn devWrite16(m: &mut Mem, a: i64, val: i64) {
     if a >= 0xA00000 && a <= 0xA0FFFF {
-        // 68k word write into Z80 space (bytes go high-then-low). Only RAM is
-        // wired here; the 68k mostly uploads the sound driver as bytes.
-        m.z80.mem[(a & 0x1FFF)] = ((val >> 8) & 0xFF) as u8
-        m.z80.mem[((a + 1) & 0x1FFF)] = (val & 0xFF) as u8
+        // 68k word write into Z80 space (high byte then low). Sub-dispatch so
+        // $A04000-3 hits the YM2612, not RAM.
+        let za = a & 0xFFFF
+        if za < 0x2000 {
+            m.z80.mem[za] = ((val >> 8) & 0xFF) as u8
+            m.z80.mem[(za + 1) & 0x1FFF] = (val & 0xFF) as u8
+        } else {
+            z80DevWrite(m.z80, za, (val >> 8) & 0xFF)
+            z80DevWrite(m.z80, za + 1, val & 0xFF)
+        }
         return
     }
     if a == 0xC00000 || a == 0xC00002 {

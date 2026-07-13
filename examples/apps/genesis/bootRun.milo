@@ -130,6 +130,23 @@ fn main(): i32 {
     print("final PC=" + hex8(cpu.pc) + " SR=" + hex4(cpu.sr) + " A7=" + hex8(cpu.a[7]))
     print("frames=" + itoa(frames) + " vblank-ints=" + itoa(vints) + " vdpLine=" + itoa(m.vdpLine))
     print("z80: running=" + boolStr(z80Running(m)) + " steps=" + itoa(z80Steps) + " fail=" + itoa(z80Fail) + " pc=" + hex4(m.z80.pc))
+    var ymNz: i64 = 0
+    var i2: i64 = 0
+    while i2 < 512 {
+        if m.z80.ym[i2] != 0 {
+            ymNz = ymNz + 1
+        }
+        i2 = i2 + 1
+    }
+    var psgNz: i64 = 0
+    i2 = 0
+    while i2 < 8 {
+        if m.z80.psg[i2] != 0 {
+            psgNz = psgNz + 1
+        }
+        i2 = i2 + 1
+    }
+    print("ym-nonzero=" + itoa(ymNz) + "/512  psg-nonzero=" + itoa(psgNz) + "/8")
     printVdpRegs(m)
     printCram(m)
     renderPpm(m, "/tmp/sonic.ppm")

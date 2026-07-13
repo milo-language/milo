@@ -30,6 +30,13 @@ many games run without a live Z80, some need it).
 
 ### Status (in progress)
 
+**Sound drivers now PLAY** — the "68k<->z80 deadlock" was a red herring: the real
+bug was the 68k's YM2612 busy-poll at $A04000 being misrouted to Z80 RAM (bit7
+never cleared -> infinite VInt spin). Fixed the $A0xxxx sub-dispatch (RAM <$2000,
+YM2612 $4000-3, bank $6000, PSG $7F11). Now with REAL Z80-RAM read-back: Sonic
+writes 136 YM2612 registers, SoR3 writes 87 -> the SMPS drivers are running the
+songs. Still need YM2612 FM + PSG *synthesis* to turn those registers into audio.
+
 **Compatibility: 3/3 commercial games boot + render** (validates the emulator is
 not Sonic-specific): Sonic 1 (Green Hill Zone gameplay), Golden Axe (title kanji
 戦斧 + sky), Streets of Rage 3 (STREETS title logo). All run millions of 68k+z80
