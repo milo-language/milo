@@ -17,6 +17,7 @@ let FM_SCALE_1E6: i64 = 50808 // (53267 / 2^20) * 1e6, rounded
 struct Synth {
     phase: [i64; 10] // carrier phase per voice (6 FM + 3 PSG + 1 noise), 8.16 fixed
     modPhase: [i64; 6] // FM modulator (op3) phase per channel
+    envLevel: [i64; 6] // per-channel amplitude envelope (0..255), smooths note gates
     noiseLfsr: i64
 }
 
@@ -24,6 +25,7 @@ fn newSynth(): Synth {
     return Synth {
         phase: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         modPhase: [0, 0, 0, 0, 0, 0],
+        envLevel: [0, 0, 0, 0, 0, 0],
         noiseLfsr: 0x8000,
     }
 }
@@ -91,31 +93,49 @@ fn synthSample(s: &mut Synth, z: &mut Z80): i64 {
     // --- YM2612 FM channels (2-op model); ch5 skipped when DAC drives ch6 ---
     var c: i64 = 0
     while c < 6 {
-        let fMilli = fmFreqMilli(z, c)
-        if fMilli > 0 && z.fmKey[c] && !(c == 5 && dacOn) {
+        if !(c == 5 && dacOn) {
             let part: i64 = if c < 3 {
                 0
             } else {
                 256
             }
             let ci = c % 3
-            // base carrier phase inc (8.16) then per-operator MUL (op4=carrier +0xC,
-            // op3=modulator +0x4 in the register slot layout).
-            let baseInc = (fMilli * 65536) / (SAMPLE_RATE * 1000)
-            let carInc = baseInc * opMulX2(z, part, 0xC, ci) / 2
-            let modInc = baseInc * opMulX2(z, part, 0x4, ci) / 2
-            s.phase[c] = (s.phase[c] + carInc) & 0xFFFFFF
-            s.modPhase[c] = (s.modPhase[c] + modInc) & 0xFFFFFF
-            // modulator level from its total level (0x40+0x4); low TL => deep FM
-            let modTl = z.ym[part + 0x44 + ci] & 0x7F
-            let modDepth = 96 - (modTl * 3) / 4
-            var modOut: i64 = 0
-            if modDepth > 0 {
-                modOut = sineLut((s.modPhase[c] >> 8) & 0xFF) * modDepth / 64
+            // Amplitude envelope: attack fast toward the keyed level, release toward
+            // 0 at the carrier's RR (reg $80 low nibble) — removes note-gate clicks.
+            let target = if z.fmKey[c] {
+                fmAmp(z, c)
+            } else {
+                0
             }
-            let amp = fmAmp(z, c)
-            let ph = ((s.phase[c] >> 8) + modOut) & 0xFF
-            acc = acc + sineLut(ph) * amp / 255
+            if s.envLevel[c] < target {
+                s.envLevel[c] = s.envLevel[c] + 8
+                if s.envLevel[c] > target {
+                    s.envLevel[c] = target
+                }
+            } else if s.envLevel[c] > target {
+                let rr = z.ym[part + 0x8C + ci] & 0xF
+                let step = 1 + rr
+                s.envLevel[c] = s.envLevel[c] - step
+                if s.envLevel[c] < target {
+                    s.envLevel[c] = target
+                }
+            }
+            let fMilli = fmFreqMilli(z, c)
+            if fMilli > 0 && s.envLevel[c] > 0 {
+                let baseInc = (fMilli * 65536) / (SAMPLE_RATE * 1000)
+                let carInc = baseInc * opMulX2(z, part, 0xC, ci) / 2
+                let modInc = baseInc * opMulX2(z, part, 0x4, ci) / 2
+                s.phase[c] = (s.phase[c] + carInc) & 0xFFFFFF
+                s.modPhase[c] = (s.modPhase[c] + modInc) & 0xFFFFFF
+                let modTl = z.ym[part + 0x44 + ci] & 0x7F
+                let modDepth = 96 - (modTl * 3) / 4
+                var modOut: i64 = 0
+                if modDepth > 0 {
+                    modOut = sineLut((s.modPhase[c] >> 8) & 0xFF) * modDepth / 64
+                }
+                let ph = ((s.phase[c] >> 8) + modOut) & 0xFF
+                acc = acc + sineLut(ph) * s.envLevel[c] / 255
+            }
         }
         c = c + 1
     }
