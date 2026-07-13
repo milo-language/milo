@@ -30,6 +30,16 @@ many games run without a live Z80, some need it).
 
 ### Status — playable with picture + sound
 
+**Input verified end-to-end**: injecting a Start tap advances the title screen into
+Green Hill Zone under player control (title -> gameplay), and injected directions
+show up in Sonic's controller RAM ($FFF604). So the pad path (keyboard -> pad1 ->
+TH multiplex -> $A10003 -> game) works. Known refinement: Sonic's run-physics didn't
+advance player-X under a held Right in the offline test — likely a held-vs-edge
+detail in how the game samples the pad across TH toggles; movement in the live SDL
+build (real key-repeat) should be checked. Audio is full YM2612 (4-op FM + DAC +
+stereo) + PSG.
+
+
 **The emulator boots Sonic to Green Hill Zone gameplay with video AND music.**
 Pipeline: 68000 (Harte-validated) + Z80 (Harte-validated) co-running -> bus/DMA/
 interrupts -> VDP (planes, scroll, sprites, priority, window) -> YM2612 2-op FM +
