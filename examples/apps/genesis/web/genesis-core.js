@@ -861,6 +861,14 @@ function memWrite8(m, addr, val) {
           } else {
             if (((a >= 10551304) && (a <= 10551311))) {
               m.ioRegs[((((a | 1) >>> 0) & 15) >>> 0)] = ((val & 255) >>> 0);
+            } else {
+              if ((a == 10555648)) {
+                m.z80Busreq = (((val & 1) >>> 0) != 0);
+              } else {
+                if ((a == 10555904)) {
+                  m.z80Reset = (((val & 1) >>> 0) == 0);
+                }
+              }
             }
           }
         }
@@ -3382,6 +3390,9 @@ function doDaa(cpu) {
 
 function stepZ80(cpu) {
   ymTimerTick(cpu, 1);
+  if (cpu.halted) {
+    return true;
+  }
   const op = fetchOp(cpu);
   const x = ((Math.floor(op / 2 ** (6)) & 3) >>> 0);
   const y = ((Math.floor(op / 2 ** (3)) & 7) >>> 0);
