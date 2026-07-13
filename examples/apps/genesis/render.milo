@@ -14,7 +14,7 @@ fn frameWidth(m: &Mem): i64 {
     return 256
 }
 
-fn frameHeight(m: &Mem): i64 {
+fn frameHeight(_m: &Mem): i64 {
     return 224
 }
 

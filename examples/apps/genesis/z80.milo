@@ -625,7 +625,7 @@ fn stepZ80(cpu: &mut Z80): bool {
     return execX3(cpu, op, y, z, p, q)
 }
 
-fn execX0(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
+fn execX0(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
     if z == 0 {
         if y == 0 {
             return true // NOP
@@ -747,7 +747,7 @@ fn execIndirect(cpu: &mut Z80, p: i64, q: i64): bool {
     return true
 }
 
-fn execX3(cpu: &mut Z80, op: i64, y: i64, z: i64, p: i64, q: i64): bool {
+fn execX3(cpu: &mut Z80, _op: i64, y: i64, z: i64, p: i64, q: i64): bool {
     if z == 0 {
         // RET cc
         if testCC(cpu, y) {
