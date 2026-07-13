@@ -31,6 +31,7 @@ struct Ppu {
     cgaddr: i64 // $2121 color word address
     cgLatch: i64
     cgHi: bool // writing the high byte of a color word
+    tm: i64 // $212C main-screen layer enable (bit0-3 = BG1-4, bit4 = OBJ)
 }
 
 fn ppuZeros(n: i64): Vec<u8> {
@@ -57,7 +58,7 @@ fn newPpu(): Ppu {
         inidisp: 0, obsel: 0, oamaddr: 0, oamLatch: 0, oamHi: false,
         bgmode: 0, bgsc0: 0, bgsc1: 0, bgsc2: 0, bgsc3: 0, bg12nba: 0, bg34nba: 0,
         bghofs: ppuZerosI64(4), bgvofs: ppuZerosI64(4), scrollLatch: 0, scrollHi: 0,
-        vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false
+        vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false, tm: 0x1F
     }
 }
 
@@ -176,6 +177,9 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
         }
         return
     }
+    if reg == 0x2C {
+        p.tm = v return
+    } // main-screen layer enable
     // remaining regs (windows, color math, mosaic, mode7, ...) modeled later
 }
 
@@ -236,6 +240,23 @@ fn tile4bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
     let p3 = p.vram[(r0 + 17) & 0xFFFF]as i64
     let bit = 7 - px
     return ((p0 >> bit) & 1) | (((p1 >> bit) & 1) << 1) | (((p2 >> bit) & 1) << 2) | (((p3 >> bit) & 1) << 3)
+}
+
+// 8bpp planar tile pixel (0-255). 32 words = 64 bytes/tile; 8 planes in 4 pairs.
+fn tile8bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
+    let tb = ((charBase + tileNum * 32) * 2) & 0xFFFF
+    let r0 = (tb + py * 2) & 0xFFFF
+    let bit = 7 - px
+    var ci: i64 = 0
+    var plane: i64 = 0
+    while plane < 4 {
+        let a = (r0 + plane * 16) & 0xFFFF
+        let lo = p.vram[a]as i64
+        let hi = p.vram[(a + 1) & 0xFFFF]as i64
+        ci = ci | (((lo >> bit) & 1) << (plane * 2)) | (((hi >> bit) & 1) << (plane * 2 + 1))
+        plane = plane + 1
+    }
+    return ci
 }
 
 // CGRAM BGR555 color -> 0xRRGGBB, scaled by master brightness (0-15).
@@ -382,13 +403,21 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
             if ((entry >> 15) & 1) != 0 {
                 py = 7 - py
             }
-            let ci: i64 = if bpp == 4 {
+            let ci: i64 = if bpp == 8 {
+                tile8bpp(p, chBase, tileNum, px, py)
+            } else if bpp == 4 {
                 tile4bpp(p, chBase, tileNum, px, py)
             } else {
                 tile2bpp(p, chBase, tileNum, px, py)
             }
             if ci != 0 {
-                fb[y * 256 + x] = cgToRgb(p, palBase + pal * palW + ci, bright)
+                // 8bpp indexes CGRAM directly; lower bpp uses palette groups.
+                let colorIdx: i64 = if bpp == 8 {
+                    ci
+                } else {
+                    palBase + pal * palW + ci
+                }
+                fb[y * 256 + x] = cgToRgb(p, colorIdx, bright)
             }
             x = x + 1
         }
@@ -421,19 +450,47 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     let ch3 = (p.bg34nba & 0x0F) << 12
     let ch4 = ((p.bg34nba >> 4) & 0x0F) << 12
     let mode = p.bgmode & 0x07
+    let en1 = (p.tm & 0x01) != 0
+    let en2 = (p.tm & 0x02) != 0
+    let en3 = (p.tm & 0x04) != 0
+    let en4 = (p.tm & 0x08) != 0
     if mode == 0 {
         // Mode 0: four 2bpp BGs; palette groups at cgram 0/32/64/96.
-        renderBGLayer(p, fb, bright, p.bgsc3, ch4, p.bghofs[3], p.bgvofs[3], 2, 96) // BG4
-        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 64) // BG3
-        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 2, 32) // BG2
-        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0) // BG1
+        if en4 {
+            renderBGLayer(p, fb, bright, p.bgsc3, ch4, p.bghofs[3], p.bgvofs[3], 2, 96)
+        }
+        if en3 {
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 64)
+        }
+        if en2 {
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 2, 32)
+        }
+        if en1 {
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0)
+        }
+    } else if mode == 3 {
+        // Mode 3: BG1 8bpp (direct 256-color), BG2 4bpp.
+        if en2 {
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0)
+        }
+        if en1 {
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 8, 0)
+        }
     } else {
-        // Mode 1 (and a reasonable default for 2-7): BG3 2bpp, BG2/BG1 4bpp.
-        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0) // BG3
-        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0) // BG2
-        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0) // BG1
+        // Mode 1 (and a reasonable default for 2/4-7): BG3 2bpp, BG2/BG1 4bpp.
+        if en3 {
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0)
+        }
+        if en2 {
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0)
+        }
+        if en1 {
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0)
+        }
     }
-    renderSprites(p, fb, bright)
+    if (p.tm & 0x10) != 0 {
+        renderSprites(p, fb, bright)
+    }
 }
 
 // Direct byte accessors (used by DMA / tests to peek loaded graphics memory).
