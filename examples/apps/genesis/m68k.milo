@@ -49,6 +49,10 @@ struct Mem {
     vdpLine: i64 // current scanline (drives the vblank status bit)
     // --- I/O ---
     dmaFillPending: bool // VRAM fill armed, awaiting the fill-byte data write
+    fillAddr: i64 // VRAM fill: address latched at arm time (regs can change before the data write)
+    fillInc: i64 // VRAM fill: auto-increment latched at arm time
+    fillLen: i64 // VRAM fill: length latched at arm time
+    lastDataByte: i64 // last byte written to the VDP data port (fill byte when a fill is flushed)
     z80Busreq: bool
     z80Reset: bool // true = Z80 held in reset (not running)
     z80: Z80
@@ -72,6 +76,10 @@ fn newMem(): Mem {
         vram: Vec.new(), cram: [0; 64], vsram: [0; 40], vdpRegs: [0; 24],
         vdpAddr: 0, vdpCode: 0, vdpFirst: 0, vdpPending: false, vdpLine: 0,
         dmaFillPending: false,
+        fillAddr: 0,
+        fillInc: 0,
+        fillLen: 0,
+        lastDataByte: 0,
         z80Busreq: false, z80Reset: true, z80: newZ80(), ctrl1: 0, tmssUnlocked: false,
         pad1: 0, padTh: false,
     }
@@ -314,12 +322,27 @@ fn vdpControlWrite(m: &mut Mem, val: i64) {
 
 // 68000 -> VDP DMA (instant model). Source is a 68k byte address from regs
 // 21/22/23; length in words from regs 19/20; destination + target from the
-// current VDP address/code. Fill/copy modes (reg23 bit7 set) not yet handled.
+// current VDP address/code. Fill (mode 2) and VRAM copy (mode 3) handled too.
 fn vdpDma(m: &mut Mem) {
     let mode = (m.vdpRegs[23] >> 6) & 0x3
     if mode == 2 {
-        // VRAM fill: armed here, executed on the next data-port write (which
-        // supplies the fill byte).
+        // VRAM fill. Latch address/increment/length NOW — the game can reprogram
+        // the VDP address/auto-increment registers before writing the fill data,
+        // and the fill must use the arm-time values (else it lands at the wrong
+        // address, e.g. GA's char-select plane clears). If a previously-armed fill
+        // is still pending (game armed several clears back-to-back with a single
+        // fill-data write), flush it now using the last data-port byte so every
+        // armed region is actually cleared.
+        if m.dmaFillPending {
+            doFill(m, m.lastDataByte)
+        }
+        var flen = (m.vdpRegs[20] << 8) | m.vdpRegs[19]
+        if flen == 0 {
+            flen = 0x10000
+        }
+        m.fillAddr = m.vdpAddr
+        m.fillInc = m.vdpRegs[15]
+        m.fillLen = flen
         m.dmaFillPending = true
         return
     }
@@ -369,28 +392,34 @@ fn vdpDmaCopy(m: &mut Mem) {
     m.vdpAddr = dst & 0x1FFFF
 }
 
+// Execute a latched VRAM fill: write `fillByte` to `fillLen` VRAM bytes from
+// `fillAddr`, stepping by `fillInc`. Uses the arm-time latched params.
+fn doFill(m: &mut Mem, fillByteIn: i64) {
+    m.dmaFillPending = false
+    let fillByte = (fillByteIn & 0xFF) as u8
+    let len = m.fillLen
+    let inc = m.fillInc
+    var da = m.fillAddr
+    var i: i64 = 0
+    while i < len {
+        let idx = da & 0xFFFF
+        while m.vram.len <= idx {
+            m.vram.push(0)
+        }
+        m.vram[idx] = fillByte
+        da = (da + inc) & 0x1FFFF
+        i = i + 1
+    }
+    m.vdpAddr = da & 0x1FFFF
+}
+
 fn vdpDataWrite(m: &mut Mem, val: i64) {
+    // The data byte (high byte of the word) is what a fill would use; remember it
+    // so a fill flushed by a subsequent arm can find its fill value.
+    m.lastDataByte = (val >> 8) & 0xFF
     if m.dmaFillPending {
-        // VRAM fill: the written word's high byte fills `len` VRAM bytes from the
-        // current address, stepping by the auto-increment.
-        m.dmaFillPending = false
-        let fillByte = ((val >> 8) & 0xFF) as u8
-        var len = (m.vdpRegs[20] << 8) | m.vdpRegs[19]
-        if len == 0 {
-            len = 0x10000
-        }
-        var da = m.vdpAddr
-        var i: i64 = 0
-        while i < len {
-            let idx = da & 0xFFFF
-            while m.vram.len <= idx {
-                m.vram.push(0)
-            }
-            m.vram[idx] = fillByte
-            da = (da + m.vdpRegs[15]) & 0x1FFFF
-            i = i + 1
-        }
-        m.vdpAddr = da & 0x1FFFF
+        // VRAM fill triggered by this data write: fill with this word's high byte.
+        doFill(m, (val >> 8) & 0xFF)
         return
     }
     let target = m.vdpCode & 0xF
