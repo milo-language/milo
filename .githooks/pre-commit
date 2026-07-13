@@ -5,14 +5,25 @@
 # src-milo/ is excluded on purpose: self-hosting M1 bisects that directory's
 # history, and a reformat commit there would rewrite the files under
 # investigation. Drop the exclusion once M1 lands (docs/self-hosting.md).
+#
+# tests/errors/ is excluded because those fixtures are intentionally malformed
+# (they must fail the type-checker/parser). Reformatting can rewrite or delete
+# the exact construct under test — e.g. the formatter strips a mid-expression
+# ';' that the parser is meant to reject — silently breaking the fixture.
 set -e
 
-staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.milo' | grep -v '^src-milo/' || true)
-[ -z "$staged" ] && exit 0
+# 1. Format staged .milo files (skip src-milo/ and tests/errors/ per the notes above).
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.milo' | grep -vE '^(src-milo/|tests/errors/)' || true)
+if [ -n "$staged" ]; then
+    # shellcheck disable=SC2086
+    echo "$staged" | while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        bun run src/main.ts fmt -w "$f" >/dev/null
+        git add -- "$f"
+    done
+fi
 
-# shellcheck disable=SC2086
-echo "$staged" | while IFS= read -r f; do
-    [ -f "$f" ] || continue
-    bun run src/main.ts fmt -w "$f" >/dev/null
-    git add -- "$f"
-done
+# 2. Deterministic lint + auto-fix on all staged files (scripts/lint.ts).
+# Runs regardless of whether any .milo files are staged. Fixes are re-staged
+# inside lint.ts; an unfixable error exits non-zero and aborts the commit.
+bun run scripts/lint.ts --staged --fix

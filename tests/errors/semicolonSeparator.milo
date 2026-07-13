@@ -1,10 +1,8 @@
 // @error: can't appear inside an expression
 // A trailing/separating ';' is a tolerated no-op (Milo is newline-delimited),
-// but a ';' inside an expression is still a parse error.
-fn f(): void {
-    let x = 1 +
-}
-
+// but a ';' inside an expression is still a parse error. Kept inside parens so
+// the file does not parse — the formatter can't silently strip the ';'.
 fn main(): i32 {
+    let x = (1 ; + 2)
     return 0
 }
