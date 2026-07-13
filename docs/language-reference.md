@@ -824,6 +824,10 @@ struct Bad { r: &string }         // COMPILE ERROR: can't store a reference
 This is Milo's key insight: by restricting where references can live, you get
 memory safety without a borrow checker or lifetime annotations.
 
+For *why* this design is shaped this way — how it compares to Rust's lifetimes,
+why it's "guardrails, not magic," and how to do zero-copy work without stored
+references — see **[ownership-model.md](ownership-model.md)**.
+
 ---
 
 ## Traits
