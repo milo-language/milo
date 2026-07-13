@@ -75,12 +75,27 @@ let SDL_KEYUP: u32 = 0x301
 // Controller keys (SDL scancodes): arrows = D-pad, Z = A, X = B, Return = Start,
 // Right Shift = Select. Sampled live from SDL_GetKeyboardState in the run loop.
 
-// Recursively collect every *.nes path under `dir` into `out`.
+// Recursively collect every *.nes path under `dir` into `out`. Build each path
+// with an exact-capacity buffer: growing a string via `+` can realloc, and a
+// string realloc while the `out` Vec is live can corrupt it (Milo heap bug).
+fn joinPath(dir: &string, name: &string): string {
+    var full = String.withCapacity(dir.len + name.len + 1)
+    var k: i64 = 0
+    while k < dir.len {
+        full.push(dir[k]) k = k + 1
+    }
+    full.push(47 as u8) // '/'
+    k = 0
+    while k < name.len {
+        full.push(name[k]) k = k + 1
+    }
+    return full
+}
+
 fn collectRoms(dir: string, out: &mut Vec<string>): void {
     let entries = readDir(dir)
     for entry in entries {
-        let name = entry.name
-        let full = dir + "/" + name
+        let full = joinPath(dir, entry.name)
         if entry.isDir {
             collectRoms(full, out)
         } else {
@@ -129,10 +144,103 @@ fn parseIndex(s: &string): i64 {
     return -1
 }
 
-// Terminal ROM picker: list every ROM under roms/, prompt for a number.
-// Returns the chosen path, or "" if none found / invalid selection.
+// File name after the last '/'.
+fn baseName(p: &string): string {
+    var start: i64 = 0
+    var i: i64 = 0
+    while i < p.len {
+        if p[i] == 47 {
+            start = i + 1
+        } // '/'
+        i = i + 1
+    }
+    var s: string = ""
+    i = start
+    while i < p.len {
+        s.push(p[i]) i = i + 1
+    }
+    return s
+}
+
+fn lc(c: i64): i64 {
+    if c >= 65 && c <= 90 {
+        return c + 32
+    }
+    return c
+}
+
+// Case-insensitive substring test.
+fn containsCI(hay: &string, needle: &string): bool {
+    if needle.len == 0 {
+        return true
+    }
+    if needle.len > hay.len {
+        return false
+    }
+    var i: i64 = 0
+    while i <= hay.len - needle.len {
+        var j: i64 = 0
+        var ok = true
+        while j < needle.len {
+            if lc(hay[i + j]as i64) != lc(needle[j]as i64) {
+                ok = false break
+            }
+            j = j + 1
+        }
+        if ok {
+            return true
+        }
+        i = i + 1
+    }
+    return false
+}
+
+// Strip surrounding whitespace / newlines.
+fn trimLine(s: &string): string {
+    var a: i64 = 0
+    var b: i64 = s.len
+    while a < b {
+        let c = s[a]as i64
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            a = a + 1
+        } else {
+            break
+        }
+    }
+    while b > a {
+        let c = s[b - 1]as i64
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            b = b - 1
+        } else {
+            break
+        }
+    }
+    var out: string = ""
+    var i = a
+    while i < b {
+        out.push(s[i]) i = i + 1
+    }
+    return out
+}
+
+fn strEq(a: &string, b: &string): bool {
+    if a.len != b.len {
+        return false
+    }
+    var i: i64 = 0
+    while i < a.len {
+        if a[i] != b[i] {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+// Terminal ROM picker with search + pagination — a bare numbered dump is
+// unusable with hundreds of ROMs (can't scroll back to find one). Type part of a
+// name to filter, then pick a number from the (capped) matches.
 fn pickRom(): string {
-    // Prefer a curated roms/games/ folder; fall back to the whole roms/ tree.
     var scanDir = "roms"
     if isDir("roms/games") {
         scanDir = "roms/games"
@@ -140,34 +248,69 @@ fn pickRom(): string {
     var roms: Vec<string> = []
     collectRoms(scanDir.clone(), roms)
     if roms.len == 0 {
-        print("no .nes ROMs found under ./")
-        print(scanDir)
+        print("no .nes ROMs found under ./" + scanDir)
         return ""
     }
-    print("Pick a ROM:")
-    var i: i64 = 0
-    while i < roms.len {
-        writeStdout("  [")
-        writeStdout(intToStr(i))
-        writeStdout("] ")
-        writeStdout(roms[i])
-        writeStdout("\n")
-        i = i + 1
-    }
-    writeStdout("Enter number: ")
-    match readLine() {
-        Option.Some(line) => {
-            let idx = parseIndex(line)
-            if idx >= 0 && idx < roms.len {
-                return roms[idx]
+    let PAGE: i64 = 30
+    print(intToStr(roms.len) + " ROMs under " + scanDir + ".")
+    while true {
+        writeStdout("\nSearch name (Enter=list, q=quit): ")
+        var query = ""
+        match readLine() {
+            Option.Some(line) => {
+                query = trimLine(line)
             }
-            print("invalid selection")
+            Option.None => {
+                return ""
+            }
+        }
+        if strEq(query, "q") {
             return ""
         }
-        Option.None => {
-            return ""
+        // Filter to matches, remembering each match's real path.
+        var matches: Vec<string> = []
+        var i: i64 = 0
+        while i < roms.len {
+            if containsCI(baseName(roms[i]), query) {
+                matches.push(roms[i])
+            }
+            i = i + 1
+        }
+        if matches.len == 0 {
+            print("no matches for \"" + query + "\"")
+            continue
+        }
+        var shown = matches.len
+        if shown > PAGE {
+            shown = PAGE
+        }
+        i = 0
+        while i < shown {
+            print("  [" + intToStr(i) + "] " + baseName(matches[i]))
+            i = i + 1
+        }
+        if matches.len > PAGE {
+            print("  ...and " + intToStr(matches.len - PAGE) + " more — narrow your search")
+        }
+        writeStdout("Number to play (Enter=search again): ")
+        match readLine() {
+            Option.Some(sel) => {
+                let t = trimLine(sel)
+                if t.len == 0 {
+                    continue
+                }
+                let idx = parseIndex(t)
+                if idx >= 0 && idx < shown {
+                    return matches[idx]
+                }
+                print("invalid selection")
+            }
+            Option.None => {
+                return ""
+            }
         }
     }
+    return ""
 }
 
 // Print the keyboard controls to the terminal at launch.
