@@ -1,0 +1,35 @@
+// @expect: -5
+// @expect: 251
+// @expect: negmin
+// @expect: 7
+
+fn main(): i32 {
+    let a: i32 = 5
+    print(a.wrappingNeg()) // -5
+
+    let b: u8 = 5
+    print(b.wrappingNeg()) // 251 (0 - 5 wraps in u8)
+
+    // checkedNeg is None only at signed INT_MIN (no representable positive)
+    let min: i32 = -2147483648
+    match min.checkedNeg() {
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("negmin")
+        } // negmin
+    }
+
+    let c: i32 = -7
+    match c.checkedNeg() {
+        Option.Some(v) => {
+            print(v)
+        } // 7
+        Option.None => {
+            print("negmin")
+        }
+    }
+
+    return 0
+}

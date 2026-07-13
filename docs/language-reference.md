@@ -121,8 +121,8 @@ q.checkedDiv(0)      // Option.None — None on divide-by-zero
 q.checkedRem(0)      // Option.None — None on divide-by-zero
 ```
 
-Available: `wrappingAdd/Sub/Mul`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul/Div/Rem`.
-`checkedDiv`/`checkedRem` also return `None` on signed `INT_MIN / -1` overflow.
+Available: `wrappingAdd/Sub/Mul/Neg`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul/Div/Rem/Neg`.
+`checkedDiv`/`checkedRem` also return `None` on signed `INT_MIN / -1` overflow; `checkedNeg` returns `None` at signed `INT_MIN`.
 
 ### Ranged Integer Types
 

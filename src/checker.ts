@@ -4039,6 +4039,16 @@ export class TypeChecker {
             }
             return this.setType(expr, this.resolveOptionForValue(objType, sp));
           }
+          // unary negation — desugars to sub(0, x) in lowering, so overflow
+          // semantics (None only at signed INT_MIN / unsigned nonzero) fall out for free
+          if (expr.method === "wrappingNeg") {
+            if (expr.args.length !== 0) { this.error(`'wrappingNeg' takes no arguments`, sp); }
+            return this.setType(expr, objType);
+          }
+          if (expr.method === "checkedNeg") {
+            if (expr.args.length !== 0) { this.error(`'checkedNeg' takes no arguments`, sp); }
+            return this.setType(expr, this.resolveOptionForValue(objType, sp));
+          }
         }
         // frozen-collection guard: reject realloc/free-capable builtins on a borrowed receiver
         if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")

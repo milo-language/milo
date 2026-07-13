@@ -619,6 +619,16 @@ class LowerCtx {
           return { kind: "BoolToString", value: this.lowerExpr(expr.object), type, span: expr.span };
         }
         if (objType?.tag === "int") {
+          // x.wrappingNeg() / x.checkedNeg() → wrapping/checked sub(0, x)
+          if (expr.method === "wrappingNeg" || expr.method === "checkedNeg") {
+            const right = this.lowerExpr(expr.object);
+            const zero: import("./hir").HIRExpr = { kind: "IntLit", value: 0n, type: objType, span: expr.span };
+            if (expr.method === "wrappingNeg") {
+              return { kind: "WrappingArith", op: "sub", left: zero, right, type, span: expr.span };
+            }
+            const optName = type.tag === "enum" ? type.name : "Option_" + (objType.signed ? "i" : "u") + objType.bits;
+            return { kind: "CheckedArith", op: "sub", left: zero, right, optionEnumName: optName, type, span: expr.span };
+          }
           const opMap: Record<string, string> = {
             wrappingAdd: "add", wrappingSub: "sub", wrappingMul: "mul",
             saturatingAdd: "add", saturatingSub: "sub", saturatingMul: "mul",
