@@ -56,6 +56,17 @@ struct Z80 {
     dac: [i64; 4096] // DAC sample ring (ch6), written via reg $2A
     dacW: i64 // DAC ring write index
     dacR: i64 // DAC ring read index (advanced by the synth)
+    // YM2612 timers. Many sound drivers (Aladdin's among them) pace playback by
+    // polling the Timer A/B overflow flags in the $4000 status byte; without them
+    // the driver spins forever waiting for an overflow that never comes. Modeled in
+    // emulated-microseconds: the harness runs the Z80 at ~1.02M steps/emulated-sec
+    // (130 instr/line, half 68k rate), so 1 step ~= 1 us, and the real HW periods
+    // (Timer A = 18*(1024-NA) us, Timer B = 288*(256-NB) us) apply almost directly.
+    ymStatus: i64 // status byte read at $4000: bit0 = Timer A overflow, bit1 = Timer B
+    timerACnt: i64 // Timer A elapsed-us counter
+    timerARun: bool
+    timerBCnt: i64 // Timer B elapsed-us counter
+    timerBRun: bool
 }
 
 fn newZ80(): Z80 {
@@ -72,6 +83,35 @@ fn newZ80(): Z80 {
         gen: false, bank: 0, ymAddr0: 0, ymAddr1: 0, ym: [0; 512],
         psgLatch: 0, psg: [0; 8], fmKey: [false, false, false, false, false, false],
         rom: Vec.new(), dac: [0; 4096], dacW: 0, dacR: 0,
+        ymStatus: 0, timerACnt: 0, timerARun: false, timerBCnt: 0, timerBRun: false,
+    }
+}
+
+// Advance the YM2612 timers by `us` emulated-microseconds, setting the overflow
+// flags in the status byte when a period elapses. Enable bits (reg $27 bit2/bit3)
+// gate whether an overflow actually latches into the status byte.
+fn ymTimerTick(cpu: &mut Z80, us: i64) {
+    if cpu.timerARun {
+        cpu.timerACnt = cpu.timerACnt + us
+        let na = ((cpu.ym[0x24] & 0xFF) << 2) | (cpu.ym[0x25] & 0x3)
+        let periodA = 18 * (1024 - na)
+        if periodA > 0 && cpu.timerACnt >= periodA {
+            cpu.timerACnt = cpu.timerACnt - periodA
+            if (cpu.ym[0x27] & 0x04) != 0 {
+                cpu.ymStatus = cpu.ymStatus | 0x01
+            }
+        }
+    }
+    if cpu.timerBRun {
+        cpu.timerBCnt = cpu.timerBCnt + us
+        let nb = cpu.ym[0x26] & 0xFF
+        let periodB = 288 * (256 - nb)
+        if periodB > 0 && cpu.timerBCnt >= periodB {
+            cpu.timerBCnt = cpu.timerBCnt - periodB
+            if (cpu.ym[0x27] & 0x08) != 0 {
+                cpu.ymStatus = cpu.ymStatus | 0x02
+            }
+        }
     }
 }
 
@@ -89,7 +129,10 @@ fn rd(cpu: &Z80, addr: i64): i64 {
             }
             return 0
         }
-        return 0 // YM2612 status ($4000-3) reads not-busy; $6000/$7Fxx read 0
+        if a >= 0x4000 && a <= 0x4003 {
+            return cpu.ymStatus // bit0/1 = Timer A/B overflow; bit7 (busy) = 0 = ready
+        }
+        return 0 // $6000/$7Fxx read 0
     }
     return cpu.mem[a] as i64
 }
@@ -121,6 +164,18 @@ fn z80DevWrite(cpu: &mut Z80, a: i64, val: i64) {
             // DAC sample write: append to the ch6 DAC ring.
             cpu.dac[cpu.dacW & 4095] = val
             cpu.dacW = cpu.dacW + 1
+        }
+        if reg == 0x27 {
+            // Timer control: bit0/1 = load (run) Timer A/B, bit4/5 = reset overflow
+            // flag. Drivers poll the flag then strobe reset to re-arm the next tick.
+            cpu.timerARun = (val & 0x01) != 0
+            cpu.timerBRun = (val & 0x02) != 0
+            if (val & 0x10) != 0 {
+                cpu.ymStatus = cpu.ymStatus & ~0x01
+            }
+            if (val & 0x20) != 0 {
+                cpu.ymStatus = cpu.ymStatus & ~0x02
+            }
         }
         if reg == 0x28 {
             // key on/off: %oooo0ccc (op mask + channel; ccc: 0-2 = ch0-2, 4-6 = ch3-5)
@@ -608,6 +663,7 @@ fn doDaa(cpu: &mut Z80) {
 
 // Execute one instruction. Returns false on an opcode not yet implemented.
 fn stepZ80(cpu: &mut Z80): bool {
+    ymTimerTick(cpu, 1) // ~1 emulated-us per step (see struct note); paces sound drivers
     let op = fetchOp(cpu)
     let x = (op >> 6) & 0x3
     let y = (op >> 3) & 0x7

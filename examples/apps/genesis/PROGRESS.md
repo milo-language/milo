@@ -30,6 +30,17 @@ many games run without a live Z80, some need it).
 
 ### Status — playable with picture + sound
 
+**YM2612 Timer A/B now emulated** (z80.milo) — the $4000 status byte's timer-overflow
+flags (bit0/bit1) used to always read 0. Drivers that pace playback by polling those
+flags (Aladdin, Golden Axe title) spun forever waiting for an overflow that never came,
+so they never keyed a note or streamed DAC — dead silence. Modeled in emulated-us
+(1 Z80 step ~= 1 us given the harness's 130-instr/line half-rate clock): Timer A period
+18*(1024-NA) us, Timer B 288*(256-NB) us; reg $27 bit0/1 run, bit4/5 reset flag. Result:
+**Aladdin now plays music+SFX** (FM keys + DAC stream flowing) and Golden Axe's title,
+previously silent, now sounds.
+
+
+
 **Input works (confirmed in the live SDL build)** — Sonic plays well with real
 keyboard input. The pad path (keyboard -> pad1 -> TH multiplex -> $A10003 -> game)
 delivers both directions and Start correctly (controller RAM $FFF604 held / $FFF605
