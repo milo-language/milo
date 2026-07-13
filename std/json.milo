@@ -263,6 +263,112 @@ impl Json {
         return Option.Some(jsonExtractSubtree(self, childNodeIdx))
     }
 
+    // ── Zero-copy cursor navigation ──
+    //
+    // `get`/`at` above return an owned Json by deep-cloning the whole document
+    // (source string + every node) per call — navigating a large doc thousands
+    // of times blows up to gigabytes. The cursor API instead treats a plain
+    // `i64` node index as a cursor into THIS document: navigation returns child
+    // indices (‑1 = missing) with zero allocation, and only leaf-string reads
+    // materialize (just that one string). Start at `curRoot()` and chain:
+    //   let user = doc.curField(doc.curChild(doc.curRoot(), 0), "name")
+    //   match doc.curStr(user) { Option.Some(s) => ..., Option.None => ... }
+
+    fn curRoot(self: &Self): i64 {
+        return self.root
+    }
+
+    fn curChild(self: &Self, cur: i64, index: i64): i64 {
+        if cur < 0 {
+            return -1
+        }
+        let node = self.nodes[cur]
+        if node.kind != 4 || index < 0 || index >= node.childCount {
+            return -1
+        }
+        return self.childIdx[node.childStart + index]
+    }
+
+    fn curField(self: &Self, cur: i64, key: &string): i64 {
+        if cur < 0 {
+            return -1
+        }
+        let node = self.nodes[cur]
+        if node.kind != 5 {
+            return -1
+        }
+        for i in 0..node.childCount {
+            if jsonKeyEq(self.source, self.keyOffsets[node.keyStart + i], self.keyLens[node.keyStart + i], key) {
+                return self.childIdx[node.childStart + i]
+            }
+        }
+        return -1
+    }
+
+    fn curLen(self: &Self, cur: i64): i64 {
+        if cur < 0 {
+            return 0
+        }
+        let node = self.nodes[cur]
+        if node.kind != 4 && node.kind != 5 {
+            return 0
+        }
+        return node.childCount
+    }
+
+    // Node kind at the cursor: 0 null, 1 bool, 2 number, 3 string, 4 array,
+    // 5 object; -1 if the cursor is invalid.
+    fn curKind(self: &Self, cur: i64): i32 {
+        if cur < 0 {
+            return -1
+        }
+        return self.nodes[cur].kind
+    }
+
+    fn curInt(self: &Self, cur: i64): Option<i64> {
+        if cur < 0 {
+            return Option.None
+        }
+        let node = self.nodes[cur]
+        if node.kind == 2 {
+            return Option.Some(node.numVal as i64)
+        }
+        return Option.None
+    }
+
+    fn curFloat(self: &Self, cur: i64): Option<f64> {
+        if cur < 0 {
+            return Option.None
+        }
+        let node = self.nodes[cur]
+        if node.kind == 2 {
+            return Option.Some(node.numVal)
+        }
+        return Option.None
+    }
+
+    fn curBool(self: &Self, cur: i64): Option<bool> {
+        if cur < 0 {
+            return Option.None
+        }
+        let node = self.nodes[cur]
+        if node.kind == 1 {
+            return Option.Some(node.boolVal)
+        }
+        return Option.None
+    }
+
+    fn curStr(self: &Self, cur: i64): Option<string> {
+        if cur < 0 {
+            return Option.None
+        }
+        let node = self.nodes[cur]
+        if node.kind == 3 {
+            return Option.Some(jsonMaterializeStr(self.source, node.strStart, node.strLen))
+        }
+        return Option.None
+    }
+
     // ── Indexed accessors (array[i].field, zero allocation for scalars) ──
 
     fn strAt(self: &Self, index: i64, key: &string): Option<string> {
