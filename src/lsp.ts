@@ -1291,6 +1291,190 @@ function handleSignatureHelp(uri: string, line: number, character: number): obje
   return null;
 }
 
+// ── Inlay hints: elided &mut at callsites ──
+// Milo omits `&mut` at the callsite (second-class refs — see docs/design.md); the
+// reader-side visibility is delegated here. For every call argument bound to a
+// `&mut T` param — and for a `&mut self` receiver — we render a `&mut` hint at the
+// argument's start position, so mutation intent is visible without baking a marker
+// into the syntax.
+
+type TK = import("./types").TypeKind;
+
+// Underlying nominal name of a type (through refs/heap), or null when there's no
+// user-facing impl name to match an impl block against.
+function typeKindName(tk: TK | undefined): string | null {
+  if (!tk) return null;
+  switch (tk.tag) {
+    case "ref": return typeKindName(tk.inner);
+    case "heap": return typeKindName(tk.inner);
+    case "struct": case "enum": case "interface": return tk.name;
+    case "vec": return "Vec";
+    case "hashmap": return "HashMap";
+    default: return null;
+  }
+}
+
+// Visit every sub-expression of `e` (and `e` itself), descending into nested
+// statement bodies (closures, if/match expressions).
+function visitExpr(e: Expr, cb: (e: Expr) => void) {
+  cb(e);
+  switch (e.kind) {
+    case "BinOp": visitExpr(e.left, cb); visitExpr(e.right, cb); break;
+    case "UnaryOp": visitExpr(e.operand, cb); break;
+    case "Call": for (const a of e.args) visitExpr(a, cb); break;
+    case "StructLit": for (const f of e.fields) visitExpr(f.value, cb); break;
+    case "FieldAccess": visitExpr(e.object, cb); break;
+    case "ArrayLit": for (const el of e.elements) visitExpr(el, cb); break;
+    case "ArrayRepeat": visitExpr(e.value, cb); break;
+    case "IndexAccess": visitExpr(e.object, cb); visitExpr(e.index, cb); break;
+    case "EnumLit": for (const a of e.args) visitExpr(a, cb); break;
+    case "Unwrap": case "Propagate": case "IsExpr": visitExpr(e.operand, cb); break;
+    case "DefaultValue": visitExpr(e.operand, cb); visitExpr(e.default, cb); break;
+    case "CastExpr": visitExpr(e.operand, cb); break;
+    case "MethodCall": visitExpr(e.object, cb); for (const a of e.args) visitExpr(a, cb); break;
+    case "Closure": for (const s of e.body) visitStmtExprs(s, cb); break;
+    case "RangeExpr": visitExpr(e.start, cb); visitExpr(e.end, cb); break;
+    case "IfExpr":
+      visitExpr(e.cond, cb);
+      for (const s of e.thenBody) visitStmtExprs(s, cb);
+      for (const s of e.elseBody) visitStmtExprs(s, cb);
+      break;
+    case "MatchExpr":
+      visitExpr(e.subject, cb);
+      for (const arm of e.arms) for (const s of arm.body) visitStmtExprs(s, cb);
+      break;
+  }
+}
+
+function visitStmtExprs(s: Stmt, cb: (e: Expr) => void) {
+  switch (s.kind) {
+    case "LetDecl": case "VarDecl": visitExpr(s.value, cb); break;
+    case "Assign": visitExpr(s.target, cb); visitExpr(s.value, cb); break;
+    case "Return": if (s.value) visitExpr(s.value, cb); break;
+    case "ExprStmt": visitExpr(s.expr, cb); break;
+    case "IfStmt":
+      visitExpr(s.cond, cb);
+      for (const st of s.thenBody) visitStmtExprs(st, cb);
+      if (s.elseBody) for (const st of s.elseBody) visitStmtExprs(st, cb);
+      break;
+    case "WhileStmt":
+      visitExpr(s.cond, cb);
+      for (const st of s.body) visitStmtExprs(st, cb);
+      break;
+    case "MatchStmt":
+      visitExpr(s.subject, cb);
+      for (const arm of s.arms) for (const st of arm.body) visitStmtExprs(st, cb);
+      break;
+    case "IfLetStmt":
+      visitExpr(s.subject, cb);
+      for (const st of s.thenBody) visitStmtExprs(st, cb);
+      if (s.elseBody) for (const st of s.elseBody) visitStmtExprs(st, cb);
+      break;
+    case "ForInStmt":
+      visitExpr(s.iterable, cb);
+      for (const st of s.body) visitStmtExprs(st, cb);
+      break;
+    case "UnsafeBlock":
+      for (const st of s.body) visitStmtExprs(st, cb);
+      break;
+  }
+}
+
+function handleInlayHint(uri: string, range: any): object[] {
+  const source = documents.get(uri);
+  if (!source) return [];
+
+  let program: Program;
+  // Walk only THIS file's decls: resolveImports merges std's functions/impls into
+  // `program`, and their internal callsites carry spans in their own files — plotting
+  // those onto this document produces hundreds of bogus mid-token hints. `parsed`
+  // holds just the local decls; `program` is still used to look up callee params.
+  let parsed: Program;
+  let exprTypes: Map<Expr, TK> = new Map();
+  try {
+    parsed = new Parser(new Lexer(source).tokenize()).parse();
+    const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
+    program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
+    try { exprTypes = new TypeChecker().check(program).exprTypes ?? new Map(); } catch {}
+  } catch { return []; }
+
+  const startLine = range?.start?.line ?? 0;
+  const endLine = range?.end?.line ?? Number.MAX_SAFE_INTEGER;
+
+  // free functions by name; impl methods grouped by name (ambiguity resolved via
+  // the receiver's inferred type where possible).
+  const fnByName = new Map<string, Function>();
+  for (const fn of program.functions) if (!fn.isExtern) fnByName.set(fn.name, fn);
+  const methodsByName = new Map<string, { typeName: string; fn: Function }[]>();
+  for (const impl of program.impls) {
+    for (const m of impl.methods) {
+      (methodsByName.get(m.name) ?? methodsByName.set(m.name, []).get(m.name)!)
+        .push({ typeName: impl.typeName, fn: m });
+    }
+  }
+
+  const hints: object[] = [];
+  const pushHint = (span: Span | undefined) => {
+    if (!span) return;
+    const line = span.line - 1;
+    if (line < startLine || line > endLine) return;
+    hints.push({
+      position: { line, character: span.col - 1 },
+      label: "&mut",
+      kind: 2, // Parameter
+      paddingRight: true,
+    });
+  };
+
+  const process = (e: Expr) => {
+    if (e.kind === "Call") {
+      const fn = fnByName.get(e.func);
+      if (!fn) return;
+      e.args.forEach((arg, i) => {
+        if (fn.params[i]?.type?.isRefMut) pushHint(arg.span);
+      });
+    } else if (e.kind === "MethodCall") {
+      const cands = methodsByName.get(e.method);
+      if (!cands || cands.length === 0) return;
+      // Disambiguate overloaded method names by the receiver's inferred type;
+      // fall back only when every candidate agrees on which params are &mut.
+      let chosen: Function | null = null;
+      if (cands.length === 1) chosen = cands[0].fn;
+      else {
+        const recvName = typeKindName(exprTypes.get(e.object));
+        const byType = recvName ? cands.filter(c => c.typeName === recvName) : [];
+        if (byType.length === 1) chosen = byType[0].fn;
+        else {
+          const sig = (fn: Function) => fn.params.map(p => p.type?.isRefMut ? "1" : "0").join("");
+          const first = sig(cands[0].fn);
+          if (cands.every(c => sig(c.fn) === first)) chosen = cands[0].fn;
+        }
+      }
+      if (!chosen) return;
+      const params = chosen.params;
+      if (params[0]?.name === "self") {
+        if (params[0].type?.isRefMut) pushHint(e.object.span);
+        e.args.forEach((arg, i) => {
+          if (params[i + 1]?.type?.isRefMut) pushHint(arg.span);
+        });
+      } else {
+        e.args.forEach((arg, i) => {
+          if (params[i]?.type?.isRefMut) pushHint(arg.span);
+        });
+      }
+    }
+  };
+
+  for (const fn of parsed.functions) {
+    if (fn.isExtern) continue;
+    for (const s of fn.body) visitStmtExprs(s, process);
+  }
+  for (const impl of parsed.impls) {
+    for (const m of impl.methods) for (const s of m.body) visitStmtExprs(s, process);
+  }
+  return hints;
+}
+
 // ── References / document highlight / rename (text-based, across open docs) ──
 
 function walkMiloFiles(dir: string, acc: string[]): void {
@@ -1412,6 +1596,7 @@ function handleRequest(id: number | string, method: string, params: any) {
           documentHighlightProvider: true,
           renameProvider: true,
           workspaceSymbolProvider: true,
+          inlayHintProvider: true,
         },
         serverInfo: { name: "milod", version: "0.1.0" },
       });
@@ -1456,6 +1641,9 @@ function handleRequest(id: number | string, method: string, params: any) {
       break;
     case "workspace/symbol":
       sendResponse(id, handleWorkspaceSymbol(params.query ?? ""));
+      break;
+    case "textDocument/inlayHint":
+      sendResponse(id, handleInlayHint(params.textDocument.uri, params.range));
       break;
     case "textDocument/formatting": {
       const source = documents.get(params.textDocument.uri) ?? "";
