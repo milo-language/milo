@@ -108,7 +108,7 @@ fn spcMemReset(m: &mut SpcMem): void {
     m.val = Vec.new()
 }
 
-fn spcRead(m: &SpcMem, a: i64): i64 {
+fn spcRead(m: &mut SpcMem, a: i64): i64 {
     if m.testMode {
         var i: i64 = 0
         while i < m.addr.len {
@@ -124,24 +124,16 @@ fn spcRead(m: &SpcMem, a: i64): i64 {
         return m.inPort[addr - 0xF4] // read the CPU->SPC latch
     }
     if addr >= 0xFD && addr <= 0xFF {
-        return m.tOut[addr - 0xFD] & 0x0F // timer out counter (clear handled in spcStep)
-    }
-    if m.iplEnabled && addr >= 0xFFC0 {
-        return m.ipl[addr - 0xFFC0]as i64
-    }
-    return m.ram[addr]as i64
-}
-
-// Timer counter reads ($FD-$FF) clear the 4-bit out counter — must go through
-// the mutable path. Returns -1 when addr isn't a timer counter register.
-fn spcReadTimer(m: &mut SpcMem, addr: i64): i64 {
-    if addr >= 0xFD && addr <= 0xFF {
+        // Timer counter: return the 4-bit out value and clear it (read-clears).
         let t = addr - 0xFD
         let r = m.tOut[t] & 0x0F
         m.tOut[t] = 0
         return r
     }
-    return -1
+    if m.iplEnabled && addr >= 0xFFC0 {
+        return m.ipl[addr - 0xFFC0]as i64
+    }
+    return m.ram[addr]as i64
 }
 
 // Advance the timers by `cyc` SPC cycles. Prescale: T0/T1 tick every 128
@@ -238,7 +230,7 @@ fn apuWritePort(m: &mut SpcMem, i: i64, v: i64): void {
 }
 
 // Reset the SPC into the IPL: PC from the reset vector at $FFFE.
-fn spcReset(spc: &mut Spc, m: &SpcMem): void {
+fn spcReset(spc: &mut Spc, m: &mut SpcMem): void {
     spc.pc = spcRead16(m, 0xFFFE)
     spc.sp = 0xEF
     spc.psw = 0x02
@@ -257,7 +249,7 @@ fn spcNZ(spc: &mut Spc, v: i64): void {
     spcSetBit(spc, PN, (v & 0x80) != 0)
 }
 
-fn spcFetch(spc: &mut Spc, m: &SpcMem): i64 {
+fn spcFetch(spc: &mut Spc, m: &mut SpcMem): i64 {
     let v = spcRead(m, spc.pc)
     spc.pc = (spc.pc + 1) & 0xFFFF
     return v
@@ -271,7 +263,7 @@ fn dpAddr(spc: &Spc, dp: i64): i64 {
     return dp & 0xFF
 }
 
-fn spcFetch16(spc: &mut Spc, m: &SpcMem): i64 {
+fn spcFetch16(spc: &mut Spc, m: &mut SpcMem): i64 {
     let lo = spcFetch(spc, m)
     let hi = spcFetch(spc, m)
     return lo | (hi << 8)
@@ -322,19 +314,19 @@ fn spcSbc(spc: &mut Spc, v: i64): void {
     spc.a = aluSbcVal(spc, spc.a, v)
 }
 
-fn readDp(spc: &mut Spc, m: &SpcMem): i64 {
+fn readDp(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, dpAddr(spc, spcFetch(spc, m)))
 }
 
-fn readAbs(spc: &mut Spc, m: &SpcMem): i64 {
+fn readAbs(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, spcFetch16(spc, m))
 }
 
-fn readAbsX(spc: &mut Spc, m: &SpcMem): i64 {
+fn readAbsX(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, (spcFetch16(spc, m) + spc.x) & 0xFFFF)
 }
 
-fn readAbsY(spc: &mut Spc, m: &SpcMem): i64 {
+fn readAbsY(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, (spcFetch16(spc, m) + spc.y) & 0xFFFF)
 }
 
@@ -344,7 +336,7 @@ fn spcPush(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
     spc.sp = (spc.sp - 1) & 0xFF
 }
 
-fn spcPull(spc: &mut Spc, m: &SpcMem): i64 {
+fn spcPull(spc: &mut Spc, m: &mut SpcMem): i64 {
     spc.sp = (spc.sp + 1) & 0xFF
     return spcRead(m, 0x100 | (spc.sp & 0xFF))
 }
@@ -354,13 +346,13 @@ fn spcPush16(spc: &mut Spc, m: &mut SpcMem, v: i64): void {
     spcPush(spc, m, v & 0xFF)
 }
 
-fn spcPull16(spc: &mut Spc, m: &SpcMem): i64 {
+fn spcPull16(spc: &mut Spc, m: &mut SpcMem): i64 {
     let lo = spcPull(spc, m)
     let hi = spcPull(spc, m)
     return lo | (hi << 8)
 }
 
-fn spcRead16(m: &SpcMem, addr: i64): i64 {
+fn spcRead16(m: &mut SpcMem, addr: i64): i64 {
     return spcRead(m, addr) | (spcRead(m, (addr + 1) & 0xFFFF) << 8)
 }
 
@@ -413,7 +405,7 @@ fn spcDiv(spc: &mut Spc): void {
 }
 
 // BBS/BBC dp.bit,rel — branch if a direct-page bit matches wantSet.
-fn bbTest(spc: &mut Spc, m: &SpcMem, bit: i64, wantSet: bool): void {
+fn bbTest(spc: &mut Spc, m: &mut SpcMem, bit: i64, wantSet: bool): void {
     let v = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
     let off = spcFetch(spc, m)
     let soff: i64 = if off >= 0x80 {
@@ -428,7 +420,7 @@ fn bbTest(spc: &mut Spc, m: &SpcMem, bit: i64, wantSet: bool): void {
 }
 
 // Relative branch: signed 8-bit offset applied if cond (PC already past it).
-fn spcBranch(spc: &mut Spc, m: &SpcMem, cond: bool): void {
+fn spcBranch(spc: &mut Spc, m: &mut SpcMem, cond: bool): void {
     let off = spcFetch(spc, m)
     let soff: i64 = if off >= 0x80 {
         off - 0x100
@@ -473,7 +465,7 @@ fn spcNZ16(spc: &mut Spc, w: i64): void {
 }
 
 // 16-bit direct-page word (second byte wraps within the page).
-fn readDpWord(spc: &Spc, m: &SpcMem, d: i64): i64 {
+fn readDpWord(spc: &Spc, m: &mut SpcMem, d: i64): i64 {
     let lo = spcRead(m, dpAddr(spc, d))
     let hi = spcRead(m, dpAddr(spc, (d + 1) & 0xFF))
     return lo | (hi << 8)
@@ -485,22 +477,22 @@ fn writeDpWord(spc: &Spc, m: &mut SpcMem, d: i64, w: i64): void {
 }
 
 // dp indexed by X (byte, wraps within the direct page).
-fn readDpX(spc: &mut Spc, m: &SpcMem): i64 {
+fn readDpX(spc: &mut Spc, m: &mut SpcMem): i64 {
     return spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF))
 }
 
 // (X): direct page at register X. [dp+X]: 16-bit pointer at dp+X. [dp]+Y:
 // 16-bit pointer at dp, then +Y.
-fn readIndX(spc: &Spc, m: &SpcMem): i64 {
+fn readIndX(spc: &Spc, m: &mut SpcMem): i64 {
     return spcRead(m, dpAddr(spc, spc.x))
 }
 
-fn readIndDpX(spc: &mut Spc, m: &SpcMem): i64 {
+fn readIndDpX(spc: &mut Spc, m: &mut SpcMem): i64 {
     let d = (spcFetch(spc, m) + spc.x) & 0xFF
     return spcRead(m, readDpWord(spc, m, d))
 }
 
-fn readIndDpY(spc: &mut Spc, m: &SpcMem): i64 {
+fn readIndDpY(spc: &mut Spc, m: &mut SpcMem): i64 {
     let d = spcFetch(spc, m)
     let ptr = readDpWord(spc, m, d)
     return spcRead(m, (ptr + spc.y) & 0xFFFF)
@@ -958,7 +950,8 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         }
         0xEA => { // NOT1 m.b
             let mb = spcFetch16(spc, m) let ad = mb & 0x1FFF let bit = (mb >> 13) & 7
-            spcWrite(m, ad, spcRead(m, ad) ^ (1 << bit))
+            let cur = spcRead(m, ad)
+            spcWrite(m, ad, cur ^ (1 << bit))
         }
 
         // ---- TSET1 / TCLR1 !abs (flags from A - M) ----
