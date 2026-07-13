@@ -323,21 +323,55 @@ fn tile2bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
     return ((p0 >> bit) & 1) | (((p1 >> bit) & 1) << 1)
 }
 
-// Composite one 32x32 BG layer onto fb (transparent where the pixel index is 0).
+// Tilemap word for a tile coord, honoring the screen-size layout ($400-word
+// screens tiled 1x1 / 2x1 / 1x2 / 2x2 by the size bits).
+fn bgEntryAddr(tmBase: i64, sc: i64, tileX: i64, tileY: i64): i64 {
+    let nh: i64 = if (sc & 1) != 0 {
+        2
+    } else {
+        1
+    }
+    let sx: i64 = if tileX >= 32 {
+        1
+    } else {
+        0
+    }
+    let sy: i64 = if tileY >= 32 {
+        1
+    } else {
+        0
+    }
+    let quad = sx + sy * nh
+    return tmBase + quad * 0x400 + (tileY & 31) * 32 + (tileX & 31)
+}
+
+// Composite one BG layer onto fb (transparent where the pixel index is 0).
+// sc = the BGnSC register: base in bits2-7, screen size in bits0-1.
 // bpp 4 -> 16 colors/palette; bpp 2 -> 4 colors/palette (BG3).
-fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, tmBase: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64): void {
+fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64): void {
     let palW: i64 = if bpp == 4 {
         16
     } else {
         4
     }
+    let tmBase = (sc & 0xFC) << 8
+    let maskX: i64 = if (sc & 1) != 0 {
+        0x1FF
+    } else {
+        0xFF
+    }
+    let maskY: i64 = if (sc & 2) != 0 {
+        0x1FF
+    } else {
+        0xFF
+    }
     var y: i64 = 0
     while y < 224 {
         var x: i64 = 0
         while x < 256 {
-            let ex = (x + hofs) & 0xFF
-            let ey = (y + vofs) & 0xFF
-            let entry = vramWord(p, tmBase + (ey >> 3) * 32 + (ex >> 3))
+            let ex = (x + hofs) & maskX
+            let ey = (y + vofs) & maskY
+            let entry = vramWord(p, bgEntryAddr(tmBase, sc, ex >> 3, ey >> 3))
             let tileNum = entry & 0x3FF
             let pal = (entry >> 10) & 0x07
             var px = ex & 7
@@ -385,9 +419,9 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     let ch1 = (p.bg12nba & 0x0F) << 12
     let ch2 = ((p.bg12nba >> 4) & 0x0F) << 12
     let ch3 = (p.bg34nba & 0x0F) << 12
-    renderBGLayer(p, fb, bright, (p.bgsc2 & 0xFC) << 8, ch3, p.bghofs[2], p.bgvofs[2], 2) // BG3
-    renderBGLayer(p, fb, bright, (p.bgsc1 & 0xFC) << 8, ch2, p.bghofs[1], p.bgvofs[1], 4) // BG2
-    renderBGLayer(p, fb, bright, (p.bgsc0 & 0xFC) << 8, ch1, p.bghofs[0], p.bgvofs[0], 4) // BG1
+    renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2) // BG3
+    renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4) // BG2
+    renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4) // BG1
     renderSprites(p, fb, bright)
 }
 
