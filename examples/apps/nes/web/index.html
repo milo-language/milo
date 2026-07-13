@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Milo NES — in the browser</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: #0d1117; color: #e6edf3;
+    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .5px; }
+  h1 span { color: #d29922; }
+  #screen {
+    image-rendering: pixelated;
+    width: 768px; height: 720px; max-width: 100%;
+    background: #000; border: 1px solid #30363d; border-radius: 6px;
+  }
+  #screen:fullscreen { width: auto; height: 100vh; border: 0; border-radius: 0; }
+  select { background: #21262d; color: #e6edf3; border: 1px solid #30363d; padding: 7px 10px; border-radius: 6px; font: inherit; }
+  #bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  button, label.file {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    padding: 7px 14px; border-radius: 6px; cursor: pointer; font: inherit;
+  }
+  button:hover, label.file:hover { background: #30363d; }
+  #drop {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(13,17,23,.85); border: 2px dashed #d29922; font-size: 18px; z-index: 5;
+  }
+  #status { color: #8b949e; min-height: 1.2em; }
+  .keys { color: #8b949e; font-size: 12px; text-align: center; max-width: 520px; }
+  .keys b { color: #e6edf3; }
+</style>
+</head>
+<body>
+<div id="drop">drop a <code>.nes</code> ROM to play</div>
+
+<h1>Milo <span>NES</span> — compiled to JavaScript</h1>
+<canvas id="screen" width="256" height="240"></canvas>
+
+<div id="bar">
+  <label class="file">Load ROM…<input id="rom" type="file" accept=".nes" hidden></label>
+  <button id="pause" disabled>Pause</button>
+  <select id="scale" title="Window size">
+    <option value="2">2×</option>
+    <option value="3" selected>3×</option>
+    <option value="4">4×</option>
+    <option value="5">5×</option>
+  </select>
+  <button id="fs">Fullscreen</button>
+  <span id="fps"></span>
+</div>
+
+<!-- One-click free homebrew (fetched from retrobrews' own CORS-open hosting) -->
+<div id="bar">
+  <span style="color:#8b949e">Free homebrew:</span>
+  <button data-rom="https://raw.githubusercontent.com/OpenEmu/OpenEmu-Update/master/Homebrew/NES/Blade%20Buster/BladeBuster.nes">Blade Buster</button>
+  <button data-rom="https://raw.githubusercontent.com/OpenEmu/OpenEmu-Update/master/Homebrew/NES/Battle%20Kid/BattleKid-Demo.nes">Battle Kid</button>
+  <button data-rom="https://raw.githubusercontent.com/OpenEmu/OpenEmu-Update/master/Homebrew/NES/Super%20PakPak/superpakpak.nes">Super PakPak</button>
+  <button data-rom="https://raw.githubusercontent.com/OpenEmu/OpenEmu-Update/master/Homebrew/NES/Sir%20Ababol/Sir%20Ababol%20(2013)(The%20Mojon%20Twins)%5B!%5D.nes">Sir Ababol</button>
+  <button data-rom="https://raw.githubusercontent.com/OpenEmu/OpenEmu-Update/master/Homebrew/NES/Lawn%20Mower/Lawn_Mower.nes">Lawn Mower</button>
+  <button data-rom="https://raw.githubusercontent.com/retrobrews/nes-games/master/madwizard.nes">Mad Wizard</button>
+</div>
+
+<!-- Your own ROMs, served same-origin by serve.ts. Hidden on the public build. -->
+<div id="localBar" style="display:none">
+  <span style="color:#8b949e">Your ROMs:</span>
+  <select id="localRoms"></select>
+  <button id="localPlay">Play</button>
+</div>
+<div id="status">Click a free homebrew game above, or load your own <code>.nes</code> (drag onto the window).</div>
+<div class="keys">
+  <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> A &nbsp;·&nbsp; <b>X</b> B &nbsp;·&nbsp;
+  <b>Enter</b> Start &nbsp;·&nbsp; <b>Shift</b> Select
+  <br>The entire NES core (CPU + PPU + APU) is written in Milo and compiled to this page's JS by <code>emit-js</code>. No wasm, no plugins.
+</div>
+
+<!-- Milo-compiled emulator core: defines global createNes / stepFrame / setButtons -->
+<script src="nes-core.js"></script>
+<script>
+"use strict";
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d", { alpha: false });
+const statusEl = document.getElementById("status");
+const fpsEl = document.getElementById("fps");
+const pauseBtn = document.getElementById("pause");
+
+// Reusable RGBA image + a Uint32 view over it. The Milo framebuffer is u32 with
+// byte order [R,G,B,A]; on little-endian JS that is exactly one Uint32 per pixel,
+// so we copy fb straight into the view (forcing full alpha).
+const img = ctx.createImageData(256, 240);
+const view = new Uint32Array(img.data.buffer);
+
+let handle = null;      // NesHandle from the Milo core
+let running = false;
+let buttons = 0;
+
+// scancode-ish key map -> controller bit (see setButtons in webcore.milo)
+const KEYS = {
+  "KeyZ": 0x01, "KeyX": 0x02, "ShiftRight": 0x04, "ShiftLeft": 0x04,
+  "Enter": 0x08, "ArrowUp": 0x10, "ArrowDown": 0x20, "ArrowLeft": 0x40, "ArrowRight": 0x80,
+};
+addEventListener("keydown", e => { if (KEYS[e.code] !== undefined) { buttons |= KEYS[e.code]; e.preventDefault(); } });
+addEventListener("keyup",   e => { if (KEYS[e.code] !== undefined) { buttons &= ~KEYS[e.code]; e.preventDefault(); } });
+
+// --- Audio: the APU emits ~735 signed-16 mono samples per frame at 44.1 kHz into
+// bus.apu.samples. We drain them into a ring buffer that a ScriptProcessor pulls. ---
+const SR = 44100;
+let audioCtx = null;
+const ring = new Float32Array(1 << 16);   // power-of-two for cheap & masking
+const RMASK = ring.length - 1;
+let rHead = 0, rTail = 0;
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new AudioContext({ sampleRate: SR });
+  const node = audioCtx.createScriptProcessor(1024, 0, 1);
+  node.onaudioprocess = e => {
+    const out = e.outputBuffer.getChannelData(0);
+    for (let i = 0; i < out.length; i++) {
+      if (rHead !== rTail) { out[i] = ring[rHead]; rHead = (rHead + 1) & RMASK; }
+      else out[i] = 0;   // underrun -> silence
+    }
+  };
+  node.connect(audioCtx.destination);
+}
+// Browsers keep an AudioContext suspended until a user gesture. Video runs on
+// load regardless; the first click/keypress unlocks sound.
+function unlockAudio() {
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  if (running) statusEl.textContent = "Running — Arrows + Z/X. \u{1F50A} sound on.";
+}
+addEventListener("pointerdown", unlockAudio);
+addEventListener("keydown", unlockAudio);
+
+function drainAudio() {
+  const s = handle.bus.apu.samples;
+  for (let i = 0; i < s.length; i++) {
+    const next = (rTail + 1) & RMASK;
+    if (next === rHead) break;         // ring full: drop the rest (keeps latency bounded)
+    ring[rTail] = s[i] / 32768;        // i16 -> [-1, 1)
+    rTail = next;
+  }
+  s.length = 0;                        // reset the APU buffer (mirrors the SDL frontend)
+}
+
+// NES frame rate is 60.0988 Hz; step by wall-clock so the emulator runs at true
+// speed regardless of the display's refresh rate (60/120/144 Hz).
+const FRAME_MS = 1000 / 60.0988;
+let last = 0, accMs = 0, fpsFrames = 0, fpsAcc = 0;
+function blit() {
+  const fb = handle.bus.ppu.fb;
+  for (let i = 0; i < 256 * 240; i++) view[i] = (fb[i] | 0xFF000000) >>> 0;
+  ctx.putImageData(img, 0, 0);
+}
+function loop(now) {
+  if (!running) return;
+  accMs += now - last; last = now;
+  if (accMs > 100) accMs = 100;        // clamp: avoid a catch-up spiral after a stall
+  let ran = false;
+  while (accMs >= FRAME_MS) {
+    setButtons(handle, buttons & 0xFF);
+    stepFrame(handle);
+    drainAudio();
+    accMs -= FRAME_MS;
+    ran = true;
+    fpsFrames++;
+  }
+  if (ran) blit();
+
+  fpsAcc += now - (loop._p || now); loop._p = now;
+  if (fpsAcc >= 500) { fpsEl.textContent = (fpsFrames * 1000 / fpsAcc).toFixed(0) + " fps"; fpsFrames = 0; fpsAcc = 0; }
+  requestAnimationFrame(loop);
+}
+
+function boot(bytes) {
+  handle = createNes(Array.from(bytes));   // Vec<u8> == JS array
+  initAudio();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  running = true;
+  pauseBtn.disabled = false;
+  pauseBtn.textContent = "Pause";
+  statusEl.textContent = audioCtx && audioCtx.state === "running"
+    ? "Running — Arrows + Z/X."
+    : "Running — click anywhere or press a key for \u{1F50A} sound.";
+  last = performance.now(); loop._p = last; accMs = 0; fpsFrames = 0; fpsAcc = 0;
+  requestAnimationFrame(loop);
+}
+
+async function loadFile(file) {
+  statusEl.textContent = "Loading " + file.name + "…";
+  boot(new Uint8Array(await file.arrayBuffer()));
+}
+
+// One-click load from a URL. Only works if the host sends CORS headers
+// (same-origin bundled ROMs, raw.githubusercontent.com, archive.org). ROM sites
+// generally do not, so a failed fetch is almost always a CORS block, not a 404.
+async function loadUrl(url, label) {
+  statusEl.textContent = "Fetching " + (label || url) + "…";
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    boot(new Uint8Array(await resp.arrayBuffer()));
+  } catch (e) {
+    statusEl.textContent = "Could not load " + (label || url) +
+      " — the host must allow cross-origin requests (CORS). " + e.message;
+  }
+}
+// data-rom="<url>" on any button loads that ROM on click.
+for (const btn of document.querySelectorAll("[data-rom]")) {
+  btn.addEventListener("click", () => loadUrl(btn.dataset.rom, btn.textContent));
+}
+
+// Auto-start a game so the page is alive on load (video only until a gesture
+// unlocks audio). Pick the first homebrew button's ROM as the default.
+const firstRom = document.querySelector("[data-rom]");
+if (firstRom) loadUrl(firstRom.dataset.rom, firstRom.textContent);
+
+document.getElementById("rom").addEventListener("change", e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+pauseBtn.addEventListener("click", () => {
+  if (!handle) return;
+  running = !running;
+  pauseBtn.textContent = running ? "Pause" : "Resume";
+  if (running) {
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    last = performance.now(); loop._p = last; accMs = 0;
+    requestAnimationFrame(loop);
+  } else if (audioCtx) {
+    audioCtx.suspend();
+  }
+});
+
+// window size (integer scale) + fullscreen
+const scaleSel = document.getElementById("scale");
+function applyScale() {
+  const s = +scaleSel.value;
+  canvas.style.width = (256 * s) + "px";
+  canvas.style.height = (240 * s) + "px";
+}
+scaleSel.addEventListener("change", applyScale);
+applyScale();
+document.getElementById("fs").addEventListener("click", () => {
+  if (!document.fullscreenElement) canvas.requestFullscreen();
+  else document.exitFullscreen();
+});
+
+// Local ROMs: serve.ts publishes /local-roms.json on localhost. On the public
+// GitHub Pages build that endpoint 404s, so this section stays hidden.
+fetch("/local-roms.json").then(r => r.ok ? r.json() : []).then(list => {
+  if (!Array.isArray(list) || list.length === 0) return;
+  const sel = document.getElementById("localRoms");
+  for (const name of list) {
+    const o = document.createElement("option");
+    o.value = name; o.textContent = name;
+    sel.appendChild(o);
+  }
+  document.getElementById("localBar").style.display = "flex";
+  // encodeURI keeps the "/" separators but escapes spaces etc. in the filename.
+  document.getElementById("localPlay").addEventListener("click",
+    () => loadUrl(encodeURI("/local/" + sel.value), sel.value));
+}).catch(() => {});
+
+// drag-and-drop a ROM anywhere on the window
+const drop = document.getElementById("drop");
+addEventListener("dragover", e => { e.preventDefault(); drop.style.display = "flex"; });
+drop.addEventListener("dragleave", () => drop.style.display = "none");
+addEventListener("drop", e => {
+  e.preventDefault(); drop.style.display = "none";
+  const f = e.dataTransfer.files[0];
+  if (f && f.name.toLowerCase().endsWith(".nes")) loadFile(f);
+});
+</script>
+</body>
+</html>

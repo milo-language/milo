@@ -9,7 +9,10 @@ from "std/fs" import {
     writeFile
 }
 from "./cartridge" import {
-    Cartridge, loadCartridge
+    Cartridge
+}
+from "./cartridgeFile" import {
+    loadCartridge
 }
 from "./cpu" import {
     Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag, clockApu

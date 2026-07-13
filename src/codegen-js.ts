@@ -90,6 +90,18 @@ export class CodegenJS {
       this.emit("");
     }
 
+    // module-level globals (e.g. lookup tables). Emit before functions: function
+    // decls hoist, so a global initializer may reference a function declared later,
+    // but the global's own value must be evaluated before main() runs. No function
+    // scope here, so no boxing applies.
+    for (const g of module.globals) {
+      const prevBoxed = this.boxed;
+      this.boxed = new Set();
+      this.emit(`${g.mutable ? "let" : "const"} ${g.name} = ${this.genExpr(g.value)};`);
+      this.boxed = prevBoxed;
+    }
+    if (module.globals.length > 0) this.emit("");
+
     // functions
     for (const fn of module.functions) {
       if (fn.isExtern) continue;
@@ -532,6 +544,72 @@ export class CodegenJS {
         this.output = prev;
         return `(() => {\n${lines.join("\n")}\n${"  ".repeat(this.indent)}})()`;
       }
+      case "WrappingArith": {
+        // Fixed-width wrapping add/sub/mul (x.wrappingAdd(y) etc). Mask the raw
+        // result to the type width, matching native two's-complement wraparound.
+        const jsOp = ({ add: "+", sub: "-", mul: "*" } as Record<string, string>)[expr.op];
+        return this.maskInt(`(${this.genExpr(expr.left)} ${jsOp} ${this.genExpr(expr.right)})`, expr.type);
+      }
+      case "SaturatingArith": {
+        // Clamp to the type's representable range instead of wrapping.
+        const jsOp = ({ add: "+", sub: "-", mul: "*" } as Record<string, string>)[expr.op];
+        const [lo, hi] = this.intRange(expr.type);
+        const v = `(${this.genExpr(expr.left)} ${jsOp} ${this.genExpr(expr.right)})`;
+        return `(__v => __v < ${lo} ? ${lo} : (__v > ${hi} ? ${hi} : __v))(${v})`;
+      }
+      case "CheckedArith": {
+        // Some(masked) when the true result fits the type, else None. Option is
+        // represented as {tag:0,data:[x]} (Some) / {tag:1} (None) — see genEnum.
+        const jsOp = ({ add: "+", sub: "-", mul: "*", div: "/", rem: "%" } as Record<string, string>)[expr.op];
+        const [lo, hi] = this.intRange(expr.type);
+        const raw = expr.op === "div" || expr.op === "rem"
+          ? `Math.trunc(${this.genExpr(expr.left)} ${jsOp} ${this.genExpr(expr.right)})`
+          : `(${this.genExpr(expr.left)} ${jsOp} ${this.genExpr(expr.right)})`;
+        const masked = this.maskInt("__v", expr.type);
+        return `(__v => (__v < ${lo} || __v > ${hi}) ? {tag:1} : {tag:0, data:[${masked}]})(${raw})`;
+      }
+      case "BitIntrinsic":
+        return this.genBitIntrinsic(expr);
+      case "StringCstr":
+        // A null-terminated C string only means something at an FFI boundary, which
+        // doesn't exist in JS; a Milo string is already a JS string, so pass it through.
+        return this.genExpr(expr.object);
+    }
+    // No silent fallthrough: an unhandled kind used to interpolate `undefined`
+    // into the output (e.g. `x = undefined`), producing code that ran but computed
+    // garbage. Fail loudly so backend gaps surface at compile time, not at runtime.
+    throw new Error(`codegen-js: unhandled HIR expression kind '${(expr as any).kind}'`);
+  }
+
+  // Inclusive [min, max] JS numeric literals for an integer type. 64-bit uses the
+  // f64 safe-integer range (exact 2^63 wrap is unrepresentable in JS numbers).
+  private intRange(ty: any): [string, string] {
+    if (!ty || ty.tag !== "int") return ["-Infinity", "Infinity"];
+    if (ty.bits >= 64) return ty.signed ? ["-9223372036854775808", "9223372036854775807"] : ["0", "18446744073709551615"];
+    if (ty.signed) { const h = 2 ** (ty.bits - 1); return [String(-h), String(h - 1)]; }
+    return ["0", String(2 ** ty.bits - 1)];
+  }
+
+  private genBitIntrinsic(expr: HIRExpr & { kind: "BitIntrinsic" }): string {
+    const v = this.genExpr(expr.value);
+    const bits = expr.type.tag === "int" ? expr.type.bits : 32;
+    switch (expr.intrinsic) {
+      case "ctpop": // popcount
+        return `(__x => { let __c = 0; let __n = ${this.maskInt("__x", expr.type)}; while (__n) { __c += __n & 1; __n = Math.floor(__n / 2); } return __c; })(${v})`;
+      case "ctlz": // leading zeros within the type width
+        return `(__x => { let __n = ${this.maskInt("__x", expr.type)}; let __c = ${bits}; while (__n) { __c--; __n = Math.floor(__n / 2); } return __c; })(${v})`;
+      case "cttz": // trailing zeros within the type width
+        return `(__x => { let __n = ${this.maskInt("__x", expr.type)}; if (__n === 0) return ${bits}; let __c = 0; while ((__n & 1) === 0) { __c++; __n = Math.floor(__n / 2); } return __c; })(${v})`;
+      case "fshl": // rotate left by amount (mod width)
+      case "fshr": {
+        if (bits > 32) throw new Error("codegen-js: rotate on >32-bit ints unsupported");
+        const amt = expr.amount ? this.genExpr(expr.amount) : "0";
+        // Normalize to a left-rotation amount in [0, bits).
+        const leftAmt = expr.intrinsic === "fshl" ? `__s` : `(${bits} - __s)`;
+        return `(__x => { const __m = ${this.maskInt("__x", expr.type)}; const __s = ((${amt}) % ${bits} + ${bits}) % ${bits}; const __l = ${leftAmt} % ${bits}; return ${this.maskInt(`((__m << __l) | (__m >>> (${bits} - __l)))`, expr.type)}; })(${v})`;
+      }
+      default:
+        throw new Error(`codegen-js: unhandled bit intrinsic '${expr.intrinsic}'`);
     }
   }
 
@@ -570,7 +648,34 @@ export class CodegenJS {
       return `(${l} ${expr.op} ${r})`;
     }
 
+    // Integer arithmetic/bitwise must match native Milo's fixed-width wrapping
+    // (e.g. u8 250+20 == 14), which JS f64 math does not do. Integer `/` also
+    // truncates toward zero (JS `/` is float division). Mask the result to the
+    // op's result width so downstream ops see the same value the native binary would.
+    const ARITH_BITWISE = new Set(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"]);
+    if (ARITH_BITWISE.has(expr.op) && expr.type.tag === "int") {
+      const raw = expr.op === "/" ? `Math.trunc(${l} / ${r})` : `(${l} ${expr.op} ${r})`;
+      return this.maskInt(raw, expr.type);
+    }
+
     return `(${l} ${expr.op} ${r})`;
+  }
+
+  // Wrap an integer value to a fixed-width two's-complement representation, matching
+  // native Milo. 8/16/32-bit are exact; 64-bit is best-effort (JS f64 can't wrap at
+  // 2^64, but the emulators' 64-bit values stay well under 2^53).
+  private maskInt(val: string, ty: any): string {
+    if (!ty || ty.tag !== "int") return val;
+    if (ty.signed) {
+      if (ty.bits === 8) return `((${val} << 24) >> 24)`;
+      if (ty.bits === 16) return `((${val} << 16) >> 16)`;
+      if (ty.bits === 32) return `(${val} | 0)`;
+      return `Math.trunc(${val})`;
+    }
+    if (ty.bits === 8) return `(${val} & 0xFF)`;
+    if (ty.bits === 16) return `(${val} & 0xFFFF)`;
+    if (ty.bits === 32) return `(${val} >>> 0)`;
+    return `Math.trunc(${val})`;
   }
 
   // A by-ref arg that is a boxed primitive ident passes the BOX itself (so the callee
@@ -642,7 +747,9 @@ export class CodegenJS {
   private genCast(expr: HIRExpr & { kind: "Cast" }): string {
     const val = this.genExpr(expr.operand);
     const target = expr.targetType;
-    if (target.tag === "int") return `(${val} | 0)`;
+    // Mask to the target width so `x as u8` wraps to 0..255 (native semantics),
+    // not the 32-bit-signed truncation a bare `| 0` would give.
+    if (target.tag === "int") return this.maskInt(val, target);
     if (target.tag === "float") return `(+${val})`;
     if (target.tag === "bool") return `Boolean(${val})`;
     return val;

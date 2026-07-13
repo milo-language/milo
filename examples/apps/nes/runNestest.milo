@@ -3,7 +3,7 @@
 //   PC A:.. X:.. Y:.. P:.. SP:.. CYC:..
 // Diff against roms/nes-test-roms/other/nestest.log via scripts/nestestDiff.ts.
 //   milo run examples/apps/nes/runNestest.milo
-from "./cartridge" import {
+from "./cartridgeFile" import {
     loadCartridge
 }
 from "./cpu" import {

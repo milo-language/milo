@@ -1,0 +1,30 @@
+// Filesystem loader for iNES ROMs — the native-only I/O wrapper around the pure
+// byte parser in cartridge.milo. Kept separate so cartridge.milo (and the core
+// that imports it) stays free of std/io, which the JS backend can't lower.
+from "std/io" import {
+    readFile
+}
+from "./cartridge" import {
+    Cartridge, parseCartridge
+}
+
+fn loadCartridge(path: &string): Result<Cartridge, string> {
+    var raw = ""
+    match readFile(path) {
+        Result.Ok(s) => {
+            raw = s
+        }
+        Result.Err(e) => {
+            return Result.Err("cannot read ROM file")
+        }
+    }
+    // std/io hands back a string (UTF-8 byte buffer); copy to a Vec<u8> so the
+    // parser works on bytes regardless of source (file vs. browser fetch).
+    var bytes: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < raw.len {
+        bytes.push(raw[i])
+        i = i + 1
+    }
+    return parseCartridge(bytes)
+}

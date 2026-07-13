@@ -19,7 +19,10 @@ from "std/string" import {
     strEndsWith
 }
 from "./cartridge" import {
-    Cartridge, loadCartridge
+    Cartridge
+}
+from "./cartridgeFile" import {
+    loadCartridge
 }
 from "./cpu" import {
     Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag, clockApu

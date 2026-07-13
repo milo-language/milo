@@ -1,7 +1,10 @@
 // Standalone check for the iNES loader against the real nestest ROM.
 //   milo run examples/apps/nes/testCartridge.milo
 from "./cartridge" import {
-    Cartridge, loadCartridge
+    Cartridge
+}
+from "./cartridgeFile" import {
+    loadCartridge
 }
 
 fn main(): i32 {

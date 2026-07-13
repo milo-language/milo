@@ -9,9 +9,10 @@
 //   7    flags7: mapper high nibble
 //   8-15 (iNES 1.0 fields we don't need yet)
 
-from "std/io" import {
-    readFile
-}
+// No std/io import here on purpose: this module is pulled in transitively by the
+// pure emulation core (cpu/ppu), which must stay FFI-free so it compiles through
+// the JS backend (emit-js) for the browser target. The fs-based loader lives in
+// cartridgeFile.milo. See parseCartridge below for the byte-slice entry point.
 
 struct Cartridge {
     prg: Vec<u8> // program ROM (CPU $8000-$FFFF space)
@@ -29,7 +30,7 @@ let HEADER: i64 = 16
 let TRAINER: i64 = 512
 
 // Copy `len` bytes out of `src` starting at `off` into a fresh Vec<u8>.
-fn sliceBytes(src: &string, off: i64, len: i64): Vec<u8> {
+fn sliceBytes(src: &Vec<u8>, off: i64, len: i64): Vec<u8> {
     var out: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < len {
@@ -39,17 +40,9 @@ fn sliceBytes(src: &string, off: i64, len: i64): Vec<u8> {
     return out
 }
 
-fn loadCartridge(path: &string): Result<Cartridge, string> {
-    var raw = ""
-    match readFile(path) {
-        Result.Ok(s) => {
-            raw = s
-        }
-        Result.Err(e) => {
-            return Result.Err("cannot read ROM file")
-        }
-    }
-
+// Parse an iNES image from raw bytes. FFI-free so both the fs loader
+// (cartridgeFile.milo) and the browser driver can share it.
+fn parseCartridge(raw: &Vec<u8>): Result<Cartridge, string> {
     if raw.len < HEADER {
         return Result.Err("file too small for iNES header")
     }
