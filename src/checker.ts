@@ -2682,22 +2682,55 @@ export class TypeChecker {
   // through the mutable borrow could invalidate the shared reference (e.g.
   // `push` reallocates), leaving it dangling. Pure argument-origin check.
   private checkCallSiteExclusivity(args: Expr[], sp: Span) {
-    const mutRoots = new Map<string, Span>();
-    const sharedRoots = new Set<string>();
+    const muts: { root: string; fields: string[] | null; span: Span }[] = [];
+    const shared: { root: string; fields: string[] | null }[] = [];
     for (const arg of args) {
       const ab = this.autoBorrowed.get(arg);
       if (!ab) continue;
-      const root = this.rootVarOf(arg);
-      if (!root) continue;
-      if (ab.mutable) mutRoots.set(root, arg.span ?? sp);
-      else sharedRoots.add(root);
+      const p = this.accessPath(arg);
+      if (!p) continue;
+      if (ab.mutable) muts.push({ root: p.root, fields: p.fields, span: arg.span ?? sp });
+      else shared.push({ root: p.root, fields: p.fields });
     }
-    for (const [root, span] of mutRoots) {
-      if (sharedRoots.has(root)) {
-        this.error(`'${root}' is borrowed mutably and shared in the same call`, span,
-          `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${root}' — pass a copy or split the call`);
+    // Two accesses off the same root can alias only if their field paths overlap —
+    // one a prefix of the other. Divergence at distinct field names (e.g. self.pos vs
+    // self.src) is provably disjoint, so a &mut into one can't invalidate a & into the
+    // other. An index/deref anywhere (fields === null) is imprecise → treated as overlap.
+    const overlaps = (a: string[] | null, b: string[] | null): boolean => {
+      if (a === null || b === null) return true;
+      const n = Math.min(a.length, b.length);
+      for (let i = 0; i < n; i++) if (a[i] !== b[i]) return false;
+      return true;
+    };
+    for (const m of muts) {
+      for (const s of shared) {
+        if (m.root === s.root && overlaps(m.fields, s.fields)) {
+          this.error(`'${m.root}' is borrowed mutably and shared in the same call`, m.span,
+            `a mutation through the '&var'/'&mut' argument could invalidate the '&' argument into '${m.root}' — pass a copy or split the call`);
+        }
       }
     }
+  }
+
+  // Access path for exclusivity: root variable + chain of field names. `fields` is
+  // null when the access goes through an index or deref, where offsets are dynamic
+  // and disjointness can't be proven — callers treat null as "may alias".
+  private accessPath(e: Expr): { root: string; fields: string[] | null } | null {
+    if (e.kind === "Ident") return { root: e.name, fields: [] };
+    if (e.kind === "FieldAccess") {
+      const base = this.accessPath(e.object);
+      if (!base) return null;
+      return { root: base.root, fields: base.fields === null ? null : [...base.fields, e.field] };
+    }
+    if (e.kind === "IndexAccess") {
+      const base = this.accessPath(e.object);
+      return base ? { root: base.root, fields: null } : null;
+    }
+    if (e.kind === "UnaryOp" && e.op === "*") {
+      const base = this.accessPath(e.operand);
+      return base ? { root: base.root, fields: null } : null;
+    }
+    return null;
   }
 
   private isRootMutable(expr: Expr): boolean {

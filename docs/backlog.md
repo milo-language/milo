@@ -19,6 +19,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 - **`rotateLeft/rotateRight/reverseBits`** — funnel-shift + bitreverse, return receiver width.
 - **Fixed-size array slicing** (Tier-2 #6) — `arr[a..b]` view into array storage, no copy.
 - **JSON pull parser** (Tier-2 #7) — `jsonPull(src).next()` event stream, no tree, O(depth) mem.
+- **Field-precise call-site exclusivity** — `f(&self.a, &mut self.b)` on distinct fields no longer rejected; index/deref still conservative. Unblocks stateful cursor/parser structs. (`checker.ts accessPath`, refines safety-roadmap #3.)
 - **JSON `strOpt/intOpt/floatOpt/boolOpt`** — optional fields stay in the fluent chain.
 
 ## Tier 1 — quick wins (high ROI, low effort) — do first

@@ -1730,12 +1730,7 @@ fn jsonPullNumber(s: &string, pos: &mut i64): f64 {
 impl JsonPull {
     fn next(self: &mut Self): JsonToken {
         while true {
-            // pos is localized around helper calls: passing self.src (&) and self.pos
-            // (&mut) together trips the exclusivity checker (both borrow self), so the
-            // &mut must be a local that can't alias the self.src borrow.
-            var wsPos = self.pos
-            jsonSkipWs(self.src, wsPos)
-            self.pos = wsPos
+            jsonSkipWs(self.src, self.pos)
             if self.pos >= self.src.len {
                 return jsonTok(JsonEvent.End)
             }
@@ -1782,9 +1777,7 @@ impl JsonPull {
                 var strStart: i64 = 0
                 var strLen: i64 = 0
                 var strErr: bool = false
-                var sp = self.pos
-                jsonScanStringRange(self.src, sp, strStart, strLen, strErr)
-                self.pos = sp
+                jsonScanStringRange(self.src, self.pos, strStart, strLen, strErr)
                 var t = jsonTok(JsonEvent.Str)
                 // in an object at a key slot (state 1) the string is the key
                 if self.stack.len > 0 && self.stack[self.stack.len - 1] == 1 {
@@ -1811,9 +1804,7 @@ impl JsonPull {
             }
             if c == '-' || (c >= '0' && c <= '9') {
                 var t = jsonTok(JsonEvent.Num)
-                var np = self.pos
-                t.num = jsonPullNumber(self.src, np)
-                self.pos = np
+                t.num = jsonPullNumber(self.src, self.pos)
                 return t
             }
             return jsonTok(JsonEvent.Error)
