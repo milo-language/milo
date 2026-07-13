@@ -30,6 +30,10 @@ export class Codegen {
   private labelCounter = 0;
   private locals = new Map<string, { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }>();
   private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
+  // milo fns whose big-aggregate return is lowered to a hidden `ptr %__sret.out`
+  // first param (see genStoreInto). Excludes main and exported fns (C ABI).
+  private sretFns = new Set<string>();
+  private currentFnSret = false;
   // extern fns that pass/return a struct by value need native-ABI lowering (byval/sret/coerce)
   private externAbi = new Map<string, ExternAbiInfo>();
   private structLayouts = new Map<string, StructLayout>();
@@ -522,6 +526,72 @@ export class Codegen {
     return `  store ${ty} ${val}, ptr ${ptr}`;
   }
 
+  // Big aggregates must never become first-class SSA values: SROA rewrites any
+  // whole-aggregate load/store touching an alloca into per-ELEMENT scalar ops
+  // with no size cap, so one `load %Bus` of a struct holding a [61440 x i32]
+  // framebuffer becomes ~1M IR instructions and -O2 never finishes (the NES
+  // emulator's -O2 build went from unbounded to seconds with this). Threshold
+  // matches ZERO_STORE_MEMSET_THRESHOLD: memcpy/sret is never worse.
+  private static BIG_AGG_THRESHOLD = 128;
+  private isBigAgg(ty: string): boolean {
+    return (ty.startsWith("%") || ty.startsWith("[")) && this.typeSize(ty) >= Codegen.BIG_AGG_THRESHOLD;
+  }
+  private emitMemcpy(lines: string[], dst: string, src: string, ty: string): void {
+    lines.push(`  call void @llvm.memcpy.p0.p0.i64(ptr ${dst}, ptr ${src}, i64 ${this.typeSize(ty)}, i1 false)`);
+  }
+
+  // Evaluate `expr` and store its value into `destPtr` (LLVM type `ty`). For
+  // big aggregates this keeps the value in memory end-to-end: direct calls to
+  // sret-lowered fns write straight into destPtr, places copy via llvm.memcpy
+  // (with the same move-out bookkeeping as the SSA paths in genExpr), and
+  // struct literals build field-by-field in place. Any shape not handled falls
+  // back to the plain genExpr+store path — correct, just slower to compile.
+  private genStoreInto(lines: string[], destPtr: string, ty: string, expr: HIRExpr): void {
+    if (this.isBigAgg(ty)) {
+      if (expr.kind === "Call" && this.sretFns.has(expr.func)) {
+        const [cl] = this.genExpr(expr, destPtr);
+        lines.push(...cl);
+        return;
+      }
+      if (expr.kind === "StructLit" && this.structLayouts.has(expr.name)) {
+        const layout = this.structLayouts.get(expr.name)!;
+        for (const f of expr.fields) {
+          const idx = layout.fields.findIndex(lf => lf.name === f.name);
+          const fieldTy = layout.fields[idx].type;
+          const ptr = this.nextTemp();
+          lines.push(`  ${ptr} = getelementptr %${expr.name}, ptr ${destPtr}, i32 0, i32 ${idx}`);
+          this.genStoreInto(lines, ptr, fieldTy, f.value);
+        }
+        return;
+      }
+      if (expr.kind === "Ident" || expr.kind === "FieldAccess" ||
+          (expr.kind === "IndexAccess" && !(expr.isMove && this.needsDropCg(expr.type)))) {
+        // Ident must be a real local/global (not a fn-as-value); a ref local's
+        // pointee is owned elsewhere, so moves from it never occur — skip bookkeeping.
+        const identLocal = expr.kind === "Ident" ? this.locals.get(expr.name) : null;
+        const placeOk = expr.kind !== "Ident" || identLocal !== undefined || this.globalVars.has(expr.name);
+        if (placeOk) {
+          const [pl, srcPtr] = this.genLValue(expr);
+          if (srcPtr !== "null") {
+            lines.push(...pl);
+            this.emitMemcpy(lines, destPtr, srcPtr, ty);
+            if (expr.isMove && this.needsDropCg(expr.type) && !identLocal?.isRef) {
+              lines.push(this.zeroStore(ty, srcPtr));
+              if (expr.kind === "Ident") {
+                const dl = this.droppableLocals.find(d => this.localAddr(d.name) === srcPtr);
+                if (dl) lines.push(`  store i1 0, ptr ${dl.aliveFlag}`);
+              }
+            }
+            return;
+          }
+        }
+      }
+    }
+    const [el, v] = this.genExpr(expr);
+    lines.push(...el);
+    lines.push(this.valStore(ty, v, destPtr));
+  }
+
   // Structural equality of two lvalue expressions, restricted to Ident and
   // FieldAccess chains (no index/call — those may have side effects). Used to
   // recognize `place = place + rhs` and to guard against aliasing self-assigns.
@@ -854,6 +924,13 @@ export class Codegen {
     const functions = module.functions.filter(f => !f.isExtern);
     if (module.userFnNames) this.userFnNames = module.userFnNames;
 
+    // sret-lower internal fns returning big aggregates (after userFnNames is
+    // known — exported fns keep their C-visible signature)
+    for (const fn of functions) {
+      if (fn.name === "main" || this.userFnNames.has(fn.name)) continue;
+      if (this.isBigAgg(this.llvmType(fn.retType))) this.sretFns.add(fn.name);
+    }
+
     // register globals before function generation so they're visible during codegen
     for (const g of module.globals) {
       const ty = this.llvmType(g.type);
@@ -1090,7 +1167,9 @@ export class Codegen {
     // main is the process entry point: the OS reads its return register as the exit code, so it
     // must always be i32 even when the Milo signature is void (`fn main()`). A `void @main` leaves
     // garbage in the return register → nonzero exit on a program that should succeed.
-    const ret = fn.name === "main" ? "i32" : this.llvmType(fn.retType);
+    const isSret = this.sretFns.has(fn.name);
+    this.currentFnSret = isSret;
+    const ret = fn.name === "main" ? "i32" : isSret ? "void" : this.llvmType(fn.retType);
     // Subprogram attaches BEFORE the `{`; applyDebugInfo keys function boundaries off this.
     const dbgAttr = this.emitDebug ? ` !dbg !${this.diSubprogram(fn)}` : "";
     if (this.emitDebug) {
@@ -1105,7 +1184,9 @@ export class Codegen {
       // linkonce_odr let the linker merge same-named fns across separately-compiled
       // objects and silently pick one body when they differed (issue #5).
       const linkage = this.userFnNames.has(fn.name) ? "" : "internal ";
-      lines.push(`define ${linkage}${ret} @${fn.name}(${params})${dbgAttr} {`);
+      // `.` can't appear in a Milo identifier, so %__sret.out never collides
+      const allParams = isSret ? (params ? `ptr %__sret.out, ${params}` : "ptr %__sret.out") : params;
+      lines.push(`define ${linkage}${ret} @${fn.name}(${allParams})${dbgAttr} {`);
     }
     // Dotted label, not bare `entry`: LLVM shares one symbol table for block
     // labels and local values, and params are emitted as `%<name>`. A param named
@@ -1239,8 +1320,6 @@ export class Codegen {
 
     switch (stmt.kind) {
       case "Let": {
-        const [exprLines, val, valTy] = this.genExpr(stmt.value);
-        lines.push(...exprLines);
         // For `&T` locals (slices), store the inner value directly. The ref-ness is
         // a compile-time concept (enforces no-escape). At runtime it's a non-owning
         // %String (cap=0) or similar — no pointer indirection needed.
@@ -1248,6 +1327,25 @@ export class Codegen {
         const storedTypeKind = isRefLocal ? (stmt.type as Extract<TypeKind, {tag: "ref"}>).inner : stmt.type;
         const declTy = this.llvmType(storedTypeKind);
         const addrName = this.locals.has(stmt.name) ? `%${stmt.name}.${this.scopeCounter++}.addr` : `%${stmt.name}.addr`;
+        const bigAgg = !isRefLocal && !stmt.rangeCheck && this.isBigAgg(declTy);
+        let val = "";
+        let bigTmp: string | null = null;
+        if (bigAgg) {
+          // In-loop droppable redecl must keep the old order (eval RHS, drop old
+          // slot, then write) — the RHS may read the previous iteration's value —
+          // so spill through a temp. Otherwise write the destination directly.
+          if (this.needsDropCg(stmt.type) && this.loopHeader !== null) {
+            bigTmp = this.nextTemp();
+            lines.push(`  ${bigTmp} = alloca ${declTy}`);
+            this.genStoreInto(lines, bigTmp, declTy, stmt.value);
+          } else {
+            this.genStoreInto(lines, addrName, declTy, stmt.value);
+          }
+        } else {
+          const [exprLines, v] = this.genExpr(stmt.value);
+          lines.push(...exprLines);
+          val = v;
+        }
         this.locals.set(stmt.name, { type: declTy, typeKind: stmt.type, mutable: stmt.mutable, isRef: false, addr: addrName });
         this.entryAllocas.push(`  ${addrName} = alloca ${declTy}`);
         // Zero-init droppable allocas so a drop-glue pass over a never-initialized
@@ -1261,7 +1359,8 @@ export class Codegen {
             this.emitDropValue(lines, addrName, stmt.type);
           }
         }
-        lines.push(this.valStore(declTy, val, addrName));
+        if (bigTmp) this.emitMemcpy(lines, addrName, bigTmp, declTy);
+        else if (!bigAgg) lines.push(this.valStore(declTy, val, addrName));
         // Describe the value actually stored: for `&T` locals that's the inner value.
         this.dbgDeclare(lines, stmt.name, addrName, storedTypeKind, stmt.span?.line ?? 0, 0);
         if (stmt.rangeCheck) {
@@ -1300,6 +1399,23 @@ export class Codegen {
           this.emitStringAppendInPlace(lines, tgtPtr, rhsVal);
           return [lines, false];
         }
+        const assignLlTy = this.llvmType(stmt.target.type);
+        if (this.isBigAgg(assignLlTy)) {
+          // Materialize the RHS fully before touching the target (it may read the
+          // old value), matching the small-type eval→drop→store order, then copy.
+          const tmp = this.nextTemp();
+          lines.push(`  ${tmp} = alloca ${assignLlTy}`);
+          this.genStoreInto(lines, tmp, assignLlTy, stmt.value);
+          const [tl, tPtr] = this.genLValue(stmt.target);
+          lines.push(...tl);
+          const isLValueTgt =
+            stmt.target.kind === "Ident" || stmt.target.kind === "FieldAccess" || stmt.target.kind === "IndexAccess";
+          if (isLValueTgt && this.needsDropCg(stmt.target.type) && !this.lvalueMatches(stmt.value, stmt.target)) {
+            this.emitDropValue(lines, tPtr, stmt.target.type);
+          }
+          this.emitMemcpy(lines, tPtr, tmp, assignLlTy);
+          return [lines, false];
+        }
         const [valLines, val, valTy] = this.genExpr(stmt.value);
         lines.push(...valLines);
         const [targetLines, targetPtr, targetTy] = this.genLValue(stmt.target);
@@ -1326,6 +1442,23 @@ export class Codegen {
           } else {
             lines.push("  ret void");
           }
+          return [lines, true];
+        }
+        if (this.currentFnSret) {
+          const retLl = this.llvmType(stmt.retType);
+          this.genStoreInto(lines, "%__sret.out", retLl, stmt.value);
+          if (this.currentEnsures.length > 0) {
+            this.emitMemcpy(lines, "%__contract_result.addr", "%__sret.out", retLl);
+            const savedResult = this.locals.get("result");
+            this.locals.set("result", { type: retLl, typeKind: stmt.retType, mutable: false, isRef: false, addr: "%__contract_result.addr" });
+            this.emitEnsuresChecks(lines);
+            if (savedResult) this.locals.set("result", savedResult);
+            else this.locals.delete("result");
+          } else {
+            this.emitEnsuresChecks(lines);
+          }
+          this.emitDropGlue(lines);
+          lines.push("  ret void");
           return [lines, true];
         }
         const [exprLines, val, valTy] = this.genExpr(stmt.value);
@@ -2080,14 +2213,16 @@ export class Codegen {
     lines.push(`  br label %${condLabel}`);
     lines.push(`${condLabel}:`);
 
-    // call next(&mut self)
-    const result = this.nextTemp();
-    lines.push(`  ${result} = call ${retTy} @${stmt.nextMethod}(ptr ${iterAddr})`);
-
-    // stage enum to extract tag
+    // call next(&mut self); stage the Option enum in memory to extract the tag
     const stagePtr = this.nextTemp();
     this.entryAllocas.push(`  ${stagePtr} = alloca ${retTy}`);
-    lines.push(`  store ${retTy} ${result}, ptr ${stagePtr}`);
+    if (this.sretFns.has(stmt.nextMethod)) {
+      lines.push(`  call void @${stmt.nextMethod}(ptr ${stagePtr}, ptr ${iterAddr})`);
+    } else {
+      const result = this.nextTemp();
+      lines.push(`  ${result} = call ${retTy} @${stmt.nextMethod}(ptr ${iterAddr})`);
+      lines.push(`  store ${retTy} ${result}, ptr ${stagePtr}`);
+    }
     const tagPtr = this.nextTemp();
     lines.push(`  ${tagPtr} = getelementptr ${retTy}, ptr ${stagePtr}, i32 0, i32 0`);
     const tag = this.nextTemp();
@@ -2748,7 +2883,10 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
-  private genExpr(expr: HIRExpr): [string[], string, string] {
+  // sretDest: only honored when `expr` itself is a direct call to an
+  // sret-lowered fn (set by genStoreInto); the callee then writes straight
+  // into that pointer and no aggregate SSA value is materialized.
+  private genExpr(expr: HIRExpr, sretDest?: string): [string[], string, string] {
     const lines: string[] = [];
     const lt = this.llvmType(expr.type);
 
@@ -2807,7 +2945,14 @@ export class Codegen {
               const body: string[] = [];
               body.push(`define ${sig.retType} @${trampolineName}(${trampolineParams}) {`);
               body.push("entry.bb:");
-              if (sig.retType === "void") {
+              if (this.sretFns.has(expr.name)) {
+                // callee is sret-lowered; trampoline keeps the closure convention
+                // (returns the aggregate) and bridges via a local slot
+                body.push(`  %slot = alloca ${sig.retType}`);
+                body.push(`  call void @${expr.name}(${fwdArgs ? `ptr %slot, ${fwdArgs}` : "ptr %slot"})`);
+                body.push(`  %r = load ${sig.retType}, ptr %slot`);
+                body.push(`  ret ${sig.retType} %r`);
+              } else if (sig.retType === "void") {
                 body.push(`  call void @${expr.name}(${fwdArgs})`);
                 body.push("  ret void");
               } else {
@@ -2984,6 +3129,17 @@ export class Codegen {
         }
         const argsStr = argVals.map(a => `${a.type} ${a.val}`).join(", ");
         const retTy = sig?.retType ?? "i32";
+        if (this.sretFns.has(expr.func)) {
+          const dest = sretDest ?? this.nextTemp();
+          if (!sretDest) lines.push(`  ${dest} = alloca ${retTy}`);
+          lines.push(`  call void @${expr.func}(${argsStr ? `ptr ${dest}, ${argsStr}` : `ptr ${dest}`})`);
+          if (sretDest) return [lines, "undef", retTy];
+          // no direct destination: fall back to a first-class value for generic
+          // consumers (rare — slower to compile at -O2, but correct)
+          const tmp = this.nextTemp();
+          lines.push(`  ${tmp} = load ${retTy}, ptr ${dest}`);
+          return [lines, tmp, retTy];
+        }
         let callPrefix = retTy;
         if (expr.variadic) {
           const paramStr = sig!.paramTypes.join(", ");
@@ -3005,11 +3161,9 @@ export class Codegen {
         for (const f of expr.fields) {
           const idx = layout.fields.findIndex(lf => lf.name === f.name);
           const fieldTy = layout.fields[idx].type;
-          const [fLines, fVal] = this.genExpr(f.value);
-          lines.push(...fLines);
           const ptr = this.nextTemp();
           lines.push(`  ${ptr} = getelementptr ${structTy}, ptr ${alloca}, i32 0, i32 ${idx}`);
-          lines.push(this.valStore(fieldTy, fVal, ptr));
+          this.genStoreInto(lines, ptr, fieldTy, f.value);
         }
         const val = this.nextTemp();
         lines.push(`  ${val} = load ${structTy}, ptr ${alloca}`);

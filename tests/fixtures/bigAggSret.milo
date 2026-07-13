@@ -1,0 +1,37 @@
+// Big aggregates (≥128B) must never become first-class LLVM SSA values — a
+// whole-aggregate load/store gets SROA-expanded per-element with no size cap,
+// which made -O2 builds of struct-heavy code (NES %Bus/%Ppu framebuffer) never
+// finish. Codegen lowers big-agg returns to sret + moves/copies to llvm.memcpy.
+// This exercises constructor-return, big-agg copy, and copy independence.
+// @expect: 11
+// @expect: 99
+// @expect: 22
+// @expect: 105
+// @expect: 107
+struct Big {
+    buf: [i32; 4096],
+    tag: i64,
+}
+
+fn makeBig(seed: i64): Big {
+    var b = Big {
+        buf: [0; 4096], tag: seed
+    }
+    b.buf[0] = 11
+    b.buf[4095] = 22
+    b.tag = seed + 100
+    return b
+}
+
+fn main(): i32 {
+    let a = makeBig(5)
+    var c = a
+    c.buf[1] = 99
+    print(c.buf[0])
+    print(c.buf[1])
+    print(c.buf[4095])
+    print(c.tag)
+    let d = makeBig(7)
+    print(d.tag)
+    return 0
+}
