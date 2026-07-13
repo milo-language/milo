@@ -2179,6 +2179,50 @@ export class Codegen {
       }
     }
 
+    // Fast path — an all-integer/char match lowers to a single LLVM `switch`
+    // rather than an icmp/br comparison chain. LLVM turns the switch into a jump
+    // table (O(1) dispatch instead of a linear scan) and, critically, the CFG
+    // stays flat: a 250-arm opcode dispatcher was becoming a 461-branch chain
+    // that -O2's superlinear passes choked on (>3 min vs seconds). Requires
+    // distinct case values (LLVM rejects duplicates); anything else (string,
+    // bool, float, dup values) falls through to the chain below.
+    const allIntCharDistinct = (() => {
+      if (literalArms.length === 0) return false;
+      const seen = new Set<string>();
+      for (const la of literalArms) {
+        const p = la.arm.pattern;
+        if (p.kind !== "LiteralPattern" || (p.literalKind !== "int" && p.literalKind !== "char")) return false;
+        const key = String(p.value);
+        if (seen.has(key)) return false;
+        seen.add(key);
+      }
+      return true;
+    })();
+
+    if (allIntCharDistinct) {
+      const defaultLabel = wildcardArm ? this.nextLabel("match.wildcard") : this.nextLabel("match.default");
+      const cases = literalArms.map(la => {
+        const p = la.arm.pattern as HIRPattern & { kind: "LiteralPattern" };
+        return `${subjTy} ${p.value}, label %${la.label}`;
+      }).join(" ");
+      lines.push(`  switch ${subjTy} ${subjVal}, label %${defaultLabel} [${cases}]`);
+      for (const la of literalArms) {
+        lines.push(`${la.label}:`);
+        const armTerminated = this.emitMatchArmBody(lines, la.arm.body, resultSlot);
+        if (!armTerminated) { lines.push(`  br label %${endLabel}`); allArmsTerminated = false; }
+      }
+      lines.push(`${defaultLabel}:`);
+      if (wildcardArm) {
+        const wcTerminated = this.emitMatchArmBody(lines, wildcardArm.body, resultSlot);
+        if (!wcTerminated) { lines.push(`  br label %${endLabel}`); allArmsTerminated = false; }
+      } else {
+        lines.push(`  unreachable`);
+      }
+      lines.push(`${endLabel}:`);
+      if (allArmsTerminated) lines.push(`  unreachable`);
+      return [lines, allArmsTerminated];
+    }
+
     // chain: compare → arm body or fall through to next comparison
     for (let i = 0; i < literalArms.length; i++) {
       const next = i + 1 < literalArms.length
