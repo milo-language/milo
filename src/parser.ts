@@ -629,7 +629,27 @@ export class Parser {
       elseBody = this.parseStmts();
       this.expect(TokenKind.RBrace);
     }
+    // An arm block whose tail is a statement-form `if/else` still yields that
+    // if's value in expression context. parseStmts parsed it as an IfStmt (no
+    // value); reinterpret it as an if-expression so nested `if c { a } else { b }`
+    // arms typecheck and codegen as values. Scoped to if-expr arms, so plain
+    // statement-ifs elsewhere are untouched.
+    this.valueTailToExpr(thenBody);
+    this.valueTailToExpr(elseBody);
     return { kind: "IfExpr", cond, thenBody, elseBody, span: s };
+  }
+
+  // Rewrite a block's trailing statement-form if/else into an if-expression, in
+  // place, recursing so deeply-nested arms convert too.
+  private valueTailToExpr(body: Stmt[]): void {
+    if (body.length === 0) return;
+    const last = body[body.length - 1];
+    if (last.kind === "IfStmt" && last.elseBody) {
+      this.valueTailToExpr(last.thenBody);
+      this.valueTailToExpr(last.elseBody);
+      const asExpr: Expr = { kind: "IfExpr", cond: last.cond, thenBody: last.thenBody, elseBody: last.elseBody, span: last.span };
+      body[body.length - 1] = { kind: "ExprStmt", expr: asExpr, span: last.span };
+    }
   }
 
   private parseIfLet(s: Span): Stmt {
