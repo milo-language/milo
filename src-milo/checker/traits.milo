@@ -69,17 +69,15 @@ fn registerBuiltinTraits(ck: &mut Checker) {
     opTraits.push("Sub")
     opTraits.push("Mul")
     opTraits.push("Div")
-    var i: i64 = 0
-    while i < opTraits.len {
+    for op in opTraits {
         var methods: HashMap<string, TraitMethodInfo> = HashMap.new()
-        var methodName = opTraits[i].toLower()
+        var methodName = op.toLower()
         methods.insert(methodName, TraitMethodInfo {
             params: Vec.new(),
             ret: selfType.clone(),
             hasDefault: false,
         })
-        ck.traits.insert(opTraits[i].clone(), TraitInfo { name: opTraits[i].clone(), supertraits: Vec.new(), methods: methods })
-        i = i + 1
+        ck.traits.insert(op.clone(), TraitInfo { name: op.clone(), supertraits: Vec.new(), methods: methods })
     }
 
     // Register Eq for primitives

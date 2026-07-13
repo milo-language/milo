@@ -605,10 +605,8 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
     // f-strings lower to `format(parts...)` in parseFString; it is a builtin, not
     // a prelude function. Variadic, any displayable part, yields a string.
     if func == "format" {
-        var fi: i64 = 0
-        while fi < args.len {
-            checkExpr(ck, *args[fi])
-            fi = fi + 1
+        for arg in args {
+            checkExpr(ck, *arg)
         }
         return tyString()
     }
@@ -663,10 +661,8 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
     // prelude functions — the checker has to know them or every call is
     // "undefined function". Variadic; any displayable argument.
     if func == "print" || func == "println" || func == "eprint" {
-        var pi: i64 = 0
-        while pi < args.len {
-            checkExpr(ck, *args[pi])
-            pi = pi + 1
+        for arg in args {
+            checkExpr(ck, *arg)
         }
         return tyVoid()
     }
@@ -769,10 +765,8 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         // runtime-support builtins (_atomic*, _callClosure*, scheduler hooks)
         // exist in the oracle's codegen only; accept them so std checks
         if func.len > 1 && func[0] == 95 {
-            var bi: i64 = 0
-            while bi < args.len {
-                checkExpr(ck, *args[bi])
-                bi = bi + 1
+            for arg in args {
+                checkExpr(ck, *arg)
             }
             return tyUnknown()
         }
@@ -879,12 +873,10 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
             Option.Some(et) => {
                 match et {
                     TypeKind.TStruct(mangled) => {
-                        var bi: i64 = 0
-                        while bi < ck.structInsts.len {
-                            if ck.structInsts[bi].mangled == mangled && ck.structInsts[bi].base == structName {
+                        for inst in ck.structInsts {
+                            if inst.mangled == mangled && inst.base == structName {
                                 structName = mangled.clone()
                             }
-                            bi = bi + 1
                         }
                     }
                     _ => {}
@@ -1287,20 +1279,18 @@ fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argT
         }
         TypeKind.TStruct(mangled) => {
             // Look up the monomorphized instance's concrete args.
-            var ii: i64 = 0
-            while ii < ck.structInsts.len {
-                if ck.structInsts[ii].mangled == mangled {
-                    // Clone each arg; binding `let x = ck.structInsts[ii].args`
+            for inst in ck.structInsts {
+                if inst.mangled == mangled {
+                    // Clone each arg; binding `let x = inst.args`
                     // would move the Vec out and empty it for later lookups.
                     var ai: i64 = 0
-                    while ai < declAst.typeArgs.len && ai < ck.structInsts[ii].args.len {
-                        let ca = ck.structInsts[ii].args[ai].clone()
+                    while ai < declAst.typeArgs.len && ai < inst.args.len {
+                        let ca = inst.args[ai].clone()
                         inferFromAst(ck, typeParams, declAst.typeArgs[ai], ca, inferred)
                         ai = ai + 1
                     }
                     return
                 }
-                ii = ii + 1
             }
             return
         }
@@ -2043,10 +2033,8 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
         if tinfo.methods.contains(method) {
             let m = tinfo.methods.get(method)!
             // user args skip the implicit self (trait method's first param)
-            var ai: i64 = 0
-            while ai < args.len {
-                checkExpr(ck, *args[ai])
-                ai = ai + 1
+            for arg in args {
+                checkExpr(ck, *arg)
             }
             return m.ret.clone()
         }

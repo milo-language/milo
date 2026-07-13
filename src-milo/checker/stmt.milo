@@ -351,20 +351,16 @@ fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<H
         _ => {}
     }
 
-    var i: i64 = 0
-    while i < thenBody.len {
-        checkStmt(ck, *thenBody[i], fnRetType)
-        i = i + 1
+    for s in thenBody {
+        checkStmt(ck, *s, fnRetType)
     }
     popScope(ck)
 
     match elseBody {
         Option.Some(body) => {
             pushScope(ck)
-            var j: i64 = 0
-            while j < body.len {
-                checkStmt(ck, *body[j], fnRetType)
-                j = j + 1
+            for s in body {
+                checkStmt(ck, *s, fnRetType)
             }
             popScope(ck)
         }
@@ -411,10 +407,8 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
                 span: cloneSpan(span),
             })
             ck.loopDepth = ck.loopDepth + 1
-            var i: i64 = 0
-            while i < body.len {
-                checkStmt(ck, *body[i], fnRetType)
-                i = i + 1
+            for s in body {
+                checkStmt(ck, *s, fnRetType)
             }
             ck.loopDepth = ck.loopDepth - 1
             popScope(ck)
@@ -514,10 +508,8 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
         }
     }
 
-    var i: i64 = 0
-    while i < body.len {
-        checkStmt(ck, *body[i], fnRetType)
-        i = i + 1
+    for s in body {
+        checkStmt(ck, *s, fnRetType)
     }
 
     ck.loopDepth = ck.loopDepth - 1
@@ -532,16 +524,15 @@ fn checkFunction(ck: &mut Checker, func: &Function) {
     ck.currentFnRetType = retType.clone()
 
     // Declare parameters
-    var i: i64 = 0
-    while i < func.params.len {
-        let pType = resolveAstType(ck, func.params[i].ty)
+    for param in func.params {
+        let pType = resolveAstType(ck, param.ty)
         // a &mut param makes the pointee assignable through the ref
         var pMut = false
         match pType.clone() {
             TypeKind.TRef(inner, m) => { pMut = m }
             _ => {}
         }
-        declare(ck, func.params[i].name.clone(), VarInfo {
+        declare(ck, param.name.clone(), VarInfo {
             ty: pType,
             mutable: pMut,
             moved: false,
@@ -549,14 +540,11 @@ fn checkFunction(ck: &mut Checker, func: &Function) {
             read: false,
             span: Option.None,
         })
-        i = i + 1
     }
 
     // Check body
-    var j: i64 = 0
-    while j < func.body.len {
-        checkStmt(ck, *func.body[j], retType)
-        j = j + 1
+    for s in func.body {
+        checkStmt(ck, *s, retType)
     }
 
     popScope(ck)
@@ -566,13 +554,11 @@ fn checkFunction(ck: &mut Checker, func: &Function) {
 
 fn registerFunction(ck: &mut Checker, func: &Function) {
     var params: Vec<FnParam> = Vec.new()
-    var i: i64 = 0
-    while i < func.params.len {
+    for param in func.params {
         params.push(FnParam {
-            name: func.params[i].name.clone(),
-            ty: resolveAstType(ck, func.params[i].ty),
+            name: param.name.clone(),
+            ty: resolveAstType(ck, param.ty),
         })
-        i = i + 1
     }
     let sig = FnSig {
         params: params,
@@ -585,13 +571,11 @@ fn registerFunction(ck: &mut Checker, func: &Function) {
 
 fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
     var fields: Vec<CkStructField> = Vec.new()
-    var i: i64 = 0
-    while i < decl.fields.len {
+    for field in decl.fields {
         fields.push(CkStructField {
-            name: decl.fields[i].name.clone(),
-            ty: resolveAstType(ck, decl.fields[i].ty),
+            name: field.name.clone(),
+            ty: resolveAstType(ck, field.ty),
         })
-        i = i + 1
     }
     let info = StructInfo {
         fields: fields,
@@ -605,10 +589,8 @@ fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
     var i: i64 = 0
     while i < decl.variants.len {
         var fields: Vec<TypeKind> = Vec.new()
-        var j: i64 = 0
-        while j < decl.variants[i].fields.len {
-            fields.push(resolveAstType(ck, decl.variants[i].fields[j]))
-            j = j + 1
+        for vfield in decl.variants[i].fields {
+            fields.push(resolveAstType(ck, vfield))
         }
         variants.insert(decl.variants[i].name.clone(), VariantInfo {
             tag: i as i32,
@@ -753,41 +735,32 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     // later (e.g. `arena: Arena<Node>`) resolves it to the monomorphized name
     // rather than the flattened base.
     var i: i64 = 0
-    while i < program.structs.len {
-        if program.structs[i].typeParams.len > 0 {
-            registerGenericStruct(ck, program.structs[i])
+    for s in program.structs {
+        if s.typeParams.len > 0 {
+            registerGenericStruct(ck, s)
         }
-        i = i + 1
     }
-    i = 0
-    while i < program.enums.len {
-        if program.enums[i].typeParams.len > 0 {
-            registerGenericEnum(ck, program.enums[i])
+    for e in program.enums {
+        if e.typeParams.len > 0 {
+            registerGenericEnum(ck, e)
         }
-        i = i + 1
     }
-    i = 0
-    while i < program.structs.len {
-        if program.structs[i].typeParams.len == 0 {
-            registerStruct(ck, program.structs[i])
+    for s in program.structs {
+        if s.typeParams.len == 0 {
+            registerStruct(ck, s)
         }
-        i = i + 1
     }
-    i = 0
-    while i < program.enums.len {
-        if program.enums[i].typeParams.len == 0 {
-            registerEnum(ck, program.enums[i])
+    for e in program.enums {
+        if e.typeParams.len == 0 {
+            registerEnum(ck, e)
         }
-        i = i + 1
     }
-    i = 0
-    while i < program.functions.len {
-        if program.functions[i].typeParams.len > 0 {
-            registerGenericFn(ck, program.functions[i])
+    for f in program.functions {
+        if f.typeParams.len > 0 {
+            registerGenericFn(ck, f)
         } else {
-            registerFunction(ck, program.functions[i])
+            registerFunction(ck, f)
         }
-        i = i + 1
     }
 
     // Phase 1.5: enum payloads and struct fields were converted before every
