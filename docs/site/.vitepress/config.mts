@@ -28,6 +28,7 @@ export default defineConfig({
       { text: 'Language', link: '/language/' },
       { text: 'Standard Library', link: '/stdlib/' },
       { text: 'Playground', link: '/playground' },
+      { text: 'NES', link: '/nes/', target: '_self' },
       { text: 'Benchmarks', link: '/benchmarks' },
       { text: 'Roadmap', link: '/roadmap' },
       { text: 'AI Coding', link: '/ai-coding' },

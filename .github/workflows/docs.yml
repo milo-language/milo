@@ -24,6 +24,16 @@ jobs:
         with:
           bun-version: latest
 
+      # Compile the Milo NES core to JS and stage the demo under the VitePress
+      # public dir so it deploys at /milo/nes/. Source of truth stays in
+      # examples/apps/nes/web; nes-core.js is regenerated here to match webcore.milo.
+      - name: Build Milo NES browser demo
+        run: |
+          bun install
+          bun run src/main.ts emit-js examples/apps/nes/webcore.milo -o examples/apps/nes/web/nes-core.js
+          mkdir -p docs/site/public/nes
+          cp examples/apps/nes/web/index.html examples/apps/nes/web/nes-core.js docs/site/public/nes/
+
       - name: Install dependencies
         run: cd docs/site && bun install
 
