@@ -30,6 +30,14 @@ many games run without a live Z80, some need it).
 
 ### Status (in progress)
 
+**Compatibility: 3/3 commercial games boot + render** (validates the emulator is
+not Sonic-specific): Sonic 1 (Green Hill Zone gameplay), Golden Axe (title kanji
+戦斧 + sky), Streets of Rage 3 (STREETS title logo). All run millions of 68k+z80
+instructions with zero unimplemented opcodes. ROMs gitignored under roms/games/.
+Known: minor mid-screen sprite/plane artifacts on some titles; sound not playing
+(68k<->z80 sync TODO). SDL frontend fixed for H32<->H40 width switch (was crashing).
+
+
 **🎉🎉🎉 GREEN HILL ZONE renders** — demo auto-play shows GHZ Act 1: HUD
 (SCORE/TIME/RINGS/lives), palm trees, checkered ground, water, rings, Sonic
 sprite, with hscroll/vscroll scrolling. Real Sonic gameplay rendering. Reached
