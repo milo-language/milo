@@ -75,9 +75,12 @@ fn newMem(): Mem {
     }
 }
 
-// The Z80 runs when it is out of reset and the 68k is not holding its bus.
+// The Z80 runs when out of reset. Busreq is deliberately NOT gated here: our
+// cores aren't cycle-synced, so freezing the Z80 during a 68k bus-request while
+// the 68k spins waiting for a Z80-cleared flag deadlocks. Letting the Z80 keep
+// executing (it shares z80.mem with the 68k window) lets the handshake complete.
 fn z80Running(m: &Mem): bool {
-    return !m.z80Reset && !m.z80Busreq
+    return !m.z80Reset
 }
 
 // 3-button pad read (active low). TH=1 exposes Up/Down/Left/Right/B/C; TH=0
@@ -213,9 +216,10 @@ fn devRead16(m: &Mem, a: i64): i64 {
 
 fn devRead8(m: &Mem, a: i64): i64 {
     if a >= 0xA00000 && a <= 0xA0FFFF {
-        // The 68k<->Z80 sound handshake polls a flag it wrote to Z80 RAM, waiting
-        // for the Z80 to clear it. Our cores aren't cycle-synced, so return 0
-        // ("ready") to avoid a boot deadlock; the Z80 still runs its own RAM.
+        // Returning real Z80 RAM makes the 68k upload the full sound driver but
+        // then its VBlank handler hangs on the 68k<->Z80 handshake (our cores are
+        // not cycle-synced). Returning 0 ("Z80 ready") keeps boot + video working;
+        // in-game music needs proper bus-sync — a known TODO.
         return 0
     }
     if a == 0xA10001 {

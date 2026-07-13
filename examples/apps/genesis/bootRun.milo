@@ -129,7 +129,7 @@ fn main(): i32 {
     print("steps executed: " + itoa(steps))
     print("final PC=" + hex8(cpu.pc) + " SR=" + hex4(cpu.sr) + " A7=" + hex8(cpu.a[7]))
     print("frames=" + itoa(frames) + " vblank-ints=" + itoa(vints) + " vdpLine=" + itoa(m.vdpLine))
-    print("z80: running=" + boolStr(z80Running(m)) + " steps=" + itoa(z80Steps) + " fail=" + itoa(z80Fail) + " pc=" + hex4(m.z80.pc) + " ymReg2b=" + hex2(m.z80.ym[0x2B]))
+    print("z80: running=" + boolStr(z80Running(m)) + " steps=" + itoa(z80Steps) + " fail=" + itoa(z80Fail) + " pc=" + hex4(m.z80.pc))
     printVdpRegs(m)
     printCram(m)
     renderPpm(m, "/tmp/sonic.ppm")
