@@ -24,6 +24,7 @@ fn vword(p: &mut Ppu, w: i64): void {
 fn main(): i32 {
     var p = newPpu()
     ppuRegWrite(p, 0x00, 0x0F) // INIDISP: full brightness, no force-blank
+    ppuRegWrite(p, 0x01, 0x03) // OBSEL: OBJ char base -> empty VRAM (no sprites)
     ppuRegWrite(p, 0x05, 0x01) // BGMODE 1
     ppuRegWrite(p, 0x07, 0x04) // BG1SC: tilemap base word $0400
     ppuRegWrite(p, 0x0B, 0x00) // BG12NBA: BG1 char base word 0
