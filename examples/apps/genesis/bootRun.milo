@@ -17,7 +17,7 @@ from "./m68k" import {
     M68k, Mem, newCpu, newMem, step, deliverInterrupt, z80Running
 }
 from "./z80" import {
-    stepZ80
+    stepZ80, z80Interrupt
 }
 from "./sound" import {
     Synth, newSynth, synthSample
@@ -130,9 +130,15 @@ fn main(): i32 {
         // VBlank interrupt on the rising edge of the vblank region, when enabled
         // by VDP reg1 bit5 (0x20).
         let inVblank = m.vdpLine >= 224
-        if inVblank && !wasVblank && (m.vdpRegs[1] & 0x20) != 0 {
-            if deliverInterrupt(cpu, m, 6) {
-                vints = vints + 1
+        if inVblank && !wasVblank {
+            if (m.vdpRegs[1] & 0x20) != 0 {
+                if deliverInterrupt(cpu, m, 6) {
+                    vints = vints + 1
+                }
+            }
+            // The Z80 INT line is tied to VBlank (independent of the 68k's reg1).
+            if z80Running(m) {
+                z80Interrupt(m.z80)
             }
         }
         wasVblank = inVblank

@@ -455,6 +455,26 @@ fn setRP2(cpu: &mut Z80, p: i64, v: i64) {
     }
 }
 
+// Deliver the Z80 maskable interrupt (its INT line is tied to the VDP VBlank on
+// the Genesis). Fires once per frame if interrupts are enabled. IM 1 (the usual
+// mode) vectors to $0038; IM 2 uses the I-register vector table.
+fn z80Interrupt(cpu: &mut Z80): bool {
+    if !cpu.iff1 {
+        return false
+    }
+    cpu.iff1 = false
+    cpu.iff2 = false
+    cpu.halted = false
+    push16(cpu, cpu.pc)
+    if cpu.im == 2 {
+        let vec = ((cpu.i << 8) | 0xFF) & 0xFFFF
+        cpu.pc = rd(cpu, vec) | (rd(cpu, (vec + 1) & 0xFFFF) << 8)
+    } else {
+        cpu.pc = 0x0038 // IM 0/1 -> RST 38
+    }
+    return true
+}
+
 fn push16(cpu: &mut Z80, v: i64) {
     cpu.sp = (cpu.sp - 1) & 0xFFFF
     wr(cpu, cpu.sp, (v >> 8) & 0xFF)

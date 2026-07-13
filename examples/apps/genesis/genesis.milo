@@ -15,7 +15,7 @@ from "./m68k" import {
     M68k, Mem, newCpu, newMem, step, deliverInterrupt, z80Running
 }
 from "./z80" import {
-    stepZ80
+    stepZ80, z80Interrupt
 }
 from "./sound" import {
     Synth, newSynth, synthSample
@@ -93,8 +93,13 @@ fn runFrame(cpu: &mut M68k, m: &mut Mem) {
             }
             k = k + 1
         }
-        if line == 224 && (m.vdpRegs[1] & 0x20) != 0 {
-            deliverInterrupt(cpu, m, 6)
+        if line == 224 {
+            if (m.vdpRegs[1] & 0x20) != 0 {
+                deliverInterrupt(cpu, m, 6)
+            }
+            if z80Running(m) {
+                z80Interrupt(m.z80) // Z80 INT tied to VBlank (drives sound timers)
+            }
         }
         line = line + 1
     }
