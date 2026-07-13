@@ -77,7 +77,7 @@
 
 <div id="status">Click a game above, or load your own ROM (drag onto the window).</div>
 <div class="keys">
-  <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> A &nbsp;·&nbsp; <b>X</b> B &nbsp;·&nbsp; <b>C</b> C &nbsp;·&nbsp; <b>Enter</b> Start
+  <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> B (attack) &nbsp;·&nbsp; <b>X</b> A &nbsp;·&nbsp; <b>C</b> C (jump) &nbsp;·&nbsp; <b>Enter</b> Start
 </div>
 
 <div class="pitch">
@@ -104,7 +104,7 @@ let pad = 0;
 // key -> pad1 bit (see setButtons in genesisWebcore.milo)
 const KEYS = {
   "ArrowUp": 0x01, "ArrowDown": 0x02, "ArrowLeft": 0x04, "ArrowRight": 0x08,
-  "KeyZ": 0x10, "KeyX": 0x20, "KeyC": 0x40, "Enter": 0x80,
+  "KeyZ": 0x20, "KeyX": 0x10, "KeyC": 0x40, "Enter": 0x80,   // Z->B(attack), X->A, C->C(jump)
 };
 addEventListener("keydown", e => { if (KEYS[e.code] !== undefined) { pad |= KEYS[e.code]; e.preventDefault(); } });
 addEventListener("keyup",   e => { if (KEYS[e.code] !== undefined) { pad &= ~KEYS[e.code]; e.preventDefault(); } });

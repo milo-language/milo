@@ -33,7 +33,7 @@ class Cart {
 }
 
 class Mem {
-  constructor(ram, touched, genesis, vram, cram, vsram, vdpRegs, vdpAddr, vdpCode, vdpFirst, vdpPending, vdpLine, dmaFillPending, z80Busreq, z80Reset, z80, ctrl1, tmssUnlocked, pad1, padTh) {
+  constructor(ram, touched, genesis, vram, cram, vsram, vdpRegs, vdpAddr, vdpCode, vdpFirst, vdpPending, vdpLine, dmaFillPending, fillAddr, fillInc, fillLen, lastDataByte, z80Busreq, z80Reset, z80, ctrl1, tmssUnlocked, pad1, padTh) {
     this.ram = ram;
     this.touched = touched;
     this.genesis = genesis;
@@ -47,6 +47,10 @@ class Mem {
     this.vdpPending = vdpPending;
     this.vdpLine = vdpLine;
     this.dmaFillPending = dmaFillPending;
+    this.fillAddr = fillAddr;
+    this.fillInc = fillInc;
+    this.fillLen = fillLen;
+    this.lastDataByte = lastDataByte;
     this.z80Busreq = z80Busreq;
     this.z80Reset = z80Reset;
     this.z80 = z80;
@@ -74,7 +78,7 @@ class M68k {
 }
 
 class Z80 {
-  constructor(a, b, c, d, e, h, l, f, i, r, pc, sp, ix, iy, af_, bc_, de_, hl_, iff1, iff2, im, wz, halted, mem, gen, bank, ymAddr0, ymAddr1, ym, psgLatch, psg, fmKey, rom, dac, dacW, dacR) {
+  constructor(a, b, c, d, e, h, l, f, i, r, pc, sp, ix, iy, af_, bc_, de_, hl_, iff1, iff2, im, wz, halted, mem, gen, bank, ymAddr0, ymAddr1, ym, psgLatch, psg, fmKey, rom, dac, dacW, dacR, ymStatus, timerACnt, timerARun, timerBCnt, timerBRun) {
     this.a = a;
     this.b = b;
     this.c = c;
@@ -111,6 +115,11 @@ class Z80 {
     this.dac = dac;
     this.dacW = dacW;
     this.dacR = dacR;
+    this.ymStatus = ymStatus;
+    this.timerACnt = timerACnt;
+    this.timerARun = timerARun;
+    this.timerBCnt = timerBCnt;
+    this.timerBRun = timerBRun;
   }
 }
 
@@ -669,10 +678,9 @@ function stepFrame(h) {
     const row = Math.trunc(Math.trunc(i / srcW));
     const col = (i % srcW);
     const dst = Math.trunc((Math.trunc((Math.trunc((row * MAXW)) + col)) * 4));
-    const e = h.m.cram[((fb[i] & 63) >>> 0)];
-    h.rgba[dst] = (cramR(e) & 0xFF);
-    h.rgba[Math.trunc((dst + 1))] = (cramG(e) & 0xFF);
-    h.rgba[Math.trunc((dst + 2))] = (cramB(e) & 0xFF);
+    h.rgba[dst] = (pixelR(h.m, fb[i]) & 0xFF);
+    h.rgba[Math.trunc((dst + 1))] = (pixelG(h.m, fb[i]) & 0xFF);
+    h.rgba[Math.trunc((dst + 2))] = (pixelB(h.m, fb[i]) & 0xFF);
     h.rgba[Math.trunc((dst + 3))] = 255;
     i = Math.trunc((i + 1));
   }
@@ -761,7 +769,7 @@ function newMem() {
     ram.push(0);
     i = Math.trunc((i + 1));
   }
-  return new Mem(ram, [], false, [], Array.from({length: 64}, () => __clone(0)), Array.from({length: 40}, () => __clone(0)), Array.from({length: 24}, () => __clone(0)), 0, 0, 0, false, 0, false, false, true, newZ80(), 0, false, 0, false);
+  return new Mem(ram, [], false, [], Array.from({length: 64}, () => __clone(0)), Array.from({length: 40}, () => __clone(0)), Array.from({length: 24}, () => __clone(0)), 0, 0, 0, false, 0, false, 0, 0, 0, 0, false, true, newZ80(), 0, false, 0, false);
 }
 
 function z80Running(m) {
@@ -874,7 +882,7 @@ function isDevice(a) {
 }
 
 function vdpStatus(m) {
-  let s = 13312;
+  let s = ((13312 | 512) >>> 0);
   if ((m.vdpLine >= 224)) {
     s = ((s | 8) >>> 0);
   }
@@ -990,7 +998,14 @@ function vdpControlWrite(m, val) {
 function vdpDma(m) {
   const mode = ((Math.floor(m.vdpRegs[23] / 2 ** (6)) & 3) >>> 0);
   if ((mode == 2)) {
-    m.dmaFillPending = true;
+    let flen = ((((m.vdpRegs[20] << 8) >>> 0) | m.vdpRegs[19]) >>> 0);
+    if ((flen == 0)) {
+      flen = 65536;
+    }
+    m.fillAddr = m.vdpAddr;
+    m.fillInc = m.vdpRegs[15];
+    m.fillLen = flen;
+    doFill(m, m.lastDataByte);
     return;
   }
   if ((mode == 3)) {
@@ -1010,6 +1025,11 @@ function vdpDma(m) {
     src = ((Math.trunc((src + 2)) & 16777215) >>> 0);
     i = Math.trunc((i + 1));
   }
+  const srcWord = ((Math.floor(src / 2 ** (1)) & 65535) >>> 0);
+  m.vdpRegs[21] = ((srcWord & 255) >>> 0);
+  m.vdpRegs[22] = ((Math.floor(srcWord / 2 ** (8)) & 255) >>> 0);
+  m.vdpRegs[19] = 0;
+  m.vdpRegs[20] = 0;
 }
 
 function vdpDmaCopy(m) {
@@ -1039,28 +1059,27 @@ function vdpDmaCopy(m) {
   m.vdpAddr = ((dst & 131071) >>> 0);
 }
 
-function vdpDataWrite(m, val) {
-  if (m.dmaFillPending) {
-    m.dmaFillPending = false;
-    const fillByte = (((Math.floor(val / 2 ** (8)) & 255) >>> 0) & 0xFF);
-    let len = ((((m.vdpRegs[20] << 8) >>> 0) | m.vdpRegs[19]) >>> 0);
-    if ((len == 0)) {
-      len = 65536;
+function doFill(m, fillByteIn) {
+  m.dmaFillPending = false;
+  const fillByte = (((fillByteIn & 255) >>> 0) & 0xFF);
+  const len = m.fillLen;
+  const inc = m.fillInc;
+  let da = m.fillAddr;
+  let i = 0;
+  while ((i < len)) {
+    const idx = ((da & 65535) >>> 0);
+    while ((m.vram.length <= idx)) {
+      m.vram.push(0);
     }
-    let da = m.vdpAddr;
-    let i = 0;
-    while ((i < len)) {
-      const idx = ((da & 65535) >>> 0);
-      while ((m.vram.length <= idx)) {
-        m.vram.push(0);
-      }
-      m.vram[idx] = fillByte;
-      da = ((Math.trunc((da + m.vdpRegs[15])) & 131071) >>> 0);
-      i = Math.trunc((i + 1));
-    }
-    m.vdpAddr = ((da & 131071) >>> 0);
-    return;
+    m.vram[idx] = fillByte;
+    da = ((Math.trunc((da + inc)) & 131071) >>> 0);
+    i = Math.trunc((i + 1));
   }
+  m.vdpAddr = ((da & 131071) >>> 0);
+}
+
+function vdpDataWrite(m, val) {
+  m.lastDataByte = ((Math.floor(val / 2 ** (8)) & 255) >>> 0);
   const target = ((m.vdpCode & 15) >>> 0);
   const a = m.vdpAddr;
   if ((target == 1)) {
@@ -2757,7 +2776,32 @@ function newZ80() {
     mem.push(0);
     i = Math.trunc((i + 1));
   }
-  return new Z80(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, 0, 0, false, mem, false, 0, 0, 0, Array.from({length: 512}, () => __clone(0)), 0, Array.from({length: 8}, () => __clone(0)), [false, false, false, false, false, false], [], Array.from({length: 4096}, () => __clone(0)), 0, 0);
+  return new Z80(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, 0, 0, false, mem, false, 0, 0, 0, Array.from({length: 512}, () => __clone(0)), 0, Array.from({length: 8}, () => __clone(0)), [false, false, false, false, false, false], [], Array.from({length: 4096}, () => __clone(0)), 0, 0, 0, 0, false, 0, false);
+}
+
+function ymTimerTick(cpu, us) {
+  if (cpu.timerARun) {
+    cpu.timerACnt = Math.trunc((cpu.timerACnt + us));
+    const na = ((((((cpu.ym[36] & 255) >>> 0) << 2) >>> 0) | ((cpu.ym[37] & 3) >>> 0)) >>> 0);
+    const periodA = Math.trunc((18 * Math.trunc((1024 - na))));
+    if (((periodA > 0) && (cpu.timerACnt >= periodA))) {
+      cpu.timerACnt = Math.trunc((cpu.timerACnt - periodA));
+      if ((((cpu.ym[39] & 4) >>> 0) != 0)) {
+        cpu.ymStatus = ((cpu.ymStatus | 1) >>> 0);
+      }
+    }
+  }
+  if (cpu.timerBRun) {
+    cpu.timerBCnt = Math.trunc((cpu.timerBCnt + us));
+    const nb = ((cpu.ym[38] & 255) >>> 0);
+    const periodB = Math.trunc((288 * Math.trunc((256 - nb))));
+    if (((periodB > 0) && (cpu.timerBCnt >= periodB))) {
+      cpu.timerBCnt = Math.trunc((cpu.timerBCnt - periodB));
+      if ((((cpu.ym[39] & 8) >>> 0) != 0)) {
+        cpu.ymStatus = ((cpu.ymStatus | 2) >>> 0);
+      }
+    }
+  }
 }
 
 function rd(cpu, addr) {
@@ -2772,6 +2816,9 @@ function rd(cpu, addr) {
         return Math.trunc(cpu.rom[src]);
       }
       return 0;
+    }
+    if (((a >= 16384) && (a <= 16387))) {
+      return cpu.ymStatus;
     }
     return 0;
   }
@@ -2802,6 +2849,16 @@ function z80DevWrite(cpu, a, val) {
     if ((reg == 42)) {
       cpu.dac[((cpu.dacW & 4095) >>> 0)] = val;
       cpu.dacW = Math.trunc((cpu.dacW + 1));
+    }
+    if ((reg == 39)) {
+      cpu.timerARun = (((val & 1) >>> 0) != 0);
+      cpu.timerBRun = (((val & 2) >>> 0) != 0);
+      if ((((val & 16) >>> 0) != 0)) {
+        cpu.ymStatus = ((cpu.ymStatus & (~1)) >>> 0);
+      }
+      if ((((val & 32) >>> 0) != 0)) {
+        cpu.ymStatus = ((cpu.ymStatus & (~2)) >>> 0);
+      }
     }
     if ((reg == 40)) {
       const sel = ((val & 7) >>> 0);
@@ -3298,6 +3355,7 @@ function doDaa(cpu) {
 }
 
 function stepZ80(cpu) {
+  ymTimerTick(cpu, 1);
   const op = fetchOp(cpu);
   const x = ((Math.floor(op / 2 ** (6)) & 3) >>> 0);
   const y = ((Math.floor(op / 2 ** (3)) & 7) >>> 0);
@@ -4354,6 +4412,32 @@ function cramB(e) {
   return Math.trunc((((Math.floor(e / 2 ** (9)) & 7) >>> 0) * 36));
 }
 
+function shComp(c, mode) {
+  if ((mode == 1)) {
+    return Math.trunc(Math.trunc(c / 2));
+  }
+  if ((mode == 2)) {
+    const v = Math.trunc((Math.trunc(Math.trunc(c / 2)) + 128));
+    if ((v > 255)) {
+      return 255;
+    }
+    return v;
+  }
+  return c;
+}
+
+function pixelR(m, packed) {
+  return shComp(cramR(m.cram[((packed & 63) >>> 0)]), ((Math.floor(packed / 2 ** (6)) & 3) >>> 0));
+}
+
+function pixelG(m, packed) {
+  return shComp(cramG(m.cram[((packed & 63) >>> 0)]), ((Math.floor(packed / 2 ** (6)) & 3) >>> 0));
+}
+
+function pixelB(m, packed) {
+  return shComp(cramB(m.cram[((packed & 63) >>> 0)]), ((Math.floor(packed / 2 ** (6)) & 3) >>> 0));
+}
+
 function vram8(m, addr) {
   const a = ((addr & 65535) >>> 0);
   if ((a < m.vram.length)) {
@@ -4485,6 +4569,16 @@ function renderIndexed(m) {
   const baseA = ((((m.vdpRegs[2] & 56) >>> 0) << 10) >>> 0);
   const baseB = ((((m.vdpRegs[4] & 7) >>> 0) << 13) >>> 0);
   const backdrop = ((m.vdpRegs[7] & 63) >>> 0);
+  const sh = (((m.vdpRegs[12] & 8) >>> 0) != 0);
+  if ((((m.vdpRegs[1] & 64) >>> 0) == 0)) {
+    let blank = [];
+    let bi = 0;
+    while ((bi < Math.trunc((width * height)))) {
+      blank.push(((backdrop & 63) >>> 0));
+      bi = Math.trunc((bi + 1));
+    }
+    return blank;
+  }
   const spanAx = Math.trunc((planeW * 8));
   const spanAy = Math.trunc((planeH * 8));
   let spr = [];
@@ -4511,10 +4605,34 @@ function renderIndexed(m) {
         aVal = samplePlane(m, baseA, planeW, planeH, wrapCoord(Math.trunc((x - hA)), spanAx), pyA);
       }
       const bVal = samplePlane(m, baseB, planeW, planeH, wrapCoord(Math.trunc((x - hB)), spanAx), pyB);
-      const sVal = spr[Math.trunc((Math.trunc((y * width)) + x))];
+      let sVal = spr[Math.trunc((Math.trunc((y * width)) + x))];
+      let shadowed = false;
+      let highlighted = false;
+      if (sh) {
+        const hiPlane = (((aVal >= 0) && (((aVal & PRI) >>> 0) != 0)) || ((bVal >= 0) && (((bVal & PRI) >>> 0) != 0)));
+        shadowed = (!hiPlane);
+        if ((sVal >= 0)) {
+          const sc = ((sVal & 63) >>> 0);
+          if ((sc == 63)) {
+            shadowed = true;
+            sVal = (-1);
+          } else {
+            if ((sc == 62)) {
+              if (shadowed) {
+                shadowed = false;
+              } else {
+                highlighted = true;
+              }
+              sVal = (-1);
+            }
+          }
+        }
+      }
       let pick = backdrop;
+      let winSprite = false;
       if (((sVal >= 0) && (((sVal & PRI) >>> 0) != 0))) {
         pick = ((sVal & 63) >>> 0);
+        winSprite = true;
       } else {
         if (((aVal >= 0) && (((aVal & PRI) >>> 0) != 0))) {
           pick = ((aVal & 63) >>> 0);
@@ -4524,6 +4642,7 @@ function renderIndexed(m) {
           } else {
             if ((sVal >= 0)) {
               pick = ((sVal & 63) >>> 0);
+              winSprite = true;
             } else {
               if ((aVal >= 0)) {
                 pick = ((aVal & 63) >>> 0);
@@ -4536,7 +4655,17 @@ function renderIndexed(m) {
           }
         }
       }
-      fb.push(((pick & 63) >>> 0));
+      let mode = 0;
+      if ((sh && (!winSprite))) {
+        if (highlighted) {
+          mode = 2;
+        } else {
+          if (shadowed) {
+            mode = 1;
+          }
+        }
+      }
+      fb.push(((((pick & 63) >>> 0) | ((mode << 6) >>> 0)) >>> 0));
       x = Math.trunc((x + 1));
     }
     y = Math.trunc((y + 1));
