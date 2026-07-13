@@ -23,10 +23,9 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
     var functions: Vec<HIRFunction> = Vec.new()
 
     // Lower structs (skip generic templates)
-    var i: i64 = 0
-    while i < program.structs.len {
-        if program.structs[i].typeParams.len == 0 {
-            let name = program.structs[i].name.clone()
+    for decl in program.structs {
+        if decl.typeParams.len == 0 {
+            let name = decl.name.clone()
             if ck.structs.contains(name) {
                 let info = ck.structs.get(name)!
                 var fields: Vec<HIRField> = Vec.new()
@@ -39,7 +38,6 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
                 structs.push(HIRStruct { name: name, fields: fields })
             }
         }
-        i = i + 1
     }
 
     // Lower enums (all registered, including monomorphized)
@@ -56,15 +54,12 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
     }
 
     // Lower functions
-    i = 0
-    while i < program.functions.len {
-        let f = program.functions[i]
+    for f in program.functions {
         if f.isExtern {
             functions.push(lowerExtern(f, ck))
         } else if f.typeParams.len == 0 {
             functions.push(lowerFn(f, ck))
         }
-        i = i + 1
     }
 
     // Lower monomorphized functions
@@ -745,13 +740,11 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
         }
         Expr.Closure(params, retType, body, isMove, span) => {
             var hirParams: Vec<ClosureParam> = Vec.new()
-            var i: i64 = 0
-            while i < params.len {
+            for param in params {
                 hirParams.push(ClosureParam {
-                    name: params[i].name.clone(),
-                    ty: typeFromAst(params[i].ty),
+                    name: param.name.clone(),
+                    ty: typeFromAst(param.ty),
                 })
-                i = i + 1
             }
             var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
             var closureRetType = tyVoid()
