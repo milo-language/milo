@@ -11,6 +11,9 @@ hero:
     - theme: alt
       text: Learn More
       link: /language/
+    - theme: alt
+      text: ▶ Play a demo
+      link: /nes/
 ---
 
 <div class="pillars-colored">
@@ -26,6 +29,28 @@ hero:
     <h2 class="ch-orange">Formally verifiable. Built for AI.</h2>
     <p>Built-in contracts and safety profiles let you prove code correct with theorem provers. Simple rules + loud errors = <a href="/milo/ai-coding">LLMs catch mistakes at compile time, not in production</a>.</p>
   </div>
+</div>
+
+<div class="showcase">
+  <div class="showcase-head">
+    <h2>Talk is cheap. Here's what Milo ships.</h2>
+    <p>Full game-console emulators, written in Milo. The <em>same source</em> compiles to a native binary <strong>and</strong> to the JavaScript running these pages — byte-for-byte identical output. No wasm, no rewrite. Click and play, right now, in your browser.</p>
+  </div>
+  <div class="showcase-grid">
+    <a class="app-card" href="/milo/nes/">
+      <div class="app-emoji">🎮</div>
+      <h3>NES</h3>
+      <p>6502 CPU · PPU · APU — a complete Nintendo Entertainment System. Commercial and homebrew ROMs at 60&nbsp;fps with sound.</p>
+      <span class="app-play">▶ Play in your browser</span>
+    </a>
+    <a class="app-card" href="/milo/genesis/">
+      <div class="app-emoji">🕹️</div>
+      <h3>Genesis</h3>
+      <p>68000 + Z80 + VDP + YM2612 — a complete Sega Genesis / Mega&nbsp;Drive. Sonic, Golden Axe, and homebrew, with stereo sound.</p>
+      <span class="app-play">▶ Play in your browser</span>
+    </a>
+  </div>
+  <p class="showcase-more">Also written in Milo: a <strong>SNES</strong> emulator (boots Super Mario World), the <strong>Hades</strong> debugger (a DAP server with a React + xterm UI), an HTTP / JSON / TLS standard library, and a <strong>self-hosting compiler</strong> that reproduces itself byte-for-byte.</p>
 </div>
 
 <div class="section-break"></div>
@@ -134,4 +159,3 @@ Milo also ships `milo skill` — a machine-readable language guide that gives an
 </div>
 
 </div>
-
