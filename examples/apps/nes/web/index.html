@@ -17,10 +17,10 @@
   h1 span { color: #d29922; }
   #screen {
     image-rendering: pixelated;
-    width: 768px; height: 720px; max-width: 100%;
+    width: min(95vw, 1000px); height: auto; aspect-ratio: 256 / 240;
     background: #000; border: 1px solid #30363d; border-radius: 6px;
   }
-  #screen:fullscreen { width: auto; height: 100vh; border: 0; border-radius: 0; }
+  #screen:fullscreen { width: auto; height: 100vh; aspect-ratio: auto; border: 0; border-radius: 0; }
   select { background: #21262d; color: #e6edf3; border: 1px solid #30363d; padding: 7px 10px; border-radius: 6px; font: inherit; }
   #bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
   button, label.file {
@@ -33,25 +33,28 @@
     background: rgba(13,17,23,.85); border: 2px dashed #d29922; font-size: 18px; z-index: 5;
   }
   #status { color: #8b949e; min-height: 1.2em; }
-  .keys { color: #8b949e; font-size: 12px; text-align: center; max-width: 520px; }
+  .keys { color: #8b949e; font-size: 12px; text-align: center; }
   .keys b { color: #e6edf3; }
+  .sub { color: #8b949e; font-size: 13px; margin-top: -8px; }
+  .pitch { max-width: 640px; text-align: center; color: #c9d1d9; font-size: 14px; line-height: 1.7; padding: 0 16px 8px; }
+  .pitch p { margin: 10px 0; }
+  .pitch b { color: #fff; }
+  .pitch .native { color: #7ee787; }
+  .pitch .js { color: #d29922; }
+  .pitch a { color: #58a6ff; text-decoration: none; }
+  .pitch code { background: #161b22; padding: 1px 5px; border-radius: 4px; }
 </style>
 </head>
 <body>
 <div id="drop">drop a <code>.nes</code> ROM to play</div>
 
-<h1>Milo <span>NES</span> — compiled to JavaScript</h1>
+<h1>Milo <span>NES</span></h1>
+<div class="sub">a Nintendo Entertainment System, written in Milo — playing in your browser</div>
 <canvas id="screen" width="256" height="240"></canvas>
 
 <div id="bar">
   <label class="file">Load ROM…<input id="rom" type="file" accept=".nes" hidden></label>
   <button id="pause" disabled>Pause</button>
-  <select id="scale" title="Window size">
-    <option value="2">2×</option>
-    <option value="3" selected>3×</option>
-    <option value="4">4×</option>
-    <option value="5">5×</option>
-  </select>
   <button id="fs">Fullscreen</button>
   <label style="color:#8b949e">🔊<input id="vol" type="range" min="0" max="100" value="25" style="vertical-align:middle;width:80px"></label>
   <span id="fps"></span>
@@ -78,7 +81,12 @@
 <div class="keys">
   <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> A &nbsp;·&nbsp; <b>X</b> B &nbsp;·&nbsp;
   <b>Enter</b> Start &nbsp;·&nbsp; <b>Shift</b> Select
-  <br>The entire NES core (CPU + PPU + APU) is written in Milo and compiled to this page's JS by <code>emit-js</code>. No wasm, no plugins.
+</div>
+
+<div class="pitch">
+  <p>This whole NES — <b>CPU, PPU (graphics), APU (sound)</b>, all of it — is one program written in <a href="..">Milo</a>, a memory-safe systems language.</p>
+  <p>From that <b>one source file set</b>, the Milo compiler produces two things: a <b class="native">native binary</b> (via LLVM — a real SDL2 desktop app) and the <b class="js">JavaScript</b> running this page (via <code>emit-js</code>). No second implementation, no wasm, no plugins.</p>
+  <p>And they agree exactly: the frame you're looking at is <b>byte-for-byte identical</b> to what the native binary renders.</p>
 </div>
 
 <!-- Milo-compiled emulator core: defines global createNes / stepFrame / setButtons -->
@@ -242,14 +250,6 @@ pauseBtn.addEventListener("click", () => {
 });
 
 // window size (integer scale) + fullscreen
-const scaleSel = document.getElementById("scale");
-function applyScale() {
-  const s = +scaleSel.value;
-  canvas.style.width = (256 * s) + "px";
-  canvas.style.height = (240 * s) + "px";
-}
-scaleSel.addEventListener("change", applyScale);
-applyScale();
 document.getElementById("fs").addEventListener("click", () => {
   if (!document.fullscreenElement) canvas.requestFullscreen();
   else document.exitFullscreen();
