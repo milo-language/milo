@@ -8147,12 +8147,31 @@ export class Codegen {
     return [lines, result, optionTy];
   }
 
-  // x.countOnes()/leadingZeros()/trailingZeros() — LLVM ctpop/ctlz/cttz.
-  // Count fits any width, so the iN result is zero-extended to the i64 return.
+  // Integer bit intrinsics. countOnes/leadingZeros/trailingZeros (ctpop/ctlz/cttz)
+  // return an i64 count; rotateLeft/Right (fshl/fshr funnel shift) and reverseBits
+  // (bitreverse) return the same width as the receiver.
   private genBitIntrinsic(expr: HIRExpr & { kind: "BitIntrinsic" }, lines: string[]): [string[], string, string] {
     const [vl, vv, vt] = this.genExpr(expr.value);
     lines.push(...vl);
     const name = `@llvm.${expr.intrinsic}.${vt}`;
+
+    // rotate = funnel shift with both halves the same value; amount is taken mod width
+    if (expr.intrinsic === "fshl" || expr.intrinsic === "fshr") {
+      const [al, av] = this.genExpr(expr.amount!);
+      lines.push(...al);
+      this.usedOverflowIntrinsics.add(`declare ${vt} ${name}(${vt}, ${vt}, ${vt})`);
+      const r = this.nextTemp();
+      lines.push(`  ${r} = call ${vt} ${name}(${vt} ${vv}, ${vt} ${vv}, ${vt} ${av})`);
+      return [lines, r, vt];
+    }
+    if (expr.intrinsic === "bitreverse") {
+      this.usedOverflowIntrinsics.add(`declare ${vt} ${name}(${vt})`);
+      const r = this.nextTemp();
+      lines.push(`  ${r} = call ${vt} ${name}(${vt} ${vv})`);
+      return [lines, r, vt];
+    }
+
+    // bit counts → i64
     const raw = this.nextTemp();
     if (expr.intrinsic === "ctpop") {
       this.usedOverflowIntrinsics.add(`declare ${vt} ${name}(${vt})`);

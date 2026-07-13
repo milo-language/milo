@@ -620,10 +620,13 @@ class LowerCtx {
         }
         if (objType?.tag === "int") {
           const bitIntrinsics: Record<string, string> = {
-            countOnes: "ctpop", leadingZeros: "ctlz", trailingZeros: "cttz",
+            countOnes: "ctpop", leadingZeros: "ctlz", trailingZeros: "cttz", reverseBits: "bitreverse",
           };
           if (bitIntrinsics[expr.method]) {
             return { kind: "BitIntrinsic", intrinsic: bitIntrinsics[expr.method], value: this.lowerExpr(expr.object), type, span: expr.span };
+          }
+          if (expr.method === "rotateLeft" || expr.method === "rotateRight") {
+            return { kind: "BitIntrinsic", intrinsic: expr.method === "rotateLeft" ? "fshl" : "fshr", value: this.lowerExpr(expr.object), amount: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
           // x.wrappingNeg() / x.checkedNeg() → wrapping/checked sub(0, x)
           if (expr.method === "wrappingNeg" || expr.method === "checkedNeg") {

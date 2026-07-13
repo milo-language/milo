@@ -1,0 +1,20 @@
+// @expect: 21
+// @expect: 145
+// @expect: 1
+// @expect: 128
+
+fn main(): i32 {
+    let a: u8 = 0b10001010 // rotateLeft 1: top bit wraps to bit0
+    print(a.rotateLeft(1)) // 0b00010101 = 21
+
+    let b: u8 = 0b00100011 // rotateRight 1: bit0 wraps to top
+    print(b.rotateRight(1)) // 0b10010001 = 145
+
+    let c: u8 = 0b10000000
+    print(c.reverseBits()) // 0b00000001 = 1
+
+    let d: u8 = 0b00000001
+    print(d.reverseBits()) // 0b10000000 = 128
+
+    return 0
+}

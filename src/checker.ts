@@ -4055,6 +4055,22 @@ export class TypeChecker {
             if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
             return this.setType(expr, { tag: "int", bits: 64, signed: true });
           }
+          // rotate: 1-arg shift (mod bit-width), returns same type
+          if (expr.method === "rotateLeft" || expr.method === "rotateRight") {
+            if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); }
+            else {
+              const at = this.checkExprWithHint(expr.args[0], objType);
+              if (!typeEq(objType, at) && at.tag !== "unknown") {
+                this.error(`'${expr.method}': shift amount must be ${typeName(objType)}, got ${typeName(at)}`, sp);
+              }
+            }
+            return this.setType(expr, objType);
+          }
+          // reverseBits — 0-arg, returns same type
+          if (expr.method === "reverseBits") {
+            if (expr.args.length !== 0) { this.error(`'reverseBits' takes no arguments`, sp); }
+            return this.setType(expr, objType);
+          }
         }
         // frozen-collection guard: reject realloc/free-capable builtins on a borrowed receiver
         if ((objType.tag === "vec" || objType.tag === "hashmap" || objType.tag === "string")

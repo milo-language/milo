@@ -16,6 +16,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 
 - **`checkedDiv/Rem`, `wrapping/checkedNeg`** — arithmetic suite completion.
 - **`countOnes/leadingZeros/trailingZeros`** — bit intrinsics (LLVM ctpop/ctlz/cttz), return `i64`.
+- **`rotateLeft/rotateRight/reverseBits`** — funnel-shift + bitreverse, return receiver width.
 - **JSON `strOpt/intOpt/floatOpt/boolOpt`** — optional fields stay in the fluent chain.
 
 ## Tier 1 — quick wins (high ROI, low effort) — do first

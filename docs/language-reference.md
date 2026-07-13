@@ -124,7 +124,7 @@ q.checkedRem(0)      // Option.None — None on divide-by-zero
 Available: `wrappingAdd/Sub/Mul/Neg`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul/Div/Rem/Neg`.
 `checkedDiv`/`checkedRem` also return `None` on signed `INT_MIN / -1` overflow; `checkedNeg` returns `None` at signed `INT_MIN`.
 
-Bit intrinsics (return `i64` count): `countOnes`, `leadingZeros`, `trailingZeros` — LLVM `ctpop`/`ctlz`/`cttz`; zero-count equals the type's bit width.
+Bit intrinsics: `countOnes`, `leadingZeros`, `trailingZeros` return an `i64` count (LLVM `ctpop`/`ctlz`/`cttz`; zero-count equals the type's bit width). `rotateLeft(n)`/`rotateRight(n)` (funnel shift, `n` taken mod bit-width) and `reverseBits()` return the same width as the receiver.
 
 ### Ranged Integer Types
 
