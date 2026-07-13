@@ -534,6 +534,36 @@ if let Option.Some(val) = x {
 }
 ```
 
+### while let
+
+Loop as long as the subject matches the pattern, binding the payload each iteration:
+
+```milo
+while let Option.Some(line) = reader.next() {
+    process(line)
+}
+```
+
+### match as an expression
+
+`match` can appear in expression position — each arm yields a value. Arms may be
+a bare expression (`P => v`) or a braced block whose tail is the value:
+
+```milo
+let name = match n {
+    0 => "zero",
+    1 => "one",
+    _ => "many"
+}
+
+let doubled = match r {
+    Result.Ok(v)  => { let d = v * 2  d }
+    Result.Err(e) => 0
+}
+```
+
+All arms must agree on a type, and the match must still be exhaustive.
+
 ---
 
 ## Arrays
@@ -572,6 +602,17 @@ let last = v.pop()            // removes and returns last element
 ```
 
 Vec owns its elements and frees them when it goes out of scope.
+
+### Constructors
+
+```milo
+var a: Vec<i64> = Vec.new()              // empty, no allocation
+var b: Vec<i64> = Vec.withCapacity(1024) // empty, pre-sized (no realloc up to 1024 pushes)
+var c: Vec<u8>  = Vec.filled(4096, 0)    // 4096 copies of 0 — zeroed buffer
+```
+
+`Vec.filled(n, v)` requires `v` to be a `Copy` type (the value is duplicated into
+every slot); build a non-`Copy` Vec with a `push` loop.
 
 ```milo
 // Vec of strings
