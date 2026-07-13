@@ -664,6 +664,12 @@ fn doDaa(cpu: &mut Z80) {
 // Execute one instruction. Returns false on an opcode not yet implemented.
 fn stepZ80(cpu: &mut Z80): bool {
     ymTimerTick(cpu, 1) // ~1 emulated-us per step (see struct note); paces sound drivers
+    // While halted the Z80 idles on the HALT instruction, executing nothing until
+    // an interrupt clears the flag (z80Interrupt). Without this it fetched and ran
+    // whatever followed HALT, corrupting sound drivers that HALT-wait for the vint.
+    if cpu.halted {
+        return true
+    }
     let op = fetchOp(cpu)
     let x = (op >> 6) & 0x3
     let y = (op >> 3) & 0x7

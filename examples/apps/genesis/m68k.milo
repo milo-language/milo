@@ -173,6 +173,10 @@ fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
                 m.padTh = (val & 0x40) != 0 // TH multiplex select
             } else if a >= 0xA10008 && a <= 0xA1000F {
                 m.ioRegs[(a | 1) & 0xF] = val & 0xFF // ctrl/serial regs latch writes
+            } else if a == 0xA11100 {
+                m.z80Busreq = (val & 0x01) != 0 // Z80 bus request (byte form; bit0 = word bit8)
+            } else if a == 0xA11200 {
+                m.z80Reset = (val & 0x01) == 0 // Z80 reset (bit0 set = release)
             }
             return
         }
