@@ -32,6 +32,13 @@ struct Ppu {
     cgLatch: i64
     cgHi: bool // writing the high byte of a color word
     tm: i64 // $212C main-screen layer enable (bit0-3 = BG1-4, bit4 = OBJ)
+
+    // Mode 7 affine state. Matrix A/D/B/C are signed 8.8 fixed ($211B-$211E);
+    // center X/Y ($211F/$2120) and scroll ($210D/$210E) are 13-bit signed. All
+    // write-twice (low then high) through the shared m7Latch byte.
+    m7a: i64 m7b: i64 m7c: i64 m7d: i64
+    m7x: i64 m7y: i64 m7hofs: i64 m7vofs: i64
+    m7sel: i64 m7Latch: i64
 }
 
 fn ppuZeros(n: i64): Vec<u8> {
@@ -58,7 +65,9 @@ fn newPpu(): Ppu {
         inidisp: 0, obsel: 0, oamaddr: 0, oamLatch: 0, oamHi: false,
         bgmode: 0, bgsc0: 0, bgsc1: 0, bgsc2: 0, bgsc3: 0, bg12nba: 0, bg34nba: 0,
         bghofs: ppuZerosI64(4), bgvofs: ppuZerosI64(4), scrollLatch: 0, scrollHi: 0,
-        vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false, tm: 0x1F
+        vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false, tm: 0x1F,
+        m7a: 0x100, m7b: 0, m7c: 0, m7d: 0x100, m7x: 0, m7y: 0, m7hofs: 0, m7vofs: 0,
+        m7sel: 0, m7Latch: 0
     }
 }
 
@@ -132,6 +141,13 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
         } else {
             p.bghofs[idx] = ((v << 8) | (p.scrollLatch & 0xF8) | (p.scrollHi & 0x07)) & 0x3FF
         }
+        // $210D/$210E double as Mode 7 BG1 scroll (13-bit signed, m7 latch).
+        if reg == 0x0D {
+            p.m7hofs = m7Ext13(((v << 8) | p.m7Latch) & 0x1FFF) p.m7Latch = v
+        }
+        if reg == 0x0E {
+            p.m7vofs = m7Ext13(((v << 8) | p.m7Latch) & 0x1FFF) p.m7Latch = v
+        }
         p.scrollHi = p.scrollLatch
         p.scrollLatch = v
         return
@@ -176,6 +192,27 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
             p.cgHi = false
         }
         return
+    }
+    if reg == 0x1A {
+        p.m7sel = v return
+    }
+    if reg == 0x1B { // M7A — signed 8.8 fixed
+        p.m7a = m7Ext16((v << 8) | p.m7Latch) p.m7Latch = v return
+    }
+    if reg == 0x1C {
+        p.m7b = m7Ext16((v << 8) | p.m7Latch) p.m7Latch = v return
+    }
+    if reg == 0x1D {
+        p.m7c = m7Ext16((v << 8) | p.m7Latch) p.m7Latch = v return
+    }
+    if reg == 0x1E {
+        p.m7d = m7Ext16((v << 8) | p.m7Latch) p.m7Latch = v return
+    }
+    if reg == 0x1F { // M7X — 13-bit signed center
+        p.m7x = m7Ext13(((v << 8) | p.m7Latch) & 0x1FFF) p.m7Latch = v return
+    }
+    if reg == 0x20 {
+        p.m7y = m7Ext13(((v << 8) | p.m7Latch) & 0x1FFF) p.m7Latch = v return
     }
     if reg == 0x2C {
         p.tm = v return
@@ -223,6 +260,25 @@ fn ppuRegReadPure(p: &Ppu, reg: i64): i64 {
         return p.cgram[(p.cgaddr * 2) & 0x1FF]as i64
     }
     return 0
+}
+
+// Sign-extend a 16-bit / 13-bit two's-complement value (Mode 7 fixed-point regs).
+fn m7Ext16(v: i64): i64 {
+    let x = v & 0xFFFF
+    return if x >= 0x8000 {
+        x - 0x10000
+    } else {
+        x
+    }
+}
+
+fn m7Ext13(v: i64): i64 {
+    let x = v & 0x1FFF
+    return if x >= 0x1000 {
+        x - 0x2000
+    } else {
+        x
+    }
 }
 
 fn vramWord(p: &Ppu, waddr: i64): i64 {
@@ -425,6 +481,38 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
     }
 }
 
+// Mode 7 render: one 128x128 tilemap of 8bpp tiles, transformed by the affine
+// matrix. VRAM is byte-interleaved — even byte = tilemap entry, odd byte = tile
+// graphics. Plane coord = (M * (screen + scroll - center)) >> 8 + center. Screen
+// -over modes 0/1 wrap the 1024px plane; 2/3 (transparent / tile0 fill) TODO.
+fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
+    let ox = p.m7hofs - p.m7x
+    let oy = p.m7vofs - p.m7y
+    var sy: i64 = 0
+    while sy < 224 {
+        var sx: i64 = 0
+        while sx < 256 {
+            let dx = ox + sx
+            let dy = oy + sy
+            let vx = ((p.m7a * dx + p.m7b * dy) >> 8) + p.m7x
+            let vy = ((p.m7c * dx + p.m7d * dy) >> 8) + p.m7y
+            let px = vx & 1023
+            let py = vy & 1023
+            let tileX = px >> 3
+            let tileY = py >> 3
+            let mapN = tileY * 128 + tileX
+            let tile = p.vram[(mapN * 2) & 0xFFFF]as i64
+            let gAddr = ((tile * 64 + (py & 7) * 8 + (px & 7)) * 2 + 1) & 0xFFFF
+            let ci = p.vram[gAddr]as i64
+            if ci != 0 {
+                fb[sy * 256 + sx] = cgToRgb(p, ci, bright)
+            }
+            sx = sx + 1
+        }
+        sy = sy + 1
+    }
+}
+
 // Render a full frame (Mode 1: BG3 2bpp behind, BG2/BG1 4bpp, sprites on top).
 // Layers composite by transparency; exact priority bits refined later.
 fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
@@ -467,6 +555,10 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
         }
         if en1 {
             renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0)
+        }
+    } else if mode == 7 {
+        if en1 {
+            renderMode7(p, fb, bright)
         }
     } else if mode == 3 {
         // Mode 3: BG1 8bpp (direct 256-color), BG2 4bpp.

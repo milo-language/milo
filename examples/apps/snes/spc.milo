@@ -37,13 +37,24 @@ struct SpcMem {
     iplEnabled: bool
     inPort: Vec<i64> // [4] CPU->SPC
     outPort: Vec<i64> // [4] SPC->CPU
+
+    // Timers 0/1 (8 kHz) + 2 (64 kHz). $F1 bits0-2 enable; $FA-$FC set targets;
+    // $FD-$FF read the 4-bit out counter (cleared on read). Sound drivers gate
+    // their init/ready handshake on these ticking, so they must advance.
+    tEnable: i64
+    tTarget: Vec<i64> // [3] divider target (0 = 256)
+    tDiv: Vec<i64> // [3] cycle accumulator toward the 128/128/16 prescale
+    tCount: Vec<i64> // [3] counts prescale ticks toward target
+    tOut: Vec<i64> // [3] 4-bit visible counter
 }
 
 fn spcMemNew(): SpcMem {
     return SpcMem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         ram: Vec.new(), ipl: Vec.new(), iplEnabled: false,
-        inPort: Vec.new(), outPort: Vec.new()
+        inPort: Vec.new(), outPort: Vec.new(),
+        tEnable: 0, tTarget: spcZerosI64(3), tDiv: spcZerosI64(3),
+        tCount: spcZerosI64(3), tOut: spcZerosI64(3)
     }
 }
 
@@ -86,7 +97,9 @@ fn spcMemReal(): SpcMem {
     return SpcMem {
         addr: Vec.new(), val: Vec.new(), testMode: false,
         ram: spcZeros(0x10000), ipl: iplRom(), iplEnabled: true,
-        inPort: spcZerosI64(4), outPort: spcZerosI64(4)
+        inPort: spcZerosI64(4), outPort: spcZerosI64(4),
+        tEnable: 0, tTarget: spcZerosI64(3), tDiv: spcZerosI64(3),
+        tCount: spcZerosI64(3), tOut: spcZerosI64(3)
     }
 }
 
@@ -110,10 +123,56 @@ fn spcRead(m: &SpcMem, a: i64): i64 {
     if addr >= 0xF4 && addr <= 0xF7 {
         return m.inPort[addr - 0xF4] // read the CPU->SPC latch
     }
+    if addr >= 0xFD && addr <= 0xFF {
+        return m.tOut[addr - 0xFD] & 0x0F // timer out counter (clear handled in spcStep)
+    }
     if m.iplEnabled && addr >= 0xFFC0 {
         return m.ipl[addr - 0xFFC0]as i64
     }
     return m.ram[addr]as i64
+}
+
+// Timer counter reads ($FD-$FF) clear the 4-bit out counter — must go through
+// the mutable path. Returns -1 when addr isn't a timer counter register.
+fn spcReadTimer(m: &mut SpcMem, addr: i64): i64 {
+    if addr >= 0xFD && addr <= 0xFF {
+        let t = addr - 0xFD
+        let r = m.tOut[t] & 0x0F
+        m.tOut[t] = 0
+        return r
+    }
+    return -1
+}
+
+// Advance the timers by `cyc` SPC cycles. Prescale: T0/T1 tick every 128
+// cycles, T2 every 16; each prescale tick counts toward the target, and hitting
+// it bumps the 4-bit out counter.
+fn spcTimersTick(m: &mut SpcMem, cyc: i64): void {
+    var t: i64 = 0
+    while t < 3 {
+        if (m.tEnable & (1 << t)) != 0 {
+            let period: i64 = if t == 2 {
+                16
+            } else {
+                128
+            }
+            m.tDiv[t] = m.tDiv[t] + cyc
+            while m.tDiv[t] >= period {
+                m.tDiv[t] = m.tDiv[t] - period
+                m.tCount[t] = m.tCount[t] + 1
+                let tgt: i64 = if m.tTarget[t] == 0 {
+                    256
+                } else {
+                    m.tTarget[t]
+                }
+                if m.tCount[t] >= tgt {
+                    m.tCount[t] = 0
+                    m.tOut[t] = (m.tOut[t] + 1) & 0x0F
+                }
+            }
+        }
+        t = t + 1
+    }
 }
 
 fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
@@ -142,6 +201,22 @@ fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
         if (bv & 0x10) != 0 {
             m.inPort[0] = 0 m.inPort[1] = 0
         }
+        // bits0-2 enable timers; a disabled->enabled edge resets that timer.
+        var t: i64 = 0
+        while t < 3 {
+            let was = (m.tEnable >> t) & 1
+            let now = (bv >> t) & 1
+            if now == 1 && was == 0 {
+                m.tDiv[t] = 0 m.tCount[t] = 0 m.tOut[t] = 0
+            }
+            t = t + 1
+        }
+        m.tEnable = bv & 0x07
+        m.ram[addr] = bv as u8
+        return
+    }
+    if addr >= 0xFA && addr <= 0xFC { // timer targets
+        m.tTarget[addr - 0xFA] = bv
         m.ram[addr] = bv as u8
         return
     }
@@ -472,6 +547,10 @@ fn spcCmpw(spc: &mut Spc, w: i64): void {
 // Execute one instruction. Batches: flag ops, MOVs, INC/DEC, and A-form ALU
 // (OR/AND/EOR/CMP/ADC/SBC) over immediate/dp/abs.
 fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
+    // Advance timers by a nominal per-instruction cycle count. Exact cycle
+    // accounting isn't modeled yet; ~16 keeps the 8kHz/64kHz rates in the right
+    // ballpark so sound-driver timing loops progress.
+    spcTimersTick(m, 16)
     let op = spcFetch(spc, m)
     match op {
         0x00 => {

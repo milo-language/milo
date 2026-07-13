@@ -416,9 +416,17 @@ fn nmi(cpu: &mut Cpu, m: &mut Mem): void {
 // vblank flag, fire NMI if enabled, run the vblank handler), then clear it.
 // Instruction budgets stand in for cycle-accurate scanline timing for now.
 fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
+    // CPU and SPC must be finely interleaved: the boot handshake (and later
+    // in-game audio commands) round-trips through $2140-$2143 many times, and a
+    // handshake-locked transfer only advances one byte per CPU<->SPC switch. Run
+    // the SPC every few CPU steps so uploads complete in a frame, not thousands.
     var i: i64 = 0
     while i < 2000 {
-        step(cpu, m) i = i + 1
+        step(cpu, m)
+        if (i & 3) == 0 {
+            runApu(m, 2)
+        }
+        i = i + 1
     }
     m.vblankToggle = 0x80
     if (m.nmitimen & 0x80) != 0 {
@@ -426,10 +434,13 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     }
     i = 0
     while i < 600 {
-        step(cpu, m) i = i + 1
+        step(cpu, m)
+        if (i & 3) == 0 {
+            runApu(m, 2)
+        }
+        i = i + 1
     }
     m.vblankToggle = 0
-    runApu(m, 400) // co-run the audio CPU across the frame
 }
 
 // --- register-width predicates (emulation forces both to 8-bit) ---
