@@ -106,8 +106,10 @@ fn queueAudio(synth: &mut Synth, m: &Mem, dev: u32) {
     var sa: i64 = 0
     while sa < 735 {
         let smp = synthSample(synth, m.z80)
-        buf.push((smp & 0xFF) as u8)
-        buf.push(((smp >> 8) & 0xFF) as u8)
+        buf.push((smp.l & 0xFF) as u8)
+        buf.push(((smp.l >> 8) & 0xFF) as u8)
+        buf.push((smp.r & 0xFF) as u8)
+        buf.push(((smp.r >> 8) & 0xFF) as u8)
         sa = sa + 1
     }
     unsafe {
@@ -187,7 +189,7 @@ fn main(): i32 {
         want[1] = 0xAC // 44100
         want[4] = 0x10
         want[5] = 0x80 // format S16LSB
-        want[6] = 1 // channels
+        want[6] = 2 // channels (stereo)
         want[8] = 0x00
         want[9] = 0x08 // 2048 samples
         var got: [u8; 32] = [0; 32]

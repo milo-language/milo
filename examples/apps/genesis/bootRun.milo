@@ -119,8 +119,10 @@ fn main(): i32 {
                 var sa: i64 = 0
                 while sa < 735 {
                     let smp = synthSample(synth, m.z80)
-                    wav.push((smp & 0xFF) as u8)
-                    wav.push(((smp >> 8) & 0xFF) as u8)
+                    wav.push((smp.l & 0xFF) as u8)
+                    wav.push(((smp.l >> 8) & 0xFF) as u8)
+                    wav.push((smp.r & 0xFF) as u8)
+                    wav.push(((smp.r >> 8) & 0xFF) as u8)
                     sa = sa + 1
                 }
             }
@@ -195,10 +197,10 @@ fn writeWav(samples: &Vec<u8>, path: &string) {
     out = out + "WAVEfmt "
     out = pushLE32(out, 16) // fmt chunk size
     out = pushLE16(out, 1) // PCM
-    out = pushLE16(out, 1) // mono
+    out = pushLE16(out, 2) // stereo
     out = pushLE32(out, 44100)
-    out = pushLE32(out, 44100 * 2) // byte rate
-    out = pushLE16(out, 2) // block align
+    out = pushLE32(out, 44100 * 4) // byte rate (2ch x 2 bytes)
+    out = pushLE16(out, 4) // block align
     out = pushLE16(out, 16) // bits
     out = out + "data"
     out = pushLE32(out, dataLen)

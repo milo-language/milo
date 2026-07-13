@@ -166,19 +166,41 @@ fn keyOnMask(z: &Z80): i64 {
     return z.ym[0x28]
 }
 
-// Advance the synth by one sample; returns a signed 16-bit sample.
-fn synthSample(s: &mut Synth, z: &mut Z80): i64 {
-    var acc: i64 = 0
+struct StereoSample {
+    l: i64
+    r: i64
+}
+
+// Per-channel stereo pan from reg $B4 (bit7=L, bit6=R). 0 (unset) => centre.
+fn panLR(z: &Z80, part: i64, ci: i64): i64 {
+    let p = (z.ym[part + 0xB4 + ci] >> 6) & 0x3
+    if p == 0 {
+        return 3 // both (avoid accidental silence before the game sets panning)
+    }
+    return p
+}
+
+// Advance the synth by one sample; returns a signed 16-bit stereo pair.
+fn synthSample(s: &mut Synth, z: &mut Z80): StereoSample {
+    var accL: i64 = 0
+    var accR: i64 = 0
     let dacOn = (z.ym[0x2B] & 0x80) != 0
     // --- ch6 DAC (sampled drums) replaces FM channel 5 when enabled ---
     if dacOn {
         if z.dacR < z.dacW {
             let smp = z.dac[z.dacR & 4095]
             z.dacR = z.dacR + 1
-            acc = acc + (smp - 128) * 3
+            let v = (smp - 128) * 3
+            let pan = panLR(z, 256, 2) // ch6 pan = reg $1B6
+            if (pan & 2) != 0 {
+                accL = accL + v
+            }
+            if (pan & 1) != 0 {
+                accR = accR + v
+            }
         }
     }
-    // --- YM2612 FM channels (2-op model); ch5 skipped when DAC drives ch6 ---
+    // --- YM2612 FM channels (4-op); ch5 skipped when DAC drives ch6 ---
     var c: i64 = 0
     while c < 6 {
         if !(c == 5 && dacOn) {
@@ -211,13 +233,19 @@ fn synthSample(s: &mut Synth, z: &mut Z80): i64 {
             let fMilli = fmFreqMilli(z, c)
             if fMilli > 0 && s.envLevel[c] > 0 {
                 let baseInc = (fMilli * 65536) / (SAMPLE_RATE * 1000)
-                let chOut = fmChannel4op(s, z, c, part, ci, baseInc)
-                acc = acc + chOut * s.envLevel[c] / 255
+                let chOut = fmChannel4op(s, z, c, part, ci, baseInc) * s.envLevel[c] / 255
+                let pan = panLR(z, part, ci)
+                if (pan & 2) != 0 {
+                    accL = accL + chOut
+                }
+                if (pan & 1) != 0 {
+                    accR = accR + chOut
+                }
             }
         }
         c = c + 1
     }
-    // --- PSG: 3 square channels + noise ---
+    // --- PSG: 3 square channels (centre) ---
     var ch: i64 = 0
     while ch < 3 {
         let period = z.psg[ch * 2]
@@ -232,19 +260,27 @@ fn synthSample(s: &mut Synth, z: &mut Z80): i64 {
             } else {
                 -1
             }
-            acc = acc + sq * vol * 40
+            let pv = sq * vol * 40
+            accL = accL + pv
+            accR = accR + pv
         }
         ch = ch + 1
     }
-    // master gain, then clamp to i16
-    acc = acc * 40
-    if acc > 32767 {
-        acc = 32767
+    // master gain, then clamp each channel to i16
+    return StereoSample {
+        l: clampS16(accL * 40),
+        r: clampS16(accR * 40),
     }
-    if acc < -32768 {
-        acc = -32768
+}
+
+fn clampS16(v: i64): i64 {
+    if v > 32767 {
+        return 32767
     }
-    return acc
+    if v < -32768 {
+        return -32768
+    }
+    return v
 }
 
 // 256-entry sine, amplitude +/-64 (kept small so 6 channels sum without heavy clip).
