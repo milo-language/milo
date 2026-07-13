@@ -23,7 +23,29 @@ for replies — no SPC700 core, no boot. S-DSP (actual sound output) CAN wait.
 - **Reference emulators** (behavior questions only, don't port): Mesen2
   (best debugger — trace logger + event viewer), bsnes (accuracy reference).
 
-## Status (M1 done; M2 bus+cartridge underway)
+## Status (M1/M2/M3 done; M4 first pixels + frame loop; M5 DMA done)
+
+Latest: the emulator RUNS A ROM end-to-end. A synthesized ROM's 65816 code DMAs
+a palette+tile into the PPU, configures BG1, and loops; `stepFrame` runs it
+through the frame loop (vblank + NMI), and `renderFrame` produces a real tiled
+image (romGfxDemo.milo -> /tmp/snes_rom.ppm). Full path proven:
+CPU exec -> DMA -> PPU VRAM/CGRAM -> BG1 render -> pixels.
+
+Done: M1 CPU (256 ops, 254 Harte-green), M2 bus/cartridge/MMIO, M3 SPC700 (256
+ops green) + IPL boot handshake, M4-partial (BG1 Mode-1 renderer: 4bpp tiles,
+tilemap, cgram palette, brightness, scroll, per-tile palette/flip), M5 general
+DMA (8 channels), frame loop + vblank NMI (nmiFrameDemo: 5 frames = 5 NMIs).
+Smokes all green: systemSmoke, mmioSmoke, systemBoot, dmaSmoke, ppuRenderSmoke,
+ppuDemo, nmiFrameDemo, romGfxDemo.
+
+Next (toward a real game): BG2/BG3 layers + priority; sprites (OBJ); remaining
+BG modes + Mode 7; per-scanline rendering (HDMA/mid-frame effects); SDL window
+frontend (reuse NES pipeline) + input; H/V IRQ; then load a real .sfc. No game
+ROM on disk yet — the cartridge loader is ready for one dropped in ~/Downloads.
+Milo runtime gotcha found: growing a string while a large Vec is live corrupts
+the heap — pre-size with String.withCapacity (see feedback/).
+
+## (was) Status (M1 done; M2 bus+cartridge underway)
 
 M1 CPU: all 256 opcodes; 254 Harte-exact green (e+n). MVN/MVP atomic (excluded
 from gate — cycle-bounded partial state). BRK/COP/RTI/WAI/STP/WDM green.
@@ -119,7 +141,7 @@ Run: `examples/apps/snes/harte.sh` (or `harte.sh ea a9 …` for a subset).
   - **Gate: Harte 65816 SingleStepTests, per-opcode diff harness**
     (`runHarte.milo` + a TS diff script, same pattern as nestestDiff.ts).
     Every opcode green in both emulation + native mode before proceeding.
-- [ ] **M2 — bus + cartridge**: LoROM first (HiROM after; detect via header
+- [x] **M2 — bus + cartridge**: LoROM first (HiROM after; detect via header
       checksum at $7FC0/$FFC0). WRAM 128K, open bus, MDR. NO enhancement
       chips (SuperFX/SA-1/DSP-1) — huge library without them.
 - [x] **M3 — SPC700 core + handshake** (`spc.milo`): full second CPU, own
@@ -134,7 +156,7 @@ Run: `examples/apps/snes/harte.sh` (or `harte.sh ea a9 …` for a subset).
       increment modes, NMI/VBlank, auto-joypad read. forced blank, brightness.
       **Gate: krom BG/OBJ test ROMs match reference screenshots; a real game
       shows its title screen.**
-- [ ] **M5 — DMA + HDMA**: 8 channels, all transfer patterns; HDMA per-line
+- [~] **M5 — DMA + HDMA**: 8 channels, all transfer patterns; HDMA per-line
       table walker (indirect + direct). Nearly every game gates on this for
       status bars / gradients. **Gate: krom HDMA tests + game HUDs render.**
 - [ ] **M6 — input + timers**: joypad ports (manual $4016 + auto-read $4218+),
