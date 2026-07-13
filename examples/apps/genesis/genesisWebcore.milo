@@ -1,0 +1,157 @@
+// Browser-target Genesis core: the pure emulator (m68k + Z80 + VDP + YM2612, zero
+// FFI) plus a thin handle API the JS/canvas driver calls. Compile with emit-js:
+//   bun run src/main.ts emit-js examples/apps/genesis/genesisWebcore.milo -o web/genesis/genesis-core.js
+// Per frame the driver calls setButtons(h, bits), stepFrame(h), blits h.rgba to a
+// canvas, and drains h.samples (interleaved stereo i16 @44.1kHz) to WebAudio.
+from "./cart68k" import {
+    Cart, parseCart
+}
+from "./m68k" import {
+    M68k, Mem, newCpu, newMem, step, deliverInterrupt, z80Running
+}
+from "./z80" import {
+    stepZ80, z80Interrupt
+}
+from "./sound" import {
+    Synth, newSynth, synthSample
+}
+from "./render" import {
+    renderIndexed, frameWidth, frameHeight, cramR, cramG, cramB
+}
+
+// Fixed max frame width (H40); H32 (256px) frames render into the left columns and
+// the right edge stays black — same as the native 320-wide texture.
+let MAXW: i64 = 320
+
+struct GenHandle {
+    cpu: M68k
+    m: Mem
+    synth: Synth
+    rgba: Vec<u8> // reused RGBA framebuffer, MAXW * frameHeight * 4
+    samples: Vec<i16> // interleaved L,R for the frame just stepped; driver drains + clears
+}
+
+fn loadRom(m: &mut Mem, cart: &Cart): void {
+    var i: i64 = 0
+    while i < cart.rom.len && i < 0x400000 {
+        m.ram[i] = cart.rom[i]
+        m.z80.rom.push(cart.rom[i]) // Z80 bank-window ROM copy (DAC samples)
+        i = i + 1
+    }
+}
+
+// Parse `rom` and boot the machine. On a bad image, boots an empty cart so the JS
+// side always gets a usable handle (a black screen beats a crash).
+fn createGenesis(rom: Vec<u8>): GenHandle {
+    var cart = Cart {
+        rom: Vec.new(), name: "", romEnd: 0,
+    }
+    match parseCart(rom) {
+        Result.Ok(c) => {
+            cart = c
+        }
+        Result.Err(e) => {
+            print("Genesis ROM parse failed: " + e)
+        }
+    }
+
+    var m = newMem()
+    m.genesis = true
+    m.z80.gen = true
+    loadRom(m, cart)
+
+    // Reset vector: SP at $000000, PC at $000004 (big-endian longs).
+    let sp = ((m.ram[0] as i64) << 24) | ((m.ram[1] as i64) << 16) | ((m.ram[2] as i64) << 8) | (m.ram[3] as i64)
+    let pc = ((m.ram[4] as i64) << 24) | ((m.ram[5] as i64) << 16) | ((m.ram[6] as i64) << 8) | (m.ram[7] as i64)
+    var cpu = newCpu()
+    cpu.a[7] = sp & 0xFFFFFFFF
+    cpu.pc = pc & 0xFFFFFFFF
+    cpu.sr = 0x2700
+
+    let h = frameHeight(m)
+    var rgba: Vec<u8> = Vec.new()
+    var t: i64 = 0
+    while t < MAXW * h * 4 {
+        rgba.push(0)
+        t = t + 1
+    }
+    var samples: Vec<i16> = Vec.new()
+
+    return GenHandle {
+        cpu: cpu, m: m, synth: newSynth(), rgba: rgba, samples: samples,
+    }
+}
+
+// Controller 1. Bits (matches genesis.milo): 0 Up, 1 Down, 2 Left, 3 Right,
+// 4 A, 5 B, 6 C, 7 Start.
+fn setButtons(h: &mut GenHandle, p: i64): void {
+    h.m.pad1 = p
+}
+
+// Run the 68000 + Z80 for one video frame (262 scanlines), delivering the VBlank
+// interrupt at line 224 when enabled. Mirrors genesis.milo's runFrame.
+fn runFrame(cpu: &mut M68k, m: &mut Mem): void {
+    var line: i64 = 0
+    while line < 262 {
+        m.vdpLine = line
+        var k: i64 = 0
+        while k < 130 {
+            if !cpu.halted {
+                step(cpu, m)
+            }
+            if z80Running(m) && (k & 1) == 0 {
+                stepZ80(m.z80)
+            }
+            k = k + 1
+        }
+        if line == 224 {
+            if (m.vdpRegs[1] & 0x20) != 0 {
+                deliverInterrupt(cpu, m, 6)
+            }
+            if z80Running(m) {
+                z80Interrupt(m.z80)
+            }
+        }
+        line = line + 1
+    }
+}
+
+// Advance one frame: run the CPUs, generate this frame's audio (735 stereo
+// samples @44.1kHz), then rasterize the CRAM-index framebuffer into h.rgba.
+fn stepFrame(h: &mut GenHandle): void {
+    runFrame(h.cpu, h.m)
+
+    var sa: i64 = 0
+    while sa < 735 {
+        let smp = synthSample(h.synth, h.m.z80)
+        h.samples.push(smp.l as i16)
+        h.samples.push(smp.r as i16)
+        sa = sa + 1
+    }
+
+    let fb = renderIndexed(h.m)
+    let srcW = frameWidth(h.m)
+    var i: i64 = 0
+    while i < fb.len {
+        let row = i / srcW
+        let col = i % srcW
+        let dst = (row * MAXW + col) * 4
+        let e = h.m.cram[fb[i] & 0x3F]
+        h.rgba[dst] = cramR(e) as u8
+        h.rgba[dst + 1] = cramG(e) as u8
+        h.rgba[dst + 2] = cramB(e) as u8
+        h.rgba[dst + 3] = 255
+        i = i + 1
+    }
+}
+
+// Frame height (rows) so the driver can size its canvas; width is always MAXW.
+fn frameH(h: &GenHandle): i64 {
+    return frameHeight(h.m)
+}
+
+// emit-js appends `main(); __flush();`; no-op so importing in the browser has no
+// side effects — the driver drives everything.
+fn main(): i32 {
+    return 0
+}

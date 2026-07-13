@@ -53,6 +53,7 @@
     <option value="5">5×</option>
   </select>
   <button id="fs">Fullscreen</button>
+  <label style="color:#8b949e">🔊<input id="vol" type="range" min="0" max="100" value="25" style="vertical-align:middle;width:80px"></label>
   <span id="fps"></span>
 </div>
 
@@ -111,10 +112,11 @@ addEventListener("keyup",   e => { if (KEYS[e.code] !== undefined) { buttons &= 
 // --- Audio: the APU emits ~735 signed-16 mono samples per frame at 44.1 kHz into
 // bus.apu.samples. We drain them into a ring buffer that a ScriptProcessor pulls. ---
 const SR = 44100;
-let audioCtx = null;
+let audioCtx = null, gainNode = null;
 const ring = new Float32Array(1 << 16);   // power-of-two for cheap & masking
 const RMASK = ring.length - 1;
 let rHead = 0, rTail = 0;
+const volSlider = document.getElementById("vol");
 function initAudio() {
   if (audioCtx) return;
   audioCtx = new AudioContext({ sampleRate: SR });
@@ -126,8 +128,13 @@ function initAudio() {
       else out[i] = 0;   // underrun -> silence
     }
   };
-  node.connect(audioCtx.destination);
+  // Gain stage so the volume slider can keep autoplay quiet by default.
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = (+volSlider.value / 100) ** 2;   // perceptual-ish curve
+  node.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
 }
+volSlider.addEventListener("input", () => { if (gainNode) gainNode.gain.value = (+volSlider.value / 100) ** 2; });
 // Browsers keep an AudioContext suspended until a user gesture. Video runs on
 // load regardless; the first click/keypress unlocks sound.
 function unlockAudio() {
@@ -251,9 +258,10 @@ document.getElementById("fs").addEventListener("click", () => {
 // Local ROMs: serve.ts publishes /local-roms.json on localhost. On the public
 // GitHub Pages build that endpoint 404s, so this section stays hidden.
 fetch("/local-roms.json").then(r => r.ok ? r.json() : []).then(list => {
-  if (!Array.isArray(list) || list.length === 0) return;
+  const nesList = (Array.isArray(list) ? list : []).filter(n => /\.nes$/i.test(n));
+  if (nesList.length === 0) return;
   const sel = document.getElementById("localRoms");
-  for (const name of list) {
+  for (const name of nesList) {
     const o = document.createElement("option");
     o.value = name; o.textContent = name;
     sel.appendChild(o);

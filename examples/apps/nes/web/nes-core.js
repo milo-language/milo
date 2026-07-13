@@ -773,17 +773,17 @@ function newBus(cart) {
 function busRead(bus, addr) {
   const a = Math.trunc(addr);
   if ((a < 8192)) {
-    return bus.ram[Math.trunc((a & 2047))];
+    return bus.ram[((a & 2047) >>> 0)];
   }
   if ((a < 16384)) {
-    return ppuRegRead(bus.ppu, Math.trunc((a & 7)));
+    return ppuRegRead(bus.ppu, ((a & 7) >>> 0));
   }
   if ((a == 16406)) {
     if ((((bus.strobe & 1) & 0xFF) == 1)) {
       bus.ctrl1 = bus.buttons;
     }
     const bit = ((bus.ctrl1 & 1) & 0xFF);
-    bus.ctrl1 = ((((bus.ctrl1 >> 1) & 0xFF) | 128) & 0xFF);
+    bus.ctrl1 = (((Math.floor(bus.ctrl1 / 2 ** (1)) & 0xFF) | 128) & 0xFF);
     return ((bit | 64) & 0xFF);
   }
   if ((a == 16405)) {
@@ -812,9 +812,9 @@ function busRead(bus, addr) {
     if ((bus.mapper == 227)) {
       const n16 = Math.trunc(Math.trunc(bus.prg.length / 16384));
       if ((a < 49152)) {
-        return bus.prg[Math.trunc((Math.trunc((Math.trunc((bus.m227Lo % n16)) * 16384)) + Math.trunc((a - 32768))))];
+        return bus.prg[Math.trunc((Math.trunc(((bus.m227Lo % n16) * 16384)) + Math.trunc((a - 32768))))];
       }
-      return bus.prg[Math.trunc((Math.trunc((Math.trunc((bus.m227Hi % n16)) * 16384)) + Math.trunc((a - 49152))))];
+      return bus.prg[Math.trunc((Math.trunc(((bus.m227Hi % n16) * 16384)) + Math.trunc((a - 49152))))];
     }
     if ((bus.mapper == 2)) {
       if ((a < 49152)) {
@@ -822,7 +822,7 @@ function busRead(bus, addr) {
       }
       return bus.prg[Math.trunc((Math.trunc((Math.trunc((bus.prgBanks - 1)) * 16384)) + Math.trunc((a - 49152))))];
     }
-    return bus.prg[Math.trunc((Math.trunc((a - 32768)) & bus.prgMask))];
+    return bus.prg[((Math.trunc((a - 32768)) & bus.prgMask) >>> 0)];
   }
   return 0;
 }
@@ -830,15 +830,15 @@ function busRead(bus, addr) {
 function busWrite(bus, addr, val) {
   const a = Math.trunc(addr);
   if ((a < 8192)) {
-    bus.ram[Math.trunc((a & 2047))] = val;
+    bus.ram[((a & 2047) >>> 0)] = val;
     return;
   }
   if ((a < 16384)) {
-    ppuRegWrite(bus.ppu, Math.trunc((a & 7)), val);
+    ppuRegWrite(bus.ppu, ((a & 7) >>> 0), val);
     return;
   }
   if ((a == 16404)) {
-    const page = Math.trunc((Math.trunc(val) << 8));
+    const page = ((Math.trunc(val) << 8) >>> 0);
     let i = 0;
     while ((i < 256)) {
       const b = busRead(bus, (Math.trunc((page + i)) & 0xFFFF));
@@ -864,7 +864,7 @@ function busWrite(bus, addr, val) {
   }
   if ((a >= 32768)) {
     if ((bus.mapper == 2)) {
-      bus.prgBank = Math.trunc((Math.trunc(val) & Math.trunc((bus.prgBanks - 1))));
+      bus.prgBank = ((Math.trunc(val) & Math.trunc((bus.prgBanks - 1))) >>> 0);
       return;
     }
     if ((bus.mapper == 4)) {
@@ -876,19 +876,19 @@ function busWrite(bus, addr, val) {
         return;
       }
       if ((a < 45056)) {
-        bus.mmc2Prg = Math.trunc((Math.trunc(val) & 15));
+        bus.mmc2Prg = ((Math.trunc(val) & 15) >>> 0);
       } else {
         if ((a < 49152)) {
-          mmc2SetChr(bus.ppu, 0, Math.trunc((Math.trunc(val) & 31)));
+          mmc2SetChr(bus.ppu, 0, ((Math.trunc(val) & 31) >>> 0));
         } else {
           if ((a < 53248)) {
-            mmc2SetChr(bus.ppu, 1, Math.trunc((Math.trunc(val) & 31)));
+            mmc2SetChr(bus.ppu, 1, ((Math.trunc(val) & 31) >>> 0));
           } else {
             if ((a < 57344)) {
-              mmc2SetChr(bus.ppu, 2, Math.trunc((Math.trunc(val) & 31)));
+              mmc2SetChr(bus.ppu, 2, ((Math.trunc(val) & 31) >>> 0));
             } else {
               if ((a < 61440)) {
-                mmc2SetChr(bus.ppu, 3, Math.trunc((Math.trunc(val) & 31)));
+                mmc2SetChr(bus.ppu, 3, ((Math.trunc(val) & 31) >>> 0));
               } else {
                 bus.ppu.mirrorVertical = (((val & 1) & 0xFF) == 0);
               }
@@ -907,39 +907,39 @@ function busWrite(bus, addr, val) {
 }
 
 function mapper227Write(bus, a) {
-  const bank = Math.trunc((Math.trunc((a >> 2)) & 31));
-  const l = Math.trunc((Math.trunc((a >> 7)) & 1));
-  const s = Math.trunc((a & 1));
-  const mirror = Math.trunc((Math.trunc((a >> 1)) & 1));
+  const bank = ((Math.floor(a / 2 ** (2)) & 31) >>> 0);
+  const l = ((Math.floor(a / 2 ** (7)) & 1) >>> 0);
+  const s = ((a & 1) >>> 0);
+  const mirror = ((Math.floor(a / 2 ** (1)) & 1) >>> 0);
   if ((l == 1)) {
     if ((s == 0)) {
-      bus.m227Lo = Math.trunc((bank & 30));
-      bus.m227Hi = Math.trunc((Math.trunc((bank & 30)) | 1));
+      bus.m227Lo = ((bank & 30) >>> 0);
+      bus.m227Hi = ((((bank & 30) >>> 0) | 1) >>> 0);
     } else {
       bus.m227Lo = bank;
       bus.m227Hi = bank;
     }
   } else {
     bus.m227Lo = bank;
-    bus.m227Hi = Math.trunc((Math.trunc((bank & 24)) | (() => {
+    bus.m227Hi = ((((bank & 24) >>> 0) | (() => {
     if ((s == 1)) {
       return 7;
     } else {
       return 0;
     }
-    })()));
+    })()) >>> 0);
   }
   bus.ppu.mirrorVertical = (mirror == 0);
 }
 
 function mmc3Write(bus, a, val) {
-  const even = (Math.trunc((a & 1)) == 0);
+  const even = (((a & 1) >>> 0) == 0);
   const v = Math.trunc(val);
   if ((a < 40960)) {
     if (even) {
       bus.mmcSelect = v;
     } else {
-      const r = Math.trunc((bus.mmcSelect & 7));
+      const r = ((bus.mmcSelect & 7) >>> 0);
       if ((r == 0)) {
         bus.mmcR0 = v;
       }
@@ -969,7 +969,7 @@ function mmc3Write(bus, a, val) {
   } else {
     if ((a < 49152)) {
       if (even) {
-        bus.ppu.mirrorVertical = (Math.trunc((v & 1)) == 0);
+        bus.ppu.mirrorVertical = (((v & 1) >>> 0) == 0);
       }
     } else {
       if ((a < 57344)) {
@@ -997,7 +997,7 @@ function newCpuNestest() {
 function newCpuReset(bus) {
   const lo = Math.trunc(busRead(bus, 65532));
   const hi = Math.trunc(busRead(bus, 65533));
-  return new Cpu(0, 0, 0, 253, 36, wrap16(Math.trunc((lo | Math.trunc((hi << 8))))), 0, 0, Array.from({length: 256}, () => __clone(false)));
+  return new Cpu(0, 0, 0, 253, 36, wrap16(((lo | ((hi << 8) >>> 0)) >>> 0)), 0, 0, Array.from({length: 256}, () => __clone(false)));
 }
 
 function nmi(cpu, bus) {
@@ -1006,7 +1006,7 @@ function nmi(cpu, bus) {
   setFlag(cpu, FI, true);
   const lo = Math.trunc(busRead(bus, 65530));
   const hi = Math.trunc(busRead(bus, 65531));
-  cpu.pc = wrap16(Math.trunc((lo | Math.trunc((hi << 8)))));
+  cpu.pc = wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
   cpu.cyc = Math.trunc((cpu.cyc + 7));
 }
 
@@ -1016,13 +1016,13 @@ function irq(cpu, bus) {
   setFlag(cpu, FI, true);
   const lo = Math.trunc(busRead(bus, 65534));
   const hi = Math.trunc(busRead(bus, 65535));
-  cpu.pc = wrap16(Math.trunc((lo | Math.trunc((hi << 8)))));
+  cpu.pc = wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
   cpu.cyc = Math.trunc((cpu.cyc + 7));
 }
 
 function mmc3UpdateChr(bus) {
   const num1k = Math.trunc(Math.trunc(bus.ppu.chr.length / 1024));
-  const mode = Math.trunc((Math.trunc((bus.mmcSelect >> 7)) & 1));
+  const mode = ((Math.floor(bus.mmcSelect / 2 ** (7)) & 1) >>> 0);
   let w0 = 0;
   let w1 = 0;
   let w2 = 0;
@@ -1032,10 +1032,10 @@ function mmc3UpdateChr(bus) {
   let w6 = 0;
   let w7 = 0;
   if ((mode == 0)) {
-    w0 = Math.trunc((bus.mmcR0 & 254));
-    w1 = Math.trunc((Math.trunc((bus.mmcR0 & 254)) + 1));
-    w2 = Math.trunc((bus.mmcR1 & 254));
-    w3 = Math.trunc((Math.trunc((bus.mmcR1 & 254)) + 1));
+    w0 = ((bus.mmcR0 & 254) >>> 0);
+    w1 = Math.trunc((((bus.mmcR0 & 254) >>> 0) + 1));
+    w2 = ((bus.mmcR1 & 254) >>> 0);
+    w3 = Math.trunc((((bus.mmcR1 & 254) >>> 0) + 1));
     w4 = bus.mmcR2;
     w5 = bus.mmcR3;
     w6 = bus.mmcR4;
@@ -1045,25 +1045,25 @@ function mmc3UpdateChr(bus) {
     w1 = bus.mmcR3;
     w2 = bus.mmcR4;
     w3 = bus.mmcR5;
-    w4 = Math.trunc((bus.mmcR0 & 254));
-    w5 = Math.trunc((Math.trunc((bus.mmcR0 & 254)) + 1));
-    w6 = Math.trunc((bus.mmcR1 & 254));
-    w7 = Math.trunc((Math.trunc((bus.mmcR1 & 254)) + 1));
+    w4 = ((bus.mmcR0 & 254) >>> 0);
+    w5 = Math.trunc((((bus.mmcR0 & 254) >>> 0) + 1));
+    w6 = ((bus.mmcR1 & 254) >>> 0);
+    w7 = Math.trunc((((bus.mmcR1 & 254) >>> 0) + 1));
   }
-  bus.ppu.chrBankOffset[0] = Math.trunc((Math.trunc((w0 % num1k)) * 1024));
-  bus.ppu.chrBankOffset[1] = Math.trunc((Math.trunc((w1 % num1k)) * 1024));
-  bus.ppu.chrBankOffset[2] = Math.trunc((Math.trunc((w2 % num1k)) * 1024));
-  bus.ppu.chrBankOffset[3] = Math.trunc((Math.trunc((w3 % num1k)) * 1024));
-  bus.ppu.chrBankOffset[4] = Math.trunc((Math.trunc((w4 % num1k)) * 1024));
-  bus.ppu.chrBankOffset[5] = Math.trunc((Math.trunc((w5 % num1k)) * 1024));
-  bus.ppu.chrBankOffset[6] = Math.trunc((Math.trunc((w6 % num1k)) * 1024));
-  bus.ppu.chrBankOffset[7] = Math.trunc((Math.trunc((w7 % num1k)) * 1024));
+  bus.ppu.chrBankOffset[0] = Math.trunc(((w0 % num1k) * 1024));
+  bus.ppu.chrBankOffset[1] = Math.trunc(((w1 % num1k) * 1024));
+  bus.ppu.chrBankOffset[2] = Math.trunc(((w2 % num1k) * 1024));
+  bus.ppu.chrBankOffset[3] = Math.trunc(((w3 % num1k) * 1024));
+  bus.ppu.chrBankOffset[4] = Math.trunc(((w4 % num1k) * 1024));
+  bus.ppu.chrBankOffset[5] = Math.trunc(((w5 % num1k) * 1024));
+  bus.ppu.chrBankOffset[6] = Math.trunc(((w6 % num1k) * 1024));
+  bus.ppu.chrBankOffset[7] = Math.trunc(((w7 % num1k) * 1024));
 }
 
 function mmc3PrgOffset(bus, a) {
   const num8k = Math.trunc(Math.trunc(bus.prg.length / 8192));
   const last = Math.trunc((num8k - 1));
-  const mode = Math.trunc((Math.trunc((bus.mmcSelect >> 6)) & 1));
+  const mode = ((Math.floor(bus.mmcSelect / 2 ** (6)) & 1) >>> 0);
   let bank = 0;
   if ((a < 40960)) {
     bank = (() => {
@@ -1090,7 +1090,7 @@ function mmc3PrgOffset(bus, a) {
       }
     }
   }
-  return Math.trunc((Math.trunc((Math.trunc((bank % num8k)) * 8192)) + Math.trunc((a & 8191))));
+  return Math.trunc((Math.trunc(((bank % num8k) * 8192)) + ((a & 8191) >>> 0)));
 }
 
 function mmc3ClockIrq(bus) {
@@ -1139,21 +1139,21 @@ function setZN(cpu, v) {
 }
 
 function wrap16(v) {
-  return (Math.trunc((v & 65535)) & 0xFFFF);
+  return (((v & 65535) >>> 0) & 0xFFFF);
 }
 
 function read16(bus, addr) {
   const lo = Math.trunc(busRead(bus, addr));
   const hi = Math.trunc(busRead(bus, wrap16(Math.trunc((Math.trunc(addr) + 1)))));
-  return wrap16(Math.trunc((lo | Math.trunc((hi << 8)))));
+  return wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
 }
 
 function read16Bug(bus, addr) {
   const a = Math.trunc(addr);
   const lo = Math.trunc(busRead(bus, addr));
-  const hiAddr = Math.trunc((Math.trunc((a & 65280)) | Math.trunc((Math.trunc((a + 1)) & 255))));
+  const hiAddr = ((((a & 65280) >>> 0) | ((Math.trunc((a + 1)) & 255) >>> 0)) >>> 0);
   const hi = Math.trunc(busRead(bus, wrap16(hiAddr)));
-  return wrap16(Math.trunc((lo | Math.trunc((hi << 8)))));
+  return wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
 }
 
 function fetch8(cpu, bus) {
@@ -1169,34 +1169,34 @@ function fetch16(cpu, bus) {
 }
 
 function push8(cpu, bus, v) {
-  busWrite(bus, wrap16(Math.trunc((256 | Math.trunc(cpu.sp)))), v);
+  busWrite(bus, wrap16(((256 | Math.trunc(cpu.sp)) >>> 0)), v);
   cpu.sp = ((cpu.sp - 1) & 0xFF);
 }
 
 function pop8(cpu, bus) {
   cpu.sp = ((cpu.sp + 1) & 0xFF);
-  return busRead(bus, wrap16(Math.trunc((256 | Math.trunc(cpu.sp)))));
+  return busRead(bus, wrap16(((256 | Math.trunc(cpu.sp)) >>> 0)));
 }
 
 function push16(cpu, bus, v) {
-  push8(cpu, bus, (((v >> 8) & 0xFFFF) & 0xFF));
+  push8(cpu, bus, ((Math.floor(v / 2 ** (8)) & 0xFFFF) & 0xFF));
   push8(cpu, bus, (v & 0xFF));
 }
 
 function pop16(cpu, bus) {
   const lo = Math.trunc(pop8(cpu, bus));
   const hi = Math.trunc(pop8(cpu, bus));
-  return wrap16(Math.trunc((lo | Math.trunc((hi << 8)))));
+  return wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
 }
 
 function pageCrossed(base, eff) {
-  return (Math.trunc((Math.trunc(base) & 65280)) != Math.trunc((Math.trunc(eff) & 65280)));
+  return (((Math.trunc(base) & 65280) >>> 0) != ((Math.trunc(eff) & 65280) >>> 0));
 }
 
 function read16ZP(bus, z) {
-  const lo = Math.trunc(busRead(bus, (Math.trunc((z & 255)) & 0xFFFF)));
-  const hi = Math.trunc(busRead(bus, (Math.trunc((Math.trunc((z + 1)) & 255)) & 0xFFFF)));
-  return wrap16(Math.trunc((lo | Math.trunc((hi << 8)))));
+  const lo = Math.trunc(busRead(bus, (((z & 255) >>> 0) & 0xFFFF)));
+  const hi = Math.trunc(busRead(bus, (((Math.trunc((z + 1)) & 255) >>> 0) & 0xFFFF)));
+  return wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
 }
 
 function aImm(cpu) {
@@ -1210,11 +1210,11 @@ function aZp(cpu, bus) {
 }
 
 function aZpX(cpu, bus) {
-  return (Math.trunc((Math.trunc((Math.trunc(fetch8(cpu, bus)) + Math.trunc(cpu.x))) & 255)) & 0xFFFF);
+  return (((Math.trunc((Math.trunc(fetch8(cpu, bus)) + Math.trunc(cpu.x))) & 255) >>> 0) & 0xFFFF);
 }
 
 function aZpY(cpu, bus) {
-  return (Math.trunc((Math.trunc((Math.trunc(fetch8(cpu, bus)) + Math.trunc(cpu.y))) & 255)) & 0xFFFF);
+  return (((Math.trunc((Math.trunc(fetch8(cpu, bus)) + Math.trunc(cpu.y))) & 255) >>> 0) & 0xFFFF);
 }
 
 function aAbs(cpu, bus) {
@@ -1240,7 +1240,7 @@ function aAbsY(cpu, bus) {
 }
 
 function aIndX(cpu, bus) {
-  const z = Math.trunc((Math.trunc((Math.trunc(fetch8(cpu, bus)) + Math.trunc(cpu.x))) & 255));
+  const z = ((Math.trunc((Math.trunc(fetch8(cpu, bus)) + Math.trunc(cpu.x))) & 255) >>> 0);
   return read16ZP(bus, z);
 }
 
@@ -1264,15 +1264,15 @@ function adc(cpu, m) {
   }
   })();
   const sum = Math.trunc((Math.trunc((a + Math.trunc(m))) + carry));
-  const r = (Math.trunc((sum & 255)) & 0xFF);
+  const r = (((sum & 255) >>> 0) & 0xFF);
   setFlag(cpu, FC, (sum > 255));
-  setFlag(cpu, FV, (Math.trunc((Math.trunc(((~Math.trunc((a ^ Math.trunc(m)))) & Math.trunc((a ^ Math.trunc(r))))) & 128)) != 0));
+  setFlag(cpu, FV, ((((((~((a ^ Math.trunc(m)) >>> 0)) & ((a ^ Math.trunc(r)) >>> 0)) >>> 0) & 128) >>> 0) != 0));
   cpu.a = r;
   setZN(cpu, r);
 }
 
 function sbc(cpu, m) {
-  adc(cpu, (Math.trunc((Math.trunc(m) ^ 255)) & 0xFF));
+  adc(cpu, (((Math.trunc(m) ^ 255) >>> 0) & 0xFF));
 }
 
 function compare(cpu, reg, m) {
@@ -1281,7 +1281,7 @@ function compare(cpu, reg, m) {
 }
 
 function bitTest(cpu, m) {
-  setFlag(cpu, FZ, (Math.trunc((Math.trunc(cpu.a) & Math.trunc(m))) == 0));
+  setFlag(cpu, FZ, (((Math.trunc(cpu.a) & Math.trunc(m)) >>> 0) == 0));
   setFlag(cpu, FN, (((m & 128) & 0xFF) != 0));
   setFlag(cpu, FV, (((m & 64) & 0xFF) != 0));
 }
@@ -1295,7 +1295,7 @@ function aslV(cpu, m) {
 
 function lsrV(cpu, m) {
   setFlag(cpu, FC, (((m & 1) & 0xFF) != 0));
-  const r = ((m >> 1) & 0xFF);
+  const r = (Math.floor(m / 2 ** (1)) & 0xFF);
   setZN(cpu, r);
   return r;
 }
@@ -1323,7 +1323,7 @@ function rorV(cpu, m) {
   }
   })();
   setFlag(cpu, FC, (((m & 1) & 0xFF) != 0));
-  const r = ((((m >> 1) & 0xFF) | cin) & 0xFF);
+  const r = (((Math.floor(m / 2 ** (1)) & 0xFF) | cin) & 0xFF);
   setZN(cpu, r);
   return r;
 }
@@ -1355,14 +1355,14 @@ function appendStr(dst, src) {
 function hex2(v) {
   const d = "0123456789ABCDEF";
   let s = "";
-  (s += String.fromCharCode(d.charCodeAt(Math.trunc((Math.trunc((v >> 4)) & 15)))));
-  (s += String.fromCharCode(d.charCodeAt(Math.trunc((v & 15)))));
+  (s += String.fromCharCode(d.charCodeAt(((Math.floor(v / 2 ** (4)) & 15) >>> 0))));
+  (s += String.fromCharCode(d.charCodeAt(((v & 15) >>> 0))));
   return s;
 }
 
 function hex4(v) {
-  const s = {v: hex2(Math.trunc((Math.trunc((v >> 8)) & 255)))};
-  const lo = hex2(Math.trunc((v & 255)));
+  const s = {v: hex2(((Math.floor(v / 2 ** (8)) & 255) >>> 0))};
+  const lo = hex2(((v & 255) >>> 0));
   appendStr(s, lo);
   return s.v;
 }
@@ -1374,7 +1374,7 @@ function decStr(n) {
   let v = n;
   let buf = "";
   while ((v > 0)) {
-    (buf += String.fromCharCode((Math.trunc((Math.trunc((v % 10)) + 48)) & 0xFF)));
+    (buf += String.fromCharCode((Math.trunc(((v % 10) + 48)) & 0xFF)));
     v = Math.trunc(Math.trunc(v / 10));
   }
   let out = "";
@@ -1469,7 +1469,7 @@ function step(cpu, bus) {
     setFlag(cpu, FI, true);
     const lo = Math.trunc(busRead(bus, 65534));
     const hi = Math.trunc(busRead(bus, 65535));
-    cpu.pc = wrap16(Math.trunc((lo | Math.trunc((hi << 8)))));
+    cpu.pc = wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
     cpu.cyc = Math.trunc((cpu.cyc + 7));
   } else if (_t3 === 169) {
     const v = busRead(bus, aImm(cpu));
@@ -2353,7 +2353,7 @@ function step(cpu, bus) {
   } else {
     if ((!cpu.unknownSeen[Math.trunc(op)])) {
       cpu.unknownSeen[Math.trunc(op)] = true;
-      __eprint(((("unimplemented opcode 0x" + hex2(Math.trunc(op))) + " at pc=0x") + hex4(Math.trunc((Math.trunc((Math.trunc(cpu.pc) - 1)) & 65535)))));
+      __eprint(((("unimplemented opcode 0x" + hex2(Math.trunc(op))) + " at pc=0x") + hex4(((Math.trunc((Math.trunc(cpu.pc) - 1)) & 65535) >>> 0))));
     }
     cpu.cyc = Math.trunc((cpu.cyc + 2));
   }
@@ -2380,7 +2380,7 @@ function parseCartridge(raw) {
   const chr8k = raw[5];
   const flags6 = raw[6];
   const flags7 = raw[7];
-  const mapper = ((((flags7 & 240) & 0xFF) | ((((flags6 >> 4) & 0xFF) & 15) & 0xFF)) & 0xFF);
+  const mapper = ((((flags7 & 240) & 0xFF) | (((Math.floor(flags6 / 2 ** (4)) & 0xFF) & 15) & 0xFF)) & 0xFF);
   const mirrorVertical = (((flags6 & 1) & 0xFF) != 0);
   const hasBattery = (((flags6 & 2) & 0xFF) != 0);
   const hasTrainer = (((flags6 & 4) & 0xFF) != 0);
@@ -2427,11 +2427,11 @@ function mmc2UpdateChr(ppu) {
   })();
   let w = 0;
   while ((w < 4)) {
-    ppu.chrBankOffset[w] = Math.trunc((Math.trunc((Math.trunc((b0 % n4k)) * 4096)) + Math.trunc((w * 1024))));
+    ppu.chrBankOffset[w] = Math.trunc((Math.trunc(((b0 % n4k) * 4096)) + Math.trunc((w * 1024))));
     w = Math.trunc((w + 1));
   }
   while ((w < 8)) {
-    ppu.chrBankOffset[w] = Math.trunc((Math.trunc((Math.trunc((b1 % n4k)) * 4096)) + Math.trunc((Math.trunc((w - 4)) * 1024))));
+    ppu.chrBankOffset[w] = Math.trunc((Math.trunc(((b1 % n4k) * 4096)) + Math.trunc((Math.trunc((w - 4)) * 1024))));
     w = Math.trunc((w + 1));
   }
 }
@@ -2493,12 +2493,12 @@ function mmc2Latch(ppu, a) {
 }
 
 function mirrorNT(ppu, addr) {
-  const a = Math.trunc((addr & 4095));
+  const a = ((addr & 4095) >>> 0);
   const table = Math.trunc(Math.trunc(a / 1024));
-  const off = Math.trunc((a & 1023));
+  const off = ((a & 1023) >>> 0);
   let phys = 0;
   if (ppu.mirrorVertical) {
-    phys = Math.trunc((Math.trunc((Math.trunc((table & 1)) * 1024)) + off));
+    phys = Math.trunc((Math.trunc((((table & 1) >>> 0) * 1024)) + off));
   } else {
     phys = Math.trunc((Math.trunc((Math.trunc(Math.trunc(table / 2)) * 1024)) + off));
   }
@@ -2506,18 +2506,18 @@ function mirrorNT(ppu, addr) {
 }
 
 function chrPhys(ppu, a) {
-  return Math.trunc((Math.trunc((ppu.chrBankOffset[Math.trunc(Math.trunc(a / 1024))] + Math.trunc((a & 1023)))) % ppu.chr.length));
+  return (Math.trunc((ppu.chrBankOffset[Math.trunc(Math.trunc(a / 1024))] + ((a & 1023) >>> 0))) % ppu.chr.length);
 }
 
 function ppuMemRead(ppu, addr) {
-  const a = Math.trunc((Math.trunc(addr) & 16383));
+  const a = ((Math.trunc(addr) & 16383) >>> 0);
   if ((a < 8192)) {
     return ppu.chr[chrPhys(ppu, a)];
   }
   if ((a < 16128)) {
     return ppu.vram[mirrorNT(ppu, a)];
   }
-  let p = Math.trunc((a & 31));
+  let p = ((a & 31) >>> 0);
   if ((p == 16)) {
     p = 0;
   }
@@ -2534,7 +2534,7 @@ function ppuMemRead(ppu, addr) {
 }
 
 function ppuMemWrite(ppu, addr, val) {
-  const a = Math.trunc((Math.trunc(addr) & 16383));
+  const a = ((Math.trunc(addr) & 16383) >>> 0);
   if ((a < 8192)) {
     ppu.chr[chrPhys(ppu, a)] = val;
     return;
@@ -2543,7 +2543,7 @@ function ppuMemWrite(ppu, addr, val) {
     ppu.vram[mirrorNT(ppu, a)] = val;
     return;
   }
-  let p = Math.trunc((a & 31));
+  let p = ((a & 31) >>> 0);
   if ((p == 16)) {
     p = 0;
   }
@@ -2573,7 +2573,7 @@ function ppuRegRead(ppu, reg) {
     const a = ppu.v;
     let result = ppu.readBuffer;
     ppu.readBuffer = ppuMemRead(ppu, a);
-    if ((Math.trunc((Math.trunc(a) & 16383)) >= 16128)) {
+    if ((((Math.trunc(a) & 16383) >>> 0) >= 16128)) {
       result = ppu.readBuffer;
     }
     const inc = (() => {
@@ -2583,7 +2583,7 @@ function ppuRegRead(ppu, reg) {
       return 1;
     }
     })();
-    ppu.v = (Math.trunc((Math.trunc((Math.trunc(ppu.v) + inc)) & 32767)) & 0xFFFF);
+    ppu.v = (((Math.trunc((Math.trunc(ppu.v) + inc)) & 32767) >>> 0) & 0xFFFF);
     return result;
   }
   return 0;
@@ -2592,7 +2592,7 @@ function ppuRegRead(ppu, reg) {
 function ppuRegWrite(ppu, reg, val) {
   if ((reg == 0)) {
     ppu.ctrl = val;
-    ppu.t = (Math.trunc((Math.trunc((Math.trunc(ppu.t) & 29695)) | Math.trunc((Math.trunc((Math.trunc(val) & 3)) << 10)))) & 0xFFFF);
+    ppu.t = (((((Math.trunc(ppu.t) & 29695) >>> 0) | ((((Math.trunc(val) & 3) >>> 0) << 10) >>> 0)) >>> 0) & 0xFFFF);
     return;
   }
   if ((reg == 1)) {
@@ -2605,28 +2605,28 @@ function ppuRegWrite(ppu, reg, val) {
   }
   if ((reg == 4)) {
     ppu.oam[Math.trunc(ppu.oamAddr)] = val;
-    ppu.oamAddr = (Math.trunc((Math.trunc((Math.trunc(ppu.oamAddr) + 1)) & 255)) & 0xFF);
+    ppu.oamAddr = (((Math.trunc((Math.trunc(ppu.oamAddr) + 1)) & 255) >>> 0) & 0xFF);
     return;
   }
   if ((reg == 5)) {
     if ((ppu.w == 0)) {
       ppu.fineX = ((val & 7) & 0xFF);
-      ppu.t = (Math.trunc((Math.trunc((Math.trunc(ppu.t) & 32736)) | Math.trunc((Math.trunc(val) >> 3)))) & 0xFFFF);
+      ppu.t = (((((Math.trunc(ppu.t) & 32736) >>> 0) | Math.floor(Math.trunc(val) / 2 ** (3))) >>> 0) & 0xFFFF);
       ppu.w = 1;
     } else {
-      const hi = Math.trunc((Math.trunc((Math.trunc(val) & 7)) << 12));
-      const lo = Math.trunc((Math.trunc((Math.trunc(val) & 248)) << 2));
-      ppu.t = (Math.trunc((Math.trunc((Math.trunc((Math.trunc(ppu.t) & 3103)) | hi)) | lo)) & 0xFFFF);
+      const hi = ((((Math.trunc(val) & 7) >>> 0) << 12) >>> 0);
+      const lo = ((((Math.trunc(val) & 248) >>> 0) << 2) >>> 0);
+      ppu.t = (((((((Math.trunc(ppu.t) & 3103) >>> 0) | hi) >>> 0) | lo) >>> 0) & 0xFFFF);
       ppu.w = 0;
     }
     return;
   }
   if ((reg == 6)) {
     if ((ppu.w == 0)) {
-      ppu.t = (Math.trunc((Math.trunc((Math.trunc(ppu.t) & 255)) | Math.trunc((Math.trunc((Math.trunc(val) & 63)) << 8)))) & 0xFFFF);
+      ppu.t = (((((Math.trunc(ppu.t) & 255) >>> 0) | ((((Math.trunc(val) & 63) >>> 0) << 8) >>> 0)) >>> 0) & 0xFFFF);
       ppu.w = 1;
     } else {
-      ppu.t = (Math.trunc((Math.trunc((Math.trunc(ppu.t) & 32512)) | Math.trunc(val))) & 0xFFFF);
+      ppu.t = (((((Math.trunc(ppu.t) & 32512) >>> 0) | Math.trunc(val)) >>> 0) & 0xFFFF);
       ppu.v = ppu.t;
       ppu.w = 0;
     }
@@ -2641,21 +2641,21 @@ function ppuRegWrite(ppu, reg, val) {
       return 1;
     }
     })();
-    ppu.v = (Math.trunc((Math.trunc((Math.trunc(ppu.v) + inc)) & 32767)) & 0xFFFF);
+    ppu.v = (((Math.trunc((Math.trunc(ppu.v) + inc)) & 32767) >>> 0) & 0xFFFF);
     return;
   }
 }
 
 function incrementY(ppu) {
   let v = Math.trunc(ppu.v);
-  if ((Math.trunc((v & 28672)) != 28672)) {
+  if ((((v & 28672) >>> 0) != 28672)) {
     v = Math.trunc((v + 4096));
   } else {
-    v = Math.trunc((v & (~28672)));
-    let y = Math.trunc((Math.trunc((v >> 5)) & 31));
+    v = ((v & (~28672)) >>> 0);
+    let y = ((Math.floor(v / 2 ** (5)) & 31) >>> 0);
     if ((y == 29)) {
       y = 0;
-      v = Math.trunc((v ^ 2048));
+      v = ((v ^ 2048) >>> 0);
     } else {
       if ((y == 31)) {
         y = 0;
@@ -2663,9 +2663,9 @@ function incrementY(ppu) {
         y = Math.trunc((y + 1));
       }
     }
-    v = Math.trunc((Math.trunc((v & (~992))) | Math.trunc((y << 5))));
+    v = ((((v & (~992)) >>> 0) | ((y << 5) >>> 0)) >>> 0);
   }
-  ppu.v = (Math.trunc((v & 32767)) & 0xFFFF);
+  ppu.v = (((v & 32767) >>> 0) & 0xFFFF);
 }
 
 function ppuStep(ppu) {
@@ -2686,9 +2686,9 @@ function ppuStep(ppu) {
     }
   }
   if ((((ppu.scanline == 261) && (ppu.dot == 280)) && rendering)) {
-    const keepHoriz = Math.trunc((Math.trunc(ppu.v) & 1055));
-    const vert = Math.trunc((Math.trunc(ppu.t) & 31712));
-    ppu.v = (Math.trunc((keepHoriz | vert)) & 0xFFFF);
+    const keepHoriz = ((Math.trunc(ppu.v) & 1055) >>> 0);
+    const vert = ((Math.trunc(ppu.t) & 31712) >>> 0);
+    ppu.v = (((keepHoriz | vert) >>> 0) & 0xFFFF);
   }
   if (((ppu.scanline == 241) && (ppu.dot == 1))) {
     ppu.status = ((ppu.status | 128) & 0xFF);
@@ -2702,11 +2702,11 @@ function ppuStep(ppu) {
 }
 
 function nesColor(idx) {
-  const c = Math.trunc(NESPAL[Math.trunc((idx & 63))]);
-  const r = Math.trunc((Math.trunc((c >> 16)) & 255));
-  const g = Math.trunc((Math.trunc((c >> 8)) & 255));
-  const b = Math.trunc((c & 255));
-  return (Math.trunc((Math.trunc((Math.trunc((r | Math.trunc((g << 8)))) | Math.trunc((b << 16)))) | 4278190080)) >>> 0);
+  const c = Math.trunc(NESPAL[((idx & 63) >>> 0)]);
+  const r = ((Math.floor(c / 2 ** (16)) & 255) >>> 0);
+  const g = ((Math.floor(c / 2 ** (8)) & 255) >>> 0);
+  const b = ((c & 255) >>> 0);
+  return (((((((r | ((g << 8) >>> 0)) >>> 0) | ((b << 16) >>> 0)) >>> 0) | 4278190080) >>> 0) >>> 0);
 }
 
 function renderScanline(ppu, sl) {
@@ -2715,8 +2715,8 @@ function renderScanline(ppu, sl) {
   if ((((ppu.mask & 8) & 0xFF) != 0)) {
     const t = Math.trunc(ppu.t);
     const v = Math.trunc(ppu.v);
-    ppu.scrollX = Math.trunc((Math.trunc((Math.trunc((Math.trunc((Math.trunc((t >> 10)) & 1)) * 256)) + Math.trunc((Math.trunc((t & 31)) * 8)))) + Math.trunc(ppu.fineX)));
-    ppu.scrollY = Math.trunc((Math.trunc((Math.trunc((Math.trunc((Math.trunc((v >> 11)) & 1)) * 240)) + Math.trunc((Math.trunc((Math.trunc((v >> 5)) & 31)) * 8)))) + Math.trunc((Math.trunc((v >> 12)) & 7))));
+    ppu.scrollX = Math.trunc((Math.trunc((Math.trunc((((Math.floor(t / 2 ** (10)) & 1) >>> 0) * 256)) + Math.trunc((((t & 31) >>> 0) * 8)))) + Math.trunc(ppu.fineX)));
+    ppu.scrollY = Math.trunc((Math.trunc((Math.trunc((((Math.floor(v / 2 ** (11)) & 1) >>> 0) * 240)) + Math.trunc((((Math.floor(v / 2 ** (5)) & 31) >>> 0) * 8)))) + ((Math.floor(v / 2 ** (12)) & 7) >>> 0)));
     const bgTable = (() => {
     if ((((ppu.ctrl & 16) & 0xFF) != 0)) {
       return 4096;
@@ -2729,8 +2729,8 @@ function renderScanline(ppu, sl) {
     let palGroup = 0;
     let x = 0;
     while ((x < 256)) {
-      const wx = Math.trunc((Math.trunc((ppu.scrollX + x)) & 511));
-      if (((Math.trunc((wx & 7)) == 0) || (x == 0))) {
+      const wx = ((Math.trunc((ppu.scrollX + x)) & 511) >>> 0);
+      if (((((wx & 7) >>> 0) == 0) || (x == 0))) {
         let wy = ppu.scrollY;
         while ((wy >= 480)) {
           wy = Math.trunc((wy - 480));
@@ -2738,16 +2738,16 @@ function renderScanline(ppu, sl) {
         const ntX = Math.trunc(Math.trunc(wx / 256));
         const ntY = Math.trunc(Math.trunc(wy / 240));
         const ntBase = Math.trunc((8192 + Math.trunc((Math.trunc((Math.trunc((ntY * 2)) + ntX)) * 1024))));
-        const lx = Math.trunc((wx & 255));
+        const lx = ((wx & 255) >>> 0);
         const ly = Math.trunc((wy - Math.trunc((ntY * 240))));
         const col = Math.trunc(Math.trunc(lx / 8));
         const row = Math.trunc(Math.trunc(ly / 8));
         const tile = Math.trunc(ppuMemRead(ppu, (Math.trunc((Math.trunc((ntBase + Math.trunc((row * 32)))) + col)) & 0xFFFF)));
         const atAddr = Math.trunc((Math.trunc((Math.trunc((ntBase + 960)) + Math.trunc((Math.trunc(Math.trunc(row / 4)) * 8)))) + Math.trunc(Math.trunc(col / 4))));
         const at = Math.trunc(ppuMemRead(ppu, (atAddr & 0xFFFF)));
-        const shift = Math.trunc((Math.trunc((Math.trunc((row & 2)) * 2)) + Math.trunc((col & 2))));
-        palGroup = Math.trunc((Math.trunc((at >> shift)) & 3));
-        const fy = Math.trunc((ly & 7));
+        const shift = Math.trunc((Math.trunc((((row & 2) >>> 0) * 2)) + ((col & 2) >>> 0)));
+        palGroup = ((Math.floor(at / 2 ** (shift)) & 3) >>> 0);
+        const fy = ((ly & 7) >>> 0);
         const patAddr = Math.trunc((Math.trunc((bgTable + Math.trunc((tile * 16)))) + fy));
         lo = Math.trunc(ppuMemRead(ppu, (patAddr & 0xFFFF)));
         hi = Math.trunc(ppuMemRead(ppu, (Math.trunc((patAddr + 8)) & 0xFFFF)));
@@ -2755,8 +2755,8 @@ function renderScanline(ppu, sl) {
           mmc2Latch(ppu, Math.trunc((patAddr + 8)));
         }
       }
-      const bit = Math.trunc((7 - Math.trunc((wx & 7))));
-      const px = Math.trunc((Math.trunc((Math.trunc((lo >> bit)) & 1)) | Math.trunc((Math.trunc((Math.trunc((hi >> bit)) & 1)) << 1))));
+      const bit = Math.trunc((7 - ((wx & 7) >>> 0)));
+      const px = ((((Math.floor(lo / 2 ** (bit)) & 1) >>> 0) | ((((Math.floor(hi / 2 ** (bit)) & 1) >>> 0) << 1) >>> 0)) >>> 0);
       let colorIdx = universal;
       if ((px != 0)) {
         colorIdx = Math.trunc(ppuMemRead(ppu, (Math.trunc((Math.trunc((16128 + Math.trunc((palGroup * 4)))) + px)) & 0xFFFF)));
@@ -2795,10 +2795,10 @@ function renderSpriteLine(ppu, sl, bgOpaque) {
       const rawTile = Math.trunc(ppu.oam[Math.trunc((base + 1))]);
       const attr = Math.trunc(ppu.oam[Math.trunc((base + 2))]);
       const sx = Math.trunc(ppu.oam[Math.trunc((base + 3))]);
-      const palGroup = Math.trunc((attr & 3));
-      const flipH = (Math.trunc((attr & 64)) != 0);
-      const flipV = (Math.trunc((attr & 128)) != 0);
-      const behind = (Math.trunc((attr & 32)) != 0);
+      const palGroup = ((attr & 3) >>> 0);
+      const flipH = (((attr & 64) >>> 0) != 0);
+      const flipV = (((attr & 128) >>> 0) != 0);
+      const behind = (((attr & 32) >>> 0) != 0);
       const ry = (() => {
       if (flipV) {
         return Math.trunc((Math.trunc((h - 1)) - row));
@@ -2808,7 +2808,7 @@ function renderSpriteLine(ppu, sl, bgOpaque) {
       })();
       let patAddr = 0;
       if (tall) {
-        patAddr = Math.trunc((Math.trunc((Math.trunc((Math.trunc((rawTile & 1)) * 4096)) + Math.trunc((Math.trunc((Math.trunc((rawTile & 254)) + Math.trunc(Math.trunc(ry / 8)))) * 16)))) + Math.trunc((ry & 7))));
+        patAddr = Math.trunc((Math.trunc((Math.trunc((((rawTile & 1) >>> 0) * 4096)) + Math.trunc((Math.trunc((((rawTile & 254) >>> 0) + Math.trunc(Math.trunc(ry / 8)))) * 16)))) + ((ry & 7) >>> 0)));
       } else {
         const sprTable = (() => {
         if ((((ppu.ctrl & 8) & 0xFF) != 0)) {
@@ -2833,7 +2833,7 @@ function renderSpriteLine(ppu, sl, bgOpaque) {
           return Math.trunc((7 - fx));
         }
         })();
-        const px = Math.trunc((Math.trunc((Math.trunc((lo >> rx)) & 1)) | Math.trunc((Math.trunc((Math.trunc((hi >> rx)) & 1)) << 1))));
+        const px = ((((Math.floor(lo / 2 ** (rx)) & 1) >>> 0) | ((((Math.floor(hi / 2 ** (rx)) & 1) >>> 0) << 1) >>> 0)) >>> 0);
         if ((px != 0)) {
           const x = Math.trunc((sx + fx));
           if ((x < 256)) {
@@ -2923,24 +2923,24 @@ function apuWrite(apu, reg, val) {
 
 function writePulse(p, idx, v) {
   if ((idx == 0)) {
-    p.duty = Math.trunc((Math.trunc((v >> 6)) & 3));
-    p.lengthHalt = (Math.trunc((v & 32)) != 0);
-    p.constant = (Math.trunc((v & 16)) != 0);
-    p.volume = Math.trunc((v & 15));
+    p.duty = ((Math.floor(v / 2 ** (6)) & 3) >>> 0);
+    p.lengthHalt = (((v & 32) >>> 0) != 0);
+    p.constant = (((v & 16) >>> 0) != 0);
+    p.volume = ((v & 15) >>> 0);
   } else {
     if ((idx == 1)) {
-      p.sweepEnabled = (Math.trunc((v & 128)) != 0);
-      p.sweepPeriod = Math.trunc((Math.trunc((v >> 4)) & 7));
-      p.sweepNegate = (Math.trunc((v & 8)) != 0);
-      p.sweepShift = Math.trunc((v & 7));
+      p.sweepEnabled = (((v & 128) >>> 0) != 0);
+      p.sweepPeriod = ((Math.floor(v / 2 ** (4)) & 7) >>> 0);
+      p.sweepNegate = (((v & 8) >>> 0) != 0);
+      p.sweepShift = ((v & 7) >>> 0);
       p.sweepReload = true;
     } else {
       if ((idx == 2)) {
-        p.timerPeriod = Math.trunc((Math.trunc((p.timerPeriod & 1792)) | v));
+        p.timerPeriod = ((((p.timerPeriod & 1792) >>> 0) | v) >>> 0);
       } else {
-        p.timerPeriod = Math.trunc((Math.trunc((p.timerPeriod & 255)) | Math.trunc((Math.trunc((v & 7)) << 8))));
+        p.timerPeriod = ((((p.timerPeriod & 255) >>> 0) | ((((v & 7) >>> 0) << 8) >>> 0)) >>> 0);
         if (p.enabled) {
-          p.length = LENGTH_TABLE[Math.trunc((Math.trunc((v >> 3)) & 31))];
+          p.length = LENGTH_TABLE[((Math.floor(v / 2 ** (3)) & 31) >>> 0)];
         }
         p.dutyPos = 0;
         p.envStart = true;
@@ -2951,16 +2951,16 @@ function writePulse(p, idx, v) {
 
 function writeTriangle(t, idx, v) {
   if ((idx == 0)) {
-    t.control = (Math.trunc((v & 128)) != 0);
-    t.linearReload = Math.trunc((v & 127));
+    t.control = (((v & 128) >>> 0) != 0);
+    t.linearReload = ((v & 127) >>> 0);
   } else {
     if ((idx == 2)) {
-      t.timerPeriod = Math.trunc((Math.trunc((t.timerPeriod & 1792)) | v));
+      t.timerPeriod = ((((t.timerPeriod & 1792) >>> 0) | v) >>> 0);
     } else {
       if ((idx == 3)) {
-        t.timerPeriod = Math.trunc((Math.trunc((t.timerPeriod & 255)) | Math.trunc((Math.trunc((v & 7)) << 8))));
+        t.timerPeriod = ((((t.timerPeriod & 255) >>> 0) | ((((v & 7) >>> 0) << 8) >>> 0)) >>> 0);
         if (t.enabled) {
-          t.length = LENGTH_TABLE[Math.trunc((Math.trunc((v >> 3)) & 31))];
+          t.length = LENGTH_TABLE[((Math.floor(v / 2 ** (3)) & 31) >>> 0)];
         }
         t.linearReloadFlag = true;
       }
@@ -2970,17 +2970,17 @@ function writeTriangle(t, idx, v) {
 
 function writeNoise(n, idx, v) {
   if ((idx == 0)) {
-    n.lengthHalt = (Math.trunc((v & 32)) != 0);
-    n.constant = (Math.trunc((v & 16)) != 0);
-    n.volume = Math.trunc((v & 15));
+    n.lengthHalt = (((v & 32) >>> 0) != 0);
+    n.constant = (((v & 16) >>> 0) != 0);
+    n.volume = ((v & 15) >>> 0);
   } else {
     if ((idx == 2)) {
-      n.mode = (Math.trunc((v & 128)) != 0);
-      n.timerPeriod = NOISE_PERIOD[Math.trunc((v & 15))];
+      n.mode = (((v & 128) >>> 0) != 0);
+      n.timerPeriod = NOISE_PERIOD[((v & 15) >>> 0)];
     } else {
       if ((idx == 3)) {
         if (n.enabled) {
-          n.length = LENGTH_TABLE[Math.trunc((Math.trunc((v >> 3)) & 31))];
+          n.length = LENGTH_TABLE[((Math.floor(v / 2 ** (3)) & 31) >>> 0)];
         }
         n.envStart = true;
       }
@@ -2990,15 +2990,15 @@ function writeNoise(n, idx, v) {
 
 function writeDmc(d, idx, v) {
   if ((idx == 0)) {
-    d.irqEnabled = (Math.trunc((v & 128)) != 0);
-    d.loopFlag = (Math.trunc((v & 64)) != 0);
-    d.rate = DMC_RATE[Math.trunc((v & 15))];
+    d.irqEnabled = (((v & 128) >>> 0) != 0);
+    d.loopFlag = (((v & 64) >>> 0) != 0);
+    d.rate = DMC_RATE[((v & 15) >>> 0)];
     if ((!d.irqEnabled)) {
       d.irqFlag = false;
     }
   } else {
     if ((idx == 1)) {
-      d.output = Math.trunc((v & 127));
+      d.output = ((v & 127) >>> 0);
     } else {
       if ((idx == 2)) {
         d.sampleAddr = Math.trunc((49152 + Math.trunc((v * 64))));
@@ -3010,24 +3010,24 @@ function writeDmc(d, idx, v) {
 }
 
 function writeStatus(apu, v) {
-  apu.pulse1.enabled = (Math.trunc((v & 1)) != 0);
+  apu.pulse1.enabled = (((v & 1) >>> 0) != 0);
   if ((!apu.pulse1.enabled)) {
     apu.pulse1.length = 0;
   }
-  apu.pulse2.enabled = (Math.trunc((v & 2)) != 0);
+  apu.pulse2.enabled = (((v & 2) >>> 0) != 0);
   if ((!apu.pulse2.enabled)) {
     apu.pulse2.length = 0;
   }
-  apu.triangle.enabled = (Math.trunc((v & 4)) != 0);
+  apu.triangle.enabled = (((v & 4) >>> 0) != 0);
   if ((!apu.triangle.enabled)) {
     apu.triangle.length = 0;
   }
-  apu.noise.enabled = (Math.trunc((v & 8)) != 0);
+  apu.noise.enabled = (((v & 8) >>> 0) != 0);
   if ((!apu.noise.enabled)) {
     apu.noise.length = 0;
   }
   apu.dmc.irqFlag = false;
-  apu.dmc.enabled = (Math.trunc((v & 16)) != 0);
+  apu.dmc.enabled = (((v & 16) >>> 0) != 0);
   if ((!apu.dmc.enabled)) {
     apu.dmc.bytesRemaining = 0;
   } else {
@@ -3042,8 +3042,8 @@ function writeStatus(apu, v) {
 }
 
 function writeFrameCounter(apu, v) {
-  apu.frameMode = Math.trunc((Math.trunc((v >> 7)) & 1));
-  apu.frameInhibit = (Math.trunc((v & 64)) != 0);
+  apu.frameMode = ((Math.floor(v / 2 ** (7)) & 1) >>> 0);
+  apu.frameInhibit = (((v & 64) >>> 0) != 0);
   if (apu.frameInhibit) {
     apu.frameIrq = false;
   }
@@ -3057,25 +3057,25 @@ function writeFrameCounter(apu, v) {
 function apuReadStatus(apu) {
   let r = 0;
   if ((apu.pulse1.length > 0)) {
-    r = Math.trunc((r | 1));
+    r = ((r | 1) >>> 0);
   }
   if ((apu.pulse2.length > 0)) {
-    r = Math.trunc((r | 2));
+    r = ((r | 2) >>> 0);
   }
   if ((apu.triangle.length > 0)) {
-    r = Math.trunc((r | 4));
+    r = ((r | 4) >>> 0);
   }
   if ((apu.noise.length > 0)) {
-    r = Math.trunc((r | 8));
+    r = ((r | 8) >>> 0);
   }
   if ((apu.dmc.bytesRemaining > 0)) {
-    r = Math.trunc((r | 16));
+    r = ((r | 16) >>> 0);
   }
   if (apu.frameIrq) {
-    r = Math.trunc((r | 64));
+    r = ((r | 64) >>> 0);
   }
   if (apu.dmc.irqFlag) {
-    r = Math.trunc((r | 128));
+    r = ((r | 128) >>> 0);
   }
   apu.frameIrq = false;
   return (r & 0xFF);
@@ -3091,7 +3091,7 @@ function apuStep(apu, cycles) {
       clockPulseTimer(apu.pulse2);
       clockNoiseTimer(apu.noise);
     }
-    apu.cpuParity = Math.trunc((apu.cpuParity ^ 1));
+    apu.cpuParity = ((apu.cpuParity ^ 1) >>> 0);
     stepFrameCounter(apu);
     apu.sampleAccum = (apu.sampleAccum + 1);
     if ((apu.sampleAccum >= CYCLES_PER_SAMPLE)) {
@@ -3178,7 +3178,7 @@ function halfFrame(apu) {
 function clockPulseTimer(p) {
   if ((p.timerVal == 0)) {
     p.timerVal = p.timerPeriod;
-    p.dutyPos = Math.trunc((Math.trunc((p.dutyPos + 1)) & 7));
+    p.dutyPos = ((Math.trunc((p.dutyPos + 1)) & 7) >>> 0);
   } else {
     p.timerVal = Math.trunc((p.timerVal - 1));
   }
@@ -3191,7 +3191,7 @@ function clockDmc(d) {
   }
   d.timer = d.rate;
   if ((!d.silence)) {
-    if ((Math.trunc((d.shiftReg & 1)) == 1)) {
+    if ((((d.shiftReg & 1) >>> 0) == 1)) {
       if ((d.output <= 125)) {
         d.output = Math.trunc((d.output + 2));
       }
@@ -3201,7 +3201,7 @@ function clockDmc(d) {
       }
     }
   }
-  d.shiftReg = Math.trunc((d.shiftReg >> 1));
+  d.shiftReg = Math.floor(d.shiftReg / 2 ** (1));
   d.bitsRemaining = Math.trunc((d.bitsRemaining - 1));
   if ((d.bitsRemaining <= 0)) {
     d.bitsRemaining = 8;
@@ -3243,7 +3243,7 @@ function clockTriangleTimer(t) {
   if ((t.timerVal == 0)) {
     t.timerVal = t.timerPeriod;
     if (((t.length > 0) && (t.linearCounter > 0))) {
-      t.seqPos = Math.trunc((Math.trunc((t.seqPos + 1)) & 31));
+      t.seqPos = ((Math.trunc((t.seqPos + 1)) & 31) >>> 0);
     }
   } else {
     t.timerVal = Math.trunc((t.timerVal - 1));
@@ -3253,16 +3253,16 @@ function clockTriangleTimer(t) {
 function clockNoiseTimer(n) {
   if ((n.timerVal == 0)) {
     n.timerVal = n.timerPeriod;
-    const bit0 = Math.trunc((n.shift & 1));
+    const bit0 = ((n.shift & 1) >>> 0);
     const tap = (() => {
     if (n.mode) {
-      return Math.trunc((Math.trunc((n.shift >> 6)) & 1));
+      return ((Math.floor(n.shift / 2 ** (6)) & 1) >>> 0);
     } else {
-      return Math.trunc((Math.trunc((n.shift >> 1)) & 1));
+      return ((Math.floor(n.shift / 2 ** (1)) & 1) >>> 0);
     }
     })();
-    const fb = Math.trunc((bit0 ^ tap));
-    n.shift = Math.trunc((Math.trunc((n.shift >> 1)) | Math.trunc((fb << 14))));
+    const fb = ((bit0 ^ tap) >>> 0);
+    n.shift = ((Math.floor(n.shift / 2 ** (1)) | ((fb << 14) >>> 0)) >>> 0);
   } else {
     n.timerVal = Math.trunc((n.timerVal - 1));
   }
@@ -3341,7 +3341,7 @@ function clockPulseSweep(p) {
   }
   p.sweepDivider = p.sweepPeriod;
   if (((p.sweepEnabled && (p.sweepShift > 0)) && (!pulseMuted(p)))) {
-    const change = Math.trunc((p.timerPeriod >> p.sweepShift));
+    const change = Math.floor(p.timerPeriod / 2 ** (p.sweepShift));
     if (p.sweepNegate) {
       let d = change;
       if ((!p.isPulse2)) {
@@ -3376,7 +3376,7 @@ function triangleOutput(t) {
 }
 
 function noiseOutput(n) {
-  if ((((!n.enabled) || (n.length == 0)) || (Math.trunc((n.shift & 1)) == 1))) {
+  if ((((!n.enabled) || (n.length == 0)) || (((n.shift & 1) >>> 0) == 1))) {
     return 0;
   }
   if (n.constant) {

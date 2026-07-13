@@ -648,14 +648,31 @@ export class CodegenJS {
       return `(${l} ${expr.op} ${r})`;
     }
 
-    // Integer arithmetic/bitwise must match native Milo's fixed-width wrapping
-    // (e.g. u8 250+20 == 14), which JS f64 math does not do. Integer `/` also
-    // truncates toward zero (JS `/` is float division). Mask the result to the
-    // op's result width so downstream ops see the same value the native binary would.
-    const ARITH_BITWISE = new Set(["+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"]);
-    if (ARITH_BITWISE.has(expr.op) && expr.type.tag === "int") {
-      const raw = expr.op === "/" ? `Math.trunc(${l} / ${r})` : `(${l} ${expr.op} ${r})`;
-      return this.maskInt(raw, expr.type);
+    // Integer ops must match native Milo's fixed-width two's-complement semantics,
+    // which JS f64/int32 math does not give for free.
+    if (expr.type.tag === "int") {
+      const op = expr.op;
+      const bits = expr.type.bits;
+      // JS bitwise/shift operators coerce operands to SIGNED int32. For <=32-bit
+      // types maskInt then yields the correct (positive) value; but i64/u64 — used
+      // by 32-bit CPU cores to hold masked 32-bit registers — need explicit
+      // normalization so a bit31-set value like 0xFFFFFFFF isn't seen as -1.
+      if (op === "&" || op === "|" || op === "^" || op === "<<") {
+        const raw = `(${l} ${op} ${r})`;
+        return bits >= 64 ? `(${raw} >>> 0)` : this.maskInt(raw, expr.type);
+      }
+      if (op === ">>") {
+        // Divide-based shift is correct for any magnitude (JS `>>` would coerce to
+        // int32 and sign-corrupt 32-bit values) and matches native arithmetic shift
+        // for negatives (Math.floor rounds toward -inf).
+        const raw = `Math.floor(${l} / 2 ** (${r}))`;
+        return bits >= 64 ? raw : this.maskInt(raw, expr.type);
+      }
+      if (op === "+" || op === "-" || op === "*") {
+        return this.maskInt(`(${l} ${op} ${r})`, expr.type);
+      }
+      if (op === "/") return this.maskInt(`Math.trunc(${l} / ${r})`, expr.type);
+      if (op === "%") return `(${l} % ${r})`;
     }
 
     return `(${l} ${expr.op} ${r})`;

@@ -4,9 +4,9 @@
 // is metadata (console name, region, RAM info), not a load-affecting container.
 // Ref: https://plutiedev.com/rom-header  — big-endian throughout (68000 is BE).
 
-from "std/io" import {
-    readFile
-}
+// No std/io here: this module is imported by the browser core, which must stay
+// FFI-free so it compiles through the JS backend (emit-js). The fs loader lives in
+// cart68kFile.milo; parseCart below takes raw bytes from either source.
 
 struct Cart {
     rom: Vec<u8> // full ROM image, byte-addressable at $000000
@@ -21,16 +21,9 @@ fn romByte(rom: &Vec<u8>, addr: i64): u8 {
     return 0
 }
 
-fn loadCart(path: &string): Result<Cart, string> {
-    var raw = ""
-    match readFile(path) {
-        Result.Ok(s) => {
-            raw = s
-        }
-        Result.Err(e) => {
-            return Result.Err("cannot read ROM file")
-        }
-    }
+// Parse a flat Genesis ROM image from raw bytes. FFI-free so both the fs loader
+// and the browser driver share it.
+fn parseCart(raw: &Vec<u8>): Result<Cart, string> {
     if raw.len < 0x200 {
         return Result.Err("file too small to be a Genesis ROM")
     }

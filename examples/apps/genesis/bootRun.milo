@@ -11,7 +11,10 @@ from "std/args" import {
     args
 }
 from "./cart68k" import {
-    Cart, loadCart
+    Cart
+}
+from "./cart68kFile" import {
+    loadCart
 }
 from "./m68k" import {
     M68k, Mem, newCpu, newMem, step, deliverInterrupt, z80Running

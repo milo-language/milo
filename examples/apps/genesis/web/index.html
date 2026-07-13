@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Milo Genesis — in the browser</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px;
+    background: #0d1117; color: #e6edf3;
+    font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .5px; }
+  h1 span { color: #58a6ff; }
+  #screen {
+    image-rendering: pixelated;
+    width: 960px; height: 672px; max-width: 100%;
+    background: #000; border: 1px solid #30363d; border-radius: 6px;
+  }
+  #screen:fullscreen { width: auto; height: 100vh; border: 0; border-radius: 0; }
+  #bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  button, label.file, select {
+    background: #21262d; color: #e6edf3; border: 1px solid #30363d;
+    padding: 7px 14px; border-radius: 6px; cursor: pointer; font: inherit;
+  }
+  button:hover, label.file:hover { background: #30363d; }
+  #drop {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(13,17,23,.85); border: 2px dashed #58a6ff; font-size: 18px; z-index: 5;
+  }
+  #status { color: #8b949e; min-height: 1.2em; }
+  .keys { color: #8b949e; font-size: 12px; text-align: center; max-width: 560px; }
+  .keys b { color: #e6edf3; }
+</style>
+</head>
+<body>
+<div id="drop">drop a Genesis ROM (<code>.md</code> / <code>.bin</code> / <code>.gen</code>) to play</div>
+
+<h1>Milo <span>Genesis</span> — compiled to JavaScript</h1>
+<canvas id="screen" width="320" height="224"></canvas>
+
+<div id="bar">
+  <label class="file">Load ROM…<input id="rom" type="file" accept=".md,.bin,.gen,.smd" hidden></label>
+  <button id="pause" disabled>Pause</button>
+  <select id="scale" title="Window size">
+    <option value="2">2×</option>
+    <option value="3" selected>3×</option>
+    <option value="4">4×</option>
+  </select>
+  <button id="fs">Fullscreen</button>
+  <label style="color:#8b949e">🔊<input id="vol" type="range" min="0" max="100" value="25" style="vertical-align:middle;width:80px"></label>
+  <span id="fps"></span>
+</div>
+
+<!-- One-click free homebrew (fetched from CORS-open hosting) -->
+<div id="bar">
+  <span style="color:#8b949e">Free homebrew:</span>
+  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/headship.bin">Headship</button>
+  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/astroperdido.bin">Astro Perdido</button>
+  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/gravitypig.bin">Gravity Pig</button>
+  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/dragonscastle.bin">Dragon's Castle</button>
+</div>
+
+<!-- Your own ROMs, served same-origin by serve.ts. Hidden on the public build. -->
+<div id="localBar" style="display:none">
+  <span style="color:#8b949e">Your ROMs:</span>
+  <select id="localRoms"></select>
+  <button id="localPlay">Play</button>
+</div>
+
+<div id="status">Click a game above, or load your own ROM (drag onto the window).</div>
+<div class="keys">
+  <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> A &nbsp;·&nbsp; <b>X</b> B &nbsp;·&nbsp; <b>C</b> C &nbsp;·&nbsp; <b>Enter</b> Start
+  <br>The entire Genesis core — Motorola 68000 + Z80 + VDP + YM2612 — is written in Milo and compiled to this page's JS by <code>emit-js</code>. No wasm, no plugins.
+</div>
+
+<!-- Milo-compiled emulator core: defines global createGenesis / stepFrame / setButtons / frameH -->
+<script src="genesis-core.js"></script>
+<script>
+"use strict";
+const canvas = document.getElementById("screen");
+const ctx = canvas.getContext("2d", { alpha: false });
+const statusEl = document.getElementById("status");
+const fpsEl = document.getElementById("fps");
+const pauseBtn = document.getElementById("pause");
+
+let img = ctx.createImageData(320, 224);   // resized to match the core's frame height on boot
+let handle = null;
+let running = false;
+let pad = 0;
+
+// key -> pad1 bit (see setButtons in genesisWebcore.milo)
+const KEYS = {
+  "ArrowUp": 0x01, "ArrowDown": 0x02, "ArrowLeft": 0x04, "ArrowRight": 0x08,
+  "KeyZ": 0x10, "KeyX": 0x20, "KeyC": 0x40, "Enter": 0x80,
+};
+addEventListener("keydown", e => { if (KEYS[e.code] !== undefined) { pad |= KEYS[e.code]; e.preventDefault(); } });
+addEventListener("keyup",   e => { if (KEYS[e.code] !== undefined) { pad &= ~KEYS[e.code]; e.preventDefault(); } });
+
+// --- Stereo audio: the YM2612+PSG mix produces 735 interleaved L,R i16 samples
+// per frame at 44.1 kHz into h.samples. Drain into a ring the ScriptProcessor pulls. ---
+const SR = 44100;
+let audioCtx = null, gainNode = null;
+const ringL = new Float32Array(1 << 16), ringR = new Float32Array(1 << 16);
+const RMASK = ringL.length - 1;
+let rHead = 0, rTail = 0;
+const volSlider = document.getElementById("vol");
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new AudioContext({ sampleRate: SR });
+  const node = audioCtx.createScriptProcessor(1024, 0, 2);
+  node.onaudioprocess = e => {
+    const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+    for (let i = 0; i < L.length; i++) {
+      if (rHead !== rTail) { L[i] = ringL[rHead]; R[i] = ringR[rHead]; rHead = (rHead + 1) & RMASK; }
+      else { L[i] = 0; R[i] = 0; }
+    }
+  };
+  gainNode = audioCtx.createGain();
+  gainNode.gain.value = (+volSlider.value / 100) ** 2;
+  node.connect(gainNode);
+  gainNode.connect(audioCtx.destination);
+}
+volSlider.addEventListener("input", () => { if (gainNode) gainNode.gain.value = (+volSlider.value / 100) ** 2; });
+function unlockAudio() {
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+  if (running) statusEl.textContent = "Running — Arrows + Z/X/C. \u{1F50A} sound on.";
+}
+addEventListener("pointerdown", unlockAudio);
+addEventListener("keydown", unlockAudio);
+
+function drainAudio() {
+  const s = handle.samples;
+  for (let k = 0; k + 1 < s.length; k += 2) {
+    const next = (rTail + 1) & RMASK;
+    if (next === rHead) break;               // ring full: drop rest (bounded latency)
+    ringL[rTail] = s[k] / 32768;
+    ringR[rTail] = s[k + 1] / 32768;
+    rTail = next;
+  }
+  s.length = 0;                              // reset the core's sample buffer
+}
+
+// Genesis runs at ~59.92 Hz (NTSC). Pace by wall-clock so speed is display-independent.
+const FRAME_MS = 1000 / 59.92;
+let last = 0, accMs = 0, fpsFrames = 0, fpsAcc = 0;
+function blit() {
+  img.data.set(handle.rgba);   // rgba is already [R,G,B,A] bytes, 320-wide, frameH rows
+  ctx.putImageData(img, 0, 0);
+}
+function loop(now) {
+  if (!running) return;
+  accMs += now - last; last = now;
+  if (accMs > 100) accMs = 100;
+  let ran = false;
+  while (accMs >= FRAME_MS) {
+    setButtons(handle, pad & 0xFF);
+    stepFrame(handle);
+    drainAudio();
+    accMs -= FRAME_MS;
+    ran = true;
+    fpsFrames++;
+  }
+  if (ran) blit();
+  fpsAcc += now - (loop._p || now); loop._p = now;
+  if (fpsAcc >= 500) { fpsEl.textContent = (fpsFrames * 1000 / fpsAcc).toFixed(0) + " fps"; fpsFrames = 0; fpsAcc = 0; }
+  requestAnimationFrame(loop);
+}
+
+function boot(bytes) {
+  handle = createGenesis(Array.from(bytes));
+  const h = frameH(handle);
+  if (h !== canvas.height) { canvas.height = h; img = ctx.createImageData(320, h); }
+  initAudio();
+  if (audioCtx.state === "suspended") audioCtx.resume();
+  running = true;
+  pauseBtn.disabled = false;
+  pauseBtn.textContent = "Pause";
+  statusEl.textContent = audioCtx.state === "running"
+    ? "Running — Arrows + Z/X/C."
+    : "Running — click anywhere or press a key for \u{1F50A} sound.";
+  last = performance.now(); loop._p = last; accMs = 0; fpsFrames = 0; fpsAcc = 0;
+  requestAnimationFrame(loop);
+}
+
+async function loadFile(file) {
+  statusEl.textContent = "Loading " + file.name + "…";
+  boot(new Uint8Array(await file.arrayBuffer()));
+}
+async function loadUrl(url, label) {
+  statusEl.textContent = "Fetching " + (label || url) + "…";
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    boot(new Uint8Array(await resp.arrayBuffer()));
+  } catch (e) {
+    statusEl.textContent = "Could not load " + (label || url) + " — host must allow CORS. " + e.message;
+  }
+}
+
+document.getElementById("rom").addEventListener("change", e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+pauseBtn.addEventListener("click", () => {
+  if (!handle) return;
+  running = !running;
+  pauseBtn.textContent = running ? "Pause" : "Resume";
+  if (running) {
+    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+    last = performance.now(); loop._p = last; accMs = 0;
+    requestAnimationFrame(loop);
+  } else if (audioCtx) { audioCtx.suspend(); }
+});
+
+const scaleSel = document.getElementById("scale");
+function applyScale() { const s = +scaleSel.value; canvas.style.width = (320 * s) + "px"; canvas.style.height = (canvas.height * s) + "px"; }
+scaleSel.addEventListener("change", applyScale);
+applyScale();
+document.getElementById("fs").addEventListener("click", () => {
+  if (!document.fullscreenElement) canvas.requestFullscreen(); else document.exitFullscreen();
+});
+
+for (const btn of document.querySelectorAll("[data-rom]")) {
+  btn.addEventListener("click", () => loadUrl(btn.dataset.rom, btn.textContent));
+}
+
+// Auto-start Dragon's Castle so the page is alive on load (video only until a
+// gesture unlocks audio).
+loadUrl("https://raw.githubusercontent.com/retrobrews/md-games/master/dragonscastle.bin", "Dragon's Castle");
+
+// Local ROMs (serve.ts, localhost only). Filter the shared manifest to Genesis exts.
+fetch("/local-roms.json").then(r => r.ok ? r.json() : []).then(list => {
+  const genList = (Array.isArray(list) ? list : []).filter(n => /\.(md|bin|gen|smd)$/i.test(n));
+  if (genList.length === 0) return;
+  const sel = document.getElementById("localRoms");
+  for (const name of genList) { const o = document.createElement("option"); o.value = name; o.textContent = name; sel.appendChild(o); }
+  document.getElementById("localBar").style.display = "flex";
+  document.getElementById("localPlay").addEventListener("click", () => loadUrl(encodeURI("/local/" + sel.value), sel.value));
+}).catch(() => {});
+
+const drop = document.getElementById("drop");
+addEventListener("dragover", e => { e.preventDefault(); drop.style.display = "flex"; });
+drop.addEventListener("dragleave", () => drop.style.display = "none");
+addEventListener("drop", e => {
+  e.preventDefault(); drop.style.display = "none";
+  const f = e.dataTransfer.files[0];
+  if (f && /\.(md|bin|gen|smd)$/i.test(f.name)) loadFile(f);
+});
+</script>
+</body>
+</html>

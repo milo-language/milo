@@ -1,0 +1,26 @@
+// Filesystem loader for Genesis ROMs — native-only I/O wrapper around the pure
+// byte parser in cart68k.milo. Separate so cart68k stays free of std/io (which the
+// JS backend can't lower) for the browser build.
+from "std/io" import {
+    readFile
+}
+from "./cart68k" import {
+    Cart, parseCart
+}
+
+fn loadCart(path: &string): Result<Cart, string> {
+    var raw = ""
+    match readFile(path) {
+        Result.Ok(s) => {
+            raw = s
+        }
+        Result.Err(e) => {
+            return Result.Err("cannot read ROM file")
+        }
+    }
+    var bytes: Vec<u8> = Vec.new()
+    for b in raw {
+        bytes.push(b)
+    }
+    return parseCart(bytes)
+}
