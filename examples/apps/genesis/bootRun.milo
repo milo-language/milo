@@ -33,6 +33,7 @@ fn loadRom(m: &mut Mem, cart: &Cart) {
     var i: i64 = 0
     while i < cart.rom.len && i < 0x400000 {
         m.ram[i] = cart.rom[i]
+        m.z80.rom.push(cart.rom[i]) // Z80 bank-window ROM copy (DAC samples)
         i = i + 1
     }
 }

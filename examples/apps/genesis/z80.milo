@@ -52,6 +52,10 @@ struct Z80 {
     psgLatch: i64 // last SN76489 latched channel/type
     psg: [i64; 8] // PSG registers (4 channels x tone/vol)
     fmKey: [bool; 6] // per-FM-channel key-on, latched on every $28 write
+    rom: Vec<u8> // 68k ROM copy, for the $8000-$FFFF bank window (DAC samples)
+    dac: [i64; 4096] // DAC sample ring (ch6), written via reg $2A
+    dacW: i64 // DAC ring write index
+    dacR: i64 // DAC ring read index (advanced by the synth)
 }
 
 fn newZ80(): Z80 {
@@ -67,18 +71,25 @@ fn newZ80(): Z80 {
         iff1: false, iff2: false, im: 0, wz: 0, halted: false, mem: mem,
         gen: false, bank: 0, ymAddr0: 0, ymAddr1: 0, ym: [0; 512],
         psgLatch: 0, psg: [0; 8], fmKey: [false, false, false, false, false, false],
+        rom: Vec.new(), dac: [0; 4096], dacW: 0, dacR: 0,
     }
 }
 
 fn rd(cpu: &Z80, addr: i64): i64 {
     let a = addr & 0xFFFF
-    if cpu.gen && a >= 0x4000 {
-        // Device reads: YM2612 status ($4000-$4003) reads "not busy"; the 68k bank
-        // window ($8000+) is not backed yet (DAC sample fetch deferred).
-        return 0
-    }
     if cpu.gen {
-        return cpu.mem[a & 0x1FFF]as i64 // 8 KB RAM mirrored across $0000-$3FFF
+        if a < 0x4000 {
+            return cpu.mem[a & 0x1FFF]as i64 // 8 KB RAM mirrored across $0000-$3FFF
+        }
+        if a >= 0x8000 {
+            // $8000-$FFFF: banked window into 68k address space (bank reg << 15).
+            let src = ((cpu.bank << 15) | (a & 0x7FFF)) & 0xFFFFFF
+            if src < cpu.rom.len {
+                return cpu.rom[src]as i64
+            }
+            return 0
+        }
+        return 0 // YM2612 status ($4000-3) reads not-busy; $6000/$7Fxx read 0
     }
     return cpu.mem[a]as i64
 }
@@ -106,6 +117,11 @@ fn z80DevWrite(cpu: &mut Z80, a: i64, val: i64) {
     if a == 0x4001 {
         let reg = cpu.ymAddr0 & 0xFF
         cpu.ym[reg] = val
+        if reg == 0x2A {
+            // DAC sample write: append to the ch6 DAC ring.
+            cpu.dac[cpu.dacW & 4095] = val
+            cpu.dacW = cpu.dacW + 1
+        }
         if reg == 0x28 {
             // key on/off: %oooo0ccc (op mask + channel; ccc: 0-2 = ch0-2, 4-6 = ch3-5)
             let sel = val & 0x7

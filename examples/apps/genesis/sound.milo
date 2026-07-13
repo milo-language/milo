@@ -77,13 +77,22 @@ fn keyOnMask(z: &Z80): i64 {
 }
 
 // Advance the synth by one sample; returns a signed 16-bit sample.
-fn synthSample(s: &mut Synth, z: &Z80): i64 {
+fn synthSample(s: &mut Synth, z: &mut Z80): i64 {
     var acc: i64 = 0
-    // --- YM2612 FM channels (melody model) ---
+    let dacOn = (z.ym[0x2B] & 0x80) != 0
+    // --- ch6 DAC (sampled drums) replaces FM channel 5 when enabled ---
+    if dacOn {
+        if z.dacR < z.dacW {
+            let smp = z.dac[z.dacR & 4095]
+            z.dacR = z.dacR + 1
+            acc = acc + (smp - 128) * 3
+        }
+    }
+    // --- YM2612 FM channels (2-op model); ch5 skipped when DAC drives ch6 ---
     var c: i64 = 0
     while c < 6 {
         let fMilli = fmFreqMilli(z, c)
-        if fMilli > 0 && z.fmKey[c] {
+        if fMilli > 0 && z.fmKey[c] && !(c == 5 && dacOn) {
             let part: i64 = if c < 3 {
                 0
             } else {
