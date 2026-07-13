@@ -1411,7 +1411,98 @@ fn execAddqSubq(cpu: &mut M68k, m: &mut Mem, op: i64): bool {
     return true
 }
 
-// ADD/ADDA (top D) and SUB/SUBA (top 9). ADDX/SUBX deferred.
+// ADDX/SUBX: Dx = Dx +/- Dy +/- X (mode 0, register form) or
+// -(Ax) = -(Ax) +/- -(Ay) +/- X (mode 1, memory predecrement form).
+// Encoded in the ADD/SUB "<ea> op Dn" slot with an <ea> of a data reg (0) or
+// addr reg (1) — encodings that are otherwise illegal for ADD/SUB, so they mean
+// ADDX/SUBX. Z is STICKY: cleared on a non-zero result, left unchanged on zero,
+// so a multi-precision sequence's final Z reflects the whole operand.
+fn execAddSubX(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool, size: i64) {
+    let rx = (op >> 9) & 0x7
+    let ry = op & 0x7
+    let mem = ((op >> 3) & 0x7) == 1
+    let mask = sizeMask(size)
+    let msb = sizeMsb(size)
+    let bytes = sizeBytes(size)
+    let x: i64 = if getBit(cpu, SR_X) {
+        1
+    } else {
+        0
+    }
+    var a: i64 = 0
+    var b: i64 = 0
+    var addr: i64 = 0
+    if mem {
+        // source -(Ay) then dest -(Ax); byte access on A7 stays word-aligned
+        let decY: i64 = if size == 0 && ry == 7 {
+            2
+        } else {
+            bytes
+        }
+        cpu.a[ry] = (cpu.a[ry] - decY) & 0xFFFFFFFF
+        b = readSized(m, cpu.a[ry], size)
+        let decX: i64 = if size == 0 && rx == 7 {
+            2
+        } else {
+            bytes
+        }
+        cpu.a[rx] = (cpu.a[rx] - decX) & 0xFFFFFFFF
+        addr = cpu.a[rx]
+        a = readSized(m, addr, size)
+    } else {
+        a = getD(cpu, rx, size)
+        b = getD(cpu, ry, size)
+    }
+    let ua = a & mask
+    let ub = b & mask
+    var res: i64 = 0
+    var carry = false
+    var overflow = false
+    if isAdd {
+        let full = ua + ub + x
+        res = full & mask
+        carry = full > mask
+        overflow = ((~(a ^ b)) & (a ^ res) & msb) != 0
+    } else {
+        res = (ua - ub - x) & mask
+        carry = (ub + x) > ua
+        overflow = ((a ^ b) & (a ^ res) & msb) != 0
+    }
+    setBit(cpu, SR_N, (res & msb) != 0)
+    setBit(cpu, SR_V, overflow)
+    setBit(cpu, SR_C, carry)
+    setBit(cpu, SR_X, carry)
+    if res != 0 {
+        setBit(cpu, SR_Z, false) // sticky: only clear, never set
+    }
+    if mem {
+        writeSized(m, addr, size, res)
+    } else {
+        setD(cpu, rx, size, res)
+    }
+}
+
+fn readSized(m: &Mem, addr: i64, size: i64): i64 {
+    if size == 0 {
+        return memRead8(m, addr)
+    }
+    if size == 1 {
+        return memRead16(m, addr)
+    }
+    return memRead32(m, addr)
+}
+
+fn writeSized(m: &mut Mem, addr: i64, size: i64, val: i64) {
+    if size == 0 {
+        memWrite8(m, addr, val)
+    } else if size == 1 {
+        memWrite16(m, addr, val)
+    } else {
+        memWrite32(m, addr, val)
+    }
+}
+
+// ADD/ADDA (top D) and SUB/SUBA (top 9); ADDX/SUBX split out to execAddSubX.
 fn execAddSub(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool): bool {
     let dn = (op >> 9) & 0x7
     let opmode = (op >> 6) & 0x7
@@ -1439,6 +1530,12 @@ fn execAddSub(cpu: &mut M68k, m: &mut Mem, op: i64, isAdd: bool): bool {
 
     let size = opmode & 0x3
     let toEa = (opmode & 0x4) != 0
+    // <ea> op Dn with an <ea> of a data reg (0) or addr reg (1) is illegal for
+    // ADD/SUB — that encoding is ADDX/SUBX.
+    if toEa && (mode == 0 || mode == 1) {
+        execAddSubX(cpu, m, op, isAdd, size)
+        return true
+    }
     let ea = resolveEa(cpu, m, mode, reg, size)
     if toEa {
         // <ea> = <ea> op Dn

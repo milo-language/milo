@@ -93,10 +93,21 @@ tiles are clean, coherent art). Chain of evidence (via bootRun on goldenaxe.md):
   * Isolated to the CPU CORE: identical bus, only the 68k differs. NOT VDP/render/
     palette. Bit-8 drop does not affect control flow (PC stays in lockstep), so
     it's a data-path bug in some instruction GA uses to build the tile number.
-  NEXT: add a lockstep per-instruction PC+D0-7/A0-7 trace to BOTH cores over a
-  windowed range, diff to find the first instruction whose register result differs
-  (the bit-8 drop). Likely a byte-op/MOVE/OR/ext that clobbers or fails to preserve
-  bit 8. Then fix that opcode in m68k.milo + add a Harte-style regression.
+  FIXED (root cause found via lockstep reg trace + watchpoint diff, ref vs ours):
+  * The bit-8 drop was ADDX.B being UNIMPLEMENTED. GA builds sprite tile numbers
+    as a 16-bit add done byte-wise: `ADD.B (9,A0),D4` (low, sets X) ... `ADDX.B
+    D4,D0` (high, uses X). Our decoder mis-routed ADDX (encoded in the ADD/SUB
+    "<ea> op Dn" slot with an <ea> of a data/addr reg) into the plain ADD path,
+    so it silently did the wrong op and never added the carry -> tile hi bit lost.
+  * Fix: execAddSubX in m68k.milo (ADDX/SUBX register + -(An) forms, sticky Z).
+    After it, our core is BYTE-IDENTICAL to Musashi across GA's full 64K work RAM
+    (0 differing bytes), and GA renders perfectly (title logo + in-game sprites);
+    Sonic unaffected.
+  * Reference-diff harness lives in ref/ (ref.c = Musashi 68k + a C port of this
+    bus; traceMilo.milo = our core, same bus, no Z80). build: ref/build.sh.
+    Reusable to pin any future CPU divergence: dump REGS / RAM (/tmp/*-ram.bin) /
+    SAT and diff. The SAME mis-decode class also hides ABCD/SBCD/EXG (run as
+    AND/OR) and NBCD/MOVEP (unimplemented) — implement + Harte-gate these next.
 
 Undocumented CPU-flag corners
 (68000 SSW, Z80 SCF/CCF + block-op X/Y), SSF2 mapper for >4MB carts.

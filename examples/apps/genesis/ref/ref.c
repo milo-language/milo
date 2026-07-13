@@ -20,6 +20,7 @@ static int VSRAM[40];
 static int VREG[24];
 static int vdpAddr = 0, vdpCode = 0, vdpFirst = 0, vdpPending = 0;
 static int vdpLine = 0, dmaFill = 0;
+static int padTh = 0; // controller 1 TH multiplex line (bit6 of $A10003)
 
 // ---- low-level 68k-address reads used by DMA (ROM + RAM only) ----
 static unsigned int rd8(unsigned int a) {
@@ -109,7 +110,7 @@ static unsigned int devRead16(unsigned int a) {
 static unsigned int devRead8(unsigned int a) {
     if (a >= 0xA00000 && a <= 0xA0FFFF) { int za = a & 0xFFFF; return za < 0x2000 ? Z80[za] : 0; }
     if (a == 0xA10001) return 0xA0;
-    if (a == 0xA10003) return 0x7F; // controller 1: idle
+    if (a == 0xA10003) return padTh ? 0x7F : 0x33; // controller 1: idle, TH-muxed
     if (a == 0xA10005) return 0x7F;
     { unsigned int w = devRead16(a & ~1u); return (a & 1) ? (w & 0xFF) : ((w >> 8) & 0xFF); }
 }
@@ -147,6 +148,7 @@ static void devWrite16(unsigned int a, unsigned int val) {
 void m68k_write_memory_8(unsigned int a, unsigned int val) {
     a &= 0xFFFFFF; val &= 0xFF;
     if (a < 0x400000) return; // ROM
+    if (a == 0xA10003) { padTh = (val & 0x40) != 0; return; } // TH multiplex select
     if (a >= 0xFF0000) { RAM[a & 0xFFFF] = val; return; }
     if (a >= 0xA00000 && a <= 0xA0FFFF) { int za = a & 0xFFFF; if (za < 0x2000) Z80[za] = val; return; }
 }
@@ -187,12 +189,21 @@ int main(int argc, char **argv) {
     }
 
     unsigned int pc = m68k_get_reg(NULL, M68K_REG_PC);
+    // Lockstep reg dump (compared byte-for-byte against our Milo core).
+    printf("REGS pc=%06x sr=%04x", pc, m68k_get_reg(NULL, M68K_REG_SR) & 0xFFFF);
+    int dreg[8] = {M68K_REG_D0,M68K_REG_D1,M68K_REG_D2,M68K_REG_D3,M68K_REG_D4,M68K_REG_D5,M68K_REG_D6,M68K_REG_D7};
+    int areg[8] = {M68K_REG_A0,M68K_REG_A1,M68K_REG_A2,M68K_REG_A3,M68K_REG_A4,M68K_REG_A5,M68K_REG_A6,M68K_REG_A7};
+    for (int r = 0; r < 8; r++) printf(" d%d=%08x", r, m68k_get_reg(NULL, dreg[r]));
+    for (int r = 0; r < 8; r++) printf(" a%d=%08x", r, m68k_get_reg(NULL, areg[r]));
+    printf("\n");
     printf("frames=%d final PC=%06X\n", frames, pc);
     for (int l = 0; l < 4; l++) {
         printf("CRAM line%d:", l);
         for (int c = 0; c < 16; c++) printf(" %04x", CRAM[l * 16 + c]);
         printf("\n");
     }
+    FILE *rf = fopen("/tmp/ref-ram.bin", "wb");
+    if (rf) { fwrite(RAM, 1, 0x10000, rf); fclose(rf); }
     int sat = (VREG[5] & 0x7F) << 9;
     printf("SAT base=%04x\n", sat);
     for (int s = 0; s < 8; s++) {
