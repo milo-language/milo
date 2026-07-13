@@ -106,9 +106,9 @@ fn freeMem(): i64 {
     var count: [u32; 1] = [38]
     unsafe {
         if host_statistics64(mach_host_self(), 4, stats, count as *u32) == 0 {
-            let freePages = (stats as *u32) [0]as i64
-            let inactivePages = (stats as *u32) [2]as i64
-            let purgeablePages = (stats as *u32) [22]as i64
+            let freePages = (stats as *u32) [0] as i64
+            let inactivePages = (stats as *u32) [2] as i64
+            let purgeablePages = (stats as *u32) [22] as i64
             let pageSize = sysconf(29)
             return (freePages + inactivePages + purgeablePages) * pageSize
         }
@@ -130,7 +130,7 @@ fn uptime(): i64 {
         // seconds at offset 0 (little-endian i64)
         var nowSec: i64 = 0
         for i in 0..8 {
-            nowSec = nowSec | ((tvbuf[i]as i64) << (i as i64 * 8))
+            nowSec = nowSec | ((tvbuf[i] as i64) << (i as i64 * 8))
         }
         return nowSec - boottime[0]
     }

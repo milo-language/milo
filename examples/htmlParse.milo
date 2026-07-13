@@ -1,3 +1,4 @@
+// @run:
 // htmlParse — an HTML tokenizer + stack-based tree builder over the arena DOM
 // (examples/domArena.milo). The point: drive a real state-machine parser into
 // the no-stored-refs DOM and round-trip actual HTML. Handles tags, attributes

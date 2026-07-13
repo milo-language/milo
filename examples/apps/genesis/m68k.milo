@@ -132,7 +132,7 @@ fn memRead8(m: &Mem, addr: i64): i64 {
     if m.genesis && isDevice(a) {
         return devRead8(m, a)
     }
-    return m.ram[a]as i64
+    return m.ram[a] as i64
 }
 
 fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
@@ -166,7 +166,7 @@ fn memRead16(m: &Mem, addr: i64): i64 {
     if m.genesis && isDevice(a) {
         return devRead16(m, a)
     }
-    return ((m.ram[a]as i64) << 8) | (m.ram[(a + 1) & ADDR_MASK]as i64)
+    return ((m.ram[a] as i64) << 8) | (m.ram[(a + 1) & ADDR_MASK] as i64)
 }
 
 fn memWrite16(m: &mut Mem, addr: i64, val: i64) {
@@ -225,7 +225,7 @@ fn devRead8(m: &Mem, a: i64): i64 {
     if a >= 0xA00000 && a <= 0xA0FFFF {
         let za = a & 0xFFFF
         if za < 0x2000 {
-            return m.z80.mem[za]as i64 // Z80 8 KB RAM
+            return m.z80.mem[za] as i64 // Z80 8 KB RAM
         }
         // $A04000-$A04003 is the YM2612 (68k side): bit7 = busy. Return 0 = ready.
         // Everything else in the window (bank/PSG/unused) reads back 0.
@@ -335,7 +335,7 @@ fn vdpDma(m: &mut Mem) {
     var i: i64 = 0
     while i < len {
         let a = src & 0xFFFFFF
-        let w = ((m.ram[a]as i64) << 8) | (m.ram[(a + 1) & 0xFFFFFF]as i64)
+        let w = ((m.ram[a] as i64) << 8) | (m.ram[(a + 1) & 0xFFFFFF] as i64)
         vdpDataWrite(m, w)
         src = (src + 2) & 0xFFFFFF
         i = i + 1

@@ -72,7 +72,7 @@ fn drawFish(fb: &mut [i64; 3520], x0: i64, y0: i64, r: i64, g: i64, b: i64, dir:
         let row = fishRow(dyi)
         for dx in 0..10 {
             let dxi = dx as i64
-            let ch = row[dxi]as i64
+            let ch = row[dxi] as i64
             if ch != 32 {
                 // dir<0 mirrors the sprite so left-swimmers face left
                 var px = x0 + dxi
@@ -211,7 +211,7 @@ fn main(): i32 {
             if fvx[i] < 0.0 {
                 dir = -1
             }
-            drawFish(fb, fx[i]as i64, (fy[i] + bob) as i64, tmp[0], tmp[1], tmp[2], dir)
+            drawFish(fb, fx[i] as i64, (fy[i] + bob) as i64, tmp[0], tmp[1], tmp[2], dir)
         }
 
         // ── bubbles (rise + wobble, respawn at the bottom) ──
@@ -222,7 +222,7 @@ fn main(): i32 {
                 bx[i] = randFloatRange(0.0, PW as f64)
             }
             let wob = mathSin(t * 2.0 + by[i] * 0.3) * 1.5
-            setPx(fb, (bx[i] + wob) as i64, by[i]as i64, 200, 235, 255)
+            setPx(fb, (bx[i] + wob) as i64, by[i] as i64, 200, 235, 255)
         }
 
         // ── blit framebuffer via half-blocks ──

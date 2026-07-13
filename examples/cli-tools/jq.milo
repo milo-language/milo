@@ -1,3 +1,5 @@
+// @run: .
+// @stdin: {"a":1}
 // jq — minimal JSON query tool (field access, array iteration, array indexing)
 from "std/argparse" import {
     newParser

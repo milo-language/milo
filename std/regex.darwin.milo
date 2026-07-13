@@ -38,7 +38,7 @@ fn regexNew(pattern: string): Option<Regex> {
 fn _readMatchI64(buf: &[u8; 160], off: i32): i64 {
     var val: i64 = 0
     for k in 0..8 {
-        val = val | ((buf[off + k]as i64) << ((k * 8) as i64))
+        val = val | ((buf[off + k] as i64) << ((k * 8) as i64))
     }
     return val
 }

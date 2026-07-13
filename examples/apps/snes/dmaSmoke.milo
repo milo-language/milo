@@ -10,7 +10,8 @@ from "./cpu" import {
 fn hex2(v: i64): string {
     let d = "0123456789ABCDEF"
     var s = ""
-    s.push(d[(v >> 4) & 0xF]) s.push(d[v & 0xF])
+    s.push(d[(v >> 4) & 0xF])
+    s.push(d[v & 0xF])
     return s
 }
 
@@ -18,8 +19,7 @@ fn main(): i32 {
     var rom = vecZeros(0x8000)
     // Program at $8000: CGADD=0; configure DMA ch0 (A->B, CGDATA, src $00:8100,
     // size 32); trigger $420B=1; halt.
-    let prog = [
-    0xA9, 0x00, 0x8D, 0x21, 0x21, // LDA #0 ; STA $2121 (CGADD)
+    let prog = [0xA9, 0x00, 0x8D, 0x21, 0x21, // LDA #0 ; STA $2121 (CGADD)
     0xA9, 0x00, 0x8D, 0x00, 0x43, // LDA #0 ; STA $4300 (DMAP0)
     0xA9, 0x22, 0x8D, 0x01, 0x43, // LDA #$22 ; STA $4301 (BBAD0 = CGDATA)
     0xA9, 0x00, 0x8D, 0x02, 0x43, // LDA #0 ; STA $4302 (A1T0 lo)
@@ -32,12 +32,14 @@ fn main(): i32 {
     ]
     var i: i64 = 0
     while i < (prog.len as i64) {
-        rom[i] = prog[i]as u8 i = i + 1
+        rom[i] = prog[i] as u8
+        i = i + 1
     }
     // Palette at ROM offset $100 (maps to $00:8100): bytes 1..32.
     var k: i64 = 0
     while k < 32 {
-        rom[0x100 + k] = (k + 1) as u8 k = k + 1
+        rom[0x100 + k] = (k + 1) as u8
+        k = k + 1
     }
     rom[0x7FFC] = 0x00 as u8 // reset vector -> $8000
     rom[0x7FFD] = 0x80 as u8

@@ -68,8 +68,8 @@ fn main(): i32 {
     m.z80.gen = true
     loadRom(m, cart)
 
-    let sp = ((m.ram[0]as i64) << 24) | ((m.ram[1]as i64) << 16) | ((m.ram[2]as i64) << 8) | (m.ram[3]as i64)
-    let pc = ((m.ram[4]as i64) << 24) | ((m.ram[5]as i64) << 16) | ((m.ram[6]as i64) << 8) | (m.ram[7]as i64)
+    let sp = ((m.ram[0] as i64) << 24) | ((m.ram[1] as i64) << 16) | ((m.ram[2] as i64) << 8) | (m.ram[3] as i64)
+    let pc = ((m.ram[4] as i64) << 24) | ((m.ram[5] as i64) << 16) | ((m.ram[6] as i64) << 8) | (m.ram[7] as i64)
     print("reset SP=" + hex8(sp) + " PC=" + hex8(pc))
 
     var cpu = newCpu()
@@ -181,7 +181,7 @@ fn main(): i32 {
     var k: i64 = 0
     let n = wav.len / 2
     while k < n {
-        var v = (wav[k * 2]as i64) | ((wav[k * 2 + 1]as i64) << 8)
+        var v = (wav[k * 2] as i64) | ((wav[k * 2 + 1] as i64) << 8)
         if v >= 32768 {
             v = v - 65536
         }
@@ -283,7 +283,7 @@ fn printCram(m: &Mem) {
 
 fn memRead16Pub(m: &Mem, addr: i64): i64 {
     let a = addr & 0xFFFFFF
-    return ((m.ram[a]as i64) << 8) | (m.ram[(a + 1) & 0xFFFFFF]as i64)
+    return ((m.ram[a] as i64) << 8) | (m.ram[(a + 1) & 0xFFFFFF] as i64)
 }
 
 fn boolStr(b: bool): string {

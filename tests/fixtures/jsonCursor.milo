@@ -13,7 +13,8 @@ fn main(): i32 {
     let doc = match jsonParse("{\"users\":[{\"name\":\"alice\",\"age\":30},{\"name\":\"bob\",\"age\":25}]}") {
         Result.Ok(j) => j
         Result.Err(e) => {
-            print("parse fail") return 1
+            print("parse fail")
+            return 1
         }
     }
     let root = doc.curRoot()

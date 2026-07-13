@@ -391,7 +391,7 @@ fn _argparseParseI64(s: &string): i64 {
         i = 1
     }
     while i < s.len {
-        let d = s[i]as i64 - 48
+        let d = s[i] as i64 - 48
         result = result * 10 + d
         i = i + 1
     }

@@ -1,3 +1,4 @@
+// @run: examples/hello.milo
 // cat — file viewer with line numbers and syntax highlighting
 from "std/argparse" import {
     newParser
@@ -15,7 +16,7 @@ from "std/color" import {
 fn parseI64(s: string): i64 {
     var result: i64 = 0
     for i in 0..s.len {
-        let d = s[i]as i64 - 48
+        let d = s[i] as i64 - 48
         if d >= 0 && d <= 9 {
             result = result * 10 + d
         }

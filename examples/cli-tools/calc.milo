@@ -1,3 +1,4 @@
+// @run: 2+3*4
 // calc — simple expression evaluator
 // Supports: + - * / % ** () with standard precedence, unary minus, floats
 

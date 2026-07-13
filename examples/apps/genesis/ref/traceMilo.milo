@@ -44,8 +44,8 @@ fn main(): i32 {
         m.ram[i] = cart.rom[i]
         i = i + 1
     }
-    let sp = ((m.ram[0]as i64) << 24) | ((m.ram[1]as i64) << 16) | ((m.ram[2]as i64) << 8) | (m.ram[3]as i64)
-    let pc = ((m.ram[4]as i64) << 24) | ((m.ram[5]as i64) << 16) | ((m.ram[6]as i64) << 8) | (m.ram[7]as i64)
+    let sp = ((m.ram[0] as i64) << 24) | ((m.ram[1] as i64) << 16) | ((m.ram[2] as i64) << 8) | (m.ram[3] as i64)
+    let pc = ((m.ram[4] as i64) << 24) | ((m.ram[5] as i64) << 16) | ((m.ram[6] as i64) << 8) | (m.ram[7] as i64)
     var cpu = newCpu()
     cpu.a[7] = sp & 0xFFFFFFFF
     cpu.pc = pc & 0xFFFFFFFF
@@ -108,7 +108,7 @@ fn strToI(s: &string): i64 {
     var v: i64 = 0
     var i: i64 = 0
     while i < s.len {
-        let c = s[i]as i64
+        let c = s[i] as i64
         if c >= 48 && c <= 57 {
             v = v * 10 + (c - 48)
         }

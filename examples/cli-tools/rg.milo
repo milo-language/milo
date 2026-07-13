@@ -1,3 +1,4 @@
+// @run: fn examples/hello.milo
 // rg — ripgrep-lite: regex-powered recursive search
 
 from "std/argparse" import {
@@ -141,8 +142,7 @@ fn highlightLine(line: &string, matches: &Vec<RegexMatch>, noColor: bool): strin
 
 // ── output formatting ──
 
-fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &string,
-multiFile: bool, opts: &RgOpts): string {
+fn formatLine(content: &string, lineNum: i64, isMatch: bool, filePath: &string, multiFile: bool, opts: &RgOpts): string {
     var out: string = ""
     if multiFile && opts.noHeading {
         if opts.noColor {

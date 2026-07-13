@@ -24,7 +24,7 @@ struct Toks {
 
 fn nextTok(t: &mut Toks): i64 {
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c == 32 || c == 10 || c == 13 || c == 9 {
             t.pos = t.pos + 1
         } else {
@@ -33,7 +33,7 @@ fn nextTok(t: &mut Toks): i64 {
     }
     var v: i64 = 0
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c >= 48 && c <= 57 {
             v = v * 10 + (c - 48)
             t.pos = t.pos + 1
@@ -47,9 +47,15 @@ fn nextTok(t: &mut Toks): i64 {
 // Read one state record's 10 registers into cpu, then ramN (addr,val) pairs
 // into memory. Field order matches harteConv.ts emitState.
 fn loadRegs(cpu: &mut Cpu, m: &mut Mem, t: &mut Toks): void {
-    cpu.a = nextTok(t) cpu.x = nextTok(t) cpu.y = nextTok(t)
-    cpu.s = nextTok(t) cpu.d = nextTok(t) cpu.pc = nextTok(t)
-    cpu.p = nextTok(t) cpu.dbr = nextTok(t) cpu.pbr = nextTok(t)
+    cpu.a = nextTok(t)
+    cpu.x = nextTok(t)
+    cpu.y = nextTok(t)
+    cpu.s = nextTok(t)
+    cpu.d = nextTok(t)
+    cpu.pc = nextTok(t)
+    cpu.p = nextTok(t)
+    cpu.dbr = nextTok(t)
+    cpu.pbr = nextTok(t)
     cpu.e = nextTok(t)
     if cpu.e == 1 {
         cpu.s = 0x0100 | (cpu.s & 0xFF) // emulation forces stack high byte to 01
@@ -67,9 +73,15 @@ fn loadRegs(cpu: &mut Cpu, m: &mut Mem, t: &mut Toks): void {
 // Compare cpu/memory against the "final" record; consume it either way.
 // Returns "" on match or a description of the first mismatch.
 fn checkFinal(cpu: &Cpu, m: &Mem, t: &mut Toks): string {
-    let fa = nextTok(t) let fx = nextTok(t) let fy = nextTok(t)
-    let fs = nextTok(t) let fd = nextTok(t) let fpc = nextTok(t)
-    let fp = nextTok(t) let fdbr = nextTok(t) let fpbr = nextTok(t)
+    let fa = nextTok(t)
+    let fx = nextTok(t)
+    let fy = nextTok(t)
+    let fs = nextTok(t)
+    let fd = nextTok(t)
+    let fpc = nextTok(t)
+    let fp = nextTok(t)
+    let fdbr = nextTok(t)
+    let fpbr = nextTok(t)
     let fe = nextTok(t)
     let ramN = nextTok(t)
 
@@ -135,7 +147,8 @@ fn main(): i32 {
             raw = s
         }
         Result.Err(e) => {
-            print("cannot read " + argv[1]) return 1
+            print("cannot read " + argv[1])
+            return 1
         }
     }
 

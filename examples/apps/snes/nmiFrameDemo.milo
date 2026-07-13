@@ -11,13 +11,17 @@ fn dc(n: i64): string {
     if n == 0 {
         return "0"
     }
-    var v = n var b = ""
+    var v = n
+    var b = ""
     while v > 0 {
-        b.push(((v % 10) + 48) as u8) v = v / 10
+        b.push(((v % 10) + 48) as u8)
+        v = v / 10
     }
-    var o = "" var i: i64 = b.len - 1
+    var o = ""
+    var i: i64 = b.len - 1
     while i >= 0 {
-        o.push(b[i]) i = i - 1
+        o.push(b[i])
+        i = i - 1
     }
     return o
 }
@@ -25,36 +29,39 @@ fn dc(n: i64): string {
 fn main(): i32 {
     var rom = vecZeros(0x8000)
     // main @ $8000: enable NMI, then loop.
-    let main = [
-    0xA9, 0x80, 0x8D, 0x00, 0x42, // LDA #$80 ; STA $4200 (NMITIMEN NMI enable)
+    let main = [0xA9, 0x80, 0x8D, 0x00, 0x42, // LDA #$80 ; STA $4200 (NMITIMEN NMI enable)
     0xEA, // NOP  ($8005 = loop target)
     0x80, 0xFD // BRA -3 (back to $8005)
     ]
     var i: i64 = 0
     while i < (main.len as i64) {
-        rom[i] = main[i]as u8 i = i + 1
+        rom[i] = main[i] as u8
+        i = i + 1
     }
     // NMI handler @ $8010: counter++ at WRAM $0000, RTI.
-    let handler = [
-    0xAD, 0x00, 0x00, // LDA $0000
+    let handler = [0xAD, 0x00, 0x00, // LDA $0000
     0x1A, // INC A
     0x8D, 0x00, 0x00, // STA $0000
     0x40 // RTI
     ]
     i = 0
     while i < (handler.len as i64) {
-        rom[0x10 + i] = handler[i]as u8 i = i + 1
+        rom[0x10 + i] = handler[i] as u8
+        i = i + 1
     }
 
-    rom[0x7FFC] = 0x00 as u8 rom[0x7FFD] = 0x80 as u8 // reset -> $8000
-    rom[0x7FFA] = 0x10 as u8 rom[0x7FFB] = 0x80 as u8 // NMI  -> $8010
+    rom[0x7FFC] = 0x00 as u8
+    rom[0x7FFD] = 0x80 as u8 // reset -> $8000
+    rom[0x7FFA] = 0x10 as u8
+    rom[0x7FFB] = 0x80 as u8 // NMI  -> $8010
 
     var m = busNew(rom, 0)
     var cpu = newCpuReset(m)
 
     var f: i64 = 0
     while f < 5 {
-        stepFrame(cpu, m) f = f + 1
+        stepFrame(cpu, m)
+        f = f + 1
     }
 
     let count = memRead(m, 0x000000)

@@ -62,7 +62,7 @@ fn parseNumber(s: &string, pos: &mut i64): Heap<JsonValue> {
     }
     var n: i64 = 0
     while pos < s.len && isDigit(s[pos]) {
-        n = n * 10 + (s[pos]as i64 - '0' as i64)
+        n = n * 10 + (s[pos] as i64 - '0' as i64)
         pos = pos + 1
     }
     if neg {

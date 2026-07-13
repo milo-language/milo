@@ -44,7 +44,7 @@ fn cramB(e: i64): i64 {
 fn vram8(m: &Mem, addr: i64): i64 {
     let a = addr & 0xFFFF
     if a < m.vram.len {
-        return m.vram[a]as i64
+        return m.vram[a] as i64
     }
     return 0
 }

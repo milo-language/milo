@@ -1,3 +1,4 @@
+// @run:
 // Dependency graph with topological sort — classic arena use case
 // Nodes cross-reference each other via Handle, not pointers or &T
 from "std/arena" import {

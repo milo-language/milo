@@ -1,3 +1,4 @@
+// @run: examples/embedded
 // tree — display directory tree
 from "std/argparse" import {
     newParser

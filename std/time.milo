@@ -14,7 +14,7 @@ fn _readI64FromBuf(buf: &[u8; 16], off: i64): i64 {
     var val: i64 = 0
     var i: i64 = 0
     while i < 8 {
-        val = val | ((buf[off + i]as i64) << (i * 8))
+        val = val | ((buf[off + i] as i64) << (i * 8))
         i = i + 1
     }
     return val

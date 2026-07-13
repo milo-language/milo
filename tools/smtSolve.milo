@@ -18,8 +18,12 @@
 //     rootIdx
 // Output: one line per problem, "<index> <proven|violated|unknown>".
 
-from "std/io" import { readStdin }
-from "std/smt" import { Verdict, newProblem, addAtom, nAtom, nNot, nAnd, nOr, decide }
+from "std/io" import {
+    readStdin
+}
+from "std/smt" import {
+    Verdict, newProblem, addAtom, nAtom, nNot, nAnd, nOr, decide
+}
 
 fn main(): i32 {
     let s = readStdin()
@@ -94,8 +98,12 @@ fn main(): i32 {
         // per variable, in declaration order) so the caller can report the
         // failing input, not just that one exists.
         match decide(p, root) {
-            Verdict.Proven => { print(pi, " proven") }
-            Verdict.Unknown => { print(pi, " unknown") }
+            Verdict.Proven => {
+                print(pi, " proven")
+            }
+            Verdict.Unknown => {
+                print(pi, " unknown")
+            }
             Verdict.Violated(w) => {
                 var line: string = $"{pi} violated"
                 var k: i64 = 0

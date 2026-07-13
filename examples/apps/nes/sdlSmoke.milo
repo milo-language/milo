@@ -50,8 +50,7 @@ fn main(): i32 {
     // Whole render path juggles raw C pointers — one unsafe scope, like std/fs.milo.
     unsafe {
         let title = "Milo NES — SDL smoke"
-        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        W * 3, H * 3, SDL_WINDOW_SHOWN)
+        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, W * 3, H * 3, SDL_WINDOW_SHOWN)
         let ren = SDL_CreateRenderer(win, -1, 0)
         let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, W, H)
         // Fail loud if any SDL handle is NULL — a silent black window hid a bad
@@ -70,7 +69,7 @@ fn main(): i32 {
         while !quit {
             // Poll all pending events; SDL_Event.type is the first u32.
             while SDL_PollEvent((&ev[0]) as *u8) != 0 {
-                let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
                 }

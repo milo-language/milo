@@ -82,12 +82,14 @@ fn joinPath(dir: &string, name: &string): string {
     var full = String.withCapacity(dir.len + name.len + 1)
     var k: i64 = 0
     while k < dir.len {
-        full.push(dir[k]) k = k + 1
+        full.push(dir[k])
+        k = k + 1
     }
     full.push(47 as u8) // '/'
     k = 0
     while k < name.len {
-        full.push(name[k]) k = k + 1
+        full.push(name[k])
+        k = k + 1
     }
     return full
 }
@@ -157,7 +159,8 @@ fn baseName(p: &string): string {
     var s: string = ""
     i = start
     while i < p.len {
-        s.push(p[i]) i = i + 1
+        s.push(p[i])
+        i = i + 1
     }
     return s
 }
@@ -182,7 +185,7 @@ fn containsCI(hay: &string, needle: &string): bool {
         var j: i64 = 0
         var ok = true
         while j < needle.len {
-            if lc(hay[i + j]as i64) != lc(needle[j]as i64) {
+            if lc(hay[i + j] as i64) != lc(needle[j] as i64) {
                 ok = false break
             }
             j = j + 1
@@ -200,7 +203,7 @@ fn trimLine(s: &string): string {
     var a: i64 = 0
     var b: i64 = s.len
     while a < b {
-        let c = s[a]as i64
+        let c = s[a] as i64
         if c == 32 || c == 9 || c == 10 || c == 13 {
             a = a + 1
         } else {
@@ -208,7 +211,7 @@ fn trimLine(s: &string): string {
         }
     }
     while b > a {
-        let c = s[b - 1]as i64
+        let c = s[b - 1] as i64
         if c == 32 || c == 9 || c == 10 || c == 13 {
             b = b - 1
         } else {
@@ -218,7 +221,8 @@ fn trimLine(s: &string): string {
     var out: string = ""
     var i = a
     while i < b {
-        out.push(s[i]) i = i + 1
+        out.push(s[i])
+        i = i + 1
     }
     return out
 }
@@ -358,7 +362,7 @@ fn dumpFrame(bus: &Bus): void {
     var data: string = ""
     var i: i64 = 0
     while i < 61440 {
-        let px = bus.ppu.fb[i]as i64
+        let px = bus.ppu.fb[i] as i64
         data.push((px & 0xFF) as u8)
         data.push(((px >> 8) & 0xFF) as u8)
         data.push(((px >> 16) & 0xFF) as u8)
@@ -384,8 +388,7 @@ fn runNes(cart: Cartridge): i32 {
     }
     unsafe {
         let title = "Milo NES"
-        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        256 * 3, 240 * 3, SDL_WINDOW_SHOWN)
+        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * 3, 240 * 3, SDL_WINDOW_SHOWN)
         let ren = SDL_CreateRenderer(win, -1, 0)
         let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, 256, 240)
         if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
@@ -454,7 +457,7 @@ fn runNes(cart: Cartridge): i32 {
             // Pump the event queue (also refreshes keyboard state); only QUIT is
             // handled as an event.
             while SDL_PollEvent((&ev[0]) as *u8) != 0 {
-                let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
                 }

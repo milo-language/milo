@@ -22,7 +22,7 @@ struct Toks {
 
 fn nextTok(t: &mut Toks): i64 {
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c == 32 || c == 10 || c == 13 || c == 9 {
             t.pos = t.pos + 1
         } else {
@@ -31,9 +31,10 @@ fn nextTok(t: &mut Toks): i64 {
     }
     var v: i64 = 0
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c >= 48 && c <= 57 {
-            v = v * 10 + (c - 48) t.pos = t.pos + 1
+            v = v * 10 + (c - 48)
+            t.pos = t.pos + 1
         } else {
             break
         }
@@ -42,8 +43,12 @@ fn nextTok(t: &mut Toks): i64 {
 }
 
 fn loadRegs(spc: &mut Spc, m: &mut SpcMem, t: &mut Toks): void {
-    spc.a = nextTok(t) spc.x = nextTok(t) spc.y = nextTok(t)
-    spc.sp = nextTok(t) spc.pc = nextTok(t) spc.psw = nextTok(t)
+    spc.a = nextTok(t)
+    spc.x = nextTok(t)
+    spc.y = nextTok(t)
+    spc.sp = nextTok(t)
+    spc.pc = nextTok(t)
+    spc.psw = nextTok(t)
     let ramN = nextTok(t)
     var j: i64 = 0
     while j < ramN {
@@ -55,8 +60,12 @@ fn loadRegs(spc: &mut Spc, m: &mut SpcMem, t: &mut Toks): void {
 }
 
 fn checkFinal(spc: &Spc, m: &SpcMem, t: &mut Toks): string {
-    let fa = nextTok(t) let fx = nextTok(t) let fy = nextTok(t)
-    let fsp = nextTok(t) let fpc = nextTok(t) let fpsw = nextTok(t)
+    let fa = nextTok(t)
+    let fx = nextTok(t)
+    let fy = nextTok(t)
+    let fsp = nextTok(t)
+    let fpc = nextTok(t)
+    let fpsw = nextTok(t)
     let ramN = nextTok(t)
     var mismatch = ""
     if spc.a != fa && mismatch == "" {
@@ -92,7 +101,8 @@ fn checkFinal(spc: &Spc, m: &SpcMem, t: &mut Toks): string {
 fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
-        print("usage: runHarteSpc <op.flat> [maxCases]") return 1
+        print("usage: runHarteSpc <op.flat> [maxCases]")
+        return 1
     }
     var maxCases: i64 = 100000000
     if argv.len >= 3 {
@@ -105,7 +115,8 @@ fn main(): i32 {
             raw = s
         }
         Result.Err(e) => {
-            print("cannot read " + argv[1]) return 1
+            print("cannot read " + argv[1])
+            return 1
         }
     }
 
@@ -154,20 +165,26 @@ fn itoa(n: i64): string {
     if n == 0 {
         return "0"
     }
-    var v = n var s = ""
+    var v = n
+    var s = ""
     while v > 0 {
-        s = digitStr(v % 10) + s v = v / 10
+        s = digitStr(v % 10) + s
+        v = v / 10
     }
     return s
 }
 
 fn digitStr(d: i64): string {
-    var s = "" s.push((48 + d) as u8) return s
+    var s = ""
+    s.push((48 + d) as u8)
+    return s
 }
 
 fn hex(n: i64): string {
     let v = n & 0xFFFFFFFF
-    var s = "0x" var i: i64 = 28 var lead = true
+    var s = "0x"
+    var i: i64 = 28
+    var lead = true
     while i >= 0 {
         let nib = (v >> i) & 0xF
         if nib != 0 {
@@ -182,7 +199,8 @@ fn hex(n: i64): string {
 }
 
 fn hexNib(n: i64): string {
-    var s = "" if n < 10 {
+    var s = ""
+    if n < 10 {
         s.push((48 + n) as u8)
     } else {
         s.push((87 + n) as u8)

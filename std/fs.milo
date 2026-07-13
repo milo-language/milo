@@ -35,14 +35,14 @@ fn fileInfo(path: &string): FileInfo {
         let modeOff = statModeOffset()
         let sizeOff = statSizeOffset()
         // read u16 mode (macOS) — works for permission bits
-        let modeLo = buf[modeOff]as i32
-        let modeHi = buf[modeOff + 1]as i32
+        let modeLo = buf[modeOff] as i32
+        let modeHi = buf[modeOff + 1] as i32
         let mode = modeLo | (modeHi << 8)
         // read i64 size
         var size: i64 = 0
         for i in 0..8 {
             let off = i as i64
-            size = size | ((buf[sizeOff + off]as i64) << (off * 8))
+            size = size | ((buf[sizeOff + off] as i64) << (off * 8))
         }
         return FileInfo {
             size: size, mode: mode, exists: true
@@ -365,13 +365,13 @@ fn lstatInfo(path: &string): FileInfo {
         }
         let modeOff = statModeOffset()
         let sizeOff = statSizeOffset()
-        let modeLo = buf[modeOff]as i32
-        let modeHi = buf[modeOff + 1]as i32
+        let modeLo = buf[modeOff] as i32
+        let modeHi = buf[modeOff + 1] as i32
         let mode = modeLo | (modeHi << 8)
         var size: i64 = 0
         for i in 0..8 {
             let off = i as i64
-            size = size | ((buf[sizeOff + off]as i64) << (off * 8))
+            size = size | ((buf[sizeOff + off] as i64) << (off * 8))
         }
         return FileInfo {
             size: size, mode: mode, exists: true

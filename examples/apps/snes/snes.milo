@@ -60,16 +60,23 @@ let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
 let SDL_QUIT: u32 = 0x100
 
 fn ldaSta(rom: &mut Vec<u8>, o: i64, imm: i64, addr: i64): i64 {
-    rom[o] = 0xA9 as u8 rom[o + 1] = (imm & 0xFF) as u8
-    rom[o + 2] = 0x8D as u8 rom[o + 3] = (addr & 0xFF) as u8 rom[o + 4] = ((addr >> 8) & 0xFF) as u8
+    rom[o] = 0xA9 as u8
+    rom[o + 1] = (imm & 0xFF) as u8
+    rom[o + 2] = 0x8D as u8
+    rom[o + 3] = (addr & 0xFF) as u8
+    rom[o + 4] = ((addr >> 8) & 0xFF) as u8
     return o + 5
 }
 
 fn dmaCfg(rom: &mut Vec<u8>, o: i64, dmap: i64, bbad: i64, src: i64, size: i64): i64 {
     var p = o
-    p = ldaSta(rom, p, dmap, 0x4300) p = ldaSta(rom, p, bbad, 0x4301)
-    p = ldaSta(rom, p, src & 0xFF, 0x4302) p = ldaSta(rom, p, (src >> 8) & 0xFF, 0x4303)
-    p = ldaSta(rom, p, 0x00, 0x4304) p = ldaSta(rom, p, size & 0xFF, 0x4305) p = ldaSta(rom, p, (size >> 8) & 0xFF, 0x4306)
+    p = ldaSta(rom, p, dmap, 0x4300)
+    p = ldaSta(rom, p, bbad, 0x4301)
+    p = ldaSta(rom, p, src & 0xFF, 0x4302)
+    p = ldaSta(rom, p, (src >> 8) & 0xFF, 0x4303)
+    p = ldaSta(rom, p, 0x00, 0x4304)
+    p = ldaSta(rom, p, size & 0xFF, 0x4305)
+    p = ldaSta(rom, p, (size >> 8) & 0xFF, 0x4306)
     return ldaSta(rom, p, 0x01, 0x420B)
 }
 
@@ -79,19 +86,27 @@ fn demoRom(): Vec<u8> {
     var o: i64 = 0
     o = ldaSta(rom, o, 0x00, 0x2121)
     o = dmaCfg(rom, o, 0x00, 0x22, 0x8200, 0x20)
-    o = ldaSta(rom, o, 0x80, 0x2115) o = ldaSta(rom, o, 0x00, 0x2116) o = ldaSta(rom, o, 0x00, 0x2117)
+    o = ldaSta(rom, o, 0x80, 0x2115)
+    o = ldaSta(rom, o, 0x00, 0x2116)
+    o = ldaSta(rom, o, 0x00, 0x2117)
     o = dmaCfg(rom, o, 0x01, 0x18, 0x8300, 0x20)
-    o = ldaSta(rom, o, 0x01, 0x2105) o = ldaSta(rom, o, 0x04, 0x2107) o = ldaSta(rom, o, 0x00, 0x210B) o = ldaSta(rom, o, 0x0F, 0x2100)
-    rom[o] = 0xEA as u8 rom[o + 1] = 0x80 as u8 rom[o + 2] = 0xFD as u8
+    o = ldaSta(rom, o, 0x01, 0x2105)
+    o = ldaSta(rom, o, 0x04, 0x2107)
+    o = ldaSta(rom, o, 0x00, 0x210B)
+    o = ldaSta(rom, o, 0x0F, 0x2100)
+    rom[o] = 0xEA as u8
+    rom[o + 1] = 0x80 as u8
+    rom[o + 2] = 0xFD as u8
     let pal = [0x00, 0x00, 0x1F, 0x00, 0xE0, 0x03, 0x00, 0x7C, 0xFF, 0x03]
     var i: i64 = 0
     while i < (pal.len as i64) {
-        rom[0x200 + i] = pal[i]as u8 i = i + 1
+        rom[0x200 + i] = pal[i] as u8
+        i = i + 1
     }
     let idx = [1, 2, 3, 4, 1, 2, 3, 4]
     var row: i64 = 0
     while row < 8 {
-        let k = idx[row]as i64
+        let k = idx[row] as i64
         rom[0x300 + row * 2] = (if (k & 1) != 0 {
             0xFF
         } else {
@@ -112,7 +127,8 @@ fn demoRom(): Vec<u8> {
         ) as u8
         row = row + 1
     }
-    rom[0x7FFC] = 0x00 as u8 rom[0x7FFD] = 0x80 as u8
+    rom[0x7FFC] = 0x00 as u8
+    rom[0x7FFD] = 0x80 as u8
     return rom
 }
 
@@ -132,7 +148,9 @@ fn main(): i32 {
     if argv.len >= 2 {
         match loadCartridge(argv[1]) {
             Result.Ok(cart) => {
-                rom = cart.rom mapMode = cart.map print("loaded " + argv[1])
+                rom = cart.rom
+                mapMode = cart.map
+                print("loaded " + argv[1])
             }
             Result.Err(e) => {
                 print("load failed, using demo: " + e)
@@ -152,7 +170,8 @@ fn main(): i32 {
         srmPath = argv[1] + ".srm"
         match readFile(srmPath) {
             Result.Ok(data) => {
-                sramFromString(m, data) print("loaded save: " + srmPath)
+                sramFromString(m, data)
+                print("loaded save: " + srmPath)
             }
             Result.Err(e) => {
             }
@@ -160,7 +179,8 @@ fn main(): i32 {
     }
 
     if SDL_Init(SDL_INIT_VIDEO) != 0 {
-        print("SDL_Init failed") return 1
+        print("SDL_Init failed")
+        return 1
     }
     unsafe {
         let title = "Milo SNES"
@@ -168,14 +188,17 @@ fn main(): i32 {
         let ren = SDL_CreateRenderer(win, -1, 0)
         let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, 256, 224)
         if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
-            print("SDL setup failed") return 2
+            print("SDL setup failed")
+            return 2
         }
 
         var fb: Vec<i64> = Vec.new()
         var texBuf: Vec<u32> = Vec.new()
         var i: i64 = 0
         while i < 256 * 224 {
-            fb.push(0) texBuf.push(0) i = i + 1
+            fb.push(0)
+            texBuf.push(0)
+            i = i + 1
         }
 
         var ev: [u8; 64] = [0; 64]
@@ -207,7 +230,7 @@ fn main(): i32 {
             SDL_RenderPresent(ren)
 
             while SDL_PollEvent((&ev[0]) as *u8) != 0 {
-                let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
                 }

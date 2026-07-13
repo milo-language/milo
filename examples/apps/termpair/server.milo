@@ -419,11 +419,7 @@ fn handleGetSessions(): string {
                 result = result + ","
             }
             first = false
-            result = result + makePublicSession(
-            sessions[i].terminalId, sessions[i].displayName,
-            sessions[i].command, sessions[i].rows, sessions[i].cols,
-            sessions[i].startTime, sessions[i].browserCount
-            )
+            result = result + makePublicSession(sessions[i].terminalId, sessions[i].displayName, sessions[i].command, sessions[i].rows, sessions[i].cols, sessions[i].startTime, sessions[i].browserCount)
         }
     }
     result = result + "]"
@@ -435,12 +431,7 @@ fn handleGetTerminal(terminalId: &string): string {
     if idx < 0 {
         return ""
     }
-    return makeTerminalInfo(
-    sessions[idx].terminalId, sessions[idx].rows, sessions[idx].cols,
-    sessions[idx].command, sessions[idx].startTime,
-    sessions[idx].isPublic, sessions[idx].displayName,
-    sessions[idx].allowControl
-    )
+    return makeTerminalInfo(sessions[idx].terminalId, sessions[idx].rows, sessions[idx].cols, sessions[idx].command, sessions[idx].startTime, sessions[idx].isPublic, sessions[idx].displayName, sessions[idx].allowControl)
 }
 
 // ── Main ──

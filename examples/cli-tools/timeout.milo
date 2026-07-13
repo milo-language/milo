@@ -246,9 +246,9 @@ fn main(): i32 {
         while epochMillis() < deadlineMs {
             let r = waitpid(pid, status, 1)
             if r > 0 {
-                let sig = status[0]as i32 & 127
+                let sig = status[0] as i32 & 127
                 if sig == 0 {
-                    return status[1]as i32
+                    return status[1] as i32
                 }
                 return 128 + sig
             }

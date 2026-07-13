@@ -61,7 +61,7 @@ impl Process {
             if r < 0 {
                 return Result.Err("waitpid() failed")
             }
-            let raw = (statusBuf[1]as i32)
+            let raw = (statusBuf[1] as i32)
             return Result.Ok(raw)
         }
     }
@@ -198,7 +198,8 @@ impl Child {
 
     // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
     fn readStderr(self: &Self, buf: *u8, len: i64): i64
-    requires self.stderrFd >= 0
+    requires
+    self.stderrFd >= 0
     {
         unsafe {
             return read(self.stderrFd, buf, len)
@@ -215,7 +216,8 @@ impl Child {
     // Stream the child's stderr the same way. Only valid when stderr is a
     // separate pipe (not merged into stdout).
     fn stderr(self: &Self): Channel<string>
-    requires self.stderrFd >= 0
+    requires
+    self.stderrFd >= 0
     {
         return fdChannel(self.stderrFd)
     }
@@ -238,7 +240,7 @@ impl Child {
                 return Result.Err("waitpid() failed")
             }
             // macOS/Linux: low byte holds signal/stop info, next byte the exit code.
-            return Result.Ok(statusBuf[1]as i32)
+            return Result.Ok(statusBuf[1] as i32)
         }
     }
 

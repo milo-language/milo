@@ -32,7 +32,8 @@ fn atoi(s: &string): i64 {
 fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
-        print("usage: runRom <rom.sfc> [frames]") return 1
+        print("usage: runRom <rom.sfc> [frames]")
+        return 1
     }
     var frames: i64 = 8
     if argv.len >= 3 {
@@ -43,7 +44,8 @@ fn main(): i32 {
     var mapMode: i64 = 0
     match loadCartridge(argv[1]) {
         Result.Ok(cart) => {
-            rom = cart.rom mapMode = cart.map
+            rom = cart.rom
+            mapMode = cart.map
             print("loaded " + argv[1] + " (" + (if cart.map == 1 {
                 "HiROM"
             } else {
@@ -52,7 +54,8 @@ fn main(): i32 {
             ) + ")")
         }
         Result.Err(e) => {
-            print("load failed: " + e) return 1
+            print("load failed: " + e)
+            return 1
         }
     }
 
@@ -60,13 +63,15 @@ fn main(): i32 {
     var cpu = newCpuReset(m)
     var f: i64 = 0
     while f < frames {
-        stepFrame(cpu, m) f = f + 1
+        stepFrame(cpu, m)
+        f = f + 1
     }
 
     var fb: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < 256 * 224 {
-        fb.push(0) i = i + 1
+        fb.push(0)
+        i = i + 1
     }
     renderFrame(m.ppu, fb)
 
@@ -74,12 +79,15 @@ fn main(): i32 {
     let hdr = "P6\n256 224\n255\n"
     i = 0
     while i < hdr.len {
-        out.push(hdr[i]) i = i + 1
+        out.push(hdr[i])
+        i = i + 1
     }
     i = 0
     while i < 256 * 224 {
         let px = fb[i]
-        out.push(((px >> 16) & 0xFF) as u8) out.push(((px >> 8) & 0xFF) as u8) out.push((px & 0xFF) as u8)
+        out.push(((px >> 16) & 0xFF) as u8)
+        out.push(((px >> 8) & 0xFF) as u8)
+        out.push((px & 0xFF) as u8)
         i = i + 1
     }
     match makeDir("/tmp/snes", 493) {
@@ -95,10 +103,12 @@ fn main(): i32 {
             } else {
                 "0"
             }
-            ) + " frames") return 0
+            ) + " frames")
+            return 0
         }
         Result.Err(e) => {
-            print("write failed") return 1
+            print("write failed")
+            return 1
         }
     }
 }

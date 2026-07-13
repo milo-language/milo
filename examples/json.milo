@@ -1,3 +1,4 @@
+// @run:
 // JSON in Milo — stringify structs, parse them back, handle errors
 from "std/json" import {
     jsonParse

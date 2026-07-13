@@ -69,7 +69,8 @@ fn spcZeros(n: i64): Vec<u8> {
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < n {
-        v.push(0) i = i + 1
+        v.push(0)
+        i = i + 1
     }
     return v
 }
@@ -77,16 +78,12 @@ fn spcZeros(n: i64): Vec<u8> {
 // Canonical SNES SPC700 IPL boot ROM ($FFC0-$FFFF): posts $AA/$BB to ports 0/1
 // then runs the upload handshake. Reset vector ($FFFE) = $FFC0.
 fn iplRom(): Vec<u8> {
-    let b = [
-    0xCD, 0xEF, 0xBD, 0xE8, 0x00, 0xC6, 0x1D, 0xD0, 0xFC, 0x8F, 0xAA, 0xF4, 0x8F, 0xBB, 0xF5, 0x78,
-    0xCC, 0xF4, 0xD0, 0xFB, 0x2F, 0x19, 0xEB, 0xF4, 0xD0, 0xFC, 0x7E, 0xF4, 0xD0, 0x0B, 0xE4, 0xF5,
-    0xCB, 0xF4, 0xD7, 0x00, 0xFC, 0xD0, 0xF3, 0xAB, 0x01, 0x10, 0xEF, 0x7E, 0xF4, 0x10, 0xEB, 0xBA,
-    0xF6, 0xDA, 0x00, 0xBA, 0xF4, 0xC4, 0xF4, 0xDD, 0x5D, 0xD0, 0xDB, 0x1F, 0x00, 0x00, 0xC0, 0xFF
-    ]
+    let b = [0xCD, 0xEF, 0xBD, 0xE8, 0x00, 0xC6, 0x1D, 0xD0, 0xFC, 0x8F, 0xAA, 0xF4, 0x8F, 0xBB, 0xF5, 0x78, 0xCC, 0xF4, 0xD0, 0xFB, 0x2F, 0x19, 0xEB, 0xF4, 0xD0, 0xFC, 0x7E, 0xF4, 0xD0, 0x0B, 0xE4, 0xF5, 0xCB, 0xF4, 0xD7, 0x00, 0xFC, 0xD0, 0xF3, 0xAB, 0x01, 0x10, 0xEF, 0x7E, 0xF4, 0x10, 0xEB, 0xBA, 0xF6, 0xDA, 0x00, 0xBA, 0xF4, 0xC4, 0xF4, 0xDD, 0x5D, 0xD0, 0xDB, 0x1F, 0x00, 0x00, 0xC0, 0xFF]
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < 64 {
-        v.push(b[i]as u8) i = i + 1
+        v.push(b[i] as u8)
+        i = i + 1
     }
     return v
 }
@@ -95,7 +92,8 @@ fn spcZerosI64(n: i64): Vec<i64> {
     var v: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < n {
-        v.push(0) i = i + 1
+        v.push(0)
+        i = i + 1
     }
     return v
 }
@@ -135,7 +133,7 @@ fn spcRead(m: &mut SpcMem, a: i64): i64 {
         return m.dspAddr
     }
     if addr == 0xF3 {
-        return m.dsp[m.dspAddr & 0x7F]as i64 // DSP register readback
+        return m.dsp[m.dspAddr & 0x7F] as i64 // DSP register readback
     }
     if addr >= 0xFD && addr <= 0xFF {
         // Timer counter: return the 4-bit out value and clear it (read-clears).
@@ -145,9 +143,9 @@ fn spcRead(m: &mut SpcMem, a: i64): i64 {
         return r
     }
     if m.iplEnabled && addr >= 0xFFC0 {
-        return m.ipl[addr - 0xFFC0]as i64
+        return m.ipl[addr - 0xFFC0] as i64
     }
-    return m.ram[addr]as i64
+    return m.ram[addr] as i64
 }
 
 // Advance the timers by `cyc` SPC cycles. Prescale: T0/T1 tick every 128
@@ -202,10 +200,12 @@ fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
         m.iplEnabled = (bv & 0x80) != 0 // control: bit7 maps the IPL ROM
         // bits 4/5 clear the input port latches
         if (bv & 0x20) != 0 {
-            m.inPort[2] = 0 m.inPort[3] = 0
+            m.inPort[2] = 0
+            m.inPort[3] = 0
         }
         if (bv & 0x10) != 0 {
-            m.inPort[0] = 0 m.inPort[1] = 0
+            m.inPort[0] = 0
+            m.inPort[1] = 0
         }
         // bits0-2 enable timers; a disabled->enabled edge resets that timer.
         var t: i64 = 0
@@ -213,7 +213,9 @@ fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
             let was = (m.tEnable >> t) & 1
             let now = (bv >> t) & 1
             if now == 1 && was == 0 {
-                m.tDiv[t] = 0 m.tCount[t] = 0 m.tOut[t] = 0
+                m.tDiv[t] = 0
+                m.tCount[t] = 0
+                m.tOut[t] = 0
             }
             t = t + 1
         }
@@ -297,15 +299,18 @@ fn spcFetch16(spc: &mut Spc, m: &mut SpcMem): i64 {
 
 // --- ALU on A (8-bit; set flags per SPC700 semantics) ---
 fn spcOr(spc: &mut Spc, v: i64): void {
-    spc.a = spc.a | v spcNZ(spc, spc.a)
+    spc.a = spc.a | v
+    spcNZ(spc, spc.a)
 }
 
 fn spcAnd(spc: &mut Spc, v: i64): void {
-    spc.a = spc.a & v spcNZ(spc, spc.a)
+    spc.a = spc.a & v
+    spcNZ(spc, spc.a)
 }
 
 fn spcEor(spc: &mut Spc, v: i64): void {
-    spc.a = spc.a ^ v spcNZ(spc, spc.a)
+    spc.a = spc.a ^ v
+    spcNZ(spc, spc.a)
 }
 
 // CMP reg,v: C if reg>=v; N/Z from the difference. No register change.
@@ -325,7 +330,9 @@ fn aluAdcVal(spc: &mut Spc, a: i64, v: i64): i64 {
     spcSetBit(spc, PC_, r > 0xFF)
     spcSetBit(spc, PH, ((av & 0xF) + (vv & 0xF) + c) > 0xF)
     spcSetBit(spc, PV, ((~(av ^ vv)) & (av ^ r) & 0x80) != 0)
-    let rr = r & 0xFF spcNZ(spc, rr) return rr
+    let rr = r & 0xFF
+    spcNZ(spc, rr)
+    return rr
 }
 
 fn aluSbcVal(spc: &mut Spc, a: i64, v: i64): i64 {
@@ -388,7 +395,8 @@ fn spcDaa(spc: &mut Spc): void {
     var carry = (spc.psw & PC_) != 0
     var a = oldA
     if carry || oldA > 0x99 {
-        a = a + 0x60 carry = true
+        a = a + 0x60
+        carry = true
     }
     if (spc.psw & PH) != 0 || (oldA & 0x0F) > 0x09 {
         a = a + 0x06
@@ -403,7 +411,8 @@ fn spcDas(spc: &mut Spc): void {
     var carry = (spc.psw & PC_) != 0
     var a = oldA
     if !carry || oldA > 0x99 {
-        a = a - 0x60 carry = false
+        a = a - 0x60
+        carry = false
     }
     if (spc.psw & PH) == 0 || (oldA & 0x0F) > 0x09 {
         a = a - 0x06
@@ -426,7 +435,8 @@ fn spcDiv(spc: &mut Spc): void {
         spc.a = 255 - (ya - (x << 9)) / (256 - x)
         spc.y = x + (ya - (x << 9)) % (256 - x)
     }
-    spc.a = spc.a & 0xFF spc.y = spc.y & 0xFF
+    spc.a = spc.a & 0xFF
+    spc.y = spc.y & 0xFF
     spcNZ(spc, spc.a)
 }
 
@@ -461,18 +471,24 @@ fn spcBranch(spc: &mut Spc, m: &mut SpcMem, cond: bool): void {
 // --- shifts/rotates (8-bit; set C + N/Z) ---
 fn spcAsl(spc: &mut Spc, v: i64): i64 {
     spcSetBit(spc, PC_, (v & 0x80) != 0)
-    let r = (v << 1) & 0xFF spcNZ(spc, r) return r
+    let r = (v << 1) & 0xFF
+    spcNZ(spc, r)
+    return r
 }
 
 fn spcLsr(spc: &mut Spc, v: i64): i64 {
     spcSetBit(spc, PC_, (v & 1) != 0)
-    let r = (v & 0xFF) >> 1 spcNZ(spc, r) return r
+    let r = (v & 0xFF) >> 1
+    spcNZ(spc, r)
+    return r
 }
 
 fn spcRol(spc: &mut Spc, v: i64): i64 {
     let oldC = spc.psw & PC_
     spcSetBit(spc, PC_, (v & 0x80) != 0)
-    let r = ((v << 1) | oldC) & 0xFF spcNZ(spc, r) return r
+    let r = ((v << 1) | oldC) & 0xFF
+    spcNZ(spc, r)
+    return r
 }
 
 fn spcRor(spc: &mut Spc, v: i64): i64 {
@@ -482,7 +498,8 @@ fn spcRor(spc: &mut Spc, v: i64): i64 {
     if oldC != 0 {
         r = r | 0x80
     }
-    spcNZ(spc, r) return r
+    spcNZ(spc, r)
+    return r
 }
 
 fn spcNZ16(spc: &mut Spc, w: i64): void {
@@ -543,7 +560,9 @@ fn spcAddw(spc: &mut Spc, w: i64): void {
     spcSetBit(spc, PC_, r > 0xFFFF)
     spcSetBit(spc, PH, ((ya & 0xFFF) + (w & 0xFFF)) > 0xFFF)
     spcSetBit(spc, PV, ((~(ya ^ w)) & (ya ^ r) & 0x8000) != 0)
-    spc.a = r & 0xFF spc.y = (r >> 8) & 0xFF spcNZ16(spc, r)
+    spc.a = r & 0xFF
+    spc.y = (r >> 8) & 0xFF
+    spcNZ16(spc, r)
 }
 
 fn spcSubw(spc: &mut Spc, w: i64): void {
@@ -553,7 +572,9 @@ fn spcSubw(spc: &mut Spc, w: i64): void {
     spcSetBit(spc, PC_, r > 0xFFFF)
     spcSetBit(spc, PH, ((ya & 0xFFF) + (comp & 0xFFF) + 1) > 0xFFF)
     spcSetBit(spc, PV, ((~(ya ^ comp)) & (ya ^ r) & 0x8000) != 0)
-    spc.a = r & 0xFF spc.y = (r >> 8) & 0xFF spcNZ16(spc, r)
+    spc.a = r & 0xFF
+    spc.y = (r >> 8) & 0xFF
+    spcNZ16(spc, r)
 }
 
 fn spcCmpw(spc: &mut Spc, w: i64): void {
@@ -588,7 +609,8 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
             spcSetBit(spc, PC_, true)
         } // SETC
         0xE0 => {
-            spcSetBit(spc, PV, false) spcSetBit(spc, PH, false)
+            spcSetBit(spc, PV, false)
+            spcSetBit(spc, PH, false)
         } // CLRV (V + H)
         0xED => {
             spcSetBit(spc, PC_, (spc.psw & PC_) == 0)
@@ -602,30 +624,41 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- immediate loads ----
         0xE8 => {
-            let v = spcFetch(spc, m) spc.a = v spcNZ(spc, v)
+            let v = spcFetch(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,#imm
         0xCD => {
-            let v = spcFetch(spc, m) spc.x = v spcNZ(spc, v)
+            let v = spcFetch(spc, m)
+            spc.x = v
+            spcNZ(spc, v)
         } // MOV X,#imm
         0x8D => {
-            let v = spcFetch(spc, m) spc.y = v spcNZ(spc, v)
+            let v = spcFetch(spc, m)
+            spc.y = v
+            spcNZ(spc, v)
         } // MOV Y,#imm
 
         // ---- register-to-register moves ----
         0x7D => {
-            spc.a = spc.x spcNZ(spc, spc.a)
+            spc.a = spc.x
+            spcNZ(spc, spc.a)
         } // MOV A,X
         0xDD => {
-            spc.a = spc.y spcNZ(spc, spc.a)
+            spc.a = spc.y
+            spcNZ(spc, spc.a)
         } // MOV A,Y
         0x5D => {
-            spc.x = spc.a spcNZ(spc, spc.x)
+            spc.x = spc.a
+            spcNZ(spc, spc.x)
         } // MOV X,A
         0xFD => {
-            spc.y = spc.a spcNZ(spc, spc.y)
+            spc.y = spc.a
+            spcNZ(spc, spc.y)
         } // MOV Y,A
         0x9D => {
-            spc.x = spc.sp spcNZ(spc, spc.x)
+            spc.x = spc.sp
+            spcNZ(spc, spc.x)
         } // MOV X,SP
         0xBD => {
             spc.sp = spc.x
@@ -633,131 +666,176 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- register INC/DEC ----
         0xBC => {
-            spc.a = (spc.a + 1) & 0xFF spcNZ(spc, spc.a)
+            spc.a = (spc.a + 1) & 0xFF
+            spcNZ(spc, spc.a)
         } // INC A
         0x3D => {
-            spc.x = (spc.x + 1) & 0xFF spcNZ(spc, spc.x)
+            spc.x = (spc.x + 1) & 0xFF
+            spcNZ(spc, spc.x)
         } // INC X
         0xFC => {
-            spc.y = (spc.y + 1) & 0xFF spcNZ(spc, spc.y)
+            spc.y = (spc.y + 1) & 0xFF
+            spcNZ(spc, spc.y)
         } // INC Y
         0x9C => {
-            spc.a = (spc.a - 1) & 0xFF spcNZ(spc, spc.a)
+            spc.a = (spc.a - 1) & 0xFF
+            spcNZ(spc, spc.a)
         } // DEC A
         0x1D => {
-            spc.x = (spc.x - 1) & 0xFF spcNZ(spc, spc.x)
+            spc.x = (spc.x - 1) & 0xFF
+            spcNZ(spc, spc.x)
         } // DEC X
         0xDC => {
-            spc.y = (spc.y - 1) & 0xFF spcNZ(spc, spc.y)
+            spc.y = (spc.y - 1) & 0xFF
+            spcNZ(spc, spc.y)
         } // DEC Y
 
         // ---- A-form ALU (imm / dp / abs) ----
         0x08 => {
-            let v = spcFetch(spc, m) spcOr(spc, v)
+            let v = spcFetch(spc, m)
+            spcOr(spc, v)
         } // OR A,#imm
         0x04 => {
-            let v = readDp(spc, m) spcOr(spc, v)
+            let v = readDp(spc, m)
+            spcOr(spc, v)
         } // OR A,dp
         0x05 => {
-            let v = readAbs(spc, m) spcOr(spc, v)
+            let v = readAbs(spc, m)
+            spcOr(spc, v)
         } // OR A,abs
         0x28 => {
-            let v = spcFetch(spc, m) spcAnd(spc, v)
+            let v = spcFetch(spc, m)
+            spcAnd(spc, v)
         } // AND A,#imm
         0x24 => {
-            let v = readDp(spc, m) spcAnd(spc, v)
+            let v = readDp(spc, m)
+            spcAnd(spc, v)
         }
         0x25 => {
-            let v = readAbs(spc, m) spcAnd(spc, v)
+            let v = readAbs(spc, m)
+            spcAnd(spc, v)
         }
         0x48 => {
-            let v = spcFetch(spc, m) spcEor(spc, v)
+            let v = spcFetch(spc, m)
+            spcEor(spc, v)
         } // EOR A,#imm
         0x44 => {
-            let v = readDp(spc, m) spcEor(spc, v)
+            let v = readDp(spc, m)
+            spcEor(spc, v)
         }
         0x45 => {
-            let v = readAbs(spc, m) spcEor(spc, v)
+            let v = readAbs(spc, m)
+            spcEor(spc, v)
         }
         0x68 => {
-            let v = spcFetch(spc, m) spcCmp(spc, spc.a, v)
+            let v = spcFetch(spc, m)
+            spcCmp(spc, spc.a, v)
         } // CMP A,#imm
         0x64 => {
-            let v = readDp(spc, m) spcCmp(spc, spc.a, v)
+            let v = readDp(spc, m)
+            spcCmp(spc, spc.a, v)
         }
         0x65 => {
-            let v = readAbs(spc, m) spcCmp(spc, spc.a, v)
+            let v = readAbs(spc, m)
+            spcCmp(spc, spc.a, v)
         }
         0x88 => {
-            let v = spcFetch(spc, m) spcAdc(spc, v)
+            let v = spcFetch(spc, m)
+            spcAdc(spc, v)
         } // ADC A,#imm
         0x84 => {
-            let v = readDp(spc, m) spcAdc(spc, v)
+            let v = readDp(spc, m)
+            spcAdc(spc, v)
         }
         0x85 => {
-            let v = readAbs(spc, m) spcAdc(spc, v)
+            let v = readAbs(spc, m)
+            spcAdc(spc, v)
         }
         0xA8 => {
-            let v = spcFetch(spc, m) spcSbc(spc, v)
+            let v = spcFetch(spc, m)
+            spcSbc(spc, v)
         } // SBC A,#imm
         0xA4 => {
-            let v = readDp(spc, m) spcSbc(spc, v)
+            let v = readDp(spc, m)
+            spcSbc(spc, v)
         }
         0xA5 => {
-            let v = readAbs(spc, m) spcSbc(spc, v)
+            let v = readAbs(spc, m)
+            spcSbc(spc, v)
         }
 
         // ---- CMP X / CMP Y immediate ----
         0xC8 => {
-            let v = spcFetch(spc, m) spcCmp(spc, spc.x, v)
+            let v = spcFetch(spc, m)
+            spcCmp(spc, spc.x, v)
         } // CMP X,#imm
         0xAD => {
-            let v = spcFetch(spc, m) spcCmp(spc, spc.y, v)
+            let v = spcFetch(spc, m)
+            spcCmp(spc, spc.y, v)
         } // CMP Y,#imm
 
         // ---- MOV A <-> memory ----
         0xE4 => {
-            let v = readDp(spc, m) spc.a = v spcNZ(spc, v)
+            let v = readDp(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,dp
         0xE5 => {
-            let v = readAbs(spc, m) spc.a = v spcNZ(spc, v)
+            let v = readAbs(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,abs
         0xC4 => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) spcWrite(m, ad, spc.a)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            spcWrite(m, ad, spc.a)
         } // MOV dp,A
         0xC5 => {
-            let ad = spcFetch16(spc, m) spcWrite(m, ad, spc.a)
+            let ad = spcFetch16(spc, m)
+            spcWrite(m, ad, spc.a)
         } // MOV abs,A
 
         // ---- MOV X/Y <-> memory ----
         0xF8 => {
-            let v = readDp(spc, m) spc.x = v spcNZ(spc, v)
+            let v = readDp(spc, m)
+            spc.x = v
+            spcNZ(spc, v)
         } // MOV X,dp
         0xE9 => {
-            let v = readAbs(spc, m) spc.x = v spcNZ(spc, v)
+            let v = readAbs(spc, m)
+            spc.x = v
+            spcNZ(spc, v)
         } // MOV X,abs
         0xD8 => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) spcWrite(m, ad, spc.x)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            spcWrite(m, ad, spc.x)
         } // MOV dp,X
         0xC9 => {
-            let ad = spcFetch16(spc, m) spcWrite(m, ad, spc.x)
+            let ad = spcFetch16(spc, m)
+            spcWrite(m, ad, spc.x)
         } // MOV abs,X
         0xEB => {
-            let v = readDp(spc, m) spc.y = v spcNZ(spc, v)
+            let v = readDp(spc, m)
+            spc.y = v
+            spcNZ(spc, v)
         } // MOV Y,dp
         0xEC => {
-            let v = readAbs(spc, m) spc.y = v spcNZ(spc, v)
+            let v = readAbs(spc, m)
+            spc.y = v
+            spcNZ(spc, v)
         } // MOV Y,abs
         0xCB => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) spcWrite(m, ad, spc.y)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            spcWrite(m, ad, spc.y)
         } // MOV dp,Y
         0xCC => {
-            let ad = spcFetch16(spc, m) spcWrite(m, ad, spc.y)
+            let ad = spcFetch16(spc, m)
+            spcWrite(m, ad, spc.y)
         } // MOV abs,Y
 
         // ---- MOV (X) indirect, MOV dp,#imm ----
         0xE6 => {
-            spc.a = spcRead(m, dpAddr(spc, spc.x)) spcNZ(spc, spc.a)
+            spc.a = spcRead(m, dpAddr(spc, spc.x))
+            spcNZ(spc, spc.a)
         } // MOV A,(X)
         0xC6 => {
             spcWrite(m, dpAddr(spc, spc.x), spc.a)
@@ -796,16 +874,28 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- INC/DEC memory ----
         0xAB => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) + 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) + 1) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // INC dp
         0xAC => {
-            let ad = spcFetch16(spc, m) let r = (spcRead(m, ad) + 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let ad = spcFetch16(spc, m)
+            let r = (spcRead(m, ad) + 1) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // INC abs
         0x8B => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) - 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) - 1) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // DEC dp
         0x8C => {
-            let ad = spcFetch16(spc, m) let r = (spcRead(m, ad) - 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let ad = spcFetch16(spc, m)
+            let r = (spcRead(m, ad) - 1) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // DEC abs
 
         // ---- branches (relative) ----
@@ -839,60 +929,86 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- A-form ALU, abs+X / abs+Y ----
         0x15 => {
-            let v = readAbsX(spc, m) spcOr(spc, v)
+            let v = readAbsX(spc, m)
+            spcOr(spc, v)
         }
         0x16 => {
-            let v = readAbsY(spc, m) spcOr(spc, v)
+            let v = readAbsY(spc, m)
+            spcOr(spc, v)
         }
         0x35 => {
-            let v = readAbsX(spc, m) spcAnd(spc, v)
+            let v = readAbsX(spc, m)
+            spcAnd(spc, v)
         }
         0x36 => {
-            let v = readAbsY(spc, m) spcAnd(spc, v)
+            let v = readAbsY(spc, m)
+            spcAnd(spc, v)
         }
         0x55 => {
-            let v = readAbsX(spc, m) spcEor(spc, v)
+            let v = readAbsX(spc, m)
+            spcEor(spc, v)
         }
         0x56 => {
-            let v = readAbsY(spc, m) spcEor(spc, v)
+            let v = readAbsY(spc, m)
+            spcEor(spc, v)
         }
         0x75 => {
-            let v = readAbsX(spc, m) spcCmp(spc, spc.a, v)
+            let v = readAbsX(spc, m)
+            spcCmp(spc, spc.a, v)
         }
         0x76 => {
-            let v = readAbsY(spc, m) spcCmp(spc, spc.a, v)
+            let v = readAbsY(spc, m)
+            spcCmp(spc, spc.a, v)
         }
         0x95 => {
-            let v = readAbsX(spc, m) spcAdc(spc, v)
+            let v = readAbsX(spc, m)
+            spcAdc(spc, v)
         }
         0x96 => {
-            let v = readAbsY(spc, m) spcAdc(spc, v)
+            let v = readAbsY(spc, m)
+            spcAdc(spc, v)
         }
         0xB5 => {
-            let v = readAbsX(spc, m) spcSbc(spc, v)
+            let v = readAbsX(spc, m)
+            spcSbc(spc, v)
         }
         0xB6 => {
-            let v = readAbsY(spc, m) spcSbc(spc, v)
+            let v = readAbsY(spc, m)
+            spcSbc(spc, v)
         }
 
         // ---- RMW on dp+X ----
         0x1B => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcAsl(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            let r = spcAsl(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         } // ASL dp+X
         0x5B => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcLsr(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            let r = spcLsr(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         } // LSR dp+X
         0x3B => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcRol(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            let r = spcRol(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         } // ROL dp+X
         0x7B => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = spcRor(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            let r = spcRor(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         } // ROR dp+X
         0xBB => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = (spcRead(m, ad) + 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            let r = (spcRead(m, ad) + 1) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // INC dp+X
         0x9B => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) let r = (spcRead(m, ad) - 1) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            let r = (spcRead(m, ad) - 1) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // DEC dp+X
         0xDE => { // CBNE dp+X,rel — branch if A != (dp+X); no flags
             let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF))
@@ -909,63 +1025,95 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- remaining MOV loads/stores ----
         0xF5 => {
-            let v = readAbsX(spc, m) spc.a = v spcNZ(spc, v)
+            let v = readAbsX(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,abs+X
         0xF6 => {
-            let v = readAbsY(spc, m) spc.a = v spcNZ(spc, v)
+            let v = readAbsY(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,abs+Y
         0xE7 => {
-            let v = readIndDpX(spc, m) spc.a = v spcNZ(spc, v)
+            let v = readIndDpX(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,[dp+X]
         0xF7 => {
-            let v = readIndDpY(spc, m) spc.a = v spcNZ(spc, v)
+            let v = readIndDpY(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,[dp]+Y
         0xD5 => {
-            let ad = (spcFetch16(spc, m) + spc.x) & 0xFFFF spcWrite(m, ad, spc.a)
+            let ad = (spcFetch16(spc, m) + spc.x) & 0xFFFF
+            spcWrite(m, ad, spc.a)
         } // MOV abs+X,A
         0xD6 => {
-            let ad = (spcFetch16(spc, m) + spc.y) & 0xFFFF spcWrite(m, ad, spc.a)
+            let ad = (spcFetch16(spc, m) + spc.y) & 0xFFFF
+            spcWrite(m, ad, spc.a)
         } // MOV abs+Y,A
         0xC7 => {
-            let ptr = readDpWord(spc, m, (spcFetch(spc, m) + spc.x) & 0xFF) spcWrite(m, ptr, spc.a)
+            let ptr = readDpWord(spc, m, (spcFetch(spc, m) + spc.x) & 0xFF)
+            spcWrite(m, ptr, spc.a)
         } // MOV [dp+X],A
         0xD7 => {
-            let ptr = readDpWord(spc, m, spcFetch(spc, m)) spcWrite(m, (ptr + spc.y) & 0xFFFF, spc.a)
+            let ptr = readDpWord(spc, m, spcFetch(spc, m))
+            spcWrite(m, (ptr + spc.y) & 0xFFFF, spc.a)
         } // MOV [dp]+Y,A
         0xF9 => {
-            let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.y) & 0xFF)) spc.x = v spcNZ(spc, v)
+            let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.y) & 0xFF))
+            spc.x = v
+            spcNZ(spc, v)
         } // MOV X,dp+Y
         0xFB => {
-            let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)) spc.y = v spcNZ(spc, v)
+            let v = spcRead(m, dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF))
+            spc.y = v
+            spcNZ(spc, v)
         } // MOV Y,dp+X
         0xDB => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) spcWrite(m, ad, spc.y)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            spcWrite(m, ad, spc.y)
         } // MOV dp+X,Y
         0xD9 => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.y) & 0xFF) spcWrite(m, ad, spc.x)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.y) & 0xFF)
+            spcWrite(m, ad, spc.x)
         } // MOV dp+Y,X
 
         // ---- carry <-> memory bit (operand: low 13 = addr, high 3 = bit) ----
         0x0A => {
-            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) || (b != 0))
+            let mb = spcFetch16(spc, m)
+            let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1
+            spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) || (b != 0))
         } // OR1 C,m.b
         0x2A => {
-            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) || (b == 0))
+            let mb = spcFetch16(spc, m)
+            let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1
+            spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) || (b == 0))
         } // OR1 C,/m.b
         0x4A => {
-            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) && (b != 0))
+            let mb = spcFetch16(spc, m)
+            let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1
+            spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) && (b != 0))
         } // AND1 C,m.b
         0x6A => {
-            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) && (b == 0))
+            let mb = spcFetch16(spc, m)
+            let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1
+            spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) && (b == 0))
         } // AND1 C,/m.b
         0x8A => {
-            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) != (b != 0))
+            let mb = spcFetch16(spc, m)
+            let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1
+            spcSetBit(spc, PC_, ((spc.psw & PC_) != 0) != (b != 0))
         } // EOR1 C,m.b
         0xAA => {
-            let mb = spcFetch16(spc, m) let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1 spcSetBit(spc, PC_, b != 0)
+            let mb = spcFetch16(spc, m)
+            let b = (spcRead(m, mb & 0x1FFF) >> ((mb >> 13) & 7)) & 1
+            spcSetBit(spc, PC_, b != 0)
         } // MOV1 C,m.b
         0xCA => { // MOV1 m.b,C
-            let mb = spcFetch16(spc, m) let ad = mb & 0x1FFF let bit = (mb >> 13) & 7
+            let mb = spcFetch16(spc, m)
+            let ad = mb & 0x1FFF
+            let bit = (mb >> 13) & 7
             var v = spcRead(m, ad)
             if (spc.psw & PC_) != 0 {
                 v = v | (1 << bit)
@@ -975,60 +1123,110 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
             spcWrite(m, ad, v)
         }
         0xEA => { // NOT1 m.b
-            let mb = spcFetch16(spc, m) let ad = mb & 0x1FFF let bit = (mb >> 13) & 7
+            let mb = spcFetch16(spc, m)
+            let ad = mb & 0x1FFF
+            let bit = (mb >> 13) & 7
             let cur = spcRead(m, ad)
             spcWrite(m, ad, cur ^ (1 << bit))
         }
 
         // ---- TSET1 / TCLR1 !abs (flags from A - M) ----
         0x0E => {
-            let ad = spcFetch16(spc, m) let v = spcRead(m, ad) spcNZ(spc, (spc.a - v) & 0xFF) spcWrite(m, ad, v | spc.a)
+            let ad = spcFetch16(spc, m)
+            let v = spcRead(m, ad)
+            spcNZ(spc, (spc.a - v) & 0xFF)
+            spcWrite(m, ad, v | spc.a)
         } // TSET1
         0x4E => {
-            let ad = spcFetch16(spc, m) let v = spcRead(m, ad) spcNZ(spc, (spc.a - v) & 0xFF) spcWrite(m, ad, v & (~spc.a))
+            let ad = spcFetch16(spc, m)
+            let v = spcRead(m, ad)
+            spcNZ(spc, (spc.a - v) & 0xFF)
+            spcWrite(m, ad, v & (~spc.a))
         } // TCLR1
 
         // ---- ALU dp,#imm  (operands: imm then dp) ----
         0x18 => {
-            let imm = spcFetch(spc, m) let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) | imm) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let imm = spcFetch(spc, m)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) | imm) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // OR
         0x38 => {
-            let imm = spcFetch(spc, m) let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) & imm) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let imm = spcFetch(spc, m)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) & imm) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // AND
         0x58 => {
-            let imm = spcFetch(spc, m) let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) ^ imm) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let imm = spcFetch(spc, m)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) ^ imm) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // EOR
         0x78 => {
-            let imm = spcFetch(spc, m) let ad = dpAddr(spc, spcFetch(spc, m)) spcCmp(spc, spcRead(m, ad), imm)
+            let imm = spcFetch(spc, m)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            spcCmp(spc, spcRead(m, ad), imm)
         } // CMP
         0x98 => {
-            let imm = spcFetch(spc, m) let ad = dpAddr(spc, spcFetch(spc, m)) let r = aluAdcVal(spc, spcRead(m, ad), imm) spcWrite(m, ad, r)
+            let imm = spcFetch(spc, m)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = aluAdcVal(spc, spcRead(m, ad), imm)
+            spcWrite(m, ad, r)
         } // ADC
         0xB8 => {
-            let imm = spcFetch(spc, m) let ad = dpAddr(spc, spcFetch(spc, m)) let r = aluSbcVal(spc, spcRead(m, ad), imm) spcWrite(m, ad, r)
+            let imm = spcFetch(spc, m)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = aluSbcVal(spc, spcRead(m, ad), imm)
+            spcWrite(m, ad, r)
         } // SBC
 
         // ---- ALU dp,dp  (operands: source dp then dest dp) ----
         0x09 => {
-            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m))) let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) | sv) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) | sv) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // OR
         0x29 => {
-            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m))) let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) & sv) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) & sv) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // AND
         0x49 => {
-            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m))) let ad = dpAddr(spc, spcFetch(spc, m)) let r = (spcRead(m, ad) ^ sv) & 0xFF spcWrite(m, ad, r) spcNZ(spc, r)
+            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = (spcRead(m, ad) ^ sv) & 0xFF
+            spcWrite(m, ad, r)
+            spcNZ(spc, r)
         } // EOR
         0x69 => {
-            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m))) let ad = dpAddr(spc, spcFetch(spc, m)) spcCmp(spc, spcRead(m, ad), sv)
+            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            spcCmp(spc, spcRead(m, ad), sv)
         } // CMP
         0x89 => {
-            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m))) let ad = dpAddr(spc, spcFetch(spc, m)) let r = aluAdcVal(spc, spcRead(m, ad), sv) spcWrite(m, ad, r)
+            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = aluAdcVal(spc, spcRead(m, ad), sv)
+            spcWrite(m, ad, r)
         } // ADC
         0xA9 => {
-            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m))) let ad = dpAddr(spc, spcFetch(spc, m)) let r = aluSbcVal(spc, spcRead(m, ad), sv) spcWrite(m, ad, r)
+            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = aluSbcVal(spc, spcRead(m, ad), sv)
+            spcWrite(m, ad, r)
         } // SBC
         0xFA => {
-            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m))) let ad = dpAddr(spc, spcFetch(spc, m)) spcWrite(m, ad, sv)
+            let sv = spcRead(m, dpAddr(spc, spcFetch(spc, m)))
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            spcWrite(m, ad, sv)
         } // MOV dp,dp (no flags)
 
         // ---- SET1 / CLR1 dp.bit ----
@@ -1083,113 +1281,148 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- auto-increment (X) MOVs ----
         0xBF => {
-            spc.a = spcRead(m, dpAddr(spc, spc.x)) spcNZ(spc, spc.a) spc.x = (spc.x + 1) & 0xFF
+            spc.a = spcRead(m, dpAddr(spc, spc.x))
+            spcNZ(spc, spc.a)
+            spc.x = (spc.x + 1) & 0xFF
         } // MOV A,(X)+
         0xAF => {
-            spcWrite(m, dpAddr(spc, spc.x), spc.a) spc.x = (spc.x + 1) & 0xFF
+            spcWrite(m, dpAddr(spc, spc.x), spc.a)
+            spc.x = (spc.x + 1) & 0xFF
         } // MOV (X)+,A (no flags)
 
         // ---- A-form ALU, (X) indirect ----
         0x06 => {
-            let v = readIndX(spc, m) spcOr(spc, v)
+            let v = readIndX(spc, m)
+            spcOr(spc, v)
         } // OR A,(X)
         0x26 => {
-            let v = readIndX(spc, m) spcAnd(spc, v)
+            let v = readIndX(spc, m)
+            spcAnd(spc, v)
         }
         0x46 => {
-            let v = readIndX(spc, m) spcEor(spc, v)
+            let v = readIndX(spc, m)
+            spcEor(spc, v)
         }
         0x66 => {
-            let v = readIndX(spc, m) spcCmp(spc, spc.a, v)
+            let v = readIndX(spc, m)
+            spcCmp(spc, spc.a, v)
         }
         0x86 => {
-            let v = readIndX(spc, m) spcAdc(spc, v)
+            let v = readIndX(spc, m)
+            spcAdc(spc, v)
         }
         0xA6 => {
-            let v = readIndX(spc, m) spcSbc(spc, v)
+            let v = readIndX(spc, m)
+            spcSbc(spc, v)
         }
 
         // ---- A-form ALU, [dp+X] indexed-indirect ----
         0x07 => {
-            let v = readIndDpX(spc, m) spcOr(spc, v)
+            let v = readIndDpX(spc, m)
+            spcOr(spc, v)
         } // OR A,[dp+X]
         0x27 => {
-            let v = readIndDpX(spc, m) spcAnd(spc, v)
+            let v = readIndDpX(spc, m)
+            spcAnd(spc, v)
         }
         0x47 => {
-            let v = readIndDpX(spc, m) spcEor(spc, v)
+            let v = readIndDpX(spc, m)
+            spcEor(spc, v)
         }
         0x67 => {
-            let v = readIndDpX(spc, m) spcCmp(spc, spc.a, v)
+            let v = readIndDpX(spc, m)
+            spcCmp(spc, spc.a, v)
         }
         0x87 => {
-            let v = readIndDpX(spc, m) spcAdc(spc, v)
+            let v = readIndDpX(spc, m)
+            spcAdc(spc, v)
         }
         0xA7 => {
-            let v = readIndDpX(spc, m) spcSbc(spc, v)
+            let v = readIndDpX(spc, m)
+            spcSbc(spc, v)
         }
 
         // ---- A-form ALU, [dp]+Y indirect-indexed ----
         0x17 => {
-            let v = readIndDpY(spc, m) spcOr(spc, v)
+            let v = readIndDpY(spc, m)
+            spcOr(spc, v)
         } // OR A,[dp]+Y
         0x37 => {
-            let v = readIndDpY(spc, m) spcAnd(spc, v)
+            let v = readIndDpY(spc, m)
+            spcAnd(spc, v)
         }
         0x57 => {
-            let v = readIndDpY(spc, m) spcEor(spc, v)
+            let v = readIndDpY(spc, m)
+            spcEor(spc, v)
         }
         0x77 => {
-            let v = readIndDpY(spc, m) spcCmp(spc, spc.a, v)
+            let v = readIndDpY(spc, m)
+            spcCmp(spc, spc.a, v)
         }
         0x97 => {
-            let v = readIndDpY(spc, m) spcAdc(spc, v)
+            let v = readIndDpY(spc, m)
+            spcAdc(spc, v)
         }
         0xB7 => {
-            let v = readIndDpY(spc, m) spcSbc(spc, v)
+            let v = readIndDpY(spc, m)
+            spcSbc(spc, v)
         }
 
         // ---- MUL YA = Y * A (N/Z from high byte) ----
         0xCF => {
             let r = (spc.y * spc.a) & 0xFFFF
-            spc.a = r & 0xFF spc.y = (r >> 8) & 0xFF spcNZ(spc, spc.y)
+            spc.a = r & 0xFF
+            spc.y = (r >> 8) & 0xFF
+            spcNZ(spc, spc.y)
         }
 
         // ---- 16-bit ADDW/SUBW/CMPW YA,dp ----
         0x7A => {
-            let d = spcFetch(spc, m) spcAddw(spc, readDpWord(spc, m, d))
+            let d = spcFetch(spc, m)
+            spcAddw(spc, readDpWord(spc, m, d))
         } // ADDW YA,dp
         0x9A => {
-            let d = spcFetch(spc, m) spcSubw(spc, readDpWord(spc, m, d))
+            let d = spcFetch(spc, m)
+            spcSubw(spc, readDpWord(spc, m, d))
         } // SUBW YA,dp
         0x5A => {
-            let d = spcFetch(spc, m) spcCmpw(spc, readDpWord(spc, m, d))
+            let d = spcFetch(spc, m)
+            spcCmpw(spc, readDpWord(spc, m, d))
         } // CMPW YA,dp
 
         // ---- A-form ALU, dp+X indexed ----
         0x14 => {
-            let v = readDpX(spc, m) spcOr(spc, v)
+            let v = readDpX(spc, m)
+            spcOr(spc, v)
         } // OR A,dp+X
         0x34 => {
-            let v = readDpX(spc, m) spcAnd(spc, v)
+            let v = readDpX(spc, m)
+            spcAnd(spc, v)
         } // AND A,dp+X
         0x54 => {
-            let v = readDpX(spc, m) spcEor(spc, v)
+            let v = readDpX(spc, m)
+            spcEor(spc, v)
         } // EOR A,dp+X
         0x74 => {
-            let v = readDpX(spc, m) spcCmp(spc, spc.a, v)
+            let v = readDpX(spc, m)
+            spcCmp(spc, spc.a, v)
         } // CMP A,dp+X
         0x94 => {
-            let v = readDpX(spc, m) spcAdc(spc, v)
+            let v = readDpX(spc, m)
+            spcAdc(spc, v)
         } // ADC A,dp+X
         0xB4 => {
-            let v = readDpX(spc, m) spcSbc(spc, v)
+            let v = readDpX(spc, m)
+            spcSbc(spc, v)
         } // SBC A,dp+X
         0xF4 => {
-            let v = readDpX(spc, m) spc.a = v spcNZ(spc, v)
+            let v = readDpX(spc, m)
+            spc.a = v
+            spcNZ(spc, v)
         } // MOV A,dp+X
         0xD4 => {
-            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF) spcWrite(m, ad, spc.a)
+            let ad = dpAddr(spc, (spcFetch(spc, m) + spc.x) & 0xFF)
+            spcWrite(m, ad, spc.a)
         } // MOV dp+X,A
 
         // ---- shifts/rotates (A / dp / abs) ----
@@ -1197,47 +1430,66 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
             spc.a = spcAsl(spc, spc.a)
         } // ASL A
         0x0B => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcAsl(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = spcAsl(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         } // ASL dp
         0x0C => {
-            let ad = spcFetch16(spc, m) let r = spcAsl(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = spcFetch16(spc, m)
+            let r = spcAsl(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         } // ASL abs
         0x5C => {
             spc.a = spcLsr(spc, spc.a)
         } // LSR A
         0x4B => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcLsr(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = spcLsr(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         }
         0x4C => {
-            let ad = spcFetch16(spc, m) let r = spcLsr(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = spcFetch16(spc, m)
+            let r = spcLsr(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         }
         0x3C => {
             spc.a = spcRol(spc, spc.a)
         } // ROL A
         0x2B => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcRol(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = spcRol(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         }
         0x2C => {
-            let ad = spcFetch16(spc, m) let r = spcRol(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = spcFetch16(spc, m)
+            let r = spcRol(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         }
         0x7C => {
             spc.a = spcRor(spc, spc.a)
         } // ROR A
         0x6B => {
-            let ad = dpAddr(spc, spcFetch(spc, m)) let r = spcRor(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = dpAddr(spc, spcFetch(spc, m))
+            let r = spcRor(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         }
         0x6C => {
-            let ad = spcFetch16(spc, m) let r = spcRor(spc, spcRead(m, ad)) spcWrite(m, ad, r)
+            let ad = spcFetch16(spc, m)
+            let r = spcRor(spc, spcRead(m, ad))
+            spcWrite(m, ad, r)
         }
         0x9F => { // XCN A — swap nibbles
-            spc.a = ((spc.a >> 4) | (spc.a << 4)) & 0xFF spcNZ(spc, spc.a)
+            spc.a = ((spc.a >> 4) | (spc.a << 4)) & 0xFF
+            spcNZ(spc, spc.a)
         }
 
         // ---- 16-bit word ops (YA / dp) ----
         0xBA => { // MOVW YA,dp
             let d = spcFetch(spc, m)
             let w = readDpWord(spc, m, d)
-            spc.a = w & 0xFF spc.y = (w >> 8) & 0xFF spcNZ16(spc, w)
+            spc.a = w & 0xFF
+            spc.y = (w >> 8) & 0xFF
+            spcNZ16(spc, w)
         }
         0xDA => { // MOVW dp,YA (no flags)
             let d = spcFetch(spc, m)
@@ -1246,12 +1498,14 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
         0x3A => { // INCW dp
             let d = spcFetch(spc, m)
             let w = (readDpWord(spc, m, d) + 1) & 0xFFFF
-            writeDpWord(spc, m, d, w) spcNZ16(spc, w)
+            writeDpWord(spc, m, d, w)
+            spcNZ16(spc, w)
         }
         0x1A => { // DECW dp
             let d = spcFetch(spc, m)
             let w = (readDpWord(spc, m, d) - 1) & 0xFFFF
-            writeDpWord(spc, m, d, w) spcNZ16(spc, w)
+            writeDpWord(spc, m, d, w)
+            spcNZ16(spc, w)
         }
 
         // ---- loop branches ----
@@ -1309,69 +1563,89 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- TCALL n (vector table $FFDE - n*2) ----
         0x01 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFDE)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFDE)
         }
         0x11 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFDC)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFDC)
         }
         0x21 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFDA)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFDA)
         }
         0x31 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD8)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFD8)
         }
         0x41 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD6)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFD6)
         }
         0x51 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD4)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFD4)
         }
         0x61 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD2)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFD2)
         }
         0x71 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFD0)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFD0)
         }
         0x81 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFCE)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFCE)
         }
         0x91 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFCC)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFCC)
         }
         0xA1 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFCA)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFCA)
         }
         0xB1 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC8)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFC8)
         }
         0xC1 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC6)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFC6)
         }
         0xD1 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC4)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFC4)
         }
         0xE1 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC2)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFC2)
         }
         0xF1 => {
-            spcPush16(spc, m, spc.pc) spc.pc = spcRead16(m, 0xFFC0)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = spcRead16(m, 0xFFC0)
         }
 
         // ---- PCALL u (target $FF00|u) ----
         0x4F => {
-            let u = spcFetch(spc, m) spcPush16(spc, m, spc.pc) spc.pc = 0xFF00 | u
+            let u = spcFetch(spc, m)
+            spcPush16(spc, m, spc.pc)
+            spc.pc = 0xFF00 | u
         }
 
         // ---- JMP [!abs+X] ----
         0x1F => {
-            let addr = (spcFetch16(spc, m) + spc.x) & 0xFFFF spc.pc = spcRead16(m, addr)
+            let addr = (spcFetch16(spc, m) + spc.x) & 0xFFFF
+            spc.pc = spcRead16(m, addr)
         }
 
         // ---- BRK / RETI ----
         0x0F => { // BRK
             spcPush16(spc, m, spc.pc)
             spcPush(spc, m, spc.psw)
-            spcSetBit(spc, PB, true) spcSetBit(spc, PI, false)
+            spcSetBit(spc, PB, true)
+            spcSetBit(spc, PI, false)
             spc.pc = spcRead16(m, 0xFFDE)
         }
         0x7F => { // RET1 (RETI): pull PSW then PC
@@ -1392,16 +1666,20 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- CMP X / CMP Y (dp / abs) ----
         0x3E => {
-            let v = readDp(spc, m) spcCmp(spc, spc.x, v)
+            let v = readDp(spc, m)
+            spcCmp(spc, spc.x, v)
         } // CMP X,dp
         0x1E => {
-            let v = readAbs(spc, m) spcCmp(spc, spc.x, v)
+            let v = readAbs(spc, m)
+            spcCmp(spc, spc.x, v)
         } // CMP X,abs
         0x7E => {
-            let v = readDp(spc, m) spcCmp(spc, spc.y, v)
+            let v = readDp(spc, m)
+            spcCmp(spc, spc.y, v)
         } // CMP Y,dp
         0x5E => {
-            let v = readAbs(spc, m) spcCmp(spc, spc.y, v)
+            let v = readAbs(spc, m)
+            spcCmp(spc, spc.y, v)
         } // CMP Y,abs
 
         // ---- BBS / BBC dp.bit,rel ----
@@ -1456,22 +1734,37 @@ fn spcStep(spc: &mut Spc, m: &mut SpcMem): void {
 
         // ---- ALU (X),(Y) indirect-to-indirect ----
         0x19 => {
-            let a1 = dpAddr(spc, spc.x) let r = (spcRead(m, a1) | spcRead(m, dpAddr(spc, spc.y))) & 0xFF spcWrite(m, a1, r) spcNZ(spc, r)
+            let a1 = dpAddr(spc, spc.x)
+            let r = (spcRead(m, a1) | spcRead(m, dpAddr(spc, spc.y))) & 0xFF
+            spcWrite(m, a1, r)
+            spcNZ(spc, r)
         } // OR (X),(Y)
         0x39 => {
-            let a1 = dpAddr(spc, spc.x) let r = (spcRead(m, a1) & spcRead(m, dpAddr(spc, spc.y))) & 0xFF spcWrite(m, a1, r) spcNZ(spc, r)
+            let a1 = dpAddr(spc, spc.x)
+            let r = (spcRead(m, a1) & spcRead(m, dpAddr(spc, spc.y))) & 0xFF
+            spcWrite(m, a1, r)
+            spcNZ(spc, r)
         } // AND
         0x59 => {
-            let a1 = dpAddr(spc, spc.x) let r = (spcRead(m, a1) ^ spcRead(m, dpAddr(spc, spc.y))) & 0xFF spcWrite(m, a1, r) spcNZ(spc, r)
+            let a1 = dpAddr(spc, spc.x)
+            let r = (spcRead(m, a1) ^ spcRead(m, dpAddr(spc, spc.y))) & 0xFF
+            spcWrite(m, a1, r)
+            spcNZ(spc, r)
         } // EOR
         0x79 => {
-            let v1 = spcRead(m, dpAddr(spc, spc.x)) let v2 = spcRead(m, dpAddr(spc, spc.y)) spcCmp(spc, v1, v2)
+            let v1 = spcRead(m, dpAddr(spc, spc.x))
+            let v2 = spcRead(m, dpAddr(spc, spc.y))
+            spcCmp(spc, v1, v2)
         } // CMP
         0x99 => {
-            let a1 = dpAddr(spc, spc.x) let r = aluAdcVal(spc, spcRead(m, a1), spcRead(m, dpAddr(spc, spc.y))) spcWrite(m, a1, r)
+            let a1 = dpAddr(spc, spc.x)
+            let r = aluAdcVal(spc, spcRead(m, a1), spcRead(m, dpAddr(spc, spc.y)))
+            spcWrite(m, a1, r)
         } // ADC
         0xB9 => {
-            let a1 = dpAddr(spc, spc.x) let r = aluSbcVal(spc, spcRead(m, a1), spcRead(m, dpAddr(spc, spc.y))) spcWrite(m, a1, r)
+            let a1 = dpAddr(spc, spc.x)
+            let r = aluSbcVal(spc, spcRead(m, a1), spcRead(m, dpAddr(spc, spc.y)))
+            spcWrite(m, a1, r)
         } // SBC
 
         // ---- halt (no interrupts in tests: advance past opcode) ----

@@ -8,12 +8,18 @@ fn main(): i32 {
     let path = "roms/nes-test-roms/other/nestest.nes"
     match loadCartridge(path) {
         Result.Ok(cart) => {
-            print("mapper=") print(cart.mapper)
-            print(" prg16kBanks=") print(cart.prg16kBanks)
-            print(" chr8kBanks=") print(cart.chr8kBanks)
-            print(" prgLen=") print(cart.prg.len)
-            print(" chrLen=") print(cart.chr.len)
-            print(" mirrorV=") print(cart.mirrorVertical)
+            print("mapper=")
+            print(cart.mapper)
+            print(" prg16kBanks=")
+            print(cart.prg16kBanks)
+            print(" chr8kBanks=")
+            print(cart.chr8kBanks)
+            print(" prgLen=")
+            print(cart.prg.len)
+            print(" chrLen=")
+            print(cart.chr.len)
+            print(" mirrorV=")
+            print(cart.mirrorVertical)
             // nestest: mapper 0, 1x16KiB PRG, 1x8KiB CHR.
             if cart.mapper == 0 && cart.prg.len == 16384 && cart.chr.len == 8192 {
                 print(" OK")

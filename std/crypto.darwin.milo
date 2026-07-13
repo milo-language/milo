@@ -111,12 +111,7 @@ requires iv.len == 12
             ctBuf = malloc(plaintext.len)
         }
 
-        let ret = CCCryptorGCMOneshotEncrypt(
-        0, key, 32, iv, 12,
-        aadPtr, aad.len,
-        ptPtr, plaintext.len,
-        ctBuf, tag, 16
-        )
+        let ret = CCCryptorGCMOneshotEncrypt(0, key, 32, iv, 12, aadPtr, aad.len, ptPtr, plaintext.len, ctBuf, tag, 16)
         if ret != 0 {
             if plaintext.len > 0 {
                 free(ctBuf)
@@ -168,12 +163,7 @@ requires tag.len == 16
             ptBuf = malloc(ciphertext.len)
         }
 
-        let ret = CCCryptorGCMOneshotDecrypt(
-        0, key, 32, iv, 12,
-        aadPtr, aad.len,
-        ctPtr, ciphertext.len,
-        ptBuf, tag, 16
-        )
+        let ret = CCCryptorGCMOneshotDecrypt(0, key, 32, iv, 12, aadPtr, aad.len, ctPtr, ciphertext.len, ptBuf, tag, 16)
         if ret != 0 {
             if ciphertext.len > 0 {
                 free(ptBuf)
@@ -217,12 +207,7 @@ requires iv.len == 12
             ctBuf = malloc(plaintext.len)
         }
 
-        let ret = CCCryptorGCMOneshotEncrypt(
-        0, key, 16, iv, 12,
-        aadPtr, aad.len,
-        ptPtr, plaintext.len,
-        ctBuf, tag, 16
-        )
+        let ret = CCCryptorGCMOneshotEncrypt(0, key, 16, iv, 12, aadPtr, aad.len, ptPtr, plaintext.len, ctBuf, tag, 16)
         if ret != 0 {
             if plaintext.len > 0 {
                 free(ctBuf)
@@ -274,12 +259,7 @@ requires tag.len == 16
             ptBuf = malloc(ciphertext.len)
         }
 
-        let ret = CCCryptorGCMOneshotDecrypt(
-        0, key, 16, iv, 12,
-        aadPtr, aad.len,
-        ctPtr, ciphertext.len,
-        ptBuf, tag, 16
-        )
+        let ret = CCCryptorGCMOneshotDecrypt(0, key, 16, iv, 12, aadPtr, aad.len, ctPtr, ciphertext.len, ptBuf, tag, 16)
         if ret != 0 {
             if ciphertext.len > 0 {
                 free(ptBuf)

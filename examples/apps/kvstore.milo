@@ -1,3 +1,4 @@
+// @run:
 // kvstore — a mini page-based key-value store, the last of the five rewrite
 // probes (sled-lite / buffer-pool pattern). Stresses the iterator/cursor story:
 // in Rust a scan returns Iterator<Item = (&K, &V)> borrowing the pages; Milo's

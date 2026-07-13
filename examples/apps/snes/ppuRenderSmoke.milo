@@ -11,7 +11,8 @@ fn hex6(v: i64): string {
     var s = ""
     var i: i64 = 20
     while i >= 0 {
-        s.push(d[(v >> i) & 0xF]) i = i - 4
+        s.push(d[(v >> i) & 0xF])
+        i = i - 4
     }
     return s
 }
@@ -31,25 +32,30 @@ fn main(): i32 {
     ppuRegWrite(p, 0x15, 0x80) // VMAIN: +1 word, increment on high-byte write
 
     // Tile 0 at char base 0: every pixel = palette index 1 (plane0 all set).
-    ppuRegWrite(p, 0x16, 0x00) ppuRegWrite(p, 0x17, 0x00) // VMADDR = 0
+    ppuRegWrite(p, 0x16, 0x00)
+    ppuRegWrite(p, 0x17, 0x00) // VMADDR = 0
     var r: i64 = 0
     while r < 8 {
-        vword(p, 0x00FF) r = r + 1
+        vword(p, 0x00FF)
+        r = r + 1
     } // rows 0-7: plane0=$FF, plane1=0
     r = 0
     while r < 8 {
-        vword(p, 0x0000) r = r + 1
+        vword(p, 0x0000)
+        r = r + 1
     } // planes 2/3 = 0
 
     // Tilemap ($0400) stays all-zero = tile 0, palette 0 everywhere.
     // CGRAM color 1 = red (BGR555 $001F); color 0 = black backdrop.
     ppuRegWrite(p, 0x21, 0x01) // CGADD = 1
-    ppuRegWrite(p, 0x22, 0x1F) ppuRegWrite(p, 0x22, 0x00) // color 1 low/high
+    ppuRegWrite(p, 0x22, 0x1F)
+    ppuRegWrite(p, 0x22, 0x00) // color 1 low/high
 
     var fb: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < 256 * 224 {
-        fb.push(0) i = i + 1
+        fb.push(0)
+        i = i + 1
     }
     renderFrame(p, fb)
 

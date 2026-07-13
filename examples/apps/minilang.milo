@@ -1,3 +1,4 @@
+// @run:
 // minilang — a tree-walking interpreter for a tiny expression language. Stresses
 // the "interpreter env holding an AST + values" lifetime pattern under Milo's
 // no-stored-refs model: the AST is real payload enums in a generational arena

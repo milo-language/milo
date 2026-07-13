@@ -165,7 +165,7 @@ fn _tmI32(buf: &[u8; 128], off: i64): i32 {
     var v: i64 = 0
     var i: i64 = 3
     while i >= 0 {
-        v = v * 256 + (buf[off + i]as i64)
+        v = v * 256 + (buf[off + i] as i64)
         i = i - 1
     }
     return v as i32

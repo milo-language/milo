@@ -44,15 +44,7 @@ fn makeInitMessage(rows: i64, cols: i64, command: &string, startTime: &string, i
 
 // ── terminal info (GET /terminal/:id response) ──
 
-fn makeTerminalInfo(
-terminalId: &string,
-rows: i64, cols: i64,
-command: &string,
-startTime: &string,
-isPublic: bool,
-displayName: &string,
-allowControl: bool
-): string {
+fn makeTerminalInfo(terminalId: &string, rows: i64, cols: i64, command: &string, startTime: &string, isPublic: bool, displayName: &string, allowControl: bool): string {
     var j: string = "{"
     j = j + "\"terminal_id\":\"" + terminalId + "\""
     j = j + ",\"cols\":" + cols.toString()
@@ -79,14 +71,7 @@ allowControl: bool
 
 // ── public sessions list (GET /api/sessions response) ──
 
-fn makePublicSession(
-terminalId: &string,
-displayName: &string,
-command: &string,
-rows: i64, cols: i64,
-startTime: &string,
-viewerCount: i64
-): string {
+fn makePublicSession(terminalId: &string, displayName: &string, command: &string, rows: i64, cols: i64, startTime: &string, viewerCount: i64): string {
     var j: string = "{"
     j = j + "\"terminal_id\":\"" + terminalId + "\""
     j = j + ",\"display_name\":\"" + displayName + "\""

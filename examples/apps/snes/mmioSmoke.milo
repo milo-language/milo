@@ -12,14 +12,14 @@ from "./cpu" import {
 fn hex2(v: i64): string {
     let d = "0123456789ABCDEF"
     var s = ""
-    s.push(d[(v >> 4) & 0xF]) s.push(d[v & 0xF])
+    s.push(d[(v >> 4) & 0xF])
+    s.push(d[v & 0xF])
     return s
 }
 
 fn main(): i32 {
     var rom = vecZeros(0x8000)
-    let prog = [
-    0xA9, 0x0C, // LDA #$0C
+    let prog = [0xA9, 0x0C, // LDA #$0C
     0x8D, 0x02, 0x42, // STA $4202  (mpyA = 12)
     0xA9, 0x0A, // LDA #$0A
     0x8D, 0x03, 0x42, // STA $4203  (mpyB = 10 -> product 120)
@@ -39,7 +39,8 @@ fn main(): i32 {
     ]
     var i: i64 = 0
     while i < (prog.len as i64) {
-        rom[i] = prog[i]as u8 i = i + 1
+        rom[i] = prog[i] as u8
+        i = i + 1
     }
     rom[0x7FFC] = 0x00 as u8
     rom[0x7FFD] = 0x80 as u8
@@ -48,7 +49,8 @@ fn main(): i32 {
     var cpu = newCpuReset(m)
     var n: i64 = 0
     while n < 17 {
-        step(cpu, m) n = n + 1
+        step(cpu, m)
+        n = n + 1
     }
 
     let prod = memRead(m, 0x0000)

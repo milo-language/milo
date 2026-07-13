@@ -84,7 +84,7 @@ fn miClone(v: &MiValue): MiValue {
 fn _validUtf8(bytes: &Vec<u8>): bool {
     var i: i64 = 0
     while i < bytes.len {
-        let b = bytes[i]as i64
+        let b = bytes[i] as i64
         var n: i64 = 0
         if b < 0x80 {
             n = 0
@@ -108,13 +108,13 @@ fn _validUtf8(bytes: &Vec<u8>): bool {
             if i + j >= bytes.len {
                 return false
             }
-            if ((bytes[i + j]as i64) & 0xC0) != 0x80 {
+            if ((bytes[i + j] as i64) & 0xC0) != 0x80 {
                 return false
             }
             j = j + 1
         }
         if n == 2 {
-            let b1 = bytes[i + 1]as i64
+            let b1 = bytes[i + 1] as i64
             if b == 0xE0 && b1 < 0xA0 {
                 return false
             }
@@ -123,7 +123,7 @@ fn _validUtf8(bytes: &Vec<u8>): bool {
             }
         }
         if n == 3 {
-            let b1 = bytes[i + 1]as i64
+            let b1 = bytes[i + 1] as i64
             if b == 0xF0 && b1 < 0x90 {
                 return false
             }

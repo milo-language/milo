@@ -15,7 +15,7 @@ struct Cart {
 }
 
 fn u16At(data: &Vec<u8>, i: i64): i64 {
-    return (data[i]as i64) | ((data[i + 1]as i64) << 8)
+    return (data[i] as i64) | ((data[i + 1] as i64) << 8)
 }
 
 // Higher score = more likely the real header location.
@@ -30,7 +30,7 @@ fn scoreHeader(data: &Vec<u8>, base: i64, wantHi: bool): i64 {
         score = score + 8
     }
     // Map byte bit0: 0 = LoROM, 1 = HiROM.
-    let mode = data[base + 0x15]as i64
+    let mode = data[base + 0x15] as i64
     let modeHi = (mode & 1) == 1
     if modeHi == wantHi {
         score = score + 4
@@ -61,7 +61,8 @@ fn loadCartridge(path: &string): Result<Cart, string> {
     var data: Vec<u8> = Vec.new()
     var i: i64 = start
     while i < raw.len {
-        data.push(raw[i]) i = i + 1
+        data.push(raw[i])
+        i = i + 1
     }
     if data.len < 0x8000 {
         return Result.Err("ROM too small")

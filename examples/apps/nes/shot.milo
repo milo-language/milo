@@ -29,7 +29,9 @@ fn main(): i32 {
             return run(cart, strToInt(argv[2]), argv[3])
         }
         Result.Err(e) => {
-            print("load failed: ") print(e) return 1
+            print("load failed: ")
+            print(e)
+            return 1
         }
     }
     return 0
@@ -77,7 +79,7 @@ fn run(cart: Cartridge, frames: i64, out: string): i32 {
     var data: string = ""
     var i: i64 = 0
     while i < 61440 {
-        let px = bus.ppu.fb[i]as i64
+        let px = bus.ppu.fb[i] as i64
         data.push((px & 0xFF) as u8)
         data.push(((px >> 8) & 0xFF) as u8)
         data.push(((px >> 16) & 0xFF) as u8)
@@ -85,10 +87,13 @@ fn run(cart: Cartridge, frames: i64, out: string): i32 {
     }
     match writeFile(out, data) {
         Result.Ok(n) => {
-            print("wrote bytes: ") print(n) return 0
+            print("wrote bytes: ")
+            print(n)
+            return 0
         }
         Result.Err(e) => {
-            print("write failed") return 1
+            print("write failed")
+            return 1
         }
     }
 }

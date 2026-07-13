@@ -54,13 +54,15 @@ fn main(): i32 {
     o = ldaSta(rom, o, 0x00, 0x210B) // BG12NBA -> char base 0
     o = ldaSta(rom, o, 0x0F, 0x2100) // INIDISP brightness 15
     rom[o] = 0xEA as u8 // NOP (loop)
-    rom[o + 1] = 0x80 as u8 rom[o + 2] = 0xFD as u8 // BRA -3
+    rom[o + 1] = 0x80 as u8
+    rom[o + 2] = 0xFD as u8 // BRA -3
 
     // Palette at $8200: color0 black; 1 red, 2 green, 3 blue, 4 yellow (BGR555).
     let pal = [0x00, 0x00, 0x1F, 0x00, 0xE0, 0x03, 0x00, 0x7C, 0xFF, 0x03]
     var i: i64 = 0
     while i < (pal.len as i64) {
-        rom[0x200 + i] = pal[i]as u8 i = i + 1
+        rom[0x200 + i] = pal[i] as u8
+        i = i + 1
     }
 
     // Tile at $8300: horizontal 4-color stripes (rows cycle index 1,2,3,4).
@@ -68,7 +70,7 @@ fn main(): i32 {
     let idx = [1, 2, 3, 4, 1, 2, 3, 4]
     var row: i64 = 0
     while row < 8 {
-        let k = idx[row]as i64
+        let k = idx[row] as i64
         rom[0x300 + row * 2] = (if (k & 1) != 0 {
             0xFF
         } else {
@@ -91,19 +93,22 @@ fn main(): i32 {
         row = row + 1
     }
 
-    rom[0x7FFC] = 0x00 as u8 rom[0x7FFD] = 0x80 as u8 // reset -> $8000
+    rom[0x7FFC] = 0x00 as u8
+    rom[0x7FFD] = 0x80 as u8 // reset -> $8000
 
     var m = busNew(rom, 0)
     var cpu = newCpuReset(m)
     var f: i64 = 0
     while f < 3 {
-        stepFrame(cpu, m) f = f + 1
+        stepFrame(cpu, m)
+        f = f + 1
     }
 
     var fb: Vec<i64> = Vec.new()
     i = 0
     while i < 256 * 224 {
-        fb.push(0) i = i + 1
+        fb.push(0)
+        i = i + 1
     }
     renderFrame(m.ppu, fb)
 
@@ -111,12 +116,15 @@ fn main(): i32 {
     let hdr = "P6\n256 224\n255\n"
     i = 0
     while i < hdr.len {
-        out.push(hdr[i]) i = i + 1
+        out.push(hdr[i])
+        i = i + 1
     }
     i = 0
     while i < 256 * 224 {
         let px = fb[i]
-        out.push(((px >> 16) & 0xFF) as u8) out.push(((px >> 8) & 0xFF) as u8) out.push((px & 0xFF) as u8)
+        out.push(((px >> 16) & 0xFF) as u8)
+        out.push(((px >> 8) & 0xFF) as u8)
+        out.push((px & 0xFF) as u8)
         i = i + 1
     }
     match makeDir("/tmp/snes", 493) {
@@ -127,10 +135,12 @@ fn main(): i32 {
     }
     match writeFile("/tmp/snes/frame.ppm", out) {
         Result.Ok(n) => {
-            print("OK: ran a ROM (CPU->DMA->PPU->frame) -> /tmp/snes/frame.ppm") return 0
+            print("OK: ran a ROM (CPU->DMA->PPU->frame) -> /tmp/snes/frame.ppm")
+            return 0
         }
         Result.Err(e) => {
-            print("write failed") return 1
+            print("write failed")
+            return 1
         }
     }
 }

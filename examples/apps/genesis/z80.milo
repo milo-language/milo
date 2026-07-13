@@ -79,19 +79,19 @@ fn rd(cpu: &Z80, addr: i64): i64 {
     let a = addr & 0xFFFF
     if cpu.gen {
         if a < 0x4000 {
-            return cpu.mem[a & 0x1FFF]as i64 // 8 KB RAM mirrored across $0000-$3FFF
+            return cpu.mem[a & 0x1FFF] as i64 // 8 KB RAM mirrored across $0000-$3FFF
         }
         if a >= 0x8000 {
             // $8000-$FFFF: banked window into 68k address space (bank reg << 15).
             let src = ((cpu.bank << 15) | (a & 0x7FFF)) & 0xFFFFFF
             if src < cpu.rom.len {
-                return cpu.rom[src]as i64
+                return cpu.rom[src] as i64
             }
             return 0
         }
         return 0 // YM2612 status ($4000-3) reads not-busy; $6000/$7Fxx read 0
     }
-    return cpu.mem[a]as i64
+    return cpu.mem[a] as i64
 }
 
 fn wr(cpu: &mut Z80, addr: i64, val: i64) {

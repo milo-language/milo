@@ -25,7 +25,8 @@ fn main(): i32 {
     let r: Result<i64, string> = Result.Ok(7)
     let msg = match r {
         Result.Ok(n) => {
-            let d = n * 2 d
+            let d = n * 2
+            d
         }
         Result.Err(e) => 0
     }

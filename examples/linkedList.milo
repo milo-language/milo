@@ -1,3 +1,4 @@
+// @run:
 // Doubly-linked list via arena — nodes point to neighbors via Handle
 from "std/arena" import {
     Arena, Handle, arenaAlloc, arenaGet, arenaModify, arenaNew

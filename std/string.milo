@@ -41,7 +41,7 @@ requires pos >= 0
     // verifies the rest — ~5x faster than a byte-at-a-time loop on big inputs
     let base = haystack.cstr() as i64
     let nptr = needle.cstr()
-    let c0 = needle[0]as i32
+    let c0 = needle[0] as i32
     let last = haystack.len - needle.len
     var i: i64 = pos
     while i <= last {

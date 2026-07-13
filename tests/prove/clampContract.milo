@@ -5,8 +5,12 @@ fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi
 ensures result >= lo && result <= hi
 {
-    if value < lo { return lo }
-    if value > hi { return hi }
+    if value < lo {
+        return lo
+    }
+    if value > hi {
+        return hi
+    }
     return value
 }
 

@@ -16,7 +16,9 @@ fn main(): i32 {
     print(b is Maybe.Nothing)
 
     let opt = Option.Some(99)
-    if opt is Option.Some {
+    if opt
+    is
+    Option.Some {
         print("found some")
     }
     return 0

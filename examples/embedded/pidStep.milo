@@ -39,8 +39,7 @@ ensures result >= lo && result <= hi
 // One PID step. All gains and signals are Q16.16. integral is the running sum
 // carried between ticks; here we exercise a fixed number of ticks in a bounded
 // loop so the kernel is fully WCET-bounded.
-fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32,
-integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
+fn pidStep(setpoint: i32, measured: i32, kp: i32, ki: i32, kd: i32, integral: i32, prevError: i32, outLo: i32, outHi: i32): i32
 requires outLo <= outHi
 {
     let error: i32 = setpoint - measured

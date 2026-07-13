@@ -21,7 +21,7 @@ struct Toks {
 
 fn nextTok(t: &mut Toks): i64 {
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c == 32 || c == 10 || c == 13 || c == 9 {
             t.pos = t.pos + 1
         } else {
@@ -30,7 +30,7 @@ fn nextTok(t: &mut Toks): i64 {
     }
     var v: i64 = 0
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c >= 48 && c <= 57 {
             v = v * 10 + (c - 48)
             t.pos = t.pos + 1
@@ -137,7 +137,7 @@ fn checkFinal(cpu: &Z80, t: &mut Toks): string {
     while j < ramN {
         let addr = nextTok(t)
         let want = nextTok(t)
-        let got = cpu.mem[addr & 0xFFFF]as i64
+        let got = cpu.mem[addr & 0xFFFF] as i64
         if got != want && mm == "" {
             mm = "RAM[" + hx(addr) + "] " + hx(got) + "!=" + hx(want)
         }

@@ -1,3 +1,4 @@
+// @run:
 // domArena — arena/handle DOM, the load-bearing piece for an html5ever-style
 // rewrite in Milo. No stored refs: nodes live in a generational arena, parent
 // and children are Handles (indices), never &Node. This file answers one

@@ -493,7 +493,7 @@ fn parseStatus(raw: &string): i32 {
     var code: i32 = 0
     var i: i64 = 9
     while i < raw.len && raw[i] >= '0' && raw[i] <= '9' {
-        code = code * 10 + (raw[i]as i32 - 48)
+        code = code * 10 + (raw[i] as i32 - 48)
         i = i + 1
     }
     return code
@@ -612,7 +612,7 @@ fn parsePort(url: &string): u16 {
         i = i + 1
         var port: i32 = 0
         while i < url.len && url[i] >= '0' && url[i] <= '9' {
-            port = port * 10 + (url[i]as i32 - 48)
+            port = port * 10 + (url[i] as i32 - 48)
             i = i + 1
         }
         return port as u16

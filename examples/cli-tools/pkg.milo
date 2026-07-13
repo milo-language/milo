@@ -1,3 +1,4 @@
+// @run: --help
 // milo-pkg — package manager for Milo
 // uses git as transport, GitHub as registry, global cache at ~/.milo/cache/
 

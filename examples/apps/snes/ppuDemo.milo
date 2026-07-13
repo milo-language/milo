@@ -31,25 +31,30 @@ fn main(): i32 {
     ppuRegWrite(p, 0x15, 0x80) // VMAIN +1 on high write
 
     // Tile 0 = solid palette-index 1.
-    ppuRegWrite(p, 0x16, 0x00) ppuRegWrite(p, 0x17, 0x00)
+    ppuRegWrite(p, 0x16, 0x00)
+    ppuRegWrite(p, 0x17, 0x00)
     var r: i64 = 0
     while r < 8 {
-        vword(p, 0x00FF) r = r + 1
+        vword(p, 0x00FF)
+        r = r + 1
     }
     r = 0
     while r < 8 {
-        vword(p, 0x0000) r = r + 1
+        vword(p, 0x0000)
+        r = r + 1
     }
 
     // 8 palette hues at color (pal*16 + 1): a rainbow across BGR555.
     let hues = [0x001F, 0x03FF, 0x03E0, 0x7FE0, 0x7C00, 0x7C1F, 0x7FFF, 0x421F]
     var pal: i64 = 0
     while pal < 8 {
-        setColor(p, pal * 16 + 1, hues[pal]as i64) pal = pal + 1
+        setColor(p, pal * 16 + 1, hues[pal] as i64)
+        pal = pal + 1
     }
 
     // Tilemap at word $0400: 32x32 entries, palette = (col>>2)&7 -> 8 bands.
-    ppuRegWrite(p, 0x16, 0x00) ppuRegWrite(p, 0x17, 0x04) // VMADDR = $0400
+    ppuRegWrite(p, 0x16, 0x00)
+    ppuRegWrite(p, 0x17, 0x04) // VMADDR = $0400
     var row: i64 = 0
     while row < 32 {
         var col: i64 = 0
@@ -64,7 +69,8 @@ fn main(): i32 {
     var fb: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < 256 * 224 {
-        fb.push(0) i = i + 1
+        fb.push(0)
+        i = i + 1
     }
     renderFrame(p, fb)
 
@@ -74,7 +80,8 @@ fn main(): i32 {
     let hdr = "P6\n256 224\n255\n"
     i = 0
     while i < hdr.len {
-        out.push(hdr[i]) i = i + 1
+        out.push(hdr[i])
+        i = i + 1
     }
     i = 0
     while i < 256 * 224 {
@@ -92,10 +99,12 @@ fn main(): i32 {
     }
     match writeFile("/tmp/snes/bands.ppm", out) {
         Result.Ok(n) => {
-            print("wrote /tmp/snes/bands.ppm (8 color bands, 256x224) — open it to view") return 0
+            print("wrote /tmp/snes/bands.ppm (8 color bands, 256x224) — open it to view")
+            return 0
         }
         Result.Err(e) => {
-            print("write failed") return 1
+            print("write failed")
+            return 1
         }
     }
 }

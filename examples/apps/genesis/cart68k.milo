@@ -44,21 +44,21 @@ fn loadCart(path: &string): Result<Cart, string> {
     // Shift-JIS fullwidth Latin (lead byte $81/$82) rather than ASCII — decode
     // those to plain ASCII so e.g. Golden Axe reads "GOLDEN AXE" not garbage.
     var end: i64 = 0x120 + 48
-    while end > 0x120 && (rom[end - 1]as i64) == 0x20 {
+    while end > 0x120 && (rom[end - 1] as i64) == 0x20 {
         end = end - 1
     }
-    while end >= 0x122 && (rom[end - 2]as i64) == 0x81 && (rom[end - 1]as i64) == 0x40 {
+    while end >= 0x122 && (rom[end - 2] as i64) == 0x81 && (rom[end - 1] as i64) == 0x40 {
         end = end - 2 // trailing fullwidth spaces
     }
     var name = ""
     var j: i64 = 0x120
     while j < end {
-        let b = rom[j]as i64
-        if b == 0x81 && j + 1 < end && (rom[j + 1]as i64) == 0x40 {
+        let b = rom[j] as i64
+        if b == 0x81 && j + 1 < end && (rom[j + 1] as i64) == 0x40 {
             name = name + " "
             j = j + 2
         } else if b == 0x82 && j + 1 < end {
-            let c = rom[j + 1]as i64
+            let c = rom[j + 1] as i64
             var out: i64 = -1
             if c >= 0x4F && c <= 0x58 {
                 out = 0x30 + (c - 0x4F) // fullwidth 0-9
@@ -80,7 +80,7 @@ fn loadCart(path: &string): Result<Cart, string> {
     }
 
     // ROM end address is a big-endian long at $1A4.
-    let romEnd = ((rom[0x1A4]as i64) << 24) | ((rom[0x1A5]as i64) << 16) | ((rom[0x1A6]as i64) << 8) | (rom[0x1A7]as i64)
+    let romEnd = ((rom[0x1A4] as i64) << 24) | ((rom[0x1A5] as i64) << 16) | ((rom[0x1A6] as i64) << 8) | (rom[0x1A7] as i64)
 
     return Result.Ok(Cart {
         rom: rom,

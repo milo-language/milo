@@ -1,3 +1,5 @@
+// @run:
+// @stdin: 1 2 3
 // shuf — shuffle lines from stdin or a file
 from "std/argparse" import {
     newParser

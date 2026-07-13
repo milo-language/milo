@@ -7,7 +7,8 @@ fn main(): i32 {
     var fb: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < 57344 {
-        fb.push(i) i = i + 1
+        fb.push(i)
+        i = i + 1
     }
     var out = ""
     i = 0

@@ -256,7 +256,7 @@ fn tomlGetI64(s: &string, start: i64, end: i64, key: &string): Option<i64> {
             i = i + 1
         }
         while i < t.end && t.raw[i] >= '0' && t.raw[i] <= '9' {
-            result = result * 10 + (t.raw[i]as i32 - 48) as i64
+            result = result * 10 + (t.raw[i] as i32 - 48) as i64
             i = i + 1
         }
         if negative {
@@ -281,14 +281,14 @@ fn tomlGetF64(s: &string, start: i64, end: i64, key: &string): Option<f64> {
             i = i + 1
         }
         while i < t.end && t.raw[i] >= '0' && t.raw[i] <= '9' {
-            result = result * 10.0 + (t.raw[i]as i32 - 48) as f64
+            result = result * 10.0 + (t.raw[i] as i32 - 48) as f64
             i = i + 1
         }
         if i < t.end && t.raw[i] == '.' {
             i = i + 1
             var frac: f64 = 0.1
             while i < t.end && t.raw[i] >= '0' && t.raw[i] <= '9' {
-                result = result + (t.raw[i]as i32 - 48) as f64 * frac
+                result = result + (t.raw[i] as i32 - 48) as f64 * frac
                 frac = frac * 0.1
                 i = i + 1
             }

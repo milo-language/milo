@@ -161,20 +161,24 @@ impl Pool {
     }
 
     fn free(self: &mut Self, block: i64): void
-    requires block >= self.base
-    requires self.liveCount > 0
+    requires
+    block >= self.base
+    requires
+    self.liveCount > 0
     {
         poolFree(self, block)
     }
 
     fn live(self: &Self): i64
-    ensures result >= 0
+    ensures
+    result >= 0
     {
         return poolLive(self)
     }
 
     fn available(self: &Self): i64
-    ensures result >= 0
+    ensures
+    result >= 0
     {
         return poolAvailable(self)
     }
@@ -188,7 +192,8 @@ impl Pool {
     }
 
     fn reset(self: &mut Self): void
-    ensures self.liveCount == 0
+    ensures
+    self.liveCount == 0
     {
         poolReset(self)
     }

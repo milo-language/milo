@@ -219,7 +219,8 @@ struct Channel<T> {
 
 impl Channel<T> {
     fn new(capacity: i64): Result<Channel<T>>
-    requires capacity > 0
+    requires
+    capacity > 0
     {
         unsafe {
             let raw = malloc(88)

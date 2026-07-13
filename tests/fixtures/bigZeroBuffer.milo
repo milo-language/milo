@@ -7,7 +7,7 @@
 fn main(): i32 {
     var buf: [u8; 65536] = [0; 65536]
     buf[0] = 7
-    print(buf[0]as i64)
-    print(buf[65535]as i64)
+    print(buf[0] as i64)
+    print(buf[65535] as i64)
     return 0
 }

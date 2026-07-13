@@ -279,8 +279,7 @@ fn renderNext(buf: &mut string, kind: i64, row: i64, col: i64): void {
     }
 }
 
-fn render(buf: &mut string, board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64,
-score: i64, lines: i64, nextKind: i64): void {
+fn render(buf: &mut string, board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var cells: [i64; 8] = [0; 8]
     pieceCells(kind, rot, cells)
     var pcx: [i64; 4] = [0; 4]
@@ -308,7 +307,7 @@ score: i64, lines: i64, nextKind: i64): void {
         cursor(buf, 2 + y, 2)
         emit(buf, bar)
         for x in 0..W {
-            var c: i64 = board[y * W + x]as i64
+            var c: i64 = board[y * W + x] as i64
             var hit = false
             if c == 0 {
                 for i in 0..4 {
@@ -367,8 +366,7 @@ score: i64, lines: i64, nextKind: i64): void {
     emit(buf, bold(yellow("★ github.com/cs01/milo")))
 }
 
-fn drawFrame(board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64,
-score: i64, lines: i64, nextKind: i64): void {
+fn drawFrame(board: &[i32; 200], kind: i64, rot: i64, px: i64, py: i64, score: i64, lines: i64, nextKind: i64): void {
     var buf = ""
     render(buf, board, kind, rot, px, py, score, lines, nextKind)
     writeStdout(buf)

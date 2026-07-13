@@ -61,7 +61,8 @@ fn newPpu(chr: Vec<u8>, mirrorVertical: bool): Ppu {
     if c.len == 0 {
         var i: i64 = 0
         while i < 8192 {
-            c.push(0) i = i + 1
+            c.push(0)
+            i = i + 1
         }
     }
     return Ppu {
@@ -264,10 +265,12 @@ fn ppuRegWrite(ppu: &mut Ppu, reg: i64, val: u8): void {
         return
     }
     if reg == 1 {
-        ppu.mask = val return
+        ppu.mask = val
+        return
     }
     if reg == 3 {
-        ppu.oamAddr = val return
+        ppu.oamAddr = val
+        return
     }
     if reg == 4 {
         ppu.oam[ppu.oamAddr as i64] = val
@@ -370,22 +373,13 @@ fn ppuStep(ppu: &mut Ppu): void {
 }
 
 // --- NES master palette (0xRRGGBB), 2C02 canonical set ---
-let NESPAL: [u32; 64] = [
-0x545454, 0x001E74, 0x081090, 0x300088, 0x440064, 0x5C0030, 0x540400, 0x3C1800,
-0x202A00, 0x083A00, 0x004000, 0x003C00, 0x00323C, 0x000000, 0x000000, 0x000000,
-0x989698, 0x084CC4, 0x3032EC, 0x5C1EE4, 0x8814B0, 0xA01464, 0x982220, 0x783C00,
-0x545A00, 0x287200, 0x087C00, 0x007628, 0x006678, 0x000000, 0x000000, 0x000000,
-0xECEEEC, 0x4C9AEC, 0x787CEC, 0xB062EC, 0xE454EC, 0xEC58B4, 0xEC6A64, 0xD48820,
-0xA0AA00, 0x74C400, 0x4CD020, 0x38CC6C, 0x38B4CC, 0x3C3C3C, 0x000000, 0x000000,
-0xECEEEC, 0xA8CCEC, 0xBCBCEC, 0xD4B2EC, 0xECAEEC, 0xECAED4, 0xECB4B0, 0xE4C490,
-0xCCD278, 0xB4DE78, 0xA8E290, 0x98E2B4, 0xA0D6E4, 0xA0A2A0, 0x000000, 0x000000,
-]
+let NESPAL: [u32; 64] = [0x545454, 0x001E74, 0x081090, 0x300088, 0x440064, 0x5C0030, 0x540400, 0x3C1800, 0x202A00, 0x083A00, 0x004000, 0x003C00, 0x00323C, 0x000000, 0x000000, 0x000000, 0x989698, 0x084CC4, 0x3032EC, 0x5C1EE4, 0x8814B0, 0xA01464, 0x982220, 0x783C00, 0x545A00, 0x287200, 0x087C00, 0x007628, 0x006678, 0x000000, 0x000000, 0x000000, 0xECEEEC, 0x4C9AEC, 0x787CEC, 0xB062EC, 0xE454EC, 0xEC58B4, 0xEC6A64, 0xD48820, 0xA0AA00, 0x74C400, 0x4CD020, 0x38CC6C, 0x38B4CC, 0x3C3C3C, 0x000000, 0x000000, 0xECEEEC, 0xA8CCEC, 0xBCBCEC, 0xD4B2EC, 0xECAEEC, 0xECAED4, 0xECB4B0, 0xE4C490, 0xCCD278, 0xB4DE78, 0xA8E290, 0x98E2B4, 0xA0D6E4, 0xA0A2A0, 0x000000, 0x000000,]
 
 // Convert a 6-bit NES color index to a framebuffer u32 (R,G,B,A byte order).
 fn nesColor(idx: i64): u32
 ensures(result & 0xFF000000) == 0xFF000000 // every emitted pixel is fully opaque
 {
-    let c = NESPAL[idx & 0x3F]as i64
+    let c = NESPAL[idx & 0x3F] as i64
     let r = (c >> 16) & 0xFF
     let g = (c >> 8) & 0xFF
     let b = c & 0xFF
@@ -480,11 +474,11 @@ fn renderSpriteLine(ppu: &mut Ppu, sl: i64, bgOpaque: [u8; 256]): void {
     var i: i64 = 63
     while i >= 0 {
         let base = i * 4
-        let row = sl - (ppu.oam[base]as i64 + 1) // OAM Y is top-minus-1
+        let row = sl - (ppu.oam[base] as i64 + 1) // OAM Y is top-minus-1
         if row >= 0 && row < h {
-            let rawTile = ppu.oam[base + 1]as i64
-            let attr = ppu.oam[base + 2]as i64
-            let sx = ppu.oam[base + 3]as i64
+            let rawTile = ppu.oam[base + 1] as i64
+            let attr = ppu.oam[base + 2] as i64
+            let sx = ppu.oam[base + 3] as i64
             let palGroup = attr & 0x03
             let flipH = (attr & 0x40) != 0
             let flipV = (attr & 0x80) != 0

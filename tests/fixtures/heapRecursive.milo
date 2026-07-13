@@ -18,10 +18,7 @@ fn sum(t: Tree): i32 {
 }
 
 fn main(): i32 {
-    let tree = Tree.Node(
-    Heap(Tree.Node(Heap(Tree.Leaf(1)), Heap(Tree.Leaf(2)))),
-    Heap(Tree.Node(Heap(Tree.Leaf(3)), Heap(Tree.Leaf(4))))
-    )
+    let tree = Tree.Node(Heap(Tree.Node(Heap(Tree.Leaf(1)), Heap(Tree.Leaf(2)))), Heap(Tree.Node(Heap(Tree.Leaf(3)), Heap(Tree.Leaf(4)))))
     print("sum: ", sum(tree))
     return 0
 }

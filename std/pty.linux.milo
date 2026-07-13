@@ -85,7 +85,8 @@ impl Pty {
 
     // Spawn child connected to PTY.
     fn spawn(self: &mut Self, program: &string, args: &Vec<string>): Result<i32, string>
-    requires self.masterFd >= 0
+    requires
+    self.masterFd >= 0
     {
         unsafe {
             let argc = args.len + 2
@@ -151,7 +152,8 @@ impl Pty {
     // Low-level single read into a raw buffer. Prefer `output()` for streaming —
     // it owns the read/EAGAIN pump and hands you an iterable channel of chunks.
     fn read(self: &Self, buf: *u8, len: i64): i64
-    requires len > 0
+    requires
+    len > 0
     {
         unsafe {
             return readFd(self.masterFd, buf, len)
@@ -159,7 +161,8 @@ impl Pty {
     }
 
     fn write(self: &Self, buf: *u8, len: i64): i64
-    requires len > 0
+    requires
+    len > 0
     {
         unsafe {
             return writeFd(self.masterFd, buf, len)
@@ -204,12 +207,13 @@ impl Pty {
 
     // Wait for child to exit. Returns exit status.
     fn wait(self: &Self): i32
-    requires self.childPid > 0
+    requires
+    self.childPid > 0
     {
         var status: [u8; 4] = [0; 4]
         unsafe {
             waitpid(self.childPid, status, 0)
-            return status[1]as i32
+            return status[1] as i32
         }
     }
 

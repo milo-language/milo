@@ -27,7 +27,7 @@ struct Toks {
 fn nextTok(t: &mut Toks): i64 {
     // skip whitespace
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c == 32 || c == 10 || c == 13 || c == 9 {
             t.pos = t.pos + 1
         } else {
@@ -36,12 +36,12 @@ fn nextTok(t: &mut Toks): i64 {
     }
     var v: i64 = 0
     var neg = false
-    if t.pos < t.s.len && (t.s[t.pos]as i64) == 45 {
+    if t.pos < t.s.len && (t.s[t.pos] as i64) == 45 {
         neg = true
         t.pos = t.pos + 1
     }
     while t.pos < t.s.len {
-        let c = t.s[t.pos]as i64
+        let c = t.s[t.pos] as i64
         if c >= 48 && c <= 57 {
             v = v * 10 + (c - 48)
             t.pos = t.pos + 1
@@ -163,7 +163,7 @@ fn checkFinal(cpu: &M68k, m: &Mem, t: &mut Toks): string {
     while j < ramN {
         let addr = nextTok(t)
         let want = nextTok(t) & 0xFF
-        let got = m.ram[addr & 0xFFFFFF]as i64
+        let got = m.ram[addr & 0xFFFFFF] as i64
         if got != want && mismatch == "" {
             mismatch = "RAM[" + hex8(addr) + "] got " + hex8(got) + " want " + hex8(want)
         }

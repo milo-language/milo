@@ -5,7 +5,9 @@
 fn absVal(x: i64): i64
 ensures result >= 0
 {
-    if x < 0 { return -x }
+    if x < 0 {
+        return -x
+    }
     return x
 }
 

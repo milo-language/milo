@@ -191,8 +191,8 @@ impl WsConn {
                 if !_readExact(self.fd, self.ssl, extLen, 2) {
                     return Result.Err("connection closed reading length")
                 }
-                let hi = extLen[0]as i64
-                let lo = extLen[1]as i64
+                let hi = extLen[0] as i64
+                let lo = extLen[1] as i64
                 payloadLen = (hi << 8) | lo
             } else if payloadLen == 127 {
                 var extLen: [u8; 8] = [0; 8]
@@ -201,7 +201,7 @@ impl WsConn {
                 }
                 payloadLen = 0
                 for i in 0..8 {
-                    payloadLen = (payloadLen << 8) | extLen[i]as i64
+                    payloadLen = (payloadLen << 8) | extLen[i] as i64
                 }
             }
 
@@ -224,7 +224,7 @@ impl WsConn {
                     if masked {
                         for i in 0..payloadLen {
                             let p = (buf as i64 + i) as *u8
-                            *p = *p ^ maskKey[i % 4]
+                            * p = *p ^ maskKey[i % 4]
                         }
                     }
                     for i in 0..payloadLen {
@@ -344,16 +344,16 @@ impl WsConn {
             } else if payload.len < 65536 {
                 *((frame as i64 + pos) as *u8) = maskBit | 126
                 pos = pos + 1
-                *((frame as i64 + pos) as *u8) = (payload.len >> 8) as u8
+                * ((frame as i64 + pos) as *u8) = (payload.len >> 8) as u8
                 pos = pos + 1
-                *((frame as i64 + pos) as *u8) = (payload.len & 255) as u8
+                * ((frame as i64 + pos) as *u8) = (payload.len & 255) as u8
                 pos = pos + 1
             } else {
                 *((frame as i64 + pos) as *u8) = maskBit | 127
                 pos = pos + 1
                 for i in 0..8 {
                     let shift = ((7 - i) * 8) as i64
-                    *((frame as i64 + pos) as *u8) = (payload.len >> shift) as u8
+                    * ((frame as i64 + pos) as *u8) = (payload.len >> shift) as u8
                     pos = pos + 1
                 }
             }

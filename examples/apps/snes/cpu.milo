@@ -92,7 +92,8 @@ fn vecZeros(n: i64): Vec<u8> {
     var v: Vec<u8> = Vec.new()
     var i: i64 = 0
     while i < n {
-        v.push(0) i = i + 1
+        v.push(0)
+        i = i + 1
     }
     return v
 }
@@ -143,7 +144,7 @@ fn busReadVram(m: &Mem, a: i64): i64 {
 }
 
 fn scratch(m: &Mem, addr: i64): i64 {
-    return m.mmio[addr - 0x2000]as i64
+    return m.mmio[addr - 0x2000] as i64
 }
 
 fn setScratch(m: &mut Mem, addr: i64, v: i64): void {
@@ -200,16 +201,19 @@ fn runDMA(m: &mut Mem, channels: i64): void {
                 let bAddr = 0x2100 | ((bbad + dmaPatternOffset(pattern, count)) & 0xFF)
                 let aFull = (abank << 16) | (aaddr & 0xFFFF)
                 if dir == 0 {
-                    let v = memRead(m, aFull) memWrite(m, bAddr, v)
+                    let v = memRead(m, aFull)
+                    memWrite(m, bAddr, v)
                 } else {
-                    let v = memRead(m, bAddr) memWrite(m, aFull, v)
+                    let v = memRead(m, bAddr)
+                    memWrite(m, aFull, v)
                 }
                 aaddr = (aaddr + astep) & 0xFFFF
                 count = count + 1
             }
             setScratch(m, base + 2, aaddr & 0xFF)
             setScratch(m, base + 3, (aaddr >> 8) & 0xFF)
-            setScratch(m, base + 5, 0) setScratch(m, base + 6, 0)
+            setScratch(m, base + 5, 0)
+            setScratch(m, base + 6, 0)
         }
         ch = ch + 1
     }
@@ -227,7 +231,7 @@ fn mmioRead(m: &Mem, off: i64): i64 {
         return apuReadPort(m.apuMem, off - 0x2140) // APU ports $2140-$2143
     }
     if off == 0x2180 {
-        return m.wram[m.wmadd & 0x1FFFF]as i64
+        return m.wram[m.wmadd & 0x1FFFF] as i64
     } // WMDATA read (auto-inc omitted on the &Mem read path)
     if off == 0x4210 {
         return m.vblankToggle | 0x02
@@ -256,52 +260,65 @@ fn mmioRead(m: &Mem, off: i64): i64 {
     if off == 0x4219 {
         return (m.joy1 >> 8) & 0xFF
     }
-    return m.mmio[off - 0x2000]as i64
+    return m.mmio[off - 0x2000] as i64
 }
 
 // CPU-side MMIO write ($2000-$5FFF). Writing $4203/$4206 latches mul/div results.
 fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
     if off >= 0x2100 && off <= 0x213F {
-        ppuRegWrite(m.ppu, off - 0x2100, val) return // PPU registers
+        ppuRegWrite(m.ppu, off - 0x2100, val)
+        return // PPU registers
     }
     if off >= 0x2140 && off <= 0x2143 {
-        apuWritePort(m.apuMem, off - 0x2140, val) return // APU ports $2140-$2143
+        apuWritePort(m.apuMem, off - 0x2140, val)
+        return // APU ports $2140-$2143
     }
     if off == 0x420B {
         m.mmio[off - 0x2000] = (val & 0xFF) as u8
-        runDMA(m, val) return // MDMAEN: start general-purpose DMA on set channels
+        runDMA(m, val)
+        return // MDMAEN: start general-purpose DMA on set channels
     }
     if off == 0x2180 { // WMDATA: write WRAM at the auto-incrementing address
         m.wram[m.wmadd & 0x1FFFF] = (val & 0xFF) as u8
-        m.wmadd = (m.wmadd + 1) & 0x1FFFF return
+        m.wmadd = (m.wmadd + 1) & 0x1FFFF
+        return
     }
     if off == 0x2181 {
-        m.wmadd = (m.wmadd & 0x1FF00) | val return
+        m.wmadd = (m.wmadd & 0x1FF00) | val
+        return
     }
     if off == 0x2182 {
-        m.wmadd = (m.wmadd & 0x100FF) | (val << 8) return
+        m.wmadd = (m.wmadd & 0x100FF) | (val << 8)
+        return
     }
     if off == 0x2183 {
-        m.wmadd = (m.wmadd & 0x0FFFF) | ((val & 1) << 16) return
+        m.wmadd = (m.wmadd & 0x0FFFF) | ((val & 1) << 16)
+        return
     }
     if off == 0x4200 {
-        m.nmitimen = val return
+        m.nmitimen = val
+        return
     }
     if off == 0x4202 {
-        m.wrmpya = val return
+        m.wrmpya = val
+        return
     }
     if off == 0x4203 {
-        m.rdmpy = (m.wrmpya * val) & 0xFFFF return
+        m.rdmpy = (m.wrmpya * val) & 0xFFFF
+        return
     } // 8x8 -> 16 product
     if off == 0x4204 {
-        m.wrdiv = (m.wrdiv & 0xFF00) | val return
+        m.wrdiv = (m.wrdiv & 0xFF00) | val
+        return
     }
     if off == 0x4205 {
-        m.wrdiv = (m.wrdiv & 0x00FF) | (val << 8) return
+        m.wrdiv = (m.wrdiv & 0x00FF) | (val << 8)
+        return
     }
     if off == 0x4206 { // 16/8 divide -> quotient + remainder
         if val == 0 {
-            m.rddiv = 0xFFFF m.rdmpy = m.wrdiv
+            m.rddiv = 0xFFFF
+            m.rdmpy = m.wrdiv
         } else {
             m.rddiv = (m.wrdiv / val) & 0xFFFF
             m.rdmpy = (m.wrdiv % val) & 0xFFFF
@@ -309,16 +326,20 @@ fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
         return
     }
     if off == 0x4207 {
-        m.htime = (m.htime & 0x100) | val return
+        m.htime = (m.htime & 0x100) | val
+        return
     }
     if off == 0x4208 {
-        m.htime = ((val & 1) << 8) | (m.htime & 0xFF) return
+        m.htime = ((val & 1) << 8) | (m.htime & 0xFF)
+        return
     }
     if off == 0x4209 {
-        m.vtime = (m.vtime & 0x100) | val return
+        m.vtime = (m.vtime & 0x100) | val
+        return
     }
     if off == 0x420A {
-        m.vtime = ((val & 1) << 8) | (m.vtime & 0xFF) return
+        m.vtime = ((val & 1) << 8) | (m.vtime & 0xFF)
+        return
     }
     m.mmio[off - 0x2000] = (val & 0xFF) as u8
 }
@@ -341,7 +362,7 @@ fn romOffset(m: &Mem, bank: i64, off: i64): i64 {
 fn romByte(m: &Mem, bank: i64, off: i64): i64 {
     let o = romOffset(m, bank, off)
     if o < m.rom.len {
-        return m.rom[o]as i64
+        return m.rom[o] as i64
     }
     return 0
 }
@@ -376,7 +397,8 @@ fn sramToString(m: &Mem): string {
 fn sramFromString(m: &mut Mem, data: &string): void {
     var i: i64 = 0
     while i < m.sram.len && i < data.len {
-        m.sram[i] = data[i]i = i + 1
+        m.sram[i] = data[i]
+        i = i + 1
     }
 }
 
@@ -394,19 +416,19 @@ fn memRead(m: &Mem, a: i64): i64 {
     let bank = (a >> 16) & 0xFF
     let off = a & 0xFFFF
     if bank == 0x7E {
-        return m.wram[off]as i64
+        return m.wram[off] as i64
     }
     if bank == 0x7F {
-        return m.wram[0x10000 + off]as i64
+        return m.wram[0x10000 + off] as i64
     }
     let si = sramIndex(m, bank, off)
     if si >= 0 {
-        return m.sram[si]as i64
+        return m.sram[si] as i64
     }
     let b = bank & 0x7F
     if b <= 0x3F {
         if off < 0x2000 {
-            return m.wram[off]as i64 // low WRAM mirror
+            return m.wram[off] as i64 // low WRAM mirror
         }
         if off < 0x6000 {
             return mmioRead(m, off)
@@ -437,22 +459,27 @@ fn memWrite(m: &mut Mem, a: i64, v: i64): void {
     let off = a & 0xFFFF
     let bv = (v & 0xFF) as u8
     if bank == 0x7E {
-        m.wram[off] = bv return
+        m.wram[off] = bv
+        return
     }
     if bank == 0x7F {
-        m.wram[0x10000 + off] = bv return
+        m.wram[0x10000 + off] = bv
+        return
     }
     let si = sramIndex(m, bank, off)
     if si >= 0 {
-        m.sram[si] = bv return
+        m.sram[si] = bv
+        return
     }
     let b = bank & 0x7F
     if b <= 0x3F {
         if off < 0x2000 {
-            m.wram[off] = bv return
+            m.wram[off] = bv
+            return
         }
         if off < 0x6000 {
-            mmioWrite(m, off, v) return
+            mmioWrite(m, off, v)
+            return
         }
         return // unused/ROM writes ignored
     }
@@ -477,13 +504,15 @@ fn nmi(cpu: &mut Cpu, m: &mut Mem): void {
         push8(cpu, m, cpu.pbr)
         push16(cpu, m, cpu.pc)
         push8(cpu, m, cpu.p)
-        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        setBit(cpu, FI, true)
+        setBit(cpu, FD, false)
         cpu.pbr = 0
         cpu.pc = memRead(m, 0xFFEA) | (memRead(m, 0xFFEB) << 8)
     } else {
         push16(cpu, m, cpu.pc)
         push8(cpu, m, cpu.p & (~0x10)) // hardware interrupt pushes break (bit4) clear
-        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        setBit(cpu, FI, true)
+        setBit(cpu, FD, false)
         cpu.pbr = 0
         cpu.pc = memRead(m, 0xFFFA) | (memRead(m, 0xFFFB) << 8)
     }
@@ -496,13 +525,15 @@ fn irq(cpu: &mut Cpu, m: &mut Mem): void {
         push8(cpu, m, cpu.pbr)
         push16(cpu, m, cpu.pc)
         push8(cpu, m, cpu.p)
-        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        setBit(cpu, FI, true)
+        setBit(cpu, FD, false)
         cpu.pbr = 0
         cpu.pc = memRead(m, 0xFFEE) | (memRead(m, 0xFFEF) << 8)
     } else {
         push16(cpu, m, cpu.pc)
         push8(cpu, m, cpu.p & (~0x10))
-        setBit(cpu, FI, true) setBit(cpu, FD, false)
+        setBit(cpu, FI, true)
+        setBit(cpu, FD, false)
         cpu.pbr = 0
         cpu.pc = memRead(m, 0xFFFE) | (memRead(m, 0xFFFF) << 8)
     }
@@ -546,7 +577,8 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     var i: i64 = 0
     while i < 7600 {
         if !fired && irqAt >= 0 && i >= irqAt {
-            maybeIrq(cpu, m) fired = true
+            maybeIrq(cpu, m)
+            fired = true
         }
         step(cpu, m)
         if (i & 3) == 0 {
@@ -840,10 +872,12 @@ fn staTo(cpu: &Cpu, m: &mut Mem, addr: i64, bank0wrap: bool): void {
 fn ldaFrom(cpu: &mut Cpu, m: &Mem, addr: i64, bank0wrap: bool): void {
     if m8(cpu) {
         let v = memRead(m, addr)
-        cpu.a = (cpu.a & 0xFF00) | v setNZ8(cpu, v)
+        cpu.a = (cpu.a & 0xFF00) | v
+        setNZ8(cpu, v)
     } else {
         let v = read16w(m, addr, bank0wrap)
-        cpu.a = v setNZ16(cpu, v)
+        cpu.a = v
+        setNZ16(cpu, v)
     }
 }
 
@@ -879,25 +913,31 @@ fn immX(cpu: &mut Cpu, m: &Mem): i64 {
 // Write a result into A at accumulator width (high byte preserved when 8-bit).
 fn setA(cpu: &mut Cpu, r: i64): void {
     if m8(cpu) {
-        cpu.a = (cpu.a & 0xFF00) | (r & 0xFF) setNZ8(cpu, r)
+        cpu.a = (cpu.a & 0xFF00) | (r & 0xFF)
+        setNZ8(cpu, r)
     } else {
-        cpu.a = r & 0xFFFF setNZ16(cpu, r)
+        cpu.a = r & 0xFFFF
+        setNZ16(cpu, r)
     }
 }
 
 fn setXreg(cpu: &mut Cpu, r: i64): void {
     if x8(cpu) {
-        cpu.x = r & 0xFF setNZ8(cpu, r)
+        cpu.x = r & 0xFF
+        setNZ8(cpu, r)
     } else {
-        cpu.x = r & 0xFFFF setNZ16(cpu, r)
+        cpu.x = r & 0xFFFF
+        setNZ16(cpu, r)
     }
 }
 
 fn setYreg(cpu: &mut Cpu, r: i64): void {
     if x8(cpu) {
-        cpu.y = r & 0xFF setNZ8(cpu, r)
+        cpu.y = r & 0xFF
+        setNZ8(cpu, r)
     } else {
-        cpu.y = r & 0xFFFF setNZ16(cpu, r)
+        cpu.y = r & 0xFFFF
+        setNZ16(cpu, r)
     }
 }
 
@@ -923,35 +963,43 @@ fn compareVals(cpu: &mut Cpu, reg: i64, v: i64, wide: bool): void {
 
 // --- op-from-resolved-address helpers (reuse for every addressing mode) ---
 fn oraFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readMval(cpu, m, addr, wrap) setA(cpu, cpu.a | v)
+    let v = readMval(cpu, m, addr, wrap)
+    setA(cpu, cpu.a | v)
 }
 
 fn andFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readMval(cpu, m, addr, wrap) setA(cpu, cpu.a & v)
+    let v = readMval(cpu, m, addr, wrap)
+    setA(cpu, cpu.a & v)
 }
 
 fn eorFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readMval(cpu, m, addr, wrap) setA(cpu, cpu.a ^ v)
+    let v = readMval(cpu, m, addr, wrap)
+    setA(cpu, cpu.a ^ v)
 }
 
 fn cmpFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readMval(cpu, m, addr, wrap) compareVals(cpu, cpu.a, v,!m8(cpu))
+    let v = readMval(cpu, m, addr, wrap)
+    compareVals(cpu, cpu.a, v,!m8(cpu))
 }
 
 fn cpxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readXval(cpu, m, addr, wrap) compareVals(cpu, cpu.x, v,!x8(cpu))
+    let v = readXval(cpu, m, addr, wrap)
+    compareVals(cpu, cpu.x, v,!x8(cpu))
 }
 
 fn cpyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readXval(cpu, m, addr, wrap) compareVals(cpu, cpu.y, v,!x8(cpu))
+    let v = readXval(cpu, m, addr, wrap)
+    compareVals(cpu, cpu.y, v,!x8(cpu))
 }
 
 fn ldxFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readXval(cpu, m, addr, wrap) setXreg(cpu, v)
+    let v = readXval(cpu, m, addr, wrap)
+    setXreg(cpu, v)
 }
 
 fn ldyFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readXval(cpu, m, addr, wrap) setYreg(cpu, v)
+    let v = readXval(cpu, m, addr, wrap)
+    setYreg(cpu, v)
 }
 
 fn stxTo(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool): void {
@@ -1121,11 +1169,13 @@ fn doSBC(cpu: &mut Cpu, v: i64): void {
 }
 
 fn adcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readMval(cpu, m, addr, wrap) doADC(cpu, v)
+    let v = readMval(cpu, m, addr, wrap)
+    doADC(cpu, v)
 }
 
 fn sbcFrom(cpu: &mut Cpu, m: &Mem, addr: i64, wrap: bool): void {
-    let v = readMval(cpu, m, addr, wrap) doSBC(cpu, v)
+    let v = readMval(cpu, m, addr, wrap)
+    doSBC(cpu, v)
 }
 
 // --- RMW value transforms (accumulator width; set C + N/Z) ---
@@ -1211,19 +1261,27 @@ fn writeAccW(cpu: &mut Cpu, r: i64): void {
 }
 
 fn accASL(cpu: &mut Cpu): void {
-    let v = cpu.a & accMask(cpu) let r = aslVal(cpu, v) writeAccW(cpu, r)
+    let v = cpu.a & accMask(cpu)
+    let r = aslVal(cpu, v)
+    writeAccW(cpu, r)
 }
 
 fn accLSR(cpu: &mut Cpu): void {
-    let v = cpu.a & accMask(cpu) let r = lsrVal(cpu, v) writeAccW(cpu, r)
+    let v = cpu.a & accMask(cpu)
+    let r = lsrVal(cpu, v)
+    writeAccW(cpu, r)
 }
 
 fn accROL(cpu: &mut Cpu): void {
-    let v = cpu.a & accMask(cpu) let r = rolVal(cpu, v) writeAccW(cpu, r)
+    let v = cpu.a & accMask(cpu)
+    let r = rolVal(cpu, v)
+    writeAccW(cpu, r)
 }
 
 fn accROR(cpu: &mut Cpu): void {
-    let v = cpu.a & accMask(cpu) let r = rorVal(cpu, v) writeAccW(cpu, r)
+    let v = cpu.a & accMask(cpu)
+    let r = rorVal(cpu, v)
+    writeAccW(cpu, r)
 }
 
 fn rmwWrite(cpu: &Cpu, m: &mut Mem, addr: i64, wrap: bool, r: i64): void {
@@ -1433,7 +1491,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             } else {
                 cpu.a & 0xFFFF
             }
-            cpu.x = v setNZx(cpu, v)
+            cpu.x = v
+            setNZx(cpu, v)
         }
         0xA8 => { // TAY
             let v = if x8(cpu) {
@@ -1441,20 +1500,25 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             } else {
                 cpu.a & 0xFFFF
             }
-            cpu.y = v setNZx(cpu, v)
+            cpu.y = v
+            setNZx(cpu, v)
         }
         0x8A => { // TXA
             if m8(cpu) {
-                cpu.a = (cpu.a & 0xFF00) | (cpu.x & 0xFF) setNZ8(cpu, cpu.x)
+                cpu.a = (cpu.a & 0xFF00) | (cpu.x & 0xFF)
+                setNZ8(cpu, cpu.x)
             } else {
-                cpu.a = cpu.x & 0xFFFF setNZ16(cpu, cpu.x)
+                cpu.a = cpu.x & 0xFFFF
+                setNZ16(cpu, cpu.x)
             }
         }
         0x98 => { // TYA
             if m8(cpu) {
-                cpu.a = (cpu.a & 0xFF00) | (cpu.y & 0xFF) setNZ8(cpu, cpu.y)
+                cpu.a = (cpu.a & 0xFF00) | (cpu.y & 0xFF)
+                setNZ8(cpu, cpu.y)
             } else {
-                cpu.a = cpu.y & 0xFFFF setNZ16(cpu, cpu.y)
+                cpu.a = cpu.y & 0xFFFF
+                setNZ16(cpu, cpu.y)
             }
         }
         0xBA => { // TSX
@@ -1463,7 +1527,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             } else {
                 cpu.s & 0xFFFF
             }
-            cpu.x = v setNZx(cpu, v)
+            cpu.x = v
+            setNZx(cpu, v)
         }
         0x9A => { // TXS — no flags; emulation forces SH=01
             if cpu.e == 1 {
@@ -1478,7 +1543,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             } else {
                 cpu.x & 0xFFFF
             }
-            cpu.y = v setNZx(cpu, v)
+            cpu.y = v
+            setNZx(cpu, v)
         }
         0xBB => { // TYX
             let v = if x8(cpu) {
@@ -1486,7 +1552,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             } else {
                 cpu.y & 0xFFFF
             }
-            cpu.x = v setNZx(cpu, v)
+            cpu.x = v
+            setNZx(cpu, v)
         }
         0x1B => { // TCS — 16-bit C→S always; emulation forces SH=01, no flags
             if cpu.e == 1 {
@@ -1496,13 +1563,16 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             }
         }
         0x3B => { // TSC — 16-bit S→C, 16-bit flags
-            cpu.a = cpu.s & 0xFFFF setNZ16(cpu, cpu.a)
+            cpu.a = cpu.s & 0xFFFF
+            setNZ16(cpu, cpu.a)
         }
         0x5B => { // TCD — 16-bit A→D, 16-bit flags
-            cpu.d = cpu.a & 0xFFFF setNZ16(cpu, cpu.d)
+            cpu.d = cpu.a & 0xFFFF
+            setNZ16(cpu, cpu.d)
         }
         0x7B => { // TDC — 16-bit D→C, 16-bit flags
-            cpu.a = cpu.d & 0xFFFF setNZ16(cpu, cpu.a)
+            cpu.a = cpu.d & 0xFFFF
+            setNZ16(cpu, cpu.a)
         }
 
         // ---- XBA: swap A's two bytes; N/Z from the new low byte (8-bit) ----
@@ -1549,17 +1619,21 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0x1A => { // INC A
             if m8(cpu) {
                 let lo = (cpu.a + 1) & 0xFF
-                cpu.a = (cpu.a & 0xFF00) | lo setNZ8(cpu, lo)
+                cpu.a = (cpu.a & 0xFF00) | lo
+                setNZ8(cpu, lo)
             } else {
-                cpu.a = (cpu.a + 1) & 0xFFFF setNZ16(cpu, cpu.a)
+                cpu.a = (cpu.a + 1) & 0xFFFF
+                setNZ16(cpu, cpu.a)
             }
         }
         0x3A => { // DEC A
             if m8(cpu) {
                 let lo = (cpu.a - 1) & 0xFF
-                cpu.a = (cpu.a & 0xFF00) | lo setNZ8(cpu, lo)
+                cpu.a = (cpu.a & 0xFF00) | lo
+                setNZ8(cpu, lo)
             } else {
-                cpu.a = (cpu.a - 1) & 0xFFFF setNZ16(cpu, cpu.a)
+                cpu.a = (cpu.a - 1) & 0xFFFF
+                setNZ16(cpu, cpu.a)
             }
         }
 
@@ -1567,31 +1641,37 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0xA9 => { // LDA #
             if m8(cpu) {
                 let v = fetch8(cpu, m)
-                cpu.a = (cpu.a & 0xFF00) | v setNZ8(cpu, v)
+                cpu.a = (cpu.a & 0xFF00) | v
+                setNZ8(cpu, v)
             } else {
                 let lo = fetch8(cpu, m)
                 let hi = fetch8(cpu, m)
-                cpu.a = lo | (hi << 8) setNZ16(cpu, cpu.a)
+                cpu.a = lo | (hi << 8)
+                setNZ16(cpu, cpu.a)
             }
         }
         0xA2 => { // LDX #
             if x8(cpu) {
                 let v = fetch8(cpu, m)
-                cpu.x = v setNZ8(cpu, v)
+                cpu.x = v
+                setNZ8(cpu, v)
             } else {
                 let lo = fetch8(cpu, m)
                 let hi = fetch8(cpu, m)
-                cpu.x = lo | (hi << 8) setNZ16(cpu, cpu.x)
+                cpu.x = lo | (hi << 8)
+                setNZ16(cpu, cpu.x)
             }
         }
         0xA0 => { // LDY #
             if x8(cpu) {
                 let v = fetch8(cpu, m)
-                cpu.y = v setNZ8(cpu, v)
+                cpu.y = v
+                setNZ8(cpu, v)
             } else {
                 let lo = fetch8(cpu, m)
                 let hi = fetch8(cpu, m)
-                cpu.y = lo | (hi << 8) setNZ16(cpu, cpu.y)
+                cpu.y = lo | (hi << 8)
+                setNZ16(cpu, cpu.y)
             }
         }
 
@@ -1641,406 +1721,534 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
 
         // ---- STA (store A; address resolved first to sequence the borrows) ----
         0x85 => {
-            let a = aDp(cpu, m) staTo(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            staTo(cpu, m, a, true)
         }
         0x95 => {
-            let a = aDpX(cpu, m) staTo(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            staTo(cpu, m, a, true)
         }
         0x8D => {
-            let a = aAbs(cpu, m) staTo(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x9D => {
-            let a = aAbsX(cpu, m) staTo(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x99 => {
-            let a = aAbsY(cpu, m) staTo(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x8F => {
-            let a = aLong(cpu, m) staTo(cpu, m, a, false)
+            let a = aLong(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x9F => {
-            let a = aLongX(cpu, m) staTo(cpu, m, a, false)
+            let a = aLongX(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x81 => {
-            let a = aDpIndX(cpu, m) staTo(cpu, m, a, false)
+            let a = aDpIndX(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x91 => {
-            let a = aDpIndY(cpu, m) staTo(cpu, m, a, false)
+            let a = aDpIndY(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x92 => {
-            let a = aDpInd(cpu, m) staTo(cpu, m, a, false)
+            let a = aDpInd(cpu, m)
+            staTo(cpu, m, a, false)
         } // STA (dp)
         0x87 => {
-            let a = aDpLong(cpu, m) staTo(cpu, m, a, false)
+            let a = aDpLong(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x97 => {
-            let a = aDpLongY(cpu, m) staTo(cpu, m, a, false)
+            let a = aDpLongY(cpu, m)
+            staTo(cpu, m, a, false)
         }
         0x83 => {
-            let a = aSr(cpu, m) staTo(cpu, m, a, true)
+            let a = aSr(cpu, m)
+            staTo(cpu, m, a, true)
         }
         0x93 => {
-            let a = aSrY(cpu, m) staTo(cpu, m, a, false)
+            let a = aSrY(cpu, m)
+            staTo(cpu, m, a, false)
         }
 
         // ---- ORA ----
         0x09 => {
-            let v = immM(cpu, m) setA(cpu, cpu.a | v)
+            let v = immM(cpu, m)
+            setA(cpu, cpu.a | v)
         }
         0x05 => {
-            let a = aDp(cpu, m) oraFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            oraFrom(cpu, m, a, true)
         }
         0x15 => {
-            let a = aDpX(cpu, m) oraFrom(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            oraFrom(cpu, m, a, true)
         }
         0x0D => {
-            let a = aAbs(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x1D => {
-            let a = aAbsX(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x19 => {
-            let a = aAbsY(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x0F => {
-            let a = aLong(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aLong(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x1F => {
-            let a = aLongX(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aLongX(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x01 => {
-            let a = aDpIndX(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aDpIndX(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x11 => {
-            let a = aDpIndY(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aDpIndY(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x12 => {
-            let a = aDpInd(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aDpInd(cpu, m)
+            oraFrom(cpu, m, a, false)
         } // ORA (dp)
         0x07 => {
-            let a = aDpLong(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aDpLong(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x17 => {
-            let a = aDpLongY(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aDpLongY(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
         0x03 => {
-            let a = aSr(cpu, m) oraFrom(cpu, m, a, true)
+            let a = aSr(cpu, m)
+            oraFrom(cpu, m, a, true)
         }
         0x13 => {
-            let a = aSrY(cpu, m) oraFrom(cpu, m, a, false)
+            let a = aSrY(cpu, m)
+            oraFrom(cpu, m, a, false)
         }
 
         // ---- AND ----
         0x29 => {
-            let v = immM(cpu, m) setA(cpu, cpu.a & v)
+            let v = immM(cpu, m)
+            setA(cpu, cpu.a & v)
         }
         0x25 => {
-            let a = aDp(cpu, m) andFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            andFrom(cpu, m, a, true)
         }
         0x35 => {
-            let a = aDpX(cpu, m) andFrom(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            andFrom(cpu, m, a, true)
         }
         0x2D => {
-            let a = aAbs(cpu, m) andFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x3D => {
-            let a = aAbsX(cpu, m) andFrom(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x39 => {
-            let a = aAbsY(cpu, m) andFrom(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x2F => {
-            let a = aLong(cpu, m) andFrom(cpu, m, a, false)
+            let a = aLong(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x3F => {
-            let a = aLongX(cpu, m) andFrom(cpu, m, a, false)
+            let a = aLongX(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x21 => {
-            let a = aDpIndX(cpu, m) andFrom(cpu, m, a, false)
+            let a = aDpIndX(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x31 => {
-            let a = aDpIndY(cpu, m) andFrom(cpu, m, a, false)
+            let a = aDpIndY(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x32 => {
-            let a = aDpInd(cpu, m) andFrom(cpu, m, a, false)
+            let a = aDpInd(cpu, m)
+            andFrom(cpu, m, a, false)
         } // AND (dp)
         0x27 => {
-            let a = aDpLong(cpu, m) andFrom(cpu, m, a, false)
+            let a = aDpLong(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x37 => {
-            let a = aDpLongY(cpu, m) andFrom(cpu, m, a, false)
+            let a = aDpLongY(cpu, m)
+            andFrom(cpu, m, a, false)
         }
         0x23 => {
-            let a = aSr(cpu, m) andFrom(cpu, m, a, true)
+            let a = aSr(cpu, m)
+            andFrom(cpu, m, a, true)
         }
         0x33 => {
-            let a = aSrY(cpu, m) andFrom(cpu, m, a, false)
+            let a = aSrY(cpu, m)
+            andFrom(cpu, m, a, false)
         }
 
         // ---- EOR ----
         0x49 => {
-            let v = immM(cpu, m) setA(cpu, cpu.a ^ v)
+            let v = immM(cpu, m)
+            setA(cpu, cpu.a ^ v)
         }
         0x45 => {
-            let a = aDp(cpu, m) eorFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            eorFrom(cpu, m, a, true)
         }
         0x55 => {
-            let a = aDpX(cpu, m) eorFrom(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            eorFrom(cpu, m, a, true)
         }
         0x4D => {
-            let a = aAbs(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x5D => {
-            let a = aAbsX(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x59 => {
-            let a = aAbsY(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x4F => {
-            let a = aLong(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aLong(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x5F => {
-            let a = aLongX(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aLongX(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x41 => {
-            let a = aDpIndX(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aDpIndX(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x51 => {
-            let a = aDpIndY(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aDpIndY(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x52 => {
-            let a = aDpInd(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aDpInd(cpu, m)
+            eorFrom(cpu, m, a, false)
         } // EOR (dp)
         0x47 => {
-            let a = aDpLong(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aDpLong(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x57 => {
-            let a = aDpLongY(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aDpLongY(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
         0x43 => {
-            let a = aSr(cpu, m) eorFrom(cpu, m, a, true)
+            let a = aSr(cpu, m)
+            eorFrom(cpu, m, a, true)
         }
         0x53 => {
-            let a = aSrY(cpu, m) eorFrom(cpu, m, a, false)
+            let a = aSrY(cpu, m)
+            eorFrom(cpu, m, a, false)
         }
 
         // ---- CMP ----
         0xC9 => {
-            let v = immM(cpu, m) compareVals(cpu, cpu.a, v,!m8(cpu))
+            let v = immM(cpu, m)
+            compareVals(cpu, cpu.a, v,!m8(cpu))
         }
         0xC5 => {
-            let a = aDp(cpu, m) cmpFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            cmpFrom(cpu, m, a, true)
         }
         0xD5 => {
-            let a = aDpX(cpu, m) cmpFrom(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            cmpFrom(cpu, m, a, true)
         }
         0xCD => {
-            let a = aAbs(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xDD => {
-            let a = aAbsX(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xD9 => {
-            let a = aAbsY(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xCF => {
-            let a = aLong(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aLong(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xDF => {
-            let a = aLongX(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aLongX(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xC1 => {
-            let a = aDpIndX(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aDpIndX(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xD1 => {
-            let a = aDpIndY(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aDpIndY(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xD2 => {
-            let a = aDpInd(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aDpInd(cpu, m)
+            cmpFrom(cpu, m, a, false)
         } // CMP (dp)
         0xC7 => {
-            let a = aDpLong(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aDpLong(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xD7 => {
-            let a = aDpLongY(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aDpLongY(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
         0xC3 => {
-            let a = aSr(cpu, m) cmpFrom(cpu, m, a, true)
+            let a = aSr(cpu, m)
+            cmpFrom(cpu, m, a, true)
         }
         0xD3 => {
-            let a = aSrY(cpu, m) cmpFrom(cpu, m, a, false)
+            let a = aSrY(cpu, m)
+            cmpFrom(cpu, m, a, false)
         }
 
         // ---- CPX / CPY ----
         0xE0 => {
-            let v = immX(cpu, m) compareVals(cpu, cpu.x, v,!x8(cpu))
+            let v = immX(cpu, m)
+            compareVals(cpu, cpu.x, v,!x8(cpu))
         }
         0xE4 => {
-            let a = aDp(cpu, m) cpxFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            cpxFrom(cpu, m, a, true)
         }
         0xEC => {
-            let a = aAbs(cpu, m) cpxFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            cpxFrom(cpu, m, a, false)
         }
         0xC0 => {
-            let v = immX(cpu, m) compareVals(cpu, cpu.y, v,!x8(cpu))
+            let v = immX(cpu, m)
+            compareVals(cpu, cpu.y, v,!x8(cpu))
         }
         0xC4 => {
-            let a = aDp(cpu, m) cpyFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            cpyFrom(cpu, m, a, true)
         }
         0xCC => {
-            let a = aAbs(cpu, m) cpyFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            cpyFrom(cpu, m, a, false)
         }
 
         // ---- LDX / LDY (immediate A2/A0 handled above) ----
         0xA6 => {
-            let a = aDp(cpu, m) ldxFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            ldxFrom(cpu, m, a, true)
         }
         0xB6 => {
-            let a = aDpY(cpu, m) ldxFrom(cpu, m, a, true)
+            let a = aDpY(cpu, m)
+            ldxFrom(cpu, m, a, true)
         }
         0xAE => {
-            let a = aAbs(cpu, m) ldxFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            ldxFrom(cpu, m, a, false)
         }
         0xBE => {
-            let a = aAbsY(cpu, m) ldxFrom(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            ldxFrom(cpu, m, a, false)
         }
         0xA4 => {
-            let a = aDp(cpu, m) ldyFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            ldyFrom(cpu, m, a, true)
         }
         0xB4 => {
-            let a = aDpX(cpu, m) ldyFrom(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            ldyFrom(cpu, m, a, true)
         }
         0xAC => {
-            let a = aAbs(cpu, m) ldyFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            ldyFrom(cpu, m, a, false)
         }
         0xBC => {
-            let a = aAbsX(cpu, m) ldyFrom(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            ldyFrom(cpu, m, a, false)
         }
 
         // ---- STX / STY / STZ ----
         0x86 => {
-            let a = aDp(cpu, m) stxTo(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            stxTo(cpu, m, a, true)
         }
         0x96 => {
-            let a = aDpY(cpu, m) stxTo(cpu, m, a, true)
+            let a = aDpY(cpu, m)
+            stxTo(cpu, m, a, true)
         }
         0x8E => {
-            let a = aAbs(cpu, m) stxTo(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            stxTo(cpu, m, a, false)
         }
         0x84 => {
-            let a = aDp(cpu, m) styTo(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            styTo(cpu, m, a, true)
         }
         0x94 => {
-            let a = aDpX(cpu, m) styTo(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            styTo(cpu, m, a, true)
         }
         0x8C => {
-            let a = aAbs(cpu, m) styTo(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            styTo(cpu, m, a, false)
         }
         0x64 => {
-            let a = aDp(cpu, m) stzTo(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            stzTo(cpu, m, a, true)
         }
         0x74 => {
-            let a = aDpX(cpu, m) stzTo(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            stzTo(cpu, m, a, true)
         }
         0x9C => {
-            let a = aAbs(cpu, m) stzTo(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            stzTo(cpu, m, a, false)
         }
         0x9E => {
-            let a = aAbsX(cpu, m) stzTo(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            stzTo(cpu, m, a, false)
         }
 
         // ---- ADC ----
         0x69 => {
-            let v = immM(cpu, m) doADC(cpu, v)
+            let v = immM(cpu, m)
+            doADC(cpu, v)
         }
         0x65 => {
-            let a = aDp(cpu, m) adcFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            adcFrom(cpu, m, a, true)
         }
         0x75 => {
-            let a = aDpX(cpu, m) adcFrom(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            adcFrom(cpu, m, a, true)
         }
         0x6D => {
-            let a = aAbs(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x7D => {
-            let a = aAbsX(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x79 => {
-            let a = aAbsY(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x6F => {
-            let a = aLong(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aLong(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x7F => {
-            let a = aLongX(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aLongX(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x61 => {
-            let a = aDpIndX(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aDpIndX(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x71 => {
-            let a = aDpIndY(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aDpIndY(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x72 => {
-            let a = aDpInd(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aDpInd(cpu, m)
+            adcFrom(cpu, m, a, false)
         } // ADC (dp)
         0x67 => {
-            let a = aDpLong(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aDpLong(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x77 => {
-            let a = aDpLongY(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aDpLongY(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
         0x63 => {
-            let a = aSr(cpu, m) adcFrom(cpu, m, a, true)
+            let a = aSr(cpu, m)
+            adcFrom(cpu, m, a, true)
         }
         0x73 => {
-            let a = aSrY(cpu, m) adcFrom(cpu, m, a, false)
+            let a = aSrY(cpu, m)
+            adcFrom(cpu, m, a, false)
         }
 
         // ---- SBC ----
         0xE9 => {
-            let v = immM(cpu, m) doSBC(cpu, v)
+            let v = immM(cpu, m)
+            doSBC(cpu, v)
         }
         0xE5 => {
-            let a = aDp(cpu, m) sbcFrom(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            sbcFrom(cpu, m, a, true)
         }
         0xF5 => {
-            let a = aDpX(cpu, m) sbcFrom(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            sbcFrom(cpu, m, a, true)
         }
         0xED => {
-            let a = aAbs(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xFD => {
-            let a = aAbsX(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xF9 => {
-            let a = aAbsY(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aAbsY(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xEF => {
-            let a = aLong(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aLong(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xFF => {
-            let a = aLongX(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aLongX(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xE1 => {
-            let a = aDpIndX(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aDpIndX(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xF1 => {
-            let a = aDpIndY(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aDpIndY(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xF2 => {
-            let a = aDpInd(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aDpInd(cpu, m)
+            sbcFrom(cpu, m, a, false)
         } // SBC (dp)
         0xE7 => {
-            let a = aDpLong(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aDpLong(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xF7 => {
-            let a = aDpLongY(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aDpLongY(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
         0xE3 => {
-            let a = aSr(cpu, m) sbcFrom(cpu, m, a, true)
+            let a = aSr(cpu, m)
+            sbcFrom(cpu, m, a, true)
         }
         0xF3 => {
-            let a = aSrY(cpu, m) sbcFrom(cpu, m, a, false)
+            let a = aSrY(cpu, m)
+            sbcFrom(cpu, m, a, false)
         }
 
         // ---- ASL / LSR / ROL / ROR (accumulator + memory) ----
@@ -2048,118 +2256,151 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             accASL(cpu)
         }
         0x06 => {
-            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 0)
+            let a = aDp(cpu, m)
+            rmwMem(cpu, m, a, true, 0)
         }
         0x16 => {
-            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 0)
+            let a = aDpX(cpu, m)
+            rmwMem(cpu, m, a, true, 0)
         }
         0x0E => {
-            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 0)
+            let a = aAbs(cpu, m)
+            rmwMem(cpu, m, a, false, 0)
         }
         0x1E => {
-            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 0)
+            let a = aAbsX(cpu, m)
+            rmwMem(cpu, m, a, false, 0)
         }
         0x4A => {
             accLSR(cpu)
         }
         0x46 => {
-            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 1)
+            let a = aDp(cpu, m)
+            rmwMem(cpu, m, a, true, 1)
         }
         0x56 => {
-            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 1)
+            let a = aDpX(cpu, m)
+            rmwMem(cpu, m, a, true, 1)
         }
         0x4E => {
-            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 1)
+            let a = aAbs(cpu, m)
+            rmwMem(cpu, m, a, false, 1)
         }
         0x5E => {
-            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 1)
+            let a = aAbsX(cpu, m)
+            rmwMem(cpu, m, a, false, 1)
         }
         0x2A => {
             accROL(cpu)
         }
         0x26 => {
-            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 2)
+            let a = aDp(cpu, m)
+            rmwMem(cpu, m, a, true, 2)
         }
         0x36 => {
-            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 2)
+            let a = aDpX(cpu, m)
+            rmwMem(cpu, m, a, true, 2)
         }
         0x2E => {
-            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 2)
+            let a = aAbs(cpu, m)
+            rmwMem(cpu, m, a, false, 2)
         }
         0x3E => {
-            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 2)
+            let a = aAbsX(cpu, m)
+            rmwMem(cpu, m, a, false, 2)
         }
         0x6A => {
             accROR(cpu)
         }
         0x66 => {
-            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 3)
+            let a = aDp(cpu, m)
+            rmwMem(cpu, m, a, true, 3)
         }
         0x76 => {
-            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 3)
+            let a = aDpX(cpu, m)
+            rmwMem(cpu, m, a, true, 3)
         }
         0x6E => {
-            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 3)
+            let a = aAbs(cpu, m)
+            rmwMem(cpu, m, a, false, 3)
         }
         0x7E => {
-            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 3)
+            let a = aAbsX(cpu, m)
+            rmwMem(cpu, m, a, false, 3)
         }
 
         // ---- INC / DEC memory (accumulator forms 0x1A/0x3A handled above) ----
         0xE6 => {
-            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 4)
+            let a = aDp(cpu, m)
+            rmwMem(cpu, m, a, true, 4)
         }
         0xF6 => {
-            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 4)
+            let a = aDpX(cpu, m)
+            rmwMem(cpu, m, a, true, 4)
         }
         0xEE => {
-            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 4)
+            let a = aAbs(cpu, m)
+            rmwMem(cpu, m, a, false, 4)
         }
         0xFE => {
-            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 4)
+            let a = aAbsX(cpu, m)
+            rmwMem(cpu, m, a, false, 4)
         }
         0xC6 => {
-            let a = aDp(cpu, m) rmwMem(cpu, m, a, true, 5)
+            let a = aDp(cpu, m)
+            rmwMem(cpu, m, a, true, 5)
         }
         0xD6 => {
-            let a = aDpX(cpu, m) rmwMem(cpu, m, a, true, 5)
+            let a = aDpX(cpu, m)
+            rmwMem(cpu, m, a, true, 5)
         }
         0xCE => {
-            let a = aAbs(cpu, m) rmwMem(cpu, m, a, false, 5)
+            let a = aAbs(cpu, m)
+            rmwMem(cpu, m, a, false, 5)
         }
         0xDE => {
-            let a = aAbsX(cpu, m) rmwMem(cpu, m, a, false, 5)
+            let a = aAbsX(cpu, m)
+            rmwMem(cpu, m, a, false, 5)
         }
 
         // ---- TSB / TRB ----
         0x04 => {
-            let a = aDp(cpu, m) tsbMem(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            tsbMem(cpu, m, a, true)
         }
         0x0C => {
-            let a = aAbs(cpu, m) tsbMem(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            tsbMem(cpu, m, a, false)
         }
         0x14 => {
-            let a = aDp(cpu, m) trbMem(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            trbMem(cpu, m, a, true)
         }
         0x1C => {
-            let a = aAbs(cpu, m) trbMem(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            trbMem(cpu, m, a, false)
         }
 
         // ---- BIT ----
         0x89 => {
-            let v = immM(cpu, m) bitImm(cpu, v)
+            let v = immM(cpu, m)
+            bitImm(cpu, v)
         }
         0x24 => {
-            let a = aDp(cpu, m) bitMem(cpu, m, a, true)
+            let a = aDp(cpu, m)
+            bitMem(cpu, m, a, true)
         }
         0x34 => {
-            let a = aDpX(cpu, m) bitMem(cpu, m, a, true)
+            let a = aDpX(cpu, m)
+            bitMem(cpu, m, a, true)
         }
         0x2C => {
-            let a = aAbs(cpu, m) bitMem(cpu, m, a, false)
+            let a = aAbs(cpu, m)
+            bitMem(cpu, m, a, false)
         }
         0x3C => {
-            let a = aAbsX(cpu, m) bitMem(cpu, m, a, false)
+            let a = aAbsX(cpu, m)
+            bitMem(cpu, m, a, false)
         }
 
         // ---- branches ----
@@ -2206,10 +2447,12 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         } // JMP abs
         0x5C => { // JML/JMP long
             let t = fetch24(cpu, m)
-            cpu.pc = t & 0xFFFF cpu.pbr = (t >> 16) & 0xFF
+            cpu.pc = t & 0xFFFF
+            cpu.pbr = (t >> 16) & 0xFF
         }
         0x6C => {
-            let ptr = fetch16(cpu, m) cpu.pc = readPtr16(m, ptr)
+            let ptr = fetch16(cpu, m)
+            cpu.pc = readPtr16(m, ptr)
         } // JMP (abs), ptr in bank 0
         0x7C => { // JMP (abs,X) — pointer read within the program bank
             let base = fetch16(cpu, m)
@@ -2221,7 +2464,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0xDC => { // JML [abs] — 24-bit pointer in bank 0
             let ptr = fetch16(cpu, m)
             let t = readPtr24(m, ptr)
-            cpu.pc = t & 0xFFFF cpu.pbr = (t >> 16) & 0xFF
+            cpu.pc = t & 0xFFFF
+            cpu.pbr = (t >> 16) & 0xFF
         }
 
         // ---- subroutine call/return ----
@@ -2239,20 +2483,23 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             push8f(cpu, m, cpu.pbr)
             push16f(cpu, m, (cpu.pc - 1) & 0xFFFF)
             clampEmuStack(cpu)
-            cpu.pc = target & 0xFFFF cpu.pbr = (target >> 16) & 0xFF
+            cpu.pc = target & 0xFFFF
+            cpu.pbr = (target >> 16) & 0xFF
         }
         0x6B => { // RTL — pull PC then PBR (full stack)
             let addr = pull16f(cpu, m)
             let bank = pull8f(cpu, m)
             clampEmuStack(cpu)
-            cpu.pc = (addr + 1) & 0xFFFF cpu.pbr = bank & 0xFF
+            cpu.pc = (addr + 1) & 0xFFFF
+            cpu.pbr = bank & 0xFF
         }
 
         // ---- PEI / PER (push effective address; full 16-bit stack) ----
         0xD4 => { // PEI — push the 16-bit word at a direct-page pointer
             let ad = aDp(cpu, m)
             let v = readPtr16(m, ad)
-            push16f(cpu, m, v) clampEmuStack(cpu)
+            push16f(cpu, m, v)
+            clampEmuStack(cpu)
         }
         0x62 => { // PER — push PC + 16-bit relative
             let off = fetch16(cpu, m)
@@ -2261,7 +2508,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             } else {
                 off
             }
-            push16f(cpu, m, (cpu.pc + soff) & 0xFFFF) clampEmuStack(cpu)
+            push16f(cpu, m, (cpu.pc + soff) & 0xFFFF)
+            clampEmuStack(cpu)
         }
 
         // ---- stack push/pull ----
@@ -2275,9 +2523,11 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0x68 => { // PLA
             if m8(cpu) {
                 let v = pull8(cpu, m)
-                cpu.a = (cpu.a & 0xFF00) | v setNZ8(cpu, v)
+                cpu.a = (cpu.a & 0xFF00) | v
+                setNZ8(cpu, v)
             } else {
-                cpu.a = pull16(cpu, m) setNZ16(cpu, cpu.a)
+                cpu.a = pull16(cpu, m)
+                setNZ16(cpu, cpu.a)
             }
         }
         0xDA => { // PHX
@@ -2289,9 +2539,11 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         }
         0xFA => { // PLX
             if x8(cpu) {
-                cpu.x = pull8(cpu, m) setNZ8(cpu, cpu.x)
+                cpu.x = pull8(cpu, m)
+                setNZ8(cpu, cpu.x)
             } else {
-                cpu.x = pull16(cpu, m) setNZ16(cpu, cpu.x)
+                cpu.x = pull16(cpu, m)
+                setNZ16(cpu, cpu.x)
             }
         }
         0x5A => { // PHY
@@ -2303,9 +2555,11 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         }
         0x7A => { // PLY
             if x8(cpu) {
-                cpu.y = pull8(cpu, m) setNZ8(cpu, cpu.y)
+                cpu.y = pull8(cpu, m)
+                setNZ8(cpu, cpu.y)
             } else {
-                cpu.y = pull16(cpu, m) setNZ16(cpu, cpu.y)
+                cpu.y = pull16(cpu, m)
+                setNZ16(cpu, cpu.y)
             }
         }
         0x08 => { // PHP — status pushed as-is (8-bit)
@@ -2320,23 +2574,31 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             }
         }
         0x8B => { // PHB — data bank (full-stack op)
-            push8f(cpu, m, cpu.dbr) clampEmuStack(cpu)
+            push8f(cpu, m, cpu.dbr)
+            clampEmuStack(cpu)
         }
         0xAB => { // PLB
-            cpu.dbr = pull8f(cpu, m) clampEmuStack(cpu) setNZ8(cpu, cpu.dbr)
+            cpu.dbr = pull8f(cpu, m)
+            clampEmuStack(cpu)
+            setNZ8(cpu, cpu.dbr)
         }
         0x4B => { // PHK — program bank (full-stack op)
-            push8f(cpu, m, cpu.pbr) clampEmuStack(cpu)
+            push8f(cpu, m, cpu.pbr)
+            clampEmuStack(cpu)
         }
         0x0B => { // PHD — direct-page register (always 16-bit, full stack)
-            push16f(cpu, m, cpu.d) clampEmuStack(cpu)
+            push16f(cpu, m, cpu.d)
+            clampEmuStack(cpu)
         }
         0x2B => { // PLD
-            cpu.d = pull16f(cpu, m) clampEmuStack(cpu) setNZ16(cpu, cpu.d)
+            cpu.d = pull16f(cpu, m)
+            clampEmuStack(cpu)
+            setNZ16(cpu, cpu.d)
         }
         0xF4 => { // PEA — push a 16-bit immediate (full stack)
             let v = fetch16(cpu, m)
-            push16f(cpu, m, v) clampEmuStack(cpu)
+            push16f(cpu, m, v)
+            clampEmuStack(cpu)
         }
 
         // ---- software interrupts BRK / COP ----
@@ -2355,7 +2617,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             cpu.pc = addr
             applyEmulationConstraints(cpu)
             if (cpu.p & FX) != 0 {
-                cpu.x = cpu.x & 0xFF cpu.y = cpu.y & 0xFF
+                cpu.x = cpu.x & 0xFF
+                cpu.y = cpu.y & 0xFF
             }
         }
 

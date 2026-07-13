@@ -164,8 +164,8 @@ fn main(): i32 {
     m.genesis = true
     m.z80.gen = true
     loadRom(m, cart)
-    let sp = ((m.ram[0]as i64) << 24) | ((m.ram[1]as i64) << 16) | ((m.ram[2]as i64) << 8) | (m.ram[3]as i64)
-    let pc = ((m.ram[4]as i64) << 24) | ((m.ram[5]as i64) << 16) | ((m.ram[6]as i64) << 8) | (m.ram[7]as i64)
+    let sp = ((m.ram[0] as i64) << 24) | ((m.ram[1] as i64) << 16) | ((m.ram[2] as i64) << 8) | (m.ram[3] as i64)
+    let pc = ((m.ram[4] as i64) << 24) | ((m.ram[5] as i64) << 16) | ((m.ram[6] as i64) << 8) | (m.ram[7] as i64)
     var cpu = newCpu()
     cpu.a[7] = sp & 0xFFFFFFFF
     cpu.pc = pc & 0xFFFFFFFF
@@ -203,8 +203,7 @@ fn main(): i32 {
             SDL_PauseAudioDevice(audioDev, 0)
         }
         let title = "Milo Genesis"
-        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        (maxW * 3) as i32, (h * 3) as i32, SDL_WINDOW_SHOWN)
+        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (maxW * 3) as i32, (h * 3) as i32, SDL_WINDOW_SHOWN)
         let ren = SDL_CreateRenderer(win, -1, 0)
         let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, maxW as i32, h as i32)
         if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
@@ -218,7 +217,7 @@ fn main(): i32 {
             // Input first, every iteration, so the window stays responsive even
             // while we're pacing on audio.
             while SDL_PollEvent((&ev[0]) as *u8) != 0 {
-                let evType: u32 = (ev[0]as u32) | ((ev[1]as u32) << 8) | ((ev[2]as u32) << 16) | ((ev[3]as u32) << 24)
+                let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
                 }

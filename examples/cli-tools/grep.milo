@@ -1,3 +1,4 @@
+// @run: fn examples/hello.milo
 // grep — search for a pattern in files
 from "std/argparse" import {
     newParser
