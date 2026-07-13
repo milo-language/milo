@@ -1,0 +1,64 @@
+// @expect: {
+// @expect: key:name
+// @expect: str:milo
+// @expect: key:n
+// @expect: num
+// @expect: key:ok
+// @expect: bool
+// @expect: key:arr
+// @expect: [
+// @expect: num
+// @expect: str:x
+// @expect: ]
+// @expect: }
+// @expect: END
+
+from "std/json" import {
+    jsonPull, JsonEvent
+}
+
+// Streaming pull parser: walk the event stream without building a tree.
+fn main(): i32 {
+    var p = jsonPull("{\"name\":\"milo\",\"n\":42,\"ok\":true,\"arr\":[1,\"x\"]}")
+    while true {
+        let t = p.next()
+        match t.kind {
+            JsonEvent.StartObject => {
+                print("{")
+            }
+            JsonEvent.EndObject => {
+                print("}")
+            }
+            JsonEvent.StartArray => {
+                print("[")
+            }
+            JsonEvent.EndArray => {
+                print("]")
+            }
+            JsonEvent.Key => {
+                print("key:" + t.text)
+            }
+            JsonEvent.Str => {
+                print("str:" + t.text)
+            }
+            JsonEvent.Num => {
+                print("num")
+            }
+            JsonEvent.Bool => {
+                print("bool")
+            }
+            JsonEvent.Null => {
+                print("null")
+            }
+            JsonEvent.End => {
+                print("END")
+                return 0
+            }
+            JsonEvent.Error => {
+                print("ERR")
+                return 1
+            }
+        }
+    }
+    return 0
+}

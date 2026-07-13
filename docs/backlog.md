@@ -18,6 +18,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 - **`countOnes/leadingZeros/trailingZeros`** — bit intrinsics (LLVM ctpop/ctlz/cttz), return `i64`.
 - **`rotateLeft/rotateRight/reverseBits`** — funnel-shift + bitreverse, return receiver width.
 - **Fixed-size array slicing** (Tier-2 #6) — `arr[a..b]` view into array storage, no copy.
+- **JSON pull parser** (Tier-2 #7) — `jsonPull(src).next()` event stream, no tree, O(depth) mem.
 - **JSON `strOpt/intOpt/floatOpt/boolOpt`** — optional fields stay in the fluent chain.
 
 ## Tier 1 — quick wins (high ROI, low effort) — do first
@@ -35,7 +36,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 | # | Item | ROI | Effort | Why / unblocks | Ref |
 |---|------|-----|--------|----------------|-----|
 | 6 | **Borrowed slices / byte views** `&[T]` — *mostly shipped* | H | M | Vec/string slicing works; ✅ 2026-07-13 **fixed-size array slicing** (`arr[a..b]` / `arr.slice(a,b)` → non-owning `%Vec` view into the array's own storage, bound against static N, `codegen genArraySlice`). **Remaining:** generalized byte views for I/O/`Buffer`/`ArrayBuffer` interop. Unblocks zero-copy form of #7. | roadmap.md:109 |
-| 7 | **JSON streaming / pull parser** | H | M | Unbounded / multi-GB / NDJSON input has no path today (whole-doc-only, offsets into resident source). Separate state-machine tokenizer; `src-milo/lexer.milo` pattern. Zero-copy variant wants #6. | roadmap: Standard Library |
+| 7 | **JSON streaming / pull parser** — *shipped (string-backed)* | H | M | ✅ 2026-07-13 `jsonPull(src).next()` → `JsonToken` event stream, O(depth) memory, no tree (`std/json.milo`). **Remaining:** incremental byte-feed for truly unbounded input (socket/multi-GB) — a reader layer over the same tokenizer. | roadmap: Standard Library |
 | 8 | **Iterators** — `.map().filter().collect()` | H | H | Ergonomics everywhere; kills manual index loops. Needs associated types. | roadmap.md:115 |
 | 9 | **Doc comments + `milo doc`** | H | M | `///` + generator. DX + real docs; incentivizes the docstrings #2 adds by hand. | roadmap.md:123 |
 | 10 | **LSP rename + find-references** | H | M | Daily-driver DX gap. | roadmap.md:122 |

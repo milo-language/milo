@@ -1109,7 +1109,7 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
         }
     } else {
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            result = result * 10.0 + (s[pos]as i32 - 48) as f64
+            result = result * 10.0 + (s[pos] as i32 - 48) as f64
             pos = pos + 1
         }
     }
@@ -1120,7 +1120,7 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
         }
         var frac: f64 = 0.1
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            result = result + (s[pos]as i32 - 48) as f64 * frac
+            result = result + (s[pos] as i32 - 48) as f64 * frac
             frac = frac * 0.1
             pos = pos + 1
         }
@@ -1139,7 +1139,7 @@ fn jsonParseNumber(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, _err: &
         }
         var exp: i64 = 0
         while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
-            exp = exp * 10 + (s[pos]as i32 - 48) as i64
+            exp = exp * 10 + (s[pos] as i32 - 48) as i64
             pos = pos + 1
         }
         var factor: f64 = 1.0
@@ -1623,5 +1623,201 @@ impl JsonArr {
             out = out + jsonSer(self.items[i])
         }
         return out + "]"
+    }
+}
+
+// ── Streaming pull parser ──────────────────────────────────────────────────
+// Emits one event at a time and never materializes the tree — O(depth) memory,
+// for documents too large to hold as a flat pool (cf. Go json.Decoder.Token /
+// Rust StreamDeserializer). jsonPull(src).next() yields tokens until End.
+
+enum JsonEvent {
+    StartObject,
+    EndObject,
+    StartArray,
+    EndArray,
+    Key,
+    Str,
+    Num,
+    Bool,
+    Null,
+    End,
+    Error,
+}
+
+struct JsonToken {
+    kind: JsonEvent,
+    text: string, // set for Key and Str
+    num: f64, // set for Num
+    flag: bool, // set for Bool
+}
+
+fn jsonTok(k: JsonEvent): JsonToken {
+    return JsonToken {
+        kind: k, text: "", num: 0.0, flag: false
+    }
+}
+
+// Container stack entries: 0 = array, 1 = object expecting key, 2 = object
+// expecting value. The colon/comma transitions flip 1<->2 so a string can be
+// classified as Key vs Str without lookahead.
+struct JsonPull {
+    src: string,
+    pos: i64,
+    stack: Vec<i64>,
+}
+
+fn jsonPull(src: string): JsonPull {
+    return JsonPull {
+        src: src, pos: 0, stack: Vec.new()
+    }
+}
+
+// Standalone number → f64 (int . frac e exp), advancing pos past the literal.
+// The flat-pool parser's jsonParseNumber is node-coupled, so the scan is inlined.
+fn jsonPullNumber(s: &string, pos: &mut i64): f64 {
+    var result: f64 = 0.0
+    var negative: bool = false
+    if pos < s.len && s[pos] == '-' {
+        negative = true
+        pos = pos + 1
+    }
+    while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+        result = result * 10.0 + (s[pos] as i32 - 48) as f64
+        pos = pos + 1
+    }
+    if pos < s.len && s[pos] == '.' {
+        pos = pos + 1
+        var frac: f64 = 0.1
+        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+            result = result + (s[pos] as i32 - 48) as f64 * frac
+            frac = frac * 0.1
+            pos = pos + 1
+        }
+    }
+    if pos < s.len && (s[pos] == 'e' || s[pos] == 'E') {
+        pos = pos + 1
+        var expNeg: bool = false
+        if pos < s.len && s[pos] == '+' {
+            pos = pos + 1
+        } else if pos < s.len && s[pos] == '-' {
+            expNeg = true
+            pos = pos + 1
+        }
+        var exp: i64 = 0
+        while pos < s.len && s[pos] >= '0' && s[pos] <= '9' {
+            exp = exp * 10 + (s[pos] as i32 - 48) as i64
+            pos = pos + 1
+        }
+        var scale: f64 = 1.0
+        var i: i64 = 0
+        while i < exp {
+            scale = scale * 10.0
+            i = i + 1
+        }
+        if expNeg {
+            result = result / scale
+        } else {
+            result = result * scale
+        }
+    }
+    if negative {
+        result = 0.0 - result
+    }
+    return result
+}
+
+impl JsonPull {
+    fn next(self: &mut Self): JsonToken {
+        while true {
+            // pos is localized around helper calls: passing self.src (&) and self.pos
+            // (&mut) together trips the exclusivity checker (both borrow self), so the
+            // &mut must be a local that can't alias the self.src borrow.
+            var wsPos = self.pos
+            jsonSkipWs(self.src, wsPos)
+            self.pos = wsPos
+            if self.pos >= self.src.len {
+                return jsonTok(JsonEvent.End)
+            }
+            let c = self.src[self.pos]
+            if c == '{' {
+                self.pos = self.pos + 1
+                self.stack.push(1)
+                return jsonTok(JsonEvent.StartObject)
+            }
+            if c == '}' {
+                self.pos = self.pos + 1
+                if self.stack.len > 0 {
+                    self.stack.pop()
+                }
+                return jsonTok(JsonEvent.EndObject)
+            }
+            if c == '[' {
+                self.pos = self.pos + 1
+                self.stack.push(0)
+                return jsonTok(JsonEvent.StartArray)
+            }
+            if c == ']' {
+                self.pos = self.pos + 1
+                if self.stack.len > 0 {
+                    self.stack.pop()
+                }
+                return jsonTok(JsonEvent.EndArray)
+            }
+            if c == ',' {
+                self.pos = self.pos + 1
+                if self.stack.len > 0 && self.stack[self.stack.len - 1] == 2 {
+                    self.stack[self.stack.len - 1] = 1
+                }
+                continue
+            }
+            if c == ':' {
+                self.pos = self.pos + 1
+                if self.stack.len > 0 && self.stack[self.stack.len - 1] == 1 {
+                    self.stack[self.stack.len - 1] = 2
+                }
+                continue
+            }
+            if c == '"' {
+                var strStart: i64 = 0
+                var strLen: i64 = 0
+                var strErr: bool = false
+                var sp = self.pos
+                jsonScanStringRange(self.src, sp, strStart, strLen, strErr)
+                self.pos = sp
+                var t = jsonTok(JsonEvent.Str)
+                // in an object at a key slot (state 1) the string is the key
+                if self.stack.len > 0 && self.stack[self.stack.len - 1] == 1 {
+                    t = jsonTok(JsonEvent.Key)
+                }
+                t.text = jsonMaterializeStr(self.src, strStart, strLen)
+                return t
+            }
+            if c == 't' {
+                self.pos = self.pos + 4
+                var t = jsonTok(JsonEvent.Bool)
+                t.flag = true
+                return t
+            }
+            if c == 'f' {
+                self.pos = self.pos + 5
+                var t = jsonTok(JsonEvent.Bool)
+                t.flag = false
+                return t
+            }
+            if c == 'n' {
+                self.pos = self.pos + 4
+                return jsonTok(JsonEvent.Null)
+            }
+            if c == '-' || (c >= '0' && c <= '9') {
+                var t = jsonTok(JsonEvent.Num)
+                var np = self.pos
+                t.num = jsonPullNumber(self.src, np)
+                self.pos = np
+                return t
+            }
+            return jsonTok(JsonEvent.Error)
+        }
+        return jsonTok(JsonEvent.Error)
     }
 }
