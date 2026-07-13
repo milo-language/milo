@@ -58,10 +58,28 @@ CPUs run tens of millions of instructions with zero unimplemented opcodes.
 
 Deferred refinements (non-blocking): full 4-op FM + envelopes (current = 2-op,
 melody+timbre correct), ch6 DAC drums (needs Z80 bank-window ROM access + sample-
-rate capture), GA title sprite garble (ISOLATED: a solid-fill test proved sprite positions/sizes
-are perfect — the bug is wrong TILE DATA in VRAM at the sprite tile addresses, i.e.
-a DMA/VRAM-population issue in how GA uploads sprite graphics, NOT a rendering bug;
-Sonic populates VRAM correctly. Fix = trace GA's VDP DMA/data-port writes), undocumented CPU-flag corners
+rate capture),
+
+GA sprite garble — ROOT-CAUSED to a SPRITE-PALETTE-LINE divergence (NOT tile data;
+the earlier "wrong VRAM tile data" note was WRONG — headless dumps prove the sprite
+tiles are clean, coherent art). Chain of evidence (via bootRun on goldenaxe.md):
+  * Backgrounds/planes, all FONT sprites (1x1), kanji logo, and audio: perfect.
+  * Corrupt = the romaji "GOLDEN AXE" logo (title) + character sprites (gameplay) —
+    all MULTI-CELL sprites, but multi-cell-ness is NOT the cause.
+  * Those sprites are drawn pal=0 (SAT attr e.g. 0x8062). CRAM line0 idx2-5 = 0
+    (black) — it holds the FONT palette (idx1=red, idx6=white). The matching GOLD
+    gradient lives in CRAM LINE 1 (idx2-6). So pal0 sprites render black/noise.
+  * The game writes 0x0000 to CRAM line0 idx2-5 EVERY frame while the logo shows,
+    so the logo genuinely does NOT use line0 → it SHOULD be pal=1 (line1 gold).
+  * Conclusion: the 68k writes the WRONG palette bit into the SAT (0x8062/pal0 where
+    real HW would have 0xa062/pal1) for the resting title. During the earlier
+    flying-in intro the SAME tile 0x62 IS written 0xa062 (pal1), so the core can
+    produce it — the divergence is context-specific in the title-setup routine.
+  NEXT: trace the 68k routine that builds the resting-title SAT (find where bit
+  0x2000 of the attr word is lost), OR rule in a CRAM-DMA source mixup. This is a
+  CPU/DMA data-divergence, not a VDP-render bug — render/compositor are correct.
+
+Undocumented CPU-flag corners
 (68000 SSW, Z80 SCF/CCF + block-op X/Y), SSF2 mapper for >4MB carts.
 
 ### Original milestone notes
