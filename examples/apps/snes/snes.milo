@@ -24,6 +24,9 @@ from "./ppu" import {
 from "./cartridge" import {
     loadCartridge
 }
+from "./savestate" import {
+    saveState, loadState
+}
 
 extern fn SDL_Init(flags: u32): i32
 
@@ -177,6 +180,13 @@ fn main(): i32 {
 
         var ev: [u8; 64] = [0; 64]
         var quit = false
+        var prevSave = false // F5 = save-state, F7 = load-state (edge-detected)
+        var prevLoad = false
+        let statePath = if argv.len >= 2 {
+            argv[1] + ".state"
+        } else {
+            "/tmp/snes/demo.state"
+        }
         while !quit {
             stepFrame(cpu, m)
             renderFrame(m.ppu, fb)
@@ -206,6 +216,35 @@ fn main(): i32 {
             if key(ks, 41) != 0 {
                 quit = true
             } // Escape
+            // F5 = save state, F7 = load state (scancodes 62 / 64), edge-triggered.
+            let sd = key(ks, 62) != 0
+            if sd && !prevSave {
+                match writeFile(statePath, saveState(cpu, m)) {
+                    Result.Ok(n) => {
+                        print("state saved -> " + statePath)
+                    }
+                    Result.Err(e) => {
+                        print("state save failed")
+                    }
+                }
+            }
+            prevSave = sd
+            let ld = key(ks, 64) != 0
+            if ld && !prevLoad {
+                match readFile(statePath) {
+                    Result.Ok(data) => {
+                        if loadState(cpu, m, data) {
+                            print("state loaded <- " + statePath)
+                        } else {
+                            print("state file invalid")
+                        }
+                    }
+                    Result.Err(e) => {
+                        print("no state file")
+                    }
+                }
+            }
+            prevLoad = ld
             // Build the 16-bit auto-read joypad word (B Y Sel St Up Dn Lt Rt A X L R).
             var j: i64 = 0
             if key(ks, 29) != 0 {

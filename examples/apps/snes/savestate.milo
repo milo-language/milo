@@ -1,0 +1,172 @@
+// Save-states: serialize the whole machine (CPU + Mem/WRAM/SRAM/MMIO + PPU
+// VRAM/CGRAM/OAM + SPC700 + its RAM/timers/DSP) to a byte string and restore it.
+// ROM + IPL are not saved (they come from the cartridge/boot). This lets a run
+// resume exactly where it left off — skip the boot/intro entirely.
+
+from "./cpu" import {
+    Cpu, Mem
+}
+
+// ---- writers (little-endian) ----
+fn putB(s: &mut string, v: i64): void {
+    s.push((v & 0xFF) as u8)
+}
+
+fn putW(s: &mut string, v: i64): void {
+    s.push((v & 0xFF) as u8)
+    s.push(((v >> 8) & 0xFF) as u8)
+    s.push(((v >> 16) & 0xFF) as u8)
+    s.push(((v >> 24) & 0xFF) as u8)
+}
+
+fn putBool(s: &mut string, b: bool): void {
+    if b {
+        s.push(1 as u8)
+    } else {
+        s.push(0 as u8)
+    }
+}
+
+fn putBytes(s: &mut string, v: &Vec<u8>): void {
+    putW(s, v.len)
+    var i: i64 = 0
+    while i < v.len {
+        s.push(v[i]) i = i + 1
+    }
+}
+
+fn putWords(s: &mut string, v: &Vec<i64>): void {
+    putW(s, v.len)
+    var i: i64 = 0
+    while i < v.len {
+        putW(s, v[i]) i = i + 1
+    }
+}
+
+// ---- reader with a cursor ----
+struct Rd {
+    pos: i64
+}
+
+fn getB(data: &string, r: &mut Rd): i64 {
+    let v = data[r.pos]as i64
+    r.pos = r.pos + 1
+    return v
+}
+
+fn getW(data: &string, r: &mut Rd): i64 {
+    let v = (data[r.pos]as i64) | ((data[r.pos + 1]as i64) << 8) | ((data[r.pos + 2]as i64) << 16) | ((data[r.pos + 3]as i64) << 24)
+    r.pos = r.pos + 4
+    return v
+}
+
+fn getBool(data: &string, r: &mut Rd): bool {
+    return getB(data, r) != 0
+}
+
+// Read length-prefixed bytes back into an existing (correctly sized) Vec<u8>.
+fn getBytes(data: &string, r: &mut Rd, dst: &mut Vec<u8>): void {
+    let n = getW(data, r)
+    var i: i64 = 0
+    while i < n {
+        if i < dst.len {
+            dst[i] = data[r.pos]as u8
+        }
+        r.pos = r.pos + 1
+        i = i + 1
+    }
+}
+
+fn getWords(data: &string, r: &mut Rd, dst: &mut Vec<i64>): void {
+    let n = getW(data, r)
+    var i: i64 = 0
+    while i < n {
+        let v = getW(data, r)
+        if i < dst.len {
+            dst[i] = v
+        }
+        i = i + 1
+    }
+}
+
+// Magic header so a stale/foreign file is rejected rather than corrupting state.
+let SAVE_MAGIC: i64 = 0x314D5353 // "SSM1"
+
+fn saveState(cpu: &Cpu, m: &Mem): string {
+    var s = String.withCapacity(400000)
+    putW(s, SAVE_MAGIC)
+    // CPU
+    putW(s, cpu.a) putW(s, cpu.x) putW(s, cpu.y) putW(s, cpu.s) putW(s, cpu.d)
+    putW(s, cpu.pc) putW(s, cpu.p) putW(s, cpu.dbr) putW(s, cpu.pbr) putW(s, cpu.e)
+    // Mem scalars + arrays (rom is not saved)
+    putW(s, m.mapMode) putW(s, m.nmitimen) putW(s, m.htime) putW(s, m.vtime)
+    putW(s, m.timeup) putW(s, m.wmadd) putW(s, m.wrmpya) putW(s, m.wrdiv)
+    putW(s, m.rddiv) putW(s, m.rdmpy) putW(s, m.vblankToggle) putW(s, m.joy1)
+    putBytes(s, m.wram) putBytes(s, m.sram) putBytes(s, m.mmio)
+    // PPU
+    putBytes(s, m.ppu.vram) putBytes(s, m.ppu.cgram) putBytes(s, m.ppu.oam)
+    putW(s, m.ppu.inidisp) putW(s, m.ppu.obsel) putW(s, m.ppu.oamaddr) putW(s, m.ppu.oamLatch)
+    putBool(s, m.ppu.oamHi)
+    putW(s, m.ppu.bgmode) putW(s, m.ppu.bgsc0) putW(s, m.ppu.bgsc1) putW(s, m.ppu.bgsc2) putW(s, m.ppu.bgsc3)
+    putW(s, m.ppu.bg12nba) putW(s, m.ppu.bg34nba)
+    putWords(s, m.ppu.bghofs) putWords(s, m.ppu.bgvofs)
+    putW(s, m.ppu.scrollLatch) putW(s, m.ppu.scrollHi)
+    putW(s, m.ppu.vmain) putW(s, m.ppu.vmaddr) putW(s, m.ppu.vmLatch)
+    putW(s, m.ppu.cgaddr) putW(s, m.ppu.cgLatch) putBool(s, m.ppu.cgHi)
+    putW(s, m.ppu.tm) putW(s, m.ppu.ts)
+    putW(s, m.ppu.cgadsub) putW(s, m.ppu.coldR) putW(s, m.ppu.coldG) putW(s, m.ppu.coldB)
+    putW(s, m.ppu.m7a) putW(s, m.ppu.m7b) putW(s, m.ppu.m7c) putW(s, m.ppu.m7d)
+    putW(s, m.ppu.m7x) putW(s, m.ppu.m7y) putW(s, m.ppu.m7hofs) putW(s, m.ppu.m7vofs)
+    putW(s, m.ppu.m7sel) putW(s, m.ppu.m7Latch)
+    // SPC700
+    putW(s, m.apuSpc.a) putW(s, m.apuSpc.x) putW(s, m.apuSpc.y)
+    putW(s, m.apuSpc.sp) putW(s, m.apuSpc.pc) putW(s, m.apuSpc.psw)
+    putBytes(s, m.apuMem.ram) putBool(s, m.apuMem.iplEnabled)
+    putWords(s, m.apuMem.inPort) putWords(s, m.apuMem.outPort)
+    putW(s, m.apuMem.tEnable)
+    putWords(s, m.apuMem.tTarget) putWords(s, m.apuMem.tDiv) putWords(s, m.apuMem.tCount) putWords(s, m.apuMem.tOut)
+    putW(s, m.apuMem.dspAddr) putBytes(s, m.apuMem.dsp)
+    return s
+}
+
+// Restore in the exact order saveState wrote. Returns false if the magic is
+// wrong (foreign/corrupt file) so the caller can keep running as-is.
+fn loadState(cpu: &mut Cpu, m: &mut Mem, data: &string): bool {
+    if data.len < 4 {
+        return false
+    }
+    var r = Rd {
+        pos: 0
+    }
+    if getW(data, r) != SAVE_MAGIC {
+        return false
+    }
+    cpu.a = getW(data, r) cpu.x = getW(data, r) cpu.y = getW(data, r) cpu.s = getW(data, r) cpu.d = getW(data, r)
+    cpu.pc = getW(data, r) cpu.p = getW(data, r) cpu.dbr = getW(data, r) cpu.pbr = getW(data, r) cpu.e = getW(data, r)
+    m.mapMode = getW(data, r) m.nmitimen = getW(data, r) m.htime = getW(data, r) m.vtime = getW(data, r)
+    m.timeup = getW(data, r) m.wmadd = getW(data, r) m.wrmpya = getW(data, r) m.wrdiv = getW(data, r)
+    m.rddiv = getW(data, r) m.rdmpy = getW(data, r) m.vblankToggle = getW(data, r) m.joy1 = getW(data, r)
+    getBytes(data, r, m.wram) getBytes(data, r, m.sram) getBytes(data, r, m.mmio)
+    getBytes(data, r, m.ppu.vram) getBytes(data, r, m.ppu.cgram) getBytes(data, r, m.ppu.oam)
+    m.ppu.inidisp = getW(data, r) m.ppu.obsel = getW(data, r) m.ppu.oamaddr = getW(data, r) m.ppu.oamLatch = getW(data, r)
+    m.ppu.oamHi = getBool(data, r)
+    m.ppu.bgmode = getW(data, r) m.ppu.bgsc0 = getW(data, r) m.ppu.bgsc1 = getW(data, r) m.ppu.bgsc2 = getW(data, r) m.ppu.bgsc3 = getW(data, r)
+    m.ppu.bg12nba = getW(data, r) m.ppu.bg34nba = getW(data, r)
+    getWords(data, r, m.ppu.bghofs) getWords(data, r, m.ppu.bgvofs)
+    m.ppu.scrollLatch = getW(data, r) m.ppu.scrollHi = getW(data, r)
+    m.ppu.vmain = getW(data, r) m.ppu.vmaddr = getW(data, r) m.ppu.vmLatch = getW(data, r)
+    m.ppu.cgaddr = getW(data, r) m.ppu.cgLatch = getW(data, r) m.ppu.cgHi = getBool(data, r)
+    m.ppu.tm = getW(data, r) m.ppu.ts = getW(data, r)
+    m.ppu.cgadsub = getW(data, r) m.ppu.coldR = getW(data, r) m.ppu.coldG = getW(data, r) m.ppu.coldB = getW(data, r)
+    m.ppu.m7a = getW(data, r) m.ppu.m7b = getW(data, r) m.ppu.m7c = getW(data, r) m.ppu.m7d = getW(data, r)
+    m.ppu.m7x = getW(data, r) m.ppu.m7y = getW(data, r) m.ppu.m7hofs = getW(data, r) m.ppu.m7vofs = getW(data, r)
+    m.ppu.m7sel = getW(data, r) m.ppu.m7Latch = getW(data, r)
+    m.apuSpc.a = getW(data, r) m.apuSpc.x = getW(data, r) m.apuSpc.y = getW(data, r)
+    m.apuSpc.sp = getW(data, r) m.apuSpc.pc = getW(data, r) m.apuSpc.psw = getW(data, r)
+    getBytes(data, r, m.apuMem.ram) m.apuMem.iplEnabled = getBool(data, r)
+    getWords(data, r, m.apuMem.inPort) getWords(data, r, m.apuMem.outPort)
+    m.apuMem.tEnable = getW(data, r)
+    getWords(data, r, m.apuMem.tTarget) getWords(data, r, m.apuMem.tDiv) getWords(data, r, m.apuMem.tCount) getWords(data, r, m.apuMem.tOut)
+    m.apuMem.dspAddr = getW(data, r) getBytes(data, r, m.apuMem.dsp)
+    return true
+}
