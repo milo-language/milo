@@ -46,6 +46,12 @@ struct SpcMem {
     tDiv: Vec<i64> // [3] cycle accumulator toward the 128/128/16 prescale
     tCount: Vec<i64> // [3] counts prescale ticks toward target
     tOut: Vec<i64> // [3] 4-bit visible counter
+
+    // S-DSP register file ($F2 = index, $F3 = data). No audio synthesis yet —
+    // just a readback-consistent 128-register store so drivers that verify DSP
+    // writes during init progress. ENVX/OUTX ($x8/$x9) return 0.
+    dspAddr: i64
+    dsp: Vec<u8> // [128]
 }
 
 fn spcMemNew(): SpcMem {
@@ -54,7 +60,8 @@ fn spcMemNew(): SpcMem {
         ram: Vec.new(), ipl: Vec.new(), iplEnabled: false,
         inPort: Vec.new(), outPort: Vec.new(),
         tEnable: 0, tTarget: spcZerosI64(3), tDiv: spcZerosI64(3),
-        tCount: spcZerosI64(3), tOut: spcZerosI64(3)
+        tCount: spcZerosI64(3), tOut: spcZerosI64(3),
+        dspAddr: 0, dsp: Vec.new()
     }
 }
 
@@ -99,7 +106,8 @@ fn spcMemReal(): SpcMem {
         ram: spcZeros(0x10000), ipl: iplRom(), iplEnabled: true,
         inPort: spcZerosI64(4), outPort: spcZerosI64(4),
         tEnable: 0, tTarget: spcZerosI64(3), tDiv: spcZerosI64(3),
-        tCount: spcZerosI64(3), tOut: spcZerosI64(3)
+        tCount: spcZerosI64(3), tOut: spcZerosI64(3),
+        dspAddr: 0, dsp: spcZeros(128)
     }
 }
 
@@ -122,6 +130,12 @@ fn spcRead(m: &mut SpcMem, a: i64): i64 {
     let addr = a & 0xFFFF
     if addr >= 0xF4 && addr <= 0xF7 {
         return m.inPort[addr - 0xF4] // read the CPU->SPC latch
+    }
+    if addr == 0xF2 {
+        return m.dspAddr
+    }
+    if addr == 0xF3 {
+        return m.dsp[m.dspAddr & 0x7F]as i64 // DSP register readback
     }
     if addr >= 0xFD && addr <= 0xFF {
         // Timer counter: return the 4-bit out value and clear it (read-clears).
@@ -204,6 +218,18 @@ fn spcWrite(m: &mut SpcMem, a: i64, v: i64): void {
             t = t + 1
         }
         m.tEnable = bv & 0x07
+        m.ram[addr] = bv as u8
+        return
+    }
+    if addr == 0xF2 { // DSP register index
+        m.dspAddr = bv
+        m.ram[addr] = bv as u8
+        return
+    }
+    if addr == 0xF3 { // DSP register data — index bit7 set = read-only, ignore write
+        if (m.dspAddr & 0x80) == 0 {
+            m.dsp[m.dspAddr & 0x7F] = bv as u8
+        }
         m.ram[addr] = bv as u8
         return
     }

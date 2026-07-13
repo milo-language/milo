@@ -656,6 +656,11 @@ fn aDpIndY(cpu: &mut Cpu, m: &Mem): i64 { // (dp),Y
     return (((cpu.dbr << 16) | ptr) + cpu.y) & 0xFFFFFF
 }
 
+fn aDpInd(cpu: &mut Cpu, m: &Mem): i64 { // (dp)
+    let ptr = readPtr16(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF)
+    return ((cpu.dbr << 16) | ptr) & 0xFFFFFF
+}
+
 fn aDpLong(cpu: &mut Cpu, m: &Mem): i64 { // [dp]
     return readPtr24(m, (cpu.d + fetch8(cpu, m)) & 0xFFFF)
 }
@@ -1492,6 +1497,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0xB1 => {
             ldaFrom(cpu, m, aDpIndY(cpu, m), false)
         } // (dp),Y
+        0xB2 => {
+            ldaFrom(cpu, m, aDpInd(cpu, m), false)
+        } // LDA (dp)
         0xA7 => {
             ldaFrom(cpu, m, aDpLong(cpu, m), false)
         } // [dp]
@@ -1533,6 +1541,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0x91 => {
             let a = aDpIndY(cpu, m) staTo(cpu, m, a, false)
         }
+        0x92 => {
+            let a = aDpInd(cpu, m) staTo(cpu, m, a, false)
+        } // STA (dp)
         0x87 => {
             let a = aDpLong(cpu, m) staTo(cpu, m, a, false)
         }
@@ -1577,6 +1588,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0x11 => {
             let a = aDpIndY(cpu, m) oraFrom(cpu, m, a, false)
         }
+        0x12 => {
+            let a = aDpInd(cpu, m) oraFrom(cpu, m, a, false)
+        } // ORA (dp)
         0x07 => {
             let a = aDpLong(cpu, m) oraFrom(cpu, m, a, false)
         }
@@ -1621,6 +1635,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0x31 => {
             let a = aDpIndY(cpu, m) andFrom(cpu, m, a, false)
         }
+        0x32 => {
+            let a = aDpInd(cpu, m) andFrom(cpu, m, a, false)
+        } // AND (dp)
         0x27 => {
             let a = aDpLong(cpu, m) andFrom(cpu, m, a, false)
         }
@@ -1665,6 +1682,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0x51 => {
             let a = aDpIndY(cpu, m) eorFrom(cpu, m, a, false)
         }
+        0x52 => {
+            let a = aDpInd(cpu, m) eorFrom(cpu, m, a, false)
+        } // EOR (dp)
         0x47 => {
             let a = aDpLong(cpu, m) eorFrom(cpu, m, a, false)
         }
@@ -1709,6 +1729,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0xD1 => {
             let a = aDpIndY(cpu, m) cmpFrom(cpu, m, a, false)
         }
+        0xD2 => {
+            let a = aDpInd(cpu, m) cmpFrom(cpu, m, a, false)
+        } // CMP (dp)
         0xC7 => {
             let a = aDpLong(cpu, m) cmpFrom(cpu, m, a, false)
         }
@@ -1831,6 +1854,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0x71 => {
             let a = aDpIndY(cpu, m) adcFrom(cpu, m, a, false)
         }
+        0x72 => {
+            let a = aDpInd(cpu, m) adcFrom(cpu, m, a, false)
+        } // ADC (dp)
         0x67 => {
             let a = aDpLong(cpu, m) adcFrom(cpu, m, a, false)
         }
@@ -1875,6 +1901,9 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         0xF1 => {
             let a = aDpIndY(cpu, m) sbcFrom(cpu, m, a, false)
         }
+        0xF2 => {
+            let a = aDpInd(cpu, m) sbcFrom(cpu, m, a, false)
+        } // SBC (dp)
         0xE7 => {
             let a = aDpLong(cpu, m) sbcFrom(cpu, m, a, false)
         }
