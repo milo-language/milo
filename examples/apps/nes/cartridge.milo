@@ -53,6 +53,13 @@ fn parseCartridge(raw: &Vec<u8>): Result<Cartridge, string> {
 
     let prg16k: u8 = raw[4]
     let chr8k: u8 = raw[5]
+
+    // A cart with zero PRG banks is malformed: every mapper derives its bank
+    // count as prg.len / bankSize and indexes with `bank % count`, so prg16k==0
+    // would divide/modulo by zero (MMC3/MMC2/227) downstream. Reject at the seam.
+    if prg16k < 1 {
+        return Result.Err("iNES header declares zero PRG banks")
+    }
     let flags6: u8 = raw[6]
     let flags7: u8 = raw[7]
 

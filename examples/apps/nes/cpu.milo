@@ -120,29 +120,28 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
             // MMC2: $8000-$9FFF switchable 8 KiB; $A000-$FFFF = fixed last three.
             let n8k = bus.prg.len / 0x2000
             if a < 0xA000 {
-                return bus.prg[bus.mmc2Prg * 0x2000 + (a - 0x8000)]
+                return bus.prg[prgOffset(bus.prg, 0x2000, bus.mmc2Prg, a - 0x8000)]
             }
             if a < 0xC000 {
-                return bus.prg[(n8k - 3) * 0x2000 + (a - 0xA000)]
+                return bus.prg[prgOffset(bus.prg, 0x2000, n8k - 3, a - 0xA000)]
             }
             if a < 0xE000 {
-                return bus.prg[(n8k - 2) * 0x2000 + (a - 0xC000)]
+                return bus.prg[prgOffset(bus.prg, 0x2000, n8k - 2, a - 0xC000)]
             }
-            return bus.prg[(n8k - 1) * 0x2000 + (a - 0xE000)]
+            return bus.prg[prgOffset(bus.prg, 0x2000, n8k - 1, a - 0xE000)]
         }
         if bus.mapper == 227 {
-            let n16 = bus.prg.len / 0x4000
             if a < 0xC000 {
-                return bus.prg[(bus.m227Lo % n16) * 0x4000 + (a - 0x8000)]
+                return bus.prg[prgOffset(bus.prg, 0x4000, bus.m227Lo, a - 0x8000)]
             }
-            return bus.prg[(bus.m227Hi % n16) * 0x4000 + (a - 0xC000)]
+            return bus.prg[prgOffset(bus.prg, 0x4000, bus.m227Hi, a - 0xC000)]
         }
         if bus.mapper == 2 {
             // UxROM: $8000-$BFFF = switchable bank, $C000-$FFFF = fixed last bank.
             if a < 0xC000 {
-                return bus.prg[bus.prgBank * 0x4000 + (a - 0x8000)]
+                return bus.prg[prgOffset(bus.prg, 0x4000, bus.prgBank, a - 0x8000)]
             }
-            return bus.prg[(bus.prgBanks - 1) * 0x4000 + (a - 0xC000)]
+            return bus.prg[prgOffset(bus.prg, 0x4000, bus.prgBanks - 1, a - 0xC000)]
         }
         return bus.prg[(a - 0x8000) & bus.prgMask] // NROM
     }
@@ -201,6 +200,14 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
             // MMC2 registers (only $A000-$FFFF; $8000-$9FFF is unmapped).
             if a < 0xA000 {
                 return
+            }
+            // TEMP DEBUG: log mapper writes during one frame (remove)
+            if bus.ppu.frame == 2799 && a >= 0xB000 {
+                print("M a12/sl/dot/val:")
+                print(a >> 12)
+                print(bus.ppu.scanline)
+                print(bus.ppu.dot)
+                print(val as i64)
             }
             if a < 0xB000 {
                 bus.mmc2Prg = (val as i64) & 0x0F // PRG select
@@ -414,6 +421,21 @@ fn mmc3UpdateChr(bus: &mut Bus): void {
 
 // Byte offset into PRG for a $8000-$FFFF address under the current PRG mode.
 // Windows: two switchable (R6,R7) and two fixed (second-last, last 8 KiB bank).
+// Resolve a mapper bank index + intra-bank byte into a byte offset into `prg`,
+// wrapping the (untrusted, register-derived) bank number into the ROM's real
+// bank count. The nonneg double-modulo also absorbs the negative results of
+// fixed-bank math like `n8k - 3` on a ROM with fewer banks than a mapper's
+// fixed region assumes, so a malformed cart can never index past the buffer.
+// `bank` may be any i64; `off` must be an intra-bank byte (0..bankSize).
+fn prgOffset(prg: &Vec<u8>, bankSize: i64, bank: i64, off: i64): i64
+requires prg.len > 0 && bankSize > 0 && off >= 0 && off < bankSize
+ensures result >= 0 && result < prg.len
+{
+    let n = prg.len / bankSize
+    let b = ((bank % n) + n) % n
+    return b * bankSize + off
+}
+
 fn mmc3PrgOffset(bus: &Bus, a: i64): i64 {
     let num8k = bus.prg.len / 0x2000
     let last = num8k - 1
@@ -436,7 +458,7 @@ fn mmc3PrgOffset(bus: &Bus, a: i64): i64 {
     } else {
         bank = last
     }
-    return (bank % num8k) * 0x2000 + (a & 0x1FFF)
+    return prgOffset(bus.prg, 0x2000, bank, a & 0x1FFF)
 }
 
 // Clock the scanline IRQ counter once per rendered scanline (A12 approximation).
