@@ -1,15 +1,24 @@
-// std/arena — generational arena for cyclic and graph data structures
+// std/arena — generational arena for cyclic and graph data structures.
 //
-// Handles are freely copyable and storable (unlike &T).
-// Generation checks detect use-after-free at runtime.
+// An Arena<T> owns a pool of T values. Start here: create one with arenaNew, then
+// arenaAlloc a value to get back a Handle<T> — a small copyable token (NOT a
+// reference) that you pass to the arena to reach that value later:
 //
-// Handle<T> carries a phantom type param so handles from one arena cannot
-// accidentally be used with another arena of a different element type.
-// Returning &T is forbidden by second-class refs; mutation goes through
-// arenaSet (full overwrite) or arenaModify (closure on current value).
+//     var a = arenaNew<Node>()
+//     let h = a.alloc(Node { ... })     // Handle<Node> — copy/store it freely
+//     let n = a.get(h)                    // Option<Node>: None once freed
+//     a.modify(h, |n| Node { ... })       // mutate the slot in place
+//     a.free(h)                           // bumps generation → old h now stale
+//
+// Reach for this over &T for graph/cyclic data: handles can live in struct fields
+// and be returned, and each slot's generation counter turns a use-after-free into
+// a None instead of silent aliasing. See the `impl Arena` block for the full API.
 
-// Opaque handle to an arena slot. Safe to copy, store, and return.
-// T is phantom — not stored, only used for type-checking handle/arena pairs.
+// A copyable token naming one slot in an Arena<T> — the arena's stand-in for a
+// pointer. You do not use it directly: get one from arenaAlloc (a.alloc), then
+// pass it to a.get / a.set / a.modify / a.free to read, overwrite, mutate, or
+// release that slot. Safe to copy, store in fields, and return (unlike &T). T is
+// phantom (not stored) so a handle can't be used with an arena of another type.
 @derive(Eq)
 struct Handle<T> {
     index: i32,
