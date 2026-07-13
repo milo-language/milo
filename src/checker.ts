@@ -4051,6 +4051,32 @@ export class TypeChecker {
           if (expr.args.length !== 0) { this.error(`'toString' takes no arguments`, sp); }
           return this.setType(expr, { tag: "string" });
         }
+        // Option combinators — isSome/isNone/unwrapOr. Gated on baseName so a user
+        // enum's own impl method of the same name still resolves normally below.
+        if (objType.tag === "enum" && this.enums.get(objType.name)?.baseName === "Option") {
+          if (expr.method === "isSome" || expr.method === "isNone") {
+            if (expr.args.length !== 0) { this.error(`'${expr.method}' takes no arguments`, sp); }
+            return this.setType(expr, { tag: "bool" });
+          }
+          if (expr.method === "unwrapOr") {
+            if (expr.args.length !== 1) { this.error(`'unwrapOr' expects 1 argument`, sp); }
+            const inner = this.unwrapableInner(objType);
+            if (inner && !isCopy(inner)) {
+              // select-based lowering copies the payload; for owned types that would
+              // alias the heap buffer (double-free). Move-out needs match.
+              this.error(`'unwrapOr' on a non-Copy Option<${typeName(inner)}> — use 'match' to move the value out`, sp);
+              return this.setType(expr, inner);
+            }
+            if (inner) {
+              const at = this.checkExprWithHint(expr.args[0], inner);
+              if (!typeEq(inner, at) && at.tag !== "unknown") {
+                this.error(`'unwrapOr': default must be ${typeName(inner)}, got ${typeName(at)}`, sp);
+              }
+              return this.setType(expr, inner);
+            }
+            return this.setType(expr, { tag: "unknown" });
+          }
+        }
         // wrapping/saturating/checked arithmetic methods on integers
         if (objType.tag === "int") {
           const wrappingMethods = ["wrappingAdd", "wrappingSub", "wrappingMul"];

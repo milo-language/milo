@@ -3599,6 +3599,8 @@ export class Codegen {
         return this.genCheckedArith(expr, lines);
       case "BitIntrinsic":
         return this.genBitIntrinsic(expr, lines);
+      case "OptionOp":
+        return this.genOptionOp(expr, lines);
       case "JsonStringify":
         return this.genJsonStringify(expr, lines);
       case "Closure": {
@@ -8244,6 +8246,41 @@ export class Codegen {
     const wide = this.nextTemp();
     lines.push(`  ${wide} = zext ${vt} ${raw} to i64`);
     return [lines, wide, "i64"];
+  }
+
+  // opt.isSome()/isNone()/unwrapOr(d). Some is always tag 0. unwrapOr selects the
+  // Some payload vs the default; the checker restricts it to Copy inner types so the
+  // payload load can't alias an owned heap buffer.
+  private genOptionOp(expr: HIRExpr & { kind: "OptionOp" }, lines: string[]): [string[], string, string] {
+    const [vl, vv] = this.genExpr(expr.value);
+    lines.push(...vl);
+    const enumTy = `%${expr.enumName}`;
+    const addr = this.nextTemp();
+    lines.push(`  ${addr} = alloca ${enumTy}`);
+    lines.push(`  store ${enumTy} ${vv}, ptr ${addr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 0`);
+    const tag = this.nextTemp();
+    lines.push(`  ${tag} = load i32, ptr ${tagPtr}`);
+    const isSome = this.nextTemp();
+    lines.push(`  ${isSome} = icmp eq i32 ${tag}, 0`);
+    if (expr.op === "isSome") return [lines, isSome, "i1"];
+    if (expr.op === "isNone") {
+      const r = this.nextTemp();
+      lines.push(`  ${r} = xor i1 ${isSome}, true`);
+      return [lines, r, "i1"];
+    }
+    // unwrapOr
+    const payloadTy = this.llvmType(expr.type);
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+    const payload = this.nextTemp();
+    lines.push(`  ${payload} = load ${payloadTy}, ptr ${payloadPtr}`);
+    const [dl, dv] = this.genExpr(expr.default!);
+    lines.push(...dl);
+    const r = this.nextTemp();
+    lines.push(`  ${r} = select i1 ${isSome}, ${payloadTy} ${payload}, ${payloadTy} ${dv}`);
+    return [lines, r, payloadTy];
   }
 
   private usedSatIntrinsics?: Set<string>;

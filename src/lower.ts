@@ -618,6 +618,14 @@ class LowerCtx {
         if (objType?.tag === "bool" && expr.method === "toString") {
           return { kind: "BoolToString", value: this.lowerExpr(expr.object), type, span: expr.span };
         }
+        if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Option"
+            && (expr.method === "isSome" || expr.method === "isNone" || expr.method === "unwrapOr")) {
+          return {
+            kind: "OptionOp", op: expr.method, value: this.lowerExpr(expr.object),
+            default: expr.method === "unwrapOr" ? this.lowerExpr(expr.args[0]) : undefined,
+            enumName: objType.name, type, span: expr.span,
+          };
+        }
         if (objType?.tag === "int") {
           const bitIntrinsics: Record<string, string> = {
             countOnes: "ctpop", leadingZeros: "ctlz", trailingZeros: "cttz", reverseBits: "bitreverse",

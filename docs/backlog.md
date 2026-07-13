@@ -20,6 +20,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 - **Fixed-size array slicing** (Tier-2 #6) — `arr[a..b]` view into array storage, no copy.
 - **JSON pull parser** (Tier-2 #7) — `jsonPull(src).next()` event stream, no tree, O(depth) mem.
 - **Field-precise call-site exclusivity** — `f(&self.a, &mut self.b)` on distinct fields no longer rejected; index/deref still conservative. Unblocks stateful cursor/parser structs. (`checker.ts accessPath`, refines safety-roadmap #3.)
+- **Option combinators** (Tier-2 #11 start) — `isSome`/`isNone`/`unwrapOr` (Copy inner).
 - **JSON `strOpt/intOpt/floatOpt/boolOpt`** — optional fields stay in the fluent chain.
 
 ## Tier 1 — quick wins (high ROI, low effort) — do first
@@ -41,7 +42,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 | 8 | **Iterators** — `.map().filter().collect()` | H | H | Ergonomics everywhere; kills manual index loops. Needs associated types. | roadmap.md:115 |
 | 9 | **Doc comments + `milo doc`** | H | M | `///` + generator. DX + real docs; incentivizes the docstrings #2 adds by hand. | roadmap.md:123 |
 | 10 | **LSP rename + find-references** | H | M | Daily-driver DX gap. | roadmap.md:122 |
-| 11 | **Option ergonomics** | H | M | Frequent papercut; touches nearly all code paths. | memory: papercuts-from-hades |
+| 11 | **Option ergonomics** — *started* | H | M | ✅ 2026-07-13 `isSome()`/`isNone()`/`unwrapOr(default)` (`checker`/`lower`/`codegen OptionOp`); `unwrapOr` gated to Copy inner (owned → use `match`). Remaining: `map`/`unwrapOrElse` (need closures), `?`-on-Option polish. | memory: papercuts-from-hades |
 | 12 | **Flow-sensitive invalidation tracking** | H | H | Compile-time catch of aliased mutation / use-after-invalidate — the aircraft-grade safety tier. | roadmap.md:94, safety-roadmap.md |
 | 13 | **Compile-time reduction** | H | H | Broad DX win; diffuse, needs profiling first (candidate for MIR #b8). | memory: papercuts-from-hades |
 

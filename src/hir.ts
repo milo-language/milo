@@ -79,6 +79,7 @@ export type HIRExpr =
   | { kind: "SaturatingArith"; op: string; left: HIRExpr; right: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "CheckedArith"; op: string; left: HIRExpr; right: HIRExpr; optionEnumName: string; type: TypeKind; span?: Span }
   | { kind: "BitIntrinsic"; intrinsic: string; value: HIRExpr; amount?: HIRExpr; span?: Span; type: TypeKind }
+  | { kind: "OptionOp"; op: string; value: HIRExpr; default?: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "SizeOf"; sizeType: TypeKind; type: TypeKind; span?: Span }
   | { kind: "OffsetOf"; sizeType: TypeKind; fieldName: string; type: TypeKind; span?: Span }
   | { kind: "Zeroed"; zeroType: TypeKind; type: TypeKind; span?: Span }
