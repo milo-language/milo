@@ -72,6 +72,7 @@ Ongoing work on aliasing/invalidation gaps: [safety-roadmap.md](safety-roadmap.m
 - **Error handling** — `Result<T, E>` + `Option<T>` with `!` (unwrap), `?` (propagate), `??` (default). No try/catch.
 - **Strings** — owned UTF-8 `{ptr, len, cap}`; `s[a..b]` is a zero-copy `&string` slice (cap=0), `.substr(a, b)` copies.
 - **Modules** — `import "path.milo"` and `from "path" import { names }`; recursive resolution, dedup.
+- **Semicolons (cosmetic)** — statements are newline/grammar-delimited; a trailing, same-line-separating, or empty `;` is a tolerated no-op, so habitual `;` never hits a wall. It is *not* semantic (unlike Rust, a `;` never voids a block tail — block value is positional: the last expr-statement is the value). The formatter strips statement-level `;`, keeping the load-bearing `;` in `[T; N]`; a `;` *inside* an expression is still a parse error. Net: canonical form stays newline-only, `fmt` makes it deterministic, no JS-style "some with, some without".
 - **Arenas (deferred)** — `Arena<T>` + generational `Ref<T>` (`index: u32, gen: u32`, Copy) for cyclic data: trees with parent pointers, doubly-linked lists, graphs, ECS. Deferred until self-hosting reveals real API needs — CLI tools, parsers, compilers, HTTP servers, and file processors don't need them.
 
 ## Concurrency

@@ -183,8 +183,36 @@ function isTopLevel(kind: TokenKind): boolean {
     kind === TokenKind.Interface;
 }
 
+// Drop cosmetic statement-level ';' (Milo is newline/grammar-delimited) while
+// keeping the load-bearing ';' inside array types / repeat literals `[T; N]`.
+// Any comment attached to a dropped ';' migrates onto a neighbor so it survives.
+function stripStmtSemicolons(tokens: Token[]): Token[] {
+  const out: Token[] = [];
+  let bracket = 0;
+  let pending: Trivia[] = [];
+  for (const tok of tokens) {
+    if (tok.kind === TokenKind.LBracket) bracket++;
+    else if (tok.kind === TokenKind.RBracket) bracket = Math.max(0, bracket - 1);
+    if (tok.kind === TokenKind.Semicolon && bracket === 0) {
+      const carry = [...(tok.leadingTrivia ?? []), ...(tok.trailingTrivia ?? [])];
+      if (carry.length) {
+        const prev = out[out.length - 1];
+        if (prev) prev.trailingTrivia = [...(prev.trailingTrivia ?? []), ...carry];
+        else pending = [...pending, ...carry]; // leading ';' at file/block start
+      }
+      continue;
+    }
+    if (pending.length) {
+      tok.leadingTrivia = [...pending, ...(tok.leadingTrivia ?? [])];
+      pending = [];
+    }
+    out.push(tok);
+  }
+  return out;
+}
+
 export function format(source: string): string {
-  const tokens = new Lexer(source).tokenize();
+  const tokens = stripStmtSemicolons(new Lexer(source).tokenize());
   if (tokens.length <= 1) return tokens.length === 1 ? "" : "";
 
   let out = "";

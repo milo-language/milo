@@ -41,13 +41,14 @@ export class Parser {
   }
 
   // Throw a parse error carrying a structured Diagnostic (span + message + hint).
-  // `expected`, when given, drives a precise "expected X" hint; a stray ';' gets
-  // a dedicated hint since Milo uses newlines, not ';', to separate statements.
+  // `expected`, when given, drives a precise "expected X" hint; a ';' reaching here
+  // is mid-expression (trailing/separating ';' is tolerated in parseStmts), so the
+  // hint reflects that ';' is a statement separator, not valid inside an expression.
   private error(msg: string, tok: Token, expected?: TokenKind, hintOverride?: string): never {
     let hint = hintOverride;
     if (hint === undefined) {
       if (tok.kind === TokenKind.Semicolon) {
-        hint = "Milo uses newlines, not ';', to separate statements — remove the ';' or start a new line";
+        hint = "';' separates statements and can't appear inside an expression — remove it";
       } else if (expected !== undefined) {
         hint = `expected '${expected}' here`;
       }
@@ -72,6 +73,8 @@ export class Parser {
     const interfaces: InterfaceDecl[] = [];
     const globals: GlobalDecl[] = [];
     while (!this.at(TokenKind.Eof)) {
+      // trailing ';' after a top-level decl is a cosmetic no-op (see parseStmts)
+      if (this.match(TokenKind.Semicolon)) continue;
       // collect attributes before struct/enum
       let attrs: Attribute[] | undefined;
       while (this.at(TokenKind.At)) {
@@ -472,6 +475,10 @@ export class Parser {
   private parseStmts(): Stmt[] {
     const stmts: Stmt[] = [];
     while (!this.at(TokenKind.RBrace) && !this.at(TokenKind.Eof)) {
+      // ';' is cosmetic in Milo — statements are newline/grammar-delimited, so a
+      // trailing (or same-line separating, or empty) ';' is a no-op. Tolerated at
+      // boundaries only; a ';' inside an expression still errors in parseExpr.
+      if (this.match(TokenKind.Semicolon)) continue;
       stmts.push(this.parseStmt());
     }
     return stmts;
