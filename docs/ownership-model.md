@@ -58,7 +58,7 @@ struct Node { parent: Option<Weak<RefCell<Node>>>, children: Vec<Rc<RefCell<Node
 // node.borrow_mut()...  // safety check moved to RUNTIME — can panic; heap + refcount per node
 ```
 
-Both compile. Both carry a cost: the first spreads `<'a>` through every type that touches `Node`; the second moves the safety check to runtime (`borrow_mut()` can panic) and adds a heap allocation per node.
+The first *declaration* type-checks, but it's a trap: a mutable, parent-linked tree is essentially unbuildable with `&'a mut` — filling in a child's `parent` while the parent is itself borrowed to hand out the child is exactly the self-referential aliasing the borrow checker forbids, so in practice you can only build the immutable-node variant. The second one you *can* build, but it moves the safety check to runtime (`borrow_mut()` can panic) and adds a heap allocation plus refcount per node. And the `<'a>` from either spreads through every type that touches `Node`.
 
 The design Rust programmers most often settle on for this is **neither** — it's to stop storing references and refer by *index* instead: put the nodes in one owner (a `Vec` or arena) and store a plain id for the parent link.
 
@@ -81,7 +81,7 @@ struct Parser<'a> { input: &'a [u8], pos: usize }   // holds a borrow, copies no
 
 Milo can't store the `&[u8]`. But **zero-copy does not require storing a pointer** — it requires storing an *offset*. The two idiomatic replacements need no lifetimes and copy nothing:
 
-- **Spans.** Store `{ start, len }` integers into a buffer owned elsewhere. `std/json`'s parser does exactly this — string values are offsets into a resident `source`, materialized only on read. A million tokens is a million small structs, not a million string copies. (This is what `serde(borrow)` / `simd-json` do too — minus the lifetime.)
+- **Spans.** Store `{ start, len }` integers into a buffer owned elsewhere. `std/json`'s parser does exactly this — string values are offsets into a resident `source`, materialized only on read. A million tokens is a million small structs, not a million string copies. (It's the same zero-copy shape `serde(borrow)` / `simd-json` use — they express it with a borrow lifetime, `'de`; Milo expresses it with an offset, so no lifetime is needed.)
 - **Arenas + handles.** `std/arena` gives `Arena<T>` + a `Copy` generational `Handle<T>`. A tree or graph stores handles, not `&Node` — a lifetime-free AST. This is the design rustc and most production Rust compilers pick *on purpose*, precisely to escape `<'a>` propagation.
 
 What you actually trade away is narrow: the compile-time *tie* between a view and its buffer (a span is just integers, so nothing stops you indexing it into the wrong buffer — still memory-safe via bounds checks, but a logic bug Rust's `&'a` would have caught), plus a featherweight generational check on arena access.
