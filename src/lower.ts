@@ -626,6 +626,17 @@ class LowerCtx {
             enumName: objType.name, type, span: expr.span,
           };
         }
+        // Result isOk/isErr/unwrapOr reuse OptionOp — Ok is tag 0 like Some, so
+        // isOk maps to the isSome (tag==0) test and isErr to isNone.
+        if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Result"
+            && (expr.method === "isOk" || expr.method === "isErr" || expr.method === "unwrapOr")) {
+          const op = expr.method === "isOk" ? "isSome" : expr.method === "isErr" ? "isNone" : "unwrapOr";
+          return {
+            kind: "OptionOp", op, value: this.lowerExpr(expr.object),
+            default: expr.method === "unwrapOr" ? this.lowerExpr(expr.args[0]) : undefined,
+            enumName: objType.name, type, span: expr.span,
+          };
+        }
         if (objType?.tag === "int") {
           const bitIntrinsics: Record<string, string> = {
             countOnes: "ctpop", leadingZeros: "ctlz", trailingZeros: "cttz", reverseBits: "bitreverse",

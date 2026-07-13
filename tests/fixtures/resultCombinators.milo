@@ -1,0 +1,23 @@
+// @expect: true
+// @expect: false
+// @expect: true
+// @expect: 10
+// @expect: 0
+
+fn parse(x: i64): Result<i64, string> {
+    if x > 0 {
+        return Result.Ok(x * 2)
+    }
+    return Result.Err("negative")
+}
+
+fn main(): i32 {
+    let a = parse(5)
+    let b = parse(-1)
+    print(a.isOk()) // true
+    print(a.isErr()) // false
+    print(b.isErr()) // true
+    print(a.unwrapOr(0)) // 10 (Ok(10))
+    print(b.unwrapOr(0)) // 0  (Err → default)
+    return 0
+}
