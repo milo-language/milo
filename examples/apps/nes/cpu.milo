@@ -81,7 +81,7 @@ fn newBus(cart: Cartridge): Bus {
         mmc2InitMapper(bus.ppu) // latch-driven CHR banking lives in the PPU
     }
     if bus.mapper == 227 {
-        bus.m227Hi = bus.prg.len / 0x4000 - 1 // menu boots from the last bank at $C000
+        bus.m227Hi = 0 // boot the multicart menu (bank 0) at $C000
     }
     return bus
 }
@@ -236,13 +236,12 @@ fn mapper227Write(bus: &mut Bus, a: i64): void {
     let s = (a >> 8) & 1 // 1 = 32 KiB (NROM-256), 0 = 16 KiB (NROM-128)
     let m = (a >> 9) & 1 // mirroring: 1 = horizontal, 0 = vertical
     let prg16 = (o << 5) | p
-    let last = bus.prg.len / 0x4000 - 1
     if s == 1 {
         bus.m227Lo = prg16 & 0x3E
         bus.m227Hi = (prg16 & 0x3E) | 1
     } else {
         bus.m227Lo = prg16
-        bus.m227Hi = last // $C000 fixed to the menu's bank
+        bus.m227Hi = 0 // $C000 fixed to bank 0 — the multicart menu lives here
     }
     bus.ppu.mirrorVertical = m == 0
 }
