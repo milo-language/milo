@@ -139,7 +139,7 @@ volSlider.addEventListener("input", () => { if (gainNode) gainNode.gain.value = 
 // load regardless; the first click/keypress unlocks sound.
 function unlockAudio() {
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-  if (running) statusEl.textContent = "Running — Arrows + Z/X. \u{1F50A} sound on.";
+  if (running) statusEl.textContent = "Running · \u{1F50A} sound on";
 }
 addEventListener("pointerdown", unlockAudio);
 addEventListener("keydown", unlockAudio);
@@ -192,8 +192,8 @@ function boot(bytes) {
   pauseBtn.disabled = false;
   pauseBtn.textContent = "Pause";
   statusEl.textContent = audioCtx && audioCtx.state === "running"
-    ? "Running — Arrows + Z/X."
-    : "Running — click anywhere or press a key for \u{1F50A} sound.";
+    ? "Running · \u{1F50A} sound on"
+    : "Running · press a key for \u{1F50A} sound";
   last = performance.now(); loop._p = last; accMs = 0; fpsFrames = 0; fpsAcc = 0;
   requestAnimationFrame(loop);
 }

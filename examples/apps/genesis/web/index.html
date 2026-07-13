@@ -127,7 +127,7 @@ function initAudio() {
 volSlider.addEventListener("input", () => { if (gainNode) gainNode.gain.value = (+volSlider.value / 100) ** 2; });
 function unlockAudio() {
   if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-  if (running) statusEl.textContent = "Running — Arrows + Z/X/C. \u{1F50A} sound on.";
+  if (running) statusEl.textContent = "Running · \u{1F50A} sound on";
 }
 addEventListener("pointerdown", unlockAudio);
 addEventListener("keydown", unlockAudio);
@@ -180,8 +180,8 @@ function boot(bytes) {
   pauseBtn.disabled = false;
   pauseBtn.textContent = "Pause";
   statusEl.textContent = audioCtx.state === "running"
-    ? "Running — Arrows + Z/X/C."
-    : "Running — click anywhere or press a key for \u{1F50A} sound.";
+    ? "Running · \u{1F50A} sound on"
+    : "Running · press a key for \u{1F50A} sound";
   last = performance.now(); loop._p = last; accMs = 0; fpsFrames = 0; fpsAcc = 0;
   requestAnimationFrame(loop);
 }
