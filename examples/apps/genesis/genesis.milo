@@ -291,7 +291,16 @@ fn main(): i32 {
                 blit(m, fb, w, maxW, rgba)
                 SDL_UpdateTexture(tex, 0 as *u8, (&rgba[0]) as *u8, (maxW * 4) as i32)
                 SDL_RenderClear(ren)
-                SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
+                // Copy only the live w*h region of the (maxW-wide) texture, scaled to
+                // fill the window — else an H32 (256px) frame leaves the right 64
+                // texture columns (unused, black) showing as a black bar. Genesis
+                // stretches H32 to the same full width as H40 on a TV.
+                var srcRect: [u8; 16] = [0; 16]
+                srcRect[8] = (w & 0xFF) as u8
+                srcRect[9] = ((w >> 8) & 0xFF) as u8
+                srcRect[12] = (h & 0xFF) as u8
+                srcRect[13] = ((h >> 8) & 0xFF) as u8
+                SDL_RenderCopy(ren, tex, (&srcRect[0]) as *u8, 0 as *u8)
                 SDL_RenderPresent(ren)
                 if audioDev == 0 {
                     SDL_Delay(16)
