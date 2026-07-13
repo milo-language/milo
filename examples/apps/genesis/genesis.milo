@@ -83,8 +83,25 @@ fn loadRom(m: &mut Mem, cart: &Cart) {
 // interrupt at the start of vblank when enabled.
 fn runFrame(cpu: &mut M68k, m: &mut Mem) {
     var line: i64 = 0
+    var hIntCounter: i64 = m.vdpRegs[10]
     while line < 262 {
         m.vdpLine = line
+        // Horizontal interrupt (level 4): the counter counts down once per active
+        // scanline and, when it expires, fires an H-int (if reg0 bit4 enables it)
+        // and reloads from reg10. It is held reloaded throughout vblank. Games use
+        // it for mid-frame raster effects and timing.
+        if line < 224 {
+            if hIntCounter == 0 {
+                hIntCounter = m.vdpRegs[10]
+                if (m.vdpRegs[0] & 0x10) != 0 {
+                    deliverInterrupt(cpu, m, 4)
+                }
+            } else {
+                hIntCounter = hIntCounter - 1
+            }
+        } else {
+            hIntCounter = m.vdpRegs[10]
+        }
         // ~130 instructions per scanline; co-run the Z80 (sound CPU) at ~half rate.
         var k: i64 = 0
         while k < 130 {

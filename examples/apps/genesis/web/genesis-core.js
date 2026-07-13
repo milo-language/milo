@@ -638,8 +638,21 @@ function setButtons(h, p) {
 
 function runFrame(cpu, m) {
   let line = 0;
+  let hIntCounter = m.vdpRegs[10];
   while ((line < 262)) {
     m.vdpLine = line;
+    if ((line < 224)) {
+      if ((hIntCounter == 0)) {
+        hIntCounter = m.vdpRegs[10];
+        if ((((m.vdpRegs[0] & 16) >>> 0) != 0)) {
+          deliverInterrupt(cpu, m, 4);
+        }
+      } else {
+        hIntCounter = Math.trunc((hIntCounter - 1));
+      }
+    } else {
+      hIntCounter = m.vdpRegs[10];
+    }
     let k = 0;
     while ((k < 130)) {
       if ((!cpu.halted)) {

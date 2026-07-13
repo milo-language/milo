@@ -90,6 +90,7 @@ fn main(): i32 {
     var wav: Vec<u8> = Vec.new()
     // synthetic scanline clock: ~1 line per 130 instructions, 262 lines/frame
     var lineClock: i64 = 0
+    var hIntCounter: i64 = m.vdpRegs[10]
     var wasVblank = false
     while steps < maxSteps {
         let okPc = cpu.pc
@@ -114,6 +115,21 @@ fn main(): i32 {
         if lineClock >= 130 {
             lineClock = 0
             m.vdpLine = m.vdpLine + 1
+            // Horizontal interrupt (level 4): counter counts down per active line,
+            // fires an H-int when it expires (reg0 bit4), reloads from reg10; held
+            // reloaded through vblank.
+            if m.vdpLine < 224 {
+                if hIntCounter == 0 {
+                    hIntCounter = m.vdpRegs[10]
+                    if (m.vdpRegs[0] & 0x10) != 0 {
+                        deliverInterrupt(cpu, m, 4)
+                    }
+                } else {
+                    hIntCounter = hIntCounter - 1
+                }
+            } else {
+                hIntCounter = m.vdpRegs[10]
+            }
             if m.vdpLine >= 262 {
                 m.vdpLine = 0
                 frames = frames + 1
