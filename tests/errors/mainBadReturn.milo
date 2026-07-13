@@ -1,0 +1,5 @@
+// @error: 'main' must return i32 or void
+
+fn main(): i64 {
+    return 0
+}

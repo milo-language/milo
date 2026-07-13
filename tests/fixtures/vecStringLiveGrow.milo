@@ -1,0 +1,23 @@
+// @expect: 172032 100
+// Regression: growing a `string` via .push() across many iterations while a
+// large Vec is simultaneously live used to corrupt the heap (a String realloc
+// clobbered the Vec's buffer, SIGTRAP/SIGSEGV). Fixed by the drop-old-value +
+// in-place string-append codegen work; this locks it in.
+fn main(): i32 {
+    var fb: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < 57344 {
+        fb.push(i) i = i + 1
+    }
+    var out = ""
+    i = 0
+    while i < 57344 {
+        let px = fb[i]
+        out.push(((px >> 16) & 0xFF) as u8)
+        out.push(((px >> 8) & 0xFF) as u8)
+        out.push((px & 0xFF) as u8)
+        i = i + 1
+    }
+    print($"{out.len} {fb[100]}")
+    return 0
+}

@@ -996,6 +996,15 @@ export class TypeChecker {
       if (ret.tag === "ref") {
         this.error(`function '${fn.name}': cannot return a reference`, undefined, `references are second-class — return an owned value instead`);
       }
+      // main lowers to a C `int main`; codegen forces its LLVM return to i32, so
+      // any other return type emits a mismatched `ret` and fails at the LLVM
+      // stage instead of here. Catch it in the checker.
+      if (fn.name === "main" && !fn.isExtern) {
+        const okMain = ret.tag === "void" || (ret.tag === "int" && ret.bits === 32 && ret.signed);
+        if (!okMain) {
+          this.error(`'main' must return i32 or void, got ${typeName(ret)}`, fn.span, `the entry point lowers to C 'int main'`);
+        }
+      }
       // extern signatures must be C-representable — catch ABI-broken decls here rather
       // than emitting silently-wrong IR in codegen
       if (fn.isExtern) {

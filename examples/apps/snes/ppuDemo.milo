@@ -68,8 +68,8 @@ fn main(): i32 {
     }
     renderFrame(p, fb)
 
-    // Emit a binary PPM (P6). Pre-size the buffer: growing a string while a
-    // large Vec is live corrupts the heap in the current Milo runtime.
+    // Emit a binary PPM (P6). Pre-size the buffer to avoid repeated reallocs
+    // across the ~172k pushes below.
     var out = String.withCapacity(200000)
     let hdr = "P6\n256 224\n255\n"
     i = 0

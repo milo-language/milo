@@ -7765,18 +7765,94 @@ export class Codegen {
 
   private usedSatIntrinsics?: Set<string>;
 
+  // LLVM encodes a double constant as its raw 64-bit hex pattern.
+  private formatFloatBits(v: number): string {
+    const buf = new ArrayBuffer(8);
+    new Float64Array(buf)[0] = v;
+    const bits = new BigUint64Array(buf)[0];
+    return `0x${bits.toString(16).toUpperCase().padStart(16, "0")}`;
+  }
+
+  // Fold a compile-time-constant numeric expression (literals + arithmetic on
+  // them) to an int/float value. The checker's isConstGlobalInit already admits
+  // BinOp/UnaryOp of constants as valid global initializers, but without this
+  // fold codegen fell through to "0" and silently zeroed them (e.g. a global
+  // `let x: f64 = a / b` became 0.0). Int math stays in bigint to preserve i64
+  // precision; float math promotes to Number.
+  private tryConstNumeric(
+    expr: import("./hir").HIRExpr,
+  ): { kind: "int"; v: bigint } | { kind: "float"; v: number } | null {
+    switch (expr.kind) {
+      case "IntLit": return { kind: "int", v: BigInt(expr.value) };
+      case "FloatLit": return { kind: "float", v: expr.value };
+      case "BoolLit": return { kind: "int", v: expr.value ? 1n : 0n };
+      case "UnaryOp": {
+        const o = this.tryConstNumeric(expr.operand);
+        if (!o) return null;
+        if (expr.op === "-") return o.kind === "float" ? { kind: "float", v: -o.v } : { kind: "int", v: -o.v };
+        if (expr.op === "~" && o.kind === "int") return { kind: "int", v: -o.v - 1n }; // two's-complement bitwise-not
+        if (expr.op === "!" && o.kind === "int") return { kind: "int", v: o.v === 0n ? 1n : 0n };
+        return null;
+      }
+      case "Cast": {
+        const o = this.tryConstNumeric(expr.operand);
+        if (!o) return null;
+        if (expr.targetType.tag === "float") return { kind: "float", v: o.kind === "float" ? o.v : Number(o.v) };
+        if (expr.targetType.tag === "int") return { kind: "int", v: o.kind === "float" ? BigInt(Math.trunc(o.v)) : o.v };
+        return null;
+      }
+      case "BinOp": {
+        const l = this.tryConstNumeric(expr.left);
+        const r = this.tryConstNumeric(expr.right);
+        if (!l || !r) return null;
+        const asFloat = expr.type.tag === "float" || l.kind === "float" || r.kind === "float";
+        if (asFloat) {
+          const a = l.kind === "float" ? l.v : Number(l.v);
+          const b = r.kind === "float" ? r.v : Number(r.v);
+          switch (expr.op) {
+            case "+": return { kind: "float", v: a + b };
+            case "-": return { kind: "float", v: a - b };
+            case "*": return { kind: "float", v: a * b };
+            case "/": return { kind: "float", v: a / b };
+            default: return null;
+          }
+        }
+        const a = l.v as bigint, b = r.v as bigint;
+        switch (expr.op) {
+          case "+": return { kind: "int", v: a + b };
+          case "-": return { kind: "int", v: a - b };
+          case "*": return { kind: "int", v: a * b };
+          case "/": return b === 0n ? null : { kind: "int", v: a / b };  // bigint / truncates toward zero, matches sdiv
+          case "%": return b === 0n ? null : { kind: "int", v: a % b };
+          case "<<": return { kind: "int", v: a << b };
+          case ">>": return { kind: "int", v: a >> b };
+          case "&": return { kind: "int", v: a & b };
+          case "|": return { kind: "int", v: a | b };
+          case "^": return { kind: "int", v: a ^ b };
+          default: return null;
+        }
+      }
+      default: return null;
+    }
+  }
+
   private tryConstantExpr(expr: import("./hir").HIRExpr): string | null {
     switch (expr.kind) {
       case "IntLit": return expr.value.toString();
-      case "FloatLit": {
-        const buf = new ArrayBuffer(8);
-        new Float64Array(buf)[0] = expr.value;
-        const bits = new BigUint64Array(buf)[0];
-        return `0x${bits.toString(16).toUpperCase().padStart(16, "0")}`;
-      }
+      case "FloatLit": return this.formatFloatBits(expr.value);
       case "BoolLit": return expr.value ? "1" : "0";
+      case "BinOp":
+      case "UnaryOp": {
+        const n = this.tryConstNumeric(expr);
+        if (n === null) return null;
+        return n.kind === "float" ? this.formatFloatBits(n.v) : n.v.toString();
+      }
       case "Cast":
         if (expr.type.tag === "ptr") return "null";
+        if (expr.type.tag === "int" || expr.type.tag === "float") {
+          const n = this.tryConstNumeric(expr);
+          if (n !== null) return n.kind === "float" ? this.formatFloatBits(n.v) : n.v.toString();
+        }
         return null;
       case "StructLit": {
         const layout = this.structLayouts.get(expr.name);
