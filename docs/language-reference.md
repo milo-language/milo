@@ -115,9 +115,14 @@ let a: u8 = 255
 a.wrappingAdd(1)     // 0 — wraps, even in debug builds
 a.saturatingAdd(1)   // 255 — clamps to max
 let r = a.checkedAdd(1)  // Option.None — returns None on overflow
+
+let q: i32 = 10
+q.checkedDiv(0)      // Option.None — None on divide-by-zero
+q.checkedRem(0)      // Option.None — None on divide-by-zero
 ```
 
-Available: `wrappingAdd/Sub/Mul`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul`.
+Available: `wrappingAdd/Sub/Mul`, `saturatingAdd/Sub/Mul`, `checkedAdd/Sub/Mul/Div/Rem`.
+`checkedDiv`/`checkedRem` also return `None` on signed `INT_MIN / -1` overflow.
 
 ### Ranged Integer Types
 

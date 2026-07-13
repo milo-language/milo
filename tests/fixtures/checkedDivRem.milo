@@ -1,0 +1,52 @@
+// @expect: 20
+// @expect: divzero
+// @expect: 1
+// @expect: overflow
+
+fn main(): i32 {
+    let a: i32 = 100
+    let b: i32 = 5
+    match a.checkedDiv(b) {
+        Option.Some(v) => {
+            print(v)
+        } // 20
+        Option.None => {
+            print("divzero")
+        }
+    }
+
+    let z: i32 = 0
+    match a.checkedDiv(z) {
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("divzero")
+        } // divide-by-zero
+    }
+
+    let c: i32 = 7
+    let d: i32 = 3
+    match c.checkedRem(d) {
+        Option.Some(v) => {
+            print(v)
+        } // 1
+        Option.None => {
+            print("divzero")
+        }
+    }
+
+    // INT_MIN / -1 overflows signed division
+    let min: i32 = -2147483648
+    let neg1: i32 = -1
+    match min.checkedDiv(neg1) {
+        Option.Some(v) => {
+            print(v)
+        }
+        Option.None => {
+            print("overflow")
+        } // overflow
+    }
+
+    return 0
+}

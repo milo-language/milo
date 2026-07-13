@@ -623,6 +623,7 @@ class LowerCtx {
             wrappingAdd: "add", wrappingSub: "sub", wrappingMul: "mul",
             saturatingAdd: "add", saturatingSub: "sub", saturatingMul: "mul",
             checkedAdd: "add", checkedSub: "sub", checkedMul: "mul",
+            checkedDiv: "div", checkedRem: "rem",
           };
           const op = opMap[expr.method];
           if (op) {

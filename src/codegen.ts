@@ -7996,6 +7996,10 @@ export class Codegen {
 
   // x.checkedAdd(y) — returns Option<T>, None on overflow
   private genCheckedArith(expr: HIRExpr & { kind: "CheckedArith" }, lines: string[]): [string[], string, string] {
+    // div/rem have no *.with.overflow intrinsic — the failure modes are divisor==0
+    // and (signed) INT_MIN/-1, and the division itself traps on those, so it must be
+    // guarded and executed only on the safe path. Handled separately.
+    if (expr.op === "div" || expr.op === "rem") return this.genCheckedDivRem(expr, lines);
     const [ll, lv, lt] = this.genExpr(expr.left);
     const [rl, rv] = this.genExpr(expr.right);
     lines.push(...ll, ...rl);
@@ -8059,6 +8063,85 @@ export class Codegen {
     const result = this.nextTemp();
     lines.push(`  ${result} = phi ${optionTy} [ ${someVal}, %${okLabel} ], [ ${noneVal}, %${overflowLabel} ]`);
 
+    return [lines, result, optionTy];
+  }
+
+  // x.checkedDiv(y) / x.checkedRem(y) — Option<T>, None on divide-by-zero or
+  // (signed) INT_MIN/-1. The divide is emitted only on the safe branch because
+  // LLVM sdiv/udiv trap on a zero divisor.
+  private genCheckedDivRem(expr: HIRExpr & { kind: "CheckedArith" }, lines: string[]): [string[], string, string] {
+    const [ll, lv, lt] = this.genExpr(expr.left);
+    const [rl, rv] = this.genExpr(expr.right);
+    lines.push(...ll, ...rl);
+    const signed = expr.left.type.tag === "int" && expr.left.type.signed;
+    const bits = expr.left.type.tag === "int" ? expr.left.type.bits : 32;
+
+    const optionTy = `%${expr.optionEnumName}`;
+    const optionLayout = this.enumLayouts.get(expr.optionEnumName);
+    if (!optionLayout) throw new Error(`Option enum '${expr.optionEnumName}' not found`);
+    const someTag = optionLayout.variants.get("Some")!.tag;
+    const noneTag = optionLayout.variants.get("None")!.tag;
+
+    const zeroCmp = this.nextTemp();
+    lines.push(`  ${zeroCmp} = icmp eq ${lt} ${rv}, 0`);
+    let flag = zeroCmp;
+    if (signed) {
+      // signed overflow: INT_MIN / -1 has no representable result
+      const minVal = (-(BigInt(2) ** BigInt(bits - 1))).toString();
+      const isMin = this.nextTemp();
+      lines.push(`  ${isMin} = icmp eq ${lt} ${lv}, ${minVal}`);
+      const isNeg1 = this.nextTemp();
+      lines.push(`  ${isNeg1} = icmp eq ${lt} ${rv}, -1`);
+      const ovf = this.nextTemp();
+      lines.push(`  ${ovf} = and i1 ${isMin}, ${isNeg1}`);
+      const combined = this.nextTemp();
+      lines.push(`  ${combined} = or i1 ${zeroCmp}, ${ovf}`);
+      flag = combined;
+    }
+
+    const okLabel = this.nextLabel("checked.ok");
+    const overflowLabel = this.nextLabel("checked.overflow");
+    const doneLabel = this.nextLabel("checked.done");
+
+    lines.push(`  br i1 ${flag}, label %${overflowLabel}, label %${okLabel}`);
+
+    // safe → divide (divisor non-zero, no signed overflow) → Some(val)
+    lines.push(`${okLabel}:`);
+    const llvmOp = (signed ? "s" : "u") + expr.op; // sdiv/udiv/srem/urem
+    const val = this.nextTemp();
+    lines.push(`  ${val} = ${llvmOp} ${lt} ${lv}, ${rv}`);
+    const someAlloca = this.nextTemp();
+    lines.push(`  ${someAlloca} = alloca ${optionTy}`);
+    const someTagPtr = this.nextTemp();
+    lines.push(`  ${someTagPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 0`);
+    lines.push(`  store i32 ${someTag}, ptr ${someTagPtr}`);
+    const somePayloadPtr = this.nextTemp();
+    lines.push(`  ${somePayloadPtr} = getelementptr ${optionTy}, ptr ${someAlloca}, i32 0, i32 1`);
+    lines.push(`  store ${lt} ${val}, ptr ${somePayloadPtr}`);
+    const someVal = this.nextTemp();
+    lines.push(`  ${someVal} = load ${optionTy}, ptr ${someAlloca}`);
+    lines.push(`  br label %${doneLabel}`);
+
+    // unsafe → None
+    lines.push(`${overflowLabel}:`);
+    const noneAlloca = this.nextTemp();
+    lines.push(`  ${noneAlloca} = alloca ${optionTy}`);
+    this.needsMemset = true;
+    const optSize = this.nextTemp();
+    lines.push(`  ${optSize} = getelementptr ${optionTy}, ptr null, i32 1`);
+    const optSizeI = this.nextTemp();
+    lines.push(`  ${optSizeI} = ptrtoint ptr ${optSize} to i64`);
+    lines.push(`  call ptr @memset(ptr ${noneAlloca}, i32 0, i64 ${optSizeI})`);
+    const noneTagPtr = this.nextTemp();
+    lines.push(`  ${noneTagPtr} = getelementptr ${optionTy}, ptr ${noneAlloca}, i32 0, i32 0`);
+    lines.push(`  store i32 ${noneTag}, ptr ${noneTagPtr}`);
+    const noneVal = this.nextTemp();
+    lines.push(`  ${noneVal} = load ${optionTy}, ptr ${noneAlloca}`);
+    lines.push(`  br label %${doneLabel}`);
+
+    lines.push(`${doneLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = phi ${optionTy} [ ${someVal}, %${okLabel} ], [ ${noneVal}, %${overflowLabel} ]`);
     return [lines, result, optionTy];
   }
 

@@ -4022,7 +4022,7 @@ export class TypeChecker {
         if (objType.tag === "int") {
           const wrappingMethods = ["wrappingAdd", "wrappingSub", "wrappingMul"];
           const saturatingMethods = ["saturatingAdd", "saturatingSub", "saturatingMul"];
-          const checkedMethods = ["checkedAdd", "checkedSub", "checkedMul"];
+          const checkedMethods = ["checkedAdd", "checkedSub", "checkedMul", "checkedDiv", "checkedRem"];
           if (wrappingMethods.includes(expr.method) || saturatingMethods.includes(expr.method)) {
             if (expr.args.length !== 1) { this.error(`'${expr.method}' expects 1 argument`, sp); }
             const argType = this.checkExprWithHint(expr.args[0], objType);
