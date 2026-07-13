@@ -194,7 +194,18 @@ function formatMiloType(t: import("./ast").MiloType): string {
 function extractDocComment(source: string, declLineIndex: number): string | null {
   const lines = source.split("\n");
   const comments: string[] = [];
-  for (let i = declLineIndex - 1; i >= 0; i--) {
+  let i = declLineIndex - 1;
+  // Skip the decl's attribute block (`@ derive(...)` etc.) so the doc comment
+  // above it still attaches — an attribute is part of the decl, not a separator.
+  // Blanks interleaved with the attributes are skipped too, but a lone blank with
+  // no attribute stays a hard stop (a blank-separated comment is not a doc).
+  let j = i, sawAttr = false;
+  while (j >= 0 && (lines[j].trim() === "" || lines[j].trim().startsWith("@"))) {
+    if (lines[j].trim().startsWith("@")) sawAttr = true;
+    j--;
+  }
+  if (sawAttr) i = j;
+  for (; i >= 0; i--) {
     const trimmed = lines[i].trim();
     if (trimmed.startsWith("//")) {
       if (trimmed.includes("──")) break;

@@ -97,6 +97,13 @@ fn isStmtLeadKeyword(s: &string): bool {
     s == "continue" || s == "unsafe"
 }
 
+// The lexer emits `@` as an Ident with text "@" (unknown-char fallthrough), so an
+// attribute like `@ derive(...)` starts with such a token rather than a dedicated
+// kind.
+fn isAtToken(tok: &Token): bool {
+    return tok.kind == TokKind.Ident && tok.text == "@"
+}
+
 // ── Lexer ──
 
 struct Lexer {
@@ -617,6 +624,27 @@ fn commentLeadsTopLevel(tokens: &Vec<Token>, i: i64): bool {
             j = j + 1
             continue
         }
+        // An attribute (`@ derive(...)`) is part of the decl it precedes — skip it
+        // so a doc comment above the attribute still counts as leading the decl.
+        if isAtToken(tokens[j]) {
+            j = j + 1
+            if j < tokens.len && tokens[j].kind == TokKind.Ident {
+                j = j + 1
+            }
+            if j < tokens.len && tokens[j].kind == TokKind.LParen {
+                var d: i64 = 1
+                j = j + 1
+                while j < tokens.len && d > 0 {
+                    if tokens[j].kind == TokKind.LParen {
+                        d = d + 1
+                    } else if tokens[j].kind == TokKind.RParen {
+                        d = d - 1
+                    }
+                    j = j + 1
+                }
+            }
+            continue
+        }
         return k == TokKind.Keyword && isTopLevel(tokens[j].text)
     }
     return false
@@ -865,6 +893,9 @@ fn formatSource(src: string): string {
     var lastWasExtern: bool = false
     // Only own-line comments can be doc comments; `} // note` cannot.
     var lastWasOwnLineComment: bool = false
+    // True while emitting a top-level attribute (`@ derive(...)`) and up to the decl
+    // it prefixes, so no blank line is inserted between the attribute and its decl.
+    var afterAttr: bool = false
 
     for i in 0..tokens.len {
         let tok = tokens[i]
@@ -935,8 +966,12 @@ fn formatSource(src: string): string {
         // — inserting it there detaches the doc from what it documents.
         let attachedDoc = lastWasOwnLineComment && !blank
 
-        // Blank line before top-level decls
-        if depth == 0 && tok.kind == TokKind.Keyword && isTopLevel(tok.text) && !hugExtern && !attachedDoc {
+        // Blank line before a top-level item. A `@ attribute` starts the item, so
+        // the blank goes above it (and any doc comment above that); no blank is
+        // inserted between the attribute and the decl it prefixes (afterAttr).
+        let startsTopLevelItem = (tok.kind == TokKind.Keyword && isTopLevel(tok.text)) ||
+        (isAtToken(tok) && depth == 0)
+        if depth == 0 && startsTopLevelItem && !hugExtern && !attachedDoc && !afterAttr {
             if out.len > 0 && !out.endsWith("\n\n") {
                 if !atLineStart {
                     out = out + "\n"
@@ -1038,6 +1073,14 @@ fn formatSource(src: string): string {
         lastWasExtern = tok.kind == TokKind.Keyword && tok.text == "extern"
         lastWasOwnLineComment = false
         prevKind = tok.kind
+        // A top-level `@` opens an attribute that prefixes the next decl: hold
+        // afterAttr across the attribute so no blank splits it from the decl, then
+        // clear it once the decl keyword lands.
+        if isAtToken(tok) && depth == 0 {
+            afterAttr = true
+        } else if tok.kind == TokKind.Keyword && isTopLevel(tok.text) && depth == 0 {
+            afterAttr = false
+        }
 
         // { increases indent and forces newline
         if tok.kind == TokKind.LBrace {
