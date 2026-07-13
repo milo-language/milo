@@ -33,7 +33,7 @@ class Cart {
 }
 
 class Mem {
-  constructor(ram, touched, genesis, vram, cram, vsram, vdpRegs, vdpAddr, vdpCode, vdpFirst, vdpPending, vdpLine, dmaFillPending, fillAddr, fillInc, fillLen, lastDataByte, z80Busreq, z80Reset, z80, ctrl1, tmssUnlocked, pad1, padTh) {
+  constructor(ram, touched, genesis, vram, cram, vsram, vdpRegs, vdpAddr, vdpCode, vdpFirst, vdpPending, vdpLine, dmaFillPending, fillAddr, fillInc, fillLen, lastDataByte, z80Busreq, z80Reset, z80, ctrl1, tmssUnlocked, pad1, padTh, ioRegs) {
     this.ram = ram;
     this.touched = touched;
     this.genesis = genesis;
@@ -58,6 +58,7 @@ class Mem {
     this.tmssUnlocked = tmssUnlocked;
     this.pad1 = pad1;
     this.padTh = padTh;
+    this.ioRegs = ioRegs;
   }
 }
 
@@ -782,11 +783,11 @@ function newMem() {
     ram.push(0);
     i = Math.trunc((i + 1));
   }
-  return new Mem(ram, [], false, [], Array.from({length: 64}, () => __clone(0)), Array.from({length: 40}, () => __clone(0)), Array.from({length: 24}, () => __clone(0)), 0, 0, 0, false, 0, false, 0, 0, 0, 0, false, true, newZ80(), 0, false, 0, false);
+  return new Mem(ram, [], false, [], Array.from({length: 64}, () => __clone(0)), Array.from({length: 40}, () => __clone(0)), Array.from({length: 24}, () => __clone(0)), 0, 0, 0, false, 0, false, 0, 0, 0, 0, false, true, newZ80(), 0, false, 0, false, Array.from({length: 16}, () => __clone(0)));
 }
 
 function z80Running(m) {
-  return (!m.z80Reset);
+  return ((!m.z80Reset) && (!m.z80Busreq));
 }
 
 function padRead(m) {
@@ -857,6 +858,10 @@ function memWrite8(m, addr, val) {
         } else {
           if ((a == 10551299)) {
             m.padTh = (((val & 64) >>> 0) != 0);
+          } else {
+            if (((a >= 10551304) && (a <= 10551311))) {
+              m.ioRegs[((((a | 1) >>> 0) & 15) >>> 0)] = ((val & 255) >>> 0);
+            }
           }
         }
       }
@@ -918,8 +923,12 @@ function devRead16(m, a) {
   if ((a == 10551296)) {
     return 160;
   }
-  if (((a >= 10551298) && (a <= 10551311))) {
+  if (((a >= 10551298) && (a <= 10551303))) {
     return 65535;
+  }
+  if (((a >= 10551304) && (a <= 10551311))) {
+    const b = m.ioRegs[((((a | 1) >>> 0) & 15) >>> 0)];
+    return ((((b << 8) >>> 0) | b) >>> 0);
   }
   return 0;
 }
@@ -983,6 +992,10 @@ function devWrite16(m, a, val) {
   if ((a == 10551298)) {
     m.ctrl1 = ((val & 65535) >>> 0);
     m.padTh = (((val & 64) >>> 0) != 0);
+    return;
+  }
+  if (((a >= 10551304) && (a <= 10551310))) {
+    m.ioRegs[((((a | 1) >>> 0) & 15) >>> 0)] = ((val & 255) >>> 0);
   }
 }
 
