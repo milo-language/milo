@@ -236,13 +236,15 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
 fn mapper227Write(bus: &mut Bus, a: i64): void {
     let bank = (a >> 2) & 0x1F
     let l = (a >> 7) & 1
-    let s = a & 1
+    let s = a & 1 // PRG A14 source: 0 = follows CPU A14 (32K contiguous), 1 = fixed (16K mirror)
     let mirror = (a >> 1) & 1
     if l == 1 {
-        if s == 1 {
+        if s == 0 {
+            // 32 KiB (NROM-256): consecutive banks at $8000 and $C000.
             bus.m227Lo = bank & 0x1E
             bus.m227Hi = (bank & 0x1E) | 1
         } else {
+            // 16 KiB (NROM-128): the bank mirrored into both windows.
             bus.m227Lo = bank
             bus.m227Hi = bank
         }
