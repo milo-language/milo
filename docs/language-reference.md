@@ -49,6 +49,14 @@ let name = "Milo"      // type inference works
 Under the hood, `let` maps to an SSA register and `var` maps to a stack allocation.
 This means what you write is what LLVM sees — no hidden costs.
 
+### Semicolons
+
+Statements are separated by newlines — no terminator required. A trailing `;` is
+allowed but optional (`let x = 1;` and `let x = 1` are identical), so habit doesn't
+fight you; `milo fmt` strips it, keeping the canonical form newline-only. Unlike
+Rust, a `;` never changes a value — a block's value is its last expression whether
+or not a `;` follows. A `;` *inside* an expression is still an error.
+
 ---
 
 ## Primitive Types

@@ -22,7 +22,10 @@ type_name   = "i8" | "i16" | "i32" | "i64"
             | "bool" | "void"
             | IDENT ;
 
-block       = "{" { statement } "}" ;
+(* Statements are newline/grammar-delimited; a ";" between or after them is an
+   optional cosmetic no-op (the formatter strips it). It is not a value-voiding
+   terminator as in Rust. Note: the ";" in "[T; N]" array types is separate. *)
+block       = "{" { ";" | statement } "}" ;
 
 statement   = let_decl | var_decl | assign_stmt | return_stmt
             | if_stmt | while_stmt | expr_stmt ;
