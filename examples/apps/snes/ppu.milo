@@ -32,6 +32,7 @@ struct Ppu {
     cgLatch: i64
     cgHi: bool // writing the high byte of a color word
     tm: i64 // $212C main-screen layer enable (bit0-3 = BG1-4, bit4 = OBJ)
+    ts: i64 // $212D sub-screen layer enable
 
     // Mode 7 affine state. Matrix A/D/B/C are signed 8.8 fixed ($211B-$211E);
     // center X/Y ($211F/$2120) and scroll ($210D/$210E) are 13-bit signed. All
@@ -65,7 +66,7 @@ fn newPpu(): Ppu {
         inidisp: 0, obsel: 0, oamaddr: 0, oamLatch: 0, oamHi: false,
         bgmode: 0, bgsc0: 0, bgsc1: 0, bgsc2: 0, bgsc3: 0, bg12nba: 0, bg34nba: 0,
         bghofs: ppuZerosI64(4), bgvofs: ppuZerosI64(4), scrollLatch: 0, scrollHi: 0,
-        vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false, tm: 0x1F,
+        vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false, tm: 0x1F, ts: 0,
         m7a: 0x100, m7b: 0, m7c: 0, m7d: 0x100, m7x: 0, m7y: 0, m7hofs: 0, m7vofs: 0,
         m7sel: 0, m7Latch: 0
     }
@@ -217,6 +218,9 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
     if reg == 0x2C {
         p.tm = v return
     } // main-screen layer enable
+    if reg == 0x2D {
+        p.ts = v return
+    } // sub-screen layer enable
     // remaining regs (windows, color math, mosaic, mode7, ...) modeled later
 }
 
@@ -513,35 +517,18 @@ fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
     }
 }
 
-// Render a full frame (Mode 1: BG3 2bpp behind, BG2/BG1 4bpp, sprites on top).
-// Layers composite by transparency; exact priority bits refined later.
-fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
-    let bright = p.inidisp & 0x0F
-    let forceBlank = (p.inidisp & 0x80) != 0
-    let backdrop: i64 = if forceBlank {
-        0
-    } else {
-        cgToRgb(p, 0, bright)
-    }
-
-    var i: i64 = 0
-    while i < 256 * 224 {
-        fb[i] = backdrop i = i + 1
-    }
-    if forceBlank {
-        return
-    }
-
-    // char bases (each nibble of bg12nba / bg34nba, in 0x1000-word units).
+// Render the mode's BG layers whose bit is set in `enable` (a $212C/$212D mask),
+// back-to-front, compositing onto fb by transparency.
+fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64): void {
     let ch1 = (p.bg12nba & 0x0F) << 12
     let ch2 = ((p.bg12nba >> 4) & 0x0F) << 12
     let ch3 = (p.bg34nba & 0x0F) << 12
     let ch4 = ((p.bg34nba >> 4) & 0x0F) << 12
     let mode = p.bgmode & 0x07
-    let en1 = (p.tm & 0x01) != 0
-    let en2 = (p.tm & 0x02) != 0
-    let en3 = (p.tm & 0x04) != 0
-    let en4 = (p.tm & 0x08) != 0
+    let en1 = (enable & 0x01) != 0
+    let en2 = (enable & 0x02) != 0
+    let en3 = (enable & 0x04) != 0
+    let en4 = (enable & 0x08) != 0
     if mode == 0 {
         // Mode 0: four 2bpp BGs; palette groups at cgram 0/32/64/96.
         if en4 {
@@ -580,7 +567,34 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
             renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0)
         }
     }
-    if (p.tm & 0x10) != 0 {
+}
+
+// Render a full frame. The sub-screen ($212D TS) layers are drawn first as the
+// base and the main-screen ($212C TM) layers on top — an approximation of color
+// math (no add/half blending) that at least surfaces backgrounds games place on
+// the sub-screen (e.g. SMW's overworld map behind a windowed main-screen border).
+fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
+    let bright = p.inidisp & 0x0F
+    let forceBlank = (p.inidisp & 0x80) != 0
+    let backdrop: i64 = if forceBlank {
+        0
+    } else {
+        cgToRgb(p, 0, bright)
+    }
+
+    var i: i64 = 0
+    while i < 256 * 224 {
+        fb[i] = backdrop i = i + 1
+    }
+    if forceBlank {
+        return
+    }
+
+    if p.ts != 0 {
+        renderScreenBGs(p, fb, bright, p.ts)
+    }
+    renderScreenBGs(p, fb, bright, p.tm)
+    if ((p.tm | p.ts) & 0x10) != 0 {
         renderSprites(p, fb, bright)
     }
 }
