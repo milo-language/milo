@@ -12,7 +12,13 @@ from "./cart68k" import {
     Cart, loadCart
 }
 from "./m68k" import {
-    M68k, Mem, newCpu, newMem, step, deliverInterrupt
+    M68k, Mem, newCpu, newMem, step, deliverInterrupt, z80Running
+}
+from "./z80" import {
+    stepZ80
+}
+from "./sound" import {
+    Synth, newSynth, synthSample
 }
 from "./render" import {
     renderIndexed, frameWidth, frameHeight, cramR, cramG, cramB
@@ -45,7 +51,16 @@ extern fn SDL_Delay(ms: u32): void
 
 extern fn SDL_Quit(): void
 
+extern fn SDL_OpenAudioDevice(device: *u8, iscapture: i32, desired: *u8, obtained: *u8, allowed: i32): u32
+
+extern fn SDL_QueueAudio(dev: u32, data: *u8, len: u32): i32
+
+extern fn SDL_PauseAudioDevice(dev: u32, pause_on: i32): void
+
+extern fn SDL_GetQueuedAudioSize(dev: u32): u32
+
 let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_INIT_AUDIO: u32 = 0x10
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
 let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
@@ -66,11 +81,14 @@ fn runFrame(cpu: &mut M68k, m: &mut Mem) {
     var line: i64 = 0
     while line < 262 {
         m.vdpLine = line
-        // ~130 instructions per scanline (synthetic pacing)
+        // ~130 instructions per scanline; co-run the Z80 (sound CPU) at ~half rate.
         var k: i64 = 0
         while k < 130 {
             if !cpu.halted {
                 step(cpu, m)
+            }
+            if z80Running(m) && (k & 1) == 0 {
+                stepZ80(m.z80)
             }
             k = k + 1
         }
@@ -78,6 +96,21 @@ fn runFrame(cpu: &mut M68k, m: &mut Mem) {
             deliverInterrupt(cpu, m, 6)
         }
         line = line + 1
+    }
+}
+
+// Generate one frame of audio and queue it to SDL (735 samples @ 44.1 kHz).
+fn queueAudio(synth: &mut Synth, m: &Mem, dev: u32) {
+    var buf: Vec<u8> = Vec.new()
+    var sa: i64 = 0
+    while sa < 735 {
+        let smp = synthSample(synth, m.z80)
+        buf.push((smp & 0xFF) as u8)
+        buf.push(((smp >> 8) & 0xFF) as u8)
+        sa = sa + 1
+    }
+    unsafe {
+        SDL_QueueAudio(dev, (&buf[0]) as *u8, buf.len as u32)
     }
 }
 
@@ -121,6 +154,7 @@ fn main(): i32 {
 
     var m = newMem()
     m.genesis = true
+    m.z80.gen = true
     loadRom(m, cart)
     let sp = ((m.ram[0]as i64) << 24) | ((m.ram[1]as i64) << 16) | ((m.ram[2]as i64) << 8) | (m.ram[3]as i64)
     let pc = ((m.ram[4]as i64) << 24) | ((m.ram[5]as i64) << 16) | ((m.ram[6]as i64) << 8) | (m.ram[7]as i64)
@@ -140,11 +174,26 @@ fn main(): i32 {
         t = t + 1
     }
 
-    if SDL_Init(SDL_INIT_VIDEO) != 0 {
+    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0 {
         print("SDL_Init failed")
         return 1
     }
+    var synth = newSynth()
     unsafe {
+        // SDL_AudioSpec (32 bytes): freq 44100, AUDIO_S16LSB (0x8010), mono, 2048 samples.
+        var want: [u8; 32] = [0; 32]
+        want[0] = 0x44
+        want[1] = 0xAC // 44100
+        want[4] = 0x10
+        want[5] = 0x80 // format S16LSB
+        want[6] = 1 // channels
+        want[8] = 0x00
+        want[9] = 0x08 // 2048 samples
+        var got: [u8; 32] = [0; 32]
+        let audioDev = SDL_OpenAudioDevice(0 as *u8, 0, (&want[0]) as *u8, (&got[0]) as *u8, 0)
+        if audioDev != 0 {
+            SDL_PauseAudioDevice(audioDev, 0)
+        }
         let title = "Milo Genesis"
         let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
         (maxW * 3) as i32, (h * 3) as i32, SDL_WINDOW_SHOWN)
@@ -159,6 +208,10 @@ fn main(): i32 {
         var quit = false
         while !quit {
             runFrame(cpu, m)
+            // Keep at most ~4 frames of audio queued so video/audio stay in step.
+            if audioDev != 0 && SDL_GetQueuedAudioSize(audioDev) < 12000 {
+                queueAudio(synth, m, audioDev)
+            }
             let fb = renderIndexed(m)
             let w = frameWidth(m)
             blit(m, fb, w, maxW, rgba)
