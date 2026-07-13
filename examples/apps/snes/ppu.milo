@@ -612,15 +612,13 @@ fn backdropColor(p: &Ppu, bright: i64): i64 {
     var r = w & 0x1F
     var g = (w >> 5) & 0x1F
     var b = (w >> 10) & 0x1F
-    if (p.cgadsub & 0x20) != 0 {
-        if (p.cgadsub & 0x80) != 0 {
-            r = clamp5(r - p.coldR) g = clamp5(g - p.coldG) b = clamp5(b - p.coldB)
-        } else {
-            r = clamp5(r + p.coldR) g = clamp5(g + p.coldG) b = clamp5(b + p.coldB)
-        }
-        if (p.cgadsub & 0x40) != 0 {
-            r = r >> 1 g = g >> 1 b = b >> 1
-        }
+    // Only ADD (paint) the fixed color onto the backdrop. Subtract/half on the
+    // backdrop would DARKEN it — and since we don't model the full window/clip
+    // conditions, applying those risks blacking out a level whose raw backdrop
+    // (cgram0) is the real sky. Add-only can only brighten: strictly safe, and it
+    // covers SMW's sky (black backdrop + fixed color).
+    if (p.cgadsub & 0x20) != 0 && (p.cgadsub & 0x80) == 0 {
+        r = clamp5(r + p.coldR) g = clamp5(g + p.coldG) b = clamp5(b + p.coldB)
     }
     let rr = (((r << 3) * bright) / 15) & 0xFF
     let gg = (((g << 3) * bright) / 15) & 0xFF
