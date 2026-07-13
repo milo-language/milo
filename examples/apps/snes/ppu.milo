@@ -348,7 +348,7 @@ fn bgEntryAddr(tmBase: i64, sc: i64, tileX: i64, tileY: i64): i64 {
 // Composite one BG layer onto fb (transparent where the pixel index is 0).
 // sc = the BGnSC register: base in bits2-7, screen size in bits0-1.
 // bpp 4 -> 16 colors/palette; bpp 2 -> 4 colors/palette (BG3).
-fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64): void {
+fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64, palBase: i64): void {
     let palW: i64 = if bpp == 4 {
         16
     } else {
@@ -388,7 +388,7 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
                 tile2bpp(p, chBase, tileNum, px, py)
             }
             if ci != 0 {
-                fb[y * 256 + x] = cgToRgb(p, pal * palW + ci, bright)
+                fb[y * 256 + x] = cgToRgb(p, palBase + pal * palW + ci, bright)
             }
             x = x + 1
         }
@@ -415,13 +415,24 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
         return
     }
 
-    // char bases: BG1 = bg12nba low nibble, BG2 = high nibble, BG3 = bg34nba low.
+    // char bases (each nibble of bg12nba / bg34nba, in 0x1000-word units).
     let ch1 = (p.bg12nba & 0x0F) << 12
     let ch2 = ((p.bg12nba >> 4) & 0x0F) << 12
     let ch3 = (p.bg34nba & 0x0F) << 12
-    renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2) // BG3
-    renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4) // BG2
-    renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4) // BG1
+    let ch4 = ((p.bg34nba >> 4) & 0x0F) << 12
+    let mode = p.bgmode & 0x07
+    if mode == 0 {
+        // Mode 0: four 2bpp BGs; palette groups at cgram 0/32/64/96.
+        renderBGLayer(p, fb, bright, p.bgsc3, ch4, p.bghofs[3], p.bgvofs[3], 2, 96) // BG4
+        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 64) // BG3
+        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 2, 32) // BG2
+        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0) // BG1
+    } else {
+        // Mode 1 (and a reasonable default for 2-7): BG3 2bpp, BG2/BG1 4bpp.
+        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0) // BG3
+        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0) // BG2
+        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0) // BG1
+    }
     renderSprites(p, fb, bright)
 }
 
