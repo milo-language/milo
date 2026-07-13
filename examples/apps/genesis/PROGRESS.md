@@ -30,14 +30,14 @@ many games run without a live Z80, some need it).
 
 ### Status — playable with picture + sound
 
-**Input verified end-to-end**: injecting a Start tap advances the title screen into
-Green Hill Zone under player control (title -> gameplay), and injected directions
-show up in Sonic's controller RAM ($FFF604). So the pad path (keyboard -> pad1 ->
-TH multiplex -> $A10003 -> game) works. Known refinement: Sonic's run-physics didn't
-advance player-X under a held Right in the offline test — likely a held-vs-edge
-detail in how the game samples the pad across TH toggles; movement in the live SDL
-build (real key-repeat) should be checked. Audio is full YM2612 (4-op FM + DAC +
-stereo) + PSG.
+**Input works (confirmed in the live SDL build)** — Sonic plays well with real
+keyboard input. The pad path (keyboard -> pad1 -> TH multiplex -> $A10003 -> game)
+delivers both directions and Start correctly (controller RAM $FFF604 held / $FFF605
+pressed reflect it). NOTE: the offline `bootRun` dumper is NOT a substitute for
+input testing — hardcoding pad1 at fixed frames reads back correctly but does not
+produce the natural key-down/up edges the game samples across TH toggles, so it
+won't advance the title or drive physics. Test input in the live SDL build, not
+offline. Audio is full YM2612 (4-op FM + DAC + stereo) + PSG.
 
 
 **The emulator boots Sonic to Green Hill Zone gameplay with video AND music.**
