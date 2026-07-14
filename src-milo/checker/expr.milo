@@ -817,7 +817,11 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         // arm below MOVES its inner Heap into `inner`, leaving `paramType` unusable
         // (typeName on it then reads a moved-out buffer → runaway alloc).
         let ptName = typeName(paramType)
+        // Steer const-int enum-lit payload widths to the param (see
+        // checkGenericEnumLit); reset after, matching the struct-field idiom.
+        ck.expectedType = Option.Some(paramType.clone())
         let argType = checkExpr(ck, *args[i])
+        ck.expectedType = Option.None
         match paramType {
             TypeKind.TRef(inner, mutable) => {
                 // interface coercion: a concrete struct implementing interface `inner`
@@ -1360,11 +1364,48 @@ fn checkGenericEnumLit(ck: &mut Checker, enumName: &string, variant: &string, ar
     if args.len != variantInfo.fields.len {
         error(ck, "variant '" + enumName.clone() + "." + variant.clone() + "' expects " + variantInfo.fields.len.toString() + " args, got " + args.len.toString(), cloneSpan(span))
     }
+    // Hint-driven const-int narrowing: when a concrete enum of this base is the
+    // expected type (a let annotation or a call param), an int-literal payload
+    // takes the declared field's width instead of forcing the enum to
+    // monomorphize at the i64 default (`let a: i32? = Option.Some(21)` should be
+    // Option_i32, not Option_i64). src-milo has no per-node retyping, so we steer
+    // inference at the source. Snapshot the expected enum name first — checkExpr
+    // below clobbers ck.expectedType.
+    var expEnum: Option<string> = Option.None
+    match ck.expectedType {
+        Option.Some(et) => {
+            match et {
+                TypeKind.TEnum(monoName) => { expEnum = Option.Some(monoName.clone()) }
+                _ => {}
+            }
+        }
+        Option.None => {}
+    }
+    var haveHint = false
+    var hintFields: Vec<TypeKind> = Vec.new()
+    match expEnum {
+        Option.Some(monoName) => {
+            if ck.enums.contains(monoName) {
+                let einfo = ck.enums.get(monoName)!
+                if einfo.baseName == enumName && einfo.variants.contains(variant) {
+                    let srcFields = einfo.variants.get(variant)!.fields
+                    for fi in 0..srcFields.len { hintFields.push(srcFields[fi].clone()) }
+                    haveHint = true
+                }
+            }
+        }
+        Option.None => {}
+    }
+
     var inferred: HashMap<string, TypeKind> = HashMap.new()
     let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
     for i in 0..limit {
         let argType = checkExpr(ck, *args[i])
-        inferInto(generic.typeParams, variantInfo.fields[i], argType, inferred)
+        var effType = argType.clone()
+        if haveHint && i < hintFields.len && isConstIntExpr(*args[i]) && isInteger(argType) && isInteger(hintFields[i]) {
+            effType = hintFields[i].clone()
+        }
+        inferInto(generic.typeParams, variantInfo.fields[i], effType, inferred)
         tryMove(ck, *args[i])
     }
     var typeArgs: Vec<TypeKind> = Vec.new()
