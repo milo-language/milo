@@ -23,7 +23,7 @@ instead of segfaults is the tell of a safe language. One real asterisk (#1).
 
 ---
 
-## 1. RUNTIME MEMORY-SAFETY HOLE — string realloc corrupts a live Vec (serious)
+## 1. RUNTIME MEMORY-SAFETY HOLE — string realloc corrupts a live Vec (serious) [RESOLVED 2026-07-14]
 
 Growing a `string` via `.push()` across many iterations **while a large
 `Vec<i64>` is simultaneously live** corrupts the heap → SIGTRAP/SIGSEGV
@@ -53,6 +53,14 @@ the `Vec`'s buffer (or vice-versa).
 
 **Fix:** this is a real allocator/GC bug in the runtime; a memory-safe language
 must not let one heap object's growth corrupt another. High priority.
+
+**RESOLVED (verified 2026-07-14):** fixed by drop-old-value + in-place
+string-append codegen; locked by `tests/fixtures/vecStringLiveGrow.milo`.
+Re-verified this session — 100+ runs (serial / 24-way parallel / under the guard,
+`-O0`/`-O2`/`-O3`), all clean and correct. NB the fixture *looks* red under
+`bun test -t vecStringLiveGrow` — that's a harness artifact (guard pressure-kill +
+lost stdout, see the README entry), **not** a regression; it's green in the full
+suite.
 
 ## 2. Debugging hazard — buffered stdout is discarded on a crash
 

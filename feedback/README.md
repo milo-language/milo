@@ -31,3 +31,21 @@ Triage: the human flips `[open]` → `[resolved: <what changed>]` or `[wontfix: 
 ### 2026-07-11 — bootstrap  [resolved: initial system created]
 - **Friction:** n/a — seed entry establishing the format.
 - **Proposed fix:** n/a.
+
+### 2026-07-14 — filtered single-fixture runs (`bun test -t <name>`) spuriously fail  [open]
+- **Friction:** `bun test tests/run.test.ts -t "vecStringLiveGrow"` fails with empty
+  stdout (expected `172032 100`), but the identical binary passes standalone, under
+  the guard, 24-way parallel, and in the FULL suite. Cause: the driver's `beforeAll`
+  builds *all* ~449 fixtures concurrently even for a filtered run, then immediately
+  runs the one selected binary while the machine is still in the build storm's
+  memory-pressure tail; `scripts/guard.ts` is fail-closed on system pressure and
+  SIGKILLs the largest guarded tree — catching the lone run. Then the runtime's
+  lost-stdout-on-abnormal-exit (lang-friction #2) turns the kill into silent empty
+  output, so it reads as a crash / regression rather than "guard-killed."
+- **Cost:** ~30 min this session chasing a "resurrected" memory-safety bug that was
+  actually fixed; anyone debugging a single fixture will hit the same false alarm.
+- **Proposed fix:** (a) don't build all fixtures in `beforeAll` for a filtered run —
+  build only the selected file(s); and/or (b) flush stdout on the guard's kill path
+  and have `runWithRetry` surface `signal`/`killReason` so a guard kill reports as
+  such instead of an empty-stdout mismatch (this is lang-friction #2 — worth fixing
+  regardless).
