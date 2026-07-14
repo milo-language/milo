@@ -39,7 +39,10 @@ fn main(): i32 {
     }
     )
     let _t2 = Promise<i64>.blocking(move(): i64 => {
-        sleepMs(100)
+        // Wake the send-parked task well after the recv scenario above prints, so
+        // the two @expect lines keep their order under a loaded CI runner. Both
+        // wakes still exercise a real park; only the print interleaving is pinned.
+        sleepMs(300)
         let _a = ch2.recv()!
         let _b = ch2.recv()!
         return 0
