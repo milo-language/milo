@@ -329,7 +329,7 @@ fn genVecFindAnyAll(cg: &mut Cgen, obj: &Val, elemTy: &string, clv: &Val, mode: 
     // result cell: Option<T> for find, i1 for any/all (any starts false, all true)
     var optName = ""
     var optTy = ""
-    var someTag = 0
+    var someTag: i32 = 0 // variant tag (i32); annotate now that bare literals default i64
     let resAddr = nextTemp(cg)
     if isFind {
         optName = stripPercent(resolveTyStr(cg, "Option<" + elemTy.clone() + ">"))

@@ -108,7 +108,7 @@ fn deref(t: &TypeKind): TypeKind {
 fn checkExpr(ck: &mut Checker, expr: &Expr): TypeKind {
     match expr {
         Expr.IntLit(val, span) => {
-            return tyI32()
+            return tyI64()
         }
         Expr.FloatLit(val, span) => {
             return TypeKind.TFloat(64)
