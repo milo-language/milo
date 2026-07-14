@@ -123,41 +123,63 @@ papercuts persist.
 `string.len` are i64 field-style; `Json.len()` is a method. Four shapes for
 "length". Pick one type (i64) and one syntax.
 
-## 8. `&x` at a call site is address-of, not borrow (ergonomic; Rust-muscle-memory trap)
+## 8. `&` is overloaded — borrow in types, address-of in expressions (clarity; must fix)
 
-`&T` in a **param type** means borrow, but `&x` in an **expression** means
+`&T` in a **param type** means *borrow*; `&x` in an **expression** means
 *address-of* → a raw `*T` that needs `unsafe`. Borrowing at a call site is
-implicit — you pass the value bare and Milo borrows per the param signature.
+implicit (pass bare):
 ```milo
 fn peek(m: &Mem, addrs: &Vec<i64>): void { ... }
 peek(m, &peekAddrs)   // error: expected &Vec<i64>, got *Vec<i64>; address-of needs unsafe
 peek(m, peekAddrs)    // correct — auto-borrow
 ```
-So the same `&` sigil means "borrow" in types but "raw pointer" in expressions.
-Anyone with Rust reflexes writes `&x` and gets a confusing `*T`/unsafe error.
-**Fix:** when the expected param type is `&T`, accept `&x` as a borrow (identical
-to bare) — only treat `&x` as address-of in a `*T`/`unsafe` context. Then `f(x)`
-and `f(&x)` both work; raw address-of still lives in the unsafe path. Small
-call-site coercion change; non-breaking.
+Same sigil, two meanings, split by position — this is the C++ `&` mess (address-of
+/ reference-declarator / bitwise-and) we don't want. A first-pass "fix" of *accept
+`&x` as a borrow when a `&T` is expected* was **rejected (cs01, 2026-07-13):** it
+makes `&` mean borrow-or-pointer by context — strictly worse, more ambiguity.
+
+**The requirement: `&` gets exactly ONE meaning, no context-sensitivity.**
+
+**DECISION direction (Design A, recommended):** `&` is *only* the borrow marker
+and *only* appears in types.
+- `&T` / `&mut T` in a param (or `ref`-binding, see #9) type = "borrowed". The
+  only place `&` appears.
+- Borrows stay implicit — you pass `x`, never `&x`.
+- `&x` as an expression is **removed**; writing it errors with *"borrows are
+  implicit; drop the `&`. For a raw pointer use `rawPtr()`."*
+- Raw address-of (rare, unsafe) becomes a loud explicit name: `rawPtr(x)`, and
+  `buf.ptr()` for the FFI-buffer case (the only real users today —
+  `(&ev[0]) as *u8`, `(&texBuf[0]) as *u8`).
+- One-sentence model: **"`&` marks a borrowed parameter in a type signature; it is
+  never an expression operator."**
+
+Alternative (Design B): `&x` = borrow everywhere (Rust-familiar), address-of →
+`&raw`/named, borrows become explicit sigils. Also single-meaning, but flips
+borrows implicit→explicit — a bigger philosophical change. A preferred over B.
 
 ## 9. No function-local reuse of a borrow to a nested field (ergonomic; the big one)
 
-Can't alias a deep path for repeated reads:
+Can't alias a deep path for repeated reads — I wrote `m.ppu.m7a`, `m.ppu.m7b`, …
+dozens of times because a local alias is rejected (refs are second-class, params
+only). This is the deliberate "no lifetimes" bargain (a stored borrow would need
+one). But you don't need lifetime *syntax* to allow a **function-local** borrow:
+Milo already infers borrow validity for params with no annotation — extend that to
+a local binding, legal **iff it provably doesn't escape** (can't be returned,
+stored in a struct, or outlive its source). Plain escape analysis, no lifetime
+annotations, because the borrow never crosses an API boundary — lifetimes stay out
+of signatures (this is what Rust NLL already does *inside* a fn; `'a` only at
+boundaries).
+
+Syntax must respect #8 — **no `&` in expression position.** So spell the local
+alias with a keyword, not `&x`:
 ```milo
-let p = &m.ppu      // rejected — refs are second-class (params only)
-p.m7a; p.m7b; ...   // wanted; instead I wrote m.ppu.m7a / m.ppu.m7b dozens of times
+ref p = m.ppu       // non-owning, escape-checked, immutable
+ref mut q = m.ppu   // mutable variant
+p.m7a; p.m7b        // read many fields, no repetition
 ```
-This is the deliberate "no lifetimes" bargain (a stored borrow would need one).
-But you don't need lifetime *syntax* to allow a **function-local** borrow: Milo
-already infers borrow validity for params with no annotation — extend exactly
-that to a `let`, legal **iff `p` provably doesn't escape** (can't be returned,
-stored in a struct, or outlive `m`). That's a plain escape check, no lifetime
-annotations, because the borrow never crosses an API boundary — lifetimes stay
-banished from signatures (the whole design goal), they're just not needed for
-something scoped to one function body (this is what Rust NLL already does *inside*
-a fn; you only write `'a` at boundaries). Highest-value ergonomic unlock of the
-three; it's an escape analysis, not a borrow checker. Related to #4 (both are
-"the borrow model is more conservative than it needs to be inside one function").
+Highest-value ergonomic unlock of the three; it's an escape analysis, not a borrow
+checker. Related to #4 (both: the borrow model is more conservative than it needs
+to be inside one function).
 
 (Deliberately NOT filed: "moves need manual reorder" — `busNew(rom)` consuming
 `rom` then failing on reuse is *correct* ownership, identical to Rust, and the
