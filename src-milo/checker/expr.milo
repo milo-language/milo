@@ -545,9 +545,9 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
         return ot
     }
     if op == "&" {
-        if ck.unsafeDepth == 0 {
-            error(ck, "address-of operator requires 'unsafe' block", cloneSpan(span))
-        }
+        // `&` is a borrow marker that appears only in a TYPE (`&T`), never an
+        // expression. Raw pointers come from `v.ptr()` / `x.addrOf()`.
+        error(ck, "'&x' is not an expression — borrows are implicit (pass 'x' bare). For a raw pointer use 'v.ptr()' (a collection's data) or 'x.addrOf()' (any value, in an unsafe block).", cloneSpan(span))
         return TypeKind.TPtr(Heap(ot))
     }
     return tyUnknown()
@@ -1550,6 +1550,16 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         _ => {}
     }
 
+    // x.addrOf(): *T — raw address of any lvalue (the replacement for `&x`).
+    // Universal, requires unsafe. 'addrOf' is a reserved method name.
+    if method == "addrOf" {
+        if args.len != 0 { error(ck, "'addrOf' takes no arguments", cloneSpan(span)) }
+        if ck.unsafeDepth == 0 {
+            error(ck, "'addrOf' (raw address-of) requires 'unsafe' block", cloneSpan(span))
+        }
+        return TypeKind.TPtr(Heap(objType.clone()))
+    }
+
     // numeric.toString()
     if (isInteger(objType) || isFloat(objType)) && method == "toString" {
         if args.len != 0 { error(ck, "'toString' takes no arguments", cloneSpan(span)) }
@@ -1634,6 +1644,11 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
 // -- Vec methods --
 
 fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
+    // v.ptr(): *T — the Vec's backing data pointer. Safe to obtain (mirrors cstr).
+    if method == "ptr" {
+        if args.len != 0 { error(ck, "'ptr' takes no arguments", cloneSpan(span)) }
+        return TypeKind.TPtr(Heap(elem.clone()))
+    }
     if method == "push" {
         if args.len != 1 {
             error(ck, "'push' expects 1 argument, got " + args.len.toString(), cloneSpan(span))

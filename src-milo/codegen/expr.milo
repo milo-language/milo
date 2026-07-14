@@ -1862,6 +1862,12 @@ fn genVecPop(cg: &mut Cgen, addr: &string, vecTy: &string): Val {
 }
 
 fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<Expr>>, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    // x.addrOf(): the raw address of the receiver lvalue — identical to the old
+    // `&x` (see the UnaryOp `&` arm). Resolve the lvalue, don't load a value.
+    if method == "addrOf" {
+        let lv = genLvalue(cg, object, locs, sigs)
+        return Val { v: lv.v, ty: "ptr" }
+    }
     // `push` grows the receiver in place, so it needs the address, not a loaded
     // copy. Resolve the lvalue before evaluating the object as a value.
     if method == "push" {
@@ -2112,6 +2118,11 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
     if objTyLl == "%String" && method == "cstr" {
         let p = nextTemp(cg)
         emit(cg, "  " + p + " = extractvalue %String " + obj.v + ", 0\n")
+        return Val { v: p, ty: "ptr" }
+    }
+    if objTyLl == "%Vec" && method == "ptr" {
+        let p = nextTemp(cg)
+        emit(cg, "  " + p + " = extractvalue %Vec " + obj.v + ", 0\n")
         return Val { v: p, ty: "ptr" }
     }
     if objTyLl == "%String" && method == "len" {
