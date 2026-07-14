@@ -69,6 +69,9 @@ struct Mem {
     // 5 B,6 C,7 Start) and the current TH multiplex line the game drove.
     pad1: i64
     padTh: bool
+    // Controller 2: same bitmask + its own TH multiplex line ($A10005 data port).
+    pad2: i64
+    padTh2: bool
     // I/O ctrl/serial registers $A10008-$A1000F (indexed by low nibble). Must
     // power on as 0 and read back written values: games (e.g. Golden Axe) test
     // them at entry to distinguish cold boot from soft reset, and a nonzero read
@@ -94,7 +97,7 @@ fn newMem(): Mem {
         fillLen: 0,
         lastDataByte: 0,
         z80Busreq: false, z80Reset: true, z80: newZ80(), ctrl1: 0, tmssUnlocked: false,
-        pad1: 0, padTh: false, ioRegs: [0; 16],
+        pad1: 0, padTh: false, pad2: 0, padTh2: false, ioRegs: [0; 16],
     }
 }
 
@@ -111,11 +114,11 @@ fn z80Running(m: &Mem): bool {
 }
 
 // 3-button pad read (active low). TH=1 exposes Up/Down/Left/Right/B/C; TH=0
-// exposes Up/Down/A/Start. Returns the data byte for $A10003.
-fn padRead(m: &Mem): i64 {
-    let p = m.pad1
+// exposes Up/Down/A/Start. `p` is the pressed-button bitmask, `th` the current
+// TH multiplex line. Shared by both controller ports ($A10003 / $A10005).
+fn padReadPort(p: i64, th: bool): i64 {
     var v: i64 = 0
-    if m.padTh {
+    if th {
         v = 0x40
         if (p & 0x01) == 0 {
             v = v | 0x01
@@ -177,7 +180,9 @@ fn memWrite8(m: &mut Mem, addr: i64, val: i64) {
             } else if a >= 0xA14000 && a <= 0xA14003 {
                 m.tmssUnlocked = true // 'SEGA' TMSS unlock bytes
             } else if a == 0xA10003 {
-                m.padTh = (val & 0x40) != 0 // TH multiplex select
+                m.padTh = (val & 0x40) != 0 // TH multiplex select (controller 1)
+            } else if a == 0xA10005 {
+                m.padTh2 = (val & 0x40) != 0 // TH multiplex select (controller 2)
             } else if a >= 0xA10008 && a <= 0xA1000F {
                 m.ioRegs[(a | 1) & 0xF] = val & 0xFF // ctrl/serial regs latch writes
             } else if a == 0xA11100 {
@@ -275,10 +280,10 @@ fn devRead8(m: &Mem, a: i64): i64 {
         return 0xA0 // version byte: overseas NTSC, no expansion
     }
     if a == 0xA10003 {
-        return padRead(m) // controller 1 data
+        return padReadPort(m.pad1, m.padTh) // controller 1 data
     }
     if a == 0xA10005 {
-        return 0x7F // controller 2: nothing pressed
+        return padReadPort(m.pad2, m.padTh2) // controller 2 data
     }
     let w = devRead16(m, a & ~1)
     if (a & 1) == 0 {
@@ -324,6 +329,10 @@ fn devWrite16(m: &mut Mem, a: i64, val: i64) {
     if a == 0xA10002 {
         m.ctrl1 = val & 0xFFFF // controller-1 direction latch
         m.padTh = (val & 0x40) != 0 // TH select (data reg is the low byte, $A10003)
+        return
+    }
+    if a == 0xA10004 {
+        m.padTh2 = (val & 0x40) != 0 // controller-2 TH select (data reg $A10005)
         return
     }
     if a >= 0xA10008 && a <= 0xA1000E {

@@ -33,7 +33,7 @@ class Cart {
 }
 
 class Mem {
-  constructor(ram, touched, genesis, vram, cram, vsram, vdpRegs, vdpAddr, vdpCode, vdpFirst, vdpPending, vdpLine, dmaFillPending, fillAddr, fillInc, fillLen, lastDataByte, z80Busreq, z80Reset, z80, ctrl1, tmssUnlocked, pad1, padTh, ioRegs) {
+  constructor(ram, touched, genesis, vram, cram, vsram, vdpRegs, vdpAddr, vdpCode, vdpFirst, vdpPending, vdpLine, dmaFillPending, fillAddr, fillInc, fillLen, lastDataByte, z80Busreq, z80Reset, z80, ctrl1, tmssUnlocked, pad1, padTh, pad2, padTh2, ioRegs) {
     this.ram = ram;
     this.touched = touched;
     this.genesis = genesis;
@@ -58,6 +58,8 @@ class Mem {
     this.tmssUnlocked = tmssUnlocked;
     this.pad1 = pad1;
     this.padTh = padTh;
+    this.pad2 = pad2;
+    this.padTh2 = padTh2;
     this.ioRegs = ioRegs;
   }
 }
@@ -170,6 +172,7 @@ const SR_X = 16;
 const SR_S = 8192;
 const SR_T = 32768;
 const ADDR_MASK = 16777215;
+const VRAM_MASK = 65535;
 const FC = 1;
 const FN = 2;
 const FPV = 4;
@@ -783,17 +786,16 @@ function newMem() {
     ram.push(0);
     i = Math.trunc((i + 1));
   }
-  return new Mem(ram, [], false, [], Array.from({length: 64}, () => __clone(0)), Array.from({length: 40}, () => __clone(0)), Array.from({length: 24}, () => __clone(0)), 0, 0, 0, false, 0, false, 0, 0, 0, 0, false, true, newZ80(), 0, false, 0, false, Array.from({length: 16}, () => __clone(0)));
+  return new Mem(ram, [], false, [], Array.from({length: 64}, () => __clone(0)), Array.from({length: 40}, () => __clone(0)), Array.from({length: 24}, () => __clone(0)), 0, 0, 0, false, 0, false, 0, 0, 0, 0, false, true, newZ80(), 0, false, 0, false, 0, false, Array.from({length: 16}, () => __clone(0)));
 }
 
 function z80Running(m) {
   return ((!m.z80Reset) && (!m.z80Busreq));
 }
 
-function padRead(m) {
-  const p = m.pad1;
+function padReadPort(p, th) {
   let v = 0;
-  if (m.padTh) {
+  if (th) {
     v = 64;
     if ((((p & 1) >>> 0) == 0)) {
       v = ((v | 1) >>> 0);
@@ -859,14 +861,18 @@ function memWrite8(m, addr, val) {
           if ((a == 10551299)) {
             m.padTh = (((val & 64) >>> 0) != 0);
           } else {
-            if (((a >= 10551304) && (a <= 10551311))) {
-              m.ioRegs[((((a | 1) >>> 0) & 15) >>> 0)] = ((val & 255) >>> 0);
+            if ((a == 10551301)) {
+              m.padTh2 = (((val & 64) >>> 0) != 0);
             } else {
-              if ((a == 10555648)) {
-                m.z80Busreq = (((val & 1) >>> 0) != 0);
+              if (((a >= 10551304) && (a <= 10551311))) {
+                m.ioRegs[((((a | 1) >>> 0) & 15) >>> 0)] = ((val & 255) >>> 0);
               } else {
-                if ((a == 10555904)) {
-                  m.z80Reset = (((val & 1) >>> 0) == 0);
+                if ((a == 10555648)) {
+                  m.z80Busreq = (((val & 1) >>> 0) != 0);
+                } else {
+                  if ((a == 10555904)) {
+                    m.z80Reset = (((val & 1) >>> 0) == 0);
+                  }
                 }
               }
             }
@@ -953,10 +959,10 @@ function devRead8(m, a) {
     return 160;
   }
   if ((a == 10551299)) {
-    return padRead(m);
+    return padReadPort(m.pad1, m.padTh);
   }
   if ((a == 10551301)) {
-    return 127;
+    return padReadPort(m.pad2, m.padTh2);
   }
   const w = devRead16(m, ((a & (~1)) >>> 0));
   if ((((a & 1) >>> 0) == 0)) {
@@ -1000,6 +1006,10 @@ function devWrite16(m, a, val) {
   if ((a == 10551298)) {
     m.ctrl1 = ((val & 65535) >>> 0);
     m.padTh = (((val & 64) >>> 0) != 0);
+    return;
+  }
+  if ((a == 10551300)) {
+    m.padTh2 = (((val & 64) >>> 0) != 0);
     return;
   }
   if (((a >= 10551304) && (a <= 10551310))) {
@@ -1066,6 +1076,14 @@ function vdpDma(m) {
   m.vdpRegs[20] = 0;
 }
 
+function vramPut(m, idx, byte) {
+  const i = ((idx & VRAM_MASK) >>> 0);
+  while ((m.vram.length <= i)) {
+    m.vram.push(0);
+  }
+  m.vram[i] = byte;
+}
+
 function vdpDmaCopy(m) {
   let src = ((((m.vdpRegs[22] << 8) >>> 0) | m.vdpRegs[21]) >>> 0);
   let len = ((((m.vdpRegs[20] << 8) >>> 0) | m.vdpRegs[19]) >>> 0);
@@ -1075,17 +1093,14 @@ function vdpDmaCopy(m) {
   let dst = m.vdpAddr;
   let i = 0;
   while ((i < len)) {
-    while ((m.vram.length <= ((dst & 65535) >>> 0))) {
-      m.vram.push(0);
-    }
     const sb = (() => {
-    if ((((src & 65535) >>> 0) < m.vram.length)) {
-      return m.vram[((src & 65535) >>> 0)];
+    if ((((src & VRAM_MASK) >>> 0) < m.vram.length)) {
+      return m.vram[((src & VRAM_MASK) >>> 0)];
     } else {
       return 0;
     }
     })();
-    m.vram[((dst & 65535) >>> 0)] = sb;
+    vramPut(m, dst, sb);
     src = ((Math.trunc((src + 1)) & 65535) >>> 0);
     dst = ((Math.trunc((dst + m.vdpRegs[15])) & 65535) >>> 0);
     i = Math.trunc((i + 1));
@@ -1101,11 +1116,7 @@ function doFill(m, fillByteIn) {
   let da = m.fillAddr;
   let i = 0;
   while ((i < len)) {
-    const idx = ((da & 65535) >>> 0);
-    while ((m.vram.length <= idx)) {
-      m.vram.push(0);
-    }
-    m.vram[idx] = fillByte;
+    vramPut(m, da, fillByte);
     da = ((Math.trunc((da + inc)) & 131071) >>> 0);
     i = Math.trunc((i + 1));
   }
@@ -1117,18 +1128,15 @@ function vdpDataWrite(m, val) {
   const target = ((m.vdpCode & 15) >>> 0);
   const a = m.vdpAddr;
   if ((target == 1)) {
-    while ((m.vram.length <= ((a | 1) >>> 0))) {
-      m.vram.push(0);
-    }
-    const base = ((a & 65534) >>> 0);
+    const base = ((((a & VRAM_MASK) >>> 0) & 65534) >>> 0);
     const hi = (((Math.floor(val / 2 ** (8)) & 255) >>> 0) & 0xFF);
     const lo = (((val & 255) >>> 0) & 0xFF);
     if ((((a & 1) >>> 0) == 0)) {
-      m.vram[base] = hi;
-      m.vram[Math.trunc((base + 1))] = lo;
+      vramPut(m, base, hi);
+      vramPut(m, Math.trunc((base + 1)), lo);
     } else {
-      m.vram[base] = lo;
-      m.vram[Math.trunc((base + 1))] = hi;
+      vramPut(m, base, lo);
+      vramPut(m, Math.trunc((base + 1)), hi);
     }
   } else {
     if ((target == 3)) {

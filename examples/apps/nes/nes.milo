@@ -90,15 +90,26 @@ let PAD_DPAD_RIGHT: i32 = 14
 // Controller hotplug events.
 let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
 let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
+// Window events (SDL_WINDOWEVENT); the sub-event id is byte 12 of the event.
+let SDL_WINDOWEVENT: u32 = 0x200
+let SDL_WINDOWEVENT_MINIMIZED: u8 = 7
+let SDL_WINDOWEVENT_RESTORED: u8 = 9
+let SDL_WINDOWEVENT_FOCUS_GAINED: u8 = 12
+let SDL_WINDOWEVENT_FOCUS_LOST: u8 = 13
 
-// Open the first attached game controller, or null. Re-run on hotplug so pads
-// can be plugged/unplugged at any time.
-fn openFirstPad(): *u8 {
+// Open the n-th attached game controller (0 = player 1, 1 = player 2), or null.
+// Re-run on hotplug so pads can be plugged/unplugged at any time; slot order
+// follows SDL's joystick enumeration.
+fn openPadN(n: i64): *u8 {
     unsafe {
+        var found: i64 = 0
         var ji: i32 = 0
         while ji < SDL_NumJoysticks() {
             if SDL_IsGameController(ji) != 0 {
-                return SDL_GameControllerOpen(ji)
+                if found == n {
+                    return SDL_GameControllerOpen(ji)
+                }
+                found = found + 1
             }
             ji = ji + 1
         }
@@ -428,7 +439,8 @@ fn runNes(cart: Cartridge): i32 {
         return 1
     }
     unsafe {
-        var pad: *u8 = openFirstPad()
+        var pad: *u8 = openPadN(0) // player 1
+        var pad2: *u8 = openPadN(1) // player 2
         let title = "Milo NES"
         let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * 3, 240 * 3, SDL_WINDOW_SHOWN)
         let ren = SDL_CreateRenderer(win, -1, 0)
@@ -456,32 +468,36 @@ fn runNes(cart: Cartridge): i32 {
 
         var ev: [u8; 64] = [0; 64]
         var quit = false
+        var focused = true // false while backgrounded -> pause + silence audio
         var dumpPrev = false // edge-detect the P (frame-dump) key
         var comboFrames: i64 = 0 // Start+Select held -> quit to the menu
         while !quit {
-            // Run the system until the PPU completes one video frame.
-            let startFrame = bus.ppu.frame
-            while bus.ppu.frame == startFrame {
-                let before = cpu.cyc
-                step(cpu, bus)
-                let used = cpu.cyc - before
-                var k: i64 = 0
-                while k < used * 3 {
-                    clockPpu(bus)
-                    k = k + 1
-                }
-                clockApu(bus, used)
-                if bus.ppu.nmiPending {
-                    bus.ppu.nmiPending = false
-                    nmi(cpu, bus)
-                }
-                // APU frame IRQ + DMC IRQ are level-triggered: OR them into the line
-                // at check time rather than latching bus.irqPending (which is MMC3's
-                // edge latch — latching there leaves a phantom pending IRQ after the
-                // game acks, desyncing MMC3 scanline splits).
-                if (bus.irqPending || bus.apu.frameIrq || bus.apu.dmc.irqFlag) && !cpuFlag(cpu, 0x04) {
-                    bus.irqPending = false
-                    irq(cpu, bus)
+            // Run the system until the PPU completes one video frame. Skipped
+            // while backgrounded (focused == false) so the emulator pauses.
+            if focused {
+                let startFrame = bus.ppu.frame
+                while bus.ppu.frame == startFrame {
+                    let before = cpu.cyc
+                    step(cpu, bus)
+                    let used = cpu.cyc - before
+                    var k: i64 = 0
+                    while k < used * 3 {
+                        clockPpu(bus)
+                        k = k + 1
+                    }
+                    clockApu(bus, used)
+                    if bus.ppu.nmiPending {
+                        bus.ppu.nmiPending = false
+                        nmi(cpu, bus)
+                    }
+                    // APU frame IRQ + DMC IRQ are level-triggered: OR them into the line
+                    // at check time rather than latching bus.irqPending (which is MMC3's
+                    // edge latch — latching there leaves a phantom pending IRQ after the
+                    // game acks, desyncing MMC3 scanline splits).
+                    if (bus.irqPending || bus.apu.frameIrq || bus.apu.dmc.irqFlag) && !cpuFlag(cpu, 0x04) {
+                        bus.irqPending = false
+                        irq(cpu, bus)
+                    }
                 }
             }
 
@@ -504,12 +520,33 @@ fn runNes(cart: Cartridge): i32 {
                 if evType == SDL_QUIT {
                     quit = true
                 }
-                // Controller plugged in or removed: re-grab the first available.
+                // Controller plugged in or removed: re-grab both slots so P1/P2
+                // stay assigned as pads come and go at any time.
                 if evType == SDL_CONTROLLERDEVICEADDED || evType == SDL_CONTROLLERDEVICEREMOVED {
                     if (pad as i64) != 0 {
                         SDL_GameControllerClose(pad)
                     }
-                    pad = openFirstPad()
+                    if (pad2 as i64) != 0 {
+                        SDL_GameControllerClose(pad2)
+                    }
+                    pad = openPadN(0)
+                    pad2 = openPadN(1)
+                }
+                // Pause + silence audio when backgrounded; resume on refocus.
+                if evType == SDL_WINDOWEVENT {
+                    let we = ev[12]
+                    if we == SDL_WINDOWEVENT_FOCUS_LOST || we == SDL_WINDOWEVENT_MINIMIZED {
+                        focused = false
+                        if audioDev != 0 {
+                            SDL_PauseAudioDevice(audioDev, 1)
+                        }
+                    }
+                    if we == SDL_WINDOWEVENT_FOCUS_GAINED || we == SDL_WINDOWEVENT_RESTORED {
+                        focused = true
+                        if audioDev != 0 {
+                            SDL_PauseAudioDevice(audioDev, 0)
+                        }
+                    }
                 }
             }
             // Sample the live keyboard state each frame rather than tracking key
@@ -569,6 +606,35 @@ fn runNes(cart: Cartridge): i32 {
                 } // Select
             }
             bus.buttons = b
+            // Player 2 is the second controller only (no keyboard fallback).
+            var b2: u8 = 0
+            if (pad2 as i64) != 0 {
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_UP) != 0 {
+                    b2 = b2 | 0x10
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_DOWN) != 0 {
+                    b2 = b2 | 0x20
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_LEFT) != 0 {
+                    b2 = b2 | 0x40
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_RIGHT) != 0 {
+                    b2 = b2 | 0x80
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_A) != 0 {
+                    b2 = b2 | 0x01
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_B) != 0 {
+                    b2 = b2 | 0x02
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_START) != 0 {
+                    b2 = b2 | 0x08
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_BACK) != 0 {
+                    b2 = b2 | 0x04
+                }
+            }
+            bus.buttons2 = b2
             // Start+Select (0x08|0x04) held ~1s quits back to the menu — the
             // universal retro "exit game" chord, so no keyboard is needed.
             if (b & 0x0C) == 0x0C {
@@ -585,13 +651,19 @@ fn runNes(cart: Cartridge): i32 {
                 dumpFrame(bus)
             }
             dumpPrev = dumpNow
-            // Pace to audio when active (drain to ~4 frames latency); else fixed 60Hz.
-            if audioDev != 0 {
-                while SDL_GetQueuedAudioSize(audioDev) > (735 * 2 * 4) as u32 {
-                    SDL_Delay(1)
-                }
+            // Pace to audio when active (drain to ~4 frames latency); else fixed
+            // 60Hz. While backgrounded, idle slower — audio is paused so the queue
+            // never drains and the drain-loop would otherwise busy-spin.
+            if !focused {
+                SDL_Delay(50)
             } else {
-                SDL_Delay(16)
+                if audioDev != 0 {
+                    while SDL_GetQueuedAudioSize(audioDev) > (735 * 2 * 4) as u32 {
+                        SDL_Delay(1)
+                    }
+                } else {
+                    SDL_Delay(16)
+                }
             }
         }
 

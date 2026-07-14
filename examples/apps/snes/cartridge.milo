@@ -1,46 +1,12 @@
-// SNES cartridge loader: reads a .sfc/.smc image, strips an optional 512-byte
-// copier header, and detects the memory map (LoROM vs HiROM) by scoring the
-// internal header at $7FC0 (LoROM) and $FFC0 (HiROM). Feed cart.rom + cart.map
-// to busNew() in cpu.milo.
-// Header layout (relative to base): 0x00 title[21], 0x15 map byte,
-//   0x1C-0x1D checksum complement, 0x1E-0x1F checksum (comp+chk == 0xFFFF).
+// SNES cartridge fs loader: reads a .sfc/.smc image from disk and hands the raw
+// bytes to the FFI-free parser in cartcore.milo. Kept separate so the browser
+// (emit-js) core can import cartcore without dragging in std/io (-> std/sync).
 
 from "std/io" import {
     readFile
 }
-
-struct Cart {
-    rom: Vec<u8>
-    map: i64 // 0 = LoROM, 1 = HiROM
-}
-
-fn u16At(data: &Vec<u8>, i: i64): i64 {
-    return (data[i] as i64) | ((data[i + 1] as i64) << 8)
-}
-
-// Higher score = more likely the real header location.
-fn scoreHeader(data: &Vec<u8>, base: i64, wantHi: bool): i64 {
-    if base + 0x20 > data.len {
-        return -1
-    }
-    var score: i64 = 0
-    let comp = u16At(data, base + 0x1C)
-    let chk = u16At(data, base + 0x1E)
-    if ((comp + chk) & 0xFFFF) == 0xFFFF && chk != 0 {
-        score = score + 8
-    }
-    // Map byte bit0: 0 = LoROM, 1 = HiROM.
-    let mode = data[base + 0x15] as i64
-    let modeHi = (mode & 1) == 1
-    if modeHi == wantHi {
-        score = score + 4
-    }
-    // Reset vector should point into ROM ($8000-$FFFF).
-    let reset = u16At(data, base + 0x3C)
-    if reset >= 0x8000 {
-        score = score + 1
-    }
-    return score
+from "./cartcore" import {
+    Cart, parseCart
 }
 
 fn loadCartridge(path: &string): Result<Cart, string> {
@@ -53,29 +19,11 @@ fn loadCartridge(path: &string): Result<Cart, string> {
             return Result.Err("cannot read ROM file")
         }
     }
-    // Strip a 512-byte SMC copier header if the size isn't a clean 32 KiB multiple.
-    var start: i64 = 0
-    if (raw.len % 0x8000) == 512 {
-        start = 512
-    }
-    var data: Vec<u8> = Vec.new()
-    var i: i64 = start
+    var bytes: Vec<u8> = Vec.new()
+    var i: i64 = 0
     while i < raw.len {
-        data.push(raw[i])
+        bytes.push(raw[i])
         i = i + 1
     }
-    if data.len < 0x8000 {
-        return Result.Err("ROM too small")
-    }
-
-    let loScore = scoreHeader(data, 0x7FC0, false)
-    let hiScore = scoreHeader(data, 0xFFC0, true)
-    var mapMode: i64 = 0
-    if hiScore > loScore {
-        mapMode = 1
-    }
-    return Result.Ok(Cart {
-        rom: data, map: mapMode
-    }
-    )
+    return parseCart(bytes)
 }

@@ -67,6 +67,7 @@ struct Mem {
     vblankToggle: i64 // stub: flips so $4210/$4212 vblank-wait loops progress
     hcounter: i64 // free-running instr counter; drives the $4212 HBLANK-flag stub
     joy1: i64 // $4218/$4219 auto-read pad 1 (0 = nothing pressed)
+    joy2: i64 // $421A/$421B auto-read pad 2 (0 = nothing pressed)
 
     // Audio subsystem (SPC700 + its RAM). $2140-$2143 bridge to its port latches.
     apuSpc: Spc
@@ -84,7 +85,7 @@ fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         wram: Vec.new(), rom: Vec.new(), romMask: 0, sram: Vec.new(), sramMask: 0, mapMode: 0, mmio: Vec.new(),
-        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0,
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0, joy2: 0,
         apuSpc: newApuSpc(), apuMem: spcMemNew(), ppu: newPpu()
     }
 }
@@ -112,7 +113,7 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
         wram: vecZeros(0x20000), rom: rom, romMask: mask,
         sram: vecZeros(0x8000), sramMask: 0x7FFF, mapMode: mapMode,
         mmio: vecZeros(0x4000),
-        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0,
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0, joy2: 0,
         apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu()
     }
     // Boot the SPC into its IPL. The reset vector ($FFFE) is fixed at $FFC0;
@@ -451,6 +452,12 @@ fn mmioRead(m: &Mem, off: i64): i64 {
     }
     if off == 0x4219 {
         return (m.joy1 >> 8) & 0xFF
+    }
+    if off == 0x421A {
+        return m.joy2 & 0xFF
+    }
+    if off == 0x421B {
+        return (m.joy2 >> 8) & 0xFF
     }
     return m.mmio[off - 0x2000] as i64
 }

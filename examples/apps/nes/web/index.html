@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Milo NES — in the browser</title>
 <style>
   :root { color-scheme: dark; }
@@ -12,6 +12,7 @@
     align-items: center; justify-content: center; gap: 18px;
     background: #0d1117; color: #e6edf3;
     font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    -webkit-user-select: none; user-select: none; touch-action: manipulation;
   }
   h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: .5px; }
   h1 span { color: #d29922; }
@@ -45,6 +46,23 @@
   .pitch .js { color: #d29922; }
   .pitch a { color: #58a6ff; text-decoration: none; }
   .pitch code { background: #161b22; padding: 1px 5px; border-radius: 4px; }
+
+  /* On-screen touch gamepad — shown on coarse-pointer (touch) devices only. */
+  #pad { display: none; width: min(96vw, 560px); justify-content: space-between;
+         align-items: center; gap: 12px; padding: 4px 8px 20px; touch-action: none; }
+  @media (hover: none) and (pointer: coarse) { #pad { display: flex; } }
+  #pad.force { display: flex; }
+  .tb { -webkit-user-select: none; user-select: none; touch-action: none;
+        display: flex; align-items: center; justify-content: center;
+        background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+        border-radius: 50%; width: 54px; height: 54px; font-size: 15px; font-weight: 600; }
+  .tb.pressed { background: #d29922; color: #0d1117; }
+  .dpad { display: grid; grid-template-columns: repeat(3, 54px); grid-template-rows: repeat(3, 54px); gap: 4px; }
+  .dpad .tb { border-radius: 10px; }
+  .dpad .sp { visibility: hidden; }
+  .face { display: grid; grid-template-columns: repeat(3, 54px); grid-template-rows: repeat(2, 54px); gap: 8px; }
+  .mid { display: flex; gap: 10px; }
+  .mid .tb { width: auto; height: 34px; border-radius: 17px; padding: 0 16px; font-size: 12px; }
 </style>
 </head>
 <body>
@@ -60,6 +78,7 @@
   <button id="pause" disabled>Pause</button>
   <button id="hd">✨ HD: off</button>
   <button id="fs">Fullscreen</button>
+  <button id="togglePad" title="Show/hide the on-screen gamepad">🎮 Pad</button>
   <label style="color:#8b949e">🔊<input id="vol" type="range" min="0" max="100" value="25" style="vertical-align:middle;width:80px"></label>
   <span id="fps"></span>
 </div>
@@ -81,6 +100,23 @@
   <select id="localRoms"></select>
   <button id="localPlay">Play</button>
 </div>
+
+<div id="pad">
+  <div class="dpad">
+    <div class="sp"></div><div class="tb" data-bit="0x10">▲</div><div class="sp"></div>
+    <div class="tb" data-bit="0x40">◀</div><div class="sp"></div><div class="tb" data-bit="0x80">▶</div>
+    <div class="sp"></div><div class="tb" data-bit="0x20">▼</div><div class="sp"></div>
+  </div>
+  <div class="mid">
+    <div class="tb" data-bit="0x04">Sel</div>
+    <div class="tb" data-bit="0x08">Sta</div>
+  </div>
+  <div class="mid">
+    <div class="tb" data-bit="0x02">B</div>
+    <div class="tb" data-bit="0x01">A</div>
+  </div>
+</div>
+
 <div id="status">Click a free homebrew game above, or load your own <code>.nes</code> (drag onto the window).</div>
 <div class="keys">
   <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> A &nbsp;·&nbsp; <b>X</b> B &nbsp;·&nbsp;
@@ -203,6 +239,21 @@ const KEYS = {
 };
 addEventListener("keydown", e => { if (KEYS[e.code] !== undefined) { buttons |= KEYS[e.code]; e.preventDefault(); } });
 addEventListener("keyup",   e => { if (KEYS[e.code] !== undefined) { buttons &= ~KEYS[e.code]; e.preventDefault(); } });
+
+// --- On-screen touch gamepad. Each button owns a bit; press sets it, release
+// clears it. Multi-touch works because each element gets its own pointer events. ---
+function bindPad(el) {
+  const bit = parseInt(el.dataset.bit, 16);
+  const set = on => { if (on) buttons |= bit; else buttons &= ~bit; el.classList.toggle("pressed", on); };
+  el.addEventListener("pointerdown", e => { e.preventDefault(); el.setPointerCapture(e.pointerId); set(true); });
+  el.addEventListener("pointerup",   e => { e.preventDefault(); set(false); });
+  el.addEventListener("pointercancel", () => set(false));
+  el.addEventListener("lostpointercapture", () => set(false));
+}
+for (const el of document.querySelectorAll(".tb[data-bit]")) bindPad(el);
+document.getElementById("togglePad").addEventListener("click", () => {
+  document.getElementById("pad").classList.toggle("force");
+});
 
 // --- Audio: the APU emits ~735 signed-16 mono samples per frame at 44.1 kHz into
 // bus.apu.samples. We drain them into a ring buffer that a ScriptProcessor pulls. ---

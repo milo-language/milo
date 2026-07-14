@@ -22,7 +22,7 @@ class NesHandle {
 }
 
 class Bus {
-  constructor(ram, wram, prg, prgMask, ppu, apu, ctrl1, strobe, buttons, mapper, prgBanks, prgBank, mmc2Prg, m227Lo, m227Hi, mmcSelect, mmcR0, mmcR1, mmcR2, mmcR3, mmcR4, mmcR5, mmcR6, mmcR7, irqLatch, irqCounter, irqReload, irqEnabled, irqPending) {
+  constructor(ram, wram, prg, prgMask, ppu, apu, ctrl1, strobe, buttons, ctrl2, buttons2, mapper, prgBanks, prgBank, mmc2Prg, m227Lo, m227Hi, mmcSelect, mmcR0, mmcR1, mmcR2, mmcR3, mmcR4, mmcR5, mmcR6, mmcR7, irqLatch, irqCounter, irqReload, irqEnabled, irqPending) {
     this.ram = ram;
     this.wram = wram;
     this.prg = prg;
@@ -32,6 +32,8 @@ class Bus {
     this.ctrl1 = ctrl1;
     this.strobe = strobe;
     this.buttons = buttons;
+    this.ctrl2 = ctrl2;
+    this.buttons2 = buttons2;
     this.mapper = mapper;
     this.prgBanks = prgBanks;
     this.prgBank = prgBank;
@@ -757,7 +759,7 @@ function newBus(cart) {
   })();
   const ppu = newPpu(cart.chr, cart.mirrorVertical);
   const banks = Math.trunc(cart.prg16kBanks);
-  let bus = new Bus(Array.from({length: 2048}, () => __clone(0)), Array.from({length: 8192}, () => __clone(0)), cart.prg, mask, ppu, newApu(), 0, 0, 0, Math.trunc(cart.mapper), banks, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false);
+  let bus = new Bus(Array.from({length: 2048}, () => __clone(0)), Array.from({length: 8192}, () => __clone(0)), cart.prg, mask, ppu, newApu(), 0, 0, 0, 0, 0, Math.trunc(cart.mapper), banks, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false);
   if ((bus.mapper == 4)) {
     mmc3UpdateChr(bus);
   }
@@ -784,6 +786,14 @@ function busRead(bus, addr) {
     }
     const bit = ((bus.ctrl1 & 1) & 0xFF);
     bus.ctrl1 = (((Math.floor(bus.ctrl1 / 2 ** (1)) & 0xFF) | 128) & 0xFF);
+    return ((bit | 64) & 0xFF);
+  }
+  if ((a == 16407)) {
+    if ((((bus.strobe & 1) & 0xFF) == 1)) {
+      bus.ctrl2 = bus.buttons2;
+    }
+    const bit = ((bus.ctrl2 & 1) & 0xFF);
+    bus.ctrl2 = (((Math.floor(bus.ctrl2 / 2 ** (1)) & 0xFF) | 128) & 0xFF);
     return ((bit | 64) & 0xFF);
   }
   if ((a == 16405)) {
@@ -850,6 +860,7 @@ function busWrite(bus, addr, val) {
     bus.strobe = ((val & 1) & 0xFF);
     if ((bus.strobe == 1)) {
       bus.ctrl1 = bus.buttons;
+      bus.ctrl2 = bus.buttons2;
     }
     return;
   }

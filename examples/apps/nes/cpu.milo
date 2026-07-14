@@ -33,6 +33,8 @@ struct Bus {
     ctrl1: u8 // $4016 controller-1 shift register (serial, drained LSB-first)
     strobe: u8 // $4016 strobe latch
     buttons: u8 // live controller-1 state: bit0 A,1 B,2 Select,3 Start,4 Up,5 Down,6 Left,7 Right
+    ctrl2: u8 // $4017 controller-2 shift register (read side; $4017 writes are the APU frame counter)
+    buttons2: u8 // live controller-2 state, same bit layout as `buttons`
     mapper: i64 // iNES mapper number (0 = NROM, 2 = UxROM, 4 = MMC3)
     prgBanks: i64 // number of 16 KiB PRG banks
     prgBank: i64 // UxROM: switchable 16 KiB bank mapped at $8000-$BFFF
@@ -69,7 +71,7 @@ fn newBus(cart: Cartridge): Bus {
     let ppu = newPpu(cart.chr, cart.mirrorVertical)
     let banks = cart.prg16kBanks as i64
     var bus = Bus {
-        ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, apu: newApu(), ctrl1: 0, strobe: 0, buttons: 0,
+        ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, apu: newApu(), ctrl1: 0, strobe: 0, buttons: 0, ctrl2: 0, buttons2: 0,
         mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0, mmc2Prg: 0, m227Lo: 0, m227Hi: 0,
         mmcSelect: 0, mmcR0: 0, mmcR1: 0, mmcR2: 0, mmcR3: 0, mmcR4: 0, mmcR5: 0, mmcR6: 0, mmcR7: 0,
         irqLatch: 0, irqCounter: 0, irqReload: false, irqEnabled: false, irqPending: false
@@ -105,6 +107,16 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
         let bit = bus.ctrl1 & 0x01
         bus.ctrl1 = (bus.ctrl1 >> 1) | 0x80
         return bit | 0x40 // open-bus high bits read as 0x40 on real HW
+    }
+    if a == 0x4017 {
+        // controller 2: same serial shift-out as $4016. (Writes to $4017 are the
+        // APU frame counter, handled in busWrite — the read side is the pad.)
+        if (bus.strobe & 0x01) == 1 {
+            bus.ctrl2 = bus.buttons2
+        }
+        let bit = bus.ctrl2 & 0x01
+        bus.ctrl2 = (bus.ctrl2 >> 1) | 0x80
+        return bit | 0x40
     }
     if a == 0x4015 {
         return apuReadStatus(bus.apu)
@@ -171,9 +183,10 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
     }
     if a == 0x4016 {
         bus.strobe = val & 0x01
-        // Strobe going (or held) high latches the live button state for shift-out.
+        // Strobe going (or held) high latches both controller ports for shift-out.
         if bus.strobe == 1 {
             bus.ctrl1 = bus.buttons
+            bus.ctrl2 = bus.buttons2
         }
         return
     }

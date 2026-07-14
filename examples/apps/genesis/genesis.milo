@@ -88,6 +88,12 @@ let PAD_DPAD_RIGHT: i32 = 14
 // Controller hotplug events.
 let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
 let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
+// Window events (SDL_WINDOWEVENT); the sub-event id is byte 12 of the event.
+let SDL_WINDOWEVENT: u32 = 0x200
+let SDL_WINDOWEVENT_MINIMIZED: u8 = 7
+let SDL_WINDOWEVENT_RESTORED: u8 = 9
+let SDL_WINDOWEVENT_FOCUS_GAINED: u8 = 12
+let SDL_WINDOWEVENT_FOCUS_LOST: u8 = 13
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
 let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
@@ -183,14 +189,19 @@ fn blit(m: &Mem, fb: &Vec<i64>, srcW: i64, stride: i64, rgba: &mut Vec<u8>) {
     }
 }
 
-// Open the first attached game controller, or null. Re-run on hotplug so pads
-// can be plugged/unplugged at any time.
-fn openFirstPad(): *u8 {
+// Open the n-th attached game controller (0 = player 1, 1 = player 2), or null.
+// Re-run on hotplug so pads can be plugged/unplugged at any time; slot order
+// follows SDL's joystick enumeration.
+fn openPadN(n: i64): *u8 {
     unsafe {
+        var found: i64 = 0
         var ji: i32 = 0
         while ji < SDL_NumJoysticks() {
             if SDL_IsGameController(ji) != 0 {
-                return SDL_GameControllerOpen(ji)
+                if found == n {
+                    return SDL_GameControllerOpen(ji)
+                }
+                found = found + 1
             }
             ji = ji + 1
         }
@@ -246,7 +257,8 @@ fn main(): i32 {
     }
     var synth = newSynth()
     unsafe {
-        var pad: *u8 = openFirstPad()
+        var pad: *u8 = openPadN(0) // player 1
+        var pad2: *u8 = openPadN(1) // player 2
         // SDL_AudioSpec (32 bytes): freq 44100, AUDIO_S16LSB (0x8010), mono, 2048 samples.
         var want: [u8; 32] = [0; 32]
         want[0] = 0x44
@@ -272,6 +284,7 @@ fn main(): i32 {
 
         var ev: [u8; 64] = [0; 64]
         var quit = false
+        var focused = true // false while backgrounded -> pause + silence audio
         var comboFrames: i64 = 0 // Start+Back held -> quit to the menu
         while !quit {
             // Input first, every iteration, so the window stays responsive even
@@ -281,12 +294,33 @@ fn main(): i32 {
                 if evType == SDL_QUIT {
                     quit = true
                 }
-                // Controller plugged in or removed: re-grab the first available.
+                // Controller plugged in or removed: re-grab both slots so P1/P2
+                // stay assigned as pads come and go at any time.
                 if evType == SDL_CONTROLLERDEVICEADDED || evType == SDL_CONTROLLERDEVICEREMOVED {
                     if (pad as i64) != 0 {
                         SDL_GameControllerClose(pad)
                     }
-                    pad = openFirstPad()
+                    if (pad2 as i64) != 0 {
+                        SDL_GameControllerClose(pad2)
+                    }
+                    pad = openPadN(0)
+                    pad2 = openPadN(1)
+                }
+                // Pause + silence audio when backgrounded; resume on refocus.
+                if evType == SDL_WINDOWEVENT {
+                    let we = ev[12]
+                    if we == SDL_WINDOWEVENT_FOCUS_LOST || we == SDL_WINDOWEVENT_MINIMIZED {
+                        focused = false
+                        if audioDev != 0 {
+                            SDL_PauseAudioDevice(audioDev, 1)
+                        }
+                    }
+                    if we == SDL_WINDOWEVENT_FOCUS_GAINED || we == SDL_WINDOWEVENT_RESTORED {
+                        focused = true
+                        if audioDev != 0 {
+                            SDL_PauseAudioDevice(audioDev, 0)
+                        }
+                    }
                 }
             }
             let ks = SDL_GetKeyboardState(0 as *i32)
@@ -347,6 +381,35 @@ fn main(): i32 {
                 } // Start
             }
             m.pad1 = p
+            // Player 2 is the second controller only (no keyboard fallback).
+            var p2: i64 = 0
+            if (pad2 as i64) != 0 {
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_UP) != 0 {
+                    p2 = p2 | 0x01
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_DOWN) != 0 {
+                    p2 = p2 | 0x02
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_LEFT) != 0 {
+                    p2 = p2 | 0x04
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_RIGHT) != 0 {
+                    p2 = p2 | 0x08
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_A) != 0 {
+                    p2 = p2 | 0x10
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_B) != 0 {
+                    p2 = p2 | 0x20
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_X) != 0 {
+                    p2 = p2 | 0x40
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_START) != 0 {
+                    p2 = p2 | 0x80
+                }
+            }
+            m.pad2 = p2
             if ks[41] != 0 {
                 quit = true // Esc
             }
@@ -370,7 +433,9 @@ fn main(): i32 {
             // ~5 frames (24 KB stereo) are buffered, then idle. This keeps a
             // cushion so a backgrounded / throttled window doesn't starve the
             // audio and stutter. No audio device => cap at ~60 fps by delay.
-            if audioDev != 0 && SDL_GetQueuedAudioSize(audioDev) >= 24000 {
+            if !focused {
+                SDL_Delay(50) // backgrounded: paused + silent, idle the loop
+            } else if audioDev != 0 && SDL_GetQueuedAudioSize(audioDev) >= 24000 {
                 SDL_Delay(1)
             } else {
                 runFrame(cpu, m)

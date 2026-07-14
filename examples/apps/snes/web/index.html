@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Milo Genesis — in the browser</title>
+<title>Milo SNES — in the browser</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -18,7 +18,7 @@
   h1 span { color: #58a6ff; }
   #screen {
     image-rendering: pixelated;
-    width: min(92vw, 640px); height: auto; aspect-ratio: 320 / 224;
+    width: min(92vw, 640px); height: auto; aspect-ratio: 256 / 224;
     background: #000; border: 1px solid #30363d; border-radius: 6px;
   }
   #screen:fullscreen { width: auto; height: 100vh; aspect-ratio: auto; border: 0; border-radius: 0; }
@@ -60,31 +60,23 @@
   .face { display: grid; grid-template-columns: repeat(3, 54px); grid-template-rows: repeat(2, 54px); gap: 8px; }
   .mid { display: flex; gap: 10px; }
   .mid .tb { width: auto; height: 34px; border-radius: 17px; padding: 0 16px; font-size: 12px; }
+  .shoulders { display: flex; justify-content: space-between; width: min(96vw, 640px); padding: 0 10px; }
+  .shoulders .tb { width: auto; height: 34px; border-radius: 10px; padding: 0 22px; font-size: 13px; }
 </style>
 </head>
 <body>
-<div id="drop">drop a Genesis ROM (<code>.md</code> / <code>.bin</code> / <code>.gen</code>) to play</div>
+<div id="drop">drop a SNES ROM (<code>.sfc</code> / <code>.smc</code>) to play</div>
 
-<h1>Milo <span>Genesis</span></h1>
-<div class="sub">a Sega Genesis / Mega Drive, written in Milo — playing in your browser</div>
-<canvas id="screen" width="320" height="224"></canvas>
+<h1>Milo <span>SNES</span></h1>
+<div class="sub">a Super Nintendo, written in Milo — playing in your browser</div>
+<canvas id="screen" width="256" height="224"></canvas>
 
 <div id="bar">
-  <label class="file">Load ROM…<input id="rom" type="file" accept=".md,.bin,.gen,.smd" hidden></label>
+  <label class="file">Load ROM…<input id="rom" type="file" accept=".sfc,.smc" hidden></label>
   <button id="pause" disabled>Pause</button>
   <button id="fs">Fullscreen</button>
   <button id="togglePad" title="Show/hide the on-screen gamepad">🎮 Pad</button>
-  <label style="color:#8b949e">🔊<input id="vol" type="range" min="0" max="100" value="25" style="vertical-align:middle;width:80px"></label>
   <span id="fps"></span>
-</div>
-
-<!-- One-click free homebrew (fetched from CORS-open hosting) -->
-<div id="bar">
-  <span style="color:#8b949e">Free homebrew:</span>
-  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/headship.bin">Headship</button>
-  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/astroperdido.bin">Astro Perdido</button>
-  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/gravitypig.bin">Gravity Pig</button>
-  <button data-rom="https://raw.githubusercontent.com/retrobrews/md-games/master/dragonscastle.bin">Dragon's Castle</button>
 </div>
 
 <!-- Your own ROMs, served same-origin by serve.ts. Hidden on the public build. -->
@@ -94,35 +86,40 @@
   <button id="localPlay">Play</button>
 </div>
 
+<!-- Shoulder buttons sit above the main pad row -->
+<div class="shoulders" id="padShoulders" style="display:none">
+  <div class="tb" data-bit="0x0020">L</div>
+  <div class="tb" data-bit="0x0010">R</div>
+</div>
 <div id="pad">
   <div class="dpad">
-    <div class="sp"></div><div class="tb" data-bit="0x01">▲</div><div class="sp"></div>
-    <div class="tb" data-bit="0x04">◀</div><div class="sp"></div><div class="tb" data-bit="0x08">▶</div>
-    <div class="sp"></div><div class="tb" data-bit="0x02">▼</div><div class="sp"></div>
+    <div class="sp"></div><div class="tb" data-bit="0x0800">▲</div><div class="sp"></div>
+    <div class="tb" data-bit="0x0200">◀</div><div class="sp"></div><div class="tb" data-bit="0x0100">▶</div>
+    <div class="sp"></div><div class="tb" data-bit="0x0400">▼</div><div class="sp"></div>
   </div>
   <div class="mid">
-    <div class="tb" data-bit="0x80">Sta</div>
+    <div class="tb" data-bit="0x2000">Sel</div>
+    <div class="tb" data-bit="0x1000">Sta</div>
   </div>
-  <div class="mid">
-    <div class="tb" data-bit="0x10">A</div>
-    <div class="tb" data-bit="0x20">B</div>
-    <div class="tb" data-bit="0x40">C</div>
+  <div class="face">
+    <div class="sp"></div><div class="tb" data-bit="0x4000">Y</div><div class="tb" data-bit="0x0040">X</div>
+    <div class="tb" data-bit="0x8000">B</div><div class="tb" data-bit="0x0080">A</div><div class="sp"></div>
   </div>
 </div>
 
-<div id="status">Click a game above, or load your own ROM (drag onto the window).</div>
+<div id="status">Load a SNES ROM to play (drag onto the window, or use Load ROM…).</div>
 <div class="keys">
-  <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> B (attack) &nbsp;·&nbsp; <b>X</b> A &nbsp;·&nbsp; <b>C</b> C (jump) &nbsp;·&nbsp; <b>Enter</b> Start
+  <b>Arrows</b> D-pad &nbsp;·&nbsp; <b>Z</b> B &nbsp;·&nbsp; <b>X</b> A &nbsp;·&nbsp; <b>A</b> Y &nbsp;·&nbsp; <b>S</b> X &nbsp;·&nbsp; <b>Q/W</b> L/R &nbsp;·&nbsp; <b>Enter</b> Start &nbsp;·&nbsp; <b>RShift</b> Select
 </div>
 
 <div class="pitch">
-  <p>This whole Sega Genesis — <b>Motorola 68000 + Z80 + VDP (graphics) + YM2612 (sound)</b> — is one program written in <a href="..">Milo</a>, a memory-safe systems language.</p>
+  <p>This whole Super Nintendo — <b>65816 CPU + SPC700 audio CPU + PPU (graphics)</b> — is one program written in <a href="..">Milo</a>, a memory-safe systems language.</p>
   <p>From that <b>one source file set</b>, the Milo compiler produces two things: a <b class="native">native binary</b> (via LLVM — a real SDL2 desktop app) and the <b class="js">JavaScript</b> running this page (via <code>emit-js</code>). No second implementation, no wasm, no plugins.</p>
   <p>And they agree exactly: the frame you're looking at is <b>byte-for-byte identical</b> to what the native binary renders.</p>
 </div>
 
-<!-- Milo-compiled emulator core: defines global createGenesis / stepFrame / setButtons / frameH -->
-<script src="genesis-core.js"></script>
+<!-- Milo-compiled emulator core: defines global createSnes / advanceFrame / setButtons / frameW / frameH -->
+<script src="snes-core.js"></script>
 <script>
 "use strict";
 const canvas = document.getElementById("screen");
@@ -131,15 +128,16 @@ const statusEl = document.getElementById("status");
 const fpsEl = document.getElementById("fps");
 const pauseBtn = document.getElementById("pause");
 
-let img = ctx.createImageData(320, 224);   // resized to match the core's frame height on boot
+let img = ctx.createImageData(256, 224);
 let handle = null;
 let running = false;
-let pad = 0;
+let pad = 0;   // 16-bit SNES auto-read joypad word (see setButtons in snesWebcore.milo)
 
-// key -> pad1 bit (see setButtons in genesisWebcore.milo)
+// key -> joypad bit. Matches snes.milo's desktop mapping.
 const KEYS = {
-  "ArrowUp": 0x01, "ArrowDown": 0x02, "ArrowLeft": 0x04, "ArrowRight": 0x08,
-  "KeyZ": 0x20, "KeyX": 0x10, "KeyC": 0x40, "Enter": 0x80,   // Z->B(attack), X->A, C->C(jump)
+  "ArrowUp": 0x0800, "ArrowDown": 0x0400, "ArrowLeft": 0x0200, "ArrowRight": 0x0100,
+  "KeyZ": 0x8000, "KeyA": 0x4000, "ShiftRight": 0x2000, "Enter": 0x1000,  // Z->B, A->Y, RShift->Select, Enter->Start
+  "KeyX": 0x0080, "KeyS": 0x0040, "KeyQ": 0x0020, "KeyW": 0x0010,          // X->A, S->X, Q->L, W->R
 };
 addEventListener("keydown", e => { if (KEYS[e.code] !== undefined) { pad |= KEYS[e.code]; e.preventDefault(); } });
 addEventListener("keyup",   e => { if (KEYS[e.code] !== undefined) { pad &= ~KEYS[e.code]; e.preventDefault(); } });
@@ -156,58 +154,20 @@ function bindPad(el) {
 }
 for (const el of document.querySelectorAll(".tb[data-bit]")) bindPad(el);
 document.getElementById("togglePad").addEventListener("click", () => {
-  document.getElementById("pad").classList.toggle("force");
+  const p = document.getElementById("pad"), s = document.getElementById("padShoulders");
+  const showing = p.classList.toggle("force");
+  s.style.display = showing || getComputedStyle(p).display === "flex" ? "flex" : "none";
 });
-
-// --- Stereo audio: the YM2612+PSG mix produces 735 interleaved L,R i16 samples
-// per frame at 44.1 kHz into h.samples. Drain into a ring the ScriptProcessor pulls. ---
-const SR = 44100;
-let audioCtx = null, gainNode = null;
-const ringL = new Float32Array(1 << 16), ringR = new Float32Array(1 << 16);
-const RMASK = ringL.length - 1;
-let rHead = 0, rTail = 0;
-const volSlider = document.getElementById("vol");
-function initAudio() {
-  if (audioCtx) return;
-  audioCtx = new AudioContext({ sampleRate: SR });
-  const node = audioCtx.createScriptProcessor(1024, 0, 2);
-  node.onaudioprocess = e => {
-    const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
-    for (let i = 0; i < L.length; i++) {
-      if (rHead !== rTail) { L[i] = ringL[rHead]; R[i] = ringR[rHead]; rHead = (rHead + 1) & RMASK; }
-      else { L[i] = 0; R[i] = 0; }
-    }
-  };
-  gainNode = audioCtx.createGain();
-  gainNode.gain.value = (+volSlider.value / 100) ** 2;
-  node.connect(gainNode);
-  gainNode.connect(audioCtx.destination);
-}
-volSlider.addEventListener("input", () => { if (gainNode) gainNode.gain.value = (+volSlider.value / 100) ** 2; });
-function unlockAudio() {
-  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-  if (running) statusEl.textContent = "Running · \u{1F50A} sound on";
-}
-addEventListener("pointerdown", unlockAudio);
-addEventListener("keydown", unlockAudio);
-
-function drainAudio() {
-  const s = handle.samples;
-  for (let k = 0; k + 1 < s.length; k += 2) {
-    const next = (rTail + 1) & RMASK;
-    if (next === rHead) break;               // ring full: drop rest (bounded latency)
-    ringL[rTail] = s[k] / 32768;
-    ringR[rTail] = s[k + 1] / 32768;
-    rTail = next;
-  }
-  s.length = 0;                              // reset the core's sample buffer
+// Show shoulder row whenever the pad is visible on touch devices.
+if (matchMedia("(hover: none) and (pointer: coarse)").matches) {
+  document.getElementById("padShoulders").style.display = "flex";
 }
 
-// Genesis runs at ~59.92 Hz (NTSC). Pace by wall-clock so speed is display-independent.
-const FRAME_MS = 1000 / 59.92;
+// SNES runs at ~60.1 Hz (NTSC). Pace by wall-clock so speed is display-independent.
+const FRAME_MS = 1000 / 60.098;
 let last = 0, accMs = 0, fpsFrames = 0, fpsAcc = 0;
 function blit() {
-  img.data.set(handle.rgba);   // rgba is already [R,G,B,A] bytes, 320-wide, frameH rows
+  img.data.set(handle.rgba);
   ctx.putImageData(img, 0, 0);
 }
 function loop(now) {
@@ -216,9 +176,8 @@ function loop(now) {
   if (accMs > 100) accMs = 100;
   let ran = false;
   while (accMs >= FRAME_MS) {
-    setButtons(handle, pad & 0xFF);
-    stepFrame(handle);
-    drainAudio();
+    setButtons(handle, pad & 0xFFFF);
+    advanceFrame(handle);
     accMs -= FRAME_MS;
     ran = true;
     fpsFrames++;
@@ -230,17 +189,13 @@ function loop(now) {
 }
 
 function boot(bytes) {
-  handle = createGenesis(Array.from(bytes));
-  const h = frameH(handle);
-  if (h !== canvas.height) { canvas.height = h; img = ctx.createImageData(320, h); }
-  initAudio();
-  if (audioCtx.state === "suspended") audioCtx.resume();
+  handle = createSnes(Array.from(bytes));
+  const w = frameW(handle), h = frameH(handle);
+  if (w !== canvas.width || h !== canvas.height) { canvas.width = w; canvas.height = h; img = ctx.createImageData(w, h); }
   running = true;
   pauseBtn.disabled = false;
   pauseBtn.textContent = "Pause";
-  statusEl.textContent = audioCtx.state === "running"
-    ? "Running · \u{1F50A} sound on"
-    : "Running · press a key for \u{1F50A} sound";
+  statusEl.textContent = "Running";
   last = performance.now(); loop._p = last; accMs = 0; fpsFrames = 0; fpsAcc = 0;
   requestAnimationFrame(loop);
 }
@@ -265,31 +220,18 @@ pauseBtn.addEventListener("click", () => {
   if (!handle) return;
   running = !running;
   pauseBtn.textContent = running ? "Pause" : "Resume";
-  if (running) {
-    if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
-    last = performance.now(); loop._p = last; accMs = 0;
-    requestAnimationFrame(loop);
-  } else if (audioCtx) { audioCtx.suspend(); }
+  if (running) { last = performance.now(); loop._p = last; accMs = 0; requestAnimationFrame(loop); }
 });
-
 document.getElementById("fs").addEventListener("click", () => {
   if (!document.fullscreenElement) canvas.requestFullscreen(); else document.exitFullscreen();
 });
 
-for (const btn of document.querySelectorAll("[data-rom]")) {
-  btn.addEventListener("click", () => loadUrl(btn.dataset.rom, btn.textContent));
-}
-
-// Auto-start Dragon's Castle so the page is alive on load (video only until a
-// gesture unlocks audio).
-loadUrl("https://raw.githubusercontent.com/retrobrews/md-games/master/dragonscastle.bin", "Dragon's Castle");
-
-// Local ROMs (serve.ts, localhost only). Filter the shared manifest to Genesis exts.
+// Local ROMs (serve.ts, localhost only). Filter the shared manifest to SNES exts.
 fetch("/local-roms.json").then(r => r.ok ? r.json() : []).then(list => {
-  const genList = (Array.isArray(list) ? list : []).filter(n => /\.(md|bin|gen|smd)$/i.test(n));
-  if (genList.length === 0) return;
+  const snesList = (Array.isArray(list) ? list : []).filter(n => /\.(sfc|smc)$/i.test(n));
+  if (snesList.length === 0) return;
   const sel = document.getElementById("localRoms");
-  for (const name of genList) { const o = document.createElement("option"); o.value = name; o.textContent = name; sel.appendChild(o); }
+  for (const name of snesList) { const o = document.createElement("option"); o.value = name; o.textContent = name; sel.appendChild(o); }
   document.getElementById("localBar").style.display = "flex";
   document.getElementById("localPlay").addEventListener("click", () => loadUrl(encodeURI("/local/" + sel.value), sel.value));
 }).catch(() => {});
@@ -300,7 +242,7 @@ drop.addEventListener("dragleave", () => drop.style.display = "none");
 addEventListener("drop", e => {
   e.preventDefault(); drop.style.display = "none";
   const f = e.dataTransfer.files[0];
-  if (f && /\.(md|bin|gen|smd)$/i.test(f.name)) loadFile(f);
+  if (f && /\.(sfc|smc)$/i.test(f.name)) loadFile(f);
 });
 </script>
 </body>

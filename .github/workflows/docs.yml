@@ -25,17 +25,19 @@ jobs:
           bun-version: latest
 
       # Compile the Milo emulator cores to JS and stage each demo under the
-      # VitePress public dir so they deploy at /milo/nes/ and /milo/genesis/.
-      # Source of truth stays in examples/apps/*/web; the *-core.js files are
-      # regenerated here to match their webcore.milo.
+      # VitePress public dir so they deploy at /milo/nes/, /milo/genesis/ and
+      # /milo/snes/. Source of truth stays in examples/apps/*/web; the *-core.js
+      # files are regenerated here to match their webcore.milo.
       - name: Build Milo browser demos
         run: |
           bun install
           bun run src/main.ts emit-js examples/apps/nes/webcore.milo -o examples/apps/nes/web/nes-core.js
           bun run src/main.ts emit-js examples/apps/genesis/genesisWebcore.milo -o examples/apps/genesis/web/genesis-core.js
-          mkdir -p docs/site/public/nes docs/site/public/genesis
+          bun run src/main.ts emit-js examples/apps/snes/snesWebcore.milo -o examples/apps/snes/web/snes-core.js
+          mkdir -p docs/site/public/nes docs/site/public/genesis docs/site/public/snes
           cp examples/apps/nes/web/index.html examples/apps/nes/web/nes-core.js docs/site/public/nes/
           cp examples/apps/genesis/web/index.html examples/apps/genesis/web/genesis-core.js docs/site/public/genesis/
+          cp examples/apps/snes/web/index.html examples/apps/snes/web/snes-core.js docs/site/public/snes/
 
       - name: Install dependencies
         run: cd docs/site && bun install
