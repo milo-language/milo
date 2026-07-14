@@ -4,6 +4,9 @@
 from "std/fs" import {
     readDir, isDir
 }
+from "std/io" import {
+    readFile
+}
 from "std/string" import {
     strEndsWith
 }
@@ -75,6 +78,84 @@ fn prettify(name: &string): string {
     return s
 }
 
+// Extract a 21-byte SNES header title at `off`, trimmed of trailing spaces, plus
+// a printable-character score so the caller can pick LoROM vs HiROM (whichever
+// header is real). Returns (score, title).
+fn snesTitleAt(data: &string, off: i64): i64 {
+    if off + 21 > data.len {
+        return -1
+    }
+    var score: i64 = 0
+    var i: i64 = 0
+    while i < 21 {
+        let c = data[off + i] as i64
+        if c >= 0x20 && c <= 0x7E {
+            score = score + 1
+        }
+        i = i + 1
+    }
+    return score
+}
+
+fn snesTitleStr(data: &string, off: i64): string {
+    var s: string = ""
+    var end: i64 = 21
+    // Trim trailing spaces/nulls.
+    while end > 0 {
+        let c = data[off + end - 1] as i64
+        if c != 0x20 && c != 0x00 {
+            break
+        }
+        end = end - 1
+    }
+    var i: i64 = 0
+    while i < end {
+        let c = data[off + i] as i64
+        if c >= 0x20 && c <= 0x7E {
+            s.push(c as u8)
+        } else {
+            s.push(0x20 as u8) // replace stray control bytes with a space
+        }
+        i = i + 1
+    }
+    return s
+}
+
+// Human-readable label. For SNES, read the game name from the cartridge header
+// (LoROM $7FC0 / HiROM $FFC0, whichever scores as real ASCII) so "smw.smc" shows
+// as "SUPER MARIO WORLD". Falls back to the prettified filename on any failure.
+fn romTitle(path: &string, name: &string, sys: &string): string {
+    if sys == "snes" {
+        match readFile(path) {
+            Result.Ok(data) => {
+                var base: i64 = 0
+                if data.len % 1024 == 512 {
+                    base = 512 // skip a copier's 512-byte SMC header
+                }
+                let loOff = base + 0x7FC0
+                let hiOff = base + 0xFFC0
+                let loScore = snesTitleAt(data, loOff)
+                let hiScore = snesTitleAt(data, hiOff)
+                var bestOff = loOff
+                var bestScore = loScore
+                if hiScore > bestScore {
+                    bestOff = hiOff
+                    bestScore = hiScore
+                }
+                if bestScore >= 16 { // mostly-printable = a real title
+                    let t = snesTitleStr(data, bestOff)
+                    if t.len > 0 {
+                        return t
+                    }
+                }
+            }
+            Result.Err(e) => {
+            }
+        }
+    }
+    return prettify(name)
+}
+
 fn hasRomExt(name: &string, sys: &string): bool {
     if sys == "nes" {
         return strEndsWith(name, ".nes") || strEndsWith(name, ".NES")
@@ -129,7 +210,7 @@ fn addSystem(rows: &mut Vec<Row>, sel: &mut Vec<i64>, title: string, sys: string
             let full = joinPath(dir, n)
             sel.push(rows.len)
             rows.push(Row {
-                kind: 1, label: prettify(n), sys: sys.clone(), path: full
+                kind: 1, label: romTitle(full, n, sys), sys: sys.clone(), path: full
             }
             )
         }

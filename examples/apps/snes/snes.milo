@@ -84,6 +84,12 @@ let PAD_DPAD_RIGHT: i32 = 14
 // Controller hotplug events.
 let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
 let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
+// Window events (SDL_WINDOWEVENT); the sub-event id is byte 12 of the event.
+let SDL_WINDOWEVENT: u32 = 0x200
+let SDL_WINDOWEVENT_MINIMIZED: u8 = 7
+let SDL_WINDOWEVENT_RESTORED: u8 = 9
+let SDL_WINDOWEVENT_FOCUS_GAINED: u8 = 12
+let SDL_WINDOWEVENT_FOCUS_LOST: u8 = 13
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
 let SDL_WINDOW_RESIZABLE: u32 = 0x20 // lets the OS maximize/resize the window
@@ -164,6 +170,45 @@ fn demoRom(): Vec<u8> {
     return rom
 }
 
+// Game name from the cartridge header (LoROM $7FC0 / HiROM $FFC0, 21 bytes,
+// space-padded). loadCartridge already strips any 512-byte SMC header. Returns
+// "" if the region isn't a plausible ASCII title.
+fn snesRomTitle(rom: &Vec<u8>, mapMode: i64): string {
+    var base: i64 = 0
+    if rom.len % 1024 == 512 {
+        base = 512 // a copier's 512-byte SMC header survived (loadCartridge usually strips it)
+    }
+    let off: i64 = base + (if mapMode == 1 {
+        0xFFC0
+    } else {
+        0x7FC0
+    }
+    )
+    if off + 21 > rom.len {
+        return ""
+    }
+    var end: i64 = 21
+    while end > 0 {
+        let c = rom[off + end - 1] as i64
+        if c != 0x20 && c != 0x00 {
+            break
+        }
+        end = end - 1
+    }
+    var s: string = ""
+    var i: i64 = 0
+    while i < end {
+        let c = rom[off + i] as i64
+        if c >= 0x20 && c <= 0x7E {
+            s.push(c as u8)
+        } else {
+            s.push(0x20 as u8)
+        }
+        i = i + 1
+    }
+    return s
+}
+
 // Read a keyboard scancode's state from SDL's key array.
 fn key(ks: *u8, sc: i64): i64 {
     unsafe {
@@ -173,14 +218,19 @@ fn key(ks: *u8, sc: i64): i64 {
     }
 }
 
-// Open the first attached game controller, or null. Re-run on hotplug so pads
-// can be plugged/unplugged at any time.
-fn openFirstPad(): *u8 {
+// Open the n-th attached game controller (0 = player 1, 1 = player 2), or null.
+// Re-run on hotplug so pads can be plugged/unplugged at any time; slot order
+// follows SDL's joystick enumeration.
+fn openPadN(n: i64): *u8 {
     unsafe {
+        var found: i64 = 0
         var ji: i32 = 0
         while ji < SDL_NumJoysticks() {
             if SDL_IsGameController(ji) != 0 {
-                return SDL_GameControllerOpen(ji)
+                if found == n {
+                    return SDL_GameControllerOpen(ji)
+                }
+                found = found + 1
             }
             ji = ji + 1
         }
@@ -207,6 +257,7 @@ fn main(): i32 {
         print("no ROM arg — running built-in demo")
     }
 
+    let gameName = snesRomTitle(rom, mapMode) // before busNew moves `rom`
     var m = busNew(rom, mapMode)
     var cpu = newCpuReset(m)
 
@@ -230,8 +281,15 @@ fn main(): i32 {
         return 1
     }
     unsafe {
-        var pad: *u8 = openFirstPad()
-        let title = "Milo SNES"
+        var pad: *u8 = openPadN(0) // player 1
+        var pad2: *u8 = openPadN(1) // player 2
+        // Window title = the game's own name (from the cart header), falling back
+        // to "Milo SNES". Trailing NUL so the string is a valid C string for SDL.
+        var title = "Milo SNES"
+        if gameName.len > 0 {
+            title = gameName + " - Milo SNES"
+        }
+        title.push(0 as u8)
         let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * 3, 224 * 3, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE)
         let ren = SDL_CreateRenderer(win, -1, 0)
         // Scale the 256x224 frame to fill the (resizable) window, aspect-preserved.
@@ -253,6 +311,7 @@ fn main(): i32 {
 
         var ev: [u8; 64] = [0; 64]
         var quit = false
+        var focused = true // false while backgrounded -> pause the emulator
         var prevSave = false // F5 = save-state, F7 = load-state (edge-detected)
         var prevLoad = false
         var comboFrames: i64 = 0 // Start+Select held -> quit to the menu
@@ -267,7 +326,9 @@ fn main(): i32 {
             "/tmp/snes/demo.state"
         }
         while !quit {
-            stepFrame(cpu, m)
+            if focused {
+                stepFrame(cpu, m)
+            }
             renderFrame(m.ppu, fb)
 
             saveTick = saveTick + 1
@@ -310,12 +371,27 @@ fn main(): i32 {
                 if evType == SDL_QUIT {
                     quit = true
                 }
-                // Controller plugged in or removed: re-grab the first available.
+                // Controller plugged in or removed: re-grab both slots so P1/P2
+                // stay assigned as pads come and go at any time.
                 if evType == SDL_CONTROLLERDEVICEADDED || evType == SDL_CONTROLLERDEVICEREMOVED {
                     if (pad as i64) != 0 {
                         SDL_GameControllerClose(pad)
                     }
-                    pad = openFirstPad()
+                    if (pad2 as i64) != 0 {
+                        SDL_GameControllerClose(pad2)
+                    }
+                    pad = openPadN(0)
+                    pad2 = openPadN(1)
+                }
+                // Pause + go silent when backgrounded; resume on refocus.
+                if evType == SDL_WINDOWEVENT {
+                    let we = ev[12]
+                    if we == SDL_WINDOWEVENT_FOCUS_LOST || we == SDL_WINDOWEVENT_MINIMIZED {
+                        focused = false
+                    }
+                    if we == SDL_WINDOWEVENT_FOCUS_GAINED || we == SDL_WINDOWEVENT_RESTORED {
+                        focused = true
+                    }
                 }
             }
             let ks = SDL_GetKeyboardState(0 as *i32)
@@ -429,6 +505,47 @@ fn main(): i32 {
                 } // R
             }
             m.joy1 = j
+            // Player 2 is the second controller only (no keyboard fallback).
+            var j2: i64 = 0
+            if (pad2 as i64) != 0 {
+                if SDL_GameControllerGetButton(pad2, PAD_B) != 0 {
+                    j2 = j2 | 0x8000
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_Y) != 0 {
+                    j2 = j2 | 0x4000
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_BACK) != 0 {
+                    j2 = j2 | 0x2000
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_START) != 0 {
+                    j2 = j2 | 0x1000
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_UP) != 0 {
+                    j2 = j2 | 0x0800
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_DOWN) != 0 {
+                    j2 = j2 | 0x0400
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_LEFT) != 0 {
+                    j2 = j2 | 0x0200
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_DPAD_RIGHT) != 0 {
+                    j2 = j2 | 0x0100
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_A) != 0 {
+                    j2 = j2 | 0x0080
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_X) != 0 {
+                    j2 = j2 | 0x0040
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_LSHOULDER) != 0 {
+                    j2 = j2 | 0x0020
+                }
+                if SDL_GameControllerGetButton(pad2, PAD_RSHOULDER) != 0 {
+                    j2 = j2 | 0x0010
+                }
+            }
+            m.joy2 = j2
             // Start+Select held ~1s quits back to the menu.
             if (j & 0x3000) == 0x3000 {
                 comboFrames = comboFrames + 1
@@ -438,7 +555,12 @@ fn main(): i32 {
             } else {
                 comboFrames = 0
             }
-            SDL_Delay(16) // ~60 fps pacing
+            // ~60 fps when active; idle slower while backgrounded/paused.
+            if focused {
+                SDL_Delay(16)
+            } else {
+                SDL_Delay(50)
+            }
         }
     }
     // Persist cartridge SRAM on exit so in-game saves survive.
