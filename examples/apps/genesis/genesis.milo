@@ -58,6 +58,8 @@ extern fn SDL_GameControllerOpen(index: i32): *u8
 
 extern fn SDL_GameControllerGetButton(gc: *u8, button: i32): u8
 
+extern fn SDL_GameControllerClose(gc: *u8): void
+
 extern fn SDL_Delay(ms: u32): void
 
 extern fn SDL_Quit(): void
@@ -83,6 +85,9 @@ let PAD_DPAD_UP: i32 = 11
 let PAD_DPAD_DOWN: i32 = 12
 let PAD_DPAD_LEFT: i32 = 13
 let PAD_DPAD_RIGHT: i32 = 14
+// Controller hotplug events.
+let SDL_CONTROLLERDEVICEADDED: u32 = 0x653
+let SDL_CONTROLLERDEVICEREMOVED: u32 = 0x654
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
 let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
@@ -178,6 +183,21 @@ fn blit(m: &Mem, fb: &Vec<i64>, srcW: i64, stride: i64, rgba: &mut Vec<u8>) {
     }
 }
 
+// Open the first attached game controller, or null. Re-run on hotplug so pads
+// can be plugged/unplugged at any time.
+fn openFirstPad(): *u8 {
+    unsafe {
+        var ji: i32 = 0
+        while ji < SDL_NumJoysticks() {
+            if SDL_IsGameController(ji) != 0 {
+                return SDL_GameControllerOpen(ji)
+            }
+            ji = ji + 1
+        }
+        return 0 as *u8
+    }
+}
+
 fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
@@ -226,16 +246,7 @@ fn main(): i32 {
     }
     var synth = newSynth()
     unsafe {
-        // Open the first attached game controller (Bluetooth pads included).
-        var pad: *u8 = 0 as *u8
-        var ji: i32 = 0
-        while ji < SDL_NumJoysticks() {
-            if SDL_IsGameController(ji) != 0 {
-                pad = SDL_GameControllerOpen(ji)
-                break
-            }
-            ji = ji + 1
-        }
+        var pad: *u8 = openFirstPad()
         // SDL_AudioSpec (32 bytes): freq 44100, AUDIO_S16LSB (0x8010), mono, 2048 samples.
         var want: [u8; 32] = [0; 32]
         want[0] = 0x44
@@ -269,6 +280,13 @@ fn main(): i32 {
                 let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
+                }
+                // Controller plugged in or removed: re-grab the first available.
+                if evType == SDL_CONTROLLERDEVICEADDED || evType == SDL_CONTROLLERDEVICEREMOVED {
+                    if (pad as i64) != 0 {
+                        SDL_GameControllerClose(pad)
+                    }
+                    pad = openFirstPad()
                 }
             }
             let ks = SDL_GetKeyboardState(0 as *i32)

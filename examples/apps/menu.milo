@@ -19,10 +19,11 @@ from "./shared/sdl" import {
     SDL_UpdateTexture, SDL_RenderClear, SDL_RenderCopy, SDL_RenderPresent,
     SDL_PollEvent, SDL_GetKeyboardState, SDL_Delay, SDL_Quit,
     SDL_NumJoysticks, SDL_IsGameController,
-    SDL_GameControllerOpen, SDL_GameControllerGetButton,
+    SDL_GameControllerOpen, SDL_GameControllerGetButton, SDL_GameControllerClose,
     SDL_INIT_VIDEO, SDL_INIT_GAMECONTROLLER, SDL_WINDOWPOS_CENTERED,
     SDL_WINDOW_SHOWN, SDL_WINDOW_FULLSCREEN_DESKTOP, SDL_TEXTUREACCESS_STREAMING,
     SDL_PIXELFORMAT_ABGR8888, SDL_QUIT,
+    SDL_CONTROLLERDEVICEADDED, SDL_CONTROLLERDEVICEREMOVED,
     PAD_A, PAD_B, PAD_BACK, PAD_START, PAD_DPAD_UP, PAD_DPAD_DOWN,
     SC_UP, SC_DOWN, SC_RETURN, SC_ESCAPE, SC_Z, SC_X
 }
@@ -33,12 +34,24 @@ from "./shared/menucore" import {
     Row, buildRows, render, LIST_TOP, ROW_H
 }
 
+// Open the first attached game controller, or null if none. Re-run on hotplug
+// events so pads can be plugged/unplugged at any time.
+fn openFirstPad(): *u8 {
+    unsafe {
+        var ji: i32 = 0
+        while ji < SDL_NumJoysticks() {
+            if SDL_IsGameController(ji) != 0 {
+                return SDL_GameControllerOpen(ji)
+            }
+            ji = ji + 1
+        }
+        return 0 as *u8
+    }
+}
+
 fn main(): i32 {
     var fullscreen = false
-    // Bind before iterating: `for a in args()` iterates a temporary the compiler
-    // frees too early (use-after-free). Same footgun as readDir in menucore.
-    let argv = args()
-    for a in argv {
+    for a in args() {
         if a == "--fullscreen" {
             fullscreen = true
         }
@@ -62,17 +75,9 @@ fn main(): i32 {
     var fb: [u32; 230400] = [0; 230400]
 
     unsafe {
-        // SDL ships a built-in controller mapping DB covering most Bluetooth
-        // pads (Xbox / PlayStation / 8BitDo), so no external file is needed.
-        var pad: *u8 = 0 as *u8
-        var ji: i32 = 0
-        while ji < SDL_NumJoysticks() {
-            if SDL_IsGameController(ji) != 0 {
-                pad = SDL_GameControllerOpen(ji)
-                break
-            }
-            ji = ji + 1
-        }
+        // SDL ships a built-in controller mapping DB covering most pads
+        // (Xbox / PlayStation / 8BitDo), so no external file is needed.
+        var pad: *u8 = openFirstPad()
 
         let title = "Milo Retro Console"
         var winFlags = SDL_WINDOW_SHOWN
@@ -103,6 +108,13 @@ fn main(): i32 {
                 let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
+                }
+                // Controller plugged in or removed: re-grab the first available.
+                if evType == SDL_CONTROLLERDEVICEADDED || evType == SDL_CONTROLLERDEVICEREMOVED {
+                    if (pad as i64) != 0 {
+                        SDL_GameControllerClose(pad)
+                    }
+                    pad = openFirstPad()
                 }
             }
 

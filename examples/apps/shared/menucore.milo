@@ -101,10 +101,7 @@ fn addSystem(rows: &mut Vec<Row>, sel: &mut Vec<i64>, title: string, sys: string
     let dir = "roms/" + sys
     var names: Vec<string> = []
     if isDir(dir) {
-        // Bind the readDir result before iterating: `for e in readDir(dir)`
-        // iterates a temporary the compiler frees too early (use-after-free).
-        let entries = readDir(dir)
-        for entry in entries {
+        for entry in readDir(dir) {
             if !entry.isDir && hasRomExt(entry.name, sys) {
                 names.push(entry.name.clone())
             }
