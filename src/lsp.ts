@@ -395,6 +395,10 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const builtinHover = findBuiltinTypeHover(source, word, line);
     if (builtinHover) return { contents: { kind: "markdown", value: builtinHover } };
 
+    // Scalar primitives + raw pointers (`u8`, `i32`, `*u8`, …)
+    const primHover = findPrimitiveHover(source, word, line, character);
+    if (primHover) return { contents: { kind: "markdown", value: primHover } };
+
     // Type aliases
     for (const ta of program.typeAliases) {
       if (ta.name === word) {
@@ -664,6 +668,48 @@ const BUILTIN_TYPE_HOVERS: Record<string, { doc: string; ctors: Record<string, s
     },
   },
 };
+
+// Scalar primitives + the two string types. Keyed by the exact type keyword;
+// the value is the markdown body shown on hover.
+const PRIMITIVE_HOVERS: Record<string, string> = {
+  u8: "8-bit unsigned integer (0–255). Also the byte type for raw buffers and `*u8` C strings.",
+  u16: "16-bit unsigned integer (0–65535).",
+  u32: "32-bit unsigned integer.",
+  u64: "64-bit unsigned integer.",
+  i8: "8-bit signed integer (−128–127).",
+  i16: "16-bit signed integer.",
+  i32: "32-bit signed integer.",
+  i64: "64-bit signed integer. Default type for an unannotated integer literal.",
+  f32: "32-bit IEEE-754 float.",
+  f64: "64-bit IEEE-754 float. Default type for an unannotated float literal.",
+  bool: "Boolean — `true` or `false`.",
+  char: "A single Unicode scalar value (32-bit).",
+  string: "Borrowed UTF-8 string slice (a view; not owned). The owned, growable buffer is `String`.",
+  void: "No value — the return type of a function that returns nothing.",
+};
+
+// Hover for a scalar/string primitive. If the type keyword is written as `*T`
+// (raw pointer — the `*` sits immediately before the word), lead with the
+// pointer explanation since that's the surprising part at FFI boundaries.
+function findPrimitiveHover(source: string, word: string, line: number, character: number): string | null {
+  const body = PRIMITIVE_HOVERS[word];
+  if (!body) return null;
+  const text = source.split("\n")[line] ?? "";
+  let start = character;
+  while (start > 0 && /\w/.test(text[start - 1])) start--;
+  const isPtr = start > 0 && text[start - 1] === "*";
+  if (isPtr) {
+    return [
+      "```milo",
+      `*${word}`,
+      "```",
+      `Raw pointer to \`${word}\` — a C-FFI handle (often the opaque \`void*\` stand-in for a foreign type).`,
+      "",
+      "Dereferencing or passing a raw `*T` needs `unsafe`, except `0 as *T` (null) and pointers auto-coerced at a call. Non-`Send` across threads.",
+    ].join("\n");
+  }
+  return ["```milo", word, "```", body].join("\n");
+}
 
 function findBuiltinTypeHover(source: string, word: string, line: number): string | null {
   const entry = BUILTIN_TYPE_HOVERS[word];

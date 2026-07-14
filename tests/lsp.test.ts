@@ -63,6 +63,15 @@ const BUILTIN_SRC = `fn main() {
 `;
 const BUILTIN_URI = "file:///tmp/milo-lsp-builtin.milo";
 
+// Hover on a scalar primitive and on a raw pointer (`*u8`) at an FFI boundary.
+const PRIM_SRC = `fn openPad(): *u8 {
+    let n: i64 = 3
+    let p: *u32 = 0 as *u32
+    return 0 as *u8
+}
+`;
+const PRIM_URI = "file:///tmp/milo-lsp-prim.milo";
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -113,7 +122,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -146,6 +155,21 @@ test("hover on builtin Vec type and Vec.new constructor", async () => {
   // `new` in `Vec.new()` (line 1, char 27).
   const onCtor = await req(23, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 1, character: 27 } });
   expect(onCtor?.contents?.value).toContain("Vec.new");
+});
+
+test("hover on a raw pointer and a scalar primitive", async () => {
+  // `u8` inside the `*u8` return type (line 0, char 15) — pointer explanation leads.
+  const onPtr = await req(24, "textDocument/hover", { textDocument: { uri: PRIM_URI }, position: { line: 0, character: 15 } });
+  expect(onPtr?.contents?.value).toContain("*u8");
+  expect(onPtr?.contents?.value).toContain("unsafe");
+  // `u32` inside `*u32` (line 2, char 12) — same pointer treatment as `*u8`.
+  const onPtr32 = await req(26, "textDocument/hover", { textDocument: { uri: PRIM_URI }, position: { line: 2, character: 12 } });
+  expect(onPtr32?.contents?.value).toContain("*u32");
+  expect(onPtr32?.contents?.value).toContain("unsafe");
+  // `i64` in a plain annotation (line 1, char 11) — scalar doc, no pointer note.
+  const onScalar = await req(25, "textDocument/hover", { textDocument: { uri: PRIM_URI }, position: { line: 1, character: 11 } });
+  expect(onScalar?.contents?.value).toContain("64-bit signed integer");
+  expect(onScalar?.contents?.value).not.toContain("Raw pointer");
 });
 
 test("goto-definition on imported stdlib symbol resolves to std/string.milo", async () => {
