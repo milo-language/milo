@@ -1,0 +1,40 @@
+// Headless preview of the splash screen: render it and dump the framebuffer as
+// raw RGB24 for ffmpeg. See splash.milo header for the convert command.
+from "std/args" import {
+    args
+}
+from "std/fs" import {
+    writeFile
+}
+from "./splash" import {
+    renderSplash
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: splashShot <out.rgb>")
+        return 1
+    }
+    var fb: [u32; 61440] = [0; 61440]
+    renderSplash(fb)
+    var data: string = ""
+    var i: i64 = 0
+    while i < 61440 {
+        let px = fb[i] as i64
+        data.push((px & 0xFF) as u8)
+        data.push(((px >> 8) & 0xFF) as u8)
+        data.push(((px >> 16) & 0xFF) as u8)
+        i = i + 1
+    }
+    match writeFile(argv[1], data) {
+        Result.Ok(n) => {
+            print("wrote splash rgb")
+            return 0
+        }
+        Result.Err(e) => {
+            print("write failed")
+            return 1
+        }
+    }
+}

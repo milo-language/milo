@@ -70,6 +70,24 @@ struct Ppu {
     lineColdR: Vec<i64> // COLDATA $2132 fixed-color R per line (0-31)
     lineColdG: Vec<i64>
     lineColdB: Vec<i64>
+
+    // Window clipping. W12SEL/W34SEL ($2123/$2124): per-BG window1/2 enable+invert
+    // (nibble per layer). WH0-3 ($2126-$2129): window 1 left/right, window 2
+    // left/right. WBGLOG ($212A): per-BG combine logic (OR/AND/XOR/XNOR). TMW/TSW
+    // ($212E/$212F): disable a layer inside its window area on main/sub screen.
+    // SMW clips the overworld map to a rectangle via HDMA-driven WH0/WH1 (per-line)
+    // + inverted window + TMW. lineWH0/1 carry the per-scanline window-1 bounds.
+    w12sel: i64
+    w34sel: i64
+    wh0: i64
+    wh1: i64
+    wh2: i64
+    wh3: i64
+    wbglog: i64
+    tmw: i64
+    tsw: i64
+    lineWH0: Vec<i64>
+    lineWH1: Vec<i64>
 }
 
 fn ppuZeros(n: i64): Vec<u8> {
@@ -103,7 +121,9 @@ fn newPpu(): Ppu {
         m7sel: 0, m7Latch: 0,
         cgadsub: 0, coldR: 0, coldG: 0, coldB: 0,
         hdmaOn: false, lineBright: ppuZerosI64(224), lineColdR: ppuZerosI64(224),
-        lineColdG: ppuZerosI64(224), lineColdB: ppuZerosI64(224)
+        lineColdG: ppuZerosI64(224), lineColdB: ppuZerosI64(224),
+        w12sel: 0, w34sel: 0, wh0: 0, wh1: 0, wh2: 0, wh3: 0, wbglog: 0,
+        tmw: 0, tsw: 0, lineWH0: ppuZerosI64(224), lineWH1: ppuZerosI64(224)
     }
 }
 
@@ -280,6 +300,37 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
         p.m7Latch = v
         return
     }
+    if reg == 0x23 {
+        if v != 0 {
+            print("DBG W12SEL write = " + v.toString())
+        }
+        p.w12sel = v
+        return
+    } // W12SEL: BG1/BG2 window enable+invert
+    if reg == 0x24 {
+        p.w34sel = v
+        return
+    } // W34SEL: BG3/BG4
+    if reg == 0x26 {
+        p.wh0 = v
+        return
+    } // WH0: window 1 left
+    if reg == 0x27 {
+        p.wh1 = v
+        return
+    } // WH1: window 1 right
+    if reg == 0x28 {
+        p.wh2 = v
+        return
+    } // WH2: window 2 left
+    if reg == 0x29 {
+        p.wh3 = v
+        return
+    } // WH3: window 2 right
+    if reg == 0x2A {
+        p.wbglog = v
+        return
+    } // WBGLOG: window combine logic per BG
     if reg == 0x2C {
         p.tm = v
         return
@@ -288,6 +339,14 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
         p.ts = v
         return
     } // sub-screen layer enable
+    if reg == 0x2E {
+        p.tmw = v
+        return
+    } // TMW: main-screen window-area layer disable
+    if reg == 0x2F {
+        p.tsw = v
+        return
+    } // TSW: sub-screen window-area layer disable
     if reg == 0x31 {
         p.cgadsub = v
         return
@@ -413,6 +472,66 @@ fn lineBrightAt(p: &Ppu, y: i64, deflt: i64): i64 {
     return deflt
 }
 
+// True if BG layer `layerIdx` (0-3) must be SKIPPED at pixel (x,y) because it is
+// window-disabled (screenDisable = TMW for main / TSW for sub) and (x,y) falls in
+// the layer's combined window area. Returns false (draw normally) unless the
+// layer's screen-disable bit is set AND a window is enabled for it — so layers
+// without windows are unaffected. Window 1 bounds are per-scanline (HDMA); window
+// 2 is scalar. SMW's overworld uses an inverted window 1 + TMW to clip the map.
+fn windowMasked(p: &Ppu, layerIdx: i64, screenDisable: i64, x: i64, y: i64): bool {
+    if (screenDisable & (1 << layerIdx)) == 0 {
+        return false
+    }
+    let sel = if layerIdx < 2 {
+        p.w12sel
+    } else {
+        p.w34sel
+    }
+    let shift = (layerIdx & 1) * 4
+    let w1en = ((sel >> shift) & 1) != 0
+    let w1inv = ((sel >> (shift + 1)) & 1) != 0
+    let w2en = ((sel >> (shift + 2)) & 1) != 0
+    let w2inv = ((sel >> (shift + 3)) & 1) != 0
+    if !w1en && !w2en {
+        return false
+    }
+    let lo1 = if p.hdmaOn {
+        p.lineWH0[y]
+    } else {
+        p.wh0
+    }
+    let hi1 = if p.hdmaOn {
+        p.lineWH1[y]
+    } else {
+        p.wh1
+    }
+    var in1 = x >= lo1 && x <= hi1
+    if w1inv {
+        in1 = !in1
+    }
+    var in2 = x >= p.wh2 && x <= p.wh3
+    if w2inv {
+        in2 = !in2
+    }
+    if w1en && w2en {
+        let logic = (p.wbglog >> (layerIdx * 2)) & 3
+        if logic == 1 {
+            return in1 && in2
+        }
+        if logic == 2 {
+            return in1 != in2
+        }
+        if logic == 3 {
+            return in1 == in2
+        }
+        return in1 || in2
+    }
+    if w1en {
+        return in1
+    }
+    return in2
+}
+
 fn cgToRgb(p: &Ppu, idx: i64, bright: i64): i64 {
     let a = (idx * 2) & 0x1FF
     let w = (p.cgram[a] as i64) | ((p.cgram[(a + 1) & 0x1FF] as i64) << 8)
@@ -522,7 +641,7 @@ fn bgEntryAddr(tmBase: i64, sc: i64, tileX: i64, tileY: i64): i64 {
 // Composite one BG layer onto fb (transparent where the pixel index is 0).
 // sc = the BGnSC register: base in bits2-7, screen size in bits0-1.
 // bpp 4 -> 16 colors/palette; bpp 2 -> 4 colors/palette (BG3).
-fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64, palBase: i64): void {
+fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64, palBase: i64, layerIdx: i64, screenDisable: i64): void {
     let palW: i64 = if bpp == 4 {
         16
     } else {
@@ -543,6 +662,10 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
     while y < 224 {
         var x: i64 = 0
         while x < 256 {
+            if windowMasked(p, layerIdx, screenDisable, x, y) {
+                x = x + 1
+                continue
+            }
             let ex = (x + hofs) & maskX
             let ey = (y + vofs) & maskY
             let entry = vramWord(p, bgEntryAddr(tmBase, sc, ex >> 3, ey >> 3))
@@ -612,7 +735,7 @@ fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
 
 // Render the mode's BG layers whose bit is set in `enable` (a $212C/$212D mask),
 // back-to-front, compositing onto fb by transparency.
-fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64): void {
+fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenDisable: i64): void {
     let ch1 = (p.bg12nba & 0x0F) << 12
     let ch2 = ((p.bg12nba >> 4) & 0x0F) << 12
     let ch3 = (p.bg34nba & 0x0F) << 12
@@ -625,16 +748,16 @@ fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64): void {
     if mode == 0 {
         // Mode 0: four 2bpp BGs; palette groups at cgram 0/32/64/96.
         if en4 {
-            renderBGLayer(p, fb, bright, p.bgsc3, ch4, p.bghofs[3], p.bgvofs[3], 2, 96)
+            renderBGLayer(p, fb, bright, p.bgsc3, ch4, p.bghofs[3], p.bgvofs[3], 2, 96, 3, screenDisable)
         }
         if en3 {
-            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 64)
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 64, 2, screenDisable)
         }
         if en2 {
-            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 2, 32)
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 2, 32, 1, screenDisable)
         }
         if en1 {
-            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0)
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0, 0, screenDisable)
         }
     } else if mode == 7 {
         if en1 {
@@ -643,21 +766,21 @@ fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64): void {
     } else if mode == 3 {
         // Mode 3: BG1 8bpp (direct 256-color), BG2 4bpp.
         if en2 {
-            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0)
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, screenDisable)
         }
         if en1 {
-            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 8, 0)
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 8, 0, 0, screenDisable)
         }
     } else {
         // Mode 1 (and a reasonable default for 2/4-7): BG3 2bpp, BG2/BG1 4bpp.
         if en3 {
-            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0)
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, screenDisable)
         }
         if en2 {
-            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0)
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, screenDisable)
         }
         if en1 {
-            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0)
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0, 0, screenDisable)
         }
     }
 }
@@ -750,9 +873,9 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     }
 
     if p.ts != 0 {
-        renderScreenBGs(p, fb, bright, p.ts)
+        renderScreenBGs(p, fb, bright, p.ts, p.tsw)
     }
-    renderScreenBGs(p, fb, bright, p.tm)
+    renderScreenBGs(p, fb, bright, p.tm, p.tmw)
     if ((p.tm | p.ts) & 0x10) != 0 {
         renderSprites(p, fb, bright)
     }

@@ -1,0 +1,187 @@
+// Pure (non-SDL) logic for the retro-console menu: ROM discovery, row layout,
+// and framebuffer rendering. Split out from menu.milo so a headless harness can
+// render the same pixels to a PNG for verification without opening a window.
+from "std/fs" import {
+    readDir, isDir
+}
+from "std/string" import {
+    strEndsWith
+}
+from "./font" import {
+    MENU_W, MENU_H, rgb, clear, fillRect, drawText, drawTextCentered, textWidth
+}
+
+// A menu row: a system header (kind 0), a selectable ROM (kind 1), or a
+// non-selectable note like "(no roms)" (kind 2).
+struct Row {
+    kind: i64,
+    label: string,
+    sys: string,
+    path: string,
+}
+
+fn joinPath(dir: &string, name: &string): string {
+    var full: string = ""
+    var k: i64 = 0
+    while k < dir.len {
+        full.push(dir[k])
+        k = k + 1
+    }
+    full.push(47 as u8) // '/'
+    k = 0
+    while k < name.len {
+        full.push(name[k])
+        k = k + 1
+    }
+    return full
+}
+
+// Lexicographic string less-than (byte order) — for sorting ROM names.
+fn strLess(a: &string, b: &string): bool {
+    var i: i64 = 0
+    while i < a.len && i < b.len {
+        if a[i] != b[i] {
+            return a[i] < b[i]
+        }
+        i = i + 1
+    }
+    return a.len < b.len
+}
+
+// Human-readable label: drop the extension, uppercase, underscores -> spaces.
+fn prettify(name: &string): string {
+    var end = name.len
+    var i = name.len - 1
+    while i >= 0 {
+        if name[i] == 46 { // '.'
+            end = i
+            break
+        }
+        i = i - 1
+    }
+    var s: string = ""
+    var j: i64 = 0
+    while j < end {
+        var c = name[j] as i64
+        if c == 95 { // '_'
+            c = 32 // space
+        }
+        if c >= 97 && c <= 122 { // a-z -> A-Z
+            c = c - 32
+        }
+        s.push(c as u8)
+        j = j + 1
+    }
+    return s
+}
+
+fn hasRomExt(name: &string, sys: &string): bool {
+    if sys == "nes" {
+        return strEndsWith(name, ".nes") || strEndsWith(name, ".NES")
+    }
+    if sys == "genesis" {
+        return strEndsWith(name, ".md") || strEndsWith(name, ".MD")
+        || strEndsWith(name, ".bin") || strEndsWith(name, ".BIN")
+        || strEndsWith(name, ".gen") || strEndsWith(name, ".GEN")
+        || strEndsWith(name, ".smd") || strEndsWith(name, ".SMD")
+    }
+    if sys == "snes" {
+        return strEndsWith(name, ".sfc") || strEndsWith(name, ".SFC")
+        || strEndsWith(name, ".smc") || strEndsWith(name, ".SMC")
+    }
+    return false
+}
+
+// Append the header + ROM rows for one system, sorted by name.
+fn addSystem(rows: &mut Vec<Row>, sel: &mut Vec<i64>, title: string, sys: string): void {
+    rows.push(Row {
+        kind: 0, label: title, sys: sys.clone(), path: ""
+    }
+    )
+    let dir = "roms/" + sys
+    var names: Vec<string> = []
+    if isDir(dir) {
+        // Bind the readDir result before iterating: `for e in readDir(dir)`
+        // iterates a temporary the compiler frees too early (use-after-free).
+        let entries = readDir(dir)
+        for entry in entries {
+            if !entry.isDir && hasRomExt(entry.name, sys) {
+                names.push(entry.name.clone())
+            }
+        }
+    }
+    // Insertion sort — ROM lists are small and this keeps the menu tidy.
+    var a: i64 = 1
+    while a < names.len {
+        var b = a
+        while b > 0 && strLess(names[b], names[b - 1]) {
+            let t = names[b - 1].clone()
+            names[b - 1] = names[b].clone()
+            names[b] = t
+            b = b - 1
+        }
+        a = a + 1
+    }
+    if names.len == 0 {
+        rows.push(Row {
+            kind: 2, label: "(no ROMs in " + dir + "/)", sys: sys.clone(), path: ""
+        }
+        )
+    } else {
+        for n in names {
+            let full = joinPath(dir, n)
+            sel.push(rows.len)
+            rows.push(Row {
+                kind: 1, label: prettify(n), sys: sys.clone(), path: full
+            }
+            )
+        }
+    }
+}
+
+fn buildRows(rows: &mut Vec<Row>, sel: &mut Vec<i64>): void {
+    addSystem(rows, sel, "NES", "nes")
+    addSystem(rows, sel, "GENESIS", "genesis")
+    addSystem(rows, sel, "SNES", "snes")
+}
+
+// Row layout constants (framebuffer pixels).
+let LIST_TOP: i64 = 58
+let ROW_H: i64 = 22
+
+fn render(fb: &mut [u32; 230400], rows: &Vec<Row>, selRow: i64, scrollTop: i64, visN: i64, font: &string, glyphs: &[string; 49]): void {
+    let bg = rgb(16, 18, 30)
+    let gold = rgb(248, 206, 92)
+    let romCol = rgb(206, 212, 226)
+    let noteCol = rgb(110, 118, 140)
+    let barCol = rgb(64, 132, 220)
+    let barText = rgb(12, 14, 24)
+    let footCol = rgb(120, 128, 150)
+
+    clear(fb, bg)
+    drawTextCentered(fb, "MILO RETRO CONSOLE", 14, 3, gold, font, glyphs)
+
+    var i = scrollTop
+    var drawn: i64 = 0
+    while i < rows.len && drawn < visN {
+        let kind = rows[i].kind
+        let y = LIST_TOP + drawn * ROW_H
+        if kind == 0 {
+            drawText(fb, rows[i].label, 24, y, 2, gold, font, glyphs)
+        } else if kind == 2 {
+            drawText(fb, rows[i].label, 48, y, 2, noteCol, font, glyphs)
+        } else {
+            if i == selRow {
+                fillRect(fb, 40, y - 3, MENU_W - 80, ROW_H - 2, barCol)
+                drawText(fb, rows[i].label, 48, y, 2, barText, font, glyphs)
+            } else {
+                drawText(fb, rows[i].label, 48, y, 2, romCol, font, glyphs)
+            }
+        }
+        i = i + 1
+        drawn = drawn + 1
+    }
+
+    let foot = "UP/DOWN MOVE   A/ENTER PLAY   B/ESC QUIT"
+    drawText(fb, foot, (MENU_W - textWidth(foot, 1)) / 2, MENU_H - 16, 1, footCol, font, glyphs)
+}

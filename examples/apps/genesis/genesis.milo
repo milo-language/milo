@@ -50,6 +50,14 @@ extern fn SDL_PollEvent(event: *u8): i32
 
 extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
+extern fn SDL_NumJoysticks(): i32
+
+extern fn SDL_IsGameController(index: i32): i32
+
+extern fn SDL_GameControllerOpen(index: i32): *u8
+
+extern fn SDL_GameControllerGetButton(gc: *u8, button: i32): u8
+
 extern fn SDL_Delay(ms: u32): void
 
 extern fn SDL_Quit(): void
@@ -64,6 +72,17 @@ extern fn SDL_GetQueuedAudioSize(dev: u32): u32
 
 let SDL_INIT_VIDEO: u32 = 0x20
 let SDL_INIT_AUDIO: u32 = 0x10
+let SDL_INIT_GAMECONTROLLER: u32 = 0x2000
+// SDL_GameControllerButton ids.
+let PAD_A: i32 = 0
+let PAD_B: i32 = 1
+let PAD_X: i32 = 2
+let PAD_BACK: i32 = 4
+let PAD_START: i32 = 6
+let PAD_DPAD_UP: i32 = 11
+let PAD_DPAD_DOWN: i32 = 12
+let PAD_DPAD_LEFT: i32 = 13
+let PAD_DPAD_RIGHT: i32 = 14
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
 let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
@@ -201,12 +220,22 @@ fn main(): i32 {
         t = t + 1
     }
 
-    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0 {
+    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0 {
         print("SDL_Init failed")
         return 1
     }
     var synth = newSynth()
     unsafe {
+        // Open the first attached game controller (Bluetooth pads included).
+        var pad: *u8 = 0 as *u8
+        var ji: i32 = 0
+        while ji < SDL_NumJoysticks() {
+            if SDL_IsGameController(ji) != 0 {
+                pad = SDL_GameControllerOpen(ji)
+                break
+            }
+            ji = ji + 1
+        }
         // SDL_AudioSpec (32 bytes): freq 44100, AUDIO_S16LSB (0x8010), mono, 2048 samples.
         var want: [u8; 32] = [0; 32]
         want[0] = 0x44
@@ -232,6 +261,7 @@ fn main(): i32 {
 
         var ev: [u8; 64] = [0; 64]
         var quit = false
+        var comboFrames: i64 = 0 // Start+Back held -> quit to the menu
         while !quit {
             // Input first, every iteration, so the window stays responsive even
             // while we're pacing on audio.
@@ -270,9 +300,52 @@ fn main(): i32 {
             if ks[40] != 0 {
                 p = p | 0x80 // Enter -> Start
             }
+            // Overlay the game controller onto the same Genesis pad byte. Face
+            // mapping (A/B/C) is a sensible default; tweak to taste per pad.
+            if (pad as i64) != 0 {
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_UP) != 0 {
+                    p = p | 0x01
+                }
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_DOWN) != 0 {
+                    p = p | 0x02
+                }
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_LEFT) != 0 {
+                    p = p | 0x04
+                }
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_RIGHT) != 0 {
+                    p = p | 0x08
+                }
+                if SDL_GameControllerGetButton(pad, PAD_A) != 0 {
+                    p = p | 0x10
+                } // A
+                if SDL_GameControllerGetButton(pad, PAD_B) != 0 {
+                    p = p | 0x20
+                } // B
+                if SDL_GameControllerGetButton(pad, PAD_X) != 0 {
+                    p = p | 0x40
+                } // C
+                if SDL_GameControllerGetButton(pad, PAD_START) != 0 {
+                    p = p | 0x80
+                } // Start
+            }
             m.pad1 = p
             if ks[41] != 0 {
                 quit = true // Esc
+            }
+            // Start+Back (controller) held ~1s quits back to the menu (Genesis
+            // pads have no Select, so Back stands in for the exit chord).
+            var padQuit = false
+            if (pad as i64) != 0 {
+                padQuit = SDL_GameControllerGetButton(pad, PAD_START) != 0
+                && SDL_GameControllerGetButton(pad, PAD_BACK) != 0
+            }
+            if padQuit {
+                comboFrames = comboFrames + 1
+                if comboFrames > 60 {
+                    quit = true
+                }
+            } else {
+                comboFrames = 0
             }
 
             // Audio-mastered pacing: the SDL queue is the clock. Run frames until

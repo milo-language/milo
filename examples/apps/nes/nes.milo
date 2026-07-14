@@ -51,6 +51,14 @@ extern fn SDL_PollEvent(event: *u8): i32
 
 extern fn SDL_GetKeyboardState(numkeys: *i32): *u8
 
+extern fn SDL_NumJoysticks(): i32
+
+extern fn SDL_IsGameController(index: i32): i32
+
+extern fn SDL_GameControllerOpen(index: i32): *u8
+
+extern fn SDL_GameControllerGetButton(gc: *u8, button: i32): u8
+
 extern fn SDL_Delay(ms: u32): void
 
 extern fn SDL_DestroyWindow(win: *u8): void
@@ -67,6 +75,16 @@ extern fn SDL_GetQueuedAudioSize(dev: u32): u32
 
 let SDL_INIT_VIDEO: u32 = 0x20
 let SDL_INIT_AUDIO: u32 = 0x10
+let SDL_INIT_GAMECONTROLLER: u32 = 0x2000
+// SDL_GameControllerButton ids.
+let PAD_A: i32 = 0
+let PAD_B: i32 = 1
+let PAD_BACK: i32 = 4
+let PAD_START: i32 = 6
+let PAD_DPAD_UP: i32 = 11
+let PAD_DPAD_DOWN: i32 = 12
+let PAD_DPAD_LEFT: i32 = 13
+let PAD_DPAD_RIGHT: i32 = 14
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
 let SDL_TEXTUREACCESS_STREAMING: i32 = 1
@@ -385,11 +403,21 @@ fn runNes(cart: Cartridge): i32 {
     var bus = newBus(cart)
     var cpu = newCpuReset(bus)
 
-    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) != 0 {
+    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0 {
         print("SDL_Init failed")
         return 1
     }
     unsafe {
+        // Open the first attached game controller (Bluetooth pads included).
+        var pad: *u8 = 0 as *u8
+        var ji: i32 = 0
+        while ji < SDL_NumJoysticks() {
+            if SDL_IsGameController(ji) != 0 {
+                pad = SDL_GameControllerOpen(ji)
+                break
+            }
+            ji = ji + 1
+        }
         let title = "Milo NES"
         let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * 3, 240 * 3, SDL_WINDOW_SHOWN)
         let ren = SDL_CreateRenderer(win, -1, 0)
@@ -418,6 +446,7 @@ fn runNes(cart: Cartridge): i32 {
         var ev: [u8; 64] = [0; 64]
         var quit = false
         var dumpPrev = false // edge-detect the P (frame-dump) key
+        var comboFrames: i64 = 0 // Start+Select held -> quit to the menu
         while !quit {
             // Run the system until the PPU completes one video frame.
             let startFrame = bus.ppu.frame
@@ -494,7 +523,44 @@ fn runNes(cart: Cartridge): i32 {
             if ks[229] != 0 {
                 b = b | 0x04 // Right Shift -> Select
             }
+            // Overlay the game controller (if any) onto the same NES button byte.
+            if (pad as i64) != 0 {
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_UP) != 0 {
+                    b = b | 0x10
+                }
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_DOWN) != 0 {
+                    b = b | 0x20
+                }
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_LEFT) != 0 {
+                    b = b | 0x40
+                }
+                if SDL_GameControllerGetButton(pad, PAD_DPAD_RIGHT) != 0 {
+                    b = b | 0x80
+                }
+                if SDL_GameControllerGetButton(pad, PAD_A) != 0 {
+                    b = b | 0x01
+                } // A
+                if SDL_GameControllerGetButton(pad, PAD_B) != 0 {
+                    b = b | 0x02
+                } // B
+                if SDL_GameControllerGetButton(pad, PAD_START) != 0 {
+                    b = b | 0x08
+                } // Start
+                if SDL_GameControllerGetButton(pad, PAD_BACK) != 0 {
+                    b = b | 0x04
+                } // Select
+            }
             bus.buttons = b
+            // Start+Select (0x08|0x04) held ~1s quits back to the menu — the
+            // universal retro "exit game" chord, so no keyboard is needed.
+            if (b & 0x0C) == 0x0C {
+                comboFrames = comboFrames + 1
+                if comboFrames > 60 {
+                    quit = true
+                }
+            } else {
+                comboFrames = 0
+            }
             // Debug: press P (scancode 19) to snapshot the current frame.
             let dumpNow = ks[19] != 0
             if dumpNow && !dumpPrev {

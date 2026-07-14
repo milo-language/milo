@@ -1,0 +1,36 @@
+# systemd unit: boot the Raspberry Pi straight into the retro-console menu on
+# the TV — no desktop, no login prompt. SDL renders directly to the display via
+# the KMS/DRM driver (kmsdrm), so nothing but the console appears.
+#
+# Install (as the 'pi' user; adjust User= and paths to match your setup):
+#   sudo cp retro-console.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable retro-console
+#   sudo systemctl start retro-console     # or just reboot
+#
+# The Pi should be set to console (not desktop) autologin via raspi-config:
+#   System Options -> Boot / Auto Login -> Console Autologin.
+[Unit]
+Description=Milo Retro Console
+After=systemd-user-sessions.service bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+User=pi
+# Render straight to the framebuffer/display with no X11 or Wayland.
+Environment=SDL_VIDEODRIVER=kmsdrm
+# Home of the console: holds bin/ and roms/. Point this at wherever you deployed.
+WorkingDirectory=/home/pi/retro
+ExecStart=/home/pi/retro/launch.sh --fullscreen
+# Give the pi user access to the DRM/input devices (video + input groups).
+SupplementaryGroups=video input render
+Restart=always
+RestartSec=2
+# Take over the TV's virtual terminal so the login prompt never shows through.
+TTYPath=/dev/tty1
+StandardInput=tty
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
