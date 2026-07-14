@@ -612,6 +612,11 @@ class LowerCtx {
         const rawObjType = this.typeOf(expr.object);
         // auto-deref `&T` so methods (.substr, .len, .clone, etc.) dispatch through slices
         const objType = rawObjType?.tag === "ref" ? rawObjType.inner : rawObjType;
+        // x.addrOf() → the same address-of the old `&x` emitted, so codegen and
+        // hence the selfhost output are byte-identical for migrated sites.
+        if (expr.method === "addrOf") {
+          return { kind: "UnaryOp", op: "&", operand: this.lowerExpr(expr.object), type, span: expr.span };
+        }
         if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "toString") {
           return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
         }

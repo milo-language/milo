@@ -3167,6 +3167,12 @@ export class TypeChecker {
           return this.setType(expr, ot);
         }
         if (expr.op === "&") {
+          // Deprecated: `&x` in expression position (raw address-of) is being
+          // replaced by `x.addrOf()` (any value) / `v.ptr()` (a collection's data),
+          // so `&` can mean exactly one thing — a borrow marker in a TYPE. Warn
+          // (user code only, to avoid flooding std) during migration; still works.
+          if (this.currentFnIsUser)
+            this.warn("deprecated-addressof", `'&x' address-of is deprecated — use 'x.addrOf()' (any value, unsafe) or 'v.ptr()' (a collection's data). '&' is becoming types-only.`, sp);
           this.requireUnsafe(`address-of operator requires 'unsafe' block`, sp);
           if (expr.operand.kind !== "Ident" && expr.operand.kind !== "FieldAccess" && expr.operand.kind !== "IndexAccess")
             this.error(`address-of requires an lvalue (variable, field, or index)`, sp);
@@ -4081,6 +4087,23 @@ export class TypeChecker {
         if ((objType.tag === "int" || objType.tag === "float" || objType.tag === "bool") && expr.method === "toString") {
           if (expr.args.length !== 0) { this.error(`'toString' takes no arguments`, sp); }
           return this.setType(expr, { tag: "string" });
+        }
+        // x.addrOf(): *T — raw address of any lvalue (the replacement for `&x`).
+        // Universal (any receiver), lvalue-only, requires unsafe. Lowers to the
+        // same address-of the old `&x` emitted (see lower.ts) → IR unchanged.
+        if (expr.method === "addrOf") {
+          if (expr.args.length !== 0) { this.error(`'addrOf' takes no arguments`, sp); }
+          this.requireUnsafe(`'addrOf' (raw address-of) requires 'unsafe' block`, sp);
+          if (expr.object.kind !== "Ident" && expr.object.kind !== "FieldAccess" && expr.object.kind !== "IndexAccess")
+            this.error(`'addrOf' requires an lvalue (variable, field, or index)`, sp);
+          return this.setType(expr, { tag: "ptr", inner: objType });
+        }
+        // v.ptr(): *T — a collection's backing DATA pointer (first element). Safe
+        // to obtain (mirrors string.cstr); the receiver stays live in the caller.
+        if ((objType.tag === "vec" || (objType.tag === "array" && objType.size !== null)) && expr.method === "ptr") {
+          if (expr.args.length !== 0) { this.error(`'ptr' takes no arguments`, sp); }
+          const elem = objType.tag === "vec" ? objType.element : objType.element;
+          return this.setType(expr, { tag: "ptr", inner: elem });
         }
         // Option combinators — isSome/isNone/unwrapOr. Gated on baseName so a user
         // enum's own impl method of the same name still resolves normally below.
