@@ -45,15 +45,21 @@ Debug tooling added to `dbg.milo`: `--forcebright` (reveal graphics behind a bla
 fade), `--probe` (hot-PC histogram → spot wait-loops), HDMA-channel decode in the
 reg dump. See `.claude/skills/emu-debug/SKILL.md`.
 
-DKC: fixed — now boots through its animated intro (DK+boombox, Cranky+gramophone).
-Root cause was the fixed per-frame CPU budget: DKC's vblank NMI handler ($80A97A)
-saves A/X/Y but not DBR, so it only works when NMI fires from the main wait-loop
-(DBR=$80). At the old 7600-instr active budget, a heavy load frame's object update
-(~15k instrs, DBR=$BB in bank $BB) overran, NMI caught it mid-routine, and the task
-dispatcher read its handler-pointer table through the wrong bank -> JMP into unmapped
-RAM -> black crash. Raised active budget to 20k so the heaviest frame reaches its
-wait-loop first (see stepFrame). Light frames idle-spin the surplus; APU ratio is
-per-instruction so audio sync is unaffected.
+DKC: boots -> Rareware logo -> animated intro -> file select -> STARTS A LEVEL, but
+the level-load derails ($7003 BRK loop). 2026-07-14 fixes (6 commits): (1) black-screen
+crash - DKC's vblank NMI handler ($80A97A) saves A/X/Y but NOT DBR, so NMI is only safe
+from the main wait-loop (DBR=$80); a heavy frame overran the budget, NMI landed
+mid-routine (DBR=$BB), the dispatcher read its handler table through the wrong bank ->
+JMP to unmapped RAM. First fixed by raising the CPU budget 7600->20000, then made robust
+by firing NMI at WAI ($CB) instead of a fixed count (NMI always fires from the idle
+wait). (2) Rareware logo - it's on the sub-screen, added to main via CGADSUB color-math;
+added additive blend compositing. (3) manual $4016/$4017 serial joypad (Start/Enter now
+work). (4) anti-piracy "unauthorized device" screen - size SRAM from the header (DKC=2KB,
+mask $7FF) not a fixed 32KB so the mirror check passes. (5) 16x16 BG tiles (BGMODE bits
+4-7) - DKC level BGs use them.
+NEXT: level-load derail. Reproduce via a PRE-CRASH world-map save-state replayed forward
+(scripted enter-level press) + a PC/DBR ring-buffer derail tracer; a post-crash state
+can't be traced. Likely another lag/vector-corruption path in the level decompressor.
 
 Still black/next: SMW intro message auto-advance into playfield scroll; remaining
 HDMA render targets (scroll parallax, Mode7 perspective, window).
