@@ -28,23 +28,34 @@ fn planeCells(code: i64): i64 {
     return 128 // code 3 (2 is invalid, treat as 128)
 }
 
-// Genesis 9-bit CRAM entry (----bbb-ggg-rrr-) to 8-bit RGB components.
-fn cramR(e: i64): i64 {
+// Genesis 9-bit CRAM entry (----bbb-ggg-rrr-) to 8-bit RGB components. Each
+// channel is a 3-bit field, so the result is one of 8 evenly-spaced levels in
+// [0, 252] — a bound the RGBA packing downstream relies on.
+fn cramR(e: i64): i64
+ensures result >= 0 && result <= 252
+{
     return ((e >> 1) & 0x7) * 36
 }
 
-fn cramG(e: i64): i64 {
+fn cramG(e: i64): i64
+ensures result >= 0 && result <= 252
+{
     return ((e >> 5) & 0x7) * 36
 }
 
-fn cramB(e: i64): i64 {
+fn cramB(e: i64): i64
+ensures result >= 0 && result <= 252
+{
     return ((e >> 9) & 0x7) * 36
 }
 
 // Apply a shadow/highlight brightness mode (0 normal, 1 shadow, 2 highlight) to a
 // single 0-252 colour component. Shadow halves it; highlight lifts it into the
 // upper half of the range.
-fn shComp(c: i64, mode: i64): i64 {
+fn shComp(c: i64, mode: i64): i64
+requires c >= 0 && c <= 252
+ensures result >= 0 && result <= 255
+{
     if mode == 1 {
         return c / 2
     }
@@ -81,7 +92,10 @@ fn vram8(m: &Mem, addr: i64): i64 {
 }
 
 // Wrap a (possibly negative) plane coordinate into [0, span).
-fn wrapCoord(v: i64, span: i64): i64 {
+fn wrapCoord(v: i64, span: i64): i64
+requires span > 0
+ensures result >= 0 && result < span
+{
     let r = v % span
     if r < 0 {
         return r + span
