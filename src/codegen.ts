@@ -1852,12 +1852,45 @@ export class Codegen {
     return [lines, false];
   }
 
+  // A for-in over an rvalue (`for x in makeVec()`) has no address. genLValue
+  // returns "null" for a call, so the loop would GEP off a null base — reading a
+  // garbage len (usually 0), silently never running the body, and never even
+  // emitting the producing call. Materialize the rvalue into a temp alloca and,
+  // if it owns heap data, register it as a droppable local so the buffer is freed
+  // at function exit. Elements are only borrowed (&T) in the body, never moved, so
+  // one whole-container drop is sound and the alive-flag makes it double-free safe.
+  private genForEachIterableAddr(iterable: HIRExpr): [string[], string, string] {
+    const lvalueKinds = ["Ident", "FieldAccess", "IndexAccess", "PtrDeref", "HeapDeref"];
+    if (lvalueKinds.includes(iterable.kind)) {
+      return this.genLValue(iterable);
+    }
+    const lines: string[] = [];
+    const [valLines, val] = this.genExpr(iterable);
+    lines.push(...valLines);
+    const iterTy = this.llvmType(iterable.type);
+    const addr = this.nextTemp();
+    this.entryAllocas.push(`  ${addr} = alloca ${iterTy}`);
+    lines.push(`  store ${iterTy} ${val}, ptr ${addr}`);
+    if (this.needsDropCg(iterable.type)) {
+      // Register before the caller sets loopDropStart so this temp is function-
+      // scoped (dropped once at fn exit / early return), not loop-body-scoped.
+      const name = `__forin_tmp.${this.scopeCounter++}`;
+      this.locals.set(name, { type: iterTy, typeKind: iterable.type, mutable: false, isRef: false, addr });
+      const aliveFlag = `${addr}.alive`;
+      this.entryAllocas.push(`  ${aliveFlag} = alloca i1`);
+      this.entryAllocas.push(`  store i1 0, ptr ${aliveFlag}`);
+      lines.push(`  store i1 1, ptr ${aliveFlag}`);
+      this.droppableLocals.push({ name, typeKind: iterable.type, aliveFlag });
+    }
+    return [lines, addr, iterTy];
+  }
+
   private genForEach(stmt: HIRStmt & { kind: "ForEach" }): [string[], boolean] {
     const lines: string[] = [];
 
     if (stmt.iterableKind === "vec") {
       // get pointer to the vec so we can extract data ptr and len
-      const [iterLines, iterAddr, iterTy] = this.genLValue(stmt.iterable);
+      const [iterLines, iterAddr, iterTy] = this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
       const dataPtr = this.nextTemp();
       const lenPtr = this.nextTemp();
@@ -1930,7 +1963,7 @@ export class Codegen {
       return [lines, false];
 
     } else if (stmt.iterableKind === "string") {
-      const [iterLines, iterAddr] = this.genLValue(stmt.iterable);
+      const [iterLines, iterAddr] = this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
       const dataPtr = this.nextTemp();
       const lenPtr = this.nextTemp();
@@ -2001,7 +2034,7 @@ export class Codegen {
       return [lines, false];
 
     } else if (stmt.iterableKind === "array") {
-      const [iterLines, iterAddr, iterTy] = this.genLValue(stmt.iterable);
+      const [iterLines, iterAddr, iterTy] = this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
       const match = iterTy.match(/\[(\d+) x (.+)\]/);
       if (!match) throw new Error("expected fixed array type for for-each");
@@ -2068,7 +2101,7 @@ export class Codegen {
 
     } else {
       // hashmap iteration
-      const [iterLines, iterAddr] = this.genLValue(stmt.iterable);
+      const [iterLines, iterAddr] = this.genForEachIterableAddr(stmt.iterable);
       lines.push(...iterLines);
       const dataPtr = this.nextTemp();
       const capPtr = this.nextTemp();

@@ -1,0 +1,39 @@
+// @expect: 10
+// @expect: 20
+// @expect: 30
+// @expect: 0
+// @expect: 10
+// @expect: 1
+// @expect: 20
+// @expect: 2
+// @expect: 30
+// @expect: 60
+// Regression: `for x in makeVec()` over a temporary (rvalue) Vec silently ran
+// zero iterations. genLValue returned "null" for the call, so ForEach GEP'd off a
+// null base — reading a garbage len and never even emitting the producing call.
+// Rvalue iterables are now materialized into a temp alloca (and dropped at fn
+// exit). Covers plain, enumerate, and re-evaluation (call runs each loop).
+
+fn makeVec(): Vec<i32> {
+    var v: Vec<i32> = Vec.new()
+    v.push(10)
+    v.push(20)
+    v.push(30)
+    return v
+}
+
+fn main(): i32 {
+    for x in makeVec() {
+        print(x)
+    }
+    for i, x in makeVec() {
+        print(i)
+        print(x)
+    }
+    var sum: i32 = 0
+    for x in makeVec() {
+        sum = sum + x
+    }
+    print(sum)
+    return 0
+}
