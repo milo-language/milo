@@ -45,9 +45,18 @@ Debug tooling added to `dbg.milo`: `--forcebright` (reveal graphics behind a bla
 fade), `--probe` (hot-PC histogram → spot wait-loops), HDMA-channel decode in the
 reg dump. See `.claude/skills/emu-debug/SKILL.md`.
 
+DKC: fixed — now boots through its animated intro (DK+boombox, Cranky+gramophone).
+Root cause was the fixed per-frame CPU budget: DKC's vblank NMI handler ($80A97A)
+saves A/X/Y but not DBR, so it only works when NMI fires from the main wait-loop
+(DBR=$80). At the old 7600-instr active budget, a heavy load frame's object update
+(~15k instrs, DBR=$BB in bank $BB) overran, NMI caught it mid-routine, and the task
+dispatcher read its handler-pointer table through the wrong bank -> JMP into unmapped
+RAM -> black crash. Raised active budget to 20k so the heaviest frame reaches its
+wait-loop first (see stepFrame). Light frames idle-spin the surplus; APU ratio is
+per-instruction so audio sync is unaffected.
+
 Still black/next: SMW intro message auto-advance into playfield scroll; remaining
-HDMA render targets (scroll parallax, Mode7 perspective, window); DKC still boots
-but is a separate derail.
+HDMA render targets (scroll parallax, Mode7 perspective, window).
 
 ## Status (M1/M2/M3 done; M4 first pixels + frame loop; M5 DMA done)
 

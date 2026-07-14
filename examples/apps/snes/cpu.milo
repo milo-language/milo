@@ -759,10 +759,19 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     // in-game audio commands) round-trips through $2140-$2143 many times, and a
     // handshake-locked transfer only advances one byte per CPU<->SPC switch. Run
     // the SPC every few CPU steps so uploads complete in a frame, not thousands.
-    // ~9k instrs/frame approximates the 65816's real per-frame work (was 2600,
-    // which ran game logic ~4x too slow); ~6:1 active:vblank matches 224:38 lines.
+    // activeSteps must exceed the *worst-case* main-thread work per frame, not the
+    // average: the vblank NMI handler saves A/X/Y but NOT DBR (see nmi()/$80A97A in
+    // DKC), so it only works if NMI fires while the main loop sits in its vblank-wait
+    // (DBR=$80). On a heavy load frame DKC's object update spans ~15k instrs in bank
+    // $BB (DBR=$BB); at the old 7600 budget NMI caught it mid-routine, the dispatcher
+    // read its handler-pointer table through the wrong bank, and JMP'd into unmapped
+    // RAM -> black-screen crash. 20k gives the heaviest frame room to reach the wait
+    // loop first; light frames just idle-spin the surplus (harmless). APU stepping is
+    // per-instruction so the CPU:SPC ratio is preserved regardless of this budget.
+    let activeSteps: i64 = 20000
+    let vblankSteps: i64 = 1400
     m.timeup = 0 // TIMEUP is read-cleared on hardware; approximate by per-frame reset
-    // Scanline where a V-timed IRQ should fire, mapped into the 7600-instr active
+    // Scanline where a V-timed IRQ should fire, mapped into the active-instruction
     // window (VTIME 0-224 visible; clamp so it lands during active display).
     var irqAt: i64 = -1
     if (m.nmitimen & 0x30) != 0 {
@@ -770,11 +779,11 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
         if vt > 224 {
             vt = 224
         }
-        irqAt = (vt * 7600) / 224
+        irqAt = (vt * activeSteps) / 224
     }
     var fired = false
     var i: i64 = 0
-    while i < 7600 {
+    while i < activeSteps {
         if !fired && irqAt >= 0 && i >= irqAt {
             maybeIrq(cpu, m)
             fired = true
@@ -794,7 +803,7 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
         nmi(cpu, m)
     }
     i = 0
-    while i < 1400 {
+    while i < vblankSteps {
         step(cpu, m)
         if (i & 3) == 0 {
             runApu(m, 2)
