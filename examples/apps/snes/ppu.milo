@@ -202,11 +202,18 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
     if reg >= 0x0D && reg <= 0x14 {
         let idx = (reg - 0x0D) / 2
         let isV = ((reg - 0x0D) & 1) == 1
-        // write-twice: low byte then high 3 bits (shared BG scroll latch)
+        // BG scroll write-twice, hardware dual-latch quirk (bsnes/Anomie):
+        //   HOFS = (new<<8) | (sharedLatch & ~7) | (hLatch & 7)
+        //   VOFS = (new<<8) | sharedLatch
+        // After the first of the two writes both latches hold the low byte, so
+        // the second write reconstructs the FULL low byte — including the low 3
+        // fine-scroll bits. The old single-latch formula pulled those 3 bits from
+        // a stale byte (usually 0), snapping scroll to 8px steps -> choppy scroll.
         if isV {
-            p.bgvofs[idx] = ((v << 8) | (p.scrollLatch & 0xF8) | (p.scrollHi & 0x07)) & 0x3FF
+            p.bgvofs[idx] = ((v << 8) | p.scrollLatch) & 0x3FF
         } else {
             p.bghofs[idx] = ((v << 8) | (p.scrollLatch & 0xF8) | (p.scrollHi & 0x07)) & 0x3FF
+            p.scrollHi = v // H-offset latch: updated only by HOFS writes
         }
         // $210D/$210E double as Mode 7 BG1 scroll (13-bit signed, m7 latch).
         if reg == 0x0D {
@@ -217,8 +224,7 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
             p.m7vofs = m7Ext13(((v << 8) | p.m7Latch) & 0x1FFF)
             p.m7Latch = v
         }
-        p.scrollHi = p.scrollLatch
-        p.scrollLatch = v
+        p.scrollLatch = v // shared data latch: updated by every scroll write
         return
     }
     if reg == 0x15 {
