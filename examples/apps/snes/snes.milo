@@ -31,6 +31,32 @@ from "std/datetime" import {
     dateTimeLocalNow, dateTimeFormatTime
 }
 
+// Dump the current 256x224 framebuffer (0xRRGGBB per pixel) as a binary PPM next to
+// a save-state, so a state can be eyeballed without loading it in the debugger.
+fn dumpPpm(fb: &Vec<i64>, path: &string): void {
+    var out = String.withCapacity(200000)
+    let hdr = "P6\n256 224\n255\n"
+    var i: i64 = 0
+    while i < hdr.len {
+        out.push(hdr[i])
+        i = i + 1
+    }
+    i = 0
+    while i < 256 * 224 {
+        let px = fb[i]
+        out.push(((px >> 16) & 0xFF) as u8)
+        out.push(((px >> 8) & 0xFF) as u8)
+        out.push((px & 0xFF) as u8)
+        i = i + 1
+    }
+    match writeFile(path, out) {
+        Result.Ok(n) => {
+        }
+        Result.Err(e) => {
+        }
+    }
+}
+
 extern fn SDL_Init(flags: u32): i32
 
 extern fn SDL_CreateWindow(title: *u8, x: i32, y: i32, w: i32, h: i32, flags: u32): *u8
@@ -419,6 +445,7 @@ fn main(): i32 {
                         print("state save failed")
                     }
                 }
+                dumpPpm(fb, slot + ".ppm") // screenshot alongside the state
                 match writeFile(statePath, blob) {
                     Result.Ok(n) => {
                     }
