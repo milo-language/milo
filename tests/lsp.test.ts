@@ -37,6 +37,32 @@ fn main() {
 `;
 const RICH_URI = "file:///tmp/milo-lsp-rich.milo";
 
+// Hover on an enum-pattern payload binding (`n` in `Option.Some(n)`).
+const MATCH_SRC = `struct Node {
+    name: string,
+}
+
+fn nodeName(g: Option<Node>): string {
+    match g {
+        Option.Some(n) => {
+            return n.name
+        }
+        Option.None => {
+            return "<invalid>"
+        }
+    }
+}
+`;
+const MATCH_URI = "file:///tmp/milo-lsp-match.milo";
+
+// Hover on a builtin collection type and its static constructor.
+const BUILTIN_SRC = `fn main() {
+    let v: Vec<i32> = Vec.new()
+    v.push(1)
+}
+`;
+const BUILTIN_URI = "file:///tmp/milo-lsp-builtin.milo";
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -87,7 +113,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -101,6 +127,25 @@ test("hover on imported stdlib symbol returns without hanging", async () => {
   const hover = await req(2, "textDocument/hover", { textDocument: { uri: STDLIB_URI }, position: STDLIB_POS });
   expect(hover?.contents?.value).toContain("strStartsWith");
   expect(hover?.contents?.value).toContain("std/string");
+});
+
+test("hover on enum-pattern payload binding shows its type", async () => {
+  // `n` in the pattern `Option.Some(n)` (line 6, char 20).
+  const inPat = await req(20, "textDocument/hover", { textDocument: { uri: MATCH_URI }, position: { line: 6, character: 20 } });
+  expect(inPat?.contents?.value).toContain("n:");
+  expect(inPat?.contents?.value).toContain("Node");
+  // `n` used in the arm body `return n.name` (line 7, char 19).
+  const inBody = await req(21, "textDocument/hover", { textDocument: { uri: MATCH_URI }, position: { line: 7, character: 19 } });
+  expect(inBody?.contents?.value).toContain("Node");
+});
+
+test("hover on builtin Vec type and Vec.new constructor", async () => {
+  // `Vec` in the annotation `Vec<i32>` (line 1, char 12).
+  const onType = await req(22, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 1, character: 12 } });
+  expect(onType?.contents?.value).toContain("Vec<T>");
+  // `new` in `Vec.new()` (line 1, char 27).
+  const onCtor = await req(23, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 1, character: 27 } });
+  expect(onCtor?.contents?.value).toContain("Vec.new");
 });
 
 test("goto-definition on imported stdlib symbol resolves to std/string.milo", async () => {

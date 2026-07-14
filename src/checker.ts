@@ -66,6 +66,7 @@ export interface EnumInfo {
 export interface CheckResult {
   diagnostics: Diagnostic[];
   exprTypes: Map<Expr, TypeKind>;
+  patternBindingTypes: Map<import("./ast").Pattern, TypeKind[]>;
   autoBorrowed: Map<Expr, { mutable: boolean }>;
   matchSubjectRef: Set<Expr>;
   rewrittenCalls: Map<Expr, string>;
@@ -178,6 +179,8 @@ export class TypeChecker {
   private unsafeUsedStack: boolean[] = [];
   private scopes: Map<string, VarInfo>[] = [];
   private exprTypes = new Map<Expr, TypeKind>();
+  // Per-pattern payload binding types (parallel to pattern.bindings), for hover/LSP.
+  private patternBindingTypes = new Map<import("./ast").Pattern, TypeKind[]>();
   private autoBorrowed = new Map<Expr, { mutable: boolean }>();
   private matchSubjectRef = new Set<Expr>();
   private rewrittenCalls = new Map<Expr, string>();
@@ -1087,6 +1090,7 @@ export class TypeChecker {
     return {
       diagnostics: this.diagnostics,
       exprTypes: this.exprTypes,
+      patternBindingTypes: this.patternBindingTypes,
       autoBorrowed: this.autoBorrowed,
       matchSubjectRef: this.matchSubjectRef,
       rewrittenCalls: this.rewrittenCalls,
@@ -2325,6 +2329,7 @@ export class TypeChecker {
           }
           this.pushScope();
           if (variant) {
+            this.patternBindingTypes.set(stmt.pattern, variant.fields.slice(0, stmt.pattern.bindings.length));
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
               this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false, read: false });
             }
@@ -4901,6 +4906,7 @@ export class TypeChecker {
         if (arm.pattern.kind === "EnumPattern") {
           const variant = enumInfo.variants.get(arm.pattern.variant);
           if (variant) {
+            const bindTypes: TypeKind[] = [];
             for (let i = 0; i < Math.min(arm.pattern.bindings.length, variant.fields.length); i++) {
               let bt = variant.fields[i];
               // Ref- or place-match: a non-Copy payload binds as a borrow
@@ -4909,8 +4915,10 @@ export class TypeChecker {
               if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
                 bt = { tag: "ref", inner: bt, mutable: false };
               }
+              bindTypes.push(bt);
               this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false });
             }
+            this.patternBindingTypes.set(arm.pattern, bindTypes);
           }
         }
         for (const s of arm.body) this.checkStmt(s, fnRetType);

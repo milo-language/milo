@@ -391,6 +391,10 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const enumHover = findEnumHover(source, program, word, line, character, parsed, sourceDir);
     if (enumHover) return { contents: { kind: "markdown", value: enumHover } };
 
+    // Builtin collection types + their static constructors (Vec.new, HashMap.new, …)
+    const builtinHover = findBuiltinTypeHover(source, word, line);
+    if (builtinHover) return { contents: { kind: "markdown", value: builtinHover } };
+
     // Type aliases
     for (const ta of program.typeAliases) {
       if (ta.name === word) {
@@ -447,7 +451,8 @@ function handleHover(uri: string, line: number, character: number): object | nul
           return { contents: { kind: "markdown", value: `\`\`\`milo\n${p.name}: ${formatMiloType(p.type)}\n\`\`\`` } };
         }
       }
-      const varHover = findVarHover(enclosing.fn.body, word, exprTypes);
+      const bindTypes = checkResult?.patternBindingTypes ?? new Map();
+      const varHover = findVarHover(enclosing.fn.body, word, exprTypes, bindTypes);
       if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`` } };
     }
   } catch (e) {
@@ -457,7 +462,20 @@ function handleHover(uri: string, line: number, character: number): object | nul
   return null;
 }
 
-function findVarHover(stmts: Stmt[], word: string, exprTypes: Map<Expr, import("./types").TypeKind>): string | null {
+function findVarHover(
+  stmts: Stmt[],
+  word: string,
+  exprTypes: Map<Expr, import("./types").TypeKind>,
+  bindTypes: Map<import("./ast").Pattern, import("./types").TypeKind[]>,
+): string | null {
+  // A payload binding from an enum pattern (`Option.Some(n)` binds `n`).
+  const patternBindHover = (pattern: import("./ast").Pattern): string | null => {
+    if (pattern.kind !== "EnumPattern") return null;
+    const i = pattern.bindings.indexOf(word);
+    if (i < 0) return null;
+    const tk = bindTypes.get(pattern)?.[i];
+    return `let ${word}: ${tk ? formatTypeName(tk) : "?"}`;
+  };
   for (const stmt of stmts) {
     if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.name === word) {
       let resolved = stmt.type?.name ?? inferLiteralType(stmt.value);
@@ -468,24 +486,30 @@ function findVarHover(stmts: Stmt[], word: string, exprTypes: Map<Expr, import("
       if (resolved) return `${stmt.kind === "LetDecl" ? "let" : "var"} ${stmt.name}: ${resolved}`;
     }
     if (stmt.kind === "IfStmt") {
-      const r = findVarHover(stmt.thenBody, word, exprTypes); if (r) return r;
-      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes); if (r2) return r2; }
+      const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes); if (r) return r;
+      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes); if (r2) return r2; }
+    }
+    if (stmt.kind === "IfLetStmt") {
+      const b = patternBindHover(stmt.pattern); if (b) return b;
+      const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes); if (r) return r;
+      if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes); if (r2) return r2; }
     }
     if (stmt.kind === "WhileStmt") {
-      const r = findVarHover(stmt.body, word, exprTypes); if (r) return r;
+      const r = findVarHover(stmt.body, word, exprTypes, bindTypes); if (r) return r;
     }
     if (stmt.kind === "MatchStmt") {
       for (const arm of stmt.arms) {
-        const r = findVarHover(arm.body, word, exprTypes); if (r) return r;
+        const b = patternBindHover(arm.pattern); if (b) return b;
+        const r = findVarHover(arm.body, word, exprTypes, bindTypes); if (r) return r;
       }
     }
     if (stmt.kind === "ForInStmt") {
       if (stmt.varName === word) return `let ${stmt.varName}: (loop variable)`;
       if (stmt.varName2 && stmt.varName2 === word) return `let ${stmt.varName2}: (loop variable)`;
-      const r = findVarHover(stmt.body, word, exprTypes); if (r) return r;
+      const r = findVarHover(stmt.body, word, exprTypes, bindTypes); if (r) return r;
     }
     if (stmt.kind === "UnsafeBlock") {
-      const r = findVarHover(stmt.body, word, exprTypes); if (r) return r;
+      const r = findVarHover(stmt.body, word, exprTypes, bindTypes); if (r) return r;
     }
   }
   return null;
@@ -593,6 +617,66 @@ const BUILTIN_DOCS: Record<string, { enum: string; variants: Record<string, stri
     },
   },
 };
+
+// Builtin collection types + their static constructors. These aren't user
+// decls (Vec.new parses as an EnumLit "Vec"/"new"), so plain symbol lookup
+// misses them — this table drives their hover.
+const BUILTIN_TYPE_HOVERS: Record<string, { doc: string; ctors: Record<string, string> }> = {
+  Vec: {
+    doc: [
+      "```milo",
+      "Vec<T>",
+      "```",
+      "A growable, heap-allocated array of `T`. Single owner; moved, not copied.",
+      "",
+      "**Construct:** `Vec.new()` · `Vec.withCapacity(n)` · `Vec.filled(n, v)` · literal `[a, b, c]`",
+    ].join("\n"),
+    ctors: {
+      new: "```milo\nfn Vec.new(): Vec<T>\n```\nEmpty vector. `T` is inferred from the binding's annotation.\n\n```milo\nlet v: Vec<i32> = Vec.new()\nv.push(1)\n```",
+      withCapacity: "```milo\nfn Vec.withCapacity(capacity: i64): Vec<T>\n```\nEmpty vector with room preallocated for `capacity` elements — avoids reallocs while pushing a known count.\n\n```milo\nlet v: Vec<i32> = Vec.withCapacity(100)\n```",
+      filled: "```milo\nfn Vec.filled(count: i64, value: T): Vec<T>\n```\n`count` copies of `value` (requires a Copy `T` — the value is duplicated into every slot).\n\n```milo\nlet zeros: Vec<i32> = Vec.filled(8, 0)\n```",
+    },
+  },
+  HashMap: {
+    doc: [
+      "```milo",
+      "HashMap<K, V>",
+      "```",
+      "A hash map from keys of type `K` to values of type `V`.",
+      "",
+      "**Construct:** `HashMap.new()`",
+    ].join("\n"),
+    ctors: {
+      new: "```milo\nfn HashMap.new(): HashMap<K, V>\n```\nEmpty map. `K`/`V` are inferred from the binding's annotation.\n\n```milo\nlet m: HashMap<string, i32> = HashMap.new()\nm.insert(\"a\", 1)\n```",
+    },
+  },
+  String: {
+    doc: [
+      "```milo",
+      "String",
+      "```",
+      "An owned, growable UTF-8 string buffer (distinct from a borrowed `string`).",
+      "",
+      "**Construct:** `String.withCapacity(n)`",
+    ].join("\n"),
+    ctors: {
+      withCapacity: "```milo\nfn String.withCapacity(capacity: i64): String\n```\nEmpty string with room preallocated for `capacity` bytes.\n\n```milo\nlet s = String.withCapacity(64)\n```",
+    },
+  },
+};
+
+function findBuiltinTypeHover(source: string, word: string, line: number): string | null {
+  const entry = BUILTIN_TYPE_HOVERS[word];
+  if (entry) return entry.doc;
+  // A constructor like `new` — only when the line reads `Type.new` (disambiguates
+  // `withCapacity`, shared by Vec and String).
+  const lineText = source.split("\n")[line] ?? "";
+  for (const [typeName, e] of Object.entries(BUILTIN_TYPE_HOVERS)) {
+    const ctor = e.ctors[word];
+    if (ctor && new RegExp(`\\b${typeName}\\.${word}\\b`).test(lineText)) return ctor;
+  }
+  return null;
+}
 
 function findEnumHover(source: string, program: Program, word: string, line: number, character: number, parsed: Program, sourceDir: string): string | null {
   const lineText = source.split("\n")[line] ?? "";
