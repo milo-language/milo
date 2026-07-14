@@ -91,7 +91,10 @@ test("built binary carries a source line table lldb can bind to", () => {
     try { rmSync(`${bin}.dSYM`, { recursive: true, force: true }); } catch {}
     if (existsSync(`${bin}.dbg.o`)) unlinkSync(`${bin}.dbg.o`);
   }
-});
+// Unlike the sibling frame tests (-g --debug, -O0), this exercises the default
+// -g (-O2) path: the optimizing compile plus an lldb launch overruns the 5s
+// default on a cold CI runner.
+}, 30000);
 
 const VARS_SRC = `struct Point { x: i32, y: i32 }
 fn compute(a: i32, b: i32): i32 {

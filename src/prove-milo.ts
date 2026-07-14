@@ -7,7 +7,7 @@
 // fragment fall to "unknown", exactly where z3 gives up on theories std/smt
 // doesn't model.
 import { spawnSync } from "child_process";
-import { existsSync, mkdirSync, statSync } from "fs";
+import { existsSync, mkdirSync, statSync, renameSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { VerifyResult, ProveResult, SolverResult } from "./verify";
@@ -233,19 +233,37 @@ function newestMtime(...paths: string[]): number {
 // Build tools/smtSolve.milo once and cache the binary, rebuilding only when the
 // solver or std/smt sources change. Returns the binary path, or null on failure.
 function ensureSolverBinary(): string | null {
-  const root = join(import.meta.dir, "..");
+  // In a `bun build --compile` binary, import.meta.dir points into the virtual
+  // bundle (no tools/ or std/ on disk); MILO_ROOT, which callers/tests already
+  // set for import resolution, is the real on-disk repo root.
+  const root = process.env.MILO_ROOT ?? join(import.meta.dir, "..");
   const solverSrc = join(root, "tools", "smtSolve.milo");
   const smtLib = join(root, "std", "smt.milo");
   const cacheDir = join(tmpdir(), "milo-smt-cache");
   mkdirSync(cacheDir, { recursive: true });
   const bin = join(cacheDir, "smtSolve");
 
-  if (existsSync(bin) && statSync(bin).mtimeMs >= newestMtime(solverSrc, smtLib)) return bin;
+  const fresh = () => existsSync(bin) && statSync(bin).mtimeMs >= newestMtime(solverSrc, smtLib);
+  if (fresh()) return bin;
 
+  // Re-invoke the `build` subcommand. Non-compiled: process.execPath is bun, so
+  // pass the CLI entry (src/main.ts). Compiled: process.execPath is the milo
+  // binary itself, which dispatches `build` directly — its main.ts lives only in
+  // bun's virtual FS ($bunfs), so it can't be passed as a script. The old
+  // `bun run <import.meta.dir>/main.ts` broke under --compile: that virtual path
+  // ran nothing, so the solver never built on a cold cache (e.g. CI).
   const mainTs = join(import.meta.dir, "main.ts");
+  const compiled = import.meta.dir.startsWith("/$bunfs") || !existsSync(mainTs);
+  const prefix = compiled ? [] : [mainTs];
+  // Build to a pid-unique temp then atomically rename into place. `bun test` runs
+  // prove.test.ts and verify-contracts.test.ts (both solver consumers) in parallel;
+  // on a cold cache they'd otherwise race to write the same `bin` and hand each other
+  // a half-written binary → spurious "no verdict"/translator errors.
+  const tmpBin = `${bin}.${process.pid}`;
   for (let attempt = 0; attempt < 4; attempt++) {
-    const b = spawnSync("bun", ["run", mainTs, "build", solverSrc, "-o", bin], { encoding: "utf-8", timeout: 120000 });
-    if (b.status === 0 && existsSync(bin)) return bin;
+    const b = spawnSync(process.execPath, [...prefix, "build", solverSrc, "-o", tmpBin], { encoding: "utf-8", timeout: 120000 });
+    if (b.status === 0 && existsSync(tmpBin)) { renameSync(tmpBin, bin); return bin; }
+    if (fresh()) return bin; // a concurrent builder finished ours while we were building
     if (!/memory pressure/.test((b.stderr ?? "") + (b.stdout ?? ""))) break; // real error, don't retry
   }
   return null;
