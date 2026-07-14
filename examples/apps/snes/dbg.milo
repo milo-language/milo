@@ -11,6 +11,7 @@
 //     --layers              after the run, render each enabled layer in isolation
 //     --forcebright         override INIDISP to full brightness (see graphics behind a black fade)
 //     --probe               after the run, print a hot-PC histogram (spot CPU wait-loops)
+//     --oam                 after the run, dump on-screen OAM sprites (pos/tile/size/pal/prio)
 //     --out <prefix>        output path prefix (default /tmp/snes/dbg)
 //
 // Each reg dump also prints a `wram:` line of key low-WRAM vars ($13/$14 frame
@@ -262,6 +263,37 @@ fn renderTo(m: &mut Mem, fb: &mut Vec<i64>, path: &string, forceBright: bool): v
     writePpm(fb, path)
 }
 
+// Dump on-screen OAM sprites (X/Y in range) with decoded size/tile/pal/prio, so a
+// missing or misplaced sprite is obvious. OBSEL bits 5-7 pick the size PAIR; the
+// per-sprite high-table bit selects small vs large within it.
+fn dumpOam(m: &Mem): void {
+    let sizeSel = (m.ppu.obsel >> 5) & 0x07
+    print("OAM (OBSEL=$" + hex2(m.ppu.obsel) + " sizeSel=" + sizeSel.toString() + "):")
+    var shown: i64 = 0
+    var s: i64 = 0
+    while s < 128 {
+        let oa = s * 4
+        let xl = m.ppu.oam[oa] as i64
+        let y = m.ppu.oam[oa + 1] as i64
+        let tileL = m.ppu.oam[oa + 2] as i64
+        let attr = m.ppu.oam[oa + 3] as i64
+        let ht = m.ppu.oam[0x200 + (s >> 2)] as i64
+        let shift = (s & 3) * 2
+        let xhi = (ht >> shift) & 1
+        let large = (ht >> (shift + 1)) & 1
+        var sx = xl | (xhi << 8)
+        if sx >= 256 {
+            sx = sx - 512
+        }
+        if y < 224 && shown < 24 {
+            print("  #" + s.toString() + " x=" + sx.toString() + " y=" + y.toString() + " tile=$" + hex4(tileL | ((attr & 1) << 8)) + " large=" + large.toString() + " pal=" + ((attr >> 1) & 7).toString() + " prio=" + ((attr >> 4) & 3).toString() + " flip=" + ((attr >> 6) & 3).toString())
+            shown = shown + 1
+        }
+        s = s + 1
+    }
+    print("  (" + shown.toString() + " shown of on-screen sprites)")
+}
+
 // Dump a few low-WRAM bytes ($00xxxx mirror = m.wram[off]). Useful to check
 // whether per-frame game variables (frame counters, player position, scroll) are
 // advancing when the screen looks frozen.
@@ -334,6 +366,7 @@ fn main(): i32 {
     var doLayers = false
     var forceBright = false
     var doProbe = false
+    var doOam = false
     var pressBits: Vec<i64> = Vec.new()
     var pressFrom: Vec<i64> = Vec.new()
     var pressTo: Vec<i64> = Vec.new()
@@ -362,6 +395,9 @@ fn main(): i32 {
             ai = ai + 1
         } else if a == "--probe" {
             doProbe = true
+            ai = ai + 1
+        } else if a == "--oam" {
+            doOam = true
             ai = ai + 1
         } else if a == "--press" && ai + 1 < argv.len {
             // parse btn@a-b
@@ -486,6 +522,9 @@ fn main(): i32 {
 
     dumpRegs(m, frames)
     peekWram(m, peekAddrs)
+    if doOam {
+        dumpOam(m)
+    }
     if lastBadOp() >= 0 {
         print("!! UNIMPLEMENTED OPCODE $" + hex2(lastBadOp()) + " at $" + hex2((lastBadOpPc() >> 16) & 0xFF) + hex4(lastBadOpPc() & 0xFFFF) + " — CPU derailed here")
     }
