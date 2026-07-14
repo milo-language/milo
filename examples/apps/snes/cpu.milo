@@ -11,7 +11,7 @@ from "./spc" import {
     Spc, SpcMem, spcMemNew, spcMemReal, spcReset, spcStep, apuReadPort, apuWritePort
 }
 from "./ppu" import {
-    Ppu, newPpu, ppuRegWrite, ppuRegReadPure, ppuCgram, ppuVram
+    Ppu, newPpu, ppuRegWrite, ppuRegReadPure, ppuCgram, ppuVram, ppuVblankOamReload
 }
 
 // --- P status-register bit masks ---
@@ -891,6 +891,7 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     // renderer consumes (gradient skies, brightness fades).
     hdmaWalkFrame(m)
     m.vblankToggle = 0x80
+    ppuVblankOamReload(m.ppu) // hardware reloads OAMADDR from $2102/3 at vblank start
     if (m.nmitimen & 0x80) != 0 {
         nmi(cpu, m)
     }

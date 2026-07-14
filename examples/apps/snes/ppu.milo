@@ -139,6 +139,24 @@ fn vramStep(p: &Ppu): i64 {
     return 128
 }
 
+// OAMADDR reload value ($2102/$2103). Real hardware reloads the internal OAM
+// address from this at the start of each vblank (when not force-blank), so a game
+// that writes its whole OAM every frame without re-setting OAMADDR (DKC) always
+// starts at the same place. Without the reload OAMADDR drifts past the 272-word OAM
+// and sprite writes spill into the 32-byte high table, corrupting the X-high/size
+// bits — which flings a metasprite's tiles off-screen (DKC's DK vanished). Global
+// (not a struct field) so it stays out of the save-state format.
+var oamReload: i64 = 0
+
+// Reload OAMADDR at vblank start (called from stepFrame). No-op under force-blank,
+// matching hardware (OAM address isn't reloaded while the screen is forced blank).
+fn ppuVblankOamReload(p: &mut Ppu): void {
+    if (p.inidisp & 0x80) == 0 {
+        p.oamaddr = oamReload
+        p.oamHi = false
+    }
+}
+
 // Register write for $2100-$213F (reg = low byte of the address).
 fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
     let v = val & 0xFF
@@ -152,10 +170,12 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
     }
     if reg == 0x02 {
         p.oamaddr = (p.oamaddr & 0x100) | v
+        oamReload = p.oamaddr
         p.oamHi = false return
     }
     if reg == 0x03 {
         p.oamaddr = ((v & 1) << 8) | (p.oamaddr & 0xFF)
+        oamReload = p.oamaddr
         p.oamHi = false return
     }
     if reg == 0x04 { // OAMDATA — 16-bit latch on even, commit on odd
