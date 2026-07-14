@@ -78,7 +78,11 @@ ensures result >= outLo && result <= outHi
         prevError = error
         measured = measured + (cmd >> 8)
     }
-    return cmd
+    // Re-clamp on the way out: runtime-wise cmd is already in range (pidStep
+    // clamps every iteration and the loop always runs), but this hands the
+    // prover clampI32's postcondition directly so `settle`'s ensures discharges
+    // without loop reasoning.
+    return clampI32(cmd, outLo, outHi)
 }
 
 fn main(): i32 {
