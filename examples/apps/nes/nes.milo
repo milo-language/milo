@@ -25,7 +25,7 @@ from "./cartridgeFile" import {
     loadCartridge
 }
 from "./cpu" import {
-    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag, clockApu
+    Cpu, Bus, newBus, newCpuReset, step, clockPpu, clockApu, serviceInterrupts
 }
 from "./ppu" import {
     renderFrame
@@ -486,18 +486,7 @@ fn runNes(cart: Cartridge): i32 {
                         k = k + 1
                     }
                     clockApu(bus, used)
-                    if bus.ppu.nmiPending {
-                        bus.ppu.nmiPending = false
-                        nmi(cpu, bus)
-                    }
-                    // APU frame IRQ + DMC IRQ are level-triggered: OR them into the line
-                    // at check time rather than latching bus.irqPending (which is MMC3's
-                    // edge latch — latching there leaves a phantom pending IRQ after the
-                    // game acks, desyncing MMC3 scanline splits).
-                    if (bus.irqPending || bus.apu.frameIrq || bus.apu.dmc.irqFlag) && !cpuFlag(cpu, 0x04) {
-                        bus.irqPending = false
-                        irq(cpu, bus)
-                    }
+                    serviceInterrupts(cpu, bus)
                 }
             }
 

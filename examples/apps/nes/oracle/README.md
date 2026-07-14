@@ -13,11 +13,21 @@ game misbehaves and nestest (CPU-only) can't drive it.
    patched mappers are used.)
 3. `bun examples/apps/nes/oracle/oracle.mjs`
 
-## Finding (2026-07)
-jsnes plays BOMBERMAN launched from the 1200-in-1 menu — Start advances past the
-title (pc -> $C602, framebuffer changes). OUR emulator stays on the title
-(vblank-wait loop $C288). Same mapper-227 logic in both, so the bug is in our
-CPU/PPU/input core, not the mapper. Controller $4016 read looks standard; likely a
-subtle opcode/PPU/timing issue on BOMBERMAN's title->play path. Next: aligned
-instruction trace-diff (extract BOMBERMAN standalone with a patched reset vector so
-both emulators run deterministically from reset, then diff pc/regs to first divergence).
+## Finding (2026-07) — RESOLVED
+jsnes played BOMBERMAN launched from the 1200-in-1 menu — Start advanced past the
+title (pc -> $C602). OUR emulator stalled on the title in a vblank-wait loop $C288.
+Same mapper-227 logic in both, so the bug was in our core, not the mapper.
+
+Root cause: **NMI was dispatched immediately** after the instruction whose PPU
+catch-up set the vblank flag. BOMBERMAN's title->play routine at $C288 is the
+classic `LDA $2002 / BPL` "wait for vblank to begin" poll with NMI enabled; the
+eager NMI preempted the poll every frame, and the NMI handler's own $2002 read
+cleared bit 7 before the mainline could observe it, so the loop spun forever. Real
+6502 polls the interrupt lines late in each instruction, giving a one-instruction
+NMI recognition latency — the mainline read gets to see the flag first.
+
+Fix: `serviceInterrupts()` in `cpu.milo` arms the NMI on the edge and dispatches it
+one instruction later. BOMBERMAN now advances title -> "STAGE 1"; PC tracks jsnes
+($C603 vs $C602). Repro/regression harness: `traceRun.milo` (drives the menu +
+Start via injected controller input, asserts the framebuffer leaves the title).
+Punch-Out (MMC2, NMI-timing sensitive) renders byte-identical before/after.

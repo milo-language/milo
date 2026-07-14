@@ -4,7 +4,7 @@
 // The driver (web/index.html) does: createNes(romBytes) -> h; each rAF frame it
 // calls setButtons(h, bits) then stepFrame(h), then blits h.bus.ppu.fb to a canvas.
 from "./cpu" import {
-    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag, clockApu
+    Cpu, Bus, newBus, newCpuReset, step, clockPpu, clockApu, serviceInterrupts
 }
 from "./ppu" import {
     renderFrame
@@ -86,14 +86,7 @@ fn stepFrame(h: &mut NesHandle): void {
             k = k + 1
         }
         clockApu(h.bus, used)
-        if h.bus.ppu.nmiPending {
-            h.bus.ppu.nmiPending = false
-            nmi(h.cpu, h.bus)
-        }
-        if (h.bus.irqPending || h.bus.apu.frameIrq || h.bus.apu.dmc.irqFlag) && !cpuFlag(h.cpu, 0x04) {
-            h.bus.irqPending = false
-            irq(h.cpu, h.bus)
-        }
+        serviceInterrupts(h.cpu, h.bus)
     }
     renderFrame(h.bus.ppu)
 }
@@ -109,14 +102,7 @@ fn stepOne(h: &mut NesHandle): void {
         k = k + 1
     }
     clockApu(h.bus, used)
-    if h.bus.ppu.nmiPending {
-        h.bus.ppu.nmiPending = false
-        nmi(h.cpu, h.bus)
-    }
-    if (h.bus.irqPending || h.bus.apu.frameIrq || h.bus.apu.dmc.irqFlag) && !cpuFlag(h.cpu, 0x04) {
-        h.bus.irqPending = false
-        irq(h.cpu, h.bus)
-    }
+    serviceInterrupts(h.cpu, h.bus)
 }
 
 // emit-js appends `main(); __flush();`; keep it a no-op so importing the module in

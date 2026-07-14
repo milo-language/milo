@@ -57,6 +57,7 @@ struct Bus {
     irqReload: bool
     irqEnabled: bool
     irqPending: bool // set when the scanline counter hits 0; consumed by the CPU
+    nmiArmed: bool // NMI edge detected last instruction, serviced this one (1-instr latency)
 }
 
 fn newBus(cart: Cartridge): Bus {
@@ -74,7 +75,7 @@ fn newBus(cart: Cartridge): Bus {
         ram: [0; 2048], wram: [0; 8192], prg: cart.prg, prgMask: mask, ppu: ppu, apu: newApu(), ctrl1: 0, strobe: 0, buttons: 0, ctrl2: 0, buttons2: 0,
         mapper: cart.mapper as i64, prgBanks: banks, prgBank: 0, mmc2Prg: 0, m227Lo: 0, m227Hi: 0,
         mmcSelect: 0, mmcR0: 0, mmcR1: 0, mmcR2: 0, mmcR3: 0, mmcR4: 0, mmcR5: 0, mmcR6: 0, mmcR7: 0,
-        irqLatch: 0, irqCounter: 0, irqReload: false, irqEnabled: false, irqPending: false
+        irqLatch: 0, irqCounter: 0, irqReload: false, irqEnabled: false, irqPending: false, nmiArmed: false
     }
     if bus.mapper == 4 {
         mmc3UpdateChr(bus) // establish the initial CHR window mapping
@@ -377,6 +378,32 @@ fn irq(cpu: &mut Cpu, bus: &mut Bus): void {
     let hi = busRead(bus, 0xFFFF) as i64
     cpu.pc = wrap16(lo | (hi << 8))
     cpu.cyc = cpu.cyc + 7
+}
+
+// Service pending interrupts after one CPU instruction + its PPU/APU catch-up.
+// NMI carries a one-instruction recognition latency: the 6502 polls the
+// interrupt lines late in each instruction, so an NMI asserted as the PPU enters
+// vblank isn't serviced until AFTER the next instruction completes. That gap lets
+// a mainline "wait for vblank" poll (LDA $2002 / BPL) observe bit 7 before the NMI
+// handler's own $2002 read clears it. Dispatching NMI immediately preempted that
+// poll, so vblank-wait loops with NMI enabled spun forever — the 1200-in-1
+// BOMBERMAN title->play handoff (loop at $C288) is the canonical repro.
+fn serviceInterrupts(cpu: &mut Cpu, bus: &mut Bus): void {
+    if bus.nmiArmed {
+        bus.nmiArmed = false
+        nmi(cpu, bus)
+    } else if bus.ppu.nmiPending {
+        bus.ppu.nmiPending = false
+        bus.nmiArmed = true
+    }
+    // APU frame IRQ + DMC IRQ are level-triggered: OR them into the line at check
+    // time rather than latching bus.irqPending (which is MMC3's edge latch —
+    // latching there leaves a phantom pending IRQ after the game acks, desyncing
+    // MMC3 scanline splits).
+    if (bus.irqPending || bus.apu.frameIrq || bus.apu.dmc.irqFlag) && !cpuFlag(cpu, 0x04) {
+        bus.irqPending = false
+        irq(cpu, bus)
+    }
 }
 
 // --- MMC3 (mapper 4) ---

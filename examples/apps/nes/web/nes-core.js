@@ -22,7 +22,7 @@ class NesHandle {
 }
 
 class Bus {
-  constructor(ram, wram, prg, prgMask, ppu, apu, ctrl1, strobe, buttons, ctrl2, buttons2, mapper, prgBanks, prgBank, mmc2Prg, m227Lo, m227Hi, mmcSelect, mmcR0, mmcR1, mmcR2, mmcR3, mmcR4, mmcR5, mmcR6, mmcR7, irqLatch, irqCounter, irqReload, irqEnabled, irqPending) {
+  constructor(ram, wram, prg, prgMask, ppu, apu, ctrl1, strobe, buttons, ctrl2, buttons2, mapper, prgBanks, prgBank, mmc2Prg, m227Lo, m227Hi, mmcSelect, mmcR0, mmcR1, mmcR2, mmcR3, mmcR4, mmcR5, mmcR6, mmcR7, irqLatch, irqCounter, irqReload, irqEnabled, irqPending, nmiArmed) {
     this.ram = ram;
     this.wram = wram;
     this.prg = prg;
@@ -54,6 +54,7 @@ class Bus {
     this.irqReload = irqReload;
     this.irqEnabled = irqEnabled;
     this.irqPending = irqPending;
+    this.nmiArmed = nmiArmed;
   }
 }
 
@@ -712,14 +713,7 @@ function stepFrame(h) {
       k = Math.trunc((k + 1));
     }
     clockApu(h.bus, used);
-    if (h.bus.ppu.nmiPending) {
-      h.bus.ppu.nmiPending = false;
-      nmi(h.cpu, h.bus);
-    }
-    if ((((h.bus.irqPending || h.bus.apu.frameIrq) || h.bus.apu.dmc.irqFlag) && (!cpuFlag(h.cpu, 4)))) {
-      h.bus.irqPending = false;
-      irq(h.cpu, h.bus);
-    }
+    serviceInterrupts(h.cpu, h.bus);
   }
   renderFrame(h.bus.ppu);
 }
@@ -734,14 +728,7 @@ function stepOne(h) {
     k = Math.trunc((k + 1));
   }
   clockApu(h.bus, used);
-  if (h.bus.ppu.nmiPending) {
-    h.bus.ppu.nmiPending = false;
-    nmi(h.cpu, h.bus);
-  }
-  if ((((h.bus.irqPending || h.bus.apu.frameIrq) || h.bus.apu.dmc.irqFlag) && (!cpuFlag(h.cpu, 4)))) {
-    h.bus.irqPending = false;
-    irq(h.cpu, h.bus);
-  }
+  serviceInterrupts(h.cpu, h.bus);
 }
 
 function main() {
@@ -759,7 +746,7 @@ function newBus(cart) {
   })();
   const ppu = newPpu(cart.chr, cart.mirrorVertical);
   const banks = Math.trunc(cart.prg16kBanks);
-  let bus = new Bus(Array.from({length: 2048}, () => __clone(0)), Array.from({length: 8192}, () => __clone(0)), cart.prg, mask, ppu, newApu(), 0, 0, 0, 0, 0, Math.trunc(cart.mapper), banks, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false);
+  let bus = new Bus(Array.from({length: 2048}, () => __clone(0)), Array.from({length: 8192}, () => __clone(0)), cart.prg, mask, ppu, newApu(), 0, 0, 0, 0, 0, Math.trunc(cart.mapper), banks, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, false, false, false);
   if ((bus.mapper == 4)) {
     mmc3UpdateChr(bus);
   }
@@ -1028,6 +1015,22 @@ function irq(cpu, bus) {
   const hi = Math.trunc(busRead(bus, 65535));
   cpu.pc = wrap16(((lo | ((hi << 8) >>> 0)) >>> 0));
   cpu.cyc = Math.trunc((cpu.cyc + 7));
+}
+
+function serviceInterrupts(cpu, bus) {
+  if (bus.nmiArmed) {
+    bus.nmiArmed = false;
+    nmi(cpu, bus);
+  } else {
+    if (bus.ppu.nmiPending) {
+      bus.ppu.nmiPending = false;
+      bus.nmiArmed = true;
+    }
+  }
+  if ((((bus.irqPending || bus.apu.frameIrq) || bus.apu.dmc.irqFlag) && (!cpuFlag(cpu, 4)))) {
+    bus.irqPending = false;
+    irq(cpu, bus);
+  }
 }
 
 function mmc3UpdateChr(bus) {

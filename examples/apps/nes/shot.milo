@@ -15,7 +15,7 @@ from "./cartridgeFile" import {
     loadCartridge
 }
 from "./cpu" import {
-    Cpu, Bus, newBus, newCpuReset, step, nmi, irq, clockPpu, cpuFlag, clockApu
+    Cpu, Bus, newBus, newCpuReset, step, clockPpu, clockApu, serviceInterrupts
 }
 from "./ppu" import {
     renderFrame
@@ -67,14 +67,7 @@ fn run(cart: Cartridge, frames: i64, out: string): i32 {
                 k = k + 1
             }
             clockApu(bus, used)
-            if bus.ppu.nmiPending {
-                bus.ppu.nmiPending = false
-                nmi(cpu, bus)
-            }
-            if (bus.irqPending || bus.apu.frameIrq || bus.apu.dmc.irqFlag) && !cpuFlag(cpu, 0x04) {
-                bus.irqPending = false
-                irq(cpu, bus)
-            }
+            serviceInterrupts(cpu, bus)
         }
         f = f + 1
     }
