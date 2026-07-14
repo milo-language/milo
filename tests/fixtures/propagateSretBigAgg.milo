@@ -1,0 +1,99 @@
+// Regression: `?` in a function whose return type is a big aggregate (>128B, so
+// it is sret-lowered to `void @f(ptr %__sret.out, …)`). The Err early-return
+// must store into %__sret.out and `ret void`, not `ret <value>` — the latter
+// mismatches the void result type and fails to compile (hades _decode).
+//
+// Must be a method: root free fns stay C-visible (by-value) and never sret, so
+// only an internal fn (method or imported) exercises the broken path. Covers
+// both propagate ret sites: same-enum (run) and From-conversion (runConv).
+// @expect: boom
+// @expect: 7
+// @expect: wrap:boom
+// @expect: 1
+
+struct Big {
+    a: string, b: string, c: string, d: string,
+    e: string, f: string, g: string,
+}
+
+enum WrapErr {
+    S(string),
+}
+
+struct Chainer {
+}
+
+fn makeErr(): Result<Big, string> {
+    return Result.Err("boom")
+}
+
+fn makeOk(): Result<Big, string> {
+    return Result.Ok(Big {
+        a: "1", b: "2", c: "3", d: "4", e: "5", f: "6", g: "7"
+    }
+    )
+}
+
+impl Chainer {
+    // same-enum propagate: retType == operand enum, no conversion (site 4131)
+    fn run(self: &Self, fail: bool): Result<Big, string> {
+        let v = if fail {
+            makeErr()?
+        } else {
+            makeOk()?
+        }
+        return Result.Ok(v)
+    }
+
+    // From-conversion propagate: string Err auto-wraps into WrapErr (site 4183)
+    fn runConv(self: &Self, fail: bool): Result<Big, WrapErr> {
+        let v = if fail {
+            makeErr()?
+        } else {
+            makeOk()?
+        }
+        return Result.Ok(v)
+    }
+}
+
+fn main(): i32 {
+    let c = Chainer {
+    }
+    match c.run(true) {
+        Result.Ok(b) => {
+            print("unexpected ok")
+        }
+        Result.Err(e) => {
+            print(e)
+        }
+    }
+    match c.run(false) {
+        Result.Ok(b) => {
+            print(b.g)
+        }
+        Result.Err(e) => {
+            print("unexpected err")
+        }
+    }
+    match c.runConv(true) {
+        Result.Ok(b) => {
+            print("unexpected ok")
+        }
+        Result.Err(e) => {
+            match e {
+                WrapErr.S(m) => {
+                    print("wrap:", m)
+                }
+            }
+        }
+    }
+    match c.runConv(false) {
+        Result.Ok(b) => {
+            print(b.a)
+        }
+        Result.Err(e) => {
+            print("unexpected err")
+        }
+    }
+    return 0
+}

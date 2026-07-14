@@ -4127,8 +4127,16 @@ export class Codegen {
     lines.push(`${errLabel}:`);
     const retEnumName = expr.retType.tag === "enum" ? expr.retType.name : expr.enumName;
     if (retEnumName === expr.enumName && !expr.fromConversion) {
-      // same enum type — return as-is
-      lines.push(`  ret ${retTy} ${ov}`);
+      // same enum type — return as-is. When the enclosing fn is sret-lowered
+      // (big-aggregate return), the signature is `void @f(ptr %__sret.out, …)`,
+      // so this early `?`-return must write the result buffer and `ret void`
+      // rather than `ret <value>` (which mismatches the void result type).
+      if (this.currentFnSret) {
+        lines.push(`  store ${retTy} ${ov}, ptr %__sret.out`);
+        lines.push("  ret void");
+      } else {
+        lines.push(`  ret ${retTy} ${ov}`);
+      }
     } else {
       // extract source Err payload
       const errPayloadPtr = this.nextTemp();
@@ -4180,7 +4188,13 @@ export class Codegen {
       }
       const retVal = this.nextTemp();
       lines.push(`  ${retVal} = load ${retEnumTy}, ptr ${retAlloca}`);
-      lines.push(`  ret ${retEnumTy} ${retVal}`);
+      // sret-lowered enclosing fn: write %__sret.out + ret void (see above).
+      if (this.currentFnSret) {
+        lines.push(`  store ${retEnumTy} ${retVal}, ptr %__sret.out`);
+        lines.push("  ret void");
+      } else {
+        lines.push(`  ret ${retEnumTy} ${retVal}`);
+      }
     }
 
     // ok branch — extract payload and zero source to prevent double-free
