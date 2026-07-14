@@ -678,12 +678,36 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
         4
     }
     let tmBase = (sc & 0xFC) << 8
+    // BGMODE bits 4-7 select 16x16 character tiles per BG (bit 4+layerIdx). A 16x16
+    // cell is a 2x2 block of 8x8 tiles (base, base+1, base+16, base+17). DKC's level
+    // backgrounds use this; without it the tilemap is read at 8x8 granularity and the
+    // level renders as scrambled tiles. tileShift = pixels-per-tilemap-cell.
+    let big16 = ((p.bgmode >> (4 + layerIdx)) & 1) != 0
+    let tileShift: i64 = if big16 {
+        4
+    } else {
+        3
+    }
+    // The tilemap wraps every 32/64 CELLS; in pixels that's twice as wide/tall with
+    // 16x16 tiles, so the scroll mask scales with the cell size.
     let maskX: i64 = if (sc & 1) != 0 {
+        if big16 {
+            0x3FF
+        } else {
+            0x1FF
+        }
+    } else if big16 {
         0x1FF
     } else {
         0xFF
     }
     let maskY: i64 = if (sc & 2) != 0 {
+        if big16 {
+            0x3FF
+        } else {
+            0x1FF
+        }
+    } else if big16 {
         0x1FF
     } else {
         0xFF
@@ -698,19 +722,33 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
             }
             let ex = (x + hofs) & maskX
             let ey = (y + vofs) & maskY
-            let entry = vramWord(p, bgEntryAddr(tmBase, sc, ex >> 3, ey >> 3))
+            let entry = vramWord(p, bgEntryAddr(tmBase, sc, ex >> tileShift, ey >> tileShift))
             if wantPrio >= 0 && ((entry >> 13) & 1) != wantPrio {
                 x = x + 1
                 continue // this tile belongs to the other priority pass
             }
-            let tileNum = entry & 0x3FF
+            let hflip = (entry >> 14) & 1
+            let vflip = (entry >> 15) & 1
+            // For a 16x16 cell, pick the 8x8 sub-tile: +1 right, +16 down (flips swap).
+            var tileNum = entry & 0x3FF
+            if big16 {
+                var sx8 = (ex >> 3) & 1
+                var sy8 = (ey >> 3) & 1
+                if hflip != 0 {
+                    sx8 = 1 - sx8
+                }
+                if vflip != 0 {
+                    sy8 = 1 - sy8
+                }
+                tileNum = (tileNum + sx8 + sy8 * 16) & 0x3FF
+            }
             let pal = (entry >> 10) & 0x07
             var px = ex & 7
             var py = ey & 7
-            if ((entry >> 14) & 1) != 0 {
+            if hflip != 0 {
                 px = 7 - px
             }
-            if ((entry >> 15) & 1) != 0 {
+            if vflip != 0 {
                 py = 7 - py
             }
             let ci: i64 = if bpp == 8 {
