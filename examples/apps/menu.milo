@@ -98,10 +98,14 @@ fn main(): i32 {
         var quit = false
         var chosen: i64 = -1
         // Edge-detect: act on a press only when it transitions from up to down.
-        var upPrev = false
-        var downPrev = false
         var okPrev = false
         var backPrev = false
+        // Vertical auto-repeat: hold up/down to keep moving, accelerating the
+        // longer it's held. heldFrames counts frames the current direction has
+        // been down; repeatTimer counts frames until the next auto-move.
+        var heldFrames: i64 = 0
+        var repeatTimer: i64 = 0
+        var lastDir: i64 = 0
 
         while !quit {
             while SDL_PollEvent(ev) != 0 {
@@ -138,18 +142,46 @@ fn main(): i32 {
                 }
             }
 
-            if upNow && !upPrev && sel.len > 0 {
-                selIdx = selIdx - 1
-                if selIdx < 0 {
-                    selIdx = 0
+            var moveDir: i64 = 0
+            if upNow && !downNow {
+                moveDir = -1
+            } else if downNow && !upNow {
+                moveDir = 1
+            }
+            if moveDir != lastDir {
+                heldFrames = 0 // direction changed (or released): restart the ramp
+            }
+            if moveDir != 0 && sel.len > 0 {
+                var doMove = false
+                if heldFrames == 0 {
+                    doMove = true // initial press fires immediately
+                    repeatTimer = 20 // ~0.33s delay before auto-repeat kicks in
+                } else {
+                    repeatTimer = repeatTimer - 1
+                    if repeatTimer <= 0 {
+                        doMove = true
+                        // Acceleration: repeat interval shrinks the longer it's
+                        // held, from ~6 frames down to 1 (60/s) after ~1.7s.
+                        var interval = 6 - heldFrames / 20
+                        if interval < 1 {
+                            interval = 1
+                        }
+                        repeatTimer = interval
+                    }
+                }
+                heldFrames = heldFrames + 1
+                if doMove {
+                    selIdx = selIdx + moveDir
+                    // Wrap: past the bottom -> top, past the top -> bottom.
+                    if selIdx < 0 {
+                        selIdx = sel.len - 1
+                    }
+                    if selIdx >= sel.len {
+                        selIdx = 0
+                    }
                 }
             }
-            if downNow && !downPrev && sel.len > 0 {
-                selIdx = selIdx + 1
-                if selIdx >= sel.len {
-                    selIdx = sel.len - 1
-                }
-            }
+            lastDir = moveDir
             if okNow && !okPrev && sel.len > 0 {
                 chosen = sel[selIdx]
                 quit = true
@@ -157,8 +189,6 @@ fn main(): i32 {
             if backNow && !backPrev {
                 quit = true
             }
-            upPrev = upNow
-            downPrev = downNow
             okPrev = okNow
             backPrev = backNow
 

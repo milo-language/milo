@@ -121,10 +121,83 @@ fn snesTitleStr(data: &string, off: i64): string {
     return s
 }
 
+// Count printable ASCII bytes in a `len`-byte window — used to tell a real
+// Genesis header title from garbage (e.g. an interleaved/SMD dump).
+fn printScore(data: &string, off: i64, len: i64): i64 {
+    if off + len > data.len {
+        return -1
+    }
+    var score: i64 = 0
+    var i: i64 = 0
+    while i < len {
+        let c = data[off + i] as i64
+        if c >= 0x20 && c <= 0x7E {
+            score = score + 1
+        }
+        i = i + 1
+    }
+    return score
+}
+
+// Read a 48-byte Genesis header title, collapsing runs of spaces and trimming.
+// Genesis titles are space-padded to a fixed width ("SONIC THE       HEDGEHOG").
+fn genesisTitleStr(data: &string, off: i64): string {
+    var s: string = ""
+    var pendingSpace = false
+    var started = false
+    var i: i64 = 0
+    while i < 48 {
+        var c = data[off + i] as i64
+        if c < 0x20 || c > 0x7E {
+            c = 0x20 // treat stray/control bytes as spaces
+        }
+        if c == 0x20 {
+            if started {
+                pendingSpace = true
+            }
+        } else {
+            if pendingSpace {
+                s.push(0x20 as u8)
+                pendingSpace = false
+            }
+            s.push(c as u8)
+            started = true
+        }
+        i = i + 1
+    }
+    return s
+}
+
 // Human-readable label. For SNES, read the game name from the cartridge header
 // (LoROM $7FC0 / HiROM $FFC0, whichever scores as real ASCII) so "smw.smc" shows
 // as "SUPER MARIO WORLD". Falls back to the prettified filename on any failure.
 fn romTitle(path: &string, name: &string, sys: &string): string {
+    if sys == "genesis" {
+        match readFile(path) {
+            Result.Ok(data) => {
+                // Overseas title $150, domestic $120; pick the more printable.
+                let oScore = printScore(data, 0x150, 48)
+                let dScore = printScore(data, 0x120, 48)
+                var off: i64 = 0x150
+                var best = oScore
+                if dScore > best {
+                    off = 0x120
+                    best = dScore
+                }
+                // Real Genesis titles are space-padded ASCII (~48/48 printable);
+                // an interleaved/SMD dump scores far lower, so reject it and let
+                // the filename fall-through win.
+                if best >= 44 {
+                    let t = genesisTitleStr(data, off)
+                    if t.len > 0 {
+                        return t
+                    }
+                }
+            }
+            Result.Err(e) => {
+            }
+        }
+    }
     if sys == "snes" {
         match readFile(path) {
             Result.Ok(data) => {

@@ -14,13 +14,6 @@ struct Cart {
     romEnd: i64 // last ROM address from header ($0001A4)
 }
 
-fn romByte(rom: &Vec<u8>, addr: i64): u8 {
-    if addr < rom.len {
-        return rom[addr]
-    }
-    return 0
-}
-
 // Parse a flat Genesis ROM image from raw bytes. FFI-free so both the fs loader
 // and the browser driver share it.
 fn parseCart(raw: &Vec<u8>): Result<Cart, string> {

@@ -9,6 +9,28 @@ Battle-tested triage for the Milo NES / SNES / Genesis emulators. The #1 failure
 mode of agents debugging these: staring at pixels or source code before reading
 the machine state. Registers first, pixels second, source third.
 
+## Rule 0.0 — never leave an emulator running (CPU-orphan trap)
+
+Every emulator is an infinite 60fps loop that **never exits on its own**. Launch
+one detached and it becomes an orphan (reparented to init, PPID 1) pegging a full
+core forever — invisible to your shell, survives the session. Multiple debug
+sessions stacked ~300% CPU of dead `/tmp/*_ctrl` / `/tmp/menu` orphans once.
+
+- **Never `run_in_background`, `nohup`, `&`, or `disown` an emulator or its SDL
+  window.** Not the headless harness, not the interactive binary — nothing that
+  loops.
+- **Headless runs must be bounded:** always pass `--frames N` (dbg/shot/bootRun
+  all take it) so the process self-terminates. A headless run with no frame cap
+  is the same infinite loop.
+- **Build debug binaries under a known prefix** (`/tmp/snes/`, `/tmp/nes/`, …) so
+  leftovers are greppable.
+- **When done, sweep for survivors** (do this at the end of any emu session):
+  ```bash
+  pkill -9 -f '/tmp/(snes|nes|gen|menu)' ; pkill -9 -f 'examples/apps/retro/bin/'
+  ps -Ao pid,ppid,%cpu,command -r | grep -Ei '_ctrl|retro/bin|/tmp/menu' | grep -v grep
+  ```
+  Orphans show `PPID 1` — kill by PID if the pattern misses.
+
 ## Rule 0 — reproduce headless, never through the SDL window
 
 Each system has a headless harness that runs N frames and dumps an image you can
