@@ -875,6 +875,95 @@ fn rra(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
     adc(cpu, m)
 }
 
+// ANC: A &= imm; carry is copied from the result's bit 7 (as ASL/ROL would).
+fn anc(cpu: &mut Cpu, m: u8): void {
+    cpu.a = cpu.a & m
+    setZN(cpu, cpu.a)
+    setFlag(cpu, FC, (cpu.a & 0x80) != 0)
+}
+
+// ALR (ASR): A &= imm, then LSR A.
+fn alr(cpu: &mut Cpu, m: u8): void {
+    cpu.a = lsrV(cpu, cpu.a & m)
+}
+
+// ARR: A &= imm, then ROR A — but C/V come from the result, not the shifted bit.
+fn arr(cpu: &mut Cpu, m: u8): void {
+    let cin: u8 = if cpuFlag(cpu, FC) {
+        0x80
+    } else {
+        0
+    }
+    let r: u8 = ((cpu.a & m) >> 1) | cin
+    cpu.a = r
+    setZN(cpu, r) // N = old carry (now bit 7), Z from r
+    setFlag(cpu, FC, (r & 0x40) != 0)
+    setFlag(cpu, FV, ((((r as i64) >> 6) ^ ((r as i64) >> 5)) & 1) != 0)
+}
+
+// SBX (AXS): X = (A & X) - imm; carry set like CMP, no borrow-in.
+fn sbx(cpu: &mut Cpu, m: u8): void {
+    let ax: i64 = (cpu.a as i64) & (cpu.x as i64)
+    setFlag(cpu, FC, ax >= (m as i64))
+    cpu.x = ((ax - (m as i64)) & 0xFF) as u8
+    setZN(cpu, cpu.x)
+}
+
+// LAS: A = X = SP = (mem & SP).
+fn las(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    let t = busRead(bus, addr) & cpu.sp
+    cpu.a = t
+    cpu.x = t
+    cpu.sp = t
+    setZN(cpu, t)
+}
+
+// LXA: A = X = imm. (The chip's "magic constant" varies; 0xFF is the stable
+// value most emulators/test ROMs assume, reducing this to LDA #imm; TAX.)
+fn lxa(cpu: &mut Cpu, m: u8): void {
+    cpu.a = m
+    cpu.x = m
+    setZN(cpu, m)
+}
+
+// ANE (XAA): A = (A | magic) & X & imm. Unstable; 0xEE is the common magic.
+fn ane(cpu: &mut Cpu, m: u8): void {
+    cpu.a = (cpu.a | 0xEE) & cpu.x & m
+    setZN(cpu, cpu.a)
+}
+
+// SHA/SHX/SHY/TAS: store reg AND'd with (high byte of target + 1) — the address
+// high byte leaks onto the data bus on these unstable stores. Games only hit
+// these when already derailed, so the simple (non-page-cross-corrupting) form.
+fn hiPlus1(addr: u16): i64 {
+    return (((addr as i64) >> 8) + 1) & 0xFF
+}
+
+fn sha(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    busWrite(bus, addr, (((cpu.a as i64) & (cpu.x as i64) & hiPlus1(addr)) & 0xFF) as u8)
+}
+
+fn shx(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    busWrite(bus, addr, (((cpu.x as i64) & hiPlus1(addr)) & 0xFF) as u8)
+}
+
+fn shy(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    busWrite(bus, addr, (((cpu.y as i64) & hiPlus1(addr)) & 0xFF) as u8)
+}
+
+fn tas(cpu: &mut Cpu, bus: &mut Bus, addr: u16): void {
+    cpu.sp = cpu.a & cpu.x
+    busWrite(bus, addr, (((cpu.sp as i64) & hiPlus1(addr)) & 0xFF) as u8)
+}
+
+// JAM/KIL: hardware halts until reset. Rewind PC onto the opcode so it re-executes
+// forever (frozen mainline), but still burn cycles so the caller's PPU catch-up +
+// NMI keep running — the emulator stays responsive instead of hanging.
+fn jam(cpu: &mut Cpu): void {
+    cpu.pc = wrap16((cpu.pc as i64) - 1)
+    cpu.cyc = cpu.cyc + 2
+}
+
 // Execute one instruction, advancing cyc by its total cost.
 fn step(cpu: &mut Cpu, bus: &mut Bus): void {
     cpu.extraCycles = 0
@@ -2036,10 +2125,102 @@ fn step(cpu: &mut Cpu, bus: &mut Bus): void {
             rra(cpu, bus, aIndY(cpu, bus))
             cpu.cyc = cpu.cyc + 8
         }
+        // ---- unofficial: immediate ALU ----
+        0x0B => { // ANC
+            anc(cpu, busRead(bus, aImm(cpu)))
+            cpu.cyc = cpu.cyc + 2
+        }
+        0x2B => { // ANC (mirror)
+            anc(cpu, busRead(bus, aImm(cpu)))
+            cpu.cyc = cpu.cyc + 2
+        }
+        0x4B => { // ALR / ASR
+            alr(cpu, busRead(bus, aImm(cpu)))
+            cpu.cyc = cpu.cyc + 2
+        }
+        0x6B => { // ARR
+            arr(cpu, busRead(bus, aImm(cpu)))
+            cpu.cyc = cpu.cyc + 2
+        }
+        0xCB => { // SBX / AXS
+            sbx(cpu, busRead(bus, aImm(cpu)))
+            cpu.cyc = cpu.cyc + 2
+        }
+        0xAB => { // LXA / LAX #imm
+            lxa(cpu, busRead(bus, aImm(cpu)))
+            cpu.cyc = cpu.cyc + 2
+        }
+        0x8B => { // ANE / XAA
+            ane(cpu, busRead(bus, aImm(cpu)))
+            cpu.cyc = cpu.cyc + 2
+        }
+        // ---- unofficial: LAS (read), SH* / TAS (unstable stores) ----
+        0xBB => { // LAS
+            las(cpu, bus, aAbsY(cpu, bus))
+            cpu.cyc = cpu.cyc + 4 + cpu.extraCycles
+        }
+        0x9F => { // SHA abs,Y
+            sha(cpu, bus, aAbsY(cpu, bus))
+            cpu.cyc = cpu.cyc + 5
+        }
+        0x93 => { // SHA (ind),Y
+            sha(cpu, bus, aIndY(cpu, bus))
+            cpu.cyc = cpu.cyc + 6
+        }
+        0x9E => { // SHX abs,Y
+            shx(cpu, bus, aAbsY(cpu, bus))
+            cpu.cyc = cpu.cyc + 5
+        }
+        0x9C => { // SHY abs,X
+            shy(cpu, bus, aAbsX(cpu, bus))
+            cpu.cyc = cpu.cyc + 5
+        }
+        0x9B => { // TAS / SHS
+            tas(cpu, bus, aAbsY(cpu, bus))
+            cpu.cyc = cpu.cyc + 5
+        }
+        // ---- JAM / KIL: a real 6502 locks up until reset. Freeze on the opcode
+        // (rewind the fetch) so PC stalls like hardware; the frame loop still
+        // advances via NMI, keeping the emulator responsive to reset/game-switch.
+        0x02 => {
+            jam(cpu)
+        }
+        0x12 => {
+            jam(cpu)
+        }
+        0x22 => {
+            jam(cpu)
+        }
+        0x32 => {
+            jam(cpu)
+        }
+        0x42 => {
+            jam(cpu)
+        }
+        0x52 => {
+            jam(cpu)
+        }
+        0x62 => {
+            jam(cpu)
+        }
+        0x72 => {
+            jam(cpu)
+        }
+        0x92 => {
+            jam(cpu)
+        }
+        0xB2 => {
+            jam(cpu)
+        }
+        0xD2 => {
+            jam(cpu)
+        }
+        0xF2 => {
+            jam(cpu)
+        }
         _ => {
-            // Unimplemented opcode. fetch8 already advanced PC past it, so this is
-            // NOT a halt — we skip the byte and run on. Log once per opcode so real
-            // ROMs surface which illegal ops they actually hit without flooding.
+            // Every 8-bit pattern is now decoded (official + all undocumented).
+            // Reaching here means a genuine dispatch gap — log once, skip, run on.
             if !cpu.unknownSeen[op as i64] {
                 cpu.unknownSeen[op as i64] = true
                 eprint("unimplemented opcode 0x" + hex2(op as i64) + " at pc=0x" + hex4((cpu.pc as i64 - 1) & 0xFFFF))

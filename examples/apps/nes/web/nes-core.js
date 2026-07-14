@@ -1478,6 +1478,83 @@ function rra(cpu, bus, addr) {
   adc(cpu, m);
 }
 
+function anc(cpu, m) {
+  cpu.a = ((cpu.a & m) & 0xFF);
+  setZN(cpu, cpu.a);
+  setFlag(cpu, FC, (((cpu.a & 128) & 0xFF) != 0));
+}
+
+function alr(cpu, m) {
+  cpu.a = lsrV(cpu, ((cpu.a & m) & 0xFF));
+}
+
+function arr(cpu, m) {
+  const cin = (() => {
+  if (cpuFlag(cpu, FC)) {
+    return 128;
+  } else {
+    return 0;
+  }
+  })();
+  const r = (((Math.floor(((cpu.a & m) & 0xFF) / 2 ** (1)) & 0xFF) | cin) & 0xFF);
+  cpu.a = r;
+  setZN(cpu, r);
+  setFlag(cpu, FC, (((r & 64) & 0xFF) != 0));
+  setFlag(cpu, FV, (((((Math.floor(Math.trunc(r) / 2 ** (6)) ^ Math.floor(Math.trunc(r) / 2 ** (5))) >>> 0) & 1) >>> 0) != 0));
+}
+
+function sbx(cpu, m) {
+  const ax = ((Math.trunc(cpu.a) & Math.trunc(cpu.x)) >>> 0);
+  setFlag(cpu, FC, (ax >= Math.trunc(m)));
+  cpu.x = (((Math.trunc((ax - Math.trunc(m))) & 255) >>> 0) & 0xFF);
+  setZN(cpu, cpu.x);
+}
+
+function las(cpu, bus, addr) {
+  const t = ((busRead(bus, addr) & cpu.sp) & 0xFF);
+  cpu.a = t;
+  cpu.x = t;
+  cpu.sp = t;
+  setZN(cpu, t);
+}
+
+function lxa(cpu, m) {
+  cpu.a = m;
+  cpu.x = m;
+  setZN(cpu, m);
+}
+
+function ane(cpu, m) {
+  cpu.a = ((((((cpu.a | 238) & 0xFF) & cpu.x) & 0xFF) & m) & 0xFF);
+  setZN(cpu, cpu.a);
+}
+
+function hiPlus1(addr) {
+  return ((Math.trunc((Math.floor(Math.trunc(addr) / 2 ** (8)) + 1)) & 255) >>> 0);
+}
+
+function sha(cpu, bus, addr) {
+  busWrite(bus, addr, (((((((Math.trunc(cpu.a) & Math.trunc(cpu.x)) >>> 0) & hiPlus1(addr)) >>> 0) & 255) >>> 0) & 0xFF));
+}
+
+function shx(cpu, bus, addr) {
+  busWrite(bus, addr, (((((Math.trunc(cpu.x) & hiPlus1(addr)) >>> 0) & 255) >>> 0) & 0xFF));
+}
+
+function shy(cpu, bus, addr) {
+  busWrite(bus, addr, (((((Math.trunc(cpu.y) & hiPlus1(addr)) >>> 0) & 255) >>> 0) & 0xFF));
+}
+
+function tas(cpu, bus, addr) {
+  cpu.sp = ((cpu.a & cpu.x) & 0xFF);
+  busWrite(bus, addr, (((((Math.trunc(cpu.sp) & hiPlus1(addr)) >>> 0) & 255) >>> 0) & 0xFF));
+}
+
+function jam(cpu) {
+  cpu.pc = wrap16(Math.trunc((Math.trunc(cpu.pc) - 1)));
+  cpu.cyc = Math.trunc((cpu.cyc + 2));
+}
+
 function step(cpu, bus) {
   cpu.extraCycles = 0;
   const op = fetch8(cpu, bus);
@@ -2369,6 +2446,69 @@ function step(cpu, bus) {
   } else if (_t3 === 115) {
     rra(cpu, bus, aIndY(cpu, bus));
     cpu.cyc = Math.trunc((cpu.cyc + 8));
+  } else if (_t3 === 11) {
+    anc(cpu, busRead(bus, aImm(cpu)));
+    cpu.cyc = Math.trunc((cpu.cyc + 2));
+  } else if (_t3 === 43) {
+    anc(cpu, busRead(bus, aImm(cpu)));
+    cpu.cyc = Math.trunc((cpu.cyc + 2));
+  } else if (_t3 === 75) {
+    alr(cpu, busRead(bus, aImm(cpu)));
+    cpu.cyc = Math.trunc((cpu.cyc + 2));
+  } else if (_t3 === 107) {
+    arr(cpu, busRead(bus, aImm(cpu)));
+    cpu.cyc = Math.trunc((cpu.cyc + 2));
+  } else if (_t3 === 203) {
+    sbx(cpu, busRead(bus, aImm(cpu)));
+    cpu.cyc = Math.trunc((cpu.cyc + 2));
+  } else if (_t3 === 171) {
+    lxa(cpu, busRead(bus, aImm(cpu)));
+    cpu.cyc = Math.trunc((cpu.cyc + 2));
+  } else if (_t3 === 139) {
+    ane(cpu, busRead(bus, aImm(cpu)));
+    cpu.cyc = Math.trunc((cpu.cyc + 2));
+  } else if (_t3 === 187) {
+    las(cpu, bus, aAbsY(cpu, bus));
+    cpu.cyc = Math.trunc((Math.trunc((cpu.cyc + 4)) + cpu.extraCycles));
+  } else if (_t3 === 159) {
+    sha(cpu, bus, aAbsY(cpu, bus));
+    cpu.cyc = Math.trunc((cpu.cyc + 5));
+  } else if (_t3 === 147) {
+    sha(cpu, bus, aIndY(cpu, bus));
+    cpu.cyc = Math.trunc((cpu.cyc + 6));
+  } else if (_t3 === 158) {
+    shx(cpu, bus, aAbsY(cpu, bus));
+    cpu.cyc = Math.trunc((cpu.cyc + 5));
+  } else if (_t3 === 156) {
+    shy(cpu, bus, aAbsX(cpu, bus));
+    cpu.cyc = Math.trunc((cpu.cyc + 5));
+  } else if (_t3 === 155) {
+    tas(cpu, bus, aAbsY(cpu, bus));
+    cpu.cyc = Math.trunc((cpu.cyc + 5));
+  } else if (_t3 === 2) {
+    jam(cpu);
+  } else if (_t3 === 18) {
+    jam(cpu);
+  } else if (_t3 === 34) {
+    jam(cpu);
+  } else if (_t3 === 50) {
+    jam(cpu);
+  } else if (_t3 === 66) {
+    jam(cpu);
+  } else if (_t3 === 82) {
+    jam(cpu);
+  } else if (_t3 === 98) {
+    jam(cpu);
+  } else if (_t3 === 114) {
+    jam(cpu);
+  } else if (_t3 === 146) {
+    jam(cpu);
+  } else if (_t3 === 178) {
+    jam(cpu);
+  } else if (_t3 === 210) {
+    jam(cpu);
+  } else if (_t3 === 242) {
+    jam(cpu);
   } else {
     if ((!cpu.unknownSeen[Math.trunc(op)])) {
       cpu.unknownSeen[Math.trunc(op)] = true;
