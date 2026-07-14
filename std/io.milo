@@ -1,16 +1,16 @@
 // std/io — file and directory I/O with automatic cleanup
 
 from "std/os" import {
-    close, lseek, open, readFd, strerror, writeFd
+    close, lseek, open, read, readFd, strerror, writeFd
 }
 from "std/platform" import {
-    getErrno, oWriteCreateAppend, oWriteCreateTrunc
+    eagain, getErrno, oWriteCreateAppend, oWriteCreateTrunc
 }
 from "std/sync" import {
     Channel
 }
 from "std/runtime" import {
-    Task, schedulerWaitRead
+    Task, schedulerCurrent, schedulerWaitRead
 }
 from "std/event" import {
     setNonblocking
@@ -27,7 +27,6 @@ enum IoError {
 }
 
 // map errno to IoError variant with path context
-
 fn _ioError(path: &string): IoError {
     unsafe {
         let e = getErrno()
@@ -49,7 +48,6 @@ fn _ioError(path: &string): IoError {
 }
 
 // Write a string to stdout without appending a newline.
-
 fn writeStdout(s: &string): void {
     writeFd(1, s, s.len)
 }
@@ -107,10 +105,119 @@ fn stdinChannel(): Channel<string> {
     return fdChannel(0)
 }
 
+// ── FdReader: green-aware byte reads ──
+
+// A read cursor over a raw fd whose read strategy is fixed at construction:
+// under the green scheduler it parks the task on the event loop at EAGAIN; on a
+// plain OS thread it blocks in the kernel. attach() decides once from runtime
+// truth and welds that choice to the fd's O_NONBLOCK state, so no caller ever
+// threads an "in green?" flag — the sharp edge where a wrong bool either stalls
+// the whole cooperative runtime (a blocking read inside a green task) or spins
+// treating EAGAIN as EOF (parking with no scheduler). Illegal states are
+// unrepresentable: a Green reader implies a non-blocking fd, a Blocking one a
+// blocking read path.
+//
+// The reader borrows the fd; it does not own or close it. Keep the owning
+// source (File / Pty / Child / socket) alive for the reader's lifetime.
+enum FdReader {
+    Green(i32),
+    Blocking(i32),
+}
+
+// Capture the read strategy from the current runtime context, flipping the fd
+// non-blocking iff we will park on it so the two never drift apart. Free fn (not
+// an FdReader method) because milo resolves `FdReader.attach` as a variant, not
+// a static method.
+fn fdReaderAttach(fd: i32): FdReader {
+    if schedulerCurrent() as i64 != 0 {
+        setNonblocking(fd)
+        return FdReader.Green(fd)
+    }
+    return FdReader.Blocking(fd)
+}
+
+impl FdReader {
+    fn _fd(self: &Self): i32 {
+        match self {
+            FdReader.Green(f) => {
+                return f
+            }
+            FdReader.Blocking(f) => {
+                return f
+            }
+        }
+    }
+
+    fn _green(self: &Self): bool {
+        match self {
+            FdReader.Green(_f) => {
+                return true
+            }
+            FdReader.Blocking(_f) => {
+                return false
+            }
+        }
+    }
+
+    // Read one byte, returned as 0..255. Returns -1 at EOF or on error.
+    fn readByte(self: &Self): i64 {
+        let fd = self._fd()
+        let green = self._green()
+        var b: [u8; 1] = [0; 1]
+        unsafe {
+            while true {
+                let n = read(fd, b as *u8, 1)
+                if n > 0 {
+                    return b[0] as i64
+                }
+                if n == 0 {
+                    return -1 as i64
+                }
+                if green && getErrno() == eagain() {
+                    schedulerWaitRead(fd)
+                    continue
+                }
+                return -1 as i64
+            }
+        }
+        return -1 as i64
+    }
+
+    // Read exactly n bytes into a string. Err if the stream ends first.
+    fn readExact(self: &Self, n: i64): Result<string> {
+        let fd = self._fd()
+        let green = self._green()
+        var out: string = String.withCapacity(n + 1)
+        var buf: [u8; 4096] = [0; 4096]
+        var got: i64 = 0
+        while got < n {
+            var want = n - got
+            if want > 4096 {
+                want = 4096
+            }
+            var r: i64 = 0
+            unsafe {
+                r = read(fd, buf as *u8, want)
+            }
+            if r < 0 && green && getErrno() == eagain() {
+                schedulerWaitRead(fd)
+                continue
+            }
+            if r <= 0 {
+                return Result.Err("eof")
+            }
+            for i in 0..r {
+                out.push(buf[i])
+            }
+            got = got + r
+        }
+        return Result.Ok(out)
+    }
+}
+
 // ── File ──
 
 // Owned file handle. Automatically closes the fd when dropped.
-
 struct File {
     fd: i32,
 }
@@ -215,13 +322,11 @@ fn readFile(path: &string): Result<string, IoError> {
 }
 
 // Write a string to stdout without a trailing newline.
-
 fn writeStr(s: &string): void {
     writeFd(1, s, s.len)
 }
 
 // Write a single byte to stdout.
-
 fn putChar(ch: u8): void {
     var _pcBuf: [u8; 1] = [0; 1]
     _pcBuf[0] = ch
@@ -229,7 +334,6 @@ fn putChar(ch: u8): void {
 }
 
 // Split a string into lines on newline boundaries.
-
 fn splitLines(content: &string): Vec<string> {
     var result: Vec<string> = Vec.new()
     var cur = ""
@@ -250,14 +354,12 @@ fn splitLines(content: &string): Vec<string> {
 }
 
 // Read a file and return its contents as a Vec of lines.
-
 fn readLines(path: &string): Result<Vec<string>, IoError> {
     let content = readFile(path)?
     return Result.Ok(splitLines(content))
 }
 
 // Read a single line from a file descriptor (reads byte-by-byte until newline or EOF).
-
 fn _readLineFd(fd: i32): Option<string> {
     var _rlBuf: [u8; 1] = [0; 1]
     var _rlResult = ""
@@ -282,14 +384,12 @@ fn _readLineFd(fd: i32): Option<string> {
 }
 
 // Read a single line from stdin. Returns None at EOF.
-
 fn readLine(): Option<string> {
     return _readLineFd(0)
 }
 
 // Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
 // streaming/incremental consumption.
-
 fn readStdin(): string {
     var result: string = ""
     var buf: [u8; 4096] = [0; 4096]

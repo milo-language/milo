@@ -27,6 +27,33 @@ TcpStream / Child) alive and open for as long as you consume the channel —
 closing or dropping it out from under the pump strands the pump (parks
 forever), and for a TLS source would read freed SSL state.
 
+### `FdReader.readByte`
+
+```milo
+fn FdReader.readByte(self: &FdReader): i64
+```
+
+Read one byte, returned as 0..255. Returns -1 at EOF or on error.
+
+### `FdReader.readExact`
+
+```milo
+fn FdReader.readExact(self: &FdReader, n: i64): Result<string>
+```
+
+Read exactly n bytes into a string. Err if the stream ends first.
+
+### `fdReaderAttach`
+
+```milo
+fn fdReaderAttach(fd: i32): FdReader
+```
+
+Capture the read strategy from the current runtime context, flipping the fd
+non-blocking iff we will park on it so the two never drift apart. Free fn (not
+an FdReader method) because milo resolves `FdReader.attach` as a variant, not
+a static method.
+
 ### `File.openAppend`
 
 ```milo
@@ -57,7 +84,7 @@ _Undocumented._
 fn File.putChar(ch: u8): void
 ```
 
-_Undocumented._
+Write a single byte to stdout.
 
 ### `File.readAll`
 
@@ -82,7 +109,7 @@ etc.) rather than throwing; propagate with `?` or match on it.
 fn File.readLine(): Option<string>
 ```
 
-_Undocumented._
+Read a single line from stdin. Returns None at EOF.
 
 ### `File.readLines`
 
@@ -90,7 +117,7 @@ _Undocumented._
 fn File.readLines(path: &string): Result<Vec<string>, IoError>
 ```
 
-_Undocumented._
+Read a file and return its contents as a Vec of lines.
 
 ### `File.readStdin`
 
@@ -98,7 +125,8 @@ _Undocumented._
 fn File.readStdin(): string
 ```
 
-_Undocumented._
+Read all of stdin into a string (blocks to EOF). Prefer `stdinChannel()` for
+streaming/incremental consumption.
 
 ### `File.size`
 
@@ -114,7 +142,7 @@ _Undocumented._
 fn File.splitLines(content: &string): Vec<string>
 ```
 
-_Undocumented._
+Split a string into lines on newline boundaries.
 
 ### `File.writeAll`
 
@@ -130,7 +158,7 @@ _Undocumented._
 fn File.writeStr(s: &string): void
 ```
 
-_Undocumented._
+Write a string to stdout without a trailing newline.
 
 ### `stdinChannel`
 
@@ -150,4 +178,4 @@ per stdin session; don't mix streaming and blocking reads of the same fd.
 fn writeStdout(s: &string): void
 ```
 
-_Undocumented._
+Write a string to stdout without appending a newline.
