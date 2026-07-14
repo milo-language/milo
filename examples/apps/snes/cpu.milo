@@ -42,6 +42,12 @@ var joyCnt2: i64 = 0
 // loads (the vblank handler saves A/X/Y but not DBR; see stepFrame/nmi).
 var cpuWaiting: bool = false
 
+// Set by step()'s default arm if an unimplemented opcode is ever executed (should
+// never happen — all 256 are wired). Loud diagnostic so a dropped opcode surfaces
+// immediately instead of silently desyncing PC. badOp = -1 means "none seen".
+var badOp: i64 = -1
+var badOpPc: i64 = 0
+
 struct Cpu {
     a: i64 // 16-bit accumulator (low byte = A, high byte = B when M=1)
     x: i64 // 16-bit index
@@ -2751,6 +2757,16 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             let hi = memRead(m, (cpu.pbr << 16) | ((a0 + 1) & 0xFFFF))
             cpu.pc = lo | (hi << 8)
         }
+        0xFC => { // JSR (abs,X) — push return, then jump through the pointer at
+            // (abs+X) in the program bank. DKC's vblank dispatcher uses this; leaving
+            // it unimplemented desynced PC and derailed the level load into $7003.
+            let base = fetch16(cpu, m)
+            push16(cpu, m, (cpu.pc - 1) & 0xFFFF)
+            let a0 = (base + cpu.x) & 0xFFFF
+            let lo = memRead(m, (cpu.pbr << 16) | a0)
+            let hi = memRead(m, (cpu.pbr << 16) | ((a0 + 1) & 0xFFFF))
+            cpu.pc = lo | (hi << 8)
+        }
         0xDC => { // JML [abs] — 24-bit pointer in bank 0
             let ptr = fetch16(cpu, m)
             let t = readPtr24(m, ptr)
@@ -2931,6 +2947,13 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
         } // STP
 
         _ => {
-        } // unimplemented — leaves state unchanged; Harte will flag it
+            // No opcode should reach here — all 256 are implemented. If a future
+            // edit drops one, record it LOUDLY instead of silently no-op'ing: a
+            // no-op leaves the operand bytes unconsumed, so PC desyncs and the CPU
+            // derails hundreds of instructions later into unmapped RAM (this is how
+            // the DKC $FC/JSR-(abs,X) gap hid for so long). Harnesses surface badOp.
+            badOp = op
+            badOpPc = (cpu.pbr << 16) | ((cpu.pc - 1) & 0xFFFF)
+        } // unimplemented — see badOp/badOpPc
     }
 }
