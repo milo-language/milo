@@ -1,4 +1,4 @@
-export interface Span { line: number; col: number }
+export interface Span { line: number; col: number; file?: string }
 
 export interface MiloType {
   name: string; // "i32", "u8", "bool", "void", etc.

@@ -26,7 +26,7 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   let tokens, program;
   try {
     tokens = new Lexer(source).tokenize();
-    program = new Parser(tokens, source).parse();
+    program = new Parser(tokens, source, filePath).parse();
     program = resolveImports(program, sourceDir, target, filePath);
   } catch (e: any) {
     // Parse errors carry a structured Diagnostic — render the source line + caret
@@ -43,9 +43,19 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
   const result = new TypeChecker(warningConfig).check(program);
   const errors = result.diagnostics.filter(d => d.severity === "error");
   const warnings = result.diagnostics.filter(d => d.severity !== "error");
-  for (const d of warnings) console.error(formatDiagnostic(d, source, filePath));
+  // Diagnostics from imported modules carry span.file; resolve their source off
+  // disk (cached) so the caret renders against the right file, not the entry.
+  const srcCache = new Map<string, string | undefined>();
+  const resolveSource = (f: string): string | undefined => {
+    if (f === filePath) return source;
+    if (!srcCache.has(f)) {
+      try { srcCache.set(f, readFileSync(f, "utf-8")); } catch { srcCache.set(f, undefined); }
+    }
+    return srcCache.get(f);
+  };
+  for (const d of warnings) console.error(formatDiagnostic(d, source, filePath, resolveSource));
   if (errors.length > 0) {
-    for (const d of errors) console.error(formatDiagnostic(d, source, filePath));
+    for (const d of errors) console.error(formatDiagnostic(d, source, filePath, resolveSource));
     process.exit(1);
   }
 

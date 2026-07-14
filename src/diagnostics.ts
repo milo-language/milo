@@ -41,17 +41,31 @@ export const DIM = "\x1b[2m";
 
 const SEV_COLOR: Record<Severity, string> = { error: RED, warning: YELLOW, hint: CYAN };
 
-export function formatDiagnostic(d: Diagnostic, source: string, filePath?: string): string {
+// `resolveSource` maps a span's owning file to its source text. Diagnostics from
+// imported modules carry span.file; without this the caret/line would be pulled
+// from the entry file and point at an unrelated line (wrong-file misattribution).
+export function formatDiagnostic(
+  d: Diagnostic,
+  source: string,
+  filePath?: string,
+  resolveSource?: (file: string) => string | undefined,
+): string {
   const lines: string[] = [];
   const color = SEV_COLOR[d.severity];
-  const file = filePath ?? "<input>";
+
+  // A span may belong to a different file than the entry (imported code). Render
+  // the header and snippet against that file, falling back to the entry source.
+  const spanFile = d.span?.file;
+  const file = spanFile ?? filePath ?? "<input>";
+  const effSource =
+    spanFile && spanFile !== filePath ? resolveSource?.(spanFile) : source;
 
   if (d.span) {
     const loc = `${file}:${d.span.line}:${d.span.col}`;
     lines.push(`${BOLD}${color}${d.severity}${RESET}${BOLD}: ${d.message}${RESET}`);
     lines.push(`  ${DIM}──>${RESET} ${loc}`);
 
-    const srcLines = source.split("\n");
+    const srcLines = (effSource ?? "").split("\n");
     const lineIdx = d.span.line - 1;
     if (lineIdx >= 0 && lineIdx < srcLines.length) {
       const lineNum = String(d.span.line);

@@ -98,6 +98,39 @@ int main(void) { printf("%lld %lld\\n", fromA(), fromB()); return 0; }
   expect(out.trim()).toBe("111 222");
 });
 
+// Regression: a type error in an *imported* module must be reported against that
+// module's file/line/source — not misattributed to the entry file. Spans used to
+// carry only line/col (no file), so the renderer pulled the caret from the entry
+// source and printed e.g. "main.milo:105" (a blank line) for an error in an import.
+test("type error in an imported module names the imported file, not the entry", () => {
+  write("err_mod.milo", `fn bad(x: i64): i64 {
+    let narrow: i32 = 2
+    return x + narrow
+}
+`);
+  // Pad the entry so the imported error's line number lands on unrelated entry
+  // text — that mismatch is exactly what the old renderer exposed.
+  const main = write("err_main.milo", `from "err_mod" import { bad }
+// filler
+// filler
+// filler
+// filler
+fn main(): void {
+    print(bad(5))
+}
+`);
+  const r = milo(`run ${main}`);
+  expect(r.code).not.toBe(0);
+  const msg = r.err + r.out;
+  expect(msg).toContain("type mismatch in '+'");
+  // Header points at the imported file, and the caret snippet is the imported
+  // file's real source line — proof the right source was resolved.
+  expect(msg).toContain("err_mod.milo:3");
+  expect(msg).toContain("return x + narrow");
+  // The entry file must NOT be blamed for the imported module's error.
+  expect(msg).not.toContain("err_main.milo:");
+});
+
 test("cleanup", () => {
   rmSync(DIR, { recursive: true, force: true });
 });

@@ -25,7 +25,7 @@ export class Parser {
     return a && b && a.kind === k && b.kind === k && a.line === b.line && b.col === a.col + 1;
   }
   private advance(): Token { return this.tokens[this.pos++]; }
-  private span(tok: Token): Span { return { line: tok.line, col: tok.col }; }
+  private span(tok: Token): Span { return { line: tok.line, col: tok.col, file: this.filePath }; }
 
   private at(kind: TokenKind): boolean { return this.peek().kind === kind; }
 
@@ -55,7 +55,7 @@ export class Parser {
     }
     throw new ParseError({
       severity: "error",
-      span: { line: tok.line, col: tok.col },
+      span: { line: tok.line, col: tok.col, file: this.filePath },
       message: msg,
       hint,
       code: "parse",
@@ -136,7 +136,7 @@ export class Parser {
         this.match(TokenKind.Comma);
       }
       this.expect(TokenKind.RBrace);
-      return { kind: "ImportDecl", path: pathTok.value, names, span: { line: tok.line, col: tok.col } };
+      return { kind: "ImportDecl", path: pathTok.value, names, span: { line: tok.line, col: tok.col, file: this.filePath } };
     }
     // bare import "path" → error with hint
     if (this.at(TokenKind.Import)) {
