@@ -8,7 +8,7 @@
 fn randBool(): bool
 ```
 
-_Undocumented._
+Random bool (coin flip).
 
 ### `randBytes`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn randBytes(buf: *u8, n: i64): void
 ```
 
-_Undocumented._
+Fill a buffer with random bytes.
 
 ### `randFloat`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn randFloat(): f64
 ```
 
-_Undocumented._
+Random f64 in [0.0, 1.0).
 
 ### `randFloatRange`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn randFloatRange(min: f64, max: f64): f64
 ```
 
-_Undocumented._
+Random f64 in [min, max).
 
 ### `randInt`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn randInt(max: i64): i64
 ```
 
-_Undocumented._
+Random i64 in [0, max). Panics if max <= 0.
 
 ### `randRange`
 
@@ -48,7 +48,7 @@ _Undocumented._
 fn randRange(min: i64, max: i64): i64
 ```
 
-_Undocumented._
+Random i64 in [min, max]. Panics if min > max.
 
 ### `randU32`
 
@@ -56,7 +56,7 @@ _Undocumented._
 fn randU32(): u32
 ```
 
-_Undocumented._
+Random u32 in [0, 2^32).
 
 ### `shuffleI64`
 
@@ -64,4 +64,4 @@ _Undocumented._
 fn shuffleI64(v: &mut Vec<i64>, n: i64): void
 ```
 
-_Undocumented._
+Shuffle a Vec<i64> in place using Fisher-Yates. Pass v.len() as n.

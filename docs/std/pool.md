@@ -16,7 +16,7 @@ _Undocumented._
 fn Drop.poolAlloc(p: &mut Pool): Result<i64>
 ```
 
-_Undocumented._
+Allocate one block. O(1). Returns Err when pool is exhausted.
 
 ### `Drop.poolAvailable`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn Drop.poolAvailable(p: &Pool): i64
 ```
 
-_Undocumented._
+Number of blocks available.
 
 ### `Drop.poolEmpty`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn Drop.poolEmpty(p: &Pool): bool
 ```
 
-_Undocumented._
+Check if pool has no live allocations.
 
 ### `Drop.poolFree`
 
@@ -40,7 +40,8 @@ _Undocumented._
 fn Drop.poolFree(p: &mut Pool, block: i64): void
 ```
 
-_Undocumented._
+Free one block back to pool. O(1).
+Caller must pass a pointer previously returned by poolAlloc.
 
 ### `Drop.poolFull`
 
@@ -48,7 +49,7 @@ _Undocumented._
 fn Drop.poolFull(p: &Pool): bool
 ```
 
-_Undocumented._
+Check if pool is fully exhausted.
 
 ### `Drop.poolLive`
 
@@ -56,7 +57,7 @@ _Undocumented._
 fn Drop.poolLive(p: &Pool): i64
 ```
 
-_Undocumented._
+Number of blocks currently in use.
 
 ### `Drop.poolNew`
 
@@ -64,7 +65,8 @@ _Undocumented._
 fn Drop.poolNew(size: i64, count: i64): Result<Pool>
 ```
 
-_Undocumented._
+Create a pool of `count` blocks, each `size` bytes (minimum 8 for free-list pointer).
+Single malloc at init — no further heap allocation.
 
 ### `Drop.poolReset`
 
@@ -72,7 +74,8 @@ _Undocumented._
 fn Drop.poolReset(p: &mut Pool): void
 ```
 
-_Undocumented._
+Reset pool to initial state — all blocks free.
+Existing pointers become invalid.
 
 ### `Pool.alloc`
 

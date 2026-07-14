@@ -131,4 +131,5 @@ _Undocumented._
 fn run(cmd: &string): Result<i32>
 ```
 
-_Undocumented._
+Execute a shell command and return its exit code.
+Example: let code = run("ls -la")!

@@ -8,7 +8,8 @@
 fn Drop.arenaAlloc(a: &mut Arena, size: i64): Result<i64>
 ```
 
-_Undocumented._
+Allocate size bytes from the arena (8-byte aligned).
+Returns Err if the arena doesn't have enough space.
 
 ### `Drop.arenaNew`
 
@@ -16,7 +17,7 @@ _Undocumented._
 fn Drop.arenaNew(capacity: i64): Result<Arena>
 ```
 
-_Undocumented._
+Create a new arena with the given capacity in bytes.
 
 ### `Drop.arenaRemaining`
 
@@ -32,7 +33,7 @@ _Undocumented._
 fn Drop.arenaReset(a: &mut Arena): void
 ```
 
-_Undocumented._
+Reset the arena, making all previously allocated memory available for reuse.
 
 ### `Drop.drop`
 
@@ -56,7 +57,7 @@ _Undocumented._
 fn Drop.mmapAnon(size: i64): Result<MappedMemory>
 ```
 
-_Undocumented._
+Allocate an anonymous (non-file-backed) memory-mapped region.
 
 ### `Drop.mmapFile`
 
@@ -64,4 +65,4 @@ _Undocumented._
 fn Drop.mmapFile(fFd: i32, size: i64): Result<MappedMemory>
 ```
 
-_Undocumented._
+Memory-map a file descriptor for reading.

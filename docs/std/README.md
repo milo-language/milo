@@ -2,6 +2,7 @@
 
 Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 
+- [std/ansi](./ansi.md)
 - [std/arena](./arena.md)
 - [std/argparse](./argparse.md)
 - [std/args](./args.md)
@@ -41,6 +42,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/select](./select.md)
 - [std/set](./set.md)
 - [std/signal](./signal.md)
+- [std/smt](./smt.md)
 - [std/sort](./sort.md)
 - [std/sqlite](./sqlite.md)
 - [std/strconv](./strconv.md)

@@ -98,6 +98,87 @@ fn Json.childStrAt(self: &Json, key: &string, index: i64, subKey: &string): Opti
 
 _Undocumented._
 
+### `Json.curBool`
+
+```milo
+fn Json.curBool(self: &Json, cur: i64): Option<bool>
+```
+
+_Undocumented._
+
+### `Json.curChild`
+
+```milo
+fn Json.curChild(self: &Json, cur: i64, index: i64): i64
+```
+
+_Undocumented._
+
+### `Json.curField`
+
+```milo
+fn Json.curField(self: &Json, cur: i64, key: &string): i64
+```
+
+_Undocumented._
+
+### `Json.curFloat`
+
+```milo
+fn Json.curFloat(self: &Json, cur: i64): Option<f64>
+```
+
+_Undocumented._
+
+### `Json.curInt`
+
+```milo
+fn Json.curInt(self: &Json, cur: i64): Option<i64>
+```
+
+_Undocumented._
+
+### `Json.curKind`
+
+```milo
+fn Json.curKind(self: &Json, cur: i64): i32
+```
+
+Node kind at the cursor: 0 null, 1 bool, 2 number, 3 string, 4 array,
+5 object; -1 if the cursor is invalid.
+
+### `Json.curLen`
+
+```milo
+fn Json.curLen(self: &Json, cur: i64): i64
+```
+
+_Undocumented._
+
+### `Json.curRoot`
+
+```milo
+fn Json.curRoot(self: &Json): i64
+```
+
+
+`get`/`at` above return an owned Json by deep-cloning the whole document
+(source string + every node) per call — navigating a large doc thousands
+of times blows up to gigabytes. The cursor API instead treats a plain
+`i64` node index as a cursor into THIS document: navigation returns child
+indices (‑1 = missing) with zero allocation, and only leaf-string reads
+materialize (just that one string). Start at `curRoot()` and chain:
+  let user = doc.curField(doc.curChild(doc.curRoot(), 0), "name")
+  match doc.curStr(user) { Option.Some(s) => ..., Option.None => ... }
+
+### `Json.curStr`
+
+```milo
+fn Json.curStr(self: &Json, cur: i64): Option<string>
+```
+
+_Undocumented._
+
 ### `Json.f64`
 
 ```milo
@@ -310,6 +391,31 @@ fn JsonArr.int(self: JsonArr, val: i64): JsonArr
 
 _Undocumented._
 
+### `JsonArr.jsonPull`
+
+```milo
+fn JsonArr.jsonPull(src: string): JsonPull
+```
+
+_Undocumented._
+
+### `JsonArr.jsonPullNumber`
+
+```milo
+fn JsonArr.jsonPullNumber(s: &string, pos: &mut i64): f64
+```
+
+Standalone number → f64 (int . frac e exp), advancing pos past the literal.
+The flat-pool parser's jsonParseNumber is node-coupled, so the scan is inlined.
+
+### `JsonArr.jsonTok`
+
+```milo
+fn JsonArr.jsonTok(k: JsonEvent): JsonToken
+```
+
+_Undocumented._
+
 ### `JsonArr.nil`
 
 ```milo
@@ -414,6 +520,14 @@ fn JsonObj.bool(self: JsonObj, key: string, val: bool): JsonObj
 
 _Undocumented._
 
+### `JsonObj.boolOpt`
+
+```milo
+fn JsonObj.boolOpt(self: JsonObj, key: string, val: Option<bool>): JsonObj
+```
+
+_Undocumented._
+
 ### `JsonObj.build`
 
 ```milo
@@ -430,10 +544,26 @@ fn JsonObj.float(self: JsonObj, key: string, val: f64): JsonObj
 
 _Undocumented._
 
+### `JsonObj.floatOpt`
+
+```milo
+fn JsonObj.floatOpt(self: JsonObj, key: string, val: Option<f64>): JsonObj
+```
+
+_Undocumented._
+
 ### `JsonObj.int`
 
 ```milo
 fn JsonObj.int(self: JsonObj, key: string, val: i64): JsonObj
+```
+
+_Undocumented._
+
+### `JsonObj.intOpt`
+
+```milo
+fn JsonObj.intOpt(self: JsonObj, key: string, val: Option<i64>): JsonObj
 ```
 
 _Undocumented._
@@ -477,6 +607,16 @@ fn JsonObj.str(self: JsonObj, key: string, val: string): JsonObj
 ```
 
 _Undocumented._
+
+### `JsonObj.strOpt`
+
+```milo
+fn JsonObj.strOpt(self: JsonObj, key: string, val: Option<string>): JsonObj
+```
+
+Optional-field helpers: add the key only when the Option is Some, so a
+conditional field stays inside the fluent chain instead of breaking out
+to an `if` around each call.
 
 ### `JsonObj.val`
 
@@ -533,6 +673,14 @@ _Undocumented._
 
 ```milo
 fn jsonParseValue(s: &string, pos: &mut i64, nodes: &mut Vec<JsonNode>, childIdx: &mut Vec<i64>, keyOffsets: &mut Vec<i64>, keyLens: &mut Vec<i64>, scratch: &mut Vec<i64>, scratchLen: &mut i64, err: &mut bool): i64
+```
+
+_Undocumented._
+
+### `JsonPull.next`
+
+```milo
+fn JsonPull.next(self: &mut JsonPull): JsonToken
 ```
 
 _Undocumented._

@@ -101,7 +101,7 @@ Like Python's parse_args(args=[...]).
 fn newParser(name: string, description: string): ArgParser
 ```
 
-_Undocumented._
+Create a new argument parser with a program name and description.
 
 ### `ParsedArgs.getBool`
 

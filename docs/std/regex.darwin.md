@@ -5,26 +5,26 @@
 ### `regexFind`
 
 ```milo
-fn regexFind(re: &mut Regex, input: &string): Option<RegexMatch>
+fn regexFind(re: &Regex, input: &string): Option<RegexMatch>
 ```
 
-_Undocumented._
+Find the first match in a string. Returns None if no match.
 
 ### `regexFindAll`
 
 ```milo
-fn regexFindAll(re: &mut Regex, input: &string): Vec<RegexMatch>
+fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch>
 ```
 
-_Undocumented._
+Find all non-overlapping matches in a string.
 
 ### `regexMatch`
 
 ```milo
-fn regexMatch(re: &mut Regex, input: &string): bool
+fn regexMatch(re: &Regex, input: &string): bool
 ```
 
-_Undocumented._
+Test if a string matches the pattern.
 
 ### `regexNew`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn regexNew(pattern: string): Option<Regex>
 ```
 
-_Undocumented._
+Compile a POSIX extended regular expression. Returns None on invalid pattern.
 
 ### `regexNewFlags`
 
@@ -40,4 +40,4 @@ _Undocumented._
 fn regexNewFlags(pattern: string, cflags: i32): Option<Regex>
 ```
 
-_Undocumented._
+Compile a POSIX extended regex with explicit cflags. REG_EXTENDED=1, REG_ICASE=2.

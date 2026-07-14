@@ -32,7 +32,7 @@ _Undocumented._
 fn fileInfo(path: &string): FileInfo
 ```
 
-_Undocumented._
+Get file metadata. Returns FileInfo with exists=false if path doesn't exist.
 
 ### `fileSizePath`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn fileSizePath(path: &string): i64
 ```
 
-_Undocumented._
+Get file size in bytes. Returns -1 if file doesn't exist.
 
 ### `hardLink`
 
@@ -56,7 +56,7 @@ _Undocumented._
 fn isDir(path: &string): bool
 ```
 
-_Undocumented._
+Check if a path is a directory.
 
 ### `isFile`
 
@@ -64,7 +64,7 @@ _Undocumented._
 fn isFile(path: &string): bool
 ```
 
-_Undocumented._
+Check if a path is a regular file.
 
 ### `isSymlink`
 
@@ -104,7 +104,7 @@ _Undocumented._
 fn pathExists(path: &string): bool
 ```
 
-_Undocumented._
+Check if a path exists.
 
 ### `readDir`
 
@@ -112,7 +112,7 @@ _Undocumented._
 fn readDir(path: &string): Vec<DirEntry>
 ```
 
-_Undocumented._
+List directory contents. Returns empty vec on error.
 
 ### `readLink`
 
@@ -232,4 +232,4 @@ _Undocumented._
 fn writeFile(path: &string, data: &string): Result<i64, IoError>
 ```
 
-_Undocumented._
+Write a string to a file, creating or truncating it.

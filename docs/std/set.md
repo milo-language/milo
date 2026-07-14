@@ -8,7 +8,7 @@
 fn setAdd<T>(s: &mut HashSet<T>, val: T): void
 ```
 
-_Undocumented._
+Add a value to the set.
 
 ### `setContains`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn setContains<T>(s: &HashSet<T>, val: T): bool
 ```
 
-_Undocumented._
+Check if the set contains a value.
 
 ### `setLen`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn setLen<T>(s: &HashSet<T>): i64
 ```
 
-_Undocumented._
+Number of elements in the set.
 
 ### `setNew`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn setNew<T>(): HashSet<T>
 ```
 
-_Undocumented._
+Create an empty HashSet.
 
 ### `setRemove`
 
@@ -40,4 +40,4 @@ _Undocumented._
 fn setRemove<T>(s: &mut HashSet<T>, val: T): void
 ```
 
-_Undocumented._
+Remove a value from the set.

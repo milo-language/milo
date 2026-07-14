@@ -8,7 +8,9 @@
 fn acceptFd(fd: i32): i32
 ```
 
-_Undocumented._
+Accept one connection; returns the client fd (<0 on error). In a green task
+the client fd is left nonblocking so later readFd/writeFd calls skip a
+redundant fcntl round-trip.
 
 ### `connectFd`
 
@@ -16,7 +18,8 @@ _Undocumented._
 fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32
 ```
 
-_Undocumented._
+connect(2). In a green task: nonblocking connect, park until writable,
+then check SO_ERROR. Returns 0 on success, <0 on failure.
 
 ### `readFd`
 
@@ -24,7 +27,7 @@ _Undocumented._
 fn readFd(fd: i32, buf: *u8, len: i64): i64
 ```
 
-_Undocumented._
+One read(2). Returns bytes read, 0 at EOF, <0 on error.
 
 ### `sslConnectFd`
 
@@ -32,7 +35,7 @@ _Undocumented._
 fn sslConnectFd(ssl: *u8, fd: i32): i32
 ```
 
-_Undocumented._
+Drive SSL_connect to completion. Returns 1 on success (SSL_connect result otherwise).
 
 ### `sslReadFd`
 
@@ -40,7 +43,7 @@ _Undocumented._
 fn sslReadFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32
 ```
 
-_Undocumented._
+One SSL_read. Returns bytes read (>0), or <=0 on close/error.
 
 ### `sslWriteFd`
 
@@ -48,7 +51,7 @@ _Undocumented._
 fn sslWriteFd(ssl: *u8, fd: i32, buf: *u8, len: i32): i32
 ```
 
-_Undocumented._
+One SSL_write (OpenSSL default writes all-or-WANT; no partial handling needed).
 
 ### `writeFd`
 
@@ -56,4 +59,4 @@ _Undocumented._
 fn writeFd(fd: i32, buf: *u8, len: i64): i64
 ```
 
-_Undocumented._
+Write all len bytes (loops over partial writes). Returns len or <0 on error.

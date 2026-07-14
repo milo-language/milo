@@ -8,7 +8,8 @@
 fn args(): Vec<string>
 ```
 
-_Undocumented._
+Return all command-line arguments as a Vec<string>.
+Index 0 is the program name.
 
 ### `getFlag`
 
@@ -16,7 +17,9 @@ _Undocumented._
 fn getFlag(name: &string): string?
 ```
 
-_Undocumented._
+Get the value following a --name flag.
+Returns null if the flag is not present.
+Example: getFlag("port") returns the value after --port.
 
 ### `hasFlag`
 
@@ -24,4 +27,4 @@ _Undocumented._
 fn hasFlag(name: &string): bool
 ```
 
-_Undocumented._
+Check if a --name flag is present in the arguments.

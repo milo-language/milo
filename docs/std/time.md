@@ -24,7 +24,7 @@ _Undocumented._
 fn durationSecs(d: &Duration): i64
 ```
 
-_Undocumented._
+Duration accessors.
 
 ### `elapsed`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn elapsed(start: Instant, end: Instant): Duration
 ```
 
-_Undocumented._
+Elapsed time between two instants.
 
 ### `epochMillis`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn epochMillis(): i64
 ```
 
-_Undocumented._
+Milliseconds since Unix epoch.
 
 ### `epochSecs`
 
@@ -48,7 +48,7 @@ _Undocumented._
 fn epochSecs(): i64
 ```
 
-_Undocumented._
+Seconds since Unix epoch.
 
 ### `now`
 
@@ -56,7 +56,7 @@ _Undocumented._
 fn now(): Instant
 ```
 
-_Undocumented._
+Capture the current wall-clock time.
 
 ### `since`
 
@@ -64,7 +64,7 @@ _Undocumented._
 fn since(start: Instant): Duration
 ```
 
-_Undocumented._
+Elapsed time since an instant.
 
 ### `sleepMs`
 
@@ -72,7 +72,8 @@ _Undocumented._
 fn sleepMs(ms: i64): void
 ```
 
-_Undocumented._
+Sleep for the given number of milliseconds.
+Inside a green thread, yields cooperatively so other tasks keep running.
 
 ### `sleepSecs`
 
@@ -80,4 +81,4 @@ _Undocumented._
 fn sleepSecs(secs: i64): void
 ```
 
-_Undocumented._
+Sleep for the given number of seconds.

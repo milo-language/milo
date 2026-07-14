@@ -8,7 +8,7 @@
 fn base64Decode(input: &string): string
 ```
 
-_Undocumented._
+Decode a base64 string.
 
 ### `base64Encode`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn base64Encode(input: &string): string
 ```
 
-_Undocumented._
+Encode a string to base64.
 
 ### `base64UrlEncode`
 
@@ -24,4 +24,5 @@ _Undocumented._
 fn base64UrlEncode(input: &string): string
 ```
 
-_Undocumented._
+URL-safe base64, no padding (RFC 4648 §5): '+' → '-', '/' → '_', drop '='.
+Used for embedding binary data in URL fragments.

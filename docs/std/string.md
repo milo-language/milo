@@ -8,7 +8,7 @@
 fn charIsAlpha(ch: u8): bool
 ```
 
-_Undocumented._
+Check if a byte is an ASCII letter.
 
 ### `charIsAlphanumeric`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn charIsAlphanumeric(ch: u8): bool
 ```
 
-_Undocumented._
+Check if a byte is an ASCII letter or digit.
 
 ### `charIsDigit`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn charIsDigit(ch: u8): bool
 ```
 
-_Undocumented._
+Check if a byte is an ASCII digit.
 
 ### `charIsWhitespace`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn charIsWhitespace(ch: u8): bool
 ```
 
-_Undocumented._
+Check if a byte is ASCII whitespace.
 
 ### `strCharAt`
 
@@ -232,7 +232,7 @@ Copy with leading ASCII whitespace removed.
 fn trim(s: &string): string
 ```
 
-_Undocumented._
+Remove leading and trailing whitespace (spaces, tabs, newlines, carriage returns).
 
 ### `vecJoin`
 

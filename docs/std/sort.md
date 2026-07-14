@@ -8,7 +8,7 @@
 fn reverseI64(v: &mut Vec<i64>): void
 ```
 
-_Undocumented._
+Reverse a Vec<i64> in place.
 
 ### `sortI32`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn sortI32(v: &mut Vec<i32>): void
 ```
 
-_Undocumented._
+Sort Vec<i32> in ascending order.
 
 ### `sortI64`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn sortI64(v: &mut Vec<i64>): void
 ```
 
-_Undocumented._
+Sort Vec<i64> in ascending order.
 
 ### `sortStrings`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn sortStrings(v: &mut Vec<string>): void
 ```
 
-_Undocumented._
+Sort Vec<string> in lexicographic order.
 
 ### `sortStringsByFreq`
 
@@ -40,4 +40,4 @@ _Undocumented._
 fn sortStringsByFreq(keys: &mut Vec<string>, vals: &mut Vec<i64>): void
 ```
 
-_Undocumented._
+Sort Vec<string> + parallel Vec<i64> by values descending, then keys ascending (for top-N).

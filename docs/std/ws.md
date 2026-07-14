@@ -16,7 +16,7 @@ _Undocumented._
 fn Drop.extractWsKey(raw: &string): string
 ```
 
-_Undocumented._
+Extract Sec-WebSocket-Key from raw HTTP request.
 
 ### `Drop.isWsUpgrade`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn Drop.isWsUpgrade(raw: &string): bool
 ```
 
-_Undocumented._
+Check if raw HTTP request bytes contain a WebSocket upgrade request.
 
 ### `Drop.wsAccept`
 
@@ -32,7 +32,8 @@ _Undocumented._
 fn Drop.wsAccept(fd: i32, rawRequest: &string): Result<WsConn, string>
 ```
 
-_Undocumented._
+Accept a WebSocket upgrade on an already-accepted TCP fd.
+Pass the raw HTTP request bytes so the handshake can be completed.
 
 ### `WS_BINARY`
 
@@ -88,7 +89,7 @@ _Undocumented._
 fn WsConn.close(self: &mut WsConn): void
 ```
 
-_Undocumented._
+Send close frame and mark connection closed.
 
 ### `WsConn.ping`
 
@@ -96,7 +97,7 @@ _Undocumented._
 fn WsConn.ping(self: &WsConn): Result<i32, string>
 ```
 
-_Undocumented._
+Send a ping.
 
 ### `WsConn.recv`
 
@@ -104,7 +105,7 @@ _Undocumented._
 fn WsConn.recv(self: &mut WsConn): Result<WsMessage, string>
 ```
 
-_Undocumented._
+Read next WebSocket message. Handles fragmentation, responds to ping automatically.
 
 ### `WsConn.sendBinary`
 
@@ -112,7 +113,7 @@ _Undocumented._
 fn WsConn.sendBinary(self: &WsConn, data: &string): Result<i32, string>
 ```
 
-_Undocumented._
+Send a binary message.
 
 ### `WsConn.sendText`
 
@@ -120,7 +121,7 @@ _Undocumented._
 fn WsConn.sendText(self: &WsConn, msg: &string): Result<i32, string>
 ```
 
-_Undocumented._
+Send a text message.
 
 ### `WsConn.wsConnect`
 
@@ -128,7 +129,8 @@ _Undocumented._
 fn WsConn.wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string>
 ```
 
-_Undocumented._
+Connect to a WebSocket server. Performs TCP connect + HTTP upgrade handshake.
+Returns a WsConn on successful 101 response.
 
 ### `WsConn.wsConnectTls`
 
@@ -136,4 +138,7 @@ _Undocumented._
 fn WsConn.wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string>
 ```
 
-_Undocumented._
+Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS
+handshake (blocking — call before setting fds nonblocking), then the HTTP
+upgrade handshake over the encrypted channel. `hostname` is used for SNI,
+certificate validation, and the Host header.

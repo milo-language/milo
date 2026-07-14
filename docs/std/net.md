@@ -32,7 +32,8 @@ _Undocumented._
 fn Drop.ip4(a: u8, b: u8, c: u8, d: u8): u32
 ```
 
-_Undocumented._
+Construct an IPv4 address from four octets.
+Example: ip4(127, 0, 0, 1) for localhost.
 
 ### `Response.decodeChunked`
 

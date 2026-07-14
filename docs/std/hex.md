@@ -8,7 +8,7 @@
 fn hexDecode(input: &string): string
 ```
 
-_Undocumented._
+Decode a hex string back to bytes.
 
 ### `hexEncode`
 
@@ -16,4 +16,4 @@ _Undocumented._
 fn hexEncode(input: &string): string
 ```
 
-_Undocumented._
+Encode a string as hex (each byte becomes two hex chars).

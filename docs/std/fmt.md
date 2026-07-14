@@ -8,7 +8,7 @@
 fn fmt1(template: &string, a: &string): string
 ```
 
-_Undocumented._
+Replace the first {} with val.
 
 ### `fmt2`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn fmt2(template: &string, a: &string, b: &string): string
 ```
 
-_Undocumented._
+Replace the first two {} with a and b.
 
 ### `fmt3`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn fmt3(template: &string, a: &string, b: &string, c: &string): string
 ```
 
-_Undocumented._
+Replace the first three {} with a, b, and c.
 
 ### `fmt4`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn fmt4(template: &string, a: &string, b: &string, c: &string, d: &string): string
 ```
 
-_Undocumented._
+Replace the first four {} with a, b, c, and d.
 
 ### `join`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn join(parts: &Vec<string>, sep: &string): string
 ```
 
-_Undocumented._
+Join a Vec<string> with a separator.
 
 ### `padLeft`
 
@@ -48,7 +48,7 @@ _Undocumented._
 fn padLeft(s: &string, width: i64, ch: u8): string
 ```
 
-_Undocumented._
+Left-pad a string to a minimum width.
 
 ### `padRight`
 
@@ -56,7 +56,7 @@ _Undocumented._
 fn padRight(s: &string, width: i64, ch: u8): string
 ```
 
-_Undocumented._
+Right-pad a string to a minimum width.
 
 ### `zeroPad`
 
@@ -64,4 +64,4 @@ _Undocumented._
 fn zeroPad(n: i64, width: i64): string
 ```
 
-_Undocumented._
+Zero-pad an integer to a minimum width.

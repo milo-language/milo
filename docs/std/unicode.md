@@ -8,7 +8,7 @@
 fn codepointCount(s: &string): i64
 ```
 
-_Undocumented._
+Number of Unicode codepoints in a string (not bytes).
 
 ### `codepoints`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn codepoints(s: &string): Vec<i32>
 ```
 
-_Undocumented._
+Decode UTF-8 string into Unicode codepoints.
 
 ### `isAlpha`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn isAlphaStr(s: &string): bool
 ```
 
-_Undocumented._
+Check if an entire string is alphabetic.
 
 ### `isAscii`
 
@@ -48,7 +48,7 @@ _Undocumented._
 fn isAscii(ch: u8): bool
 ```
 
-_Undocumented._
+Classify ASCII bytes.
 
 ### `isControl`
 
@@ -88,7 +88,7 @@ _Undocumented._
 fn isNumeric(s: &string): bool
 ```
 
-_Undocumented._
+Check if an entire string is numeric (all digits).
 
 ### `isPrintable`
 
@@ -128,7 +128,7 @@ _Undocumented._
 fn toLowerChar(ch: u8): u8
 ```
 
-_Undocumented._
+Case conversion for ASCII bytes.
 
 ### `toUpperChar`
 

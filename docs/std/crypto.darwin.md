@@ -8,7 +8,7 @@
 fn aesGcm128Decrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
 ```
 
-_Undocumented._
+Decrypt with AES-128-GCM. Key 16 bytes, IV 12 bytes, tag 16 bytes.
 
 ### `aesGcm128Encrypt`
 
@@ -16,7 +16,7 @@ _Undocumented._
 fn aesGcm128Encrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
 ```
 
-_Undocumented._
+Encrypt with AES-128-GCM. Key must be 16 bytes, IV 12 bytes. (termpair uses AES-128.)
 
 ### `aesGcmDecrypt`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn aesGcmDecrypt(key: &string, iv: &string, ciphertext: &string, tag: &string, aad: &string): Result<string, string>
 ```
 
-_Undocumented._
+Decrypt with AES-256-GCM. Key must be 32 bytes, IV 12 bytes, tag 16 bytes.
 
 ### `aesGcmEncrypt`
 
@@ -32,7 +32,7 @@ _Undocumented._
 fn aesGcmEncrypt(key: &string, iv: &string, plaintext: &string, aad: &string): Result<AesGcmResult, string>
 ```
 
-_Undocumented._
+Encrypt with AES-256-GCM. Key must be 32 bytes, IV should be 12 bytes.
 
 ### `md5`
 
@@ -40,7 +40,7 @@ _Undocumented._
 fn md5(input: &string): string
 ```
 
-_Undocumented._
+Compute MD5 hash of a string. Returns 32-char lowercase hex string.
 
 ### `sha1`
 
@@ -48,7 +48,7 @@ _Undocumented._
 fn sha1(input: &string): string
 ```
 
-_Undocumented._
+Compute SHA-1 hash. Returns 40-char lowercase hex string.
 
 ### `sha1Bytes`
 
@@ -56,7 +56,7 @@ _Undocumented._
 fn sha1Bytes(input: &string): string
 ```
 
-_Undocumented._
+Raw 20-byte SHA-1 digest as a string (for WebSocket handshake, HMAC, etc.)
 
 ### `sha256`
 
@@ -64,4 +64,4 @@ _Undocumented._
 fn sha256(input: &string): string
 ```
 
-_Undocumented._
+Compute SHA-256 hash of a string. Returns 64-char lowercase hex string.

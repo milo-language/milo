@@ -8,7 +8,7 @@
 fn addrinfoAddrOffset(): i64
 ```
 
-_Undocumented._
+offset of aiAddr field in struct addrinfo
 
 ### `direntNameOffset`
 
@@ -24,7 +24,7 @@ _Undocumented._
 fn direntTypeOffset(): i64
 ```
 
-_Undocumented._
+struct dirent layout
 
 ### `eagain`
 
@@ -264,7 +264,7 @@ _Undocumented._
 fn statModeOffset(): i64
 ```
 
-_Undocumented._
+struct stat layout (macOS aarch64/x8664)
 
 ### `statSizeOffset`
 

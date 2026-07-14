@@ -64,7 +64,7 @@ _Undocumented._
 fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T>
 ```
 
-_Undocumented._
+Insert a value and return a handle to it.
 
 ### `arenaFree`
 
@@ -72,7 +72,7 @@ _Undocumented._
 fn arenaFree<T>(a: &mut Arena<T>, h: Handle<T>): bool
 ```
 
-_Undocumented._
+Free a slot, bumping its generation so stale handles are detected.
 
 ### `arenaGet`
 
@@ -80,7 +80,9 @@ _Undocumented._
 fn arenaGet<T>(a: &Arena<T>, h: Handle<T>): Option<T>
 ```
 
-_Undocumented._
+Get a copy of the value at a handle. Returns None if the handle is stale.
+Returns by value, not &T, because second-class refs cannot be stored in
+Option<_>. For large T, prefer arenaModify to avoid the copy churn.
 
 ### `arenaLen`
 
@@ -88,7 +90,7 @@ _Undocumented._
 fn arenaLen<T>(a: &Arena<T>): i64
 ```
 
-_Undocumented._
+Number of live entries.
 
 ### `arenaModify`
 
@@ -96,7 +98,9 @@ _Undocumented._
 fn arenaModify<T>(a: &mut Arena<T>, h: Handle<T>, f: (T) => T): bool
 ```
 
-_Undocumented._
+In-place update via closure. Avoids the manual get/modify/set dance and
+is the recommended way to mutate a single field of an arena value.
+Returns false if the handle is stale (closure not invoked).
 
 ### `arenaModifyMut`
 
@@ -104,7 +108,10 @@ _Undocumented._
 fn arenaModifyMut<T>(a: &mut Arena<T>, h: Handle<T>, f: (&mut T) => void): bool
 ```
 
-_Undocumented._
+In-place mutate via &mut borrow — no copy in, no copy out, no full-struct
+rewrite. Mutate fields of the live value directly inside f. Returns false
+(f not called) if the handle is stale. Preferred over arenaModify when T is
+large or you only touch a field or two.
 
 ### `arenaNew`
 
@@ -112,7 +119,7 @@ _Undocumented._
 fn arenaNew<T>(): Arena<T>
 ```
 
-_Undocumented._
+Create a new empty arena.
 
 ### `arenaSet`
 
@@ -120,7 +127,7 @@ _Undocumented._
 fn arenaSet<T>(a: &mut Arena<T>, h: Handle<T>, val: T): bool
 ```
 
-_Undocumented._
+Overwrite the value at a handle. Returns false if the handle is stale.
 
 ### `arenaValid`
 
@@ -128,7 +135,7 @@ _Undocumented._
 fn arenaValid<T>(a: &Arena<T>, h: Handle<T>): bool
 ```
 
-_Undocumented._
+Check whether a handle is still valid.
 
 ### `arenaWith`
 
@@ -136,4 +143,7 @@ _Undocumented._
 fn arenaWith<T, R>(a: &Arena<T>, h: Handle<T>, f: (&T) => R): Option<R>
 ```
 
-_Undocumented._
+Read via borrow — no copy. The &T flows into `f` as a second-class ref:
+valid only inside the closure, never stored or returned. Returns None (and
+does not call f) if the handle is stale. This is the zero-copy alternative
+to arenaGet for large T — read just the field(s) you need inside f.
