@@ -52,9 +52,11 @@ dispatcher uses it for a jump table; the no-op default arm consumed only the opc
 byte, desyncing PC -> ran off into $7003 BRK loop -> garbled/black level. Fixed +
 Harte-validated (fc.e/fc.n 10000/10000); the test files existed but 'fc' wasn't in
 harte.sh's list, so make the no-arg run glob ALL 254 opcodes now. Default arm also
-records badOp/badOpPc (loud) so a future dropped opcode surfaces immediately. Remaining:
-sprite polish (a transient parked-sprite box at the top-left for ~1-2 frames on level
-entry, before sprite VRAM finishes loading; clears once in-game). Audio still SPC-stub.
+records badOp/badOpPc (loud) so a future dropped opcode surfaces immediately. Sprites
+fixed (DK + enemies render) via the OAMADDR vblank-reload (commit 910cd8b): HW reloads
+OAMADDR from $2102/3 at vblank; DKC relies on it, and without it OAMADDR overran the OAM
+and sprite writes corrupted the high table (X-high/size bits) -> DK's tiles flung
+off-screen. Remaining: audio (SPC/DSP still a stub — no sound).
 Earlier 2026-07-14 fixes (the road here): (1) black-screen
 crash - DKC's vblank NMI handler ($80A97A) saves A/X/Y but NOT DBR, so NMI is only safe
 from the main wait-loop (DBR=$80); a heavy frame overran the budget, NMI landed
