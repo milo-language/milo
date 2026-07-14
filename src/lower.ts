@@ -617,6 +617,9 @@ class LowerCtx {
         if (expr.method === "addrOf") {
           return { kind: "UnaryOp", op: "&", operand: this.lowerExpr(expr.object), type, span: expr.span };
         }
+        if (objType?.tag === "vec" && expr.method === "ptr") {
+          return { kind: "VecPtr", object: this.lowerExpr(expr.object), type, span: expr.span };
+        }
         if ((objType?.tag === "int" || objType?.tag === "float") && expr.method === "toString") {
           return { kind: "NumberToString", value: this.lowerExpr(expr.object), valueType: objType, type, span: expr.span };
         }

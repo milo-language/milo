@@ -3244,6 +3244,14 @@ export class Codegen {
         lines.push(`  ${dataPtr} = extractvalue %String ${ov}, 0`);
         return [lines, dataPtr, "ptr"];
       }
+      case "VecPtr": {
+        // v.ptr(): the Vec's backing data pointer (field 0 of {ptr,len,cap}).
+        const [ol, ov] = this.genExpr(expr.object);
+        lines.push(...ol);
+        const dataPtr = this.nextTemp();
+        lines.push(`  ${dataPtr} = extractvalue %Vec ${ov}, 0`);
+        return [lines, dataPtr, "ptr"];
+      }
       case "ArrayLit": {
         // Vec literal: `[a, b, c]` with Vec<T> type hint. Emit malloc + N stores, build %Vec struct.
         if (expr.type.tag === "vec") {

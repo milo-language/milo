@@ -4098,12 +4098,12 @@ export class TypeChecker {
             this.error(`'addrOf' requires an lvalue (variable, field, or index)`, sp);
           return this.setType(expr, { tag: "ptr", inner: objType });
         }
-        // v.ptr(): *T — a collection's backing DATA pointer (first element). Safe
-        // to obtain (mirrors string.cstr); the receiver stays live in the caller.
-        if ((objType.tag === "vec" || (objType.tag === "array" && objType.size !== null)) && expr.method === "ptr") {
+        // v.ptr(): *T — a Vec's backing DATA pointer (first element). Safe to
+        // obtain (mirrors string.cstr); the Vec stays live in the caller. Fixed
+        // arrays already auto-coerce to *T (pass bare), so this is Vec-only.
+        if (objType.tag === "vec" && expr.method === "ptr") {
           if (expr.args.length !== 0) { this.error(`'ptr' takes no arguments`, sp); }
-          const elem = objType.tag === "vec" ? objType.element : objType.element;
-          return this.setType(expr, { tag: "ptr", inner: elem });
+          return this.setType(expr, { tag: "ptr", inner: objType.element });
         }
         // Option combinators — isSome/isNone/unwrapOr. Gated on baseName so a user
         // enum's own impl method of the same name still resolves normally below.

@@ -25,6 +25,7 @@ export type HIRExpr =
   | { kind: "ArrayLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringLen"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "StringCstr"; object: HIRExpr; type: TypeKind; span?: Span }
+  | { kind: "VecPtr"; object: HIRExpr; type: TypeKind; span?: Span }
   | { kind: "Unwrap"; operand: HIRExpr; enumName: string; type: TypeKind; span?: Span }
   | { kind: "Propagate"; operand: HIRExpr; enumName: string; retType: TypeKind; fromConversion?: { targetEnumName: string; wrapVariant: string; wrapTag: number }; type: TypeKind; span?: Span }
   | { kind: "DefaultValue"; operand: HIRExpr; default: HIRExpr; enumName: string; type: TypeKind; span?: Span }
