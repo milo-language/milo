@@ -135,55 +135,110 @@ peek(m, peekAddrs)    // correct — auto-borrow
 ```
 Same sigil, two meanings, split by position — this is the C++ `&` mess (address-of
 / reference-declarator / bitwise-and) we don't want. A first-pass "fix" of *accept
-`&x` as a borrow when a `&T` is expected* was **rejected (cs01, 2026-07-13):** it
-makes `&` mean borrow-or-pointer by context — strictly worse, more ambiguity.
+`&x` as a borrow when a `&T` is expected* was **rejected (cs01):** it makes `&`
+mean borrow-or-pointer by context — strictly worse.
 
 **The requirement: `&` gets exactly ONE meaning, no context-sensitivity.**
 
-**DECISION direction (Design A, recommended):** `&` is *only* the borrow marker
-and *only* appears in types.
-- `&T` / `&mut T` in a param (or `ref`-binding, see #9) type = "borrowed". The
-  only place `&` appears.
-- Borrows stay implicit — you pass `x`, never `&x`.
-- `&x` as an expression is **removed**; writing it errors with *"borrows are
-  implicit; drop the `&`. For a raw pointer use `rawPtr()`."*
-- Raw address-of (rare, unsafe) becomes a loud explicit name: `rawPtr(x)`, and
-  `buf.ptr()` for the FFI-buffer case (the only real users today —
-  `(&ev[0]) as *u8`, `(&texBuf[0]) as *u8`).
-- One-sentence model: **"`&` marks a borrowed parameter in a type signature; it is
-  never an expression operator."**
+**DECISION — Design A (2026-07-13, red-teamed by a Fable subagent that swept every
+`&`-address-of site in `examples/` + `std/`):** `&` is *only* the borrow marker and
+*only* appears in types. `&x` in expression position is a hard error:
+*"borrows are implicit — pass `x` bare. For a raw pointer use `v.ptr()` (buffer)
+or `addrOf(x)` (any value, unsafe)."*
 
-Alternative (Design B): `&x` = borrow everywhere (Rust-familiar), address-of →
-`&raw`/named, borrows become explicit sigils. Also single-meaning, but flips
-borrows implicit→explicit — a bigger philosophical change. A preferred over B.
+Raw pointers (FFI only) get **two named ops, split by meaning — the split is
+load-bearing, not pedagogy:**
+- **`v.ptr(): *T`** on `Vec<T>` → the backing **data** pointer. **Safe to call**
+  (mirrors the existing `string.cstr()`, which already returns `*u8` with no
+  `unsafe`). May be **null when `len==0`** — strictly safer than today's
+  `(&v[0])`, which bounds-panics or is UB on an empty Vec. `string` keeps
+  `.cstr()` (its contract is NUL-termination); do **not** add `string.ptr()`.
+- **`addrOf(x): *T`** — builtin free fn (joins the `sizeOf<T>()`/`offsetOf<T>()`
+  family), lvalue-only (Ident / field / index; **temporaries rejected** — kills
+  the dangling-rvalue hazard), and **still requires `unsafe`**. It feeds
+  `memcpy`/ioctl out-params/generic byte-surgery; every current site is already
+  in an `unsafe` block, so keeping it unsafe = **zero migration churn** and no
+  marker erosion.
+- **Why not one unified name:** `std/sync`'s generic `addrOf(v)` needs *header*
+  semantics when `T = Vec` ("address of the slot"), while `.ptr()` means the
+  *buffer*. A single "collections mean the buffer" rule would be incoherent in
+  generics. Rust (`as_ptr` + `addr_of!`), C++ (`.data()` + `std::addressof`), Zig
+  (`.ptr` + `&x`) all keep both — nobody unified them.
+- **Pointer→pointer casts stay `unsafe`** (type punning deserves the marker). So
+  `texBuf.ptr() as *u8` (a `Vec<u32>` fed to an SDL `*u8`) **keeps its `unsafe`
+  block** — only same-typed buffers (`Vec<u8>`→`*u8`) actually shed it. Don't
+  oversell the ergonomic win.
+- **Fixed arrays already coerce** (`[T;N]`→`*T` at call sites), so the current
+  `(&ev[0]) as *u8` for a `[u8;64]` is *redundant* — migrate those to a **bare
+  pass**, not `.ptr()`. The only genuine `.ptr()` customer is `Vec`.
+
+Coverage: the sweep found exactly 6 address-taking shapes, all covered; **zero**
+uses of `&buf[k]` at nonzero index, `&struct.scalarField`, or address-of-temporary.
+
+**Must-fix holes (pre-existing, but this proposal makes them load-bearing):**
+- Doc/impl contradiction: lang-ref says "unsafe when a param takes a raw `*T` not
+  from auto-coercion," but the checker treats any `*T`→`*T` arg as safe (the
+  `strlen(ptr)` example relies on it). With safe `.ptr()`, `memcpy(a.cstr(),
+  b.cstr(), n)` — a raw write — type-checks with **zero `unsafe`**. Decide and
+  align before shipping safe `.ptr()`.
+
+Rejected alt (Design B): `&x` = borrow everywhere (Rust-familiar), address-of →
+`&raw`/named, borrows become explicit. Also single-meaning, but (a) flips borrows
+implicit→explicit (ecosystem-wide churn) and (b) puts `&` back in expression
+position, so raw pointers next to it reintroduce position-blindness. **A wins:
+after A, `&` appears in exactly ONE syntactic position (types) — nothing left to
+confuse.**
 
 ## 9. No function-local reuse of a borrow to a nested field (ergonomic; the big one)
 
 Can't alias a deep path for repeated reads — I wrote `m.ppu.m7a`, `m.ppu.m7b`, …
 dozens of times because a local alias is rejected (refs are second-class, params
-only). This is the deliberate "no lifetimes" bargain (a stored borrow would need
-one). But you don't need lifetime *syntax* to allow a **function-local** borrow:
-Milo already infers borrow validity for params with no annotation — extend that to
-a local binding, legal **iff it provably doesn't escape** (can't be returned,
-stored in a struct, or outlive its source). Plain escape analysis, no lifetime
-annotations, because the borrow never crosses an API boundary — lifetimes stay out
-of signatures (this is what Rust NLL already does *inside* a fn; `'a` only at
-boundaries).
+only). This is the deliberate "no lifetimes" bargain (a stored borrow would need one).
 
-Syntax must respect #8 — **no `&` in expression position.** So spell the local
-alias with a keyword, not `&x`:
+**Reframe (from the red-team): this is NOT a new borrow system — it's extending
+the EXISTING slice-local machinery.** Slice locals already work: `let h = s[0..5]`
+binds a `&string`-typed local that **freezes its source** (rejects mutation /
+reassignment of `s` while `h` is live) and releases at scope pop (checker.ts slice
+handling). Milo already has ref-typed locals with source-freezing; #9 just extends
+slice-binding from `[a..b]` expressions to **field paths**. Smaller feature, and it
+needs *conflict* checking (freeze the root against move/mutation/`&mut` while the
+alias lives), not merely escape checking.
+
+Syntax must respect #8 — **no `&` in expression position.** Two candidates:
 ```milo
-ref p = m.ppu       // non-owning, escape-checked, immutable
-ref mut q = m.ppu   // mutable variant
-p.m7a; p.m7b        // read many fields, no repetition
+ref p = m.ppu          // keyword form (terse); ref mut q = m.ppu for mutable
+let p: &Ppu = m.ppu    // annotation form: the receiving TYPE requests the borrow
+p.m7a; p.m7b           // read many fields, no repetition
 ```
-Highest-value ergonomic unlock of the three; it's an escape analysis, not a borrow
-checker. Related to #4 (both: the borrow model is more conservative than it needs
-to be inside one function).
+The annotation form is the "one model" purist choice (borrows always requested by a
+`&T` on the receiving side, never in expressions — identical to the call-site
+rule). The `ref` keyword is terser but adds a third borrow-introduction form (after
+param types and slice `let`s). **Pick one, don't ship both.**
+
+**Granularity decision — MUST resolve, jointly with #4:** if `ref p = m.ppu`
+freezes **all of `m`**, any later `m.apu` write or `render(m)` errors — that's
+friction #4 (no split borrows) in a new costume, and it guts the m7a/m7b use case.
+If it freezes **only the path `m.ppu`**, you need field-path-granular borrow
+tracking — which *is* the #4 fix. So **#9-done-right subsumes #4; #9-done-cheap
+(whole-root freeze) will disappoint.** Decide the granularity before locking.
+
+Soundness traps to spec explicitly: `ref p = v[i]` then `v.push()` (must freeze the
+Vec — slice pattern); a `ref` captured by a closure passed to `spawn` (escape —
+must reject; confirm slice rules already cover closure capture, unverified);
+moving the root while the ref is live; `ref mut` exclusivity vs reads through the
+original path. Highest-value ergonomic unlock of the three.
 
 (Deliberately NOT filed: "moves need manual reorder" — `busNew(rom)` consuming
 `rom` then failing on reuse is *correct* ownership, identical to Rust, and the
 diagnostic already suggests `.clone()`. Working as intended, not friction.)
+
+---
+
+## One-sentence mental model for pointers/borrows (from the red-team — memorize this)
+
+**"A `&T` in a type means the receiver borrows it — you always pass values bare;
+when C needs a real pointer, ask the collection for its buffer with `.ptr()`, or
+take any value's address with `addrOf(x)` inside `unsafe`."**
 
 ---
 
