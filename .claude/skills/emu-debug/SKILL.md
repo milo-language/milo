@@ -69,7 +69,15 @@ goes wrong. Register diffs between shots tell you what the game changed.
 path. Garbled OBJ only → OAM/sprite path (NES precedent: MMC2 sprite-fetch
 latch order). One layer black but enabled → its map/char base or palette.
 
-**4. Freeze/black with sane PPU regs → suspect CPU derail, not PPU.** Classic
+**3b. Frozen image but game logic maybe running → check WRAM vars.** The SNES
+dbg reg dump prints a `wram:` line ($13/$14 frame counters, $94 player X, $1A/$1B
+scroll). If the frame counter advances but player/scroll don't, the main loop is
+running but the game is in a wait *substate* — often a cutscene/message that
+needs a button (SMW's story intro won't advance without a `--press b`), or an
+APU-synced sequence we can't complete. Bump input before assuming a bug. If
+*nothing* in WRAM advances across frames, it's a true stall → step 4.
+
+**4. Freeze/black with sane PPU regs → suspect CPU derail or wait-loop, not PPU.** Classic
 signature: derail → lands in zeroed RAM → BRK/crash-trap loop (SNES DKC frame
 761, SMW pre-fix `(dp)` opcodes). Checks: do regs still change between shots?
 Does NMITIMEN stay sane? Add a temporary PC ring-buffer print in the CPU step

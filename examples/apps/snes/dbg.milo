@@ -13,6 +13,10 @@
 //     --probe               after the run, print a hot-PC histogram (spot CPU wait-loops)
 //     --out <prefix>        output path prefix (default /tmp/snes/dbg)
 //
+// Each reg dump also prints a `wram:` line of key low-WRAM vars ($13/$14 frame
+// counters, $94 player X, $1A/$1B scroll) — if these advance the game logic is
+// running even when the screen looks frozen (isolates "stuck" from "just slow").
+//
 // Outputs <prefix>.ppm (final composite), <prefix>_f<N>.ppm (shots),
 // <prefix>_bg1..4.ppm/_obj.ppm (layers). View: ffmpeg -y -i x.ppm x.png
 
@@ -255,6 +259,17 @@ fn renderTo(m: &mut Mem, fb: &mut Vec<i64>, path: &string, forceBright: bool): v
     writePpm(fb, path)
 }
 
+// Dump a few low-WRAM bytes ($00xxxx mirror = m.wram[off]). Useful to check
+// whether per-frame game variables (frame counters, player position, scroll) are
+// advancing when the screen looks frozen.
+fn peekWram(m: &Mem, addrs: &Vec<i64>): void {
+    var s = "wram:"
+    for a in addrs {
+        s = s + " $" + hex2(a & 0xFF) + "=" + hex2(m.wram[a & 0x1FFFF] as i64)
+    }
+    print(s)
+}
+
 // Single-step N instructions from the current state and report the most-visited
 // PCs. A tiny hot set spanning a few bytes = the CPU is spinning in a wait loop
 // (fade/handshake stall); a broad spread = it's executing normally.
@@ -427,6 +442,16 @@ fn main(): i32 {
         }
     }
 
+    // SMW-useful low-WRAM vars: $13/$14 frame counters, $10 game-mode/NMI flag,
+    // $94/$95 player X, $1A/$1B layer-1 scroll. Advancing = game logic is running.
+    var peekAddrs: Vec<i64> = Vec.new()
+    peekAddrs.push(0x10)
+    peekAddrs.push(0x13)
+    peekAddrs.push(0x14)
+    peekAddrs.push(0x94)
+    peekAddrs.push(0x1A)
+    peekAddrs.push(0x1B)
+
     var fb: Vec<i64> = Vec.new()
     var i: i64 = 0
     while i < 256 * 224 {
@@ -449,6 +474,7 @@ fn main(): i32 {
         for s in shots {
             if s == f {
                 dumpRegs(m, f)
+                peekWram(m, peekAddrs)
                 renderTo(m, fb, outPrefix + "_f" + f.toString() + ".ppm", forceBright)
             }
         }
@@ -456,6 +482,7 @@ fn main(): i32 {
     }
 
     dumpRegs(m, frames)
+    peekWram(m, peekAddrs)
     if doProbe {
         probeLoop(cpu, m, 6000)
     }
