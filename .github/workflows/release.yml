@@ -13,6 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      # Match the CI workflow's toolchain: z3 for the contract gate, lld for the
+      # bare-metal ARM link tests (-fuse-ld=lld in tests/embedded.test.ts).
+      - run: brew install z3
+      - run: brew install lld
       - run: bun test
 
   build:
