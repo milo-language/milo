@@ -30,7 +30,7 @@ function buildElf(src: string): string {
 }
 
 test.if(hasTools)("estimates positive cycles for a bounded loop", () => {
-  const elf = buildElf(`fn loopSum(): i32 { var t: i32 = 0 for i in 0..10 { t = t + i } return t }
+  const elf = buildElf(`fn loopSum(): i32 { var t: i32 = 0 for i in 0..10 { t = t + (i as i32) } return t }
 fn main(): i32 { return loopSum() }`);
   const est = estimateLoopCycles(elf, "loopSum", 10);
   expect(est).not.toBeNull();
@@ -41,7 +41,7 @@ fn main(): i32 { return loopSum() }`);
 });
 
 test.if(hasTools)("cycle bound scales with iteration count", () => {
-  const elf = buildElf(`fn loopSum(): i32 { var t: i32 = 0 for i in 0..100 { t = t + i } return t }
+  const elf = buildElf(`fn loopSum(): i32 { var t: i32 = 0 for i in 0..100 { t = t + (i as i32) } return t }
 fn main(): i32 { return loopSum() }`);
   const e10 = estimateLoopCycles(elf, "loopSum", 10);
   const e100 = estimateLoopCycles(elf, "loopSum", 100);

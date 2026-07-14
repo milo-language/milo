@@ -38,7 +38,7 @@ fn f(x: i64): i32 { unsafe { return munmap(x as *u8, 8) } }`;
 
 test("does not flag pointer deref / address-of / pointer index", () => {
   const src = `fn deref(p: *i64): i64 { unsafe { return *p } }
-fn addr(x: i64): i64 { unsafe { let p = &x return p as i64 } }
+fn addr(x: i64): i64 { unsafe { let p = x.addrOf() return p as i64 } }
 fn idx(p: *i64): i64 { unsafe { return p[3] } }`;
   expect(unusedUnsafeLines(src)).toEqual([]);
 });

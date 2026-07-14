@@ -570,7 +570,7 @@ fn readLine(n: i32): Option<string> {
     return Option.None
 }
 
-var i = 0
+var i: i32 = 0
 while let Option.Some(line) = readLine(i) {
     print(line)
     i = i + 1
@@ -1343,7 +1343,7 @@ fn cmpI32(a: *u8, b: *u8): i32 {
 
 fn main(): i32 {
     var arr: [i32; 5] = [50, 10, 99, 30, 70]
-    unsafe { qsort((&arr[0]) as *u8, 5, 4, cmpI32) }   // cmpI32 passed directly
+    unsafe { qsort(arr[0].addrOf() as *u8, 5, 4, cmpI32) }   // cmpI32 passed directly
     return 0
 }
 ```
