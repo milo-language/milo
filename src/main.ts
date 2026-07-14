@@ -284,6 +284,11 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
   const tmpLl = join(tmpdir(), `milo_${id}.ll`);
 
+  // The linker won't create -o's parent dir; without this it errors with
+  // "ld: open() failed" on a fresh checkout (e.g. building into a bin/ that
+  // isn't there yet).
+  mkdirSync(dirname(out), { recursive: true });
+
   try {
     writeFileSync(tmpLl, ir);
     if (target.bareMetal) {

@@ -11,4 +11,7 @@ jobs:
       # If this step ever flakes, the gate falls back to the native solver (fewer
       # proofs, still green) rather than failing the build.
       - run: brew install z3
+      # lld provides ld.lld, which `milo build --target=cortex-m3` invokes via
+      # -fuse-ld=lld to link freestanding ARM ELF executables (tests/embedded.test.ts).
+      - run: brew install lld
       - run: bun test
