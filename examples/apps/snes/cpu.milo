@@ -35,6 +35,13 @@ var joyCnt1: i64 = 0
 var joyLatch2: i64 = 0
 var joyCnt2: i64 = 0
 
+// Set by the WAI opcode ($CB): the CPU is idling until the next interrupt. The
+// per-frame active loop breaks as soon as this is set so NMI fires from the game's
+// vblank-wait (where DBR=$80) rather than at an arbitrary instruction count deep
+// inside a heavy routine (DBR=$BB) — the latter derailed DKC's boot and its level
+// loads (the vblank handler saves A/X/Y but not DBR; see stepFrame/nmi).
+var cpuWaiting: bool = false
+
 struct Cpu {
     a: i64 // 16-bit accumulator (low byte = A, high byte = B when M=1)
     x: i64 // 16-bit index
@@ -843,6 +850,7 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
         irqAt = (vt * activeSteps) / 224
     }
     var fired = false
+    cpuWaiting = false
     var i: i64 = 0
     while i < activeSteps {
         if !fired && irqAt >= 0 && i >= irqAt {
@@ -853,7 +861,15 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
         if (i & 3) == 0 {
             runApu(m, 2)
         }
-        i = i + 1
+        // The game reached its vblank-wait (WAI). Stop early and fire NMI from here
+        // (DBR=$80) instead of running the budget out mid-routine. Keeps NMI off the
+        // heavy load/decompress paths that run with a different data bank.
+        if cpuWaiting {
+            cpuWaiting = false
+            i = activeSteps
+        } else {
+            i = i + 1
+        }
     }
     // Tables set up during (this frame's) active display are now stable; walk the
     // armed HDMA channels to produce the per-scanline PPU-register overrides the
@@ -2909,7 +2925,8 @@ fn step(cpu: &mut Cpu, m: &mut Mem): void {
             let sig = fetch8(cpu, m)
         } // WDM consumes its signature byte
         0xCB => {
-        } // WAI
+            cpuWaiting = true
+        } // WAI — halt until the next interrupt (see stepFrame's active loop)
         0xDB => {
         } // STP
 
