@@ -2,6 +2,8 @@
 
 Memory-safe systems language → LLVM IR. TypeScript compiler, Bun runtime.
 
+**Agent entry point:** start at [AGENTS.md](AGENTS.md) — the router to skills, docs, scripts, conventions, and the [workflow](AGENT_WORKFLOW.md). This file holds the hard operational rules below; when the two conflict, this file wins.
+
 ## Quick Reference
 
 ```bash

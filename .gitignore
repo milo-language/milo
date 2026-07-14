@@ -81,10 +81,12 @@ benchmarks/json/json_c
 benchmarks/json/json_go
 benchmarks/results-*.md
 docs/site/.vitepress/cache/
-.claude/
+.claude/*
+!.claude/skills/
 lib.a
 tmp/
 .worktrees/
 
 # self-host stage binaries
 .selfhost/
+roms/
