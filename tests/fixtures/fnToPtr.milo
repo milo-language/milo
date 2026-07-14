@@ -18,7 +18,7 @@ fn main(): i32 {
     arr[3] = 30
     arr[4] = 70
     unsafe {
-        qsort((&arr[0]) as *u8, 5, 4, cmpI32 as *u8)
+        qsort((arr[0].addrOf()) as *u8, 5, 4, cmpI32 as *u8)
     }
     // sorted: 10 30 50 70 99 — last element is max
     print(arr[4])

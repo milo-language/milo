@@ -7,7 +7,7 @@ from "std/runtime" import {
 fn main(): i32 {
     var x: i32 = 42
     unsafe {
-        let p = (&x) as *u8
+        let p = (x.addrOf()) as *u8
         let _t = Promise<i64>.blocking(move(): i64 => {
             print("ptr value: ", p as i64)
             return 0
