@@ -103,13 +103,65 @@ let mask = if wide { 0xFFFF } else { 0xFF }   // inferred i32
 let a = reg & mask                             // i64 & i32 -> compile error
 ```
 Fixed with `let mask: i64 = if ...`. Recurring across two independent emulators →
-worth prioritizing context-directed int-literal inference.
+worth prioritizing context-directed int-literal inference. Hit it AGAIN this
+session (`var end = 21` then `off + end`; `if mapMode==1 {0xFFC0} else {0x7FC0}`).
+
+**DECISION (2026-07-13, with cs01): default context-free int literals to i64.**
+Rationale: this codebase is i64-dominant (all arithmetic, every Vec/string index,
+every loop counter); i32 is the annotated exception (FFI/widths). Keep target-type
+coercion where there IS context (`let x: i32 = 5`, i32 fn params) — only the
+no-context literal flips to i64. Won't hide bugs: a literal that truly needed i32
+still errors at its typed use site. Rejected "require an annotation" (too much
+ceremony — `var i: i64 = 0` on every loop). The strictly-better-but-more-work
+option is real usage inference (defer the literal's type, unify across uses,
+Rust-style) — ship the i64 default first, reach for full inference only if
+papercuts persist.
 
 ## 7. Inconsistent `.len` (ergonomic)
 
 `array.len` is **i32** (forces `while i < ops.len as i64`); `Vec.len` and
 `string.len` are i64 field-style; `Json.len()` is a method. Four shapes for
 "length". Pick one type (i64) and one syntax.
+
+## 8. `&x` at a call site is address-of, not borrow (ergonomic; Rust-muscle-memory trap)
+
+`&T` in a **param type** means borrow, but `&x` in an **expression** means
+*address-of* → a raw `*T` that needs `unsafe`. Borrowing at a call site is
+implicit — you pass the value bare and Milo borrows per the param signature.
+```milo
+fn peek(m: &Mem, addrs: &Vec<i64>): void { ... }
+peek(m, &peekAddrs)   // error: expected &Vec<i64>, got *Vec<i64>; address-of needs unsafe
+peek(m, peekAddrs)    // correct — auto-borrow
+```
+So the same `&` sigil means "borrow" in types but "raw pointer" in expressions.
+Anyone with Rust reflexes writes `&x` and gets a confusing `*T`/unsafe error.
+**Fix:** when the expected param type is `&T`, accept `&x` as a borrow (identical
+to bare) — only treat `&x` as address-of in a `*T`/`unsafe` context. Then `f(x)`
+and `f(&x)` both work; raw address-of still lives in the unsafe path. Small
+call-site coercion change; non-breaking.
+
+## 9. No function-local reuse of a borrow to a nested field (ergonomic; the big one)
+
+Can't alias a deep path for repeated reads:
+```milo
+let p = &m.ppu      // rejected — refs are second-class (params only)
+p.m7a; p.m7b; ...   // wanted; instead I wrote m.ppu.m7a / m.ppu.m7b dozens of times
+```
+This is the deliberate "no lifetimes" bargain (a stored borrow would need one).
+But you don't need lifetime *syntax* to allow a **function-local** borrow: Milo
+already infers borrow validity for params with no annotation — extend exactly
+that to a `let`, legal **iff `p` provably doesn't escape** (can't be returned,
+stored in a struct, or outlive `m`). That's a plain escape check, no lifetime
+annotations, because the borrow never crosses an API boundary — lifetimes stay
+banished from signatures (the whole design goal), they're just not needed for
+something scoped to one function body (this is what Rust NLL already does *inside*
+a fn; you only write `'a` at boundaries). Highest-value ergonomic unlock of the
+three; it's an escape analysis, not a borrow checker. Related to #4 (both are
+"the borrow model is more conservative than it needs to be inside one function").
+
+(Deliberately NOT filed: "moves need manual reorder" — `busNew(rom)` consuming
+`rom` then failing on reuse is *correct* ownership, identical to Rust, and the
+diagnostic already suggests `.clone()`. Working as intended, not friction.)
 
 ---
 
