@@ -18,39 +18,33 @@ struct EventLoop {
 }
 
 fn eventLoopNew(): Result<EventLoop, string> {
-    unsafe {
-        let fd = kqueue()
-        if fd < 0 {
-            return Result.Err("kqueue() failed")
-        }
-        return Result.Ok(EventLoop {
-            kqfd: fd
-        }
-        )
+    let fd = kqueue()
+    if fd < 0 {
+        return Result.Err("kqueue() failed")
     }
+    return Result.Ok(EventLoop {
+        kqfd: fd
+    }
+    )
 }
 
 fn setNonblocking(fd: i32): i32 {
-    unsafe {
-        let flags = fcntl(fd, fGetfl())
-        if flags < 0 {
-            return -1
-        }
-        return fcntl(fd, fSetfl(), flags | oNonblock())
+    let flags = fcntl(fd, fGetfl())
+    if flags < 0 {
+        return -1
     }
+    return fcntl(fd, fSetfl(), flags | oNonblock())
 }
 
 // Clear O_NONBLOCK. fd 0/1/2 share an open file description with the parent
 // shell, so a non-blocking flag left set here leaks out and makes the shell's
 // reads return EAGAIN after we exit. Restore blocking mode before exiting.
 fn clearNonblocking(fd: i32): i32 {
-    unsafe {
-        let flags = fcntl(fd, fGetfl())
-        if flags < 0 {
-            return -1
-        }
-        return fcntl(fd, fSetfl(), flags & ~oNonblock())
+    let flags = fcntl(fd, fGetfl())
+    if flags < 0 {
+        return -1
     }
+    return fcntl(fd, fSetfl(), flags & ~oNonblock())
 }
 
 fn eventRegisterRead(el: &EventLoop, fd: i32): i32 {
@@ -207,7 +201,5 @@ fn eventLoopFd(el: &EventLoop): i32 {
 }
 
 fn eventLoopClose(el: &EventLoop): void {
-    unsafe {
-        close(el.kqfd)
-    }
+    close(el.kqfd)
 }

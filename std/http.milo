@@ -409,9 +409,7 @@ fn sendRaw(fd: i32, status: i32, contentType: string, body: string, extraHeaders
     resp = resp + "\r\nServer: milo"
     resp = resp + "\r\n\r\n"
     resp = resp + body
-    unsafe {
-        write(fd, resp, resp.len)
-    }
+    write(fd, resp, resp.len)
 }
 
 fn sendResponse(fd: i32, response: Response, headers: &Vec<Param>): void {
@@ -443,9 +441,7 @@ struct Socket {
 impl Drop for Socket {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            unsafe {
-                close(self.fd)
-            }
+            close(self.fd)
         }
     }
 }
@@ -464,53 +460,51 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         bindPort = p
     }
 
-    unsafe {
-        let rawFd = socket(AF_INET, SOCK_STREAM, 0)
-        if rawFd < 0 {
-            return Result.Err("socket() failed")
+    let rawFd = socket(AF_INET, SOCK_STREAM, 0)
+    if rawFd < 0 {
+        return Result.Err("socket() failed")
+    }
+    let sock = Socket {
+        fd: rawFd
+    }
+
+    var one: i32 = 1
+    setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
+
+    var addr = makeSockaddr(bindPort, 0)
+
+    if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        return Result.Err("bind() failed")
+    }
+
+    if listen(sock.fd, BACKLOG) < 0 {
+        return Result.Err("listen() failed")
+    }
+
+    var boundAddr = makeZeroedSockaddr()
+    var boundLen: u32 = SIZEOF_SOCKADDR_IN
+    getsockname(sock.fd, boundAddr, boundLen)
+    let actualPort = ntohs(boundAddr.sinPort)
+
+    print($"listening on http://localhost:{actualPort}")
+
+    while true {
+        var clientAddr = makeZeroedSockaddr()
+        var addrlen: u32 = SIZEOF_SOCKADDR_IN
+        let clientFd = accept(sock.fd, clientAddr, addrlen)
+        if clientFd < 0 {
+            continue
         }
-        let sock = Socket {
-            fd: rawFd
+
+        var buf: [u8; 8192] = [0; 8192]
+        let n = read(clientFd, buf, BUF_SIZE)
+        if n > 0 {
+            let req = parseRequest(buf, n)
+            let resp = handler(req)
+            let noHeaders: Vec<Param> = []
+            sendResponse(clientFd, resp, noHeaders)
         }
-
-        var one: i32 = 1
-        setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
-
-        var addr = makeSockaddr(bindPort, 0)
-
-        if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-            return Result.Err("bind() failed")
-        }
-
-        if listen(sock.fd, BACKLOG) < 0 {
-            return Result.Err("listen() failed")
-        }
-
-        var boundAddr = makeZeroedSockaddr()
-        var boundLen: u32 = SIZEOF_SOCKADDR_IN
-        getsockname(sock.fd, boundAddr, boundLen)
-        let actualPort = ntohs(boundAddr.sinPort)
-
-        print($"listening on http://localhost:{actualPort}")
-
-        while true {
-            var clientAddr = makeZeroedSockaddr()
-            var addrlen: u32 = SIZEOF_SOCKADDR_IN
-            let clientFd = accept(sock.fd, clientAddr, addrlen)
-            if clientFd < 0 {
-                continue
-            }
-
-            var buf: [u8; 8192] = [0; 8192]
-            let n = read(clientFd, buf, BUF_SIZE)
-            if n > 0 {
-                let req = parseRequest(buf, n)
-                let resp = handler(req)
-                let noHeaders: Vec<Param> = []
-                sendResponse(clientFd, resp, noHeaders)
-            }
-            close(clientFd)
-        }
+        close(clientFd)
     }
     return Result.Err("server exited")
 }
@@ -631,49 +625,47 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
         bindPort = p
     }
 
-    unsafe {
-        let rawFd = socket(AF_INET, SOCK_STREAM, 0)
-        if rawFd < 0 {
-            return Result.Err("socket() failed")
-        }
-        let sock = Socket {
-            fd: rawFd
+    let rawFd = socket(AF_INET, SOCK_STREAM, 0)
+    if rawFd < 0 {
+        return Result.Err("socket() failed")
+    }
+    let sock = Socket {
+        fd: rawFd
+    }
+
+    var one: i32 = 1
+    setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
+
+    var addr = makeSockaddr(bindPort, 0)
+    if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        return Result.Err("bind() failed")
+    }
+    if listen(sock.fd, BACKLOG) < 0 {
+        return Result.Err("listen() failed")
+    }
+
+    var boundAddr = makeZeroedSockaddr()
+    var boundLen: u32 = SIZEOF_SOCKADDR_IN
+    getsockname(sock.fd, boundAddr, boundLen)
+    let actualPort = ntohs(boundAddr.sinPort)
+    print($"listening on http://localhost:{actualPort}")
+
+    while true {
+        var clientAddr = makeZeroedSockaddr()
+        var addrlen: u32 = SIZEOF_SOCKADDR_IN
+        let clientFd = accept(sock.fd, clientAddr, addrlen)
+        if clientFd < 0 {
+            continue
         }
 
-        var one: i32 = 1
-        setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
-
-        var addr = makeSockaddr(bindPort, 0)
-        if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-            return Result.Err("bind() failed")
+        var buf: [u8; 8192] = [0; 8192]
+        let n = read(clientFd, buf, BUF_SIZE)
+        if n > 0 {
+            let req = parseRequest(buf, n)
+            let handled = router.handle(req)
+            sendResponse(clientFd, handled.response, handled.headers)
         }
-        if listen(sock.fd, BACKLOG) < 0 {
-            return Result.Err("listen() failed")
-        }
-
-        var boundAddr = makeZeroedSockaddr()
-        var boundLen: u32 = SIZEOF_SOCKADDR_IN
-        getsockname(sock.fd, boundAddr, boundLen)
-        let actualPort = ntohs(boundAddr.sinPort)
-        print($"listening on http://localhost:{actualPort}")
-
-        while true {
-            var clientAddr = makeZeroedSockaddr()
-            var addrlen: u32 = SIZEOF_SOCKADDR_IN
-            let clientFd = accept(sock.fd, clientAddr, addrlen)
-            if clientFd < 0 {
-                continue
-            }
-
-            var buf: [u8; 8192] = [0; 8192]
-            let n = read(clientFd, buf, BUF_SIZE)
-            if n > 0 {
-                let req = parseRequest(buf, n)
-                let handled = router.handle(req)
-                sendResponse(clientFd, handled.response, handled.headers)
-            }
-            close(clientFd)
-        }
+        close(clientFd)
     }
     return Result.Err("server exited")
 }

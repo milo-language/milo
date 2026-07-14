@@ -30,9 +30,7 @@ struct Instant {
 // Capture the current wall-clock time.
 fn now(): Instant {
     var tv: [u8; 16] = [0; 16]
-    unsafe {
-        gettimeofday(tv, 0 as *u8)
-    }
+    gettimeofday(tv, 0 as *u8)
     let sec = _readI64FromBuf(tv, 0)
     let usec = _readI64FromBuf(tv, 8)
     return Instant {
@@ -96,9 +94,7 @@ fn sleepMs(ms: i64): void {
         }
         return
     }
-    unsafe {
-        usleep((ms * 1000) as u32)
-    }
+    usleep((ms * 1000) as u32)
 }
 
 // Sleep for the given number of seconds.

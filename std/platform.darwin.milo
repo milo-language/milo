@@ -13,14 +13,12 @@ struct SockAddrIn {
 }
 
 fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
-    unsafe {
-        return SockAddrIn {
-            sinLen: 16 as u8,
-            sinFamily: 2 as u8,
-            sinPort: htons(port),
-            sinAddr: addr,
-            sinZero: [0; 8],
-        }
+    return SockAddrIn {
+        sinLen: 16 as u8,
+        sinFamily: 2 as u8,
+        sinPort: htons(port),
+        sinAddr: addr,
+        sinZero: [0; 8],
     }
 }
 

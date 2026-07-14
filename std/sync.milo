@@ -71,42 +71,38 @@ fn _nodeStoreI64(node: *u8, off: i64, v: i64): void {
 // select. Returns the new head. The node must not be touched after this — the
 // woken task's frame (plain) or the Select (arm) owns it.
 fn _wakeOne(head: *u8): *u8 {
-    unsafe {
-        if head as i64 == 0 {
-            return 0 as *u8
-        }
-        let next = _nodeLoadPtr(head, nodeNext())
-        if _nodeLoadI64(head, nodeKind()) == kindPlain() {
-            schedulerUnpark(_nodeLoadPtr(head, nodeA()))
-        } else {
-            _selectTryClaim(_nodeLoadPtr(head, nodeA()), _nodeLoadI64(head, nodeArm()))
-        }
-        return next
+    if head as i64 == 0 {
+        return 0 as *u8
     }
+    let next = _nodeLoadPtr(head, nodeNext())
+    if _nodeLoadI64(head, nodeKind()) == kindPlain() {
+        schedulerUnpark(_nodeLoadPtr(head, nodeA()))
+    } else {
+        _selectTryClaim(_nodeLoadPtr(head, nodeA()), _nodeLoadI64(head, nodeArm()))
+    }
+    return next
 }
 
 // Unlink `node` from a wait list if present. Caller holds the channel mutex.
 fn _unlinkNode(head: *u8, node: *u8): *u8 {
-    unsafe {
-        if head as i64 == 0 {
-            return 0 as *u8
-        }
-        if head as i64 == node as i64 {
-            return _nodeLoadPtr(head, nodeNext())
-        }
-        var prev = head
-        var cur = _nodeLoadPtr(head, nodeNext())
-        while cur as i64 != 0 {
-            let next = _nodeLoadPtr(cur, nodeNext())
-            if cur as i64 == node as i64 {
-                _nodeStorePtr(prev, nodeNext(), next)
-                return head
-            }
-            prev = cur
-            cur = next
-        }
-        return head
+    if head as i64 == 0 {
+        return 0 as *u8
     }
+    if head as i64 == node as i64 {
+        return _nodeLoadPtr(head, nodeNext())
+    }
+    var prev = head
+    var cur = _nodeLoadPtr(head, nodeNext())
+    while cur as i64 != 0 {
+        let next = _nodeLoadPtr(cur, nodeNext())
+        if cur as i64 == node as i64 {
+            _nodeStorePtr(prev, nodeNext(), next)
+            return head
+        }
+        prev = cur
+        cur = next
+    }
+    return head
 }
 
 // Park the current green task as a receive waiter. Caller holds mtx; returns
@@ -478,39 +474,27 @@ impl AtomicI64 {
     }
 
     fn load(self: &Self): i64 {
-        unsafe {
-            return _atomicLoadI64(self._ptr)
-        }
+        return _atomicLoadI64(self._ptr)
     }
 
     fn store(self: &Self, val: i64): void {
-        unsafe {
-            _atomicStoreI64(self._ptr, val)
-        }
+        _atomicStoreI64(self._ptr, val)
     }
 
     fn add(self: &Self, val: i64): i64 {
-        unsafe {
-            return _atomicAddI64(self._ptr, val)
-        }
+        return _atomicAddI64(self._ptr, val)
     }
 
     fn sub(self: &Self, val: i64): i64 {
-        unsafe {
-            return _atomicSubI64(self._ptr, val)
-        }
+        return _atomicSubI64(self._ptr, val)
     }
 
     fn cas(self: &Self, expected: i64, desired: i64): i64 {
-        unsafe {
-            return _atomicCasI64(self._ptr, expected, desired)
-        }
+        return _atomicCasI64(self._ptr, expected, desired)
     }
 
     fn destroy(self: Self): void {
-        unsafe {
-            free(self._ptr)
-        }
+        free(self._ptr)
     }
 }
 
@@ -535,27 +519,19 @@ impl AtomicBool {
     }
 
     fn load(self: &Self): bool {
-        unsafe {
-            return _atomicLoadBool(self._ptr)
-        }
+        return _atomicLoadBool(self._ptr)
     }
 
     fn store(self: &Self, val: bool): void {
-        unsafe {
-            _atomicStoreBool(self._ptr, val)
-        }
+        _atomicStoreBool(self._ptr, val)
     }
 
     fn swap(self: &Self, val: bool): bool {
-        unsafe {
-            return _atomicSwapBool(self._ptr, val)
-        }
+        return _atomicSwapBool(self._ptr, val)
     }
 
     fn destroy(self: Self): void {
-        unsafe {
-            free(self._ptr)
-        }
+        free(self._ptr)
     }
 }
 
@@ -597,33 +573,29 @@ impl WaitGroup {
     }
 
     fn add(self: &Self, n: i64): void {
-        unsafe {
-            let p = self._p
-            let mtx = _nodeLoadPtr(p, 0)
-            pthread_mutex_lock(mtx)
-            _nodeStoreI64(p, 16, _nodeLoadI64(p, 16) + n)
-            pthread_mutex_unlock(mtx)
-        }
+        let p = self._p
+        let mtx = _nodeLoadPtr(p, 0)
+        pthread_mutex_lock(mtx)
+        _nodeStoreI64(p, 16, _nodeLoadI64(p, 16) + n)
+        pthread_mutex_unlock(mtx)
     }
 
     fn done(self: &Self): void {
-        unsafe {
-            let p = self._p
-            let mtx = _nodeLoadPtr(p, 0)
-            pthread_mutex_lock(mtx)
-            let c = _nodeLoadI64(p, 16) - 1
-            _nodeStoreI64(p, 16, c)
-            if c <= 0 {
-                // wake every parked green waiter, then broadcast to pthreads
-                var h = _nodeLoadPtr(p, 24)
-                while h as i64 != 0 {
-                    h = _wakeOne(h)
-                }
-                _nodeStorePtr(p, 24, 0 as *u8)
-                pthread_cond_broadcast(_nodeLoadPtr(p, 8))
+        let p = self._p
+        let mtx = _nodeLoadPtr(p, 0)
+        pthread_mutex_lock(mtx)
+        let c = _nodeLoadI64(p, 16) - 1
+        _nodeStoreI64(p, 16, c)
+        if c <= 0 {
+            // wake every parked green waiter, then broadcast to pthreads
+            var h = _nodeLoadPtr(p, 24)
+            while h as i64 != 0 {
+                h = _wakeOne(h)
             }
-            pthread_mutex_unlock(mtx)
+            _nodeStorePtr(p, 24, 0 as *u8)
+            pthread_cond_broadcast(_nodeLoadPtr(p, 8))
         }
+        pthread_mutex_unlock(mtx)
     }
 
     fn wait(self: &Self): void {
@@ -668,13 +640,11 @@ impl WaitGroup {
     }
 
     fn destroy(self: Self): void {
-        unsafe {
-            let p = self._p
-            pthread_mutex_destroy(_nodeLoadPtr(p, 0))
-            free(_nodeLoadPtr(p, 0))
-            pthread_cond_destroy(_nodeLoadPtr(p, 8))
-            free(_nodeLoadPtr(p, 8))
-            free(p)
-        }
+        let p = self._p
+        pthread_mutex_destroy(_nodeLoadPtr(p, 0))
+        free(_nodeLoadPtr(p, 0))
+        pthread_cond_destroy(_nodeLoadPtr(p, 8))
+        free(_nodeLoadPtr(p, 8))
+        free(p)
     }
 }

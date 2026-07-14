@@ -31,9 +31,7 @@ fn parseInt(s: string): Option<i64> {
         }
         i = i + 1
     }
-    unsafe {
-        return Option.Some(strtol(s, 0 as *u8, 10))
-    }
+    return Option.Some(strtol(s, 0 as *u8, 10))
 }
 
 // Parse an integer string with a given base (2, 8, 10, 16).
@@ -43,9 +41,7 @@ fn parseIntRadix(s: string, base: i32): Option<i64> {
     if s.len == 0 {
         return Option.None
     }
-    unsafe {
-        return Option.Some(strtol(s, 0 as *u8, base))
-    }
+    return Option.Some(strtol(s, 0 as *u8, base))
 }
 
 // Parse a floating-point string. Returns None if not a valid number.
@@ -66,9 +62,7 @@ fn parseFloat(s: string): Option<f64> {
     if (s[start] < 48 || s[start] > 57) && s[start] != 46 {
         return Option.None
     }
-    unsafe {
-        return Option.Some(atof(s))
-    }
+    return Option.Some(atof(s))
 }
 
 // Convert i64 to hexadecimal string (lowercase).

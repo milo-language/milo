@@ -16,15 +16,13 @@ from "std/sync" import {
 // Execute a shell command and return its exit code.
 // Example: let code = run("ls -la")!
 fn run(cmd: &string): Result<i32> {
-    unsafe {
-        let status = system(cmd)
-        if status < 0 {
-            return Result.Err("system() failed")
-        }
-        // macOS: exit code is in bits 8-15
-        let exitCode = (status >> 8) & 255
-        return Result.Ok(exitCode)
+    let status = system(cmd)
+    if status < 0 {
+        return Result.Err("system() failed")
     }
+    // macOS: exit code is in bits 8-15
+    let exitCode = (status >> 8) & 255
+    return Result.Ok(exitCode)
 }
 
 // ── Process with lifecycle management ──
@@ -36,42 +34,36 @@ struct Process {
 
 impl Process {
     fn spawn(path: &string): Result<Process> {
-        unsafe {
-            let pid = fork()
-            if pid < 0 {
-                return Result.Err("fork() failed")
-            }
-            if pid == 0 {
-                execl(path, path, 0 as *u8)
-                exit(127)
-            }
-            return Result.Ok(Process {
-                pid: pid
-            }
-            )
+        let pid = fork()
+        if pid < 0 {
+            return Result.Err("fork() failed")
         }
+        if pid == 0 {
+            execl(path, path, 0 as *u8)
+            exit(127)
+        }
+        return Result.Ok(Process {
+            pid: pid
+        }
+        )
     }
 
     fn wait(self: &Self): Result<i32> {
         var statusBuf: [u8; 4] = [0; 4]
-        unsafe {
-            let r = waitpid(self.pid, statusBuf, 0)
-            if r < 0 {
-                return Result.Err("waitpid() failed")
-            }
-            let raw = (statusBuf[1] as i32)
-            return Result.Ok(raw)
+        let r = waitpid(self.pid, statusBuf, 0)
+        if r < 0 {
+            return Result.Err("waitpid() failed")
         }
+        let raw = (statusBuf[1] as i32)
+        return Result.Ok(raw)
     }
 
     fn signal(self: &Self, sig: i32): Result<i32> {
-        unsafe {
-            let r = kill(self.pid, sig)
-            if r < 0 {
-                return Result.Err("kill() failed")
-            }
-            return Result.Ok(0)
+        let r = kill(self.pid, sig)
+        if r < 0 {
+            return Result.Err("kill() failed")
         }
+        return Result.Ok(0)
     }
 }
 
@@ -175,9 +167,7 @@ impl Child {
     }
 
     fn writeStdin(self: &Self, buf: *u8, len: i64): i64 {
-        unsafe {
-            return write(self.stdinFd, buf, len)
-        }
+        return write(self.stdinFd, buf, len)
     }
 
     fn writeStdinStr(self: &Self, s: &string): i64 {
@@ -188,9 +178,7 @@ impl Child {
 
     // Low-level single read into a raw buffer. Prefer `stdout()` for streaming.
     fn readStdout(self: &Self, buf: *u8, len: i64): i64 {
-        unsafe {
-            return read(self.stdoutFd, buf, len)
-        }
+        return read(self.stdoutFd, buf, len)
     }
 
     // Low-level single read into a raw buffer. Prefer `stderr()` for streaming.
@@ -198,9 +186,7 @@ impl Child {
     requires
     self.stderrFd >= 0
     {
-        unsafe {
-            return read(self.stderrFd, buf, len)
-        }
+        return read(self.stderrFd, buf, len)
     }
 
     // Stream the child's stdout as an iterable channel, pumped on a background
@@ -222,47 +208,39 @@ impl Child {
     // Close the child's stdin, sending EOF. Idempotent.
     fn closeStdin(self: &mut Self): void {
         if self.stdinFd >= 0 {
-            unsafe {
-                close(self.stdinFd)
-            }
+            close(self.stdinFd)
             self.stdinFd = -1
         }
     }
 
     fn wait(self: &Self): Result<i32> {
         var statusBuf: [u8; 4] = [0; 4]
-        unsafe {
-            let r = waitpid(self.pid, statusBuf, 0)
-            if r < 0 {
-                return Result.Err("waitpid() failed")
-            }
-            // macOS/Linux: low byte holds signal/stop info, next byte the exit code.
-            return Result.Ok(statusBuf[1] as i32)
+        let r = waitpid(self.pid, statusBuf, 0)
+        if r < 0 {
+            return Result.Err("waitpid() failed")
         }
+        // macOS/Linux: low byte holds signal/stop info, next byte the exit code.
+        return Result.Ok(statusBuf[1] as i32)
     }
 
     fn signal(self: &Self, sig: i32): Result<i32> {
-        unsafe {
-            let r = kill(self.pid, sig)
-            if r < 0 {
-                return Result.Err("kill() failed")
-            }
-            return Result.Ok(0)
+        let r = kill(self.pid, sig)
+        if r < 0 {
+            return Result.Err("kill() failed")
         }
+        return Result.Ok(0)
     }
 
     // Close any still-open parent-side fds. Call after wait().
     fn close(self: &mut Self): void {
         self.closeStdin()
-        unsafe {
-            if self.stdoutFd >= 0 {
-                close(self.stdoutFd)
-                self.stdoutFd = -1
-            }
-            if self.stderrFd >= 0 {
-                close(self.stderrFd)
-                self.stderrFd = -1
-            }
+        if self.stdoutFd >= 0 {
+            close(self.stdoutFd)
+            self.stdoutFd = -1
+        }
+        if self.stderrFd >= 0 {
+            close(self.stderrFd)
+            self.stderrFd = -1
         }
     }
 }

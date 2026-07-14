@@ -18,11 +18,9 @@ fn regexNewFlags(pattern: string, cflags: i32): Option<Regex> {
     var r = Regex {
         _preg: [0; 128], _valid: false
     }
-    unsafe {
-        let rc = regcomp(r._preg, pattern, cflags)
-        if rc != 0 {
-            return Option.None
-        }
+    let rc = regcomp(r._preg, pattern, cflags)
+    if rc != 0 {
+        return Option.None
     }
     r._valid = true
     return Option.Some(r)
@@ -43,9 +41,7 @@ fn _readMatchI64(buf: &[u8; 160], off: i32): i64 {
 
 // Test if a string matches the pattern.
 fn regexMatch(re: &Regex, input: &string): bool {
-    unsafe {
-        return regexec(re._preg, input, 0, 0 as *u8, 0) == 0
-    }
+    return regexec(re._preg, input, 0, 0 as *u8, 0) == 0
 }
 
 // Match result: start and end byte offsets.
@@ -57,11 +53,9 @@ struct RegexMatch {
 // Find the first match in a string. Returns None if no match.
 fn regexFind(re: &Regex, input: &string): Option<RegexMatch> {
     var pmatch: [u8; 160] = [0; 160]
-    unsafe {
-        let rc = regexec(re._preg, input, 1, pmatch, 0)
-        if rc != 0 {
-            return Option.None
-        }
+    let rc = regexec(re._preg, input, 1, pmatch, 0)
+    if rc != 0 {
+        return Option.None
     }
     let so = _readMatchI64(pmatch, 0)
     let eo = _readMatchI64(pmatch, 8)
@@ -78,11 +72,9 @@ fn regexFindAll(re: &Regex, input: &string): Vec<RegexMatch> {
     var pmatch: [u8; 160] = [0; 160]
     while offset < input.len {
         let tail = input[offset..input.len]
-        unsafe {
-            let rc = regexec(re._preg, tail, 1, pmatch, 0)
-            if rc != 0 {
-                break
-            }
+        let rc = regexec(re._preg, tail, 1, pmatch, 0)
+        if rc != 0 {
+            break
         }
         let so = _readMatchI64(pmatch, 0)
         let eo = _readMatchI64(pmatch, 8)

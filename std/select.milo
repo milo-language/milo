@@ -168,10 +168,8 @@ impl Select {
     }
 
     fn destroy(self: &Self): void {
-        unsafe {
-            _selectStateFree(self._state)
-            free(self._nodes)
-        }
+        _selectStateFree(self._state)
+        free(self._nodes)
     }
 }
 

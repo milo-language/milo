@@ -42,9 +42,7 @@ struct TcpStream {
 impl Drop for TcpStream {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            unsafe {
-                close(self.fd)
-            }
+            close(self.fd)
         }
     }
 }
@@ -65,24 +63,22 @@ impl TcpStream {
         let SOCK_STREAM: i32 = 1
         let SIZEOF_SOCKADDR_IN: u32 = 16
 
-        unsafe {
-            let fd = socket(AF_INET, SOCK_STREAM, 0)
-            if fd < 0 {
-                return Result.Err(NetError.ConnectionFailed("socket() failed"))
-            }
-
-            var addr = makeSockaddr(port, ip)
-
-            if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-                close(fd)
-                return Result.Err(NetError.ConnectionFailed("connect() failed"))
-            }
-
-            return Result.Ok(TcpStream {
-                fd: fd
-            }
-            )
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 {
+            return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
+
+        var addr = makeSockaddr(port, ip)
+
+        if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            close(fd)
+            return Result.Err(NetError.ConnectionFailed("connect() failed"))
+        }
+
+        return Result.Ok(TcpStream {
+            fd: fd
+        }
+        )
     }
 
     fn send(self: &Self, data: &string): Result<i64, NetError> {
@@ -140,9 +136,7 @@ struct TcpListener {
 impl Drop for TcpListener {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            unsafe {
-                close(self.fd)
-            }
+            close(self.fd)
         }
     }
 }
@@ -156,29 +150,27 @@ impl TcpListener {
         let SOCK_STREAM: i32 = 1
         let SIZEOF_SOCKADDR_IN: u32 = 16
 
-        unsafe {
-            let fd = socket(AF_INET, SOCK_STREAM, 0)
-            if fd < 0 {
-                return Result.Err(NetError.ConnectionFailed("socket() failed"))
-            }
-
-            var one: i32 = 1
-            setsockopt(fd, solSocket(), soReuseaddr(), one, 4)
-
-            var addr = makeSockaddr(port, 0)
-            if bind(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-                close(fd)
-                return Result.Err(NetError.ConnectionFailed("bind() failed"))
-            }
-            if listen(fd, 1024) < 0 {
-                close(fd)
-                return Result.Err(NetError.ConnectionFailed("listen() failed"))
-            }
-            return Result.Ok(TcpListener {
-                fd: fd
-            }
-            )
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        if fd < 0 {
+            return Result.Err(NetError.ConnectionFailed("socket() failed"))
         }
+
+        var one: i32 = 1
+        setsockopt(fd, solSocket(), soReuseaddr(), one, 4)
+
+        var addr = makeSockaddr(port, 0)
+        if bind(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            close(fd)
+            return Result.Err(NetError.ConnectionFailed("bind() failed"))
+        }
+        if listen(fd, 1024) < 0 {
+            close(fd)
+            return Result.Err(NetError.ConnectionFailed("listen() failed"))
+        }
+        return Result.Ok(TcpListener {
+            fd: fd
+        }
+        )
     }
 
     // Accept one connection. Inside the green scheduler this yields (via the

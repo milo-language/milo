@@ -41,9 +41,7 @@ struct Pty {
 
 // Returns true if fd is connected to a terminal.
 fn fdIsTerminal(fd: i32): bool {
-    unsafe {
-        return isatty(fd) == 1
-    }
+    return isatty(fd) == 1
 }
 
 // Returns true if stdin is a terminal (process is interactive).
@@ -158,18 +156,14 @@ impl Pty {
     requires
     len > 0
     {
-        unsafe {
-            return readFd(self.masterFd, buf, len)
-        }
+        return readFd(self.masterFd, buf, len)
     }
 
     fn write(self: &Self, buf: *u8, len: i64): i64
     requires
     len > 0
     {
-        unsafe {
-            return writeFd(self.masterFd, buf, len)
-        }
+        return writeFd(self.masterFd, buf, len)
     }
 
     fn writeStr(self: &Self, s: &string): i64 {
@@ -214,16 +208,12 @@ impl Pty {
     self.childPid > 0
     {
         var status: [u8; 4] = [0; 4]
-        unsafe {
-            waitpid(self.childPid, status, 0)
-            return status[1] as i32
-        }
+        waitpid(self.childPid, status, 0)
+        return status[1] as i32
     }
 
     fn close(self: &Self): void {
-        unsafe {
-            close(self.masterFd)
-        }
+        close(self.masterFd)
     }
 }
 

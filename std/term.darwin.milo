@@ -59,37 +59,35 @@ fn restoreTerminal(state: &TermState): void {
 // read a keypress without blocking; returns KEY_* constant
 fn readKey(): i32 {
     var buf: [u8; 3] = [0; 3]
-    unsafe {
-        let n = read(0, buf, 1)
-        if n <= 0 {
-            return KEY_NONE
-        }
-        // 'q' or ctrl-c (byte 3 / ETX). ISIG is cleared in raw mode, so ctrl-c
-        // arrives as a raw byte rather than a signal — treat it as a clean quit
-        // so callers can restore the terminal on the way out.
-        if buf[0] == 113 || buf[0] == 3 {
-            return KEY_QUIT
-        }
-        if buf[0] == 32 {
-            return KEY_SPACE
-        }
-        if buf[0] == 27 {
-            let n2 = read(0, buf, 2)
-            if n2 == 2 && buf[0] == 91 {
-                if buf[1] == 65 {
-                    return KEY_UP
-                }
-                if buf[1] == 66 {
-                    return KEY_DOWN
-                }
-                if buf[1] == 68 {
-                    return KEY_LEFT
-                }
-                if buf[1] == 67 {
-                    return KEY_RIGHT
-                }
-            }
-        }
+    let n = read(0, buf, 1)
+    if n <= 0 {
         return KEY_NONE
     }
+    // 'q' or ctrl-c (byte 3 / ETX). ISIG is cleared in raw mode, so ctrl-c
+    // arrives as a raw byte rather than a signal — treat it as a clean quit
+    // so callers can restore the terminal on the way out.
+    if buf[0] == 113 || buf[0] == 3 {
+        return KEY_QUIT
+    }
+    if buf[0] == 32 {
+        return KEY_SPACE
+    }
+    if buf[0] == 27 {
+        let n2 = read(0, buf, 2)
+        if n2 == 2 && buf[0] == 91 {
+            if buf[1] == 65 {
+                return KEY_UP
+            }
+            if buf[1] == 66 {
+                return KEY_DOWN
+            }
+            if buf[1] == 68 {
+                return KEY_LEFT
+            }
+            if buf[1] == 67 {
+                return KEY_RIGHT
+            }
+        }
+    }
+    return KEY_NONE
 }

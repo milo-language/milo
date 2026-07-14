@@ -12,21 +12,17 @@ struct CStr {
 
 impl CStr {
     fn wrap(ptr: *u8): Option<CStr> {
-        unsafe {
-            if ptr as i64 == 0 as i64 {
-                return Option.None
-            }
-            return Option.Some(CStr {
-                _ptr: ptr, _len: strlen(ptr)
-            }
-            )
+        if ptr as i64 == 0 as i64 {
+            return Option.None
         }
+        return Option.Some(CStr {
+            _ptr: ptr, _len: strlen(ptr)
+        }
+        )
     }
 
     fn toString(self: &Self): string {
-        unsafe {
-            return _cstrToString(self._ptr)
-        }
+        return _cstrToString(self._ptr)
     }
 
     fn len(self: &Self): i64 {
@@ -49,8 +45,6 @@ impl CStr {
         if self._len != other._len {
             return false
         }
-        unsafe {
-            return strncmp(self._ptr, other._ptr, self._len) == 0
-        }
+        return strncmp(self._ptr, other._ptr, self._len) == 0
     }
 }

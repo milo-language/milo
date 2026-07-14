@@ -225,60 +225,50 @@ struct File {
 impl Drop for File {
     fn drop(self: &mut Self): void {
         if self.fd >= 0 {
-            unsafe {
-                close(self.fd)
-            }
+            close(self.fd)
         }
     }
 }
 
 impl File {
     fn openRead(path: &string): Result<File, IoError> {
-        unsafe {
-            let fd = open(path, 0)
-            if fd < 0 {
-                return Result.Err(_ioError(path))
-            }
-            return Result.Ok(File {
-                fd: fd
-            }
-            )
+        let fd = open(path, 0)
+        if fd < 0 {
+            return Result.Err(_ioError(path))
         }
+        return Result.Ok(File {
+            fd: fd
+        }
+        )
     }
 
     fn openWrite(path: &string): Result<File, IoError> {
-        unsafe {
-            let fd = open(path, oWriteCreateTrunc(), 420)
-            if fd < 0 {
-                return Result.Err(_ioError(path))
-            }
-            return Result.Ok(File {
-                fd: fd
-            }
-            )
+        let fd = open(path, oWriteCreateTrunc(), 420)
+        if fd < 0 {
+            return Result.Err(_ioError(path))
         }
+        return Result.Ok(File {
+            fd: fd
+        }
+        )
     }
 
     fn openAppend(path: &string): Result<File, IoError> {
-        unsafe {
-            let fd = open(path, oWriteCreateAppend(), 420)
-            if fd < 0 {
-                return Result.Err(_ioError(path))
-            }
-            return Result.Ok(File {
-                fd: fd
-            }
-            )
+        let fd = open(path, oWriteCreateAppend(), 420)
+        if fd < 0 {
+            return Result.Err(_ioError(path))
         }
+        return Result.Ok(File {
+            fd: fd
+        }
+        )
     }
 
     fn size(self: &Self): i64 {
-        unsafe {
-            let cur = lseek(self.fd, 0, 1)
-            let size = lseek(self.fd, 0, 2)
-            lseek(self.fd, cur, 0)
-            return size
-        }
+        let cur = lseek(self.fd, 0, 1)
+        let size = lseek(self.fd, 0, 2)
+        lseek(self.fd, cur, 0)
+        return size
     }
 
     fn readAll(self: &Self): Result<string, IoError> {
@@ -286,9 +276,7 @@ impl File {
         if size < 0 {
             return Result.Err(IoError.Other("failed to get file size"))
         }
-        unsafe {
-            lseek(self.fd, 0, 0)
-        }
+        lseek(self.fd, 0, 0)
         // Presize to the stat'd size (+1 for the NUL) so the push loop never reallocs;
         // push still grows safely if the file grew between size() and read().
         var result: string = String.withCapacity(size + 1)

@@ -11,9 +11,7 @@ extern fn arc4random_buf(buf: *u8, nbytes: i64): void
 
 // Random u32 in [0, 2^32).
 fn randU32(): u32 {
-    unsafe {
-        return arc4random()
-    }
+    return arc4random()
 }
 
 // Random i64 in [0, max). Panics if max <= 0.
@@ -21,9 +19,7 @@ fn randInt(max: i64): i64 {
     if max <= 0 {
         eprint("randInt: max must be > 0")
     }
-    unsafe {
-        return arc4random_uniform(max as u32) as i64
-    }
+    return arc4random_uniform(max as u32) as i64
 }
 
 // Random i64 in [min, max]. Panics if min > max.
@@ -65,7 +61,5 @@ fn shuffleI64(v: &mut Vec<i64>, n: i64): void {
 
 // Fill a buffer with random bytes.
 fn randBytes(buf: *u8, n: i64): void {
-    unsafe {
-        arc4random_buf(buf, n)
-    }
+    arc4random_buf(buf, n)
 }

@@ -1571,7 +1571,16 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
 
     match toType.clone() {
         TypeKind.TPtr(inner) => {
-            if ck.unsafeDepth == 0 {
+            // `0 as *T` is the null-pointer constant — safe (making a null pointer
+            // can't cause UB; dereferencing it still requires unsafe). Mirror the
+            // oracle (checker.ts isNullPtrConst) so std's `0 as *u8` initializers
+            // aren't spuriously unsafe-gated.
+            var isNullPtrConst = false
+            match operand {
+                Expr.IntLit(v, s) => { if v == 0 { isNullPtrConst = true } }
+                _ => {}
+            }
+            if ck.unsafeDepth == 0 && !isNullPtrConst {
                 error(ck, "cast to pointer type requires 'unsafe' block", cloneSpan(span))
             }
         }

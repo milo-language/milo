@@ -283,9 +283,7 @@ impl WsConn {
         if !self._closed {
             let _ = self._sendFrame(WS_CLOSE(), "", true)
             self._closed = true
-            unsafe {
-                close(self.fd)
-            }
+            close(self.fd)
         }
     }
 
@@ -403,66 +401,64 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let SOCK_STREAM: i32 = 1
     let SIZEOF_SOCKADDR_IN: u32 = 16
 
-    unsafe {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
-        if fd < 0 {
-            return Result.Err("socket() failed")
-        }
-
-        var addr = makeSockaddr(port, ip)
-        if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-            close(fd)
-            return Result.Err("connect() failed")
-        }
-
-        // generate a 16-byte base64 key (use a fixed key — sufficient for non-encrypted sessions)
-        let clientKey = "dGVybXBhaXItbWlsbw=="
-
-        var req: string = "GET " + path + " HTTP/1.1\r\n"
-        req = req + "Host: localhost\r\n"
-        req = req + "Upgrade: websocket\r\n"
-        req = req + "Connection: Upgrade\r\n"
-        req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
-        req = req + "Sec-WebSocket-Version: 13\r\n"
-        req = req + "\r\n"
-
-        let n = writeFd(fd, req, req.len)
-        if n < 0 {
-            close(fd)
-            return Result.Err("failed to send upgrade request")
-        }
-
-        // read response — expect "HTTP/1.1 101"
-        var buf: [u8; 4096] = [0; 4096]
-        let respLen = readFd(fd, buf, 4096)
-        if respLen <= 0 {
-            close(fd)
-            return Result.Err("no response from server")
-        }
-
-        var resp: string = ""
-        for i in 0..respLen {
-            resp.push(buf[i])
-        }
-
-        if !resp.startsWith("HTTP/1.1 101") {
-            close(fd)
-            return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
-        }
-
-        // validate Sec-WebSocket-Accept
-        let expectedAccept = _computeAcceptKey(clientKey)
-        let actualAccept = _findHeaderValue(resp, "Sec-WebSocket-Accept")
-        if actualAccept != expectedAccept {
-            close(fd)
-            return Result.Err("invalid Sec-WebSocket-Accept")
-        }
-
-        return Result.Ok(WsConn {
-            fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true
-        }
-        )
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    if fd < 0 {
+        return Result.Err("socket() failed")
     }
+
+    var addr = makeSockaddr(port, ip)
+    if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        close(fd)
+        return Result.Err("connect() failed")
+    }
+
+    // generate a 16-byte base64 key (use a fixed key — sufficient for non-encrypted sessions)
+    let clientKey = "dGVybXBhaXItbWlsbw=="
+
+    var req: string = "GET " + path + " HTTP/1.1\r\n"
+    req = req + "Host: localhost\r\n"
+    req = req + "Upgrade: websocket\r\n"
+    req = req + "Connection: Upgrade\r\n"
+    req = req + "Sec-WebSocket-Key: " + clientKey + "\r\n"
+    req = req + "Sec-WebSocket-Version: 13\r\n"
+    req = req + "\r\n"
+
+    let n = writeFd(fd, req, req.len)
+    if n < 0 {
+        close(fd)
+        return Result.Err("failed to send upgrade request")
+    }
+
+    // read response — expect "HTTP/1.1 101"
+    var buf: [u8; 4096] = [0; 4096]
+    let respLen = readFd(fd, buf, 4096)
+    if respLen <= 0 {
+        close(fd)
+        return Result.Err("no response from server")
+    }
+
+    var resp: string = ""
+    for i in 0..respLen {
+        resp.push(buf[i])
+    }
+
+    if !resp.startsWith("HTTP/1.1 101") {
+        close(fd)
+        return Result.Err("server did not accept upgrade: " + resp.substr(0, 40))
+    }
+
+    // validate Sec-WebSocket-Accept
+    let expectedAccept = _computeAcceptKey(clientKey)
+    let actualAccept = _findHeaderValue(resp, "Sec-WebSocket-Accept")
+    if actualAccept != expectedAccept {
+        close(fd)
+        return Result.Err("invalid Sec-WebSocket-Accept")
+    }
+
+    return Result.Ok(WsConn {
+        fd: fd, ssl: 0, _ctx: 0, _closed: false, _isClient: true
+    }
+    )
 }
 
 // Connect to a WebSocket server over TLS (wss://). Performs TCP connect, TLS
