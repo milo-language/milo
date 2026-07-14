@@ -1177,7 +1177,7 @@ unsafe {
     let p = malloc(64)        // extern returning pointer
     p[0] = 42 as u8           // pointer indexing
     let val = *p              // pointer deref
-    let q = (&x) as *u8      // address-of cast
+    let q = x.addrOf() as *u8 // address of a variable (see below)
 }
 ```
 
@@ -1193,6 +1193,35 @@ let ptr = msg.cstr()               // *u8, no unsafe needed
 extern fn strlen(s: *u8): i64
 let len = strlen(ptr)              // safe — *u8 arg matches *u8 param
 ```
+
+### Raw pointers: `v.ptr()`, `x.addrOf()`, and absolute addresses
+
+Raw pointers are for FFI *and* low-level work (MMIO, DMA, custom allocators,
+byte-level surgery) — not FFI only. Obtain a pointer to a value with a method, not
+the `&x` operator, which is **deprecated** (`&` is becoming a marker that appears
+only in *types*, meaning a borrowed parameter). There are two, split by what they
+point at:
+
+- **`v.ptr(): *T`** — a `Vec`'s backing **data** pointer (its first element). Safe
+  to call (like `string.cstr()`); the `Vec` stays alive in the caller's scope.
+  ```milo
+  var buf: Vec<u8> = [72, 73, 10]
+  extern fn write(fd: i32, p: *u8, n: i64): i64
+  unsafe { write(1, buf.ptr(), 3) }
+  ```
+- **`x.addrOf(): *T`** — the address of any **lvalue** (a variable, field, or
+  index) — i.e. where the value itself lives. Requires `unsafe`. `addrOf` is a
+  **reserved** method name (a user method of that name is rejected).
+  ```milo
+  extern fn write(fd: i32, p: *u8, n: i64): i64
+  var count: i64 = 5
+  unsafe { write(1, count.addrOf() as *u8, 8) }   // address of a local
+  ```
+
+`.ptr()` and `.addrOf()` differ for a `Vec`: `v.ptr()` is the address of the *data
+buffer*; `v.addrOf()` is the address of the `Vec`'s own `{ptr,len,cap}` header. A
+fixed array `[T; N]` already auto-coerces to `*T` at an FFI call — pass it bare,
+no `.ptr()` needed.
 
 ### Opaque Foreign Types
 
