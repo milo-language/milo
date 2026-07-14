@@ -1194,34 +1194,30 @@ extern fn strlen(s: *u8): i64
 let len = strlen(ptr)              // safe — *u8 arg matches *u8 param
 ```
 
-### Raw pointers: `v.ptr()`, `x.addrOf()`, and absolute addresses
+### Raw pointers: `v.ptr()` and `x.addrOf()`
 
-Raw pointers are for FFI *and* low-level work (MMIO, DMA, custom allocators,
-byte-level surgery) — not FFI only. Obtain a pointer to a value with a method, not
-the `&x` operator, which is **deprecated** (`&` is becoming a marker that appears
-only in *types*, meaning a borrowed parameter). There are two, split by what they
-point at:
+`&` is a borrow marker: it appears only in a **type** (`&T` = a borrowed
+parameter), never in an expression. To take a raw pointer, use a method, split by
+what it points at:
 
-- **`v.ptr(): *T`** — a `Vec`'s backing **data** pointer (its first element). Safe
-  to call (like `string.cstr()`); the `Vec` stays alive in the caller's scope.
+- **`v.ptr(): *T`** — a `Vec`'s backing data pointer (its first element). Safe to
+  call (like `string.cstr()`); the `Vec` stays alive in the caller.
   ```milo
   var buf: Vec<u8> = [72, 73, 10]
   extern fn write(fd: i32, p: *u8, n: i64): i64
   unsafe { write(1, buf.ptr(), 3) }
   ```
-- **`x.addrOf(): *T`** — the address of any **lvalue** (a variable, field, or
-  index) — i.e. where the value itself lives. Requires `unsafe`. `addrOf` is a
-  **reserved** method name (a user method of that name is rejected).
+- **`x.addrOf(): *T`** — the address of any lvalue (a variable, field, or index).
+  Requires `unsafe`; `addrOf` is a reserved method name.
   ```milo
   extern fn write(fd: i32, p: *u8, n: i64): i64
   var count: i64 = 5
-  unsafe { write(1, count.addrOf() as *u8, 8) }   // address of a local
+  unsafe { write(1, count.addrOf() as *u8, 8) }
   ```
 
-`.ptr()` and `.addrOf()` differ for a `Vec`: `v.ptr()` is the address of the *data
-buffer*; `v.addrOf()` is the address of the `Vec`'s own `{ptr,len,cap}` header. A
-fixed array `[T; N]` already auto-coerces to `*T` at an FFI call — pass it bare,
-no `.ptr()` needed.
+For a `Vec`, `v.ptr()` is the data buffer's address; `v.addrOf()` is the `Vec`
+header's address. A fixed array `[T; N]` coerces to `*T` at an FFI call — pass it
+bare. A pointer to an absolute address is `<int> as *T` (in `unsafe`).
 
 ### Opaque Foreign Types
 
