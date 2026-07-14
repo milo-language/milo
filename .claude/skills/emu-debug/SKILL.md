@@ -1,0 +1,127 @@
+---
+name: emu-debug
+description: Diagnose emulator bugs (black screen, garbled graphics, freezes, derails) in examples/apps/{nes,snes,genesis}. Use whenever a game renders wrong, hangs, goes black, or crashes in a Milo emulator — BEFORE reading emulator source or guessing.
+---
+
+# Emulator debugging
+
+Battle-tested triage for the Milo NES / SNES / Genesis emulators. The #1 failure
+mode of agents debugging these: staring at pixels or source code before reading
+the machine state. Registers first, pixels second, source third.
+
+## Rule 0 — reproduce headless, never through the SDL window
+
+Each system has a headless harness that runs N frames and dumps an image you can
+Read directly (convert PPM → PNG first):
+
+```bash
+ffmpeg -y -loglevel error -i out.ppm out.png   # then Read the .png
+```
+
+| System | Harness | Notes |
+|---|---|---|
+| SNES | `examples/apps/snes/dbg.milo` | **the full diagnoser** — see below |
+| NES | `examples/apps/nes/shot.milo` → `/tmp/shot <rom> <frames> <out.rgb>` | raw RGB24: `ffmpeg -f rawvideo -pixel_format rgb24 -video_size 256x240 -i out.rgb -y out.png`. No input injection — copy dbg.milo's `--press` pattern in if you need menus |
+| Genesis | `examples/apps/genesis/bootRun.milo` | traces 68k boot + dumps VDP state + PPM |
+
+Build (SNES example): `bun run src/main.ts build examples/apps/snes/dbg.milo -o /tmp/snes/dbg --debug`
+ROMs: `/tmp/snes/roms/{smw,dkc}.smc` (originals in `~/Downloads/nesgames/`; NES: `examples/apps/nes/roms/`).
+
+### SNES `dbg` flags
+
+```
+/tmp/snes/dbg <rom.sfc> [--frames N] [--state f.state] [--press btn@a-b]
+              [--shot f] [--layers] [--out prefix]
+```
+
+- `--shot f` (repeatable): composite PPM + **decoded register dump** at frame f.
+- `--press start@450-455` (repeatable): hold a button over a frame range —
+  navigates title/menus without SDL. Hold ~5 frames; game polls once per frame.
+- `--layers`: re-render each enabled layer in isolation (`_bg1..4.ppm`, `_obj.ppm`).
+- `--state <rom>.state`: resume from a save-state (F5 in the SDL emu writes it).
+
+## Triage ladder — run in this order
+
+**1. Read the register dump before looking at any pixels.**
+The SNES dump decodes INIDISP/BGMODE/TM/TS/CGADSUB/COLDATA/backdrop/BG bases/
+HDMAEN and prints explicit `<<<` callouts for the two classic traps:
+
+- `brightness=0` or `FORCE-BLANK` → the screen is black **on purpose** (the
+  game set it). The render pipeline is fine. Question becomes: why does the
+  game never turn brightness back up? (Usually: it's mid-fade via a mechanism
+  we don't emulate, or the CPU derailed — see step 4.)
+- `HDMAEN != 0` → game armed HDMA, which is **not implemented** on SNES.
+  Expect black fade-ins, missing gradient skies, static Mode 7.
+
+**2. Bisect frames.** Multiple `--shot` points; find the exact frame the image
+goes wrong. Register diffs between shots tell you what the game changed.
+
+**3. Isolate layers** (`--layers`). Garbled BG layer → tilemap/char-fetch/scroll
+path. Garbled OBJ only → OAM/sprite path (NES precedent: MMC2 sprite-fetch
+latch order). One layer black but enabled → its map/char base or palette.
+
+**4. Freeze/black with sane PPU regs → suspect CPU derail, not PPU.** Classic
+signature: derail → lands in zeroed RAM → BRK/crash-trap loop (SNES DKC frame
+761, SMW pre-fix `(dp)` opcodes). Checks: do regs still change between shots?
+Does NMITIMEN stay sane? Add a temporary PC ring-buffer print in the CPU step
+if needed. Root causes so far have been *unimplemented opcodes falling through
+to default* (desyncs PC) — grep the opcode dispatch for the bytes around the
+derail before assuming anything subtler.
+
+**5. Check the known-gaps list before "finding" a bug.** If the symptom matches
+a gap, it's not a mystery — it's a feature to implement:
+
+- **SNES:** HDMA (fades/gradients/per-line Mode 7); color-math add/half blends
+  (backdrop-add only); windows; mosaic; hires/interlace; per-scanline raster
+  effects; S-DSP audio synthesis. TM/TS compositing is approximate (TS as base
+  layer, no real blend).
+- **Genesis:** per-scanline CRAM (raster water-line effects); VDP data-port
+  reads; sprite masking/per-line limits; interlace; PAL.
+- **NES:** essentially complete for supported mappers (no MMC1).
+
+**6. Oracle it.** When steps 1-5 leave a genuine core-behavior question:
+
+- **CPU single-instruction:** Harte SingleStepTests, already wired —
+  `examples/apps/snes/harte.sh <opcode-hex …>` (65816), `harteSpc.sh` (SPC700),
+  Genesis `runHarte.milo`. Run the suspect opcodes, not the full suite.
+- **NES whole-game:** jsnes harness at `examples/apps/nes/oracle/` (see its
+  README). Diff register-write profiles or per-scanline tile/bank state
+  frame-by-frame; find the first divergence.
+- **SNES whole-game:** no oracle wired yet. Set up Mesen2's Trace Logger and
+  diff PC/A/X/Y/P around the divergent frame (this is the documented plan for
+  the DKC frame-761 derail).
+- **Reference emus can be wrong too** (jsnes had the identical MMC2 bug).
+  Ultimate ground truth: render straight from dumped VRAM/nametable + ROM CHR
+  with a throwaway script and compare against real-hardware screenshots/videos.
+- **Feature-level:** krom (PeterLemon/SNES) test ROMs — one tiny ROM per PPU
+  feature with a known-good screenshot.
+
+## Unreachable game states → save-states (SNES)
+
+Scripted input can't reach everything (SMW's intro can't be skipped). Ask the
+user to play in the SDL emu and press **F5** at the broken moment → writes
+`<rom>.state`. Then debug it headless, deterministically:
+
+```bash
+/tmp/snes/dbg roms/smw.smc --state roms/smw.smc.state --frames 1 --shot 0 --layers
+```
+
+`--frames N` replays N frames on top of the state (replay is deterministic).
+
+## Institutional memory — read before deep-diving
+
+- `examples/apps/snes/PROGRESS.md` — SNES status, milestones, reference links
+  (fullsnes, snes.nesdev.org, Harte, krom).
+- `git log --oneline -- examples/apps/<sys>/` — commit messages carry full
+  root-cause writeups of every bug fixed so far; search them for your symptom
+  (`git log --grep=latch -- examples/apps/nes/`).
+- Hard-won gotchas live in the user's memory notes (NES: IRQ level-OR not
+  latch, MMC2 fetch-order latches; Genesis: DMA-fill on arm, IO regs power-on
+  0, Z80 busreq/HALT; SNES: SPC handshake interleave, stack-wrap quirks).
+
+## When you fix it
+
+Follow `/workflow`. Additionally: put the root cause in the commit message
+(next agent greps for it); if the fix is language/compiler-level, add a fixture
+in `tests/`; regenerate `web/*-core.js` if a Genesis/NES `.milo` core changed
+(deploys from the checked-in file); update PROGRESS.md status.
