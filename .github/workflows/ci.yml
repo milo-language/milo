@@ -6,4 +6,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      # z3 lets the contract gate (tests/verify-contracts.test.ts) discharge the
+      # nonlinear/bitwise contracts the native QF_LIA prover can only mark unknown.
+      # If this step ever flakes, the gate falls back to the native solver (fewer
+      # proofs, still green) rather than failing the build.
+      - run: brew install z3
       - run: bun test

@@ -64,8 +64,19 @@ export interface FileResult {
   noReport: boolean; // prove printed no tally (compile failure etc.)
 }
 
-export async function proveFile(miloc: string, file: string): Promise<FileResult> {
-  const r = await guardedRun(miloc, ["prove", file], { timeoutMs: 120000 });
+// Solver for the gate. z3 discharges nonlinear/bitwise contracts the native
+// QF_LIA prover can only mark `unknown`; the native prover needs no external
+// dependency. Default to z3 when it's on PATH (CI installs it), else native.
+export function gateSolver(): "z3" | "native" {
+  if (process.env.MILO_VERIFY_SOLVER === "native") return "native";
+  if (process.env.MILO_VERIFY_SOLVER === "z3") return "z3";
+  const which = Bun.spawnSync(["which", "z3"]);
+  return which.exitCode === 0 ? "z3" : "native";
+}
+
+export async function proveFile(miloc: string, file: string, solver = gateSolver()): Promise<FileResult> {
+  const args = solver === "z3" ? ["prove", file, "--solver=z3"] : ["prove", file];
+  const r = await guardedRun(miloc, args, { timeoutMs: 120000 });
   const out = (r.stdout + "\n" + r.stderr).replace(/\x1b\[[0-9;]*m/g, "");
   const m = out.match(/proven:\s*(\d+)\s+failed:\s*(\d+)\s+unknown:\s*(\d+)\s+errors:\s*(\d+)/);
   const rel = file.replace(ROOT + "/", "");
@@ -87,8 +98,9 @@ export async function proveFile(miloc: string, file: string): Promise<FileResult
 export async function verifyAll(miloc: string): Promise<FileResult[]> {
   // Serial: prove is CPU-bound and guardedRun already caps memory; parallel runs
   // would fight over the same budget on CI's small runners.
+  const solver = gateSolver();
   const results: FileResult[] = [];
-  for (const f of contractFiles()) results.push(await proveFile(miloc, f));
+  for (const f of contractFiles()) results.push(await proveFile(miloc, f, solver));
   return results;
 }
 
@@ -104,6 +116,7 @@ export function report(results: FileResult[]): Gate {
   const pad = (s: string, n: number) => s.padEnd(n);
   let tP = 0, tF = 0, tU = 0, tE = 0;
   const allRefs: Refutation[] = [];
+  console.log(`contract gate — solver: ${gateSolver()}\n`);
   console.log(pad("FILE", 44) + "proven  failed  unknown  errors");
   for (const r of results) {
     tP += r.proven; tF += r.failed; tU += r.unknown; tE += r.errors;

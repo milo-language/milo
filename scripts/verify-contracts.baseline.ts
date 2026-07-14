@@ -13,4 +13,11 @@ export const BASELINE: Record<string, string> = {
     "cannot model yet (roadmap: struct invariants). `live` never actually goes " +
     "negative — free() generation-checks the handle and returns before the " +
     "decrement, so no valid double-free reaches `live = live - 1`.",
+
+  "examples/apps/genesis/m68k.milo::vramPut":
+    "ensures (idx & VRAM_MASK) < m.vram.len holds because the body's " +
+    "`while m.vram.len <= i { push }` loop grows the buffer past the masked " +
+    "index — but the symbolic executor skips while loops, so it sees vram.len " +
+    "as unconstrained and z3 refutes with len=0. True by construction; needs " +
+    "loop-invariant reasoning the executor doesn't do yet.",
 };

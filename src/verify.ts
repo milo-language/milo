@@ -14,6 +14,64 @@ export interface VerifyResult {
   stats: { functions: number; contracts: number; loops: number };
 }
 
+// Module-level immutable constants (top-level `let`), resolved once per run so
+// contract expressions that reference them (e.g. `idx & VRAM_MASK`) translate to
+// concrete SMT literals instead of leaking an undeclared symbol to the solver.
+let GLOBAL_CONST_SMT = new Map<string, string>(); // name -> SMT literal string
+let GLOBAL_CONST_NUM = new Map<string, bigint>();  // name -> numeric value
+
+// Fold a constant expression (int literals, const globals, const arithmetic) to
+// a number, or null if it isn't statically constant. Used to recognise shift
+// amounts and power-of-two masks in the bitwise lowering below.
+function resolveConstNum(expr: Expr): bigint | null {
+  if (!expr) return null;
+  if (expr.kind === "IntLit") return BigInt(expr.value);
+  if (expr.kind === "Ident") return GLOBAL_CONST_NUM.get(expr.name) ?? null;
+  if (expr.kind === "UnaryOp" && expr.op === "-") {
+    const v = resolveConstNum(expr.operand); return v === null ? null : -v;
+  }
+  if (expr.kind === "CastExpr") return resolveConstNum(expr.operand);
+  if (expr.kind === "BinOp") {
+    const l = resolveConstNum(expr.left), r = resolveConstNum(expr.right);
+    if (l === null || r === null) return null;
+    switch (expr.op) {
+      case "+": return l + r; case "-": return l - r; case "*": return l * r;
+      case "<<": return l << r; case ">>": return l >> r;
+      case "&": return l & r; case "|": return l | r; case "^": return l ^ r;
+      case "/": return r === 0n ? null : l / r; case "%": return r === 0n ? null : l % r;
+    }
+  }
+  return null;
+}
+
+function numToSmt(n: bigint): string {
+  return n < 0n ? `(- ${-n})` : n.toString();
+}
+
+// An integer cast: unsigned narrowing is exact modular truncation; widening and
+// i64/u64 are value-preserving in our unbounded-Int model, so identity.
+function castToSmt(operandStr: string, targetName: string): string {
+  switch (targetName) {
+    case "u8": return `(mod ${operandStr} 256)`;
+    case "u16": return `(mod ${operandStr} 65536)`;
+    case "u32": return `(mod ${operandStr} 4294967296)`;
+    default: return operandStr;
+  }
+}
+
+// Bitwise/shift with a constant operand lowered to linear/nonlinear integer
+// arithmetic: `x << k` = x*2^k, `x >> k` = x div 2^k, and `x & (2^k-1)` = x mod
+// 2^k (exact for the unsigned masking idiom). Returns null when the pattern
+// isn't a constant shift/pow2-mask, so the caller falls back to the generic op.
+function bitOpToSmt(op: string, leftStr: string, rightExpr: Expr): string | null {
+  const c = resolveConstNum(rightExpr);
+  if (c === null || c < 0n) return null;
+  if (op === "<<") return `(* ${leftStr} ${numToSmt(1n << c)})`;
+  if (op === ">>") return `(div ${leftStr} ${numToSmt(1n << c)})`;
+  if (op === "&" && (c & (c + 1n)) === 0n) return `(mod ${leftStr} ${numToSmt(c + 1n)})`;
+  return null;
+}
+
 // Symbolic path through a function body
 interface SymPath {
   conditions: string[];  // path conditions as SMT expressions
@@ -225,7 +283,8 @@ function exprToSmtWithEnv(expr: Expr, env: Map<string, string>): string {
   if (expr.kind === "Ident") {
     const mapped = env.get(expr.name);
     if (mapped) return mapped;
-    return expr.name === "result" ? "result" : expr.name;
+    if (expr.name === "result") return "result";
+    return GLOBAL_CONST_SMT.get(expr.name) ?? expr.name;
   }
   if (expr.kind === "FieldAccess") {
     const flat = flattenFieldAccess(expr);
@@ -237,8 +296,13 @@ function exprToSmtWithEnv(expr: Expr, env: Map<string, string>): string {
   }
   if (expr.kind === "BinOp") {
     const left = exprToSmtWithEnv(expr.left, env);
+    const bit = bitOpToSmt(expr.op, left, expr.right);
+    if (bit) return bit;
     const right = exprToSmtWithEnv(expr.right, env);
     return `(${binOpToSmt(expr.op)} ${left} ${right})`;
+  }
+  if (expr.kind === "CastExpr") {
+    return castToSmt(exprToSmtWithEnv(expr.operand, env), expr.targetType?.name ?? "i64");
   }
   if (expr.kind === "UnaryOp") {
     if (expr.op === "!") return `(not ${exprToSmtWithEnv(expr.operand, env)})`;
@@ -254,6 +318,21 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
   const conditions: VerificationCondition[] = [];
   let contractCount = 0;
   let loopCount = 0;
+
+  // Resolve immutable top-level constants once, in source order (a global may
+  // reference an earlier one), so contracts can inline them as SMT literals.
+  GLOBAL_CONST_SMT = new Map();
+  GLOBAL_CONST_NUM = new Map();
+  for (const g of program.globals ?? []) {
+    if (g.mutable) continue;
+    const num = resolveConstNum(g.value);
+    if (num !== null) {
+      GLOBAL_CONST_NUM.set(g.name, num);
+      GLOBAL_CONST_SMT.set(g.name, numToSmt(num));
+    } else {
+      GLOBAL_CONST_SMT.set(g.name, exprToSmt(g.value));
+    }
+  }
 
   for (const fn of program.functions) {
     if (opts?.onlyFile && fn.sourceFile && fn.sourceFile !== opts.onlyFile) continue;
@@ -302,7 +381,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
             description: `postcondition of ${fn.name}: ${postSmt}`,
             smtlib: [
               `; Postcondition proof for ${fn.name}`,
-              `(set-logic QF_LIA)`,
+              `(set-logic ALL)`,
               allDecls,
               `(declare-const result ${miloTypeToSmt(fn.retType.name)})`,
               preAssumptions,
@@ -336,7 +415,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
             description: `postcondition of ${fn.name}: ${postSmt}`,
             smtlib: [
               `; Postcondition proof for ${fn.name} (void, struct state)`,
-              `(set-logic QF_LIA)`,
+              `(set-logic ALL)`,
               allDecls,
               preAssumptions,
               `(assert ${allPaths})`,
@@ -352,7 +431,7 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
             description: `postcondition of ${fn.name}: ${postSmt}`,
             smtlib: [
               `; Postcondition check for ${fn.name} (no body analysis)`,
-              `(set-logic QF_LIA)`,
+              `(set-logic ALL)`,
               allDecls,
               `(declare-const result ${miloTypeToSmt(fn.retType.name)})`,
               preAssumptions,
@@ -389,7 +468,7 @@ function collectLoopInvariants(fnName: string, stmts: Stmt[], conditions: Verifi
           description: `loop invariant in ${fnName}: ${smt}`,
           smtlib: [
             `; Loop invariant check in ${fnName}`,
-            `(set-logic QF_LIA)`,
+            `(set-logic ALL)`,
             `(assert (not ${smt}))`,
             `(check-sat)`,
           ].join("\n"),
@@ -421,9 +500,15 @@ function exprToSmt(expr: Expr): string {
   switch (expr.kind) {
     case "IntLit": return expr.value.toString();
     case "BoolLit": return expr.value ? "true" : "false";
-    case "Ident": return expr.name === "result" ? "result" : expr.name;
+    case "Ident":
+      if (expr.name === "result") return "result";
+      return GLOBAL_CONST_SMT.get(expr.name) ?? expr.name;
+    case "CastExpr":
+      return castToSmt(exprToSmt(expr.operand), expr.targetType?.name ?? "i64");
     case "BinOp": {
       const left = exprToSmt(expr.left);
+      const bit = bitOpToSmt(expr.op, left, expr.right);
+      if (bit) return bit;
       const right = exprToSmt(expr.right);
       const op = binOpToSmt(expr.op);
       return `(${op} ${left} ${right})`;

@@ -420,7 +420,7 @@ fn mmc3UpdateChr(bus: &mut Bus): void {
 // fixed region assumes, so a malformed cart can never index past the buffer.
 // `bank` may be any i64; `off` must be an intra-bank byte (0..bankSize).
 fn prgOffset(prg: &Vec<u8>, bankSize: i64, bank: i64, off: i64): i64
-requires prg.len > 0 && bankSize > 0 && off >= 0 && off < bankSize
+requires bankSize > 0 && bankSize <= prg.len && off >= 0 && off < bankSize
 ensures result >= 0 && result < prg.len
 {
     let n = prg.len / bankSize
