@@ -21,6 +21,9 @@ from "std/fs" import {
 from "./ppu" import {
     renderFrame
 }
+from "./spc" import {
+    dspGenerate
+}
 from "./cartridge" import {
     loadCartridge
 }
@@ -54,6 +57,32 @@ fn dumpPpm(fb: &Vec<i64>, path: &string): void {
         }
         Result.Err(e) => {
         }
+    }
+}
+
+// Synthesize one frame of audio (535 stereo samples @ ~32 kHz) from the S-DSP and
+// queue it to SDL as interleaved S16LSB L,R.
+fn queueAudio(m: &mut Mem, dev: u32): void {
+    var samp: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < 535 * 2 {
+        samp.push(0)
+        i = i + 1
+    }
+    dspGenerate(m.apuMem, samp, 535)
+    var buf: Vec<u8> = Vec.new()
+    i = 0
+    while i < 535 {
+        let l = samp[i * 2]
+        let r = samp[i * 2 + 1]
+        buf.push((l & 0xFF) as u8)
+        buf.push(((l >> 8) & 0xFF) as u8)
+        buf.push((r & 0xFF) as u8)
+        buf.push(((r >> 8) & 0xFF) as u8)
+        i = i + 1
+    }
+    unsafe {
+        SDL_QueueAudio(dev, buf.ptr() as *u8, buf.len as u32)
     }
 }
 
@@ -95,9 +124,18 @@ extern fn SDL_Delay(ms: u32): void
 
 extern fn SDL_GetTicks(): u32
 
+extern fn SDL_OpenAudioDevice(device: *u8, iscapture: i32, desired: *u8, obtained: *u8, allowed: i32): u32
+
+extern fn SDL_QueueAudio(dev: u32, data: *u8, len: u32): i32
+
+extern fn SDL_PauseAudioDevice(dev: u32, pause_on: i32): void
+
+extern fn SDL_GetQueuedAudioSize(dev: u32): u32
+
 extern fn SDL_Quit(): void
 
 let SDL_INIT_VIDEO: u32 = 0x20
+let SDL_INIT_AUDIO: u32 = 0x10
 let SDL_INIT_GAMECONTROLLER: u32 = 0x2000
 // SDL_GameControllerButton ids.
 let PAD_A: i32 = 0
@@ -307,13 +345,28 @@ fn main(): i32 {
         }
     }
 
-    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0 {
+    if SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMECONTROLLER) != 0 {
         print("SDL_Init failed")
         return 1
     }
     unsafe {
         var pad: *u8 = openPadN(0) // player 1
         var pad2: *u8 = openPadN(1) // player 2
+        // Audio: 32000 Hz, S16LSB, stereo, 1024-sample buffer (SDL_AudioSpec is 32
+        // bytes: freq@0, format@4, channels@6, samples@8). Matches the DSP's rate.
+        var want: [u8; 32] = [0; 32]
+        want[0] = 0x00
+        want[1] = 0x7D // 32000 = 0x7D00
+        want[4] = 0x10
+        want[5] = 0x80 // AUDIO_S16LSB
+        want[6] = 2 // stereo
+        want[8] = 0x00
+        want[9] = 0x04 // 1024 samples
+        var got: [u8; 32] = [0; 32]
+        let audioDev = SDL_OpenAudioDevice(0 as *u8, 0, want, got, 0)
+        if audioDev != 0 {
+            SDL_PauseAudioDevice(audioDev, 0)
+        }
         // Window title = the game's own name (from the cart header), falling back
         // to "Milo SNES". Trailing NUL so the string is a valid C string for SDL.
         var title = "Milo SNES"
@@ -362,6 +415,9 @@ fn main(): i32 {
             let frameStart = SDL_GetTicks() as i64
             if focused {
                 stepFrame(cpu, m)
+                if audioDev != 0 {
+                    queueAudio(m, audioDev)
+                }
             }
             renderFrame(m.ppu, fb)
 
@@ -603,12 +659,19 @@ fn main(): i32 {
             } else {
                 comboFrames = 0
             }
-            // Pace to a real 60.0 fps. The old code slept a FIXED 16ms *on top of*
-            // the per-frame work, so every frame took work+16ms -> ~55 fps (visibly
-            // slow, worse in sprite-heavy scenes). Instead sleep only the remainder
-            // to hit a 16.667ms target; the 50/3-ms accumulator keeps the average
-            // exact (targets alternate 16/17/17...). Idle slower when backgrounded.
-            if focused {
+            // Pacing. With audio, the SDL queue is the clock: drain to ~3 frames of
+            // latency (535 samples * 4 bytes * 3) so playback rate sets the speed and
+            // A/V stay synced. No audio device -> fall back to delta-timing at 60fps
+            // (sleep only the remainder to a 16.667ms target; 50/3-ms accumulator
+            // keeps the average exact). Old code slept a fixed 16ms ON TOP of the
+            // work -> ~55fps, visibly slow.
+            if !focused {
+                SDL_Delay(50)
+            } else if audioDev != 0 {
+                while SDL_GetQueuedAudioSize(audioDev) > (535 * 4 * 3) as u32 {
+                    SDL_Delay(1)
+                }
+            } else {
                 fpsCarry = fpsCarry + 50
                 let target = fpsCarry / 3
                 fpsCarry = fpsCarry - target * 3
@@ -616,8 +679,6 @@ fn main(): i32 {
                 if elapsed < target {
                     SDL_Delay((target - elapsed) as u32)
                 }
-            } else {
-                SDL_Delay(50)
             }
         }
     }

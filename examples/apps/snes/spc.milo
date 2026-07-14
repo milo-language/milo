@@ -47,11 +47,21 @@ struct SpcMem {
     tCount: Vec<i64> // [3] counts prescale ticks toward target
     tOut: Vec<i64> // [3] 4-bit visible counter
 
-    // S-DSP register file ($F2 = index, $F3 = data). No audio synthesis yet —
-    // just a readback-consistent 128-register store so drivers that verify DSP
-    // writes during init progress. ENVX/OUTX ($x8/$x9) return 0.
+    // S-DSP register file ($F2 = index, $F3 = data): 128 regs driving 8 voices +
+    // master/echo. dspGenerate synthesizes audio from these + BRR samples in `ram`.
     dspAddr: i64
     dsp: Vec<u8> // [128]
+
+    // Per-voice synthesis state (8 voices). BRR samples are 9-byte blocks in `ram`
+    // (16 samples each); a voice steps through them at its pitch rate.
+    vBrrPtr: Vec<i64> // current 9-byte BRR block address in SPC RAM
+    vInterp: Vec<i64> // 15.12 fixed position within the block (int part 0..15 = sample)
+    vBuf: Vec<i64> // [8*16] decoded samples for each voice's current block
+    vPrev0: Vec<i64> // BRR filter history (sample n-1)
+    vPrev1: Vec<i64> // BRR filter history (sample n-2)
+    vEnv: Vec<i64> // envelope level 0..0x7FF
+    vPhase: Vec<i64> // 0=off 1=attack 2=decay 3=sustain 4=release
+    vKonPrev: i64 // last KON ($4C) value, to detect key-on edges
 }
 
 fn spcMemNew(): SpcMem {
@@ -61,7 +71,10 @@ fn spcMemNew(): SpcMem {
         inPort: Vec.new(), outPort: Vec.new(),
         tEnable: 0, tTarget: spcZerosI64(3), tDiv: spcZerosI64(3),
         tCount: spcZerosI64(3), tOut: spcZerosI64(3),
-        dspAddr: 0, dsp: Vec.new()
+        dspAddr: 0, dsp: Vec.new(),
+        vBrrPtr: Vec.new(), vInterp: Vec.new(), vBuf: Vec.new(),
+        vPrev0: Vec.new(), vPrev1: Vec.new(), vEnv: Vec.new(), vPhase: Vec.new(),
+        vKonPrev: 0
     }
 }
 
@@ -105,7 +118,183 @@ fn spcMemReal(): SpcMem {
         inPort: spcZerosI64(4), outPort: spcZerosI64(4),
         tEnable: 0, tTarget: spcZerosI64(3), tDiv: spcZerosI64(3),
         tCount: spcZerosI64(3), tOut: spcZerosI64(3),
-        dspAddr: 0, dsp: spcZeros(128)
+        dspAddr: 0, dsp: spcZeros(128),
+        vBrrPtr: spcZerosI64(8), vInterp: spcZerosI64(8), vBuf: spcZerosI64(128),
+        vPrev0: spcZerosI64(8), vPrev1: spcZerosI64(8), vEnv: spcZerosI64(8),
+        vPhase: spcZerosI64(8), vKonPrev: 0
+    }
+}
+
+// --- S-DSP audio synthesis --------------------------------------------------
+// Generates 32 kHz stereo from the 8 voices: BRR samples in SPC RAM, stepped at
+// each voice's pitch, scaled by a (simplified) envelope + per-voice + master
+// volume. Skips gaussian interpolation and echo for now (dry but audible).
+
+fn s8(v: i64): i64 {
+    let x = v & 0xFF
+    if x >= 0x80 {
+        return x - 0x100
+    }
+    return x
+}
+
+fn dspClamp16(v: i64): i64 {
+    if v > 32767 {
+        return 32767
+    }
+    if v < -32768 {
+        return -32768
+    }
+    return v
+}
+
+// Decode the 9-byte BRR block at m.vBrrPtr[v] into vBuf[v*16..+16], carrying the
+// two-sample filter history. Returns the block header byte (bit0 end, bit1 loop).
+fn dspDecodeBlock(m: &mut SpcMem, v: i64): i64 {
+    let base = m.vBrrPtr[v] & 0xFFFF
+    let hdr = m.ram[base] as i64
+    let range = (hdr >> 4) & 0x0F
+    let filter = (hdr >> 2) & 0x03
+    var p0 = m.vPrev0[v]
+    var p1 = m.vPrev1[v]
+    var i: i64 = 0
+    while i < 16 {
+        let byte = m.ram[(base + 1 + (i >> 1)) & 0xFFFF] as i64
+        var nib = if (i & 1) == 0 {
+            (byte >> 4) & 0x0F
+        } else {
+            byte & 0x0F
+        }
+        if nib >= 8 {
+            nib = nib - 16
+        }
+        var s: i64 = 0
+        if range <= 12 {
+            s = (nib << range) >> 1
+        } else {
+            s = (nib >> 3) << 11
+        }
+        // BRR filters (feedback on the previous two decoded samples).
+        if filter == 1 {
+            s = s + p0 + ((-p0) >> 4)
+        } else if filter == 2 {
+            s = s + p0 * 2 + ((-p0 * 3) >> 5) - p1 + (p1 >> 4)
+        } else if filter == 3 {
+            s = s + p0 * 2 + ((-p0 * 13) >> 6) - p1 + ((p1 * 3) >> 4)
+        }
+        s = dspClamp16(s)
+        m.vBuf[v * 16 + i] = s
+        p1 = p0
+        p0 = s
+        i = i + 1
+    }
+    m.vPrev0[v] = p0
+    m.vPrev1[v] = p1
+    return hdr
+}
+
+// Sample directory entry for source SRCN: 4 bytes at (DIR<<8)+SRCN*4 = start(2)+loop(2).
+fn dspSampleStart(m: &SpcMem, srcn: i64): i64 {
+    let dir = (m.dsp[0x5D] as i64) << 8
+    let e = (dir + srcn * 4) & 0xFFFF
+    return (m.ram[e] as i64) | ((m.ram[(e + 1) & 0xFFFF] as i64) << 8)
+}
+
+fn dspSampleLoop(m: &SpcMem, srcn: i64): i64 {
+    let dir = (m.dsp[0x5D] as i64) << 8
+    let e = (dir + srcn * 4 + 2) & 0xFFFF
+    return (m.ram[e] as i64) | ((m.ram[(e + 1) & 0xFFFF] as i64) << 8)
+}
+
+fn dspKeyOn(m: &mut SpcMem, v: i64): void {
+    let srcn = m.dsp[v * 16 + 4] as i64
+    m.vBrrPtr[v] = dspSampleStart(m, srcn)
+    m.vInterp[v] = 0
+    m.vPrev0[v] = 0
+    m.vPrev1[v] = 0
+    m.vEnv[v] = 0
+    m.vPhase[v] = 1 // attack
+    dspDecodeBlock(m, v)
+}
+
+// Generate `n` stereo samples (interleaved L,R) into `out` (cleared+filled).
+fn dspGenerate(m: &mut SpcMem, out: &mut Vec<i64>, n: i64): void {
+    // Global mute / reset (FLG bit6).
+    let muted = (m.dsp[0x6C] as i64 & 0x40) != 0
+    let konNow = m.dsp[0x4C] as i64
+    let kofNow = m.dsp[0x5C] as i64
+    let newKon = konNow & (~m.vKonPrev)
+    var vk: i64 = 0
+    while vk < 8 {
+        if (newKon & (1 << vk)) != 0 {
+            dspKeyOn(m, vk)
+        }
+        if (kofNow & (1 << vk)) != 0 && m.vPhase[vk] != 0 {
+            m.vPhase[vk] = 4 // release
+        }
+        vk = vk + 1
+    }
+    m.vKonPrev = konNow
+
+    let mvolL = s8(m.dsp[0x0C] as i64)
+    let mvolR = s8(m.dsp[0x1C] as i64)
+    var i: i64 = 0
+    while i < n {
+        var accL: i64 = 0
+        var accR: i64 = 0
+        var v: i64 = 0
+        while v < 8 {
+            if m.vPhase[v] != 0 {
+                // Envelope (simplified ADSR: fast attack, hold, ramp-down release).
+                if m.vPhase[v] == 1 {
+                    m.vEnv[v] = m.vEnv[v] + 0x40
+                    if m.vEnv[v] >= 0x7FF {
+                        m.vEnv[v] = 0x7FF
+                        m.vPhase[v] = 3 // sustain
+                    }
+                } else if m.vPhase[v] == 4 {
+                    m.vEnv[v] = m.vEnv[v] - 0x20
+                    if m.vEnv[v] <= 0 {
+                        m.vEnv[v] = 0
+                        m.vPhase[v] = 0
+                    }
+                }
+                let idx = (m.vInterp[v] >> 12) & 0x0F
+                let raw = m.vBuf[v * 16 + idx]
+                let s = (raw * m.vEnv[v]) >> 11
+                accL = accL + ((s * s8(m.dsp[v * 16 + 0] as i64)) >> 7)
+                accR = accR + ((s * s8(m.dsp[v * 16 + 1] as i64)) >> 7)
+                // Advance the sample position by this voice's 14-bit pitch.
+                let pitch = ((m.dsp[v * 16 + 2] as i64) | ((m.dsp[v * 16 + 3] as i64) << 8)) & 0x3FFF
+                m.vInterp[v] = m.vInterp[v] + pitch
+                while (m.vInterp[v] >> 12) >= 16 {
+                    m.vInterp[v] = m.vInterp[v] - (16 << 12)
+                    let hdr = m.ram[m.vBrrPtr[v] & 0xFFFF] as i64
+                    if (hdr & 0x01) != 0 { // end block
+                        if (hdr & 0x02) != 0 { // loop
+                            m.vBrrPtr[v] = dspSampleLoop(m, m.dsp[v * 16 + 4] as i64)
+                        } else {
+                            m.vPhase[v] = 0 // one-shot done
+                        }
+                    } else {
+                        m.vBrrPtr[v] = (m.vBrrPtr[v] + 9) & 0xFFFF
+                    }
+                    if m.vPhase[v] != 0 {
+                        dspDecodeBlock(m, v)
+                    }
+                }
+            }
+            v = v + 1
+        }
+        var oL = (accL * mvolL) >> 7
+        var oR = (accR * mvolR) >> 7
+        if muted {
+            oL = 0
+            oR = 0
+        }
+        out[i * 2] = dspClamp16(oL)
+        out[i * 2 + 1] = dspClamp16(oR)
+        i = i + 1
     }
 }
 
