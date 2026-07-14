@@ -28,6 +28,13 @@ let SR_T: i64 = 0x8000
 // 24-bit external address space (A1..A23; A0 is internal to the word bus).
 let ADDR_MASK: i64 = 0x00FFFFFF
 
+// Genesis VRAM is 64 KiB. The VDP address counter is 17 bits (vdpAddr is kept
+// & 0x1FFFF) but its top bit is ignored for VRAM, so every VRAM access wraps
+// here. Keeping the mask in one place stops the data-port path and the
+// fill/copy paths from disagreeing on the bound (which grew a phantom 128 KiB
+// buffer and left the two paths indexing different ranges of the same Vec).
+let VRAM_MASK: i64 = 0xFFFF
+
 // Flat 16 MB memory with a touched-address log so the Harte harness can reset
 // only the bytes a case dirtied instead of reallocating 16 MB per case.
 // In `genesis` mode the device regions ($A0xxxx I/O, $C0xxxx VDP) dispatch to
@@ -398,6 +405,20 @@ fn vdpDma(m: &mut Mem) {
     m.vdpRegs[20] = 0
 }
 
+// Single owned VRAM byte write. Masks the (up-to-17-bit) address to the 64 KiB
+// hardware bound so fill, copy, and data-port writes all agree on the range,
+// then grows the lazy backing buffer to cover that bounded index. The ensures
+// makes the "index stays inside VRAM" invariant checkable in debug builds.
+fn vramPut(m: &mut Mem, idx: i64, byte: u8): void
+ensures(idx & VRAM_MASK) < m.vram.len
+{
+    let i = idx & VRAM_MASK
+    while m.vram.len <= i {
+        m.vram.push(0)
+    }
+    m.vram[i] = byte
+}
+
 // VRAM->VRAM copy DMA (mode 3): copy `len` bytes from the source (regs 21/22) to
 // the current VRAM address, byte-granular.
 fn vdpDmaCopy(m: &mut Mem) {
@@ -409,15 +430,12 @@ fn vdpDmaCopy(m: &mut Mem) {
     var dst = m.vdpAddr
     var i: i64 = 0
     while i < len {
-        while m.vram.len <= (dst & 0xFFFF) {
-            m.vram.push(0)
-        }
-        let sb = if (src & 0xFFFF) < m.vram.len {
-            m.vram[src & 0xFFFF]
+        let sb = if (src & VRAM_MASK) < m.vram.len {
+            m.vram[src & VRAM_MASK]
         } else {
             0
         }
-        m.vram[dst & 0xFFFF] = sb
+        vramPut(m, dst, sb)
         src = (src + 1) & 0xFFFF
         dst = (dst + m.vdpRegs[15]) & 0xFFFF
         i = i + 1
@@ -435,11 +453,7 @@ fn doFill(m: &mut Mem, fillByteIn: i64) {
     var da = m.fillAddr
     var i: i64 = 0
     while i < len {
-        let idx = da & 0xFFFF
-        while m.vram.len <= idx {
-            m.vram.push(0)
-        }
-        m.vram[idx] = fillByte
+        vramPut(m, da, fillByte)
         da = (da + inc) & 0x1FFFF
         i = i + 1
     }
@@ -455,18 +469,15 @@ fn vdpDataWrite(m: &mut Mem, val: i64) {
     if target == 1 {
         // VRAM word write. The two bytes are swapped when the address is odd
         // (VDP quirk); games rely on it for some uploads.
-        while m.vram.len <= (a | 1) {
-            m.vram.push(0)
-        }
-        let base = a & 0xFFFE
+        let base = (a & VRAM_MASK) & 0xFFFE
         let hi = ((val >> 8) & 0xFF) as u8
         let lo = (val & 0xFF) as u8
         if (a & 1) == 0 {
-            m.vram[base] = hi
-            m.vram[base + 1] = lo
+            vramPut(m, base, hi)
+            vramPut(m, base + 1, lo)
         } else {
-            m.vram[base] = lo
-            m.vram[base + 1] = hi
+            vramPut(m, base, lo)
+            vramPut(m, base + 1, hi)
         }
     } else if target == 3 {
         let idx = (a >> 1) & 0x3F
