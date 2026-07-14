@@ -201,14 +201,6 @@ fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
             if a < 0xA000 {
                 return
             }
-            // TEMP DEBUG: log mapper writes during one frame (remove)
-            if bus.ppu.frame == 2799 && a >= 0xB000 {
-                print("M a12/sl/dot/val:")
-                print(a >> 12)
-                print(bus.ppu.scanline)
-                print(bus.ppu.dot)
-                print(val as i64)
-            }
             if a < 0xB000 {
                 bus.mmc2Prg = (val as i64) & 0x0F // PRG select
             } else if a < 0xC000 {

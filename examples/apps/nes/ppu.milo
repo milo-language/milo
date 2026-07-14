@@ -154,6 +154,40 @@ fn mmc2Latch(ppu: &mut Ppu, a: i64): void {
     }
 }
 
+// The PPU fetches 34 background tiles per scanline; tiles 33-34 land past the
+// visible window and their pattern data is discarded, but the fetches still
+// happen — and MMC2 games rely on the latch side-effect. Punch-Out parks a
+// 32-tile band of $FD trigger tiles just right of the visible window so these
+// unused fetches re-arm the FD background bank on every HUD/crowd line (the
+// visible window itself has no trigger tiles there). Without this the HUD
+// renders from the FE bank left over by the ring-floor rows: garbled tiles.
+fn mmc2ExtraBgFetches(ppu: &mut Ppu, scrollX: i64, scrollY: i64): void {
+    let bgTable: i64 = if (ppu.ctrl & 0x10) != 0 {
+        0x1000
+    } else {
+        0
+    }
+    var wy = scrollY
+    while wy >= 480 {
+        wy = wy - 480
+    }
+    let ntY = wy / 240
+    let ly = wy - ntY * 240
+    let row = ly / 8
+    let fy = ly & 7
+    // tile n (1-based) covers column (scrollX>>3)+n-1; emulate n = 33 and 34
+    var k: i64 = 32
+    while k < 34 {
+        let wx = ((scrollX & 0x1F8) + k * 8) & 0x1FF
+        let ntX = wx / 256
+        let ntBase = 0x2000 + (ntY * 2 + ntX) * 0x400
+        let col = (wx & 0xFF) / 8
+        let tile = ppuMemRead(ppu, (ntBase + row * 32 + col) as u16) as i64
+        mmc2Latch(ppu, bgTable + tile * 16 + fy + 8) // high-plane address triggers
+        k = k + 1
+    }
+}
+
 // --- nametable mirroring: map a $2000-$2FFF address into the 2 KiB VRAM ---
 fn mirrorNT(ppu: &Ppu, addr: i64): i64 {
     let a = addr & 0x0FFF // offset within nametable region
@@ -361,6 +395,15 @@ fn ppuStep(ppu: &mut Ppu): void {
         let vert = (ppu.t as i64) & 0x7BE0
         ppu.v = (keepHoriz | vert) as u16
     }
+    // Pre-render line does the same 34-tile fetch pattern as a visible line, so
+    // its unused tile-33/34 fetches set the MMC2 latch that line 0 renders with
+    // (Punch-Out's HUD needs the FD bank armed before the first visible line).
+    if ppu.scanline == 261 && ppu.dot == 304 && rendering && ppu.mmc2 && (ppu.mask & 0x08) != 0 {
+        let t = ppu.t as i64
+        let sx = ((t >> 10) & 1) * 256 + (t & 0x1F) * 8 + (ppu.fineX as i64)
+        let sy = ((t >> 11) & 1) * 240 + ((t >> 5) & 0x1F) * 8 + ((t >> 12) & 7)
+        mmc2ExtraBgFetches(ppu, sx, sy)
+    }
     if ppu.scanline == 241 && ppu.dot == 1 {
         ppu.status = ppu.status | 0x80 // set vblank
         if (ppu.ctrl & 0x80) != 0 {
@@ -447,6 +490,9 @@ fn renderScanline(ppu: &mut Ppu, sl: i64): void {
             }
             ppu.fb[sl * 256 + x] = nesColor(colorIdx)
             x = x + 1
+        }
+        if ppu.mmc2 {
+            mmc2ExtraBgFetches(ppu, ppu.scrollX, ppu.scrollY)
         }
     } else {
         var x: i64 = 0

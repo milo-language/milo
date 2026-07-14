@@ -799,28 +799,27 @@ function busRead(bus, addr) {
     if ((bus.mapper == 9)) {
       const n8k = Math.trunc(Math.trunc(bus.prg.length / 8192));
       if ((a < 40960)) {
-        return bus.prg[Math.trunc((Math.trunc((bus.mmc2Prg * 8192)) + Math.trunc((a - 32768))))];
+        return bus.prg[prgOffset(bus.prg, 8192, bus.mmc2Prg, Math.trunc((a - 32768)))];
       }
       if ((a < 49152)) {
-        return bus.prg[Math.trunc((Math.trunc((Math.trunc((n8k - 3)) * 8192)) + Math.trunc((a - 40960))))];
+        return bus.prg[prgOffset(bus.prg, 8192, Math.trunc((n8k - 3)), Math.trunc((a - 40960)))];
       }
       if ((a < 57344)) {
-        return bus.prg[Math.trunc((Math.trunc((Math.trunc((n8k - 2)) * 8192)) + Math.trunc((a - 49152))))];
+        return bus.prg[prgOffset(bus.prg, 8192, Math.trunc((n8k - 2)), Math.trunc((a - 49152)))];
       }
-      return bus.prg[Math.trunc((Math.trunc((Math.trunc((n8k - 1)) * 8192)) + Math.trunc((a - 57344))))];
+      return bus.prg[prgOffset(bus.prg, 8192, Math.trunc((n8k - 1)), Math.trunc((a - 57344)))];
     }
     if ((bus.mapper == 227)) {
-      const n16 = Math.trunc(Math.trunc(bus.prg.length / 16384));
       if ((a < 49152)) {
-        return bus.prg[Math.trunc((Math.trunc(((bus.m227Lo % n16) * 16384)) + Math.trunc((a - 32768))))];
+        return bus.prg[prgOffset(bus.prg, 16384, bus.m227Lo, Math.trunc((a - 32768)))];
       }
-      return bus.prg[Math.trunc((Math.trunc(((bus.m227Hi % n16) * 16384)) + Math.trunc((a - 49152))))];
+      return bus.prg[prgOffset(bus.prg, 16384, bus.m227Hi, Math.trunc((a - 49152)))];
     }
     if ((bus.mapper == 2)) {
       if ((a < 49152)) {
-        return bus.prg[Math.trunc((Math.trunc((bus.prgBank * 16384)) + Math.trunc((a - 32768))))];
+        return bus.prg[prgOffset(bus.prg, 16384, bus.prgBank, Math.trunc((a - 32768)))];
       }
-      return bus.prg[Math.trunc((Math.trunc((Math.trunc((bus.prgBanks - 1)) * 16384)) + Math.trunc((a - 49152))))];
+      return bus.prg[prgOffset(bus.prg, 16384, Math.trunc((bus.prgBanks - 1)), Math.trunc((a - 49152)))];
     }
     return bus.prg[((Math.trunc((a - 32768)) & bus.prgMask) >>> 0)];
   }
@@ -1060,6 +1059,12 @@ function mmc3UpdateChr(bus) {
   bus.ppu.chrBankOffset[7] = Math.trunc(((w7 % num1k) * 1024));
 }
 
+function prgOffset(prg, bankSize, bank, off) {
+  const n = Math.trunc(Math.trunc(prg.length / bankSize));
+  const b = (Math.trunc(((bank % n) + n)) % n);
+  return Math.trunc((Math.trunc((b * bankSize)) + off));
+}
+
 function mmc3PrgOffset(bus, a) {
   const num8k = Math.trunc(Math.trunc(bus.prg.length / 8192));
   const last = Math.trunc((num8k - 1));
@@ -1090,7 +1095,7 @@ function mmc3PrgOffset(bus, a) {
       }
     }
   }
-  return Math.trunc((Math.trunc(((bank % num8k) * 8192)) + ((a & 8191) >>> 0)));
+  return prgOffset(bus.prg, 8192, bank, ((a & 8191) >>> 0));
 }
 
 function mmc3ClockIrq(bus) {
@@ -2378,6 +2383,9 @@ function parseCartridge(raw) {
   }
   const prg16k = raw[4];
   const chr8k = raw[5];
+  if ((prg16k < 1)) {
+    return Result_Cartridge_string.Err("iNES header declares zero PRG banks");
+  }
   const flags6 = raw[6];
   const flags7 = raw[7];
   const mapper = ((((flags7 & 240) & 0xFF) | (((Math.floor(flags6 / 2 ** (4)) & 0xFF) & 15) & 0xFF)) & 0xFF);
@@ -2489,6 +2497,34 @@ function mmc2Latch(ppu, a) {
   }
   if (changed) {
     mmc2UpdateChr(ppu);
+  }
+}
+
+function mmc2ExtraBgFetches(ppu, scrollX, scrollY) {
+  const bgTable = (() => {
+  if ((((ppu.ctrl & 16) & 0xFF) != 0)) {
+    return 4096;
+  } else {
+    return 0;
+  }
+  })();
+  let wy = scrollY;
+  while ((wy >= 480)) {
+    wy = Math.trunc((wy - 480));
+  }
+  const ntY = Math.trunc(Math.trunc(wy / 240));
+  const ly = Math.trunc((wy - Math.trunc((ntY * 240))));
+  const row = Math.trunc(Math.trunc(ly / 8));
+  const fy = ((ly & 7) >>> 0);
+  let k = 32;
+  while ((k < 34)) {
+    const wx = ((Math.trunc((((scrollX & 504) >>> 0) + Math.trunc((k * 8)))) & 511) >>> 0);
+    const ntX = Math.trunc(Math.trunc(wx / 256));
+    const ntBase = Math.trunc((8192 + Math.trunc((Math.trunc((Math.trunc((ntY * 2)) + ntX)) * 1024))));
+    const col = Math.trunc(Math.trunc(((wx & 255) >>> 0) / 8));
+    const tile = Math.trunc(ppuMemRead(ppu, (Math.trunc((Math.trunc((ntBase + Math.trunc((row * 32)))) + col)) & 0xFFFF)));
+    mmc2Latch(ppu, Math.trunc((Math.trunc((Math.trunc((bgTable + Math.trunc((tile * 16)))) + fy)) + 8)));
+    k = Math.trunc((k + 1));
   }
 }
 
@@ -2690,6 +2726,12 @@ function ppuStep(ppu) {
     const vert = ((Math.trunc(ppu.t) & 31712) >>> 0);
     ppu.v = (((keepHoriz | vert) >>> 0) & 0xFFFF);
   }
+  if ((((((ppu.scanline == 261) && (ppu.dot == 304)) && rendering) && ppu.mmc2) && (((ppu.mask & 8) & 0xFF) != 0))) {
+    const t = Math.trunc(ppu.t);
+    const sx = Math.trunc((Math.trunc((Math.trunc((((Math.floor(t / 2 ** (10)) & 1) >>> 0) * 256)) + Math.trunc((((t & 31) >>> 0) * 8)))) + Math.trunc(ppu.fineX)));
+    const sy = Math.trunc((Math.trunc((Math.trunc((((Math.floor(t / 2 ** (11)) & 1) >>> 0) * 240)) + Math.trunc((((Math.floor(t / 2 ** (5)) & 31) >>> 0) * 8)))) + ((Math.floor(t / 2 ** (12)) & 7) >>> 0)));
+    mmc2ExtraBgFetches(ppu, sx, sy);
+  }
   if (((ppu.scanline == 241) && (ppu.dot == 1))) {
     ppu.status = ((ppu.status | 128) & 0xFF);
     if ((((ppu.ctrl & 128) & 0xFF) != 0)) {
@@ -2764,6 +2806,9 @@ function renderScanline(ppu, sl) {
       }
       ppu.fb[Math.trunc((Math.trunc((sl * 256)) + x))] = nesColor(colorIdx);
       x = Math.trunc((x + 1));
+    }
+    if (ppu.mmc2) {
+      mmc2ExtraBgFetches(ppu, ppu.scrollX, ppu.scrollY);
     }
   } else {
     let x = 0;
