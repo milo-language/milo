@@ -703,9 +703,11 @@ function findPrimitiveHover(source: string, word: string, line: number, characte
       "```milo",
       `*${word}`,
       "```",
-      `Raw pointer to \`${word}\` — a C-FFI handle (often the opaque \`void*\` stand-in for a foreign type).`,
+      "A raw memory address — a plain number that points at some bytes somewhere.",
       "",
-      "Dereferencing or passing a raw `*T` needs `unsafe`, except `0 as *T` (null) and pointers auto-coerced at a call. Non-`Send` across threads.",
+      `Milo uses these to talk to C libraries (like SDL): the library hands you a \`*${word}\` and you hand it back. Often it's really a handle to some foreign thing Milo has no type for.`,
+      "",
+      "Milo can't prove the address is valid, so reading what it points at only works inside an `unsafe { }` block. Writing `0 as *" + word + "` means \"no address\" (an empty pointer). These can't be shared between threads.",
     ].join("\n");
   }
   return ["```milo", word, "```", body].join("\n");
