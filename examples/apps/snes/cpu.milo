@@ -285,8 +285,16 @@ fn hdmaApplyReg(m: &mut Mem, line: i64, reg: i64, v: i64): void {
         }
         return
     }
-    // Scroll / Mode7 / window HDMA targets: pointers already advanced; renderer
-    // support pending.
+    if reg == 0x2126 { // WH0: window 1 left edge, per scanline
+        m.ppu.lineWH0[line] = v & 0xFF
+        return
+    }
+    if reg == 0x2127 { // WH1: window 1 right edge, per scanline
+        m.ppu.lineWH1[line] = v & 0xFF
+        return
+    }
+    // Scroll / Mode7 / other window HDMA targets: pointers already advanced;
+    // renderer support pending.
 }
 
 fn hdmaWalkFrame(m: &mut Mem): void {
@@ -296,6 +304,8 @@ fn hdmaWalkFrame(m: &mut Mem): void {
     m.ppu.lineColdR[0] = m.ppu.coldR
     m.ppu.lineColdG[0] = m.ppu.coldG
     m.ppu.lineColdB[0] = m.ppu.coldB
+    m.ppu.lineWH0[0] = m.ppu.wh0
+    m.ppu.lineWH1[0] = m.ppu.wh1
 
     let en = scratch(m, 0x420C)
     if en == 0 {
@@ -328,6 +338,8 @@ fn hdmaWalkFrame(m: &mut Mem): void {
             m.ppu.lineColdR[line] = m.ppu.lineColdR[line - 1]
             m.ppu.lineColdG[line] = m.ppu.lineColdG[line - 1]
             m.ppu.lineColdB[line] = m.ppu.lineColdB[line - 1]
+            m.ppu.lineWH0[line] = m.ppu.lineWH0[line - 1]
+            m.ppu.lineWH1[line] = m.ppu.lineWH1[line - 1]
         }
         ch = 0
         while ch < 8 {

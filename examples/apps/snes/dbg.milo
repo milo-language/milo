@@ -214,6 +214,9 @@ fn dumpRegs(m: &Mem, frame: i64): void {
         bg = bg + 1
     }
     print("OBSEL=$" + hex2(m.ppu.obsel))
+    if m.ppu.tmw != 0 || m.ppu.tsw != 0 || m.ppu.w12sel != 0 || m.ppu.w34sel != 0 {
+        print("WIN: W12SEL=$" + hex2(m.ppu.w12sel) + " W34SEL=$" + hex2(m.ppu.w34sel) + " TMW=$" + hex2(m.ppu.tmw) + layerNames(m.ppu.tmw) + " TSW=$" + hex2(m.ppu.tsw) + " WH0=" + m.ppu.wh0.toString() + " WH1=" + m.ppu.wh1.toString())
+    }
     if mode == 7 {
         print("M7: a=" + m.ppu.m7a.toString() + " b=" + m.ppu.m7b.toString() + " c=" + m.ppu.m7c.toString() + " d=" + m.ppu.m7d.toString() + " x=" + m.ppu.m7x.toString() + " y=" + m.ppu.m7y.toString() + " hofs=" + m.ppu.m7hofs.toString() + " vofs=" + m.ppu.m7vofs.toString())
     }
