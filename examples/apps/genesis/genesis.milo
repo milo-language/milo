@@ -6,7 +6,7 @@
 // Build (SDL2 via homebrew):
 //   milo build examples/apps/genesis/genesis.milo -o /tmp/genesis -- -L/opt/homebrew/lib -lSDL2
 //   /tmp/genesis roms/games/sonic1.md
-// Keys: arrows = D-pad, Z=A, X=B, C=C, Enter=Start, Esc=quit.
+// Keys: arrows = D-pad, Z=B, X=A, C=C, Enter=Start, Esc=quit.
 
 from "./cart68k" import {
     Cart
