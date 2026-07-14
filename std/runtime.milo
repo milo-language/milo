@@ -267,7 +267,7 @@ fn _rtReadI64(base: *u8, off: i64): i64 {
 
 fn _rtWriteI64(base: *u8, off: i64, val: i64): void {
     unsafe {
-        memcpy((base as i64 + off) as *u8, (&val) as *u8, 8)
+        memcpy((base as i64 + off) as *u8, (val.addrOf()) as *u8, 8)
     }
 }
 
@@ -280,7 +280,7 @@ fn _rtReadI32(base: *u8, off: i64): i32 {
 
 fn _rtWriteI32(base: *u8, off: i64, val: i32): void {
     unsafe {
-        memcpy((base as i64 + off) as *u8, (&val) as *u8, 4)
+        memcpy((base as i64 + off) as *u8, (val.addrOf()) as *u8, 4)
     }
 }
 
@@ -294,7 +294,7 @@ fn _rtReadPtr(base: *u8, off: i64): *u8 {
 
 fn _rtWritePtr(base: *u8, off: i64, val: *u8): void {
     unsafe {
-        memcpy((base as i64 + off) as *u8, (&val) as *u8, 8)
+        memcpy((base as i64 + off) as *u8, (val.addrOf()) as *u8, 8)
     }
 }
 
@@ -374,8 +374,8 @@ impl Task {
 
             var fnPtr: *u8 = 0 as *u8
             var envPtr: *u8 = 0 as *u8
-            memcpy((&fnPtr) as *u8, (&f) as *u8, 8)
-            memcpy((&envPtr) as *u8, ((&f) as i64 + 8) as *u8, 8)
+            memcpy((fnPtr.addrOf()) as *u8, (f.addrOf()) as *u8, 8)
+            memcpy((envPtr.addrOf()) as *u8, ((f.addrOf()) as i64 + 8) as *u8, 8)
 
             let task = malloc(taskStructSize())
             memset(task, 0, taskStructSize())
@@ -457,8 +457,8 @@ fn _osThreadTrampoline(arg: *u8): *u8 {
     unsafe {
         var fnPtr: *u8 = 0 as *u8
         var envPtr: *u8 = 0 as *u8
-        memcpy((&fnPtr) as *u8, arg, 8)
-        memcpy((&envPtr) as *u8, (arg as i64 + 8) as *u8, 8)
+        memcpy((fnPtr.addrOf()) as *u8, arg, 8)
+        memcpy((envPtr.addrOf()) as *u8, (arg as i64 + 8) as *u8, 8)
         _callClosureVoid(fnPtr, envPtr)
         free(envPtr)
         free(arg)
@@ -473,9 +473,9 @@ fn _osThreadTrampoline(arg: *u8): *u8 {
 fn _spawnOsThreadDetached(f: () => void): void {
     unsafe {
         let packed = malloc(16)
-        memcpy(packed, (&f) as *u8, 16)
+        memcpy(packed, (f.addrOf()) as *u8, 16)
         var tid: i64 = 0
-        let r = pthread_create((&tid) as *u8, 0 as *u8, _osThreadTrampoline as *u8, packed)
+        let r = pthread_create((tid.addrOf()) as *u8, 0 as *u8, _osThreadTrampoline as *u8, packed)
         if r == 0 {
             pthread_detach(tid)
         } else {
@@ -676,7 +676,7 @@ fn schedulerWaitWrite(fd: i32): void {
         // mark as write-wait so deregister uses correct filter
         var one: u8 = 1
         unsafe {
-            memcpy((task as i64 + tWaitWrite()) as *u8, (&one) as *u8, 1)
+            memcpy((task as i64 + tWaitWrite()) as *u8, (one.addrOf()) as *u8, 1)
         }
 
         var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
@@ -1053,11 +1053,11 @@ fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
                 // deregister from event loop using correct filter
                 var el = eventLoopFromFd(_rtReadI32(sched, sElFd()))
                 var isWrite: u8 = 0
-                memcpy((&isWrite) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
+                memcpy((isWrite.addrOf()) as *u8, (cur as i64 + tWaitWrite()) as *u8, 1)
                 eventDeregister(el, waitFd, isWrite != 0)
                 // reset waitWrite flag
                 var zero: u8 = 0
-                memcpy((cur as i64 + tWaitWrite()) as *u8, (&zero) as *u8, 1)
+                memcpy((cur as i64 + tWaitWrite()) as *u8, (zero.addrOf()) as *u8, 1)
 
                 // remove from waiting list
                 if prev as i64 == 0 {

@@ -127,7 +127,7 @@ requires iv.len == 12
 
         var aadOutLen: i32 = 0
         if aad.len > 0 {
-            if EVP_EncryptUpdate(ctx, 0 as *u8, (&aadOutLen) as *i32, aad, aad.len as i32) != 1 {
+            if EVP_EncryptUpdate(ctx, 0 as *u8, (aadOutLen.addrOf()) as *i32, aad, aad.len as i32) != 1 {
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_EncryptUpdate (AAD) failed")
             }
@@ -140,7 +140,7 @@ requires iv.len == 12
         var outLen: i32 = 0
 
         if plaintext.len > 0 {
-            if EVP_EncryptUpdate(ctx, ctBuf, (&outLen) as *i32, plaintext, plaintext.len as i32) != 1 {
+            if EVP_EncryptUpdate(ctx, ctBuf, (outLen.addrOf()) as *i32, plaintext, plaintext.len as i32) != 1 {
                 free(ctBuf)
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_EncryptUpdate failed")
@@ -153,7 +153,7 @@ requires iv.len == 12
         } else {
             0 as *u8
         }
-        if EVP_EncryptFinal_ex(ctx, finalPtr, (&finalLen) as *i32) != 1 {
+        if EVP_EncryptFinal_ex(ctx, finalPtr, (finalLen.addrOf()) as *i32) != 1 {
             if plaintext.len > 0 {
                 free(ctBuf)
             }
@@ -213,7 +213,7 @@ requires tag.len == 16
 
         var aadOutLen: i32 = 0
         if aad.len > 0 {
-            if EVP_DecryptUpdate(ctx, 0 as *u8, (&aadOutLen) as *i32, aad, aad.len as i32) != 1 {
+            if EVP_DecryptUpdate(ctx, 0 as *u8, (aadOutLen.addrOf()) as *i32, aad, aad.len as i32) != 1 {
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_DecryptUpdate (AAD) failed")
             }
@@ -226,7 +226,7 @@ requires tag.len == 16
         var outLen: i32 = 0
 
         if ciphertext.len > 0 {
-            if EVP_DecryptUpdate(ctx, ptBuf, (&outLen) as *i32, ciphertext, ciphertext.len as i32) != 1 {
+            if EVP_DecryptUpdate(ctx, ptBuf, (outLen.addrOf()) as *i32, ciphertext, ciphertext.len as i32) != 1 {
                 free(ptBuf)
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_DecryptUpdate failed")
@@ -248,7 +248,7 @@ requires tag.len == 16
         } else {
             0 as *u8
         }
-        if EVP_DecryptFinal_ex(ctx, finalPtr, (&finalLen) as *i32) != 1 {
+        if EVP_DecryptFinal_ex(ctx, finalPtr, (finalLen.addrOf()) as *i32) != 1 {
             if ciphertext.len > 0 {
                 free(ptBuf)
             }
@@ -289,7 +289,7 @@ requires iv.len == 12
 
         var aadOutLen: i32 = 0
         if aad.len > 0 {
-            if EVP_EncryptUpdate(ctx, 0 as *u8, (&aadOutLen) as *i32, aad, aad.len as i32) != 1 {
+            if EVP_EncryptUpdate(ctx, 0 as *u8, (aadOutLen.addrOf()) as *i32, aad, aad.len as i32) != 1 {
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_EncryptUpdate (AAD) failed")
             }
@@ -302,7 +302,7 @@ requires iv.len == 12
         var outLen: i32 = 0
 
         if plaintext.len > 0 {
-            if EVP_EncryptUpdate(ctx, ctBuf, (&outLen) as *i32, plaintext, plaintext.len as i32) != 1 {
+            if EVP_EncryptUpdate(ctx, ctBuf, (outLen.addrOf()) as *i32, plaintext, plaintext.len as i32) != 1 {
                 free(ctBuf)
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_EncryptUpdate failed")
@@ -315,7 +315,7 @@ requires iv.len == 12
         } else {
             0 as *u8
         }
-        if EVP_EncryptFinal_ex(ctx, finalPtr, (&finalLen) as *i32) != 1 {
+        if EVP_EncryptFinal_ex(ctx, finalPtr, (finalLen.addrOf()) as *i32) != 1 {
             if plaintext.len > 0 {
                 free(ctBuf)
             }
@@ -375,7 +375,7 @@ requires tag.len == 16
 
         var aadOutLen: i32 = 0
         if aad.len > 0 {
-            if EVP_DecryptUpdate(ctx, 0 as *u8, (&aadOutLen) as *i32, aad, aad.len as i32) != 1 {
+            if EVP_DecryptUpdate(ctx, 0 as *u8, (aadOutLen.addrOf()) as *i32, aad, aad.len as i32) != 1 {
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_DecryptUpdate (AAD) failed")
             }
@@ -388,7 +388,7 @@ requires tag.len == 16
         var outLen: i32 = 0
 
         if ciphertext.len > 0 {
-            if EVP_DecryptUpdate(ctx, ptBuf, (&outLen) as *i32, ciphertext, ciphertext.len as i32) != 1 {
+            if EVP_DecryptUpdate(ctx, ptBuf, (outLen.addrOf()) as *i32, ciphertext, ciphertext.len as i32) != 1 {
                 free(ptBuf)
                 EVP_CIPHER_CTX_free(ctx)
                 return Result.Err("EVP_DecryptUpdate failed")
@@ -409,7 +409,7 @@ requires tag.len == 16
         } else {
             0 as *u8
         }
-        if EVP_DecryptFinal_ex(ctx, finalPtr, (&finalLen) as *i32) != 1 {
+        if EVP_DecryptFinal_ex(ctx, finalPtr, (finalLen.addrOf()) as *i32) != 1 {
             if ciphertext.len > 0 {
                 free(ptBuf)
             }

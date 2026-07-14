@@ -41,28 +41,28 @@ struct ChannelInner {
 fn _nodeLoadPtr(node: *u8, off: i64): *u8 {
     unsafe {
         var v: *u8 = 0 as *u8
-        memcpy((&v) as *u8, (node as i64 + off) as *u8, 8)
+        memcpy((v.addrOf()) as *u8, (node as i64 + off) as *u8, 8)
         return v
     }
 }
 
 fn _nodeStorePtr(node: *u8, off: i64, v: *u8): void {
     unsafe {
-        memcpy((node as i64 + off) as *u8, (&v) as *u8, 8)
+        memcpy((node as i64 + off) as *u8, (v.addrOf()) as *u8, 8)
     }
 }
 
 fn _nodeLoadI64(node: *u8, off: i64): i64 {
     unsafe {
         var v: i64 = 0
-        memcpy((&v) as *u8, (node as i64 + off) as *u8, 8)
+        memcpy((v.addrOf()) as *u8, (node as i64 + off) as *u8, 8)
         return v
     }
 }
 
 fn _nodeStoreI64(node: *u8, off: i64, v: i64): void {
     unsafe {
-        memcpy((node as i64 + off) as *u8, (&v) as *u8, 8)
+        memcpy((node as i64 + off) as *u8, (v.addrOf()) as *u8, 8)
     }
 }
 
@@ -297,9 +297,9 @@ impl Channel<T> {
             }
             var tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
-            memcpy(slotPtr, (&v) as *u8, sizeOf<T>())
+            memcpy(slotPtr, (v.addrOf()) as *u8, sizeOf<T>())
             // ownership transferred to channel buffer; zero without drop
-            memset((&v) as *u8, 0, sizeOf<T>())
+            memset((v.addrOf()) as *u8, 0, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
             // a green receiver and a pthread receiver may both be waiting
@@ -333,7 +333,7 @@ impl Channel<T> {
             }
             var head: i64 = (*inner).head
             let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
-            memcpy((&val) as *u8, slotPtr, sizeOf<T>())
+            memcpy((val.addrOf()) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
             _chWakeOneSend(inner)
@@ -358,8 +358,8 @@ impl Channel<T> {
             }
             var tail: i64 = (*inner).tail
             let slotPtr = ((*inner).buf as i64 + tail * sizeOf<T>()) as *u8
-            memcpy(slotPtr, (&v) as *u8, sizeOf<T>())
-            memset((&v) as *u8, 0, sizeOf<T>())
+            memcpy(slotPtr, (v.addrOf()) as *u8, sizeOf<T>())
+            memset((v.addrOf()) as *u8, 0, sizeOf<T>())
             (*inner).tail = (tail + 1) % cap
             (*inner).len = curLen + 1
             _chWakeOneRecv(inner)
@@ -384,7 +384,7 @@ impl Channel<T> {
             let cap = (*inner).capacity
             var head: i64 = (*inner).head
             let slotPtr = ((*inner).buf as i64 + head * sizeOf<T>()) as *u8
-            memcpy((&val) as *u8, slotPtr, sizeOf<T>())
+            memcpy((val.addrOf()) as *u8, slotPtr, sizeOf<T>())
             (*inner).head = (head + 1) % cap
             (*inner).len = curLen - 1
             _chWakeOneSend(inner)

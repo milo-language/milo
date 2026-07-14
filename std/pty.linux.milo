@@ -97,7 +97,7 @@ impl Pty {
             let pcopy = malloc(plen + 1)
             memcpy(pcopy, program as *u8, plen)
             memset((pcopy as i64 + plen) as *u8, 0, 1)
-            memcpy(argv, (&pcopy) as *u8, 8)
+            memcpy(argv, (pcopy.addrOf()) as *u8, 8)
 
             // strdup each arg into argv[1..n]
             for i in 0..args.len {
@@ -106,11 +106,11 @@ impl Pty {
                 let acopy = malloc(alen + 1)
                 memcpy(acopy, arg as *u8, alen)
                 memset((acopy as i64 + alen) as *u8, 0, 1)
-                memcpy((argv as i64 + (i + 1) * 8) as *u8, (&acopy) as *u8, 8)
+                memcpy((argv as i64 + (i + 1) * 8) as *u8, (acopy.addrOf()) as *u8, 8)
             }
 
             var nullPtr: *u8 = 0 as *u8
-            memcpy((argv as i64 + (argc - 1) * 8) as *u8, (&nullPtr) as *u8, 8)
+            memcpy((argv as i64 + (argc - 1) * 8) as *u8, (nullPtr.addrOf()) as *u8, 8)
 
             let pid = fork()
             if pid < 0 {
@@ -128,7 +128,7 @@ impl Pty {
                 var childWs = WinSize {
                     rows: self._rows, cols: self._cols, xpixel: 0 as u16, ypixel: 0 as u16
                 }
-                ioctl(slave, tiocswinsz(), (&childWs) as *u8)
+                ioctl(slave, tiocswinsz(), (childWs.addrOf()) as *u8)
                 dup2(slave, 0)
                 dup2(slave, 1)
                 dup2(slave, 2)
@@ -191,7 +191,7 @@ impl Pty {
             rows: rows, cols: cols, xpixel: 0, ypixel: 0
         }
         unsafe {
-            return ioctl(self.masterFd, tiocswinsz(), (&ws) as *u8)
+            return ioctl(self.masterFd, tiocswinsz(), (ws.addrOf()) as *u8)
         }
     }
 
@@ -200,7 +200,7 @@ impl Pty {
             rows: 0, cols: 0, xpixel: 0, ypixel: 0
         }
         unsafe {
-            ioctl(self.masterFd, tiocgwinsz(), (&ws) as *u8)
+            ioctl(self.masterFd, tiocgwinsz(), (ws.addrOf()) as *u8)
         }
         return ws
     }
@@ -235,7 +235,7 @@ fn _freeArgv(argv: *u8, argc: i64): void {
     unsafe {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8
-            memcpy((&p) as *u8, (argv as i64 + i * 8) as *u8, 8)
+            memcpy((p.addrOf()) as *u8, (argv as i64 + i * 8) as *u8, 8)
             if p as i64 != 0 {
                 free(p)
             }

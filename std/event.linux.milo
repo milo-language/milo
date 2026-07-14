@@ -139,7 +139,7 @@ fn eventLoopInitWakeup(el: &EventLoop): i32 {
 fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
     unsafe {
         var one: u64 = 1
-        let n = write(wakeupId, (&one) as *u8, 8)
+        let n = write(wakeupId, (one.addrOf()) as *u8, 8)
         if n == 8 {
             return 0
         }
@@ -152,7 +152,7 @@ fn eventLoopNotify(_el: &EventLoop, wakeupId: i32): i32 {
 fn eventLoopDrainWakeup(_el: &EventLoop, wakeupId: i32): void {
     unsafe {
         var buf: u64 = 0
-        read(wakeupId, (&buf) as *u8, 8)
+        read(wakeupId, (buf.addrOf()) as *u8, 8)
     }
 }
 

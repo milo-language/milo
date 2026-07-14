@@ -150,7 +150,7 @@ impl Child {
                     extraFd = extraFd + 1
                 }
                 var prog0: *u8 = 0 as *u8
-                memcpy((&prog0) as *u8, argv, 8)
+                memcpy((prog0.addrOf()) as *u8, argv, 8)
                 execvp(prog0, argv)
                 exit(127)
             }
@@ -279,7 +279,7 @@ fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
         let pcopy = malloc(plen + 1)
         memcpy(pcopy, program as *u8, plen)
         memset((pcopy as i64 + plen) as *u8, 0, 1)
-        memcpy(argv, (&pcopy) as *u8, 8)
+        memcpy(argv, (pcopy.addrOf()) as *u8, 8)
 
         for i in 0..args.len {
             let arg = args[i]
@@ -287,11 +287,11 @@ fn _buildArgv(program: &string, args: &Vec<string>): *u8 {
             let acopy = malloc(alen + 1)
             memcpy(acopy, arg as *u8, alen)
             memset((acopy as i64 + alen) as *u8, 0, 1)
-            memcpy((argv as i64 + (i + 1) * 8) as *u8, (&acopy) as *u8, 8)
+            memcpy((argv as i64 + (i + 1) * 8) as *u8, (acopy.addrOf()) as *u8, 8)
         }
 
         var nullPtr: *u8 = 0 as *u8
-        memcpy((argv as i64 + (argc - 1) * 8) as *u8, (&nullPtr) as *u8, 8)
+        memcpy((argv as i64 + (argc - 1) * 8) as *u8, (nullPtr.addrOf()) as *u8, 8)
         return argv
     }
 }
@@ -300,7 +300,7 @@ fn _freeArgv(argv: *u8, argc: i64): void {
     unsafe {
         for i in 0..(argc - 1) {
             var p: *u8 = 0 as *u8
-            memcpy((&p) as *u8, (argv as i64 + i * 8) as *u8, 8)
+            memcpy((p.addrOf()) as *u8, (argv as i64 + i * 8) as *u8, 8)
             if p as i64 != 0 {
                 free(p)
             }

@@ -66,7 +66,7 @@ struct Statement {
 fn dbOpen(path: string): Result<Database> {
     unsafe {
         var handle: *u8 = 0 as *u8
-        let rc = sqlite3_open(path, (&handle) as *u8)
+        let rc = sqlite3_open(path, (handle.addrOf()) as *u8)
         if rc != 0 {
             if handle != 0 as *u8 {
                 sqlite3_close(handle)
@@ -100,7 +100,7 @@ fn dbExec(db: &Database, sql: string): Result<i32> {
 fn dbQuery(db: &Database, sql: string): Result<Statement> {
     unsafe {
         var handle: *u8 = 0 as *u8
-        let rc = sqlite3_prepare_v2(db._handle, sql, 0 - 1, (&handle) as *u8, 0 as *u8)
+        let rc = sqlite3_prepare_v2(db._handle, sql, 0 - 1, (handle.addrOf()) as *u8, 0 as *u8)
         if rc != 0 {
             let msg = _cstrToString(sqlite3_errmsg(db._handle))
             return Result.Err(msg)

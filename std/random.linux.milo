@@ -6,7 +6,7 @@ extern fn getentropy(_buf: *u8, _len: i64): i32
 fn randU32(): u32 {
     var val: u32 = 0
     unsafe {
-        getentropy((&val) as *u8, 4)
+        getentropy((val.addrOf()) as *u8, 4)
     }
     return val
 }
