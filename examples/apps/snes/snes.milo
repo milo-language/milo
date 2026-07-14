@@ -27,6 +27,9 @@ from "./cartridge" import {
 from "./savestate" import {
     saveState, loadState
 }
+from "std/datetime" import {
+    dateTimeLocalNow, dateTimeFormatTime
+}
 
 extern fn SDL_Init(flags: u32): i32
 
@@ -314,6 +317,7 @@ fn main(): i32 {
         var focused = true // false while backgrounded -> pause the emulator
         var prevSave = false // F5 = save-state, F7 = load-state (edge-detected)
         var prevLoad = false
+        var saveSeq: i64 = 0 // F5 ring: cycle <rom>.state0..9 so saves don't clobber
         var comboFrames: i64 = 0 // Start+Select held -> quit to the menu
         // Autosave: flush SRAM to <rom>.srm periodically (not just on clean quit)
         // so a hard kill can't lose an in-game save. Guarded by a checksum so we
@@ -401,14 +405,27 @@ fn main(): i32 {
             // F5 = save state, F7 = load state (scancodes 62 / 64), edge-triggered.
             let sd = key(ks, 62) != 0
             if sd && !prevSave {
-                match writeFile(statePath, saveState(cpu, m)) {
+                // Ring buffer: keep the last 10 states (<rom>.state0..9) so repeated
+                // F5s don't clobber earlier snapshots, plus the canonical <rom>.state
+                // as the latest (what F7 and the headless dbg load by default).
+                let blob = saveState(cpu, m)
+                let slot = statePath + (saveSeq % 10).toString()
+                let stamp = dateTimeFormatTime(dateTimeLocalNow())
+                match writeFile(slot, blob.clone()) {
                     Result.Ok(n) => {
-                        print("state saved -> " + statePath)
+                        print("state saved -> " + slot + " (" + stamp + ")")
                     }
                     Result.Err(e) => {
                         print("state save failed")
                     }
                 }
+                match writeFile(statePath, blob) {
+                    Result.Ok(n) => {
+                    }
+                    Result.Err(e) => {
+                    }
+                }
+                saveSeq = saveSeq + 1
             }
             prevSave = sd
             let ld = key(ks, 64) != 0
