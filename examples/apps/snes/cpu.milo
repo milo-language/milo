@@ -119,10 +119,32 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
         mask = mask << 1
     }
     mask = mask - 1 // next-pow2 minus 1; ROM offsets are wrapped by this
+    // SRAM size from the cartridge header ($xxD8: size = 1024<<N bytes, 0 = none).
+    // The mask MUST match the real size: DKC's anti-piracy writes past its 2KB SRAM
+    // and checks the write mirrored back (copiers give oversized, non-mirroring RAM);
+    // a too-big mask fails that test and trips the "unauthorized device" screen.
+    let hdrRam = if mapMode == 1 {
+        0xFFD8
+    } else {
+        0x7FD8
+    }
+    var sramMask: i64 = 0x7FFF
+    if hdrRam < len {
+        let rs = rom[hdrRam] as i64
+        if rs == 0 {
+            sramMask = 0
+        } else {
+            var sz = 1024 << rs
+            if sz > 0x8000 {
+                sz = 0x8000
+            }
+            sramMask = sz - 1
+        }
+    }
     var mem = Mem {
         addr: Vec.new(), val: Vec.new(), testMode: false,
         wram: vecZeros(0x20000), rom: rom, romMask: mask,
-        sram: vecZeros(0x8000), sramMask: 0x7FFF, mapMode: mapMode,
+        sram: vecZeros(0x8000), sramMask: sramMask, mapMode: mapMode,
         mmio: vecZeros(0x4000),
         nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0, joy2: 0,
         apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu()
