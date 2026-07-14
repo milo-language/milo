@@ -34,10 +34,19 @@ ROMs: `/tmp/snes/roms/{smw,dkc}.smc` (originals in `~/Downloads/nesgames/`; NES:
               [--shot f] [--layers] [--out prefix]
 ```
 
-- `--shot f` (repeatable): composite PPM + **decoded register dump** at frame f.
+- `--shot f` (repeatable): composite PPM + **decoded register dump** (incl. armed
+  HDMA channel targets) at frame f.
 - `--press start@450-455` (repeatable): hold a button over a frame range —
   navigates title/menus without SDL. Hold ~5 frames; game polls once per frame.
 - `--layers`: re-render each enabled layer in isolation (`_bg1..4.ppm`, `_obj.ppm`).
+- `--forcebright`: override INIDISP to full brightness before render — reveals
+  whether graphics are actually loaded when the game holds the screen black
+  (fade/handshake stall vs genuinely-empty VRAM). The single fastest way to tell
+  "black because stuck" from "black because nothing rendered."
+- `--probe`: after the run, single-step and print a hot-PC histogram. A tiny hot
+  set (2-3 PCs) = the CPU is spinning in a wait loop (unmet MMIO poll); disassemble
+  those ROM bytes to see what register it's waiting on. This is how the SMW
+  level-black was pinned to a `BIT $4212 / BVC` HBLANK wait.
 - `--state <rom>.state`: resume from a save-state (F5 in the SDL emu writes it).
 
 ## Triage ladder — run in this order
@@ -71,10 +80,16 @@ derail before assuming anything subtler.
 **5. Check the known-gaps list before "finding" a bug.** If the symptom matches
 a gap, it's not a mystery — it's a feature to implement:
 
-- **SNES:** HDMA (fades/gradients/per-line Mode 7); color-math add/half blends
-  (backdrop-add only); windows; mosaic; hires/interlace; per-scanline raster
-  effects; S-DSP audio synthesis. TM/TS compositing is approximate (TS as base
-  layer, no real blend).
+- **SNES:** HDMA is **partial** — the engine (`hdmaWalkFrame`) walks tables and
+  drives INIDISP brightness (fades) + COLDATA (gradient sky) per-line; scroll
+  parallax, Mode 7 perspective, and window HDMA targets advance pointers but
+  aren't rendered yet. Still missing: color-math add/half blends (backdrop-add
+  only); windows; mosaic; hires/interlace; S-DSP audio synthesis. TM/TS
+  compositing is approximate (TS as base layer, no real blend).
+- **SNES timing stubs:** `$4212` bit7 (vblank) and bit6 (HBLANK) are pulsed off
+  counters, not real dot timing. A game that hard-waits on a status bit we don't
+  model will spin forever (black/frozen) — `--probe` finds the wait PC, then
+  disassemble to see the polled register. Precedent: SMW HBLANK wait.
 - **Genesis:** per-scanline CRAM (raster water-line effects); VDP data-port
   reads; sprite masking/per-line limits; interlace; PAL.
 - **NES:** essentially complete for supported mappers (no MMC1).

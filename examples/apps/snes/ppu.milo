@@ -60,6 +60,16 @@ struct Ppu {
     m7vofs: i64
     m7sel: i64
     m7Latch: i64
+
+    // Per-scanline HDMA overrides (populated by hdmaWalkFrame in cpu.milo before
+    // render; consumed by the renderer via lineBrightAt/backdropColorLine). When
+    // hdmaOn is false the renderer uses the scalar registers exactly as before, so
+    // non-HDMA games are byte-identical. Arrays are 224 entries (visible lines).
+    hdmaOn: bool
+    lineBright: Vec<i64> // INIDISP $2100 brightness bits0-3 per line
+    lineColdR: Vec<i64> // COLDATA $2132 fixed-color R per line (0-31)
+    lineColdG: Vec<i64>
+    lineColdB: Vec<i64>
 }
 
 fn ppuZeros(n: i64): Vec<u8> {
@@ -91,7 +101,9 @@ fn newPpu(): Ppu {
         vmain: 0, vmaddr: 0, vmLatch: 0, cgaddr: 0, cgLatch: 0, cgHi: false, tm: 0x1F, ts: 0,
         m7a: 0x100, m7b: 0, m7c: 0, m7d: 0x100, m7x: 0, m7y: 0, m7hofs: 0, m7vofs: 0,
         m7sel: 0, m7Latch: 0,
-        cgadsub: 0, coldR: 0, coldG: 0, coldB: 0
+        cgadsub: 0, coldR: 0, coldG: 0, coldB: 0,
+        hdmaOn: false, lineBright: ppuZerosI64(224), lineColdR: ppuZerosI64(224),
+        lineColdG: ppuZerosI64(224), lineColdB: ppuZerosI64(224)
     }
 }
 
@@ -392,6 +404,15 @@ fn tile8bpp(p: &Ppu, charBase: i64, tileNum: i64, px: i64, py: i64): i64 {
 }
 
 // CGRAM BGR555 color -> 0xRRGGBB, scaled by master brightness (0-15).
+// Effective brightness for scanline y: the HDMA per-line override if HDMA drove
+// INIDISP this frame, else the scalar register. Keeps non-HDMA output identical.
+fn lineBrightAt(p: &Ppu, y: i64, deflt: i64): i64 {
+    if p.hdmaOn {
+        return p.lineBright[y]
+    }
+    return deflt
+}
+
 fn cgToRgb(p: &Ppu, idx: i64, bright: i64): i64 {
     let a = (idx * 2) & 0x1FF
     let w = (p.cgram[a] as i64) | ((p.cgram[(a + 1) & 0x1FF] as i64) << 8)
@@ -454,7 +475,7 @@ fn renderSprites(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
                         let t = tileNum + (ty >> 3) * 16 + (tx >> 3)
                         let ci = tile4bpp(p, objBase, t & 0x1FF, tx & 7, ty & 7)
                         if ci != 0 {
-                            fb[scrY * 256 + scrX] = cgToRgb(p, 128 + pal * 16 + ci, bright)
+                            fb[scrY * 256 + scrX] = cgToRgb(p, 128 + pal * 16 + ci, lineBrightAt(p, scrY, bright))
                         }
                     }
                     ox = ox + 1
@@ -549,7 +570,7 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
                 } else {
                     palBase + pal * palW + ci
                 }
-                fb[y * 256 + x] = cgToRgb(p, colorIdx, bright)
+                fb[y * 256 + x] = cgToRgb(p, colorIdx, lineBrightAt(p, y, bright))
             }
             x = x + 1
         }
@@ -581,7 +602,7 @@ fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
             let gAddr = ((tile * 64 + (py & 7) * 8 + (px & 7)) * 2 + 1) & 0xFFFF
             let ci = p.vram[gAddr] as i64
             if ci != 0 {
-                fb[sy * 256 + sx] = cgToRgb(p, ci, bright)
+                fb[sy * 256 + sx] = cgToRgb(p, ci, lineBrightAt(p, sy, bright))
             }
             sx = sx + 1
         }
@@ -676,6 +697,25 @@ fn backdropColor(p: &Ppu, bright: i64): i64 {
     return (rr << 16) | (gg << 8) | bb
 }
 
+// Backdrop for scanline y using the HDMA per-line brightness + fixed color. Same
+// add-only color-math policy as backdropColor. Used when hdmaOn (gradient skies).
+fn backdropColorLine(p: &Ppu, y: i64, deflt: i64): i64 {
+    let bright = lineBrightAt(p, y, deflt)
+    let w = (p.cgram[0] as i64) | ((p.cgram[1] as i64) << 8)
+    var r = w & 0x1F
+    var g = (w >> 5) & 0x1F
+    var b = (w >> 10) & 0x1F
+    if (p.cgadsub & 0x20) != 0 && (p.cgadsub & 0x80) == 0 {
+        r = clamp5(r + p.lineColdR[y])
+        g = clamp5(g + p.lineColdG[y])
+        b = clamp5(b + p.lineColdB[y])
+    }
+    let rr = (((r << 3) * bright) / 15) & 0xFF
+    let gg = (((g << 3) * bright) / 15) & 0xFF
+    let bb = (((b << 3) * bright) / 15) & 0xFF
+    return (rr << 16) | (gg << 8) | bb
+}
+
 // Render a full frame. The sub-screen ($212D TS) layers are drawn first as the
 // base and the main-screen ($212C TM) layers on top — an approximation of color
 // math (no per-pixel add/half blending on layers yet, but the backdrop gets it
@@ -683,16 +723,27 @@ fn backdropColor(p: &Ppu, bright: i64): i64 {
 fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     let bright = p.inidisp & 0x0F
     let forceBlank = (p.inidisp & 0x80) != 0
-    let backdrop: i64 = if forceBlank {
+
+    // Fill per scanline: the backdrop is constant across a line, so compute it
+    // once per line (or once total when neither force-blank nor HDMA varies it).
+    let constBackdrop: i64 = if forceBlank {
         0
     } else {
         backdropColor(p, bright)
     }
-
-    var i: i64 = 0
-    while i < 256 * 224 {
-        fb[i] = backdrop
-        i = i + 1
+    var y: i64 = 0
+    while y < 224 {
+        let bd: i64 = if !forceBlank && p.hdmaOn {
+            backdropColorLine(p, y, bright)
+        } else {
+            constBackdrop
+        }
+        var x: i64 = 0
+        while x < 256 {
+            fb[y * 256 + x] = bd
+            x = x + 1
+        }
+        y = y + 1
     }
     if forceBlank {
         return

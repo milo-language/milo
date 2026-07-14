@@ -23,6 +23,32 @@ for replies — no SPC700 core, no boot. S-DSP (actual sound output) CAN wait.
 - **Reference emulators** (behavior questions only, don't port): Mesen2
   (best debugger — trace logger + event viewer), bsnes (accuracy reference).
 
+## Update (2026-07): SMW plays into levels — HBLANK-wait + HDMA landed
+
+SMW now goes title -> file select -> **into a level rendering in full color** (Yoshi's
+Island 1: HUD, level, intro cutscene). Two fixes:
+- **$4212 HBLANK flag (bit6).** SMW's level-init hard-waits `BIT $4212 / BVC $8440`
+  for HBLANK before fading the screen in. We returned only bit7 (vblank), so bit6
+  never set and the CPU spun forever at $008440 with brightness stuck at 0 (screen
+  black, but the level was fully loaded behind it). We don't model dot timing, so
+  bit6 is pulsed off a free-running per-instruction counter (`m.hcounter`, `(x&7)<2`)
+  — any spin-wait resolves in a few instrs. Found via the dbg `--probe` (2 distinct
+  PCs) + `--forcebright` (revealed intact level graphics behind the black).
+- **HDMA engine (`hdmaWalkFrame`).** Walks each armed channel's table for all 224
+  lines once per frame (tables stable at end-of-active-display), records per-line
+  overrides the renderer consumes. Currently wired: INIDISP brightness (fades) +
+  COLDATA (gradient sky); pointers advance correctly for all patterns/indirect, but
+  scroll/Mode7/window targets aren't consumed by the renderer yet. Non-HDMA games
+  are byte-identical (hdmaOn=false path).
+
+Debug tooling added to `dbg.milo`: `--forcebright` (reveal graphics behind a black
+fade), `--probe` (hot-PC histogram → spot wait-loops), HDMA-channel decode in the
+reg dump. See `.claude/skills/emu-debug/SKILL.md`.
+
+Still black/next: SMW intro message auto-advance into playfield scroll; remaining
+HDMA render targets (scroll parallax, Mode7 perspective, window); DKC still boots
+but is a separate derail.
+
 ## Status (M1/M2/M3 done; M4 first pixels + frame loop; M5 DMA done)
 
 Latest: the emulator RUNS A ROM end-to-end. A synthesized ROM's 65816 code DMAs

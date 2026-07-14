@@ -65,6 +65,7 @@ struct Mem {
     rddiv: i64 // $4214/$4215 quotient
     rdmpy: i64 // $4216/$4217 product (after mul) or remainder (after div)
     vblankToggle: i64 // stub: flips so $4210/$4212 vblank-wait loops progress
+    hcounter: i64 // free-running instr counter; drives the $4212 HBLANK-flag stub
     joy1: i64 // $4218/$4219 auto-read pad 1 (0 = nothing pressed)
 
     // Audio subsystem (SPC700 + its RAM). $2140-$2143 bridge to its port latches.
@@ -83,7 +84,7 @@ fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         wram: Vec.new(), rom: Vec.new(), romMask: 0, sram: Vec.new(), sramMask: 0, mapMode: 0, mmio: Vec.new(),
-        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0,
         apuSpc: newApuSpc(), apuMem: spcMemNew(), ppu: newPpu()
     }
 }
@@ -111,7 +112,7 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
         wram: vecZeros(0x20000), rom: rom, romMask: mask,
         sram: vecZeros(0x8000), sramMask: 0x7FFF, mapMode: mapMode,
         mmio: vecZeros(0x4000),
-        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, joy1: 0,
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0,
         apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu()
     }
     // Boot the SPC into its IPL. The reset vector ($FFFE) is fixed at $FFC0;
@@ -219,6 +220,177 @@ fn runDMA(m: &mut Mem, channels: i64): void {
     }
 }
 
+// --- HDMA (per-scanline DMA to PPU registers) ---
+// Games drive gradient skies (COLDATA $2132), brightness fades (INIDISP $2100),
+// parallax and Mode7 perspective by streaming one write-unit per scanline from a
+// table in CPU memory. We can't render mid-scanline, so hdmaWalkFrame walks each
+// armed channel's table for all 224 visible lines once per frame (tables are
+// stable by end-of-active-display) and records the values the renderer can use
+// per-line (currently INIDISP brightness + COLDATA). Other targets advance the
+// table pointers correctly but aren't yet consumed by the renderer.
+
+// Bytes transferred per scanline for each DMA/HDMA transfer pattern.
+fn hdmaUnitBytes(pattern: i64): i64 {
+    if pattern == 0 {
+        return 1
+    }
+    if pattern == 1 || pattern == 2 || pattern == 6 {
+        return 2
+    }
+    return 4 // 3,4,5,7
+}
+
+// B-bus register offset (added to BBAD) for the j-th byte of a write-unit.
+fn hdmaByteReg(pattern: i64, j: i64): i64 {
+    if pattern == 1 {
+        return j // r, r+1
+    }
+    if pattern == 4 {
+        return j // r, r+1, r+2, r+3
+    }
+    if pattern == 5 {
+        return j & 1 // r, r+1, r, r+1
+    }
+    if pattern == 3 || pattern == 7 {
+        if j < 2 {
+            return 0
+        }
+        return 1 // r, r, r+1, r+1
+    }
+    return 0 // patterns 0,2,6: single register
+}
+
+// Record one HDMA write into the per-line override arrays for the registers the
+// renderer consumes. Uses hold semantics (arrays carry forward line-to-line), so
+// only the plane a COLDATA write selects changes; others keep their prior value.
+fn hdmaApplyReg(m: &mut Mem, line: i64, reg: i64, v: i64): void {
+    if reg == 0x2100 { // INIDISP: brightness (force-blank line renders as bright 0)
+        var b = v & 0x0F
+        if (v & 0x80) != 0 {
+            b = 0
+        }
+        m.ppu.lineBright[line] = b
+        return
+    }
+    if reg == 0x2132 { // COLDATA: bit5=R bit6=G bit7=B select, bits0-4 intensity
+        let inten = v & 0x1F
+        if (v & 0x20) != 0 {
+            m.ppu.lineColdR[line] = inten
+        }
+        if (v & 0x40) != 0 {
+            m.ppu.lineColdG[line] = inten
+        }
+        if (v & 0x80) != 0 {
+            m.ppu.lineColdB[line] = inten
+        }
+        return
+    }
+    // Scroll / Mode7 / window HDMA targets: pointers already advanced; renderer
+    // support pending.
+}
+
+fn hdmaWalkFrame(m: &mut Mem): void {
+    let brightScalar = m.ppu.inidisp & 0x0F
+    // Line 0 baseline = scalar registers; later lines carry forward (hold).
+    m.ppu.lineBright[0] = brightScalar
+    m.ppu.lineColdR[0] = m.ppu.coldR
+    m.ppu.lineColdG[0] = m.ppu.coldG
+    m.ppu.lineColdB[0] = m.ppu.coldB
+
+    let en = scratch(m, 0x420C)
+    if en == 0 {
+        m.ppu.hdmaOn = false
+        return
+    }
+    m.ppu.hdmaOn = true
+
+    // Per-channel running state for the frame walk.
+    var a2a: Vec<i64> = Vec.new() // running table address (16-bit)
+    var a2b: Vec<i64> = Vec.new() // table bank (A1B)
+    var lctr: Vec<i64> = Vec.new() // line counter (NTLR)
+    var done: Vec<i64> = Vec.new()
+    var indAddr: Vec<i64> = Vec.new() // indirect data pointer (16-bit)
+    var ch: i64 = 0
+    while ch < 8 {
+        let base = 0x4300 + ch * 0x10
+        a2a.push(scratch(m, base + 2) | (scratch(m, base + 3) << 8))
+        a2b.push(scratch(m, base + 4))
+        lctr.push(0) // 0 forces an entry reload on line 0
+        done.push(0)
+        indAddr.push(0)
+        ch = ch + 1
+    }
+
+    var line: i64 = 0
+    while line < 224 {
+        if line > 0 { // carry forward held register state
+            m.ppu.lineBright[line] = m.ppu.lineBright[line - 1]
+            m.ppu.lineColdR[line] = m.ppu.lineColdR[line - 1]
+            m.ppu.lineColdG[line] = m.ppu.lineColdG[line - 1]
+            m.ppu.lineColdB[line] = m.ppu.lineColdB[line - 1]
+        }
+        ch = 0
+        while ch < 8 {
+            if ((en >> ch) & 1) != 0 && done[ch] == 0 {
+                let base = 0x4300 + ch * 0x10
+                let dmap = scratch(m, base + 0)
+                let bbad = scratch(m, base + 1)
+                let indirect = (dmap & 0x40) != 0
+                let pattern = dmap & 7
+                var doXfer = false
+                var terminated = false
+                if (lctr[ch] & 0x7F) == 0 { // load a new table entry (NTLR)
+                    let bank = a2b[ch]
+                    var ptr = a2a[ch]
+                    let ntlr = memRead(m, (bank << 16) | ptr)
+                    ptr = (ptr + 1) & 0xFFFF
+                    if ntlr == 0 {
+                        done[ch] = 1
+                        terminated = true
+                        a2a[ch] = ptr
+                    } else {
+                        lctr[ch] = ntlr
+                        doXfer = true
+                        if indirect {
+                            let lo = memRead(m, (bank << 16) | ptr)
+                            ptr = (ptr + 1) & 0xFFFF
+                            let hi = memRead(m, (bank << 16) | ptr)
+                            ptr = (ptr + 1) & 0xFFFF
+                            indAddr[ch] = lo | (hi << 8)
+                        }
+                        a2a[ch] = ptr
+                    }
+                } else {
+                    doXfer = (lctr[ch] & 0x80) != 0 // repeat bit: transfer every line
+                }
+                if !terminated {
+                    if doXfer {
+                        let nbytes = hdmaUnitBytes(pattern)
+                        var j: i64 = 0
+                        while j < nbytes {
+                            let reg = 0x2100 | ((bbad + hdmaByteReg(pattern, j)) & 0xFF)
+                            var v: i64 = 0
+                            if indirect {
+                                let dbank = scratch(m, base + 7)
+                                v = memRead(m, (dbank << 16) | (indAddr[ch] & 0xFFFF))
+                                indAddr[ch] = (indAddr[ch] + 1) & 0xFFFF
+                            } else {
+                                v = memRead(m, (a2b[ch] << 16) | a2a[ch])
+                                a2a[ch] = (a2a[ch] + 1) & 0xFFFF
+                            }
+                            hdmaApplyReg(m, line, reg, v)
+                            j = j + 1
+                        }
+                    }
+                    lctr[ch] = (lctr[ch] - 1) & 0xFF
+                }
+            }
+            ch = ch + 1
+        }
+        line = line + 1
+    }
+}
+
 // CPU-side MMIO read ($2000-$5FFF). Pure (no read side effects yet): mul/div
 // results, NMI/vblank status, auto-read joypad. Falls back to the scratch store.
 // vblankToggle is driven by the system frame loop, not by reads (accurate
@@ -240,8 +412,16 @@ fn mmioRead(m: &Mem, off: i64): i64 {
         return m.timeup
     } // TIMEUP (IRQ flag); cleared per-frame in stepFrame (read-clear needs &mut)
     if off == 0x4212 {
-        return m.vblankToggle
-    } // HVBJOY: bit7 vblank
+        // bit7 vblank (stub), bit0 auto-joypad-read (idle). bit6 HBLANK: we don't
+        // model scanline dot timing, so pulse it off the free-running instruction
+        // counter — SMW's level-init hard-waits on HBLANK (BIT $4212 / BVC) before
+        // fading the screen in, and a never-set bit6 hangs it black forever.
+        var hb: i64 = 0
+        if (m.hcounter & 7) < 2 {
+            hb = 0x40
+        }
+        return m.vblankToggle | hb
+    } // HVBJOY: bit7 vblank, bit6 hblank
     if off == 0x4214 {
         return m.rddiv & 0xFF
     }
@@ -586,6 +766,10 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
         }
         i = i + 1
     }
+    // Tables set up during (this frame's) active display are now stable; walk the
+    // armed HDMA channels to produce the per-scanline PPU-register overrides the
+    // renderer consumes (gradient skies, brightness fades).
+    hdmaWalkFrame(m)
     m.vblankToggle = 0x80
     if (m.nmitimen & 0x80) != 0 {
         nmi(cpu, m)
@@ -1431,6 +1615,7 @@ fn blockMove(cpu: &mut Cpu, m: &mut Mem, dir: i64): void {
 // batches are wired; other memory-operand opcodes fall through to the no-op
 // default and register as failures against Harte until implemented.
 fn step(cpu: &mut Cpu, m: &mut Mem): void {
+    m.hcounter = m.hcounter + 1 // drives the $4212 HBLANK-flag stub
     let op = fetch8(cpu, m)
     match op {
         // ---- NOP ----
