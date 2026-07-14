@@ -48,6 +48,15 @@ var cpuWaiting: bool = false
 var badOp: i64 = -1
 var badOpPc: i64 = 0
 
+// Harness accessors for the unimplemented-opcode trap (badOp = -1 when none seen).
+fn lastBadOp(): i64 {
+    return badOp
+}
+
+fn lastBadOpPc(): i64 {
+    return badOpPc
+}
+
 struct Cpu {
     a: i64 // 16-bit accumulator (low byte = A, high byte = B when M=1)
     x: i64 // 16-bit index

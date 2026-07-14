@@ -30,7 +30,7 @@ from "std/io" import {
     readFile
 }
 from "./cpu" import {
-    Cpu, Mem, busNew, newCpuReset, stepFrame, step, scratch
+    Cpu, Mem, busNew, newCpuReset, stepFrame, step, scratch, lastBadOp, lastBadOpPc
 }
 from "./ppu" import {
     Ppu, renderFrame
@@ -486,6 +486,9 @@ fn main(): i32 {
 
     dumpRegs(m, frames)
     peekWram(m, peekAddrs)
+    if lastBadOp() >= 0 {
+        print("!! UNIMPLEMENTED OPCODE $" + hex2(lastBadOp()) + " at $" + hex2((lastBadOpPc() >> 16) & 0xFF) + hex4(lastBadOpPc() & 0xFFFF) + " — CPU derailed here")
+    }
     if doProbe {
         probeLoop(cpu, m, 6000)
     }
