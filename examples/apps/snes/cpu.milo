@@ -24,6 +24,17 @@ let FM: i64 = 0x20 // accumulator width: 1 = 8-bit A (also unused in emulation)
 let FV: i64 = 0x40 // overflow
 let FN: i64 = 0x80 // negative
 
+// Manual serial joypad ($4016/$4017). The auto-joypad ($4218/$4219) covers most
+// input, but DKC also reads the pad the old 6502 way: strobe $4016, then shift 16
+// bits out of $4016 bit0 (B,Y,Select,Start,Up,Down,Left,Right,A,X,L,R, then 1s).
+// Each read advances a bit cursor — but the CPU read path (memRead/mmioRead) is
+// &Mem, so the cursor can't live in Mem. It lives in these module globals, which
+// stay mutable regardless of the borrow. Latched from m.joy1/joy2 on the strobe.
+var joyLatch1: i64 = 0
+var joyCnt1: i64 = 0
+var joyLatch2: i64 = 0
+var joyCnt2: i64 = 0
+
 struct Cpu {
     a: i64 // 16-bit accumulator (low byte = A, high byte = B when M=1)
     x: i64 // 16-bit index
@@ -447,6 +458,24 @@ fn mmioRead(m: &Mem, off: i64): i64 {
     if off == 0x4217 {
         return (m.rdmpy >> 8) & 0xFF
     }
+    if off == 0x4016 {
+        // Serial pad-1 read: shift out one bit per read, MSB-first (B,Y,Select,
+        // Start,...,R), then 1s once exhausted (open controller line reads high).
+        var bit1: i64 = 1
+        if joyCnt1 < 16 {
+            bit1 = (joyLatch1 >> (15 - joyCnt1)) & 1
+            joyCnt1 = joyCnt1 + 1
+        }
+        return bit1
+    }
+    if off == 0x4017 {
+        var bit2: i64 = 1
+        if joyCnt2 < 16 {
+            bit2 = (joyLatch2 >> (15 - joyCnt2)) & 1
+            joyCnt2 = joyCnt2 + 1
+        }
+        return bit2
+    }
     if off == 0x4218 {
         return m.joy1 & 0xFF
     }
@@ -492,6 +521,16 @@ fn mmioWrite(m: &mut Mem, off: i64, val: i64): void {
     }
     if off == 0x2183 {
         m.wmadd = (m.wmadd & 0x0FFFF) | ((val & 1) << 16)
+        return
+    }
+    if off == 0x4016 {
+        // JOYSER0 strobe: latch the current pad state and reset the serial cursor.
+        // Games pulse bit0 high then low before shifting; latching on any write
+        // captures the state so the following $4016 reads shift it out in order.
+        joyLatch1 = m.joy1
+        joyCnt1 = 0
+        joyLatch2 = m.joy2
+        joyCnt2 = 0
         return
     }
     if off == 0x4200 {
