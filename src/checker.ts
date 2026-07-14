@@ -3176,15 +3176,10 @@ export class TypeChecker {
           return this.setType(expr, ot);
         }
         if (expr.op === "&") {
-          // Deprecated: `&x` in expression position (raw address-of) is being
-          // replaced by `x.addrOf()` (any value) / `v.ptr()` (a collection's data),
-          // so `&` can mean exactly one thing — a borrow marker in a TYPE. Warn
-          // (user code only, to avoid flooding std) during migration; still works.
-          if (this.currentFnIsUser)
-            this.warn("deprecated-addressof", `'&x' address-of is deprecated — use 'x.addrOf()' (any value, unsafe) or 'v.ptr()' (a collection's data). '&' is becoming types-only.`, sp);
-          this.requireUnsafe(`address-of operator requires 'unsafe' block`, sp);
-          if (expr.operand.kind !== "Ident" && expr.operand.kind !== "FieldAccess" && expr.operand.kind !== "IndexAccess")
-            this.error(`address-of requires an lvalue (variable, field, or index)`, sp);
+          // `&` is a borrow marker that appears only in a TYPE (`&T` = a borrowed
+          // param). It is not an expression operator. Borrows are implicit (pass
+          // the value bare); a raw pointer comes from `v.ptr()` / `x.addrOf()`.
+          this.error(`'&x' is not an expression — borrows are implicit (pass 'x' bare). For a raw pointer use 'v.ptr()' (a collection's data) or 'x.addrOf()' (any value, in an unsafe block).`, sp);
           return this.setType(expr, { tag: "ptr", inner: ot });
         }
         return this.setType(expr, { tag: "unknown" });
