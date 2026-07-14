@@ -554,8 +554,15 @@ if let Option.Some(val) = x {
 Loop as long as the subject matches the pattern, binding the payload each iteration:
 
 ```milo
-while let Option.Some(line) = reader.next() {
-    process(line)
+fn readLine(n: i32): Option<string> {
+    if n < 3 { return Option.Some("line") }
+    return Option.None
+}
+
+var i = 0
+while let Option.Some(line) = readLine(i) {
+    print(line)
+    i = i + 1
 }
 ```
 
@@ -565,12 +572,14 @@ while let Option.Some(line) = reader.next() {
 a bare expression (`P => v`) or a braced block whose tail is the value:
 
 ```milo
+let n = 1
 let name = match n {
     0 => "zero",
     1 => "one",
     _ => "many"
 }
 
+let r: Result<i32> = Result.Ok(21)
 let doubled = match r {
     Result.Ok(v)  => { let d = v * 2  d }
     Result.Err(e) => 0
