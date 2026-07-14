@@ -86,6 +86,17 @@ let hex: i32 = 0xFF            // hexadecimal
 let bin: i32 = 0b1010_1010     // binary
 ```
 
+An integer literal with **no type context** defaults to `i64` (arithmetic, indices and
+loop counters are `i64`-dominant; `i32` and the narrower widths are the annotated exception).
+Where a type *is* in context — an annotation, a function parameter, a struct field or an enum
+payload — the literal adopts that type instead:
+
+```milo
+let a = 5             // i64 (no context)
+let b: i32 = 5        // i32 (annotation drives the width)
+let c = a + 1         // i64  — `1` takes `a`'s width
+```
+
 ### Integer Overflow Safety
 
 Milo prevents silent integer overflow at multiple levels:

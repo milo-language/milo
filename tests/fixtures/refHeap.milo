@@ -6,7 +6,7 @@ enum Tree {
     Leaf(i32)
 }
 
-fn printHeaped(b: &Heap<i32>) {
+fn printHeaped(b: &Heap<i64>) {
     print("value: ", *b)
 }
 

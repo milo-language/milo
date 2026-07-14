@@ -1,6 +1,7 @@
 // @error: constant expression '2147483647 + 1' overflows i32
-
+// With an i32 hint the const subexpr is checked against i32's range (context-free it would
+// now default to i64 and fit; the explicit type is what makes this an overflow).
 fn main(): i32 {
-    let x = 2147483647 + 1
+    let x: i32 = 2147483647 + 1
     return 0
 }

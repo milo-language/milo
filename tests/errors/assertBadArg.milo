@@ -1,4 +1,4 @@
-// @error: assert() condition must be bool, got i32
+// @error: assert() condition must be bool, got i64
 
 fn main(): i32 {
     assert(42)

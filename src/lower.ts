@@ -251,7 +251,7 @@ class LowerCtx {
       }
       case "ForInStmt": {
         if (stmt.iterable.kind === "RangeExpr") {
-          const rangeType = this.typeOf(stmt.iterable) ?? { tag: "int" as const, bits: 32, signed: true };
+          const rangeType = this.typeOf(stmt.iterable) ?? { tag: "int" as const, bits: 64, signed: true };
           return {
             kind: "ForRange",
             varName: stmt.varName,

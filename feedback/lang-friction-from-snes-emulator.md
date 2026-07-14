@@ -103,7 +103,19 @@ its own copy: `vecZeros`, `spcZeros`, `ppuZeros`, `spcZerosI64`, `ppuZerosI64`).
 (`String.withCapacity` exists — the Vec equivalents don't, which is also why #1
 had no clean escape for the Vec side.)
 
-## 6. `if`-expression integer literals still default to i32 (CONFIRMED recurring)
+## 6. `if`-expression integer literals still default to i32 (CONFIRMED recurring) — ✅ SHIPPED 2026-07-14
+
+**Implemented:** context-free int literals now default to i64 (`checker.ts` IntLit path +
+`lower.ts` range fallback). Coercion where context exists is unchanged. Migration touched 3
+`std/runtime.milo` scheduler loops + 1 `std/regex.darwin.milo` + 1 example (annotated to their
+genuine i32 widths). Two latent bugs the flip exposed, both fixed in `retypeConstInt`:
+narrowing a const subexpr to a hint now re-checks overflow (`let x: i32 = 2147483647 + 1`), and
+a negated INT_MIN literal (`-2147483648` into i32) is range-checked against the negated value.
+Remaining ceremony (deferred, matches the decision): a generic instantiated from a bare literal
+(`let b = Heap(42)` → `Heap<i64>`) still needs an annotation when later passed to a specific
+instantiation — the full usage-inference option below is the fix if it recurs.
+
+
 
 Already in the genesis doc; hit it again several times, e.g.
 ```milo

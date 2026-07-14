@@ -2672,8 +2672,31 @@ export class TypeChecker {
   // so per-literal range/overflow checks still fire against the target type.
   private retypeConstInt(e: Expr, t: TypeKind) {
     if (e.kind === "IntLit" || e.kind === "CharLit") { this.checkExprWithHint(e, t); return; }
-    if (e.kind === "BinOp") { this.retypeConstInt(e.left, t); this.retypeConstInt(e.right, t); this.exprTypes.set(e, t); return; }
-    if (e.kind === "UnaryOp") { this.retypeConstInt(e.operand, t); this.exprTypes.set(e, t); return; }
+    if (e.kind === "BinOp") {
+      this.retypeConstInt(e.left, t); this.retypeConstInt(e.right, t); this.exprTypes.set(e, t);
+      // Re-check overflow against the (possibly narrower) target: the folded result can exceed
+      // t even when each leaf fits it (`let x: i32 = 2147483647 + 1`). checkExpr already ran this
+      // against the i64 literal default, so a coercion down to a hint needs its own check.
+      if (t.tag === "int" && e.left.kind === "IntLit" && e.right.kind === "IntLit") {
+        this.checkConstOverflow(e.left.value, e.right.value, e.op, t, e.span);
+      }
+      return;
+    }
+    if (e.kind === "UnaryOp") {
+      // `-<literal>` at exactly signed INT_MIN (e.g. -2147483648 for i32) is valid even though
+      // the bare magnitude overflows the type; range-check the negated value, not the leaf, so
+      // the per-literal check below doesn't reject the magnitude in isolation.
+      if (e.op === "-" && e.operand.kind === "IntLit" && t.tag === "int" && t.signed) {
+        const min = -(2n ** BigInt(t.bits - 1));
+        const max = 2n ** BigInt(t.bits - 1) - 1n;
+        const neg = -e.operand.value;
+        if (neg < min || neg > max) {
+          this.error(`integer literal ${e.op}${e.operand.value} overflows i${t.bits} (range ${min}..${max})`, e.span);
+        }
+        this.exprTypes.set(e.operand, t); this.exprTypes.set(e, t); return;
+      }
+      this.retypeConstInt(e.operand, t); this.exprTypes.set(e, t); return;
+    }
   }
 
   private rootVarOf(e: Expr): string | null {
@@ -2970,7 +2993,10 @@ export class TypeChecker {
     const sp = expr.span;
     switch (expr.kind) {
       case "IntLit":
-        return this.setType(expr, { tag: "int", bits: 32, signed: true });
+        // Context-free int literals default to i64 (decision 2026-07-13): this codebase is
+        // i64-dominant (arithmetic, indices, loop counters); i32 is the annotated exception.
+        // Literals WITH a target-type hint still coerce via checkExprWithHint (let x: i32 = 5).
+        return this.setType(expr, { tag: "int", bits: 64, signed: true });
       case "FloatLit":
         return this.setType(expr, { tag: "float", bits: 64 });
       case "BoolLit":

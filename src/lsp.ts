@@ -159,7 +159,7 @@ function collectStmtTypeInfo(stmt: Stmt, fn: Function, infos: TypeInfo[]) {
 
 function inferLiteralType(expr: Expr): string | null {
   switch (expr.kind) {
-    case "IntLit": return "i32";
+    case "IntLit": return "i64";  // context-free int literals default to i64
     case "FloatLit": return "f64";
     case "BoolLit": return "bool";
     case "StringLit": return "*i8";

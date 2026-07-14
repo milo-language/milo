@@ -933,7 +933,7 @@ fn _wakeSelectFds(sched: *u8, readyFds: *i32, count: i32): void {
             let kind = _rtReadI64(cur, nodeKind())
             if kind == kindSelRead() || kind == kindSelWrite() {
                 let fd = _rtReadI32(cur, nodeFd())
-                var i = 0
+                var i: i32 = 0
                 while i < count {
                     if readyFds[i as i64] == fd {
                         _selectTryClaim(_rtReadPtr(cur, nodeA()), _rtReadI64(cur, nodeArm()))
@@ -974,7 +974,7 @@ fn _pollAndWake(sched: *u8, timeoutMs: i32): void {
         if n > 0 {
             let wakeupId = _rtReadI32(sched, sWakeupId())
             let fds = readyBuf as *i32
-            var i = 0
+            var i: i32 = 0
             while i < n {
                 if fds[i as i64] == wakeupId {
                     eventLoopDrainWakeup(el, wakeupId)
@@ -1041,7 +1041,7 @@ fn _wakeReadyTasks(sched: *u8, readyFds: *i32, count: i32): void {
             let waitFd = _rtReadI32(cur, tWaitFd())
 
             var woken = false
-            var i = 0
+            var i: i32 = 0
             while i < count {
                 if readyFds[i as i64] == waitFd {
                     woken = true

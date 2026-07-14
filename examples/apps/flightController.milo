@@ -174,7 +174,7 @@ requires tick >= 0
 
     // thrust bar
     writeStdout("  thrust  ")
-    let filled = clampF64(thrust * 30.0, 0.0, 30.0) as i32
+    let filled = clampF64(thrust * 30.0, 0.0, 30.0) as i64
     for i in 0..30 {
         if i < filled {
             writeStdout("\x1b[42m \x1b[0m")

@@ -7,7 +7,7 @@ fn maybeDouble(x: i32?): i32? {
 }
 
 fn main(): i32 {
-    let a = Option.Some(21)
+    let a: i32? = Option.Some(21)
     let result = maybeDouble(a)
     match result {
         Option.Some(v) => {
