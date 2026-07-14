@@ -292,6 +292,20 @@ fn dumpOam(m: &Mem): void {
         s = s + 1
     }
     print("  (" + shown.toString() + " shown of on-screen sprites)")
+    var raw = "  high-table[512..527]:"
+    var h: i64 = 0
+    while h < 16 {
+        raw = raw + " " + hex2(m.ppu.oam[0x200 + h] as i64)
+        h = h + 1
+    }
+    print(raw)
+    var lo = "  sprite0-3 raw (x,y,t,a):"
+    var b: i64 = 0
+    while b < 16 {
+        lo = lo + " " + hex2(m.ppu.oam[b] as i64)
+        b = b + 1
+    }
+    print(lo)
 }
 
 // Dump a few low-WRAM bytes ($00xxxx mirror = m.wram[off]). Useful to check
