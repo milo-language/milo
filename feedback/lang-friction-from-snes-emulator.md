@@ -161,12 +161,19 @@ load-bearing, not pedagogy:**
   `unsafe`). May be **null when `len==0`** — strictly safer than today's
   `(&v[0])`, which bounds-panics or is UB on an empty Vec. `string` keeps
   `.cstr()` (its contract is NUL-termination); do **not** add `string.ptr()`.
-- **`addrOf(x): *T`** — builtin free fn (joins the `sizeOf<T>()`/`offsetOf<T>()`
-  family), lvalue-only (Ident / field / index; **temporaries rejected** — kills
-  the dangling-rvalue hazard), and **still requires `unsafe`**. It feeds
-  `memcpy`/ioctl out-params/generic byte-surgery; every current site is already
-  in an `unsafe` block, so keeping it unsafe = **zero migration churn** and no
-  marker erosion.
+- **`x.addrOf(): *T`** — **method** (cs01 chose method over free-fn, 2026-07-13, to
+  stay uniform with `.ptr()`), lvalue-only (Ident / field / index; **temporaries
+  rejected** — kills the dangling-rvalue hazard), and **requires `unsafe` to call**
+  (taking a stack/field address is the escape-prone op, unlike `.ptr()` into an
+  owned heap buffer). It feeds `memcpy`/ioctl out-params/generic byte-surgery;
+  every current site is already in an `unsafe` block → zero migration churn.
+- **DECIDED (cs01, 2026-07-13): passing a raw `*T` to an extern requires `unsafe`.**
+  Resolves the doc/impl contradiction below in favor of the doc: obtaining a
+  pointer (`.ptr()`, `.cstr()`) is safe, but handing a real `*T` to C — even a
+  read like `strlen(p)` — needs an `unsafe` block; `0 as *T` stays safe. So
+  `unsafe { memcpy(dst.ptr(), src.ptr(), n) }` — the dangerous boundary can no
+  longer hide as safe code. (`.addrOf()` already forces `unsafe`, so its extern
+  uses are covered by the same block.)
 - **Why not one unified name:** `std/sync`'s generic `addrOf(v)` needs *header*
   semantics when `T = Vec` ("address of the slot"), while `.ptr()` means the
   *buffer*. A single "collections mean the buffer" rule would be incoherent in
