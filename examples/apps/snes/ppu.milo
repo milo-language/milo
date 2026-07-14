@@ -301,9 +301,6 @@ fn ppuRegWrite(p: &mut Ppu, reg: i64, val: i64): void {
         return
     }
     if reg == 0x23 {
-        if v != 0 {
-            print("DBG W12SEL write = " + v.toString())
-        }
         p.w12sel = v
         return
     } // W12SEL: BG1/BG2 window enable+invert

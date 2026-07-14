@@ -42,6 +42,10 @@ extern fn SDL_RenderClear(ren: *u8): i32
 
 extern fn SDL_RenderCopy(ren: *u8, tex: *u8, src: *u8, dst: *u8): i32
 
+// Maps the fixed 256x224 render onto whatever size the window is resized to,
+// preserving aspect (letterbox) — lets the OS maximize/resize the window.
+extern fn SDL_RenderSetLogicalSize(ren: *u8, w: i32, h: i32): i32
+
 extern fn SDL_RenderPresent(ren: *u8): void
 
 extern fn SDL_PollEvent(event: *u8): i32
@@ -77,6 +81,7 @@ let PAD_DPAD_LEFT: i32 = 13
 let PAD_DPAD_RIGHT: i32 = 14
 let SDL_WINDOWPOS_CENTERED: i32 = 0x2FFF0000
 let SDL_WINDOW_SHOWN: u32 = 0x4
+let SDL_WINDOW_RESIZABLE: u32 = 0x20 // lets the OS maximize/resize the window
 let SDL_TEXTUREACCESS_STREAMING: i32 = 1
 let SDL_PIXELFORMAT_ABGR8888: u32 = 0x16762004
 let SDL_QUIT: u32 = 0x100
@@ -216,8 +221,10 @@ fn main(): i32 {
             ji = ji + 1
         }
         let title = "Milo SNES"
-        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * 3, 224 * 3, SDL_WINDOW_SHOWN)
+        let win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 256 * 3, 224 * 3, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE)
         let ren = SDL_CreateRenderer(win, -1, 0)
+        // Scale the 256x224 frame to fill the (resizable) window, aspect-preserved.
+        SDL_RenderSetLogicalSize(ren, 256, 224)
         let tex = SDL_CreateTexture(ren, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STREAMING, 256, 224)
         if (win as i64) == 0 || (ren as i64) == 0 || (tex as i64) == 0 {
             print("SDL setup failed")
@@ -238,6 +245,11 @@ fn main(): i32 {
         var prevSave = false // F5 = save-state, F7 = load-state (edge-detected)
         var prevLoad = false
         var comboFrames: i64 = 0 // Start+Select held -> quit to the menu
+        // Autosave: flush SRAM to <rom>.srm periodically (not just on clean quit)
+        // so a hard kill can't lose an in-game save. Guarded by a checksum so we
+        // only write when the game actually changed SRAM.
+        var saveTick: i64 = 0
+        var lastSaveSum: i64 = -1
         let statePath = if argv.len >= 2 {
             argv[1] + ".state"
         } else {
@@ -246,6 +258,26 @@ fn main(): i32 {
         while !quit {
             stepFrame(cpu, m)
             renderFrame(m.ppu, fb)
+
+            saveTick = saveTick + 1
+            if srmPath.len > 0 && saveTick >= 180 { // ~3s at 60fps
+                saveTick = 0
+                var sum: i64 = 0
+                var si: i64 = 0
+                while si < m.sram.len {
+                    sum = sum + (m.sram[si] as i64) * (si + 1)
+                    si = si + 1
+                }
+                if sum != lastSaveSum {
+                    lastSaveSum = sum
+                    match writeFile(srmPath, sramToString(m)) {
+                        Result.Ok(n) => {
+                        }
+                        Result.Err(e) => {
+                        }
+                    }
+                }
+            }
 
             // Pack 0xRRGGBB -> ABGR8888 (LE bytes R,G,B,A).
             i = 0
