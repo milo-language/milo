@@ -87,9 +87,7 @@ fn sendHttp(fd: i32, status: i32, contentType: &string, body: &string): void {
     resp = resp + "Access-Control-Allow-Origin: *\r\n"
     resp = resp + "Connection: close\r\n\r\n"
     resp = resp + body
-    unsafe {
-        write(fd, resp, resp.len)
-    }
+    write(fd, resp, resp.len)
 }
 
 struct RequestLine {
@@ -446,17 +444,15 @@ fn acceptLoop(rawFd: i32): void {
         while true {
             var clientAddr = makeZeroedSockaddr()
             var addrlen: u32 = SIZEOF_SOCKADDR_IN
-            unsafe {
-                let clientFd = accept(rawFd, clientAddr, addrlen)
-                if clientFd < 0 {
-                    break
-                }
-                setNonblocking(clientFd)
-                Task.spawn(move(): void => {
-                    handleConnection(clientFd)
-                }
-                )
+            let clientFd = accept(rawFd, clientAddr, addrlen)
+            if clientFd < 0 {
+                break
             }
+            setNonblocking(clientFd)
+            Task.spawn(move(): void => {
+                handleConnection(clientFd)
+            }
+            )
         }
     }
 }
@@ -566,40 +562,38 @@ fn main(): i32 {
     let SOCK_STREAM: i32 = 1
     let SIZEOF_SOCKADDR_IN: u32 = 16
 
-    unsafe {
-        let rawFd = socket(AF_INET, SOCK_STREAM, 0)
-        if rawFd < 0 {
-            print("error: socket() failed")
-            return 1
-        }
-
-        var one: i32 = 1
-        setsockopt(rawFd, solSocket(), soReuseaddr(), one, 4)
-
-        var addr = makeSockaddr(port, 0)
-        if bind(rawFd, addr, SIZEOF_SOCKADDR_IN) < 0 {
-            print("error: bind() failed")
-            return 1
-        }
-        if listen(rawFd, 1024) < 0 {
-            print("error: listen() failed")
-            return 1
-        }
-
-        var boundAddr = makeZeroedSockaddr()
-        var boundLen: u32 = SIZEOF_SOCKADDR_IN
-        getsockname(rawFd, boundAddr, boundLen)
-        let actualPort = ntohs(boundAddr.sinPort)
-
-        print($"termpair server listening on http://localhost:{actualPort}")
-        flush()
-
-        // run accept loop in a green thread so spawned handlers can execute
-        Task.spawn(move(): void => {
-            acceptLoop(rawFd)
-        }
-        )
+    let rawFd = socket(AF_INET, SOCK_STREAM, 0)
+    if rawFd < 0 {
+        print("error: socket() failed")
+        return 1
     }
+
+    var one: i32 = 1
+    setsockopt(rawFd, solSocket(), soReuseaddr(), one, 4)
+
+    var addr = makeSockaddr(port, 0)
+    if bind(rawFd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        print("error: bind() failed")
+        return 1
+    }
+    if listen(rawFd, 1024) < 0 {
+        print("error: listen() failed")
+        return 1
+    }
+
+    var boundAddr = makeZeroedSockaddr()
+    var boundLen: u32 = SIZEOF_SOCKADDR_IN
+    getsockname(rawFd, boundAddr, boundLen)
+    let actualPort = ntohs(boundAddr.sinPort)
+
+    print($"termpair server listening on http://localhost:{actualPort}")
+    flush()
+
+    // run accept loop in a green thread so spawned handlers can execute
+    Task.spawn(move(): void => {
+        acceptLoop(rawFd)
+    }
+    )
     // Go exit semantics: main no longer drains implicitly. Drive the scheduler
     // so the accept loop (and the handlers it spawns) keep running — the server
     // never returns from here.

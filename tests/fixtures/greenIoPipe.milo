@@ -29,9 +29,7 @@ fn main(): i32 {
             s.push(buf[i])
         }
         print("got ", s)
-        unsafe {
-            close(rfd)
-        }
+        close(rfd)
     }
     )
 
@@ -45,9 +43,7 @@ fn main(): i32 {
         print("computed ", sum)
         let msg = "hello"
         writeFd(wfd, msg, msg.len)
-        unsafe {
-            close(wfd)
-        }
+        close(wfd)
     }
     )
 

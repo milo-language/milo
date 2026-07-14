@@ -1,9 +1,7 @@
 var ptr: *u8 = 0 as *u8
 
 fn setPtr(p: *u8): void {
-    unsafe {
-        ptr = p
-    }
+    ptr = p
 }
 
 fn main(): i32 {

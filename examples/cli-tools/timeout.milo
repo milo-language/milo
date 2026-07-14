@@ -127,31 +127,23 @@ fn parseFlags(argv: &Vec<string>): TimeoutOpts {
 
         if arg == "-h" || arg == "--help" {
             printHelp()
-            unsafe {
-                exit(0)
-            }
+            exit(0)
         }
         if arg == "--version" {
             print("timeout (milo) 1.0.0")
-            unsafe {
-                exit(0)
-            }
+            exit(0)
         }
         if arg == "-s" || arg == "--signal" {
             opts.cmdStart = opts.cmdStart + 1
             if opts.cmdStart >= argv.len {
                 print("error: --signal requires a value")
-                unsafe {
-                    exit(125)
-                }
+                exit(125)
             }
             let sigStr = argv[opts.cmdStart].clone()
             opts.signal = parseSignal(sigStr)
             if opts.signal < 0 {
                 print($"error: unknown signal '{sigStr}'")
-                unsafe {
-                    exit(125)
-                }
+                exit(125)
             }
             opts.cmdStart = opts.cmdStart + 1
             continue
@@ -160,9 +152,7 @@ fn parseFlags(argv: &Vec<string>): TimeoutOpts {
             opts.cmdStart = opts.cmdStart + 1
             if opts.cmdStart >= argv.len {
                 print("error: --kill-after requires a value")
-                unsafe {
-                    exit(125)
-                }
+                exit(125)
             }
             let kaStr = argv[opts.cmdStart].clone()
             opts.killAfterMs = parseDuration(kaStr) * 1000
@@ -231,53 +221,51 @@ fn main(): i32 {
 
     let deadlineMs = epochMillis() + secs * 1000
 
-    unsafe {
-        let pid = fork()
-        if pid < 0 {
-            print("error: fork failed")
+    let pid = fork()
+    if pid < 0 {
+        print("error: fork failed")
+        return 125
+    }
+    if pid == 0 {
+        let code = system(cmd)
+        exit((code >> 8) & 255)
+    }
+
+    var status: [u8; 4] = [0; 4]
+    while epochMillis() < deadlineMs {
+        let r = waitpid(pid, status, 1)
+        if r > 0 {
+            let sig = status[0] as i32 & 127
+            if sig == 0 {
+                return status[1] as i32
+            }
+            return 128 + sig
+        }
+        if r < 0 {
             return 125
         }
-        if pid == 0 {
-            let code = system(cmd)
-            exit((code >> 8) & 255)
-        }
+        sleepMs(50)
+    }
 
-        var status: [u8; 4] = [0; 4]
-        while epochMillis() < deadlineMs {
-            let r = waitpid(pid, status, 1)
-            if r > 0 {
-                let sig = status[0] as i32 & 127
-                if sig == 0 {
-                    return status[1] as i32
-                }
-                return 128 + sig
-            }
-            if r < 0 {
-                return 125
-            }
-            sleepMs(50)
-        }
+    // timed out
+    if opts.verbose {
+        print($"timeout: sending signal {opts.signal} to pid {pid}")
+    }
+    kill(pid, opts.signal)
 
-        // timed out
-        if opts.verbose {
-            print($"timeout: sending signal {opts.signal} to pid {pid}")
-        }
-        kill(pid, opts.signal)
-
-        if opts.hasKillAfter {
-            sleepMs(opts.killAfterMs)
-            let r = waitpid(pid, status, 1)
-            if r == 0 {
-                if opts.verbose {
-                    print($"timeout: sending KILL to pid {pid}")
-                }
-                kill(pid, 9)
-                waitpid(pid, status, 0)
+    if opts.hasKillAfter {
+        sleepMs(opts.killAfterMs)
+        let r = waitpid(pid, status, 1)
+        if r == 0 {
+            if opts.verbose {
+                print($"timeout: sending KILL to pid {pid}")
             }
-        } else {
-            sleepMs(100)
-            waitpid(pid, status, 1)
+            kill(pid, 9)
+            waitpid(pid, status, 0)
         }
+    } else {
+        sleepMs(100)
+        waitpid(pid, status, 1)
     }
 
     if opts.preserveStatus {

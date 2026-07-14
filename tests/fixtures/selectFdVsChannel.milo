@@ -45,9 +45,7 @@ fn main(): i32 {
                     s.push(buf[i])
                 }
                 print("fd woke: ", s)
-                unsafe {
-                    close(rfd)
-                }
+                close(rfd)
             }
             2 => {
                 print("timeout")
@@ -63,9 +61,7 @@ fn main(): i32 {
     Task.spawn(move(): void => {
         let m = "hi"
         writeFd(wfd, m, m.len)
-        unsafe {
-            close(wfd)
-        }
+        close(wfd)
     }
     )
 

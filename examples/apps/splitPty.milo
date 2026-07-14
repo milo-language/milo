@@ -237,12 +237,10 @@ fn main(): void {
                                 Result.Ok(_) => {
                                     drawBorder("ls -G (colored)", "PTY device info", half, paneRows)
 
-                                    unsafe {
-                                        let f1 = fcntl(pty1.masterFd, fGetfl())
-                                        fcntl(pty1.masterFd, fSetfl(), f1 | oNonblock())
-                                        let f2 = fcntl(pty2.masterFd, fGetfl())
-                                        fcntl(pty2.masterFd, fSetfl(), f2 | oNonblock())
-                                    }
+                                    let f1 = fcntl(pty1.masterFd, fGetfl())
+                                    fcntl(pty1.masterFd, fSetfl(), f1 | oNonblock())
+                                    let f2 = fcntl(pty2.masterFd, fGetfl())
+                                    fcntl(pty2.masterFd, fSetfl(), f2 | oNonblock())
 
                                     var out1 = ""
                                     var out2 = ""

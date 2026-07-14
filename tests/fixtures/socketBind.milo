@@ -12,20 +12,18 @@ extern fn close(fd: i32): i32
 extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
 fn main(): i32 {
-    unsafe {
-        let fd = socket(2, 1, 0)
-        if fd < 0 {
-            print("socket failed")
-            return 1
-        }
-        var addr = makeSockaddr(0, 0)
-        let result = bind(fd, addr, 16)
-        if result == 0 {
-            print("bind ok")
-        } else {
-            print("bind failed: ", result)
-        }
-        close(fd)
+    let fd = socket(2, 1, 0)
+    if fd < 0 {
+        print("socket failed")
+        return 1
     }
+    var addr = makeSockaddr(0, 0)
+    let result = bind(fd, addr, 16)
+    if result == 0 {
+        print("bind ok")
+    } else {
+        print("bind failed: ", result)
+    }
+    close(fd)
     return 0
 }
