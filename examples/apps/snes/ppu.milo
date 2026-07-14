@@ -654,7 +654,24 @@ fn bgEntryAddr(tmBase: i64, sc: i64, tileX: i64, tileY: i64): i64 {
 // wantPrio: -1 = draw all tiles; 0/1 = only tiles whose priority bit (tilemap
 // entry bit 13) matches — lets the compositor interleave BG priority levels with
 // sprite priority levels (SNES per-tile priority).
-fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64, palBase: i64, layerIdx: i64, screenDisable: i64, wantPrio: i64): void {
+fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, hofs: i64, vofs: i64, bpp: i64, palBase: i64, layerIdx: i64, screenDisable: i64, wantPrio: i64, cgMain: bool): void {
+    // Color-math mode for this layer on the main screen: nonzero => blend this
+    // layer's pixels over the sub-screen already in fb instead of overwriting.
+    let cgMode: i64 = if cgMain && (p.cgadsub & (1 << layerIdx)) != 0 {
+        if (p.cgadsub & 0x80) != 0 {
+            if (p.cgadsub & 0x40) != 0 {
+                4
+            } else {
+                3
+            }
+        } else if (p.cgadsub & 0x40) != 0 {
+            2
+        } else {
+            1
+        }
+    } else {
+        0
+    }
     let palW: i64 = if bpp == 4 {
         16
     } else {
@@ -710,7 +727,13 @@ fn renderBGLayer(p: &Ppu, fb: &mut Vec<i64>, bright: i64, sc: i64, chBase: i64, 
                 } else {
                     palBase + pal * palW + ci
                 }
-                fb[y * 256 + x] = cgToRgb(p, colorIdx, lineBrightAt(p, y, bright))
+                let col = cgToRgb(p, colorIdx, lineBrightAt(p, y, bright))
+                let fi = y * 256 + x
+                fb[fi] = if cgMode == 0 {
+                    col
+                } else {
+                    blendRgb(fb[fi], col, cgMode)
+                }
             }
             x = x + 1
         }
@@ -752,7 +775,7 @@ fn renderMode7(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
 
 // Render the mode's BG layers whose bit is set in `enable` (a $212C/$212D mask),
 // back-to-front, compositing onto fb by transparency.
-fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenDisable: i64): void {
+fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenDisable: i64, cgMain: bool): void {
     let ch1 = (p.bg12nba & 0x0F) << 12
     let ch2 = ((p.bg12nba >> 4) & 0x0F) << 12
     let ch3 = (p.bg34nba & 0x0F) << 12
@@ -765,16 +788,16 @@ fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenD
     if mode == 0 {
         // Mode 0: four 2bpp BGs; palette groups at cgram 0/32/64/96.
         if en4 {
-            renderBGLayer(p, fb, bright, p.bgsc3, ch4, p.bghofs[3], p.bgvofs[3], 2, 96, 3, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc3, ch4, p.bghofs[3], p.bgvofs[3], 2, 96, 3, screenDisable, -1, cgMain)
         }
         if en3 {
-            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 64, 2, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 64, 2, screenDisable, -1, cgMain)
         }
         if en2 {
-            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 2, 32, 1, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 2, 32, 1, screenDisable, -1, cgMain)
         }
         if en1 {
-            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0, 0, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 2, 0, 0, screenDisable, -1, cgMain)
         }
     } else if mode == 7 {
         if en1 {
@@ -783,21 +806,21 @@ fn renderScreenBGs(p: &Ppu, fb: &mut Vec<i64>, bright: i64, enable: i64, screenD
     } else if mode == 3 {
         // Mode 3: BG1 8bpp (direct 256-color), BG2 4bpp.
         if en2 {
-            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, screenDisable, -1, cgMain)
         }
         if en1 {
-            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 8, 0, 0, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 8, 0, 0, screenDisable, -1, cgMain)
         }
     } else {
         // Mode 1 (and a reasonable default for 2/4-7): BG3 2bpp, BG2/BG1 4bpp.
         if en3 {
-            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, screenDisable, -1, cgMain)
         }
         if en2 {
-            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, screenDisable, -1, cgMain)
         }
         if en1 {
-            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0, 0, screenDisable, -1)
+            renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0, 0, screenDisable, -1, cgMain)
         }
     }
 }
@@ -811,6 +834,45 @@ fn clamp5(v: i64): i64 {
         return 31
     }
     return v
+}
+
+fn clamp8(v: i64): i64 {
+    if v < 0 {
+        return 0
+    }
+    if v > 255 {
+        return 255
+    }
+    return v
+}
+
+// SNES color-math blend of a main-screen pixel over the sub-screen pixel already
+// in the framebuffer. cgMode: 1=add, 2=add-half, 3=subtract, 4=subtract-half.
+// (mode 0 = plain replace, handled by the caller.) Result = main ± sub, optionally
+// halved. Approximate: uses the drawn sub-screen (or backdrop) already in fb as the
+// second operand, which is what DKC's Rareware logo needs — the logo lives on the
+// sub-screen and CGADSUB adds it into the (dark) main-screen BG2.
+fn blendRgb(sub: i64, main: i64, cgMode: i64): i64 {
+    let sr = (sub >> 16) & 0xFF
+    let sg = (sub >> 8) & 0xFF
+    let sb = sub & 0xFF
+    let mr = (main >> 16) & 0xFF
+    let mg = (main >> 8) & 0xFF
+    let mb = main & 0xFF
+    var r = mr + sr
+    var g = mg + sg
+    var b = mb + sb
+    if cgMode == 3 || cgMode == 4 {
+        r = mr - sr
+        g = mg - sg
+        b = mb - sb
+    }
+    if cgMode == 2 || cgMode == 4 {
+        r = r / 2
+        g = g / 2
+        b = b / 2
+    }
+    return (clamp8(r) << 16) | (clamp8(g) << 8) | clamp8(b)
 }
 
 // Backdrop color (CGRAM index 0) with color math ($2131 bit5) applied: add or
@@ -876,7 +938,7 @@ fn renderMode1Main(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
     // BG3 low-priority: front of nothing (very back) when BG3-priority is off; when
     // on, BG3 high-priority instead jumps to the very front (drawn last below).
     if en3 && !bg3High {
-        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 0)
+        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 0, false)
     }
     if enObj {
         renderSprites(p, fb, bright, 0)
@@ -884,34 +946,34 @@ fn renderMode1Main(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
     if en3 {
         // BG3.1 sits here only when BG3-priority is off; when on it's frontmost.
         if !bg3High {
-            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 1)
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 1, false)
         } else {
-            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 0)
+            renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 0, false)
         }
     }
     if enObj {
         renderSprites(p, fb, bright, 1)
     }
     if en2 {
-        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, d, 0)
+        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, d, 0, false)
     }
     if en1 {
-        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0, 0, d, 0)
+        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0, 0, d, 0, false)
     }
     if enObj {
         renderSprites(p, fb, bright, 2)
     }
     if en2 {
-        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, d, 1)
+        renderBGLayer(p, fb, bright, p.bgsc1, ch2, p.bghofs[1], p.bgvofs[1], 4, 0, 1, d, 1, false)
     }
     if en1 {
-        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0, 0, d, 1)
+        renderBGLayer(p, fb, bright, p.bgsc0, ch1, p.bghofs[0], p.bgvofs[0], 4, 0, 0, d, 1, false)
     }
     if enObj {
         renderSprites(p, fb, bright, 3)
     }
     if en3 && bg3High { // BG3 high-priority tiles are frontmost (SMW HUD)
-        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 1)
+        renderBGLayer(p, fb, bright, p.bgsc2, ch3, p.bghofs[2], p.bgvofs[2], 2, 0, 2, d, 1, false)
     }
 }
 
@@ -953,12 +1015,12 @@ fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     // priority levels layer correctly; other modes keep the simpler BG-then-OBJ
     // order (sprites all drawn on top).
     if p.ts != 0 {
-        renderScreenBGs(p, fb, bright, p.ts, p.tsw)
+        renderScreenBGs(p, fb, bright, p.ts, p.tsw, false)
     }
     if (p.bgmode & 0x07) == 1 {
         renderMode1Main(p, fb, bright)
     } else {
-        renderScreenBGs(p, fb, bright, p.tm, p.tmw)
+        renderScreenBGs(p, fb, bright, p.tm, p.tmw, true)
         if ((p.tm | p.ts) & 0x10) != 0 {
             renderSprites(p, fb, bright, -1)
         }
