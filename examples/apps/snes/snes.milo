@@ -93,6 +93,8 @@ extern fn SDL_GameControllerClose(gc: *u8): void
 
 extern fn SDL_Delay(ms: u32): void
 
+extern fn SDL_GetTicks(): u32
+
 extern fn SDL_Quit(): void
 
 let SDL_INIT_VIDEO: u32 = 0x20
@@ -355,7 +357,9 @@ fn main(): i32 {
         } else {
             "/tmp/snes/demo.state"
         }
+        var fpsCarry: i64 = 0 // fractional-ms accumulator for exact 60 fps pacing
         while !quit {
+            let frameStart = SDL_GetTicks() as i64
             if focused {
                 stepFrame(cpu, m)
             }
@@ -599,9 +603,19 @@ fn main(): i32 {
             } else {
                 comboFrames = 0
             }
-            // ~60 fps when active; idle slower while backgrounded/paused.
+            // Pace to a real 60.0 fps. The old code slept a FIXED 16ms *on top of*
+            // the per-frame work, so every frame took work+16ms -> ~55 fps (visibly
+            // slow, worse in sprite-heavy scenes). Instead sleep only the remainder
+            // to hit a 16.667ms target; the 50/3-ms accumulator keeps the average
+            // exact (targets alternate 16/17/17...). Idle slower when backgrounded.
             if focused {
-                SDL_Delay(16)
+                fpsCarry = fpsCarry + 50
+                let target = fpsCarry / 3
+                fpsCarry = fpsCarry - target * 3
+                let elapsed = (SDL_GetTicks() as i64) - frameStart
+                if elapsed < target {
+                    SDL_Delay((target - elapsed) as u32)
+                }
             } else {
                 SDL_Delay(50)
             }
