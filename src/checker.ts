@@ -1435,6 +1435,15 @@ export class TypeChecker {
   private registerImpl(impl: import("./ast").ImplDecl, program: Program, implFnsToCheck: Function[]) {
     const typeName = impl.typeName;
 
+    // 'addrOf' is the built-in universal raw address-of operator (x.addrOf(): *T).
+    // Reserve the name so `x.addrOf()` means exactly one thing everywhere — a
+    // user method of the same name would be silently shadowed (context-dependent
+    // dispatch), which is the ambiguity this design exists to remove.
+    for (const m of impl.methods) {
+      if (m.name === "addrOf")
+        this.error(`'addrOf' is a reserved method name — it is the built-in raw address-of operator ('x.addrOf(): *T'). Rename this method.`, m.span ?? impl.span);
+    }
+
     // generic impl — store as template, instantiate per monomorphization
     if (impl.typeParams && impl.typeParams.length > 0 && !impl.traitName) {
       const existing = this.genericImpls.get(typeName) || [];
