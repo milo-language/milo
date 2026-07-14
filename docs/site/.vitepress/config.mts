@@ -28,8 +28,16 @@ export default defineConfig({
       { text: 'Language', link: '/language/' },
       { text: 'Standard Library', link: '/stdlib/' },
       { text: 'Playground', link: '/playground' },
-      { text: 'NES', link: '/nes/', target: '_self' },
-      { text: 'Genesis', link: '/genesis/', target: '_self' },
+      {
+        text: 'Demos',
+        items: [
+          { text: 'Showcase', link: '/demos' },
+          { text: 'NES Emulator', link: '/nes/', target: '_self' },
+          { text: 'Genesis Emulator', link: '/genesis/', target: '_self' },
+          { text: 'SNES Emulator', link: '/snes/', target: '_self' },
+          { text: 'Example Programs', link: '/examples' },
+        ]
+      },
       { text: 'Benchmarks', link: '/benchmarks' },
       { text: 'Roadmap', link: '/roadmap' },
       { text: 'AI Coding', link: '/ai-coding' },
@@ -181,6 +189,7 @@ export default defineConfig({
         {
           text: 'More',
           items: [
+            { text: 'Demos & Showcase', link: '/demos' },
             { text: 'Examples', link: '/examples' },
             { text: 'Benchmarks', link: '/benchmarks' },
             { text: 'Quick Reference', link: '/reference' },
