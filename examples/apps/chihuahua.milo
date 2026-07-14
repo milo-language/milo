@@ -125,7 +125,7 @@ fn termSize(out: &mut [i64; 2]): void {
         rows: 0 as u16, cols: 0 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
     unsafe {
-        ioctl(1, 1074295912, (&ws) as *u8)
+        ioctl(1, 1074295912, (ws.addrOf()) as *u8)
     }
     var rows = ws.rows as i64
     var cols = ws.cols as i64

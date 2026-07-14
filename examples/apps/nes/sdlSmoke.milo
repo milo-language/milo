@@ -68,7 +68,7 @@ fn main(): i32 {
         var frame: u32 = 0
         while !quit {
             // Poll all pending events; SDL_Event.type is the first u32.
-            while SDL_PollEvent((&ev[0]) as *u8) != 0 {
+            while SDL_PollEvent(ev) != 0 {
                 let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
@@ -90,7 +90,7 @@ fn main(): i32 {
                 y = y + 1
             }
 
-            SDL_UpdateTexture(tex, 0 as *u8, (&fb[0]) as *u8, W * 4)
+            SDL_UpdateTexture(tex, 0 as *u8, fb[0].addrOf() as *u8, W * 4)
             SDL_RenderClear(ren)
             SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
             SDL_RenderPresent(ren)

@@ -47,7 +47,7 @@ fn termCols(): i64 {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
     unsafe {
-        ioctl(1, 1074295912, (&ws) as *u8)
+        ioctl(1, 1074295912, (ws.addrOf()) as *u8)
     }
     return ws.cols as i64
 }
@@ -57,7 +57,7 @@ fn termRows(): i64 {
         rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
     }
     unsafe {
-        ioctl(1, 1074295912, (&ws) as *u8)
+        ioctl(1, 1074295912, (ws.addrOf()) as *u8)
     }
     return ws.rows as i64
 }

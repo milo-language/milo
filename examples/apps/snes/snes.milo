@@ -361,12 +361,12 @@ fn main(): i32 {
                 texBuf[i] = (0xFF000000 | (b << 16) | (g << 8) | r) as u32
                 i = i + 1
             }
-            SDL_UpdateTexture(tex, 0 as *u8, (&texBuf[0]) as *u8, 256 * 4)
+            SDL_UpdateTexture(tex, 0 as *u8, texBuf.ptr() as *u8, 256 * 4)
             SDL_RenderClear(ren)
             SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
             SDL_RenderPresent(ren)
 
-            while SDL_PollEvent((&ev[0]) as *u8) != 0 {
+            while SDL_PollEvent(ev) != 0 {
                 let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true

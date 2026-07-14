@@ -461,7 +461,7 @@ fn runNes(cart: Cartridge): i32 {
         want[8] = 0x00
         want[9] = 0x04 // samples 1024 (0x0400) LE
         var got: [u8; 32] = [0; 32]
-        let audioDev = SDL_OpenAudioDevice(0 as *u8, 0, (&want[0]) as *u8, (&got[0]) as *u8, 0)
+        let audioDev = SDL_OpenAudioDevice(0 as *u8, 0, want, got, 0)
         if audioDev != 0 {
             SDL_PauseAudioDevice(audioDev, 0) // unpause: start pulling from the queue
         }
@@ -502,20 +502,20 @@ fn runNes(cart: Cartridge): i32 {
             }
 
             renderFrame(bus.ppu)
-            SDL_UpdateTexture(tex, 0 as *u8, (&bus.ppu.fb[0]) as *u8, 256 * 4)
+            SDL_UpdateTexture(tex, 0 as *u8, bus.ppu.fb[0].addrOf() as *u8, 256 * 4)
             SDL_RenderClear(ren)
             SDL_RenderCopy(ren, tex, 0 as *u8, 0 as *u8)
             SDL_RenderPresent(ren)
 
             // Push this frame's samples (i16 = 2 bytes) and reset the buffer.
             if audioDev != 0 && bus.apu.samples.len > 0 {
-                SDL_QueueAudio(audioDev, (&bus.apu.samples[0]) as *u8, (bus.apu.samples.len * 2) as u32)
+                SDL_QueueAudio(audioDev, bus.apu.samples.ptr() as *u8, (bus.apu.samples.len * 2) as u32)
                 bus.apu.samples = []
             }
 
             // Pump the event queue (also refreshes keyboard state); only QUIT is
             // handled as an event.
-            while SDL_PollEvent((&ev[0]) as *u8) != 0 {
+            while SDL_PollEvent(ev) != 0 {
                 let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true

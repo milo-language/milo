@@ -32,7 +32,7 @@ fn termSize(): WinSize {
     }
     unsafe {
         // TIOCGWINSZ on macOS
-        ioctl(1, 1074295912, (&ws) as *u8)
+        ioctl(1, 1074295912, (ws.addrOf()) as *u8)
     }
     return ws
 }

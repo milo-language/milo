@@ -168,7 +168,7 @@ fn queueAudio(synth: &mut Synth, m: &Mem, dev: u32) {
         sa = sa + 1
     }
     unsafe {
-        SDL_QueueAudio(dev, (&buf[0]) as *u8, buf.len as u32)
+        SDL_QueueAudio(dev, buf.ptr() as *u8, buf.len as u32)
     }
 }
 
@@ -269,7 +269,7 @@ fn main(): i32 {
         want[8] = 0x00
         want[9] = 0x08 // 2048 samples
         var got: [u8; 32] = [0; 32]
-        let audioDev = SDL_OpenAudioDevice(0 as *u8, 0, (&want[0]) as *u8, (&got[0]) as *u8, 0)
+        let audioDev = SDL_OpenAudioDevice(0 as *u8, 0, want, got, 0)
         if audioDev != 0 {
             SDL_PauseAudioDevice(audioDev, 0)
         }
@@ -289,7 +289,7 @@ fn main(): i32 {
         while !quit {
             // Input first, every iteration, so the window stays responsive even
             // while we're pacing on audio.
-            while SDL_PollEvent((&ev[0]) as *u8) != 0 {
+            while SDL_PollEvent(ev) != 0 {
                 let evType: u32 = (ev[0] as u32) | ((ev[1] as u32) << 8) | ((ev[2] as u32) << 16) | ((ev[3] as u32) << 24)
                 if evType == SDL_QUIT {
                     quit = true
@@ -445,7 +445,7 @@ fn main(): i32 {
                 let fb = renderIndexed(m)
                 let w = frameWidth(m)
                 blit(m, fb, w, maxW, rgba)
-                SDL_UpdateTexture(tex, 0 as *u8, (&rgba[0]) as *u8, (maxW * 4) as i32)
+                SDL_UpdateTexture(tex, 0 as *u8, rgba.ptr() as *u8, (maxW * 4) as i32)
                 SDL_RenderClear(ren)
                 // Copy only the live w*h region of the (maxW-wide) texture, scaled to
                 // fill the window — else an H32 (256px) frame leaves the right 64
@@ -456,7 +456,7 @@ fn main(): i32 {
                 srcRect[9] = ((w >> 8) & 0xFF) as u8
                 srcRect[12] = (h & 0xFF) as u8
                 srcRect[13] = ((h >> 8) & 0xFF) as u8
-                SDL_RenderCopy(ren, tex, (&srcRect[0]) as *u8, 0 as *u8)
+                SDL_RenderCopy(ren, tex, srcRect, 0 as *u8)
                 SDL_RenderPresent(ren)
                 if audioDev == 0 {
                     SDL_Delay(16)
