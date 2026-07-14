@@ -459,6 +459,16 @@ function handleHover(uri: string, line: number, character: number): object | nul
       const varHover = findVarHover(enclosing.fn.body, word, exprTypes, bindTypes);
       if (varHover) return { contents: { kind: "markdown", value: `\`\`\`milo\n${varHover}\n\`\`\`` } };
     }
+
+    // Global variables — checked after params/locals so a same-named local
+    // shadows; also fires at top level (no enclosing fn) for the decl site.
+    for (const g of program.globals) {
+      if (g.name !== word) continue;
+      let ty = g.type ? formatMiloType(g.type) : null;
+      if (!ty) { const tk = exprTypes.get(g.value); if (tk) ty = formatTypeName(tk); }
+      const kw = g.mutable ? "var" : "let";
+      return { contents: { kind: "markdown", value: `\`\`\`milo\n${kw} ${g.name}: ${ty ?? "?"}\n\`\`\`` } };
+    }
   } catch (e) {
     process.stderr.write(`milod: hover parse error: ${e instanceof Error ? e.message : String(e)}\n`);
   }

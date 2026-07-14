@@ -72,6 +72,16 @@ const PRIM_SRC = `fn openPad(): *u8 {
 `;
 const PRIM_URI = "file:///tmp/milo-lsp-prim.milo";
 
+// Hover on a global variable, both at its decl and at a reference in a fn.
+const GLOBAL_SRC = `var ptr: *u8 = 0 as *u8
+
+fn main(): i32 {
+    print(ptr as i64)
+    return 0
+}
+`;
+const GLOBAL_URI = "file:///tmp/milo-lsp-global.milo";
+
 let proc: Subprocess<"pipe", "pipe", "inherit">;
 let buf = new Uint8Array(0);
 const pending = new Map<number, (v: any) => void>();
@@ -122,7 +132,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -170,6 +180,17 @@ test("hover on a raw pointer and a scalar primitive", async () => {
   const onScalar = await req(25, "textDocument/hover", { textDocument: { uri: PRIM_URI }, position: { line: 1, character: 11 } });
   expect(onScalar?.contents?.value).toContain("64-bit signed integer");
   expect(onScalar?.contents?.value).not.toContain("Raw pointer");
+});
+
+test("hover on a global variable shows its kind and type", async () => {
+  // Reference in main: `    print(ptr as i64)` — `ptr` at line 3, char 11.
+  const onRef = await req(27, "textDocument/hover", { textDocument: { uri: GLOBAL_URI }, position: { line: 3, character: 11 } });
+  expect(onRef?.contents?.value).toContain("var ptr");
+  expect(onRef?.contents?.value).toContain("*u8");
+  // Decl site: `var ptr: *u8 …` — `ptr` at line 0, char 5.
+  const onDecl = await req(28, "textDocument/hover", { textDocument: { uri: GLOBAL_URI }, position: { line: 0, character: 5 } });
+  expect(onDecl?.contents?.value).toContain("var ptr");
+  expect(onDecl?.contents?.value).toContain("*u8");
 });
 
 test("goto-definition on imported stdlib symbol resolves to std/string.milo", async () => {
