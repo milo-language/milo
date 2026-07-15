@@ -56,16 +56,19 @@ Sources must be compiled with `javac -g` for locals to be visible.
 - variables: primitives, strings, object fields, arrays (first 100)
 - evaluate as dotted path (`foo.bar.baz`) over locals and `this` — no
   expression compilation, by design
+- exception breakpoints (caught / uncaught filters) with `exceptionInfo`
+  (type name, `detailMessage`, break mode)
 - program stdout/stderr as DAP output events; exit/termination propagation
 
-Not implemented: conditional breakpoints, exception breakpoints, hot code
-replace, expression compilation, Maven/Gradle classpath resolution.
+Not implemented: conditional breakpoints, hot code replace, expression
+compilation, Maven/Gradle classpath resolution.
 
 ## Smoke / E2E
 
 ```bash
 examples/apps/java-dap/scripts/smoke.sh          # wire-level: handshake, IDSizes, threads
 bun examples/apps/java-dap/scripts/dap-e2e.ts <java-dap-bin>       # full DAP session
+bun examples/apps/java-dap/scripts/exception-e2e.ts <java-dap-bin> # exception breakpoints
 bun examples/apps/java-dap/scripts/hades-e2e.ts <hades-bin> <java-dap-bin>  # via hades MCP
 ```
 

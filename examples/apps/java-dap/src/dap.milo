@@ -143,6 +143,9 @@ struct Sess {
     frames: Vec<CachedFrame>,
     varRefs: Vec<VarRef>,
     stepReqId: i64,
+    excReqId: i64, // active EXCEPTION event request (0 = none)
+    lastExc: i64, // objectID of exception at the current stop (for exceptionInfo)
+    lastExcCaught: bool, // whether that exception was caught
     launched: bool, // we spawned the JVM (vs attach)
     terminated: bool, // terminated event already sent
     program: string, // launch `program` (main .java path, may be "")
@@ -170,8 +173,9 @@ fn dapServe(): i64 {
                 raw = s
             }
             Result.Err(_e) => {
+                eprint("client hung up before attach")
                 return 0
-            } // client hung up before attach
+            }
         }
         var req: Json = jsonParse("{}")!
         match jsonParse(raw) {
@@ -232,7 +236,8 @@ fn dapServe(): i64 {
     var sess = Sess {
         io: theIo, out: out, eventCh: eventCh,
         threads: [], bps: [], classes: [], frames: [], varRefs: [],
-        stepReqId: 0, launched: launched, terminated: false,
+        stepReqId: 0, excReqId: 0, lastExc: 0, lastExcCaught: false,
+        launched: launched, terminated: false,
         program: program, sourceRoots: sourceRoots,
     }
 
@@ -277,7 +282,8 @@ fn capabilitiesJson(): string {
     .bool("supportsConditionalBreakpoints", false)
     .bool("supportsFunctionBreakpoints", false)
     .bool("supportsDelayedStackTraceLoading", false)
-    .raw("exceptionBreakpointFilters", "[]")
+    .bool("supportsExceptionInfoRequest", true)
+    .raw("exceptionBreakpointFilters", jsonArr().raw(jsonObj().str("filter", "uncaught").str("label", "Uncaught Exceptions").bool("default", true).build()).raw(jsonObj().str("filter", "caught").str("label", "Caught Exceptions").bool("default", false).build()).build())
     .build()
 }
 
@@ -726,6 +732,10 @@ impl Sess {
 
         if cmd == "setBreakpoints" {
             self.onSetBreakpoints(seq, args)
+        } else if cmd == "setExceptionBreakpoints" {
+            self.onSetExceptionBreakpoints(seq, args)
+        } else if cmd == "exceptionInfo" {
+            self.onExceptionInfo(seq, args)
         } else if cmd == "configurationDone" {
             let _r = self.io.resumeAll()
             self.out.respond(seq, cmd, "{}")
@@ -1043,6 +1053,126 @@ impl Sess {
         self.out.respond(seq, c, "{}")
         let dapTid = args.i64("threadId") ?? (1 as i64)
         self.out.event("stopped", jsonObj().str("reason", "pause").int("threadId", dapTid).bool("allThreadsStopped", true).build())
+    }
+
+    // ── exception breakpoints ──
+
+    fn onSetExceptionBreakpoints(self: &mut Sess, seq: i64, args: Json): void {
+        let cmdName: string = "setExceptionBreakpoints"
+        let filters = strArray(args, "filters")
+        var caught = false
+        var uncaught = false
+        for f in filters {
+            if f == "caught" {
+                caught = true
+            } else if f == "uncaught" {
+                uncaught = true
+            }
+        }
+        // Rearm from scratch: one EXCEPTION request covers both caught/uncaught.
+        if self.excReqId != 0 {
+            let _c = self.io.clearEventReq(4, self.excReqId)
+            self.excReqId = 0
+        }
+        if caught || uncaught {
+            match self.io.setExceptionReq(caught, uncaught) {
+                Result.Ok(rid) => {
+                    self.excReqId = rid
+                }
+                Result.Err(e) => {
+                    self.out.fail(seq, cmdName, e)
+                    return
+                }
+            }
+        }
+        self.out.respond(seq, cmdName, "{}")
+    }
+
+    // → detailMessage of the exception, walking supertypes until Throwable's
+    // field is found. "" if none (no message, or the field couldn't be read).
+    fn exceptionMessage(self: &mut Sess, excId: i64): string {
+        var classId: i64 = 0
+        match self.io.objectType(excId) {
+            Result.Ok(c) => {
+                classId = c
+            }
+            Result.Err(_e) => {
+                return ""
+            }
+        }
+        var depth: i64 = 0
+        while classId != 0 && depth < 32 {
+            match self.io.typeFields(classId) {
+                Result.Ok(fields) => {
+                    for fld in fields {
+                        if fld.name == "detailMessage" {
+                            var ids: Vec<i64> = [fld.fieldId]
+                            match self.io.objectGetValues(excId, ids) {
+                                Result.Ok(vals) => {
+                                    if vals.len > 0 && vals[0].num != 0 {
+                                        match self.io.stringValue(vals[0].num) {
+                                            Result.Ok(s) => {
+                                                return s
+                                            }
+                                            Result.Err(_e) => {
+                                            }
+                                        }
+                                    }
+                                }
+                                Result.Err(_e) => {
+                                }
+                            }
+                            return ""
+                        }
+                    }
+                }
+                Result.Err(_e) => {
+                }
+            }
+            match self.io.superclass(classId) {
+                Result.Ok(sc) => {
+                    classId = sc
+                }
+                Result.Err(_e) => {
+                    classId = 0
+                }
+            }
+            depth = depth + 1
+        }
+        return ""
+    }
+
+    fn onExceptionInfo(self: &mut Sess, seq: i64, _args: Json): void {
+        let cmdName: string = "exceptionInfo"
+        if self.lastExc == 0 {
+            self.out.fail(seq, cmdName, "no exception at current stop")
+            return
+        }
+        var typeName: string = "Exception"
+        match self.io.objectType(self.lastExc) {
+            Result.Ok(classId) => {
+                typeName = prettyTypeName(self.classSignature(classId))
+            }
+            Result.Err(_e) => {
+            }
+        }
+        let msg = self.exceptionMessage(self.lastExc)
+        // DAP ExceptionBreakMode: uncaught ⇒ "unhandled", caught ⇒ "always".
+        var breakMode: string = "unhandled"
+        if self.lastExcCaught {
+            breakMode = "always"
+        }
+        var description = typeName.clone()
+        if msg.len > 0 {
+            description = typeName.clone() + ": " + msg.clone()
+        }
+        let body = jsonObj()
+        .str("exceptionId", typeName.clone())
+        .str("description", description)
+        .str("breakMode", breakMode)
+        .raw("details", jsonObj().str("message", msg.clone()).str("typeName", typeName.clone()).build())
+        .build()
+        self.out.respond(seq, cmdName, body)
     }
 
     // ── stack / scopes / variables ──
@@ -1692,6 +1822,21 @@ impl Sess {
             self.invalidateStop()
             let dapTid = self.dapThreadId(ev.thread)
             self.out.event("stopped", jsonObj().str("reason", "breakpoint").int("threadId", dapTid).bool("allThreadsStopped", true).build())
+        } else if ev.kind == 4 {
+            // EXCEPTION
+            self.invalidateStop()
+            self.lastExc = ev.exception
+            self.lastExcCaught = ev.caught
+            let dapTid = self.dapThreadId(ev.thread)
+            var typeName: string = "Exception"
+            match self.io.objectType(ev.exception) {
+                Result.Ok(classId) => {
+                    typeName = prettyTypeName(self.classSignature(classId))
+                }
+                Result.Err(_e) => {
+                }
+            }
+            self.out.event("stopped", jsonObj().str("reason", "exception").str("description", "Paused on exception").str("text", typeName).int("threadId", dapTid).bool("allThreadsStopped", true).build())
         } else if ev.kind == 1 {
             // SINGLE_STEP (Count=1 → expired; clear bookkeeping regardless)
             if self.stepReqId != 0 {

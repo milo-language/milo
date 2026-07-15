@@ -32,6 +32,7 @@ fn main(): void {
     if !args.getBool("smoke") {
         // the DAP loop lives in a green task: select/channel arms park on the
         // green scheduler, which only runs via schedulerRunToCompletion()
+        eprint("Spawning dap server and listening on stdio")
         Task.spawn(move(): void => {
             let code = dapServe()
             exit(code as i32)

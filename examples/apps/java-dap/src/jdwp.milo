@@ -274,6 +274,8 @@ struct JdwpEvent {
     loc: Location,
     signature: string, // CLASS_PREPARE
     typeId: i64, // CLASS_PREPARE
+    exception: i64, // EXCEPTION: thrown exception objectID
+    caught: bool, // EXCEPTION: catchLocation present (false = uncaught)
 }
 
 // ---------------------------------------------------------------------------
@@ -616,6 +618,16 @@ impl JdwpIo {
         return Result.Ok(r.str())
     }
 
+    // --- ClassType (3) ------------------------------------------------------
+
+    // → superclass referenceTypeID (0 for java.lang.Object).
+    fn superclass(self: &mut JdwpIo, classId: i64): Result<i64> {
+        var w = newWriter()
+        w.id(classId, self.sizes.referenceTypeId)
+        var r = self.request(3, 1, w.buf)?
+        return Result.Ok(r.id(self.sizes.referenceTypeId))
+    }
+
     // --- Method (6) ---------------------------------------------------------
 
     fn lineTable(self: &mut JdwpIo, classId: i64, methodId: i64): Result<Vec<LineEntry>> {
@@ -826,6 +838,31 @@ impl JdwpIo {
         return Result.Ok(r.i32v())
     }
 
+    // → requestID. ExceptionOnly modifier: exceptionOrNull 0 = all exception
+    // classes; caught/uncaught select which get reported.
+    fn setExceptionReq(self: &mut JdwpIo, caught: bool, uncaught: bool): Result<i64> {
+        var w = newWriter()
+        w.u8(4) // EXCEPTION
+        w.u8(2) // suspend ALL
+        w.u32(1)
+        w.u8(8) // ExceptionOnly
+        w.id(0, self.sizes.referenceTypeId) // any exception type
+        w.u8(if caught {
+            1
+        } else {
+            0
+        }
+        )
+        w.u8(if uncaught {
+            1
+        } else {
+            0
+        }
+        )
+        var r = self.request(15, 1, w.buf)?
+        return Result.Ok(r.i32v())
+    }
+
     fn setClassPrepareReq(self: &mut JdwpIo, pattern: &string): Result<i64> {
         var w = newWriter()
         w.u8(8) // CLASS_PREPARE
@@ -880,12 +917,22 @@ impl JdwpIo {
             let requestId = r.i32v()
             var ev = JdwpEvent {
                 kind: kind, requestId: requestId, thread: 0,
-                loc: zeroLocation(), signature: "", typeId: 0
+                loc: zeroLocation(), signature: "", typeId: 0,
+                exception: 0, caught: false
             }
             if kind == 1 || kind == 2 {
                 // SINGLE_STEP / BREAKPOINT: thread + location
                 ev.thread = r.id(self.sizes.objectId)
                 ev.loc = self.readLocation(r)
+            } else if kind == 4 {
+                // EXCEPTION: thread, throwLocation, tagged exception obj,
+                // catchLocation (all-zero classId ⇒ uncaught). loc = throw site.
+                ev.thread = r.id(self.sizes.objectId)
+                ev.loc = self.readLocation(r)
+                let _tag = r.u8()
+                ev.exception = r.id(self.sizes.objectId)
+                let catchLoc = self.readLocation(r)
+                ev.caught = catchLoc.classId != 0
             } else if kind == 8 {
                 // CLASS_PREPARE: thread, refTypeTag, typeID, signature, status
                 ev.thread = r.id(self.sizes.objectId)

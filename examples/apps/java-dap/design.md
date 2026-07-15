@@ -210,6 +210,8 @@ wants `(classID, methodID, bytecodeIndex)`. Resolution:
 | pause | Suspend; synthesize `stopped(reason=pause)` |
 | next / stepIn / stepOut | EventRequest.Set(SINGLE_STEP, [Step(thread, LINE, depth), Count(1)]); auto-cleared on fire (Count) |
 | evaluate | MVP: dotted-path lookup against locals/this only (`foo.bar.baz`); no compilation |
+| setExceptionBreakpoints | rearm one EventRequest.Set(EXCEPTION, ExceptionOnly(any, caught, uncaught)); `stopped(reason=exception)` on fire (catchLocation==0 ⇒ uncaught) |
+| exceptionInfo | ObjectReference.ReferenceType + type signature for the name; walk ClassType.Superclass for Throwable's `detailMessage` field; breakMode always/unhandled |
 | disconnect | Dispose (attach) / Exit or kill child (launch) |
 
 JDWP threadIDs are u64; DAP wants small ints — keep a bidirectional map,
