@@ -1,0 +1,348 @@
+// JDWP wire codec + minimal synchronous client (M1: handshake, IDSizes,
+// Version, AllThreads). Big-endian throughout, per the JDWP spec:
+// https://docs.oracle.com/javase/8/docs/platform/jpda/jdwp/jdwp-protocol.html
+//
+// ID widths (objectID, referenceTypeID, methodID, fieldID, frameID) are NOT
+// fixed by the spec — they come from VirtualMachine.IDSizes, which must be the
+// first command sent. All IDs are stored as i64 (HotSpot uses 8 bytes for
+// everything, but the codec honors whatever the VM reports).
+
+from "std/net" import {
+    TcpStream, ip4, resolve
+}
+from "std/io" import {
+    FdReader, fdReaderAttach
+}
+from "std/os" import {
+    write
+}
+
+// ---------------------------------------------------------------------------
+// Packet writer: builds the variable-length body; header is prepended on send.
+
+struct PacketWriter {
+    buf: string,
+}
+
+fn newWriter(): PacketWriter {
+    return PacketWriter {
+        buf: String.withCapacity(64)
+    }
+}
+
+impl PacketWriter {
+    fn u8(self: &mut PacketWriter, v: i64): void {
+        self.buf.push((v & 255) as u8)
+    }
+
+    fn u16(self: &mut PacketWriter, v: i64): void {
+        self.buf.push(((v >> 8) & 255) as u8)
+        self.buf.push((v & 255) as u8)
+    }
+
+    fn u32(self: &mut PacketWriter, v: i64): void {
+        self.buf.push(((v >> 24) & 255) as u8)
+        self.buf.push(((v >> 16) & 255) as u8)
+        self.buf.push(((v >> 8) & 255) as u8)
+        self.buf.push((v & 255) as u8)
+    }
+
+    fn u64(self: &mut PacketWriter, v: i64): void {
+        self.u32((v >> 32) & 4294967295)
+        self.u32(v & 4294967295)
+    }
+
+    // Width-parameterized ID write (width from IdSizes).
+    fn id(self: &mut PacketWriter, v: i64, width: i64): void {
+        var shift = (width - 1) * 8
+        while shift >= 0 {
+            self.buf.push(((v >> shift) & 255) as u8)
+            shift = shift - 8
+        }
+    }
+
+    // JDWP string: u32 byte length + UTF-8 bytes.
+    fn str(self: &mut PacketWriter, s: &string): void {
+        self.u32(s.len)
+        self.buf = self.buf + s.clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Packet reader: cursor over a received body.
+
+struct PacketReader {
+    buf: string,
+    pos: i64,
+}
+
+fn newReader(buf: string): PacketReader {
+    return PacketReader {
+        buf: buf, pos: 0
+    }
+}
+
+impl PacketReader {
+    fn u8(self: &mut PacketReader): i64 {
+        let v = self.buf[self.pos] as i64
+        self.pos = self.pos + 1
+        return v
+    }
+
+    fn u16(self: &mut PacketReader): i64 {
+        return (self.u8() << 8) | self.u8()
+    }
+
+    fn u32(self: &mut PacketReader): i64 {
+        return (self.u16() << 16) | self.u16()
+    }
+
+    fn u64(self: &mut PacketReader): i64 {
+        return (self.u32() << 32) | self.u32()
+    }
+
+    fn id(self: &mut PacketReader, width: i64): i64 {
+        var v: i64 = 0
+        var i: i64 = 0
+        while i < width {
+            v = (v << 8) | (self.buf[self.pos] as i64)
+            self.pos = self.pos + 1
+            i = i + 1
+        }
+        return v
+    }
+
+    fn str(self: &mut PacketReader): string {
+        let n = self.u32()
+        var out = String.withCapacity(n)
+        var i: i64 = 0
+        while i < n {
+            out.push(self.buf[self.pos + i])
+            i = i + 1
+        }
+        self.pos = self.pos + n
+        return out
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ID sizes (VirtualMachine.IDSizes reply). All widths in bytes.
+
+struct IdSizes {
+    fieldId: i64,
+    methodId: i64,
+    objectId: i64,
+    referenceTypeId: i64,
+    frameId: i64,
+}
+
+// ---------------------------------------------------------------------------
+// Client: TCP connection + handshake + synchronous request/reply.
+//
+// The JVM sends unsolicited event packets (cmdSet 64, cmd 100) on the same
+// socket — e.g. VM_START arrives right after the handshake when launched with
+// suspend=y. request() skips events while waiting for the matching reply; the
+// M2 event pump will consume them instead.
+
+struct JdwpClient {
+    reader: FdReader,
+    fd: i32,
+    nextId: i64,
+    sizes: IdSizes,
+}
+
+// One received packet, header pre-parsed. For replies `errorCode` is set and
+// cmdSet/cmd are 0; for commands (events) it's the reverse.
+struct Packet {
+    id: i64,
+    isReply: bool,
+    errorCode: i64,
+    cmdSet: i64,
+    cmd: i64,
+    body: string,
+}
+
+struct VmVersion {
+    description: string,
+    jdwpMajor: i64,
+    jdwpMinor: i64,
+    vmVersion: string,
+    vmName: string,
+}
+
+fn jdwpConnect(host: &string, port: u16): Result<JdwpClient> {
+    let ipRes = resolve(host)
+    var ip: u32 = 0
+    match ipRes {
+        Result.Ok(v) => {
+            ip = v
+        }
+        Result.Err(e) => {
+            return Result.Err("cannot resolve " + host.clone())
+        }
+    }
+    var streamRes = TcpStream.connect(ip, port)
+    match streamRes {
+        Result.Ok(s) => {
+            var stream = s
+            // take() detaches the fd so the stream's Drop won't close it;
+            // the client owns the socket lifetime from here on.
+            let fd = stream.take()
+            var client = JdwpClient {
+                reader: fdReaderAttach(fd),
+                fd: fd,
+                nextId: 1,
+                sizes: IdSizes {
+                    fieldId: 8, methodId: 8, objectId: 8, referenceTypeId: 8, frameId: 8
+                }
+                ,
+            }
+            client.handshake()?
+            client.loadIdSizes()?
+            return Result.Ok(client)
+        }
+        Result.Err(e) => {
+            return Result.Err("cannot connect to " + host.clone() + ":" + port.toString())
+        }
+    }
+}
+
+impl JdwpClient {
+    fn handshake(self: &mut JdwpClient): Result<i64> {
+        let magic: string = "JDWP-Handshake"
+        self.writeAll(magic)?
+        let echo = self.reader.readExact(14)?
+        if echo != magic {
+            return Result.Err("bad JDWP handshake reply")
+        }
+        return Result.Ok(0)
+    }
+
+    fn writeAll(self: &JdwpClient, data: &string): Result<i64> {
+        unsafe {
+            let n = write(self.fd, data, data.len)
+            if n < data.len as i64 {
+                return Result.Err("short write to JVM socket")
+            }
+            return Result.Ok(n)
+        }
+    }
+
+    // Send one command packet and block until its reply arrives, skipping any
+    // event packets that show up in between.
+    fn request(self: &mut JdwpClient, cmdSet: i64, cmd: i64, body: &string): Result<PacketReader> {
+        let id = self.nextId
+        self.nextId = self.nextId + 1
+
+        var head = newWriter()
+        head.u32(11 + body.len)
+        head.u32(id)
+        head.u8(0)
+        head.u8(cmdSet)
+        head.u8(cmd)
+        let msg = head.buf + body.clone()
+        self.writeAll(msg)?
+
+        while true {
+            let pkt = self.readPacket()?
+            if pkt.isReply && pkt.id == id {
+                if pkt.errorCode != 0 {
+                    return Result.Err("JDWP error " + pkt.errorCode.toString() + " for command " + cmdSet.toString() + "/" + cmd.toString())
+                }
+                return Result.Ok(newReader(pkt.body))
+            }
+            // Event packet (or stale reply) — ignore in M1's synchronous client.
+        }
+        return Result.Err("unreachable")
+    }
+
+    fn readPacket(self: &mut JdwpClient): Result<Packet> {
+        var head = newReader(self.reader.readExact(11)?)
+        let length = head.u32()
+        let id = head.u32()
+        let flags = head.u8()
+        if length < 11 {
+            return Result.Err("bad JDWP packet length " + length.toString())
+        }
+        var errorCode: i64 = 0
+        var cmdSet: i64 = 0
+        var cmd: i64 = 0
+        let isReply = (flags & 128) != 0
+        if isReply {
+            errorCode = head.u16()
+        } else {
+            cmdSet = head.u8()
+            cmd = head.u8()
+        }
+        var body: string = ""
+        if length > 11 {
+            body = self.reader.readExact(length - 11)?
+        }
+        return Result.Ok(Packet {
+            id: id, isReply: isReply, errorCode: errorCode,
+            cmdSet: cmdSet, cmd: cmd, body: body,
+        }
+        )
+    }
+
+    // --- VirtualMachine command set (1) ------------------------------------
+
+    fn loadIdSizes(self: &mut JdwpClient): Result<i64> {
+        let empty: string = ""
+        var r = self.request(1, 7, empty)?
+        self.sizes.fieldId = r.u32()
+        self.sizes.methodId = r.u32()
+        self.sizes.objectId = r.u32()
+        self.sizes.referenceTypeId = r.u32()
+        self.sizes.frameId = r.u32()
+        return Result.Ok(0)
+    }
+
+    fn version(self: &mut JdwpClient): Result<VmVersion> {
+        let empty: string = ""
+        var r = self.request(1, 1, empty)?
+        return Result.Ok(VmVersion {
+            description: r.str(),
+            jdwpMajor: r.u32(),
+            jdwpMinor: r.u32(),
+            vmVersion: r.str(),
+            vmName: r.str(),
+        }
+        )
+    }
+
+    fn allThreads(self: &mut JdwpClient): Result<Vec<i64>> {
+        let empty: string = ""
+        var r = self.request(1, 4, empty)?
+        let n = r.u32()
+        var out: Vec<i64> = Vec.new()
+        var i: i64 = 0
+        while i < n {
+            out.push(r.id(self.sizes.objectId))
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    fn resume(self: &mut JdwpClient): Result<i64> {
+        let empty: string = ""
+        self.request(1, 9, empty)?
+        return Result.Ok(0)
+    }
+
+    // --- ThreadReference command set (11) ----------------------------------
+
+    fn threadName(self: &mut JdwpClient, threadId: i64): Result<string> {
+        var w = newWriter()
+        w.id(threadId, self.sizes.objectId)
+        var r = self.request(11, 1, w.buf)?
+        return Result.Ok(r.str())
+    }
+
+    fn threadStatus(self: &mut JdwpClient, threadId: i64): Result<i64> {
+        var w = newWriter()
+        w.id(threadId, self.sizes.objectId)
+        var r = self.request(11, 4, w.buf)?
+        return Result.Ok(r.u32())
+    }
+}

@@ -1,0 +1,113 @@
+// java-dap — DAP adapter for the JVM, written in Milo. See ../design.md.
+//
+// M1 surface: `java-dap --attach <host>:<port> --smoke` connects to a JDWP
+// agent (java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=N),
+// performs the handshake, and prints VM version + thread list. Proves the
+// codec against a real JVM before any DAP machinery exists.
+
+from "std/argparse" import {
+    newParser, ArgParser
+}
+from "std/os" import {
+    exit
+}
+from "jdwp" import {
+    JdwpClient, jdwpConnect, VmVersion
+}
+
+fn main(): void {
+    var p = newParser("java-dap", "DAP debug adapter for the JVM (speaks JDWP to the java process)\n\n" + "M1 smoke test:\n" + "  java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005 Main &\n" + "  java-dap --attach localhost:5005 --smoke")
+    p.addString("attach", "a", "host:port of a listening JDWP agent", "")
+    p.addBool("smoke", "s", "connect, print VM version + threads, exit")
+    let args = p.parse()
+
+    let target = args.getString("attach")
+    if target.len == 0 {
+        print("java-dap: --attach <host>:<port> is required (M1)")
+        exit(2)
+    }
+    let colon = _lastIndexOf(target, 58)
+    if colon <= 0 {
+        print("java-dap: bad --attach value, expected host:port")
+        exit(2)
+    }
+    let host = _slice(target, 0, colon)
+    let port = _parsePort(target, colon + 1)
+    if port <= 0 {
+        print("java-dap: bad port in --attach value")
+        exit(2)
+    }
+
+    if !args.getBool("smoke") {
+        print("java-dap: only --smoke is implemented (M1)")
+        exit(2)
+    }
+
+    match smoke(host, port as u16) {
+        Result.Ok(v) => {
+        }
+        Result.Err(e) => {
+            print("java-dap: " + e)
+            exit(1)
+        }
+    }
+}
+
+fn smoke(host: &string, port: u16): Result<i64> {
+    var client = jdwpConnect(host, port)?
+
+    let ver = client.version()?
+    print("connected to " + ver.vmName + " " + ver.vmVersion + " (JDWP " + ver.jdwpMajor.toString() + "." + ver.jdwpMinor.toString() + ")")
+    print("id sizes: object=" + client.sizes.objectId.toString() + " method=" + client.sizes.methodId.toString() + " refType=" + client.sizes.referenceTypeId.toString())
+
+    let threads = client.allThreads()?
+    print("threads: " + threads.len.toString())
+    for t in threads {
+        let name = client.threadName(t)?
+        let status = client.threadStatus(t)?
+        print("  [" + t.toString() + "] " + name + " (status " + status.toString() + ")")
+    }
+    print("smoke ok")
+    return Result.Ok(0)
+}
+
+fn _lastIndexOf(s: &string, ch: u8): i64 {
+    var i = s.len - 1
+    while i >= 0 {
+        if s[i] == ch {
+            return i
+        }
+        i = i - 1
+    }
+    return -1
+}
+
+fn _slice(s: &string, start: i64, end: i64): string {
+    var out = String.withCapacity(end - start)
+    var i = start
+    while i < end {
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+fn _parsePort(s: &string, start: i64): i64 {
+    var v: i64 = 0
+    var i = start
+    if i >= s.len {
+        return -1
+    }
+    while i < s.len {
+        let c = s[i]
+        if c < 48 || c > 57 {
+            return -1
+        }
+        v = v * 10 + ((c - 48) as i64)
+        i = i + 1
+    }
+    if v > 65535 {
+        return -1
+    }
+    return v
+}
