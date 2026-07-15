@@ -1,0 +1,66 @@
+// Hades — web + AI interface for any DAP debugger.
+//
+// Single front-door binary. Subcommands dispatch into the real entrypoints,
+// each of which still lives in its own module so it stays single-purpose:
+//   hades web    — browser UI + shared co-debug session server  (web/server.milo)
+//   hades mcp    — MCP server (standalone, or --attach as a co-debug peer)  (mcp/main.milo)
+//
+// The top-level parser owns the command roster + usage/--help rendering; each
+// subcommand's own parser owns its flags (`hades <cmd> --help`). No hand-rolled
+// help formatting — it all flows through std/argparse.
+
+from "std/args" import { args }
+from "std/argparse" import { newParser, ArgParser }
+from "std/os" import { exit }
+from "web/server" import { webMain }
+from "mcp/main" import { mcpMain }
+
+// argparse has flags + positionals but no git-style subcommands, so the command
+// roster + examples live in the description; `command` is a trailing positional
+// whose remaining tokens are forwarded verbatim to the chosen subcommand.
+fn topParser(): ArgParser {
+    var p = newParser("hades",
+        "web + AI interface for any DAP debugger\n\n" +
+        "commands:\n" +
+        "  web     browser debugger UI + shared co-debug session server\n" +
+        "  mcp     MCP debug server (standalone, or --attach to join a web session)\n\n" +
+        "run 'hades <command> --help' for that command's options\n\n" +
+        "quick start (boots idle — configure the target in the browser):\n" +
+        "  hades web --port 8080\n" +
+        "co-debug (human in the browser + AI on the same session):\n" +
+        "  claude mcp add hades-live -- $PWD/hades mcp --attach localhost:8080")
+    p.addOptionalPositional("command", "web | mcp")
+    p.enableTrailingArgs()   // stop parsing at the command; forward the rest as-is
+    return p
+}
+
+fn main(): i32 {
+    var parser = topParser()
+    let top = parser.parseFrom(args())   // auto-handles a leading --help
+    let pos = top.positional
+    if pos.len == 0 {
+        print(parser.helpText())
+        return 0
+    }
+    let sub = pos[0]
+
+    // Hand the subcommand its own argv: [display-name, ...remaining tokens].
+    // parseFrom skips argv[0] as the program name, so `hades web --port 9`
+    // reaches webMain as ["hades web", "--port", "9"] and --help resolves
+    // against the web parser.
+    var subArgv: Vec<string> = []
+    subArgv.push($"hades {sub}")
+    var i: i64 = 1
+    while i < pos.len {
+        subArgv.push(pos[i].clone())
+        i = i + 1
+    }
+
+    if sub == "web" { return webMain(subArgv) }
+    if sub == "mcp" { return mcpMain(subArgv) }
+
+    print($"unknown command: {sub}\n")
+    print(parser.helpText())
+    exit(1)
+    return 1
+}

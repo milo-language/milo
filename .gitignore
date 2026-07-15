@@ -1,0 +1,7 @@
+/target
+*.o
+hades
+.DS_Store
+hades-web
+node_modules/
+src/web/ui/dist/

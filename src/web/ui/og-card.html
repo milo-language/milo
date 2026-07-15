@@ -1,0 +1,75 @@
+<!doctype html>
+<!-- Source for og.png (1200×630 social/link-preview thumbnail). Regenerate:
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --headless=new --screenshot=og.png --window-size=1200,630 \
+    --hide-scrollbars og-card.html
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #c9d1d9;
+    --muted: #8b949e; --accent: #58a6ff; --bp: #f85149; --stop: #d29922;
+    --ok: #3fb950;
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    width: 1200px; height: 630px; overflow: hidden;
+    background: var(--bg);
+    background-image: radial-gradient(ellipse 900px 500px at 20% 10%, rgba(88,166,255,0.10), transparent 60%),
+                      radial-gradient(ellipse 700px 400px at 95% 100%, rgba(248,81,73,0.07), transparent 60%);
+    color: var(--fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 80px 0 90px;
+  }
+  .left { max-width: 560px; }
+  .logo { font-size: 92px; font-weight: 700; letter-spacing: 3px; color: var(--accent); }
+  .logo .bolt { color: var(--stop); }
+  .tag { font-size: 30px; line-height: 1.45; color: var(--fg); margin-top: 26px; }
+  .tag b { color: var(--accent); font-weight: 600; }
+  .chips { margin-top: 44px; display: flex; gap: 14px; }
+  .chip {
+    font-size: 20px; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; padding: 9px 18px;
+  }
+  .code {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 26px 0; width: 448px; font-size: 20px; line-height: 2.0;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.5);
+  }
+  .ln { display: flex; align-items: center; }
+  .src { white-space: pre; }
+  .gut {
+    width: 66px; flex: none; text-align: right; padding-right: 14px;
+    color: #484f58; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  }
+  .dot { width: 15px; height: 15px; border-radius: 50%; background: var(--bp); flex: none; }
+  .arrow { color: var(--stop); font-size: 19px; }
+  .stopline { background: rgba(210,153,34,0.16); }
+  .kw { color: #ff7b72; } .fn { color: #d2a8ff; } .num { color: #79c0ff; }
+  .cm { color: #8b949e; } .str { color: #a5d6ff; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="logo"><span class="bolt">⚡</span> hades</div>
+    <div class="tag">web + <b>AI</b> interface for any <b>DAP</b> debugger — breakpoints, stepping, memory, disassembly, live terminal</div>
+    <div class="chips">
+      <div class="chip">lldb-dap</div>
+      <div class="chip">debugpy</div>
+      <div class="chip">MCP · AI-driven</div>
+    </div>
+  </div>
+  <div class="code">
+    <div class="ln"><span class="gut">41</span><span class="src"><span class="kw">int</span> <span class="fn">fib</span>(<span class="kw">int</span> n) {</span></div>
+    <div class="ln"><span class="gut"><span class="dot"></span>42</span><span class="src">  <span class="kw">if</span> (n &lt; <span class="num">2</span>) <span class="kw">return</span> n;</span></div>
+    <div class="ln stopline"><span class="gut"><span class="arrow">▶</span>43</span><span class="src">  <span class="kw">return</span> <span class="fn">fib</span>(n-<span class="num">1</span>) + <span class="fn">fib</span>(n-<span class="num">2</span>);</span></div>
+    <div class="ln"><span class="gut">44</span><span class="src">}</span></div>
+    <div class="ln"><span class="gut"></span><span class="src"></span></div>
+    <div class="ln"><span class="gut"></span><span class="src"><span class="cm">(hades) </span><span class="str">p n</span></span></div>
+    <div class="ln"><span class="gut"></span><span class="src"><span class="kw">(int)</span> n = <span class="num">7</span></span></div>
+  </div>
+</body>
+</html>

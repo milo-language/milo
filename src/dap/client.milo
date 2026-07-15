@@ -1,0 +1,199 @@
+// Robust DAP client: one parsed message at a time, routed by `type`.
+//
+// DAP interleaves three message kinds on the same stream — request responses,
+// unsolicited events (stopped, output, terminated), and reverse requests. A
+// correct client never assumes how many frames a command produces: it reads
+// until the response whose `request_seq` matches, dispatching every event it
+// passes on the way. That makes ordering (e.g. the `initialized` event arriving
+// before or after the `initialize` response) a non-issue.
+
+from "std/process" import { Child }
+from "std/net" import { TcpStream, resolve }
+from "std/json" import { Json, jsonParse }
+from "framing" import { readFrame }
+from "protocol" import { writeFrame }
+
+// A decoded DAP message. Unused fields for a given kind stay at their defaults.
+struct DapMsg {
+    kind: string,       // "response" | "event" | "request"
+    seq: i64,
+    requestSeq: i64,    // responses: the seq of the request this answers
+    command: string,    // responses: the command echoed back
+    event: string,      // events: the event name
+    success: bool,      // responses: did the request succeed
+    raw: string,        // full JSON body, for callers that want more
+}
+
+struct DapClient {
+    child: Child,
+    seq: i64,
+}
+
+fn _strOr(opt: Option<string>, fallback: string): string {
+    match opt {
+        Option.Some(v) => { return v }
+        Option.None => { return fallback }
+    }
+}
+
+fn _i64Or(opt: Option<i64>, fallback: i64): i64 {
+    match opt {
+        Option.Some(v) => { return v }
+        Option.None => { return fallback }
+    }
+}
+
+fn _boolOr(opt: Option<bool>, fallback: bool): bool {
+    match opt {
+        Option.Some(v) => { return v }
+        Option.None => { return fallback }
+    }
+}
+
+// Decode a raw JSON frame into a DapMsg.
+fn _decode(raw: string): Result<DapMsg> {
+    let doc = jsonParse(raw.clone())?
+    let kindKey: string = "type"
+    let kind = _strOr(_getStr(doc, kindKey), "")
+    var msg = DapMsg {
+        kind: kind,
+        seq: _i64Or(_getI64(doc, "seq"), 0 as i64),
+        requestSeq: _i64Or(_getI64(doc, "request_seq"), -1 as i64),
+        command: _strOr(_getStr(doc, "command"), ""),
+        event: _strOr(_getStr(doc, "event"), ""),
+        success: _boolOr(_getBool(doc, "success"), false),
+        raw: raw,
+    }
+    return Result.Ok(msg)
+}
+
+fn _getStr(doc: &Json, key: string): Option<string> {
+    match doc.get(key) {
+        Option.Some(node) => { return node.asStr() }
+        Option.None => { return Option.None }
+    }
+}
+
+fn _getI64(doc: &Json, key: string): Option<i64> {
+    match doc.get(key) {
+        Option.Some(node) => { return node.asI64() }
+        Option.None => { return Option.None }
+    }
+}
+
+fn _getBool(doc: &Json, key: string): Option<bool> {
+    match doc.get(key) {
+        Option.Some(node) => { return node.asBool() }
+        Option.None => { return Option.None }
+    }
+}
+
+impl DapClient {
+    // Spawn an adapter that needs argv (e.g. `python3 -m debugpy.adapter`).
+    // mergeStderr=false: keep the adapter's stderr OFF the DAP stdout stream — a
+    // crashing adapter (missing module, bad flag) prints a traceback there, and
+    // merging it would corrupt Content-Length framing AND bury the diagnostic. The
+    // caller must drain stderrFd (server pumps it) or the child deadlocks on a full
+    // pipe; the captured text is surfaced if the adapter dies before the handshake.
+    fn startArgs(program: &string, args: Vec<string>): Result<DapClient> {
+        let child = Child.spawn(program, args, false)?
+        return Result.Ok(DapClient { child: child, seq: 0 })
+    }
+
+    // Connect to an already-listening DAP adapter over TCP (e.g. `dlv dap
+    // --listen=host:port`, or a js-debug server) — the user runs the server, we
+    // just attach. The socket is bidirectional, so it presents as a synthetic
+    // Child whose stdin and stdout are the SAME fd; every downstream path
+    // (writeFrame, recv, the server's gDapIn) then works with zero changes.
+    // pid -1 marks "no spawned process" — nothing to reap on teardown.
+    fn startTcp(host: &string, port: i64): Result<DapClient> {
+        var ip: u32 = 0
+        match resolve(host) {
+            Result.Ok(a) => { ip = a }
+            Result.Err(_e) => { return Result.Err("cannot resolve DAP host: " + host.clone()) }
+        }
+        match TcpStream.connect(ip, port as u16) {
+            Result.Ok(s) => {
+                var st = s
+                // take() detaches the fd so TcpStream's drop won't close it —
+                // the synthetic Child now owns its lifetime.
+                let fd = st.take()
+                // stdin==stdout==fd: Child.close() closes this fd twice
+                // back-to-back with no scheduler yield between the two syscalls,
+                // so the second is a harmless EBADF (safe only because no yield
+                // can reuse the fd number in between).
+                let child = Child { pid: -1 as i32, stdinFd: fd, stdoutFd: fd, stderrFd: -1 as i32 }
+                return Result.Ok(DapClient { child: child, seq: 0 })
+            }
+            Result.Err(_e) => {
+                return Result.Err("cannot connect to DAP adapter at " + host.clone() + ":" + port.toString())
+            }
+        }
+        return Result.Err("unreachable")
+    }
+
+    // Even seqs only: the web server's WS-reader task sends requests on the
+    // same fd with odd seqs, so the two writers can never collide on a seq.
+    fn _nextSeq(self: &mut Self): i64 {
+        self.seq = self.seq + 2
+        return self.seq
+    }
+
+    // Reply to a reverse request (e.g. runInTerminal) from the adapter.
+    fn respond(self: &mut Self, requestSeq: i64, command: &string, bodyJson: &string): void {
+        let s = self._nextSeq()
+        let q: string = "\""
+        let payload = "{" + q + "seq" + q + ":" + s.toString()
+            + "," + q + "type" + q + ":" + q + "response" + q
+            + "," + q + "request_seq" + q + ":" + requestSeq.toString()
+            + "," + q + "success" + q + ":true"
+            + "," + q + "command" + q + ":" + q + command + q
+            + "," + q + "body" + q + ":" + bodyJson + "}"
+        let _w = writeFrame(self.child, payload)
+    }
+
+    // Frame and send a request. Returns the seq assigned, for response matching.
+    fn send(self: &mut Self, command: &string, argsJson: &string): i64 {
+        let s = self._nextSeq()
+        // Built by concatenation: escaped quotes inside a $"..." interpolation
+        // don't lex, so we splice a quote constant instead.
+        let q: string = "\""
+        let payload = "{" + q + "seq" + q + ":" + s.toString()
+            + "," + q + "type" + q + ":" + q + "request" + q
+            + "," + q + "command" + q + ":" + q + command + q
+            + "," + q + "arguments" + q + ":" + argsJson + "}"
+        let w = writeFrame(self.child, payload)
+        if w < 0 { return -1 as i64 }
+        return s
+    }
+
+    // Read and decode exactly one message off the adapter (blocking).
+    fn recv(self: &Self): Result<DapMsg> {
+        let raw = readFrame(self.child.stdoutFd)?
+        return _decode(raw)
+    }
+
+    // Send a request and pump messages until its response arrives, printing any
+    // events encountered along the way. Returns the matching response.
+    fn request(self: &mut Self, command: &string, argsJson: &string): Result<DapMsg> {
+        let want = self.send(command, argsJson)
+        if want < 0 { return Result.Err("send failed") }
+        while true {
+            let msg = self.recv()?
+            if msg.kind == "event" {
+                print($"[event] {msg.event}")
+            } else if msg.kind == "response" && msg.requestSeq == want {
+                return Result.Ok(msg)
+            }
+            // Other responses / reverse requests are ignored for now.
+        }
+        return Result.Err("unreachable")
+    }
+
+    fn close(self: &mut Self): void {
+        let disc: string = "{}"
+        let _d = self.send("disconnect", disc)
+        self.child.close()
+        let _s = self.child.wait()
+    }
+}

@@ -1,0 +1,362 @@
+:root {
+  --bg: #0d1117; --panel: #161b22; --border: #30363d; --fg: #c9d1d9;
+  --muted: #8b949e; --accent: #58a6ff; --bp: #f85149; --stop: #d29922;
+  --stop-bg: rgba(210,153,34,0.18); --ok: #3fb950;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  height: 100vh; overflow: hidden;
+}
+#root, .app { height: 100vh; display: flex; flex-direction: column; }
+header {
+  display: flex; align-items: center; gap: 10px; padding: 6px 14px;
+  background: var(--panel); border-bottom: 1px solid var(--border); flex: none;
+}
+/* Icon-only debugger controls, grouped run|step|session; hover title explains.
+   Icons are VS Code codicons — the ttf ships inside monaco (build.sh copies it). */
+@font-face {
+  font-family: "codicon";
+  src: url("../node_modules/monaco-editor/esm/vs/base/browser/ui/codicons/codicon/codicon.ttf") format("truetype");
+}
+.ci { font-family: "codicon"; font-size: 15px; line-height: 1;
+      display: inline-block; user-select: none; }
+.ci-sub { font-size: 9px; align-self: flex-end; margin-left: 1px; }
+.toolbar { display: flex; gap: 3px; }
+.toolbar + .toolbar { border-left: 1px solid var(--border); padding-left: 10px; }
+.toolbar button, .gear {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 3px 6px; min-width: 28px; height: 24px;
+}
+header .logo { font-weight: 700; letter-spacing: 1px; color: var(--accent); }
+header .logo::before { content: "⚡ "; }
+header .prog { color: var(--muted); font-size: 11px; margin-left: 8px; }
+.status { color: var(--muted); margin-left: auto; }
+.status.stopped { color: var(--stop); }
+.status.running { color: var(--accent); }
+.status.done { color: var(--ok); }
+button {
+  background: #21262d; color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 11px; cursor: pointer; font: inherit;
+}
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: 0.4; cursor: default; }
+button.run { border-color: var(--ok); color: var(--ok); }
+main { flex: 1; display: flex; min-height: 0; position: relative; }
+.editor-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.filetabs { display: flex; gap: 2px; background: var(--panel); flex: none;
+            border-bottom: 1px solid var(--border); overflow-x: auto; }
+.filetab { padding: 4px 12px; cursor: pointer; color: var(--muted); font-size: 11px;
+           white-space: nowrap; }
+.filetab.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
+.source-wrap { flex: 1; min-height: 0; min-width: 0; display: flex; }
+.source { flex: 1; min-width: 0; }
+.source + .source { border-left: 1px solid var(--border); }
+.aside-drag { width: 4px; cursor: col-resize; flex: none; }
+.aside-drag:hover { background: var(--accent); }
+.aside { border-left: 1px solid var(--border); flex: none;
+         display: flex; flex-direction: column; min-height: 0; overflow: auto; }
+/* Monaco decoration hooks (SourceView.tsx) */
+.bp-glyph { border-radius: 50%; background: var(--bp); width: 10px !important;
+            height: 10px !important; margin: 4px 0 0 6px; }
+/* amber = conditional / hit-count, diamond = logpoint */
+.bp-glyph-cond { border-radius: 50%; background: var(--stop); width: 10px !important;
+                 height: 10px !important; margin: 4px 0 0 6px; }
+.bp-glyph-log { background: var(--bp); width: 9px !important; height: 9px !important;
+                margin: 5px 0 0 7px; transform: rotate(45deg); border-radius: 2px; }
+.bp-glyph-off { border-radius: 50%; border: 1.5px solid var(--muted); width: 9px !important;
+                height: 9px !important; margin: 4px 0 0 6px; }
+.bp-pop-backdrop { position: fixed; inset: 0; z-index: 40; }
+.bp-pop { position: fixed; z-index: 41; width: 300px; background: var(--panel);
+          border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px;
+          box-shadow: 0 6px 20px rgba(0,0,0,0.55); }
+.bp-pop h3 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+             letter-spacing: 0.08em; color: var(--muted); }
+.bp-pop label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+.bp-pop input { width: 100%; margin-top: 2px; background: var(--bg); color: var(--fg);
+                border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px;
+                font: inherit; outline: none; }
+.bp-pop input:focus { border-color: var(--accent); }
+.bp-pop-note { text-transform: none; letter-spacing: 0; opacity: 0.8; }
+.bp-pop-btns { display: flex; gap: 8px; margin-top: 2px; }
+.bp-pop-rm { color: var(--bp); }
+.stop-line { background: var(--stop-bg); }
+.stop-glyph::after { content: "→"; color: var(--stop); font-weight: 700; margin-left: 4px; }
+/* stopped on a breakpoint: arrow cut out of the dot so both cues read at once */
+.bp-at-stop { position: relative; }
+.bp-at-stop::after { content: "→"; position: absolute; inset: 0; display: flex;
+                     align-items: center; justify-content: center; z-index: 2;
+                     font-size: 8px; font-weight: 900; line-height: 1; color: var(--bg); }
+/* Debug-target config drawer */
+.stopmain { display: flex; align-items: center; gap: 4px; font-size: 11px;
+            color: var(--muted); cursor: pointer; user-select: none; }
+.drawer { width: 380px; border-right: 1px solid var(--border); display: flex;
+          flex-direction: column; min-height: 0; }
+.drawer-head { display: flex; align-items: center; justify-content: space-between;
+               padding: 6px 12px; border-bottom: 1px solid var(--border); }
+.drawer-head h2, .drawer-hist h2 { margin: 0; font-size: 11px; text-transform: uppercase;
+                                   letter-spacing: 0.08em; color: var(--muted); }
+.drawer-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px;
+               border-bottom: 1px solid var(--border); }
+.cfg-field { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.cfg-field > span { flex: none; width: 64px; text-transform: uppercase; letter-spacing: 0.06em; }
+.cfg-field select, .cfg-field input { flex: 1; min-width: 0; font-size: 11px; padding: 3px 6px;
+               background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; }
+.cfg-hostport { display: flex; flex-direction: column; gap: 6px; padding-left: 20px; }
+.drawer-editor { height: 180px; border-bottom: 1px solid var(--border); }
+.cfg-note { padding: 6px 12px; font-size: 11px; color: var(--muted); }
+.cfg-err { padding: 6px 12px; font-size: 11px; color: var(--bp); white-space: pre-wrap; }
+/* Collapse chevron in the drawer header; matching reopen rail when hidden. */
+.drawer-hide { background: none; border: none; padding: 0 2px; color: var(--muted); }
+.drawer-hide:hover { color: var(--accent); }
+.drawer-reopen { position: absolute; left: 0; bottom: 10px; z-index: 20;
+                 border-left: none; border-radius: 0 6px 6px 0; padding: 8px 4px; }
+.drawer-caps { padding: 6px 12px; border-bottom: 1px solid var(--border); }
+.caps-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; max-height: 120px; overflow: auto; }
+.cap { font-size: 10px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 8px;
+       color: var(--muted); white-space: nowrap; }
+.drawer-hist { flex: 1; overflow: auto; padding: 6px 12px; }
+.hist-row { padding: 4px 6px; cursor: pointer; border-radius: 4px; overflow: hidden; }
+.hist-row:hover { background: rgba(255,255,255,0.06); }
+.hist-prog { display: block; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.hist-src { display: block; color: var(--muted); font-size: 11px;
+            white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+/* Debug-type badge on each history row — dialect at a glance, per-type hue. */
+.hist-type { display: inline-block; font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
+             padding: 0 5px; margin-right: 7px; border-radius: 4px; vertical-align: 1px;
+             border: 1px solid currentColor; opacity: .9; }
+.dt-lldb   { color: #79c0ff; }
+.dt-python { color: #3fb950; }
+.dt-node   { color: #ff9e64; }
+.dt-go     { color: #56d4dd; }
+.panel { border-bottom: 1px solid var(--border); }
+.panel h2 { margin: 0; padding: 6px 12px; font-size: 11px; text-transform: uppercase;
+            letter-spacing: 1px; color: var(--muted); background: var(--panel);
+            display: flex; align-items: center; }
+.panel .body { overflow: auto; padding: 4px 12px; max-height: 220px; }
+.panel-toggle { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.panel-toggle:hover { color: var(--fg); }
+.panel-toggle .chev { font-size: 8px; opacity: 0.55; width: 8px; text-align: center; }
+.frame { padding: 2px 4px; cursor: pointer; border-radius: 4px;
+         white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.frame:hover { background: rgba(255,255,255,0.06); }
+.frame.top { color: var(--accent); }
+.frame .tloc { color: var(--muted); font-size: 11px; margin-left: 8px; }
+/* Breakpoints panel */
+.bprow { display: flex; align-items: center; gap: 6px; padding: 2px 4px;
+         cursor: pointer; border-radius: 4px; }
+.bprow:hover { background: rgba(255,255,255,0.06); }
+.bpdot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--bp); }
+.bpdot.cond { background: var(--stop); }
+.bpdot.log { border-radius: 2px; transform: rotate(45deg); }
+.bpline { flex: none; }
+.bpdetail { color: var(--muted); font-size: 11px; flex: 1;
+            white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.bprow .bpedit { color: var(--muted); cursor: pointer; opacity: 0; margin-left: auto; padding: 0 2px; }
+.bprow .bpedit + .rm { margin-left: 4px; }
+.bprow:hover .bpedit { opacity: 1; }
+.bprow .bpedit:hover { color: var(--accent); }
+.bprow .rm { color: var(--muted); margin-left: auto; }
+.bprow.off .bpline, .bprow.off .bpdetail { opacity: 0.45; }
+.bpdot { cursor: pointer; }
+.bpdot.off { background: transparent !important; border: 1.5px solid var(--muted); }
+.bpacts { display: flex; gap: 8px; }
+.vartree .var { padding: 1px 0; display: flex; align-items: baseline; min-width: 0; }
+.vartree .var .tw { flex: none; display: inline-block; width: 14px; color: var(--muted); cursor: pointer; }
+.vartree .var .name { flex: none; color: var(--accent); padding-right: 8px; }
+/* DWARF type chip (locals): dim, truncates so long C++ types don't shove the value off. */
+.vartree .var .vtype { flex: none; color: var(--muted); font-style: italic; padding-right: 8px;
+                       max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vartree .var .val { color: var(--fg); flex: 1; min-width: 0;
+                     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.addr { color: var(--accent); text-decoration: underline dotted; cursor: pointer; }
+
+/* Flat register list: control regs pinned on top with a role label, changed
+   values in amber (--stop) with a ▲ gutter mark — same cue as x64dbg. */
+.regflat { display: flex; flex-direction: column; }
+.regpane { display: flex; }
+.regview { flex: 1; min-height: 0; overflow: auto; padding: 6px 12px; }
+.regrow { display: grid; grid-template-columns: 12px 40px 78px 1fr auto;
+          align-items: baseline; gap: 6px; padding: 1px 0; min-width: 0; }
+.regrow:hover { background: #1c2430; border-radius: 4px; }
+.regrow .rmark { color: var(--stop); font-size: 9px; text-align: center; }
+.regrow .rname { color: var(--accent); font-weight: 600; }
+.regrow .rrole { color: var(--muted); font-size: 10px; font-style: italic;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.regrow .rval { color: var(--fg); min-width: 0;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* A changed register is flagged by the ▲ mark alone — recoloring the value
+   fought with the region tint (a stack pointer stopped looking like one). */
+.regrow .memlink { color: var(--muted); cursor: pointer; padding: 0 4px; opacity: 0; }
+.regrow:hover .memlink { opacity: 1; }
+.regrow .memlink:hover { color: var(--accent); }
+
+/* Region-color system — one hue per address space, shared with the memory view.
+   A dot before a register value says what it points into at a glance. */
+:root {
+  --r-stack: #3fb950; --r-heap: #f778ba; --r-code: #79c0ff;
+  --r-const: #56d4dd; --r-data: #ff9e64;
+}
+.rdot { display: inline-block; width: 7px; height: 7px; border-radius: 2px;
+        margin-right: 7px; vertical-align: baseline; flex: none; }
+.b-stack { background: var(--r-stack); } .b-heap { background: var(--r-heap); }
+.b-code  { background: var(--r-code);  } .b-const{ background: var(--r-const); }
+.b-data  { background: var(--r-data);  }
+/* text-tint variants — region-color a pointer's digits in the memory dump */
+.t-stack { color: var(--r-stack) !important; } .t-heap { color: var(--r-heap) !important; }
+.t-code  { color: var(--r-code)  !important; } .t-const{ color: var(--r-const) !important; }
+.t-data  { color: var(--r-data)  !important; }
+
+/* Memory region legend: the color key, and — via the lit entry — what region the
+   current window lands in. Hover a swatch for the plain-English description. */
+.membanner { display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+             border-bottom: 1px solid var(--border); font-size: 11.5px; }
+.memlegend { display: flex; gap: 12px; }
+.memleg { display: flex; align-items: center; gap: 5px; color: var(--muted);
+          font-size: 11px; cursor: help; }
+.memleg-on { color: var(--fg); font-weight: 600; }
+.memleg .rdot { margin-right: 0; opacity: .55; }
+.memleg-on .rdot { opacity: 1; box-shadow: 0 0 0 2px #1c2430; }
+.vartree .var .memlink { flex: none; color: var(--muted); cursor: pointer;
+                         padding: 0 4px; opacity: 0; }
+.vartree .var:hover .memlink { opacity: 1; }
+.vartree .var .memlink:hover { color: var(--accent); }
+.vartree .kids { margin-left: 16px; }
+.varedit { background: var(--bg); color: var(--fg); border: 1px solid var(--accent);
+           border-radius: 3px; font: inherit; padding: 0 4px; outline: none; width: 160px; }
+.addbtn { margin-left: auto; cursor: pointer; color: var(--accent);
+          background: none; border: none; padding: 0 4px; font-size: 14px; }
+.wrow { display: flex; gap: 8px; padding: 1px 0; }
+.wrow .expr { color: var(--accent); }
+.wrow .wval { color: var(--fg); flex: 1; }
+.wrow .rm { color: var(--muted); cursor: pointer; }
+.hint { color: var(--muted); padding: 4px 0; font-size: 11px; }
+/* z-index/position: `main` is position:relative, so it paints in the positioned
+   phase — above a static .bottom — and the drawer's overflow bleeds over the
+   panel. Make .bottom positioned with a higher z so it owns its own area. */
+.bottom { flex: none; border-top: 1px solid var(--border); display: flex;
+          flex-direction: column; min-height: 80px; background: var(--bg);
+          position: relative; z-index: 1; }
+.dragbar { height: 4px; cursor: row-resize; flex: none; }
+.dragbar:hover { background: var(--accent); }
+.tabs { display: flex; gap: 2px; background: var(--panel); flex: none;
+        border-bottom: 1px solid var(--border); }
+.tabs .tab { padding: 5px 14px; cursor: pointer; color: var(--muted);
+             font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+.tabs .tab.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
+.tabpane { flex: 1; min-height: 0; flex-direction: column; }
+.term { flex: 1; min-height: 0; padding: 4px 8px; }
+/* Merged-terminal legend: which color is program vs debugger output. */
+.termlegend { margin-left: auto; display: flex; align-items: center; gap: 5px;
+              padding-right: 12px; font-size: 10px; color: var(--muted);
+              text-transform: none; letter-spacing: 0; }
+.termlegend .sw { width: 9px; height: 9px; border-radius: 2px; margin-left: 8px; }
+.termlegend .sw.prog { background: var(--fg); }
+.termlegend .sw.dbg { background: #5fd7d7; }
+.excrow { display: flex; align-items: center; gap: 6px; padding: 2px 0;
+          cursor: pointer; user-select: none; }
+button.asm-on, button.radix-on { border-color: var(--accent); color: var(--accent); }
+/* Fallback shown briefly for a no-debug-info frame before its disasm arrives. */
+.src-hint { flex: 1; display: flex; align-items: center; justify-content: center;
+            color: var(--muted); font-size: 12px; }
+/* Inline disassembly (Monaco view zone under a source line). */
+.asm-zone { padding: 1px 0 1px 5.5ch; font: 11px/1.5 var(--mono, monospace);
+            border-left: 2px solid var(--r-code); background: rgba(121,192,255,0.05); }
+.asm-zone-row { color: var(--muted); white-space: pre; }
+.asm-zone-row.pc { color: var(--r-code); font-weight: 600; }
+/* Divider between radix and element-size toggles in the memory control bar. */
+.memctl-sep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border); }
+/* Decimal echo for non-pointer register values. */
+.rdec { color: var(--muted); margin-left: 8px; font-variant-numeric: tabular-nums; }
+/* Memory viewer */
+.memview { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.memctl { flex: none; display: flex; gap: 6px; align-items: center;
+          padding: 6px 12px; border-bottom: 1px solid var(--border); }
+.memctl input { width: 180px; background: var(--bg); color: var(--fg);
+                border: 1px solid var(--border); border-radius: 4px;
+                padding: 3px 8px; font: inherit; outline: none; }
+.memctl input:focus { border-color: var(--accent); }
+.memctl button { padding: 3px 9px; }
+.memdump { flex: 1; overflow: auto; padding: 6px 12px; font-size: 12px; }
+.memrow { display: flex; gap: 16px; white-space: pre; }
+.memaddr { color: var(--muted); }
+.membytes { color: var(--fg); }
+.membytes .memptr { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.membytes .memptr:hover { color: var(--accent); }
+/* Muted, not orange — orange is the data-region hue; ascii shouldn't share it. */
+.memascii { color: var(--muted); }
+.mem-err { color: var(--bp); font-size: 12px; }
+/* Per-slot annotation row: one annotation, arrow padded under its word column. */
+.memannot { display: flex; gap: 16px; white-space: pre; font-size: 11px; line-height: 1.3; }
+.memannot .annospacer { visibility: hidden; }
+.anno { color: var(--muted); font-style: italic; white-space: nowrap; }
+.anno.annofollow { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.anno.annofollow:hover { color: var(--accent); }
+/* DWARF struct-follow panel: a typed pointer expanded into its members. */
+.followpanel { flex: none; margin: 8px 12px; border: 1px solid var(--border);
+               border-radius: 8px; overflow: hidden; }
+.follow-hd { padding: 7px 12px; background: var(--panel); font-size: 12px;
+             border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 5px; }
+.follow-hd b { color: var(--accent); font-weight: 700; }
+.follow-x { margin-left: auto; cursor: pointer; color: var(--muted); }
+.follow-x:hover { color: var(--fg); }
+.follow-row { display: flex; align-items: center; gap: 12px; padding: 5px 12px; font-size: 12px; }
+.follow-row:not(:last-child) { border-bottom: 1px solid var(--border); }
+.follow-name { color: var(--fg); width: 90px; }
+.follow-type { color: var(--muted); font-style: italic; width: 90px; }
+.follow-val { color: var(--fg); flex: 1; }
+/* Debug-console completions */
+.console-input { flex: none; display: flex; border-top: 1px solid var(--border);
+                 position: relative; }
+.comps { position: absolute; bottom: 100%; left: 20px; max-height: 200px; overflow: auto;
+         background: var(--panel); border: 1px solid var(--border); border-radius: 6px 6px 0 0;
+         min-width: 220px; z-index: 30; }
+.comp { padding: 3px 10px; cursor: pointer; }
+.comp.sel, .comp:hover { background: rgba(88,166,255,0.15); color: var(--accent); }
+.console-input .prompt { padding: 5px 0 5px 12px; color: var(--accent); }
+.console-input input { flex: 1; background: var(--bg); border: none; color: var(--fg);
+                       font: inherit; padding: 5px 8px; outline: none; }
+
+/* ── Stack drawing ────────────────────────────────────────────────────────────
+   Frames rendered as boxes, outermost first, so the page runs top-down in the
+   same direction as memory: high addresses up, the stack growing down. */
+.stackview { flex: 1; overflow: auto; padding: 8px 12px 24px; font-size: 12px; }
+.stackhd { display: flex; align-items: center; justify-content: space-between;
+           color: var(--muted); font-size: 11px; padding-bottom: 8px; }
+.stackgrow { color: var(--r-stack); cursor: help; }
+.sframe { border: 1px solid var(--border); border-radius: 6px; margin-bottom: 2px;
+          background: var(--panel); overflow: hidden; }
+/* The frame we're stopped in gets the stack color's edge — it's the one whose
+   locals and sp are live. */
+.sframe-cur { border-color: var(--r-stack); box-shadow: 0 0 0 1px rgba(63,185,80,.25); }
+.sf-hd { display: flex; align-items: center; gap: 8px; padding: 5px 10px;
+         background: #1c2430; border-bottom: 1px solid var(--border); }
+.sf-idx { color: var(--muted); }
+.sf-name { color: var(--accent); font-weight: 600; }
+.sf-size { margin-left: auto; color: var(--muted); font-size: 11px; }
+.sf-badge { color: #0d1117; background: var(--r-stack); border-radius: 4px;
+            padding: 1px 6px; font-size: 9px; font-weight: 700; letter-spacing: .06em; }
+.sf-slots { padding: 2px 0; }
+.sf-slot { display: grid; grid-template-columns: 15ch 14ch 1fr; gap: 10px;
+           padding: 2px 10px; cursor: pointer; }
+.sf-slot:hover { background: #1c2430; }
+.sf-a { color: var(--muted); }
+.sf-k { color: var(--fg); }
+.sf-v { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sf-local .sf-k { color: var(--accent); }
+.sf-local .sf-v { color: var(--fg); }
+.sf-local .sf-v em { color: var(--muted); font-style: italic; }
+.sf-empty { cursor: default; font-style: italic; }
+.sf-empty:hover { background: none; }
+.sf-sp { display: grid; grid-template-columns: 15ch 14ch 1fr; gap: 10px; padding: 3px 10px;
+         border-top: 1px dashed var(--border); cursor: pointer; }
+.sf-sp:hover { background: #1c2430; }
+.sf-sp .sf-k { color: var(--r-stack); font-weight: 600; }
+/* Sits in the 2px gutter between boxes: names the return edge of the fp chain. */
+.sf-link { color: var(--muted); font-size: 10px; padding: 2px 10px;
+           border-top: 1px solid var(--border); }
+.stackfoot { color: var(--muted); font-size: 10px; padding: 6px 2px; }
+.sf-sret { color: var(--stop); font-size: 10px; cursor: help; }
+.sf-frameless { color: var(--muted); border: 1px solid var(--border); border-radius: 8px;
+                padding: 0 6px; font-size: 9px; cursor: help; }

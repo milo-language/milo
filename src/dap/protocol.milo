@@ -1,0 +1,10 @@
+// DAP-specific message glue. The wire framing (Content-Length header + body,
+// identical to LSP) lives in framing.milo; this file binds it to a Child.
+
+from "std/process" import { Child }
+from "framing" import { writeFrameFd }
+
+// Frame and write a JSON payload to the child's stdin.
+fn writeFrame(child: &Child, payload: &string): i64 {
+    return writeFrameFd(child.stdinFd, payload)
+}
