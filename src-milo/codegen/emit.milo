@@ -225,6 +225,12 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
             if cg.declaredStrlen { return }
             cg.declaredStrlen = true
         }
+        // drop glue also emits `declare @free`; share one dedup flag so an
+        // explicit `extern fn free` and the drop glue never double-declare it.
+        if f.name == "free" {
+            if cg.declaredFree { return }
+            cg.declaredFree = true
+        }
         // astTypeStr, not .name: a `*u8` return must stay a pointer (`.name` alone
         // drops pointer-ness, declaring e.g. strerror as returning i8 → truncated
         // pointer → strlen on garbage in the self-compiled build).

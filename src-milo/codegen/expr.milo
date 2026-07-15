@@ -12,6 +12,7 @@ from "src-milo/codegen/types.milo" import {
     lookupVariantTag, lookupVariantPayload, lookupEnumPayloadSlots
 }
 from "src-milo/codegen/stmt.milo" import { genClosure, genClosureCall, widenToI64 }
+from "src-milo/codegen/drops.milo" import { cgNeedsDrop, zeroStore }
 from "src-milo/codegen/abi.milo" import { AbiStruct, ArgClass, RetClass, AbiReg, abiStructOf, classifyArg, classifyRet, structFieldOffset }
 from "std/io" import { readFile }
 from "src-milo/codegen/strings.milo" import {
@@ -87,7 +88,8 @@ fn genStructLit(cg: &mut Cgen, name: &string, fields: &Vec<StructLitField>, locs
         let ef = fields[fi].clone()
         let idx = lookupFieldIndex(cg, rname, ef.name)
         let fty = lookupFieldType(cg, rname, idx)
-        let fv0 = genExpr(cg, *ef.value, locs, sigs, fty.clone())
+        // struct fields are owned → move the value (zero the source place)
+        let fv0 = genOwnedArg(cg, *ef.value, fty.clone(), locs, sigs)
         let fv = genInterfaceCoerceIfNeeded(cg, fv0, fty)
         let fp = nextTemp(cg)
         emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + alloc + ", i32 0, i32 " + idx.toString() + "\n")
@@ -165,6 +167,60 @@ fn genFieldAccess(cg: &mut Cgen, object: &Expr, field: &string, locs: &Vec<Local
 }
 
 // -- Enum literal --
+
+// -- Move-out of an owned operand --
+
+// Pure (no emit) type of an addressable place expr. "" for non-places, bare fn
+// names, and derefs — anything genOwnedArg must not treat as an owned slot.
+fn placeTypeStr(cg: &Cgen, e: &Expr, locs: &Vec<Local>): string {
+    match e {
+        Expr.Ident(name, sp) => {
+            if hasLocal(locs, name) { return findLocal(locs, name).ty.clone() }
+            if cg.globalVars.contains(name) { return cg.globalVars.get(name)! }
+            return ""
+        }
+        Expr.FieldAccess(obj, field, sp) => {
+            let ot = stripPercent(placeTypeStr(cg, *obj, locs))
+            if ot.len == 0 { return "" }
+            let idx = lookupFieldIndex(cg, ot, field)
+            if idx < 0 { return "" }
+            return lookupFieldType(cg, ot, idx)
+        }
+        Expr.IndexAccess(obj, i, sp) => {
+            let ot = resolveTyStr(cg, placeTypeStr(cg, *obj, locs))
+            if isVecTy(ot) { return unwrapVec(ot) }
+            if ot.len > 0 && ot[0] == 42 { return ot[1..ot.len].clone() }
+            return ""
+        }
+        _ => { return "" }
+    }
+}
+
+// Evaluate an expr in an OWNING position (a by-value arg, RHS, or field). If it
+// is a droppable local/global VARIABLE, load its value and zero the slot — the
+// move that keeps a later scope/reassign drop from double-freeing. Only bare
+// idents are moved: the checker (tryMove) treats field/index accesses as copies
+// (`let x = v[i]` leaves v[i] live), so zeroing those would corrupt the source.
+fn genOwnedArg(cg: &mut Cgen, e: &Expr, hintTy: string, locs: &Vec<Local>, sigs: &Vec<CgFnSig>): Val {
+    match e {
+        Expr.Ident(name, sp) => {
+            let isLocal = hasLocal(locs, name)
+            if (isLocal && !findLocal(locs, name).isRef) || (!isLocal && cg.globalVars.contains(name)) {
+                let tyStr = placeTypeStr(cg, e, locs)
+                if tyStr.len > 0 && cgNeedsDrop(cg, tyStr) {
+                    let lv = genLvalue(cg, e, locs, sigs)
+                    let ll = llType(resolveTyStr(cg, lv.ty))
+                    let v = nextTemp(cg)
+                    emit(cg, "  " + v + " = load " + ll + ", ptr " + lv.v + "\n")
+                    zeroStore(cg, lv.v, lv.ty)
+                    return Val { v: v, ty: lv.ty.clone() }
+                }
+            }
+        }
+        _ => {}
+    }
+    return genExpr(cg, e, locs, sigs, hintTy)
+}
 
 fn variantStructTy(payloadTypes: &Vec<string>): string {
     var s = "{ "
@@ -1571,7 +1627,8 @@ fn genEnumLit(cg: &mut Cgen, enumName: &string, variant: &string, args: &Vec<Hea
             let ftyLl = llType(payloadTypes[fi])
             let fp = nextTemp(cg)
             emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + payPtr + ", i32 0, i32 " + fi.toString() + "\n")
-            let fv = genExpr(cg, *args[fi], locs, sigs, payloadTypes[fi].clone())
+            // enum payloads are owned → move the value (zero the source place)
+            let fv = genOwnedArg(cg, *args[fi], payloadTypes[fi].clone(), locs, sigs)
             // Reconcile integer width: a payload slot of u32 fed an i64 value
             // (e.g. Result.Ok(someI64) where Ok holds u32) must trunc, or clang
             // rejects `store i32 <i64>`.
@@ -1874,7 +1931,8 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         let lv = genLvalue(cg, object, locs, sigs)
         if isVecTy(lv.ty) {
             let elemTy = unwrapVec(lv.ty)
-            let ev0 = genExpr(cg, *args[0], locs, sigs, elemTy.clone())
+            // the pushed element is owned by the vec → move it (zero the source)
+            let ev0 = genOwnedArg(cg, *args[0], elemTy.clone(), locs, sigs)
             let ev = genInterfaceCoerceIfNeeded(cg, ev0, elemTy)
             return genVecPush(cg, lv.v, lv.ty, ev)
         }
@@ -2200,9 +2258,11 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
         // The method's param ref-ness decides which args (incl. self) pass by
         // address vs value — self is param 0.
         var mRefs: Vec<bool> = Vec.new()
+        var mHints: Vec<string> = Vec.new()
         for si in 0..sigs.len {
             if sigs[si].name == userFn {
                 for pi in 0..sigs[si].paramRefs.len { mRefs.push(sigs[si].paramRefs[pi]) }
+                for pi in 0..sigs[si].paramTys.len { mHints.push(resolveTyStr(cg, sigs[si].paramTys[pi])) }
             }
         }
         var selfIsRef = false
@@ -2231,7 +2291,15 @@ fn genMethodCall(cg: &mut Cgen, object: &Expr, method: &string, args: &Vec<Heap<
                 let alv = genLvalue(cg, *args[ai], locs, sigs)
                 argStr = argStr + ", ptr " + alv.v
             } else {
-                let av = genExpr(cg, *args[ai], locs, sigs, "")
+                // by-value method param takes ownership → move (unless `*T` decay)
+                var mh = ""
+                if (ai + 1) < mHints.len { mh = mHints[ai + 1].clone() }
+                var av = Val { v: "", ty: "" }
+                if mh.len > 0 && mh[0] != 42 {
+                    av = genOwnedArg(cg, *args[ai], "", locs, sigs)
+                } else {
+                    av = genExpr(cg, *args[ai], locs, sigs, "")
+                }
                 argStr = argStr + ", " + llType(av.ty) + " " + av.v
             }
         }
@@ -3082,9 +3150,10 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
         let zt = resolveTyStr(cg, astTypeStr(typeArgs[0]))
         return Val { v: "zeroinitializer", ty: zt }
     }
-    // Built-in Heap(expr)
+    // Built-in Heap(expr) — the box takes ownership of the value, so move it
+    // (zero the source place) or a later reassign/scope drop double-frees it.
     if name == "Heap" {
-        let inner = genExpr(cg, *args[0], locs, sigs, "")
+        let inner = genOwnedArg(cg, *args[0], "", locs, sigs)
         let innerLl = llType(inner.ty)
         let szPtr = nextTemp(cg)
         emit(cg, "  " + szPtr + " = getelementptr " + innerLl + ", ptr null, i32 1\n")
@@ -3293,7 +3362,18 @@ fn genCall(cg: &mut Cgen, name: &string, args: &Vec<Heap<Expr>>, typeArgs: &Vec<
             argVals.push(Val { v: "@" + fnm, ty: "ptr" })
             argPointees.push("")
         } else {
-            var av = genExpr(cg, *args[i], locs, sigs, hint)
+            // A by-value param of a real user fn TAKES OWNERSHIP → move the arg
+            // (zero its source), matching the checker. Skip: print/builtins &
+            // externs (no declared param, only borrow) and `*T` params (a
+            // string/array decays to a borrowed data pointer, not a move).
+            var av = Val { v: "", ty: "" }
+            let ownParam = i < paramHints.len && !cg.externFns.contains(name) &&
+                           (hint.len == 0 || hint[0] != 42)
+            if ownParam {
+                av = genOwnedArg(cg, *args[i], hint, locs, sigs)
+            } else {
+                av = genExpr(cg, *args[i], locs, sigs, hint)
+            }
             // auto-wrap a bare T argument into an Option<T> param
             if i < paramHints.len {
                 let rp = stripPercent(resolveTyStr(cg, stripPercent(paramHints[i])))

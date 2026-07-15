@@ -1,0 +1,275 @@
+// Recursive drop-glue emission: frees the heap owned by a value when it goes out
+// of scope, is reassigned, or is redeclared. Mirrors the TS compiler's
+// emitDropValue/ensureDropHelper (src/codegen.ts). Without this the self-host
+// leaks every builtin heap allocation (see docs/self-hosting.md).
+//
+// Safety rests on move-out zeroing (genOwnedArg in expr.milo): a value moved by
+// value has its source slot zeroed, so a later drop sees cap==0 / null and is a
+// no-op. Every drop below is guarded by that runtime check, so dropping a
+// moved-from or never-initialized slot is always safe.
+from "src-milo/ast.milo" import { Expr }
+from "src-milo/codegen/types.milo" import {
+    Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo,
+    emit, emitG, nextTemp, nextLabel, llType, isVecTy, unwrapVec, isHashMapTy,
+    unwrapHeap, stripPercent, resolveTyStr, lookupFieldIndex, lookupFieldType,
+    lookupVariantPayload, hasLocal, findLocal, ensureFree,
+}
+
+// A type owns heap that must be freed. HashMap is deferred to a later slice
+// (its entries leak for now) — everything else that carries a heap buffer is
+// covered: string, Vec (data + droppable elements), Heap<T>, and any struct or
+// enum transitively containing one. Recursion terminates because self-reference
+// only ever goes through Heap<T> (a bare ptr), which returns true without
+// recursing into its pointee.
+fn cgNeedsDrop(cg: &Cgen, tyRaw: &string): bool {
+    let ty = resolveTyStr(cg, tyRaw)
+    if ty == "string" { return true }
+    if isVecTy(ty) { return true }
+    if isHashMapTy(ty) { return false }
+    if unwrapHeap(ty).len > 0 { return true }
+    let raw = stripPercent(ty)
+    if cg.fnRets.contains(raw + "$Drop$drop") { return true }
+    if cg.structs.contains(raw) {
+        let fields = cg.structs.get(raw)!
+        for i in 0..fields.len {
+            if cgNeedsDrop(cg, fields[i].ty) { return true }
+        }
+        return false
+    }
+    if cg.enums.contains(raw) {
+        let info = cg.enums.get(raw)!
+        for vi in 0..info.variants.len {
+            for pi in 0..info.variants[vi].payloadTypes.len {
+                if cgNeedsDrop(cg, info.variants[vi].payloadTypes[pi]) { return true }
+            }
+        }
+        return false
+    }
+    return false
+}
+
+// Zero the slot at `addr` (typed `ty`), so a subsequent drop of it is a no-op.
+fn zeroStore(cg: &mut Cgen, addr: &string, ty: &string) {
+    emit(cg, "  store " + llType(resolveTyStr(cg, ty)) + " zeroinitializer, ptr " + addr.clone() + "\n")
+}
+
+// Emit code that drops the value stored at `addr` (a pointer to a value of type
+// `tyRaw`). Guarded so a zeroed/uninitialized slot is a safe no-op.
+fn emitDropValue(cg: &mut Cgen, addr: &string, tyRaw: &string) {
+    ensureFree(cg)
+    let ty = resolveTyStr(cg, tyRaw)
+    if ty == "string" {
+        let old = nextTemp(cg)
+        emit(cg, "  " + old + " = load %String, ptr " + addr.clone() + "\n")
+        let cap = nextTemp(cg)
+        emit(cg, "  " + cap + " = extractvalue %String " + old + ", 2\n")
+        let owned = nextTemp(cg)
+        emit(cg, "  " + owned + " = icmp ugt i64 " + cap + ", 0\n")
+        let d = nextLabel(cg, "drop")
+        let s = nextLabel(cg, "dropskip")
+        emit(cg, "  br i1 " + owned + ", label %" + d + ", label %" + s + "\n")
+        emit(cg, d + ":\n")
+        let p = nextTemp(cg)
+        emit(cg, "  " + p + " = extractvalue %String " + old + ", 0\n")
+        emit(cg, "  call void @free(ptr " + p + ")\n")
+        emit(cg, "  br label %" + s + "\n")
+        emit(cg, s + ":\n")
+        return
+    }
+    if isVecTy(ty) {
+        let elem = unwrapVec(ty)
+        let vv = nextTemp(cg)
+        emit(cg, "  " + vv + " = load %Vec, ptr " + addr.clone() + "\n")
+        let data = nextTemp(cg)
+        emit(cg, "  " + data + " = extractvalue %Vec " + vv + ", 0\n")
+        let isnull = nextTemp(cg)
+        emit(cg, "  " + isnull + " = icmp eq ptr " + data + ", null\n")
+        let d = nextLabel(cg, "vdrop")
+        let s = nextLabel(cg, "vskip")
+        emit(cg, "  br i1 " + isnull + ", label %" + s + ", label %" + d + "\n")
+        emit(cg, d + ":\n")
+        if cgNeedsDrop(cg, elem) {
+            let len = nextTemp(cg)
+            emit(cg, "  " + len + " = extractvalue %Vec " + vv + ", 1\n")
+            let elemLl = llType(resolveTyStr(cg, elem))
+            let ia = nextTemp(cg)
+            emit(cg, "  " + ia + " = alloca i64\n")
+            emit(cg, "  store i64 0, ptr " + ia + "\n")
+            let cond = nextLabel(cg, "vdc")
+            let body = nextLabel(cg, "vdb")
+            let end = nextLabel(cg, "vde")
+            emit(cg, "  br label %" + cond + "\n")
+            emit(cg, cond + ":\n")
+            let iv = nextTemp(cg)
+            emit(cg, "  " + iv + " = load i64, ptr " + ia + "\n")
+            let cmp = nextTemp(cg)
+            emit(cg, "  " + cmp + " = icmp ult i64 " + iv + ", " + len + "\n")
+            emit(cg, "  br i1 " + cmp + ", label %" + body + ", label %" + end + "\n")
+            emit(cg, body + ":\n")
+            let ep = nextTemp(cg)
+            emit(cg, "  " + ep + " = getelementptr " + elemLl + ", ptr " + data + ", i64 " + iv + "\n")
+            emitDropValue(cg, ep, elem)
+            let ni = nextTemp(cg)
+            emit(cg, "  " + ni + " = add i64 " + iv + ", 1\n")
+            emit(cg, "  store i64 " + ni + ", ptr " + ia + "\n")
+            emit(cg, "  br label %" + cond + "\n")
+            emit(cg, end + ":\n")
+        }
+        emit(cg, "  call void @free(ptr " + data + ")\n")
+        emit(cg, "  br label %" + s + "\n")
+        emit(cg, s + ":\n")
+        return
+    }
+    let inner = unwrapHeap(ty)
+    if inner.len > 0 {
+        let hp = nextTemp(cg)
+        emit(cg, "  " + hp + " = load ptr, ptr " + addr.clone() + "\n")
+        let isnull = nextTemp(cg)
+        emit(cg, "  " + isnull + " = icmp eq ptr " + hp + ", null\n")
+        let d = nextLabel(cg, "hdrop")
+        let s = nextLabel(cg, "hskip")
+        emit(cg, "  br i1 " + isnull + ", label %" + s + ", label %" + d + "\n")
+        emit(cg, d + ":\n")
+        if cgNeedsDrop(cg, inner) {
+            emitDropValue(cg, hp, inner)
+        }
+        emit(cg, "  call void @free(ptr " + hp + ")\n")
+        emit(cg, "  br label %" + s + "\n")
+        emit(cg, s + ":\n")
+        return
+    }
+    let raw = stripPercent(ty)
+    // A user `impl Drop` owns its own teardown — call it and stop (matches the
+    // pre-existing emitScopeDrops behavior; do not also auto-drop its fields).
+    if cg.fnRets.contains(raw + "$Drop$drop") {
+        emit(cg, "  call void @" + raw + "$Drop$drop(ptr " + addr.clone() + ")\n")
+        return
+    }
+    if cg.structs.contains(raw) {
+        ensureStructDropHelper(cg, raw)
+        emit(cg, "  call void @milo.drop.struct." + raw + "(ptr " + addr.clone() + ")\n")
+        return
+    }
+    if cg.enums.contains(raw) {
+        ensureEnumDropHelper(cg, raw)
+        emit(cg, "  call void @milo.drop.enum." + raw + "(ptr " + addr.clone() + ")\n")
+        return
+    }
+}
+
+// Whether a drop helper of this name has already been emitted this module.
+fn dropHelperEmitted(cg: &Cgen, hn: &string): bool {
+    for i in 0..cg.dropHelpers.len {
+        if cg.dropHelpers[i] == hn { return true }
+    }
+    return false
+}
+
+// Emit `define void @milo.drop.struct.NAME(ptr %self)` — drops each droppable
+// field in declaration order. Reuses genClosure's body-buffer save/swap so the
+// helper is emitted as its own top-level function into cg.globals.
+fn ensureStructDropHelper(cg: &mut Cgen, name: &string) {
+    let hn = "milo.drop.struct." + name.clone()
+    if dropHelperEmitted(cg, hn) { return }
+    cg.dropHelpers.push(hn.clone())          // mark BEFORE emit to break cycles
+    let savedBody = cg.body.clone()
+    let savedTemp = cg.temp
+    let savedLabel = cg.label
+    cg.body = ""
+    cg.temp = 0
+    cg.label = 0
+    emit(cg, "entry:\n")
+    let fields = cg.structs.get(name)!
+    for i in 0..fields.len {
+        if cgNeedsDrop(cg, fields[i].ty) {
+            let fp = nextTemp(cg)
+            emit(cg, "  " + fp + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 " + i.toString() + "\n")
+            emitDropValue(cg, fp, fields[i].ty)
+        }
+    }
+    emit(cg, "  ret void\n")
+    let helperIR = "define void @" + hn + "(ptr %self) {\n" + cg.body.clone() + "}\n\n"
+    cg.body = savedBody
+    cg.temp = savedTemp
+    cg.label = savedLabel
+    cg.globals = cg.globals + helperIR
+}
+
+// Emit `define void @milo.drop.enum.NAME(ptr %self)` — switches on the tag and
+// drops the droppable payload fields of the active variant. Enum layout is
+// `{ i32 tag, [slots x i64] payload }`; the payload blob is reinterpreted as the
+// variant's struct type, exactly as genMatch binds payloads.
+fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
+    let hn = "milo.drop.enum." + name.clone()
+    if dropHelperEmitted(cg, hn) { return }
+    cg.dropHelpers.push(hn.clone())
+    let savedBody = cg.body.clone()
+    let savedTemp = cg.temp
+    let savedLabel = cg.label
+    cg.body = ""
+    cg.temp = 0
+    cg.label = 0
+    emit(cg, "entry:\n")
+    let tp = nextTemp(cg)
+    emit(cg, "  " + tp + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 0\n")
+    let tag = nextTemp(cg)
+    emit(cg, "  " + tag + " = load i32, ptr " + tp + "\n")
+    let done = nextLabel(cg, "edone")
+
+    var caseLines = ""
+    var dropIdx: Vec<i64> = Vec.new()
+    var dropLbls: Vec<string> = Vec.new()
+    let info = cg.enums.get(name)!
+    for vi in 0..info.variants.len {
+        let payloadTypes = lookupVariantPayload(cg, name, info.variants[vi].name)
+        var anyDrop = false
+        for pi in 0..payloadTypes.len {
+            if cgNeedsDrop(cg, payloadTypes[pi]) { anyDrop = true }
+        }
+        if anyDrop {
+            let lbl = nextLabel(cg, "edrop")
+            caseLines = caseLines + "    i32 " + info.variants[vi].tag.toString() + ", label %" + lbl + "\n"
+            dropIdx.push(vi)
+            dropLbls.push(lbl)
+        }
+    }
+    if dropIdx.len > 0 {
+        emit(cg, "  switch i32 " + tag + ", label %" + done + " [\n" + caseLines + "  ]\n")
+        for k in 0..dropIdx.len {
+            let vi = dropIdx[k]
+            emit(cg, dropLbls[k].clone() + ":\n")
+            let payloadTypes = lookupVariantPayload(cg, name, info.variants[vi].name)
+            let pay = nextTemp(cg)
+            emit(cg, "  " + pay + " = getelementptr %" + name.clone() + ", ptr %self, i32 0, i32 1\n")
+            let vstructTy = variantStructTyDrop(payloadTypes)
+            for pi in 0..payloadTypes.len {
+                if cgNeedsDrop(cg, payloadTypes[pi]) {
+                    let fp = nextTemp(cg)
+                    emit(cg, "  " + fp + " = getelementptr " + vstructTy + ", ptr " + pay + ", i32 0, i32 " + pi.toString() + "\n")
+                    emitDropValue(cg, fp, payloadTypes[pi])
+                }
+            }
+            emit(cg, "  br label %" + done + "\n")
+        }
+    } else {
+        emit(cg, "  br label %" + done + "\n")
+    }
+    emit(cg, done + ":\n  ret void\n")
+    let helperIR = "define void @" + hn + "(ptr %self) {\n" + cg.body.clone() + "}\n\n"
+    cg.body = savedBody
+    cg.temp = savedTemp
+    cg.label = savedLabel
+    cg.globals = cg.globals + helperIR
+}
+
+// Payload struct type `{ ty0, ty1, ... }` — a local copy of expr.milo's
+// variantStructTy (that file imports this one, so it can't be imported back).
+fn variantStructTyDrop(payloadTypes: &Vec<string>): string {
+    var s = "{ "
+    for i in 0..payloadTypes.len {
+        if i > 0 { s = s + ", " }
+        s = s + llType(payloadTypes[i])
+    }
+    s = s + " }"
+    return s
+}

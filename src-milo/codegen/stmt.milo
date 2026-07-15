@@ -7,7 +7,8 @@ from "src-milo/codegen/types.milo" import { astTypeStr,
     isHashMapTy, hashMapKeyTy, hashMapValTy, hmEntryTy,
     lookupFieldIndex, lookupFieldType, lookupVariantTag, lookupVariantPayload, lookupFnRet
 }
-from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy, genOptionWrapIfNeeded, genInterfaceCoerceIfNeeded }
+from "src-milo/codegen/expr.milo" import { genExpr, genLvalue, variantStructTy, genOptionWrapIfNeeded, genInterfaceCoerceIfNeeded, genOwnedArg }
+from "src-milo/codegen/drops.milo" import { emitDropValue, cgNeedsDrop }
 from "src-milo/codegen/strings.milo" import { genStringAppendInPlace, genStringEq, genStringLit }
 
 // -- Assignment --
@@ -81,14 +82,23 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
             // a module global (not shadowed by a local) stores through @name
             if !hasLocal(locs, name) && cg.globalVars.contains(name) {
                 let gty = cg.globalVars.get(name)!
-                let v0 = genExpr(cg, value, locs, sigs, gty.clone())
+                // eval + move RHS, THEN drop the old value (order matters: the RHS
+                // may read the slot), THEN overwrite. Zeroed-on-move slots drop to
+                // no-ops, so a moved-out or reassigned global never double-frees.
+                let v0 = genOwnedArg(cg, value, gty.clone(), locs, sigs)
                 let v = genOptionWrapIfNeeded(cg, v0, gty)
+                if cgNeedsDrop(cg, gty) && !lvalueMatches(target, value) {
+                    emitDropValue(cg, "@" + name.clone(), gty)
+                }
                 emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr @" + name.clone() + "\n")
             } else {
                 let local = findLocal(locs, name)
                 let lty = local.ty.clone()
-                let v0 = genExpr(cg, value, locs, sigs, lty.clone())
+                let v0 = genOwnedArg(cg, value, lty.clone(), locs, sigs)
                 let v = genOptionWrapIfNeeded(cg, v0, lty)
+                if !local.isRef && cgNeedsDrop(cg, lty) && !lvalueMatches(target, value) {
+                    emitDropValue(cg, local.addr, lty)
+                }
                 emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + local.addr + "\n")
             }
         }
@@ -111,7 +121,9 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
             let structTy = "%" + rawName
             let fp = nextTemp(cg)
             emit(cg, "  " + fp + " = getelementptr " + structTy + ", ptr " + structAddr + ", i32 0, i32 " + idx.toString() + "\n")
-            let v = genExpr(cg, value, locs, sigs, ftyLl)
+            // field takes ownership of the RHS → move it (zero the source place).
+            // The old field value is not dropped yet (slice 2) — a leak, not a UAF.
+            let v = genOwnedArg(cg, value, ftyLl, locs, sigs)
             emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + fp + "\n")
         }
         Expr.IndexAccess(obj, idx, span) => {
@@ -128,7 +140,7 @@ fn genAssign(cg: &mut Cgen, target: &Expr, value: &Expr, locs: &mut Vec<Local>, 
                 let i64v = widenToI64(cg, iv)
                 let slot = nextTemp(cg)
                 emit(cg, "  " + slot + " = getelementptr " + elemLl + ", ptr " + d + ", i64 " + i64v + "\n")
-                let v = genExpr(cg, value, locs, sigs, elemTy)
+                let v = genOwnedArg(cg, value, elemTy, locs, sigs)
                 emit(cg, "  store " + llType(v.ty) + " " + v.v + ", ptr " + slot + "\n")
             } else if lv.ty.len > 0 && lv.ty[0] == 42 {
                 // Raw pointer `*T` (unsafe): lv.v is the alloca holding the
@@ -805,7 +817,8 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 Option.Some(t) => { hintTy = astTypeStr(t) }
                 Option.None => {}
             }
-            let v0 = genExpr(cg, *value, locs, sigs, hintTy.clone())
+            // RHS is moved into the new binding → zero a source place (var→var move)
+            let v0 = genOwnedArg(cg, *value, hintTy.clone(), locs, sigs)
             let v1 = genOptionWrapIfNeeded(cg, v0, hintTy.clone())
             let v = genInterfaceCoerceIfNeeded(cg, v1, hintTy)
             let vtyLl = llType(v.ty)
@@ -821,7 +834,8 @@ fn genStmt(cg: &mut Cgen, s: &Stmt, locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, 
                 Option.Some(t) => { hintTy = astTypeStr(t) }
                 Option.None => {}
             }
-            let v0 = genExpr(cg, *value, locs, sigs, hintTy.clone())
+            // RHS is moved into the new binding → zero a source place (var→var move)
+            let v0 = genOwnedArg(cg, *value, hintTy.clone(), locs, sigs)
             let v1 = genOptionWrapIfNeeded(cg, v0, hintTy.clone())
             let v = genInterfaceCoerceIfNeeded(cg, v1, hintTy)
             let vtyLl = llType(v.ty)

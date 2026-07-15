@@ -94,6 +94,7 @@ struct Cgen {
     declaredStrlen: bool,
     declaredDprintf: bool,
     declaredFflush: bool,
+    declaredFree: bool,
     // monotonic id for lifted closure function names (@__closure_N)
     closureId: i64,
     // return type recorded while emitting an unannotated closure body (its
@@ -107,6 +108,8 @@ struct Cgen {
     arch: string,
     // extern fns needing struct-by-value ABI lowering: name -> "1" (presence marker)
     abiExterns: HashMap<string, bool>,
+    // names of emitted drop-helper fns (milo.drop.struct.X / .enum.X) — dedup
+    dropHelpers: Vec<string>,
 }
 
 fn cgenNew(): Cgen {
@@ -142,12 +145,14 @@ fn cgenNew(): Cgen {
         declaredStrlen: false,
         declaredDprintf: false,
         declaredFflush: false,
+        declaredFree: false,
         closureId: 0,
         closureRetTy: "",
         sourceDir: "",
         emittedThunks: Vec.new(),
         arch: "aarch64",
         abiExterns: HashMap.new(),
+        dropHelpers: Vec.new(),
     }
 }
 
@@ -204,6 +209,14 @@ fn ensureMemcmp(cg: &mut Cgen) {
     if !cg.declaredMemcmp {
         emitG(cg, "declare i32 @memcmp(ptr, ptr, i64)\n")
         cg.declaredMemcmp = true
+    }
+}
+
+// `declare @free`, shared with any explicit `extern fn free` via declaredFree.
+fn ensureFree(cg: &mut Cgen) {
+    if !cg.declaredFree {
+        emitG(cg, "declare void @free(ptr)\n")
+        cg.declaredFree = true
     }
 }
 
