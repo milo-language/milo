@@ -3012,6 +3012,14 @@ export class Codegen {
           if (globalInfo) {
             const val = this.nextTemp();
             lines.push(`  ${val} = load ${globalInfo.type}, ptr @${expr.name}`);
+            // Moving a global out by value (checker cleared its moved flag, so a
+            // later reassignment will drop the slot) must zero the source, exactly
+            // like the local-move path below — otherwise the reassign's drop frees
+            // the buffer the callee already owns/freed. Double-free that compiled
+            // clean before this. No alive-flag: globals aren't in droppableLocals.
+            if (expr.isMove && this.needsDropCg(globalInfo.typeKind)) {
+              lines.push(this.zeroStore(globalInfo.type, `@${expr.name}`));
+            }
             return [lines, val, globalInfo.type];
           }
           console.error(`error[codegen]: undefined variable '${expr.name}'`); process.exit(1);

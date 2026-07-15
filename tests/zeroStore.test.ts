@@ -36,3 +36,36 @@ describe("large zero-init uses memset", () => {
     expect(ir).not.toContain("@llvm.memset");
   });
 });
+
+// Moving a global out by value must zero its slot, exactly like a local move-out.
+// Without this, a subsequent reassignment drops (frees) the old buffer the callee
+// already owns — a double-free that compiled clean. Regression for the checker's
+// moved-flag being cleared on reassign while codegen left the global slot live.
+describe("move-out of a global zeros the source slot", () => {
+  const src = `var g: string = ""
+fn takeStr(s: string) { print(s) }
+fn main(): i32 {
+    g = "hello"
+    takeStr(g)
+    g = "world"
+    print(g)
+    return 0
+}`;
+
+  test("global move-out emits a zero-store before reassignment", () => {
+    const ir = emitIr(src);
+    expect(ir).toContain("store %String zeroinitializer, ptr @g");
+  });
+
+  test("local move-out (control) also zeros its slot", () => {
+    const ir = emitIr(`fn takeStr(s: string) { print(s) }
+fn main(): i32 {
+    var l: string = "hello"
+    takeStr(l)
+    l = "world"
+    print(l)
+    return 0
+}`);
+    expect(ir).toContain("store %String zeroinitializer, ptr %l.addr");
+  });
+});
