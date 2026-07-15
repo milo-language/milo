@@ -4,7 +4,7 @@ from "std/os" import {
     free, malloc, memcpy, memset, pthread_cond_broadcast, pthread_cond_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_mutex_destroy, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock
 }
 from "std/runtime" import {
-    schedulerCurrent, schedulerExists, schedulerPark, schedulerUnpark, _schedulerBlockMain, _selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain
+    schedulerCurrent, schedulerExists, schedulerPark, schedulerUnpark, _schedulerBlockMain, _schedulerPollMain, _selectTryClaim, nodeKind, nodeNext, nodeA, nodeArm, kindPlain
 }
 
 // ── Channel<T> ──
@@ -279,9 +279,17 @@ impl Channel<T> {
             var curLen: i64 = (*inner).len
             while curLen == cap {
                 // in a green task, park the task so the scheduler keeps
-                // running; on a plain OS thread, block on the cond as before
+                // running; on the main thread with a live scheduler, drive it
+                // so a green receiver can drain the buffer (blocking the cond
+                // here would hang — nobody else would run the scheduler, and
+                // the receiver may itself be a green task); on a plain OS
+                // thread, block on the cond as before.
                 if schedulerCurrent() as i64 != 0 {
                     _chParkSend(inner)
+                } else if schedulerExists() {
+                    pthread_mutex_unlock(mtx)
+                    _schedulerPollMain()
+                    pthread_mutex_lock(mtx)
                 } else {
                     pthread_cond_wait((*inner).condNotFull, mtx)
                 }
@@ -320,8 +328,17 @@ impl Channel<T> {
                     pthread_mutex_unlock(mtx)
                     return Result.Err("channel closed")
                 }
+                // green task: park (scheduler keeps running). main thread with
+                // a live scheduler: drive it so a green sender can fill the
+                // buffer — the two-branch version deadlocked here because the
+                // cond wait blocked the only thread that could run the sender.
+                // plain OS thread: block on the cond, woken by a foreign send.
                 if schedulerCurrent() as i64 != 0 {
                     _chParkRecv(inner)
+                } else if schedulerExists() {
+                    pthread_mutex_unlock(mtx)
+                    _schedulerPollMain()
+                    pthread_mutex_lock(mtx)
                 } else {
                     pthread_cond_wait((*inner).condNotEmpty, mtx)
                 }

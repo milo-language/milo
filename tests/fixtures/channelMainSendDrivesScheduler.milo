@@ -1,0 +1,43 @@
+// @expect: got 1
+// @expect: got 2
+// @expect: got 3
+// @expect: got 4
+// @expect: main done
+
+// Regression (symmetric to channelMainDrivesScheduler): main thread calls
+// ch.send() directly into a cap-1 channel with only a green receiver. When the
+// buffer is full, send must drive the scheduler so the green receiver can drain
+// it — a bare pthread_cond_wait would deadlock. The final done.recv() (also
+// from main) blocks until the receiver has consumed every item, making the
+// output deterministic under Go exit semantics.
+from "std/runtime" import {
+    Task
+}
+from "std/sync" import {
+    Channel
+}
+
+fn main(): i32 {
+    let ch = Channel<i64>.new(1)!
+    let done = Channel<i64>.new(1)!
+
+    Task.spawn(move(): void => {
+        var i: i64 = 0
+        while i < 4 {
+            let v = ch.recv()!
+            print("got ", v)
+            i = i + 1
+        }
+        done.send(1)!
+    }
+    )
+
+    var n: i64 = 1
+    while n <= 4 {
+        ch.send(n)!
+        n = n + 1
+    }
+    done.recv()!
+    print("main done")
+    return 0
+}

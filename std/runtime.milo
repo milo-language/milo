@@ -1114,6 +1114,17 @@ fn _schedulerBlockMain(): void {
     _schedulerRunOnce(-1)
 }
 
+// Main-context driver for blockers whose wake condition is NOT an fd event the
+// poll can observe: a channel buffer filled under the mutex by a green sender
+// that then parked, or by a foreign OS-thread sender that signals a condvar the
+// main thread is not waiting on. A -1 poll would sleep past both. The bounded
+// timeout keeps the scheduler advancing while letting the caller re-check its
+// own condition (the channel buffer) between ticks — forward progress with at
+// most a few ms of latency and no busy-spin.
+fn _schedulerPollMain(): void {
+    _schedulerRunOnce(4)
+}
+
 // Drive the scheduler until every spawned task has finished, then tear it down.
 // Go exit semantics mean main no longer calls this implicitly; it stays as an
 // explicit "run all outstanding tasks to completion" entry for programs that
