@@ -1,0 +1,6 @@
+#!/bin/sh
+# Dev wrapper for the from-source compiler: `./milo <args>` == `bun run src/main.ts <args>`.
+# End users install a prebuilt `milo` binary via install.sh; this is for repo clones.
+# Resolve to the repo dir so the compiler finds src/ and std/ regardless of caller cwd.
+DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec bun run "$DIR/src/main.ts" "$@"

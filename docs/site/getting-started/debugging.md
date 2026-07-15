@@ -7,7 +7,7 @@ Milo emits standard DWARF debug info, so any DWARF-aware debugger — `lldb`, `g
 Pass `-g`:
 
 ```bash
-bun run src/main.ts build app.milo -o app -g --debug
+./milo build app.milo -o app -g --debug
 lldb ./app
 ```
 
@@ -40,7 +40,7 @@ app.dSYM/
 ## Breakpoints and variables
 
 ```
-$ bun run src/main.ts build compute.milo -o compute -g --debug
+$ ./milo build compute.milo -o compute -g --debug
 $ lldb ./compute
 (lldb) b compute.milo:6
 Breakpoint 1: where = compute`compute + 148 at compute.milo:6:5, address = 0x1000062e0
@@ -87,8 +87,8 @@ Current gaps:
 Runtime bug hunting, before you reach for a debugger:
 
 ```bash
-bun run src/main.ts build app.milo -o app --debug     # -O0 traps on integer overflow
-bun run src/main.ts build app.milo -o app --sanitize  # link with AddressSanitizer (clang only)
+./milo build app.milo -o app --debug     # -O0 traps on integer overflow
+./milo build app.milo -o app --sanitize  # link with AddressSanitizer (clang only)
 ```
 
 `--debug` (`-O0`) enables overflow traps; the default `-O2` and `--release` builds use wrapping arithmetic. See [Warnings & Errors](/language/warnings-and-errors) for compile-time diagnostics.

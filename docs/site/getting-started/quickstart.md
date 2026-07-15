@@ -16,7 +16,7 @@ Every Milo program starts at `main`, which returns an `i32` exit code.
 ## Run it
 
 ```bash
-bun run src/main.ts run hello.milo
+./milo run hello.milo
 ```
 
 The `run` command compiles and executes in one step — no artifacts left behind.
@@ -24,7 +24,7 @@ The `run` command compiles and executes in one step — no artifacts left behind
 ## Build a binary
 
 ```bash
-bun run src/main.ts build hello.milo -o hello
+./milo build hello.milo -o hello
 ./hello
 ```
 
@@ -33,10 +33,10 @@ The binary is standalone — no runtime needed. Typically under 300KB.
 ## Build modes
 
 ```bash
-bun run src/main.ts build app.milo -o app            # default: -O2
-bun run src/main.ts build app.milo -o app --release   # -O3
-bun run src/main.ts build app.milo -o app --debug     # -O0
-bun run src/main.ts build app.milo -o app -g --debug  # -O0 + DWARF, for lldb
+./milo build app.milo -o app            # default: -O2
+./milo build app.milo -o app --release   # -O3
+./milo build app.milo -o app --debug     # -O0
+./milo build app.milo -o app -g --debug  # -O0 + DWARF, for lldb
 ```
 
 `-g` emits DWARF debug info and composes with any optimization level. See [Debugging](/getting-started/debugging).
@@ -44,7 +44,7 @@ bun run src/main.ts build app.milo -o app -g --debug  # -O0 + DWARF, for lldb
 ## See the LLVM IR
 
 ```bash
-bun run src/main.ts emit-ir hello.milo
+./milo emit-ir hello.milo
 ```
 
 Useful for understanding what the compiler generates.
@@ -78,7 +78,7 @@ fn main(): i32 {
 ```
 
 ```bash
-$ bun run src/main.ts run greet.milo
+$ ./milo run greet.milo
 hi, Alice!
 age: 30
 ```

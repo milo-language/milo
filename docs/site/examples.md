@@ -36,8 +36,8 @@ Located in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/ap
 ## Running an example
 
 ```bash
-bun run src/main.ts run examples/cli-tools/grep.milo -- "hello" myfile.txt
-bun run src/main.ts build examples/apps/serve.milo -o serve && ./serve
+./milo run examples/cli-tools/grep.milo -- "hello" myfile.txt
+./milo build examples/apps/serve.milo -o serve && ./serve
 ```
 
 ## A taste: grep in Milo

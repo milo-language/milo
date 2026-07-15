@@ -17,6 +17,25 @@ fn main(): i32 {
 
 **[Docs & Playground](https://cs01.github.io/milo/)** · **[Demos](https://cs01.github.io/milo/demos)** — NES, Genesis, and SNES emulators written in Milo, playable in your browser.
 
+## Install
+
+Prebuilt binary:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/cs01/milo/main/install.sh | sh
+milo run examples/hello.milo
+```
+
+From source (needs [Bun](https://bun.sh) + LLVM): clone the repo and use the `./milo` wrapper — it's just `bun run src/main.ts <args>`:
+
+```bash
+git clone https://github.com/cs01/milo.git && cd milo
+./milo run examples/hello.milo
+./milo build examples/hello.milo -o hello
+```
+
+See **[Installation](https://cs01.github.io/milo/getting-started/installation)** for details.
+
 ## Self-hosting
 
 Milo compiles itself. `milo0` — the compiler written in Milo ([`src-milo/`](src-milo/), ~8.2K lines) — compiles its own source to a **byte-identical fixed point at `-O2`**: `stage1 == stage2 == stage3`, 161K-line IR identical, manifest-wide 212/339 fixtures emitting identical IR across stages with zero divergences.

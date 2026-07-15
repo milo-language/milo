@@ -25,7 +25,7 @@ Restart VS Code and open any `.milo` file.
 The LSP server runs via:
 
 ```bash
-bun run src/main.ts lsp
+./milo lsp
 ```
 
 Point any LSP client at this command to get diagnostics, hover, and go-to-definition.

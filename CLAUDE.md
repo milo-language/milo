@@ -6,6 +6,8 @@ Memory-safe systems language → LLVM IR. TypeScript compiler, Bun runtime.
 
 ## Quick Reference
 
+`./milo <args>` is a repo-root wrapper for `bun run src/main.ts <args>` — use either.
+
 ```bash
 bun run src/main.ts run examples/hello.milo               # compile + run (no artifacts)
 bun run src/main.ts build examples/hello.milo -o hello    # compile to binary
