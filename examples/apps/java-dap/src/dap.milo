@@ -61,7 +61,7 @@ struct DapOut {
 }
 
 impl DapOut {
-    fn sendRaw(self: &mut DapOut, json: &string): void {
+    fn sendRaw(_self: &mut DapOut, json: &string): void {
         let n = writeFrameFd(1, json)
         if n < 0 {
             eprint("[java-dap] short write on DAP stdout\n")
