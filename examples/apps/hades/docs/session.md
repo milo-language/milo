@@ -1,4 +1,20 @@
-# Session management spec (M11)
+# Session management spec (M11 + M12 config redesign)
+
+> **M12 status (shipped):** the config flow below has been superseded where noted.
+> The staged-config semantics of §2 are **gone** — `run` now carries the config
+> inline (`{cmd:"run", config:{...}, force?}`); a live session requires
+> `force:true` (the UI confirms "this will kill the existing session"), which
+> tears down and relaunches. `setConfig` survives as the idle-only programmatic
+> path (MCP). The drawer is JSON-only: schema-validated Monaco (per-type
+> autocomplete for lldb/python/go/node keys) + a template picker — the form
+> dropdowns and the debounced auto-apply are deleted, and the editor text is
+> never reformatted behind the user's back. Capabilities moved out of the drawer
+> into a quiet ⓘ toolbar popover (adapter cmd + resolved path + caps chips +
+> session id). History caps at 10, keeps `name`, and a row click only populates
+> the editor — Run launches it. CLI: `hades <program> [args...]` implies
+> `web --program`, and `--launch` accepts a single config object or a full
+> {version, configurations:[...]} launch.json with `--config <name>` selection.
+> `hello` carries the canonical `config` object (plus `adapterCmd` for ⓘ).
 
 Fixes: silent server (no connection/lifecycle log), whacky target config UX (raw JSON drawer,
 preset tabs, placeholder paths, capability dump), client-local duplicated history, hardcoded

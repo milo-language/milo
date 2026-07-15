@@ -3,7 +3,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from "react"
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import SourceView, { langFor, BpMeta, BpPopover } from "./SourceView";
-import ConfigDrawer, { DebugConfig } from "./ConfigDrawer";
+import ConfigDrawer, { DebugConfig, stripJsonc } from "./ConfigDrawer";
 
 type Frame = { id: number; name: string; line: number; path: string; ipRef: string };
 type Thread = { id: number; name: string };
@@ -159,6 +159,7 @@ const CI = {
   stepOver: 0xead6, stepInto: 0xead4, stepOut: 0xead5,
   restart: 0xead2, stop: 0xead7, chip: 0xec19, add: 0xea60, gear: 0xeaf8,
   chevRight: 0xeab6,   // 0xeab5 (chevron-left) used directly in ConfigDrawer
+  info: 0xea74,
 };
 const Ico = ({ g, sub }: { g: number; sub?: string }) => (
   <>
@@ -198,18 +199,18 @@ export default function App() {
   const [locals, setLocals] = useState<Var[]>([]);
   const [watches, setWatches] = useState<Watch[]>([]);
   const [phase, setPhase] = useState<"idle" | "running" | "stopped" | "done">("idle");
-  const [launchCfg, setLaunchCfg] = useState<any>(undefined);  // verbatim launch attrs
-  // Meta fields echoed by the server (type/request/port/host) so a non-default
-  // config round-trips into the editor — they're stripped from launchCfg (the
-  // DAP body), so without this the drawer would drop them on the next sync.
-  const [metaCfg, setMetaCfg] = useState<any>({});
+  // The server's canonical launch-config object (hello.config) — seeds the
+  // drawer editor. The editor is the source of truth once the user types; this
+  // only re-seeds it on load / history restore (see cfgTextRef for the live text).
+  const [cfg, setCfg] = useState<DebugConfig>({});
   const [cfgHist, setCfgHist] = useState<DebugConfig[]>([]);   // server-owned config history
   const [tab, setTab] = useState<"term" | "mem" | "stack" | "regs">("term");
   const [dbgLabel, setDbgLabel] = useState("debugger");  // legend + line tag
   const [bottomH, setBottomH] = useState(240);
   const [asideW, setAsideW] = useState(340);
-  const [dapPath, setDapPath] = useState("");
+  const [adapterCmd, setAdapterCmd] = useState("");    // resolved adapter command (ⓘ popover)
   const [showConfig, setShowConfig] = useState(true);  // open by default; |◂| hides it
+  const [showInfo, setShowInfo] = useState(false);     // ⓘ session-info popover
   const [configErr, setConfigErr] = useState("");
   const [caps, setCaps] = useState<Record<string, any>>({});
   const [stopMain, setStopMain] = useState(() => localStorage.getItem("hades.stopAtMain") !== "0");
@@ -252,6 +253,9 @@ export default function App() {
   const phaseRef = useRef(phase);
   const pendingRestart = useRef(false);           // kill+rerun fallback in flight
   const runRef = useRef<() => void>(() => {});    // ws handler needs a fresh run()
+  // Live text of the drawer's config editor — THE config Run launches. Seeded
+  // from hello.config, updated by every drawer edit; parsed only on Run.
+  const cfgTextRef = useRef("");
   phaseRef.current = phase;
   const termRef = useRef<Terminal | null>(null);
   const watchesRef = useRef<Watch[]>([]);
@@ -367,12 +371,14 @@ export default function App() {
       const m = JSON.parse(String(ev.data));
       if (m.type === "hello") {
         setProgram(m.program); setSrcPath(m.sourcePath || ""); setViewPath(m.sourcePath || "");
-        setDapPath(m.dapPath || ""); setConfigErr(""); setBps(new Map());
+        setAdapterCmd(m.adapterCmd || ""); setConfigErr(""); setBps(new Map());
         dbgTag = m.adapterId || "debugger"; setDbgLabel(dbgTag);
         setFiles(new Map()); setTabs(m.sourcePath ? [m.sourcePath] : []);
-        setStopPath(""); setDisasm(null); setLaunchCfg(m.launch);
-        setMetaCfg({ ...(m.dialect ? { type: m.dialect } : {}), ...(m.request ? { request: m.request } : {}),
-                     ...(m.port ? { port: m.port } : {}), ...(m.host ? { host: m.host } : {}) });
+        setStopPath(""); setDisasm(null);
+        // canonical config from the server; seed the live run text too so Run
+        // works even before the drawer editor mounts.
+        setCfg(m.config || {});
+        if (!cfgTextRef.current) cfgTextRef.current = JSON.stringify(m.config || {}, null, 2);
         // A different sessionId is a genuinely new session (newSession command
         // or server restart) — wipe everything a same-session reconnect would
         // have replayed. A rejoin replay repopulates via bpSync/stopped/etc.
@@ -697,11 +703,22 @@ export default function App() {
     send({ cmd: "threadStack", tid: t.id, id });
   };
 
+  // Run = parse the drawer's live JSON and launch it. A live session asks for
+  // confirmation, then force-kills and relaunches (server tears down first).
   const run = () => {
+    let config: any = undefined;
+    const text = stripJsonc(cfgTextRef.current).trim();  // config dialect is JSONC (launch.json)
+    if (text) {
+      try { config = JSON.parse(text); }
+      catch (e: any) { setConfigErr(`invalid JSON: ${e.message}`); setShowConfig(true); return; }
+    }
+    const force = phaseRef.current === "running" || phaseRef.current === "stopped";
+    if (force && !confirm("This will kill the existing debug session. Start a new one?")) return;
+    setConfigErr("");
     setPhase("running");
-    setStatus({ text: "running…", cls: "running" });
+    setStatus({ text: force ? "restarting with new target…" : "running…", cls: "running" });
     setStopLine(0);
-    send({ cmd: "run", stopAtMain: stopMain });
+    send({ cmd: "run", stopAtMain: stopMain, ...(config ? { config } : {}), ...(force ? { force: true } : {}) });
     termRef.current?.focus();
   };
   runRef.current = run;
@@ -776,7 +793,7 @@ export default function App() {
       <header>
         <span className="logo">HADES</span>
         <span className="toolbar">
-          <button className="run" disabled={phase !== "idle"} title="Run — start the program" onClick={run}><Ico g={CI.run} /></button>
+          <button className="run" title={phase === "idle" ? "Run — start the program" : "Run — kill the current session and relaunch"} onClick={run}><Ico g={CI.run} /></button>
           <button disabled={!stopped} title={stopped ? "Continue" : "Continue (needs a stopped program)"}
                   onClick={() => resume("continue")}><Ico g={CI.cont} /></button>
           <button disabled={phase !== "running"} title="Pause"
@@ -826,8 +843,27 @@ export default function App() {
             localStorage.setItem("hades.stopAtMain", e.target.checked ? "1" : "0");
           }} /> stop at main
         </label>
-        <span className="prog" title={dapPath ? `dapPath: ${dapPath}` : (metaCfg.port ? `tcp: ${metaCfg.host || "127.0.0.1"}:${metaCfg.port}` : "")}>{program}</span>
+        <span className="prog" title={cfg.port ? `tcp: ${cfg.host || "127.0.0.1"}:${cfg.port}` : (adapterCmd ? `adapter: ${adapterCmd}` : "")}>{program}</span>
         <span className={"status " + status.cls}>{status.text}</span>
+        {Object.keys(caps).length > 0 && (
+          <span className="info-wrap">
+            <button className="gear info-btn" title="Session info — adapter & capabilities"
+                    onClick={() => setShowInfo((v) => !v)}><Ico g={CI.info} /></button>
+            {showInfo && (
+              <div className="info-pop" onMouseLeave={() => setShowInfo(false)}>
+                <div className="info-line"><span className="info-k">adapter</span> {dbgLabel}{adapterCmd ? ` — ${adapterCmd}` : ""}</div>
+                <div className="info-line"><span className="info-k">session</span> {sidRef.current || "—"}</div>
+                <details>
+                  <summary>capabilities</summary>
+                  <div className="caps-list">
+                    {Object.keys(caps).filter((k) => caps[k] === true).sort()
+                      .map((k) => <span key={k} className="cap">{k.replace(/^supports/, "")}</span>)}
+                  </div>
+                </details>
+              </div>
+            )}
+          </span>
+        )}
         <button className="gear" title="New session — end this one, keep the target config"
                 onClick={() => {
                   if (phase !== "idle" && !confirm("End the current debug session and start a new one?")) return;
@@ -838,12 +874,12 @@ export default function App() {
       <main>
         {showConfig ? (
           <ConfigDrawer
-            config={{ ...metaCfg, program, ...(srcPath ? { source: srcPath } : {}), ...(dapPath ? { dapPath } : {}), ...(launchCfg ? { launch: launchCfg } : {}) }}
-            caps={caps}
-            idle={phase === "idle"}
+            config={cfg}
+            sessionActive={phase === "running" || phase === "stopped"}
             error={configErr}
             history={cfgHist}
-            onApply={(c: DebugConfig) => { setConfigErr(""); send({ cmd: "setConfig", ...c }); }}
+            onChange={(text: string) => { cfgTextRef.current = text; }}
+            onRun={run}
             onClose={() => setShowConfig(false)}
           />
         ) : (

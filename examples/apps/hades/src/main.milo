@@ -9,34 +9,41 @@
 // subcommand's own parser owns its flags (`hades <cmd> --help`). No hand-rolled
 // help formatting — it all flows through std/argparse.
 
-from "std/args" import { args }
-from "std/argparse" import { newParser, ArgParser }
-from "std/os" import { exit }
-from "web/server" import { webMain }
-from "mcp/main" import { mcpMain }
+from "std/args" import {
+    args
+}
+from "std/argparse" import {
+    newParser, ArgParser
+}
+from "std/os" import {
+    exit
+}
+from "std/fs" import {
+    pathExists
+}
+from "std/json" import {
+    jsonObj, jsonArr
+}
+from "web/server" import {
+    webMain
+}
+from "mcp/main" import {
+    mcpMain
+}
 
 // argparse has flags + positionals but no git-style subcommands, so the command
 // roster + examples live in the description; `command` is a trailing positional
 // whose remaining tokens are forwarded verbatim to the chosen subcommand.
 fn topParser(): ArgParser {
-    var p = newParser("hades",
-        "web + AI interface for any DAP debugger\n\n" +
-        "commands:\n" +
-        "  web     browser debugger UI + shared co-debug session server\n" +
-        "  mcp     MCP debug server (standalone, or --attach to join a web session)\n\n" +
-        "run 'hades <command> --help' for that command's options\n\n" +
-        "quick start (boots idle — configure the target in the browser):\n" +
-        "  hades web --port 8080\n" +
-        "co-debug (human in the browser + AI on the same session):\n" +
-        "  claude mcp add hades-live -- $PWD/hades mcp --attach localhost:8080")
+    var p = newParser("hades", "web + AI interface for any DAP debugger\n\n" + "commands:\n" + "  web     browser debugger UI + shared co-debug session server\n" + "  mcp     MCP debug server (standalone, or --attach to join a web session)\n\n" + "run 'hades <command> --help' for that command's options\n\n" + "quick start (the 90% invocation — path to a binary implies `web`):\n" + "  hades /tmp/a.out --those --args\n" + "or boot idle and configure the target in the browser:\n" + "  hades web --port 8080\n" + "co-debug (human in the browser + AI on the same session):\n" + "  claude mcp add hades-live -- $PWD/hades mcp --attach localhost:8080")
     p.addOptionalPositional("command", "web | mcp")
-    p.enableTrailingArgs()   // stop parsing at the command; forward the rest as-is
+    p.enableTrailingArgs() // stop parsing at the command; forward the rest as-is
     return p
 }
 
 fn main(): i32 {
     var parser = topParser()
-    let top = parser.parseFrom(args())   // auto-handles a leading --help
+    let top = parser.parseFrom(args()) // auto-handles a leading --help
     let pos = top.positional
     if pos.len == 0 {
         print(parser.helpText())
@@ -56,8 +63,33 @@ fn main(): i32 {
         i = i + 1
     }
 
-    if sub == "web" { return webMain(subArgv) }
-    if sub == "mcp" { return mcpMain(subArgv) }
+    if sub == "web" {
+        return webMain(subArgv)
+    }
+    if sub == "mcp" {
+        return mcpMain(subArgv)
+    }
+
+    // `hades <program> [args...]` — the 90% invocation. A path that exists is a
+    // debuggee, not a command: implicit `web --program <p>` with the remaining
+    // tokens as the debuggee's argv (type inferred by the config layer).
+    if pathExists(sub) {
+        var webArgv: Vec<string> = []
+        webArgv.push("hades web")
+        webArgv.push("--program")
+        webArgv.push(sub.clone())
+        if pos.len > 1 {
+            var arr = jsonArr()
+            var j: i64 = 1
+            while j < pos.len {
+                arr = arr.str(pos[j].clone())
+                j = j + 1
+            }
+            webArgv.push("--launch")
+            webArgv.push(jsonObj().arr("args", arr).build())
+        }
+        return webMain(webArgv)
+    }
 
     print($"unknown command: {sub}\n")
     print(parser.helpText())

@@ -11,27 +11,57 @@
 // both this file and web/server.milo). mcpFramesJson/varsJson below stay local:
 // they emit MCP-specific shapes, not the browser wire format.
 
-from "std/os" import { read, exit }
-from "std/event" import { setNonblocking }
-from "std/json" import { Json, jsonParse, jsonObj, jsonArr }
-from "std/argparse" import { newParser, ArgParser, ParsedArgs }
-from "std/env" import { getEnvOr }
-from "std/fs" import { pathExists }
-from "std/signal" import { ignoreSignal, SIGPIPE }
+from "std/os" import {
+    read, exit
+}
+from "std/event" import {
+    setNonblocking
+}
+from "std/json" import {
+    Json, jsonParse, jsonObj, jsonArr
+}
+from "std/argparse" import {
+    newParser, ArgParser, ParsedArgs
+}
+from "std/env" import {
+    getEnvOr
+}
+from "std/fs" import {
+    pathExists
+}
+from "std/signal" import {
+    ignoreSignal, SIGPIPE
+}
 
-from "std/process" import { Child }
-from "std/strconv" import { parseInt }
-from "std/runtime" import { Task, schedulerWaitRead, schedulerYield, schedulerRunToCompletion }
-from "std/net" import { resolve }
-from "std/ws" import { WsConn, wsConnect }
-from "../dap/client" import { DapClient, DapMsg }
-from "../dap/session" import { AdapterSel, selectAdapter, adapterIdForKind, adapterArgvOf }
-from "../web/jsonaccess" import { jsonEsc, bodyI64, bodyStr, frame0Field, frame0Path, scopes0Ref }
+from "std/process" import {
+    Child
+}
+from "std/strconv" import {
+    parseInt
+}
+from "std/runtime" import {
+    Task, schedulerWaitRead, schedulerYield, schedulerRunToCompletion
+}
+from "std/net" import {
+    resolve
+}
+from "std/ws" import {
+    WsConn, wsConnect
+}
+from "../dap/client" import {
+    DapClient, DapMsg
+}
+from "../dap/session" import {
+    AdapterSel, LaunchSpec, selectAdapter, adapterIdForKind, adapterArgvOf, launchArgsFor
+}
+from "../web/jsonaccess" import {
+    jsonEsc, bodyI64, bodyStr, frame0Field, frame0Path, scopes0Ref
+}
 
 var mBinPath: string = ""
 var mSrcPath: string = ""
 var mAdapterCmd: string = ""
-var mAdapterKind: string = ""   // dialect kind (registry) — selects the DAP adapterID
+var mAdapterKind: string = "" // dialect kind (registry) — selects the DAP adapterID
 var mQ: string = ""
 
 // Co-debug: attach to a live hades-web shared session as a second WS peer.
@@ -39,14 +69,14 @@ var mQ: string = ""
 // yielding (green scheduler — the reader keeps running underneath).
 var gAttachMode: bool = false
 var gAttFd: i32 = -1
-var gAttPhase: string = ""       // idle | running | stopped | exited | dead (set in main)
-var gAttStopped: string = ""     // last raw "stopped" broadcast
-var gAttEval: string = ""        // last raw "evalResult"
-var gAttChildren: string = ""    // last raw "children"
-var gAttThreads: string = ""     // last raw "threads" broadcast
+var gAttPhase: string = "" // idle | running | stopped | exited | dead (set in main)
+var gAttStopped: string = "" // last raw "stopped" broadcast
+var gAttEval: string = "" // last raw "evalResult"
+var gAttChildren: string = "" // last raw "children"
+var gAttThreads: string = "" // last raw "threads" broadcast
 var gAttSrc: string = ""
-var gAttNextId: i64 = 900001     // high id space: avoid colliding with the browser
-var gAttBpLines: Vec<i64> = []   // lines this MCP peer set (for replace semantics)
+var gAttNextId: i64 = 900001 // high id space: avoid colliding with the browser
+var gAttBpLines: Vec<i64> = [] // lines this MCP peer set (for replace semantics)
 
 // ── JSON building helpers ──
 
@@ -68,27 +98,30 @@ fn mcpFramesJson(raw: &string): string {
                                     Option.Some(f) => {
                                         var path: string = ""
                                         match f.get("source") {
-                                            Option.Some(src) => { path = src.str("path") ?? "" }
-                                            Option.None => {}
+                                            Option.Some(src) => {
+                                                path = src.str("path") ?? ""
+                                            }
+                                            Option.None => {
+                                            }
                                         }
-                                        arr = arr.obj(jsonObj()
-                                            .int("id", f.i64("id") ?? (0 as i64))
-                                            .str("name", f.str("name") ?? "?")
-                                            .int("line", f.i64("line") ?? (0 as i64))
-                                            .str("path", path))
+                                        arr = arr.obj(jsonObj().int("id", f.i64("id") ?? (0 as i64)).str("name", f.str("name") ?? "?").int("line", f.i64("line") ?? (0 as i64)).str("path", path))
                                     }
-                                    Option.None => {}
+                                    Option.None => {
+                                    }
                                 }
                                 i = i + 1
                             }
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
-        Result.Err(_e) => {}
+        Result.Err(_e) => {
+        }
     }
     return arr.build()
 }
@@ -102,20 +135,24 @@ fn varsJson(raw: &string): string {
                     let n = body.childLen("variables")
                     var i: i64 = 0
                     while i < n {
-                        if i > 0 { out = out + "," }
+                        if i > 0 {
+                            out = out + ","
+                        }
                         let name = body.childStrAt("variables", i, "name") ?? "?"
                         let value = body.childStrAt("variables", i, "value") ?? "?"
                         let ref = body.childI64At("variables", i, "variablesReference") ?? (0 as i64)
                         out = out + "{" + mQ + "name" + mQ + ":" + jsonEsc(name)
-                            + "," + mQ + "value" + mQ + ":" + jsonEsc(value)
-                            + "," + mQ + "ref" + mQ + ":" + ref.toString() + "}"
+                        + "," + mQ + "value" + mQ + ":" + jsonEsc(value)
+                        + "," + mQ + "ref" + mQ + ":" + ref.toString() + "}"
                         i = i + 1
                     }
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
-        Result.Err(_e) => {}
+        Result.Err(_e) => {
+        }
     }
     out = out + "]"
     return out
@@ -129,7 +166,7 @@ struct Session {
     tid: i64,
     frame0: i64,
     stopLine: i64,
-    output: string,     // debuggee/adapter output accumulated since last turn
+    output: string, // debuggee/adapter output accumulated since last turn
     exited: bool,
 }
 
@@ -137,7 +174,9 @@ struct Session {
 // remembering stopped/terminated. Never prints (stdout is MCP protocol).
 fn requestQuiet(s: &mut Session, command: &string, argsJson: &string): Result<DapMsg> {
     let want = s.cl.send(command, argsJson)
-    if want < 0 { return Result.Err("send failed") }
+    if want < 0 {
+        return Result.Err("send failed")
+    }
     while true {
         let msg = s.cl.recv()?
         if msg.kind == "event" {
@@ -170,7 +209,9 @@ fn pumpToStop(s: &mut Session): bool {
                     }
                 }
             }
-            Result.Err(_e) => { s.exited = true return false }
+            Result.Err(_e) => {
+                s.exited = true return false
+            }
         }
     }
     return false
@@ -180,25 +221,27 @@ fn buildBpArgs(lines: &Vec<i64>): string {
     var arr: string = "["
     var i: i64 = 0
     while i < lines.len {
-        if i > 0 { arr = arr + "," }
+        if i > 0 {
+            arr = arr + ","
+        }
         arr = arr + "{" + mQ + "line" + mQ + ":" + lines[i].toString() + "}"
         i = i + 1
     }
     arr = arr + "]"
     return "{" + mQ + "source" + mQ + ":{" + mQ + "path" + mQ + ":" + jsonEsc(mSrcPath) + "}"
-        + "," + mQ + "breakpoints" + mQ + ":" + arr + "}"
+    + "," + mQ + "breakpoints" + mQ + ":" + arr + "}"
 }
 
 // Stop snapshot as a JSON string: stack + frame-0 locals + buffered output.
 fn snapshotJson(s: &mut Session): string {
     if s.exited {
         let out = "{" + mQ + "exited" + mQ + ":true"
-            + "," + mQ + "output" + mQ + ":" + jsonEsc(s.output) + "}"
+        + "," + mQ + "output" + mQ + ":" + jsonEsc(s.output) + "}"
         s.output = ""
         return out
     }
     let stArgs = "{" + mQ + "threadId" + mQ + ":" + s.tid.toString()
-        + "," + mQ + "startFrame" + mQ + ":0," + mQ + "levels" + mQ + ":20}"
+    + "," + mQ + "startFrame" + mQ + ":0," + mQ + "levels" + mQ + ":20}"
     var frames: string = "[]"
     var locals: string = "[]"
     match requestQuiet(s, "stackTrace", stArgs) {
@@ -208,7 +251,9 @@ fn snapshotJson(s: &mut Session): string {
             s.frame0 = frame0Field(st.raw, "id")
             if mSrcPath.len == 0 {
                 let p = frame0Path(st.raw)
-                if p.len > 0 { mSrcPath = p }
+                if p.len > 0 {
+                    mSrcPath = p
+                }
             }
             let scArgs = "{" + mQ + "frameId" + mQ + ":" + s.frame0.toString() + "}"
             match requestQuiet(s, "scopes", scArgs) {
@@ -216,32 +261,49 @@ fn snapshotJson(s: &mut Session): string {
                     let ref = scopes0Ref(sc.raw)
                     let vArgs = "{" + mQ + "variablesReference" + mQ + ":" + ref.toString() + "}"
                     match requestQuiet(s, "variables", vArgs) {
-                        Result.Ok(v) => { locals = varsJson(v.raw) }
-                        Result.Err(_e) => {}
+                        Result.Ok(v) => {
+                            locals = varsJson(v.raw)
+                        }
+                        Result.Err(_e) => {
+                        }
                     }
                 }
-                Result.Err(_e) => {}
+                Result.Err(_e) => {
+                }
             }
         }
-        Result.Err(_e) => {}
+        Result.Err(_e) => {
+        }
     }
     let out = "{" + mQ + "stopped" + mQ + ":true"
-        + "," + mQ + "line" + mQ + ":" + s.stopLine.toString()
-        + "," + mQ + "frames" + mQ + ":" + frames
-        + "," + mQ + "locals" + mQ + ":" + locals
-        + "," + mQ + "output" + mQ + ":" + jsonEsc(s.output) + "}"
+    + "," + mQ + "line" + mQ + ":" + s.stopLine.toString()
+    + "," + mQ + "frames" + mQ + ":" + frames
+    + "," + mQ + "locals" + mQ + ":" + locals
+    + "," + mQ + "output" + mQ + ":" + jsonEsc(s.output) + "}"
     s.output = ""
     return out
 }
 
+// The standalone session as a LaunchSpec for the shared launch-body builder.
+// runInTerminal is pinned false in launchExtra: mcp is turn-based and reads the
+// debuggee's stdout via DAP "output" events, not a pty (unlike hades web) — a
+// user key always wins over the dialect default, so this suppresses it.
+fn mcpSpec(): LaunchSpec {
+    return LaunchSpec {
+        binPath: mBinPath.clone(), srcPath: mSrcPath.clone(),
+        adapterCmd: mAdapterCmd.clone(), adapterKind: mAdapterKind.clone(),
+        launchExtra: "{" + mQ + "runInTerminal" + mQ + ":false}",
+        stopAtMain: false, request: "launch", host: "", port: 0 as i64,
+        name: "", dapPath: "",
+    }
+}
+
 // Full launch handshake to the first stop (or exit).
 fn doLaunch(s: &mut Session, bpLines: &Vec<i64>): string {
-    // No supportsRunInTerminalRequest here: mcp is turn-based and reads the
-    // debuggee's stdout via DAP "output" events, not a pty (unlike hades web).
+    // No supportsRunInTerminalRequest here (see mcpSpec).
     let initArgs = "{" + mQ + "adapterID" + mQ + ":" + jsonEsc(adapterIdForKind(mAdapterKind))
-        + "," + mQ + "linesStartAt1" + mQ + ":true," + mQ + "columnsStartAt1" + mQ + ":true}"
-    let launchArgs = "{" + mQ + "program" + mQ + ":" + jsonEsc(mBinPath)
-        + "," + mQ + "stopOnEntry" + mQ + ":false}"
+    + "," + mQ + "linesStartAt1" + mQ + ":true," + mQ + "columnsStartAt1" + mQ + ":true}"
+    let launchArgs = launchArgsFor(mcpSpec(), false)
     let bpArgs = buildBpArgs(bpLines)
     let _i = s.cl.send("initialize", initArgs)
     while true {
@@ -280,13 +342,14 @@ fn doLaunch(s: &mut Session, bpLines: &Vec<i64>): string {
     return "{}"
 }
 
-
 // ── Attach mode: drive a live hades-web shared session over WS ──
 
 fn attSend(msg: &string): void {
     // Borrowed client conn: _closed=true so Drop skips teardown; _isClient
     // masks outgoing frames as RFC 6455 requires.
-    var conn = WsConn { fd: gAttFd, ssl: 0, _ctx: 0, _closed: true, _isClient: true }
+    var conn = WsConn {
+        fd: gAttFd, ssl: 0, _ctx: 0, _closed: true, _isClient: true
+    }
     let _r = conn.sendText(msg)
 }
 
@@ -296,8 +359,13 @@ fn attReaderLoop(conn: WsConn): void {
     while true {
         var payload: string = ""
         match c.recv() {
-            Result.Ok(m) => { payload = m.payload }
-            Result.Err(_e) => { gAttPhase = "dead" return }
+            Result.Ok(m) => {
+                payload = m.payload
+            }
+            Result.Err(_e) => {
+                gAttPhase = "dead"
+                return
+            }
         }
         match jsonParse(payload.clone()) {
             Result.Ok(doc) => {
@@ -309,7 +377,9 @@ fn attReaderLoop(conn: WsConn): void {
                     // future breakpoints to the file we actually stopped in.
                     if gAttSrc.len == 0 {
                         let p = doc.str("path") ?? ""
-                        if p.len > 0 { gAttSrc = p }
+                        if p.len > 0 {
+                            gAttSrc = p
+                        }
                     }
                 } else if t == "threads" {
                     gAttThreads = payload.clone()
@@ -319,17 +389,22 @@ fn attReaderLoop(conn: WsConn): void {
                     gAttPhase = "exited"
                 } else if t == "hello" {
                     gAttSrc = doc.str("sourcePath") ?? ""
-                    if (doc.str("phase") ?? "") == "running" { gAttPhase = "running" }
+                    if (doc.str("phase") ?? "") == "running" {
+                        gAttPhase = "running"
+                    }
                 } else if t == "evalResult" {
                     gAttEval = payload.clone()
                 } else if t == "children" {
                     gAttChildren = payload.clone()
                 } else if t == "bpSync" {
                     let ln = doc.i64("line") ?? (0 as i64)
-                    if ln > 0 { gAttBpLines.push(ln) }
+                    if ln > 0 {
+                        gAttBpLines.push(ln)
+                    }
                 }
             }
-            Result.Err(_e) => {}
+            Result.Err(_e) => {
+            }
         }
     }
 }
@@ -337,23 +412,34 @@ fn attReaderLoop(conn: WsConn): void {
 // Yield until the phase leaves "running" (a step/continue landed) — same
 // no-timeout semantics as launch mode's pumpToStop.
 fn attAwaitStopOrExit(): void {
-    while gAttPhase == "running" { schedulerYield() }
+    while gAttPhase == "running" {
+        schedulerYield()
+    }
 }
 
 fn attAwaitMsgId(which: &string, id: i64): string {
     while true {
         var raw: string = ""
-        if which == "evalResult" { raw = gAttEval.clone() }
-        else { raw = gAttChildren.clone() }
+        if which == "evalResult" {
+            raw = gAttEval.clone()
+        } 
+        else {
+            raw = gAttChildren.clone()
+        }
         if raw.len > 0 {
             match jsonParse(raw.clone()) {
                 Result.Ok(doc) => {
-                    if (doc.i64("id") ?? (0 as i64)) == id { return raw }
+                    if (doc.i64("id") ?? (0 as i64)) == id {
+                        return raw
+                    }
                 }
-                Result.Err(_e) => {}
+                Result.Err(_e) => {
+                }
             }
         }
-        if gAttPhase == "dead" { return "" }
+        if gAttPhase == "dead" {
+            return ""
+        }
         schedulerYield()
     }
     return ""
@@ -361,8 +447,12 @@ fn attAwaitMsgId(which: &string, id: i64): string {
 
 fn attStopField(key: &string): i64 {
     match jsonParse(gAttStopped.clone()) {
-        Result.Ok(doc) => { return doc.i64(key) ?? (-1 as i64) }
-        Result.Err(_e) => { return -1 as i64 }
+        Result.Ok(doc) => {
+            return doc.i64(key) ?? (-1 as i64)
+        }
+        Result.Err(_e) => {
+            return -1 as i64
+        }
     }
 }
 
@@ -372,21 +462,33 @@ fn attFrame0Id(): i64 {
             match doc.get("frames") {
                 Option.Some(fr) => {
                     match fr.at(0) {
-                        Option.Some(f) => { return f.i64("id") ?? (-1 as i64) }
-                        Option.None => { return -1 as i64 }
+                        Option.Some(f) => {
+                            return f.i64("id") ?? (-1 as i64)
+                        }
+                        Option.None => {
+                            return -1 as i64
+                        }
                     }
                 }
-                Option.None => { return -1 as i64 }
+                Option.None => {
+                    return -1 as i64
+                }
             }
         }
-        Result.Err(_e) => { return -1 as i64 }
+        Result.Err(_e) => {
+            return -1 as i64
+        }
     }
 }
 
 // Server "stopped" broadcast → MCP snapshot shape (line/frames/locals).
 fn attSnapshot(): string {
-    if gAttPhase == "exited" { return "{" + mQ + "exited" + mQ + ":true}" }
-    if gAttPhase == "dead" { return "{" + mQ + "error" + mQ + ":" + mQ + "web session closed" + mQ + "}" }
+    if gAttPhase == "exited" {
+        return "{" + mQ + "exited" + mQ + ":true}"
+    }
+    if gAttPhase == "dead" {
+        return "{" + mQ + "error" + mQ + ":" + mQ + "web session closed" + mQ + "}"
+    }
     if gAttStopped.len == 0 {
         return "{" + mQ + "phase" + mQ + ":" + jsonEsc(gAttPhase) + "}"
     }
@@ -396,10 +498,23 @@ fn attSnapshot(): string {
     match jsonParse(gAttStopped.clone()) {
         Result.Ok(doc) => {
             line = doc.i64("line") ?? (0 as i64)
-            match doc.get("frames") { Option.Some(f) => { frames = f.rawStr() } Option.None => {} }
-            match doc.get("locals") { Option.Some(l) => { locals = l.rawStr() } Option.None => {} }
+            match doc.get("frames") {
+                Option.Some(f) => {
+                    frames = f.rawStr()
+                }
+                Option.None => {
+                }
+            }
+            match doc.get("locals") {
+                Option.Some(l) => {
+                    locals = l.rawStr()
+                }
+                Option.None => {
+                }
+            }
         }
-        Result.Err(_e) => {}
+        Result.Err(_e) => {
+        }
     }
     var threads: string = ""
     match jsonParse(gAttThreads.clone()) {
@@ -407,29 +522,27 @@ fn attSnapshot(): string {
             match doc.get("threads") {
                 Option.Some(t) => {
                     threads = "," + mQ + "threads" + mQ + ":" + t.rawStr()
-                        + "," + mQ + "currentThread" + mQ + ":" + (doc.i64("current") ?? (-1 as i64)).toString()
+                    + "," + mQ + "currentThread" + mQ + ":" + (doc.i64("current") ?? (-1 as i64)).toString()
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
-        Result.Err(_e) => {}
+        Result.Err(_e) => {
+        }
     }
     return "{" + mQ + "stopped" + mQ + ":true"
-        + "," + mQ + "line" + mQ + ":" + line.toString()
-        + "," + mQ + "frames" + mQ + ":" + frames
-        + "," + mQ + "locals" + mQ + ":" + locals + threads + "}"
+    + "," + mQ + "line" + mQ + ":" + line.toString()
+    + "," + mQ + "frames" + mQ + ":" + frames
+    + "," + mQ + "locals" + mQ + ":" + locals + threads + "}"
 }
 
 fn attSetBp(line: i64): void {
-    attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "setBreakpoint" + mQ
-        + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc)
-        + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
+    attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "setBreakpoint" + mQ + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc) + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
 }
 
 fn attClearBp(line: i64): void {
-    attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "clearBreakpoint" + mQ
-        + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc)
-        + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
+    attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "clearBreakpoint" + mQ + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc) + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
 }
 
 fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
@@ -445,7 +558,10 @@ fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
                     return
                 }
                 let bps = jsonI64Arr(args, "breakpoints")
-                for bp in bps { attSetBp(bp) gAttBpLines.push(bp) }
+                for bp in bps {
+                    attSetBp(bp)
+                    gAttBpLines.push(bp)
+                }
                 gAttPhase = "running"
                 gAttStopped = ""
                 attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "run" + mQ + "," + mQ + "stopAtMain" + mQ + ":false}")
@@ -459,22 +575,32 @@ fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
                 var cmd: string = "continue"
                 if name == "debug_step" {
                     let kind = args.str("kind") ?? "over"
-                    if kind == "over" { cmd = "stepOver" }
-                    else if kind == "in" { cmd = "stepIn" }
-                    else if kind == "out" { cmd = "stepOut" }
+                    if kind == "over" {
+                        cmd = "stepOver"
+                    } 
+                    else if kind == "in" {
+                        cmd = "stepIn"
+                    } 
+                    else if kind == "out" {
+                        cmd = "stepOut"
+                    }
                 }
                 let tid = attStopField("tid")
                 gAttPhase = "running"
                 gAttStopped = ""
-                attSend("{" + mQ + "cmd" + mQ + ":" + jsonEsc(cmd)
-                    + "," + mQ + "tid" + mQ + ":" + tid.toString() + "}")
+                attSend("{" + mQ + "cmd" + mQ + ":" + jsonEsc(cmd) + "," + mQ + "tid" + mQ + ":" + tid.toString() + "}")
                 attAwaitStopOrExit()
                 toolResult(id, attSnapshot(), false)
             } else if name == "debug_set_breakpoints" {
                 let lines = jsonI64Arr(args, "lines")
-                for ln in gAttBpLines { attClearBp(ln) }
+                for ln in gAttBpLines {
+                    attClearBp(ln)
+                }
                 gAttBpLines = []
-                for ln in lines { attSetBp(ln) gAttBpLines.push(ln) }
+                for ln in lines {
+                    attSetBp(ln)
+                    gAttBpLines.push(ln)
+                }
                 toolResult(id, "{\"ok\":true}", false)
             } else if name == "debug_evaluate" {
                 if gAttPhase != "stopped" {
@@ -484,11 +610,7 @@ fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
                 let expr = args.str("expr") ?? ""
                 gAttNextId = gAttNextId + 1
                 let eid = gAttNextId
-                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "evaluate" + mQ
-                    + "," + mQ + "expr" + mQ + ":" + jsonEsc(expr)
-                    + "," + mQ + "context" + mQ + ":" + mQ + "repl" + mQ
-                    + "," + mQ + "id" + mQ + ":" + eid.toString()
-                    + "," + mQ + "frameId" + mQ + ":" + attFrame0Id().toString() + "}")
+                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "evaluate" + mQ + "," + mQ + "expr" + mQ + ":" + jsonEsc(expr) + "," + mQ + "context" + mQ + ":" + mQ + "repl" + mQ + "," + mQ + "id" + mQ + ":" + eid.toString() + "," + mQ + "frameId" + mQ + ":" + attFrame0Id().toString() + "}")
                 let raw = attAwaitMsgId("evalResult", eid)
                 var value: string = ""
                 var isErr = false
@@ -497,23 +619,30 @@ fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
                         value = doc.str("value") ?? ""
                         isErr = doc.bool("error") ?? false
                     }
-                    Result.Err(_e) => { isErr = true }
+                    Result.Err(_e) => {
+                        isErr = true
+                    }
                 }
                 toolResult(id, "{" + mQ + "value" + mQ + ":" + jsonEsc(value) + "}", isErr)
             } else if name == "debug_variables" {
                 let ref = args.i64("ref") ?? (0 as i64)
                 gAttNextId = gAttNextId + 1
                 let eid = gAttNextId
-                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "expand" + mQ
-                    + "," + mQ + "ref" + mQ + ":" + ref.toString()
-                    + "," + mQ + "id" + mQ + ":" + eid.toString() + "}")
+                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "expand" + mQ + "," + mQ + "ref" + mQ + ":" + ref.toString() + "," + mQ + "id" + mQ + ":" + eid.toString() + "}")
                 let raw = attAwaitMsgId("children", eid)
                 var vars: string = "[]"
                 match jsonParse(raw.clone()) {
                     Result.Ok(doc) => {
-                        match doc.get("vars") { Option.Some(v) => { vars = v.rawStr() } Option.None => {} }
+                        match doc.get("vars") {
+                            Option.Some(v) => {
+                                vars = v.rawStr()
+                            }
+                            Option.None => {
+                            }
+                        }
                     }
-                    Result.Err(_e) => {}
+                    Result.Err(_e) => {
+                    }
                 }
                 toolResult(id, "{" + mQ + "variables" + mQ + ":" + vars + "}", false)
             } else if name == "debug_terminate" {
@@ -541,11 +670,17 @@ fn readStdinLine(): Result<string> {
             n = read(0, b as *u8, 1)
         }
         if n <= 0 {
-            if line.len > 0 { return Result.Ok(line) }
+            if line.len > 0 {
+                return Result.Ok(line)
+            }
             return Result.Err("eof")
         }
-        if b[0] == 10 { return Result.Ok(line) }
-        if b[0] != 13 { line.push(b[0]) }
+        if b[0] == 10 {
+            return Result.Ok(line)
+        }
+        if b[0] != 13 {
+            line.push(b[0])
+        }
     }
     return Result.Err("unreachable")
 }
@@ -556,33 +691,29 @@ fn writeMsg(msg: &string): void {
 }
 
 fn rpcResult(id: i64, resultJson: &string): void {
-    writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ
-        + "," + mQ + "id" + mQ + ":" + id.toString()
-        + "," + mQ + "result" + mQ + ":" + resultJson + "}")
+    writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ + "," + mQ + "id" + mQ + ":" + id.toString() + "," + mQ + "result" + mQ + ":" + resultJson + "}")
 }
 
 fn rpcError(id: i64, code: i64, message: &string): void {
-    writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ
-        + "," + mQ + "id" + mQ + ":" + id.toString()
-        + "," + mQ + "error" + mQ + ":{" + mQ + "code" + mQ + ":" + code.toString()
-        + "," + mQ + "message" + mQ + ":" + jsonEsc(message) + "}}")
+    writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ + "," + mQ + "id" + mQ + ":" + id.toString() + "," + mQ + "error" + mQ + ":{" + mQ + "code" + mQ + ":" + code.toString() + "," + mQ + "message" + mQ + ":" + jsonEsc(message) + "}}")
 }
 
 // Wrap a tool result payload in MCP content form.
 fn toolResult(id: i64, payloadJson: &string, isError: bool): void {
     var err: string = ""
-    if isError { err = "," + mQ + "isError" + mQ + ":true" }
-    rpcResult(id, "{" + mQ + "content" + mQ + ":[{" + mQ + "type" + mQ + ":" + mQ + "text" + mQ
-        + "," + mQ + "text" + mQ + ":" + jsonEsc(payloadJson) + "}]" + err + "}")
+    if isError {
+        err = "," + mQ + "isError" + mQ + ":true"
+    }
+    rpcResult(id, "{" + mQ + "content" + mQ + ":[{" + mQ + "type" + mQ + ":" + mQ + "text" + mQ + "," + mQ + "text" + mQ + ":" + jsonEsc(payloadJson) + "}]" + err + "}")
 }
 
 // One tool descriptor for tools/list.
 fn toolDesc(name: &string, desc: &string, schemaProps: &string, required: &string): string {
     return "{" + mQ + "name" + mQ + ":" + mQ + name + mQ
-        + "," + mQ + "description" + mQ + ":" + jsonEsc(desc)
-        + "," + mQ + "inputSchema" + mQ + ":{" + mQ + "type" + mQ + ":" + mQ + "object" + mQ
-        + "," + mQ + "properties" + mQ + ":{" + schemaProps + "}"
-        + "," + mQ + "required" + mQ + ":[" + required + "]}}"
+    + "," + mQ + "description" + mQ + ":" + jsonEsc(desc)
+    + "," + mQ + "inputSchema" + mQ + ":{" + mQ + "type" + mQ + ":" + mQ + "object" + mQ
+    + "," + mQ + "properties" + mQ + ":{" + schemaProps + "}"
+    + "," + mQ + "required" + mQ + ":[" + required + "]}}"
 }
 
 fn toolsListJson(): string {
@@ -590,27 +721,14 @@ fn toolsListJson(): string {
     let str = "{" + mQ + "type" + mQ + ":" + mQ + "string" + mQ + "}"
     let integer = "{" + mQ + "type" + mQ + ":" + mQ + "integer" + mQ + "}"
     var tools: string = "["
-    tools = tools + toolDesc("debug_launch",
-        "Launch the configured program under the debugger with breakpoints (source line numbers). Runs to the first breakpoint or exit. Returns a stop snapshot: line, call stack, frame-0 locals (each with a ref for debug_variables), and program output.",
-        mQ + "breakpoints" + mQ + ":" + intArr, mQ + "breakpoints" + mQ)
-    tools = tools + "," + toolDesc("debug_continue",
-        "Resume execution until the next breakpoint or exit. Returns a fresh stop snapshot.", "", "")
-    tools = tools + "," + toolDesc("debug_step",
-        "Step and return a fresh stop snapshot. kind: 'over' (next line), 'in' (into calls), 'out' (finish function).",
-        mQ + "kind" + mQ + ":" + str, mQ + "kind" + mQ)
-    tools = tools + "," + toolDesc("debug_set_breakpoints",
-        "Replace ALL breakpoints with this list of source line numbers (takes effect immediately).",
-        mQ + "lines" + mQ + ":" + intArr, mQ + "lines" + mQ)
-    tools = tools + "," + toolDesc("debug_evaluate",
-        "Evaluate an expression (or lldb command) in the current stopped frame and return its value.",
-        mQ + "expr" + mQ + ":" + str, mQ + "expr" + mQ)
-    tools = tools + "," + toolDesc("debug_variables",
-        "Expand a structured variable by its ref (from a snapshot's locals or a previous expansion). Returns child name/value/ref triples.",
-        mQ + "ref" + mQ + ":" + integer, mQ + "ref" + mQ)
-    tools = tools + "," + toolDesc("debug_terminate",
-        "Terminate the debuggee and the debug session.", "", "")
-    tools = tools + "," + toolDesc("debug_state",
-        "Report the current session state without changing it (phase, stop line, call stack, locals, threads). In co-debug attach mode this reflects live human actions in the browser too.", "", "")
+    tools = tools + toolDesc("debug_launch", "Launch the configured program under the debugger with breakpoints (source line numbers). Runs to the first breakpoint or exit. Returns a stop snapshot: line, call stack, frame-0 locals (each with a ref for debug_variables), and program output.", mQ + "breakpoints" + mQ + ":" + intArr, mQ + "breakpoints" + mQ)
+    tools = tools + "," + toolDesc("debug_continue", "Resume execution until the next breakpoint or exit. Returns a fresh stop snapshot.", "", "")
+    tools = tools + "," + toolDesc("debug_step", "Step and return a fresh stop snapshot. kind: 'over' (next line), 'in' (into calls), 'out' (finish function).", mQ + "kind" + mQ + ":" + str, mQ + "kind" + mQ)
+    tools = tools + "," + toolDesc("debug_set_breakpoints", "Replace ALL breakpoints with this list of source line numbers (takes effect immediately).", mQ + "lines" + mQ + ":" + intArr, mQ + "lines" + mQ)
+    tools = tools + "," + toolDesc("debug_evaluate", "Evaluate an expression (or lldb command) in the current stopped frame and return its value.", mQ + "expr" + mQ + ":" + str, mQ + "expr" + mQ)
+    tools = tools + "," + toolDesc("debug_variables", "Expand a structured variable by its ref (from a snapshot's locals or a previous expansion). Returns child name/value/ref triples.", mQ + "ref" + mQ + ":" + integer, mQ + "ref" + mQ)
+    tools = tools + "," + toolDesc("debug_terminate", "Terminate the debuggee and the debug session.", "", "")
+    tools = tools + "," + toolDesc("debug_state", "Report the current session state without changing it (phase, stop line, call stack, locals, threads). In co-debug attach mode this reflects live human actions in the browser too.", "", "")
     tools = tools + "]"
     return "{" + mQ + "tools" + mQ + ":" + tools + "}"
 }
@@ -623,13 +741,17 @@ fn jsonI64Arr(doc: &Json, key: &string): Vec<i64> {
             var i: i64 = 0
             while i < n {
                 match arr.at(i) {
-                    Option.Some(el) => { out.push(el.asI64() ?? (0 as i64)) }
-                    Option.None => {}
+                    Option.Some(el) => {
+                        out.push(el.asI64() ?? (0 as i64))
+                    }
+                    Option.None => {
+                    }
                 }
                 i = i + 1
             }
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
     return out
 }
@@ -649,10 +771,15 @@ fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): vo
                 }
                 let argv = adapterArgvOf(mAdapterCmd)
                 var prog: string = ""
-                if argv.len > 0 { prog = argv[0].clone() }
+                if argv.len > 0 {
+                    prog = argv[0].clone()
+                }
                 var rest: Vec<string> = []
                 var ai: i64 = 1
-                while ai < argv.len { rest.push(argv[ai].clone()) ai = ai + 1 }
+                while ai < argv.len {
+                    rest.push(argv[ai].clone())
+                    ai = ai + 1
+                }
                 match DapClient.startArgs(prog, rest) {
                     Result.Ok(client) => {
                         s.cl = client
@@ -671,9 +798,15 @@ fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): vo
                 var cmd: string = "continue"
                 if name == "debug_step" {
                     let kind = args.str("kind") ?? "over"
-                    if kind == "over" { cmd = "next" }
-                    else if kind == "in" { cmd = "stepIn" }
-                    else if kind == "out" { cmd = "stepOut" }
+                    if kind == "over" {
+                        cmd = "next"
+                    } 
+                    else if kind == "in" {
+                        cmd = "stepIn"
+                    } 
+                    else if kind == "out" {
+                        cmd = "stepOut"
+                    }
                 }
                 let rArgs = "{" + mQ + "threadId" + mQ + ":" + s.tid.toString() + "}"
                 let _r = s.cl.send(cmd, rArgs)
@@ -686,8 +819,12 @@ fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): vo
                 }
                 let lines = jsonI64Arr(args, "lines")
                 match requestQuiet(s, "setBreakpoints", buildBpArgs(lines)) {
-                    Result.Ok(_m) => { toolResult(id, "{\"ok\":true}", false) }
-                    Result.Err(e) => { toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true) }
+                    Result.Ok(_m) => {
+                        toolResult(id, "{\"ok\":true}", false)
+                    }
+                    Result.Err(e) => {
+                        toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true)
+                    }
                 }
             } else if name == "debug_evaluate" {
                 if !s.started || s.exited {
@@ -696,14 +833,16 @@ fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): vo
                 }
                 let expr = args.str("expr") ?? ""
                 let eArgs = "{" + mQ + "expression" + mQ + ":" + jsonEsc(expr)
-                    + "," + mQ + "context" + mQ + ":" + mQ + "repl" + mQ
-                    + "," + mQ + "frameId" + mQ + ":" + s.frame0.toString() + "}"
+                + "," + mQ + "context" + mQ + ":" + mQ + "repl" + mQ
+                + "," + mQ + "frameId" + mQ + ":" + s.frame0.toString() + "}"
                 match requestQuiet(s, "evaluate", eArgs) {
                     Result.Ok(m) => {
                         let value = bodyStr(m.raw, "result")
-                        toolResult(id, "{" + mQ + "value" + mQ + ":" + jsonEsc(value) + "}", !m.success)
+                        toolResult(id, "{" + mQ + "value" + mQ + ":" + jsonEsc(value) + "}",!m.success)
                     }
-                    Result.Err(e) => { toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true) }
+                    Result.Err(e) => {
+                        toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true)
+                    }
                 }
             } else if name == "debug_variables" {
                 if !s.started || s.exited {
@@ -716,11 +855,17 @@ fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): vo
                     Result.Ok(m) => {
                         toolResult(id, "{" + mQ + "variables" + mQ + ":" + varsJson(m.raw) + "}", false)
                     }
-                    Result.Err(e) => { toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true) }
+                    Result.Err(e) => {
+                        toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true)
+                    }
                 }
             } else if name == "debug_state" {
-                if s.started && !s.exited { toolResult(id, snapshotJson(s), false) }
-                else { toolResult(id, "{" + mQ + "phase" + mQ + ":" + mQ + "idle" + mQ + "}", false) }
+                if s.started && !s.exited {
+                    toolResult(id, snapshotJson(s), false)
+                } 
+                else {
+                    toolResult(id, "{" + mQ + "phase" + mQ + ":" + mQ + "idle" + mQ + "}", false)
+                }
             } else if name == "debug_terminate" {
                 if s.started {
                     s.cl.close()
@@ -763,7 +908,10 @@ fn mcpMain(argv: Vec<string>): i32 {
     // fast if none is installed. Attach mode joins a web session's adapter, so skip.
     if attachArg.len == 0 {
         match selectAdapter("", cliArgs.getString("dapPath"), mBinPath) {
-            Result.Ok(sel) => { mAdapterCmd = sel.cmd mAdapterKind = sel.kind }
+            Result.Ok(sel) => {
+                mAdapterCmd = sel.cmd
+                mAdapterKind = sel.kind
+            }
             Result.Err(e) => {
                 eprint($"[hades-mcp] {e}\n")
                 return 1
@@ -775,15 +923,25 @@ fn mcpMain(argv: Vec<string>): i32 {
         var portS: string = ""
         var seenColon = false
         for ch in attachArg {
-            if ch == ':' { seenColon = true }
-            else if seenColon { portS.push(ch) }
-            else { host.push(ch) }
+            if ch == ':' {
+                seenColon = true
+            } 
+            else if seenColon {
+                portS.push(ch)
+            } 
+            else {
+                host.push(ch)
+            }
         }
         var port: i64 = 8080
-        if portS.len > 0 { port = parseInt(portS.clone()) ?? (8080 as i64) }
+        if portS.len > 0 {
+            port = parseInt(portS.clone()) ?? (8080 as i64)
+        }
         var ip: u32 = 0
         match resolve(host) {
-            Result.Ok(v) => { ip = v }
+            Result.Ok(v) => {
+                ip = v
+            }
             Result.Err(_e) => {
                 eprint($"[hades-mcp] cannot resolve {host}\n")
                 return 1
@@ -798,7 +956,10 @@ fn mcpMain(argv: Vec<string>): i32 {
                 // reader's recv; EAGAIN + schedulerWaitRead needs nonblocking.
                 setNonblocking(conn.fd)
                 gAttSrc = mSrcPath.clone()
-                Task.spawn(move (): void => { attReaderLoop(conn) })
+                Task.spawn(move(): void => {
+                    attReaderLoop(conn)
+                }
+                )
                 eprint($"[hades-mcp] attached to {attachArg} (co-debug peer)\n")
             }
             Result.Err(e) => {
@@ -810,7 +971,13 @@ fn mcpMain(argv: Vec<string>): i32 {
 
     // Placeholder client; replaced on debug_launch. Never used before started.
     var session = Session {
-        cl: DapClient { child: Child { pid: -1, stdinFd: -1, stdoutFd: -1, stderrFd: -1 }, seq: 0 },
+        cl: DapClient {
+            child: Child {
+                pid: -1, stdinFd: -1, stdoutFd: -1, stderrFd: -1
+            }
+            , seq: 0
+        }
+        ,
         started: false, tid: -1 as i64, frame0: -1 as i64,
         stopLine: 0, output: "", exited: false,
     }
@@ -819,7 +986,10 @@ fn mcpMain(argv: Vec<string>): i32 {
     // The protocol loop and the attach reader are green tasks; drive the
     // scheduler so both run (milo uses Go exit semantics — no implicit drain,
     // so main must block here instead of returning).
-    Task.spawn(move (): void => { mcpLoop(session) })
+    Task.spawn(move(): void => {
+        mcpLoop(session)
+    }
+    )
     schedulerRunToCompletion()
     return 0
 }
@@ -829,10 +999,16 @@ fn mcpLoop(sess: Session): void {
     while true {
         var line: string = ""
         match readStdinLine() {
-            Result.Ok(l) => { line = l }
-            Result.Err(_e) => { break }
+            Result.Ok(l) => {
+                line = l
+            }
+            Result.Err(_e) => {
+                break
+            }
         }
-        if line.len == 0 { continue }
+        if line.len == 0 {
+            continue
+        }
         match jsonParse(line.clone()) {
             Result.Ok(doc) => {
                 let method = doc.str("method") ?? ""
@@ -840,13 +1016,13 @@ fn mcpLoop(sess: Session): void {
                 if method == "initialize" {
                     var pv: string = "2025-06-18"
                     match doc.get("params") {
-                        Option.Some(params) => { pv = params.str("protocolVersion") ?? pv }
-                        Option.None => {}
+                        Option.Some(params) => {
+                            pv = params.str("protocolVersion") ?? pv
+                        }
+                        Option.None => {
+                        }
                     }
-                    rpcResult(id, "{" + mQ + "protocolVersion" + mQ + ":" + jsonEsc(pv)
-                        + "," + mQ + "capabilities" + mQ + ":{" + mQ + "tools" + mQ + ":{}}"
-                        + "," + mQ + "serverInfo" + mQ + ":{" + mQ + "name" + mQ + ":" + mQ + "hades" + mQ
-                        + "," + mQ + "version" + mQ + ":" + mQ + "0.1.0" + mQ + "}}")
+                    rpcResult(id, "{" + mQ + "protocolVersion" + mQ + ":" + jsonEsc(pv) + "," + mQ + "capabilities" + mQ + ":{" + mQ + "tools" + mQ + ":{}}" + "," + mQ + "serverInfo" + mQ + ":{" + mQ + "name" + mQ + ":" + mQ + "hades" + mQ + "," + mQ + "version" + mQ + ":" + mQ + "0.1.0" + mQ + "}}")
                 } else if method == "notifications/initialized" || method == "notifications/cancelled" {
                     // notifications: no response
                 } else if method == "ping" {
@@ -860,14 +1036,22 @@ fn mcpLoop(sess: Session): void {
                         Option.Some(params) => {
                             name = params.str("name") ?? ""
                             match params.get("arguments") {
-                                Option.Some(a) => { argsRaw = a.rawStr() }
-                                Option.None => {}
+                                Option.Some(a) => {
+                                    argsRaw = a.rawStr()
+                                }
+                                Option.None => {
+                                }
                             }
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
-                    if gAttachMode { handleAttachTool(id, name, argsRaw) }
-                    else { handleToolCall(session, id, name, argsRaw) }
+                    if gAttachMode {
+                        handleAttachTool(id, name, argsRaw)
+                    } 
+                    else {
+                        handleToolCall(session, id, name, argsRaw)
+                    }
                 } else if id >= 0 {
                     rpcError(id, -32601 as i64, "method not found: " + method)
                 }
@@ -877,6 +1061,8 @@ fn mcpLoop(sess: Session): void {
             }
         }
     }
-    if session.started { session.cl.close() }
+    if session.started {
+        session.cl.close()
+    }
     exit(0)
 }

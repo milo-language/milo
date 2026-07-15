@@ -97,14 +97,22 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
                padding: 6px 12px; border-bottom: 1px solid var(--border); }
 .drawer-head h2, .drawer-hist h2 { margin: 0; font-size: 11px; text-transform: uppercase;
                                    letter-spacing: 0.08em; color: var(--muted); }
-.drawer-form { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px;
-               border-bottom: 1px solid var(--border); }
-.cfg-field { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
-.cfg-field > span { flex: none; width: 64px; text-transform: uppercase; letter-spacing: 0.06em; }
-.cfg-field select, .cfg-field input { flex: 1; min-width: 0; font-size: 11px; padding: 3px 6px;
-               background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; }
-.cfg-hostport { display: flex; flex-direction: column; gap: 6px; padding-left: 20px; }
-.drawer-editor { height: 180px; border-bottom: 1px solid var(--border); }
+/* action row: template picker + Run, above the JSON editor */
+.drawer-actions { display: flex; align-items: center; justify-content: space-between;
+                  padding: 6px 12px; border-bottom: 1px solid var(--border); }
+.tpl { position: relative; }
+.tpl-btn { font-size: 11px; padding: 3px 8px; background: var(--bg); color: var(--fg);
+           border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.tpl-btn:hover { border-color: var(--accent); }
+.tpl-menu { position: absolute; top: 100%; left: 0; z-index: 30; margin-top: 2px;
+            min-width: 200px; background: var(--panel); border: 1px solid var(--border);
+            border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+.tpl-item { padding: 5px 10px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+.tpl-item:hover { background: rgba(255,255,255,0.08); }
+.run-cfg { font-size: 11px; padding: 3px 10px; background: var(--bg); color: var(--ok, #3fb950);
+           border: 1px solid var(--border); border-radius: 4px; cursor: pointer; }
+.run-cfg:hover { border-color: currentColor; }
+.drawer-editor { flex: 1; min-height: 180px; border-bottom: 1px solid var(--border); }
 .cfg-note { padding: 6px 12px; font-size: 11px; color: var(--muted); }
 .cfg-err { padding: 6px 12px; font-size: 11px; color: var(--bp); white-space: pre-wrap; }
 /* Collapse chevron in the drawer header; matching reopen rail when hidden. */
@@ -112,11 +120,24 @@ main { flex: 1; display: flex; min-height: 0; position: relative; }
 .drawer-hide:hover { color: var(--accent); }
 .drawer-reopen { position: absolute; left: 0; bottom: 10px; z-index: 20;
                  border-left: none; border-radius: 0 6px 6px 0; padding: 8px 4px; }
-.drawer-caps { padding: 6px 12px; border-bottom: 1px solid var(--border); }
-.caps-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; max-height: 120px; overflow: auto; }
+/* ⓘ session-info popover (toolbar): adapter + caps — diagnostics, kept quiet */
+.info-wrap { position: relative; display: inline-flex; }
+.info-btn { opacity: 0.55; }
+.info-btn:hover { opacity: 1; }
+.info-pop { position: absolute; top: 100%; right: 0; z-index: 40; margin-top: 4px;
+            width: 340px; padding: 8px 10px; background: var(--panel);
+            border: 1px solid var(--border); border-radius: 6px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5); font-size: 11px; }
+.info-line { padding: 2px 0; color: var(--fg); word-break: break-all; }
+.info-k { display: inline-block; width: 58px; color: var(--muted);
+          text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; }
+.info-pop details { margin-top: 4px; color: var(--muted); }
+.info-pop summary { cursor: pointer; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+.caps-list { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; max-height: 160px; overflow: auto; }
 .cap { font-size: 10px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 8px;
        color: var(--muted); white-space: nowrap; }
 .drawer-hist { flex: 1; overflow: auto; padding: 6px 12px; }
+.hist-name { color: var(--fg); margin-right: 6px; font-weight: 600; }
 .hist-row { padding: 4px 6px; cursor: pointer; border-radius: 4px; overflow: hidden; }
 .hist-row:hover { background: rgba(255,255,255,0.06); }
 .hist-prog { display: block; white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
