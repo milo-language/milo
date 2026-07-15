@@ -217,18 +217,26 @@ allocate DAP ids 1..N as threads appear.
 
 ## Milestones
 
-- **M1 — wire:** codec, handshake, IDSizes, Version; CLI `java-dap --attach
-  localhost:5005 --smoke` prints VM version and thread list. Proves codec
-  against a real JVM.
-- **M2 — stop machine:** attach, reader/event tasks, breakpoint lifecycle,
-  continue/step; DAP over stdio; drive from hades CLI against a fixture.
-- **M3 — inspection:** stackTrace/scopes/variables, string/object/array
+- **M1 — wire** ✅: codec, handshake, IDSizes, Version; `--attach --smoke`
+  prints VM version and thread list against a real JVM. (`scripts/smoke.sh`)
+- **M2 — stop machine** ✅: launch/attach, reader/event green tasks, deferred
+  breakpoint lifecycle via CLASS_PREPARE, continue/step, DAP over stdio.
+  (`scripts/dap-e2e.ts`)
+- **M3 — inspection** ✅: stackTrace/scopes/variables, string/object/array
   rendering, evaluate-as-path.
-- **M4 — launch mode:** spawn JVM, stdout→output events, exit propagation
-  (VM_DEATH → `terminated`).
-- **M5 — polish:** exception breakpoints (EXCEPTION events + ExceptionOnly
-  modifier), inner-class ClassMatch, hades dialect entry + docs page,
-  showcase entry in examples.
+- **M4 — launch mode** ✅: spawn JVM suspended, gate connect on the agent's
+  "Listening" banner, stdout/stderr→output events, exit propagation.
+- **M5 — hades integration** ✅: `java` dialect in hades' registry (probe
+  `java-dap`, `.java` inference), launch.json example, hades-MCP E2E
+  (`scripts/hades-e2e.ts`). Remaining polish → backlog: exception
+  breakpoints, inner-class ClassMatch, conditional breakpoints.
+
+Implementation notes that differ from the sketch below: the reply channel is a
+single `replyCh` (one outstanding request; the DAP loop is the only requester),
+`Child.wait` is deferred to stdout-EOF (blocking waitpid would freeze the green
+scheduler), and the JDWP connect is gated on the agent's stdout banner (a
+too-early TCP connect can hang and also makes the agent log a spurious
+handshake failure).
 
 ## Testing
 

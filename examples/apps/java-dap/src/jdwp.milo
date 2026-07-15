@@ -378,11 +378,13 @@ fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<JdwpIo
     }
 
     let replyCh = Channel<Packet>.new(8)!
-    // The boot FdReader may have buffered bytes past the IDSizes reply, so the
-    // task must take THIS reader, not attach a fresh one.
+    // FdReader is unbuffered (1-byte read syscalls), so attaching a fresh
+    // reader inside the task loses nothing. Capture the raw fd, not the boot
+    // FdReader struct.
     Task.spawn(move(): void => {
+        let taskReader = fdReaderAttach(fd)
         while true {
-            match readPacketFrom(reader) {
+            match readPacketFrom(taskReader) {
                 Result.Ok(pkt) => {
                     if pkt.isReply {
                         match replyCh.send(pkt) {

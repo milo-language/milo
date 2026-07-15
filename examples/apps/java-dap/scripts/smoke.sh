@@ -26,7 +26,7 @@ if [ -z "$JDK" ]; then
 fi
 
 ./milo build "$APP/src/main.milo" -o "$OUT"
-"$JDK/javac" -d "$APP/tests/fixtures" "$APP/tests/fixtures/HelloLoop.java"
+"$JDK/javac" -g -d "$APP/tests/fixtures" "$APP/tests/fixtures/HelloLoop.java"
 
 bun scripts/guard.ts --mem-mb 1024 --timeout-s 60 -- \
     "$JDK/java" "-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=$PORT" \

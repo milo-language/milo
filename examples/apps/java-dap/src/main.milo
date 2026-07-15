@@ -58,14 +58,22 @@ fn main(): void {
         exit(2)
     }
 
-    match smoke(host, port as u16) {
-        Result.Ok(v) => {
-        }
-        Result.Err(e) => {
-            print("java-dap: " + e)
-            exit(1)
+    // smoke rides the same reader green-task as server mode (jdwpAttach spawns
+    // it), so it needs the scheduler running too — without this, Channel.recv
+    // falls back to a pthread wait that blocks the only OS thread forever.
+    Task.spawn(move(): void => {
+        match smoke(host, port as u16) {
+            Result.Ok(v) => {
+                exit(0)
+            }
+            Result.Err(e) => {
+                print("java-dap: " + e)
+                exit(1)
+            }
         }
     }
+    )
+    schedulerRunToCompletion()
 }
 
 fn smoke(host: &string, port: u16): Result<i64> {
