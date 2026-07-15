@@ -1,8 +1,8 @@
 # Milo
 
-**Memory safe. Formally verifiable. Native. [Vibe-codeable](docs/design.md#ai-assisted-development-vibe-coding).**
+A memory-safe systems language. Ownership without lifetimes, contracts the compiler checks, native binaries via LLVM.
 
-A memory-safe systems language with built-in contracts, safety profiles, and simple syntax. Compiles to native code via LLVM.
+Milo keeps ownership — single owner, moves, borrowed references — and drops the machinery that makes it hard: no lifetime annotations, no borrow-checker puzzles, no `unsafe` in everyday code. Small enough to hold in your head; proven by shipping, not theory — game-console emulators, terminal apps, an HTTP/TLS/JSON standard library, a package manager, and the compiler itself are all written in Milo. Even the contract prover behind `milo prove` is a Milo program, and it discharges the contracts in Milo's own standard library on every test run.
 
 ```milo
 from "std/http" import { Request, Response, serve }
@@ -15,7 +15,7 @@ fn main(): i32 {
 }
 ```
 
-**[Docs & Playground](https://cs01.github.io/milo/)**
+**[Docs & Playground](https://cs01.github.io/milo/)** · **[Demos](https://cs01.github.io/milo/demos)** — NES, Genesis, and SNES emulators written in Milo, playable in your browser.
 
 ## Self-hosting
 

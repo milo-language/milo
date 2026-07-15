@@ -1,14 +1,14 @@
 # Demos & Showcase
 
-Real programs written in Milo — from retro-console emulators running in your browser to native CLI tools. Everything here compiles from the same memory-safe source: the emulators to WebAssembly-free JavaScript via `milo emit-js`, the CLI tools to small native binaries.
+Real programs written in Milo. The emulators compile to JavaScript via `milo emit-js` and run in your browser; everything else compiles to a small native binary from a single `.milo` file.
 
 ## Emulators in the browser
 
-Three full retro-console cores, written in Milo and compiled to JavaScript. No plugins — drop a ROM and play.
+Three retro-console cores. No plugins — drop a ROM and play.
 
 ### <a href="/milo/nes/" target="_self">NES →</a>
 
-Cycle-stepped 6502, PPU, and APU with DMC audio and multiple mappers. Ships six free homebrew games you can play in one click: **Blade Buster**, **Battle Kid**, **Super PakPak**, **Sir Ababol**, **Lawn Mower**, **Mad Wizard**. Drag in your own `.nes` ROM to play anything else.
+Cycle-stepped 6502, PPU, and APU with DMC audio and multiple mappers. Ships six free homebrew games playable in one click: **Blade Buster**, **Battle Kid**, **Super PakPak**, **Sir Ababol**, **Lawn Mower**, **Mad Wizard**. Drag in your own `.nes` ROM to play anything else.
 
 ### <a href="/milo/genesis/" target="_self">Genesis / Mega Drive →</a>
 
@@ -16,22 +16,70 @@ Motorola 68000 + Z80 dual-CPU core with the VDP graphics processor and FM/PSG au
 
 ### <a href="/milo/snes/" target="_self">SNES →</a>
 
-65C816 CPU core plus the SNES PPU. Boots commercial titles to their title screens — load an `.sfc` / `.smc` ROM to try it. The newest and most in-progress of the three cores.
+65C816 CPU plus the SNES PPU, including a Super FX (GSU) coprocessor core. Plays Super Mario World and Donkey Kong Country; Star Fox boots with GSU-rendered 3D. Load an `.sfc` / `.smc` ROM.
 
-> All three run natively too — `examples/apps/arcade.sh <rom>` builds the right core with SDL video, audio, and input, auto-detecting the console from the ROM extension.
+> All three run natively too — `examples/apps/arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`examples/apps/retro/`](https://github.com/cs01/milo/tree/main/examples/apps/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
 
-## CLI tools & apps
+## Debugger
 
-Native command-line programs, each a single `.milo` file. See the full list on the [Examples](/examples) page.
+### <a href="https://github.com/cs01/milo/tree/main/examples/apps/hades" target="_blank">hades →</a>
+
+A web + AI interface for any DAP debugger (lldb-dap, debugpy), written in Milo. One binary, two subcommands: `hades web` serves a React + Monaco + xterm.js debugging UI from a Milo HTTP/WebSocket server — breakpoints, stepping, call stacks, watch expressions, and a real PTY terminal you can type into while your program runs. `hades mcp` exposes the same session to an AI over MCP: both you and the model see and drive the same debuggee. Debugs Milo binaries too — the compiler emits standard DWARF.
+
+## Terminal & graphics apps
+
+TUIs in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/apps), built on the standard library's terminal, PTY, SDL, and green-thread APIs.
+
+| Program | What it is |
+|---------|-----------|
+| [tetris](https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo) | Event-driven terminal Tetris — one green task parked on a Select, no polling |
+| [sysmon](https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo) | htop-style live system monitor |
+| [donut](https://github.com/cs01/milo/blob/main/examples/apps/donut.milo) | The classic spinning 3D torus, truecolor-shaded |
+| [plasma](https://github.com/cs01/milo/blob/main/examples/apps/plasma.milo) | Full-screen truecolor animation; doubles as a render-throughput benchmark |
+| [aquarium](https://github.com/cs01/milo/blob/main/examples/apps/aquarium.milo) | Truecolor pixel aquarium — fish, bubbles, swaying seaweed |
+| [chihuahua](https://github.com/cs01/milo/blob/main/examples/apps/chihuahua.milo) | DVD-logo-style bouncing screensaver with a shaded pixel-art sprite |
+| [splitPty](https://github.com/cs01/milo/blob/main/examples/apps/splitPty.milo) | Two commands side-by-side in real PTYs — a mini tmux |
+| [flightController](https://github.com/cs01/milo/blob/main/examples/apps/flightController.milo) | Single-axis PID altitude controller with an interactive TUI |
+| [menu](https://github.com/cs01/milo/blob/main/examples/apps/menu.milo) | Fullscreen SDL retro-console front-end — gamepad/keyboard ROM picker |
+
+## Servers & network apps
+
+| Program | What it is |
+|---------|-----------|
+| [termpair](https://github.com/cs01/milo/tree/main/examples/apps/termpair) | Share your terminal in the browser — WebSocket relay with end-to-end AES encryption, client and server both in Milo |
+| [weather](https://github.com/cs01/milo/tree/main/examples/apps/weather) | weather.gov frontend served from a single static binary |
+| [serve](https://github.com/cs01/milo/blob/main/examples/apps/serve.milo) | Static file server with directory listing |
+| [webserver](https://github.com/cs01/milo/blob/main/examples/apps/webserver.milo) | HTTP server with routing, path params, middleware |
+| [httpClient](https://github.com/cs01/milo/blob/main/examples/apps/httpClient.milo) | HTTP client for fetching URLs |
+| [fetch](https://github.com/cs01/milo/blob/main/examples/apps/fetch.milo) | Fetch an HTTP API over TLS and parse the JSON response |
+
+## Data & interpreters
+
+| Program | What it is |
+|---------|-----------|
+| [kvstore](https://github.com/cs01/milo/blob/main/examples/apps/kvstore.milo) | Page-based key-value store with cursors, in the sled/buffer-pool style |
+| [minilang](https://github.com/cs01/milo/blob/main/examples/apps/minilang.milo) | Tree-walking interpreter for a small expression language |
+
+## CLI tools
+
+Coreutils-style tools in [`examples/cli-tools/`](https://github.com/cs01/milo/tree/main/examples/cli-tools), each a single `.milo` file.
 
 | Program | What it is |
 |---------|-----------|
 | [grep](https://github.com/cs01/milo/blob/main/examples/cli-tools/grep.milo) | Pattern search with color, `-i` / `-n` / `-c` / `-v` |
+| [rg](https://github.com/cs01/milo/blob/main/examples/cli-tools/rg.milo) | ripgrep-lite: regex-powered recursive search |
 | [jq](https://github.com/cs01/milo/blob/main/examples/cli-tools/jq.milo) | JSON query tool |
-| [tree](https://github.com/cs01/milo/blob/main/examples/cli-tools/tree.milo) | Recursive directory tree |
-| [serve](https://github.com/cs01/milo/blob/main/examples/apps/serve.milo) | Static file server with directory listing |
-| [webserver](https://github.com/cs01/milo/blob/main/examples/apps/webserver.milo) | HTTP server with routing |
+| [tree](https://github.com/cs01/milo/blob/main/examples/cli-tools/tree.milo) | Recursive directory tree with depth limiting |
+| [cat](https://github.com/cs01/milo/blob/main/examples/cli-tools/cat.milo) | File viewer with line numbers and syntax highlighting |
+| [wc](https://github.com/cs01/milo/blob/main/examples/cli-tools/wc.milo) | Line/word/char counter |
+| [hex](https://github.com/cs01/milo/blob/main/examples/cli-tools/hex.milo) | Hex dump viewer with ASCII column |
+| [shuf](https://github.com/cs01/milo/blob/main/examples/cli-tools/shuf.milo) | Shuffle input lines |
+| [calc](https://github.com/cs01/milo/blob/main/examples/cli-tools/calc.milo) | Expression evaluator |
+| [parallel](https://github.com/cs01/milo/blob/main/examples/cli-tools/parallel.milo) | Run shell commands in parallel across input lines (fork-based) |
+| [timeout](https://github.com/cs01/milo/blob/main/examples/cli-tools/timeout.milo) | Run a command with a time limit |
+| [fmt](https://github.com/cs01/milo/blob/main/examples/cli-tools/fmt.milo) | Milo source formatter |
+| [pkg](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) | Package manager for Milo — git transport, GitHub registry, lockfile |
 
 ## Playground
 
-Compile and run Milo entirely in your browser — no install — on the [Playground](/playground).
+Compile and run Milo in your browser — no install — on the [Playground](/playground).

@@ -1,30 +1,37 @@
 # Example Programs
 
-Milo ships real CLI tools and apps as examples — all compile to small native binaries.
+Every example is a single `.milo` file that compiles to a small native binary. They double as integration tests for the standard library.
 
-## CLI Tools
+## CLI tools
 
-Located in `examples/cli-tools/`.
+Located in [`examples/cli-tools/`](https://github.com/cs01/milo/tree/main/examples/cli-tools).
 
 | Program | Description |
 |---------|-------------|
 | [grep](https://github.com/cs01/milo/blob/main/examples/cli-tools/grep.milo) | Pattern search with color highlighting, `-i`, `-n`, `-c`, `-v` |
+| [rg](https://github.com/cs01/milo/blob/main/examples/cli-tools/rg.milo) | ripgrep-lite: regex-powered recursive search |
+| [jq](https://github.com/cs01/milo/blob/main/examples/cli-tools/jq.milo) | JSON query tool (field access, array iteration) |
+| [tree](https://github.com/cs01/milo/blob/main/examples/cli-tools/tree.milo) | Recursive directory tree with depth limiting |
+| [cat](https://github.com/cs01/milo/blob/main/examples/cli-tools/cat.milo) | File viewer with line numbers and syntax highlighting |
 | [wc](https://github.com/cs01/milo/blob/main/examples/cli-tools/wc.milo) | Line/word/char counter |
 | [hex](https://github.com/cs01/milo/blob/main/examples/cli-tools/hex.milo) | Hex dump viewer with ASCII column |
-| [tree](https://github.com/cs01/milo/blob/main/examples/cli-tools/tree.milo) | Recursive directory tree with depth limiting |
-| [cat](https://github.com/cs01/milo/blob/main/examples/cli-tools/cat.milo) | File viewer with syntax highlighting |
-| [jq](https://github.com/cs01/milo/blob/main/examples/cli-tools/jq.milo) | JSON query tool (field access, array iteration) |
+| [shuf](https://github.com/cs01/milo/blob/main/examples/cli-tools/shuf.milo) | Shuffle input lines |
+| [calc](https://github.com/cs01/milo/blob/main/examples/cli-tools/calc.milo) | Expression evaluator |
+| [parallel](https://github.com/cs01/milo/blob/main/examples/cli-tools/parallel.milo) | Run shell commands in parallel across input lines (fork-based) |
+| [timeout](https://github.com/cs01/milo/blob/main/examples/cli-tools/timeout.milo) | Run a command with a time limit |
+| [fmt](https://github.com/cs01/milo/blob/main/examples/cli-tools/fmt.milo) | Milo source formatter |
+| [pkg](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) | Package manager for Milo |
 
 ## Apps
 
-Located in `examples/apps/`.
+Located in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/apps). The emulators, terminal apps, and servers are covered on the [Demos & Showcase](/demos) page; the rest:
 
 | Program | Description |
 |---------|-------------|
-| [serve](https://github.com/cs01/milo/blob/main/examples/apps/serve.milo) | Static file server with directory listing |
-| [http](https://github.com/cs01/milo/blob/main/examples/apps/http.milo) | HTTP client with JSON pretty-printing |
-| [webserver](https://github.com/cs01/milo/blob/main/examples/apps/webserver.milo) | HTTP server with routing |
-| [fetch](https://github.com/cs01/milo/blob/main/examples/apps/fetch.milo) | HTTP client with TLS |
+| [httpClient](https://github.com/cs01/milo/blob/main/examples/apps/httpClient.milo) | HTTP client for fetching URLs |
+| [fetch](https://github.com/cs01/milo/blob/main/examples/apps/fetch.milo) | Fetch an HTTP API over TLS and parse the JSON response |
+| [kvstore](https://github.com/cs01/milo/blob/main/examples/apps/kvstore.milo) | Page-based key-value store with cursors |
+| [minilang](https://github.com/cs01/milo/blob/main/examples/apps/minilang.milo) | Tree-walking interpreter for a small expression language |
 
 ## Running an example
 

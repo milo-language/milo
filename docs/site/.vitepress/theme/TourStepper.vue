@@ -1,9 +1,9 @@
 <template>
   <div class="tour" id="tour" ref="rootEl">
     <div class="tour-head">
-      <div class="tour-kicker">Interactive tour · {{ concepts.length }} steps</div>
-      <h2 class="tour-title">Learn Milo by running it</h2>
-      <p class="tour-sub">Edit each program, run it in your browser, and move to the next. Real compiler, real output.</p>
+      <div class="tour-kicker">Interactive · runs in your browser</div>
+      <h2 class="tour-title">Learn the basics in {{ concepts.length }} steps</h2>
+      <p class="tour-sub">Edit each program, run it, move to the next. Real compiler, real output — no install.</p>
     </div>
 
     <!-- progress rail -->

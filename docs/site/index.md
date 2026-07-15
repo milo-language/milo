@@ -2,39 +2,38 @@
 layout: home
 hero:
   name: Milo
-  text: "Memory Safe. Formally Verifiable. Native."
-  tagline: "A memory-safe systems language with built-in contracts, safety profiles, and simple syntax. Compiles to native code via LLVM."
+  text: "A memory-safe systems language."
+  tagline: "Easy to use right, hard to use wrong. Simple syntax, simple mental model."
+  image:
+    src: /logo.svg
+    alt: Milo
   actions:
     - theme: brand
       text: Get Started
       link: /getting-started/installation
     - theme: alt
-      text: Learn More
+      text: Learn the Language
       link: /language/
     - theme: alt
       text: ▶ Play a demo
       link: /nes/
 ---
 
-<div class="pillars-colored">
-  <div class="color-item">
-    <h2 class="ch-blue">100% memory-safe. Proven at compile time.</h2>
-    <p>No null pointers. No dangling references. No data races. No buffer overflows. All caught before your code ever runs.</p>
-  </div>
-  <div class="color-item">
-    <h2 class="ch-purple">Native speed. Tiny binaries.</h2>
-    <p>Compiles to native code via LLVM. Sub-millisecond startup. Binaries under 300KB.</p>
-  </div>
-  <div class="color-item">
-    <h2 class="ch-orange">Formally verifiable. Built for AI.</h2>
-    <p>Built-in contracts and safety profiles let you prove code correct with theorem provers. Simple rules + loud errors = <a href="/milo/ai-coding">LLMs catch mistakes at compile time, not in production</a>.</p>
-  </div>
-</div>
+## What Milo is
+
+Milo is a small systems language built on one idea: **memory safety you can hold in your head.** It keeps ownership — single owner, move semantics, borrowed references — and drops the machinery that makes ownership hard: no lifetime annotations, no borrow-checker puzzles, no `unsafe` in everyday code. The rules are few and the errors are loud.
+
+The mission: prove that safe systems programming doesn't require a complex language. **The proof is shipped software, not theory.** Every feature earns its place by being used in real programs:
+
+- **Three game-console emulators** (NES, Genesis, SNES) — the same Milo source runs native with SDL and [in your browser](/demos) as compiled JavaScript.
+- **A self-hosting compiler** — Milo compiles Milo to a [byte-identical fixed point](https://github.com/cs01/milo/blob/main/docs/self-hosting.md) at `-O2`.
+- **A standard library** with HTTP, TLS, JSON, SQLite, PTYs, and green-thread concurrency — used by dozens of [terminal apps and CLI tools](/demos), and a [package manager](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) written in Milo.
+- **A contract prover, used for real** — `requires` / `ensures` / `invariant` are language features, and the SMT solver that discharges them is itself written in Milo. It proves contracts across Milo's own standard library on every test run.
 
 <div class="showcase">
   <div class="showcase-head">
-    <h2>Talk is cheap. Here's what Milo ships.</h2>
-    <p>Full game-console emulators, written in Milo. The <em>same source</em> compiles to a native binary <strong>and</strong> to the JavaScript running these pages — byte-for-byte identical output. No wasm, no rewrite. Click and play, right now, in your browser.</p>
+    <h2>See what's shipping with Milo</h2>
+    <p>Game-console emulators, CLI tools, high-performance servers — all written in Milo. The emulators below run right here in your browser: the same source compiles to a native binary <em>and</em> to this JavaScript, with identical output. No wasm, no rewrite.</p>
   </div>
   <div class="showcase-grid">
     <a class="app-card" href="/milo/nes/">
@@ -50,7 +49,7 @@ hero:
       <span class="app-play">▶ Play in your browser</span>
     </a>
   </div>
-  <p class="showcase-more">Also written in Milo: a <strong>SNES</strong> emulator (boots Super Mario World), the <strong>Hades</strong> debugger (a DAP server with a React + xterm UI), an HTTP / JSON / TLS standard library, and a <strong>self-hosting compiler</strong> that reproduces itself byte-for-byte.</p>
+  <p class="showcase-more">Plus a <strong>SNES</strong> emulator, a <strong>web + AI debugger</strong>, HTTP/TLS servers, terminal apps, and the compiler itself. <a href="/milo/demos">Browse the showcase →</a></p>
 </div>
 
 <div class="section-break"></div>
@@ -59,101 +58,21 @@ hero:
 
 <div class="section-break"></div>
 
-### Simple, familiar syntax
+### Go deeper
 
-```milo
-fn main(): i32 {
-    let names: Vec<string> = ["alice", "bob"]
-    let loud = names.map((n: &string) => n.toUpper())
-    print(loud.join(", "))
-    return 0
-}
-```
-
-No garbage collector. No manual memory management. The compiler tracks ownership and frees everything automatically.
-
-### Simple syntax, guaranteed memory safety
-
-`&string` is a borrow — temporary, read-only access. It can't outlive the data it points to. The compiler enforces this without annotations.
-
-```milo
-fn printExtension(filename: &string): void {
-    let dot = filename.lastIndexOf(".")
-    if dot >= 0 {
-        print(filename[dot + 1..filename.len])   // zero-copy slice
-    }
-}
-```
-
-### Lightweight concurrency, native performance
-
-Promises run on green threads — no async/await coloring, no event loop. Write blocking code that runs concurrently.
-
-```milo
-from "std/net" import { fetch }
-from "std/runtime" import { Promise }
-
-fn main(): i32 {
-    let page = Promise(() => fetch("https://example.com")!)
-    print(page.await()!.body)
-    return 0
-}
-```
-
-### Batteries included
-
-A web server with routing, path params, and closures — all from the standard library.
-
-```milo
-from "std/http" import { Context, Router, serveRouter }
-
-fn main(): i32 {
-    var r: Router = Router.new()
-    r.get("/", (ctx: &mut Context) => ctx.html("<h1>Hello!</h1>"))
-    r.get("/users/:id", (ctx: &mut Context) => {
-        let id = ctx.param("id")
-        return ctx.text(id)
-    })
-    match serveRouter(8080, r) {
-        Result.Ok(_) => { return 0 }
-        Result.Err(e) => {
-            print("error: ", e)
-            return 1
-        }
-    }
-}
-```
-
-### Built for AI coding — formally verifiable
-
-AI-generated code needs more than type checks. Milo has built-in contracts — `requires`, `ensures`, `invariant` — that the compiler type-checks and `milo verify` exports as SMT-LIB2 for theorem provers like Z3. AI writes the code, the prover proves it correct.
-
-```milo
-fn clamp(value: i64, lo: i64, hi: i64): i64
-  requires lo <= hi
-  ensures result >= lo && result <= hi
-{
-    if value < lo { return lo }
-    if value > hi { return hi }
-    return value
-}
-```
-
-No lifetime annotations to trip up LLMs. No undefined behavior to hide bugs. Wrong code fails with a clear compile error — or gets formally disproved. `milo safety --safety=do178c-a` checks against avionics, automotive, and medical device coding standards with no third-party tools. Code that passes a safety profile is structurally ready for WCET analysis — no recursion, bounded loops, no dynamic allocation.
-
-Milo also ships `milo skill` — a machine-readable language guide that gives any LLM full knowledge of the language, standard library, and idioms in a single command.
-
-<a href="/milo/ai-coding">See the full comparison vs. C++ and Rust →</a> · <a href="/milo/language/safety">Contracts and safety profiles →</a>
+- **[The language →](/language/)** — ownership and borrows without lifetimes, enums and exhaustive `match`, generics, traits, closures, and green-thread concurrency with no async coloring.
+- **[Contracts & safety →](/language/safety)** — `requires` / `ensures` / `invariant` discharged by `milo prove` (an SMT solver written in Milo), plus `milo safety` profiles for avionics-grade coding standards. Not a demo: the prover runs over Milo's own standard library on every test.
+- **[AI coding →](/ai-coding)** — no lifetimes to trip over, no undefined behavior to hide bugs, loud compile errors, and `milo skill` — a machine-readable language guide for any coding agent.
 
 <div class="section-break"></div>
 
 <div class="cta-section">
 
-### Ready to try Milo?
+### Take Milo for a walk
 
 <div class="cta-buttons">
   <a class="cta-primary" href="/milo/getting-started/installation">Get Started</a>
-  <a class="cta-secondary" href="/milo/language/">Learn More</a>
+  <a class="cta-secondary" href="/milo/playground">Playground</a>
   <a class="cta-secondary" href="/milo/roadmap">Roadmap</a>
   <a class="cta-secondary" href="https://github.com/cs01/milo">GitHub</a>
 </div>

@@ -13,20 +13,25 @@ export default defineConfig({
   base: '/milo/',
   appearance: 'dark',
 
+  head: [
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/milo/logo.svg' }],
+    ['link', { rel: 'preload', as: 'font', type: 'font/woff2', href: '/milo/fonts/DepartureMono-Regular.woff2', crossorigin: '' }],
+  ],
+
   markdown: {
     languages: [miloGrammar],
   },
 
   themeConfig: {
+    logo: '/logo.svg',
+
     search: {
       provider: 'local'
     },
 
     nav: [
-      { text: 'Tour', link: '/#tour' },
       { text: 'Docs', link: '/getting-started/installation' },
       { text: 'Language', link: '/language/' },
-      { text: 'Standard Library', link: '/stdlib/' },
       { text: 'Playground', link: '/playground' },
       {
         text: 'Demos',
@@ -38,9 +43,15 @@ export default defineConfig({
           { text: 'Example Programs', link: '/examples' },
         ]
       },
-      { text: 'Benchmarks', link: '/benchmarks' },
-      { text: 'Roadmap', link: '/roadmap' },
-      { text: 'AI Coding', link: '/ai-coding' },
+      {
+        text: 'More',
+        items: [
+          { text: 'Standard Library', link: '/stdlib/' },
+          { text: 'AI Coding', link: '/ai-coding' },
+          { text: 'Benchmarks', link: '/benchmarks' },
+          { text: 'Roadmap', link: '/roadmap' },
+        ]
+      },
     ],
 
     sidebar: {
