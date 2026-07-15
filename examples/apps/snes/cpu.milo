@@ -13,6 +13,9 @@ from "./spc" import {
 from "./ppu" import {
     Ppu, newPpu, ppuRegWrite, ppuRegReadPure, ppuCgram, ppuVram, ppuVblankOamReload
 }
+from "./superfx" import {
+    Fx, fxNew, fxRun, fxRegRead, fxRegWrite, isSuperFx, cloneBytes
+}
 
 // --- P status-register bit masks ---
 let FC: i64 = 0x01 // carry
@@ -41,6 +44,17 @@ var joyCnt2: i64 = 0
 // inside a heavy routine (DBR=$BB) — the latter derailed DKC's boot and its level
 // loads (the vblank handler saves A/X/Y but not DBR; see stepFrame/nmi).
 var cpuWaiting: bool = false
+
+// Set when the CPU reads $3031 (SFR high) — the read clears the GSU IRQ line on
+// hardware, but the read path is over &Mem, so the ack is applied in the step loop.
+var fxIrqAck: bool = false
+
+// OPHCT/OPVCT ($213C/$213D) latch a 9-bit counter read out low-byte-then-high via a
+// per-register flip-flop, both reset by reading STAT78 ($213F). Star Fox's boot spins
+// reading OPVCT until it equals a target scanline; without a moving counter it hangs.
+// The read path is &Mem, so the flip-flops live in these globals (joypad pattern).
+var ophctHi: bool = false
+var opvctHi: bool = false
 
 // Set by step()'s default arm if an unimplemented opcode is ever executed (should
 // never happen — all 256 are wired). Loud diagnostic so a dropped opcode surfaces
@@ -99,6 +113,8 @@ struct Mem {
     rdmpy: i64 // $4216/$4217 product (after mul) or remainder (after div)
     vblankToggle: i64 // stub: flips so $4210/$4212 vblank-wait loops progress
     hcounter: i64 // free-running instr counter; drives the $4212 HBLANK-flag stub
+    scanline: i64 // 0-261 pseudo V-counter, advanced monotonically over the frame so
+    // OPVCT ($213D) reads sweep every value once/frame (Star Fox scanline-wait sync)
     joy1: i64 // $4218/$4219 auto-read pad 1 (0 = nothing pressed)
     joy2: i64 // $421A/$421B auto-read pad 2 (0 = nothing pressed)
 
@@ -106,6 +122,9 @@ struct Mem {
     apuSpc: Spc
     apuMem: SpcMem
     ppu: Ppu // video memory + $2100-$213F registers
+
+    fxEnabled: bool // cart has a Super FX (GSU) coprocessor
+    fx: Fx // GSU state + game-pak RAM (framebuffer the CPU DMAs to VRAM)
 }
 
 fn newApuSpc(): Spc {
@@ -118,8 +137,9 @@ fn memNew(): Mem {
     return Mem {
         addr: Vec.new(), val: Vec.new(), testMode: true,
         wram: Vec.new(), rom: Vec.new(), romMask: 0, sram: Vec.new(), sramMask: 0, mapMode: 0, mmio: Vec.new(),
-        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0, joy2: 0,
-        apuSpc: newApuSpc(), apuMem: spcMemNew(), ppu: newPpu()
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, scanline: 0, joy1: 0, joy2: 0,
+        apuSpc: newApuSpc(), apuMem: spcMemNew(), ppu: newPpu(),
+        fxEnabled: false, fx: fxNew(Vec.new())
     }
 }
 
@@ -163,13 +183,21 @@ fn busNew(rom: Vec<u8>, mapMode: i64): Mem {
             sramMask = sz - 1
         }
     }
+    // Super FX detection + GSU init happen before `rom` is moved into the struct.
+    let fxOn = isSuperFx(rom)
+    let gsu = if fxOn {
+        fxNew(cloneBytes(rom))
+    } else {
+        fxNew(Vec.new())
+    }
     var mem = Mem {
         addr: Vec.new(), val: Vec.new(), testMode: false,
         wram: vecZeros(0x20000), rom: rom, romMask: mask,
         sram: vecZeros(0x8000), sramMask: sramMask, mapMode: mapMode,
         mmio: vecZeros(0x4000),
-        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, joy1: 0, joy2: 0,
-        apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu()
+        nmitimen: 0, htime: 0, vtime: 0, timeup: 0, wmadd: 0, wrmpya: 0, wrdiv: 0, rddiv: 0, rdmpy: 0, vblankToggle: 0, hcounter: 0, scanline: 0, joy1: 0, joy2: 0,
+        apuSpc: newApuSpc(), apuMem: spcMemReal(), ppu: newPpu(),
+        fxEnabled: fxOn, fx: gsu
     }
     // Boot the SPC into its IPL. The reset vector ($FFFE) is fixed at $FFC0;
     // set it directly to avoid a split &mut/& borrow of two `mem` fields.
@@ -354,7 +382,13 @@ fn hdmaApplyReg(m: &mut Mem, line: i64, reg: i64, v: i64): void {
 }
 
 fn hdmaWalkFrame(m: &mut Mem): void {
-    let brightScalar = m.ppu.inidisp & 0x0F
+    // Baseline honors scalar force-blank: bit7 set → line renders dark unless a
+    // $2100-targeting HDMA channel overrides it below.
+    let brightScalar = if (m.ppu.inidisp & 0x80) != 0 {
+        0
+    } else {
+        m.ppu.inidisp & 0x0F
+    }
     // Line 0 baseline = scalar registers; later lines carry forward (hold).
     m.ppu.lineBright[0] = brightScalar
     m.ppu.lineColdR[0] = m.ppu.coldR
@@ -464,6 +498,32 @@ fn hdmaWalkFrame(m: &mut Mem): void {
 // vblankToggle is driven by the system frame loop, not by reads (accurate
 // RDNMI clear-on-read arrives with PPU timing in M4).
 fn mmioRead(m: &Mem, off: i64): i64 {
+    // H/V counter reads: model a scanline counter off the free-running instruction
+    // count so vertical-sync spin loops (Star Fox boot) make progress. The dot/line
+    // aren't cycle-accurate — just monotonic-cycling so any target value is reached.
+    if off == 0x213C { // OPHCT
+        let h = (m.hcounter >> 2) % 340
+        if ophctHi {
+            ophctHi = false
+            return (h >> 8) & 1
+        }
+        ophctHi = true
+        return h & 0xFF
+    }
+    if off == 0x213D { // OPVCT
+        let v = m.scanline
+        if opvctHi {
+            opvctHi = false
+            return (v >> 8) & 1
+        }
+        opvctHi = true
+        return v & 0xFF
+    }
+    if off == 0x213F { // STAT78: reading resets the H/V read flip-flops
+        ophctHi = false
+        opvctHi = false
+        return 0x40 | 0x02 // counters-latched bit + NTSC version (2)
+    }
     if off >= 0x2100 && off <= 0x213F {
         return ppuRegReadPure(m.ppu, off - 0x2100) // PPU registers
     }
@@ -703,6 +763,33 @@ fn memRead(m: &Mem, a: i64): i64 {
     if bank == 0x7F {
         return m.wram[0x10000 + off] as i64
     }
+    if m.fxEnabled {
+        let b7 = bank & 0x7F
+        if b7 <= 0x3F {
+            if off >= 0x3000 && off <= 0x34FF {
+                if off == 0x3031 {
+                    fxIrqAck = true // SFR-high read clears the GSU IRQ line (applied in step)
+                }
+                return fxRegRead(m.fx, off)
+            }
+            if off >= 0x6000 && off <= 0x7FFF {
+                return m.fx.ram[(off - 0x6000) & m.fx.ramMask] as i64
+            }
+        }
+        if b7 == 0x70 {
+            return m.fx.ram[off & m.fx.ramMask] as i64
+        }
+        if b7 == 0x71 {
+            return m.fx.ram[(0x10000 + off) & m.fx.ramMask] as i64
+        }
+        if b7 >= 0x40 && b7 <= 0x5F { // linear 64KB ROM window (HiROM-like)
+            let o = (((bank & 0x3F) << 16) | off) & m.romMask
+            if o < m.rom.len {
+                return m.rom[o] as i64
+            }
+            return 0
+        }
+    }
     let si = sramIndex(m, bank, off)
     if si >= 0 {
         return m.sram[si] as i64
@@ -747,6 +834,27 @@ fn memWrite(m: &mut Mem, a: i64, v: i64): void {
     if bank == 0x7F {
         m.wram[0x10000 + off] = bv
         return
+    }
+    if m.fxEnabled {
+        let b7 = bank & 0x7F
+        if b7 <= 0x3F {
+            if off >= 0x3000 && off <= 0x34FF {
+                fxRegWrite(m.fx, off, v)
+                return
+            }
+            if off >= 0x6000 && off <= 0x7FFF {
+                m.fx.ram[(off - 0x6000) & m.fx.ramMask] = bv
+                return
+            }
+        }
+        if b7 == 0x70 {
+            m.fx.ram[off & m.fx.ramMask] = bv
+            return
+        }
+        if b7 == 0x71 {
+            m.fx.ram[(0x10000 + off) & m.fx.ramMask] = bv
+            return
+        }
     }
     let si = sramIndex(m, bank, off)
     if si >= 0 {
@@ -837,7 +945,37 @@ fn maybeIrq(cpu: &mut Cpu, m: &mut Mem): void {
 // Run one video frame: the CPU during active display, then vblank (set the
 // vblank flag, fire NMI if enabled, run the vblank handler), then clear it.
 // Instruction budgets stand in for cycle-accurate scanline timing for now.
+// Co-run the GSU while the GO flag is set, and route its STOP-time IRQ to the CPU.
+// Called from the frame loop between CPU steps; `fxFrameBudget` caps total GSU work
+// per frame so a runaway GSU loop can't wedge the whole system.
+var fxFrameBudget: i64 = 0
+
+fn runFxAndIrq(cpu: &mut Cpu, m: &mut Mem): void {
+    if !m.fxEnabled {
+        return
+    }
+    if fxIrqAck {
+        m.fx.irqPending = false
+        fxIrqAck = false
+    }
+    if m.fx.running && fxFrameBudget > 0 {
+        // ~32 GSU instrs per CPU instr spreads the frame budget evenly across the
+        // frame — matches Snes9x's per-scanline pacing closely enough (10.7/21.4MHz
+        // GSU vs 2.7MHz CPU) and keeps the CPU<->GSU RAM handshakes responsive.
+        var burst: i64 = 32
+        if burst > fxFrameBudget {
+            burst = fxFrameBudget
+        }
+        let ran = fxRun(m.fx, burst)
+        fxFrameBudget = fxFrameBudget - ran
+    }
+    if m.fx.irqPending && (cpu.p & FI) == 0 {
+        irq(cpu, m)
+    }
+}
+
 fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
+    fxFrameBudget = 700000 // ≈ Snes9x per-frame GSU throughput at 21.4MHz
     // CPU and SPC must be finely interleaved: the boot handshake (and later
     // in-game audio commands) round-trips through $2140-$2143 many times, and a
     // handshake-locked transfer only advances one byte per CPU<->SPC switch. Run
@@ -872,17 +1010,21 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
             maybeIrq(cpu, m)
             fired = true
         }
+        m.scanline = (i * 224) / activeSteps // 0-223 during active display
         step(cpu, m)
         if (i & 3) == 0 {
             runApu(m, 2)
         }
+        runFxAndIrq(cpu, m)
         // The game reached its vblank-wait (WAI). Stop early and fire NMI from here
         // (DBR=$80) instead of running the budget out mid-routine. Keeps NMI off the
-        // heavy load/decompress paths that run with a different data bank.
-        if cpuWaiting {
+        // heavy load/decompress paths that run with a different data bank. But keep
+        // spinning while the GSU is mid-render so it can finish the frame's polygons.
+        if cpuWaiting && !(m.fxEnabled && m.fx.running) {
             cpuWaiting = false
             i = activeSteps
         } else {
+            cpuWaiting = false
             i = i + 1
         }
     }
@@ -897,10 +1039,12 @@ fn stepFrame(cpu: &mut Cpu, m: &mut Mem): void {
     }
     i = 0
     while i < vblankSteps {
+        m.scanline = 224 + (i * 38) / vblankSteps // 224-261 during vblank
         step(cpu, m)
         if (i & 3) == 0 {
             runApu(m, 2)
         }
+        runFxAndIrq(cpu, m)
         i = i + 1
     }
     m.vblankToggle = 0

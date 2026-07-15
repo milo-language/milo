@@ -185,6 +185,40 @@ fn saveState(cpu: &Cpu, m: &Mem): string {
     putWords(s, m.apuMem.tOut)
     putW(s, m.apuMem.dspAddr)
     putBytes(s, m.apuMem.dsp)
+    // Super FX (GSU) — appended last so pre-GSU states still load (loader treats
+    // a missing tail as "no GSU block").
+    putBool(s, m.fxEnabled)
+    if m.fxEnabled {
+        putWords(s, m.fx.reg)
+        putW(s, m.fx.vSign)
+        putW(s, m.fx.vZero)
+        putW(s, m.fx.vCarry)
+        putW(s, m.fx.vOverflow)
+        putBool(s, m.fx.running)
+        putBool(s, m.fx.irqPending)
+        putBool(s, m.fx.alt1)
+        putBool(s, m.fx.alt2)
+        putBool(s, m.fx.bflag)
+        putW(s, m.fx.sreg)
+        putW(s, m.fx.dreg)
+        putW(s, m.fx.pbr)
+        putW(s, m.fx.rombr)
+        putW(s, m.fx.rambr)
+        putW(s, m.fx.cbr)
+        putW(s, m.fx.color)
+        putW(s, m.fx.por)
+        putW(s, m.fx.scbr)
+        putW(s, m.fx.scmr)
+        putW(s, m.fx.cfgr)
+        putW(s, m.fx.clsr)
+        putW(s, m.fx.bramr)
+        putW(s, m.fx.romBuffer)
+        putW(s, m.fx.pipe)
+        putBool(s, m.fx.cacheActive)
+        putW(s, m.fx.lastRamAdr)
+        putBytes(s, m.fx.ram)
+        putBytes(s, m.fx.cache)
+    }
     return s
 }
 
@@ -284,5 +318,40 @@ fn loadState(cpu: &mut Cpu, m: &mut Mem, data: &string): bool {
     getWords(data, r, m.apuMem.tOut)
     m.apuMem.dspAddr = getW(data, r)
     getBytes(data, r, m.apuMem.dsp)
+    // GSU tail (absent in pre-GSU states — leave the freshly-booted fx as-is).
+    if r.pos < data.len {
+        let hasFx = getBool(data, r)
+        if hasFx && m.fxEnabled {
+            getWords(data, r, m.fx.reg)
+            m.fx.vSign = getW(data, r)
+            m.fx.vZero = getW(data, r)
+            m.fx.vCarry = getW(data, r)
+            m.fx.vOverflow = getW(data, r)
+            m.fx.running = getBool(data, r)
+            m.fx.irqPending = getBool(data, r)
+            m.fx.alt1 = getBool(data, r)
+            m.fx.alt2 = getBool(data, r)
+            m.fx.bflag = getBool(data, r)
+            m.fx.sreg = getW(data, r)
+            m.fx.dreg = getW(data, r)
+            m.fx.pbr = getW(data, r)
+            m.fx.rombr = getW(data, r)
+            m.fx.rambr = getW(data, r)
+            m.fx.cbr = getW(data, r)
+            m.fx.color = getW(data, r)
+            m.fx.por = getW(data, r)
+            m.fx.scbr = getW(data, r)
+            m.fx.scmr = getW(data, r)
+            m.fx.cfgr = getW(data, r)
+            m.fx.clsr = getW(data, r)
+            m.fx.bramr = getW(data, r)
+            m.fx.romBuffer = getW(data, r)
+            m.fx.pipe = getW(data, r)
+            m.fx.cacheActive = getBool(data, r)
+            m.fx.lastRamAdr = getW(data, r)
+            getBytes(data, r, m.fx.ram)
+            getBytes(data, r, m.fx.cache)
+        }
+    }
     return true
 }

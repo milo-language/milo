@@ -1,0 +1,94 @@
+// Milo side of the GSU differential fuzzer. Reads whitespace test vectors (one test
+// per line: steps progLen r0..r15 carry b0..b(progLen-1)) and prints R0-R15 + SFR,
+// matching gsuoracle.cpp so a Python driver can diff Milo's GSU vs Snes9x's.
+from "std/args" import {
+    args
+}
+from "std/io" import {
+    readFile
+}
+from "std/string" import {
+    strSplit
+}
+from "./superfx" import {
+    Fx, fxTestRun
+}
+
+fn atoiTok(s: &string): i64 {
+    var v: i64 = 0
+    var neg = false
+    var started = false
+    for ch in s {
+        let c = ch as i64
+        if c == 45 && !started {
+            neg = true
+        } else if c >= 48 && c <= 57 {
+            v = v * 10 + (c - 48)
+            started = true
+        }
+    }
+    if neg {
+        return -v
+    }
+    return v
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: gsumilo <testfile>")
+        return 1
+    }
+    var text = ""
+    match readFile(argv[1]) {
+        Result.Ok(s) => {
+            text = s
+        }
+        Result.Err(e) => {
+            print("read failed")
+            return 1
+        }
+    }
+    let lines = strSplit(text, "\n")
+    var li: i64 = 0
+    while li < lines.len {
+        let line = lines[li]
+        li = li + 1
+        let toks = strSplit(line, " ")
+        if toks.len >= 19 {
+            var steps = atoiTok(toks[0])
+            var progLen = atoiTok(toks[1])
+            if steps > 100 {
+                steps = 100
+            }
+            if progLen > 64 {
+                progLen = 64
+            }
+            var seed: Vec<i64> = Vec.new()
+            var i: i64 = 0
+            while i < 16 {
+                seed.push(atoiTok(toks[2 + i]))
+                i = i + 1
+            }
+            let carry = atoiTok(toks[18])
+            var prog: Vec<u8> = Vec.new()
+            i = 0
+            while i < progLen {
+                prog.push((atoiTok(toks[19 + i]) & 0xFF) as u8)
+                i = i + 1
+            }
+            let out = fxTestRun(prog, seed, carry, steps)
+            var s = ""
+            i = 0
+            while i < out.len {
+                if i > 0 {
+                    s = s + " "
+                }
+                s = s + out[i].toString()
+                i = i + 1
+            }
+            print(s)
+        }
+    }
+    return 0
+}

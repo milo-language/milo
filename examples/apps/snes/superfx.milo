@@ -1,0 +1,1348 @@
+// Super FX (GSU-1) coprocessor — the RISC chip on the Star Fox / Yoshi's Island
+// cartridge PCB. The SNES CPU sets up geometry, kicks the GSU (write R15 / set the
+// GO flag), and the GSU renders polygons into game-pak RAM (a bitplane framebuffer)
+// which the CPU then DMAs to VRAM. Faithful port of the Snes9x GSU core: 16 general
+// registers, ALT1/ALT2/ALT3-prefixed opcode set (~90 ops), PLOT/RPIX bitplane
+// addressing, and the 1-byte fetch pipeline.
+//
+// FFI-free (no std imports) so the browser (emit-js) core can use it too. ROM is
+// cloned in (read-only) to keep the whole GSU self-contained — sidesteps the
+// second-class-ref rule against borrowing two &mut Mem fields at once.
+//
+// Flag storage mirrors Snes9x's decomposition (vSign/vZero/vCarry/vOverflow) so the
+// carry/overflow/sign/zero semantics match bit-for-bit; the packed SFR word is only
+// materialized at the CPU-facing $3030/$3031 register interface.
+
+struct Fx {
+    reg: Vec<i64> // R0-R15, held as 32-bit values (masked at use like Snes9x uint32)
+
+    // decomposed status flags (see composeSfr)
+    vSign: i64 // S set when bit15 set
+    vZero: i64 // Z set when low 16 bits == 0
+    vCarry: i64 // 0 or 1
+    vOverflow: i64 // OV set when >= 0x8000 or < -0x8000
+
+    // prefix / run state
+    running: bool // GO flag
+    irqPending: bool // IRQ flag (set by STOP, cleared by CPU read of $3031)
+    alt1: bool
+    alt2: bool
+    bflag: bool // set by WITH; makes the next TO/FROM a MOVE/MOVES
+    sreg: i64 // source register index (0-15)
+    dreg: i64 // destination register index (0-15)
+
+    // 8-bit control registers
+    pbr: i64 // program bank
+    rombr: i64 // ROM data bank (R14 / ROM buffer)
+    rambr: i64 // RAM bank
+    cbr: i64 // cache base (16-bit)
+    color: i64 // COLR — plot color
+    por: i64 // POR — plot option register
+    scbr: i64 // screen base (framebuffer base, <<10 into RAM)
+    scmr: i64 // screen mode (depth + height + RON/RAN)
+    cfgr: i64 // config (bit7 masks IRQ)
+    clsr: i64 // clock select
+    bramr: i64 // backup-RAM enable
+
+    romBuffer: i64 // byte last read via R14
+    pipe: i64 // prefetched instruction byte
+    cacheActive: bool
+    lastRamAdr: i64 // for SBK
+
+    rom: Vec<u8> // clone of cart ROM (read-only)
+    romMask: i64
+    nRomBanks: i64 // ROM size / 32KB, capped 0x20 (GSU can't see >2MB)
+
+    ram: Vec<u8> // game-pak RAM (shared framebuffer; CPU reads it at $70/$71)
+    ramMask: i64
+    nRamBanks: i64
+
+    cache: Vec<u8> // 512-byte cache RAM ($3100-$32FF)
+
+    // derived screen geometry (from scmr/por)
+    mode: i64 // color depth: 0=2bpp,1=4bpp,2=4bpp,3=8bpp
+    screenHeight: i64 // 128/160/192/256 (256 = OBJ)
+    realHeight: i64
+}
+
+// --- debug counters (probed by runRom) ---
+var fxDbgStarts: i64 = 0
+var fxDbgSteps: i64 = 0
+var fxDbgStops: i64 = 0
+var fxDbgPlots: i64 = 0
+
+fn fxDbgStat(which: i64): i64 {
+    if which == 0 {
+        return fxDbgStarts
+    }
+    if which == 1 {
+        return fxDbgSteps
+    }
+    if which == 2 {
+        return fxDbgStops
+    }
+    return fxDbgPlots
+}
+
+// Count nonzero bytes in the GSU framebuffer region (for headless data-flow probes).
+fn fxRamNonzero(fx: &Fx): i64 {
+    var count: i64 = 0
+    var i: i64 = 0
+    while i < fx.ram.len {
+        if (fx.ram[i] as i64) != 0 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+fn cloneBytes(src: &Vec<u8>): Vec<u8> {
+    var v: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < src.len {
+        v.push(src[i])
+        i = i + 1
+    }
+    return v
+}
+
+fn vecZerosFx(n: i64): Vec<u8> {
+    var v: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < n {
+        v.push(0)
+        i = i + 1
+    }
+    return v
+}
+
+// Construct a GSU over a clone of the cart ROM. nRamBanks=2 → 128KB game-pak RAM
+// (Star Fox uses one bank; Yoshi's Island two). Pipe primed with a NOP (0x01) as on
+// real hardware, so the first executed step restores the fetch-pipeline invariant.
+fn fxNew(romClone: Vec<u8>): Fx {
+    let len = romClone.len
+    var mask: i64 = 1
+    while mask < len {
+        mask = mask << 1
+    }
+    mask = mask - 1
+    var nrb = len >> 15 // number of 32KB banks
+    if nrb > 0x20 {
+        nrb = 0x20
+    }
+    if nrb < 1 {
+        nrb = 1
+    }
+    var reg: Vec<i64> = Vec.new()
+    var i: i64 = 0
+    while i < 16 {
+        reg.push(0)
+        i = i + 1
+    }
+    return Fx {
+        reg: reg,
+        vSign: 0, vZero: 0, vCarry: 0, vOverflow: 0,
+        running: false, irqPending: false, alt1: false, alt2: false, bflag: false, sreg: 0, dreg: 0,
+        pbr: 0, rombr: 0, rambr: 0, cbr: 0, color: 0, por: 0, scbr: 0, scmr: 0, cfgr: 0, clsr: 0, bramr: 0,
+        romBuffer: 0, pipe: 1, cacheActive: false, lastRamAdr: 0,
+        rom: romClone, romMask: mask, nRomBanks: nrb,
+        ram: vecZerosFx(0x20000), ramMask: 0x1FFFF, nRamBanks: 2,
+        cache: vecZerosFx(512),
+        mode: 0, screenHeight: 128, realHeight: 128
+    }
+}
+
+// --- sign/zero-extension helpers (i64 backing; explicit so we never depend on the
+// sign of Milo's >> for the arithmetic-shift ops) ---
+fn sex8(v: i64): i64 {
+    let b = v & 0xFF
+    if (b & 0x80) != 0 {
+        return b - 0x100
+    }
+    return b
+}
+
+fn sex16(v: i64): i64 {
+    let b = v & 0xFFFF
+    if (b & 0x8000) != 0 {
+        return b - 0x10000
+    }
+    return b
+}
+
+// arithmetic shift right by one (floor), matches C's `>>` on a signed value
+fn ashr1(s: i64): i64 {
+    return (s & (~1)) / 2
+}
+
+// --- GSU memory views ---
+
+// GSU ROM offset for a bank:addr. Banks $00-$3F are LoROM (32KB windows at
+// $8000, but the GSU sees both halves of a 64KB bank as the same 32KB block);
+// banks $40+ are linear 64KB (HiROM-like). Mirrors Snes9x's apvRomBank build.
+fn gsuRomOffset(fx: &Fx, bank: i64, addr: i64): i64 {
+    let b = bank & 0x7F
+    var off: i64 = 0
+    if b >= 0x40 {
+        var bb = b
+        if fx.nRomBanks > 1 {
+            bb = b % fx.nRomBanks
+        } else {
+            bb = b & 1
+        }
+        off = (bb << 16) + (addr & 0xFFFF)
+    } else {
+        off = (b << 15) + (addr & 0x7FFF)
+    }
+    return off & fx.romMask
+}
+
+fn gsuRomByte(fx: &Fx, bank: i64, addr: i64): i64 {
+    let o = gsuRomOffset(fx, bank, addr)
+    if o < fx.rom.len {
+        return fx.rom[o] as i64
+    }
+    return 0
+}
+
+// Program fetch: from ROM (PBR is a ROM bank) or game-pak RAM (PBR $70-$73).
+fn prgByte(fx: &Fx, addr: i64): i64 {
+    let b = fx.pbr & 0x7F
+    if b >= 0x70 && b <= 0x73 {
+        let idx = (((b & 3) % fx.nRamBanks) << 16) + (addr & 0xFFFF)
+        return fx.ram[idx & fx.ramMask] as i64
+    }
+    return gsuRomByte(fx, fx.pbr, addr)
+}
+
+fn gsuRamIdx(fx: &Fx, adr: i64): i64 {
+    return (((fx.rambr % fx.nRamBanks) << 16) + (adr & 0xFFFF)) & fx.ramMask
+}
+
+fn ramRead(fx: &Fx, adr: i64): i64 {
+    return fx.ram[gsuRamIdx(fx, adr)] as i64
+}
+
+fn ramWrite(fx: &mut Fx, adr: i64, v: i64): void {
+    fx.ram[gsuRamIdx(fx, adr)] = (v & 0xFF) as u8
+}
+
+// --- pipeline primitives ---
+fn fetchPipe(fx: &mut Fx): void {
+    fx.pipe = prgByte(fx, fx.reg[15] & 0xFFFF)
+}
+
+fn r15inc(fx: &mut Fx): void {
+    fx.reg[15] = (fx.reg[15] + 1) & 0xFFFF
+}
+
+fn clrflags(fx: &mut Fx): void {
+    fx.alt1 = false
+    fx.alt2 = false
+    fx.bflag = false
+    fx.sreg = 0
+    fx.dreg = 0
+}
+
+fn readR14(fx: &mut Fx): void {
+    fx.romBuffer = gsuRomByte(fx, fx.rombr, fx.reg[14] & 0xFFFF)
+}
+
+// Write the destination register (auto-reloads the ROM buffer when R14 is the dest).
+fn setDreg(fx: &mut Fx, v: i64): void {
+    fx.reg[fx.dreg] = v & 0xFFFFFFFF
+    if fx.dreg == 14 {
+        readR14(fx)
+    }
+}
+
+fn sregVal(fx: &Fx): i64 {
+    return fx.reg[fx.sreg]
+}
+
+// --- screen geometry (fx_readRegisterSpace / fx_computeScreenPointers) ---
+fn fxUpdateScreen(fx: &mut Fx): void {
+    var n: i64 = 0
+    if (fx.scmr & 0x04) != 0 {
+        n = n | 1
+    }
+    if (fx.scmr & 0x20) != 0 {
+        n = n | 2
+    }
+    if n == 0 {
+        fx.realHeight = 128
+    } else if n == 1 {
+        fx.realHeight = 160
+    } else if n == 2 {
+        fx.realHeight = 192
+    } else {
+        fx.realHeight = 256
+    }
+    fx.mode = fx.scmr & 3
+    if (fx.por & 0x10) != 0 {
+        fx.screenHeight = 256 // OBJ mode (drawing into sprites)
+    } else {
+        fx.screenHeight = fx.realHeight
+    }
+}
+
+fn bytesPerTile(mode: i64): i64 {
+    if mode == 0 {
+        return 16 // 2bpp
+    }
+    if mode == 3 {
+        return 64 // 8bpp
+    }
+    return 32 // 4bpp
+}
+
+fn planeCount(mode: i64): i64 {
+    if mode == 0 {
+        return 2
+    }
+    if mode == 3 {
+        return 8
+    }
+    return 4
+}
+
+// RAM byte offset of the plane-0 byte for pixel (x,y). Column-major tiles, matching
+// fx_computeScreenPointers: non-OBJ heights are a flat (col*tilesPerCol + row) grid;
+// the 256/OBJ height uses the 16x16 sprite-block arrangement.
+fn plotAddr(fx: &Fx, x: i64, y: i64): i64 {
+    let bpt = bytesPerTile(fx.mode)
+    let tr = y >> 3
+    let tc = x >> 3
+    var colOff: i64 = 0
+    var rowOff: i64 = 0
+    if fx.screenHeight == 256 {
+        var shift: i64 = 0
+        if fx.mode == 1 {
+            shift = 1
+        } else if fx.mode >= 2 {
+            shift = 2
+        }
+        rowOff = (((tr & 0x10) << 9) + ((tr & 0xF) << 8)) << shift
+        colOff = (((tc & 0x10) << 8) + ((tc & 0xF) << 4)) << shift
+    } else {
+        let tilesPerCol = fx.screenHeight / 8
+        colOff = tc * tilesPerCol * bpt
+        rowOff = tr * bpt
+    }
+    return (fx.scbr << 10) + colOff + rowOff + ((y & 7) << 1)
+}
+
+// 4c - plot: write COLR at (R1,R2) into the bitplane framebuffer, then R1++.
+fn fxPlot(fx: &mut Fx): void {
+    let x = fx.reg[1] & 0xFF
+    let y = fx.reg[2] & 0xFF
+    r15inc(fx)
+    clrflags(fx)
+    fx.reg[1] = (fx.reg[1] + 1) & 0xFFFFFFFF
+
+    if y >= fx.screenHeight {
+        return
+    }
+
+    let planes = planeCount(fx.mode)
+    let colr = fx.color & 0xFF
+
+    // transparency: color 0 (per POR options) is not drawn
+    if planes == 8 {
+        if (fx.por & 0x10) == 0 {
+            if (fx.por & 0x01) == 0 && (colr == 0 || ((fx.por & 0x08) != 0 && (colr & 0xF) == 0)) {
+                return
+            }
+        } else {
+            if (fx.por & 0x01) == 0 && colr == 0 {
+                return
+            }
+        }
+    } else {
+        if (fx.por & 0x01) == 0 && (colr & 0xF) == 0 {
+            return
+        }
+    }
+
+    var c = colr
+    if planes != 8 && (fx.por & 0x02) != 0 {
+        // dither: alternate nibble by (x^y) parity
+        if ((x ^ y) & 1) != 0 {
+            c = (fx.color >> 4) & 0xFF
+        } else {
+            c = fx.color & 0xFF
+        }
+    }
+
+    fxDbgPlots = fxDbgPlots + 1
+    let base = plotAddr(fx, x, y)
+    let bit = 128 >> (x & 7)
+    var p: i64 = 0
+    while p < planes {
+        let idx = (base + 0x10 * (p >> 1) + (p & 1)) & fx.ramMask
+        if (c & (1 << p)) != 0 {
+            fx.ram[idx] = ((fx.ram[idx] as i64) | bit) as u8
+        } else {
+            fx.ram[idx] = ((fx.ram[idx] as i64) & (~bit)) as u8
+        }
+        p = p + 1
+    }
+}
+
+// 4c ALT1 - rpix: read the framebuffer color at (R1,R2) into DREG.
+fn fxRpix(fx: &mut Fx): void {
+    let x = fx.reg[1] & 0xFF
+    let y = fx.reg[2] & 0xFF
+    r15inc(fx)
+
+    if y >= fx.screenHeight {
+        setDreg(fx, 0)
+        clrflags(fx)
+        return
+    }
+
+    let planes = planeCount(fx.mode)
+    let base = plotAddr(fx, x, y)
+    let bit = 128 >> (x & 7)
+    var v: i64 = 0
+    var p: i64 = 0
+    while p < planes {
+        let idx = (base + 0x10 * (p >> 1) + (p & 1)) & fx.ramMask
+        if ((fx.ram[idx] as i64) & bit) != 0 {
+            v = v | (1 << p)
+        }
+        p = p + 1
+    }
+    setDreg(fx, v)
+    fx.vZero = v
+    clrflags(fx)
+}
+
+// 00 - stop
+fn fxStop(fx: &mut Fx): void {
+    fx.running = false
+    fxDbgStops = fxDbgStops + 1
+    if (fx.cfgr & 0x80) == 0 {
+        fx.irqPending = true
+    }
+    fx.por = 0
+    fx.pipe = 1
+    clrflags(fx)
+    r15inc(fx)
+}
+
+// 02 - cache
+fn fxCache(fx: &mut Fx): void {
+    let c = fx.reg[15] & 0xFFF0
+    if fx.cbr != c || !fx.cacheActive {
+        fx.cacheActive = true
+        fx.cbr = c
+    }
+    clrflags(fx)
+    r15inc(fx)
+}
+
+// Branch helper: read the signed offset operand, advance, and optionally take it.
+fn fxBranch(fx: &mut Fx, take: bool): void {
+    let v = fx.pipe
+    r15inc(fx)
+    fetchPipe(fx)
+    if take {
+        fx.reg[15] = (fx.reg[15] + sex8(v)) & 0xFFFF
+    } else {
+        r15inc(fx)
+    }
+}
+
+fn testS(fx: &Fx): bool {
+    return (fx.vSign & 0x8000) != 0
+}
+
+fn testZ(fx: &Fx): bool {
+    return (fx.vZero & 0xFFFF) == 0
+}
+
+fn testOV(fx: &Fx): bool {
+    return fx.vOverflow >= 0x8000 || fx.vOverflow < -0x8000
+}
+
+fn testCY(fx: &Fx): bool {
+    return (fx.vCarry & 1) != 0
+}
+
+// Dispatch + execute one instruction (the byte already in `pipe`). Returns after
+// exactly one opcode. Mirrors FX_STEP: read opcode from pipe, refetch pipe from R15,
+// then run — with operand bytes pulled from the pipe as each op needs them.
+// R15 min/max window over the current run — a tight window means a stuck loop.
+fn fxStepOne(fx: &mut Fx): void {
+    let op = fx.pipe
+    fetchPipe(fx)
+    var alt: i64 = 0
+    if fx.alt1 {
+        alt = alt | 1
+    }
+    if fx.alt2 {
+        alt = alt | 2
+    }
+
+    // 0x00-0x0f: control + branches
+    if op < 0x10 {
+        if op == 0x00 {
+            fxStop(fx)
+        } else if op == 0x01 {
+            clrflags(fx)
+            r15inc(fx) // nop
+        } else if op == 0x02 {
+            fxCache(fx)
+        } else if op == 0x03 { // lsr
+            let s = sregVal(fx)
+            fx.vCarry = s & 1
+            let v = (s & 0xFFFF) >> 1
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        } else if op == 0x04 { // rol
+            let s = sregVal(fx)
+            let v = ((s << 1) + fx.vCarry) & 0xFFFF
+            fx.vCarry = (s >> 15) & 1
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        } else if op == 0x05 { // bra
+            fxBranch(fx, true)
+        } else if op == 0x06 { // bge
+            fxBranch(fx, testS(fx) == testOV(fx))
+        } else if op == 0x07 { // blt
+            fxBranch(fx, testS(fx) != testOV(fx))
+        } else if op == 0x08 { // bne
+            fxBranch(fx,!testZ(fx))
+        } else if op == 0x09 { // beq
+            fxBranch(fx, testZ(fx))
+        } else if op == 0x0A { // bpl
+            fxBranch(fx,!testS(fx))
+        } else if op == 0x0B { // bmi
+            fxBranch(fx, testS(fx))
+        } else if op == 0x0C { // bcc
+            fxBranch(fx,!testCY(fx))
+        } else if op == 0x0D { // bcs
+            fxBranch(fx, testCY(fx))
+        } else if op == 0x0E { // bvc
+            fxBranch(fx,!testOV(fx))
+        } else { // 0x0F bvs
+            fxBranch(fx, testOV(fx))
+        }
+        return
+    }
+
+    // 0x10-0x1f: to rn / move rn (if B). For n=15 with B set this IS the jump:
+    // R15 = SREG with no increment (FX_TO_R15); without B it's a plain dreg set
+    // that advances normally.
+    if op < 0x20 {
+        let n = op & 0xF
+        if fx.bflag {
+            fx.reg[n] = sregVal(fx) & 0xFFFFFFFF
+            clrflags(fx)
+            if n == 14 {
+                readR14(fx)
+            }
+            if n != 15 {
+                r15inc(fx)
+            }
+        } else {
+            fx.dreg = n
+            r15inc(fx)
+        }
+        return
+    }
+
+    // 0x20-0x2f: with rn
+    if op < 0x30 {
+        let n = op & 0xF
+        fx.bflag = true
+        fx.sreg = n
+        fx.dreg = n
+        r15inc(fx)
+        return
+    }
+
+    // 0x30-0x3f: store word/byte, loop, alt prefixes
+    if op < 0x40 {
+        if op <= 0x3B { // stw (alt0/2) / stb (alt1/3)
+            let n = op & 0xF
+            let adr = fx.reg[n]
+            fx.lastRamAdr = adr
+            ramWrite(fx, adr, sregVal(fx))
+            if alt != 1 && alt != 3 {
+                ramWrite(fx, adr ^ 1, sregVal(fx) >> 8) // word: high byte
+            }
+            clrflags(fx)
+            r15inc(fx)
+        } else if op == 0x3C { // loop
+            fx.reg[12] = (fx.reg[12] - 1) & 0xFFFFFFFF
+            fx.vSign = fx.reg[12]
+            fx.vZero = fx.reg[12]
+            if (fx.reg[12] & 0xFFFF) != 0 {
+                fx.reg[15] = fx.reg[13] & 0xFFFF
+            } else {
+                r15inc(fx)
+            }
+            clrflags(fx)
+        } else if op == 0x3D { // alt1
+            fx.alt1 = true
+            fx.bflag = false
+            r15inc(fx)
+        } else if op == 0x3E { // alt2
+            fx.alt2 = true
+            fx.bflag = false
+            r15inc(fx)
+        } else { // 0x3F alt3
+            fx.alt1 = true
+            fx.alt2 = true
+            fx.bflag = false
+            r15inc(fx)
+        }
+        return
+    }
+
+    // 0x40-0x4f: load, plot/rpix, swap, color/cmode, not
+    if op < 0x50 {
+        if op <= 0x4B { // ldw (alt0/2) / ldb (alt1/3)
+            let n = op & 0xF
+            let adr = fx.reg[n]
+            fx.lastRamAdr = adr
+            var v = ramRead(fx, adr)
+            if alt != 1 && alt != 3 {
+                v = v | (ramRead(fx, adr ^ 1) << 8)
+            }
+            r15inc(fx)
+            setDreg(fx, v)
+            clrflags(fx)
+        } else if op == 0x4C { // plot / rpix
+            if alt == 1 || alt == 3 {
+                fxRpix(fx)
+            } else {
+                fxPlot(fx)
+            }
+        } else if op == 0x4D { // swap
+            let s = sregVal(fx)
+            let v = (((s & 0xFF) << 8) | ((s >> 8) & 0xFF))
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        } else if op == 0x4E { // color / cmode
+            if alt == 1 || alt == 3 { // cmode
+                fx.por = sregVal(fx) & 0xFF
+                fxUpdateScreen(fx)
+            } else { // color
+                var c = sregVal(fx) & 0xFF
+                if (fx.por & 0x04) != 0 {
+                    c = (c & 0xF0) | ((c >> 4) & 0xF)
+                }
+                if (fx.por & 0x08) != 0 {
+                    fx.color = (fx.color & 0xF0) | (c & 0x0F)
+                } else {
+                    fx.color = c & 0xFF
+                }
+            }
+            clrflags(fx)
+            r15inc(fx)
+        } else { // 0x4F not
+            let v = (~sregVal(fx)) & 0xFFFFFFFF
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        }
+        return
+    }
+
+    // 0x50-0x5f: add / adc / add #n / adc #n. Operands are UNSIGNED 16-bit
+    // (SUSEX16) — the carry (bit16) drives BCC/BCS, so signed operands would
+    // corrupt every carry-based branch in the renderer.
+    if op < 0x60 {
+        let n = op & 0xF
+        let a = sregVal(fx) & 0xFFFF
+        let bRaw = if alt <= 1 {
+            fx.reg[n]
+        } else {
+            n
+        }
+        let b = bRaw & 0xFFFF
+        var t: i64 = 0
+        if alt == 0 { // add rn
+            t = a + b
+        } else if alt == 1 { // adc rn
+            t = a + b + fx.vCarry
+        } else if alt == 2 { // add #n
+            t = a + b
+        } else { // adc #n
+            t = a + b + fx.vCarry
+        }
+        fx.vCarry = if t >= 0x10000 {
+            1
+        } else {
+            0
+        }
+        fx.vOverflow = (~(sregVal(fx) ^ bRaw)) & (bRaw ^ t) & 0x8000
+        fx.vSign = t
+        fx.vZero = t
+        r15inc(fx)
+        setDreg(fx, t)
+        clrflags(fx)
+        return
+    }
+
+    // 0x60-0x6f: sub / sbc / sub #n / cmp — also unsigned 16-bit; carry = no-borrow.
+    if op < 0x70 {
+        let n = op & 0xF
+        let a = sregVal(fx) & 0xFFFF
+        let bRaw = if alt == 2 {
+            n
+        } else {
+            fx.reg[n]
+        }
+        let b = bRaw & 0xFFFF
+        var t: i64 = 0
+        if alt == 0 { // sub rn
+            t = a - b
+        } else if alt == 1 { // sbc rn
+            t = a - b - (fx.vCarry ^ 1)
+        } else if alt == 2 { // sub #n
+            t = a - b
+        } else { // cmp rn
+            t = a - b
+        }
+        fx.vCarry = if t >= 0 {
+            1
+        } else {
+            0
+        }
+        fx.vOverflow = (sregVal(fx) ^ bRaw) & (sregVal(fx) ^ t) & 0x8000
+        fx.vSign = t
+        fx.vZero = t
+        r15inc(fx)
+        if alt != 3 { // cmp discards the result
+            setDreg(fx, t)
+        }
+        clrflags(fx)
+        return
+    }
+
+    // 0x70: merge ; 0x71-0x7f: and / bic / and #n / bic #n
+    if op < 0x80 {
+        if op == 0x70 { // merge
+            let v = (fx.reg[7] & 0xFF00) | ((fx.reg[8] & 0xFF00) >> 8)
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vOverflow = (v & 0xC0C0) << 16
+            fx.vZero = if (v & 0xF0F0) != 0 { // Snes9x stores !(v&0xf0f0)
+                0
+            } else {
+                1
+            }
+            fx.vSign = (v | (v << 8)) & 0x8000
+            fx.vCarry = if (v & 0xE0E0) != 0 {
+                1
+            } else {
+                0
+            }
+            clrflags(fx)
+        } else {
+            let n = op & 0xF
+            let s = sregVal(fx)
+            var v: i64 = 0
+            if alt == 0 { // and rn
+                v = s & fx.reg[n]
+            } else if alt == 1 { // bic rn
+                v = s & (~fx.reg[n])
+            } else if alt == 2 { // and #n
+                v = s & n
+            } else { // bic #n
+                v = s & (~n)
+            }
+            v = v & 0xFFFFFFFF
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        }
+        return
+    }
+
+    // 0x80-0x8f: mult / umult / mult #n / umult #n
+    if op < 0x90 {
+        let n = op & 0xF
+        let s = sregVal(fx)
+        var v: i64 = 0
+        if alt == 0 { // mult rn (signed 8x8)
+            v = sex8(s) * sex8(fx.reg[n])
+        } else if alt == 1 { // umult rn
+            v = (s & 0xFF) * (fx.reg[n] & 0xFF)
+        } else if alt == 2 { // mult #n
+            v = sex8(s) * n
+        } else { // umult #n
+            v = (s & 0xFF) * n
+        }
+        v = v & 0xFFFFFFFF
+        r15inc(fx)
+        setDreg(fx, v)
+        fx.vSign = v
+        fx.vZero = v
+        clrflags(fx)
+        return
+    }
+
+    // 0x90-0x9f: sbk, link, sex, asr/div2, ror, jmp/ljmp, lob, fmult/lmult
+    if op < 0xA0 {
+        if op == 0x90 { // sbk
+            ramWrite(fx, fx.lastRamAdr, sregVal(fx))
+            ramWrite(fx, fx.lastRamAdr ^ 1, sregVal(fx) >> 8)
+            clrflags(fx)
+            r15inc(fx)
+        } else if op >= 0x91 && op <= 0x94 { // link #n
+            fx.reg[11] = (fx.reg[15] + (op & 0xF)) & 0xFFFFFFFF
+            clrflags(fx)
+            r15inc(fx)
+        } else if op == 0x95 { // sex
+            let v = (sex8(sregVal(fx))) & 0xFFFFFFFF
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        } else if op == 0x96 { // asr / div2
+            let s = sregVal(fx)
+            fx.vCarry = s & 1
+            var v: i64 = 0
+            if alt == 1 || alt == 3 { // div2
+                let sv = sex16(s)
+                if sv == -1 {
+                    v = 0
+                } else {
+                    v = ashr1(sv) & 0xFFFFFFFF
+                }
+            } else { // asr
+                v = ashr1(sex16(s)) & 0xFFFFFFFF
+            }
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        } else if op == 0x97 { // ror
+            let s = sregVal(fx)
+            let v = ((s & 0xFFFF) >> 1) | (fx.vCarry << 15)
+            fx.vCarry = s & 1
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        } else if op >= 0x98 && op <= 0x9D { // jmp / ljmp
+            let n = op & 0xF
+            if alt == 1 || alt == 3 { // ljmp: R15 = SREG (fx_cache's ++ and the -- cancel)
+                fx.pbr = fx.reg[n] & 0x7F
+                fx.reg[15] = sregVal(fx) & 0xFFFF
+                fx.cacheActive = true
+                fx.cbr = fx.reg[15] & 0xFFF0
+                clrflags(fx)
+            } else { // jmp
+                fx.reg[15] = fx.reg[n] & 0xFFFF
+                clrflags(fx)
+            }
+        } else if op == 0x9E { // lob
+            let v = sregVal(fx) & 0xFF
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v << 8
+            fx.vZero = v << 8
+            clrflags(fx)
+        } else { // 0x9F fmult / lmult
+            let c = (sex16(sregVal(fx)) * sex16(fx.reg[6])) & 0xFFFFFFFF
+            let v = (c >> 16) & 0xFFFF
+            if alt == 1 || alt == 3 { // lmult
+                fx.reg[4] = c
+            }
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            fx.vCarry = (c >> 15) & 1
+            clrflags(fx)
+        }
+        return
+    }
+
+    // 0xa0-0xaf: ibt / lms / sms / (alt3=lms)
+    if op < 0xB0 {
+        let n = op & 0xF
+        if alt == 0 { // ibt rn, #pp
+            let v = fx.pipe
+            r15inc(fx)
+            fetchPipe(fx)
+            r15inc(fx)
+            fx.reg[n] = sex8(v) & 0xFFFFFFFF
+            if n == 14 {
+                readR14(fx) // writing R14 (re)loads the ROM buffer (fx_ibt_r14)
+            }
+            clrflags(fx)
+        } else if alt == 2 { // sms (yy), rn
+            let v = fx.reg[n]
+            let adr = (fx.pipe << 1)
+            fx.lastRamAdr = adr
+            r15inc(fx)
+            fetchPipe(fx)
+            ramWrite(fx, adr, v)
+            ramWrite(fx, adr + 1, v >> 8)
+            clrflags(fx)
+            r15inc(fx)
+        } else { // lms rn, (yy)  (alt1 and alt3)
+            let adr = (fx.pipe << 1)
+            fx.lastRamAdr = adr
+            r15inc(fx)
+            fetchPipe(fx)
+            r15inc(fx)
+            var v = ramRead(fx, adr)
+            v = v | (ramRead(fx, adr + 1) << 8)
+            fx.reg[n] = v & 0xFFFFFFFF
+            if n == 14 {
+                readR14(fx) // fx_lms_r14
+            }
+            clrflags(fx)
+        }
+        return
+    }
+
+    // 0xb0-0xbf: from rn / moves rn (if B)
+    if op < 0xC0 {
+        let n = op & 0xF
+        if fx.bflag {
+            let v = fx.reg[n]
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vOverflow = (v & 0x80) << 16
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        } else {
+            fx.sreg = n
+            r15inc(fx)
+        }
+        return
+    }
+
+    // 0xc0: hib ; 0xc1-0xcf: or / xor / or #n / xor #n
+    if op < 0xD0 {
+        if op == 0xC0 { // hib
+            let v = (sregVal(fx) >> 8) & 0xFF
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v << 8
+            fx.vZero = v << 8
+            clrflags(fx)
+        } else {
+            let n = op & 0xF
+            let s = sregVal(fx)
+            var v: i64 = 0
+            if alt == 0 { // or rn
+                v = s | fx.reg[n]
+            } else if alt == 1 { // xor rn
+                v = s ^ fx.reg[n]
+            } else if alt == 2 { // or #n
+                v = s | n
+            } else { // xor #n
+                v = s ^ n
+            }
+            v = v & 0xFFFFFFFF
+            r15inc(fx)
+            setDreg(fx, v)
+            fx.vSign = v
+            fx.vZero = v
+            clrflags(fx)
+        }
+        return
+    }
+
+    // 0xd0-0xde: inc ; 0xdf: getc / ramb / romb
+    if op < 0xE0 {
+        if op <= 0xDE {
+            let n = op & 0xF
+            fx.reg[n] = (fx.reg[n] + 1) & 0xFFFFFFFF
+            fx.vSign = fx.reg[n]
+            fx.vZero = fx.reg[n]
+            if n == 14 {
+                readR14(fx) // fx_inc_r14 — the bytecode-VM dispatch relies on this
+            }
+            clrflags(fx)
+            r15inc(fx)
+        } else { // 0xdf
+            if alt == 2 { // ramb
+                fx.rambr = sregVal(fx) % fx.nRamBanks
+                clrflags(fx)
+                r15inc(fx)
+            } else if alt == 3 { // romb
+                fx.rombr = sregVal(fx) & 0x7F
+                clrflags(fx)
+                r15inc(fx)
+            } else { // getc (alt0/alt1)
+                var c = fx.romBuffer & 0xFF
+                if (fx.por & 0x04) != 0 {
+                    c = (c & 0xF0) | ((c >> 4) & 0xF)
+                }
+                if (fx.por & 0x08) != 0 {
+                    fx.color = (fx.color & 0xF0) | (c & 0x0F)
+                } else {
+                    fx.color = c & 0xFF
+                }
+                clrflags(fx)
+                r15inc(fx)
+            }
+        }
+        return
+    }
+
+    // 0xe0-0xee: dec ; 0xef: getb / getbh / getbl / getbs
+    if op < 0xF0 {
+        if op <= 0xEE {
+            let n = op & 0xF
+            fx.reg[n] = (fx.reg[n] - 1) & 0xFFFFFFFF
+            fx.vSign = fx.reg[n]
+            fx.vZero = fx.reg[n]
+            if n == 14 {
+                readR14(fx) // fx_dec_r14
+            }
+            clrflags(fx)
+            r15inc(fx)
+        } else { // 0xef getb*
+            let rb = fx.romBuffer & 0xFF
+            var v: i64 = 0
+            if alt == 1 { // getbh
+                v = (sregVal(fx) & 0xFF) | (rb << 8)
+            } else if alt == 2 { // getbl
+                v = (sregVal(fx) & 0xFF00) | rb
+            } else if alt == 3 { // getbs
+                v = sex8(rb) & 0xFFFFFFFF
+            } else { // getb
+                v = rb
+            }
+            r15inc(fx)
+            setDreg(fx, v)
+            clrflags(fx)
+        }
+        return
+    }
+
+    // 0xf0-0xff: iwt / lm / sm / (alt3=lm)
+    let n = op & 0xF
+    if alt == 0 { // iwt rn, #xx
+        let lo = fx.pipe
+        r15inc(fx)
+        fetchPipe(fx)
+        r15inc(fx)
+        let hi = fx.pipe
+        fetchPipe(fx)
+        r15inc(fx)
+        fx.reg[n] = (lo | (hi << 8)) & 0xFFFFFFFF
+        if n == 14 {
+            readR14(fx) // fx_iwt_r14
+        }
+        clrflags(fx)
+    } else if alt == 2 { // sm (xx), rn
+        let v = fx.reg[n]
+        var adr = fx.pipe
+        r15inc(fx)
+        fetchPipe(fx)
+        r15inc(fx)
+        adr = adr | (fx.pipe << 8)
+        fetchPipe(fx)
+        fx.lastRamAdr = adr
+        ramWrite(fx, adr, v)
+        ramWrite(fx, adr ^ 1, v >> 8)
+        clrflags(fx)
+        r15inc(fx)
+    } else { // lm rn, (xx)  (alt1 and alt3)
+        var adr = fx.pipe
+        r15inc(fx)
+        fetchPipe(fx)
+        r15inc(fx)
+        adr = adr | (fx.pipe << 8)
+        fetchPipe(fx)
+        r15inc(fx)
+        fx.lastRamAdr = adr
+        var v = ramRead(fx, adr)
+        v = v | (ramRead(fx, adr ^ 1) << 8)
+        fx.reg[n] = v & 0xFFFFFFFF
+        if n == 14 {
+            readR14(fx) // fx_lm_r14
+        }
+        clrflags(fx)
+    }
+}
+
+// Run up to maxSteps GSU instructions (stops early on STOP). Called in bursts from
+// the system frame loop while the GO flag is set.
+fn fxRun(fx: &mut Fx, maxSteps: i64): i64 {
+    if !fx.running {
+        return 0
+    }
+    fxUpdateScreen(fx)
+    var i: i64 = 0
+    while i < maxSteps && fx.running {
+        fxStepOne(fx)
+        i = i + 1
+    }
+    fxDbgSteps = fxDbgSteps + i
+    return i
+}
+
+// Compose the 16-bit SFR word from the decomposed flags (CPU read of $3030/$3031).
+fn composeSfr(fx: &Fx): i64 {
+    var s: i64 = 0
+    if (fx.vZero & 0xFFFF) == 0 {
+        s = s | 0x02 // Z
+    }
+    if (fx.vCarry & 1) != 0 {
+        s = s | 0x04 // CY
+    }
+    if (fx.vSign & 0x8000) != 0 {
+        s = s | 0x08 // S
+    }
+    if fx.vOverflow >= 0x8000 || fx.vOverflow < -0x8000 {
+        s = s | 0x10 // OV
+    }
+    if fx.running {
+        s = s | 0x20 // G
+    }
+    if fx.alt1 {
+        s = s | 0x100
+    }
+    if fx.alt2 {
+        s = s | 0x200
+    }
+    if fx.bflag {
+        s = s | 0x1000
+    }
+    if fx.irqPending {
+        s = s | 0x8000
+    }
+    return s
+}
+
+// --- CPU-facing register interface ($3000-$34FF) ---
+
+// Kick the GSU: prime the pipe (NOP) if idle, set GO.
+fn fxStart(fx: &mut Fx): void {
+    if !fx.running {
+        fx.running = true
+        fxDbgStarts = fxDbgStarts + 1
+    }
+}
+
+// Pure register read (the CPU read path is over &Mem). Reading $3031 clears the IRQ
+// line on hardware; that side effect is applied by the caller (see fxIrqAck usage in
+// cpu.milo) since this path can't take &mut.
+fn fxRegRead(fx: &Fx, addr: i64): i64 {
+    if addr >= 0x3000 && addr <= 0x301F {
+        let i = (addr - 0x3000) >> 1
+        let byte = addr & 1
+        return (fx.reg[i] >> (8 * byte)) & 0xFF
+    }
+    if addr == 0x3030 {
+        return composeSfr(fx) & 0xFF
+    }
+    if addr == 0x3031 {
+        return (composeSfr(fx) >> 8) & 0xFF
+    }
+    if addr == 0x3033 {
+        return fx.bramr
+    }
+    if addr == 0x3034 {
+        return fx.pbr
+    }
+    if addr == 0x3036 {
+        return fx.rombr
+    }
+    if addr == 0x3037 {
+        return fx.cfgr
+    }
+    if addr == 0x3038 {
+        return fx.scbr
+    }
+    if addr == 0x3039 {
+        return fx.clsr
+    }
+    if addr == 0x303A {
+        return fx.scmr
+    }
+    if addr == 0x303B {
+        return 0 // VCR (version), GSU1 = 0
+    }
+    if addr == 0x303C {
+        return fx.rambr
+    }
+    if addr == 0x303E {
+        return fx.cbr & 0xFF
+    }
+    if addr == 0x303F {
+        return (fx.cbr >> 8) & 0xFF
+    }
+    if addr >= 0x3100 && addr <= 0x32FF {
+        return fx.cache[addr - 0x3100] as i64
+    }
+    return 0
+}
+
+fn fxRegWrite(fx: &mut Fx, addr: i64, v: i64): void {
+    let val = v & 0xFF
+    if addr >= 0x3000 && addr <= 0x301F {
+        let i = (addr - 0x3000) >> 1
+        let byte = addr & 1
+        if byte == 0 {
+            fx.reg[i] = (fx.reg[i] & 0xFFFFFF00) | val
+        } else {
+            fx.reg[i] = (fx.reg[i] & 0xFFFF00FF) | (val << 8)
+        }
+        if addr == 0x301F {
+            fxStart(fx) // writing R15 high starts the GSU
+        }
+        return
+    }
+    if addr == 0x3030 {
+        // SFR low byte: Z,CY,S,OV,G. Setting G starts the GSU.
+        fx.vZero = if (val & 0x02) != 0 {
+            0
+        } else {
+            1
+        }
+        fx.vCarry = (val >> 2) & 1
+        fx.vSign = if (val & 0x08) != 0 {
+            0x8000
+        } else {
+            0
+        }
+        fx.vOverflow = if (val & 0x10) != 0 {
+            0x8000
+        } else {
+            0
+        }
+        if (val & 0x20) != 0 {
+            fxStart(fx)
+        } else {
+            fx.running = false
+            fx.cacheActive = false
+        }
+        return
+    }
+    if addr == 0x3031 {
+        return
+    }
+    if addr == 0x3033 {
+        fx.bramr = val
+        return
+    }
+    if addr == 0x3034 {
+        fx.pbr = val & 0x7F
+        return
+    }
+    if addr == 0x3036 {
+        fx.rombr = val & 0x7F
+        return
+    }
+    if addr == 0x3037 {
+        fx.cfgr = val
+        return
+    }
+    if addr == 0x3038 {
+        fx.scbr = val
+        fxUpdateScreen(fx)
+        return
+    }
+    if addr == 0x3039 {
+        fx.clsr = val
+        return
+    }
+    if addr == 0x303A {
+        fx.scmr = val
+        fxUpdateScreen(fx)
+        return
+    }
+    if addr == 0x303C {
+        fx.rambr = val % fx.nRamBanks
+        return
+    }
+    if addr == 0x303E {
+        fx.cbr = (fx.cbr & 0xFF00) | val
+        return
+    }
+    if addr == 0x303F {
+        fx.cbr = (fx.cbr & 0x00FF) | (val << 8)
+        return
+    }
+    if addr >= 0x3100 && addr <= 0x32FF {
+        fx.cache[addr - 0x3100] = val as u8
+        return
+    }
+}
+
+// --- differential-fuzz test entry (compared against Snes9x's fxinst.cpp) ---
+// Build a GSU whose ROM is the given program (padded to 32KB, mirrored high half so
+// R14/branch reads past $8000 alias the same bytes, matching the oracle), seed the
+// registers + carry, run `steps`, and return R0-R15 (low 16) plus a composed SFR.
+fn fxTestRun(program: &Vec<u8>, seed: &Vec<i64>, carry: i64, steps: i64): Vec<i64> {
+    var rom: Vec<u8> = Vec.new()
+    var i: i64 = 0
+    while i < 0x8000 {
+        if i < program.len {
+            rom.push(program[i])
+        } else {
+            rom.push(0)
+        }
+        i = i + 1
+    }
+    var fx = fxNew(rom)
+    i = 0
+    while i < 16 {
+        fx.reg[i] = seed[i] & 0xFFFFFFFF
+        i = i + 1
+    }
+    fx.vCarry = carry & 1
+    fx.vZero = 1 // Z clear (matches oracle seeding)
+    fx.vSign = 0
+    fx.vOverflow = 0
+    fx.reg[15] = 0
+    fx.pbr = 0
+    fx.pipe = 1
+    fx.running = true
+    var n: i64 = 0
+    while n < steps && fx.running {
+        fxStepOne(fx)
+        n = n + 1
+    }
+    var out: Vec<i64> = Vec.new()
+    i = 0
+    while i < 16 {
+        out.push(fx.reg[i] & 0xFFFF)
+        i = i + 1
+    }
+    out.push(composeSfr(fx) & 0xFFFF)
+    return out
+}
+
+// Detect a Super FX cartridge from the LoROM internal header. Cart-type byte at
+// $7FD6 in {0x13,0x14,0x15,0x1A} → Super FX. (Header already copier-stripped.)
+fn isSuperFx(rom: &Vec<u8>): bool {
+    if rom.len < 0x8000 {
+        return false
+    }
+    let t = rom[0x7FD6] as i64
+    return t == 0x13 || t == 0x14 || t == 0x15 || t == 0x1A
+}

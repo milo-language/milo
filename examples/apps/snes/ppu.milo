@@ -1041,7 +1041,11 @@ fn renderMode1Main(p: &Ppu, fb: &mut Vec<i64>, bright: i64): void {
 // via backdropColor). Surfaces sub-screen backgrounds (SMW overworld map) too.
 fn renderFrame(p: &Ppu, fb: &mut Vec<i64>): void {
     let bright = p.inidisp & 0x0F
-    let forceBlank = (p.inidisp & 0x80) != 0
+    // Scalar force-blank only blanks the whole frame when HDMA isn't rewriting
+    // INIDISP mid-frame: Star Fox letterboxes by holding $2100=$80 in the register
+    // and HDMA-writing per-line brightness for the visible band. With hdmaOn the
+    // per-line lineBright[] rules (0 on blanked lines renders black anyway).
+    let forceBlank = (p.inidisp & 0x80) != 0 && !p.hdmaOn
 
     // Fill per scanline: the backdrop is constant across a line, so compute it
     // once per line (or once total when neither force-blank nor HDMA varies it).

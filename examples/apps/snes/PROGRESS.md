@@ -224,7 +224,22 @@ Run: `examples/apps/snes/harte.sh` (or `harte.sh ea a9 …` for a subset).
       size table already in M4.
 - [ ] **M9 — compat pass**: HiROM, SRAM saves (.srm), interlace/hires
       (512-wide, Mode 5/6 + pseudo-hires) only if a target game needs it.
-- [ ] later: enhancement chips (SuperFX for Star Fox, SA-1 for Mario RPG),
+- [x] **Super FX (GSU-1)** (`superfx.milo`): full opcode set ported from Snes9x
+      fxinst.cpp (ALT1/2/3 prefixes, PLOT/RPIX bitplane framebuffer, fetch
+      pipeline, ROM buffer). Star Fox boots to title, menus, level map; GSU
+      renders the 3D polygons into cart RAM which the game DMAs to VRAM.
+      Validated two ways: (1) differential fuzzer vs a standalone build of the
+      real Snes9x GSU core (gsumilo.milo + fxTestRun; 10k random programs,
+      0 mismatches), (2) per-job replay — snapshot GSU state at kick N, run
+      the job in Snes9x, byte-compare post-STOP RAM. Gotchas that cost hours:
+      any write to R14 (inc/dec/ibt/iwt/lms/lm variants) must reload the ROM
+      buffer — Star Fox's bytecode VM dispatches on `inc r14; getb` and starves
+      forever without it; TO r15 semantics are asymmetric (B set → jump, no
+      inc; B clear → plain dreg + inc); ADD/SUB carry is unsigned-16;
+      renderFrame must not force-blank globally when HDMA rewrites INIDISP
+      per-line (Star Fox letterboxes that way); the boot needs real OPVCT
+      ($213D) sweeps 0-261 or it spins at $03:BD97. SA-1/DSP-1 still absent.
+- [ ] later: more enhancement chips (SA-1 for Mario RPG, DSP-1 for Mario Kart),
       Pi/TV/kiosk lane (reuse NES M7-M9 infra wholesale).
 
 Order rationale: M1→M3 before pixels because boot literally blocks on SPC
