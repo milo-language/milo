@@ -24,15 +24,23 @@ from "dap" import {
 }
 
 fn main(): void {
+    let VERSION = "0.1.0"
     var p = newParser("java-dap", "DAP debug adapter for the JVM (speaks JDWP to the java process)\n\n" + "default mode: DAP server on stdio (spawn me from a DAP client)\n\n" + "smoke test against a live JDWP agent:\n" + "  java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005 Main &\n" + "  java-dap --attach localhost:5005 --smoke")
     p.addString("attach", "a", "host:port of a listening JDWP agent (with --smoke)", "")
     p.addBool("smoke", "s", "connect, print VM version + threads, exit")
     let args = p.parse()
 
     if !args.getBool("smoke") {
+        // Diagnostics go to stderr only — stdin/stdout carry the DAP protocol
+        // (Content-Length framed JSON-RPC). A human who runs this from a shell
+        // sees no stdout, so tell them on stderr what this is and why nothing
+        // appears to happen, rather than leaving them staring at a hung prompt.
+        eprint($"java-dap {VERSION} — DAP debug adapter for the JVM")
+        eprint("Serving the Debug Adapter Protocol over stdio (stdin/stdout).")
+        eprint("This is meant to be spawned by a DAP client (hades, VS Code), not run by hand.")
+        eprint("Run with --help for the smoke-test / attach modes.")
         // the DAP loop lives in a green task: select/channel arms park on the
         // green scheduler, which only runs via schedulerRunToCompletion()
-        eprint("Spawning dap server and listening on stdio")
         Task.spawn(move(): void => {
             let code = dapServe()
             exit(code as i32)
