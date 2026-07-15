@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- breakpoint dot on the app's dark panel — reads at 16px -->
+  <rect width="32" height="32" rx="7" fill="#161b22"/>
+  <rect width="32" height="32" rx="7" fill="none" stroke="#30363d" stroke-width="1.5"/>
+  <circle cx="16" cy="16" r="8.5" fill="#f85149"/>
+  <circle cx="16" cy="16" r="8.5" fill="none" stroke="#0d1117" stroke-width="1"/>
+</svg>

@@ -1,0 +1,882 @@
+// Hades MCP server — AI drives the debugger.
+//
+// Speaks MCP over stdio: JSON-RPC 2.0, one message per line (no Content-Length
+// framing — that's DAP/LSP). stdout carries ONLY protocol messages; all
+// diagnostics go to stderr. A tool call is exactly one turn, so this reuses
+// the proven turn-based DAP driving, not the web UI's event-driven core.
+//
+// Register: claude mcp add hades -- /path/to/hades-mcp --program /tmp/x --source /tmp/x.c
+//
+// Shared DAP-response JSON accessors live in web/jsonaccess.milo (imported by
+// both this file and web/server.milo). mcpFramesJson/varsJson below stay local:
+// they emit MCP-specific shapes, not the browser wire format.
+
+from "std/os" import { read, exit }
+from "std/event" import { setNonblocking }
+from "std/json" import { Json, jsonParse, jsonObj, jsonArr }
+from "std/argparse" import { newParser, ArgParser, ParsedArgs }
+from "std/env" import { getEnvOr }
+from "std/fs" import { pathExists }
+from "std/signal" import { ignoreSignal, SIGPIPE }
+
+from "std/process" import { Child }
+from "std/strconv" import { parseInt }
+from "std/runtime" import { Task, schedulerWaitRead, schedulerYield, schedulerRunToCompletion }
+from "std/net" import { resolve }
+from "std/ws" import { WsConn, wsConnect }
+from "../dap/client" import { DapClient, DapMsg }
+from "../dap/session" import { AdapterSel, selectAdapter, adapterIdForKind, adapterArgvOf }
+from "../web/jsonaccess" import { jsonEsc, bodyI64, bodyStr, frame0Field, frame0Path, scopes0Ref }
+
+var mBinPath: string = ""
+var mSrcPath: string = ""
+var mAdapterCmd: string = ""
+var mAdapterKind: string = ""   // dialect kind (registry) — selects the DAP adapterID
+var mQ: string = ""
+
+// Co-debug: attach to a live hades-web shared session as a second WS peer.
+// The reader task caches every broadcast; tool calls await conditions by
+// yielding (green scheduler — the reader keeps running underneath).
+var gAttachMode: bool = false
+var gAttFd: i32 = -1
+var gAttPhase: string = ""       // idle | running | stopped | exited | dead (set in main)
+var gAttStopped: string = ""     // last raw "stopped" broadcast
+var gAttEval: string = ""        // last raw "evalResult"
+var gAttChildren: string = ""    // last raw "children"
+var gAttThreads: string = ""     // last raw "threads" broadcast
+var gAttSrc: string = ""
+var gAttNextId: i64 = 900001     // high id space: avoid colliding with the browser
+var gAttBpLines: Vec<i64> = []   // lines this MCP peer set (for replace semantics)
+
+// ── JSON building helpers ──
+
+// Distinct name from web/server.milo's framesJson: milo mangles both to the same
+// linkonce_odr symbol, so a shared name lets the linker discard one body (the
+// web one carries an ipRef field this one lacks — that loss broke disassembly).
+fn mcpFramesJson(raw: &string): string {
+    var arr = jsonArr()
+    match jsonParse(raw.clone()) {
+        Result.Ok(doc) => {
+            match doc.get("body") {
+                Option.Some(body) => {
+                    match body.get("stackFrames") {
+                        Option.Some(frames) => {
+                            let n = frames.len()
+                            var i: i64 = 0
+                            while i < n {
+                                match frames.at(i) {
+                                    Option.Some(f) => {
+                                        var path: string = ""
+                                        match f.get("source") {
+                                            Option.Some(src) => { path = src.str("path") ?? "" }
+                                            Option.None => {}
+                                        }
+                                        arr = arr.obj(jsonObj()
+                                            .int("id", f.i64("id") ?? (0 as i64))
+                                            .str("name", f.str("name") ?? "?")
+                                            .int("line", f.i64("line") ?? (0 as i64))
+                                            .str("path", path))
+                                    }
+                                    Option.None => {}
+                                }
+                                i = i + 1
+                            }
+                        }
+                        Option.None => {}
+                    }
+                }
+                Option.None => {}
+            }
+        }
+        Result.Err(_e) => {}
+    }
+    return arr.build()
+}
+
+fn varsJson(raw: &string): string {
+    var out: string = "["
+    match jsonParse(raw.clone()) {
+        Result.Ok(doc) => {
+            match doc.get("body") {
+                Option.Some(body) => {
+                    let n = body.childLen("variables")
+                    var i: i64 = 0
+                    while i < n {
+                        if i > 0 { out = out + "," }
+                        let name = body.childStrAt("variables", i, "name") ?? "?"
+                        let value = body.childStrAt("variables", i, "value") ?? "?"
+                        let ref = body.childI64At("variables", i, "variablesReference") ?? (0 as i64)
+                        out = out + "{" + mQ + "name" + mQ + ":" + jsonEsc(name)
+                            + "," + mQ + "value" + mQ + ":" + jsonEsc(value)
+                            + "," + mQ + "ref" + mQ + ":" + ref.toString() + "}"
+                        i = i + 1
+                    }
+                }
+                Option.None => {}
+            }
+        }
+        Result.Err(_e) => {}
+    }
+    out = out + "]"
+    return out
+}
+
+// ── Debug session (turn-based) ──
+
+struct Session {
+    cl: DapClient,
+    started: bool,
+    tid: i64,
+    frame0: i64,
+    stopLine: i64,
+    output: string,     // debuggee/adapter output accumulated since last turn
+    exited: bool,
+}
+
+// Send a request and pump until its response, buffering output events and
+// remembering stopped/terminated. Never prints (stdout is MCP protocol).
+fn requestQuiet(s: &mut Session, command: &string, argsJson: &string): Result<DapMsg> {
+    let want = s.cl.send(command, argsJson)
+    if want < 0 { return Result.Err("send failed") }
+    while true {
+        let msg = s.cl.recv()?
+        if msg.kind == "event" {
+            if msg.event == "output" {
+                s.output = s.output + bodyStr(msg.raw, "output")
+            } else if msg.event == "terminated" || msg.event == "exited" {
+                s.exited = true
+            }
+        } else if msg.kind == "response" && msg.requestSeq == want {
+            return Result.Ok(msg)
+        }
+    }
+    return Result.Err("unreachable")
+}
+
+// Pump events until the debuggee stops or terminates.
+fn pumpToStop(s: &mut Session): bool {
+    while true {
+        match s.cl.recv() {
+            Result.Ok(msg) => {
+                if msg.kind == "event" {
+                    if msg.event == "output" {
+                        s.output = s.output + bodyStr(msg.raw, "output")
+                    } else if msg.event == "stopped" {
+                        s.tid = bodyI64(msg.raw, "threadId", -1 as i64)
+                        return true
+                    } else if msg.event == "terminated" || msg.event == "exited" {
+                        s.exited = true
+                        return false
+                    }
+                }
+            }
+            Result.Err(_e) => { s.exited = true return false }
+        }
+    }
+    return false
+}
+
+fn buildBpArgs(lines: &Vec<i64>): string {
+    var arr: string = "["
+    var i: i64 = 0
+    while i < lines.len {
+        if i > 0 { arr = arr + "," }
+        arr = arr + "{" + mQ + "line" + mQ + ":" + lines[i].toString() + "}"
+        i = i + 1
+    }
+    arr = arr + "]"
+    return "{" + mQ + "source" + mQ + ":{" + mQ + "path" + mQ + ":" + jsonEsc(mSrcPath) + "}"
+        + "," + mQ + "breakpoints" + mQ + ":" + arr + "}"
+}
+
+// Stop snapshot as a JSON string: stack + frame-0 locals + buffered output.
+fn snapshotJson(s: &mut Session): string {
+    if s.exited {
+        let out = "{" + mQ + "exited" + mQ + ":true"
+            + "," + mQ + "output" + mQ + ":" + jsonEsc(s.output) + "}"
+        s.output = ""
+        return out
+    }
+    let stArgs = "{" + mQ + "threadId" + mQ + ":" + s.tid.toString()
+        + "," + mQ + "startFrame" + mQ + ":0," + mQ + "levels" + mQ + ":20}"
+    var frames: string = "[]"
+    var locals: string = "[]"
+    match requestQuiet(s, "stackTrace", stArgs) {
+        Result.Ok(st) => {
+            frames = mcpFramesJson(st.raw)
+            s.stopLine = frame0Field(st.raw, "line")
+            s.frame0 = frame0Field(st.raw, "id")
+            if mSrcPath.len == 0 {
+                let p = frame0Path(st.raw)
+                if p.len > 0 { mSrcPath = p }
+            }
+            let scArgs = "{" + mQ + "frameId" + mQ + ":" + s.frame0.toString() + "}"
+            match requestQuiet(s, "scopes", scArgs) {
+                Result.Ok(sc) => {
+                    let ref = scopes0Ref(sc.raw)
+                    let vArgs = "{" + mQ + "variablesReference" + mQ + ":" + ref.toString() + "}"
+                    match requestQuiet(s, "variables", vArgs) {
+                        Result.Ok(v) => { locals = varsJson(v.raw) }
+                        Result.Err(_e) => {}
+                    }
+                }
+                Result.Err(_e) => {}
+            }
+        }
+        Result.Err(_e) => {}
+    }
+    let out = "{" + mQ + "stopped" + mQ + ":true"
+        + "," + mQ + "line" + mQ + ":" + s.stopLine.toString()
+        + "," + mQ + "frames" + mQ + ":" + frames
+        + "," + mQ + "locals" + mQ + ":" + locals
+        + "," + mQ + "output" + mQ + ":" + jsonEsc(s.output) + "}"
+    s.output = ""
+    return out
+}
+
+// Full launch handshake to the first stop (or exit).
+fn doLaunch(s: &mut Session, bpLines: &Vec<i64>): string {
+    // No supportsRunInTerminalRequest here: mcp is turn-based and reads the
+    // debuggee's stdout via DAP "output" events, not a pty (unlike hades web).
+    let initArgs = "{" + mQ + "adapterID" + mQ + ":" + jsonEsc(adapterIdForKind(mAdapterKind))
+        + "," + mQ + "linesStartAt1" + mQ + ":true," + mQ + "columnsStartAt1" + mQ + ":true}"
+    let launchArgs = "{" + mQ + "program" + mQ + ":" + jsonEsc(mBinPath)
+        + "," + mQ + "stopOnEntry" + mQ + ":false}"
+    let bpArgs = buildBpArgs(bpLines)
+    let _i = s.cl.send("initialize", initArgs)
+    while true {
+        match s.cl.recv() {
+            Result.Ok(msg) => {
+                if msg.kind == "response" {
+                    if !msg.success {
+                        return "{" + mQ + "error" + mQ + ":" + jsonEsc(msg.raw) + "}"
+                    }
+                    if msg.command == "initialize" {
+                        let _l = s.cl.send("launch", launchArgs)
+                    } else if msg.command == "setBreakpoints" {
+                        let cd: string = "{}"
+                        let _c = s.cl.send("configurationDone", cd)
+                    }
+                } else if msg.kind == "event" {
+                    if msg.event == "initialized" {
+                        let _b = s.cl.send("setBreakpoints", bpArgs)
+                    } else if msg.event == "output" {
+                        s.output = s.output + bodyStr(msg.raw, "output")
+                    } else if msg.event == "stopped" {
+                        s.tid = bodyI64(msg.raw, "threadId", -1 as i64)
+                        s.started = true
+                        return snapshotJson(s)
+                    } else if msg.event == "terminated" || msg.event == "exited" {
+                        s.exited = true
+                        return snapshotJson(s)
+                    }
+                }
+            }
+            Result.Err(e) => {
+                return "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}"
+            }
+        }
+    }
+    return "{}"
+}
+
+
+// ── Attach mode: drive a live hades-web shared session over WS ──
+
+fn attSend(msg: &string): void {
+    // Borrowed client conn: _closed=true so Drop skips teardown; _isClient
+    // masks outgoing frames as RFC 6455 requires.
+    var conn = WsConn { fd: gAttFd, ssl: 0, _ctx: 0, _closed: true, _isClient: true }
+    let _r = conn.sendText(msg)
+}
+
+// Reader task: owns the real conn, caches every broadcast into globals.
+fn attReaderLoop(conn: WsConn): void {
+    var c = conn
+    while true {
+        var payload: string = ""
+        match c.recv() {
+            Result.Ok(m) => { payload = m.payload }
+            Result.Err(_e) => { gAttPhase = "dead" return }
+        }
+        match jsonParse(payload.clone()) {
+            Result.Ok(doc) => {
+                let t = doc.str("type") ?? ""
+                if t == "stopped" {
+                    gAttStopped = payload.clone()
+                    gAttPhase = "stopped"
+                    // server may have no configured source either — bind
+                    // future breakpoints to the file we actually stopped in.
+                    if gAttSrc.len == 0 {
+                        let p = doc.str("path") ?? ""
+                        if p.len > 0 { gAttSrc = p }
+                    }
+                } else if t == "threads" {
+                    gAttThreads = payload.clone()
+                } else if t == "terminated" {
+                    gAttStopped = ""
+                    gAttThreads = ""
+                    gAttPhase = "exited"
+                } else if t == "hello" {
+                    gAttSrc = doc.str("sourcePath") ?? ""
+                    if (doc.str("phase") ?? "") == "running" { gAttPhase = "running" }
+                } else if t == "evalResult" {
+                    gAttEval = payload.clone()
+                } else if t == "children" {
+                    gAttChildren = payload.clone()
+                } else if t == "bpSync" {
+                    let ln = doc.i64("line") ?? (0 as i64)
+                    if ln > 0 { gAttBpLines.push(ln) }
+                }
+            }
+            Result.Err(_e) => {}
+        }
+    }
+}
+
+// Yield until the phase leaves "running" (a step/continue landed) — same
+// no-timeout semantics as launch mode's pumpToStop.
+fn attAwaitStopOrExit(): void {
+    while gAttPhase == "running" { schedulerYield() }
+}
+
+fn attAwaitMsgId(which: &string, id: i64): string {
+    while true {
+        var raw: string = ""
+        if which == "evalResult" { raw = gAttEval.clone() }
+        else { raw = gAttChildren.clone() }
+        if raw.len > 0 {
+            match jsonParse(raw.clone()) {
+                Result.Ok(doc) => {
+                    if (doc.i64("id") ?? (0 as i64)) == id { return raw }
+                }
+                Result.Err(_e) => {}
+            }
+        }
+        if gAttPhase == "dead" { return "" }
+        schedulerYield()
+    }
+    return ""
+}
+
+fn attStopField(key: &string): i64 {
+    match jsonParse(gAttStopped.clone()) {
+        Result.Ok(doc) => { return doc.i64(key) ?? (-1 as i64) }
+        Result.Err(_e) => { return -1 as i64 }
+    }
+}
+
+fn attFrame0Id(): i64 {
+    match jsonParse(gAttStopped.clone()) {
+        Result.Ok(doc) => {
+            match doc.get("frames") {
+                Option.Some(fr) => {
+                    match fr.at(0) {
+                        Option.Some(f) => { return f.i64("id") ?? (-1 as i64) }
+                        Option.None => { return -1 as i64 }
+                    }
+                }
+                Option.None => { return -1 as i64 }
+            }
+        }
+        Result.Err(_e) => { return -1 as i64 }
+    }
+}
+
+// Server "stopped" broadcast → MCP snapshot shape (line/frames/locals).
+fn attSnapshot(): string {
+    if gAttPhase == "exited" { return "{" + mQ + "exited" + mQ + ":true}" }
+    if gAttPhase == "dead" { return "{" + mQ + "error" + mQ + ":" + mQ + "web session closed" + mQ + "}" }
+    if gAttStopped.len == 0 {
+        return "{" + mQ + "phase" + mQ + ":" + jsonEsc(gAttPhase) + "}"
+    }
+    var frames: string = "[]"
+    var locals: string = "[]"
+    var line: i64 = 0
+    match jsonParse(gAttStopped.clone()) {
+        Result.Ok(doc) => {
+            line = doc.i64("line") ?? (0 as i64)
+            match doc.get("frames") { Option.Some(f) => { frames = f.rawStr() } Option.None => {} }
+            match doc.get("locals") { Option.Some(l) => { locals = l.rawStr() } Option.None => {} }
+        }
+        Result.Err(_e) => {}
+    }
+    var threads: string = ""
+    match jsonParse(gAttThreads.clone()) {
+        Result.Ok(doc) => {
+            match doc.get("threads") {
+                Option.Some(t) => {
+                    threads = "," + mQ + "threads" + mQ + ":" + t.rawStr()
+                        + "," + mQ + "currentThread" + mQ + ":" + (doc.i64("current") ?? (-1 as i64)).toString()
+                }
+                Option.None => {}
+            }
+        }
+        Result.Err(_e) => {}
+    }
+    return "{" + mQ + "stopped" + mQ + ":true"
+        + "," + mQ + "line" + mQ + ":" + line.toString()
+        + "," + mQ + "frames" + mQ + ":" + frames
+        + "," + mQ + "locals" + mQ + ":" + locals + threads + "}"
+}
+
+fn attSetBp(line: i64): void {
+    attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "setBreakpoint" + mQ
+        + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc)
+        + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
+}
+
+fn attClearBp(line: i64): void {
+    attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "clearBreakpoint" + mQ
+        + "," + mQ + "path" + mQ + ":" + jsonEsc(gAttSrc)
+        + "," + mQ + "line" + mQ + ":" + line.toString() + "}")
+}
+
+fn handleAttachTool(id: i64, name: &string, argsRaw: &string): void {
+    match jsonParse(argsRaw.clone()) {
+        Result.Ok(args) => {
+            if name == "debug_state" {
+                toolResult(id, attSnapshot(), false)
+            } else if name == "debug_launch" {
+                if gAttPhase == "running" || gAttPhase == "stopped" {
+                    // Co-debug: the human may already have it running — report
+                    // where things stand instead of failing the whole call.
+                    toolResult(id, attSnapshot(), false)
+                    return
+                }
+                let bps = jsonI64Arr(args, "breakpoints")
+                for bp in bps { attSetBp(bp) gAttBpLines.push(bp) }
+                gAttPhase = "running"
+                gAttStopped = ""
+                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "run" + mQ + "," + mQ + "stopAtMain" + mQ + ":false}")
+                attAwaitStopOrExit()
+                toolResult(id, attSnapshot(), false)
+            } else if name == "debug_continue" || name == "debug_step" {
+                if gAttPhase != "stopped" {
+                    toolResult(id, "{\"error\":\"not stopped (phase: " + gAttPhase + ")\"}", true)
+                    return
+                }
+                var cmd: string = "continue"
+                if name == "debug_step" {
+                    let kind = args.str("kind") ?? "over"
+                    if kind == "over" { cmd = "stepOver" }
+                    else if kind == "in" { cmd = "stepIn" }
+                    else if kind == "out" { cmd = "stepOut" }
+                }
+                let tid = attStopField("tid")
+                gAttPhase = "running"
+                gAttStopped = ""
+                attSend("{" + mQ + "cmd" + mQ + ":" + jsonEsc(cmd)
+                    + "," + mQ + "tid" + mQ + ":" + tid.toString() + "}")
+                attAwaitStopOrExit()
+                toolResult(id, attSnapshot(), false)
+            } else if name == "debug_set_breakpoints" {
+                let lines = jsonI64Arr(args, "lines")
+                for ln in gAttBpLines { attClearBp(ln) }
+                gAttBpLines = []
+                for ln in lines { attSetBp(ln) gAttBpLines.push(ln) }
+                toolResult(id, "{\"ok\":true}", false)
+            } else if name == "debug_evaluate" {
+                if gAttPhase != "stopped" {
+                    toolResult(id, "{\"error\":\"not stopped\"}", true)
+                    return
+                }
+                let expr = args.str("expr") ?? ""
+                gAttNextId = gAttNextId + 1
+                let eid = gAttNextId
+                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "evaluate" + mQ
+                    + "," + mQ + "expr" + mQ + ":" + jsonEsc(expr)
+                    + "," + mQ + "context" + mQ + ":" + mQ + "repl" + mQ
+                    + "," + mQ + "id" + mQ + ":" + eid.toString()
+                    + "," + mQ + "frameId" + mQ + ":" + attFrame0Id().toString() + "}")
+                let raw = attAwaitMsgId("evalResult", eid)
+                var value: string = ""
+                var isErr = false
+                match jsonParse(raw.clone()) {
+                    Result.Ok(doc) => {
+                        value = doc.str("value") ?? ""
+                        isErr = doc.bool("error") ?? false
+                    }
+                    Result.Err(_e) => { isErr = true }
+                }
+                toolResult(id, "{" + mQ + "value" + mQ + ":" + jsonEsc(value) + "}", isErr)
+            } else if name == "debug_variables" {
+                let ref = args.i64("ref") ?? (0 as i64)
+                gAttNextId = gAttNextId + 1
+                let eid = gAttNextId
+                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "expand" + mQ
+                    + "," + mQ + "ref" + mQ + ":" + ref.toString()
+                    + "," + mQ + "id" + mQ + ":" + eid.toString() + "}")
+                let raw = attAwaitMsgId("children", eid)
+                var vars: string = "[]"
+                match jsonParse(raw.clone()) {
+                    Result.Ok(doc) => {
+                        match doc.get("vars") { Option.Some(v) => { vars = v.rawStr() } Option.None => {} }
+                    }
+                    Result.Err(_e) => {}
+                }
+                toolResult(id, "{" + mQ + "variables" + mQ + ":" + vars + "}", false)
+            } else if name == "debug_terminate" {
+                attSend("{" + mQ + "cmd" + mQ + ":" + mQ + "kill" + mQ + "}")
+                toolResult(id, "{\"ok\":true}", false)
+            } else {
+                rpcError(id, -32602 as i64, "unknown tool: " + name.clone())
+            }
+        }
+        Result.Err(_e) => {
+            rpcError(id, -32602 as i64, "bad tool arguments")
+        }
+    }
+}
+
+// ── MCP protocol ──
+
+fn readStdinLine(): Result<string> {
+    var line: string = ""
+    var b: [u8; 1] = [0; 1]
+    while true {
+        var n: i64 = 0
+        unsafe {
+            schedulerWaitRead(0)
+            n = read(0, b as *u8, 1)
+        }
+        if n <= 0 {
+            if line.len > 0 { return Result.Ok(line) }
+            return Result.Err("eof")
+        }
+        if b[0] == 10 { return Result.Ok(line) }
+        if b[0] != 13 { line.push(b[0]) }
+    }
+    return Result.Err("unreachable")
+}
+
+fn writeMsg(msg: &string): void {
+    print(msg)
+    flush()
+}
+
+fn rpcResult(id: i64, resultJson: &string): void {
+    writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ
+        + "," + mQ + "id" + mQ + ":" + id.toString()
+        + "," + mQ + "result" + mQ + ":" + resultJson + "}")
+}
+
+fn rpcError(id: i64, code: i64, message: &string): void {
+    writeMsg("{" + mQ + "jsonrpc" + mQ + ":" + mQ + "2.0" + mQ
+        + "," + mQ + "id" + mQ + ":" + id.toString()
+        + "," + mQ + "error" + mQ + ":{" + mQ + "code" + mQ + ":" + code.toString()
+        + "," + mQ + "message" + mQ + ":" + jsonEsc(message) + "}}")
+}
+
+// Wrap a tool result payload in MCP content form.
+fn toolResult(id: i64, payloadJson: &string, isError: bool): void {
+    var err: string = ""
+    if isError { err = "," + mQ + "isError" + mQ + ":true" }
+    rpcResult(id, "{" + mQ + "content" + mQ + ":[{" + mQ + "type" + mQ + ":" + mQ + "text" + mQ
+        + "," + mQ + "text" + mQ + ":" + jsonEsc(payloadJson) + "}]" + err + "}")
+}
+
+// One tool descriptor for tools/list.
+fn toolDesc(name: &string, desc: &string, schemaProps: &string, required: &string): string {
+    return "{" + mQ + "name" + mQ + ":" + mQ + name + mQ
+        + "," + mQ + "description" + mQ + ":" + jsonEsc(desc)
+        + "," + mQ + "inputSchema" + mQ + ":{" + mQ + "type" + mQ + ":" + mQ + "object" + mQ
+        + "," + mQ + "properties" + mQ + ":{" + schemaProps + "}"
+        + "," + mQ + "required" + mQ + ":[" + required + "]}}"
+}
+
+fn toolsListJson(): string {
+    let intArr = "{" + mQ + "type" + mQ + ":" + mQ + "array" + mQ + "," + mQ + "items" + mQ + ":{" + mQ + "type" + mQ + ":" + mQ + "integer" + mQ + "}}"
+    let str = "{" + mQ + "type" + mQ + ":" + mQ + "string" + mQ + "}"
+    let integer = "{" + mQ + "type" + mQ + ":" + mQ + "integer" + mQ + "}"
+    var tools: string = "["
+    tools = tools + toolDesc("debug_launch",
+        "Launch the configured program under the debugger with breakpoints (source line numbers). Runs to the first breakpoint or exit. Returns a stop snapshot: line, call stack, frame-0 locals (each with a ref for debug_variables), and program output.",
+        mQ + "breakpoints" + mQ + ":" + intArr, mQ + "breakpoints" + mQ)
+    tools = tools + "," + toolDesc("debug_continue",
+        "Resume execution until the next breakpoint or exit. Returns a fresh stop snapshot.", "", "")
+    tools = tools + "," + toolDesc("debug_step",
+        "Step and return a fresh stop snapshot. kind: 'over' (next line), 'in' (into calls), 'out' (finish function).",
+        mQ + "kind" + mQ + ":" + str, mQ + "kind" + mQ)
+    tools = tools + "," + toolDesc("debug_set_breakpoints",
+        "Replace ALL breakpoints with this list of source line numbers (takes effect immediately).",
+        mQ + "lines" + mQ + ":" + intArr, mQ + "lines" + mQ)
+    tools = tools + "," + toolDesc("debug_evaluate",
+        "Evaluate an expression (or lldb command) in the current stopped frame and return its value.",
+        mQ + "expr" + mQ + ":" + str, mQ + "expr" + mQ)
+    tools = tools + "," + toolDesc("debug_variables",
+        "Expand a structured variable by its ref (from a snapshot's locals or a previous expansion). Returns child name/value/ref triples.",
+        mQ + "ref" + mQ + ":" + integer, mQ + "ref" + mQ)
+    tools = tools + "," + toolDesc("debug_terminate",
+        "Terminate the debuggee and the debug session.", "", "")
+    tools = tools + "," + toolDesc("debug_state",
+        "Report the current session state without changing it (phase, stop line, call stack, locals, threads). In co-debug attach mode this reflects live human actions in the browser too.", "", "")
+    tools = tools + "]"
+    return "{" + mQ + "tools" + mQ + ":" + tools + "}"
+}
+
+fn jsonI64Arr(doc: &Json, key: &string): Vec<i64> {
+    var out: Vec<i64> = []
+    match doc.get(key) {
+        Option.Some(arr) => {
+            let n = arr.len()
+            var i: i64 = 0
+            while i < n {
+                match arr.at(i) {
+                    Option.Some(el) => { out.push(el.asI64() ?? (0 as i64)) }
+                    Option.None => {}
+                }
+                i = i + 1
+            }
+        }
+        Option.None => {}
+    }
+    return out
+}
+
+fn handleToolCall(s: &mut Session, id: i64, name: &string, argsRaw: &string): void {
+    match jsonParse(argsRaw.clone()) {
+        Result.Ok(args) => {
+            if name == "debug_launch" {
+                if s.started {
+                    toolResult(id, "{\"error\":\"session already started; use debug_terminate first\"}", true)
+                    return
+                }
+                let bps = jsonI64Arr(args, "breakpoints")
+                if bps.len > 0 && mSrcPath.len == 0 {
+                    toolResult(id, "{\"error\":\"pre-launch breakpoints need --source (line numbers bind to a file); launch with breakpoints:[] then debug_set_breakpoints after the first stop\"}", true)
+                    return
+                }
+                let argv = adapterArgvOf(mAdapterCmd)
+                var prog: string = ""
+                if argv.len > 0 { prog = argv[0].clone() }
+                var rest: Vec<string> = []
+                var ai: i64 = 1
+                while ai < argv.len { rest.push(argv[ai].clone()) ai = ai + 1 }
+                match DapClient.startArgs(prog, rest) {
+                    Result.Ok(client) => {
+                        s.cl = client
+                        let snap = doLaunch(s, bps)
+                        toolResult(id, snap, false)
+                    }
+                    Result.Err(e) => {
+                        toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true)
+                    }
+                }
+            } else if name == "debug_continue" || name == "debug_step" {
+                if !s.started || s.exited {
+                    toolResult(id, "{\"error\":\"no live session (launch first)\"}", true)
+                    return
+                }
+                var cmd: string = "continue"
+                if name == "debug_step" {
+                    let kind = args.str("kind") ?? "over"
+                    if kind == "over" { cmd = "next" }
+                    else if kind == "in" { cmd = "stepIn" }
+                    else if kind == "out" { cmd = "stepOut" }
+                }
+                let rArgs = "{" + mQ + "threadId" + mQ + ":" + s.tid.toString() + "}"
+                let _r = s.cl.send(cmd, rArgs)
+                let _stopped = pumpToStop(s)
+                toolResult(id, snapshotJson(s), false)
+            } else if name == "debug_set_breakpoints" {
+                if !s.started || s.exited {
+                    toolResult(id, "{\"error\":\"no live session (launch first)\"}", true)
+                    return
+                }
+                let lines = jsonI64Arr(args, "lines")
+                match requestQuiet(s, "setBreakpoints", buildBpArgs(lines)) {
+                    Result.Ok(_m) => { toolResult(id, "{\"ok\":true}", false) }
+                    Result.Err(e) => { toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true) }
+                }
+            } else if name == "debug_evaluate" {
+                if !s.started || s.exited {
+                    toolResult(id, "{\"error\":\"no live session (launch first)\"}", true)
+                    return
+                }
+                let expr = args.str("expr") ?? ""
+                let eArgs = "{" + mQ + "expression" + mQ + ":" + jsonEsc(expr)
+                    + "," + mQ + "context" + mQ + ":" + mQ + "repl" + mQ
+                    + "," + mQ + "frameId" + mQ + ":" + s.frame0.toString() + "}"
+                match requestQuiet(s, "evaluate", eArgs) {
+                    Result.Ok(m) => {
+                        let value = bodyStr(m.raw, "result")
+                        toolResult(id, "{" + mQ + "value" + mQ + ":" + jsonEsc(value) + "}", !m.success)
+                    }
+                    Result.Err(e) => { toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true) }
+                }
+            } else if name == "debug_variables" {
+                if !s.started || s.exited {
+                    toolResult(id, "{\"error\":\"no live session (launch first)\"}", true)
+                    return
+                }
+                let ref = args.i64("ref") ?? (0 as i64)
+                let vArgs = "{" + mQ + "variablesReference" + mQ + ":" + ref.toString() + "}"
+                match requestQuiet(s, "variables", vArgs) {
+                    Result.Ok(m) => {
+                        toolResult(id, "{" + mQ + "variables" + mQ + ":" + varsJson(m.raw) + "}", false)
+                    }
+                    Result.Err(e) => { toolResult(id, "{" + mQ + "error" + mQ + ":" + jsonEsc(e) + "}", true) }
+                }
+            } else if name == "debug_state" {
+                if s.started && !s.exited { toolResult(id, snapshotJson(s), false) }
+                else { toolResult(id, "{" + mQ + "phase" + mQ + ":" + mQ + "idle" + mQ + "}", false) }
+            } else if name == "debug_terminate" {
+                if s.started {
+                    s.cl.close()
+                    s.started = false
+                    s.exited = false
+                    s.output = ""
+                }
+                toolResult(id, "{\"ok\":true}", false)
+            } else {
+                rpcError(id, -32602 as i64, "unknown tool: " + name.clone())
+            }
+        }
+        Result.Err(_e) => {
+            rpcError(id, -32602 as i64, "bad tool arguments")
+        }
+    }
+}
+
+// Subcommand entrypoint: dispatched from src/main.milo as `hades mcp ...`.
+// argv[0] is the display name (skipped by parseFrom); the rest are the mcp flags.
+fn mcpMain(argv: Vec<string>): i32 {
+    ignoreSignal(SIGPIPE)
+    mQ = "\""
+
+    var parser = newParser("hades mcp", "MCP server that debugs a program via DAP")
+    parser.addString("program", "p", "path to the debuggee binary", "")
+    parser.addString("source", "s", "main source file (optional; auto-detected from the first stop — needed only for pre-launch breakpoints, and must match the DWARF path)", "")
+    parser.addString("dapPath", "a", "DAP adapter command (default: inferred from the program's type via the dialect registry)", "")
+    // Co-debug: attach to a live hades-web as a second peer instead of
+    // spawning our own adapter. host:port of the web server.
+    parser.addString("attach", "", "attach to a running hades web session (host:port) as a co-debug peer", "")
+    let cliArgs = parser.parseFrom(argv)
+    gAttPhase = "idle"
+    mBinPath = cliArgs.getString("program")
+    mSrcPath = cliArgs.getString("source")
+    let attachArg = cliArgs.getString("attach")
+    // Standalone only: resolve our own adapter. Registry-driven (shared with hades
+    // web) — an explicit --adapter is honored verbatim; otherwise the dialect is
+    // inferred from the program and the adapter probed to an absolute path, failing
+    // fast if none is installed. Attach mode joins a web session's adapter, so skip.
+    if attachArg.len == 0 {
+        match selectAdapter("", cliArgs.getString("dapPath"), mBinPath) {
+            Result.Ok(sel) => { mAdapterCmd = sel.cmd mAdapterKind = sel.kind }
+            Result.Err(e) => {
+                eprint($"[hades-mcp] {e}\n")
+                return 1
+            }
+        }
+    }
+    if attachArg.len > 0 {
+        var host: string = ""
+        var portS: string = ""
+        var seenColon = false
+        for ch in attachArg {
+            if ch == ':' { seenColon = true }
+            else if seenColon { portS.push(ch) }
+            else { host.push(ch) }
+        }
+        var port: i64 = 8080
+        if portS.len > 0 { port = parseInt(portS.clone()) ?? (8080 as i64) }
+        var ip: u32 = 0
+        match resolve(host) {
+            Result.Ok(v) => { ip = v }
+            Result.Err(_e) => {
+                eprint($"[hades-mcp] cannot resolve {host}\n")
+                return 1
+            }
+        }
+        // ?client=mcp: the server logs peer kind from the upgrade path.
+        match wsConnect(ip, port as u16, "/ws?client=mcp") {
+            Result.Ok(conn) => {
+                gAttachMode = true
+                gAttFd = conn.fd
+                // Blocking fd would stall the whole green scheduler inside the
+                // reader's recv; EAGAIN + schedulerWaitRead needs nonblocking.
+                setNonblocking(conn.fd)
+                gAttSrc = mSrcPath.clone()
+                Task.spawn(move (): void => { attReaderLoop(conn) })
+                eprint($"[hades-mcp] attached to {attachArg} (co-debug peer)\n")
+            }
+            Result.Err(e) => {
+                eprint($"[hades-mcp] attach failed: {e}\n")
+                return 1
+            }
+        }
+    }
+
+    // Placeholder client; replaced on debug_launch. Never used before started.
+    var session = Session {
+        cl: DapClient { child: Child { pid: -1, stdinFd: -1, stdoutFd: -1, stderrFd: -1 }, seq: 0 },
+        started: false, tid: -1 as i64, frame0: -1 as i64,
+        stopLine: 0, output: "", exited: false,
+    }
+
+    eprint("[hades-mcp] ready\n")
+    // The protocol loop and the attach reader are green tasks; drive the
+    // scheduler so both run (milo uses Go exit semantics — no implicit drain,
+    // so main must block here instead of returning).
+    Task.spawn(move (): void => { mcpLoop(session) })
+    schedulerRunToCompletion()
+    return 0
+}
+
+fn mcpLoop(sess: Session): void {
+    var session = sess
+    while true {
+        var line: string = ""
+        match readStdinLine() {
+            Result.Ok(l) => { line = l }
+            Result.Err(_e) => { break }
+        }
+        if line.len == 0 { continue }
+        match jsonParse(line.clone()) {
+            Result.Ok(doc) => {
+                let method = doc.str("method") ?? ""
+                let id = doc.i64("id") ?? (-1 as i64)
+                if method == "initialize" {
+                    var pv: string = "2025-06-18"
+                    match doc.get("params") {
+                        Option.Some(params) => { pv = params.str("protocolVersion") ?? pv }
+                        Option.None => {}
+                    }
+                    rpcResult(id, "{" + mQ + "protocolVersion" + mQ + ":" + jsonEsc(pv)
+                        + "," + mQ + "capabilities" + mQ + ":{" + mQ + "tools" + mQ + ":{}}"
+                        + "," + mQ + "serverInfo" + mQ + ":{" + mQ + "name" + mQ + ":" + mQ + "hades" + mQ
+                        + "," + mQ + "version" + mQ + ":" + mQ + "0.1.0" + mQ + "}}")
+                } else if method == "notifications/initialized" || method == "notifications/cancelled" {
+                    // notifications: no response
+                } else if method == "ping" {
+                    rpcResult(id, "{}")
+                } else if method == "tools/list" {
+                    rpcResult(id, toolsListJson())
+                } else if method == "tools/call" {
+                    var name: string = ""
+                    var argsRaw: string = "{}"
+                    match doc.get("params") {
+                        Option.Some(params) => {
+                            name = params.str("name") ?? ""
+                            match params.get("arguments") {
+                                Option.Some(a) => { argsRaw = a.rawStr() }
+                                Option.None => {}
+                            }
+                        }
+                        Option.None => {}
+                    }
+                    if gAttachMode { handleAttachTool(id, name, argsRaw) }
+                    else { handleToolCall(session, id, name, argsRaw) }
+                } else if id >= 0 {
+                    rpcError(id, -32601 as i64, "method not found: " + method)
+                }
+            }
+            Result.Err(_e) => {
+                // unparseable line: ignore (can't form an error without an id)
+            }
+        }
+    }
+    if session.started { session.cl.close() }
+    exit(0)
+}

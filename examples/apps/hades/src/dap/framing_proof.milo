@@ -1,0 +1,30 @@
+// Machine-checked bounds proof for the substring search in framing.milo.
+//
+// `milo prove framing_proof.milo` discharges these with std/smt — the QF_LIA
+// prover written in Milo itself, no z3 required. The property proven is the
+// memory-safety invariant of _indexOf's hand-rolled scan: its inner byte
+// access `haystack[i + j]` never reads out of bounds.
+//
+// In _indexOf the outer loop runs while  i <= hayLen - needleLen  and the inner
+// loop while  0 <= j < needleLen. searchIndex encodes exactly those guards as
+// preconditions and proves the resulting position i + j is a valid index into
+// haystack (0 <= i+j < hayLen) — the safety fact the raw code relies on but
+// never states.
+
+fn searchIndex(hayLen: i64, needleLen: i64, i: i64, j: i64): i64
+requires needleLen >= 1
+requires i >= 0
+requires i <= hayLen - needleLen
+requires j >= 0
+requires j < needleLen
+ensures result >= 0
+ensures result < hayLen
+{
+    return i + j
+}
+
+fn main(): i32 {
+    // 10-byte haystack, 3-byte needle: outer i in [0,7], inner j in [0,2].
+    print(searchIndex(10, 3, 7, 2))
+    return 0
+}
