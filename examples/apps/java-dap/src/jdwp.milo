@@ -1,20 +1,30 @@
-// JDWP wire codec + minimal synchronous client (M1: handshake, IDSizes,
-// Version, AllThreads). Big-endian throughout, per the JDWP spec:
+// JDWP wire codec + client. Big-endian throughout, per the JDWP spec:
 // https://docs.oracle.com/javase/8/docs/platform/jpda/jdwp/jdwp-protocol.html
 //
+// Boot (handshake + IDSizes) is synchronous; then a reader green-task owns the
+// socket's read side and routes packets: replies → replyCh, events → eventCh.
+// JdwpIo owns the write side; request() is synchronous-over-async (single
+// outstanding request — the DAP main loop is the only requester).
+//
 // ID widths (objectID, referenceTypeID, methodID, fieldID, frameID) are NOT
-// fixed by the spec — they come from VirtualMachine.IDSizes, which must be the
-// first command sent. All IDs are stored as i64 (HotSpot uses 8 bytes for
-// everything, but the codec honors whatever the VM reports).
+// fixed by the spec — they come from VirtualMachine.IDSizes, the first command
+// sent. All IDs are stored as i64 (HotSpot uses 8 bytes for everything, but
+// the codec honors whatever the VM reports).
 
 from "std/net" import {
-    TcpStream, ip4, resolve
+    TcpStream, resolve
 }
 from "std/io" import {
     FdReader, fdReaderAttach
 }
 from "std/os" import {
     write
+}
+from "std/sync" import {
+    Channel
+}
+from "std/runtime" import {
+    Task
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +107,16 @@ impl PacketReader {
         return (self.u16() << 16) | self.u16()
     }
 
+    // u32 read as a SIGNED 32-bit value (JDWP "int" fields like exit codes,
+    // array lengths — and EventRequest requestIDs, which the spec types int).
+    fn i32v(self: &mut PacketReader): i64 {
+        let v = self.u32()
+        if v > 2147483647 {
+            return v - 4294967296
+        }
+        return v
+    }
+
     fn u64(self: &mut PacketReader): i64 {
         return (self.u32() << 32) | self.u32()
     }
@@ -126,7 +146,7 @@ impl PacketReader {
 }
 
 // ---------------------------------------------------------------------------
-// ID sizes (VirtualMachine.IDSizes reply). All widths in bytes.
+// Wire structs.
 
 struct IdSizes {
     fieldId: i64,
@@ -136,23 +156,16 @@ struct IdSizes {
     frameId: i64,
 }
 
-// ---------------------------------------------------------------------------
-// Client: TCP connection + handshake + synchronous request/reply.
-//
-// The JVM sends unsolicited event packets (cmdSet 64, cmd 100) on the same
-// socket — e.g. VM_START arrives right after the handshake when launched with
-// suspend=y. request() skips events while waiting for the matching reply; the
-// M2 event pump will consume them instead.
-
-struct JdwpClient {
-    reader: FdReader,
-    fd: i32,
-    nextId: i64,
-    sizes: IdSizes,
+fn defaultSizes(): IdSizes {
+    return IdSizes {
+        fieldId: 8, methodId: 8, objectId: 8, referenceTypeId: 8, frameId: 8
+    }
 }
 
 // One received packet, header pre-parsed. For replies `errorCode` is set and
-// cmdSet/cmd are 0; for commands (events) it's the reverse.
+// cmdSet/cmd are 0; for commands (events) it's the reverse. Synthetic packets
+// (injected into eventCh by non-JDWP sources) use negative cmdSet:
+//   -1 socket EOF · -2 child stdout chunk · -3 child stderr chunk · -4 child exit
 struct Packet {
     id: i64,
     isReply: bool,
@@ -160,6 +173,12 @@ struct Packet {
     cmdSet: i64,
     cmd: i64,
     body: string,
+}
+
+fn synthPacket(cmdSet: i64, code: i64, body: string): Packet {
+    return Packet {
+        id: 0, isReply: false, errorCode: code, cmdSet: cmdSet, cmd: 0, body: body
+    }
 }
 
 struct VmVersion {
@@ -170,67 +189,246 @@ struct VmVersion {
     vmName: string,
 }
 
-fn jdwpConnect(host: &string, port: u16): Result<JdwpClient> {
-    let ipRes = resolve(host)
-    var ip: u32 = 0
-    match ipRes {
-        Result.Ok(v) => {
-            ip = v
-        }
-        Result.Err(e) => {
-            return Result.Err("cannot resolve " + host.clone())
-        }
-    }
-    var streamRes = TcpStream.connect(ip, port)
-    match streamRes {
-        Result.Ok(s) => {
-            var stream = s
-            // take() detaches the fd so the stream's Drop won't close it;
-            // the client owns the socket lifetime from here on.
-            let fd = stream.take()
-            var client = JdwpClient {
-                reader: fdReaderAttach(fd),
-                fd: fd,
-                nextId: 1,
-                sizes: IdSizes {
-                    fieldId: 8, methodId: 8, objectId: 8, referenceTypeId: 8, frameId: 8
-                }
-                ,
-            }
-            client.handshake()?
-            client.loadIdSizes()?
-            return Result.Ok(client)
-        }
-        Result.Err(e) => {
-            return Result.Err("cannot connect to " + host.clone() + ":" + port.toString())
-        }
+struct Location {
+    typeTag: i64,
+    classId: i64,
+    methodId: i64,
+    index: i64,
+}
+
+fn zeroLocation(): Location {
+    return Location {
+        typeTag: 0, classId: 0, methodId: 0, index: 0
     }
 }
 
-impl JdwpClient {
-    fn handshake(self: &mut JdwpClient): Result<i64> {
-        let magic: string = "JDWP-Handshake"
-        self.writeAll(magic)?
-        let echo = self.reader.readExact(14)?
-        if echo != magic {
-            return Result.Err("bad JDWP handshake reply")
+struct MethodInfo {
+    methodId: i64,
+    name: string,
+    signature: string,
+    modBits: i64,
+}
+
+struct FieldInfo {
+    fieldId: i64,
+    name: string,
+    signature: string,
+    modBits: i64,
+}
+
+struct LineEntry {
+    codeIndex: i64,
+    line: i64,
+}
+
+struct VarSlot {
+    codeIndex: i64,
+    name: string,
+    signature: string,
+    length: i64,
+    slot: i64,
+}
+
+struct FrameEntry {
+    frameId: i64,
+    loc: Location,
+}
+
+// A JDWP value: tag byte + payload. `num` holds the raw bits for primitives
+// and the objectID for reference tags ('L','s','t','g','l','c','[').
+struct JValue {
+    tag: i64,
+    num: i64,
+}
+
+fn isObjectTag(tag: i64): bool {
+    return tag == 76 || tag == 115 || tag == 116 || tag == 103
+    || tag == 108 || tag == 99 || tag == 91
+}
+
+// Payload width for a value tag, in bytes (objects use the objectId width).
+fn tagWidth(tag: i64, sizes: &IdSizes): i64 {
+    if isObjectTag(tag) {
+        return sizes.objectId
+    }
+    if tag == 74 || tag == 68 {
+        return 8
+    } // J long, D double
+    if tag == 73 || tag == 70 {
+        return 4
+    } // I int, F float
+    if tag == 83 || tag == 67 {
+        return 2
+    } // S short, C char
+    if tag == 66 || tag == 90 {
+        return 1
+    } // B byte, Z boolean
+    return 0 // V void
+}
+
+// One event out of a Composite packet, flattened across kinds.
+struct JdwpEvent {
+    kind: i64,
+    requestId: i64,
+    thread: i64,
+    loc: Location,
+    signature: string, // CLASS_PREPARE
+    typeId: i64, // CLASS_PREPARE
+}
+
+// ---------------------------------------------------------------------------
+// Reading packets off a socket FdReader (used by boot and the reader task).
+
+fn readPacketFrom(reader: &FdReader): Result<Packet> {
+    var head = newReader(reader.readExact(11)?)
+    let length = head.u32()
+    let id = head.u32()
+    let flags = head.u8()
+    if length < 11 {
+        return Result.Err("bad JDWP packet length " + length.toString())
+    }
+    var errorCode: i64 = 0
+    var cmdSet: i64 = 0
+    var cmd: i64 = 0
+    let isReply = (flags & 128) != 0
+    if isReply {
+        errorCode = head.u16()
+    } else {
+        cmdSet = head.u8()
+        cmd = head.u8()
+    }
+    var body: string = ""
+    if length > 11 {
+        body = reader.readExact(length - 11)?
+    }
+    return Result.Ok(Packet {
+        id: id, isReply: isReply, errorCode: errorCode,
+        cmdSet: cmdSet, cmd: cmd, body: body,
+    }
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Client.
+
+struct JdwpIo {
+    fd: i32,
+    nextId: i64,
+    sizes: IdSizes,
+    replyCh: Channel<Packet>,
+}
+
+// Connect + handshake + IDSizes synchronously, then hand the socket's read
+// side to a green reader task that routes replies → replyCh, events → eventCh.
+// Events seen during boot are forwarded to eventCh, not dropped.
+fn jdwpAttach(host: &string, port: u16, eventCh: Channel<Packet>): Result<JdwpIo> {
+    var ip: u32 = 0
+    match resolve(host) {
+        Result.Ok(v) => {
+            ip = v
         }
-        return Result.Ok(0)
+        Result.Err(_e) => {
+            return Result.Err("cannot resolve " + host.clone())
+        }
+    }
+    var fd: i32 = -1
+    match TcpStream.connect(ip, port) {
+        Result.Ok(s) => {
+            var stream = s
+            // take() detaches the fd so the stream's Drop won't close it.
+            fd = stream.take()
+        }
+        Result.Err(_e) => {
+            return Result.Err("cannot connect to JDWP agent at " + host.clone() + ":" + port.toString())
+        }
+    }
+    var reader = fdReaderAttach(fd)
+
+    let magic: string = "JDWP-Handshake"
+    writeAllFd(fd, magic)?
+    let echo = reader.readExact(14)?
+    if echo != magic {
+        return Result.Err("bad JDWP handshake reply")
     }
 
-    fn writeAll(self: &JdwpClient, data: &string): Result<i64> {
-        unsafe {
-            let n = write(self.fd, data, data.len)
-            if n < data.len as i64 {
-                return Result.Err("short write to JVM socket")
+    // IDSizes inline (id 1): can't use request() yet — no reader task running.
+    var head = newWriter()
+    head.u32(11)
+    head.u32(1)
+    head.u8(0)
+    head.u8(1)
+    head.u8(7)
+    writeAllFd(fd, head.buf)?
+    var sizes = defaultSizes()
+    while true {
+        let pkt = readPacketFrom(reader)?
+        if pkt.isReply && pkt.id == 1 {
+            if pkt.errorCode != 0 {
+                return Result.Err("IDSizes failed: error " + pkt.errorCode.toString())
             }
-            return Result.Ok(n)
+            var r = newReader(pkt.body)
+            sizes.fieldId = r.u32()
+            sizes.methodId = r.u32()
+            sizes.objectId = r.u32()
+            sizes.referenceTypeId = r.u32()
+            sizes.frameId = r.u32()
+            break
         }
+        let _s = eventCh.send(pkt)
     }
 
-    // Send one command packet and block until its reply arrives, skipping any
-    // event packets that show up in between.
-    fn request(self: &mut JdwpClient, cmdSet: i64, cmd: i64, body: &string): Result<PacketReader> {
+    let replyCh = Channel<Packet>.new(8)!
+    // The boot FdReader may have buffered bytes past the IDSizes reply, so the
+    // task must take THIS reader, not attach a fresh one.
+    Task.spawn(move(): void => {
+        while true {
+            match readPacketFrom(reader) {
+                Result.Ok(pkt) => {
+                    if pkt.isReply {
+                        match replyCh.send(pkt) {
+                            Result.Ok(_v) => {
+                            }
+                            Result.Err(_e) => {
+                                break
+                            }
+                        }
+                    } else {
+                        match eventCh.send(pkt) {
+                            Result.Ok(_v) => {
+                            }
+                            Result.Err(_e) => {
+                                break
+                            }
+                        }
+                    }
+                }
+                Result.Err(_e) => {
+                    let _x = eventCh.send(synthPacket(-1, 0, ""))
+                    break
+                }
+            }
+        }
+    }
+    )
+
+    return Result.Ok(JdwpIo {
+        fd: fd, nextId: 2, sizes: sizes, replyCh: replyCh
+    }
+    )
+}
+
+fn writeAllFd(fd: i32, data: &string): Result<i64> {
+    unsafe {
+        let n = write(fd, data, data.len)
+        if n < data.len as i64 {
+            return Result.Err("short write to JVM socket")
+        }
+        return Result.Ok(n)
+    }
+}
+
+impl JdwpIo {
+    fn request(self: &mut JdwpIo, cmdSet: i64, cmd: i64, body: &string): Result<PacketReader> {
         let id = self.nextId
         self.nextId = self.nextId + 1
 
@@ -241,64 +439,51 @@ impl JdwpClient {
         head.u8(cmdSet)
         head.u8(cmd)
         let msg = head.buf + body.clone()
-        self.writeAll(msg)?
+        writeAllFd(self.fd, msg)?
 
-        while true {
-            let pkt = self.readPacket()?
-            if pkt.isReply && pkt.id == id {
+        // Single outstanding request: the next reply is ours (assert anyway).
+        match self.replyCh.recv() {
+            Result.Ok(pkt) => {
+                if pkt.id != id {
+                    return Result.Err("JDWP reply id mismatch: sent " + id.toString() + " got " + pkt.id.toString())
+                }
                 if pkt.errorCode != 0 {
                     return Result.Err("JDWP error " + pkt.errorCode.toString() + " for command " + cmdSet.toString() + "/" + cmd.toString())
                 }
                 return Result.Ok(newReader(pkt.body))
             }
-            // Event packet (or stale reply) — ignore in M1's synchronous client.
+            Result.Err(_e) => {
+                return Result.Err("JDWP connection closed")
+            }
         }
-        return Result.Err("unreachable")
     }
 
-    fn readPacket(self: &mut JdwpClient): Result<Packet> {
-        var head = newReader(self.reader.readExact(11)?)
-        let length = head.u32()
-        let id = head.u32()
-        let flags = head.u8()
-        if length < 11 {
-            return Result.Err("bad JDWP packet length " + length.toString())
-        }
-        var errorCode: i64 = 0
-        var cmdSet: i64 = 0
-        var cmd: i64 = 0
-        let isReply = (flags & 128) != 0
-        if isReply {
-            errorCode = head.u16()
-        } else {
-            cmdSet = head.u8()
-            cmd = head.u8()
-        }
-        var body: string = ""
-        if length > 11 {
-            body = self.reader.readExact(length - 11)?
-        }
-        return Result.Ok(Packet {
-            id: id, isReply: isReply, errorCode: errorCode,
-            cmdSet: cmdSet, cmd: cmd, body: body,
-        }
-        )
+    fn writeLocation(self: &JdwpIo, w: &mut PacketWriter, loc: &Location): void {
+        w.u8(loc.typeTag)
+        w.id(loc.classId, self.sizes.referenceTypeId)
+        w.id(loc.methodId, self.sizes.methodId)
+        w.u64(loc.index)
     }
 
-    // --- VirtualMachine command set (1) ------------------------------------
-
-    fn loadIdSizes(self: &mut JdwpClient): Result<i64> {
-        let empty: string = ""
-        var r = self.request(1, 7, empty)?
-        self.sizes.fieldId = r.u32()
-        self.sizes.methodId = r.u32()
-        self.sizes.objectId = r.u32()
-        self.sizes.referenceTypeId = r.u32()
-        self.sizes.frameId = r.u32()
-        return Result.Ok(0)
+    fn readLocation(self: &JdwpIo, r: &mut PacketReader): Location {
+        return Location {
+            typeTag: r.u8(),
+            classId: r.id(self.sizes.referenceTypeId),
+            methodId: r.id(self.sizes.methodId),
+            index: r.u64(),
+        }
     }
 
-    fn version(self: &mut JdwpClient): Result<VmVersion> {
+    fn readValue(self: &JdwpIo, r: &mut PacketReader): JValue {
+        let tag = r.u8()
+        return JValue {
+            tag: tag, num: r.id(tagWidth(tag, self.sizes))
+        }
+    }
+
+    // --- VirtualMachine (1) -------------------------------------------------
+
+    fn version(self: &mut JdwpIo): Result<VmVersion> {
         let empty: string = ""
         var r = self.request(1, 1, empty)?
         return Result.Ok(VmVersion {
@@ -311,11 +496,28 @@ impl JdwpClient {
         )
     }
 
-    fn allThreads(self: &mut JdwpClient): Result<Vec<i64>> {
+    // → loaded classes matching a JNI signature: their referenceTypeIDs.
+    fn classesBySignature(self: &mut JdwpIo, sig: &string): Result<Vec<i64>> {
+        var w = newWriter()
+        w.str(sig)
+        var r = self.request(1, 2, w.buf)?
+        let n = r.u32()
+        var out: Vec<i64> = []
+        var i: i64 = 0
+        while i < n {
+            let _tag = r.u8()
+            out.push(r.id(self.sizes.referenceTypeId))
+            let _status = r.u32()
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    fn allThreads(self: &mut JdwpIo): Result<Vec<i64>> {
         let empty: string = ""
         var r = self.request(1, 4, empty)?
         let n = r.u32()
-        var out: Vec<i64> = Vec.new()
+        var out: Vec<i64> = []
         var i: i64 = 0
         while i < n {
             out.push(r.id(self.sizes.objectId))
@@ -324,25 +526,386 @@ impl JdwpClient {
         return Result.Ok(out)
     }
 
-    fn resume(self: &mut JdwpClient): Result<i64> {
+    fn dispose(self: &mut JdwpIo): Result<i64> {
         let empty: string = ""
-        self.request(1, 9, empty)?
+        let _r = self.request(1, 6, empty)?
         return Result.Ok(0)
     }
 
-    // --- ThreadReference command set (11) ----------------------------------
+    fn suspendAll(self: &mut JdwpIo): Result<i64> {
+        let empty: string = ""
+        let _r = self.request(1, 8, empty)?
+        return Result.Ok(0)
+    }
 
-    fn threadName(self: &mut JdwpClient, threadId: i64): Result<string> {
+    fn resumeAll(self: &mut JdwpIo): Result<i64> {
+        let empty: string = ""
+        let _r = self.request(1, 9, empty)?
+        return Result.Ok(0)
+    }
+
+    fn exitVm(self: &mut JdwpIo, code: i64): Result<i64> {
+        var w = newWriter()
+        w.u32(code)
+        // The VM dies on receipt; it may not even send the reply. Fire and
+        // don't fail the caller if the socket drops mid-request.
+        match self.request(1, 10, w.buf) {
+            Result.Ok(_r) => {
+            }
+            Result.Err(_e) => {
+            }
+        }
+        return Result.Ok(0)
+    }
+
+    // --- ReferenceType (2) --------------------------------------------------
+
+    fn typeSignature(self: &mut JdwpIo, classId: i64): Result<string> {
+        var w = newWriter()
+        w.id(classId, self.sizes.referenceTypeId)
+        var r = self.request(2, 1, w.buf)?
+        return Result.Ok(r.str())
+    }
+
+    fn typeFields(self: &mut JdwpIo, classId: i64): Result<Vec<FieldInfo>> {
+        var w = newWriter()
+        w.id(classId, self.sizes.referenceTypeId)
+        var r = self.request(2, 4, w.buf)?
+        let n = r.u32()
+        var out: Vec<FieldInfo> = []
+        var i: i64 = 0
+        while i < n {
+            out.push(FieldInfo {
+                fieldId: r.id(self.sizes.fieldId),
+                name: r.str(),
+                signature: r.str(),
+                modBits: r.u32(),
+            }
+            )
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    fn typeMethods(self: &mut JdwpIo, classId: i64): Result<Vec<MethodInfo>> {
+        var w = newWriter()
+        w.id(classId, self.sizes.referenceTypeId)
+        var r = self.request(2, 5, w.buf)?
+        let n = r.u32()
+        var out: Vec<MethodInfo> = []
+        var i: i64 = 0
+        while i < n {
+            out.push(MethodInfo {
+                methodId: r.id(self.sizes.methodId),
+                name: r.str(),
+                signature: r.str(),
+                modBits: r.u32(),
+            }
+            )
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    fn sourceFile(self: &mut JdwpIo, classId: i64): Result<string> {
+        var w = newWriter()
+        w.id(classId, self.sizes.referenceTypeId)
+        var r = self.request(2, 7, w.buf)?
+        return Result.Ok(r.str())
+    }
+
+    // --- Method (6) ---------------------------------------------------------
+
+    fn lineTable(self: &mut JdwpIo, classId: i64, methodId: i64): Result<Vec<LineEntry>> {
+        var w = newWriter()
+        w.id(classId, self.sizes.referenceTypeId)
+        w.id(methodId, self.sizes.methodId)
+        var r = self.request(6, 1, w.buf)?
+        let _start = r.u64()
+        let _end = r.u64()
+        let n = r.u32()
+        var out: Vec<LineEntry> = []
+        var i: i64 = 0
+        while i < n {
+            out.push(LineEntry {
+                codeIndex: r.u64(), line: r.u32()
+            }
+            )
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    fn variableTable(self: &mut JdwpIo, classId: i64, methodId: i64): Result<Vec<VarSlot>> {
+        var w = newWriter()
+        w.id(classId, self.sizes.referenceTypeId)
+        w.id(methodId, self.sizes.methodId)
+        var r = self.request(6, 2, w.buf)?
+        let _argCnt = r.u32()
+        let n = r.u32()
+        var out: Vec<VarSlot> = []
+        var i: i64 = 0
+        while i < n {
+            out.push(VarSlot {
+                codeIndex: r.u64(),
+                name: r.str(),
+                signature: r.str(),
+                length: r.u32(),
+                slot: r.u32(),
+            }
+            )
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    // --- ObjectReference (9) / StringReference (10) ---------------------------
+
+    // → referenceTypeID of an object.
+    fn objectType(self: &mut JdwpIo, objectId: i64): Result<i64> {
+        var w = newWriter()
+        w.id(objectId, self.sizes.objectId)
+        var r = self.request(9, 1, w.buf)?
+        let _tag = r.u8()
+        return Result.Ok(r.id(self.sizes.referenceTypeId))
+    }
+
+    fn objectGetValues(self: &mut JdwpIo, objectId: i64, fieldIds: &Vec<i64>): Result<Vec<JValue>> {
+        var w = newWriter()
+        w.id(objectId, self.sizes.objectId)
+        w.u32(fieldIds.len)
+        for f in fieldIds {
+            w.id(f, self.sizes.fieldId)
+        }
+        var r = self.request(9, 2, w.buf)?
+        let n = r.u32()
+        var out: Vec<JValue> = []
+        var i: i64 = 0
+        while i < n {
+            out.push(self.readValue(r))
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    fn stringValue(self: &mut JdwpIo, strId: i64): Result<string> {
+        var w = newWriter()
+        w.id(strId, self.sizes.objectId)
+        var r = self.request(10, 1, w.buf)?
+        return Result.Ok(r.str())
+    }
+
+    // --- ThreadReference (11) -------------------------------------------------
+
+    fn threadName(self: &mut JdwpIo, threadId: i64): Result<string> {
         var w = newWriter()
         w.id(threadId, self.sizes.objectId)
         var r = self.request(11, 1, w.buf)?
         return Result.Ok(r.str())
     }
 
-    fn threadStatus(self: &mut JdwpClient, threadId: i64): Result<i64> {
+    fn threadResume(self: &mut JdwpIo, threadId: i64): Result<i64> {
+        var w = newWriter()
+        w.id(threadId, self.sizes.objectId)
+        let _r = self.request(11, 3, w.buf)?
+        return Result.Ok(0)
+    }
+
+    // → threadStatus (suspendStatus read and dropped).
+    fn threadStatus(self: &mut JdwpIo, threadId: i64): Result<i64> {
         var w = newWriter()
         w.id(threadId, self.sizes.objectId)
         var r = self.request(11, 4, w.buf)?
-        return Result.Ok(r.u32())
+        let st = r.u32()
+        let _susp = r.u32()
+        return Result.Ok(st)
+    }
+
+    fn threadFrames(self: &mut JdwpIo, threadId: i64, start: i64, count: i64): Result<Vec<FrameEntry>> {
+        var w = newWriter()
+        w.id(threadId, self.sizes.objectId)
+        w.u32(start)
+        w.u32(count) // -1 (0xffffffff) = all remaining
+        var r = self.request(11, 6, w.buf)?
+        let n = r.u32()
+        var out: Vec<FrameEntry> = []
+        var i: i64 = 0
+        while i < n {
+            let fid = r.id(self.sizes.frameId)
+            out.push(FrameEntry {
+                frameId: fid, loc: self.readLocation(r)
+            }
+            )
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    // --- ArrayReference (13) ----------------------------------------------------
+
+    fn arrayLength(self: &mut JdwpIo, arrId: i64): Result<i64> {
+        var w = newWriter()
+        w.id(arrId, self.sizes.objectId)
+        var r = self.request(13, 1, w.buf)?
+        return Result.Ok(r.i32v())
+    }
+
+    // ArrayRegion: primitive regions are UNTAGGED (one leading tag byte for the
+    // whole region), object regions are per-element tagged values.
+    fn arrayGetValues(self: &mut JdwpIo, arrId: i64, first: i64, count: i64): Result<Vec<JValue>> {
+        var w = newWriter()
+        w.id(arrId, self.sizes.objectId)
+        w.u32(first)
+        w.u32(count)
+        var r = self.request(13, 2, w.buf)?
+        let regionTag = r.u8()
+        let n = r.u32()
+        var out: Vec<JValue> = []
+        var i: i64 = 0
+        while i < n {
+            if isObjectTag(regionTag) {
+                out.push(self.readValue(r))
+            } else {
+                out.push(JValue {
+                    tag: regionTag, num: r.id(tagWidth(regionTag, self.sizes))
+                }
+                )
+            }
+            i = i + 1
+        }
+        return Result.Ok(out)
+    }
+
+    // --- StackFrame (16) ---------------------------------------------------------
+
+    // slots/tags: parallel vectors — slot index + expected tag byte (from the
+    // variable's JNI signature first byte).
+    fn frameGetValues(self: &mut JdwpIo, threadId: i64, frameId: i64, slots: &Vec<i64>, tags: &Vec<i64>): Result<Vec<JValue>> {
+        var w = newWriter()
+        w.id(threadId, self.sizes.objectId)
+        w.id(frameId, self.sizes.frameId)
+        w.u32(slots.len)
+        var i: i64 = 0
+        while i < slots.len {
+            w.u32(slots[i])
+            w.u8(tags[i])
+            i = i + 1
+        }
+        var r = self.request(16, 1, w.buf)?
+        let n = r.u32()
+        var out: Vec<JValue> = []
+        var j: i64 = 0
+        while j < n {
+            out.push(self.readValue(r))
+            j = j + 1
+        }
+        return Result.Ok(out)
+    }
+
+    fn frameThisObject(self: &mut JdwpIo, threadId: i64, frameId: i64): Result<JValue> {
+        var w = newWriter()
+        w.id(threadId, self.sizes.objectId)
+        w.id(frameId, self.sizes.frameId)
+        var r = self.request(16, 3, w.buf)?
+        return Result.Ok(self.readValue(r))
+    }
+
+    // --- EventRequest (15) ---------------------------------------------------------
+
+    // → requestID. suspendPolicy 2 = ALL (matches DAP's stopped-world model).
+    fn setBreakpointReq(self: &mut JdwpIo, loc: &Location): Result<i64> {
+        var w = newWriter()
+        w.u8(2) // BREAKPOINT
+        w.u8(2) // suspend ALL
+        w.u32(1)
+        w.u8(7) // LocationOnly
+        self.writeLocation(w, loc)
+        var r = self.request(15, 1, w.buf)?
+        return Result.Ok(r.i32v())
+    }
+
+    fn setClassPrepareReq(self: &mut JdwpIo, pattern: &string): Result<i64> {
+        var w = newWriter()
+        w.u8(8) // CLASS_PREPARE
+        w.u8(1) // suspend EVENT_THREAD: pause only that thread to plant bps
+        w.u32(1)
+        w.u8(5) // ClassMatch
+        w.str(pattern)
+        var r = self.request(15, 1, w.buf)?
+        return Result.Ok(r.i32v())
+    }
+
+    // depth: 0 INTO, 1 OVER, 2 OUT (size fixed to LINE).
+    fn setStepReq(self: &mut JdwpIo, threadId: i64, depth: i64): Result<i64> {
+        var w = newWriter()
+        w.u8(1) // SINGLE_STEP
+        w.u8(2) // suspend ALL
+        w.u32(2)
+        w.u8(10) // Step modifier
+        w.id(threadId, self.sizes.objectId)
+        w.u32(1) // StepSize LINE
+        w.u32(depth)
+        w.u8(1) // Count modifier: fire once
+        w.u32(1)
+        var r = self.request(15, 1, w.buf)?
+        return Result.Ok(r.i32v())
+    }
+
+    fn clearEventReq(self: &mut JdwpIo, eventKind: i64, requestId: i64): Result<i64> {
+        var w = newWriter()
+        w.u8(eventKind)
+        w.u32(requestId)
+        match self.request(15, 2, w.buf) {
+            Result.Ok(_r) => {
+            }
+            Result.Err(_e) => {
+            } // already expired (Count) — not an error
+        }
+        return Result.Ok(0)
+    }
+
+    // --- Event (64) -------------------------------------------------------------
+
+    // Parse a Composite event packet body into flattened events.
+    fn parseComposite(self: &JdwpIo, body: string): Vec<JdwpEvent> {
+        var r = newReader(body)
+        let _policy = r.u8()
+        let n = r.u32()
+        var out: Vec<JdwpEvent> = []
+        var i: i64 = 0
+        while i < n {
+            let kind = r.u8()
+            let requestId = r.i32v()
+            var ev = JdwpEvent {
+                kind: kind, requestId: requestId, thread: 0,
+                loc: zeroLocation(), signature: "", typeId: 0
+            }
+            if kind == 1 || kind == 2 {
+                // SINGLE_STEP / BREAKPOINT: thread + location
+                ev.thread = r.id(self.sizes.objectId)
+                ev.loc = self.readLocation(r)
+            } else if kind == 8 {
+                // CLASS_PREPARE: thread, refTypeTag, typeID, signature, status
+                ev.thread = r.id(self.sizes.objectId)
+                let _tt = r.u8()
+                ev.typeId = r.id(self.sizes.referenceTypeId)
+                ev.signature = r.str()
+                let _status = r.u32()
+            } else if kind == 6 || kind == 7 || kind == 90 {
+                // THREAD_START / THREAD_DEATH / VM_START: thread
+                ev.thread = r.id(self.sizes.objectId)
+            } else if kind == 99 {
+                // VM_DEATH: no payload
+            } else {
+                // Unknown kind — payload size unknowable; stop parsing rather
+                // than misalign (we never request kinds outside this set).
+                eprint("[java-dap] unknown event kind " + kind.toString() + ", dropping rest of composite\n")
+                out.push(ev)
+                return out
+            }
+            out.push(ev)
+            i = i + 1
+        }
+        return out
     }
 }

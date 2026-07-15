@@ -1,0 +1,27 @@
+// Regression: nested `??` on drop-typed payloads (string) used a phi keyed on
+// the syntactic none-block; a nested default expr changes the real predecessor
+// and produced invalid LLVM IR ("instruction does not dominate all uses").
+
+fn pick(a: Option<string>, b: Option<string>): string {
+    return a ?? (b ?? "fallback")
+}
+
+fn threeDeep(a: Option<i64>, b: Option<i64>, c: Option<i64>): i64 {
+    return a ?? (b ?? (c ?? 42))
+}
+
+fn main(): void {
+    print(pick(Option.Some("top"), Option.Some("mid")))
+    print(pick(Option.None, Option.Some("mid")))
+    print(pick(Option.None, Option.None))
+
+    let ni: Option<i64> = Option.None
+    print(threeDeep(ni, ni, ni).toString())
+    print(threeDeep(ni, Option.Some(7), ni).toString())
+}
+
+// @expect: top
+// @expect: mid
+// @expect: fallback
+// @expect: 42
+// @expect: 7

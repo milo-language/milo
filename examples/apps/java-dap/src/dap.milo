@@ -1,0 +1,1750 @@
+// DAP server: stdio (Content-Length JSON) on one side, JDWP on the other.
+//
+// Two phases. Pre-attach: only initialize/launch/attach are meaningful (hades
+// and VS Code both send setBreakpoints only after our `initialized` event,
+// which we emit once the JVM is connected). Attached: a select loop over
+// {stdin readable, JDWP event channel} — DAP requests are handled inline
+// (JDWP request/reply parks this task; events queue in eventCh meanwhile).
+//
+// All diagnostics go to stderr: stdout carries DAP frames only.
+
+from "std/io" import {
+    FdReader, fdReaderAttach, readFile
+}
+from "std/os" import {
+    exit
+}
+from "std/fs" import {
+    pathExists
+}
+from "std/env" import {
+    getEnvOr
+}
+from "std/sync" import {
+    Channel
+}
+from "std/runtime" import {
+    Task
+}
+from "std/select" import {
+    Select, selectRecv
+}
+from "std/json" import {
+    Json, jsonParse, jsonObj, jsonArr
+}
+from "std/string" import {
+    strSplit, strTrim, strEndsWith, strStartsWith, strContains
+}
+from "std/strconv" import {
+    formatFloat
+}
+from "std/process" import {
+    Child
+}
+from "std/time" import {
+    sleepMs
+}
+from "framing" import {
+    readFrame, writeFrameFd
+}
+from "jdwp" import {
+    JdwpIo, jdwpAttach, Packet, synthPacket, Location, zeroLocation,
+    MethodInfo, FieldInfo, LineEntry, VarSlot, FrameEntry, JValue, JdwpEvent,
+    isObjectTag, IdSizes, defaultSizes,
+}
+
+// ---------------------------------------------------------------------------
+// DAP output writer. seq is adapter-global; every frame is one write().
+
+struct DapOut {
+    seq: i64,
+}
+
+impl DapOut {
+    fn sendRaw(self: &mut DapOut, json: &string): void {
+        let n = writeFrameFd(1, json)
+        if n < 0 {
+            eprint("[java-dap] short write on DAP stdout\n")
+        }
+    }
+
+    fn event(self: &mut DapOut, name: &string, body: &string): void {
+        self.seq = self.seq + 1
+        let msg = jsonObj().int("seq", self.seq).str("type", "event")
+        .str("event", name.clone()).raw("body", body.clone()).build()
+        self.sendRaw(msg)
+    }
+
+    fn respond(self: &mut DapOut, reqSeq: i64, command: &string, body: &string): void {
+        self.seq = self.seq + 1
+        let msg = jsonObj().int("seq", self.seq).str("type", "response")
+        .int("request_seq", reqSeq).bool("success", true)
+        .str("command", command.clone()).raw("body", body.clone()).build()
+        self.sendRaw(msg)
+    }
+
+    fn fail(self: &mut DapOut, reqSeq: i64, command: &string, message: &string): void {
+        self.seq = self.seq + 1
+        let msg = jsonObj().int("seq", self.seq).str("type", "response")
+        .int("request_seq", reqSeq).bool("success", false)
+        .str("command", command.clone()).str("message", message.clone()).build()
+        self.sendRaw(msg)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Session state.
+
+// Per-source-file breakpoint record. classId == 0 means the class isn't
+// loaded yet: a CLASS_PREPARE request (prepReqId) is armed and lines resolve
+// when the event fires.
+struct BpFile {
+    srcPath: string,
+    className: string,
+    signature: string,
+    lines: Vec<i64>,
+    reqIds: Vec<i64>,
+    reqLines: Vec<i64>,
+    classId: i64,
+    prepReqId: i64,
+}
+
+// Methods of a loaded class, cached (stackTrace hits this per frame).
+struct ClassCache {
+    classId: i64,
+    signature: string,
+    methods: Vec<MethodInfo>,
+}
+
+// One frame of the last stop, addressable by DAP frame id.
+struct CachedFrame {
+    dapId: i64,
+    threadId: i64, // jdwp
+    frameId: i64, // jdwp
+    classId: i64,
+    methodId: i64,
+    codeIndex: i64,
+}
+
+// variablesReference registry entry. kind: 1 locals (a = frames index),
+// 2 object fields (a = objectId), 3 array elements (a = objectId).
+struct VarRef {
+    kind: i64,
+    a: i64,
+}
+
+struct Sess {
+    io: JdwpIo,
+    out: DapOut,
+    eventCh: Channel<Packet>,
+    threads: Vec<i64>, // jdwp ids; DAP id = index + 1
+    bps: Vec<BpFile>,
+    classes: Vec<ClassCache>,
+    frames: Vec<CachedFrame>,
+    varRefs: Vec<VarRef>,
+    stepReqId: i64,
+    launched: bool, // we spawned the JVM (vs attach)
+    terminated: bool, // terminated event already sent
+    program: string, // launch `program` (main .java path, may be "")
+    sourceRoots: Vec<string>,
+}
+
+// ---------------------------------------------------------------------------
+// Entry point.
+
+fn dapServe(): i64 {
+    var out = DapOut {
+        seq: 0
+    }
+    let eventCh = Channel<Packet>.new(256)!
+
+    // ── phase 1: not attached ──
+    var io: Option<JdwpIo> = Option.None
+    var launched = false
+    var program: string = ""
+    var sourceRoots: Vec<string> = []
+    while true {
+        var raw: string = ""
+        match readFrame(0) {
+            Result.Ok(s) => {
+                raw = s
+            }
+            Result.Err(_e) => {
+                return 0
+            } // client hung up before attach
+        }
+        var req: Json = jsonParse("{}")!
+        match jsonParse(raw) {
+            Result.Ok(d) => {
+                req = d
+            }
+            Result.Err(_e) => {
+                continue
+            }
+        }
+        let cmd = req.str("command") ?? ""
+        let seq = req.i64("seq") ?? (0 as i64)
+        if cmd == "initialize" {
+            out.respond(seq, cmd, capabilitiesJson())
+        } else if cmd == "launch" || cmd == "attach" {
+            var args: Json = jsonParse("{}")!
+            match req.get("arguments") {
+                Option.Some(a) => {
+                    args = a
+                }
+                Option.None => {
+                }
+            }
+            program = args.str("program") ?? ""
+            sourceRoots = strArray(args, "sourceRoots")
+            match connectJvm(cmd == "launch", args, eventCh) {
+                Result.Ok(j) => {
+                    io = Option.Some(j)
+                    launched = cmd == "launch"
+                    out.respond(seq, cmd, "{}")
+                    out.event("initialized", "{}")
+                    break
+                }
+                Result.Err(e) => {
+                    out.fail(seq, cmd, e)
+                }
+            }
+        } else if cmd == "disconnect" {
+            out.respond(seq, cmd, "{}")
+            return 0
+        } else if cmd.len > 0 {
+            out.fail(seq, cmd, "not attached")
+        }
+    }
+
+    var theIo: JdwpIo = JdwpIo {
+        fd: -1 as i32, nextId: 0, sizes: defaultSizes(), replyCh: Channel<Packet>.new(1)!
+    }
+    match io {
+        Option.Some(j) => {
+            theIo = j
+        }
+        Option.None => {
+            return 1
+        }
+    }
+
+    var sess = Sess {
+        io: theIo, out: out, eventCh: eventCh,
+        threads: [], bps: [], classes: [], frames: [], varRefs: [],
+        stepReqId: 0, launched: launched, terminated: false,
+        program: program, sourceRoots: sourceRoots,
+    }
+
+    // ── phase 2: attached ──
+    while true {
+        var sel = Select.new()
+        sel.onRead(0) // arm 0: DAP request
+        selectRecv(sel, sess.eventCh) // arm 1: JDWP/synthetic event
+        let arm = sel.wait()
+        sel.destroy()
+        if arm == 0 {
+            match readFrame(0) {
+                Result.Ok(raw) => {
+                    if sess.dispatch(raw) {
+                        return 0
+                    }
+                }
+                Result.Err(_e) => {
+                    // client hung up: leave the debuggee as disconnect would
+                    sess.shutdown(true)
+                    return 0
+                }
+            }
+        } else {
+            match sess.eventCh.tryRecv() {
+                Option.Some(pkt) => {
+                    sess.handlePacket(pkt)
+                }
+                Option.None => {
+                }
+            }
+        }
+    }
+    return 0
+}
+
+fn capabilitiesJson(): string {
+    return jsonObj()
+    .bool("supportsConfigurationDoneRequest", true)
+    .bool("supportsTerminateRequest", true)
+    .bool("supportsEvaluateForHovers", false)
+    .bool("supportsConditionalBreakpoints", false)
+    .bool("supportsFunctionBreakpoints", false)
+    .bool("supportsDelayedStackTraceLoading", false)
+    .raw("exceptionBreakpointFilters", "[]")
+    .build()
+}
+
+// string-array launch key → Vec<string> (missing/invalid → empty).
+fn strArray(args: &Json, key: &string): Vec<string> {
+    var out: Vec<string> = []
+    match args.get(key) {
+        Option.Some(arr) => {
+            if arr.isArray() {
+                let n = arr.len()
+                var i: i64 = 0
+                while i < n {
+                    match arr.at(i) {
+                        Option.Some(el) => {
+                            match el.asStr() {
+                                Option.Some(s) => {
+                                    out.push(s)
+                                }
+                                Option.None => {
+                                }
+                            }
+                        }
+                        Option.None => {
+                        }
+                    }
+                    i = i + 1
+                }
+            }
+        }
+        Option.None => {
+        }
+    }
+    return out
+}
+
+// ---------------------------------------------------------------------------
+// Launch / attach.
+
+// launch: spawn `java -agentlib:jdwp=...,server=y,suspend=y,address=PORT` and
+// attach to it; child stdout/stderr/exit flow into eventCh as synthetic
+// packets. attach: connect to a JDWP agent the user started.
+fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result<JdwpIo> {
+    if !isLaunch {
+        let host = args.str("hostName") ?? (args.str("host") ?? "localhost")
+        let port = args.i64("port") ?? (0 as i64)
+        if port <= 0 {
+            return Result.Err("attach needs \"port\" (JDWP agent port)")
+        }
+        return jdwpAttach(host, port as u16, eventCh)
+    }
+
+    let program = args.str("program") ?? ""
+    var mainClass = args.str("mainClass") ?? ""
+    if mainClass.len == 0 {
+        if program.len == 0 {
+            return Result.Err("launch needs \"mainClass\" or \"program\"")
+        }
+        mainClass = classNameForSource(program)
+        if mainClass.len == 0 {
+            return Result.Err("cannot derive mainClass from " + program)
+        }
+    }
+    var cp = joinPaths(strArray(args, "classPaths"))
+    if cp.len == 0 {
+        if program.len > 0 {
+            cp = dirOf(program)
+        } else {
+            cp = "."
+        }
+    }
+    let port = args.i64("jdwpPort") ?? (15737 as i64)
+    let java = findJava(args.str("javaPath") ?? "")
+    if java.len == 0 {
+        return Result.Err("no java executable found — set \"javaPath\" or JAVA_HOME")
+    }
+
+    var argv: Vec<string> = []
+    argv.push("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=" + port.toString())
+    for vm in strArray(args, "vmArgs") {
+        argv.push(vm.clone())
+    }
+    argv.push("-cp")
+    argv.push(cp)
+    argv.push(mainClass)
+    for a in strArray(args, "args") {
+        argv.push(a.clone())
+    }
+
+    var child: Child = Child {
+        pid: -1 as i32, stdinFd: -1 as i32, stdoutFd: -1 as i32, stderrFd: -1 as i32
+    }
+    match Child.spawn(java, argv, false) {
+        Result.Ok(c) => {
+            child = c
+        }
+        Result.Err(e) => {
+            return Result.Err("failed to spawn java: " + e)
+        }
+    }
+
+    // Forward child output + exit into the event loop. The waiter task owns
+    // the Child; the JVM is stopped via JDWP (VirtualMachine.Exit), never a
+    // signal, so nothing else needs the handle.
+    let outCh = child.stdout()
+    let errCh = child.stderr()
+    Task.spawn(move(): void => {
+        while true {
+            match errCh.recv() {
+                Result.Ok(chunk) => {
+                    let _s = eventCh.send(synthPacket(-3, 0, chunk))
+                }
+                Result.Err(_e) => {
+                    break
+                }
+            }
+        }
+    }
+    )
+    // Gate the connect on the agent's own banner: connecting before the agent
+    // listens can hang in TcpStream.connect (kqueue never reports a failed
+    // connect as readable). The banner goes to child stdout; chunks seen here
+    // are still forwarded as output events.
+    var booted = false
+    while !booted {
+        match outCh.recv() {
+            Result.Ok(chunk) => {
+                if strContains(chunk, "Listening for transport") {
+                    booted = true
+                }
+                let _s = eventCh.send(synthPacket(-2, 0, chunk))
+            }
+            Result.Err(_e) => {
+                return Result.Err("JVM exited before its JDWP agent listened (check vmArgs/classPaths)")
+            }
+        }
+    }
+    // Remaining stdout flows via the forwarder from here on. Child exit is
+    // detected by this pipe's EOF: Child.wait is a BLOCKING waitpid, which
+    // would freeze the whole green scheduler if a task called it while the
+    // JVM still runs — after EOF the child is dead and the reap is instant.
+    Task.spawn(move(): void => {
+        while true {
+            match outCh.recv() {
+                Result.Ok(chunk) => {
+                    let _s = eventCh.send(synthPacket(-2, 0, chunk))
+                }
+                Result.Err(_e) => {
+                    break
+                }
+            }
+        }
+        var code: i64 = -1
+        match child.wait() {
+            Result.Ok(c) => {
+                code = c as i64
+            }
+            Result.Err(_e) => {
+            }
+        }
+        let _s = eventCh.send(synthPacket(-4, code, ""))
+    }
+    )
+
+    let host: string = "127.0.0.1"
+    var tries: i64 = 0
+    while tries < 20 {
+        match jdwpAttach(host, port as u16, eventCh) {
+            Result.Ok(io) => {
+                return Result.Ok(io)
+            }
+            Result.Err(_e) => {
+            }
+        }
+        sleepMs(100)
+        tries = tries + 1
+    }
+    return Result.Err("JVM spawned but JDWP agent never listened on port " + port.toString())
+}
+
+fn findJava(explicit: string): string {
+    if explicit.len > 0 {
+        return explicit
+    }
+    let home = getEnvOr("JAVA_HOME", "")
+    if home.len > 0 && pathExists(home + "/bin/java") {
+        return home + "/bin/java"
+    }
+    if pathExists("/opt/homebrew/opt/openjdk/bin/java") {
+        return "/opt/homebrew/opt/openjdk/bin/java"
+    }
+    if pathExists("/usr/local/opt/openjdk/bin/java") {
+        return "/usr/local/opt/openjdk/bin/java"
+    }
+    // PATH probe via the shell-independent common locations; last resort bare name.
+    if pathExists("/usr/bin/java") {
+        return "/usr/bin/java"
+    }
+    return "java"
+}
+
+fn joinPaths(v: Vec<string>): string {
+    var out: string = ""
+    var first = true
+    for p in v {
+        if !first {
+            out.push(':' as u8)
+        }
+        out = out + p.clone()
+        first = false
+    }
+    return out
+}
+
+fn dirOf(path: &string): string {
+    var lastSlash: i64 = -1
+    var i: i64 = 0
+    while i < path.len {
+        if path[i] == '/' {
+            lastSlash = i
+        }
+        i = i + 1
+    }
+    if lastSlash <= 0 {
+        return "."
+    }
+    return path.substr(0, lastSlash)
+}
+
+fn baseNameNoExt(path: &string): string {
+    var start: i64 = 0
+    var i: i64 = 0
+    while i < path.len {
+        if path[i] == '/' {
+            start = i + 1
+        }
+        i = i + 1
+    }
+    var end = path.len
+    if strEndsWith(path, ".java") {
+        end = path.len - 5
+    }
+    return path.substr(start, end)
+}
+
+// Derive the fully-qualified class name of a .java file: `package` decl (if
+// any) + filename stem. Good for top-level public classes — the normal case.
+fn classNameForSource(path: &string): string {
+    let stem = baseNameNoExt(path)
+    var pkg: string = ""
+    match readFile(path) {
+        Result.Ok(text) => {
+            let lines = strSplit(text, "\n")
+            for line in lines {
+                let t = strTrim(line)
+                if strStartsWith(t, "package ") {
+                    var p = t.substr(8, t.len)
+                    // strip trailing ';' and whitespace
+                    var end = p.len
+                    while end > 0 && (p[end - 1] == ';' || p[end - 1] == ' ') {
+                        end = end - 1
+                    }
+                    pkg = p.substr(0, end)
+                    break
+                }
+                // package decl precedes any type decl; stop at one
+                if strStartsWith(t, "public ") || strStartsWith(t, "class ")
+                || strStartsWith(t, "interface ") || strStartsWith(t, "record ") {
+                    break
+                }
+            }
+        }
+        Result.Err(_e) => {
+        }
+    }
+    if pkg.len == 0 {
+        return stem
+    }
+    return pkg + "." + stem
+}
+
+// dotted class name → JNI signature: com.example.Main → Lcom/example/Main;
+fn jniSignature(className: &string): string {
+    var out: string = "L"
+    for ch in className {
+        if ch == '.' {
+            out.push('/' as u8)
+        } else {
+            out.push(ch)
+        }
+    }
+    out.push(';' as u8)
+    return out
+}
+
+// JNI signature → dotted class name (arrays/primitives → best effort).
+fn prettyTypeName(sig: &string): string {
+    if sig.len == 0 {
+        return "?"
+    }
+    if sig[0] == '[' {
+        let inner = sig.substr(1, sig.len)
+        return prettyTypeName(inner) + "[]"
+    }
+    if sig[0] == 'L' {
+        var out: string = ""
+        var i: i64 = 1
+        while i < sig.len - 1 {
+            if sig[i] == '/' {
+                out.push('.' as u8)
+            } else {
+                out.push(sig[i])
+            }
+            i = i + 1
+        }
+        return out
+    }
+    if sig[0] == 'I' {
+        return "int"
+    }
+    if sig[0] == 'J' {
+        return "long"
+    }
+    if sig[0] == 'Z' {
+        return "boolean"
+    }
+    if sig[0] == 'B' {
+        return "byte"
+    }
+    if sig[0] == 'S' {
+        return "short"
+    }
+    if sig[0] == 'C' {
+        return "char"
+    }
+    if sig[0] == 'F' {
+        return "float"
+    }
+    if sig[0] == 'D' {
+        return "double"
+    }
+    if sig[0] == 'V' {
+        return "void"
+    }
+    return sig.clone()
+}
+
+// Last dotted segment: com.example.Main → Main
+fn simpleName(dotted: &string): string {
+    var start: i64 = 0
+    var i: i64 = 0
+    while i < dotted.len {
+        if dotted[i] == '.' {
+            start = i + 1
+        }
+        i = i + 1
+    }
+    return dotted.substr(start, dotted.len)
+}
+
+// IEEE-754 bit pattern → f64, decoded manually (no bit-cast in safe Milo).
+// expBits/manBits: 11/52 for double, 8/23 for float.
+fn floatFromBits(bits: i64, expBits: i64, manBits: i64): string {
+    let sign = (bits >> (expBits + manBits)) & 1
+    let expMax = (1 << expBits) - 1
+    let exp = (bits >> manBits) & expMax
+    let man = bits & ((1 << manBits) - 1)
+    if exp == expMax {
+        if man != 0 {
+            return "NaN"
+        }
+        if sign == 1 {
+            return "-Infinity"
+        }
+        return "Infinity"
+    }
+    if exp == 0 && man == 0 {
+        if sign == 1 {
+            return "-0.0"
+        }
+        return "0.0"
+    }
+    let bias = (1 << (expBits - 1)) - 1
+    var manScale: f64 = 1.0
+    var k: i64 = 0
+    while k < manBits {
+        manScale = manScale * 2.0
+        k = k + 1
+    }
+    var frac: f64 = (man as f64) / manScale
+    var e = exp - bias
+    if exp == 0 {
+        // subnormal: no implicit leading 1, exponent is 1-bias
+        e = 1 - bias
+    } else {
+        frac = frac + 1.0
+    }
+    var val = frac
+    while e > 0 {
+        val = val * 2.0
+        e = e - 1
+    }
+    while e < 0 {
+        val = val / 2.0
+        e = e + 1
+    }
+    if sign == 1 {
+        val = 0.0 - val
+    }
+    return formatFloat(val, 6)
+}
+
+// Sign-extend an unsigned value of `bits` width.
+fn signExtend(v: i64, bits: i64): i64 {
+    let signBit = 1 << (bits - 1)
+    if (v & signBit) != 0 {
+        return v - (1 << bits)
+    }
+    return v
+}
+
+// ---------------------------------------------------------------------------
+// Request dispatch + handlers.
+
+impl Sess {
+    // returns true when the adapter should exit (disconnect/terminate handled).
+    fn dispatch(self: &mut Sess, raw: string): bool {
+        var req: Json = jsonParse("{}")!
+        match jsonParse(raw) {
+            Result.Ok(d) => {
+                req = d
+            }
+            Result.Err(_e) => {
+                return false
+            }
+        }
+        let cmd = req.str("command") ?? ""
+        let seq = req.i64("seq") ?? (0 as i64)
+        var args: Json = jsonParse("{}")!
+        match req.get("arguments") {
+            Option.Some(a) => {
+                args = a
+            }
+            Option.None => {
+            }
+        }
+
+        if cmd == "setBreakpoints" {
+            self.onSetBreakpoints(seq, args)
+        } else if cmd == "configurationDone" {
+            let _r = self.io.resumeAll()
+            self.out.respond(seq, cmd, "{}")
+        } else if cmd == "threads" {
+            self.onThreads(seq)
+        } else if cmd == "stackTrace" {
+            self.onStackTrace(seq, args)
+        } else if cmd == "scopes" {
+            self.onScopes(seq, args)
+        } else if cmd == "variables" {
+            self.onVariables(seq, args)
+        } else if cmd == "continue" {
+            self.invalidateStop()
+            let _r = self.io.resumeAll()
+            self.out.respond(seq, cmd, "{\"allThreadsContinued\":true}")
+        } else if cmd == "next" {
+            self.onStep(seq, cmd, args, 1)
+        } else if cmd == "stepIn" {
+            self.onStep(seq, cmd, args, 0)
+        } else if cmd == "stepOut" {
+            self.onStep(seq, cmd, args, 2)
+        } else if cmd == "pause" {
+            self.onPause(seq, args)
+        } else if cmd == "evaluate" {
+            self.onEvaluate(seq, args)
+        } else if cmd == "source" {
+            self.out.fail(seq, cmd, "source request not supported")
+        } else if cmd == "disconnect" || cmd == "terminate" {
+            // terminateDebuggee default: kill what we launched, leave what we
+            // attached to (DAP's documented default).
+            var killIt = self.launched
+            match args.bool("terminateDebuggee") {
+                Option.Some(b) => {
+                    killIt = b
+                }
+                Option.None => {
+                }
+            }
+            self.out.respond(seq, cmd, "{}")
+            self.shutdown(killIt)
+            return true
+        } else if cmd == "initialize" {
+            self.out.respond(seq, cmd, capabilitiesJson())
+        } else if cmd == "launch" || cmd == "attach" {
+            self.out.fail(seq, cmd, "already attached")
+        } else if cmd.len > 0 {
+            self.out.fail(seq, cmd, "unsupported request: " + cmd)
+        }
+        return false
+    }
+
+    fn shutdown(self: &mut Sess, killDebuggee: bool): void {
+        if killDebuggee {
+            let _r = self.io.exitVm(0)
+        } else {
+            match self.io.dispose() {
+                Result.Ok(_v) => {
+                }
+                Result.Err(_e) => {
+                }
+            }
+        }
+    }
+
+    // Drop per-stop caches (frames + variable refs) — resuming invalidates both.
+    fn invalidateStop(self: &mut Sess): void {
+        self.frames = []
+        self.varRefs = []
+    }
+
+    // ── threads ──
+
+    fn dapThreadId(self: &mut Sess, jdwpId: i64): i64 {
+        var i: i64 = 0
+        while i < self.threads.len {
+            if self.threads[i] == jdwpId {
+                return i + 1
+            }
+            i = i + 1
+        }
+        self.threads.push(jdwpId)
+        return self.threads.len
+    }
+
+    fn jdwpThreadOf(self: &Sess, dapId: i64): i64 {
+        if dapId >= 1 && dapId <= self.threads.len {
+            return self.threads[dapId - 1]
+        }
+        return 0
+    }
+
+    fn onThreads(self: &mut Sess, seq: i64): void {
+        var ids: Vec<i64> = []
+        match self.io.allThreads() {
+            Result.Ok(v) => {
+                ids = v
+            }
+            Result.Err(e) => {
+                let c: string = "threads"
+                self.out.fail(seq, c, e)
+                return
+            }
+        }
+        var arr = jsonArr()
+        for t in ids {
+            let dapId = self.dapThreadId(t)
+            var name: string = "thread-" + dapId.toString()
+            match self.io.threadName(t) {
+                Result.Ok(n) => {
+                    name = n
+                }
+                Result.Err(_e) => {
+                }
+            }
+            arr = arr.raw(jsonObj().int("id", dapId).str("name", name).build())
+        }
+        let c: string = "threads"
+        self.out.respond(seq, c, jsonObj().raw("threads", arr.build()).build())
+    }
+
+    // ── breakpoints ──
+
+    fn onSetBreakpoints(self: &mut Sess, seq: i64, args: Json): void {
+        let cmdName: string = "setBreakpoints"
+        var path: string = ""
+        match args.get("source") {
+            Option.Some(src) => {
+                path = src.str("path") ?? ""
+            }
+            Option.None => {
+            }
+        }
+        var lines: Vec<i64> = []
+        match args.get("breakpoints") {
+            Option.Some(arr) => {
+                let n = arr.len()
+                var i: i64 = 0
+                while i < n {
+                    match arr.i64At(i, "line") {
+                        Option.Some(l) => {
+                            lines.push(l)
+                        }
+                        Option.None => {
+                        }
+                    }
+                    i = i + 1
+                }
+            }
+            Option.None => {
+            }
+        }
+        if path.len == 0 {
+            self.out.fail(seq, cmdName, "setBreakpoints needs source.path")
+            return
+        }
+
+        let className = classNameForSource(path)
+        let sig = jniSignature(className)
+
+        // find-or-create the per-file record; clear its old requests.
+        var idx: i64 = -1
+        var i: i64 = 0
+        while i < self.bps.len {
+            if self.bps[i].srcPath == path {
+                idx = i
+                break
+            }
+            i = i + 1
+        }
+        if idx < 0 {
+            self.bps.push(BpFile {
+                srcPath: path.clone(), className: className.clone(),
+                signature: sig.clone(), lines: [], reqIds: [], reqLines: [],
+                classId: 0, prepReqId: 0
+            }
+            )
+            idx = self.bps.len - 1
+        }
+        for rid in self.bps[idx].reqIds {
+            let _c = self.io.clearEventReq(2, rid)
+        }
+        self.bps[idx].reqIds = []
+        self.bps[idx].reqLines = []
+        var newLines: Vec<i64> = []
+        for l in lines {
+            newLines.push(l)
+        }
+        self.bps[idx].lines = newLines
+
+        // class loaded already?
+        if self.bps[idx].classId == 0 {
+            match self.io.classesBySignature(sig) {
+                Result.Ok(cls) => {
+                    if cls.len > 0 {
+                        self.bps[idx].classId = cls[0]
+                    }
+                }
+                Result.Err(_e) => {
+                }
+            }
+        }
+
+        var results: string = ""
+        if self.bps[idx].classId != 0 {
+            results = self.plantBreakpoints(idx)
+        } else {
+            // defer: arm CLASS_PREPARE for this class (once per file record)
+            if self.bps[idx].prepReqId == 0 {
+                match self.io.setClassPrepareReq(className) {
+                    Result.Ok(rid) => {
+                        self.bps[idx].prepReqId = rid
+                    }
+                    Result.Err(_e) => {
+                    }
+                }
+            }
+            var arr = jsonArr()
+            for l in lines {
+                arr = arr.raw(jsonObj().bool("verified", false).int("line", l).str("message", "class " + className.clone() + " not loaded yet").build())
+            }
+            results = arr.build()
+        }
+        self.out.respond(seq, cmdName, jsonObj().raw("breakpoints", results).build())
+    }
+
+    // Set JDWP breakpoints for every requested line of bps[idx] (class loaded).
+    // Returns the DAP breakpoints array JSON.
+    fn plantBreakpoints(self: &mut Sess, idx: i64): string {
+        let classId = self.bps[idx].classId
+        var methods: Vec<MethodInfo> = []
+        match self.classMethods(classId) {
+            Result.Ok(m) => {
+                methods = m
+            }
+            Result.Err(_e) => {
+            }
+        }
+        var arr = jsonArr()
+        var lineIdx: i64 = 0
+        while lineIdx < self.bps[idx].lines.len {
+            let want = self.bps[idx].lines[lineIdx]
+            var planted = false
+            for m in methods {
+                match self.io.lineTable(classId, m.methodId) {
+                    Result.Ok(table) => {
+                        for entry in table {
+                            if entry.line == want {
+                                let loc = Location {
+                                    typeTag: 1, classId: classId,
+                                    methodId: m.methodId, index: entry.codeIndex
+                                }
+                                match self.io.setBreakpointReq(loc) {
+                                    Result.Ok(rid) => {
+                                        self.bps[idx].reqIds.push(rid)
+                                        self.bps[idx].reqLines.push(want)
+                                        planted = true
+                                    }
+                                    Result.Err(_e) => {
+                                    }
+                                }
+                                break
+                            }
+                        }
+                    }
+                    Result.Err(_e) => {
+                    }
+                }
+                if planted {
+                    break
+                }
+            }
+            arr = arr.raw(jsonObj().bool("verified", planted).int("line", want).build())
+            lineIdx = lineIdx + 1
+        }
+        return arr.build()
+    }
+
+    // ── stepping / pause ──
+
+    fn onStep(self: &mut Sess, seq: i64, cmd: string, args: Json, depth: i64): void {
+        let dapTid = args.i64("threadId") ?? (1 as i64)
+        let tid = self.jdwpThreadOf(dapTid)
+        if tid == 0 {
+            self.out.fail(seq, cmd, "unknown threadId")
+            return
+        }
+        if self.stepReqId != 0 {
+            let _c = self.io.clearEventReq(1, self.stepReqId)
+            self.stepReqId = 0
+        }
+        match self.io.setStepReq(tid, depth) {
+            Result.Ok(rid) => {
+                self.stepReqId = rid
+            }
+            Result.Err(e) => {
+                self.out.fail(seq, cmd, e)
+                return
+            }
+        }
+        self.invalidateStop()
+        let _r = self.io.resumeAll()
+        self.out.respond(seq, cmd, "{}")
+    }
+
+    fn onPause(self: &mut Sess, seq: i64, args: Json): void {
+        let c: string = "pause"
+        match self.io.suspendAll() {
+            Result.Ok(_v) => {
+            }
+            Result.Err(e) => {
+                self.out.fail(seq, c, e)
+                return
+            }
+        }
+        self.out.respond(seq, c, "{}")
+        let dapTid = args.i64("threadId") ?? (1 as i64)
+        self.out.event("stopped", jsonObj().str("reason", "pause").int("threadId", dapTid).bool("allThreadsStopped", true).build())
+    }
+
+    // ── stack / scopes / variables ──
+
+    fn classMethods(self: &mut Sess, classId: i64): Result<Vec<MethodInfo>> {
+        var i: i64 = 0
+        while i < self.classes.len {
+            if self.classes[i].classId == classId {
+                var out: Vec<MethodInfo> = []
+                for m in self.classes[i].methods {
+                    out.push(MethodInfo {
+                        methodId: m.methodId, name: m.name.clone(),
+                        signature: m.signature.clone(), modBits: m.modBits
+                    }
+                    )
+                }
+                return Result.Ok(out)
+            }
+            i = i + 1
+        }
+        let sig = self.io.typeSignature(classId)?
+        let methods = self.io.typeMethods(classId)?
+        var stash: Vec<MethodInfo> = []
+        for m in methods {
+            stash.push(MethodInfo {
+                methodId: m.methodId, name: m.name.clone(),
+                signature: m.signature.clone(), modBits: m.modBits
+            }
+            )
+        }
+        self.classes.push(ClassCache {
+            classId: classId, signature: sig, methods: stash
+        }
+        )
+        return Result.Ok(methods)
+    }
+
+    fn classSignature(self: &mut Sess, classId: i64): string {
+        var i: i64 = 0
+        while i < self.classes.len {
+            if self.classes[i].classId == classId {
+                return self.classes[i].signature.clone()
+            }
+            i = i + 1
+        }
+        // classMethods populates the cache (signature included)
+        match self.classMethods(classId) {
+            Result.Ok(_m) => {
+            }
+            Result.Err(_e) => {
+                return ""
+            }
+        }
+        var j: i64 = 0
+        while j < self.classes.len {
+            if self.classes[j].classId == classId {
+                return self.classes[j].signature.clone()
+            }
+            j = j + 1
+        }
+        return ""
+    }
+
+    fn methodNameOf(self: &mut Sess, classId: i64, methodId: i64): string {
+        match self.classMethods(classId) {
+            Result.Ok(methods) => {
+                for m in methods {
+                    if m.methodId == methodId {
+                        return m.name.clone()
+                    }
+                }
+            }
+            Result.Err(_e) => {
+            }
+        }
+        return "?"
+    }
+
+    // best-effort line for a code index: greatest table line whose codeIndex <= idx.
+    fn lineForIndex(self: &mut Sess, classId: i64, methodId: i64, codeIndex: i64): i64 {
+        match self.io.lineTable(classId, methodId) {
+            Result.Ok(table) => {
+                var best: i64 = 0
+                var bestIdx: i64 = -1
+                for e in table {
+                    if e.codeIndex <= codeIndex && e.codeIndex >= bestIdx {
+                        bestIdx = e.codeIndex
+                        best = e.line
+                    }
+                }
+                return best
+            }
+            Result.Err(_e) => {
+                return 0
+            }
+        }
+    }
+
+    // source path for a class: breakpoint files first, then the launch
+    // program, then sourceRoots + package path + SourceFile.
+    fn sourcePathFor(self: &mut Sess, classId: i64, sig: &string): string {
+        var i: i64 = 0
+        while i < self.bps.len {
+            if self.bps[i].signature == sig {
+                return self.bps[i].srcPath.clone()
+            }
+            i = i + 1
+        }
+        let dotted = prettyTypeName(sig)
+        if self.program.len > 0 && classNameForSource(self.program) == dotted {
+            return self.program.clone()
+        }
+        var srcName: string = ""
+        match self.io.sourceFile(classId) {
+            Result.Ok(s) => {
+                srcName = s
+            }
+            Result.Err(_e) => {
+                return ""
+            }
+        }
+        // package dirs: everything up to the last '/' of the JNI name
+        var pkgPath: string = ""
+        if sig.len > 2 {
+            let inner = sig.substr(1, sig.len - 1) // strip L ... ;
+            var lastSlash: i64 = -1
+            var j: i64 = 0
+            while j < inner.len {
+                if inner[j] == '/' {
+                    lastSlash = j
+                }
+                j = j + 1
+            }
+            if lastSlash > 0 {
+                pkgPath = inner.substr(0, lastSlash + 1)
+            }
+        }
+        for root in self.sourceRoots {
+            let cand = root.clone() + "/" + pkgPath.clone() + srcName.clone()
+            if pathExists(cand) {
+                return cand
+            }
+        }
+        if self.program.len > 0 {
+            let cand = dirOf(self.program) + "/" + srcName.clone()
+            if pathExists(cand) {
+                return cand
+            }
+        }
+        return ""
+    }
+
+    fn onStackTrace(self: &mut Sess, seq: i64, args: Json): void {
+        let c: string = "stackTrace"
+        let dapTid = args.i64("threadId") ?? (1 as i64)
+        let tid = self.jdwpThreadOf(dapTid)
+        if tid == 0 {
+            self.out.fail(seq, c, "unknown threadId")
+            return
+        }
+        var entries: Vec<FrameEntry> = []
+        match self.io.threadFrames(tid, 0, -1) {
+            Result.Ok(f) => {
+                entries = f
+            }
+            Result.Err(e) => {
+                self.out.fail(seq, c, e)
+                return
+            }
+        }
+        var arr = jsonArr()
+        var fi: i64 = 0
+        while fi < entries.len {
+            let fr = entries[fi]
+            let dapFrameId = self.frames.len + 1
+            self.frames.push(CachedFrame {
+                dapId: dapFrameId, threadId: tid,
+                frameId: fr.frameId, classId: fr.loc.classId,
+                methodId: fr.loc.methodId, codeIndex: fr.loc.index
+            }
+            )
+            let sig = self.classSignature(fr.loc.classId)
+            let cls = prettyTypeName(sig)
+            let mname = self.methodNameOf(fr.loc.classId, fr.loc.methodId)
+            let line = self.lineForIndex(fr.loc.classId, fr.loc.methodId, fr.loc.index)
+            let srcPath = self.sourcePathFor(fr.loc.classId, sig)
+            var b = jsonObj().int("id", dapFrameId)
+            .str("name", simpleName(cls) + "." + mname)
+            .int("line", line).int("column", 1)
+            if srcPath.len > 0 {
+                b = b.raw("source", jsonObj().str("name", baseNameNoExt(srcPath) + ".java").str("path", srcPath).build())
+            }
+            arr = arr.raw(b.build())
+            fi = fi + 1
+        }
+        self.out.respond(seq, c, jsonObj().raw("stackFrames", arr.build()).int("totalFrames", entries.len).build())
+    }
+
+    fn frameByDapId(self: &Sess, dapId: i64): i64 {
+        var i: i64 = 0
+        while i < self.frames.len {
+            if self.frames[i].dapId == dapId {
+                return i
+            }
+            i = i + 1
+        }
+        return -1
+    }
+
+    fn newVarRef(self: &mut Sess, kind: i64, a: i64): i64 {
+        self.varRefs.push(VarRef {
+            kind: kind, a: a
+        }
+        )
+        return self.varRefs.len
+    }
+
+    fn onScopes(self: &mut Sess, seq: i64, args: Json): void {
+        let c: string = "scopes"
+        let frameId = args.i64("frameId") ?? (0 as i64)
+        let fidx = self.frameByDapId(frameId)
+        if fidx < 0 {
+            self.out.fail(seq, c, "unknown frameId")
+            return
+        }
+        let localsRef = self.newVarRef(1, fidx)
+        var arr = jsonArr().raw(jsonObj().str("name", "Locals").int("variablesReference", localsRef).bool("expensive", false).build())
+        // "This" scope only when the frame has a this object (static methods don't)
+        let fr = self.frames[fidx]
+        match self.io.frameThisObject(fr.threadId, fr.frameId) {
+            Result.Ok(v) => {
+                if v.num != 0 {
+                    let thisRef = self.newVarRef(2, v.num)
+                    arr = arr.raw(jsonObj().str("name", "This").int("variablesReference", thisRef).bool("expensive", false).build())
+                }
+            }
+            Result.Err(_e) => {
+            }
+        }
+        self.out.respond(seq, c, jsonObj().raw("scopes", arr.build()).build())
+    }
+
+    // Render one JDWP value → DAP variable JSON (named `name`).
+    fn renderVariable(self: &mut Sess, name: &string, v: &JValue): string {
+        var value: string = ""
+        var typeName: string = ""
+        var ref: i64 = 0
+        let tag = v.tag
+        if tag == 90 {
+            typeName = "boolean"
+            if v.num != 0 {
+                value = "true"
+            } else {
+                value = "false"
+            }
+        } else if tag == 66 {
+            typeName = "byte"
+            value = signExtend(v.num, 8).toString()
+        } else if tag == 83 {
+            typeName = "short"
+            value = signExtend(v.num, 16).toString()
+        } else if tag == 73 {
+            typeName = "int"
+            value = signExtend(v.num, 32).toString()
+        } else if tag == 74 {
+            typeName = "long"
+            value = v.num.toString()
+        } else if tag == 67 {
+            typeName = "char"
+            if v.num >= 32 && v.num < 127 {
+                var s: string = "'"
+                s.push(v.num as u8)
+                s.push('\'' as u8)
+                value = s
+            } else {
+                value = "'\\u" + v.num.toString() + "'"
+            }
+        } else if tag == 70 {
+            typeName = "float"
+            value = floatFromBits(v.num, 8, 23)
+        } else if tag == 68 {
+            typeName = "double"
+            value = floatFromBits(v.num, 11, 52)
+        } else if tag == 115 {
+            typeName = "String"
+            if v.num == 0 {
+                value = "null"
+            } else {
+                match self.io.stringValue(v.num) {
+                    Result.Ok(s) => {
+                        value = "\"" + s + "\""
+                    }
+                    Result.Err(_e) => {
+                        value = "<string?>"
+                    }
+                }
+            }
+        } else if tag == 91 {
+            if v.num == 0 {
+                value = "null"
+            } else {
+                var len: i64 = -1
+                match self.io.arrayLength(v.num) {
+                    Result.Ok(l) => {
+                        len = l
+                    }
+                    Result.Err(_e) => {
+                    }
+                }
+                var elemType: string = "?"
+                match self.io.objectType(v.num) {
+                    Result.Ok(cid) => {
+                        elemType = prettyTypeName(self.classSignature(cid))
+                    }
+                    Result.Err(_e) => {
+                    }
+                }
+                typeName = elemType.clone()
+                value = elemType + " (length " + len.toString() + ")"
+                if len > 0 {
+                    ref = self.newVarRef(3, v.num)
+                }
+            }
+        } else if isObjectTag(tag) {
+            if v.num == 0 {
+                value = "null"
+            } else {
+                var cls: string = "Object"
+                match self.io.objectType(v.num) {
+                    Result.Ok(cid) => {
+                        cls = prettyTypeName(self.classSignature(cid))
+                    }
+                    Result.Err(_e) => {
+                    }
+                }
+                typeName = cls.clone()
+                value = cls + "@" + v.num.toString()
+                ref = self.newVarRef(2, v.num)
+            }
+        } else if tag == 86 {
+            value = "void"
+        } else {
+            value = "<tag " + tag.toString() + ">"
+        }
+        return jsonObj().str("name", name.clone()).str("value", value)
+        .str("type", typeName).int("variablesReference", ref).build()
+    }
+
+    fn onVariables(self: &mut Sess, seq: i64, args: Json): void {
+        let c: string = "variables"
+        let ref = args.i64("variablesReference") ?? (0 as i64)
+        if ref < 1 || ref > self.varRefs.len {
+            self.out.fail(seq, c, "unknown variablesReference")
+            return
+        }
+        let vr = self.varRefs[ref - 1]
+        var arr = jsonArr()
+
+        if vr.kind == 1 {
+            // locals of a cached frame, filtered to slots live at the frame's pc
+            let fr = self.frames[vr.a]
+            var slots: Vec<VarSlot> = []
+            match self.io.variableTable(fr.classId, fr.methodId) {
+                Result.Ok(t) => {
+                    slots = t
+                }
+                Result.Err(_e) => {
+                }
+            }
+            var slotIdxs: Vec<i64> = []
+            var slotTags: Vec<i64> = []
+            var names: Vec<string> = []
+            for s in slots {
+                if fr.codeIndex >= s.codeIndex && fr.codeIndex < s.codeIndex + s.length
+                && s.name != "this" {
+                    slotIdxs.push(s.slot)
+                    slotTags.push(s.signature[0] as i64)
+                    names.push(s.name.clone())
+                }
+            }
+            if slotIdxs.len > 0 {
+                match self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) {
+                    Result.Ok(vals) => {
+                        var i: i64 = 0
+                        while i < vals.len && i < names.len {
+                            arr = arr.raw(self.renderVariable(names[i], vals[i]))
+                            i = i + 1
+                        }
+                    }
+                    Result.Err(e) => {
+                        self.out.fail(seq, c, e)
+                        return
+                    }
+                }
+            }
+        } else if vr.kind == 2 {
+            // fields of an object (instance fields of its class; static skipped)
+            var classId: i64 = 0
+            match self.io.objectType(vr.a) {
+                Result.Ok(cid) => {
+                    classId = cid
+                }
+                Result.Err(e) => {
+                    self.out.fail(seq, c, e)
+                    return
+                }
+            }
+            var fields: Vec<FieldInfo> = []
+            match self.io.typeFields(classId) {
+                Result.Ok(f) => {
+                    fields = f
+                }
+                Result.Err(_e) => {
+                }
+            }
+            var ids: Vec<i64> = []
+            var names: Vec<string> = []
+            for f in fields {
+                if (f.modBits & 8) == 0 { // ACC_STATIC
+                    ids.push(f.fieldId)
+                    names.push(f.name.clone())
+                }
+            }
+            if ids.len > 0 {
+                match self.io.objectGetValues(vr.a, ids) {
+                    Result.Ok(vals) => {
+                        var i: i64 = 0
+                        while i < vals.len && i < names.len {
+                            arr = arr.raw(self.renderVariable(names[i], vals[i]))
+                            i = i + 1
+                        }
+                    }
+                    Result.Err(e) => {
+                        self.out.fail(seq, c, e)
+                        return
+                    }
+                }
+            }
+        } else {
+            // array elements, first 100
+            var len: i64 = 0
+            match self.io.arrayLength(vr.a) {
+                Result.Ok(l) => {
+                    len = l
+                }
+                Result.Err(_e) => {
+                }
+            }
+            var take = len
+            if take > 100 {
+                take = 100
+            }
+            if take > 0 {
+                match self.io.arrayGetValues(vr.a, 0, take) {
+                    Result.Ok(vals) => {
+                        var i: i64 = 0
+                        while i < vals.len {
+                            let nm = "[" + i.toString() + "]"
+                            arr = arr.raw(self.renderVariable(nm, vals[i]))
+                            i = i + 1
+                        }
+                    }
+                    Result.Err(e) => {
+                        self.out.fail(seq, c, e)
+                        return
+                    }
+                }
+            }
+        }
+        self.out.respond(seq, c, jsonObj().raw("variables", arr.build()).build())
+    }
+
+    // evaluate: dotted-path lookup over locals, then `this` fields. No
+    // compilation — `foo.bar.baz` walks object fields.
+    fn onEvaluate(self: &mut Sess, seq: i64, args: Json): void {
+        let c: string = "evaluate"
+        let expr = strTrim(args.str("expression") ?? "")
+        let frameId = args.i64("frameId") ?? (0 as i64)
+        let fidx = self.frameByDapId(frameId)
+        if expr.len == 0 || fidx < 0 {
+            self.out.fail(seq, c, "evaluate needs an expression and a frameId")
+            return
+        }
+        let parts = strSplit(expr, ".")
+        let fr = self.frames[fidx]
+
+        // resolve head: local, else field of this
+        var cur: JValue = JValue {
+            tag: 0, num: 0
+        }
+        var found = false
+        match self.io.variableTable(fr.classId, fr.methodId) {
+            Result.Ok(slots) => {
+                for s in slots {
+                    if s.name == parts[0] && fr.codeIndex >= s.codeIndex
+                    && fr.codeIndex < s.codeIndex + s.length {
+                        var slotIdxs: Vec<i64> = [s.slot]
+                        var slotTags: Vec<i64> = [s.signature[0] as i64]
+                        match self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) {
+                            Result.Ok(vals) => {
+                                if vals.len > 0 {
+                                    cur = vals[0]
+                                    found = true
+                                }
+                            }
+                            Result.Err(_e) => {
+                            }
+                        }
+                        break
+                    }
+                }
+            }
+            Result.Err(_e) => {
+            }
+        }
+        if !found {
+            match self.io.frameThisObject(fr.threadId, fr.frameId) {
+                Result.Ok(thisV) => {
+                    if thisV.num != 0 {
+                        match self.fieldOf(thisV.num, parts[0]) {
+                            Option.Some(v) => {
+                                cur = v
+                                found = true
+                            }
+                            Option.None => {
+                            }
+                        }
+                    }
+                }
+                Result.Err(_e) => {
+                }
+            }
+        }
+        if !found {
+            self.out.fail(seq, c, "cannot resolve \"" + parts[0] + "\" (locals and this searched)")
+            return
+        }
+
+        // walk the rest of the dotted path through object fields
+        var pi: i64 = 1
+        while pi < parts.len {
+            if !isObjectTag(cur.tag) || cur.num == 0 {
+                self.out.fail(seq, c, "\"" + parts[pi - 1] + "\" is not an object")
+                return
+            }
+            match self.fieldOf(cur.num, parts[pi]) {
+                Option.Some(v) => {
+                    cur = v
+                }
+                Option.None => {
+                    self.out.fail(seq, c, "no field \"" + parts[pi] + "\"")
+                    return
+                }
+            }
+            pi = pi + 1
+        }
+
+        let nm: string = "result"
+        let rendered = self.renderVariable(nm, cur)
+        // reshape the variable JSON into an evaluate response
+        match jsonParse(rendered) {
+            Result.Ok(d) => {
+                let value = d.str("value") ?? ""
+                let ref = d.i64("variablesReference") ?? (0 as i64)
+                let ty = d.str("type") ?? ""
+                self.out.respond(seq, c, jsonObj().str("result", value).str("type", ty).int("variablesReference", ref).build())
+            }
+            Result.Err(_e) => {
+                self.out.fail(seq, c, "internal render error")
+            }
+        }
+    }
+
+    fn fieldOf(self: &mut Sess, objectId: i64, name: &string): Option<JValue> {
+        var classId: i64 = 0
+        match self.io.objectType(objectId) {
+            Result.Ok(cid) => {
+                classId = cid
+            }
+            Result.Err(_e) => {
+                return Option.None
+            }
+        }
+        match self.io.typeFields(classId) {
+            Result.Ok(fields) => {
+                for f in fields {
+                    if f.name == name && (f.modBits & 8) == 0 {
+                        var ids: Vec<i64> = [f.fieldId]
+                        match self.io.objectGetValues(objectId, ids) {
+                            Result.Ok(vals) => {
+                                if vals.len > 0 {
+                                    return Option.Some(vals[0])
+                                }
+                            }
+                            Result.Err(_e) => {
+                            }
+                        }
+                    }
+                }
+            }
+            Result.Err(_e) => {
+            }
+        }
+        return Option.None
+    }
+
+    // ── JDWP / synthetic event handling ──
+
+    fn handlePacket(self: &mut Sess, pkt: Packet): void {
+        if pkt.cmdSet == 64 && pkt.cmd == 100 {
+            let events = self.io.parseComposite(pkt.body)
+            for ev in events {
+                self.handleEvent(ev)
+            }
+            return
+        }
+        if pkt.cmdSet == -1 {
+            self.emitTerminated()
+            return
+        }
+        if pkt.cmdSet == -2 {
+            self.out.event("output", jsonObj().str("category", "stdout").str("output", pkt.body.clone()).build())
+            return
+        }
+        if pkt.cmdSet == -3 {
+            self.out.event("output", jsonObj().str("category", "stderr").str("output", pkt.body.clone()).build())
+            return
+        }
+        if pkt.cmdSet == -4 {
+            self.out.event("exited", jsonObj().int("exitCode", pkt.errorCode).build())
+            self.emitTerminated()
+            return
+        }
+    }
+
+    fn emitTerminated(self: &mut Sess): void {
+        if self.terminated {
+            return
+        }
+        self.terminated = true
+        self.out.event("terminated", "{}")
+    }
+
+    fn handleEvent(self: &mut Sess, ev: &JdwpEvent): void {
+        if ev.kind == 2 {
+            // BREAKPOINT
+            self.invalidateStop()
+            let dapTid = self.dapThreadId(ev.thread)
+            self.out.event("stopped", jsonObj().str("reason", "breakpoint").int("threadId", dapTid).bool("allThreadsStopped", true).build())
+        } else if ev.kind == 1 {
+            // SINGLE_STEP (Count=1 → expired; clear bookkeeping regardless)
+            if self.stepReqId != 0 {
+                let _c = self.io.clearEventReq(1, self.stepReqId)
+                self.stepReqId = 0
+            }
+            self.invalidateStop()
+            let dapTid = self.dapThreadId(ev.thread)
+            self.out.event("stopped", jsonObj().str("reason", "step").int("threadId", dapTid).bool("allThreadsStopped", true).build())
+        } else if ev.kind == 8 {
+            // CLASS_PREPARE: plant deferred breakpoints, then let the thread go
+            var i: i64 = 0
+            while i < self.bps.len {
+                if self.bps[i].signature == ev.signature {
+                    self.bps[i].classId = ev.typeId
+                    let results = self.plantBreakpoints(i)
+                    // re-announce each breakpoint's new verified state
+                    match jsonParse(results) {
+                        Result.Ok(arr) => {
+                            let n = arr.len()
+                            var j: i64 = 0
+                            while j < n {
+                                match arr.at(j) {
+                                    Option.Some(bp) => {
+                                        self.out.event("breakpoint", jsonObj().str("reason", "changed").raw("breakpoint", bp.rawStr()).build())
+                                    }
+                                    Option.None => {
+                                    }
+                                }
+                                j = j + 1
+                            }
+                        }
+                        Result.Err(_e) => {
+                        }
+                    }
+                    if self.bps[i].prepReqId != 0 {
+                        let _c = self.io.clearEventReq(8, self.bps[i].prepReqId)
+                        self.bps[i].prepReqId = 0
+                    }
+                }
+                i = i + 1
+            }
+            let _r = self.io.threadResume(ev.thread)
+        } else if ev.kind == 6 {
+            let dapTid = self.dapThreadId(ev.thread)
+            self.out.event("thread", jsonObj().str("reason", "started").int("threadId", dapTid).build())
+        } else if ev.kind == 7 {
+            let dapTid = self.dapThreadId(ev.thread)
+            self.out.event("thread", jsonObj().str("reason", "exited").int("threadId", dapTid).build())
+        } else if ev.kind == 99 {
+            self.emitTerminated()
+        }
+        // VM_START (90) intentionally ignored: the VM stays suspended until
+        // configurationDone resumes it.
+    }
+}

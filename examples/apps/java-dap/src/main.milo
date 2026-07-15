@@ -1,9 +1,8 @@
 // java-dap — DAP adapter for the JVM, written in Milo. See ../design.md.
 //
-// M1 surface: `java-dap --attach <host>:<port> --smoke` connects to a JDWP
-// agent (java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=N),
-// performs the handshake, and prints VM version + thread list. Proves the
-// codec against a real JVM before any DAP machinery exists.
+// Default mode (no flags): DAP server over stdio — this is what a DAP client
+// (hades, VS Code) spawns. `--attach host:port --smoke` is the wire-level
+// self-test: connect to a JDWP agent, print VM version + threads, exit.
 
 from "std/argparse" import {
     newParser, ArgParser
@@ -11,19 +10,40 @@ from "std/argparse" import {
 from "std/os" import {
     exit
 }
+from "std/sync" import {
+    Channel
+}
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
 from "jdwp" import {
-    JdwpClient, jdwpConnect, VmVersion
+    JdwpIo, jdwpAttach, Packet
+}
+from "dap" import {
+    dapServe
 }
 
 fn main(): void {
-    var p = newParser("java-dap", "DAP debug adapter for the JVM (speaks JDWP to the java process)\n\n" + "M1 smoke test:\n" + "  java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005 Main &\n" + "  java-dap --attach localhost:5005 --smoke")
-    p.addString("attach", "a", "host:port of a listening JDWP agent", "")
+    var p = newParser("java-dap", "DAP debug adapter for the JVM (speaks JDWP to the java process)\n\n" + "default mode: DAP server on stdio (spawn me from a DAP client)\n\n" + "smoke test against a live JDWP agent:\n" + "  java -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005 Main &\n" + "  java-dap --attach localhost:5005 --smoke")
+    p.addString("attach", "a", "host:port of a listening JDWP agent (with --smoke)", "")
     p.addBool("smoke", "s", "connect, print VM version + threads, exit")
     let args = p.parse()
 
+    if !args.getBool("smoke") {
+        // the DAP loop lives in a green task: select/channel arms park on the
+        // green scheduler, which only runs via schedulerRunToCompletion()
+        Task.spawn(move(): void => {
+            let code = dapServe()
+            exit(code as i32)
+        }
+        )
+        schedulerRunToCompletion()
+        exit(0)
+    }
+
     let target = args.getString("attach")
     if target.len == 0 {
-        print("java-dap: --attach <host>:<port> is required (M1)")
+        print("java-dap: --smoke needs --attach <host>:<port>")
         exit(2)
     }
     let colon = _lastIndexOf(target, 58)
@@ -38,11 +58,6 @@ fn main(): void {
         exit(2)
     }
 
-    if !args.getBool("smoke") {
-        print("java-dap: only --smoke is implemented (M1)")
-        exit(2)
-    }
-
     match smoke(host, port as u16) {
         Result.Ok(v) => {
         }
@@ -54,17 +69,18 @@ fn main(): void {
 }
 
 fn smoke(host: &string, port: u16): Result<i64> {
-    var client = jdwpConnect(host, port)?
+    let eventCh = Channel<Packet>.new(64)!
+    var io = jdwpAttach(host, port, eventCh)?
 
-    let ver = client.version()?
+    let ver = io.version()?
     print("connected to " + ver.vmName + " " + ver.vmVersion + " (JDWP " + ver.jdwpMajor.toString() + "." + ver.jdwpMinor.toString() + ")")
-    print("id sizes: object=" + client.sizes.objectId.toString() + " method=" + client.sizes.methodId.toString() + " refType=" + client.sizes.referenceTypeId.toString())
+    print("id sizes: object=" + io.sizes.objectId.toString() + " method=" + io.sizes.methodId.toString() + " refType=" + io.sizes.referenceTypeId.toString())
 
-    let threads = client.allThreads()?
+    let threads = io.allThreads()?
     print("threads: " + threads.len.toString())
     for t in threads {
-        let name = client.threadName(t)?
-        let status = client.threadStatus(t)?
+        let name = io.threadName(t)?
+        let status = io.threadStatus(t)?
         print("  [" + t.toString() + "] " + name + " (status " + status.toString() + ")")
     }
     print("smoke ok")

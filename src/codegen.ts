@@ -4217,8 +4217,14 @@ export class Codegen {
     const enumTy = `%${expr.enumName}`;
     const resultTy = this.llvmType(expr.type);
 
+    // Merge via alloca+store, NOT a phi: the default expr may itself lower to
+    // control flow (nested `??`, short-circuit, match-expr), so the block that
+    // falls into doneLabel isn't necessarily noneLabel — a phi keyed on
+    // noneLabel is invalid IR there. Allocas hoisted to entry (loop safety).
     const enumAddr = this.nextTemp();
-    lines.push(`  ${enumAddr} = alloca ${enumTy}`);
+    this.entryAllocas.push(`  ${enumAddr} = alloca ${enumTy}`);
+    const resultAddr = this.nextTemp();
+    this.entryAllocas.push(`  ${resultAddr} = alloca ${resultTy}`);
     lines.push(`  store ${enumTy} ${ov}, ptr ${enumAddr}`);
     const tagPtr = this.nextTemp();
     lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${enumAddr}, i32 0, i32 0`);
@@ -4243,18 +4249,19 @@ export class Codegen {
       const srcAddr = this.localAddr(expr.operand.name);
       if (srcAddr) lines.push(`  store ${enumTy} zeroinitializer, ptr ${srcAddr}`);
     }
+    lines.push(`  store ${resultTy} ${someVal}, ptr ${resultAddr}`);
     lines.push(`  br label %${doneLabel}`);
 
     // none branch — use default
     lines.push(`${noneLabel}:`);
     const [dl, dv] = this.genExpr(expr.default);
     lines.push(...dl);
+    lines.push(`  store ${resultTy} ${dv}, ptr ${resultAddr}`);
     lines.push(`  br label %${doneLabel}`);
 
-    // merge with phi
     lines.push(`${doneLabel}:`);
     const result = this.nextTemp();
-    lines.push(`  ${result} = phi ${resultTy} [${someVal}, %${someLabel}], [${dv}, %${noneLabel}]`);
+    lines.push(`  ${result} = load ${resultTy}, ptr ${resultAddr}`);
     return [lines, result, resultTy];
   }
 
