@@ -54,26 +54,16 @@ The mission: prove that safe systems programming doesn't require a complex langu
 
 <div class="section-break"></div>
 
-<TourStepper />
-
-<div class="section-break"></div>
-
-### Go deeper
-
-- **[The language →](/language/)** — ownership and borrows without lifetimes, enums and exhaustive `match`, generics, traits, closures, and green-thread concurrency with no async coloring.
-- **[Contracts & safety →](/language/safety)** — `requires` / `ensures` / `invariant` discharged by `milo prove` (an SMT solver written in Milo), plus `milo safety` profiles for avionics-grade coding standards. Not a demo: the prover runs over Milo's own standard library on every test.
-- **[AI coding →](/ai-coding)** — no lifetimes to trip over, no undefined behavior to hide bugs, loud compile errors, and `milo skill` — a machine-readable language guide for any coding agent.
-
-<div class="section-break"></div>
-
 <div class="cta-section">
 
 ### Take Milo for a walk
 
 <div class="cta-buttons">
-  <a class="cta-primary" href="/milo/getting-started/installation">Get Started</a>
+  <a class="cta-primary" href="/milo/tour">Learn the basics · 11 lessons</a>
+  <a class="cta-secondary" href="/milo/language/">Language overview</a>
+  <a class="cta-secondary" href="/milo/stdlib/">Standard library</a>
   <a class="cta-secondary" href="/milo/playground">Playground</a>
-  <a class="cta-secondary" href="/milo/roadmap">Roadmap</a>
+  <a class="cta-secondary" href="/milo/getting-started/installation">Get Started</a>
   <a class="cta-secondary" href="https://github.com/cs01/milo">GitHub</a>
 </div>
 

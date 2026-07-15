@@ -24,7 +24,9 @@ Motorola 68000 + Z80 dual-CPU core with the VDP graphics processor and FM/PSG au
 
 ### <a href="https://github.com/cs01/milo/tree/main/examples/apps/hades" target="_blank">hades →</a>
 
-A web + AI interface for any DAP debugger (lldb-dap, debugpy), written in Milo. One binary, two subcommands: `hades web` serves a React + Monaco + xterm.js debugging UI from a Milo HTTP/WebSocket server — breakpoints, stepping, call stacks, watch expressions, and a real PTY terminal you can type into while your program runs. `hades mcp` exposes the same session to an AI over MCP: both you and the model see and drive the same debuggee. Debugs Milo binaries too — the compiler emits standard DWARF.
+[![hades web UI — stopped at a breakpoint inside classify(), showing the source view, call stack, locals, and a live lldb terminal](/hades/debugging.png)](https://github.com/cs01/milo/tree/main/examples/apps/hades)
+
+A web + AI interface for any DAP debugger (lldb-dap, debugpy), written in Milo. One binary, two subcommands: `hades web` serves a React + Monaco + xterm.js debugging UI from a Milo HTTP/WebSocket server — breakpoints, stepping, call stacks, expandable locals, watch expressions, an ARM64/x86 disassembly pane, and a real PTY terminal you can type into while your program runs. `hades mcp` exposes the same session to an AI over MCP: both you and the model see and drive the same debuggee. Debugs Milo binaries too — the compiler emits standard DWARF.
 
 ## Terminal & graphics apps
 

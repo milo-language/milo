@@ -30,6 +30,7 @@ export default defineConfig({
     },
 
     nav: [
+      { text: 'Tour', link: '/tour' },
       { text: 'Docs', link: '/getting-started/installation' },
       { text: 'Language', link: '/language/' },
       { text: 'Playground', link: '/playground' },
