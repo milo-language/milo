@@ -8,11 +8,16 @@ from "std/io" import {
     writeStdout
 }
 
+let MAX_HIST_ROWS: i64 = 1000 // scrollback cap (rows); trimmed to this when exceeded
+
 struct Term {
     cols: i64,
     rows: i64,
     chars: Vec<u8>,
     attrs: Vec<i32>,
+    // scrollback: rows scrolled off the top, oldest first, cols-per-row flattened
+    histChars: Vec<u8>,
+    histAttrs: Vec<i32>,
     cr: i64, // cursor row
     cc: i64, // cursor col
     attr: i32, // current pen
@@ -35,6 +40,7 @@ fn newTerm(rows: i64, cols: i64): Term {
     }
     return Term {
         cols: cols, rows: rows, chars: chars, attrs: attrs,
+        histChars: Vec.new(), histAttrs: Vec.new(),
         cr: 0, cc: 0, attr: 0, mode: 0,
         params: Vec.new(), curParam: 0, haveParam: false, priv: false
     }
@@ -59,8 +65,19 @@ impl Term {
         }
     }
 
-    // scroll the whole screen up one line, blanking the new bottom row
+    // scroll the whole screen up one line, blanking the new bottom row. The
+    // departing top row is pushed into scrollback first.
     fn scrollUp(self: &mut Self): void {
+        // save row 0 to history
+        var c0: i64 = 0
+        while c0 < self.cols {
+            let k = self.idx(0, c0)
+            self.histChars.push(self.chars[k])
+            self.histAttrs.push(self.attrs[k])
+            c0 = c0 + 1
+        }
+        self.trimHistory()
+
         var r: i64 = 1
         while r < self.rows {
             var c: i64 = 0
@@ -74,6 +91,79 @@ impl Term {
             r = r + 1
         }
         self.clearRow(self.rows - 1)
+    }
+
+    fn scrollbackRows(self: &Self): i64 {
+        return self.histChars.len / self.cols
+    }
+
+    // Cap scrollback: once it grows past 2x the limit, rebuild keeping the last
+    // MAX_HIST_ROWS (amortized O(n) so steady scrolling stays cheap).
+    fn trimHistory(self: &mut Self): void {
+        let have = self.histChars.len / self.cols
+        if have <= MAX_HIST_ROWS * 2 {
+            return
+        }
+        let drop = have - MAX_HIST_ROWS
+        let start = drop * self.cols
+        var nc: Vec<u8> = Vec.new()
+        var na: Vec<i32> = Vec.new()
+        var i = start
+        while i < self.histChars.len {
+            nc.push(self.histChars[i])
+            na.push(self.histAttrs[i])
+            i = i + 1
+        }
+        self.histChars = nc
+        self.histAttrs = na
+    }
+
+    // Render `rows` visible lines scrolled back by `offset` rows into history
+    // (offset 0 = the live screen). Combined view is [history…][live grid]; the
+    // viewport is bottom-anchored and shifted up by offset.
+    fn renderScrollback(self: &Self, startRow: i64, startCol: i64, offset: i64): string {
+        let hrows = self.scrollbackRows()
+        var off = offset
+        if off < 0 {
+            off = 0
+        }
+        if off > hrows {
+            off = hrows
+        }
+        let top = hrows - off // index of the first visible combined-row
+        var out = ""
+        var vr: i64 = 0
+        while vr < self.rows {
+            let vi = top + vr
+            out = out + $"\x1b[{startRow + vr};{startCol}H\x1b[0m"
+            var curAttr: i32 = 0
+            var c: i64 = 0
+            while c < self.cols {
+                var ch: u8 = 32
+                var a: i32 = 0
+                if vi < hrows {
+                    let k = vi * self.cols + c
+                    ch = self.histChars[k]
+                    a = self.histAttrs[k]
+                } else {
+                    let gr = vi - hrows
+                    if gr < self.rows {
+                        let k = gr * self.cols + c
+                        ch = self.chars[k]
+                        a = self.attrs[k]
+                    }
+                }
+                if a != curAttr {
+                    out = out + sgrFor(a)
+                    curAttr = a
+                }
+                out.push(ch)
+                c = c + 1
+            }
+            out = out + "\x1b[0m"
+            vr = vr + 1
+        }
+        return out
     }
 
     fn newline(self: &mut Self): void {
