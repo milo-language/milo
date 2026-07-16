@@ -151,6 +151,7 @@ export interface Contract {
 export interface Function {
   kind: "Function";
   name: string;
+  attributes?: Attribute[]; // `@cSig(...)` on an extern fn; other attrs are rejected by the checker
   sourceFile?: string; // set by the resolver; used to diagnose cross-module name collisions
   typeParams: TypeParam[];
   params: Param[];

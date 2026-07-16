@@ -1,0 +1,10 @@
+// @error: only an 'extern fn' has a C signature to verify
+// A Milo fn is compiled from this source — there's no foreign declaration to check.
+@cSig("unistd.h", "int f(int)")
+fn f(x: i32): i32 {
+    return x
+}
+
+fn main() {
+    print(f(1))
+}

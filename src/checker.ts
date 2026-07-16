@@ -66,6 +66,12 @@ export interface CLayout {
   header: string;
 }
 
+// A verified claim about an extern fn's C signature, from `@cSig(header, sig)`.
+export interface CSig {
+  header: string;
+  sig: string;
+}
+
 export interface EnumInfo {
   baseName?: string;
   variants: Map<string, { tag: number; fields: TypeKind[] }>;
@@ -102,6 +108,7 @@ export interface CheckResult {
   propagateConversions: Map<Expr, { targetEnumName: string; wrapVariant: string; wrapTag: number }>;
   rangeCheckedExprs: Map<Expr, { min: number; max: number; typeName: string }>;
   sizeOfTypes: Map<Expr, TypeKind>;
+  cSigs: Map<string, CSig>;
   offsetOfFields: Map<Expr, string>;
   interfaces: Map<string, InterfaceInfo>;
   interfaceCoercions: Map<Expr, { fromType: string; ifaceName: string }>;
@@ -212,6 +219,7 @@ export class TypeChecker {
   private closureCaptures = new Map<Expr, CaptureInfo[]>();
   private closureCalls = new Map<Expr, TypeKind>();
   private sizeOfTypes = new Map<Expr, TypeKind>();
+  private cSigs = new Map<string, CSig>();
   private offsetOfFields = new Map<Expr, string>();
   private closureScopeDepth: number | null = null;
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
@@ -1026,6 +1034,13 @@ export class TypeChecker {
 
     // register functions
     for (const fn of program.functions) {
+      if (fn.attributes) {
+        for (const attr of fn.attributes) {
+          if (attr.name === "cSig") this.checkCSig(fn, attr);
+          else this.error(`'@${attr.name}' is not supported on functions — '${fn.name}'`, undefined,
+            `only '@cSig' applies to a fn; it would be silently ignored otherwise`);
+        }
+      }
       if (fn.typeParams.length > 0) {
         this.genericFns.set(fn.name, { typeParams: fn.typeParams.map(tp => tp.name), decl: fn });
         continue;
@@ -1152,6 +1167,7 @@ export class TypeChecker {
       propagateConversions: this.propagateConversions,
       rangeCheckedExprs: this.rangeCheckedExprs,
       sizeOfTypes: this.sizeOfTypes,
+      cSigs: this.cSigs,
       offsetOfFields: this.offsetOfFields,
       interfaces: this.interfaces,
       interfaceCoercions: this.interfaceCoercions,
@@ -1423,7 +1439,41 @@ export class TypeChecker {
   // in silence, so a typo (`@clayout`, `@drive(Eq)`) looked like it worked while doing
   // nothing — the same silent-failure class @cLayout exists to close. Enums parse
   // attributes but nothing consumes them, so those are rejected rather than ignored.
-  private static readonly KNOWN_ATTRS = ["derive", "send", "sync", "cLayout"];
+  private static readonly KNOWN_ATTRS = ["derive", "send", "sync", "cLayout", "cSig"];
+
+  // `@cSig("unistd.h", "long sysconf(int)")` — the C signature is checked against the real
+  // header at build time. Milo's type system can't express C type identity (is `i64` a
+  // `long` or a `long long`? on macOS they're distinct types of the same width), so the
+  // compiler cannot derive this — the declaration states it and the build verifies it.
+  private checkCSig(f: Function, attr: Attribute): void {
+    if (!f.isExtern) {
+      this.error(`@cSig on '${f.name}': only an 'extern fn' has a C signature to verify`, undefined,
+        `a Milo fn is compiled from this source — there's no foreign declaration to check it against`);
+      return;
+    }
+    if (attr.args.length !== 2 || attr.argKinds?.some(k => k !== "string")) {
+      this.error(`@cSig on '${f.name}': expected two string arguments`, undefined,
+        `write '@cSig("unistd.h", "int ${f.name}(int)")' — the header, then the C signature as the header spells it`);
+      return;
+    }
+    const header = attr.args[0]!, sig = attr.args[1]!;
+    if (!TypeChecker.C_HEADER_RE.test(header)) {
+      this.error(`@cSig on '${f.name}': '${header}' is not a C header path`, undefined,
+        `expected a header ending in '.h', as written inside '#include <...>' — e.g. 'unistd.h'`);
+      return;
+    }
+    if (!TypeChecker.C_SIG_RE.test(sig)) {
+      this.error(`@cSig on '${f.name}': '${sig}' is not a C function signature`, undefined,
+        `expected the declaration as C spells it — e.g. 'ssize_t ${f.name}(int, void *, size_t)'`);
+      return;
+    }
+    if (!new RegExp(`(^|[^A-Za-z0-9_])${f.name}\\s*\\(`).test(sig)) {
+      this.error(`@cSig on '${f.name}': the signature declares a different function`, undefined,
+        `'${sig}' must name '${f.name}' — the assert is generated against that symbol`);
+      return;
+    }
+    this.cSigs.set(f.name, { header, sig });
+  }
 
   private validateAttributes(declName: string, attrs: Attribute[] | undefined, target: "struct" | "enum"): void {
     if (!attrs) return;
@@ -1444,6 +1494,11 @@ export class TypeChecker {
   // type position and inject arbitrary C.
   private static readonly C_TYPE_RE = /^(struct |union |enum )?[A-Za-z_][A-Za-z0-9_]*$/;
   private static readonly C_HEADER_RE = /^[A-Za-z0-9_][A-Za-z0-9_./+-]*\.h$/;
+  // A C function signature, pasted verbatim into a generated TU — so it's held to a
+  // charset that can't close the assert and inject statements. Allows what real decls
+  // need (`ssize_t f(int, void *, size_t)`, `struct tm *g(const time_t *)`, `void h(void)`)
+  // and nothing else: no quotes, no semicolons, no braces, no backslashes, no newlines.
+  private static readonly C_SIG_RE = /^[A-Za-z_][A-Za-z0-9_ ,*()[\]]*\)$/;
 
   private checkCLayout(s: StructDecl, attr: Attribute): void {
     if (!s.isExtern || s.isOpaque) {

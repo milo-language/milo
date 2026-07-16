@@ -101,10 +101,14 @@ export class Parser {
         } else if (nextTok && nextTok.kind === TokenKind.Type) {
           structs.push(this.parseExternType());
         } else {
-          functions.push(this.parseExternFn());
+          const f = this.parseExternFn();
+          if (attrs) f.attributes = attrs;
+          functions.push(f);
         }
       } else if (this.at(TokenKind.Fn)) {
-        functions.push(this.parseFn());
+        const f = this.parseFn();
+        if (attrs) f.attributes = attrs;
+        functions.push(f);
       } else if (this.at(TokenKind.Trait)) {
         traits.push(this.parseTraitDecl());
       } else if (this.at(TokenKind.Impl)) {

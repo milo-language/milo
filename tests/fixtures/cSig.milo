@@ -1,0 +1,27 @@
+// @cSig verifies an extern fn's signature against the real C header at build time.
+// `sysconf` is the case that motivated the design: it returns `long`, and on macOS
+// `int64_t` is `long long` — a distinct type of the same width. So the compiler cannot
+// derive the C signature from the Milo one; the declaration states it and the build
+// checks it. Mismatch cases live in tests/errors/cSig*.milo.
+@cSig("unistd.h", "long sysconf(int)")
+extern fn sysconf(name: i32): i64
+
+@cSig("unistd.h", "int close(int)")
+extern fn close(fd: i32): i32
+
+@cSig("stdlib.h", "int abs(int)")
+extern fn abs(x: i32): i32
+
+fn main() {
+    // _SC_PAGESIZE = 29 on darwin, 30 on linux — both return a sane page size.
+    let pageSize = sysconf(29)
+    // @expect: true
+    print(pageSize > 0)
+
+    // @expect: true
+    print(abs(-7) == 7)
+
+    // Closing a definitely-invalid fd returns -1; proves the i32 mapping round-trips.
+    // @expect: true
+    print(close(-1) == -1)
+}

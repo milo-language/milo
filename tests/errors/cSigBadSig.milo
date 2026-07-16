@@ -1,0 +1,9 @@
+// @error: is not a C function signature
+// The signature is pasted into a generated TU, so it's held to a charset that can't
+// close the assert and inject statements.
+@cSig("unistd.h", "int close(int)); void evil(void")
+extern fn close(fd: i32): i32
+
+fn main() {
+    print(close(-1))
+}

@@ -175,4 +175,6 @@ export interface HIRModule {
   // opaque extern struct names (dropped from `structs` since they have no body) — kept
   // so the C header generator can emit forward `typedef struct X X;` declarations
   opaqueTypes?: string[];
+  // From `@cSig(...)`: extern fn signatures to verify against real C headers at build time.
+  cSigs?: { fnName: string; header: string; sig: string; retType: TypeKind }[];
 }

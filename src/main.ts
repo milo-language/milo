@@ -66,24 +66,32 @@ function compile(source: string, target: TargetInfo, filePath?: string, warningC
   return compileWithGuards(source, target, filePath, warningConfig, debugOverflow, emitDebug).ir;
 }
 
-// `cGuards` is the `@cLayout` verification TU (null when the program declares none) —
-// see Codegen.cLayoutGuards. It rides alongside the IR because only codegen knows the
-// field offsets it asserts.
+// `cGuards` is the `@cLayout`/`@cSig` verification TU (null when the program declares
+// neither) — see Codegen.cDeclGuards. It rides alongside the IR because only codegen
+// knows the field offsets and return widths it asserts.
 function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false): { ir: string; cGuards: string | null } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
   const cg = new Codegen(target, filePath, debugOverflow, emitDebug);
   const ir = cg.generate(hirModule);
-  return { ir, cGuards: cg.cLayoutGuards() };
+  return { ir, cGuards: cg.cDeclGuards() };
 }
 
-// Compile the @cLayout guard TU against the real system headers and fail the build if any
-// _Static_assert trips. Bare-metal targets are skipped: they're freestanding and cross-
-// compiled, so the host's headers aren't the ones the program will run against.
-function verifyCLayouts(cGuards: string | null, target: TargetInfo): void {
-  if (!cGuards || target.bareMetal) return;
+// Compile the @cLayout/@cSig guard TU against the real system headers and fail the build
+// if any _Static_assert trips. Bare-metal targets are skipped: they're freestanding and
+// cross-compiled, so the host's headers aren't the ones the program will run against.
+function verifyCDecls(cGuards: string | null, target: TargetInfo): void {
+  if (!cGuards) return;
+  // The guard TU is compiled with the host cc against the host's headers, so it only
+  // says anything true when the target IS the host. Bare-metal is freestanding; a
+  // different hosted target has its own headers and, more subtly, its own data model —
+  // `long` is 8 bytes on every target Milo hosts today (all LP64) but 4 on LLP64
+  // (Windows), which would make a correct `i64` declaration wrong there. Verifying that
+  // against macOS headers would report the host's answer for the target's question.
+  const host = getHostTarget();
+  if (target.bareMetal || target.os !== host.os || target.arch !== host.arch) return;
   const tc = detectToolchain();
   const cc = tc.kind === "clang" ? tc.path : "cc";
-  const tmpC = join(tmpdir(), `milo_clayout_${crypto.randomUUID().slice(0, 8)}.c`);
+  const tmpC = join(tmpdir(), `milo_cdecl_${crypto.randomUUID().slice(0, 8)}.c`);
   try {
     writeFileSync(tmpC, cGuards);
     execSync(`${cc} -fsyntax-only "${tmpC}"`, { stdio: ["pipe", "pipe", "pipe"] });
@@ -98,10 +106,10 @@ function verifyCLayouts(cGuards: string | null, target: TargetInfo): void {
       const m = line.match(/static assertion failed(?: due to requirement '.*?')?:\s*(.*)$/);
       if (m) asserts.push(m[1].trim().replace(/^"|"$/g, ""));
     }
-    console.error(`error[c-layout]: an extern struct's declared layout does not match the C header`);
+    console.error(`error[c-decl]: a declaration does not match the C header it claims to describe`);
     for (const a of asserts) console.error(`  ${a}`);
     if (asserts.length === 0) console.error(stderr);
-    else console.error(`  the declaration is a claim about the C type; trust the header, not the claim`);
+    else console.error(`  the Milo declaration is a claim about C; trust the header, not the claim`);
     process.exit(1);
   } finally {
     try { unlinkSync(tmpC); } catch {}
@@ -260,7 +268,7 @@ function fmtBinStale(fmtBin: string, fmtSrc: string, root: string): boolean {
 function compileToObj(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, noEntry = false): string {
   const source = readFileSync(sourcePath, "utf-8");
   const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig);
-  verifyCLayouts(cGuards, target);
+  verifyCDecls(cGuards, target);
 
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const out = outputPath ?? base + ".o";
@@ -357,7 +365,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
   // -identical and free of per-build dsymutil / .dSYM litter.
   const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig, debugOverflow, emitDebug);
-  verifyCLayouts(cGuards, target);
+  verifyCDecls(cGuards, target);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
@@ -389,7 +397,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 
 function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
   const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig);
-  verifyCLayouts(cGuards, target);
+  verifyCDecls(cGuards, target);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = join(tmpdir(), `milo_${base}_${id}`);

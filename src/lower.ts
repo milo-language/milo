@@ -102,7 +102,13 @@ class LowerCtx {
       });
     }
 
-    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: program.userFnNames, opaqueTypes };
+    // Pair each @cSig with its Milo return type, so codegen can check the mapping
+    // (the C signature is the truth; the Milo decl's width/signedness must agree).
+    const cSigs = [...this.c.cSigs.entries()].flatMap(([fnName, s]) => {
+      const fn = functions.find(f => f.name === fnName);
+      return fn ? [{ fnName, header: s.header, sig: s.sig, retType: fn.retType }] : [];
+    });
+    return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: program.userFnNames, opaqueTypes, cSigs };
   }
 
   private lowerParam(p: import("./ast").Param, sig: import("./checker").FnSig | undefined, i: number) {

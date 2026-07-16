@@ -1263,6 +1263,41 @@ extern struct SockAddrIn {
 }
 ```
 
+#### Verifying a signature: `@cSig`
+
+An `extern fn` is the same kind of claim an `extern struct` is, and nothing checks it —
+C linkage has no mangling, so a wrong parameter type or arity links fine and corrupts at
+the ABI seam. `@cSig(header, signature)` verifies it at build time:
+
+```milo
+@cSig("unistd.h", "long sysconf(int)")
+extern fn sysconf(name: i32): i64
+```
+
+Why you write the C signature rather than the compiler deriving it: **Milo's type system
+can't express C type identity.** `i64` is a 64-bit integer, but C distinguishes `long`
+from `long long` — on macOS `int64_t` *is* `long long`, so a derived declaration would
+reject the correct `sysconf` above. The signature states which C type is meant; the build
+then checks two independent claims, and says which one broke:
+
+1. the stated signature really is what the header declares (via `__builtin_types_compatible_p`)
+2. the Milo return type's width and signedness match that C return type
+
+```
+error[c-decl]: a declaration does not match the C header it claims to describe
+  sysconf: Milo declares a 4-byte return, C returns a different width
+```
+
+Write the signature exactly as the header spells it, including pointer types
+(`"ssize_t read(int, void *, size_t)"`) — that's what makes pointer-taking functions
+checkable at all.
+
+**Parameter mapping is not checked.** Introspecting a C function type's parameters needs
+a C parser; only arity and the return type are verified. The signature sits next to the
+Milo declaration so the two read together.
+
+Like `@cLayout`, it's opt-in and skipped for bare-metal targets.
+
 #### Verifying the layout: `@cLayout`
 
 An `extern struct` is a **claim** about a C type. The compiler believes it and computes

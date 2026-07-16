@@ -1,25 +1,36 @@
 // std/sysinfo — high-level system information (macOS)
 
+@cSig("unistd.h", "int gethostname(char *, size_t)")
 extern fn gethostname(name: *u8, len: i64): i32
 
+@cSig("unistd.h", "char *getcwd(char *, size_t)")
 extern fn getcwd(buf: *u8, size: i64): *u8
 
+@cSig("unistd.h", "int chdir(const char *)")
 extern fn chdir(path: *u8): i32
 
+@cSig("unistd.h", "pid_t getpid(void)")
 extern fn getpid(): i32
 
+@cSig("unistd.h", "pid_t getppid(void)")
 extern fn getppid(): i32
 
+@cSig("unistd.h", "uid_t getuid(void)")
 extern fn getuid(): u32
 
+@cSig("unistd.h", "gid_t getgid(void)")
 extern fn getgid(): u32
 
+@cSig("unistd.h", "uid_t geteuid(void)")
 extern fn geteuid(): u32
 
+@cSig("unistd.h", "gid_t getegid(void)")
 extern fn getegid(): u32
 
+@cSig("unistd.h", "long sysconf(int)")
 extern fn sysconf(name: i32): i64
 
+@cSig("stdlib.h", "int getloadavg(double [], int)")
 extern fn getloadavg(loadavg: *f64, nelem: i32): i32
 
 extern fn sysctlbyname(name: *u8, oldp: *u8, oldlenp: *i64, newp: *u8, newlen: i64): i32

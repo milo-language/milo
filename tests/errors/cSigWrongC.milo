@@ -1,0 +1,9 @@
+// @error: is not what unistd.h declares
+// The stated C signature is wrong: sysconf returns `long`, not `int`. Checked exactly
+// against the header via __builtin_types_compatible_p.
+@cSig("unistd.h", "int sysconf(int)")
+extern fn sysconf(name: i32): i64
+
+fn main() {
+    print(sysconf(29))
+}
