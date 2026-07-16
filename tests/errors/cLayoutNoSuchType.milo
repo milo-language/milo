@@ -1,0 +1,9 @@
+// @error: the header declares no such type
+@cLayout("struct nosuchtype", "time.h")
+extern struct T {
+    a: i64,
+}
+
+fn main() {
+    print(sizeOf<T>())
+}

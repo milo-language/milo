@@ -1,0 +1,12 @@
+// @error: has no such field
+// Naming a field C doesn't have makes offsetof itself ill-formed, so clang errors before
+// evaluating the assert — that path has to be translated too, not dumped raw.
+@cLayout("struct timespec", "time.h")
+extern struct T {
+    tv_sec: i64,
+    bogusField: i64,
+}
+
+fn main() {
+    print(sizeOf<T>())
+}

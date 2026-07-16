@@ -115,8 +115,24 @@ function verifyCDecls(cGuards: string | null, target: TargetInfo): void {
     const asserts: string[] = [];
     for (const line of stderr.split("\n")) {
       const m = line.match(/static assertion failed(?: due to requirement '.*?')?:\s*(.*)$/);
-      if (m) asserts.push(m[1].trim().replace(/^"|"$/g, ""));
+      if (m) { asserts.push(m[1].trim().replace(/^"|"$/g, "")); continue; }
+      // Not every mismatch reaches an assert: naming a field C doesn't have makes
+      // `offsetof` itself ill-formed, so clang errors before evaluating the assert.
+      // Translate rather than dump — the raw text cites a temp file the user can't open.
+      const noMember = line.match(/no member named '([^']+)' in '([^']+)'/);
+      if (noMember) asserts.push(`${noMember[1]}: declared in Milo, but '${noMember[2]}' has no such field`);
+      const unknownType = line.match(/(?:unknown type name|no type named|incomplete type) '([^']+)'/);
+      if (unknownType) asserts.push(`'${unknownType[1]}': named in Milo, but the header declares no such type`);
     }
+    // clang reports the error then a note pointing at the real declaration, so the same
+    // finding arrives twice (once as `timespec`, once as `struct timespec`).
+    const seen = new Set<string>();
+    const unique = asserts.filter(a => {
+      const key = a.replace(/'(?:struct |union |enum )?([^']+)'/g, "'$1'");
+      return seen.has(key) ? false : (seen.add(key), true);
+    });
+    asserts.length = 0;
+    asserts.push(...unique);
     console.error(`error[c-decl]: a declaration does not match the C header it claims to describe`);
     for (const a of asserts) console.error(`  ${a}`);
     if (asserts.length === 0) console.error(stderr);
