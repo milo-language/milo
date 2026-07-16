@@ -27,7 +27,7 @@ class LowerCtx {
       const info = this.c.structs.get(s.name);
       if (!info) continue;
       if (info.isOpaque) { opaqueTypes.push(s.name); continue; }
-      structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type })), isExtern: info.isExtern, cLayout: info.cLayout });
+      structs.push({ name: s.name, fields: info.fields.map(f => ({ name: f.name, type: f.type, ...(f.cOpaque ? { cOpaque: true } : {}) })), isExtern: info.isExtern, cLayout: info.cLayout });
     }
     for (const s of this.c.monomorphizedStructs) {
       const info = this.c.structs.get(s.name);

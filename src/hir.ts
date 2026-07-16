@@ -145,7 +145,7 @@ export interface HIRFunction {
 
 export interface HIRStruct {
   name: string;
-  fields: { name: string; type: TypeKind }[];
+  fields: { name: string; type: TypeKind; cOpaque?: boolean }[];
   isExtern?: boolean;
   // From `@cLayout(...)`: verify these field offsets against the real C header at build time.
   cLayout?: { cType: string; header: string };

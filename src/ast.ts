@@ -40,6 +40,8 @@ export function declaredType(p: Param): MiloType {
 export interface StructField {
   name: string;
   type: MiloType;
+  // `@cOpaque` — filler with no C counterpart; @cLayout must not check it (see checker).
+  attributes?: Attribute[];
 }
 
 export interface TypeParam {

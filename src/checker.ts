@@ -52,7 +52,7 @@ export interface FnSig {
 }
 
 export interface StructInfo {
-  fields: { name: string; type: TypeKind }[];
+  fields: { name: string; type: TypeKind; cOpaque?: boolean }[];
   baseName?: string;
   typeArgs?: TypeKind[];
   isExtern?: boolean;
@@ -939,7 +939,10 @@ export class TypeChecker {
 
     for (const s of program.structs) {
       if (s.typeParams.length === 0) {
-        const fields = s.fields.map(f => ({ name: f.name, type: this.resolve(f.type) }));
+        const fields = s.fields.map(f => ({
+          name: f.name, type: this.resolve(f.type),
+          ...(f.attributes?.some(a => a.name === "cOpaque") ? { cOpaque: true } : {}),
+        }));
         for (const f of fields) {
           if (f.type.tag === "ref") {
             this.error(`struct '${s.name}' field '${f.name}': references cannot be stored in structs`, undefined, `references are second-class — use an owned type instead`);
@@ -966,6 +969,7 @@ export class TypeChecker {
     // collect @send/@sync annotations
     for (const s of program.structs) {
       this.validateAttributes(s.name, s.attributes, "struct");
+      this.validateFieldAttributes(s);
       this.warnUnverifiedExtern(s);
       if (s.attributes) {
         for (const attr of s.attributes) {
@@ -1527,6 +1531,28 @@ export class TypeChecker {
       `extern struct '${s.name}' has no @cLayout — its layout is an unverified claim about C`,
       s.span,
       `add '@cLayout("struct ${s.name.toLowerCase()}", "some/header.h")' to check the field offsets against the real header at build time`);
+  }
+
+  // `@cOpaque` marks a field as filler with no C counterpart, so @cLayout skips it —
+  // needed for structs padded out to a size C dictates (getrusage writes 144 bytes into
+  // a struct whose named fields only cover 32). It still counts toward Milo's own layout,
+  // so the size assert stays meaningful. Anything else on a field is rejected: a silently
+  // ignored attribute is the failure this whole feature exists to close.
+  private validateFieldAttributes(s: StructDecl): void {
+    for (const f of s.fields) {
+      if (!f.attributes) continue;
+      for (const attr of f.attributes) {
+        if (attr.name !== "cOpaque") {
+          this.error(`'@${attr.name}' is not supported on a struct field — '${s.name}.${f.name}'`, s.span,
+            `only '@cOpaque' applies to a field; it marks C-invisible padding for @cLayout`);
+        } else if (!s.isExtern) {
+          this.error(`@cOpaque on '${s.name}.${f.name}': only an 'extern struct' field can be C-invisible`, s.span,
+            `a Milo struct has no C layout to be opaque against`);
+        } else if (attr.args.length !== 0) {
+          this.error(`@cOpaque on '${s.name}.${f.name}': takes no arguments`, s.span);
+        }
+      }
+    }
   }
 
   private checkCLayout(s: StructDecl, attr: Attribute): void {

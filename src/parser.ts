@@ -337,10 +337,16 @@ export class Parser {
     this.expect(TokenKind.LBrace);
     const fields: StructField[] = [];
     while (!this.at(TokenKind.RBrace)) {
+      // Attributes may precede a field — `@cOpaque` marks C-invisible padding.
+      let fieldAttrs: Attribute[] | undefined;
+      while (this.at(TokenKind.At)) {
+        if (!fieldAttrs) fieldAttrs = [];
+        fieldAttrs.push(this.parseAttribute());
+      }
       const fieldName = this.expect(TokenKind.Ident).value;
       this.expect(TokenKind.Colon);
       const fieldType = this.parseType();
-      fields.push({ name: fieldName, type: fieldType });
+      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}) });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
