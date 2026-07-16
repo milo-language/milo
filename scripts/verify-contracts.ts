@@ -3,9 +3,10 @@
 // counterexample proving it false). This is a pure compile-time check — no code
 // runs, the prover discharges requires/ensures/invariant against the SMT theory.
 //
-// `unknown` (nonlinear / bitwise terms the native QF_LIA solver can't decide)
-// and translator `errors` are reported but do NOT fail the gate: they are solver
-// limitations, not contract violations. Only a `failed` verdict — a proven-false
+// `unknown` and translator `errors` are reported but do NOT fail the gate: they are
+// solver/translator limitations, not contract violations. `unknown` covers two distinct
+// causes — nonlinear/bitwise terms the native QF_LIA solver can't decide, and constructs
+// the SMT translator has no rule for at all (the per-VC detail says which). Only a `failed` verdict — a proven-false
 // contract — breaks the build. That is the guarantee the prover can give today,
 // and it can never regress silently: break a provable contract and this goes red.
 //
@@ -140,7 +141,7 @@ export function report(results: FileResult[]): Gate {
 
   console.log(
     `\n${tP} proven, ${tF} refuted (${allRefs.length - unexpected.length} baselined, ` +
-    `${unexpected.length} new), ${tU} unknown (solver limit), ${tE} translator errors.`
+    `${unexpected.length} new), ${tU} unknown (solver limit or untranslatable), ${tE} translator errors.`
   );
   if (unexpected.length) {
     console.log("\nNEW refuted contracts (gate FAIL) — the prover found a counterexample:");

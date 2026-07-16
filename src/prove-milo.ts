@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, statSync, renameSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import type { VerifyResult, ProveResult, SolverResult } from "./verify";
+import { untranslatable, untranslatableDetail } from "./verify";
 
 // ---- S-expression parser ----
 
@@ -282,9 +283,13 @@ export function proveWithMilo(result: VerifyResult): ProveResult {
   const prepared: { index: number; vars: string[]; root: FNode }[] = [];
 
   result.conditions.forEach((vc, i) => {
-    const f = vcToFormula(vc.smtlib);
+    // "outside linear fragment" is the catch-all for anything the parser rejects, which
+    // includes translator markers — reporting nonlinearity for a linear contract. Name the
+    // real cause when there is one.
+    const cant = untranslatable(vc.smtlib);
+    const f = cant.length ? null : vcToFormula(vc.smtlib);
     if (!f) {
-      results[i] = { vc, status: "unknown", detail: "outside linear fragment (std/smt)" };
+      results[i] = { vc, status: "unknown", detail: cant.length ? untranslatableDetail(cant) : "outside linear fragment (std/smt)" };
     } else {
       prepared.push({ index: i, vars: f.vars, root: f.root });
     }

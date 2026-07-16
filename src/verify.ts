@@ -579,6 +579,27 @@ export interface ProveResult {
 }
 
 // Invoke z3 on all verification conditions and return proof results.
+// What the SMT translator couldn't express, read back out of the generated VC.
+//
+// exprToSmt emits an `UNSUPPORTED` marker rather than dropping the term — which is what
+// keeps the prover sound (the marker poisons the formula, so nothing gets proven by
+// accident). But the marker then reaches the solver as an undeclared symbol, and both
+// backends blame themselves for it: std/smt reports "outside linear fragment" about a
+// perfectly linear contract, and z3 emits a raw parse error naming a constant the user
+// never wrote. Neither points at the actual cause, so both send you off optimizing a
+// contract that was never the problem.
+export function untranslatable(smtlib: string): string[] {
+  const out = new Set<string>();
+  for (const m of smtlib.matchAll(/\(UNSUPPORTED (\w+)\)/g)) out.add(`${m[1]} expressions`);
+  for (const m of smtlib.matchAll(/\(UNSUPPORTED_UNARY (\S+?)\)/g)) out.add(`unary '${m[1]}'`);
+  for (const m of smtlib.matchAll(/UNSUPPORTED_OP_(\S+?)[\s)]/g)) out.add(`operator '${m[1]}'`);
+  return [...out];
+}
+
+export function untranslatableDetail(kinds: string[]): string {
+  return `the SMT translator has no rule for ${kinds.join(", ")} — the contract is not the problem`;
+}
+
 export function proveWithZ3(result: VerifyResult): ProveResult {
   const { spawnSync } = require("child_process") as typeof import("child_process");
 
@@ -593,6 +614,10 @@ export function proveWithZ3(result: VerifyResult): ProveResult {
 
   const results: SolverResult[] = [];
   for (const vc of result.conditions) {
+    // Don't hand z3 a formula containing a marker it can't parse — it would come back as
+    // an opaque parse error about a symbol the user never wrote.
+    const cant = untranslatable(vc.smtlib);
+    if (cant.length) { results.push({ vc, status: "unknown", detail: untranslatableDetail(cant) }); continue; }
     const proc = spawnSync("z3", ["-in", "-T:5"], {
       input: vc.smtlib,
       encoding: "utf-8",
