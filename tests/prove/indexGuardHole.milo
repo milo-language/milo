@@ -1,5 +1,7 @@
-// @proven: 1
+// @proven: 4
 // @failed: 1
+// Counts include call-site preconditions: the prover now proves each caller
+// satisfies the callee's `requires`, not just that the callee keeps its `ensures`.
 // A one-sided index guard (checks idx < len but not idx >= 0), modeled from the
 // self-hosted lexer's peekCharAt. The prover proves result < len but REFUTES
 // result >= 0 with a counterexample (pos=0, offset=-1) — locking that the

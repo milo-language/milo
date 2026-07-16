@@ -1,5 +1,7 @@
-// @proven: 2
+// @proven: 4
 // @failed: 0
+// Counts include call-site preconditions: the prover now proves each caller
+// satisfies the callee's `requires`, not just that the callee keeps its `ensures`.
 // Two postconditions, both discharged: the sum of two non-negatives dominates
 // each operand.
 fn addNonneg(a: i64, b: i64): i64

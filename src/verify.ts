@@ -83,10 +83,38 @@ interface SymPath {
 interface SymExecResult {
   paths: SymPath[];
   finalEnvs: { conditions: string[]; env: Map<string, string> }[];
+  calls: CallSite[];
+}
+
+// A call reached during symbolic execution, with the path conditions that hold when it
+// runs. Used to prove the caller actually satisfies the callee's `requires` — without the
+// conditions, `if x >= 0 { g(x) }` would be reported as a violation of g's `requires
+// x >= 0`, and a prover that cries wolf is one people stop running.
+interface CallSite {
+  name: string;
+  args: string[];        // already lowered to SMT in the caller's environment
+  conditions: string[];
+}
+
+// Every call reachable from an expression, paired with the conditions in force. Only
+// direct calls to named fns matter — that is all a `requires` can hang off.
+function collectCallsInExpr(expr: Expr, conds: string[], env: Map<string, string>, out: CallSite[]): void {
+  if (!expr) return;
+  const e = expr as any;
+  if (e.kind === "Call" && typeof e.func === "string") {
+    out.push({ name: e.func, args: (e.args ?? []).map((a: Expr) => exprToSmtWithEnv(a, env)), conditions: [...conds] });
+  }
+  for (const key of ["left", "right", "operand", "object", "index", "cond", "value", "start", "end", "default"]) {
+    if (e[key] && typeof e[key] === "object" && e[key].kind) collectCallsInExpr(e[key], conds, env, out);
+  }
+  for (const key of ["args", "elements"]) {
+    if (Array.isArray(e[key])) for (const a of e[key]) if (a && a.kind) collectCallsInExpr(a, conds, env, out);
+  }
 }
 
 function collectPaths(stmts: Stmt[], env: Map<string, string>): SymExecResult {
   const paths: SymPath[] = [];
+  const calls: CallSite[] = [];
 
   function walk(stmts: Stmt[], idx: number, pathConds: string[], localEnv: Map<string, string>): void {
     for (let i = idx; i < stmts.length; i++) {
@@ -166,6 +194,14 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>): SymExecResult {
   function walkCapture(stmts: Stmt[], idx: number, pathConds: string[], localEnv: Map<string, string>): void {
     for (let i = idx; i < stmts.length; i++) {
       const stmt = stmts[i];
+      // Record calls before the statement updates the env, so an argument is lowered in
+      // the state that actually holds at the call. Loops/match are not modelled by this
+      // walker at all, so calls inside them are never recorded — missed coverage rather
+      // than a VC built on conditions we cannot see.
+      const st = stmt as any;
+      for (const key of ["value", "expr", "cond", "subject"]) {
+        if (st[key] && st[key].kind) collectCallsInExpr(st[key], pathConds, localEnv, calls);
+      }
 
       if (stmt.kind === "LetDecl" || stmt.kind === "VarDecl") {
         if (stmt.value) localEnv.set(stmt.name, exprToSmtWithEnv(stmt.value, localEnv));
@@ -222,7 +258,7 @@ function collectPaths(stmts: Stmt[], env: Map<string, string>): SymExecResult {
   }
 
   walkCapture(stmts, 0, [], new Map(env));
-  return { paths, finalEnvs };
+  return { paths, finalEnvs, calls };
 }
 
 function branchAlwaysReturns(stmts: Stmt[]): boolean {
@@ -314,6 +350,25 @@ function exprToSmtWithEnv(expr: Expr, env: Map<string, string>): string {
 // onlyFile: restrict VCs to functions declared in that absolute path (the entry
 // file). Functions with no sourceFile (single-file program, no imports) are always
 // kept. Without it, imported stdlib contracts flood the report with unmodeled-theory noise.
+// Whether a body calls anything with a `requires`, so a contract-free fn is still visited
+// for its call-site obligations. Deliberately shallow-but-broad: over-reporting here only
+// costs a walk that finds nothing.
+function callsAContractedFn(stmts: Stmt[], contracted: Map<string, Function>): boolean {
+  let found = false;
+  const seen = new Set<any>();
+  const scan = (node: any) => {
+    if (!node || typeof node !== "object" || found || seen.has(node)) return;
+    seen.add(node);
+    if (node.kind === "Call" && typeof node.func === "string" && contracted.has(node.func)) { found = true; return; }
+    for (const v of Object.values(node)) {
+      if (Array.isArray(v)) v.forEach(scan);
+      else if (v && typeof v === "object") scan(v);
+    }
+  };
+  stmts.forEach(scan);
+  return found;
+}
+
 export function generateVerificationConditions(program: Program, opts?: { onlyFile?: string }): VerifyResult {
   const conditions: VerificationCondition[] = [];
   let contractCount = 0;
@@ -334,24 +389,74 @@ export function generateVerificationConditions(program: Program, opts?: { onlyFi
     }
   }
 
+  // Callee preconditions, for the call-site obligations below.
+  const requiresByFn = new Map<string, Function>();
+  for (const fn of program.functions) {
+    if (fn.contracts.some(c => c.kind === "requires")) requiresByFn.set(fn.name, fn);
+  }
+
   for (const fn of program.functions) {
     if (opts?.onlyFile && fn.sourceFile && fn.sourceFile !== opts.onlyFile) continue;
-    if (fn.contracts.length === 0 && !hasLoopInvariants(fn.body)) continue;
+    // A fn with no contracts of its own still has to honour the ones it calls.
+    const callsContracted = callsAContractedFn(fn.body, requiresByFn);
+    if (fn.contracts.length === 0 && !hasLoopInvariants(fn.body) && !callsContracted) continue;
 
     const requires = fn.contracts.filter(c => c.kind === "requires");
     const ensures = fn.contracts.filter(c => c.kind === "ensures");
     contractCount += fn.contracts.length;
 
     const paramDecls = fn.params.map(p => `(declare-const ${p.name} ${miloTypeToSmt(p.type?.name ?? "i64")})`).join("\n");
+    // What the type already guarantees. Without it the solver invents out-of-range inputs.
+    const paramRanges = fn.params
+      .map(p => intRangeAssumption(p.name, p.type?.name))
+      .filter(Boolean).join("\n");
 
     // collect all field access references used in contracts and body, declare as SMT constants
     const fieldRefs = new Set<string>();
     for (const c of fn.contracts) collectFieldRefs(c.expr, fieldRefs);
     collectFieldRefsFromBody(fn.body, fieldRefs);
     const fieldDecls = [...fieldRefs].map(f => `(declare-const ${f} Int)`).join("\n");
-    const allDecls = fieldDecls ? `${paramDecls}\n${fieldDecls}` : paramDecls;
+    let allDecls = fieldDecls ? `${paramDecls}\n${fieldDecls}` : paramDecls;
+    if (paramRanges) allDecls = `${allDecls}\n${paramRanges}`;
 
     const preAssumptions = requires.map(r => `(assert ${exprToSmt(r.expr)})`).join("\n");
+
+    // Call-site obligations: the prover proves a callee's `ensures` GIVEN its `requires`,
+    // and nothing proved the caller actually delivers that `requires`. Statically it was
+    // an assumption. (Debug builds do assert it at entry — language-reference.md:267 —
+    // so this closes the *static* half, not an unchecked hole.)
+    {
+      const paramEnv = new Map<string, string>();
+      for (const p of fn.params) paramEnv.set(p.name, p.name);
+      const { calls } = collectPaths(fn.body, paramEnv);
+      for (const call of calls) {
+        const callee = requiresByFn.get(call.name);
+        if (!callee || callee.name === fn.name) continue;   // self-recursion: needs induction, skip
+        if (call.args.length !== callee.params.length) continue;  // variadic/defaulted: can't map args to params
+        // Substitute the callee's params with the caller's arg expressions.
+        const subst = new Map<string, string>();
+        callee.params.forEach((p, idx) => subst.set(p.name, call.args[idx]!));
+        for (const req of callee.contracts.filter(c => c.kind === "requires")) {
+          const obligation = exprToSmtWithEnv(req.expr, subst);
+          if (/UNSUPPORTED/.test(obligation)) continue;   // untranslatable: say nothing rather than something wrong
+          const guard = call.conditions.length > 0 ? `(assert (and ${call.conditions.join(" ")}))` : "";
+          conditions.push({
+            fn: fn.name,
+            kind: "precondition",
+            description: `call to ${callee.name} from ${fn.name}: ${obligation}`,
+            smtlib: [
+              `; Call-site precondition proof: ${fn.name} -> ${callee.name}`,
+              `(set-logic ALL)`,
+              allDecls,
+              preAssumptions,
+              guard,
+              `(assert (not ${obligation}))`,
+              `(check-sat)`,
+            ].filter(Boolean).join("\n"),
+          });
+        }
+      }
+    }
 
     // Postconditions: symbolically execute body to build path constraints
     if (ensures.length > 0) {
@@ -548,6 +653,35 @@ function binOpToSmt(op: string): string {
     case "||": return "or";
     default: return `UNSUPPORTED_OP_${op}`;
   }
+}
+
+// An integer type's real range, as an SMT assumption. Every int lowers to an unbounded
+// mathematical `Int`, so without this the solver is free to pick i32 = -10^18 and
+// "refute" a contract like `requires a >= -2147483648` that no i32 can actually violate.
+// It is an assumption about the inputs, so it only ever makes a proof easier — it cannot
+// turn a proven VC into a failing one.
+// i64/u64 are deliberately absent. Their bounds (±2^63, 2^64-1) make the native std/smt
+// solver return unsat for a plainly satisfiable formula — a FALSE PROOF, verified against
+// z3, which says sat:
+//   (declare-const x Int)
+//   (assert (and (>= x (- 9223372036854775808)) (<= x 9223372036854775807)))
+//   (assert (not (>= x 0)))     ; x = -1 satisfies this
+// Asserting a range that is true but unusable would trade a false alarm for a false
+// proof, which is the worse of the two by a distance. The narrow types carry the weight
+// anyway — they are what the solver cannot otherwise know. See backlog: std/smt overflows
+// on 64-bit literals.
+const INT_RANGES: Record<string, [string, string]> = {
+  i8: ["(- 128)", "127"],
+  i16: ["(- 32768)", "32767"],
+  i32: ["(- 2147483648)", "2147483647"],
+  u8: ["0", "255"],
+  u16: ["0", "65535"],
+  u32: ["0", "4294967295"],
+};
+
+function intRangeAssumption(name: string, typeName: string | undefined): string | null {
+  const r = INT_RANGES[typeName ?? ""];
+  return r ? `(assert (and (>= ${name} ${r[0]}) (<= ${name} ${r[1]})))` : null;
 }
 
 function miloTypeToSmt(name: string): string {

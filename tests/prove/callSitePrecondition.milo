@@ -1,0 +1,33 @@
+// @proven: 1
+// @failed: 1
+// Call-site precondition obligations. The prover proves a callee's `ensures` GIVEN its
+// `requires`; until now nothing proved the caller actually delivers that `requires`, so
+// statically it was an assumption. (Debug builds do assert it at entry — see
+// language-reference.md — so this closes the static half, not an unchecked hole.)
+//
+// The discrimination is the whole point: a guarded call must PROVE, or the check cries
+// wolf on correct code and gets switched off. Path conditions are what make that work.
+// No `ensures` here on purpose: this fixture is about the CALLER's obligation, and
+// `n / 2` is nonlinear, so a postcondition would add an unrelated `unknown`.
+fn half(n: i32): i32
+requires n >= 0
+{
+    return n / 2
+}
+
+// Guarded: the `if` is what makes this call legal. Must be proven, not reported.
+fn guarded(x: i32): i32 {
+    if x >= 0 {
+        return half(x)
+    }
+    return 0
+}
+
+// Unguarded: nothing stops a negative x. Must be refuted, with x = -1 as the witness.
+fn unguarded(x: i32): i32 {
+    return half(x)
+}
+
+fn main() {
+    print(guarded(10) + unguarded(10))
+}

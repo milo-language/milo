@@ -1,5 +1,7 @@
-// @proven: 1
+// @proven: 2
 // @failed: 0
+// Counts include call-site preconditions: the prover now proves each caller
+// satisfies the callee's `requires`, not just that the callee keeps its `ensures`.
 // clamp's result is provably within [lo, hi] on every path.
 fn clamp(value: i64, lo: i64, hi: i64): i64
 requires lo <= hi

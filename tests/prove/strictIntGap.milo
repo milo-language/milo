@@ -1,6 +1,8 @@
-// @proven: 0
+// @proven: 1
 // @failed: 0
 // @unknown: 1
+// Counts include call-site preconditions: the prover now proves each caller
+// satisfies the callee's `requires`, not just that the callee keeps its `ensures`.
 // x < y implies x+1 <= y over the INTEGERS, but not over the rationals
 // (y = x + 0.5). The Tier-1 core reasons over rationals + a bounded integer
 // witness search, finds no integer counterexample, and honestly returns

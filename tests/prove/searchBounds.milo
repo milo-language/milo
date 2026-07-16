@@ -1,5 +1,7 @@
-// @proven: 2
+// @proven: 7
 // @failed: 0
+// Counts include call-site preconditions: the prover now proves each caller
+// satisfies the callee's `requires`, not just that the callee keeps its `ensures`.
 // Memory-safety of a substring search's inner access haystack[i+j]: the outer
 // loop guard (i <= hayLen - needleLen) and inner guard (0 <= j < needleLen)
 // prove 0 <= i+j < hayLen. (Modeled from the DAP framing scanner.)

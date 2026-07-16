@@ -14,6 +14,15 @@ export const BASELINE: Record<string, string> = {
     "negative — free() generation-checks the handle and returns before the " +
     "decrement, so no valid double-free reaches `live = live - 1`.",
 
+  "examples/embedded/pidStep.milo::pidStep":
+    "call-site preconditions for fpMul(kp, error) / fpMul(ki, newIntegral) / " +
+    "fpMul(kd, derivative). fpMul requires its args >= i32::MIN, which no i32 can " +
+    "violate — but only PARAMS carry a range assumption, not intermediate arithmetic. " +
+    "`error = setpoint - measured` is a subtraction of two i32s, so the unbounded-Int " +
+    "model lets it reach -2^32 and refutes. In the real program that subtraction would " +
+    "trap on overflow in a debug build long before fpMul is reached, so the values are " +
+    "always in range. Needs range-carrying arithmetic (or a bitvector model) to retire.",
+
   "examples/apps/genesis/m68k.milo::vramPut":
     "ensures (idx & VRAM_MASK) < m.vram.len holds because the body's " +
     "`while m.vram.len <= i { push }` loop grows the buffer past the masked " +
