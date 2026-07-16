@@ -1,22 +1,26 @@
 // tmuxDaemon — a client-server terminal multiplexer with detach/attach.
 //
-// `tmuxdaemon serve`  spawns TWO shells tiled side by side, holds their screen
-//                     state, and listens on 127.0.0.1:7373.
-// `tmuxdaemon attach` connects, renders the composite, forwards input to the
-//                     focused pane. Ctrl-B o switches panes; Ctrl-B d detaches —
-//                     the shells keep running in the daemon. Re-attach and it's
-//                     exactly where you left it (full repaint on attach).
+// `tmuxdaemon serve`  holds N windows, each of N tiled shells, drives them all,
+//                     and listens on 127.0.0.1:7373.
+// `tmuxdaemon attach` connects, renders the active window's composite, forwards
+//                     input to the focused pane, and negotiates its size.
 //
-// The server is a compositor: each pane has its own VT grid (shared tmuxVt), fed
-// by its shell; on any change the two grids are composited and sent to the one
-// attached client. Client size is negotiated (\x1e rows;cols \x1e).
+// The server is a compositor: each pane has its own VT grid (shared tmuxVt) fed
+// by its shell; the active window's grids are composited and streamed to the one
+// attached client. Shells keep running while you're detached — re-attach and get
+// a full repaint of the current screen.
 //
-// std/net has no AF_UNIX yet, so this uses a localhost TCP port (see backlog).
+// Keys (server-side prefix Ctrl-B, except d which detaches client-side):
+//   Ctrl-B o   next pane          Ctrl-B %   split (add a pane)
+//   Ctrl-B c   new window         Ctrl-B n   next window
+//   Ctrl-B [   copy/scroll mode (j/k line, u/d page, q exit)
+//   Ctrl-B d   detach (shells live on)
+// Closing a shell (`exit`) removes just that pane; the daemon lives until the
+// last one closes. std/net has no AF_UNIX yet, so this is localhost TCP.
 //
 //   milo build examples/apps/tmuxDaemon.milo -o tmuxdaemon
-//   ./tmuxdaemon serve &      # start the daemon
-//   ./tmuxdaemon attach       # attach; run commands; Ctrl-B d to detach
-//   ./tmuxdaemon attach       # re-attach — your shell is still there
+//   ./tmuxdaemon serve &   # start the daemon
+//   ./tmuxdaemon attach    # attach; Ctrl-B d to detach; re-attach anytime
 
 from "std/pty" import {
     Pty, WinSize, openAndSpawn, isInteractive
