@@ -1134,9 +1134,12 @@ fn parseStructLit(p: &mut Parser, name: string, s: Option<Span>): Expr {
     expect(p, TokKind.LBrace)
     var fields: Vec<StructLitField> = Vec.new()
     while !at(p, TokKind.RBrace) {
-        let fieldName = expect(p, TokKind.Ident).value
-        expect(p, TokKind.Colon)
-        let value = parseExpr(p)
+        let nameTok = expect(p, TokKind.Ident)
+        // Span captured before moving `.value` out — partial move would bar the borrow.
+        let fieldSpan = span(nameTok)
+        let fieldName = nameTok.value
+        // Field shorthand: `{ x }` desugars to `{ x: x }` (value is the binding named `x`).
+        let value = if matchTok(p, TokKind.Colon) { parseExpr(p) } else { Expr.Ident(fieldName.clone(), fieldSpan) }
         fields.push(StructLitField { name: fieldName, value: Heap(value) })
         matchTok(p, TokKind.Comma)
     }
@@ -1151,9 +1154,10 @@ fn parseJsonObject(p: &mut Parser, s: Option<Span>): Expr {
     var fields: Vec<StructLitField> = Vec.new()
     while !at(p, TokKind.RBrace) {
         if at(p, TokKind.Eof) { break }
-        let fieldName = expect(p, TokKind.Ident).value
-        expect(p, TokKind.Colon)
-        let value = parseExpr(p)
+        let nameTok = expect(p, TokKind.Ident)
+        let fieldSpan = span(nameTok)
+        let fieldName = nameTok.value
+        let value = if matchTok(p, TokKind.Colon) { parseExpr(p) } else { Expr.Ident(fieldName.clone(), fieldSpan) }
         fields.push(StructLitField { name: fieldName, value: Heap(value) })
         matchTok(p, TokKind.Comma)
     }
