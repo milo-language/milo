@@ -21,20 +21,9 @@ hero:
 
 ## What Milo is
 
-Milo is a small systems language built on one idea: **memory safety you can hold in your head.** It keeps ownership — single owner, move semantics, borrowed references — and drops the machinery that makes ownership hard: no lifetime annotations, no borrow-checker puzzles, no `unsafe` in everyday code. The rules are few and the errors are loud.
+Milo is a systems language built on **second-class references** — the design [Rust's creator wanted and didn't get](https://github.com/cs01/milo/blob/main/docs/design.md#alignment-with-graydon-hoares-the-rust-i-wanted). A reference may appear only as a function parameter: never stored in a struct, never returned. That one restriction removes lifetimes, lifetime annotations, and the borrow-checker puzzles that come with them.
 
-> When you hand a value to someone else, you don't have it anymore. That's it. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races — all at zero runtime cost.
-
-Because ownership is explicit, code that compiles already has a predictable structure: one owner per value, data flowing one direction, no hidden shared state. Compiler errors usually point at a real design problem, and fixing one tends to make the code more readable.
-
-The mission: prove that safe systems programming doesn't require a complex language. **The proof is shipped software, not theory.** Every feature earns its place by being used in real programs:
-
-- **Three game-console emulators** (NES, Genesis, SNES) — the same Milo source runs native with SDL and [in your browser](/demos) as compiled JavaScript.
-- **A self-hosting compiler** — Milo is written in Milo and [reproduces itself byte-for-byte](https://github.com/cs01/milo/blob/main/docs/self-hosting.md).
-- **A standard library** with HTTP, TLS, JSON, SQLite, PTYs, and green-thread concurrency — used by dozens of [terminal apps and CLI tools](/demos), and a [package manager](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) written in Milo.
-- **A contract prover, used for real** — `requires` / `ensures` / `invariant` are language features, and the SMT solver that discharges them is itself written in Milo. It proves contracts across Milo's own standard library on every test run.
-
-## What it looks like
+What's left is a **simpler Rust with contracts** — `requires` / `ensures` are part of the language, and an SMT prover discharges them across the codebase rather than trusting them. That combination is deliberately AI-friendly: a machine writing Milo gets loud compiler errors and machine-checked contracts instead of conventions it has to infer.
 
 <CodeCarousel
   :titles="['Ownership', 'Concurrency', 'Contracts']"
@@ -42,7 +31,7 @@ The mission: prove that safe systems programming doesn't require a complex langu
   :captions="[
     'Hand a value to someone else and you no longer have it. That one rule is where memory safety comes from — no lifetime annotations, no borrow-checker puzzles. The compiler catches the mistake at compile time, not at 3am.',
     'Promise.run starts a green task, not an OS thread, so thousands are cheap. There is no mutex here because there is nothing to guard: each task owns its data, and the same move rules that stop use-after-free stop data races.',
-    'requires and ensures are part of the language, and the SMT solver that discharges them is itself written in Milo. This contract is proven for every possible input before the program runs — not tested on a few.',
+    'requires and ensures are part of the language, and the SMT solver that discharges them is written in Milo. It proves clamp keeps its promise for every input that meets the precondition — not tested on a few. Pass constants that violate requires and the compiler rejects the call outright.',
   ]"
 >
 
@@ -70,8 +59,8 @@ fn main() {
 
 ```milo
 fn clamp(x: i64, lo: i64, hi: i64): i64
-    requires lo <= hi                       // caller must hold up its end
-    ensures result >= lo && result <= hi    // and this always holds
+    requires lo <= hi                       // the caller's obligation
+    ensures result >= lo && result <= hi    // proven, for every input that meets it
 {
     if x < lo { return lo }
     if x > hi { return hi }
@@ -80,8 +69,6 @@ fn clamp(x: i64, lo: i64, hi: i64): i64
 ```
 
 </CodeCarousel>
-
-Three ideas, one language: values have a single owner, concurrency needs no locks because there is nothing shared to lock, and the contracts are checked by a prover rather than trusted. Nothing above is a library trick — it is all in the compiler.
 
 <div class="showcase">
   <div class="showcase-head">
