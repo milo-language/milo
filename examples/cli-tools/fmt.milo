@@ -944,8 +944,12 @@ fn formatSource(src: string): string {
             continue
         }
 
-        // `extern fn` is one construct — keep `fn` glued to a preceding `extern`.
-        let hugExtern = tok.kind == TokKind.Keyword && tok.text == "fn" && lastWasExtern
+        // `extern fn` / `extern struct` / `extern type` are each one construct — keep the
+        // second word glued to a preceding `extern`. Without this, `struct` reads as the
+        // start of a top-level item and gets a blank line pushed in front of it, splitting
+        // the declaration across three lines. Matching on text alone (not TokKind) is
+        // deliberate: `type` isn't in isKeyword, and only these three can follow `extern`.
+        let hugExtern = lastWasExtern && (tok.text == "fn" || tok.text == "struct" || tok.text == "type")
 
         // } decreases indent
         if tok.kind == TokKind.RBrace {

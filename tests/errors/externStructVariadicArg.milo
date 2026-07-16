@@ -1,7 +1,5 @@
 // @error: cannot be passed in a variadic position
-extern
-
-struct Pt {
+extern struct Pt {
     x: i32,
     y: i32,
 }

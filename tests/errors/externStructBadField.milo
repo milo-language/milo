@@ -1,8 +1,6 @@
 // @error: is not C-representable
 // string carries drop glue + non-C layout — illegal in an extern struct
-extern
-
-struct BadRec {
+extern struct BadRec {
     id: i32,
     name: string,
 }
