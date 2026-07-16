@@ -637,10 +637,10 @@ interleaved while a container is still open. Children park on the scratch stack 
 the container closes, then commit as one contiguous block — this replaced a pre-counting
 scan to the matching close bracket that re-read every container body (73% of parse time).
 
-### `jsonParseJsonc`
+### `jsoncParse`
 
 ```milo
-fn jsonParseJsonc(s: string): Result<Json>
+fn jsoncParse(s: string): Result<Json>
 ```
 
 _Undocumented._

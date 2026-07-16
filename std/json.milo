@@ -934,7 +934,7 @@ fn jsonStripJsonc(s: &string): string {
     return out
 }
 
-fn jsonParseJsonc(s: string): Result<Json> {
+fn jsoncParse(s: string): Result<Json> {
     let stripped = jsonStripJsonc(s)
     return jsonParse(stripped)
 }

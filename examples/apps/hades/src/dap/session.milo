@@ -6,7 +6,7 @@
 // LaunchSpec; nothing here reads or writes global state.
 
 from "std/json" import {
-    Json, jsonParse, jsonParseJsonc, jsonObj, jsonArr
+    Json, jsonParse, jsoncParse, jsonObj, jsonArr
 }
 from "std/fs" import {
     pathExists
@@ -473,7 +473,7 @@ fn cfgHas(cfg: &Json, k: &string): bool {
 fn resolveConfig(raw: string, selectName: string): Result<LaunchSpec> {
     // JSONC, not strict JSON: launch.json files are commented in the wild (VS
     // Code's own dialect), and the drawer templates ship commented-out options.
-    match jsonParseJsonc(raw.clone()) {
+    match jsoncParse(raw.clone()) {
         Result.Ok(doc) => {
             return resolveConfigDoc(doc, selectName)
         }

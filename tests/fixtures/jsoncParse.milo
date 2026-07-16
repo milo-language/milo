@@ -5,14 +5,14 @@
 // @expect: urlIntact=http://x.io//path
 
 from "std/json" import {
-    jsonParse, jsonParseJsonc
+    jsonParse, jsoncParse
 }
 
 fn main(): i32 {
     // line comments, a block comment, and trailing commas in both object and array
     let src = "{\n  // the app name\n  \"name\": \"milo\",\n  \"port\": 8080, /* default */\n  \"tags\": [\"a\", \"b\", \"c\",],\n  \"url\": \"http://x.io//path\",\n}"
 
-    let j = jsonParseJsonc(src.clone())!
+    let j = jsoncParse(src.clone())!
     print("name=", j.str("name")!)
     print("port=", j.i64("port")!)
     print("count=", j.get("tags")!.len())
