@@ -4,6 +4,8 @@ A memory-safe systems language. Ownership without lifetimes, contracts the compi
 
 Milo keeps ownership — single owner, moves, borrowed references — and drops the machinery that makes it hard: no lifetime annotations, no borrow-checker puzzles, no `unsafe` in everyday code. Small enough to hold in your head; proven by shipping, not theory — game-console emulators, terminal apps, an HTTP/TLS/JSON standard library, a package manager, and the compiler itself are all written in Milo. Even the contract prover behind `milo prove` is a Milo program, and it discharges the contracts in Milo's own standard library on every test run.
 
+> When you hand a value to someone else, you don't have it anymore. That's it. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races — all at zero runtime cost.
+
 ```milo
 from "std/http" import { Request, Response, serve }
 

@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-label="Milo the lab dog: a dog in a white lab coat holding a beaker">
+  <defs>
+    <clipPath id="beakerClip"><path d="M138 150 l6 40 a18 18 0 0 0 36 0 l6 -40 Z"/></clipPath>
+  </defs>
+
+  <!-- lab coat body -->
+  <path d="M64 232 q0 -70 56 -70 q56 0 56 70 Z" fill="#f4f6f8" stroke="#c8d0d8" stroke-width="3"/>
+  <!-- coat lapels -->
+  <path d="M120 168 l-22 12 l8 40 l14 -24 Z" fill="#e7ebef" stroke="#c8d0d8" stroke-width="2"/>
+  <path d="M120 168 l22 12 l-8 40 l-14 -24 Z" fill="#e7ebef" stroke="#c8d0d8" stroke-width="2"/>
+  <!-- coat pocket -->
+  <rect x="146" y="196" width="22" height="18" rx="2" fill="none" stroke="#c8d0d8" stroke-width="2"/>
+
+  <!-- ears (behind head) -->
+  <path d="M74 78 q-22 6 -18 52 q2 22 22 20 q-14 -40 8 -64 Z" fill="#b07a44"/>
+  <path d="M166 78 q22 6 18 52 q-2 22 -22 20 q14 -40 -8 -64 Z" fill="#b07a44"/>
+
+  <!-- head -->
+  <ellipse cx="120" cy="104" rx="52" ry="48" fill="#d79a5b"/>
+  <!-- muzzle -->
+  <ellipse cx="120" cy="128" rx="30" ry="24" fill="#f0d6b0"/>
+  <!-- nose -->
+  <ellipse cx="120" cy="118" rx="9" ry="7" fill="#3a2b1c"/>
+  <!-- mouth -->
+  <path d="M120 125 v10 M120 135 q-8 6 -16 2 M120 135 q8 6 16 2" fill="none" stroke="#3a2b1c" stroke-width="2.5" stroke-linecap="round"/>
+  <!-- eyes -->
+  <circle cx="100" cy="96" r="7" fill="#2b2b2b"/>
+  <circle cx="140" cy="96" r="7" fill="#2b2b2b"/>
+  <circle cx="102.5" cy="93.5" r="2.2" fill="#fff"/>
+  <circle cx="142.5" cy="93.5" r="2.2" fill="#fff"/>
+  <!-- eyebrows -->
+  <path d="M90 82 q10 -6 20 -1 M130 81 q10 -5 20 1" fill="none" stroke="#b07a44" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- safety goggles pushed up on forehead -->
+  <path d="M92 74 h56" fill="none" stroke="#7a8791" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="102" cy="72" r="10" fill="none" stroke="#7a8791" stroke-width="3"/>
+  <circle cx="138" cy="72" r="10" fill="none" stroke="#7a8791" stroke-width="3"/>
+
+  <!-- paw holding beaker -->
+  <ellipse cx="150" cy="182" rx="14" ry="11" fill="#d79a5b"/>
+
+  <!-- beaker -->
+  <path d="M138 150 l6 40 a18 18 0 0 0 36 0 l6 -40 Z" fill="#eef4f6" stroke="#5a6b73" stroke-width="3"/>
+  <!-- liquid -->
+  <g clip-path="url(#beakerClip)">
+    <rect x="132" y="176" width="60" height="40" fill="#22c39a"/>
+    <ellipse cx="150" cy="176" rx="7" ry="4" fill="#3ad6ae"/>
+    <ellipse cx="170" cy="180" rx="5" ry="3" fill="#3ad6ae"/>
+  </g>
+  <!-- beaker lip -->
+  <path d="M134 150 h56" fill="none" stroke="#5a6b73" stroke-width="4" stroke-linecap="round"/>
+  <!-- bubbles rising -->
+  <circle cx="158" cy="164" r="3" fill="#8ef0d4"/>
+  <circle cx="166" cy="156" r="2.2" fill="#8ef0d4"/>
+  <circle cx="152" cy="150" r="2" fill="#8ef0d4"/>
+</svg>

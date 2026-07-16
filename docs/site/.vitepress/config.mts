@@ -75,6 +75,7 @@ export default defineConfig({
             { text: 'Warnings & Errors', link: '/language/warnings-and-errors' },
             { text: 'Modules', link: '/language/modules' },
             { text: 'C FFI', link: '/language/ffi' },
+            { text: 'JavaScript target', link: '/language/javascript-target' },
           ]
         },
         {

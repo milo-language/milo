@@ -10,6 +10,7 @@
 <template>
   <div class="lab" ref="rootEl">
     <div class="lab-head">
+      <img class="lab-mascot" :src="base + 'mascot.svg'" alt="Milo the lab dog" width="72" height="72" />
       <div class="kicker">Interactive · runs in your browser</div>
       <h2 class="title">Learn Milo by running it</h2>
       <p class="sub">{{ concepts.length }} short programs, each editable and live. Or jump to the Sandbox and write your own — same real compiler, no install.</p>
@@ -219,6 +220,24 @@ fn main(): i32 {
     match nextYear("") {
         Result.Ok(v)  => { print($"next year: {v}") }
         Result.Err(e) => { print($"error: {e}") }
+    }
+    return 0
+}` },
+  { title: 'Fetch over HTTP', file: 'fetch.milo', native: true,
+    desc: 'A one-line <code>fetch</code> returns a <code>Result</code>; <code>!</code> unwraps it or aborts. Parse the body with <code>.json()</code> and pull fields with <code>if let</code>.',
+    take: 'Networking lives in the standard library — sockets, TLS, and JSON, all written in Milo. (The browser target has no network runtime, so this replays the real native output.)',
+    out: ['status: 200', 'origin: 174.160.122.146'],
+    code: `from "std/net" import { fetch }
+
+fn main(): i32 {
+    let resp = fetch("https://httpbin.org/get")!    // Result — ! unwraps or aborts
+    print($"status: {resp.status}")
+
+    let data = resp.json()                          // parse body as JSON
+    if let Option.Some(origin) = data.get("origin") {
+        if let Option.Some(s) = origin.asStr() {
+            print($"origin: {s}")
+        }
     }
     return 0
 }` },
@@ -624,6 +643,7 @@ onMounted(() => {
   margin: 40px 0 8px; font-family: var(--vp-font-family-base);
 }
 .lab-head { text-align: center; margin-bottom: 22px; }
+.lab-mascot { display: block; margin: 0 auto 6px; width: 72px; height: 72px; }
 .kicker { font-family: var(--vp-font-family-mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--brand); }
 .title { font-size: 1.9rem; font-weight: 750; letter-spacing: -.02em; margin: 8px 0 6px; border: 0; padding: 0; }
 .sub { color: var(--vp-c-text-2); margin: 0; }
