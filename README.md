@@ -40,4 +40,4 @@ sh scripts/selfhost.sh            # oracle builds stage1 (stage1 binary is gitig
 bun test tests/selfhost.test.ts   # smoke + manifest convergence gate
 ```
 
-See **[docs/self-hosting.md](docs/self-hosting.md)** for the milestone log and the eight compiler miscompiles the self-compile exposed and fixed.
+See **[docs/self-hosting.md](docs/self-hosting.md)** for how it works.
