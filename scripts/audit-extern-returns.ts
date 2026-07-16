@@ -41,6 +41,10 @@ const OPTIONAL: { name: string; headers: string[]; flags: string }[] = [
   { name: "sqlite3", headers: ["sqlite3.h"], flags: "" },
   { name: "mach", headers: ["mach/mach.h", "mach/mach_host.h"], flags: "" },
   { name: "commoncrypto", headers: ["CommonCrypto/CommonCrypto.h", "CommonCrypto/CommonCryptor.h"], flags: "" },
+  // Linux-only. These must be probed, not unconditional: <sys/epoll.h> doesn't exist on
+  // macOS, and one missing include fails every compile — skipping the whole audit rather
+  // than one group.
+  { name: "linux-event", headers: ["sys/epoll.h", "sys/eventfd.h", "sys/inotify.h"], flags: "" },
 ];
 
 function opensslInclude(): string {
@@ -52,10 +56,22 @@ function opensslInclude(): string {
 
 type Decl = { name: string; arity: number; ret: string; file: string };
 
+// std splits platform code by filename suffix (platform.darwin.milo / platform.linux.milo)
+// and the resolver picks per host. The audit must too: checking a darwin-only decl against
+// glibc is meaningless, and worse than meaningless when the name exists on both with
+// different signatures (`sysctl`) — that reports drift where there is none.
+function isForeignPlatform(file: string): boolean {
+  const m = file.match(/\.(darwin|linux)\.milo$/);
+  if (!m) return false;
+  const host = process.platform === "darwin" ? "darwin" : "linux";
+  return m[1] !== host;
+}
+
 function declsFrom(dir: string): Decl[] {
   const out: Decl[] = [];
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".milo")) continue;
+    if (isForeignPlatform(f)) continue;
     for (const line of readFileSync(join(dir, f), "utf-8").split("\n")) {
       const m = line.match(/^extern fn ([A-Za-z_0-9]+)\((.*)\):\s*(.+?)\s*$/);
       if (!m) continue;

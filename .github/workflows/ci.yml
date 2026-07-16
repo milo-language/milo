@@ -15,3 +15,20 @@ jobs:
       # -fuse-ld=lld to link freestanding ARM ELF executables (tests/embedded.test.ts).
       - run: brew install lld
       - run: bun test
+      # Checks every scalar-returning `extern fn` against this runner's real headers.
+      # Needs no annotations; see the script's header for what it does and doesn't cover.
+      - run: bun run scripts/audit-extern-returns.ts
+
+  # The suite runs on macOS only, so std/*.linux.milo has never been checked by anything.
+  # The audit reads the host's headers, so a Linux runner is the only thing that can
+  # verify those declarations. It's cheap (no build, just header probes), so it runs here
+  # even though the full suite doesn't — yet.
+  audit-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      # Without these the openssl/sqlite decls are skipped (the audit says so and stays
+      # green) rather than checked — which is the half most likely to have drifted.
+      - run: sudo apt-get update && sudo apt-get install -y libssl-dev libsqlite3-dev
+      - run: bun run scripts/audit-extern-returns.ts
