@@ -10,8 +10,9 @@
 //   - HOST ONLY. It reads this machine's headers, so on macOS it says nothing about
 //     std/*.linux.milo (and vice versa). Run it on both to cover both.
 //   - Return types only. Parameters need a C parser (see @cSig's docs).
-//   - Skips pointer/void returns (no width is claimed) and any fn these headers don't
-//     declare (openssl, sqlite3, mach, CoreCrypto — they'd need their own headers).
+//   - Skips pointer/void returns (no width is claimed) and any fn the headers below
+//     don't declare. openssl/sqlite3/mach/CommonCrypto are probed and used when present;
+//     when they're missing those decls stay unchecked (and say so) rather than fail.
 //
 // Usage: bun run scripts/audit-extern-returns.ts
 // Exits non-zero if any declaration disagrees with C.
@@ -29,7 +30,25 @@ const UNSIGNED = new Set(["u8", "u16", "u32", "u64"]);
 const HEADERS = ["stdio.h", "stdlib.h", "string.h", "unistd.h", "fcntl.h", "time.h", "errno.h",
   "math.h", "signal.h", "dirent.h", "pthread.h", "sys/stat.h", "sys/mman.h", "sys/time.h",
   "sys/socket.h", "sys/resource.h", "sys/wait.h", "netinet/in.h", "arpa/inet.h", "netdb.h",
-  "termios.h", "poll.h", "spawn.h"];
+  "termios.h", "poll.h", "spawn.h", "sys/ioctl.h", "regex.h", "sys/sysctl.h", "sys/utsname.h",
+  "pwd.h", "grp.h", "libgen.h", "sys/select.h", "sys/uio.h"];
+
+// Non-libc bindings: hand-written, so likelier to drift than libc, but their headers
+// aren't guaranteed present. Each group is probed once and used only if it compiles —
+// a missing openssl just means those decls stay skipped, not a broken audit.
+const OPTIONAL: { name: string; headers: string[]; flags: string }[] = [
+  { name: "openssl", headers: ["openssl/ssl.h", "openssl/evp.h", "openssl/err.h"], flags: opensslInclude() },
+  { name: "sqlite3", headers: ["sqlite3.h"], flags: "" },
+  { name: "mach", headers: ["mach/mach.h", "mach/mach_host.h"], flags: "" },
+  { name: "commoncrypto", headers: ["CommonCrypto/CommonCrypto.h", "CommonCrypto/CommonCryptor.h"], flags: "" },
+];
+
+function opensslInclude(): string {
+  for (const p of ["/opt/homebrew/opt/openssl@3.6", "/opt/homebrew/opt/openssl@3", "/opt/homebrew/opt/openssl", "/usr/local/opt/openssl@3", "/usr"]) {
+    try { if (readFileSync(`${p}/include/openssl/ssl.h`)) return `-I${p}/include`; } catch {}
+  }
+  return "";
+}
 
 type Decl = { name: string; arity: number; ret: string; file: string };
 
@@ -52,20 +71,32 @@ const tmpC = join(tmpdir(), `milo_audit_${crypto.randomUUID().slice(0, 8)}.c`);
 const findings: string[] = [];
 let checked = 0, skipped = 0;
 
+// Probe each optional group once rather than per-decl.
+const available: { headers: string[]; flags: string }[] = [];
+for (const g of OPTIONAL) {
+  writeFileSync(tmpC, g.headers.map(h => `#include <${h}>`).join("\n") + "\nint main(void){return 0;}\n");
+  try {
+    execSync(`cc -fsyntax-only ${g.flags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
+    available.push({ headers: g.headers, flags: g.flags });
+  } catch { console.log(`note: ${g.name} headers not found — its decls stay unchecked`); }
+}
+const allHeaders = [...HEADERS, ...available.flatMap(g => g.headers)];
+const allFlags = available.map(g => g.flags).filter(Boolean).join(" ");
+
 try {
   for (const d of declsFrom("std")) {
     const size = SIZES[d.ret];
     if (size === undefined) { skipped++; continue; }  // pointer/void/struct return: no width claimed
     const args = Array(d.arity).fill("0").join(", ");
     const src = [
-      ...HEADERS.map(h => `#include <${h}>`),
+      ...allHeaders.map(h => `#include <${h}>`),
       `_Static_assert(sizeof(${d.name}(${args})) == ${size}, "WIDTH");`,
       SIGNED.has(d.ret) ? `_Static_assert((__typeof__(${d.name}(${args})))-1 < 0, "SIGN");` : "",
       UNSIGNED.has(d.ret) ? `_Static_assert((__typeof__(${d.name}(${args})))-1 > 0, "SIGN");` : "",
     ].filter(Boolean).join("\n");
     writeFileSync(tmpC, src + "\n");
     try {
-      execSync(`cc -fsyntax-only ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`cc -fsyntax-only ${allFlags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
       checked++;
     } catch (e: any) {
       const err = e.stderr?.toString() ?? "";
