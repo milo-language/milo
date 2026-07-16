@@ -328,12 +328,8 @@ impl TlsStream {
                 for i in 0..n as i64 {
                     data.push(buf[i])
                 }
-                match ch.send(data) {
-                    Result.Ok(_v) => {
-                    }
-                    Result.Err(_e) => {
-                        break
-                    }
+                if ch.send(data).isErr() {
+                    break
                 }
             }
             ch.close()

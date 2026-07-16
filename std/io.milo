@@ -82,12 +82,8 @@ fn fdChannel(fd: i32): Channel<string> {
             for i in 0..n {
                 data.push(buf[i])
             }
-            match ch.send(data) {
-                Result.Ok(_v) => {
-                }
-                Result.Err(_e) => {
-                    break
-                }
+            if ch.send(data).isErr() {
+                break
             }
         }
         ch.close()

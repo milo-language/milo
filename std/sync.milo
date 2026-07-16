@@ -445,14 +445,10 @@ impl Channel<T> {
 
     // Iterator protocol — enables `for val in channel { ... }`
     fn next(self: &mut Self): Option<T> {
-        match self.recv() {
-            Result.Ok(val) => {
-                return Option.Some(val)
-            }
-            Result.Err(_) => {
-                return Option.None
-            }
+        let Result.Ok(val) = self.recv() else {
+            return Option.None
         }
+        return Option.Some(val)
     }
 
     fn destroy(self: &Self): void {

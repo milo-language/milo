@@ -294,13 +294,8 @@ fn capture(cmd: &string): Result<string> {
     if code != 0 {
         return Result.Err("command failed with exit code")
     }
-    let content = readFile(tmpPath)
-    match content {
-        Result.Ok(s) => {
-            return Result.Ok(s)
-        }
-        Result.Err(e) => {
-            return Result.Err("failed to read capture output")
-        }
+    let Result.Ok(s) = readFile(tmpPath) else {
+        return Result.Err("failed to read capture output")
     }
+    return Result.Ok(s)
 }
