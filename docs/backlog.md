@@ -78,6 +78,10 @@ primitives carried it, but these gaps are where the friction was. Ranked.
 | C6 | **Papercuts** | L | L | (a) match-bound values are immutable for `&mut` **fn args** but fine for `&mut` **methods** — inconsistent, forced inlining a spawn helper. (b) `string.push` needs an explicit `as u8` on int literals. (c) ~~`appendFile` missing from `std/fs`~~ ✅ added this session. | session |
 | C7 | **No `AF_UNIX` in `std/net`** | M | M | `std/net` is TCP-only (`TcpListener`/`TcpStream` over `AF_INET`). The tmux-style detach/attach daemon (`examples/apps/tmuxDaemon.milo`) works over a localhost TCP port as a result — fine on one machine, but a unix-domain socket (filesystem-scoped, no port allocation/conflicts, peer-cred auth) is the right transport for a local daemon. Add `UnixListener`/`UnixStream`. | `std/net.milo`, `examples/apps/tmuxDaemon.milo` |
 
+**Positive findings (this loop):** `Vec<Pty>` and `Vec<Term>` both work — pushing owned structs-with-drop into a `Vec`, indexing them, calling `&mut` methods on elements (`terms[i].feed(...)`), and whole-element reassignment (`terms[i] = newTerm(...)`) all compile and run. That's what let the daemon go dynamic N-pane. No language gap here — just noting it works.
+
+**Known limitation (not a bug):** on split/resize the daemon rebuilds every pane grid at the new width (shells repaint via SIGWINCH), so on-screen content of *other* panes is cleared at that moment (still live in each shell's own history). True content reflow across a resize is a later polish.
+
 ## Dependency notes
 
 - **#6 (byte views) gates the zero-copy form of #7 (streaming JSON).** #7 works without it (materialize per event), but hands out copies until #6 lands.

@@ -101,81 +101,123 @@ fn paneTab(idx: i64, focused: bool): string {
     return $"\x1b[90m {idx}:sh \x1b[0m "
 }
 
-// Composite two pane grids side by side into one full-screen paint: pane 0 left,
-// a separator column, pane 1 right, a tmux-style status bar on the bottom row
-// (with a focus indicator), and the cursor parked in the focused pane. The grids
-// occupy rows 1..gridRows; the status bar sits on row gridRows+1. This is what
-// the (single, dumb) client renders.
-// copyMode: the pane `copyPane` is shown scrolled `copyOffset` rows back into
-// its scrollback (offset 0 = live); the other pane stays live.
-fn renderComposite(term0: &Term, term1: &Term, focus: i64, copyMode: bool, copyPane: i64, copyOffset: i64): string {
-    let paneCols = term0.cols
-    let gridRows = term0.rows
+// Column where pane `idx` starts (each pane paneW wide + one separator column).
+fn paneStartCol(idx: i64, paneW: i64): i64 {
+    return idx * (paneW + 1) + 1
+}
+
+// Composite N pane grids side by side + separators + a tmux-style status bar on
+// the bottom row. In copy mode the focused pane is scrolled `copyOffset` rows
+// back; others stay live. This is what the (single, dumb) client renders.
+fn renderCompositeN(terms: &Vec<Term>, focus: i64, copyMode: bool, copyOffset: i64): string {
+    let n = terms.len
+    if n == 0 {
+        return ""
+    }
+    let gridRows = terms[0].rows
+    let paneW = terms[0].cols
     var out = "\x1b[2J\x1b[H"
-    if copyMode && copyPane == 0 {
-        out = out + term0.renderScrollback(1, 1, copyOffset)
-    } else {
-        out = out + renderTermString(term0, 1, 1)
-    }
-    var r: i64 = 0
-    while r < gridRows {
-        out = out + $"\x1b[{r + 1};{paneCols + 1}H\x1b[90m\xe2\x94\x82\x1b[0m"
-        r = r + 1
-    }
-    if copyMode && copyPane == 1 {
-        out = out + term1.renderScrollback(1, paneCols + 2, copyOffset)
-    } else {
-        out = out + renderTermString(term1, 1, paneCols + 2)
+    var p: i64 = 0
+    while p < n {
+        let sc = paneStartCol(p, paneW)
+        if copyMode && p == focus {
+            out = out + terms[p].renderScrollback(1, sc, copyOffset)
+        } else {
+            out = out + renderTermString(terms[p], 1, sc)
+        }
+        if p < n - 1 {
+            let sep = sc + paneW
+            var r: i64 = 0
+            while r < gridRows {
+                out = out + $"\x1b[{r + 1};{sep}H\x1b[90m\xe2\x94\x82\x1b[0m"
+                r = r + 1
+            }
+        }
+        p = p + 1
     }
 
-    // status bar
     out = out + $"\x1b[{gridRows + 1};1H\x1b[K"
     if copyMode {
         out = out + $"\x1b[48;2;120;90;150;38;2;255;255;255;1m COPY \x1b[0m "
-        out = out + $"\x1b[95mpane {copyPane}  -{copyOffset} rows\x1b[0m"
-        out = out + "\x1b[90m   j/k:line  u/d:page  q:exit\x1b[0m"
+        out = out + $"\x1b[95mpane {focus}  -{copyOffset} rows\x1b[0m"
+        out = out + "\x1b[90m   j/k:line u/d:page q:exit\x1b[0m"
     } else {
         out = out + "\x1b[48;2;145;96;58;38;2;24;20;16;1m tmuxd \x1b[0m "
-        out = out + paneTab(0, focus == 0)
-        out = out + paneTab(1, focus == 1)
-        out = out + "\x1b[90m  Ctrl-B o:switch \xc2\xb7 [:scroll \xc2\xb7 Ctrl-B d:detach\x1b[0m"
+        var i: i64 = 0
+        while i < n {
+            out = out + paneTab(i, i == focus)
+            i = i + 1
+        }
+        out = out + "\x1b[90m  Ctrl-B o:next \xc2\xb7 %:split \xc2\xb7 [:scroll \xc2\xb7 d:detach\x1b[0m"
     }
 
     if !copyMode {
-        if focus == 0 {
-            out = out + $"\x1b[{term0.cr + 1};{term0.cc + 1}H"
-        } else {
-            out = out + $"\x1b[{term1.cr + 1};{paneCols + 2 + term1.cc}H"
-        }
+        let sc = paneStartCol(focus, paneW)
+        out = out + $"\x1b[{terms[focus].cr + 1};{sc + terms[focus].cc}H"
     }
     return out
 }
 
-// ── server: hold two shells tiled side by side, composite to the client ──
+// Re-tile: split the width across all panes, resize each PTY + rebuild each grid.
+fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, cols: i64, gridRows: i64): void {
+    let n = ptys.len
+    if n == 0 {
+        return
+    }
+    let paneW = (cols - (n - 1)) / n
+    var p: i64 = 0
+    while p < n {
+        setPtySize(ptys[p].masterFd, gridRows, paneW)
+        terms[p] = newTerm(gridRows, paneW)
+        p = p + 1
+    }
+}
 
-fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): void {
+fn shellArgs(): Vec<string> {
+    var a: Vec<string> = Vec.new()
+    a.push("-i")
+    return a
+}
+
+// ── server: hold N shells tiled side by side, composite to the client ──
+
+fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
+    let gridRows = rows - 1
+    let sa = shellArgs()
+    var ptys: Vec<Pty> = Vec.new()
+    var terms: Vec<Term> = Vec.new()
+    var k: i64 = 0
+    while k < 2 {
+        match openAndSpawn(shell, sa) {
+            Result.Ok(p) => {
+                setNonblock(p.masterFd)
+                ptys.push(p)
+                terms.push(newTerm(gridRows, 1))
+            }
+            Result.Err(_) => {
+            }
+        }
+        k = k + 1
+    }
+    var cols = cols0
+    reTile(ptys, terms, cols, gridRows)
+
     var clientFd: i32 = -1
     var buf: [u8; 4096] = [0; 4096]
-    // one grid per pane; shell output is always fed in so a (re)attaching client
-    // can be sent the current composite screen, not just new output. The bottom
-    // row is reserved for the status bar, so grids are rows-1 tall.
-    let gridRows = rows - 1
-    setPtySize(pty0.masterFd, gridRows, paneCols)
-    setPtySize(pty1.masterFd, gridRows, paneCols)
-    var term0 = newTerm(gridRows, paneCols)
-    var term1 = newTerm(gridRows, paneCols)
     var focus: i64 = 0
-    var prefixArmed = false // Ctrl-B o switches focus (server-side prefix)
-    var ctrlMode = false // \x1e rows;cols \x1e resize control
+    var prefixArmed = false
+    var ctrlMode = false
     var ctrlBuf = ""
-    var copyMode = false // Ctrl-B [ scrolls the focused pane's scrollback
-    var copyPane: i64 = 0
+    var copyMode = false
     var copyOffset: i64 = 0
     var running = true
     while running {
         var sel = Select.new()
-        sel.onRead(pty0.masterFd)
-        sel.onRead(pty1.masterFd)
+        var ai: i64 = 0
+        while ai < ptys.len {
+            sel.onRead(ptys[ai].masterFd)
+            ai = ai + 1
+        }
         sel.onRead(listenFd)
         if clientFd >= 0 {
             sel.onRead(clientFd)
@@ -185,26 +227,20 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
 
         var dirty = false
 
-        unsafe {
-            let n = read(pty0.masterFd, buf as *u8, 4096)
-            if n == 0 {
-                running = false
-            } else if n > 0 {
-                term0.feed(buf, n)
-                dirty = true
+        var di: i64 = 0
+        while di < ptys.len {
+            unsafe {
+                let nn = read(ptys[di].masterFd, buf as *u8, 4096)
+                if nn == 0 {
+                    running = false
+                } else if nn > 0 {
+                    terms[di].feed(buf, nn)
+                    dirty = true
+                }
             }
-        }
-        unsafe {
-            let n = read(pty1.masterFd, buf as *u8, 4096)
-            if n == 0 {
-                running = false
-            } else if n > 0 {
-                term1.feed(buf, n)
-                dirty = true
-            }
+            di = di + 1
         }
 
-        // new attach → repaint the full composite
         let newFd = acceptFd(listenFd)
         if newFd >= 0 {
             if clientFd >= 0 {
@@ -217,8 +253,6 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
             dirty = true
         }
 
-        // client input: resize control, server prefix (Ctrl-B o), else route to
-        // the focused pane's shell. EOF (== 0) means the client detached.
         if clientFd >= 0 {
             var n: i64 = 0
             unsafe {
@@ -240,12 +274,8 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
                             var sz: [i64; 2] = [0; 2]
                             parseSize(ctrlBuf, sz)
                             if sz[0] > 1 && sz[1] > 0 {
-                                let pc = (sz[1] - 1) / 2
-                                let gr = sz[0] - 1 // reserve the status row
-                                setPtySize(pty0.masterFd, gr, pc)
-                                setPtySize(pty1.masterFd, gr, pc)
-                                term0 = newTerm(gr, pc)
-                                term1 = newTerm(gr, pc)
+                                cols = sz[1]
+                                reTile(ptys, terms, cols, sz[0] - 1)
                                 dirty = true
                             }
                             ctrlMode = false
@@ -257,22 +287,21 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
                         ctrlMode = true
                         ctrlBuf = ""
                     } else if copyMode {
-                        // scroll keys; nothing reaches the shell in copy mode
-                        if b == 113 || b == 27 { // q / Esc → exit
+                        if b == 113 || b == 27 {
                             copyMode = false
                             dirty = true
-                        } else if b == 107 { // k → up one line
+                        } else if b == 107 {
                             copyOffset = copyOffset + 1
                             dirty = true
-                        } else if b == 106 { // j → down one line
+                        } else if b == 106 {
                             if copyOffset > 0 {
                                 copyOffset = copyOffset - 1
                             }
                             dirty = true
-                        } else if b == 117 { // u → page up
+                        } else if b == 117 {
                             copyOffset = copyOffset + 10
                             dirty = true
-                        } else if b == 100 { // d → page down
+                        } else if b == 100 {
                             copyOffset = copyOffset - 10
                             if copyOffset < 0 {
                                 copyOffset = 0
@@ -281,15 +310,29 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
                         }
                     } else if prefixArmed {
                         prefixArmed = false
-                        if b == 111 || b == 9 { // o / Tab → switch focused pane
-                            focus = 1 - focus
+                        if b == 111 || b == 9 {
+                            focus = (focus + 1) % ptys.len
                             dirty = true
-                        } else if b == 91 { // [ → enter copy/scroll mode
+                        } else if b == 37 {
+                            if ptys.len < 6 {
+                                match openAndSpawn(shell, sa) {
+                                    Result.Ok(p) => {
+                                        setNonblock(p.masterFd)
+                                        ptys.push(p)
+                                        terms.push(newTerm(gridRows, 1))
+                                        focus = ptys.len - 1
+                                        reTile(ptys, terms, cols, gridRows)
+                                        dirty = true
+                                    }
+                                    Result.Err(_) => {
+                                    }
+                                }
+                            }
+                        } else if b == 91 {
                             copyMode = true
-                            copyPane = focus
                             copyOffset = 0
                             dirty = true
-                        } else if b == PREFIX { // literal Ctrl-B to the shell
+                        } else if b == PREFIX {
                             fwd[fwdN] = PREFIX
                             fwdN = fwdN + 1
                         }
@@ -302,19 +345,15 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
                     i = i + 1
                 }
                 if fwdN > 0 {
-                    var tfd = pty0.masterFd
-                    if focus == 1 {
-                        tfd = pty1.masterFd
-                    }
                     unsafe {
-                        write(tfd, fwd as *u8, fwdN)
+                        write(ptys[focus].masterFd, fwd as *u8, fwdN)
                     }
                 }
             }
         }
 
         if dirty && clientFd >= 0 {
-            let comp = renderComposite(term0, term1, focus, copyMode, copyPane, copyOffset)
+            let comp = renderCompositeN(terms, focus, copyMode, copyOffset)
             unsafe {
                 write(clientFd, comp as *u8, comp.len)
             }
@@ -325,12 +364,17 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
             close(clientFd)
         }
     }
-}
-
-fn shellArgs(): Vec<string> {
-    var a: Vec<string> = Vec.new()
-    a.push("-i")
-    return a
+    var tp: i64 = 0
+    while tp < ptys.len {
+        ptys[tp].kill()
+        tp = tp + 1
+    }
+    var tc: i64 = 0
+    while tc < ptys.len {
+        ptys[tc].close()
+        ptys[tc].wait()
+        tc = tc + 1
+    }
 }
 
 fn runServe(): void {
@@ -338,35 +382,9 @@ fn runServe(): void {
         Result.Ok(listener) => {
             setNonblock(listener.fd)
             let shell = getEnvOr("SHELL", "/bin/sh")
-            let sargs = shellArgs()
-            match openAndSpawn(shell, sargs) {
-                Result.Ok(pty0) => {
-                    match openAndSpawn(shell, sargs) {
-                        Result.Ok(pty1) => {
-                            setNonblock(pty0.masterFd)
-                            setNonblock(pty1.masterFd)
-                            let paneCols = (80 - 1) / 2
-                            setPtySize(pty0.masterFd, 24, paneCols)
-                            setPtySize(pty1.masterFd, 24, paneCols)
-                            print($"tmuxd: serving 2 shells on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
-                            serveMulti(pty0, pty1, listener.fd, 24, paneCols)
-                            pty0.kill()
-                            pty1.kill()
-                            pty0.close()
-                            pty1.close()
-                            pty0.wait()
-                            pty1.wait()
-                            print("tmuxd: stopped")
-                        }
-                        Result.Err(m) => {
-                            print($"tmuxd: spawn failed: {m}")
-                        }
-                    }
-                }
-                Result.Err(m) => {
-                    print($"tmuxd: spawn failed: {m}")
-                }
-            }
+            print($"tmuxd: serving on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
+            serveMulti(listener.fd, shell, 24, 80)
+            print("tmuxd: stopped")
         }
         Result.Err(_) => {
             print("tmuxd: bind failed — is a daemon already running on 7373?")
