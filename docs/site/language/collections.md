@@ -46,7 +46,7 @@ The annotation is optional: an unannotated `var v = Vec.new()` (or `Vec.withCapa
 
 ```milo
 var xs = Vec.new()    // element type inferred below
-xs.push(10)           // xs is Vec<i32>
+xs.push(10)           // xs is Vec<i64> — the default int width
 xs.push(20)
 ```
 
