@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: install
+purpose: how end users get a working milo (source-only; clone + wrapper on PATH)
+key-files: milo, install.sh, README.md
+update-when: the install path changes (e.g. prebuilt binaries/releases return) or the wrapper's PATH/symlink story changes
+last-verified: 2026-07-15
+-->
+
 # Installation
 
 Milo builds from source. The compiler moves fast, so a clone you can `git pull` keeps you on the latest — no stale prebuilt binaries to strand you on old behavior.
