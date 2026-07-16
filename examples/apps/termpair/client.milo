@@ -464,19 +464,11 @@ fn main(): i32 {
                             bootstrapCount = bootstrapCount + 2
                             var eu: string = ""
                             var eb: string = ""
-                            match encryptWithKey(bootKeyB, c1, unixKeyB) {
-                                Result.Ok(v) => {
-                                    eu = v
-                                }
-                                Result.Err(_) => {
-                                }
+                            if let Result.Ok(v) = encryptWithKey(bootKeyB, c1, unixKeyB) {
+                                eu = v
                             }
-                            match encryptWithKey(bootKeyB, c2, browserKeyB) {
-                                Result.Ok(v) => {
-                                    eb = v
-                                }
-                                Result.Err(_) => {
-                                }
+                            if let Result.Ok(v) = encryptWithKey(bootKeyB, c2, browserKeyB) {
+                                eb = v
                             }
                             if eu.len > 0 && eb.len > 0 {
                                 let km = aesKeysMessage(eu, eb, browserCount)
@@ -490,25 +482,21 @@ fn main(): i32 {
                         // allow_browser_control is set, but re-check defensively.
                         if allowControlB {
                             let enc = parseField(raw, "payload")
-                            match decryptWithKey(browserKeyB, enc) {
-                                Result.Ok(plain) => {
-                                    let data = parseField(plain, "data")
-                                    // Cap at MAX_COMMAND_INPUT_BYTES (4096) — matches termpair-rs.
-                                    var dlen = data.len
-                                    if dlen > 4096 {
-                                        dlen = 4096
-                                    }
-                                    if dlen > 0 {
-                                        var wbuf: [u8; 4096] = [0; 4096]
-                                        for i in 0..dlen {
-                                            wbuf[i] = data[i]
-                                        }
-                                        unsafe {
-                                            write(ptyFd3, wbuf as *u8, dlen)
-                                        }
-                                    }
+                            if let Result.Ok(plain) = decryptWithKey(browserKeyB, enc) {
+                                let data = parseField(plain, "data")
+                                // Cap at MAX_COMMAND_INPUT_BYTES (4096) — matches termpair-rs.
+                                var dlen = data.len
+                                if dlen > 4096 {
+                                    dlen = 4096
                                 }
-                                Result.Err(_) => {
+                                if dlen > 0 {
+                                    var wbuf: [u8; 4096] = [0; 4096]
+                                    for i in 0..dlen {
+                                        wbuf[i] = data[i]
+                                    }
+                                    unsafe {
+                                        write(ptyFd3, wbuf as *u8, dlen)
+                                    }
                                 }
                             }
                         }

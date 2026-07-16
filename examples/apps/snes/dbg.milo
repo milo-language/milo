@@ -456,12 +456,7 @@ fn main(): i32 {
         }
     }
 
-    match makeDir("/tmp/snes", 493) {
-        Result.Ok(x) => {
-        }
-        Result.Err(e) => {
-        }
-    }
+    let _ = makeDir("/tmp/snes", 493)
 
     var rom: Vec<u8> = Vec.new()
     var mapMode: i64 = 0

@@ -127,12 +127,7 @@ fn main(): i32 {
         out.push((px & 0xFF) as u8)
         i = i + 1
     }
-    match makeDir("/tmp/snes", 493) {
-        Result.Ok(x) => {
-        }
-        Result.Err(e) => {
-        }
-    }
+    let _ = makeDir("/tmp/snes", 493)
     match writeFile("/tmp/snes/frame.ppm", out) {
         Result.Ok(n) => {
             print("OK: ran a ROM (CPU->DMA->PPU->frame) -> /tmp/snes/frame.ppm")

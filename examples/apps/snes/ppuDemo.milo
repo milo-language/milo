@@ -91,12 +91,7 @@ fn main(): i32 {
         out.push((px & 0xFF) as u8)
         i = i + 1
     }
-    match makeDir("/tmp/snes", 493) {
-        Result.Ok(x) => {
-        }
-        Result.Err(e) => {
-        }
-    }
+    let _ = makeDir("/tmp/snes", 493)
     match writeFile("/tmp/snes/bands.ppm", out) {
         Result.Ok(n) => {
             print("wrote /tmp/snes/bands.ppm (8 color bands, 256x224) — open it to view")
