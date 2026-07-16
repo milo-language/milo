@@ -1334,6 +1334,19 @@ fields. Field *order* must still match from the start.
 `@cLayout` is skipped for bare-metal targets, which are freestanding and cross-compiled —
 the host's headers are not the ones the program runs against.
 
+**Finding what isn't verified.** `@cLayout` is opt-in, so an unannotated `extern struct`
+looks exactly like a verified one. `--deny=unverified-extern` turns that into an error:
+
+```
+error: extern struct 'Stat' has no @cLayout — its layout is an unverified claim about C
+```
+
+It's off by default, and deliberately so: an `extern struct` paired with a local `.c`
+file has no header to name, which is a legitimate shape `@cLayout` can't express. Turn it
+on for a project where every layout should be pinned to a real header. It only reports
+structs in the file being compiled — a struct inside a library you imported isn't yours
+to annotate.
+
 Field access through a pointer auto-derefs (requires `unsafe` for the pointer deref):
 
 ```milo

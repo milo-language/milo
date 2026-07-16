@@ -248,6 +248,7 @@ export class TypeChecker {
   private anonStructCounter = 0;
   private anonStructs: { name: string; fields: { name: string; type: TypeKind }[] }[] = [];
   private _userFnNames?: Set<string>;
+  private entryFile?: string;
   private _userImplKeys?: Set<string>;
   // true while checking a function from the user's own file (not imported code);
   // gates lints that would otherwise flood every compile with stdlib noise
@@ -256,6 +257,13 @@ export class TypeChecker {
   constructor(warningConfig?: WarningConfig) {
     const config = warningConfig ?? { denied: new Set(), allowed: new Set() };
     if (!config.denied.has("unused-move")) config.allowed.add("unused-move");
+    // unverified-extern is OFF unless asked for: pairing an `extern struct` with a local
+    // .c peer (no header) is a legitimate, common FFI shape — this repo's own ABI-test
+    // fixtures do exactly that — and @cLayout has no header to name there. A lint that
+    // fires on code that cannot be fixed is one users turn off wholesale, taking the
+    // cases that *are* fixable with it. `--deny=unverified-extern` opts a project in
+    // (e.g. a binding crate or a safety-critical build where every layout must be pinned).
+    if (!config.denied.has("unverified-extern")) config.allowed.add("unverified-extern");
     // unused-unsafe is on by default but fires only in user code (see currentFnIsUser):
     // the permissive safe-extern rule makes most stdlib unsafe blocks technically
     // removable, so warning on imported std would flood every compile.
@@ -851,6 +859,7 @@ export class TypeChecker {
 
   check(program: Program): CheckResult {
     this._userFnNames = program.userFnNames;
+    this.entryFile = program.entryFile;
     this._userImplKeys = program.userImplKeys;
     // register built-in functions
     const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };
@@ -957,6 +966,7 @@ export class TypeChecker {
     // collect @send/@sync annotations
     for (const s of program.structs) {
       this.validateAttributes(s.name, s.attributes, "struct");
+      this.warnUnverifiedExtern(s);
       if (s.attributes) {
         for (const attr of s.attributes) {
           if (attr.name === "send") this.sendTypes.add(s.name);
@@ -1500,6 +1510,24 @@ export class TypeChecker {
   // and `...` for variadics like `int open(const char *, int, ...)`) and nothing else:
   // no quotes, no semicolons, no braces, no backslashes, no newlines.
   private static readonly C_SIG_RE = /^[A-Za-z_][A-Za-z0-9_ .,*()[\]]*\)$/;
+
+  // An `extern struct` with no `@cLayout` is an unverified claim about a C type, and it
+  // looks exactly like a verified one — which is the whole failure mode `@cLayout` exists
+  // to close, still open by default. So say so once, at the declaration.
+  //
+  // Only for structs in the file being compiled: you can't annotate a struct inside a
+  // library you imported, and warning about one is noise you can't act on. Same reasoning
+  // as the unused-unsafe lint. `entryFile` is unset when the checker is driven directly
+  // (tests/tools), which correctly means "everything is user code".
+  private warnUnverifiedExtern(s: StructDecl): void {
+    if (!s.isExtern || s.isOpaque) return;              // opaque types have no fields to verify
+    if (s.attributes?.some(a => a.name === "cLayout")) return;
+    if (this.entryFile && s.span?.file && s.span.file !== this.entryFile) return;
+    this.warn("unverified-extern",
+      `extern struct '${s.name}' has no @cLayout — its layout is an unverified claim about C`,
+      s.span,
+      `add '@cLayout("struct ${s.name.toLowerCase()}", "some/header.h")' to check the field offsets against the real header at build time`);
+  }
 
   private checkCLayout(s: StructDecl, attr: Attribute): void {
     if (!s.isExtern || s.isOpaque) {

@@ -122,6 +122,7 @@ export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | Ex
 export interface StructDecl {
   kind: "StructDecl";
   name: string;
+  span?: Span; // decl site — lets diagnostics point at the struct, and identifies its file
   typeParams: TypeParam[];
   fields: StructField[];
   attributes?: Attribute[];
@@ -237,4 +238,5 @@ export interface Program {
   globals: GlobalDecl[];
   userFnNames?: Set<string>;
   userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
+  entryFile?: string;           // the file being compiled; imports carry their own span.file
 }

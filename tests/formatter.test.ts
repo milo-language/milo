@@ -10,7 +10,10 @@ const root = resolve(__dirname, "..");
 const fmtBin = resolve(root, "bin", "milo-fmt");
 
 beforeAll(() => {
-  if (existsSync(fmtBin)) return;
+  // Always rebuild. This used to `return` when the binary merely existed, so the tests
+  // ran whatever stale bin/milo-fmt was lying around — editing fmt.milo left them green
+  // while testing the OLD formatter. bin/milo-fmt is gitignored and rebuilt only on
+  // demand, so "exists" says nothing about "current". ~400ms, once.
   const build = spawnSync(process.execPath, [
     resolve(root, "src", "main.ts"), "build",
     resolve(root, "examples", "cli-tools", "fmt.milo"), "-o", fmtBin,

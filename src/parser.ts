@@ -328,6 +328,7 @@ export class Parser {
   }
 
   private parseExternStruct(): StructDecl {
+    const start = this.peek();
     this.expect(TokenKind.Extern);
     this.expect(TokenKind.Struct);
     const name = this.expect(TokenKind.Ident).value;
@@ -343,7 +344,7 @@ export class Parser {
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
-    return { kind: "StructDecl", name, typeParams: [], fields, isExtern: true };
+    return { kind: "StructDecl", name, typeParams: [], fields, isExtern: true, span: this.span(start) };
   }
 
   private parseFn(): Function {
