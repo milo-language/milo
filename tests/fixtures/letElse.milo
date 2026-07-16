@@ -1,0 +1,43 @@
+// let-else: refutable bind that escapes into the enclosing scope; the else
+// block must diverge. Covers Option + Result, heap-payload move-out, and the
+// happy path continuing un-indented.
+
+fn find(x: i32): Option<i32> {
+    if x > 0 {
+        return Option.Some(x * 10)
+    }
+    return Option.None
+}
+
+fn load(ok: bool): Result<string> {
+    if ok {
+        return Result.Ok("payload " + "concat")
+    }
+    return Result.Err("boom")
+}
+
+fn resolve(x: i32): i32 {
+    let Option.Some(v) = find(x) else {
+        return -1
+    }
+    // v is in scope here, no nesting
+    return v
+}
+
+fn describe(ok: bool): string {
+    let Result.Ok(s) = load(ok) else {
+        return "no value"
+    }
+    return s
+}
+
+// @expect: 50
+// @expect: -1
+// @expect: payload concat
+// @expect: no value
+fn main() {
+    print(resolve(5))
+    print(resolve(-2))
+    print(describe(true))
+    print(describe(false))
+}

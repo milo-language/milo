@@ -1,0 +1,14 @@
+// @error: let-else block must diverge
+
+// The else block runs only when the pattern doesn't match, so it must diverge
+// (return/break/continue) — otherwise the binding wouldn't be guaranteed live.
+fn find(x: i32): Option<i32> {
+    return Option.Some(x)
+}
+
+fn main() {
+    let Option.Some(v) = find(3) else {
+        print("this does not diverge")
+    }
+    print(v)
+}

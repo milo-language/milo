@@ -27,10 +27,11 @@ type_name   = "i8" | "i16" | "i32" | "i64"
    terminator as in Rust. Note: the ";" in "[T; N]" array types is separate. *)
 block       = "{" { ";" | statement } "}" ;
 
-statement   = let_decl | var_decl | assign_stmt | return_stmt
+statement   = let_decl | let_else | var_decl | assign_stmt | return_stmt
             | if_stmt | while_stmt | expr_stmt ;
 
 let_decl    = "let" IDENT [ ":" type ] "=" expr ;
+let_else    = "let" pattern "=" expr "else" block ;  (* pattern binds into the enclosing scope; block must diverge *)
 var_decl    = "var" IDENT [ ":" type ] "=" expr ;
 assign_stmt = IDENT "=" expr ;
 return_stmt = "return" [ expr ] ;

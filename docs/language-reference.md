@@ -2312,6 +2312,7 @@ The parser auto-handles `--help`/`-h` and validates required args, integer forma
 | Enum | `enum Name { Variant(Type), Empty }` |
 | Match | `match val { Variant(x) => { ... } }` |
 | If let | `if let Variant(x) = val { ... }` |
+| Let else | `let Enum.Variant(x) = val else { return }` (bind-forward; else must diverge) |
 | Option shorthand | `T?` for `Option<T>` |
 | Unwrap | `expr!` |
 | Propagate | `expr?` |

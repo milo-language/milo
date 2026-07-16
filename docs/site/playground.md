@@ -3,4 +3,4 @@ layout: page
 title: Playground
 ---
 
-<MiloPlayground />
+<MiloLab startMode="sandbox" />
