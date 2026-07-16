@@ -13,6 +13,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules.
+      # `bun test` runs fine without deps, so a missing install only shows up as the
+      # typecheck gate reporting 162 phantom "cannot find name 'console'" errors.
+      - run: bun install --frozen-lockfile
       # Match the CI workflow's toolchain: z3 for the contract gate, lld for the
       # bare-metal ARM link tests (-fuse-ld=lld in tests/embedded.test.ts).
       - run: brew install z3
