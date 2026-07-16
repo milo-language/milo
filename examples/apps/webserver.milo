@@ -3,7 +3,7 @@ from "std/http" import {
     Context, Response, Router, serveRouter
 }
 from "std/argparse" import {
-    newParser, ArgParser, ParsedArgs
+    newParser
 }
 from "std/strconv" import {
     parseInt

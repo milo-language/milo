@@ -264,6 +264,12 @@ export class TypeChecker {
     // cases that *are* fixable with it. `--deny=unverified-extern` opts a project in
     // (e.g. a binding crate or a safety-critical build where every layout must be pinned).
     if (!config.denied.has("unverified-extern")) config.allowed.add("unverified-extern");
+    // unused-import is OFF unless asked for. An import can be load-bearing without the
+    // entry file ever naming the symbol: node-milo's main.milo imports binding symbols
+    // purely so those modules get compiled and linked. Warning by default would fire on
+    // every one of them, and the fix ("just delete it") would break the build — so the
+    // projects that don't do that opt in.
+    if (!config.denied.has("unused-import")) config.allowed.add("unused-import");
     // unused-unsafe is on by default but fires only in user code (see currentFnIsUser):
     // the permissive safe-extern rule makes most stdlib unsafe blocks technically
     // removable, so warning on imported std would flood every compile.
@@ -860,6 +866,12 @@ export class TypeChecker {
   check(program: Program): CheckResult {
     this._userFnNames = program.userFnNames;
     this.entryFile = program.entryFile;
+    for (const u of program.unusedImports ?? []) {
+      this.warn("unused-import",
+        `'${u.name}' is imported from '${u.path}' but never used`,
+        u.span,
+        `remove it from the import list — unless the import exists to force '${u.path}' to link, which this lint cannot see`);
+    }
     this._userImplKeys = program.userImplKeys;
     // register built-in functions
     const ptrU8: TypeKind = { tag: "ptr", inner: { tag: "int", bits: 8, signed: false } };

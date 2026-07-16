@@ -26,7 +26,7 @@ from "std/pty" import {
     Pty, WinSize, openAndSpawn, isInteractive
 }
 from "./tmuxVt" import {
-    Term, newTerm, fullRepaint, renderTermString
+    Term, newTerm, renderTermString
 }
 from "std/net" import {
     TcpListener, TcpStream, ip4

@@ -4,7 +4,7 @@
 import { readFileSync, existsSync } from "fs";
 import { resolve, dirname } from "path";
 import { homedir } from "os";
-import type { Program } from "./ast";
+import type { Program, Span } from "./ast";
 import type { TargetInfo } from "./target";
 import { Lexer } from "./lexer";
 import { Parser } from "./parser";
@@ -255,10 +255,39 @@ export function resolveImports(program: Program, sourceDir: string, target: Targ
     return result;
   }
 
+  // Imported names the entry file never mentions. Computed here because this is the last
+  // point the entry's own AST exists apart from the merged one.
+  //
+  // Deliberately over-broad about what counts as a use: it collects every string anywhere
+  // in the entry AST, so a name that only appears in a type annotation, an enum variant,
+  // or even a string literal reads as used. That direction is the safe one — this lint can
+  // miss a genuinely unused import, but it will not tell you to delete one you need.
+  const usedStrings = new Set<string>();
+  const collectStrings = (node: any, seen = new Set<any>()) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    for (const [k, v] of Object.entries(node)) {
+      if (k === "kind") continue;
+      if (typeof v === "string") usedStrings.add(v);
+      else if (Array.isArray(v)) v.forEach(x => collectStrings(x, seen));
+      else if (v && typeof v === "object") collectStrings(v, seen);
+    }
+  };
+  for (const key of ["structs", "enums", "functions", "traits", "impls", "typeAliases", "interfaces", "globals"]) {
+    for (const decl of (program as any)[key] ?? []) collectStrings(decl);
+  }
+  const unusedImports: { name: string; path: string; span?: Span }[] = [];
+  for (const imp of program.imports) {
+    if (!imp.names) continue;   // glob import: nothing named to be unused
+    for (const n of imp.names) {
+      if (!usedStrings.has(n)) unusedImports.push({ name: n, path: imp.path, span: imp.span });
+    }
+  }
+
   const userFnNames = new Set(program.functions.map(f => f.name));
   // `program` here is still the user's pre-merge AST (imports were pushed into
   // the separate arrays above), so its impls are the user's own.
   const userImplKeys = new Set<string>();
   for (const impl of program.impls) for (const m of impl.methods) userImplKeys.add(`${impl.typeName}.${m.name}`);
-  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames, userImplKeys, entryFile: entryFile ?? undefined };
+  return { structs: dedup(structs), enums: dedup(enums), functions: dedup(functions), imports: [], traits: dedup(traits), impls, typeAliases: dedup(typeAliases), interfaces: dedup(interfaces), globals: dedup(globals), userFnNames, userImplKeys, entryFile: entryFile ?? undefined, unusedImports };
 }

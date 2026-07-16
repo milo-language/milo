@@ -18,9 +18,9 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 
 | # | Item | ROI | Effort | Why / unblocks | Ref |
 |---|------|-----|--------|----------------|-----|
-| 1 | **Docstring pass: rest of the hot modules** | L | L | `examples/apps/nes/cpu.milo` done — the 6502 registers (`a`/`x`/`y`/`sp`/`p`) and `busRead`/`busWrite`'s side effects, which are the cases the note actually named. The same treatment is worth it for the SNES/Genesis cores and `std`'s opaque structs, but it's a slow grind with little leverage until `milo doc` (Tier 2) makes it systematic. Worth doing opportunistically when touching a module, not as a sweep. | `examples/apps/{snes,genesis}/` |
-| 2 | **`src-milo/` is unformatted** (24 of 25 files) | L | M | The formatted-source gate covers `std/` + `tests/fixtures/` (0 dirty); the self-hosted compiler was never run through `fmt`, plus 3 under `examples/` and 5 under `tests/errors/`. Reformatting `src-milo/` wants the selfhost byte-identity tests (`scripts/selfhost.sh`) watched, so it's its own change. Then widen `corpus()`. | `tests/fmtCorpus.test.ts` |
-| 3 | **Unused import warnings** — *deferred, not loop-sized* | M | M | Resolver strips imports (`resolveImports` returns `imports: []`), so the checker never sees them — needs threading entry-file imports + used-name collection across resolver→checker, **and** still false-positives on node-milo's link-only imports. Wants a real design pass. | roadmap.md:108 |
+
+| 1 | **`src-milo/` is unformatted** (24 of 25 files) | L | M | The formatted-source gate covers `std/` + `tests/fixtures/` (0 dirty); the self-hosted compiler was never run through `fmt`, plus 3 under `examples/` and 5 under `tests/errors/`. Reformatting `src-milo/` wants the selfhost byte-identity tests (`scripts/selfhost.sh`) watched, so it's its own change. Then widen `corpus()`. | `tests/fmtCorpus.test.ts` |
+| 2 | **Docstring pass: rest of the hot modules** | L | L | `examples/apps/nes/cpu.milo` done — the 6502 registers (`a`/`x`/`y`/`sp`/`p`) and `busRead`/`busWrite`'s side effects, which are the cases the note actually named. The same treatment is worth it for the SNES/Genesis cores and `std`'s opaque structs, but it's a slow grind with little leverage until `milo doc` (Tier 2) makes it systematic. Worth doing opportunistically when touching a module, not as a sweep. | `examples/apps/{snes,genesis}/` |
 
 ## Tier 2 — strategic (high ROI, higher effort) — plan & invest
 

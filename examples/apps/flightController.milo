@@ -13,7 +13,7 @@
 //   milo safety examples/apps/flightController.milo --safety=do178
 
 from "std/math" import {
-    clampF64, fabs
+    clampF64
 }
 from "std/io" import {
     writeStdout

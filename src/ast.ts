@@ -241,4 +241,6 @@ export interface Program {
   userFnNames?: Set<string>;
   userImplKeys?: Set<string>;   // `${typeName}.${method}` for user-defined impl methods
   entryFile?: string;           // the file being compiled; imports carry their own span.file
+  // Imported names the entry file never mentions (resolver-computed; see unused-import).
+  unusedImports?: { name: string; path: string; span?: Span }[];
 }
