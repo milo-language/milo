@@ -327,10 +327,8 @@ fn main(): i32 {
 
     var content: string = ""
     if args.has("file") {
-        match readFile(args.getString("file")) {
-            Result.Ok(data) => {
-                content = data
-            }
+        content = match readFile(args.getString("file")) {
+            Result.Ok(data) => data
             Result.Err(e) => {
                 print($"jq: {e}")
                 return 1

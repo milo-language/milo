@@ -119,15 +119,11 @@ fn handleRequest(req: &Request, root: &string, quiet: bool): Response {
         // try index.html first
         let indexPath = pathJoin(filePath, "index.html")
         if isFile(indexPath) {
-            match readFile(indexPath) {
-                Result.Ok(content) => {
-                    if !quiet {
-                        print($"200 GET {req.path} -> index.html")
-                    }
-                    return Response.Status(200, "text/html", content)
+            if let Result.Ok(content) = readFile(indexPath) {
+                if !quiet {
+                    print($"200 GET {req.path} -> index.html")
                 }
-                Result.Err(e) => {
-                }
+                return Response.Status(200, "text/html", content)
             }
         }
         // directory listing

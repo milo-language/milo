@@ -7,21 +7,31 @@
 // passes on the way. That makes ordering (e.g. the `initialized` event arriving
 // before or after the `initialize` response) a non-issue.
 
-from "std/process" import { Child }
-from "std/net" import { TcpStream, resolve }
-from "std/json" import { Json, jsonParse }
-from "framing" import { readFrame }
-from "protocol" import { writeFrame }
+from "std/process" import {
+    Child
+}
+from "std/net" import {
+    TcpStream, resolve
+}
+from "std/json" import {
+    Json, jsonParse
+}
+from "framing" import {
+    readFrame
+}
+from "protocol" import {
+    writeFrame
+}
 
 // A decoded DAP message. Unused fields for a given kind stay at their defaults.
 struct DapMsg {
-    kind: string,       // "response" | "event" | "request"
+    kind: string, // "response" | "event" | "request"
     seq: i64,
-    requestSeq: i64,    // responses: the seq of the request this answers
-    command: string,    // responses: the command echoed back
-    event: string,      // events: the event name
-    success: bool,      // responses: did the request succeed
-    raw: string,        // full JSON body, for callers that want more
+    requestSeq: i64, // responses: the seq of the request this answers
+    command: string, // responses: the command echoed back
+    event: string, // events: the event name
+    success: bool, // responses: did the request succeed
+    raw: string, // full JSON body, for callers that want more
 }
 
 struct DapClient {
@@ -31,22 +41,34 @@ struct DapClient {
 
 fn _strOr(opt: Option<string>, fallback: string): string {
     match opt {
-        Option.Some(v) => { return v }
-        Option.None => { return fallback }
+        Option.Some(v) => {
+            return v
+        }
+        Option.None => {
+            return fallback
+        }
     }
 }
 
 fn _i64Or(opt: Option<i64>, fallback: i64): i64 {
     match opt {
-        Option.Some(v) => { return v }
-        Option.None => { return fallback }
+        Option.Some(v) => {
+            return v
+        }
+        Option.None => {
+            return fallback
+        }
     }
 }
 
 fn _boolOr(opt: Option<bool>, fallback: bool): bool {
     match opt {
-        Option.Some(v) => { return v }
-        Option.None => { return fallback }
+        Option.Some(v) => {
+            return v
+        }
+        Option.None => {
+            return fallback
+        }
     }
 }
 
@@ -68,24 +90,24 @@ fn _decode(raw: string): Result<DapMsg> {
 }
 
 fn _getStr(doc: &Json, key: string): Option<string> {
-    match doc.get(key) {
-        Option.Some(node) => { return node.asStr() }
-        Option.None => { return Option.None }
+    let Option.Some(node) = doc.get(key) else {
+        return Option.None
     }
+    return node.asStr()
 }
 
 fn _getI64(doc: &Json, key: string): Option<i64> {
-    match doc.get(key) {
-        Option.Some(node) => { return node.asI64() }
-        Option.None => { return Option.None }
+    let Option.Some(node) = doc.get(key) else {
+        return Option.None
     }
+    return node.asI64()
 }
 
 fn _getBool(doc: &Json, key: string): Option<bool> {
-    match doc.get(key) {
-        Option.Some(node) => { return node.asBool() }
-        Option.None => { return Option.None }
+    let Option.Some(node) = doc.get(key) else {
+        return Option.None
     }
+    return node.asBool()
 }
 
 impl DapClient {
@@ -97,7 +119,10 @@ impl DapClient {
     // pipe; the captured text is surfaced if the adapter dies before the handshake.
     fn startArgs(program: &string, args: Vec<string>): Result<DapClient> {
         let child = Child.spawn(program, args, false)?
-        return Result.Ok(DapClient { child: child, seq: 0 })
+        return Result.Ok(DapClient {
+            child: child, seq: 0
+        }
+        )
     }
 
     // Connect to an already-listening DAP adapter over TCP (e.g. `dlv dap
@@ -109,8 +134,12 @@ impl DapClient {
     fn startTcp(host: &string, port: i64): Result<DapClient> {
         var ip: u32 = 0
         match resolve(host) {
-            Result.Ok(a) => { ip = a }
-            Result.Err(_e) => { return Result.Err("cannot resolve DAP host: " + host.clone()) }
+            Result.Ok(a) => {
+                ip = a
+            }
+            Result.Err(_e) => {
+                return Result.Err("cannot resolve DAP host: " + host.clone())
+            }
         }
         match TcpStream.connect(ip, port as u16) {
             Result.Ok(s) => {
@@ -122,8 +151,13 @@ impl DapClient {
                 // back-to-back with no scheduler yield between the two syscalls,
                 // so the second is a harmless EBADF (safe only because no yield
                 // can reuse the fd number in between).
-                let child = Child { pid: -1 as i32, stdinFd: fd, stdoutFd: fd, stderrFd: -1 as i32 }
-                return Result.Ok(DapClient { child: child, seq: 0 })
+                let child = Child {
+                    pid: -1 as i32, stdinFd: fd, stdoutFd: fd, stderrFd: -1 as i32
+                }
+                return Result.Ok(DapClient {
+                    child: child, seq: 0
+                }
+                )
             }
             Result.Err(_e) => {
                 return Result.Err("cannot connect to DAP adapter at " + host.clone() + ":" + port.toString())
@@ -144,11 +178,11 @@ impl DapClient {
         let s = self._nextSeq()
         let q: string = "\""
         let payload = "{" + q + "seq" + q + ":" + s.toString()
-            + "," + q + "type" + q + ":" + q + "response" + q
-            + "," + q + "request_seq" + q + ":" + requestSeq.toString()
-            + "," + q + "success" + q + ":true"
-            + "," + q + "command" + q + ":" + q + command + q
-            + "," + q + "body" + q + ":" + bodyJson + "}"
+        + "," + q + "type" + q + ":" + q + "response" + q
+        + "," + q + "request_seq" + q + ":" + requestSeq.toString()
+        + "," + q + "success" + q + ":true"
+        + "," + q + "command" + q + ":" + q + command + q
+        + "," + q + "body" + q + ":" + bodyJson + "}"
         let _w = writeFrame(self.child, payload)
     }
 
@@ -159,11 +193,13 @@ impl DapClient {
         // don't lex, so we splice a quote constant instead.
         let q: string = "\""
         let payload = "{" + q + "seq" + q + ":" + s.toString()
-            + "," + q + "type" + q + ":" + q + "request" + q
-            + "," + q + "command" + q + ":" + q + command + q
-            + "," + q + "arguments" + q + ":" + argsJson + "}"
+        + "," + q + "type" + q + ":" + q + "request" + q
+        + "," + q + "command" + q + ":" + q + command + q
+        + "," + q + "arguments" + q + ":" + argsJson + "}"
         let w = writeFrame(self.child, payload)
-        if w < 0 { return -1 as i64 }
+        if w < 0 {
+            return -1 as i64
+        }
         return s
     }
 
@@ -177,7 +213,9 @@ impl DapClient {
     // events encountered along the way. Returns the matching response.
     fn request(self: &mut Self, command: &string, argsJson: &string): Result<DapMsg> {
         let want = self.send(command, argsJson)
-        if want < 0 { return Result.Err("send failed") }
+        if want < 0 {
+            return Result.Err("send failed")
+        }
         while true {
             let msg = self.recv()?
             if msg.kind == "event" {
