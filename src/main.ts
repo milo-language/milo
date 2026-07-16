@@ -77,8 +77,7 @@ function compileWithGuards(source: string, target: TargetInfo, filePath?: string
 }
 
 // Compile the @cLayout/@cSig guard TU against the real system headers and fail the build
-// if any _Static_assert trips. Bare-metal targets are skipped: they're freestanding and
-// cross-compiled, so the host's headers aren't the ones the program will run against.
+// if any _Static_assert trips.
 function verifyCDecls(cGuards: string | null, target: TargetInfo): void {
   if (!cGuards) return;
   // The guard TU is compiled with the host cc against the host's headers, so it only
@@ -86,9 +85,21 @@ function verifyCDecls(cGuards: string | null, target: TargetInfo): void {
   // different hosted target has its own headers and, more subtly, its own data model —
   // `long` is 8 bytes on every target Milo hosts today (all LP64) but 4 on LLP64
   // (Windows), which would make a correct `i64` declaration wrong there. Verifying that
-  // against macOS headers would report the host's answer for the target's question.
+  // against the host's headers would answer the host's question, not the target's.
+  //
+  // Skipping is announced, never silent: an unverified @cLayout/@cSig looks identical to
+  // a verified one, and a guard you think is running is worse than no guard at all.
+  // Verifying properly needs a sysroot for the target, which the compiler has no notion
+  // of yet (there is no -I/-isysroot anywhere in the build).
   const host = getHostTarget();
-  if (target.bareMetal || target.os !== host.os || target.arch !== host.arch) return;
+  if (target.bareMetal) {
+    console.error(`warning: @cLayout/@cSig guards skipped — a bare-metal target is freestanding, so the host's headers don't describe it`);
+    return;
+  }
+  if (target.os !== host.os || target.arch !== host.arch) {
+    console.error(`warning: @cLayout/@cSig guards skipped — building for ${target.triple}, but verification would read this ${host.os}-${host.arch} host's headers`);
+    return;
+  }
   const tc = detectToolchain();
   const cc = tc.kind === "clang" ? tc.path : "cc";
   const tmpC = join(tmpdir(), `milo_cdecl_${crypto.randomUUID().slice(0, 8)}.c`);
