@@ -137,6 +137,8 @@ fn Channel.next(self: &mut Channel): Option<T>
 ```
 
 Iterator protocol — enables `for val in channel { ... }`
+Uses match, not let-else: std must stay within the subset milo-self parses
+(src-milo has no let-else yet), or self-host can't compile std.
 
 ### `Channel.rawPtr`
 

@@ -444,11 +444,17 @@ impl Channel<T> {
     }
 
     // Iterator protocol — enables `for val in channel { ... }`
+    // Uses match, not let-else: std must stay within the subset milo-self parses
+    // (src-milo has no let-else yet), or self-host can't compile std.
     fn next(self: &mut Self): Option<T> {
-        let Result.Ok(val) = self.recv() else {
-            return Option.None
+        match self.recv() {
+            Result.Ok(val) => {
+                return Option.Some(val)
+            }
+            Result.Err(_) => {
+                return Option.None
+            }
         }
-        return Option.Some(val)
     }
 
     fn destroy(self: &Self): void {

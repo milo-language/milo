@@ -221,21 +221,22 @@ fn main(): i32 {
     }
     return 0
 }` },
-  { title: 'Fetch over HTTP', file: 'fetch.milo', native: true,
-    desc: 'A one-line <code>fetch</code> returns a <code>Result</code>; <code>!</code> unwraps it or aborts. Parse the body with <code>.json()</code> and pull fields with <code>if let</code>.',
-    take: 'Networking lives in the standard library — sockets, TLS, and JSON, all written in Milo. (The browser target has no network runtime, so this replays the real native output.)',
-    out: ['status: 200', 'origin: 174.160.122.146'],
-    code: `from "std/net" import { fetch }
+  { title: 'Parse JSON into typed values', file: 'json.milo',
+    desc: '<code>jsonParse</code> returns a <code>Result</code>; <code>!</code> unwraps it or aborts. <code>.get()</code> returns an <code>Option</code> per key, and typed accessors like <code>asStr</code> / <code>asI64</code> pull each value out — an <code>Option</code> you must handle.',
+    take: 'JSON lives in the standard library, written in Milo. Values come out <em>typed</em> — <code>asI64</code>, <code>asStr</code>, <code>asBool</code> — no stringly-typed blobs, no unchecked casts.',
+    out: ['name: milo', 'stars: 42'],
+    code: `from "std/json" import { jsonParse }
 
 fn main(): i32 {
-    let resp = fetch("https://httpbin.org/get")!    // Result — ! unwraps or aborts
-    print($"status: {resp.status}")
+    // The kind of document an HTTP body would carry — here as a literal.
+    let src = "{\\"name\\": \\"milo\\", \\"stars\\": 42, \\"safe\\": true}"
 
-    let data = resp.json()                          // parse body as JSON
-    if let Option.Some(origin) = data.get("origin") {
-        if let Option.Some(s) = origin.asStr() {
-            print($"origin: {s}")
-        }
+    let doc = jsonParse(src)!                     // Result — ! unwraps or aborts
+    if let Option.Some(v) = doc.get("name") {
+        if let Option.Some(s) = v.asStr() { print($"name: {s}") }
+    }
+    if let Option.Some(v) = doc.get("stars") {
+        if let Option.Some(n) = v.asI64() { print($"stars: {n}") }
     }
     return 0
 }` },
@@ -319,36 +320,27 @@ fn main(): i32 {
     print(b)
     return 0
 }` },
-  { title: 'Concurrency with backpressure', file: 'backpressure.milo', native: true,
-    desc: 'A green task hands data over a <em>bounded</em> <code>Channel</code>. Capacity 2 means <code>send</code> blocks when full, so a fast producer can’t outrun a slow consumer.',
-    take: 'After <code>sent 2</code> the buffer is full, so the producer pauses until a <code>recv</code> frees a slot — free backpressure. (Green threads need the native runtime, so this replays the real output.)',
-    out: ['sent 1', 'sent 2', '      recv 1', 'sent 3', '      recv 2', 'sent 4', '      recv 3', 'sent 5', '      recv 4', '      recv 5'],
-    code: `from "std/runtime" import { Promise }
-from "std/sync" import { Channel }
-from "std/time" import { sleepMs }
+  { title: 'Putting it together', file: 'sales.milo',
+    desc: 'A small program using the pieces from earlier lessons at once: <code>struct</code>s in a <code>Vec</code>, a computed field, an <code>if</code> used as an expression, and <code>.filter</code> with a closure.',
+    take: 'Nothing new here — structs, a Vec, an if-expression, and a closure compose into a real program. That’s the whole surface for everyday code.',
+    out: ['widget: 3 x 250 = 750  <- big', 'gadget: 1 x 999 = 999  <- big', 'gizmo: 5 x 120 = 600', 'total = 2349 cents across 3 sales, 2 in bulk'],
+    code: `struct Sale { item: string, qty: i32, price: i32 }
 
 fn main(): i32 {
-    let ch = Channel<i64>.new(2)!            // capacity 2
-
-    let producer = Promise<i64>.blocking(move(): i64 => {
-        var i: i64 = 1
-        while i <= 5 {
-            ch.send(i)!                      // blocks once 2 are buffered
-            print($"sent {i}")
-            i = i + 1
-        }
-        return 0
-    })
-
-    var got: i64 = 0
-    while got < 5 {
-        sleepMs(20)                          // slow consumer
-        let v = ch.recv()!
-        print($"      recv {v}")
-        got = got + 1
+    let sales: Vec<Sale> = [
+        Sale { item: "widget", qty: 3, price: 250 },
+        Sale { item: "gadget", qty: 1, price: 999 },
+        Sale { item: "gizmo",  qty: 5, price: 120 },
+    ]
+    var total: i32 = 0
+    for s in sales {
+        let line = s.qty * s.price
+        total = total + line
+        let flag = if line > 700 { "  <- big" } else { "" }
+        print($"{s.item}: {s.qty} x {s.price} = {line}{flag}")
     }
-    producer.await()!
-    ch.destroy()
+    let bulk = sales.filter((s) => s.qty >= 3)   // closure predicate
+    print($"total = {total} cents across {sales.len} sales, {bulk.len} in bulk")
     return 0
 }` },
 ]

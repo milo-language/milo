@@ -294,8 +294,13 @@ fn capture(cmd: &string): Result<string> {
     if code != 0 {
         return Result.Err("command failed with exit code")
     }
-    let Result.Ok(s) = readFile(tmpPath) else {
-        return Result.Err("failed to read capture output")
+    // match, not let-else: keep std within milo-self's parseable subset (no let-else)
+    match readFile(tmpPath) {
+        Result.Ok(s) => {
+            return Result.Ok(s)
+        }
+        Result.Err(_) => {
+            return Result.Err("failed to read capture output")
+        }
     }
-    return Result.Ok(s)
 }

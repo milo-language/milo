@@ -1,11 +1,3 @@
-<!-- doc-meta
-system: std-json
-purpose: std/json API reference — Json value type, strict jsonParse, lenient jsoncParse, builders
-key-files: std/json.milo
-update-when: json.milo adds/renames/removes a public function or the Json type changes
-last-verified: 2026-07-15
--->
-
 # std/json
 
 ## std/json
@@ -472,6 +464,14 @@ fn jsonClone(src: &Json): Json
 
 _Undocumented._
 
+### `jsoncParse`
+
+```milo
+fn jsoncParse(s: string): Result<Json>
+```
+
+_Undocumented._
+
 ### `jsonEscapeStr`
 
 ```milo
@@ -644,14 +644,6 @@ Container children must be contiguous in childIdx, but grandchildren are discove
 interleaved while a container is still open. Children park on the scratch stack until
 the container closes, then commit as one contiguous block — this replaced a pre-counting
 scan to the matching close bracket that re-read every container body (73% of parse time).
-
-### `jsoncParse`
-
-```milo
-fn jsoncParse(s: string): Result<Json>
-```
-
-_Undocumented._
 
 ### `jsonParseNumber`
 
