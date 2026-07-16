@@ -39,7 +39,6 @@ export default defineConfig({
         text: 'More',
         items: [
           { text: 'Standard Library', link: '/stdlib/' },
-          { text: 'AI Coding', link: '/ai-coding' },
           { text: 'Benchmarks', link: '/benchmarks' },
           { text: 'Roadmap', link: '/roadmap' },
         ]
@@ -195,7 +194,6 @@ export default defineConfig({
             { text: 'Showcase', link: '/demos' },
             { text: 'Benchmarks', link: '/benchmarks' },
             { text: 'Quick Reference', link: '/reference' },
-            { text: 'AI Coding', link: '/ai-coding' },
             { text: 'Roadmap', link: '/roadmap' },
           ]
         },

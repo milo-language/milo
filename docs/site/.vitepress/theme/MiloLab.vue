@@ -180,7 +180,7 @@ fn main(): i32 {
     print($"rect:   {area(Shape.Rect(3.0, 4.0))}")
     return 0
 }` },
-  { title: 'Say what must be true — the compiler proves it', file: 'clamp.milo', native: true,
+  { title: 'Say what must be true — the compiler proves it', file: 'clamp.milo',
     desc: 'Annotate a function with <code>requires</code> (what the caller must guarantee) and <code>ensures</code> (what it promises back), written in ordinary Milo. With no solver installed, each becomes a checked runtime assertion. With <code>z3</code>, <code>milo prove</code> discharges them at compile time and deletes the check.',
     take: 'Gradual verification: proven conditions cost nothing at runtime, the rest fall back to runtime checks — you are never forced to hand-write a proof the way Lean or Dafny demand. When <code>prove</code> can’t discharge a condition it hands you the failing input, not a proof obligation.',
     out: ['$ milo prove clamp.milo', '  ✓ [postcondition] clamp: proven', '', '$ milo run clamp.milo', '10'],
@@ -383,8 +383,8 @@ fn area(s: &Shape): f64 {
 }
 
 fn main(): i32 {
-    print(area(Shape.Circle(5.0)))
-    print(area(Shape.Rect(3.0, 4.0)))
+    let shapes: Vec<Shape> = [Shape.Circle(5.0), Shape.Rect(3.0, 4.0)]
+    for s in shapes { print($"area = {area(s)}") }
     return 0
 }`,
   'Closures': `fn main(): i32 {
@@ -412,6 +412,44 @@ fn main(): i32 {
     for item in items { print($"- {item}") }
     items.push("date")
     print($"after push: {items.len()}")
+    return 0
+}`,
+  'Errors': `fn parseAge(s: string): Result<i32> {
+    if s == "" { return Result.Err("empty input") }
+    return Result.Ok(42)
+}
+
+fn nextYear(s: string): Result<i32> {
+    let age = parseAge(s)?      // unwraps Ok, or returns Err early
+    return Result.Ok(age + 1)
+}
+
+fn main(): i32 {
+    match nextYear("bob") {
+        Result.Ok(v) => { print($"next year: {v}") }
+        Result.Err(e) => { print($"error: {e}") }
+    }
+    match nextYear("") {
+        Result.Ok(v) => { print($"next year: {v}") }
+        Result.Err(e) => { print($"error: {e}") }
+    }
+    return 0
+}`,
+  'Contracts': `// requires = caller's obligation, ensures = the function's promise.
+// With no solver, each becomes a checked runtime assertion;
+// 'milo prove' (with z3) discharges them at compile time for free.
+fn clamp(value: i64, lo: i64, hi: i64): i64
+requires lo <= hi
+ensures result >= lo && result <= hi
+{
+    if value < lo { return lo }
+    if value > hi { return hi }
+    return value
+}
+
+fn main(): i32 {
+    print(clamp(42, 0, 10))
+    print(clamp(-5, 0, 10))
     return 0
 }`,
 }

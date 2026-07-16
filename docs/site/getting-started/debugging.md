@@ -1,6 +1,19 @@
 # Debugging
 
-Milo emits standard DWARF debug info, so any DWARF-aware debugger — `lldb`, `gdb`, or [hades](https://github.com/cs01/hades) — can set breakpoints on Milo source lines and inspect Milo values.
+Milo emits standard DWARF debug info, so any DWARF-aware debugger — `lldb`, `gdb`, or [hades](https://github.com/cs01/milo/tree/main/examples/apps/hades) — can set breakpoints on Milo source lines and inspect Milo values.
+
+## Graphical debugging with hades
+
+[hades](https://github.com/cs01/milo/tree/main/examples/apps/hades) is a web + AI debugger written in Milo itself. It drives any DAP backend (`lldb-dap`, `debugpy`), so it debugs Milo binaries directly — same DWARF, no plugin.
+
+```bash
+./milo build app.milo -o app -g --debug     # DWARF at -O0
+hades web ./app                              # opens the UI in your browser
+```
+
+`hades web` serves a React + Monaco + xterm.js front-end from a Milo HTTP/WebSocket server: click a source line to set a breakpoint, step, inspect the call stack, expand locals and watch expressions, view an ARM64/x86 disassembly pane, and type into a real PTY terminal while the program runs — no command memorization.
+
+`hades mcp` exposes the same live session to an AI over MCP: you and the model see and drive the same debuggee, so you can ask it to find the fault while you watch. When a graphical or AI-assisted view beats `frame variable`, reach for hades; the `lldb` recipes below still work for scripted/CI triage.
 
 ## Build with debug info
 
