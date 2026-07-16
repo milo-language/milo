@@ -1664,45 +1664,29 @@ impl Sess {
             tag: 0, num: 0
         }
         var found = false
-        match self.io.variableTable(fr.classId, fr.methodId) {
-            Result.Ok(slots) => {
-                for s in slots {
-                    if s.name == parts[0] && fr.codeIndex >= s.codeIndex
-                    && fr.codeIndex < s.codeIndex + s.length {
-                        var slotIdxs: Vec<i64> = [s.slot]
-                        var slotTags: Vec<i64> = [s.signature[0] as i64]
-                        match self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) {
-                            Result.Ok(vals) => {
-                                if vals.len > 0 {
-                                    cur = vals[0]
-                                    found = true
-                                }
-                            }
-                            Result.Err(_e) => {
-                            }
+        if let Result.Ok(slots) = self.io.variableTable(fr.classId, fr.methodId) {
+            for s in slots {
+                if s.name == parts[0] && fr.codeIndex >= s.codeIndex
+                && fr.codeIndex < s.codeIndex + s.length {
+                    var slotIdxs: Vec<i64> = [s.slot]
+                    var slotTags: Vec<i64> = [s.signature[0] as i64]
+                    if let Result.Ok(vals) = self.io.frameGetValues(fr.threadId, fr.frameId, slotIdxs, slotTags) {
+                        if vals.len > 0 {
+                            cur = vals[0]
+                            found = true
                         }
-                        break
                     }
+                    break
                 }
-            }
-            Result.Err(_e) => {
             }
         }
         if !found {
-            match self.io.frameThisObject(fr.threadId, fr.frameId) {
-                Result.Ok(thisV) => {
-                    if thisV.num != 0 {
-                        match self.fieldOf(thisV.num, parts[0]) {
-                            Option.Some(v) => {
-                                cur = v
-                                found = true
-                            }
-                            Option.None => {
-                            }
-                        }
+            if let Result.Ok(thisV) = self.io.frameThisObject(fr.threadId, fr.frameId) {
+                if thisV.num != 0 {
+                    if let Option.Some(v) = self.fieldOf(thisV.num, parts[0]) {
+                        cur = v
+                        found = true
                     }
-                }
-                Result.Err(_e) => {
                 }
             }
         }
@@ -1718,14 +1702,11 @@ impl Sess {
                 self.out.fail(seq, c, "\"" + parts[pi - 1] + "\" is not an object")
                 return
             }
-            match self.fieldOf(cur.num, parts[pi]) {
-                Option.Some(v) => {
-                    cur = v
-                }
-                Option.None => {
-                    self.out.fail(seq, c, "no field \"" + parts[pi] + "\"")
-                    return
-                }
+            if let Option.Some(v) = self.fieldOf(cur.num, parts[pi]) {
+                cur = v
+            } else {
+                self.out.fail(seq, c, "no field \"" + parts[pi] + "\"")
+                return
             }
             pi = pi + 1
         }
