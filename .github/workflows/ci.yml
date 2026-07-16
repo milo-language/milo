@@ -6,6 +6,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      # tests/typecheck.test.ts runs tsc, which needs @types/bun from node_modules —
+      # without it every `console`/`process`/`Buffer` is an error. `bun test` happens to
+      # run fine without deps, which is exactly why this gap stayed invisible.
+      - run: bun install --frozen-lockfile
       # z3 lets the contract gate (tests/verify-contracts.test.ts) discharge the
       # nonlinear/bitwise contracts the native QF_LIA prover can only mark unknown.
       # If this step ever flakes, the gate falls back to the native solver (fewer
@@ -32,6 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
       # z3 mirrors the macOS job's contract gate. lld provides ld.lld for the bare-metal
       # ARM link; qemu-system-arm runs those binaries (tests/embedded.test.ts skips itself
       # when QEMU is absent, so without it that lane silently proves nothing).
