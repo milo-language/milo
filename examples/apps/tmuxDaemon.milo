@@ -368,7 +368,46 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                 var i: i64 = 0
                 while i < n {
                     let b = buf[i]
-                    if ctrlMode {
+                    // SGR mouse click: ESC [ < btn ; col ; row (M|m). A click
+                    // focuses the pane it lands in (by column). Arrives whole.
+                    if b == 27 && i + 2 < n && buf[i + 1] == 91 && buf[i + 2] == 60 {
+                        var j = i + 3
+                        var field = 0 // 0 btn, 1 col, 2 row
+                        var col = 0
+                        var press = false
+                        while j < n {
+                            let mb = buf[j]
+                            if mb >= 48 && mb <= 57 {
+                                if field == 1 {
+                                    col = col * 10 + (mb - 48) as i64
+                                }
+                            } else if mb == 59 {
+                                field = field + 1
+                            } else if mb == 77 || mb == 109 {
+                                press = mb == 77
+                                j = j + 1
+                                break
+                            }
+                            j = j + 1
+                        }
+                        if press && !copyMode {
+                            var idxs: [i64; 16] = [0; 16]
+                            let m = activePaneIdxs(paneWin, activeWin, idxs)
+                            if m > 0 {
+                                let paneW = terms[idxs[0]].cols
+                                var pos = (col - 1) / (paneW + 1)
+                                if pos < 0 {
+                                    pos = 0
+                                }
+                                if pos >= m {
+                                    pos = m - 1
+                                }
+                                focus = idxs[pos]
+                                dirty = true
+                            }
+                        }
+                        i = j
+                    } else if ctrlMode {
                         if b == RESIZE_MARK {
                             var sz: [i64; 2] = [0; 2]
                             parseSize(ctrlBuf, sz)
@@ -650,10 +689,13 @@ fn runAttach(): void {
             setNonblock(sockFd)
             let termState = enableRawMode()
             let winchFd = installSignalPipe(SIGWINCH)
-            writeStdout("\x1b[2J\x1b[H")
+            // SGR mouse reporting: clicks arrive on stdin and are forwarded to the
+            // daemon, which focuses the clicked pane.
+            writeStdout("\x1b[?1000h\x1b[?1006h\x1b[2J\x1b[H")
             flush()
             sendSize(sockFd) // negotiate size up front
             attachLoop(sockFd, winchFd)
+            writeStdout("\x1b[?1000l\x1b[?1006l") // disable mouse
             restoreTerminal(termState)
             writeStdout("\x1b[0m\r\n")
             flush()
