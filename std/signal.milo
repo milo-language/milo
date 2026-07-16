@@ -1,5 +1,12 @@
 // std/signal — OS signal handling (POSIX)
 
+from "std/os" import {
+    pipe, read, write
+}
+from "std/platform" import {
+    fcntl, fGetfl, fSetfl, oNonblock
+}
+
 extern fn signal(signum: i32, handler: *u8): *u8
 
 let SIGHUP: i32 = 1
@@ -10,6 +17,7 @@ let SIGKILL: i32 = 9
 let SIGPIPE: i32 = 13
 let SIGALRM: i32 = 14
 let SIGTERM: i32 = 15
+let SIGWINCH: i32 = 28 // 28 on both darwin and linux
 
 // Register a handler for a signal. Handler receives the signal number.
 fn onSignal(sig: i32, handler: (i32) => void): void {
@@ -29,5 +37,55 @@ fn ignoreSignal(sig: i32): void {
 fn resetSignal(sig: i32): void {
     unsafe {
         signal(sig, 0 as *u8)
+    }
+}
+
+// ── self-pipe: turn a signal into a readable fd ──
+//
+// A raw signal handler can't safely wake a Select loop parked in kqueue. The
+// self-pipe trick fixes that: the handler does one async-signal-safe write() to
+// a pipe, and the read end becomes readable — arm THAT in a Select. On BSD/macOS
+// signal() installs handlers with SA_RESTART, so kevent auto-restarts after the
+// handler and picks up the now-readable pipe on the next spin.
+
+var _sigPipeW: i32 = -1
+
+fn _sigPipeHandler(_sig: i32): void {
+    unsafe {
+        var b: [u8; 1] = [1]
+        write(_sigPipeW, b as *u8, 1) // async-signal-safe; nonblocking
+    }
+}
+
+// Install a self-pipe for `sig` and return its read fd (or -1 on failure). The
+// fd goes readable each time the signal fires; arm it with Select.onRead and
+// call drainSignalFd after it wakes. Single global pipe — one signal at a time
+// (SIGWINCH is the intended user).
+fn installSignalPipe(sig: i32): i32 {
+    unsafe {
+        var fds: [i32; 2] = [0; 2]
+        if pipe(fds as *u8) != 0 {
+            return -1
+        }
+        let r = fds[0]
+        let w = fds[1]
+        // nonblock both ends: the handler write must never block, and the drain
+        // must not stall the loop when the pipe is empty
+        fcntl(r, fSetfl(), fcntl(r, fGetfl()) | oNonblock())
+        fcntl(w, fSetfl(), fcntl(w, fGetfl()) | oNonblock())
+        _sigPipeW = w
+        signal(sig, _sigPipeHandler as *u8)
+        return r
+    }
+}
+
+// Drain pending bytes from a signal self-pipe (call after its fd wakes a Select).
+fn drainSignalFd(fd: i32): void {
+    unsafe {
+        var buf: [u8; 64] = [0; 64]
+        var n = read(fd, buf as *u8, 64)
+        while n == 64 {
+            n = read(fd, buf as *u8, 64)
+        }
     }
 }

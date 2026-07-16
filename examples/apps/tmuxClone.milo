@@ -31,17 +31,230 @@ from "std/term" import {
 from "std/select" import {
     Select
 }
+from "std/signal" import {
+    installSignalPipe, drainSignalFd, SIGWINCH
+}
 from "std/env" import {
     getEnvOr
 }
 from "std/os" import {
     ioctl, read
 }
+from "std/time" import {
+    sleepMs
+}
 from "std/platform" import {
     fcntl, fGetfl, fSetfl, oNonblock
 }
 
 let PREFIX: u8 = 2 // Ctrl-B
+
+// ─────────────────────────── splash / branding ───────────────────────────
+//
+// Milo the chihuahua — the project mascot, rendered from the same 18x18 pixel
+// sprite as the website logo (docs/site/scripts/gen-logo.ts). Drawn with the
+// half-block trick (▀/▄): two vertically-stacked pixels per character cell, so
+// it stays crisp and square in a terminal.
+
+fn spriteRow(r: i64): string {
+    if r == 0 {
+        return "  dd          dd  "
+    }
+    if r == 1 {
+        return " dddd        dddd "
+    }
+    if r == 2 {
+        return " dpdd        ddpd "
+    }
+    if r == 3 {
+        return " ddpdb      bdpdd "
+    }
+    if r == 4 {
+        return "  ddbtttttttttbdd "
+    }
+    if r == 5 {
+        return "   btttttttttttb  "
+    }
+    if r == 6 {
+        return "  bttlllllllllttb "
+    }
+    if r == 7 {
+        return " bttllllllllllllb "
+    }
+    if r == 8 {
+        return " btllkkllllkkllltb"
+    }
+    if r == 9 {
+        return " btllkgllllkglltb "
+    }
+    if r == 10 {
+        return " bttllllllllllttb "
+    }
+    if r == 11 {
+        return " bbttttwwwwttttbb "
+    }
+    if r == 12 {
+        return "  bttwwwwwwwwttb  "
+    }
+    if r == 13 {
+        return "  bttwwwkkwwwttb  "
+    }
+    if r == 14 {
+        return "   bttwwkkwwttb   "
+    }
+    if r == 15 {
+        return "   bbttwppwttbb   "
+    }
+    if r == 16 {
+        return "    bttwwwwttb    "
+    }
+    return "     bbtttbb      "
+}
+
+// pixel char → RGB into out[0..2], out[3] = 1 opaque / 0 transparent.
+fn pixelRGB(ch: u8, out: &mut [i64; 4]): void {
+    out[3] = 1
+    if ch == 100 {
+        out[0] = 96
+        out[1] = 60
+        out[2] = 38
+        return
+    } // d dark brown
+    if ch == 98 {
+        out[0] = 145
+        out[1] = 96
+        out[2] = 58
+        return
+    } // b brown shadow
+    if ch == 116 {
+        out[0] = 200
+        out[1] = 152
+        out[2] = 104
+        return
+    } // t tan
+    if ch == 108 {
+        out[0] = 226
+        out[1] = 192
+        out[2] = 150
+        return
+    } // l light tan
+    if ch == 119 {
+        out[0] = 240
+        out[1] = 226
+        out[2] = 206
+        return
+    } // w cream
+    if ch == 107 {
+        out[0] = 34
+        out[1] = 28
+        out[2] = 24
+        return
+    } // k eye / nose
+    if ch == 103 {
+        out[0] = 255
+        out[1] = 255
+        out[2] = 255
+        return
+    } // g eye glint
+    if ch == 112 {
+        out[0] = 226
+        out[1] = 150
+        out[2] = 162
+        return
+    } // p pink
+    out[3] = 0
+}
+
+fn spriteCharAt(row: &string, c: i64): u8 {
+    if c < row.len {
+        return row[c]
+    }
+    return 32
+}
+
+fn centeredCol(width: i64, cols: i64): i64 {
+    var c = (cols - width) / 2 + 1
+    if c < 1 {
+        c = 1
+    }
+    return c
+}
+
+// Paint Milo (half-block trick: two vertical pixels per cell → crisp + square),
+// wordmark + tagline, then hold until a keypress (with a generous auto-continue
+// so it never gets stuck). Stray buffered input is drained first so the splash
+// isn't dismissed the instant it appears.
+fn splash(cols: i64, rows: i64): void {
+    writeStdout("\x1b[2J\x1b[H\x1b[?25l")
+    let artCol = centeredCol(18, cols) // 18 px wide, 1 col each
+    let hc = 9 // 18 pixel rows / 2 per cell
+    var startRow = (rows - 13) / 2 + 1
+    if startRow < 1 {
+        startRow = 1
+    }
+    var tcol: [i64; 4] = [0; 4]
+    var bcol: [i64; 4] = [0; 4]
+    var r: i64 = 0
+    while r < hc {
+        var line = $"\x1b[{startRow + r};{artCol}H"
+        let rowTop = spriteRow(r * 2)
+        let rowBot = spriteRow(r * 2 + 1)
+        var c: i64 = 0
+        while c < 18 {
+            pixelRGB(spriteCharAt(rowTop, c), tcol)
+            pixelRGB(spriteCharAt(rowBot, c), bcol)
+            let topOp = tcol[3] == 1
+            let botOp = bcol[3] == 1
+            if topOp && botOp {
+                line = line + $"\x1b[38;2;{tcol[0]};{tcol[1]};{tcol[2]};48;2;{bcol[0]};{bcol[1]};{bcol[2]}m\xe2\x96\x80"
+            } else if topOp {
+                line = line + $"\x1b[49;38;2;{tcol[0]};{tcol[1]};{tcol[2]}m\xe2\x96\x80"
+            } else if botOp {
+                line = line + $"\x1b[49;38;2;{bcol[0]};{bcol[1]};{bcol[2]}m\xe2\x96\x84"
+            } else {
+                line = line + "\x1b[49m "
+            }
+            c = c + 1
+        }
+        line = line + "\x1b[0m"
+        writeStdout(line)
+        r = r + 1
+    }
+    // wordmark + tagline
+    moveTo(startRow + hc + 1, centeredCol(4, cols))
+    writeStdout("\x1b[1;38;2;226;150;162mmilo\x1b[0m")
+    let tag = "a terminal multiplexer"
+    moveTo(startRow + hc + 2, centeredCol(tag.len, cols))
+    writeStdout($"\x1b[90m{tag}\x1b[0m")
+    let hint = "press any key to start"
+    moveTo(startRow + hc + 4, centeredCol(hint.len, cols))
+    writeStdout($"\x1b[2;38;2;200;152;104m{hint}\x1b[0m")
+    flush()
+
+    // drain any input already buffered (e.g. the keystrokes that launched us) so
+    // it can't dismiss the splash before it's even seen
+    var junk: [u8; 256] = [0; 256]
+    unsafe {
+        var d = read(0, junk as *u8, 256)
+        while d == 256 {
+            d = read(0, junk as *u8, 256)
+        }
+    }
+    // Hold for a real keypress, auto-continuing after ~6s. A splash is one-shot,
+    // so a simple poll is fine (and dodges the main-thread Select.onTimeout quirk
+    // where wait() doesn't actually block off a green task).
+    var waited: i64 = 0
+    var pressed = false
+    while waited < 6000 && !pressed {
+        sleepMs(60)
+        waited = waited + 60
+        unsafe {
+            if read(0, junk as *u8, 256) > 0 {
+                pressed = true
+            }
+        }
+    }
+}
 
 // ─────────────────────────── terminal emulator ───────────────────────────
 //
@@ -401,12 +614,21 @@ fn termSize(): WinSize {
     return ws
 }
 
-fn drawBorder(focus: i64, half: i64, paneRows: i64): void {
+// basename of a path, e.g. "/bin/zsh" → "zsh"
+fn baseName(path: &string): string {
+    let i = path.lastIndexOf("/")
+    if i < 0 {
+        return path.clone()
+    }
+    return path.substr(i + 1, path.len)
+}
+
+fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
     writeStdout("\x1b[2J\x1b[H\x1b[?25l")
 
     // top
     moveTo(1, 1)
-    writeStdout("\x1b[36m\xe2\x94\x8c")
+    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x8c")
     for i in 0..half {
         writeStdout("\xe2\x94\x80")
     }
@@ -417,12 +639,13 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64): void {
     writeStdout("\xe2\x94\x90\x1b[0m")
 
     // titles — focused pane title is reverse-video so you can see where you type
-    let title0 = "shell 0"
-    let title1 = "shell 1"
+    // pane titles show the running shell (e.g. "zsh") + pane index
+    let title0 = $"{name} 0"
+    let title1 = $"{name} 1"
     moveTo(2, 1)
-    writeStdout("\x1b[36m\xe2\x94\x82")
+    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82")
     if focus == 0 {
-        writeStdout("\x1b[7;32m")
+        writeStdout("\x1b[7;38;2;200;152;104m")
     } else {
         writeStdout("\x1b[90m")
     }
@@ -434,9 +657,9 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64): void {
             writeStdout(" ")
         }
     }
-    writeStdout("\x1b[36m\xe2\x94\x82")
+    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82")
     if focus == 1 {
-        writeStdout("\x1b[7;32m")
+        writeStdout("\x1b[7;38;2;200;152;104m")
     } else {
         writeStdout("\x1b[90m")
     }
@@ -448,11 +671,11 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64): void {
             writeStdout(" ")
         }
     }
-    writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
+    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
 
     // title separator
     moveTo(3, 1)
-    writeStdout("\x1b[36m\xe2\x94\x9c")
+    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x9c")
     for i in 0..half {
         writeStdout("\xe2\x94\x80")
     }
@@ -465,16 +688,16 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64): void {
     // side borders down the content area (grid is painted inside these)
     for row in 0..paneRows {
         moveTo(4 + row as i64, 1)
-        writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
+        writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
         moveTo(4 + row as i64, half + 2)
-        writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
+        writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
         moveTo(4 + row as i64, 2 * half + 3)
-        writeStdout("\x1b[36m\xe2\x94\x82\x1b[0m")
+        writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
     }
 
     // bottom
     moveTo(4 + paneRows, 1)
-    writeStdout("\x1b[36m\xe2\x94\x94")
+    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x94")
     for i in 0..half {
         writeStdout("\xe2\x94\x80")
     }
@@ -494,7 +717,7 @@ fn drawFooter(prefixArmed: bool, paneRows: i64): void {
     moveTo(5 + paneRows, 1)
     writeStdout("\x1b[2K") // clear the whole status line first
     if prefixArmed {
-        writeStdout("\x1b[43;30;1m CHORD \x1b[0m  press:  ")
+        writeStdout("\x1b[48;2;226;150;162;38;2;34;28;24;1m CHORD \x1b[0m  press:  ")
         writeStdout("\x1b[1;32mo\x1b[0m/\x1b[1;32mTab\x1b[0m switch pane   ")
         writeStdout("\x1b[1;31mq\x1b[0m quit   ")
         writeStdout("\x1b[90mEsc or any other key cancels\x1b[0m")
@@ -531,11 +754,15 @@ fn main(): void {
     }
 
     let termState = enableRawMode()
+
+    var ws = termSize()
+    // branding: show Milo the chihuahua before handing off to the multiplexer
+    splash(ws.cols as i64, ws.rows as i64)
+
     // enable xterm mouse reporting (1000 = clicks) in SGR mode (1006 = coords
     // that survive past column 223), so you can click a pane to focus it
     writeStdout("\x1b[?1000h\x1b[?1006h")
 
-    var ws = termSize()
     var half = (ws.cols as i64 - 2) / 2
     var paneRows = ws.rows as i64 - 6
     if half < 20 {
@@ -544,13 +771,18 @@ fn main(): void {
     if paneRows < 5 {
         paneRows = 5
     }
-    let paneCols = half - 1
+    var paneCols = half - 1
+
+    // resize is the one thing no data fd reports — turn SIGWINCH into a readable
+    // fd we can arm in the select, so a resize wakes the loop like any other event
+    let winchFd = installSignalPipe(SIGWINCH)
 
     match Pty.open() {
         Result.Ok(pty0) => {
             match Pty.open() {
                 Result.Ok(pty1) => {
                     let shell = getEnvOr("SHELL", "/bin/sh")
+                    let shellName = baseName(shell)
                     // resize before spawn — child inherits winsize via slave fd
                     pty0.resize(paneRows as u16, paneCols as u16)
                     pty1.resize(paneRows as u16, paneCols as u16)
@@ -581,7 +813,7 @@ fn main(): void {
                         var term0 = newTerm(paneRows, paneCols)
                         var term1 = newTerm(paneRows, paneCols)
 
-                        drawBorder(0, half, paneRows)
+                        drawBorder(0, half, paneRows, shellName)
 
                         var focus: i64 = 0
                         var prefixArmed = false
@@ -596,8 +828,43 @@ fn main(): void {
                             sel.onRead(0)
                             sel.onRead(pty0.masterFd)
                             sel.onRead(pty1.masterFd)
+                            if winchFd >= 0 {
+                                sel.onRead(winchFd)
+                            }
                             sel.wait()
                             sel.destroy()
+
+                            // terminal resized? recompute geometry, resize the
+                            // shells (they repaint), rebuild the grids at the new
+                            // size, and redraw. Draining the self-pipe clears the
+                            // wake so we don't spin on it.
+                            if winchFd >= 0 {
+                                var wbuf: [u8; 1] = [0; 1]
+                                var got = false
+                                unsafe {
+                                    got = read(winchFd, wbuf as *u8, 1) > 0
+                                }
+                                if got {
+                                    drainSignalFd(winchFd)
+                                    ws = termSize()
+                                    half = (ws.cols as i64 - 2) / 2
+                                    paneRows = ws.rows as i64 - 6
+                                    if half < 20 {
+                                        half = 20
+                                    }
+                                    if paneRows < 5 {
+                                        paneRows = 5
+                                    }
+                                    paneCols = half - 1
+                                    pty0.resize(paneRows as u16, paneCols as u16)
+                                    pty1.resize(paneRows as u16, paneCols as u16)
+                                    term0 = newTerm(paneRows, paneCols)
+                                    term1 = newTerm(paneRows, paneCols)
+                                    drawBorder(focus, half, paneRows, shellName)
+                                    drawFooter(prefixArmed, paneRows)
+                                    prefixShown = prefixArmed
+                                }
+                            }
 
                             // A wakeup means at least one source is ready, but not
                             // which; every fd is O_NONBLOCK, so just try all three.
@@ -687,7 +954,7 @@ fn main(): void {
                             let got1 = drainInto(pty1, term1)
 
                             if redrawBorder {
-                                drawBorder(focus, half, paneRows)
+                                drawBorder(focus, half, paneRows, shellName)
                             }
                             if got0 || redrawBorder {
                                 renderTerm(term0, 2)
