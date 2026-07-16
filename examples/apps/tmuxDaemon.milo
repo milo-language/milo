@@ -1,12 +1,15 @@
-// tmuxDaemon — the detach/attach core of a terminal multiplexer, as a daemon.
+// tmuxDaemon — a client-server terminal multiplexer with detach/attach.
 //
-// `tmuxdaemon serve`  spawns a shell on a PTY and listens on 127.0.0.1:7373.
-// `tmuxdaemon attach` connects, relays your terminal to the shell, and — this is
-// the point — you can DETACH (Ctrl-B d) and the shell keeps running in the
-// daemon. Re-attach later and it's exactly where you left it.
+// `tmuxdaemon serve`  spawns TWO shells tiled side by side, holds their screen
+//                     state, and listens on 127.0.0.1:7373.
+// `tmuxdaemon attach` connects, renders the composite, forwards input to the
+//                     focused pane. Ctrl-B o switches panes; Ctrl-B d detaches —
+//                     the shells keep running in the daemon. Re-attach and it's
+//                     exactly where you left it (full repaint on attach).
 //
-// This is the flagship tmux feature (client-server) proved end-to-end for one
-// shell. Multi-pane state + on-attach repaint build on top of this transport.
+// The server is a compositor: each pane has its own VT grid (shared tmuxVt), fed
+// by its shell; on any change the two grids are composited and sent to the one
+// attached client. Client size is negotiated (\x1e rows;cols \x1e).
 //
 // std/net has no AF_UNIX yet, so this uses a localhost TCP port (see backlog).
 //
@@ -19,7 +22,7 @@ from "std/pty" import {
     Pty, WinSize, openAndSpawn, isInteractive
 }
 from "./tmuxVt" import {
-    Term, newTerm, fullRepaint
+    Term, newTerm, fullRepaint, renderTermString
 }
 from "std/net" import {
     TcpListener, TcpStream, ip4
@@ -91,22 +94,45 @@ fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
     }
 }
 
-// ── server: hold the shell, relay to whichever client is attached ──
+// Composite two pane grids side by side into one full-screen paint: pane 0 on
+// the left, a separator column, pane 1 on the right, cursor parked in the pane
+// that has focus. This is what the (single, dumb) client renders.
+fn renderComposite(term0: &Term, term1: &Term, focus: i64, rows: i64): string {
+    let paneCols = term0.cols
+    var out = "\x1b[2J\x1b[H"
+    out = out + renderTermString(term0, 1, 1)
+    var r: i64 = 0
+    while r < rows {
+        out = out + $"\x1b[{r + 1};{paneCols + 1}H\x1b[90m\xe2\x94\x82\x1b[0m"
+        r = r + 1
+    }
+    out = out + renderTermString(term1, 1, paneCols + 2)
+    if focus == 0 {
+        out = out + $"\x1b[{term0.cr + 1};{term0.cc + 1}H"
+    } else {
+        out = out + $"\x1b[{term1.cr + 1};{paneCols + 2 + term1.cc}H"
+    }
+    return out
+}
 
-fn serveLoop(pty: &Pty, listenFd: i32): void {
+// ── server: hold two shells tiled side by side, composite to the client ──
+
+fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): void {
     var clientFd: i32 = -1
     var buf: [u8; 4096] = [0; 4096]
-    // server-side screen state: shell output is always fed into this grid
-    // (default PTY size 24x80) so a (re)attaching client can be sent the current
-    // screen, not just whatever the shell prints next.
-    var term = newTerm(24, 80)
-    // resize control framing: a client can send \x1e rows;cols \x1e at any time
-    var ctrlMode = false
+    // one grid per pane; shell output is always fed in so a (re)attaching client
+    // can be sent the current composite screen, not just new output.
+    var term0 = newTerm(rows, paneCols)
+    var term1 = newTerm(rows, paneCols)
+    var focus: i64 = 0
+    var prefixArmed = false // Ctrl-B o switches focus (server-side prefix)
+    var ctrlMode = false // \x1e rows;cols \x1e resize control
     var ctrlBuf = ""
     var running = true
     while running {
         var sel = Select.new()
-        sel.onRead(pty.masterFd)
+        sel.onRead(pty0.masterFd)
+        sel.onRead(pty1.masterFd)
         sel.onRead(listenFd)
         if clientFd >= 0 {
             sel.onRead(clientFd)
@@ -114,22 +140,28 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
         sel.wait()
         sel.destroy()
 
-        // shell output → attached client (drained regardless so the PTY never
-        // wedges while detached; discarded when no one is watching)
+        var dirty = false
+
         unsafe {
-            let n = read(pty.masterFd, buf as *u8, 4096)
+            let n = read(pty0.masterFd, buf as *u8, 4096)
             if n == 0 {
-                running = false // shell exited → daemon done
+                running = false
             } else if n > 0 {
-                term.feed(buf, n)
-                if clientFd >= 0 {
-                    write(clientFd, buf as *u8, n)
-                }
+                term0.feed(buf, n)
+                dirty = true
+            }
+        }
+        unsafe {
+            let n = read(pty1.masterFd, buf as *u8, 4096)
+            if n == 0 {
+                running = false
+            } else if n > 0 {
+                term1.feed(buf, n)
+                dirty = true
             }
         }
 
-        // a new attach? one client at a time — the newcomer takes over and is
-        // sent a full repaint of the current screen so it looks continuous.
+        // new attach → repaint the full composite
         let newFd = acceptFd(listenFd)
         if newFd >= 0 {
             if clientFd >= 0 {
@@ -139,14 +171,11 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
             }
             clientFd = newFd
             setNonblock(clientFd)
-            let rp = fullRepaint(term)
-            unsafe {
-                write(clientFd, rp as *u8, rp.len)
-            }
+            dirty = true
         }
 
-        // client input → shell, minus \x1e-bracketed resize control messages;
-        // EOF (== 0) means the client detached/left
+        // client input: resize control, server prefix (Ctrl-B o), else route to
+        // the focused pane's shell. EOF (== 0) means the client detached.
         if clientFd >= 0 {
             var n: i64 = 0
             unsafe {
@@ -168,8 +197,12 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
                             var sz: [i64; 2] = [0; 2]
                             parseSize(ctrlBuf, sz)
                             if sz[0] > 0 && sz[1] > 0 {
-                                setPtySize(pty.masterFd, sz[0], sz[1])
-                                term = newTerm(sz[0], sz[1]) // shell repaints via SIGWINCH
+                                let pc = (sz[1] - 1) / 2
+                                setPtySize(pty0.masterFd, sz[0], pc)
+                                setPtySize(pty1.masterFd, sz[0], pc)
+                                term0 = newTerm(sz[0], pc)
+                                term1 = newTerm(sz[0], pc)
+                                dirty = true
                             }
                             ctrlMode = false
                             ctrlBuf = ""
@@ -179,6 +212,17 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
                     } else if b == RESIZE_MARK {
                         ctrlMode = true
                         ctrlBuf = ""
+                    } else if prefixArmed {
+                        prefixArmed = false
+                        if b == 111 || b == 9 { // o / Tab → switch focused pane
+                            focus = 1 - focus
+                            dirty = true
+                        } else if b == PREFIX { // literal Ctrl-B to the shell
+                            fwd[fwdN] = PREFIX
+                            fwdN = fwdN + 1
+                        }
+                    } else if b == PREFIX {
+                        prefixArmed = true
                     } else {
                         fwd[fwdN] = b
                         fwdN = fwdN + 1
@@ -186,10 +230,21 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
                     i = i + 1
                 }
                 if fwdN > 0 {
+                    var tfd = pty0.masterFd
+                    if focus == 1 {
+                        tfd = pty1.masterFd
+                    }
                     unsafe {
-                        write(pty.masterFd, fwd as *u8, fwdN)
+                        write(tfd, fwd as *u8, fwdN)
                     }
                 }
+            }
+        }
+
+        if dirty && clientFd >= 0 {
+            let comp = renderComposite(term0, term1, focus, rows)
+            unsafe {
+                write(clientFd, comp as *u8, comp.len)
             }
         }
     }
@@ -200,22 +255,41 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
     }
 }
 
+fn shellArgs(): Vec<string> {
+    var a: Vec<string> = Vec.new()
+    a.push("-i")
+    return a
+}
+
 fn runServe(): void {
     match TcpListener.bind(PORT) {
         Result.Ok(listener) => {
             setNonblock(listener.fd)
             let shell = getEnvOr("SHELL", "/bin/sh")
-            var shArgs: Vec<string> = Vec.new()
-            shArgs.push("-i")
-            match openAndSpawn(shell, shArgs) {
-                Result.Ok(pty) => {
-                    setNonblock(pty.masterFd)
-                    print($"tmuxd: serving on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
-                    serveLoop(pty, listener.fd)
-                    pty.kill()
-                    pty.close()
-                    pty.wait()
-                    print("tmuxd: shell exited, daemon stopped")
+            let sargs = shellArgs()
+            match openAndSpawn(shell, sargs) {
+                Result.Ok(pty0) => {
+                    match openAndSpawn(shell, sargs) {
+                        Result.Ok(pty1) => {
+                            setNonblock(pty0.masterFd)
+                            setNonblock(pty1.masterFd)
+                            let paneCols = (80 - 1) / 2
+                            setPtySize(pty0.masterFd, 24, paneCols)
+                            setPtySize(pty1.masterFd, 24, paneCols)
+                            print($"tmuxd: serving 2 shells on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
+                            serveMulti(pty0, pty1, listener.fd, 24, paneCols)
+                            pty0.kill()
+                            pty1.kill()
+                            pty0.close()
+                            pty1.close()
+                            pty0.wait()
+                            pty1.wait()
+                            print("tmuxd: stopped")
+                        }
+                        Result.Err(m) => {
+                            print($"tmuxd: spawn failed: {m}")
+                        }
+                    }
                 }
                 Result.Err(m) => {
                     print($"tmuxd: spawn failed: {m}")
@@ -275,7 +349,9 @@ fn attachLoop(sockFd: i32, winchFd: i32): void {
             }
         }
 
-        // keyboard → daemon (Ctrl-B d detaches, Ctrl-B Ctrl-B sends a literal)
+        // keyboard → daemon. Ctrl-B d detaches here (client-side); every other
+        // Ctrl-B sequence is forwarded intact so the daemon can act on it
+        // (Ctrl-B o = switch pane, Ctrl-B Ctrl-B = literal).
         unsafe {
             let n = read(0, buf as *u8, 4096)
             var i: i64 = 0
@@ -285,8 +361,10 @@ fn attachLoop(sockFd: i32, winchFd: i32): void {
                     prefixArmed = false
                     if b == 100 || b == 68 { // d / D → detach
                         done = true
-                    } else if b == PREFIX {
+                    } else {
                         one[0] = PREFIX
+                        write(sockFd, one as *u8, 1)
+                        one[0] = b
                         write(sockFd, one as *u8, 1)
                     }
                 } else if b == PREFIX {
