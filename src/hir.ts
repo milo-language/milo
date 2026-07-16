@@ -147,6 +147,8 @@ export interface HIRStruct {
   name: string;
   fields: { name: string; type: TypeKind }[];
   isExtern?: boolean;
+  // From `@cLayout(...)`: verify these field offsets against the real C header at build time.
+  cLayout?: { cType: string; header: string };
 }
 
 export interface HIREnum {

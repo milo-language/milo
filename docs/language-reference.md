@@ -1263,6 +1263,42 @@ extern struct SockAddrIn {
 }
 ```
 
+#### Verifying the layout: `@cLayout`
+
+An `extern struct` is a **claim** about a C type. The compiler believes it and computes
+field offsets from the declaration, so a field that disagrees with the real header reads
+its neighbour and returns plausible garbage — no crash, no diagnostic. `unsafe` does not
+help: it tracks provenance, not layout.
+
+`@cLayout(cType, header)` turns the claim into something the build checks. The compiler
+generates a throwaway C translation unit of `_Static_assert`s against the real header,
+compiles it with the system C compiler, and discards it. If the layout ever drifts — an
+OS update, a new architecture — the **build breaks** instead of the program lying:
+
+```milo
+@cLayout("struct timespec", "time.h")
+extern struct Timespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+```
+
+```
+error[c-layout]: an extern struct's declared layout does not match the C header
+  Timespec.tv_sec: Milo says offset 0, C header disagrees
+```
+
+Each field is checked for both its offset and its own size — offsets alone miss a wrong
+width on the last field, and elsewhere a too-narrow field can hide inside the next
+field's padding. Milo field names are used as the C field names.
+
+Declaring only a **prefix** of a C struct is supported and common: the struct's total
+size is checked with `>=`, not `==`, so you may stop early and ignore trailing platform
+fields. Field *order* must still match from the start.
+
+`@cLayout` is skipped for bare-metal targets, which are freestanding and cross-compiled —
+the host's headers are not the ones the program runs against.
+
 Field access through a pointer auto-derefs (requires `unsafe` for the pointer deref):
 
 ```milo

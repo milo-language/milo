@@ -402,14 +402,25 @@ export class Parser {
     }
     const name = this.expect(TokenKind.Ident).value;
     const args: string[] = [];
+    const argKinds: ("ident" | "string")[] = [];
     if (this.match(TokenKind.LParen)) {
-      args.push(this.expect(TokenKind.Ident).value);
+      this.parseAttributeArg(args, argKinds);
       while (this.match(TokenKind.Comma)) {
-        args.push(this.expect(TokenKind.Ident).value);
+        this.parseAttributeArg(args, argKinds);
       }
       this.expect(TokenKind.RParen);
     }
-    return { name, args };
+    return { name, args, argKinds };
+  }
+
+  private parseAttributeArg(args: string[], argKinds: ("ident" | "string")[]): void {
+    if (this.at(TokenKind.String)) {
+      args.push(this.advance().value);
+      argKinds.push("string");
+      return;
+    }
+    args.push(this.expect(TokenKind.Ident).value);
+    argKinds.push("ident");
   }
 
   private parseTraitDecl(): TraitDecl {

@@ -1,0 +1,12 @@
+// @error: expected two string arguments
+// Bare idents parse (that's @derive's arg form) but say nothing about which C type or
+// header is meant, so @cLayout must reject them rather than skip the check.
+@cLayout(timespec)
+extern struct Timespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+fn main() {
+    print(sizeOf<Timespec>())
+}

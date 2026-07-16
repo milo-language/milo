@@ -1,0 +1,12 @@
+// @error: Milo says offset 0
+// Transposed fields: every read of tv_sec would silently return nanoseconds. The widths
+// match, so only the offsets catch this one.
+@cLayout("struct timespec", "time.h")
+extern struct Timespec {
+    tv_nsec: i64,
+    tv_sec: i64,
+}
+
+fn main() {
+    print(sizeOf<Timespec>())
+}

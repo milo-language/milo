@@ -1,0 +1,12 @@
+// @error: is not a C header path
+// The header string is pasted into a generated '#include <...>', so it's constrained to
+// a charset that can't break out of the include and inject C into the guard TU.
+@cLayout("struct timespec", "time.h> \n#include <stdio.h")
+extern struct Timespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+fn main() {
+    print(sizeOf<Timespec>())
+}

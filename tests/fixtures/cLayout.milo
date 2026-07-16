@@ -1,0 +1,35 @@
+// @cLayout verifies a declared extern-struct layout against the real C header at build
+// time. `struct timespec` is two 64-bit fields on every target Milo hosts, so a correct
+// declaration must build and run. The mismatch cases live in tests/errors/cLayout*.milo.
+@cLayout("struct timespec", "time.h")
+extern
+
+struct Timespec {
+    tv_sec: i64,
+    tv_nsec: i64,
+}
+
+extern fn clock_gettime(clockId: i32, tp: *Timespec): i32
+
+fn main() {
+    // @expect: true
+    print(sizeOf<Timespec>() == 16)
+    // @expect: true
+    print(offsetOf<Timespec>("tv_nsec") == 8)
+
+    // The guard's whole point is that these reads land on the fields C says they do.
+    unsafe {
+        var ts = Timespec {
+            tv_sec: 0, tv_nsec: 0
+        }
+        let rc = clock_gettime(0, ts.addrOf() as *Timespec)
+        // @expect: true
+        print(rc == 0)
+        // CLOCK_REALTIME is well past the epoch, and nanoseconds are in range —
+        // both false if the two fields were transposed.
+        // @expect: true
+        print(ts.tv_sec > 1000000000)
+        // @expect: true
+        print(ts.tv_nsec >= 0 && ts.tv_nsec < 1000000000)
+    }
+}

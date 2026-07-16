@@ -63,8 +63,49 @@ function frontendToHIR(source: string, target: TargetInfo, filePath?: string, wa
 }
 
 function compile(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false): string {
+  return compileWithGuards(source, target, filePath, warningConfig, debugOverflow, emitDebug).ir;
+}
+
+// `cGuards` is the `@cLayout` verification TU (null when the program declares none) —
+// see Codegen.cLayoutGuards. It rides alongside the IR because only codegen knows the
+// field offsets it asserts.
+function compileWithGuards(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig, debugOverflow = false, emitDebug = false): { ir: string; cGuards: string | null } {
   const hirModule = frontendToHIR(source, target, filePath, warningConfig);
-  return new Codegen(target, filePath, debugOverflow, emitDebug).generate(hirModule);
+  const cg = new Codegen(target, filePath, debugOverflow, emitDebug);
+  const ir = cg.generate(hirModule);
+  return { ir, cGuards: cg.cLayoutGuards() };
+}
+
+// Compile the @cLayout guard TU against the real system headers and fail the build if any
+// _Static_assert trips. Bare-metal targets are skipped: they're freestanding and cross-
+// compiled, so the host's headers aren't the ones the program will run against.
+function verifyCLayouts(cGuards: string | null, target: TargetInfo): void {
+  if (!cGuards || target.bareMetal) return;
+  const tc = detectToolchain();
+  const cc = tc.kind === "clang" ? tc.path : "cc";
+  const tmpC = join(tmpdir(), `milo_clayout_${crypto.randomUUID().slice(0, 8)}.c`);
+  try {
+    writeFileSync(tmpC, cGuards);
+    execSync(`${cc} -fsyntax-only "${tmpC}"`, { stdio: ["pipe", "pipe", "pipe"] });
+  } catch (e: any) {
+    const stderr = e.stderr?.toString() ?? e.message ?? "";
+    // Pull our own message out of each failing assert and drop the rest: the raw text
+    // names a temp .c file the user never wrote and can't open, which is worse than
+    // useless in a diagnostic. clang says `failed due to requirement '<expr>': <msg>`,
+    // gcc just `failed: "<msg>"`.
+    const asserts: string[] = [];
+    for (const line of stderr.split("\n")) {
+      const m = line.match(/static assertion failed(?: due to requirement '.*?')?:\s*(.*)$/);
+      if (m) asserts.push(m[1].trim().replace(/^"|"$/g, ""));
+    }
+    console.error(`error[c-layout]: an extern struct's declared layout does not match the C header`);
+    for (const a of asserts) console.error(`  ${a}`);
+    if (asserts.length === 0) console.error(stderr);
+    else console.error(`  the declaration is a claim about the C type; trust the header, not the claim`);
+    process.exit(1);
+  } finally {
+    try { unlinkSync(tmpC); } catch {}
+  }
 }
 
 function compileToJS(source: string, target: TargetInfo, filePath?: string, warningConfig?: WarningConfig): string {
@@ -195,7 +236,8 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
 
 function compileToObj(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, noEntry = false): string {
   const source = readFileSync(sourcePath, "utf-8");
-  const ir = compile(source, target, sourcePath, warningConfig);
+  const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig);
+  verifyCLayouts(cGuards, target);
 
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const out = outputPath ?? base + ".o";
@@ -291,7 +333,8 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
   // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
   // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
   // -identical and free of per-build dsymutil / .dSYM litter.
-  const ir = compile(source, target, sourcePath, warningConfig, debugOverflow, emitDebug);
+  const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig, debugOverflow, emitDebug);
+  verifyCLayouts(cGuards, target);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = outputPath ?? join(tmpdir(), `milo_${base}_${id}`);
@@ -322,7 +365,8 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
 }
 
 function compileSourceToBinary(source: string, sourcePath: string, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig): string {
-  const ir = compile(source, target, sourcePath, warningConfig);
+  const { ir, cGuards } = compileWithGuards(source, target, sourcePath, warningConfig);
+  verifyCLayouts(cGuards, target);
   const base = basename(sourcePath).replace(/\.milo$/, "");
   const id = crypto.randomUUID().slice(0, 8);
   const out = join(tmpdir(), `milo_${base}_${id}`);

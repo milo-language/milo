@@ -1,0 +1,13 @@
+// @error: C header disagrees
+// A wrong field width is the silent-corruption case @cLayout exists to catch: tv_sec as
+// i32 still leaves tv_nsec at offset 8 (i64 alignment pads it), so every offset matches
+// and only the field's own size gives the drift away.
+@cLayout("struct timespec", "time.h")
+extern struct Timespec {
+    tv_sec: i32,
+    tv_nsec: i64,
+}
+
+fn main() {
+    print(sizeOf<Timespec>())
+}

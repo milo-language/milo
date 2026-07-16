@@ -41,6 +41,10 @@ export interface TypeParam {
 export interface Attribute {
   name: string;
   args: string[];
+  // Parallel to `args`: how each was spelled. `@derive(Clone)` is an ident,
+  // `@cLayout("sys/stat.h")` is a string — the values alone can't be told apart,
+  // and an attribute that wants a path or a C type name must reject a bare ident.
+  argKinds?: ("ident" | "string")[];
 }
 
 // ── Expressions ──

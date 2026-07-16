@@ -1,4 +1,4 @@
-import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, MatchArm } from "./ast";
+import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, MatchArm, Attribute } from "./ast";
 import { simpleType } from "./ast";
 import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
@@ -56,6 +56,13 @@ export interface StructInfo {
   typeArgs?: TypeKind[];
   isExtern?: boolean;
   isOpaque?: boolean;
+  cLayout?: CLayout;
+}
+
+// A verified claim about a C type's layout, from `@cLayout(cType, header)`.
+export interface CLayout {
+  cType: string;
+  header: string;
 }
 
 export interface EnumInfo {
@@ -938,6 +945,7 @@ export class TypeChecker {
         for (const attr of s.attributes) {
           if (attr.name === "send") this.sendTypes.add(s.name);
           if (attr.name === "sync") this.syncTypes.add(s.name);
+          if (attr.name === "cLayout") this.checkCLayout(s, attr);
         }
       }
     }
@@ -1400,6 +1408,39 @@ export class TypeChecker {
 
   private isExternStructType(ty: TypeKind): boolean {
     return ty.tag === "struct" && !!this.structs.get(ty.name)?.isExtern;
+  }
+
+  // `@cLayout("struct stat", "sys/stat.h")` — the declared layout is checked against the
+  // real header at build time. Both args are pasted into a generated C translation unit,
+  // so they're constrained to a charset that can't escape the `#include <...>` or the
+  // type position and inject arbitrary C.
+  private static readonly C_TYPE_RE = /^(struct |union |enum )?[A-Za-z_][A-Za-z0-9_]*$/;
+  private static readonly C_HEADER_RE = /^[A-Za-z0-9_][A-Za-z0-9_./+-]*\.h$/;
+
+  private checkCLayout(s: StructDecl, attr: Attribute): void {
+    if (!s.isExtern || s.isOpaque) {
+      this.error(`@cLayout on '${s.name}': only 'extern struct' has a C layout to verify`, undefined,
+        `@cLayout checks declared field offsets against a C header — a Milo struct has no C counterpart`);
+      return;
+    }
+    if (attr.args.length !== 2 || attr.argKinds?.some(k => k !== "string")) {
+      this.error(`@cLayout on '${s.name}': expected two string arguments`, undefined,
+        `write '@cLayout("struct ${s.name.toLowerCase()}", "some/header.h")' — the C type name and the header declaring it`);
+      return;
+    }
+    const cType = attr.args[0]!, header = attr.args[1]!;
+    if (!TypeChecker.C_TYPE_RE.test(cType)) {
+      this.error(`@cLayout on '${s.name}': '${cType}' is not a C type name`, undefined,
+        `expected something like 'struct stat', 'mytypedef_t', or 'union sigval'`);
+      return;
+    }
+    if (!TypeChecker.C_HEADER_RE.test(header)) {
+      this.error(`@cLayout on '${s.name}': '${header}' is not a C header path`, undefined,
+        `expected a header ending in '.h', as written inside '#include <...>' — e.g. 'sys/stat.h'`);
+      return;
+    }
+    const info = this.structs.get(s.name);
+    if (info) info.cLayout = { cType, header };
   }
 
   // extern-struct fields must be plain-old-data: scalars, raw pointers, nested extern
