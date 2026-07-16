@@ -40,36 +40,15 @@ struct DapClient {
 }
 
 fn _strOr(opt: Option<string>, fallback: string): string {
-    match opt {
-        Option.Some(v) => {
-            return v
-        }
-        Option.None => {
-            return fallback
-        }
-    }
+    return opt ?? fallback
 }
 
 fn _i64Or(opt: Option<i64>, fallback: i64): i64 {
-    match opt {
-        Option.Some(v) => {
-            return v
-        }
-        Option.None => {
-            return fallback
-        }
-    }
+    return opt ?? fallback
 }
 
 fn _boolOr(opt: Option<bool>, fallback: bool): bool {
-    match opt {
-        Option.Some(v) => {
-            return v
-        }
-        Option.None => {
-            return fallback
-        }
-    }
+    return opt ?? fallback
 }
 
 // Decode a raw JSON frame into a DapMsg.
@@ -132,38 +111,27 @@ impl DapClient {
     // (writeFrame, recv, the server's gDapIn) then works with zero changes.
     // pid -1 marks "no spawned process" — nothing to reap on teardown.
     fn startTcp(host: &string, port: i64): Result<DapClient> {
-        var ip: u32 = 0
-        match resolve(host) {
-            Result.Ok(a) => {
-                ip = a
-            }
-            Result.Err(_e) => {
-                return Result.Err("cannot resolve DAP host: " + host.clone())
-            }
+        let Result.Ok(ip) = resolve(host) else {
+            return Result.Err("cannot resolve DAP host: " + host.clone())
         }
-        match TcpStream.connect(ip, port as u16) {
-            Result.Ok(s) => {
-                var st = s
-                // take() detaches the fd so TcpStream's drop won't close it —
-                // the synthetic Child now owns its lifetime.
-                let fd = st.take()
-                // stdin==stdout==fd: Child.close() closes this fd twice
-                // back-to-back with no scheduler yield between the two syscalls,
-                // so the second is a harmless EBADF (safe only because no yield
-                // can reuse the fd number in between).
-                let child = Child {
-                    pid: -1 as i32, stdinFd: fd, stdoutFd: fd, stderrFd: -1 as i32
-                }
-                return Result.Ok(DapClient {
-                    child: child, seq: 0
-                }
-                )
-            }
-            Result.Err(_e) => {
-                return Result.Err("cannot connect to DAP adapter at " + host.clone() + ":" + port.toString())
-            }
+        let Result.Ok(s) = TcpStream.connect(ip, port as u16) else {
+            return Result.Err("cannot connect to DAP adapter at " + host.clone() + ":" + port.toString())
         }
-        return Result.Err("unreachable")
+        var st = s
+        // take() detaches the fd so TcpStream's drop won't close it —
+        // the synthetic Child now owns its lifetime.
+        let fd = st.take()
+        // stdin==stdout==fd: Child.close() closes this fd twice
+        // back-to-back with no scheduler yield between the two syscalls,
+        // so the second is a harmless EBADF (safe only because no yield
+        // can reuse the fd number in between).
+        let child = Child {
+            pid: -1 as i32, stdinFd: fd, stdoutFd: fd, stderrFd: -1 as i32
+        }
+        return Result.Ok(DapClient {
+            child: child, seq: 0
+        }
+        )
     }
 
     // Even seqs only: the web server's WS-reader task sends requests on the
