@@ -28,6 +28,12 @@ function milo(args: string): { code: number; out: string; err: string } {
   }
 }
 
+// Every test here spawns the compiler (clang/llc), and the QEMU lane boots an emulator.
+// bun's default per-test timeout is 5s: enough locally with a warm toolchain, not enough
+// on a cold CI runner, where 4 of these failed on the first Linux run purely for that.
+// COMPILE_TIMEOUT is a ceiling for a hung toolchain, not a target — these take ~100ms.
+const COMPILE_TIMEOUT = 60000;
+
 const fileType = (path: string) => execSync(`file ${path}`, { encoding: "utf-8" });
 
 afterAll(() => { try { rmSync(DIR, { recursive: true, force: true }); } catch {} });
@@ -40,7 +46,7 @@ test("emit-obj --target=cortex-m3 produces an ARM EABI object", () => {
   expect(existsSync(obj)).toBe(true);
   expect(fileType(obj)).toMatch(/ELF 32-bit.*ARM/);
   unlinkSync(obj);
-});
+}, COMPILE_TIMEOUT);
 
 test("emit-obj --target=stm32f4 (chip alias) produces an ARM object", () => {
   const obj = join(DIR, "milo_embed_f4.o");
@@ -49,20 +55,20 @@ test("emit-obj --target=stm32f4 (chip alias) produces an ARM object", () => {
   expect(r.code).toBe(0);
   expect(fileType(obj)).toMatch(/ELF 32-bit.*ARM/);
   unlinkSync(obj);
-});
+}, COMPILE_TIMEOUT);
 
 test("emit-ir --target=cortex-m3 carries the thumb triple", () => {
   const r = milo(`emit-ir ${SRC} --target=cortex-m3`);
   expect(r.code).toBe(0);
   expect(r.out).toContain(`target triple = "thumbv7m-none-eabi"`);
-});
+}, COMPILE_TIMEOUT);
 
 test("unknown target exits non-zero and lists available targets", () => {
   const r = milo(`emit-obj ${SRC} --target=bogus`);
   expect(r.code).not.toBe(0);
   expect(r.err).toContain("unknown target: bogus");
   expect(r.err).toContain("cortex-m3");
-});
+}, COMPILE_TIMEOUT);
 
 test("build --target=cortex-m3 links a bare-metal ARM ELF executable", () => {
   const bin = join(DIR, "milo_embed_bin.elf");
@@ -73,7 +79,7 @@ test("build --target=cortex-m3 links a bare-metal ARM ELF executable", () => {
   // statically-linked freestanding executable (no libc), not a relocatable .o
   expect(fileType(bin)).toMatch(/ELF 32-bit.*executable.*ARM/);
   unlinkSync(bin);
-});
+}, COMPILE_TIMEOUT);
 
 test("build --target=stm32f4 (chip alias) links an ARM ELF executable", () => {
   const bin = join(DIR, "milo_embed_f4.elf");
@@ -82,13 +88,13 @@ test("build --target=stm32f4 (chip alias) links an ARM ELF executable", () => {
   expect(r.code).toBe(0);
   expect(fileType(bin)).toMatch(/ELF 32-bit.*executable.*ARM/);
   unlinkSync(bin);
-});
+}, COMPILE_TIMEOUT);
 
 test("bare-metal runtime files (startup + linker script) are present", () => {
   const ed = join(import.meta.dir, "..", "embedded", "cortex-m");
   expect(existsSync(join(ed, "startup.c"))).toBe(true);
   expect(existsSync(join(ed, "mps2.ld"))).toBe(true);
-});
+}, COMPILE_TIMEOUT);
 
 // End-to-end: compile → link → QEMU → observe the computed result via
 // semihosting. Skipped automatically if QEMU isn't installed so the suite stays
@@ -107,7 +113,7 @@ fn main(): i32 { return add(40, 2) }
   expect(r.code).toBe(0);
   expect(r.out).toContain("exit=42");  // add(40,2) computed on the emulated core
   unlinkSync(src);
-});
+}, COMPILE_TIMEOUT);
 
 // A heap-using program (Vec grow → malloc) links and runs bare-metal against the
 // linker-provided heap region — no size baked into startup.c.
@@ -126,7 +132,7 @@ test.if(hasQemu)("bare-metal heap: a Vec-growing program runs on QEMU", () => {
   expect(r.code).toBe(0);
   expect(r.out).toContain("exit=100");  // 100 pushes into a heap-backed Vec
   unlinkSync(src);
-});
+}, COMPILE_TIMEOUT);
 
 test.if(hasQemu)("--heap-size caps the heap and OOM traps with ENOMEM instead of a silent fault", () => {
   const src = join(DIR, "milo_embed_oom.milo");
@@ -135,7 +141,7 @@ test.if(hasQemu)("--heap-size caps the heap and OOM traps with ENOMEM instead of
   expect(r.out).toContain("out of memory");
   expect(r.out).toContain("exit=12");  // ENOMEM — observable, not a silent reboot
   unlinkSync(src);
-});
+}, COMPILE_TIMEOUT);
 
 // A hosted --target that isn't the host used to be ignored entirely: clangTargetFlags
 // returned "" for non-bare-metal and the link passed -Wno-override-module, so
@@ -152,7 +158,7 @@ test("a hosted --target that isn't the host fails loudly instead of building for
   expect(existsSync(out)).toBe(false);  // no silent host binary left behind
   expect(r.err).toContain("cross-compiling");
   unlinkSync(src);
-});
+}, COMPILE_TIMEOUT);
 
 test("--heap-size rejects a non-bare-metal target", () => {
   const src = join(DIR, "milo_heap_host.milo");
@@ -161,7 +167,7 @@ test("--heap-size rejects a non-bare-metal target", () => {
   expect(r.code).not.toBe(0);
   expect(r.err).toContain("bare-metal");
   unlinkSync(src);
-});
+}, COMPILE_TIMEOUT);
 
 test("--heap-size rejects a malformed value", () => {
   const src = join(DIR, "milo_heap_bad.milo");
@@ -170,4 +176,4 @@ test("--heap-size rejects a malformed value", () => {
   expect(r.code).not.toBe(0);
   expect(r.err).toContain("k/m suffix");
   unlinkSync(src);
-});
+}, COMPILE_TIMEOUT);

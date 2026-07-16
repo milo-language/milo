@@ -6,12 +6,25 @@ import { test, expect } from "bun:test";
 import { spawn } from "child_process";
 import { guardedRun, monitorPidTree } from "../scripts/guard";
 
-test("kills a process tree that exceeds the memory cap", async () => {
+test("stops a runaway allocation at the memory cap, not at the timeout", async () => {
   // fill() touches the pages so they count toward RSS
   const hog = "const a=[]; while (true) a.push(new Uint8Array(64*1024*1024).fill(1));";
   const r = await guardedRun("bun", ["-e", hog], { memMb: 512, timeoutMs: 30000 });
-  expect(r.guardKill).toBe("memory");
-  expect(r.signal).toBe("SIGKILL");
+
+  // The property that matters is the same everywhere: the hog is stopped, and stopped by
+  // the MEMORY cap rather than by outliving the 30s wall clock. The mechanism is not the
+  // same, and asserting the mechanism is what made this fail on Linux:
+  //   macOS — enforces no rlimits at all (see scripts/guard.ts), so the polling watchdog
+  //           is the only thing that can stop it: guardKill "memory" + SIGKILL.
+  //   Linux — enforces `ulimit -v`, which guardedRun sets. The allocation fails inside
+  //           the child and it dies on its own (SIGTRAP/abort) before the watchdog is
+  //           needed. A kernel-side cap is a better outcome, not a worse one.
+  expect(r.guardKill).not.toBe("timeout");
+  expect(r.code !== 0 || r.signal !== null).toBe(true);
+  if (process.platform === "darwin") {
+    expect(r.guardKill).toBe("memory");
+    expect(r.signal).toBe("SIGKILL");
+  }
 }, 35000);
 
 test("kills a process that exceeds the wall-clock timeout", async () => {
