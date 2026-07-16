@@ -137,6 +137,23 @@ test.if(hasQemu)("--heap-size caps the heap and OOM traps with ENOMEM instead of
   unlinkSync(src);
 });
 
+// A hosted --target that isn't the host used to be ignored entirely: clangTargetFlags
+// returned "" for non-bare-metal and the link passed -Wno-override-module, so
+// `--target=linux-x64` on macOS printed "compiled" and emitted a Mach-O arm64 host
+// binary. A wrong artifact reported as success is worse than a failed build.
+test("a hosted --target that isn't the host fails loudly instead of building for the host", () => {
+  const src = join(DIR, "milo_cross_host.milo");
+  writeFileSync(src, `fn main(): i32 { return 0 }\n`);
+  const out = join(DIR, "milo_cross_bin");
+  // Pick a target that is definitely not this host, whichever host runs the suite.
+  const other = process.platform === "darwin" ? "linux-x64" : "macos-arm64";
+  const r = milo(`build ${src} --target=${other} -o ${out}`);
+  expect(r.code).not.toBe(0);
+  expect(existsSync(out)).toBe(false);  // no silent host binary left behind
+  expect(r.err).toContain("cross-compiling");
+  unlinkSync(src);
+});
+
 test("--heap-size rejects a non-bare-metal target", () => {
   const src = join(DIR, "milo_heap_host.milo");
   writeFileSync(src, `fn main(): i32 { return 0 }\n`);

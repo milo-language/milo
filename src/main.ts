@@ -170,7 +170,15 @@ function detectToolchain(): Toolchain {
 // (clang defaults to the host triple). Bare-metal targets get the thumb triple,
 // core selection, float ABI, and -ffreestanding (no hosted libc assumptions).
 function clangTargetFlags(target: TargetInfo): string {
-  if (!target.bareMetal) return "";
+  if (!target.bareMetal) {
+    // A hosted target that isn't the host must still reach clang, or `--target` is a lie:
+    // without it clang ignores the IR's triple (the link passes -Wno-override-module) and
+    // quietly builds for the host — `--target=linux-x64` on macOS produced a Mach-O arm64
+    // binary and reported success. Passing it means a cross build without a target
+    // toolchain/sysroot fails loudly, and one with a proper toolchain works.
+    const host = getHostTarget();
+    return (target.os === host.os && target.arch === host.arch) ? "" : ` --target=${target.triple}`;
+  }
   let f = ` --target=${target.triple}`;
   if (target.mcpu) f += ` -mcpu=${target.mcpu}`;
   if (target.floatAbi) f += ` -mfloat-abi=${target.floatAbi}`;
@@ -214,9 +222,11 @@ function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optF
   );
 }
 
-function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false) {
+function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, extra: string = "", sanitize: boolean = false, emitDebug = false, target?: TargetInfo) {
   const tc = detectToolchain();
   const san = sanitize ? " -fsanitize=address" : "";
+  // Empty when the target is the host, so the common path is unchanged.
+  const tgt = target ? clangTargetFlags(target) : "";
   if (tc.kind === "clang") {
     const opt = optFlag ? ` ${optFlag}` : "";
     // Mach-O keeps DWARF in the .o and references it from the executable via a debug
@@ -228,14 +238,14 @@ function linkIR(llFile: string, outFile: string, optFlag: string, libs: string, 
     if (emitDebug && process.platform === "darwin") {
       const obj = `${outFile}.dbg.o`;
       try {
-        execSync(`${tc.path}${opt}${san} -c ${llFile} -o ${obj} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
-        execSync(`${tc.path}${opt}${san} ${obj} -o ${outFile}${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+        execSync(`${tc.path}${tgt}${opt}${san} -c ${llFile} -o ${obj} -Wno-override-module`, { stdio: ["pipe", "pipe", "pipe"] });
+        execSync(`${tc.path}${tgt}${opt}${san} ${obj} -o ${outFile}${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
         execSync(`dsymutil ${outFile}`, { stdio: ["pipe", "pipe", "pipe"] });
       } finally {
         try { unlinkSync(obj); } catch {}
       }
     } else {
-      execSync(`${tc.path}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
+      execSync(`${tc.path}${tgt}${opt}${san} ${llFile} -o ${outFile} -Wno-override-module${libs}${extra}`, { stdio: ["pipe", "pipe", "pipe"] });
     }
   } else {
     if (sanitize) {
@@ -395,10 +405,14 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     } else {
       const libs = detectLibs(ir, target);
       const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
-      linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug);
+      linkIR(tmpLl, out, optFlag, libs, extra, sanitize, emitDebug, target);
     }
   } catch (e: any) {
     console.error(`error[link]: compilation failed:\n${e.stderr?.toString() ?? e.message}`);
+    const host = getHostTarget();
+    if (!target.bareMetal && (target.os !== host.os || target.arch !== host.arch)) {
+      console.error(`hint: cross-compiling to ${target.triple} needs a linker and sysroot for that target — the host toolchain can't link it. Until then, build on the target.`);
+    }
     process.exit(1);
   } finally {
     try { unlinkSync(tmpLl); } catch {}
@@ -416,7 +430,7 @@ function compileSourceToBinary(source: string, sourcePath: string, target: Targe
   try {
     writeFileSync(tmpLl, ir);
     const libs = detectLibs(ir, target);
-    linkIR(tmpLl, out, optFlag, libs);
+    linkIR(tmpLl, out, optFlag, libs, "", false, false, target);
   } catch (e: any) {
     throw new Error(`compilation failed:\n${e.stderr?.toString() ?? e.message}`);
   } finally {
