@@ -29,7 +29,7 @@ export class Codegen {
   private tempCounter = 0;
   private labelCounter = 0;
   private locals = new Map<string, { type: string; typeKind: TypeKind; mutable: boolean; isRef: boolean; addr?: string }>();
-  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean }>();
+  private fnSigs = new Map<string, { paramTypes: string[]; retType: string; variadic: boolean; wantsStringAddr?: boolean[] }>();
   // milo fns whose big-aggregate return is lowered to a hidden `ptr %__sret.out`
   // first param (see genStoreInto). Excludes main and exported fns (C ABI).
   private sretFns = new Set<string>();
@@ -819,6 +819,11 @@ export class Codegen {
       const fieldTypes = s.fields.map(f => this.llvmType(f.type));
       out.push(`// ${s.name} — declared in Milo as ${cType}`);
       s.fields.forEach((f, i) => {
+        // @cOpaque: filler with no C counterpart. `offsetof(struct rusage, _p0)` is
+        // ill-formed, so asserting it would make the struct uncheckable rather than
+        // checked. It still occupies Milo's layout, so the size assert below still
+        // covers it — that's the whole point of declaring the padding.
+        if (f.cOpaque) return;
         const offset = this.structFieldOffset(fieldTypes, i);
         const size = this.typeSize(fieldTypes[i]!);
         out.push(
@@ -987,6 +992,10 @@ export class Codegen {
         }),
         retType: fn.isExtern && fn.retType.tag === "fn" ? "ptr" : this.llvmType(fn.retType),
         variadic: fn.isVariadic,
+        // `&string` and `*u8` both lower to `ptr`, but they want different things — the
+        // address of the %String struct vs. the character buffer. The LLVM type can't
+        // tell them apart, so record it here; see the String coercion in genCall.
+        wantsStringAddr: fn.params.map(p => (p.isRef || p.isRefMut) && p.type.tag === "string"),
       });
       // classify by-value struct params/return for extern fns → native ABI lowering.
       // A `&Struct`/`*Struct` param crosses by reference (already "ptr"), so only bare
@@ -3248,11 +3257,27 @@ export class Codegen {
             }
             const [al, av, at] = this.genExpr(arg.expr);
             lines.push(...al);
-            // String → ptr coercion for extern/FFI calls (including variadic args)
-            if (at === "%String" && sig && (i >= sig.paramTypes.length || sig.paramTypes[i] === "ptr")) {
+            // String → char* coercion, for extern/FFI calls ONLY (including variadic args).
+            // The `paramTypes[i] === "ptr"` test alone is not enough to identify one: a
+            // Milo `&string` param lowers to `ptr` too, and it wants the address of the
+            // %String struct, not the bytes. Coercing there handed strTrim(&string) the
+            // character buffer, which it then read a length/capacity out of — silently
+            // returning "" instead of the trimmed text, with no crash and no diagnostic.
+            // Only a slice or other non-lvalue reached this path; an lvalue arg is
+            // auto-borrowed upstream and goes through genLValueForArg.
+            // A `&string` param wants the address of the %String struct. Only a
+            // non-lvalue reaches here (a slice, a temporary) — an lvalue is auto-borrowed
+            // upstream and goes via genLValueForArg — so materialise it and pass that.
+            const wantsAddr = at === "%String" && !!sig?.wantsStringAddr?.[i];
+            if (at === "%String" && sig && !wantsAddr && (i >= sig.paramTypes.length || sig.paramTypes[i] === "ptr")) {
               const dataPtr = this.nextTemp();
               lines.push(`  ${dataPtr} = extractvalue %String ${av}, 0`);
               argVals.push({ val: dataPtr, type: "ptr" });
+            } else if (wantsAddr) {
+              const slot = this.nextTemp();
+              lines.push(`  ${slot} = alloca %String`);
+              lines.push(`  store %String ${av}, ptr ${slot}`);
+              argVals.push({ val: slot, type: "ptr" });
             // fn closure → ptr coercion: extract fn ptr from closure tuple for extern calls
             } else if (at === "{ ptr, ptr }" && paramExpectsPtr) {
               const fnPtr = this.nextTemp();

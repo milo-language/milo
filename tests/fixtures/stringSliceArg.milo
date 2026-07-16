@@ -1,0 +1,42 @@
+// A string slice passed straight into a `&string` param used to be miscompiled: the
+// caller extracted the slice's *character buffer* and passed that where the callee
+// expected the address of a %String, so the callee read a length out of the text bytes.
+// It returned "" — silently, exit 0, no diagnostic — while binding the same slice to a
+// `let` first worked. Safe code, no unsafe, wrong answer.
+//
+// The cause: `&string` and `*u8` both lower to LLVM `ptr`, and the C-string coercion
+// keyed off the LLVM type alone, so it fired on Milo fns taking `&string` too.
+// `readFd(buf: *u8)` still needs the character buffer — both shapes are pinned here.
+from "std/string" import {
+    strTrim, strSplit
+}
+
+fn firstField(text: &string): string {
+    for line in strSplit(text, "\n") {
+        if line.len > 0 {
+            return strTrim(line[0..line.len])
+        }
+    }
+    return ""
+}
+
+fn main() {
+    let s = "  padded  "
+
+    // inline slice as an argument — the miscompiled shape
+    // @expect: [padded]
+    print($"[{strTrim(s[0..s.len])}]")
+
+    // the same slice via a let — always worked, must still
+    let sl = s[0..s.len]
+    // @expect: [padded]
+    print($"[{strTrim(sl)}]")
+
+    // a slice of a borrowed loop variable, returned out of the loop
+    // @expect: [MemTotal: 8 kB]
+    print($"[{firstField("MemTotal: 8 kB\nMemFree: 4 kB\n")}]")
+
+    // a sub-slice, so a wrong length would show up as wrong text rather than empty
+    // @expect: [dded]
+    print($"[{strTrim(s[4..s.len])}]")
+}
