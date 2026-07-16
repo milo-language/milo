@@ -3969,6 +3969,10 @@ export class TypeChecker {
           this.error(`'!' requires Option or Result type, got ${typeName(operandType)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
+        // `!` moves the payload out and codegen zeros the source slot; mark the
+        // operand moved so a later use is a compile error, not a silent read of
+        // the zeroed value. tryMove no-ops on Copy operands.
+        this.tryMove(expr.operand);
         return this.setType(expr, inner);
       }
       case "Propagate": {
@@ -3978,6 +3982,10 @@ export class TypeChecker {
           this.error(`'?' requires Option or Result type, got ${typeName(operandType)}`, sp);
           return this.setType(expr, { tag: "unknown" });
         }
+        // `?` consumes the operand (Err returns it, Ok extracts the payload and
+        // codegen zeros the slot); mark it moved so a later use errors instead of
+        // silently reading the zeroed value. tryMove no-ops on Copy operands.
+        this.tryMove(expr.operand);
         const retInner = this.unwrapableInner(this.currentFnRetType);
         if (!retInner) {
           this.error(`'?' requires function to return Option or Result, but returns ${typeName(this.currentFnRetType)}`, sp);

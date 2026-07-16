@@ -1,0 +1,18 @@
+// @error: use of moved variable 'r'
+
+// `expr!` moves the payload out of a non-Copy Result and codegen zeros the
+// source slot; using the operand afterward must be a compile error, not a
+// silent read of the zeroed enum.
+fn getIt(): Result<string> {
+    return Result.Ok("owned heap string")
+}
+
+fn main() {
+    var r = getIt()
+    let s = r!
+    match r {
+        Result.Ok(v) => { print("ok: ", v) }
+        Result.Err(e) => { print("err: ", e) }
+    }
+    print(s)
+}

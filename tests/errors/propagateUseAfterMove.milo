@@ -1,0 +1,23 @@
+// @error: use of moved variable 'r'
+
+// `expr?` consumes the operand (Err returns it, Ok extracts + zeros the slot);
+// using it afterward must be a compile error, not a silent read of the zeroed
+// enum.
+fn getIt(): Result<string> {
+    return Result.Ok("owned heap string")
+}
+
+fn use(): Result<i32> {
+    var r = getIt()
+    let s = r?
+    match r {
+        Result.Ok(v) => { print("ok: ", v) }
+        Result.Err(e) => { print("err: ", e) }
+    }
+    print(s)
+    return Result.Ok(0)
+}
+
+fn main() {
+    let _ = use()
+}
