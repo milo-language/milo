@@ -71,23 +71,23 @@ impl DapOut {
     fn event(self: &mut DapOut, name: &string, body: &string): void {
         self.seq = self.seq + 1
         let msg = jsonObj().int("seq", self.seq).str("type", "event")
-        .str("event", name.clone()).raw("body", body.clone()).build()
+            .str("event", name.clone()).raw("body", body.clone()).build()
         self.sendRaw(msg)
     }
 
     fn respond(self: &mut DapOut, reqSeq: i64, command: &string, body: &string): void {
         self.seq = self.seq + 1
         let msg = jsonObj().int("seq", self.seq).str("type", "response")
-        .int("request_seq", reqSeq).bool("success", true)
-        .str("command", command.clone()).raw("body", body.clone()).build()
+            .int("request_seq", reqSeq).bool("success", true)
+            .str("command", command.clone()).raw("body", body.clone()).build()
         self.sendRaw(msg)
     }
 
     fn fail(self: &mut DapOut, reqSeq: i64, command: &string, message: &string): void {
         self.seq = self.seq + 1
         let msg = jsonObj().int("seq", self.seq).str("type", "response")
-        .int("request_seq", reqSeq).bool("success", false)
-        .str("command", command.clone()).str("message", message.clone()).build()
+            .int("request_seq", reqSeq).bool("success", false)
+            .str("command", command.clone()).str("message", message.clone()).build()
         self.sendRaw(msg)
     }
 }
@@ -276,15 +276,15 @@ fn dapServe(): i64 {
 
 fn capabilitiesJson(): string {
     return jsonObj()
-    .bool("supportsConfigurationDoneRequest", true)
-    .bool("supportsTerminateRequest", true)
-    .bool("supportsEvaluateForHovers", false)
-    .bool("supportsConditionalBreakpoints", false)
-    .bool("supportsFunctionBreakpoints", false)
-    .bool("supportsDelayedStackTraceLoading", false)
-    .bool("supportsExceptionInfoRequest", true)
-    .raw("exceptionBreakpointFilters", jsonArr().raw(jsonObj().str("filter", "uncaught").str("label", "Uncaught Exceptions").bool("default", true).build()).raw(jsonObj().str("filter", "caught").str("label", "Caught Exceptions").bool("default", false).build()).build())
-    .build()
+        .bool("supportsConfigurationDoneRequest", true)
+        .bool("supportsTerminateRequest", true)
+        .bool("supportsEvaluateForHovers", false)
+        .bool("supportsConditionalBreakpoints", false)
+        .bool("supportsFunctionBreakpoints", false)
+        .bool("supportsDelayedStackTraceLoading", false)
+        .bool("supportsExceptionInfoRequest", true)
+        .raw("exceptionBreakpointFilters", jsonArr().raw(jsonObj().str("filter", "uncaught").str("label", "Uncaught Exceptions").bool("default", true).build()).raw(jsonObj().str("filter", "caught").str("label", "Caught Exceptions").bool("default", false).build()).build())
+        .build()
 }
 
 // string-array launch key → Vec<string> (missing/invalid → empty).
@@ -1167,11 +1167,11 @@ impl Sess {
             description = typeName.clone() + ": " + msg.clone()
         }
         let body = jsonObj()
-        .str("exceptionId", typeName.clone())
-        .str("description", description)
-        .str("breakMode", breakMode)
-        .raw("details", jsonObj().str("message", msg.clone()).str("typeName", typeName.clone()).build())
-        .build()
+            .str("exceptionId", typeName.clone())
+            .str("description", description)
+            .str("breakMode", breakMode)
+            .raw("details", jsonObj().str("message", msg.clone()).str("typeName", typeName.clone()).build())
+            .build()
         self.out.respond(seq, cmdName, body)
     }
 
@@ -1360,8 +1360,8 @@ impl Sess {
             let line = self.lineForIndex(fr.loc.classId, fr.loc.methodId, fr.loc.index)
             let srcPath = self.sourcePathFor(fr.loc.classId, sig)
             var b = jsonObj().int("id", dapFrameId)
-            .str("name", simpleName(cls) + "." + mname)
-            .int("line", line).int("column", 1)
+                .str("name", simpleName(cls) + "." + mname)
+                .int("line", line).int("column", 1)
             if srcPath.len > 0 {
                 b = b.raw("source", jsonObj().str("name", baseNameNoExt(srcPath) + ".java").str("path", srcPath).build())
             }
@@ -1518,7 +1518,7 @@ impl Sess {
             value = "<tag " + tag.toString() + ">"
         }
         return jsonObj().str("name", name.clone()).str("value", value)
-        .str("type", typeName).int("variablesReference", ref).build()
+            .str("type", typeName).int("variablesReference", ref).build()
     }
 
     fn onVariables(self: &mut Sess, seq: i64, args: Json): void {

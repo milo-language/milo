@@ -641,13 +641,13 @@ fn initArgsFor(kind: &string): string {
     // supportsRunInTerminalRequest is what makes the adapter route the debuggee
     // through our pty instead of capturing its stdio itself.
     return jsonObj().str("adapterID", adapterIdForKind(kind))
-    .bool("linesStartAt1", true)
-    .bool("columnsStartAt1", true)
-    .bool("supportsRunInTerminalRequest", true)
+        .bool("linesStartAt1", true)
+        .bool("columnsStartAt1", true)
+        .bool("supportsRunInTerminalRequest", true)
     // Without this, adapters omit memoryReference on variables/evaluate
     // and the memory viewer has almost no entry points.
-    .bool("supportsMemoryReferences", true)
-    .build()
+        .bool("supportsMemoryReferences", true)
+        .build()
 }
 
 fn launchExtraDoc(raw: &string): Option<Json> {

@@ -12,11 +12,11 @@ fn main(): i32 {
 
     // present fields land in the chain; None fields are silently skipped
     let out = jsonObj()
-    .strOpt("name", name)
-    .strOpt("skip", missing)
-    .intOpt("stars", stars)
-    .floatOpt("rating", rating)
-    .build()
+        .strOpt("name", name)
+        .strOpt("skip", missing)
+        .intOpt("stars", stars)
+        .floatOpt("rating", rating)
+        .build()
     print(out)
     return 0
 }

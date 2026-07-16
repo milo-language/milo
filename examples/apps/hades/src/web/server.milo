@@ -322,7 +322,7 @@ fn localsJson(raw: &string): string {
                 arr = arr.obj(jsonObj().str("name", body.childStrAt("variables", i, "name") ?? "?").str("value", body.childStrAt("variables", i, "value") ?? "?")
                 // DWARF-derived type (e.g. "int", "Node *", "double") when the
                 // adapter supplies it; "" for register scopes and untyped values.
-                .str("type", body.childStrAt("variables", i, "type") ?? "").int("ref", body.childI64At("variables", i, "variablesReference") ?? (0 as i64)).str("mref", body.childStrAt("variables", i, "memoryReference") ?? ""))
+                    .str("type", body.childStrAt("variables", i, "type") ?? "").int("ref", body.childI64At("variables", i, "variablesReference") ?? (0 as i64)).str("mref", body.childStrAt("variables", i, "memoryReference") ?? ""))
                 i = i + 1
             }
         }
@@ -603,12 +603,12 @@ fn helloMsg(): string {
     // resolveConfig accepts back verbatim); program/adapterCmd ride alongside as
     // display conveniences (toolbar span, ⓘ adapter line).
     var b = jsonObj().str("type", "hello")
-    .str("program", binPath.clone())
-    .str("sourcePath", srcPath.clone())
-    .str("adapterCmd", adapterCmd.clone())
-    .str("adapterId", adapterId())
-    .str("sessionId", gSessionId.clone())
-    .raw("config", specConfigJson(curSpec(), true, 0 as i64))
+        .str("program", binPath.clone())
+        .str("sourcePath", srcPath.clone())
+        .str("adapterCmd", adapterCmd.clone())
+        .str("adapterId", adapterId())
+        .str("sessionId", gSessionId.clone())
+        .raw("config", specConfigJson(curSpec(), true, 0 as i64))
     // late joiners need to know a session is live (kill-confirm on Run etc.);
     // a replayed stopped snapshot then refines running → stopped.
     if gStarted {
@@ -624,12 +624,12 @@ fn helloMsg(): string {
 // full bp state for a late-joining peer (acks are optimistic client-side).
 fn bpSyncMsg(b: &Bp): string {
     return jsonObj().str("type", "bpSync")
-    .str("path", b.path.clone()).int("line", b.line)
-    .str("condition", b.condition.clone())
-    .str("hitCondition", b.hitCondition.clone())
-    .str("logMessage", b.logMessage.clone())
-    .bool("enabled", b.enabled)
-    .build()
+        .str("path", b.path.clone()).int("line", b.line)
+        .str("condition", b.condition.clone())
+        .str("hitCondition", b.hitCondition.clone())
+        .str("logMessage", b.logMessage.clone())
+        .bool("enabled", b.enabled)
+        .build()
 }
 
 fn configErrMsg(err: &string): string {
@@ -651,9 +651,9 @@ fn sourceMsg(path: &string): string {
         }
     }
     return jsonObj().str("type", "source")
-    .str("path", path.clone())
-    .str("content", content)
-    .build()
+        .str("path", path.clone())
+        .str("content", content)
+        .build()
 }
 
 fn terminatedMsg(): string {
@@ -668,16 +668,16 @@ fn outputMsg(raw: &string): string {
     // DAP category ("stdout"/"stderr"/"console"/"important"/…) lets the merged
     // terminal color program output apart from debugger chatter.
     return jsonObj().str("type", "output")
-    .str("text", bodyStr(raw, "output"))
-    .str("category", bodyStr(raw, "category"))
-    .build()
+        .str("text", bodyStr(raw, "output"))
+        .str("category", bodyStr(raw, "category"))
+        .build()
 }
 
 // ── DAP request framing for R (odd seqs; D's DapClient uses even) ──
 
 fn sendReqFd(fd: i32, seq: i64, command: &string, argsJson: &string): void {
     let payload = jsonObj().int("seq", seq).str("type", "request")
-    .str("command", command.clone()).raw("arguments", argsJson.clone()).build()
+        .str("command", command.clone()).raw("arguments", argsJson.clone()).build()
     let _w = writeFrameFd(fd, payload)
 }
 
@@ -700,9 +700,9 @@ fn buildBpArgsForPath(bps: &Vec<Bp>, path: &string): string {
         }
     }
     return jsonObj()
-    .obj("source", jsonObj().str("path", path.clone()))
-    .arr("breakpoints", arr)
-    .build()
+        .obj("source", jsonObj().str("path", path.clone()))
+        .arr("breakpoints", arr)
+        .build()
 }
 
 // Session-init bundle: [{"args": <setBreakpoints-json>}] — one entry per file
@@ -1218,7 +1218,7 @@ fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh: Ch
                 // no `memory region`). Fired alongside scopes; reply → "regions".
                 if adapterKind == "lldb" {
                     let rArgs = jsonObj().str("expression", "memory region --all")
-                    .str("context", "repl").int("frameId", frame0).build()
+                        .str("context", "repl").int("frameId", frame0).build()
                     let rs = cl.send("evaluate", rArgs)
                     pend.push(Pending {
                         seq: rs, kind: "regions", id: 0, extra: ""
@@ -1242,17 +1242,17 @@ fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh: Ch
                     scopeRef = pextra.clone()
                 }
                 gStopMsg = jsonObj().str("type", "stopped")
-                .int("line", stopLine).str("path", lastSrc.clone()).int("tid", tid)
-                .raw("scopeRef", scopeRef)
-                .int("registersRef", regRef)
-                .raw("frames", framesJs.clone())
-                .raw("locals", localsJson(msg.raw)).build()
+                    .int("line", stopLine).str("path", lastSrc.clone()).int("tid", tid)
+                    .raw("scopeRef", scopeRef)
+                    .int("registersRef", regRef)
+                    .raw("frames", framesJs.clone())
+                    .raw("locals", localsJson(msg.raw)).build()
                 wsPush(ch, wakeWr, gStopMsg.clone())
             } else if kind == "regions" {
                 // Cached + replayed like gStopMsg so a tab that reloads mid-stop
                 // keeps its region colors instead of going grey until the next step.
                 gRegionsMsg = jsonObj().str("type", "regions")
-                .raw("regions", regionsJson(bodyStr(msg.raw, "result"))).build()
+                    .raw("regions", regionsJson(bodyStr(msg.raw, "result"))).build()
                 wsPush(ch, wakeWr, gRegionsMsg.clone())
             } else if kind == "eval" {
                 wsPush(ch, wakeWr, jsonObj().str("type", "evalResult").int("id", pid).str("value", bodyStr(msg.raw, "result")).int("ref", bodyI64(msg.raw, "variablesReference", 0 as i64)).build())
@@ -1288,7 +1288,7 @@ fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh: Ch
             } else if kind == "thr" {
                 // threads at this stop; "current" is the stopping thread.
                 gThreadsMsg = jsonObj().str("type", "threads").int("current", tid)
-                .raw("threads", threadsJson(msg.raw)).build()
+                    .raw("threads", threadsJson(msg.raw)).build()
                 wsPush(ch, wakeWr, gThreadsMsg.clone())
                 // lldb-dap fills its thread list lazily after a stop — the
                 // immediate response usually carries only the stopping thread.
@@ -1390,7 +1390,7 @@ fn dapReaderLoop(client: DapClient, ch: Channel<string>, wakeWr: i32, pendCh: Ch
                 }
                 tid = bodyI64(msg.raw, "threadId", -1 as i64)
                 let stArgs = jsonObj().int("threadId", tid)
-                .int("startFrame", 0).int("levels", 20).build()
+                    .int("startFrame", 0).int("levels", 20).build()
                 let s = cl.send("stackTrace", stArgs)
                 pend.push(Pending {
                     seq: s, kind: "st", id: 0, extra: ""
@@ -1789,7 +1789,7 @@ fn handleDebugWs(ws: WsConn, peerKind: string, bus: Channel<string>, busWakeWr: 
                 let id = jI64(payload, "id", 0 as i64)
                 let frameId = jI64(payload, "frameId", -1 as i64)
                 var b = jsonObj().str("expression", jStr(payload, "expr"))
-                .str("context", jStr(payload, "context"))
+                    .str("context", jStr(payload, "context"))
                 if frameId >= 0 {
                     b = b.int("frameId", frameId)
                 }
@@ -1877,7 +1877,7 @@ fn handleDebugWs(ws: WsConn, peerKind: string, bus: Channel<string>, busWakeWr: 
                 let id = jI64(payload, "id", 0 as i64)
                 let frameId = jI64(payload, "frameId", -1 as i64)
                 var b = jsonObj().str("text", jStr(payload, "text"))
-                .int("column", jI64(payload, "column", 1 as i64))
+                    .int("column", jI64(payload, "column", 1 as i64))
                 if frameId >= 0 {
                     b = b.int("frameId", frameId)
                 }
