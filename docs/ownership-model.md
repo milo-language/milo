@@ -8,7 +8,7 @@ last-verified: 2026-07-13
 
 # Ownership & references — why there are no lifetimes
 
-Milo is memory-safe with **no garbage collector, no reference counting in safe code, and no lifetime annotations**. This page explains how that works and, more usefully, *why the design is shaped this way* — especially if you're coming from Rust and wondering where `<'a>` went.
+Milo is memory-safe with **no garbage collector, no reference counting in safe code, and no lifetime annotations**. This page explains how that works and why the design is shaped this way, especially if you're coming from Rust and wondering where `<'a>` went.
 
 ## The one rule: references are second-class
 
@@ -26,7 +26,7 @@ fn danger(): &i64 { ... }                              // error: refs can't be r
 
 That single restriction is why Milo needs no lifetimes. Lifetimes exist, in languages that have them, to *track references that escape* — references returned from functions or stored in structs, whose validity must be proven to outlive their referent. Milo forbids escape outright, so there is nothing to annotate. The borrow checker still runs **inside** each function (it rejects mutating a collection while a loop or slice borrows it, and rejects aliasing a `&mut` and `&` into the same place at a call). "No lifetimes" does **not** mean "no borrow checking" — it means the checking never needs a syntax.
 
-## The part worth understanding: guardrails, not magic
+## Guardrails, not extra power
 
 A tempting misreading is "Milo's borrow model is more powerful than Rust's." It isn't. For the common case — threading `&mut` down a call tree — **Rust needs no lifetime annotations either** (elision handles it). Side by side, the two languages look identical:
 
@@ -39,7 +39,7 @@ fn render(doc: &mut Document, out: &mut Buffer): void { ... }
 fn render(doc: &mut Document, out: &mut Buffer) { ... }
 ```
 
-The difference is not what the clean code looks like. It's what the language *lets you build instead*.
+The difference is in what each language lets you build instead.
 
 Suppose you want to **store** a reference. The classic case is a tree whose child nodes each keep a link back to their parent — a `parent` pointer, the kind you reach for in trees, UI layouts, and document models. Rust lets you store that reference, and it has a cost:
 
@@ -69,9 +69,9 @@ struct Tree { nodes: Vec<Node> }
 
 Rust *offers* all three; it doesn't insist on any one. Milo offers only the last: `struct Node { parent: &Node }` won't compile, and there is no `Rc<RefCell>` to reach for, so referring by index/handle (or passing `&mut` down a call tree) is the only path available.
 
-This isn't about programmer skill — it's about what the language **enforces** versus merely **permits**. Milo leaves out the options that carry a hidden cost, so the version you write is the one both languages consider clean. Milo isn't doing something Rust can't; it's **removing the costly alternatives**. Guardrails, not magic.
+This is about what the language **enforces** versus merely **permits**, not about programmer skill. Milo leaves out the options that carry a hidden cost, so the version you write is the one both languages consider clean. Milo removes the costly alternatives rather than doing something Rust can't.
 
-## The honest cost — and how to pay it
+## The cost, and how to pay it
 
 Forbidding stored references gives something up: **borrowing structs** — a type that holds a view into memory it doesn't own. Rust's `<'a>` buys exactly this, e.g. a zero-copy parser:
 

@@ -1,10 +1,8 @@
 # std/arena
 
-Think of an arena like a parking garage. You drive your car in, get a ticket with a spot number. Later you hand in the ticket to get your car back. If the spot was reassigned since you parked, the garage tells you — it doesn't hand you someone else's car.
+An arena stores values and gives back handles instead of pointers. You use a handle to access or update a value later. The arena owns everything; your code holds only handles. If a handle's slot was reused since you got the handle, lookup returns `None` rather than someone else's value.
 
-That's what an arena does for data. You store values, get back handles (tickets), and use those handles to access or update your data later. The arena owns everything; your code just holds handles.
-
-This is useful when things need to reference each other — like nodes in a graph, entries in a cache, or entities in a game. Normal ownership can't model cycles (A owns B owns A?), but handles can.
+This is useful when values need to reference each other, such as nodes in a graph, entries in a cache, or entities in a game. Normal ownership can't model cycles (A owns B owns A?), but handles can.
 
 ```milo
 from "std/arena" import { Arena, Handle, arenaNew }
@@ -51,11 +49,11 @@ fn main(): i32 {
 
 **Handles are cheap.** They're two integers (slot index + generation). Copy them freely, store them in Vecs, pass them around. They don't own anything — the arena does.
 
-**Stale handles are safe.** Every slot has a generation counter that bumps on free. If you hold a handle from generation 2 but the slot is now on generation 3, `.get()` returns `None`. No crash, no garbage — just a clear "this is gone."
+**Stale handles are safe.** Every slot has a generation counter that bumps on free. If you hold a handle from generation 2 but the slot is now on generation 3, `.get()` returns `None` instead of the wrong value.
 
 ## Example: a graph with cycles
 
-The classic case — nodes that reference each other. Impossible with plain ownership (who owns whom?), straightforward with an arena.
+Nodes that reference each other. Plain ownership can't express a cycle (who owns whom?); an arena can.
 
 ```milo
 from "std/arena" import { Arena, Handle, arenaNew }
@@ -208,4 +206,3 @@ fn valid(self: &Self, handle: Handle<T>): bool
 ```
 
 Check whether a handle still points to a live value.
-

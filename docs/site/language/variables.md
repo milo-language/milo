@@ -12,7 +12,7 @@ count = count + 1
 let name = "Milo"   // type inference works
 ```
 
-Under the hood, `let` maps to an SSA register and `var` maps to a stack allocation. What you write is what LLVM sees.
+`let` maps to an SSA register and `var` maps to a stack allocation. What you write is what LLVM sees.
 
 ## Primitive types
 

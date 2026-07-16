@@ -1,6 +1,6 @@
 # Enums & Pattern Matching
 
-An enum says "this value is one of these things." Each variant can carry different data, and the compiler ensures you handle every possibility. If you've used `switch` statements before, think of enums + `match` as a strictly better version -- the compiler won't let you forget a case.
+An enum says "this value is one of these things." Each variant can carry different data, and the compiler ensures you handle every possibility. If you've used `switch` statements, enums plus `match` add one thing they lack: the compiler won't let you forget a case.
 
 ## Defining enums
 

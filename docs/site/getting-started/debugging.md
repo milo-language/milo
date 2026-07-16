@@ -11,7 +11,7 @@ Milo emits standard DWARF debug info, so any DWARF-aware debugger — `lldb`, `g
 hades web ./app                              # opens the UI in your browser
 ```
 
-`hades web` serves a React + Monaco + xterm.js front-end from a Milo HTTP/WebSocket server: click a source line to set a breakpoint, step, inspect the call stack, expand locals and watch expressions, view an ARM64/x86 disassembly pane, and type into a real PTY terminal while the program runs — no command memorization.
+`hades web` serves a React + Monaco + xterm.js front-end from a Milo HTTP/WebSocket server: click a source line to set a breakpoint, step, inspect the call stack, expand locals and watch expressions, view an ARM64/x86 disassembly pane, and type into a real PTY terminal while the program runs.
 
 `hades mcp` exposes the same live session to an AI over MCP: you and the model see and drive the same debuggee, so you can ask it to find the fault while you watch. When a graphical or AI-assisted view beats `frame variable`, reach for hades; the `lldb` recipes below still work for scripted/CI triage.
 

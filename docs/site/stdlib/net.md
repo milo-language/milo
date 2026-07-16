@@ -40,7 +40,7 @@ struct Response {
 }
 ```
 
-HTTP response returned by `fetch` and friends.
+HTTP response returned by the `fetch` functions.
 
 #### Response.text
 

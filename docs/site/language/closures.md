@@ -72,7 +72,7 @@ let big = v.filter((x) => x > 1)         // x inferred as &i32
 
 ## Practical usage: map, filter, callbacks
 
-Closures really shine when combined with collections. Passing a closure to `.map()` or `.filter()` lets you transform or select data in a single expression.
+Closures are most useful with collections. Passing a closure to `.map()` or `.filter()` lets you transform or select data in a single expression.
 
 ```milo
 var nums: Vec<i32> = Vec.new()

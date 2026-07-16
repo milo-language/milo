@@ -121,7 +121,7 @@ for x in &v {
 
 An LLM "fixes" this with `.clone()`, `RefCell`, or `unsafe` instead of restructuring. Milo's simpler model — move or clone, no shared mutable borrows — produces fewer of these puzzles.
 
-**The tradeoff:** C++ lets wrong code compile silently (UB). Rust rejects correct-in-spirit code. Both are bad for LLMs, for opposite reasons. Milo threads the needle: strict enough to catch real bugs, simple enough that correct-in-spirit code actually compiles.
+**The tradeoff:** C++ lets wrong code compile silently (UB). Rust rejects correct-in-spirit code. Both are bad for LLMs, for opposite reasons. Milo sits in between: strict enough to catch real bugs, simple enough that correct-in-spirit code actually compiles.
 
 ## Summary
 

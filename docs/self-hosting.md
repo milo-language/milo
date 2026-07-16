@@ -308,8 +308,8 @@ milo0 bug. They are all fixed and shipped to every Milo user:
 | `400a71f` | clone helper bodies bypassed `hoistAllocas` — a Vec clone allocated per loop iteration |
 | `234204f` | `h.m()` on a `Heap<T>` receiver passed the *slot address* (ptr-to-ptr) as `&T` |
 
-Self-hosting is doing its job: it is the most brutal integration test this compiler
-has. The heisenbug phase is over — what remains is mechanical porting.
+Self-hosting works as an integration test: it exercises the compiler harder than
+the fixture suite does. The heisenbug phase is over; what remains is mechanical porting.
 
 Debugging playbook that actually worked:
 - `check … 2>&1 | wc -l` returning `0` means *no output* — a crash — not "zero errors".

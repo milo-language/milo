@@ -105,7 +105,7 @@ fn main(): i32 {
 
 ## Structs
 
-Define your own types with named fields, then attach methods to them. Structs are the building blocks of most Milo programs — you'll use them for everything from coordinates to HTTP requests to database rows.
+Define your own types with named fields, then attach methods to them. Most Milo programs use structs heavily, for everything from coordinates to HTTP requests to database rows.
 
 ```milo
 struct Point {
@@ -132,7 +132,7 @@ Structs can be generic too — `Pair<A, B>`, `Heap<T>`, etc. The standard librar
 
 ## Enums and Pattern Matching
 
-Enums in Milo are more powerful than enums in most languages. Each variant can carry different data, making them perfect for modeling states, results, and anything with multiple cases. Think of them as "this value is one of these things" — and the compiler makes sure you handle every possibility.
+Each enum variant can carry different data, which makes enums good for modeling states, results, and other multi-case values. An enum value is one of its variants, and the compiler checks that you handle every case.
 
 ```milo
 enum Shape {
@@ -162,7 +162,7 @@ fn main(): i32 {
 
 ## Ownership and Moves
 
-This is the big one — and it's simpler than you might think. Milo doesn't have a garbage collector or a borrow checker with lifetime annotations. Instead, there's one rule: every value has one owner. When you assign it somewhere else, the original name is done.
+Milo doesn't have a garbage collector or a borrow checker with lifetime annotations. Instead, there's one rule: every value has one owner. When you assign it somewhere else, the original name is done.
 
 ```milo
 fn main(): i32 {
@@ -190,7 +190,7 @@ fn main(): i32 {
 }
 ```
 
-If you've heard scary things about Rust's borrow checker, don't worry — Milo is deliberately simpler. No lifetime annotations, ever. The tradeoff is that references can only be used as function parameters, not stored in structs or returned. In practice, this covers the vast majority of use cases and is much easier to learn.
+Milo is deliberately simpler than Rust's borrow checker. No lifetime annotations, ever. The tradeoff is that references can only be used as function parameters, not stored in structs or returned. In practice, this covers the vast majority of use cases and is much easier to learn.
 
 [Learn more](/language/ownership)
 
@@ -234,7 +234,7 @@ fn main(): i32 {
 
 Milo has no exceptions and no null. Instead, the type system makes you deal with errors and missing values explicitly — but with enough syntactic sugar that it doesn't feel heavy.
 
-Remember those enums with payloads from the previous section? `Result<T, E>` is just an enum with two variants: `Result.Ok(value)` for success or `Result.Err(error)` for failure. Similarly, `Option<T>` is `Option.Some(value)` or `Option.None`. The compiler won't let you use the inner value without checking which case you're in.
+`Result<T, E>` is an enum with two variants: `Result.Ok(value)` for success or `Result.Err(error)` for failure. Similarly, `Option<T>` is `Option.Some(value)` or `Option.None`. The compiler won't let you use the inner value without checking which case you're in.
 
 The `?` operator is where it gets ergonomic: if a result is an error, `?` returns it from the current function automatically. No try/catch blocks, no forgotten error checks.
 
@@ -270,7 +270,7 @@ You can also write `T?` as shorthand for `Option<T>`, and `value ?? default` to 
 
 ## Collections
 
-Milo comes with growable arrays and hash maps out of the box. `Vec<T>` is the workhorse — you'll use it constantly. It owns its elements, frees them when it goes out of scope, and has built-in methods like `map`, `filter`, and `join` that make working with data feel natural.
+Milo includes growable arrays and hash maps. `Vec<T>` is the workhorse — you'll use it constantly. It owns its elements, frees them when it goes out of scope, and has built-in methods like `map`, `filter`, and `join`.
 
 ### Vec — dynamic arrays
 
@@ -395,7 +395,7 @@ fn main(): i32 {
 
 ## Traits
 
-Milo has no classes. If you've worked with class hierarchies in other languages, you've probably run into the downsides: fragile base classes, deep inheritance chains that are hard to reason about, and the "where do I put this method?" problem when behavior doesn't fit neatly into one hierarchy. Milo takes the approach Rust pioneered — separate your data (structs) from your behavior (trait implementations). You define *what* a type can do through traits, and *how* it does it through `impl` blocks. This means you can add new behavior to existing types without modifying them, and you never have to worry about inheritance diamonds or superclass changes breaking your code.
+Milo has no classes. If you've worked with class hierarchies in other languages, you've probably run into the downsides: fragile base classes, deep inheritance chains that are hard to reason about, and the "where do I put this method?" problem when behavior doesn't fit neatly into one hierarchy. Milo takes the approach Rust pioneered — separate your data (structs) from your behavior (trait implementations). You define *what* a type can do through traits, and *how* it does it through `impl` blocks. This means you can add new behavior to existing types without modifying them, and you avoid inheritance diamonds and superclass changes breaking your code.
 
 If you've used interfaces in Go or TypeScript, traits will feel familiar — but Milo traits can also have default implementations, constrain generics, and enable operator overloading (`+`, `-`, `==`, etc.).
 
@@ -449,7 +449,7 @@ print(a == b)   // true — generated field-by-field comparison
 
 Traits are compile-time — the compiler generates specialized code for each concrete type (monomorphization). But sometimes you need runtime polymorphism: passing different types through the same function, storing mixed types in a collection, or writing plugin-style architectures where the concrete types aren't known until runtime.
 
-Milo uses Go-style interfaces for this. An interface declares a set of methods. Any type that has those methods satisfies the interface — no explicit declaration needed (structural typing). Under the hood, interface values are fat pointers carrying a data pointer and an itable (interface table) for virtual dispatch.
+Milo uses Go-style interfaces for this. An interface declares a set of methods. Any type that has those methods satisfies the interface — no explicit declaration needed (structural typing). Interface values are fat pointers carrying a data pointer and an itable (interface table) for virtual dispatch.
 
 ```milo
 interface Greeter {

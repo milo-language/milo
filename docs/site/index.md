@@ -53,7 +53,7 @@ The mission: prove that safe systems programming doesn't require a complex langu
       <span class="app-play">▶ Play in your browser</span>
     </a>
   </div>
-  <p class="showcase-more">Milo isn't just theory — it already ships: a <strong>SNES</strong> emulator, a <strong>web + AI debugger</strong>, HTTP/TLS servers, terminal apps, and the compiler itself. <a href="/milo/demos">Check them out →</a></p>
+  <p class="showcase-more">More is already shipping in Milo: a <strong>SNES</strong> emulator, a <strong>web + AI debugger</strong>, HTTP/TLS servers, terminal apps, and the compiler itself. <a href="/milo/demos">Check them out →</a></p>
 </div>
 
 <div class="section-break"></div>

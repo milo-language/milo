@@ -8,7 +8,7 @@ last-verified: 2026-07-15
 
 # Installation
 
-Milo builds from source. The compiler moves fast, so a clone you can `git pull` keeps you on the latest — no stale prebuilt binaries to strand you on old behavior.
+Milo builds from source. The compiler changes often, so a clone you can `git pull` keeps you current. There are no prebuilt binaries.
 
 ## Dependencies
 

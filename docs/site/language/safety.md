@@ -5,7 +5,7 @@ Milo lets you write down what your functions promise — and then prove it.
 - **Contracts** (`requires`, `ensures`, `invariant`) are annotations that say what a function expects, what it guarantees, and what stays true inside loops. The compiler type-checks them alongside your code — no separate annotation language, no external tool needed just to write them.
 - **Safety profiles** enforce coding standards from domains like avionics (DO-178C), automotive (ISO 26262), and medical devices (IEC 62304) — as compiler flags, not expensive third-party tools.
 
-A few things worth knowing up front:
+A few points up front:
 
 - **Zero runtime cost.** Contracts are checked for well-formedness at compile time but never inserted into the binary.
 - **Proving is separate.** The compiler catches ill-formed contracts (type errors, bad references). To verify contracts actually *hold*, run `milo verify` to export SMT-LIB2 and pipe it to a solver like [Z3](https://github.com/Z3Prover/z3). This is the same architecture used by SPARK/Ada and Dafny.
@@ -38,7 +38,7 @@ fn sqrt(n: f64): f64
 
 Now anyone reading this function knows exactly what it needs and what it promises.
 
-But wait — what about runtime values? If `n` comes from a sensor reading, nobody can prove it's non-negative at compile time. That's not what verification does. What `milo verify` + Z3 actually checks is the *chain of proof obligations*: if you call `sqrt(sensorValue)` without first checking `sensorValue >= 0.0`, the verifier flags it. You still write a runtime check at the boundary where unknown data enters — the proof just guarantees you never forgot one.
+What about runtime values? If `n` comes from a sensor reading, nobody can prove it's non-negative at compile time. That's not what verification does. What `milo verify` + Z3 actually checks is the *chain of proof obligations*: if you call `sqrt(sensorValue)` without first checking `sensorValue >= 0.0`, the verifier flags it. You still write a runtime check at the boundary where unknown data enters — the proof just guarantees you never forgot one.
 
 ```milo
 fn processSensor(raw: f64): f64 {
