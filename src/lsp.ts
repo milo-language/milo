@@ -353,8 +353,10 @@ function handleHover(uri: string, line: number, character: number): object | nul
     const exprTypes = checkResult?.exprTypes ?? new Map();
     const word = getWordAt(source, line, character);
 
-    // Variable declarations — only when hovering on the variable name itself
-    for (const fn of program.functions) {
+    // Variable declarations — only when hovering on the variable name itself.
+    // Include impl methods (Function[] in program.impls) so decl-site hover works
+    // inside method bodies, not just free functions.
+    for (const fn of [...program.functions, ...program.impls.flatMap(i => i.methods)]) {
       if (fn.isExtern) continue;
       for (const stmt of fn.body) {
         const info = findHoverInStmt(stmt, line + 1, character + 1, exprTypes, word);
@@ -600,38 +602,44 @@ const BUILTIN_DOCS: Record<string, { enum: string; variants: Record<string, stri
     enum: [
       "A value that may or may not exist.",
       "",
-      "**Operators:** `!` unwrap (panic if None) · `?` propagate None · `??` default value",
+      "**Operators** (each pulls the value out of the `Option`):",
+      "- `!` — the value; **panics** if `None`",
+      "- `?` — the value; if `None`, stops here and returns `None` from the current fn",
+      "- `??` — the value, or the given fallback if `None`",
       "",
       "```milo",
       "let x: Option<i32> = Option.Some(42)",
-      "let n = x!              // unwrap: 42",
-      "let m = x ?? 0          // default: 42",
-      "if let Option.Some(v) = x { ... }",
+      "let n = x!              // 42  (would panic if x were None)",
+      "let m = x ?? 0          // 42  (0 if x were None)",
+      "if let Option.Some(v) = x { ... }   // v is the value only when present",
       "```",
     ].join("\n"),
     variants: {
-      Some: "Wraps a value of type `T`.\n\n```milo\nlet x = Option.Some(42)\nlet v = x!   // unwrap → 42\n```",
-      None: "No value present.\n\n```milo\nlet x: Option<i32> = Option.None\nlet v = x ?? 0   // default → 0\n```",
+      Some: "Holds a value of type `T`.\n\n```milo\nlet x = Option.Some(42)\nlet v = x!   // 42 — panics if it were None\n```",
+      None: "No value present.\n\n```milo\nlet x: Option<i32> = Option.None\nlet v = x ?? 0   // 0 — the fallback, since None has no value\n```",
     },
   },
   Result: {
     enum: [
       "A value that is either a success (`Ok`) or an error (`Err`).",
       "",
-      "**Operators:** `!` unwrap (panic if Err) · `?` propagate Err · `??` default value",
+      "**Operators** (each pulls the `Ok` value out of the `Result`):",
+      "- `!` — the `Ok` value; **panics** if `Err`",
+      "- `?` — the `Ok` value; if `Err`, stops here and returns that `Err` from the current fn",
+      "- `??` — the `Ok` value, or the given fallback if `Err`",
       "",
       "```milo",
       "fn parse(s: string): Result<i64> {",
       "    if s.len == 0 { return Result.Err(\"empty\") }",
       "    return Result.Ok(42)",
       "}",
-      "let v = parse(\"x\")?     // propagate on Err",
-      "let v = parse(\"x\") ?? 0 // default on Err",
+      "let v = parse(\"x\")?     // the number, or bail out of this fn with the Err",
+      "let v = parse(\"x\") ?? 0 // the number, or 0 if it failed",
       "```",
     ].join("\n"),
     variants: {
-      Ok: "Success value of type `T`.\n\n```milo\nlet r = Result.Ok(42)\nlet v = r!   // unwrap → 42\nlet v = r?   // propagate: returns 42\n```",
-      Err: "Error with a `string` message.\n\n```milo\nlet r = Result.Err(\"not found\")\nmatch r {\n    Result.Ok(v) => { ... }\n    Result.Err(msg) => { print(msg) }\n}\n```",
+      Ok: "Success — holds a value of type `T`.\n\n```milo\nlet r: Result<i64> = Result.Ok(42)\nlet v = r!   // 42 — panics if it were Err\nlet v = r?   // 42 here; if r were Err, this returns the Err from the fn\n```",
+      Err: "Failure — holds a `string` message.\n\n```milo\nlet r: Result<i64> = Result.Err(\"not found\")\nmatch r {\n    Result.Ok(v) => { ... }\n    Result.Err(msg) => { print(msg) }\n}\n```",
     },
   },
 };
@@ -809,10 +817,19 @@ function findInImportedFiles(parsed: Program, sourceDir: string, word: string, v
       }
     }
 
-    // recurse into transitive imports
+    // recurse into transitive imports (also lets us resolve enum variants,
+    // which need the parsed enum to know the owning enum name)
     try {
       const tokens = new Lexer(fileSource).tokenize();
       const importedParsed = new Parser(tokens).parse();
+      for (const e of importedParsed.enums) {
+        if (e.variants.some(v => v.name === word)) {
+          const vLine = findEnumVariantLine(fileSource, e.name, word);
+          if (vLine >= 0) {
+            return { uri: pathToFileURL(materializeStd(absPath)).href, range: { start: { line: vLine, character: 0 }, end: { line: vLine, character: 0 } } };
+          }
+        }
+      }
       const result = findInImportedFiles(importedParsed, dirname(absPath), word, visited);
       if (result) return result;
     } catch {}
@@ -874,6 +891,19 @@ function handleDefinition(uri: string, line: number, character: number): object 
         const eLine = findDeclLine(source, "enum", e.name);
         if (eLine >= 0) {
           return { uri, range: { start: { line: eLine, character: 0 }, end: { line: eLine, character: 0 } } };
+        }
+      }
+    }
+
+    // Enum variant — `JsonVal.JFloat`. Clicking the variant should jump to its
+    // declaration line inside the enum body (name-based, so a bare `JFloat`
+    // resolves too). Only enums whose decl lives in this file; imported enums'
+    // variants are handled by findInImportedFiles below.
+    for (const e of program.enums) {
+      if (e.variants.some(v => v.name === word)) {
+        const vLine = findEnumVariantLine(source, e.name, word);
+        if (vLine >= 0) {
+          return { uri, range: { start: { line: vLine, character: 0 }, end: { line: vLine, character: 0 } } };
         }
       }
     }
@@ -950,6 +980,30 @@ function findDeclLine(source: string, keyword: string, name: string): number {
   return -1;
 }
 
+// Locate an enum variant's declaration line. Find the `enum NAME` line, then
+// scan its brace-delimited body for `VARIANT` at the start of a line (variants
+// carry no span). Returns -1 if the enum isn't in this source.
+function findEnumVariantLine(source: string, enumName: string, variant: string): number {
+  const lines = source.split("\n");
+  const declRe = new RegExp(`\\benum\\s+${enumName}\\b`);
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (declRe.test(lines[i])) { start = i; break; }
+  }
+  if (start < 0) return -1;
+  const variantRe = new RegExp(`^\\s*${variant}\\b`);
+  let depth = 0, seenBrace = false;
+  for (let i = start; i < lines.length; i++) {
+    if (i > start && variantRe.test(lines[i])) return i;
+    for (const ch of lines[i]) {
+      if (ch === "{") { depth++; seenBrace = true; }
+      else if (ch === "}") { depth--; }
+    }
+    if (seenBrace && depth === 0) break;
+  }
+  return -1;
+}
+
 function findVarDecl(stmt: Stmt, name: string): Span | null {
   if ((stmt.kind === "LetDecl" || stmt.kind === "VarDecl") && stmt.name === name && stmt.span) {
     return stmt.span;
@@ -995,7 +1049,10 @@ function findVarDecl(stmt: Stmt, name: string): Span | null {
 function findEnclosingFn(source: string, program: Program, line: number): { fn: Function; declLine: number } | null {
   const lines = source.split("\n");
   const decls: { fn: Function; declLine: number }[] = [];
-  for (const fn of program.functions) {
+  // Impl methods are Function[] too but live in program.impls — include them so
+  // hover/goto scoping works inside method bodies (`self.x`), not just free fns.
+  const allFns: Function[] = [...program.functions, ...program.impls.flatMap(i => i.methods)];
+  for (const fn of allFns) {
     if (fn.isExtern) continue;
     const re = new RegExp(`\\bfn\\s+${fn.name}\\s*[<(]`);
     for (let i = 0; i < lines.length; i++) {

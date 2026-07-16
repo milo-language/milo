@@ -83,6 +83,48 @@ fn main() {
 `;
 const IMPL_URI = "file:///tmp/milo-lsp-impl.milo";
 
+// Goto-definition on an enum variant (`Shape.Circle`). Clicking the variant
+// used to resolve nowhere — only the enum name did.
+const ENUM_SRC = `enum Shape {
+    Circle(f64),
+    Square(f64),
+}
+
+fn area(s: Shape): f64 {
+    match s {
+        Shape.Circle(r) => {
+            return r
+        }
+        Shape.Square(w) => {
+            return w
+        }
+    }
+}
+`;
+const ENUM_URI = "file:///tmp/milo-lsp-enum.milo";
+
+// Hover on a local inside an impl METHOD body (not a free fn). Method bodies
+// live in program.impls, so the enclosing-fn scoping used to skip them and
+// hover on any method local — including `if let` bindings — returned nothing.
+const METHOD_SRC = `struct Store {
+    n: i32,
+}
+
+impl Store {
+    fn run(self: &Store) {
+        let total = 42
+        if let Option.Some(v) = firstOf() {
+            print(v)
+        }
+    }
+}
+
+fn firstOf(): Option<i32> {
+    return Option.Some(1)
+}
+`;
+const METHOD_URI = "file:///tmp/milo-lsp-method.milo";
+
 // Hover on a scalar primitive and on a raw pointer (`*u8`) at an FFI boundary.
 const PRIM_SRC = `fn openPad(): *u8 {
     let n: i64 = 3
@@ -152,7 +194,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -224,6 +266,23 @@ test("goto-definition on a local impl-method call jumps to the method decl", asy
   expect(def?.uri).toBe(IMPL_URI);
   // `impl Speaker { fn greet(...) }` — the `fn greet` line is 0-based line 5.
   expect(def?.range?.start?.line).toBe(5);
+});
+
+test("goto-definition on an enum variant jumps to the variant decl line", async () => {
+  // `        Shape.Circle(r) => {` — `Circle` is on line 7 (0-based), char 14.
+  const def = await req(31, "textDocument/definition", { textDocument: { uri: ENUM_URI }, position: { line: 7, character: 14 } });
+  expect(def?.uri).toBe(ENUM_URI);
+  // `    Circle(f64),` — the variant decl is 0-based line 1.
+  expect(def?.range?.start?.line).toBe(1);
+});
+
+test("hover on a local and an if-let binding inside an impl method", async () => {
+  // `        let total = 42` — `total` at line 6, char 12.
+  const onLocal = await req(32, "textDocument/hover", { textDocument: { uri: METHOD_URI }, position: { line: 6, character: 12 } });
+  expect(onLocal?.contents?.value).toContain("total");
+  // `        if let Option.Some(v) = firstOf()` — `v` binding at line 7, char 27.
+  const onBind = await req(33, "textDocument/hover", { textDocument: { uri: METHOD_URI }, position: { line: 7, character: 27 } });
+  expect(onBind?.contents?.value).toContain("v");
 });
 
 test("documentSymbol lists top-level decls with nesting", async () => {
