@@ -270,13 +270,19 @@ impl File {
 
     fn readAll(self: &Self): Result<string, IoError> {
         let size = self.size()
-        if size < 0 {
-            return Result.Err(IoError.Other("failed to get file size"))
+        // A negative size means lseek couldn't measure this fd — NOT that the read must
+        // fail. procfs seq_files (/proc/uptime, /proc/meminfo, /proc/cpuinfo), pipes and
+        // char devices all report -1 for SEEK_END, and every one of them reads fine.
+        // Erroring here made `readFile` unable to read any of them. The size is only a
+        // presize hint, so fall back to a page and let the push loop grow as needed.
+        var capacity: i64 = 4096
+        if size > 0 {
+            // Presize to the stat'd size (+1 for the NUL) so the push loop never reallocs;
+            // push still grows safely if the file grew between size() and read().
+            capacity = size + 1
+            lseek(self.fd, 0, 0)
         }
-        lseek(self.fd, 0, 0)
-        // Presize to the stat'd size (+1 for the NUL) so the push loop never reallocs;
-        // push still grows safely if the file grew between size() and read().
-        var result: string = String.withCapacity(size + 1)
+        var result: string = String.withCapacity(capacity)
         var buf: [u8; 65536] = [0; 65536]
         while true {
             let n = readFd(self.fd, buf, 65536)
