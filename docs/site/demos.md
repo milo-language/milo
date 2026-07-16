@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: demos-showcase
+purpose: showcase page listing runnable Milo demos (browser emulators, debugger, TUIs, servers)
+key-files: examples/apps, examples/cli-tools, docs/site/.vitepress/config.mts
+update-when: a demo is added/removed or its capabilities change
+last-verified: 2026-07-15
+-->
+
 # Showcase
 
 Real programs written in Milo. The compiler is built around **pluggable codegen**: the same front-end feeds any backend. The usual target is LLVM IR (native binaries), but it can also emit JavaScript — pass the `emit-js` subcommand (`milo emit-js <file>`) instead of `build`. The emulators use this to run in the browser *and* compile to a native binary; everything else compiles to a small native binary from a single `.milo` file. They double as integration tests for the standard library — [run any of them yourself](#run-these-yourself).
