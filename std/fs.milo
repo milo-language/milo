@@ -131,6 +131,12 @@ fn writeFile(path: &string, data: &string): Result<i64, IoError> {
     return f.writeAll(data)
 }
 
+// Append a string to a file, creating it if absent (writes go to the end).
+fn appendFile(path: &string, data: &string): Result<i64, IoError> {
+    let f = File.openAppend(path)?
+    return f.writeAll(data)
+}
+
 // ── Safe wrappers around POSIX fs operations ──
 // Return Result<bool, IoError> for operations with no meaningful return value.
 fn _ok(): Result<bool, IoError> {

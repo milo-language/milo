@@ -63,6 +63,20 @@ Track in [roadmap.md](roadmap.md); pull up when a concrete need appears.
 - **Cross-compilation**, **benchmarking harness**, **"the book"** (roadmap.md:124-126)
 - **Promise / shuf ergonomics** — verify current status before scheduling (memory)
 
+## Concurrency & TUI findings (2026-07-15, tmuxClone/splitPty session)
+
+Surfaced building a terminal multiplexer (`examples/apps/tmuxClone.milo`) — the
+primitives carried it, but these gaps are where the friction was. Ranked.
+
+| # | Item | ROI | Effort | Detail | Ref |
+|---|------|-----|--------|--------|-----|
+| C1 | **`Select.wait()` returns `-1`, not the winning arm** | H | M | Main-context select parks correctly (idle CPU measured **0.0%**) but the claim never lands in the return value, so callers can't tell *which* arm fired. Workaround in the demos: drain every arm (correct + free, fds are `O_NONBLOCK`). Root cause is in the main-thread vs green-task park/claim path (`_selectWaitState`/`_wakeSelectFds`, `std/runtime.milo`); `schedulerCurrent()` is 0 on the main context so `schedulerPark()` no-ops. **Attempted fix** (drive `_pollAndWake` from `_selectWaitState` when no current task) **regressed to a hang** — the claim still didn't fire, so neither the fd nor the timer arm was recorded. Needs a proper investigation of who unparks the main select task. | `std/runtime.milo:795 _selectWaitState` |
+| C2 | **Concurrency primitives don't compose** | H | M | `Promise` is not selectable and `Channel<T>` has no shareable handle / `clone()` (`_ptr` is module-private, not `@copy`). So you can't bridge a `Promise.blocking` OS-thread result into a `Select` — which is exactly what an event-driven `timeout` needs. Want: `Channel.clone()` (or a selectable `Promise`), **plus** a child-exit `Select` arm (SIGCHLD / kqueue `EVFILT_PROC`). | `std/sync.milo:210`, `std/runtime.milo:486` |
+| C3 | **`timeout.milo:247` is a `waitpid(WNOHANG)`+sleep poll** | M | M | The one genuine I/O-poll left after the sweep (animation demos are frame timers, correctly untouched). Clean conversion is **blocked on C2**. | `examples/cli-tools/timeout.milo:247` |
+| C4 | **Blocking `waitpid` wedges the green runtime** | M | M | Blocking `waitpid` on a `SIGKILL`'d-but-wedged child (stuck writing to a full PTY) hangs the scheduler thread. Now handled inside `Pty` (kill → close master to unwedge → reap), but the runtime interaction is a sharp edge worth a guard. | `std/pty.*.milo`, session |
+| C5 | **No SIGWINCH → resize needs a timer** | M | M | No signal→`Select` arm, so TUI resize is polled (`splitPty` uses `onTimeout(500)`). A signal arm would make it fully event-driven. | `examples/apps/splitPty.milo` |
+| C6 | **Papercuts** | L | L | (a) match-bound values are immutable for `&mut` **fn args** but fine for `&mut` **methods** — inconsistent, forced inlining a spawn helper. (b) `string.push` needs an explicit `as u8` on int literals. (c) ~~`appendFile` missing from `std/fs`~~ ✅ added this session. | session |
+
 ## Dependency notes
 
 - **#6 (byte views) gates the zero-copy form of #7 (streaming JSON).** #7 works without it (materialize per event), but hands out copies until #6 lands.
