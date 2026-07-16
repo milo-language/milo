@@ -267,7 +267,9 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
         var sel = Select.new()
         var ai: i64 = 0
         while ai < ptys.len {
-            sel.onRead(ptys[ai].masterFd)
+            if paneWin[ai] >= 0 { // skip closed panes (marked -1)
+                sel.onRead(ptys[ai].masterFd)
+            }
             ai = ai + 1
         }
         sel.onRead(listenFd)
@@ -278,22 +280,60 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
         sel.destroy()
 
         var dirty = false
+        var anyDied = false
 
-        // drain EVERY pane (all windows) so no shell wedges while off-screen
+        // drain every live pane (all windows) so no shell wedges while off-screen.
+        // A shell exiting (read 0) closes just that pane — the daemon lives on.
         var di: i64 = 0
         while di < ptys.len {
-            unsafe {
-                let nn = read(ptys[di].masterFd, buf as *u8, 4096)
-                if nn == 0 {
-                    running = false
-                } else if nn > 0 {
-                    terms[di].feed(buf, nn)
-                    if paneWin[di] == activeWin {
-                        dirty = true
+            if paneWin[di] >= 0 {
+                unsafe {
+                    let nn = read(ptys[di].masterFd, buf as *u8, 4096)
+                    if nn == 0 {
+                        ptys[di].close()
+                        ptys[di].wait()
+                        paneWin[di] = -1 // mark closed; reap done
+                        anyDied = true
+                    } else if nn > 0 {
+                        terms[di].feed(buf, nn)
+                        if paneWin[di] == activeWin {
+                            dirty = true
+                        }
                     }
                 }
             }
             di = di + 1
+        }
+
+        if anyDied {
+            // re-tile all windows (a pane count changed) and fix focus if the
+            // focused pane closed; if nothing is left, the daemon exits.
+            reTileAll(ptys, terms, paneWin, winCount, cols, gridRows)
+            if paneWin[focus] < 0 {
+                var fidx: [i64; 16] = [0; 16]
+                let fm = activePaneIdxs(paneWin, activeWin, fidx)
+                if fm > 0 {
+                    focus = fidx[0]
+                } else {
+                    var found = false
+                    var w2: i64 = 0
+                    while w2 < winCount {
+                        if winPaneCount(paneWin, w2) > 0 {
+                            activeWin = w2
+                            var gidx: [i64; 16] = [0; 16]
+                            let gm = activePaneIdxs(paneWin, activeWin, gidx)
+                            focus = gidx[0]
+                            found = true
+                            w2 = winCount
+                        }
+                        w2 = w2 + 1
+                    }
+                    if !found {
+                        running = false
+                    }
+                }
+            }
+            dirty = true
         }
 
         let newFd = acceptFd(listenFd)
@@ -477,13 +517,17 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
     }
     var tp: i64 = 0
     while tp < ptys.len {
-        ptys[tp].kill()
+        if paneWin[tp] >= 0 { // -1 panes are already reaped
+            ptys[tp].kill()
+        }
         tp = tp + 1
     }
     var tc: i64 = 0
     while tc < ptys.len {
-        ptys[tc].close()
-        ptys[tc].wait()
+        if paneWin[tc] >= 0 {
+            ptys[tc].close()
+            ptys[tc].wait()
+        }
         tc = tc + 1
     }
 }
