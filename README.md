@@ -33,7 +33,7 @@ See **[Installation](https://cs01.github.io/milo/getting-started/installation)**
 
 ## Self-hosting
 
-Milo compiles itself. The compiler is written in Milo ([`src-milo/`](src-milo/)) and reproduces itself exactly — compile it with itself, then do it again, and you get a **byte-for-byte identical binary**. Few young languages can do this; it's the strongest proof that Milo is ready for real work.
+Milo compiles itself. The compiler is written in Milo ([`src-milo/`](src-milo/)) and reproduces itself exactly — compile it with itself, then do it again, and you get a **byte-for-byte identical binary**.
 
 ```bash
 sh scripts/selfhost.sh            # oracle builds stage1 (stage1 binary is gitignored)
