@@ -1496,9 +1496,10 @@ export class TypeChecker {
   private static readonly C_HEADER_RE = /^[A-Za-z0-9_][A-Za-z0-9_./+-]*\.h$/;
   // A C function signature, pasted verbatim into a generated TU — so it's held to a
   // charset that can't close the assert and inject statements. Allows what real decls
-  // need (`ssize_t f(int, void *, size_t)`, `struct tm *g(const time_t *)`, `void h(void)`)
-  // and nothing else: no quotes, no semicolons, no braces, no backslashes, no newlines.
-  private static readonly C_SIG_RE = /^[A-Za-z_][A-Za-z0-9_ ,*()[\]]*\)$/;
+  // need (`ssize_t f(int, void *, size_t)`, `struct tm *g(const time_t *)`, `void h(void)`,
+  // and `...` for variadics like `int open(const char *, int, ...)`) and nothing else:
+  // no quotes, no semicolons, no braces, no backslashes, no newlines.
+  private static readonly C_SIG_RE = /^[A-Za-z_][A-Za-z0-9_ .,*()[\]]*\)$/;
 
   private checkCLayout(s: StructDecl, attr: Attribute): void {
     if (!s.isExtern || s.isOpaque) {

@@ -16,7 +16,7 @@ impl CStr {
             return Option.None
         }
         return Option.Some(CStr {
-            _ptr: ptr, _len: strlen(ptr)
+            _ptr: ptr, _len: strlen(ptr) as i64
         }
         )
     }
