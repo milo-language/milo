@@ -34,15 +34,7 @@ export default defineConfig({
       { text: 'Docs', link: '/getting-started/installation' },
       { text: 'Language', link: '/language/' },
       { text: 'Playground', link: '/playground' },
-      {
-        text: 'Showcase',
-        items: [
-          { text: 'Overview', link: '/demos' },
-          { text: 'NES Emulator', link: '/nes/', target: '_self' },
-          { text: 'Genesis Emulator', link: '/genesis/', target: '_self' },
-          { text: 'SNES Emulator', link: '/snes/', target: '_self' },
-        ]
-      },
+      { text: 'Showcase', link: '/demos' },
       {
         text: 'More',
         items: [
