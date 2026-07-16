@@ -3651,9 +3651,15 @@ export class TypeChecker {
           return this.setType(expr, this.functions.get(mangled)!.ret);
         }
 
-        const sig = this.functions.get(expr.func);
+        // A callable in the local scope wins over a global of the same name. Globals used
+        // to be consulted first, so a parameter could never shadow one — which meant a
+        // user defining `fn handler` broke std/http's *internal* `handler(ctx)` call
+        // against its own param, reporting a type error inside a file the user never
+        // opened. Innermost binding wins, as everywhere else in the language.
+        const localCallable = this.lookup(expr.func);
+        const sig = (localCallable && localCallable.type.tag === "fn") ? undefined : this.functions.get(expr.func);
         if (!sig) {
-          const varInfo = this.lookup(expr.func);
+          const varInfo = localCallable;
           if (varInfo && varInfo.type.tag === "fn") {
             varInfo.read = true;
             const fnType = varInfo.type;

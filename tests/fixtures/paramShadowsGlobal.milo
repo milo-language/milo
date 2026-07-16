@@ -1,0 +1,34 @@
+// A parameter must win over a global of the same name — innermost binding, as everywhere
+// else in the language.
+//
+// Call resolution used to consult globals first, so a param could never shadow one. The
+// real-world bite: a user defining `fn handler` broke std/http's *internal* `handler(ctx)`
+// call, which resolved to the user's global instead of http's own parameter and reported
+// `expected &mut Context, got Request` — a type error inside a file the user never opened.
+// The workaround in the docs was to rename the user's function.
+fn apply(cb: (i64) => i64): i64 {
+    return cb(1)
+}
+
+// Same name, deliberately incompatible signature: if the global wins, this is a type
+// error rather than a wrong answer, which is how the bug announced itself.
+fn cb(s: string): i64 {
+    return 99
+}
+
+fn twice(x: i64): i64 {
+    return x * 2
+}
+
+fn main() {
+    // @expect: 2
+    print(apply((x) => x * 2))
+
+    // A named fn passed as the arg must still reach the param, not the global.
+    // @expect: 2
+    print(apply(twice))
+
+    // The global is still callable by its own name from a scope with no such param.
+    // @expect: 99
+    print(cb("ignored"))
+}
