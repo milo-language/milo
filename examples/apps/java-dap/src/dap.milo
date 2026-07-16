@@ -167,38 +167,19 @@ fn dapServe(): i64 {
     var program: string = ""
     var sourceRoots: Vec<string> = []
     while true {
-        var raw: string = ""
-        match readFrame(0) {
-            Result.Ok(s) => {
-                raw = s
-            }
-            Result.Err(_e) => {
-                eprint("client hung up before attach")
-                return 0
-            }
+        let Result.Ok(raw) = readFrame(0) else {
+            eprint("client hung up before attach")
+            return 0
         }
-        var req: Json = jsonParse("{}")!
-        match jsonParse(raw) {
-            Result.Ok(d) => {
-                req = d
-            }
-            Result.Err(_e) => {
-                continue
-            }
+        let Result.Ok(req) = jsonParse(raw) else {
+            continue
         }
         let cmd = req.str("command") ?? ""
         let seq = req.i64("seq") ?? (0 as i64)
         if cmd == "initialize" {
             out.respond(seq, cmd, capabilitiesJson())
         } else if cmd == "launch" || cmd == "attach" {
-            var args: Json = jsonParse("{}")!
-            match req.get("arguments") {
-                Option.Some(a) => {
-                    args = a
-                }
-                Option.None => {
-                }
-            }
+            let args = req.get("arguments") ?? jsonParse("{}")!
             program = args.str("program") ?? ""
             sourceRoots = strArray(args, "sourceRoots")
             match connectJvm(cmd == "launch", args, eventCh) {
@@ -221,16 +202,8 @@ fn dapServe(): i64 {
         }
     }
 
-    var theIo: JdwpIo = JdwpIo {
-        fd: -1 as i32, nextId: 0, sizes: defaultSizes(), replyCh: Channel<Packet>.new(1)!
-    }
-    match io {
-        Option.Some(j) => {
-            theIo = j
-        }
-        Option.None => {
-            return 1
-        }
+    let Option.Some(theIo) = io else {
+        return 1
     }
 
     var sess = Sess {
@@ -710,25 +683,12 @@ fn signExtend(v: i64, bits: i64): i64 {
 impl Sess {
     // returns true when the adapter should exit (disconnect/terminate handled).
     fn dispatch(self: &mut Sess, raw: string): bool {
-        var req: Json = jsonParse("{}")!
-        match jsonParse(raw) {
-            Result.Ok(d) => {
-                req = d
-            }
-            Result.Err(_e) => {
-                return false
-            }
+        let Result.Ok(req) = jsonParse(raw) else {
+            return false
         }
         let cmd = req.str("command") ?? ""
         let seq = req.i64("seq") ?? (0 as i64)
-        var args: Json = jsonParse("{}")!
-        match req.get("arguments") {
-            Option.Some(a) => {
-                args = a
-            }
-            Option.None => {
-            }
-        }
+        let args = req.get("arguments") ?? jsonParse("{}")!
 
         if cmd == "setBreakpoints" {
             self.onSetBreakpoints(seq, args)
@@ -766,14 +726,7 @@ impl Sess {
         } else if cmd == "disconnect" || cmd == "terminate" {
             // terminateDebuggee default: kill what we launched, leave what we
             // attached to (DAP's documented default).
-            var killIt = self.launched
-            match args.bool("terminateDebuggee") {
-                Option.Some(b) => {
-                    killIt = b
-                }
-                Option.None => {
-                }
-            }
+            let killIt = args.bool("terminateDebuggee") ?? self.launched
             self.out.respond(seq, cmd, "{}")
             self.shutdown(killIt)
             return true
@@ -1702,59 +1655,42 @@ impl Sess {
                 self.out.fail(seq, c, "\"" + parts[pi - 1] + "\" is not an object")
                 return
             }
-            if let Option.Some(v) = self.fieldOf(cur.num, parts[pi]) {
-                cur = v
-            } else {
+            let Option.Some(v) = self.fieldOf(cur.num, parts[pi]) else {
                 self.out.fail(seq, c, "no field \"" + parts[pi] + "\"")
                 return
             }
+            cur = v
             pi = pi + 1
         }
 
         let nm: string = "result"
         let rendered = self.renderVariable(nm, cur)
         // reshape the variable JSON into an evaluate response
-        match jsonParse(rendered) {
-            Result.Ok(d) => {
-                let value = d.str("value") ?? ""
-                let ref = d.i64("variablesReference") ?? (0 as i64)
-                let ty = d.str("type") ?? ""
-                self.out.respond(seq, c, jsonObj().str("result", value).str("type", ty).int("variablesReference", ref).build())
-            }
-            Result.Err(_e) => {
-                self.out.fail(seq, c, "internal render error")
-            }
+        let Result.Ok(d) = jsonParse(rendered) else {
+            self.out.fail(seq, c, "internal render error")
+            return
         }
+        let value = d.str("value") ?? ""
+        let ref = d.i64("variablesReference") ?? (0 as i64)
+        let ty = d.str("type") ?? ""
+        self.out.respond(seq, c, jsonObj().str("result", value).str("type", ty).int("variablesReference", ref).build())
     }
 
     fn fieldOf(self: &mut Sess, objectId: i64, name: &string): Option<JValue> {
-        var classId: i64 = 0
-        match self.io.objectType(objectId) {
-            Result.Ok(cid) => {
-                classId = cid
-            }
-            Result.Err(_e) => {
-                return Option.None
-            }
+        let Result.Ok(classId) = self.io.objectType(objectId) else {
+            return Option.None
         }
-        match self.io.typeFields(classId) {
-            Result.Ok(fields) => {
-                for f in fields {
-                    if f.name == name && (f.modBits & 8) == 0 {
-                        var ids: Vec<i64> = [f.fieldId]
-                        match self.io.objectGetValues(objectId, ids) {
-                            Result.Ok(vals) => {
-                                if vals.len > 0 {
-                                    return Option.Some(vals[0])
-                                }
-                            }
-                            Result.Err(_e) => {
-                            }
-                        }
+        let Result.Ok(fields) = self.io.typeFields(classId) else {
+            return Option.None
+        }
+        for f in fields {
+            if f.name == name && (f.modBits & 8) == 0 {
+                var ids: Vec<i64> = [f.fieldId]
+                if let Result.Ok(vals) = self.io.objectGetValues(objectId, ids) {
+                    if vals.len > 0 {
+                        return Option.Some(vals[0])
                     }
                 }
-            }
-            Result.Err(_e) => {
             }
         }
         return Option.None
