@@ -12,8 +12,8 @@ from "std/pty" import {
 from "std/io" import {
     writeStdout
 }
-from "std/time" import {
-    sleepMs
+from "std/select" import {
+    Select
 }
 from "std/term" import {
     enableRawMode, restoreTerminal, readKey, KEY_QUIT
@@ -248,6 +248,20 @@ fn main(): void {
                                     var dirty = false
 
                                     while !done {
+                                        // Event wait: wake the instant stdin (the q
+                                        // key) or either pane has output. No 50ms
+                                        // spin. The timeout only paces the resize
+                                        // check below — there's no SIGWINCH handler,
+                                        // so terminal resize is the one thing no fd
+                                        // reports; I/O still wakes us immediately.
+                                        var sel = Select.new()
+                                        sel.onRead(0)
+                                        sel.onRead(pty1.masterFd)
+                                        sel.onRead(pty2.masterFd)
+                                        sel.onTimeout(500)
+                                        sel.wait()
+                                        sel.destroy()
+
                                         // check for terminal resize, propagate to child PTYs
                                         let newWs = termSize()
                                         if newWs.cols != ws.cols || newWs.rows != ws.rows {
@@ -286,9 +300,19 @@ fn main(): void {
                                         if key == KEY_QUIT {
                                             done = true
                                         }
-                                        sleepMs(50)
                                     }
 
+                                    // The panes are `while true` shells — they never
+                                    // exit on their own, so wait() would block forever
+                                    // and 'q' would appear to do nothing. Kill them,
+                                    // then close the masters: a pane wedged writing to
+                                    // a full PTY buffer only dies once the write is
+                                    // unblocked, and closing the master does that.
+                                    pty1.kill()
+                                    pty2.kill()
+                                    pty1.close()
+                                    pty2.close()
+                                    pty1.wait()
                                     pty2.wait()
                                 }
                                 Result.Err(msg) => {

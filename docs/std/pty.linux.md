@@ -21,10 +21,20 @@ Returns true if stdin is a terminal (process is interactive).
 ### `Pty.close`
 
 ```milo
-fn Pty.close(self: &Pty): void
+fn Pty.close(self: &mut Pty): void
 ```
 
-_Undocumented._
+Idempotent: closing the master also unwedges a child blocked writing to a
+full PTY buffer (its write returns EIO), letting a pending SIGKILL land.
+
+### `Pty.kill`
+
+```milo
+fn Pty.kill(self: &Pty): void
+```
+
+SIGKILL the child. Needed to tear down children that never exit on
+their own (e.g. `while true` shells) before a blocking wait().
 
 ### `Pty.open`
 

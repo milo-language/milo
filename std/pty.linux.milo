@@ -1,7 +1,7 @@
 // std/pty — pseudoterminal support (Linux)
 
 from "std/os" import {
-    close, dup2, execvp, fork, free, grantpt, ioctl, isatty, malloc,
+    close, dup2, execvp, fork, free, grantpt, ioctl, isatty, kill, malloc,
     memcpy, memset, open, posix_openpt, ptsname, readFd, setsid, unlockpt,
     waitpid, writeFd
 }
@@ -217,9 +217,25 @@ impl Pty {
         }
     }
 
-    fn close(self: &Self): void {
+    // SIGKILL the child. Needed to tear down children that never exit on
+    // their own (e.g. `while true` shells) before a blocking wait().
+    fn kill(self: &Self): void
+    requires
+    self.childPid > 0
+    {
         unsafe {
-            close(self.masterFd)
+            kill(self.childPid, 9)
+        }
+    }
+
+    // Idempotent: closing the master also unwedges a child blocked writing to a
+    // full PTY buffer (its write returns EIO), letting a pending SIGKILL land.
+    fn close(self: &mut Self): void {
+        if self.masterFd >= 0 {
+            unsafe {
+                close(self.masterFd)
+            }
+            self.masterFd = -1
         }
     }
 }
