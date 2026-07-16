@@ -69,3 +69,25 @@ fn main(): i32 {
     expect(ir).toContain("store %String zeroinitializer, ptr %l.addr");
   });
 });
+
+// `x ?? default` moves the default into the result on the None/Err branch. That
+// branch must zero the default variable's slot, or its own scope-end drop frees
+// the buffer the result now owns — a double-free (ASAN-confirmed) that only bit
+// heap defaults (a string literal has cap 0, so its drop is a no-op and hid it).
+describe("?? zeros the default's slot on the none branch", () => {
+  test("heap default emits a zero-store in the none branch", () => {
+    const ir = emitIr(`fn getStr(): Result<string> { return Result.Err("e") }
+fn main(): i32 {
+    let base = "default"
+    let d = base + " heap buffer"
+    let s = getStr() ?? d
+    print(s)
+    return 0
+}`);
+    // the some branch (operand move-out) and none branch (default move-out) each
+    // emit one zeroinitializer store into a %String slot.
+    const zeroStores = (ir.match(/store %String zeroinitializer, ptr %/g) ?? []).length;
+    expect(zeroStores).toBeGreaterThanOrEqual(1);
+    expect(ir).toContain("default.none");
+  });
+});

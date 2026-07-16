@@ -4260,10 +4260,18 @@ export class Codegen {
     lines.push(`  store ${resultTy} ${someVal}, ptr ${resultAddr}`);
     lines.push(`  br label %${doneLabel}`);
 
-    // none branch — use default
+    // none branch — use default. The default is moved into the result; zero its
+    // source slot (mirroring the some branch) so the default variable's own
+    // scope-end drop doesn't double-free the buffer now owned by the result. Only
+    // this branch runs when the default is taken, so the Some path leaves the
+    // default untouched and its normal drop still fires there.
     lines.push(`${noneLabel}:`);
     const [dl, dv] = this.genExpr(expr.default);
     lines.push(...dl);
+    if (this.needsDropCg(expr.type) && expr.default.kind === "Ident") {
+      const dstAddr = this.localAddr(expr.default.name);
+      if (dstAddr) lines.push(`  store ${resultTy} zeroinitializer, ptr ${dstAddr}`);
+    }
     lines.push(`  store ${resultTy} ${dv}, ptr ${resultAddr}`);
     lines.push(`  br label %${doneLabel}`);
 
