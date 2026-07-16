@@ -81,7 +81,10 @@ No allocator to thread through, no manual free — `nums` is owned and freed whe
       <span class="app-play">▶ Play in your browser</span>
     </a>
   </div>
-  <p class="showcase-more">More is already shipping in Milo: a <strong>SNES</strong> emulator, a <strong>web + AI debugger</strong>, HTTP/TLS servers, terminal apps, and the compiler itself. <a href="/milo/demos">Check them out →</a></p>
+  <div class="showcase-cta">
+    <a class="showcase-cta-btn" href="/milo/demos">Explore the full showcase →</a>
+    <p class="showcase-cta-sub">SNES emulator · web + AI debugger · HTTP/TLS servers · terminal apps · the compiler itself</p>
+  </div>
 </div>
 
 <div class="section-break"></div>
