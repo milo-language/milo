@@ -39,6 +39,12 @@ fn enableRawMode(): TermState {
         let b1 = raw[25] as i32
         raw[25] = (b1 & 0xFA) as u8
 
+        // clear IXON (c_iflag bit 0x200 → byte 1, 0x02) so ctrl-s/ctrl-q reach
+        // the app as raw bytes instead of pausing/resuming output via XON/XOFF
+        // flow control — otherwise ctrl-s silently freezes a TUI.
+        let i1 = raw[1] as i32
+        raw[1] = (i1 & 0xFD) as u8
+
         // VMIN=0, VTIME=0 — non-blocking reads without O_NONBLOCK
         // (O_NONBLOCK on stdin would also affect stdout via shared pty fd)
         raw[48] = 0

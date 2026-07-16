@@ -484,8 +484,24 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64): void {
     }
     writeStdout("\xe2\x94\x98\x1b[0m")
 
+    drawFooter(false, paneRows)
+}
+
+// The status bar. In normal mode it's a quiet hint; the moment Ctrl-B is pressed
+// it flips to a bright "chord" menu showing exactly which key does what — so you
+// never have to remember (or release Ctrl and guess) like in real tmux.
+fn drawFooter(prefixArmed: bool, paneRows: i64): void {
     moveTo(5 + paneRows, 1)
-    writeStdout("\x1b[90mclick a pane to focus  \xc2\xb7  \x1b[0m\x1b[7m Ctrl-B o \x1b[0m switch  \x1b[7m Ctrl-B q \x1b[0m quit  \x1b[90m\xe2\x80\x94 tmux-clone, powered by milo\x1b[0m")
+    writeStdout("\x1b[2K") // clear the whole status line first
+    if prefixArmed {
+        writeStdout("\x1b[43;30;1m CHORD \x1b[0m  press:  ")
+        writeStdout("\x1b[1;32mo\x1b[0m/\x1b[1;32mTab\x1b[0m switch pane   ")
+        writeStdout("\x1b[1;31mq\x1b[0m quit   ")
+        writeStdout("\x1b[90mEsc or any other key cancels\x1b[0m")
+    } else {
+        writeStdout("\x1b[90mclick a pane to focus  \xc2\xb7  \x1b[0m")
+        writeStdout("\x1b[7m Ctrl-B \x1b[0m\x1b[90m then a key (menu appears)  \xc2\xb7  tmux-clone, powered by milo\x1b[0m")
+    }
 }
 
 // Non-blocking read of a PTY master, fed into the pane's emulator. Returns true
@@ -569,6 +585,7 @@ fn main(): void {
 
                         var focus: i64 = 0
                         var prefixArmed = false
+                        var prefixShown = false
                         var done = false
 
                         while !done {
@@ -627,10 +644,11 @@ fn main(): void {
                                             redrawBorder = true
                                         }
                                     }
+                                    prefixArmed = false // a click cancels a pending chord
                                     k = j
                                 } else if prefixArmed {
                                     prefixArmed = false
-                                    if b == 113 { // q
+                                    if b == 113 || b == 81 || b == 17 { // q, Q, or Ctrl-Q
                                         done = true
                                     } else if b == 111 || b == 9 { // o or Tab
                                         focus = 1 - focus
@@ -676,6 +694,14 @@ fn main(): void {
                             }
                             if got1 || redrawBorder {
                                 renderTerm(term1, half + 3)
+                            }
+
+                            // live chord indicator: reflect prefix state in the
+                            // status bar the instant it changes (a full border
+                            // redraw resets the footer, so re-sync then too)
+                            if prefixArmed != prefixShown || redrawBorder {
+                                drawFooter(prefixArmed, paneRows)
+                                prefixShown = prefixArmed
                             }
 
                             // park the real cursor in the focused pane so typing
