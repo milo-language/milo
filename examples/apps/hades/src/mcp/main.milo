@@ -260,12 +260,8 @@ fn snapshotJson(s: &mut Session): string {
                 Result.Ok(sc) => {
                     let ref = scopes0Ref(sc.raw)
                     let vArgs = "{" + mQ + "variablesReference" + mQ + ":" + ref.toString() + "}"
-                    match requestQuiet(s, "variables", vArgs) {
-                        Result.Ok(v) => {
-                            locals = varsJson(v.raw)
-                        }
-                        Result.Err(_e) => {
-                        }
+                    if let Result.Ok(v) = requestQuiet(s, "variables", vArgs) {
+                        locals = varsJson(v.raw)
                     }
                 }
                 Result.Err(_e) => {

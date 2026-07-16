@@ -225,14 +225,9 @@ fn installPkg(name: &string, url: &string): i32 {
     }
 
     let shaCmd = "git -C " + dest + " rev-parse HEAD"
-    let shaResult = capture(shaCmd)
-    match shaResult {
-        Result.Ok(sha) => {
-            let trimmedSha = trim(sha)
-            appendLock(name, url, trimmedSha)
-        }
-        Result.Err(e) => {
-        }
+    if let Result.Ok(sha) = capture(shaCmd) {
+        let trimmedSha = trim(sha)
+        appendLock(name, url, trimmedSha)
     }
 
     print($"  installed: {name}")
@@ -243,13 +238,8 @@ fn appendLock(name: &string, url: &string, sha: &string): void {
     // simple append-based lockfile
     var line: string = name + " " + url + " " + sha + "\n"
     if pathExists("milo.lock") {
-        let existing = readFile("milo.lock")
-        match existing {
-            Result.Ok(content) => {
-                line = content + line
-            }
-            Result.Err(e) => {
-            }
+        if let Result.Ok(content) = readFile("milo.lock") {
+            line = content + line
         }
     }
     let _ = writeFile("milo.lock", line)

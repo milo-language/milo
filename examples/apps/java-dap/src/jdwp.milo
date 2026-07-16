@@ -553,12 +553,7 @@ impl JdwpIo {
         w.u32(code)
         // The VM dies on receipt; it may not even send the reply. Fire and
         // don't fail the caller if the socket drops mid-request.
-        match self.request(1, 10, w.buf) {
-            Result.Ok(_r) => {
-            }
-            Result.Err(_e) => {
-            }
-        }
+        let _r = self.request(1, 10, w.buf)
         return Result.Ok(0)
     }
 
@@ -894,12 +889,8 @@ impl JdwpIo {
         var w = newWriter()
         w.u8(eventKind)
         w.u32(requestId)
-        match self.request(15, 2, w.buf) {
-            Result.Ok(_r) => {
-            }
-            Result.Err(_e) => {
-            } // already expired (Count) — not an error
-        }
+        // failure is fine here — already expired (Count), not an error
+        let _r = self.request(15, 2, w.buf)
         return Result.Ok(0)
     }
 

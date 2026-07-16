@@ -2368,12 +2368,8 @@ fn openBrowser(url: &string): void {
     args.push("-c")
     // xdg-open on Linux, open on macOS — whichever exists.
     args.push($"command -v xdg-open >/dev/null 2>&1 && xdg-open '{url}' || open '{url}' >/dev/null 2>&1 &")
-    match Child.spawn("sh", args, true) {
-        Result.Ok(child) => {
-            let _ = child.wait()
-        }
-        Result.Err(_e) => {
-        }
+    if let Result.Ok(child) = Child.spawn("sh", args, true) {
+        let _ = child.wait()
     }
 }
 
