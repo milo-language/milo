@@ -6,17 +6,17 @@ This page walks through every major concept with runnable examples. [Open the Pl
 
 ## Philosophy
 
-Milo bets that safe systems programming doesn't need a complex language. One rule carries most of the weight:
+Milo bets that safe systems programming doesn't need a complex language. Most of it comes down to one rule:
 
-> When you hand a value to someone else, you don't have it anymore. That's it. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races — all at zero runtime cost.
+> When you hand a value to someone else, you don't have it anymore. The compiler enforces this rule, and from it you get memory safety, no dangling pointers, and no data races — all at zero runtime cost.
 
 Everything else follows from keeping that rule simple:
 
-- **Memory safety you can hold in your head** — single owner, move semantics, borrowed references. No lifetime annotations, no borrow-checker puzzles, no `unsafe` in everyday code.
+- **Memory safety you can hold in your head** — single owner, move semantics, borrowed references. No lifetime annotations, no borrow-checker puzzles, no `unsafe` in everyday code. References are second-class — params only, never returned or stored — the [design Rust's creator wanted](/language/ownership) but couldn't ship.
 - **Errors point at real problems** — a rejected program usually has a genuine flaw in how data flows or who owns what. The fix tends to make the structure clearer.
 - **Zero-cost safety** — the guarantees are checked at compile time and cost nothing at runtime. Safe code compiles to the same machine code you'd write by hand.
-- **Familiar syntax** — reads like TypeScript, Python, and Rust. Little to memorize before you're productive.
-- **Proof is shipped software** — every feature earns its place in real programs: three console emulators, a self-hosting compiler, a contract prover, a full standard library.
+- **Readable without a manual** — if you know a mainstream language, you can read Milo code and follow what it does. Little to memorize before you're productive.
+- **Proof is shipped software** — a full showcase to check out, from emulators to webapps to CLI tools and more.
 
 ## Hello, Milo
 
@@ -174,7 +174,7 @@ fn main(): i32 {
 }
 ```
 
-That's it. From this one rule, the compiler can free memory automatically, prevent use-after-free bugs, and eliminate data races — all without runtime overhead.
+From this one rule, the compiler can free memory automatically, prevent use-after-free bugs, and eliminate data races — all without runtime overhead.
 
 Numbers and booleans are small enough to just copy, so they don't move. Everything else — strings, structs, enums, Vec, Heap — transfers ownership on assignment.
 

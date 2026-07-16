@@ -107,4 +107,6 @@ In practice, the overwhelming majority of references are function arguments — 
 
 The tradeoff: a much simpler mental model and zero annotation overhead for the 95% case.
 
+This isn't a fringe position. Graydon Hoare, Rust's creator, [wrote](https://graydon2.dreamwidth.org/307291.html) that he "wanted `&` to be a 'second-class' parameter-passing mode, not a first-class type, and I still think this is the sweet spot for the feature" — "I didn't think you should be able to return `&` from a function or put it in a structure." That is exactly Milo's rule. Rust shipped first-class references and can't walk that back now; Milo took the design Rust's own author wanted.
+
 Next: [Collections →](./collections)
