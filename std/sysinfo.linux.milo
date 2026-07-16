@@ -1,0 +1,194 @@
+// std/sysinfo — high-level system information (Linux)
+//
+// Mirrors sysinfo.darwin.milo's surface exactly; only the sources differ. macOS answers
+// these with sysctl/Mach, Linux with procfs and sysconf. Anything reading a /proc file
+// degrades to the same zero/empty value macOS returns on failure, so a caller never has
+// to know which platform it's on.
+
+from "std/io" import {
+    readFile
+}
+from "std/string" import {
+    strIndexOf, strSplit, strSplitWhitespace, strStartsWith, strTrim, strParseInt
+}
+from "std/strconv" import {
+    parseFloat
+}
+
+@cSig("unistd.h", "int gethostname(char *, size_t)")
+extern fn gethostname(name: *u8, len: i64): i32
+
+@cSig("unistd.h", "char *getcwd(char *, size_t)")
+extern fn getcwd(buf: *u8, size: i64): *u8
+
+@cSig("unistd.h", "int chdir(const char *)")
+extern fn chdir(path: *u8): i32
+
+@cSig("unistd.h", "pid_t getpid(void)")
+extern fn getpid(): i32
+
+@cSig("unistd.h", "pid_t getppid(void)")
+extern fn getppid(): i32
+
+@cSig("unistd.h", "uid_t getuid(void)")
+extern fn getuid(): u32
+
+@cSig("unistd.h", "gid_t getgid(void)")
+extern fn getgid(): u32
+
+@cSig("unistd.h", "uid_t geteuid(void)")
+extern fn geteuid(): u32
+
+@cSig("unistd.h", "gid_t getegid(void)")
+extern fn getegid(): u32
+
+@cSig("unistd.h", "long sysconf(int)")
+extern fn sysconf(name: i32): i64
+
+@cSig("stdlib.h", "int getloadavg(double [], int)")
+extern fn getloadavg(loadavg: *f64, nelem: i32): i32
+
+fn hostname(): string {
+    var buf: [u8; 256] = [0; 256]
+    gethostname(buf, 256)
+    unsafe {
+        return _cstrToString(buf as *u8)
+    }
+}
+
+fn cwd(): string {
+    var buf: [u8; 4096] = [0; 4096]
+    unsafe {
+        getcwd(buf, 4096)
+        return _cstrToString(buf as *u8)
+    }
+}
+
+fn pid(): i32 {
+    return getpid()
+}
+
+fn ppid(): i32 {
+    return getppid()
+}
+
+fn uid(): u32 {
+    return getuid()
+}
+
+fn gid(): u32 {
+    return getgid()
+}
+
+fn euid(): u32 {
+    return geteuid()
+}
+
+fn egid(): u32 {
+    return getegid()
+}
+
+// The first whitespace-delimited field of `text`, or "" — /proc files are
+// space-separated, so this covers /proc/uptime and /proc/meminfo's "N kB" alike.
+fn _firstField(text: &string): string {
+    let parts = strSplitWhitespace(text)
+    if parts.len() == 0 {
+        return ""
+    }
+    return parts[0].clone()
+}
+
+// Value after the first ':' on the first line whose text starts with `key`, trimmed.
+// Both /proc/cpuinfo ("model name\t: X") and /proc/meminfo ("MemTotal:  N kB") use it.
+fn _procField(path: string, key: &string): string {
+    let Result.Ok(text) = readFile(path) else {
+        return ""
+    }
+    for line in strSplit(text, "\n") {
+        if strStartsWith(line, key) {
+            let idx = strIndexOf(line, ":")
+            if idx < 0 {
+                return ""
+            }
+            return strTrim(line[idx + 1..line.len])
+        }
+    }
+    return ""
+}
+
+fn cpuCount(): i64 {
+    // _SC_NPROCESSORS_ONLN — 84 on Linux (58 on darwin; the numbers are not portable).
+    let n = sysconf(84)
+    if n < 1 {
+        return 1
+    }
+    return n
+}
+
+fn cpuModel(): string {
+    // x86 exposes "model name"; arm64 has no such field, so fall back to what it does
+    // expose rather than returning "" and making callers special-case the arch.
+    let name = _procField("/proc/cpuinfo", "model name")
+    if name.len() > 0 {
+        return name
+    }
+    let implementer = _procField("/proc/cpuinfo", "CPU implementer")
+    if implementer.len() > 0 {
+        return $"ARM (implementer {implementer})"
+    }
+    return "unknown"
+}
+
+// "MemTotal:  16311236 kB" -> bytes. /proc/meminfo is kB-suffixed throughout.
+fn _meminfoBytes(key: &string): i64 {
+    let field = _procField("/proc/meminfo", key)
+    if field.len() == 0 {
+        return 0
+    }
+    return strParseInt(_firstField(field)) * 1024
+}
+
+fn totalMem(): i64 {
+    return _meminfoBytes("MemTotal")
+}
+
+fn freeMem(): i64 {
+    // MemAvailable is the kernel's own estimate of what a new workload can claim —
+    // the closest analogue to what the darwin path computes from Mach page stats.
+    // It predates no kernel we support (3.14+), but fall back to MemFree if absent.
+    let avail = _meminfoBytes("MemAvailable")
+    if avail > 0 {
+        return avail
+    }
+    return _meminfoBytes("MemFree")
+}
+
+fn uptime(): i64 {
+    // "12345.67 89012.34" — seconds since boot, then idle time. Whole seconds only,
+    // matching the darwin path's boottime subtraction.
+    let Result.Ok(text) = readFile("/proc/uptime") else {
+        return 0
+    }
+    let Option.Some(secs) = parseFloat(_firstField(text)) else {
+        return 0
+    }
+    return secs as i64
+}
+
+fn loadAvg(): [f64; 3] {
+    var avg: [f64; 3] = [0.0; 3]
+    getloadavg(avg, 3)
+    return avg
+}
+
+fn osRelease(): string {
+    // Same string uname -r reports, without needing struct utsname's layout.
+    let Result.Ok(text) = readFile("/proc/sys/kernel/osrelease") else {
+        return ""
+    }
+    return strTrim(text)
+}
+
+fn setCwd(path: string): bool {
+    return chdir(path) == 0
+}

@@ -49,6 +49,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/string](./string.md)
 - [std/sync](./sync.md)
 - [std/sysinfo.darwin](./sysinfo.darwin.md)
+- [std/sysinfo.linux](./sysinfo.linux.md)
 - [std/term.darwin](./term.darwin.md)
 - [std/term.linux](./term.linux.md)
 - [std/testing](./testing.md)
