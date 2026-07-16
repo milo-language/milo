@@ -343,8 +343,10 @@ function isAllocExpr(e: Expr): boolean {
 }
 
 function checkDynamicAllocation(fnName: string, stmts: Stmt[], violations: SafetyViolation[], level: SafetyLevel) {
-  // walkExprs descends into every control structure (for/match/if-let/unsafe/…),
-  // not just if/while — allocation hidden in a loop body must not slip through.
+  // walkExprs descends into every control structure — statement AND expression forms
+  // (for/match/if-let/unsafe, plus if- and match-*expressions*) — so allocation hidden in
+  // a loop body or an if-expression branch can't slip through. The expression forms were
+  // silently skipped until 2026-07-16; this comment claimed otherwise the whole time.
   walkExprs(stmts, (e) => {
     if (isAllocExpr(e)) {
       violations.push({
@@ -697,14 +699,10 @@ function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s: Stmt) 
       case "CastExpr": ex(e.operand); break;
       case "Closure": st(e.body); break;
       case "RangeExpr": ex(e.start); ex(e.end); break;
-      // BUG, preserved deliberately: these arms named fields that don't exist —
-      // IsExpr has `operand`, IfExpr has `thenBody`/`elseBody` (Stmt[], so they need
-      // `st`, not `ex`). Both have always passed undefined into `ex`, which no-ops on
-      // falsy input, so this walker has never descended into an `is` operand or an
-      // if-expression's branches. Traversing them now would change what the float
-      // check and call-graph extraction see; that is a behavior fix, not a typing fix.
-      case "IsExpr": break;
-      case "IfExpr": ex(e.cond); break;
+      case "IsExpr": ex(e.operand); break;
+      // The bodies are Stmt[], not Expr — they need `st`. Mirrors IfStmt/MatchStmt below.
+      case "IfExpr": ex(e.cond); st(e.thenBody); st(e.elseBody); break;
+      case "MatchExpr": ex(e.subject); e.arms.forEach(a => st(a.body)); break;
     }
   };
   const st = (list: Stmt[]) => {

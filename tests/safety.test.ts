@@ -134,6 +134,37 @@ fn main(): i32 { return 0 }`;
   expect(rules(src, "do178c-a")).toContain("no-unsafe");
 });
 
+// if/match as EXPRESSIONS carry Stmt[] bodies, distinct from IfStmt/MatchStmt. The walker
+// silently skipped all of them (its IsExpr/IfExpr arms named fields that don't exist, and
+// MatchExpr had no arm at all), so a float or an allocation inside one was invisible to
+// every profile — a false "passed" on the check that certification depends on.
+test("noFloatingPoint catches a float in an if-expression branch", () => {
+  const src = `fn f(c: bool): i32 requires true ensures result >= 0 { let y = if c { 1.5 } else { 2.5 } return 0 }`;
+  expect(rules(src, "iec61508-4")).toContain("no-floating-point");
+});
+
+test("noFloatingPoint catches a float in a match-expression arm", () => {
+  const src = `fn g(n: i32): i32 requires n >= 0 ensures result >= 0 { let y = match n { 0 => 1.5, _ => 2.5 } return 0 }`;
+  expect(rules(src, "iec61508-4")).toContain("no-floating-point");
+});
+
+test("noDynamicAllocation catches allocation in an if-expression branch", () => {
+  const src = `fn f(c: bool): i32 requires true ensures true { let v = if c { Vec.new() } else { Vec.new() } return 0 }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("no-dynamic-alloc");
+});
+
+test("noDynamicAllocation catches allocation in a match-expression arm", () => {
+  const src = `fn f(n: i32): i32 requires n >= 0 ensures true { let v = match n { 0 => Vec.new(), _ => Vec.new() } return 0 }
+fn main(): i32 { return 0 }`;
+  expect(rules(src, "do178c-a")).toContain("no-dynamic-alloc");
+});
+
+test("noFloatingPoint catches a float in an `is` operand", () => {
+  const src = `fn f(n: i32): i32 requires n >= 0 ensures result >= 0 { let b = mk(1.5) is Maybe.Just return 0 }`;
+  expect(rules(src, "iec61508-4")).toContain("no-floating-point");
+});
+
 test("boundedLoops catches a while-loop nested inside a for-loop", () => {
   const src = `fn f(n: i32): i32 requires n >= 0 ensures result >= 0 { for i in 0..3 { var j = 0 while j < n { j = j + 1 } } return 0 }
 fn main(): i32 { return 0 }`;
