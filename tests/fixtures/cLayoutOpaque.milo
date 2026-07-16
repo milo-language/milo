@@ -1,0 +1,28 @@
+// @cOpaque marks a field as filler with no C counterpart, so @cLayout skips it.
+//
+// Needed for structs padded out to a size C dictates: node-milo's `Rusage` names only
+// ru_utime/ru_stime but must be 144 bytes because that is what getrusage() writes, so it
+// pads with _p0.._pD. Those fields do not exist in `struct rusage`, so @cLayout emitted
+// `offsetof(struct rusage, _p0)` — ill-formed C — and the struct could not be verified
+// at all. The prefix rule covers an omitted *tail*, not opaque padding in the middle.
+//
+// The real fields must still be checked; `struct timeval` is the same shape as Rusage's
+// leading members, so this pins both halves: named fields verified, filler ignored, and
+// the size assert still counts the filler (that is the point of declaring it).
+@cLayout("struct timeval", "sys/time.h")
+extern struct Timeval {
+    tv_sec: i64,
+    // Real: suseconds_t (i32) + 4 bytes of tail padding. Declaring the padding keeps
+    // sizeOf<Timeval>() honest at 16 without claiming C has a field named `_pad`.
+    tv_usec: i32,
+    @cOpaque _pad: i32,
+}
+
+fn main() {
+    // @expect: true
+    print(sizeOf<Timeval>() == 16)
+    // @expect: true
+    print(offsetOf<Timeval>("tv_sec") == 0)
+    // @expect: true
+    print(offsetOf<Timeval>("tv_usec") == 8)
+}

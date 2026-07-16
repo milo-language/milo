@@ -245,10 +245,14 @@ export class Parser {
     this.expect(TokenKind.LBrace);
     const fields: StructField[] = [];
     while (!this.at(TokenKind.RBrace)) {
+      // Parsed here even though only `extern struct` fields can carry one: rejecting a
+      // field attribute in the grammar would report `expected IDENT, got '@'`, when the
+      // checker can say which attribute and why it doesn't belong.
+      const fieldAttrs = this.parseFieldAttributes();
       const fieldName = this.expect(TokenKind.Ident).value;
       this.expect(TokenKind.Colon);
       const fieldType = this.parseType();
-      fields.push({ name: fieldName, type: fieldType });
+      fields.push({ name: fieldName, type: fieldType, ...(fieldAttrs ? { attributes: fieldAttrs } : {}) });
       this.match(TokenKind.Comma);
     }
     this.expect(TokenKind.RBrace);
@@ -337,12 +341,7 @@ export class Parser {
     this.expect(TokenKind.LBrace);
     const fields: StructField[] = [];
     while (!this.at(TokenKind.RBrace)) {
-      // Attributes may precede a field — `@cOpaque` marks C-invisible padding.
-      let fieldAttrs: Attribute[] | undefined;
-      while (this.at(TokenKind.At)) {
-        if (!fieldAttrs) fieldAttrs = [];
-        fieldAttrs.push(this.parseAttribute());
-      }
+      const fieldAttrs = this.parseFieldAttributes();
       const fieldName = this.expect(TokenKind.Ident).value;
       this.expect(TokenKind.Colon);
       const fieldType = this.parseType();
@@ -399,6 +398,16 @@ export class Parser {
       }
     }
     return { name, bounds };
+  }
+
+  // Attributes preceding a struct field — `@cOpaque` marks C-invisible padding.
+  private parseFieldAttributes(): Attribute[] | undefined {
+    let attrs: Attribute[] | undefined;
+    while (this.at(TokenKind.At)) {
+      if (!attrs) attrs = [];
+      attrs.push(this.parseAttribute());
+    }
+    return attrs;
   }
 
   private parseAttribute(): Attribute {

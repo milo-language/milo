@@ -31,6 +31,11 @@ const cases: Record<string, string> = {
   externFn: `extern fn clock_gettime(clockId: i32, tp: *Timespec): i32\n`,
   externType: `extern type Opaque\n`,
   attributed: `@cLayout("struct timespec", "time.h")\nextern struct Timespec {\n    tv_sec: i64,\n    tv_nsec: i64,\n}\n`,
+  // The lexer emits `@` as an Ident, so inside a struct body `@cOpaque b: i32` looked
+  // like three statements sharing a line and the reflow split it across three — output
+  // the parser then rejects, since an attribute name must hug its `@`. The formatter
+  // broke a working file.
+  fieldAttribute: `extern struct Timeval {\n    tv_sec: i64,\n    @cOpaque _pad: i32,\n}\n`,
 };
 
 for (const [name, src] of Object.entries(cases)) {

@@ -1,0 +1,12 @@
+// @error: is not supported on a struct field
+// The attribute set is closed. A silently-ignored one is the failure @cLayout exists to
+// close — a typo'd @cOpaque would leave the field checked against a C struct that has no
+// such member, which is a confusing error at best.
+extern struct Timeval {
+    tv_sec: i64,
+    @cBogus tv_usec: i32,
+}
+
+fn main() {
+    print(sizeOf<Timeval>())
+}

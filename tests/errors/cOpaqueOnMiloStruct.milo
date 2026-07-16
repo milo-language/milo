@@ -1,0 +1,11 @@
+// @error: only an 'extern struct' field can be C-invisible
+// Field attributes parse on any struct so the checker can explain why this one doesn't
+// belong; rejecting it in the grammar would only say `expected IDENT, got '@'`.
+struct Point {
+    @cOpaque x: i32,
+    y: i32,
+}
+
+fn main() {
+    print(sizeOf<Point>())
+}
