@@ -2,6 +2,14 @@
 
 ## std/fs
 
+### `appendFile`
+
+```milo
+fn appendFile(path: &string, data: &string): Result<i64, IoError>
+```
+
+Append a string to a file, creating it if absent (writes go to the end).
+
 ### `changeDir`
 
 ```milo
