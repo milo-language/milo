@@ -1,3 +1,11 @@
+<!-- doc-meta
+system: std-json
+purpose: std/json API reference — Json value type, strict jsonParse, lenient jsoncParse, builders
+key-files: std/json.milo
+update-when: json.milo adds/renames/removes a public function or the Json type changes
+last-verified: 2026-07-15
+-->
+
 # std/json
 
 ## std/json
