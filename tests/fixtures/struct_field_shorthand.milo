@@ -1,0 +1,21 @@
+// @expect: 3
+// @expect: 7
+// @expect: 99
+// Field shorthand `{ x }` desugars to `{ x: x }`; mixes with explicit fields.
+struct Point {
+    x: i64, y: i64
+}
+
+fn main() {
+    let x: i64 = 3
+    let y: i64 = 7
+    let p = Point {
+        x, y
+    }
+    let q = Point {
+        x, y: 99
+    }
+    print(p.x)
+    print(p.y)
+    print(q.y)
+}

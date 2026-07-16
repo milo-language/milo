@@ -1107,10 +1107,14 @@ export class Parser {
         }
       }
       // struct literal: Name { field: value, ... }
-      // disambiguate from control-flow braces via lookahead: empty `{}` or `{ IDENT :`
+      // disambiguate from control-flow braces via lookahead: empty `{}`, `{ IDENT :`,
+      // or field shorthand `{ IDENT ,` / `{ IDENT }` (desugars to `{ IDENT: IDENT }`).
       if (this.at(TokenKind.LBrace) && tok.value[0] >= "A" && tok.value[0] <= "Z"
           && (this.peekN(1).kind === TokenKind.RBrace
-              || (this.peekN(1).kind === TokenKind.Ident && this.peekN(2).kind === TokenKind.Colon))) {
+              || (this.peekN(1).kind === TokenKind.Ident
+                  && (this.peekN(2).kind === TokenKind.Colon
+                      || this.peekN(2).kind === TokenKind.Comma
+                      || this.peekN(2).kind === TokenKind.RBrace)))) {
         return this.parseStructLit(tok.value, s);
       }
       // sizeOf<Type>() / zeroed<Type>() / offsetOf<Type>("field") — builtins with explicit type arg
@@ -1173,9 +1177,14 @@ export class Parser {
     this.expect(TokenKind.LBrace);
     const fields: { name: string; value: Expr }[] = [];
     while (!this.at(TokenKind.RBrace)) {
-      const fieldName = this.expect(TokenKind.Ident).value;
-      this.expect(TokenKind.Colon);
-      const value = this.parseExpr();
+      const nameTok = this.expect(TokenKind.Ident);
+      const fieldName = nameTok.value;
+      // Field shorthand: `{ key }` desugars to `{ key: key }` (value is the
+      // in-scope binding named `key`). Span points at the field-name token so
+      // hover/goto-definition resolve the local.
+      const value = this.match(TokenKind.Colon)
+        ? this.parseExpr()
+        : { kind: "Ident", name: fieldName, span: this.span(nameTok) } as Expr;
       fields.push({ name: fieldName, value });
       this.match(TokenKind.Comma);
     }
