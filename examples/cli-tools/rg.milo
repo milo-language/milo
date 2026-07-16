@@ -176,11 +176,8 @@ fn searchFile(filePath: &string, re: &mut Regex, opts: &mut RgOpts, multiFile: b
         return
     }
 
-    var content: string = ""
-    match readFile(filePath) {
-        Result.Ok(data) => {
-            content = data
-        }
+    let content = match readFile(filePath) {
+        Result.Ok(data) => data
         Result.Err(_) => {
             return
         }

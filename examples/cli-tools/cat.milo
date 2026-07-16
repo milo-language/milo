@@ -255,11 +255,8 @@ fn main(): i32 {
     let rangeStr = args.getString("range")
     let forceLang = args.getString("language")
 
-    var content: string = ""
-    match readFile(filePath) {
-        Result.Ok(data) => {
-            content = data
-        }
+    let content = match readFile(filePath) {
+        Result.Ok(data) => data
         Result.Err(e) => {
             print($"cat: {e}")
             return 1

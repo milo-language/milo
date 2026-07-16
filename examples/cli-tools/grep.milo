@@ -122,11 +122,8 @@ fn printMatch(line: &string, filePath: &string, lineNum: i64, opts: &GrepOpts): 
 }
 
 fn grepFile(filePath: &string, opts: &mut GrepOpts): i32 {
-    var content: string = ""
-    match readFile(filePath) {
-        Result.Ok(data) => {
-            content = data
-        }
+    let content = match readFile(filePath) {
+        Result.Ok(data) => data
         Result.Err(e) => {
             print($"grep: {e}")
             return 1
