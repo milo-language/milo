@@ -36,31 +36,42 @@ The mission: prove that safe systems programming doesn't require a complex langu
 
 ## What it looks like
 
-Parse the numbers out of a string and add them up:
+Fetch three URLs concurrently and print each status as it lands:
 
 ```milo
-from "std/string" import { strReplace, strSplitWhitespace }
-from "std/strconv" import { parseInt }
+from "std/net" import { fetch }
+from "std/runtime" import { Task, schedulerRunToCompletion }
+from "std/sync" import { Channel }
 
 fn main() {
-    let input = "123 67 89,99"
+    let urls = [
+        "https://example.com",
+        "https://api.github.com",
+        "https://httpbin.org/get",
+    ]
 
-    // Split on spaces or commas, parse each token, keep the good ones.
-    var nums: Vec<i64> = []
-    for tok in strSplitWhitespace(strReplace(input, ",", " ")) {
-        let Option.Some(n) = parseInt(tok.clone()) else { continue }
-        nums.push(n)
+    // One green thread per request — all three fly at once. No OS threads and
+    // no locks: each task owns its own URL, and the channel is all they share.
+    let results = Channel<string>.new(3)!
+    for url in urls {
+        let target = url.clone()
+        Task.spawn(move(): void => {
+            let line = match fetch(target) {
+                Result.Ok(r)  => target + " -> " + r.status.toString()
+                Result.Err(_) => target + " -> failed"
+            }
+            results.send(line)!
+        })
     }
+    schedulerRunToCompletion()
 
-    var total = 0
-    for n in nums {
-        total = total + n
+    for _ in urls {
+        print(results.recv()!)   // example.com -> 200, api.github.com -> 403, ...
     }
-    print("sum: " + total.toString())   // sum: 378
 }
 ```
 
-No allocator to thread through, no manual free — `nums` is owned and freed when it falls out of scope. `parseInt` returns an `Option`, and `let Option.Some(n) = … else { continue }` binds it or skips the token in one line. [Try it in the playground →](/playground)
+`Task.spawn` starts a green thread, not an OS thread — thousands are cheap. There's no mutex anywhere because there's nothing to guard: each task *owns* its URL and hands its result to the channel, so the compiler's move rules rule out data races the same way they rule out use-after-free. HTTP, TLS, and channels all come from the standard library.
 
 <div class="showcase">
   <div class="showcase-head">
