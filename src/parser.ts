@@ -1081,8 +1081,13 @@ export class Parser {
         }
         return { kind: "EnumLit", enumName: tok.value, variant, args, span: s };
       }
-      // generic static call: Name<TypeArgs>.method(args)
-      if (this.at(TokenKind.Lt) && tok.value[0] >= "A" && tok.value[0] <= "Z") {
+      // Turbofish: an ident directly followed by `<TypeArgs>` and then either
+      //   `.method(args)` — generic static call:  Name<T>.run(...)
+      //   `(args)`        — generic free call:     promiseAll<T>(...)
+      // This is speculative because `<` is also less-than; if the tail doesn't
+      // resolve to one of those two shapes we restore and let `<` parse as a
+      // comparison. The trailing `.`/`(` requirement is the disambiguator.
+      if (this.at(TokenKind.Lt)) {
         const saved = this.pos;
         try {
           this.advance(); // consume <
@@ -1091,17 +1096,30 @@ export class Parser {
             typeArgs.push(this.parseType());
           }
           this.expect(TokenKind.Gt);
-          this.expect(TokenKind.Dot);
-          const variant = this.expect(TokenKind.Ident).value;
-          const args: Expr[] = [];
-          if (this.match(TokenKind.LParen)) {
+          if (this.at(TokenKind.Dot)) {
+            this.advance();
+            const variant = this.expect(TokenKind.Ident).value;
+            const args: Expr[] = [];
+            if (this.match(TokenKind.LParen)) {
+              while (!this.at(TokenKind.RParen)) {
+                args.push(this.parseExpr());
+                this.match(TokenKind.Comma);
+              }
+              this.expect(TokenKind.RParen);
+            }
+            return { kind: "EnumLit", enumName: tok.value, variant, args, typeArgs, span: s };
+          }
+          if (this.at(TokenKind.LParen) && this.peek().line === tok.line) {
+            this.advance(); // consume (
+            const args: Expr[] = [];
             while (!this.at(TokenKind.RParen)) {
               args.push(this.parseExpr());
               this.match(TokenKind.Comma);
             }
             this.expect(TokenKind.RParen);
+            return { kind: "Call", func: tok.value, args, typeArgs, span: s };
           }
-          return { kind: "EnumLit", enumName: tok.value, variant, args, typeArgs, span: s };
+          this.pos = saved; // not a turbofish — fall through to `<` as comparison
         } catch {
           this.pos = saved;
         }

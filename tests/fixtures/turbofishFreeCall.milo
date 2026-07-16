@@ -1,0 +1,33 @@
+// Free-function turbofish: `fn<T>(args)` explicit type args at a call site.
+// Regression: the parser used to read `foo<T>(x)` as `foo < T > (x)` and the
+// checker never seeded type params from explicit args, so a param nested past
+// what inference walks (T in Vec<Promise<T>>) could not be pinned.
+
+fn identity<T>(x: T): T {
+    return x
+}
+
+fn first<T>(v: Vec<T>): T {
+    return v[0]
+}
+
+fn main() {
+    // @expect: 42
+    let a = identity<i32>(41)
+    print((a + 1).toString())
+
+    // @expect: hi
+    print(identity<string>("hi"))
+
+    // @expect: 9
+    var xs: Vec<i32> = Vec.new()
+    xs.push(9)
+    print(first<i32>(xs).toString())
+
+    // comparisons must still parse as comparisons, not turbofish
+    // @expect: cmp ok
+    let b = 3
+    if b < 5 && 5 > b {
+        print("cmp ok")
+    }
+}

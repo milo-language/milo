@@ -161,7 +161,11 @@ export class TypeChecker {
   private enums = new Map<string, EnumInfo>();
   private genericEnums = new Map<string, GenericEnumInfo>();
   private genericStructs = new Map<string, GenericStructInfo>();
-  private typeAliases = new Map<string, TypeKind>();
+  // Store the alias's AST type, not a resolved TypeKind: aliases are registered
+  // before enums/structs, so eager resolution would mis-tag a referenced enum as
+  // a struct (breaks `?` auto-From into an aliased Result error type). Resolve
+  // lazily at each use site, when every type name is registered.
+  private typeAliases = new Map<string, MiloType>();
   private rangeCheckedExprs = new Map<Expr, { min: number; max: number; typeName: string }>();
   private returnHint: TypeKind | null = null;
   private monomorphizedDecls: import("./ast").EnumDecl[] = [];
@@ -444,7 +448,7 @@ export class TypeChecker {
     // type alias resolution
     const alias = this.typeAliases.get(ty.name);
     if (alias && !ty.isPtr && !ty.isRef && !ty.isRefMut && !ty.isArray && !ty.typeArgs?.length) {
-      return alias;
+      return this.resolve(alias);
     }
     const typeArgs = ty.typeArgs ?? [];
     if (typeArgs.length > 0) {
@@ -860,7 +864,7 @@ export class TypeChecker {
 
     // register type aliases
     for (const ta of program.typeAliases) {
-      this.typeAliases.set(ta.name, this.resolve(ta.type));
+      this.typeAliases.set(ta.name, ta.type);
     }
 
     // pre-register enum names so struct fields can reference enum types
@@ -3304,6 +3308,18 @@ export class TypeChecker {
 
           const typeMap = new Map<string, TypeKind>();
           const literalInferred = new Set<string>();
+          // Explicit turbofish type args (promiseAll<T>(x)) seed the map up front;
+          // inference below fills any the caller left off. This is the only way to
+          // pin a param that appears nested past what inference walks (e.g. T in
+          // Vec<Promise<T>>).
+          if (expr.typeArgs && expr.typeArgs.length > 0) {
+            if (expr.typeArgs.length > genericFn.typeParams.length) {
+              this.error(`'${expr.func}' expects at most ${genericFn.typeParams.length} type argument(s), got ${expr.typeArgs.length}`, sp);
+            }
+            for (let i = 0; i < expr.typeArgs.length && i < genericFn.typeParams.length; i++) {
+              typeMap.set(genericFn.typeParams[i], this.resolve(expr.typeArgs[i]));
+            }
+          }
           for (let i = 0; i < argTypes.length; i++) {
             const paramTy = genericFn.decl.params[i].type;
             const argIsLiteral = expr.args[i].kind === "IntLit" || expr.args[i].kind === "CharLit" || expr.args[i].kind === "FloatLit";

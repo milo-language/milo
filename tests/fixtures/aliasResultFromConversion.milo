@@ -1,0 +1,56 @@
+// `?` auto-From wrapping still fires when the enclosing fn's Result error type
+// is reached through a type alias. Regression: aliases were resolved eagerly at
+// registration — before enums existed — so the aliased enum got mis-tagged as a
+// struct and findFromConversion bailed ("no wrapping variant found").
+
+enum ParseError {
+    BadFormat(string)
+}
+
+enum AppError {
+    Parse(ParseError),
+    Other(string),
+}
+
+type Parsed = Result<i32, AppError>
+
+fn parseIt(s: string): Result<i32, ParseError> {
+    if s == "bad" {
+        return Result.Err(ParseError.BadFormat("bad input"))
+    }
+    return Result.Ok(s.len as i32)
+}
+
+// return type is the alias; `?` must still auto-wrap ParseError into AppError.Parse
+fn process(s: string): Parsed {
+    let n = parseIt(s)?
+    return Result.Ok(n + 100)
+}
+
+fn main() {
+    // @expect: ok: 102
+    match process("hi") {
+        Result.Ok(n) => {
+            print("ok: " + n.toString())
+        }
+        Result.Err(_) => {
+            print("err")
+        }
+    }
+    // @expect: wrapped err
+    match process("bad") {
+        Result.Ok(_) => {
+            print("ok")
+        }
+        Result.Err(e) => {
+            match e {
+                AppError.Parse(_) => {
+                    print("wrapped err")
+                }
+                AppError.Other(_) => {
+                    print("other")
+                }
+            }
+        }
+    }
+}
