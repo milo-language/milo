@@ -664,15 +664,10 @@ fn launchExtraDoc(raw: &string): Option<Json> {
 }
 
 fn extraHas(doc: &Option<Json>, key: &string): bool {
-    // `match` (not `if let`) so the &Option payload is borrowed, not moved out.
-    match doc {
-        Option.Some(d) => {
-            return d.get(key).isSome()
-        }
-        Option.None => {
-            return false
-        }
+    if let Option.Some(d) = doc {
+        return d.get(key).isSome()
     }
+    return false
 }
 
 // "attach" switches the whole flow (attach vs launch DAP command); everything

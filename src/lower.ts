@@ -200,7 +200,9 @@ class LowerCtx {
       case "ExprStmt":
         return { kind: "ExprStmt", expr: this.lowerExpr(stmt.expr), span: stmt.span };
       case "IfLetStmt": {
-        const subjType = this.typeOf(stmt.subject);
+        let subjType = this.typeOf(stmt.subject);
+        const subjectIsRef = this.c.matchSubjectRef.has(stmt.subject);
+        if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
         const enumName = subjType?.tag === "enum" ? subjType.name : "";
         const enumInfo = this.c.enums.get(enumName);
         const arms = [
@@ -220,7 +222,7 @@ class LowerCtx {
             body: [],
           });
         }
-        return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, span: stmt.span };
+        return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, subjectIsRef, span: stmt.span };
       }
       case "LetElseStmt": {
         // Desugar `let P(b) = v else { E }` into `let b = match v { P(b') => b', _ => E }`.
@@ -229,16 +231,18 @@ class LowerCtx {
         // enclosing scope — exactly let-else's semantics. Rename the arm-internal
         // binding (b') so its alloca doesn't collide with the outer Let's `b`.
         let subjType = this.typeOf(stmt.value);
+        const subjectIsRef = this.c.matchSubjectRef.has(stmt.value);
         if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
         const enumName = subjType?.tag === "enum" ? subjType.name : "";
         const enumInfo = this.c.enums.get(enumName);
         const binding = stmt.pattern.kind === "EnumPattern" ? (stmt.pattern.bindings[0] ?? "_") : "_";
         const hirPat = this.lowerPattern(stmt.pattern, enumInfo);
-        const bindingType = hirPat.kind === "EnumPattern"
-          ? (hirPat.bindings[0]?.type ?? { tag: "unknown" as const })
-          : { tag: "unknown" as const };
+        // Prefer the checker's binding type — it is `&T` when the value is a
+        // borrowed enum, whereas lowerPattern gives the owned field type.
+        const bindingType = this.c.patternBindingTypes.get(stmt.pattern)?.[0]
+          ?? (hirPat.kind === "EnumPattern" ? (hirPat.bindings[0]?.type ?? { tag: "unknown" as const }) : { tag: "unknown" as const });
         const innerName = `__letelse_${binding}`;
-        if (hirPat.kind === "EnumPattern" && hirPat.bindings[0]) hirPat.bindings[0].name = innerName;
+        if (hirPat.kind === "EnumPattern" && hirPat.bindings[0]) { hirPat.bindings[0].name = innerName; hirPat.bindings[0].type = bindingType; }
         const matchExpr: HIRExpr = {
           kind: "MatchExpr",
           subject: this.lowerExpr(stmt.value),
@@ -247,6 +251,7 @@ class LowerCtx {
             { pattern: { kind: "WildcardPattern" }, body: stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)) },
           ],
           enumName,
+          subjectIsRef,
           type: bindingType,
           span: stmt.span,
         };

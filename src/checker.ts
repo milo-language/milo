@@ -2319,7 +2319,8 @@ export class TypeChecker {
         break;
       }
       case "IfLetStmt": {
-        const subjType = this.checkExpr(stmt.subject);
+        const rawSubjType = this.checkExpr(stmt.subject);
+        const { subjType, subjBorrows } = this.enumSubjectBorrow(stmt.subject, rawSubjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
           this.error(`if let subject must be an enum, got ${typeName(subjType)}`, sp);
           break;
@@ -2338,9 +2339,10 @@ export class TypeChecker {
           }
           this.pushScope();
           if (variant) {
-            this.patternBindingTypes.set(stmt.pattern, variant.fields.slice(0, stmt.pattern.bindings.length));
+            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows));
+            this.patternBindingTypes.set(stmt.pattern, bindTypes);
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false });
             }
           }
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
@@ -2355,11 +2357,13 @@ export class TypeChecker {
           for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
           this.popScope();
         }
-        this.tryMove(stmt.subject);
+        // A borrowed subject is only read, not consumed.
+        if (!subjBorrows) this.tryMove(stmt.subject);
         break;
       }
       case "LetElseStmt": {
-        const subjType = this.checkExpr(stmt.value);
+        const rawSubjType = this.checkExpr(stmt.value);
+        const { subjType, subjBorrows } = this.enumSubjectBorrow(stmt.value, rawSubjType);
         if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
           this.error(`let-else value must be an enum (Option/Result/…), got ${typeName(subjType)}`, sp);
           break;
@@ -2387,14 +2391,16 @@ export class TypeChecker {
             this.error(`variant '${stmt.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${stmt.pattern.bindings.length} bindings`, ps);
           }
           if (variant) {
-            this.patternBindingTypes.set(stmt.pattern, variant.fields.slice(0, stmt.pattern.bindings.length));
+            const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows));
+            this.patternBindingTypes.set(stmt.pattern, bindTypes);
             // Bindings escape into the CURRENT scope (the whole point vs if-let).
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false });
             }
           }
         }
-        this.tryMove(stmt.value);
+        // A borrowed value is only read, not consumed.
+        if (!subjBorrows) this.tryMove(stmt.value);
         break;
       }
       case "UnsafeBlock": {
@@ -4893,6 +4899,35 @@ export class TypeChecker {
         return this.setType(expr, result);
       }
     }
+  }
+
+  // Borrow-detection for if-let/let-else subjects, mirroring checkMatchLike: a
+  // `&enum` or an enum place (s.field, v[i], *h) is read without being consumed,
+  // so its non-Copy payload must bind as a borrow, not a move. Resolves the enum
+  // type behind the ref and registers the subject in matchSubjectRef when it
+  // borrows (lower reads that to emit subjectIsRef).
+  private enumSubjectBorrow(subject: Expr, rawSubjType: TypeKind): { subjType: TypeKind; subjBorrows: boolean } {
+    let subjIsRef = rawSubjType.tag === "ref" && rawSubjType.inner.tag === "enum";
+    let subjType: TypeKind = subjIsRef && rawSubjType.tag === "ref" ? rawSubjType.inner : rawSubjType;
+    if (!subjIsRef && subject.kind === "Ident") {
+      const info = this.lookup(subject.name);
+      if (info && info.type.tag === "ref" && info.type.inner.tag === "enum") { subjIsRef = true; subjType = info.type.inner; }
+    }
+    const subjIsPlace = !subjIsRef && subjType.tag === "enum" &&
+      (subject.kind === "FieldAccess" || subject.kind === "IndexAccess" ||
+       (subject.kind === "UnaryOp" && subject.op === "*"));
+    const subjBorrows = subjIsRef || subjIsPlace;
+    if (subjBorrows) this.matchSubjectRef.add(subject);
+    return { subjType, subjBorrows };
+  }
+
+  // A borrowed subject's non-Copy payload binds as `&T` (a view into the still-
+  // owned subject); Copy payloads and owned subjects bind by value.
+  private payloadBindType(bt: TypeKind, subjBorrows: boolean): TypeKind {
+    if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
+      return { tag: "ref", inner: bt, mutable: false };
+    }
+    return bt;
   }
 
   // Shared checking for `match` in both statement and expression position:

@@ -1,0 +1,42 @@
+// if-let and let-else on a `&enum` borrow the payload (like `match` does)
+// instead of trying to move it out — a non-Copy payload binds as `&T`, a view
+// into the still-owned subject. Regression for the borrow-detection shared with
+// checkMatchLike.
+
+struct Box {
+    v: i32
+}
+
+fn describe(o: &Option<string>): string {
+    // borrows the String payload; must not move it out of the &Option
+    if let Option.Some(s) = o {
+        return s.clone()
+    }
+    return "none"
+}
+
+fn valueOr(o: &Option<Box>): i32 {
+    // let-else on a borrowed enum, payload read through the borrow
+    let Option.Some(b) = o else {
+        return -1
+    }
+    return b.v
+}
+
+fn main() {
+    let a: Option<string> = Option.Some("borrowed heap string")
+    // @expect: borrowed heap string
+    print(describe(a))
+    // a is not consumed by the borrow — still usable
+    // @expect: borrowed heap string
+    print(describe(a))
+    let b: Option<Box> = Option.Some(Box {
+        v: 42
+    }
+    )
+    // @expect: 42
+    print(valueOr(b))
+    let n: Option<Box> = Option.None
+    // @expect: -1
+    print(valueOr(n))
+}
