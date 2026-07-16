@@ -401,8 +401,9 @@ q.x = 99
 When an in-scope binding already has the field's name, `{ x }` is shorthand for `{ x: x }`. Mixes freely with explicit fields.
 
 ```milo
-let x = 10
-let y = 20
+struct Point { x: i32, y: i32 }
+let x: i32 = 10
+let y: i32 = 20
 let p = Point { x, y }        // same as Point { x: x, y: y }
 let q = Point { x, y: 99 }    // shorthand + explicit
 ```
