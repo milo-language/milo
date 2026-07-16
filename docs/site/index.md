@@ -34,6 +34,34 @@ The mission: prove that safe systems programming doesn't require a complex langu
 - **A standard library** with HTTP, TLS, JSON, SQLite, PTYs, and green-thread concurrency — used by dozens of [terminal apps and CLI tools](/demos), and a [package manager](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) written in Milo.
 - **A contract prover, used for real** — `requires` / `ensures` / `invariant` are language features, and the SMT solver that discharges them is itself written in Milo. It proves contracts across Milo's own standard library on every test run.
 
+## What it looks like
+
+Parse the numbers out of a string and add them up:
+
+```milo
+from "std/string" import { strReplace, strSplitWhitespace }
+from "std/strconv" import { parseInt }
+
+fn main() {
+    let input = "123 67 89,99"
+
+    // Split on spaces or commas, parse each token, keep the good ones.
+    var nums: Vec<i64> = []
+    for tok in strSplitWhitespace(strReplace(input, ",", " ")) {
+        let Option.Some(n) = parseInt(tok.clone()) else { continue }
+        nums.push(n)
+    }
+
+    var total = 0
+    for n in nums {
+        total = total + n
+    }
+    print("sum: " + total.toString())   // sum: 378
+}
+```
+
+No allocator to thread through, no manual free — `nums` is owned and freed when it falls out of scope. `parseInt` returns an `Option`, and `let Option.Some(n) = … else { continue }` binds it or skips the token in one line. [Try it in the playground →](/playground)
+
 <div class="showcase">
   <div class="showcase-head">
     <h2>See what's shipping with Milo</h2>
