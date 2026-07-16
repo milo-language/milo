@@ -16,8 +16,9 @@
       <p class="sub">{{ concepts.length }} short programs, each editable and live. Or jump to the Sandbox and write your own — same real compiler, no install.</p>
     </div>
 
-    <!-- rail: 10 lessons + Sandbox -->
+    <!-- rail: Sandbox (free play) first, then the 10 lessons -->
     <div class="rail" role="tablist" aria-label="Lessons">
+      <button class="pip sb" :class="{ cur: sandbox }" title="Sandbox — free play" @click="openSandbox">Sandbox</button>
       <button
         v-for="(c, i) in concepts" :key="i"
         class="pip" :class="{ cur: i === cur && !sandbox, ok: ran[i], reachable: i <= maxReached }"
@@ -25,9 +26,6 @@
         :title="(i + 1) + '. ' + c.title"
         @click="go(i)">
         <span v-if="ran[i]" class="tick">✓</span><span v-else>{{ i + 1 }}</span>
-      </button>
-      <button class="pip sb" :class="{ cur: sandbox }" title="Sandbox — free play" @click="openSandbox">
-        <span class="sb-ico">◇</span>
       </button>
     </div>
 
@@ -67,7 +65,7 @@
             </button>
             <transition name="pop">
               <button v-if="!sandbox && ran[cur] && cur < concepts.length - 1" class="btn next-cta" @click="next">Next →</button>
-              <button v-else-if="!sandbox && ran[cur]" class="btn next-cta" @click="openSandbox">Sandbox ◇</button>
+              <button v-else-if="!sandbox && ran[cur]" class="btn next-cta" @click="openSandbox">Sandbox</button>
             </transition>
           </div>
           <div class="editor"><div ref="cmEl" class="cm-host"></div></div>
@@ -106,7 +104,7 @@
     </div>
 
     <div v-if="allDone && !sandbox" class="done">
-      🎉 You ran every lesson. Keep going in the <a @click.prevent="openSandbox" href="#">Sandbox ◇</a>,
+      🎉 You ran every lesson. Keep going in the <a @click.prevent="openSandbox" href="#">Sandbox</a>,
       <a :href="base + 'getting-started/installation'">install Milo</a>, or read the <a :href="base + 'language/'">language guide</a>.
     </div>
   </div>
@@ -638,8 +636,11 @@ onMounted(() => {
 .lab {
   --edge: var(--vp-c-divider);
   --brand: var(--vp-c-brand-1);
-  --con-bg: #0d1320; --con-surf: #121a29; --con-edge: #24314a; --con-text: #cdd6e6;
-  --c-com: #6a7b96;
+  /* Warm charcoal panels tuned to the site's warm dark palette (page bg is
+     ~#16130f, brand is amber). The old values were a cool navy (#0d1320) that
+     clashed — blue panels on a warm amber site read as a different theme. */
+  --con-bg: #17130e; --con-surf: #201a13; --con-edge: #37301f; --con-text: #e3dccb;
+  --c-com: #8a7f6a;
   margin: 40px 0 8px; font-family: var(--vp-font-family-base);
 }
 .lab-head { text-align: center; margin-bottom: 22px; }
@@ -660,8 +661,9 @@ onMounted(() => {
 .pip.ok { color: #fff; background: var(--brand); border-color: var(--brand); }
 .pip.ok.cur { box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 30%, transparent); }
 .pip .tick { font-size: 15px; }
-.pip.sb { margin-left: 6px; border-style: dashed; }
-.pip.sb .sb-ico { font-size: 15px; }
+/* Sandbox is a text pill, not a number pip: auto width, sits first with a small
+   gap before the numbered lessons. */
+.pip.sb { width: auto; padding: 0 13px; margin-right: 6px; border-style: dashed; font-size: 12.5px; letter-spacing: .01em; }
 
 .card { border: 1px solid var(--edge); border-radius: 16px; overflow: hidden; background: var(--vp-c-bg); }
 .chead { padding: 22px 22px 4px; }
@@ -686,7 +688,10 @@ onMounted(() => {
 .pane:first-child { border-right: 1px solid var(--con-edge); }
 @media (max-width: 720px) { .pane:first-child { border-right: 0; border-bottom: 1px solid var(--con-edge); } }
 .ph { display: flex; align-items: center; gap: 7px; height: 40px; padding: 0 13px; background: var(--con-surf); border-bottom: 1px solid var(--con-edge); flex-shrink: 0; }
-.dot { width: 10px; height: 10px; border-radius: 50%; }
+/* The filename yields space first (truncates); the action buttons never clip. */
+.fname { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph .btn, .ph .edited, .ph .native { flex-shrink: 0; white-space: nowrap; }
+.dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 .d1 { background: #f2606a; } .d2 { background: #f0b866; } .d3 { background: #7bd88f; }
 .fname { font-family: var(--vp-font-family-mono); font-size: 12px; color: var(--con-text); margin-left: 3px; }
 .fname.dim { color: var(--c-com); margin-left: 0; }
@@ -719,6 +724,9 @@ onMounted(() => {
 .pop-leave-to { opacity: 0; }
 
 .editor { min-height: 240px; max-height: 460px; overflow: hidden; }
+/* oneDark re-applies its cool #282c34 to .cm-editor; scoped :deep wins on
+   specificity and repaints the code surface warm to match the panels. */
+.editor :deep(.cm-editor) { background: var(--con-bg); }
 .cm-host { height: 100%; min-height: 240px; }
 
 .term { padding: 14px 16px; font-family: var(--vp-font-family-mono); font-size: 12.5px; line-height: 1.7; min-height: 240px; max-height: 460px; overflow: auto; color: var(--con-text); }
