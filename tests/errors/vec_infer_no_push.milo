@@ -1,0 +1,5 @@
+// An unannotated Vec.new() that is never pushed to has no element to infer.
+fn main() {
+    var xs = Vec.new()  // @error: cannot infer Vec element type
+    print(xs.len.toString())
+}

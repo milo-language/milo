@@ -153,6 +153,12 @@ interface InterfaceInfo {
 export class TypeChecker {
   private warningConfig: WarningConfig;
   private diagnostics: Diagnostic[] = [];
+  // Deferred Vec element inference: `var v = Vec.new()` with no annotation gets a
+  // placeholder element object, resolved in-place from the first `v.push(x)`.
+  // inferVecElems holds the live placeholder objects (identity set); pendingInferVecs
+  // records each with its span so an unresolved one (no push ever seen) can error.
+  private inferVecElems = new WeakSet<object>();
+  private pendingInferVecs: Array<{ elem: TypeKind; span: Span }> = [];
   private _globalTypes = new Map<string, TypeKind>();
   private functions = new Map<string, FnSig>();
   private fnDecls = new Map<string, Function>();
@@ -1091,6 +1097,14 @@ export class TypeChecker {
       }
     }
 
+    // Any deferred-inference Vec that never saw a `push` couldn't have its element
+    // resolved — fall back to the original "add an annotation" error.
+    for (const p of this.pendingInferVecs) {
+      if (this.inferVecElems.has(p.elem as object)) {
+        this.error(`cannot infer Vec element type — no 'push' found to infer from; add a type annotation: 'let v: Vec<T> = Vec.new()'`, p.span);
+      }
+    }
+
     return {
       diagnostics: this.diagnostics,
       exprTypes: this.exprTypes,
@@ -1864,7 +1878,8 @@ export class TypeChecker {
         // refs in locals OK (second-class — can't escape function via return/struct/collection)
         const frozenBeforeRhs = new Set<VarInfo>();
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
-        const valType = this.checkExprWithHint(stmt.value, hint);
+        const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
+        const valType = deferred ?? this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
@@ -1915,7 +1930,8 @@ export class TypeChecker {
         const hint = stmt.type ? this.resolve(stmt.type) : null;
         const frozenBeforeRhs = new Set<VarInfo>();
         for (const scope of this.scopes) for (const [, vi] of scope) if (vi.borrowed) frozenBeforeRhs.add(vi);
-        const valType = this.checkExprWithHint(stmt.value, hint);
+        const deferred = !hint ? this.tryDeferVecInfer(stmt.value) : null;
+        const valType = deferred ?? this.checkExprWithHint(stmt.value, hint);
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
@@ -2438,6 +2454,31 @@ export class TypeChecker {
   private deref(t: TypeKind): TypeKind {
     if (t.tag === "ref") return t.inner;
     return t;
+  }
+
+  // For `let/var x = Vec.new()` / `Vec.withCapacity(n)` with no type annotation:
+  // return a Vec whose element is a placeholder to be resolved from the first
+  // `x.push(...)` (see the push handler). Returns null for anything else, so the
+  // normal (element-required) path — and its error — is untouched everywhere else.
+  private tryDeferVecInfer(value: Expr): TypeKind | null {
+    if (value.kind !== "EnumLit" || value.enumName !== "Vec") return null;
+    if (value.variant === "new") {
+      if (value.args.length !== 0) this.error(`'Vec.new' takes no arguments`, value.span);
+    } else if (value.variant === "withCapacity") {
+      if (value.args.length !== 1) this.error(`'Vec.withCapacity' expects 1 argument (capacity), got ${value.args.length}`, value.span);
+      else {
+        const c = this.checkExpr(value.args[0]);
+        if (c.tag !== "int" && c.tag !== "unknown") this.error(`'Vec.withCapacity': capacity must be an integer, got ${typeName(c)}`, value.span);
+      }
+    } else {
+      return null;
+    }
+    const elem: TypeKind = { tag: "unknown" };
+    const vecTy: TypeKind = { tag: "vec", element: elem };
+    this.inferVecElems.add(elem);
+    this.pendingInferVecs.push({ elem, span: value.span });
+    this.exprTypes.set(value, vecTy);
+    return vecTy;
   }
 
   // Does this body unconditionally exit (return/break/continue) on every path?
@@ -4316,6 +4357,16 @@ export class TypeChecker {
             if (expr.args.length !== 1) { this.error(`'push' expects 1 argument, got ${expr.args.length}`, sp); return this.setType(expr, { tag: "void" }); }
             if (!this.isRootMutable(expr.object)) {
               this.error(`cannot push to immutable Vec`, sp, `declare with 'var' to make it mutable`);
+            }
+            // Deferred-inference Vec (`var v = Vec.new()`): first push fixes the
+            // element type. Resolve the shared placeholder object in place so the
+            // binding, its exprType, and every later use all see the real element.
+            if (this.inferVecElems.has(objType.element as object)) {
+              const argType = this.checkExprWithHint(expr.args[0], null);
+              this.inferVecElems.delete(objType.element as object);
+              Object.assign(objType.element as object, argType);
+              this.tryMove(expr.args[0]);
+              return this.setType(expr, { tag: "void" });
             }
             const argType = this.checkExprWithHint(expr.args[0], objType.element);
             if (!typeEq(objType.element, argType) && argType.tag !== "unknown") {

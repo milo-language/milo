@@ -47,7 +47,7 @@ fn main() {
 
     // One green task per URL — thousands are cheap. Each task *owns* its `u`,
     // so there is no shared state to guard and no data race to worry about.
-    var jobs: Vec<Promise<string>> = Vec.new()
+    var jobs = Vec.new()   // element type inferred from the first push
     for url in urls {
         let u = url.clone()
         jobs.push(Promise<string>.run(() => {

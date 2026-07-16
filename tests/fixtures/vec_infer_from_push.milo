@@ -1,0 +1,27 @@
+// `var v = Vec.new()` with no annotation infers its element type from the
+// first push — no turbofish, no `let v: Vec<T> =` needed.
+fn main() {
+    var xs = Vec.new()
+    xs.push(10)
+    xs.push(20)
+    xs.push(12)
+    var sum = 0
+    for x in xs {
+        sum = sum + x
+    }
+    print(sum.toString())
+    // @expect: 42
+
+    var names = Vec.new()
+    names.push("ada")
+    names.push("lin")
+    print(names.join(","))
+    // @expect: ada,lin
+
+    // withCapacity infers the same way
+    var caps = Vec.withCapacity(2)
+    caps.push(true)
+    caps.push(false)
+    print(caps.len.toString())
+    // @expect: 2
+}
