@@ -94,38 +94,94 @@ fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
     }
 }
 
-fn paneTab(idx: i64, focused: bool): string {
-    if focused {
-        return $"\x1b[7;38;2;200;152;104m {idx}:sh \x1b[0m "
-    }
-    return $"\x1b[90m {idx}:sh \x1b[0m "
+// Column where pane position `pos` starts (each pane paneW wide + separator col).
+fn paneStartCol(pos: i64, paneW: i64): i64 {
+    return pos * (paneW + 1) + 1
 }
 
-// Column where pane `idx` starts (each pane paneW wide + one separator column).
-fn paneStartCol(idx: i64, paneW: i64): i64 {
-    return idx * (paneW + 1) + 1
+// Fill `out` with the global indices of panes belonging to `win`; return count.
+fn activePaneIdxs(paneWin: &Vec<i64>, win: i64, out: &mut [i64; 16]): i64 {
+    var cnt: i64 = 0
+    var i: i64 = 0
+    while i < paneWin.len {
+        if paneWin[i] == win {
+            if cnt < 16 {
+                out[cnt] = i
+            }
+            cnt = cnt + 1
+        }
+        i = i + 1
+    }
+    return cnt
 }
 
-// Composite N pane grids side by side + separators + a tmux-style status bar on
-// the bottom row. In copy mode the focused pane is scrolled `copyOffset` rows
-// back; others stay live. This is what the (single, dumb) client renders.
-fn renderCompositeN(terms: &Vec<Term>, focus: i64, copyMode: bool, copyOffset: i64): string {
-    let n = terms.len
-    if n == 0 {
-        return ""
+fn winPaneCount(paneWin: &Vec<i64>, win: i64): i64 {
+    var c: i64 = 0
+    var i: i64 = 0
+    while i < paneWin.len {
+        if paneWin[i] == win {
+            c = c + 1
+        }
+        i = i + 1
     }
-    let gridRows = terms[0].rows
-    let paneW = terms[0].cols
+    return c
+}
+
+// Re-tile the ACTIVE window: split its width across its panes, resize each.
+fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, cols: i64, gridRows: i64): void {
+    var idxs: [i64; 16] = [0; 16]
+    let m = activePaneIdxs(paneWin, activeWin, idxs)
+    if m == 0 {
+        return
+    }
+    let paneW = (cols - (m - 1)) / m
+    var j: i64 = 0
+    while j < m {
+        let gi = idxs[j]
+        setPtySize(ptys[gi].masterFd, gridRows, paneW)
+        terms[gi] = newTerm(gridRows, paneW)
+        j = j + 1
+    }
+}
+
+// Re-tile every window (used on a client resize so off-screen windows are
+// correctly sized when you switch to them, and their content is preserved).
+fn reTileAll(ptys: &Vec<Pty>, terms: &mut Vec<Term>, paneWin: &Vec<i64>, winCount: i64, cols: i64, gridRows: i64): void {
+    var w: i64 = 0
+    while w < winCount {
+        reTile(ptys, terms, paneWin, w, cols, gridRows)
+        w = w + 1
+    }
+}
+
+// Composite the active window's panes + a status bar with WINDOW tabs.
+fn renderCompositeN(terms: &Vec<Term>, paneWin: &Vec<i64>, activeWin: i64, winCount: i64, focus: i64, copyMode: bool, copyOffset: i64): string {
+    var idxs: [i64; 16] = [0; 16]
+    let m = activePaneIdxs(paneWin, activeWin, idxs)
+    if m == 0 {
+        return "\x1b[2J\x1b[H"
+    }
+    let gridRows = terms[idxs[0]].rows
+    let paneW = terms[idxs[0]].cols
+    var focusPos: i64 = 0
+    var jj: i64 = 0
+    while jj < m {
+        if idxs[jj] == focus {
+            focusPos = jj
+        }
+        jj = jj + 1
+    }
     var out = "\x1b[2J\x1b[H"
     var p: i64 = 0
-    while p < n {
+    while p < m {
+        let gi = idxs[p]
         let sc = paneStartCol(p, paneW)
-        if copyMode && p == focus {
-            out = out + terms[p].renderScrollback(1, sc, copyOffset)
+        if copyMode && p == focusPos {
+            out = out + terms[gi].renderScrollback(1, sc, copyOffset)
         } else {
-            out = out + renderTermString(terms[p], 1, sc)
+            out = out + renderTermString(terms[gi], 1, sc)
         }
-        if p < n - 1 {
+        if p < m - 1 {
             let sep = sc + paneW
             var r: i64 = 0
             while r < gridRows {
@@ -139,38 +195,30 @@ fn renderCompositeN(terms: &Vec<Term>, focus: i64, copyMode: bool, copyOffset: i
     out = out + $"\x1b[{gridRows + 1};1H\x1b[K"
     if copyMode {
         out = out + $"\x1b[48;2;120;90;150;38;2;255;255;255;1m COPY \x1b[0m "
-        out = out + $"\x1b[95mpane {focus}  -{copyOffset} rows\x1b[0m"
+        out = out + $"\x1b[95mpane {focusPos}  -{copyOffset} rows\x1b[0m"
         out = out + "\x1b[90m   j/k:line u/d:page q:exit\x1b[0m"
     } else {
         out = out + "\x1b[48;2;145;96;58;38;2;24;20;16;1m tmuxd \x1b[0m "
-        var i: i64 = 0
-        while i < n {
-            out = out + paneTab(i, i == focus)
-            i = i + 1
+        var w: i64 = 0
+        while w < winCount {
+            let pc = winPaneCount(paneWin, w)
+            if pc > 0 {
+                if w == activeWin {
+                    out = out + $"\x1b[7;38;2;200;152;104m {w}\xc2\xb7{pc}p \x1b[0m "
+                } else {
+                    out = out + $"\x1b[90m {w}\xc2\xb7{pc}p \x1b[0m "
+                }
+            }
+            w = w + 1
         }
-        out = out + "\x1b[90m  Ctrl-B o:next \xc2\xb7 %:split \xc2\xb7 [:scroll \xc2\xb7 d:detach\x1b[0m"
+        out = out + "\x1b[90m  o:pane %:split c:win n:next [:scroll d:detach\x1b[0m"
     }
 
     if !copyMode {
-        let sc = paneStartCol(focus, paneW)
+        let sc = paneStartCol(focusPos, paneW)
         out = out + $"\x1b[{terms[focus].cr + 1};{sc + terms[focus].cc}H"
     }
     return out
-}
-
-// Re-tile: split the width across all panes, resize each PTY + rebuild each grid.
-fn reTile(ptys: &Vec<Pty>, terms: &mut Vec<Term>, cols: i64, gridRows: i64): void {
-    let n = ptys.len
-    if n == 0 {
-        return
-    }
-    let paneW = (cols - (n - 1)) / n
-    var p: i64 = 0
-    while p < n {
-        setPtySize(ptys[p].masterFd, gridRows, paneW)
-        terms[p] = newTerm(gridRows, paneW)
-        p = p + 1
-    }
 }
 
 fn shellArgs(): Vec<string> {
@@ -179,13 +227,14 @@ fn shellArgs(): Vec<string> {
     return a
 }
 
-// ── server: hold N shells tiled side by side, composite to the client ──
+// ── server: N windows, each N tiled shells; composite the active window ──
 
 fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
-    let gridRows = rows - 1
+    var gridRows = rows - 1
     let sa = shellArgs()
     var ptys: Vec<Pty> = Vec.new()
     var terms: Vec<Term> = Vec.new()
+    var paneWin: Vec<i64> = Vec.new()
     var k: i64 = 0
     while k < 2 {
         match openAndSpawn(shell, sa) {
@@ -193,6 +242,7 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                 setNonblock(p.masterFd)
                 ptys.push(p)
                 terms.push(newTerm(gridRows, 1))
+                paneWin.push(0)
             }
             Result.Err(_) => {
             }
@@ -200,7 +250,9 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
         k = k + 1
     }
     var cols = cols0
-    reTile(ptys, terms, cols, gridRows)
+    var activeWin: i64 = 0
+    var winCount: i64 = 1
+    reTile(ptys, terms, paneWin, activeWin, cols, gridRows)
 
     var clientFd: i32 = -1
     var buf: [u8; 4096] = [0; 4096]
@@ -227,6 +279,7 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
 
         var dirty = false
 
+        // drain EVERY pane (all windows) so no shell wedges while off-screen
         var di: i64 = 0
         while di < ptys.len {
             unsafe {
@@ -235,7 +288,9 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                     running = false
                 } else if nn > 0 {
                     terms[di].feed(buf, nn)
-                    dirty = true
+                    if paneWin[di] == activeWin {
+                        dirty = true
+                    }
                 }
             }
             di = di + 1
@@ -275,7 +330,8 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                             parseSize(ctrlBuf, sz)
                             if sz[0] > 1 && sz[1] > 0 {
                                 cols = sz[1]
-                                reTile(ptys, terms, cols, sz[0] - 1)
+                                gridRows = sz[0] - 1
+                                reTileAll(ptys, terms, paneWin, winCount, cols, gridRows)
                                 dirty = true
                             }
                             ctrlMode = false
@@ -311,22 +367,77 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
                     } else if prefixArmed {
                         prefixArmed = false
                         if b == 111 || b == 9 {
-                            focus = (focus + 1) % ptys.len
+                            // cycle focus among active-window panes
+                            var idxs: [i64; 16] = [0; 16]
+                            let m = activePaneIdxs(paneWin, activeWin, idxs)
+                            var fp: i64 = 0
+                            var q: i64 = 0
+                            while q < m {
+                                if idxs[q] == focus {
+                                    fp = q
+                                }
+                                q = q + 1
+                            }
+                            if m > 0 {
+                                focus = idxs[(fp + 1) % m]
+                            }
                             dirty = true
                         } else if b == 37 {
-                            if ptys.len < 6 {
+                            // % → split: add a pane to the active window
+                            if ptys.len < 12 {
                                 match openAndSpawn(shell, sa) {
                                     Result.Ok(p) => {
                                         setNonblock(p.masterFd)
                                         ptys.push(p)
                                         terms.push(newTerm(gridRows, 1))
+                                        paneWin.push(activeWin)
                                         focus = ptys.len - 1
-                                        reTile(ptys, terms, cols, gridRows)
+                                        reTile(ptys, terms, paneWin, activeWin, cols, gridRows)
                                         dirty = true
                                     }
                                     Result.Err(_) => {
                                     }
                                 }
+                            }
+                        } else if b == 99 {
+                            // c → new window with one shell
+                            if ptys.len < 12 {
+                                match openAndSpawn(shell, sa) {
+                                    Result.Ok(p) => {
+                                        setNonblock(p.masterFd)
+                                        ptys.push(p)
+                                        terms.push(newTerm(gridRows, 1))
+                                        paneWin.push(winCount)
+                                        activeWin = winCount
+                                        winCount = winCount + 1
+                                        focus = ptys.len - 1
+                                        reTile(ptys, terms, paneWin, activeWin, cols, gridRows)
+                                        dirty = true
+                                    }
+                                    Result.Err(_) => {
+                                    }
+                                }
+                            }
+                        } else if b == 110 || b == 112 {
+                            // n / p → next non-empty window
+                            var tries: i64 = 0
+                            var nw = activeWin
+                            while tries < winCount {
+                                nw = (nw + 1) % winCount
+                                if winPaneCount(paneWin, nw) > 0 {
+                                    tries = winCount
+                                } else {
+                                    tries = tries + 1
+                                }
+                            }
+                            if winPaneCount(paneWin, nw) > 0 {
+                                activeWin = nw
+                                var idxs2: [i64; 16] = [0; 16]
+                                let mm = activePaneIdxs(paneWin, activeWin, idxs2)
+                                if mm > 0 {
+                                    focus = idxs2[0]
+                                }
+                                dirty = true
                             }
                         } else if b == 91 {
                             copyMode = true
@@ -353,7 +464,7 @@ fn serveMulti(listenFd: i32, shell: &string, rows: i64, cols0: i64): void {
         }
 
         if dirty && clientFd >= 0 {
-            let comp = renderCompositeN(terms, focus, copyMode, copyOffset)
+            let comp = renderCompositeN(terms, paneWin, activeWin, winCount, focus, copyMode, copyOffset)
             unsafe {
                 write(clientFd, comp as *u8, comp.len)
             }
