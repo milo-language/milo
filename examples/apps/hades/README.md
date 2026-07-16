@@ -15,7 +15,7 @@ src/web/ui/build.sh                                  # bundle UI → src/web/ui/
 bun run ../milo/src/main.ts build src/main.milo -o hades
 ```
 
-The server serves the UI from disk (`--webroot`, default `src/web/ui/dist` relative to the cwd) — UI changes only need `build.sh` + a browser refresh, no server rebuild.
+The server serves the UI from disk (`--webroot`) — UI changes only need `build.sh` + a browser refresh, no server rebuild. If `--webroot` isn't given (or its path has no `index.html`), the server walks up from the cwd to find `src/web/ui/dist`, so `hades web` runs from anywhere in the tree, not just the hades root.
 
 ## Run
 

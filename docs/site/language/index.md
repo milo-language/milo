@@ -565,4 +565,4 @@ You've seen the core of Milo. To go deeper:
 - **[Try it in the Playground](/playground)** — write and run Milo in your browser
 - **[Install Milo](/getting-started/installation)** — build real programs locally
 - **[Standard Library](/stdlib/)** — HTTP servers, JSON, SQLite, concurrency, and more
-- **[Examples](/examples)** — complete programs: CLI tools, web servers, games
+- **[Showcase](/demos)** — complete programs: CLI tools, web servers, games, emulators

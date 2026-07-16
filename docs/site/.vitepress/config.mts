@@ -35,13 +35,12 @@ export default defineConfig({
       { text: 'Language', link: '/language/' },
       { text: 'Playground', link: '/playground' },
       {
-        text: 'Demos',
+        text: 'Showcase',
         items: [
-          { text: 'Showcase', link: '/demos' },
+          { text: 'Overview', link: '/demos' },
           { text: 'NES Emulator', link: '/nes/', target: '_self' },
           { text: 'Genesis Emulator', link: '/genesis/', target: '_self' },
           { text: 'SNES Emulator', link: '/snes/', target: '_self' },
-          { text: 'Example Programs', link: '/examples' },
         ]
       },
       {
@@ -201,8 +200,7 @@ export default defineConfig({
         {
           text: 'More',
           items: [
-            { text: 'Demos & Showcase', link: '/demos' },
-            { text: 'Examples', link: '/examples' },
+            { text: 'Showcase', link: '/demos' },
             { text: 'Benchmarks', link: '/benchmarks' },
             { text: 'Quick Reference', link: '/reference' },
             { text: 'AI Coding', link: '/ai-coding' },

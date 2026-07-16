@@ -1,6 +1,6 @@
-# Demos & Showcase
+# Showcase
 
-Real programs written in Milo. The emulators compile to JavaScript via `milo emit-js` and run in your browser; everything else compiles to a small native binary from a single `.milo` file.
+Real programs written in Milo. The emulators compile to JavaScript via `milo emit-js` and run in your browser; everything else compiles to a small native binary from a single `.milo` file. They double as integration tests for the standard library — [run any of them yourself](#run-these-yourself).
 
 ## Emulators in the browser
 
@@ -82,6 +82,43 @@ Coreutils-style tools in [`examples/cli-tools/`](https://github.com/cs01/milo/tr
 | [fmt](https://github.com/cs01/milo/blob/main/examples/cli-tools/fmt.milo) | Milo source formatter |
 | [pkg](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) | Package manager for Milo — git transport, GitHub registry, lockfile |
 
-## Playground
+## Run these yourself
 
-Compile and run Milo in your browser — no install — on the [Playground](/playground).
+Every program above is a single `.milo` file. Clone the repo and run or build any of them with the `./milo` wrapper:
+
+```bash
+./milo run examples/cli-tools/grep.milo -- "hello" myfile.txt
+./milo build examples/apps/serve.milo -o serve && ./serve
+```
+
+### A taste: grep in Milo
+
+```milo
+from "std/argparse" import { newParser }
+from "std/io" import { readFile }
+
+fn main(): i32 {
+    var parser = newParser("grep", "search for a string pattern in files")
+    parser.addPositional("pattern", "string pattern to search for")
+    parser.addPositional("file", "file to search")
+    parser.addBool("ignore-case", "i", "case-insensitive search")
+    parser.addBool("line-number", "n", "show line numbers")
+    parser.addBool("count", "c", "only print count of matching lines")
+    let args = parser.parse()
+
+    let pattern = args.getString("pattern")
+    let filePath = args.getString("file")
+
+    let content = readFile(filePath)!
+    let lines = content.split("\n")
+
+    for line in lines {
+        if line.contains(pattern) {
+            print(line)
+        }
+    }
+    return 0
+}
+```
+
+Prefer no install? Compile and run Milo in your browser on the [Playground](/playground).

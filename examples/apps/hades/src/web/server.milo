@@ -49,7 +49,7 @@ from "std/event" import {
     setNonblocking
 }
 from "std/json" import {
-    Json, jsonParse, jsonParseJsonc, jsonObj, jsonArr
+    Json, jsonParse, jsoncParse, jsonObj, jsonArr
 }
 from "./jsonaccess" import {
     bodyI64, bodyStr, frame0Field, frame0Path, scopes0Ref
@@ -70,7 +70,7 @@ from "std/process" import {
     Child
 }
 from "std/fs" import {
-    pathExists, makeDir, writeFile
+    pathExists, makeDir, writeFile, currentDir
 }
 from "std/uuid" import {
     uuidV4
@@ -85,7 +85,7 @@ from "std/datetime" import {
     dateTimeLocalNow, dateTimeFormatTime
 }
 from "std/path" import {
-    pathBasename
+    pathBasename, pathDirname, pathJoin
 }
 from "std/string" import {
     strPadEnd, strSplit, strSplitWhitespace, strIndexOf, strStartsWith, strTrim
@@ -785,7 +785,7 @@ fn applyConfig(raw: string, selectName: string): string {
 // composes. A {version, configurations:[...]} wrapper is a self-contained
 // launch.json file and passes through untouched.
 fn mergeCliDefaults(text: string, prog: &string, src: &string): string {
-    match jsonParseJsonc(text.clone()) {
+    match jsoncParse(text.clone()) {
         Result.Ok(d) => {
             if !d.isObject() {
                 return text
@@ -2377,6 +2377,38 @@ fn openBrowser(url: &string): void {
     }
 }
 
+// The UI bundle lives at a fixed spot inside the source tree. When --webroot is left
+// at its cwd-relative default, walk up from the cwd looking for it, so `hades web` runs
+// from any directory in the repo (or the hades subdir) instead of only its own root.
+// Milo has no self-exe-path API, so this is a cwd walk, not a binary-relative one.
+fn findWebroot(): Option<string> {
+    var dir = match currentDir() {
+        Result.Ok(d) => {
+            d
+        }
+        Result.Err(_e) => {
+            return Option.None
+        }
+    }
+    // Markers cover both cases: cwd at/under the hades dir, and cwd at/under the repo root.
+    let rels = ["src/web/ui/dist", "examples/apps/hades/src/web/ui/dist"]
+    while true {
+        for rel in rels {
+            let cand = pathJoin(dir, rel)
+            let idx = cand + "/index.html"
+            if pathExists(idx) {
+                return Option.Some(cand)
+            }
+        }
+        let parent = pathDirname(dir)
+        if parent == dir {
+            return Option.None // reached the filesystem root
+        }
+        dir = parent
+    }
+    return Option.None
+}
+
 // Subcommand entrypoint: dispatched from src/main.milo as `hades web ...`.
 // argv[0] is the display name (skipped by parseFrom); the rest are the web flags.
 fn webMain(argv: Vec<string>): i32 {
@@ -2427,7 +2459,7 @@ fn webMain(argv: Vec<string>): i32 {
                 }
             }
         }
-        match jsonParseJsonc(launchText.clone()) {
+        match jsoncParse(launchText.clone()) {
             Result.Ok(doc) => {
                 if !doc.isObject() {
                     eprint("error: --launch must be a JSON object\n")
@@ -2440,8 +2472,19 @@ fn webMain(argv: Vec<string>): i32 {
             }
         }
     }
+    // Honor an explicit/working --webroot; otherwise walk up from the cwd to find the
+    // bundle so the command isn't pinned to the hades root directory.
     if !pathExists(webroot + "/index.html") {
-        eprint($"error: {webroot}/index.html not found — run src/web/ui/build.sh or pass --webroot\n")
+        match findWebroot() {
+            Option.Some(found) => {
+                webroot = found
+            }
+            Option.None => {
+            }
+        }
+    }
+    if !pathExists(webroot + "/index.html") {
+        eprint($"error: UI bundle not found (looked for {webroot}/index.html and walked up from the cwd) — run src/web/ui/build.sh or pass --webroot\n")
         return 1
     }
     let adapterArg = args.getString("dapPath")
