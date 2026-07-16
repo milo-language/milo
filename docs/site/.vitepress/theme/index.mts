@@ -1,6 +1,7 @@
 import DefaultTheme from 'vitepress/theme'
 import MiloLab from './MiloLab.vue'
 import BenchmarkChart from './BenchmarkChart.vue'
+import CodeCarousel from './CodeCarousel.vue'
 import './style.css'
 
 export default {
@@ -8,5 +9,6 @@ export default {
   enhanceApp({ app }) {
     app.component('MiloLab', MiloLab)
     app.component('BenchmarkChart', BenchmarkChart)
+    app.component('CodeCarousel', CodeCarousel)
   },
 }

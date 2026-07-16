@@ -36,35 +36,52 @@ The mission: prove that safe systems programming doesn't require a complex langu
 
 ## What it looks like
 
-Fetch several URLs concurrently and report each status code:
+<CodeCarousel
+  :titles="['Ownership', 'Concurrency', 'Contracts']"
+  :subtitles="['One owner per value', 'Green tasks, no mutex', 'Proved before it runs']"
+  :captions="[
+    'Hand a value to someone else and you no longer have it. That one rule is where memory safety comes from — no lifetime annotations, no borrow-checker puzzles. The compiler catches the mistake at compile time, not at 3am.',
+    'Promise.run starts a green task, not an OS thread, so thousands are cheap. There is no mutex here because there is nothing to guard: each task owns its data, and the same move rules that stop use-after-free stop data races.',
+    'requires and ensures are part of the language, and the SMT solver that discharges them is itself written in Milo. This contract is proven for every possible input before the program runs — not tested on a few.',
+  ]"
+>
 
 ```milo
-from "std/net" import { fetch }
-from "std/runtime" import { Promise }
-
 fn main() {
-    let urls = ["https://httpbin.org/get", "https://httpbin.org/ip", "https://httpbin.org/user-agent"]
+    let name = "milo"
+    let greeting = name   // `name` moves here — it is no longer yours
 
-    // One green task per URL — thousands are cheap. Each task *owns* its `u`,
-    // so there is no shared state to guard and no data race to worry about.
-    var jobs = Vec.new()   // element type inferred from the first push
-    for url in urls {
-        let u = url.clone()
-        jobs.push(Promise<string>.run(() => {
-            let status = fetch(u)!.status
-            return u + " -> " + status.toString()
-        }))
-    }
-
-    // Gather every result. await() drives the cooperative scheduler for you —
-    // no event loop to hand-crank.
-    for line in Promise.all(jobs).await()! {
-        print(line)
-    }
+    print(greeting)       // "milo"
+    print(name)           // error: use of moved variable 'name'
 }
 ```
 
-`Promise<T>.run` starts a green thread, not an OS thread — thousands are cheap — and `Promise.all` gathers them; `.await()` drives the cooperative scheduler for you. There's no mutex anywhere because there's nothing to guard: each task *owns* its URL, so the compiler's move rules rule out data races the same way they rule out use-after-free. HTTP, TLS, JSON, and green threads all come from the standard library.
+```milo
+from "std/runtime" import { Promise }
+
+fn main() {
+    // Each task owns its work. No shared state, so no mutex, so no data race.
+    let a = Promise<i64>.run(() => 6 * 7)
+    let b = Promise<i64>.run(() => 1 + 1)
+
+    print(a.await()! + b.await()!)   // 44
+}
+```
+
+```milo
+fn clamp(x: i64, lo: i64, hi: i64): i64
+    requires lo <= hi                       // caller must hold up its end
+    ensures result >= lo && result <= hi    // and this always holds
+{
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+```
+
+</CodeCarousel>
+
+Three ideas, one language: values have a single owner, concurrency needs no locks because there is nothing shared to lock, and the contracts are checked by a prover rather than trusted. Nothing above is a library trick — it is all in the compiler.
 
 <div class="showcase">
   <div class="showcase-head">
