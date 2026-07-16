@@ -94,19 +94,37 @@ fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
     }
 }
 
-// Composite two pane grids side by side into one full-screen paint: pane 0 on
-// the left, a separator column, pane 1 on the right, cursor parked in the pane
-// that has focus. This is what the (single, dumb) client renders.
-fn renderComposite(term0: &Term, term1: &Term, focus: i64, rows: i64): string {
+fn paneTab(idx: i64, focused: bool): string {
+    if focused {
+        return $"\x1b[7;38;2;200;152;104m {idx}:sh \x1b[0m "
+    }
+    return $"\x1b[90m {idx}:sh \x1b[0m "
+}
+
+// Composite two pane grids side by side into one full-screen paint: pane 0 left,
+// a separator column, pane 1 right, a tmux-style status bar on the bottom row
+// (with a focus indicator), and the cursor parked in the focused pane. The grids
+// occupy rows 1..gridRows; the status bar sits on row gridRows+1. This is what
+// the (single, dumb) client renders.
+fn renderComposite(term0: &Term, term1: &Term, focus: i64): string {
     let paneCols = term0.cols
+    let gridRows = term0.rows
     var out = "\x1b[2J\x1b[H"
     out = out + renderTermString(term0, 1, 1)
     var r: i64 = 0
-    while r < rows {
+    while r < gridRows {
         out = out + $"\x1b[{r + 1};{paneCols + 1}H\x1b[90m\xe2\x94\x82\x1b[0m"
         r = r + 1
     }
     out = out + renderTermString(term1, 1, paneCols + 2)
+
+    // status bar
+    out = out + $"\x1b[{gridRows + 1};1H\x1b[K"
+    out = out + "\x1b[48;2;145;96;58;38;2;24;20;16;1m tmuxd \x1b[0m "
+    out = out + paneTab(0, focus == 0)
+    out = out + paneTab(1, focus == 1)
+    out = out + "\x1b[90m  Ctrl-B o:switch \xc2\xb7 Ctrl-B d:detach\x1b[0m"
+
     if focus == 0 {
         out = out + $"\x1b[{term0.cr + 1};{term0.cc + 1}H"
     } else {
@@ -121,9 +139,13 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
     var clientFd: i32 = -1
     var buf: [u8; 4096] = [0; 4096]
     // one grid per pane; shell output is always fed in so a (re)attaching client
-    // can be sent the current composite screen, not just new output.
-    var term0 = newTerm(rows, paneCols)
-    var term1 = newTerm(rows, paneCols)
+    // can be sent the current composite screen, not just new output. The bottom
+    // row is reserved for the status bar, so grids are rows-1 tall.
+    let gridRows = rows - 1
+    setPtySize(pty0.masterFd, gridRows, paneCols)
+    setPtySize(pty1.masterFd, gridRows, paneCols)
+    var term0 = newTerm(gridRows, paneCols)
+    var term1 = newTerm(gridRows, paneCols)
     var focus: i64 = 0
     var prefixArmed = false // Ctrl-B o switches focus (server-side prefix)
     var ctrlMode = false // \x1e rows;cols \x1e resize control
@@ -196,12 +218,13 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
                         if b == RESIZE_MARK {
                             var sz: [i64; 2] = [0; 2]
                             parseSize(ctrlBuf, sz)
-                            if sz[0] > 0 && sz[1] > 0 {
+                            if sz[0] > 1 && sz[1] > 0 {
                                 let pc = (sz[1] - 1) / 2
-                                setPtySize(pty0.masterFd, sz[0], pc)
-                                setPtySize(pty1.masterFd, sz[0], pc)
-                                term0 = newTerm(sz[0], pc)
-                                term1 = newTerm(sz[0], pc)
+                                let gr = sz[0] - 1 // reserve the status row
+                                setPtySize(pty0.masterFd, gr, pc)
+                                setPtySize(pty1.masterFd, gr, pc)
+                                term0 = newTerm(gr, pc)
+                                term1 = newTerm(gr, pc)
                                 dirty = true
                             }
                             ctrlMode = false
@@ -242,7 +265,7 @@ fn serveMulti(pty0: &Pty, pty1: &Pty, listenFd: i32, rows: i64, paneCols: i64): 
         }
 
         if dirty && clientFd >= 0 {
-            let comp = renderComposite(term0, term1, focus, rows)
+            let comp = renderComposite(term0, term1, focus)
             unsafe {
                 write(clientFd, comp as *u8, comp.len)
             }
