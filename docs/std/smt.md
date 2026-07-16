@@ -21,10 +21,25 @@ _Undocumented._
 ### `combine`
 
 ```milo
-fn combine(p: &Constraint, n: &Constraint, k: i64): Constraint
+fn combine(p: &Constraint, n: &Constraint, k: i64): Option<Constraint>
 ```
 
 Combine upper row p (coeff +a on x_k) with lower row n (coeff -b): b*p + a*n.
+None when the arithmetic overflows — see combineTerm.
+
+### `combineTerm`
+
+```milo
+fn combineTerm(b: i64, pj: i64, a: i64, nj: i64): Option<i64>
+```
+
+b*p[j] + a*n[j], or None if any step overflows i64.
+
+This is the soundness seam. Fourier-Motzkin multiplies constants together, so a konst
+anywhere near 2^62 overflows on the first combine. Wrapping (the -O2 behaviour) flips
+the sign, the row becomes nonsense, the system looks infeasible, and `decide` reports
+UNSAT — i.e. **proven**. A false proof is the worst answer a prover can give, so an
+overflow must reach the caller as "cannot decide" and never as a verdict.
 
 ### `decide`
 
@@ -37,10 +52,10 @@ _Undocumented._
 ### `eliminateVar`
 
 ```milo
-fn eliminateVar(cs: &Vec<Constraint>, k: i64): Vec<Constraint>
+fn eliminateVar(cs: &Vec<Constraint>, k: i64): Option<Vec<Constraint>>
 ```
 
-_Undocumented._
+None when any combine overflows — the caller must not read that as infeasible.
 
 ### `evalNode`
 
@@ -53,11 +68,13 @@ _Undocumented._
 ### `feasibleRational`
 
 ```milo
-fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): bool
+fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): Option<bool>
 ```
 
 Feasible over the rationals? Eliminate every variable; a surviving constant
 row that is violated proves the system UNSAT.
+None = the elimination overflowed, so feasibility is undecided here. Returning `false`
+(infeasible) in that case is what produced false proofs.
 
 ### `findWitness`
 

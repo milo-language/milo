@@ -660,16 +660,14 @@ function binOpToSmt(op: string): string {
 // "refute" a contract like `requires a >= -2147483648` that no i32 can actually violate.
 // It is an assumption about the inputs, so it only ever makes a proof easier — it cannot
 // turn a proven VC into a failing one.
-// i64/u64 are deliberately absent. Their bounds (±2^63, 2^64-1) make the native std/smt
-// solver return unsat for a plainly satisfiable formula — a FALSE PROOF, verified against
-// z3, which says sat:
-//   (declare-const x Int)
-//   (assert (and (>= x (- 9223372036854775808)) (<= x 9223372036854775807)))
-//   (assert (not (>= x 0)))     ; x = -1 satisfies this
-// Asserting a range that is true but unusable would trade a false alarm for a false
-// proof, which is the worse of the two by a distance. The narrow types carry the weight
-// anyway — they are what the solver cannot otherwise know. See backlog: std/smt overflows
-// on 64-bit literals.
+// i64/u64 are deliberately absent, and it is a usability call, not a soundness one:
+// std/smt's Fourier-Motzkin multiplies constants, so bounds at ±2^63 overflow during
+// elimination. That used to yield a FALSE PROOF (unsat for a satisfiable formula); it now
+// yields `unknown`, because combine() detects the overflow — but `unknown` for every i64
+// contract is worse than no range at all, since the refutations go with it. Verified: with
+// i64 ranges on, a genuinely broken call reports `unknown` instead of its counterexample.
+// The narrow types carry the weight anyway — they are what the solver cannot otherwise
+// know. Retire this when the solver's arithmetic is widened (backlog).
 const INT_RANGES: Record<string, [string, string]> = {
   i8: ["(- 128)", "127"],
   i16: ["(- 32768)", "32767"],

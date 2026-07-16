@@ -136,8 +136,26 @@ fn cloneRow(row: &Vec<i64>): Vec<i64> {
     return out
 }
 
+// b*p[j] + a*n[j], or None if any step overflows i64.
+//
+// This is the soundness seam. Fourier-Motzkin multiplies constants together, so a konst
+// anywhere near 2^62 overflows on the first combine. Wrapping (the -O2 behaviour) flips
+// the sign, the row becomes nonsense, the system looks infeasible, and `decide` reports
+// UNSAT — i.e. **proven**. A false proof is the worst answer a prover can give, so an
+// overflow must reach the caller as "cannot decide" and never as a verdict.
+fn combineTerm(b: i64, pj: i64, a: i64, nj: i64): Option<i64> {
+    let Option.Some(t1) = b.checkedMul(pj) else {
+        return Option.None
+    }
+    let Option.Some(t2) = a.checkedMul(nj) else {
+        return Option.None
+    }
+    return t1.checkedAdd(t2)
+}
+
 // Combine upper row p (coeff +a on x_k) with lower row n (coeff -b): b*p + a*n.
-fn combine(p: &Constraint, n: &Constraint, k: i64): Constraint {
+// None when the arithmetic overflows — see combineTerm.
+fn combine(p: &Constraint, n: &Constraint, k: i64): Option<Constraint> {
     let a = p.coeffs[k]
     let b = -n.coeffs[k]
     var nc: Vec<i64> = []
@@ -146,17 +164,24 @@ fn combine(p: &Constraint, n: &Constraint, k: i64): Constraint {
         if j == k {
             nc.push(0)
         } else {
-            nc.push(b * p.coeffs[j] + a * n.coeffs[j])
+            let Option.Some(v) = combineTerm(b, p.coeffs[j], a, n.coeffs[j]) else {
+                return Option.None
+            }
+            nc.push(v)
         }
         j = j + 1
     }
-    let c = Constraint {
-        coeffs: nc, konst: b * p.konst + a * n.konst, strict: p.strict || n.strict
+    let Option.Some(kon) = combineTerm(b, p.konst, a, n.konst) else {
+        return Option.None
     }
-    return reduceConstraint(c)
+    let c = Constraint {
+        coeffs: nc, konst: kon, strict: p.strict || n.strict
+    }
+    return Option.Some(reduceConstraint(c))
 }
 
-fn eliminateVar(cs: &Vec<Constraint>, k: i64): Vec<Constraint> {
+// None when any combine overflows — the caller must not read that as infeasible.
+fn eliminateVar(cs: &Vec<Constraint>, k: i64): Option<Vec<Constraint>> {
     var out: Vec<Constraint> = []
     var i: i64 = 0
     while i < cs.len {
@@ -171,19 +196,24 @@ fn eliminateVar(cs: &Vec<Constraint>, k: i64): Vec<Constraint> {
             var n: i64 = 0
             while n < cs.len {
                 if cs[n].coeffs[k] < 0 {
-                    out.push(combine(cs[p], cs[n], k))
+                    let Option.Some(c) = combine(cs[p], cs[n], k) else {
+                        return Option.None
+                    }
+                    out.push(c)
                 }
                 n = n + 1
             }
         }
         p = p + 1
     }
-    return out
+    return Option.Some(out)
 }
 
 // Feasible over the rationals? Eliminate every variable; a surviving constant
 // row that is violated proves the system UNSAT.
-fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): bool {
+// None = the elimination overflowed, so feasibility is undecided here. Returning `false`
+// (infeasible) in that case is what produced false proofs.
+fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): Option<bool> {
     var cs: Vec<Constraint> = []
     var i0: i64 = 0
     while i0 < cs0.len {
@@ -192,7 +222,10 @@ fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): bool {
     }
     var k: i64 = 0
     while k < nvars {
-        cs = eliminateVar(cs, k)
+        let Option.Some(next) = eliminateVar(cs, k) else {
+            return Option.None
+        }
+        cs = next
         k = k + 1
     }
     var i: i64 = 0
@@ -200,16 +233,16 @@ fn feasibleRational(cs0: &Vec<Constraint>, nvars: i64): bool {
         let kon = cs[i].konst
         if cs[i].strict {
             if kon >= 0 {
-                return false
+                return Option.Some(false)
             }
         } else {
             if kon > 0 {
-                return false
+                return Option.Some(false)
             }
         }
         i = i + 1
     }
-    return true
+    return Option.Some(true)
 }
 
 fn satisfiesAll(cs: &Vec<Constraint>, x: &Vec<i64>): bool {
@@ -400,12 +433,22 @@ fn decide(p: &SmtProblem, root: i64): Verdict {
     while mask < total {
         if evalNode(p, root, mask) {
             let cs = inducedConstraints(p, mask)
-            if feasibleRational(cs, p.nvars) {
-                let w = findWitness(cs, p.nvars, witnessBound(p.nvars), 8000000)
-                if w.len > 0 {
-                    return Verdict.Violated(w)
+            match feasibleRational(cs, p.nvars) {
+                Option.None => {
+                    // Elimination overflowed: this branch is undecided, so the run can no
+                    // longer conclude UNSAT. Fall through to Unknown rather than claim a
+                    // proof we did not establish.
+                    sawRationalOnly = true
                 }
-                sawRationalOnly = true
+                Option.Some(feasible) => {
+                    if feasible {
+                        let w = findWitness(cs, p.nvars, witnessBound(p.nvars), 8000000)
+                        if w.len > 0 {
+                            return Verdict.Violated(w)
+                        }
+                        sawRationalOnly = true
+                    }
+                }
             }
         }
         mask = mask + 1

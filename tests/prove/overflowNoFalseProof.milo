@@ -1,0 +1,33 @@
+// @proven: 1
+// @failed: 0
+// @unknown: 1
+// Soundness: an overflow inside the solver must never be reported as a proof.
+//
+// std/smt decides feasibility by Fourier-Motzkin elimination, which multiplies constraint
+// constants together. A bound near 2^62 overflows i64 on the first combine; at -O2 that
+// wraps, the row's sign flips, the system looks infeasible, and the old code reported
+// UNSAT — i.e. **proven**. Verified against z3, which says sat: `x = -1` satisfies
+//   (>= x -4611686018427387904) & (<= x 4611686018427387904) & (not (>= x 0))
+// so `half(x)` here really can be called with a negative n. A false proof is the worst
+// answer a prover can give — worse than no answer — so combine() now detects the overflow
+// and the verdict degrades to `unknown`.
+//
+// (The 1 proven is main's own call, buggy(10) — a constant that satisfies the bound.)
+// This asserts the DEGRADATION, not a proof: if someone widens the solver's arithmetic
+// later, this becomes `failed` (with x = -1) and the annotation should follow. What must
+// never come back is `proven`.
+fn half(n: i64): i64
+requires n >= 0
+{
+    return n / 2
+}
+
+fn buggy(x: i64): i64
+requires x >= 0 - 4611686018427387904 && x <= 4611686018427387904
+{
+    return half(x)
+}
+
+fn main() {
+    print(buggy(10))
+}
