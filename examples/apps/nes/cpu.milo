@@ -89,6 +89,11 @@ fn newBus(cart: Cartridge): Bus {
     return bus
 }
 
+// One CPU read of the 16-bit address space, decoded to whichever device owns that range.
+// `&mut` on a *read* is not an oversight: reading $2002/$2007/$4016 mutates the PPU's
+// latch, its VRAM address, and the controller shift register respectively — the side
+// effects games rely on. The `& 0x07FF` / `& 0x07` masks are the real hardware's address
+// mirroring, not bounds checks.
 fn busRead(bus: &mut Bus, addr: u16): u8 {
     let a: i64 = addr as i64
     if a < 0x2000 {
@@ -161,6 +166,9 @@ fn busRead(bus: &mut Bus, addr: u16): u8 {
     return 0
 }
 
+// One CPU write, decoded like busRead. Not a plain store: $4014 copies 256 bytes into PPU
+// OAM inline (real hardware also stalls the CPU ~513 cycles for it; this emulator does
+// not model that stall, which is why raster effects timed off DMA can drift).
 fn busWrite(bus: &mut Bus, addr: u16, val: u8): void {
     let a: i64 = addr as i64
     if a < 0x2000 {
@@ -330,11 +338,11 @@ fn mmc3Write(bus: &mut Bus, a: i64, val: u8): void {
 }
 
 struct Cpu {
-    a: u8
-    x: u8
-    y: u8
-    sp: u8
-    p: u8
+    a: u8 // accumulator — the only register ALU results land in
+    x: u8 // index register; also the only one that can index the stack (TXS/TSX)
+    y: u8 // index register; no stack access, but the only one for (zp),Y
+    sp: u8 // stack pointer, an offset into page $0100 — see push8/pop8
+    p: u8 // status flags, masks FC..FN above (NV-BDIZC)
     pc: u16
     cyc: i64 // total elapsed CPU cycles
     extraCycles: i64 // page-cross / branch penalties accumulated this instr
