@@ -1,10 +1,10 @@
 # Showcase
 
-Real programs written in Milo. The emulators compile to JavaScript via `milo emit-js` and run in your browser; everything else compiles to a small native binary from a single `.milo` file. They double as integration tests for the standard library — [run any of them yourself](#run-these-yourself).
+Real programs written in Milo. The compiler is built around **pluggable codegen**: the same front-end feeds any backend. The usual target is LLVM IR (native binaries), but it can also emit JavaScript — pass the `emit-js` subcommand (`milo emit-js <file>`) instead of `build`. The emulators use this to run in the browser *and* compile to a native binary; everything else compiles to a small native binary from a single `.milo` file. They double as integration tests for the standard library — [run any of them yourself](#run-these-yourself).
 
-## Emulators in the browser
+## Emulators — desktop and browser
 
-Three retro-console cores. No plugins — drop a ROM and play.
+Three retro-console cores. Same Milo source runs two ways: native binary on desktop (SDL video/audio/input) or JavaScript in the browser via `milo emit-js`. No plugins — drop a ROM and play.
 
 ### <a href="/milo/nes/" target="_self">NES →</a>
 
