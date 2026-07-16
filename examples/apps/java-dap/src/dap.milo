@@ -1034,12 +1034,8 @@ impl Sess {
                             match self.io.objectGetValues(excId, ids) {
                                 Result.Ok(vals) => {
                                     if vals.len > 0 && vals[0].num != 0 {
-                                        match self.io.stringValue(vals[0].num) {
-                                            Result.Ok(s) => {
-                                                return s
-                                            }
-                                            Result.Err(_e) => {
-                                            }
+                                        if let Result.Ok(s) = self.io.stringValue(vals[0].num) {
+                                            return s
                                         }
                                     }
                                 }
@@ -1157,15 +1153,11 @@ impl Sess {
     }
 
     fn methodNameOf(self: &mut Sess, classId: i64, methodId: i64): string {
-        match self.classMethods(classId) {
-            Result.Ok(methods) => {
-                for m in methods {
-                    if m.methodId == methodId {
-                        return m.name.clone()
-                    }
+        if let Result.Ok(methods) = self.classMethods(classId) {
+            for m in methods {
+                if m.methodId == methodId {
+                    return m.name.clone()
                 }
-            }
-            Result.Err(_e) => {
             }
         }
         return "?"

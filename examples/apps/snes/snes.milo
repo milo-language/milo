@@ -332,13 +332,9 @@ fn main(): i32 {
     var srmPath = ""
     if argv.len >= 2 {
         srmPath = argv[1] + ".srm"
-        match readFile(srmPath) {
-            Result.Ok(data) => {
-                sramFromString(m, data)
-                print("loaded save: " + srmPath)
-            }
-            Result.Err(e) => {
-            }
+        if let Result.Ok(data) = readFile(srmPath) {
+            sramFromString(m, data)
+            print("loaded save: " + srmPath)
         }
     }
 
