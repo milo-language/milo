@@ -16,7 +16,7 @@
 //   ./tmuxdaemon attach       # re-attach — your shell is still there
 
 from "std/pty" import {
-    Pty, openAndSpawn, isInteractive
+    Pty, WinSize, openAndSpawn, isInteractive
 }
 from "./tmuxVt" import {
     Term, newTerm, fullRepaint
@@ -26,6 +26,9 @@ from "std/net" import {
 }
 from "std/select" import {
     Select
+}
+from "std/signal" import {
+    installSignalPipe, drainSignalFd, SIGWINCH
 }
 from "std/term" import {
     enableRawMode, restoreTerminal
@@ -40,7 +43,7 @@ from "std/env" import {
     getEnvOr
 }
 from "std/os" import {
-    read, write, close, acceptFd
+    read, write, close, acceptFd, ioctl
 }
 from "std/platform" import {
     fcntl, fGetfl, fSetfl, oNonblock
@@ -49,8 +52,43 @@ from "std/platform" import {
 let PORT: u16 = 7373
 let PREFIX: u8 = 2 // Ctrl-B
 
+let TIOCSWINSZ: i64 = 2148037735 // 0x80087467 (macOS)
+let RESIZE_MARK: u8 = 30 // 0x1e RS — brackets a "rows;cols" size message
+
 fn setNonblock(fd: i32): void {
     fcntl(fd, fSetfl(), fcntl(fd, fGetfl()) | oNonblock())
+}
+
+// Parse "rows;cols" from a resize control message (digits + one ';').
+fn parseSize(s: &string, out: &mut [i64; 2]): void {
+    out[0] = 0
+    out[1] = 0
+    var seenSemi = false
+    var j: i64 = 0
+    while j < s.len {
+        let ch = s[j]
+        if ch == 59 { // ';'
+            seenSemi = true
+        } else if ch >= 48 && ch <= 57 {
+            let d = (ch - 48) as i64
+            if seenSemi {
+                out[1] = out[1] * 10 + d
+            } else {
+                out[0] = out[0] * 10 + d
+            }
+        }
+        j = j + 1
+    }
+}
+
+// Push the PTY's window size (sends SIGWINCH to the shell so it repaints).
+fn setPtySize(masterFd: i32, rows: i64, cols: i64): void {
+    var ws = WinSize {
+        rows: rows as u16, cols: cols as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
+    unsafe {
+        ioctl(masterFd, TIOCSWINSZ, (ws.addrOf()) as *u8)
+    }
 }
 
 // ── server: hold the shell, relay to whichever client is attached ──
@@ -62,6 +100,9 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
     // (default PTY size 24x80) so a (re)attaching client can be sent the current
     // screen, not just whatever the shell prints next.
     var term = newTerm(24, 80)
+    // resize control framing: a client can send \x1e rows;cols \x1e at any time
+    var ctrlMode = false
+    var ctrlBuf = ""
     var running = true
     while running {
         var sel = Select.new()
@@ -104,15 +145,50 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
             }
         }
 
-        // client input → shell; EOF (== 0) means the client detached/left
+        // client input → shell, minus \x1e-bracketed resize control messages;
+        // EOF (== 0) means the client detached/left
         if clientFd >= 0 {
+            var n: i64 = 0
             unsafe {
-                let n = read(clientFd, buf as *u8, 4096)
-                if n == 0 {
+                n = read(clientFd, buf as *u8, 4096)
+            }
+            if n == 0 {
+                unsafe {
                     close(clientFd)
-                    clientFd = -1
-                } else if n > 0 {
-                    write(pty.masterFd, buf as *u8, n)
+                }
+                clientFd = -1
+            } else if n > 0 {
+                var fwd: [u8; 4096] = [0; 4096]
+                var fwdN: i64 = 0
+                var i: i64 = 0
+                while i < n {
+                    let b = buf[i]
+                    if ctrlMode {
+                        if b == RESIZE_MARK {
+                            var sz: [i64; 2] = [0; 2]
+                            parseSize(ctrlBuf, sz)
+                            if sz[0] > 0 && sz[1] > 0 {
+                                setPtySize(pty.masterFd, sz[0], sz[1])
+                                term = newTerm(sz[0], sz[1]) // shell repaints via SIGWINCH
+                            }
+                            ctrlMode = false
+                            ctrlBuf = ""
+                        } else {
+                            ctrlBuf.push(b)
+                        }
+                    } else if b == RESIZE_MARK {
+                        ctrlMode = true
+                        ctrlBuf = ""
+                    } else {
+                        fwd[fwdN] = b
+                        fwdN = fwdN + 1
+                    }
+                    i = i + 1
+                }
+                if fwdN > 0 {
+                    unsafe {
+                        write(pty.masterFd, fwd as *u8, fwdN)
+                    }
                 }
             }
         }
@@ -154,7 +230,24 @@ fn runServe(): void {
 
 // ── client: relay this terminal to the daemon, detach on Ctrl-B d ──
 
-fn attachLoop(sockFd: i32): void {
+let TIOCGWINSZ: i64 = 1074295912 // 0x40087468 (macOS)
+
+// Tell the daemon our terminal size as a \x1e-bracketed "rows;cols" message,
+// so it can size the PTY + grid to match this client.
+fn sendSize(sockFd: i32): void {
+    var ws = WinSize {
+        rows: 24 as u16, cols: 80 as u16, xpixel: 0 as u16, ypixel: 0 as u16
+    }
+    unsafe {
+        ioctl(1, TIOCGWINSZ, (ws.addrOf()) as *u8)
+    }
+    let msg = $"\x1e{ws.rows as i64};{ws.cols as i64}\x1e"
+    unsafe {
+        write(sockFd, msg as *u8, msg.len)
+    }
+}
+
+fn attachLoop(sockFd: i32, winchFd: i32): void {
     var buf: [u8; 4096] = [0; 4096]
     var one: [u8; 1] = [0; 1]
     var prefixArmed = false
@@ -163,8 +256,24 @@ fn attachLoop(sockFd: i32): void {
         var sel = Select.new()
         sel.onRead(0)
         sel.onRead(sockFd)
+        if winchFd >= 0 {
+            sel.onRead(winchFd)
+        }
         sel.wait()
         sel.destroy()
+
+        // terminal resized → tell the daemon the new size
+        if winchFd >= 0 {
+            var wb: [u8; 1] = [0; 1]
+            var got = false
+            unsafe {
+                got = read(winchFd, wb as *u8, 1) > 0
+            }
+            if got {
+                drainSignalFd(winchFd)
+                sendSize(sockFd)
+            }
+        }
 
         // keyboard → daemon (Ctrl-B d detaches, Ctrl-B Ctrl-B sends a literal)
         unsafe {
@@ -213,9 +322,11 @@ fn runAttach(): void {
             let sockFd = s.take() // own the fd ourselves; close on the way out
             setNonblock(sockFd)
             let termState = enableRawMode()
+            let winchFd = installSignalPipe(SIGWINCH)
             writeStdout("\x1b[2J\x1b[H")
             flush()
-            attachLoop(sockFd)
+            sendSize(sockFd) // negotiate size up front
+            attachLoop(sockFd, winchFd)
             restoreTerminal(termState)
             writeStdout("\x1b[0m\r\n")
             flush()
