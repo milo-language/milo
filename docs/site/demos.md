@@ -8,7 +8,7 @@ last-verified: 2026-07-15
 
 # Showcase
 
-Real programs written in Milo. The compiler is built around **pluggable codegen**: the same front-end feeds any backend. The usual target is LLVM IR (native binaries), but it can also emit JavaScript — pass the `emit-js` subcommand (`milo emit-js <file>`) instead of `build`. The emulators use this to run in the browser *and* compile to a native binary; everything else compiles to a small native binary from a single `.milo` file. They double as integration tests for the standard library — [run any of them yourself](#run-these-yourself).
+Real programs written in Milo. Every one is a single `.milo` file — clone the repo and [run or build any of them yourself](#run-these-yourself) with the `./milo` wrapper. They double as integration tests for the standard library.
 
 ## Emulators — desktop and browser
 
