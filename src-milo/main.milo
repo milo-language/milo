@@ -4,23 +4,54 @@
 //        milo emit-ir <file>
 //        milo check <file>
 
-from "std/io" import { readFile }
-from "std/fs" import { writeFile, pathExists }
-from "std/path" import { pathDirname, pathJoin }
-from "std/env" import { getEnv }
-from "std/process" import { run }
-from "std/args" import { args }
-from "src-milo/tokens.milo" import { Token }
-from "src-milo/lexer.milo" import { Lexer, tokenize }
-from "src-milo/ast.milo" import { Program }
-from "src-milo/parser.milo" import { Parser, newParser, parse }
-from "src-milo/resolver.milo" import { resolveImports }
-from "src-milo/checker/types.milo" import { TypeKind }
-from "src-milo/checker/state.milo" import { Checker, newChecker, hasErrors }
-from "src-milo/checker/stmt.milo" import { checkProgram }
-from "src-milo/codegen/emit.milo" import { buildFnTable, genProgram }
-from "src-milo/target.milo" import { getHostTarget }
-
+from "std/io" import {
+    readFile
+}
+from "std/fs" import {
+    writeFile, pathExists
+}
+from "std/path" import {
+    pathDirname, pathJoin
+}
+from "std/env" import {
+    getEnv
+}
+from "std/process" import {
+    run
+}
+from "std/args" import {
+    args
+}
+from "src-milo/tokens.milo" import {
+    Token
+}
+from "src-milo/lexer.milo" import {
+    Lexer, tokenize
+}
+from "src-milo/ast.milo" import {
+    Program
+}
+from "src-milo/parser.milo" import {
+    Parser, newParser, parse
+}
+from "src-milo/resolver.milo" import {
+    resolveImports
+}
+from "src-milo/checker/types.milo" import {
+    TypeKind
+}
+from "src-milo/checker/state.milo" import {
+    Checker, newChecker, hasErrors
+}
+from "src-milo/checker/stmt.milo" import {
+    checkProgram
+}
+from "src-milo/codegen/emit.milo" import {
+    buildFnTable, genProgram
+}
+from "src-milo/target.milo" import {
+    getHostTarget
+}
 
 // The stdlib root is the directory *containing* `std/` (resolvePath joins it with
 // "std/io.milo"), not `std/` itself. Mirrors src/resolver.ts: MILO_ROOT wins,
@@ -40,8 +71,11 @@ fn tmpPath(stem: &string, ext: &string): string {
 
 fn findStdlibRoot(sourceDir: &string): string {
     match getEnv("MILO_ROOT") {
-        Option.Some(root) => { return root }
-        Option.None => {}
+        Option.Some(root) => {
+            return root
+        }
+        Option.None => {
+        }
     }
     var dir = sourceDir.clone()
     var depth: i64 = 0
@@ -50,7 +84,9 @@ fn findStdlibRoot(sourceDir: &string): string {
             return dir
         }
         let parent = pathDirname(dir.clone())
-        if parent == dir { break }
+        if parent == dir {
+            break
+        }
         dir = parent
         depth = depth + 1
     }
@@ -60,7 +96,9 @@ fn findStdlibRoot(sourceDir: &string): string {
 fn compile(path: string): string {
     var source = ""
     match readFile(path.clone()) {
-        Result.Ok(s) => { source = s }
+        Result.Ok(s) => {
+            source = s
+        }
         Result.Err(e) => {
             eprint("error: cannot read file '" + path + "'")
             exit(1)
@@ -92,7 +130,8 @@ fn compile(path: string): string {
                     Option.Some(s) => {
                         loc = path.clone() + ":" + s.line.toString() + ":" + s.col.toString() + ": "
                     }
-                    Option.None => {}
+                    Option.None => {
+                    }
                 }
                 eprint(loc + "error: " + d.message.clone())
                 if d.hint.len > 0 {
@@ -174,7 +213,9 @@ fn main() {
         // Type-check only, no codegen
         var src = ""
         match readFile(source.clone()) {
-            Result.Ok(s) => { src = s }
+            Result.Ok(s) => {
+                src = s
+            }
             Result.Err(e) => {
                 eprint("error: cannot read file '" + source + "'")
                 exit(1)
@@ -198,7 +239,8 @@ fn main() {
                         Option.Some(sp) => {
                             loc = sp.line.toString() + ":" + sp.col.toString() + ": "
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
                     eprint(loc + "error: " + d.message.clone())
                 }
@@ -234,8 +276,11 @@ fn main() {
         let clangCmd = "clang -Wno-override-module -O2 -o " + output.clone() + " " + irFile + detectLibs(ir, getHostTarget().os)
         var status: i32 = 127
         match run(clangCmd) {
-            Result.Ok(c) => { status = c }
-            Result.Err(e) => {}
+            Result.Ok(c) => {
+                status = c
+            }
+            Result.Err(e) => {
+            }
         }
         if status != 0 {
             eprint("error: clang failed (exit " + status.toString() + ")")
@@ -253,8 +298,11 @@ fn main() {
         let clangCmd = "clang -Wno-override-module -O2 -o " + binary + " " + irFile + detectLibs(ir, getHostTarget().os)
         var status: i32 = 127
         match run(clangCmd) {
-            Result.Ok(c) => { status = c }
-            Result.Err(e) => {}
+            Result.Ok(c) => {
+                status = c
+            }
+            Result.Err(e) => {
+            }
         }
         if status != 0 {
             eprint("error: clang failed")
@@ -273,8 +321,11 @@ fn main() {
         }
         var runStatus: i32 = 127
         match run(binary + childArgs) {
-            Result.Ok(c) => { runStatus = c }
-            Result.Err(e) => {}
+            Result.Ok(c) => {
+                runStatus = c
+            }
+            Result.Err(e) => {
+            }
         }
         exit(runStatus)
     }

@@ -1,6 +1,10 @@
 // Elm-style diagnostic formatting with source context and carets
-from "src-milo/ast.milo" import { Span }
-from "src-milo/checker/state.milo" import { Diagnostic }
+from "src-milo/ast.milo" import {
+    Span
+}
+from "src-milo/checker/state.milo" import {
+    Diagnostic
+}
 
 let RESET = "\x1b[0m"
 let BOLD = "\x1b[1m"
@@ -12,7 +16,9 @@ let DIM = "\x1b[2m"
 fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string {
     var lines: Vec<string> = Vec.new()
     var color = RED
-    if d.severity == "warning" { color = YELLOW }
+    if d.severity == "warning" {
+        color = YELLOW
+    }
 
     match d.span {
         Option.Some(sp) => {
@@ -49,7 +55,9 @@ fn formatDiagnostic(d: &Diagnostic, source: &string, filePath: &string): string 
     // Join with newlines
     var result = ""
     for i in 0..lines.len {
-        if i > 0 { result = result + "\n" }
+        if i > 0 {
+            result = result + "\n"
+        }
         result = result + lines[i].clone()
     }
     return result

@@ -1,27 +1,53 @@
 // Test driver: tokenize a file, dump in canonical format matching TS `milo lex`
-from "src-milo/tokens.milo" import { TokKind, TriviaKind, Trivia, Token, tokKindName }
-from "src-milo/lexer.milo" import { tokenize }
-from "std/io" import { readFile }
-from "std/args" import { args }
+from "src-milo/tokens.milo" import {
+    TokKind, TriviaKind, Trivia, Token, tokKindName
+}
+from "src-milo/lexer.milo" import {
+    tokenize
+}
+from "std/io" import {
+    readFile
+}
+from "std/args" import {
+    args
+}
 
 fn escapeValue(s: &string): string {
     var out: string = ""
     for i in 0..s.len {
         let c = s[i]
-        if c == 10 { out = out + "\\n" }
-        else if c == 9 { out = out + "\\t" }
-        else if c == 13 { out = out + "\\r" }
-        else if c == 0 { out = out + "\\0" }
+        if c == 10 {
+            out = out + "\\n"
+        } 
+        else if c == 9 {
+            out = out + "\\t"
+        } 
+        else if c == 13 {
+            out = out + "\\r"
+        } 
+        else if c == 0 {
+            out = out + "\\0"
+        } 
         else if c < 32 || c == 127 {
             // \xHH for other control chars
             let hi = c / 16
             let lo = c % 16
             var hex: string = "\\x"
-            if hi < 10 { hex.push(hi + 48) } else { hex.push(hi + 87) }
-            if lo < 10 { hex.push(lo + 48) } else { hex.push(lo + 87) }
+            if hi < 10 {
+                hex.push(hi + 48)
+            } else {
+                hex.push(hi + 87)
+            }
+            if lo < 10 {
+                hex.push(lo + 48)
+            } else {
+                hex.push(lo + 87)
+            }
             out = out + hex
+        } 
+        else {
+            out.push(c)
         }
-        else { out.push(c) }
     }
     return out
 }
@@ -29,7 +55,9 @@ fn escapeValue(s: &string): string {
 fn printTrivia(trivia: &Vec<Trivia>, prefix: &string) {
     for i in 0..trivia.len {
         let t = trivia[i]
-        if t.kind is TriviaKind.Blank {
+        if t.kind
+        is
+        TriviaKind.Blank {
             print($"L_BLANK\t\t{t.line}")
         } else {
             print($"{prefix}\t{escapeValue(t.text)}\t{t.line}")

@@ -1,6 +1,10 @@
 // Host platform detection and target triple resolution
-from "std/process" import { capture }
-from "std/string" import { trim }
+from "std/process" import {
+    capture
+}
+from "std/string" import {
+    trim
+}
 
 struct TargetInfo {
     triple: string,
@@ -13,13 +17,19 @@ fn getHostTarget(): TargetInfo {
     // std/process no longer exposes platform()/arch(); shell out to uname instead
     var os = ""
     match capture("uname -s") {
-        Result.Ok(s) => { os = trim(s) }
-        Result.Err(e) => {}
+        Result.Ok(s) => {
+            os = trim(s)
+        }
+        Result.Err(e) => {
+        }
     }
     var cpu = ""
     match capture("uname -m") {
-        Result.Ok(s) => { cpu = trim(s) }
-        Result.Err(e) => {}
+        Result.Ok(s) => {
+            cpu = trim(s)
+        }
+        Result.Err(e) => {
+        }
     }
 
     var osStr = "linux"

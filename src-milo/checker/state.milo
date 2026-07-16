@@ -1,11 +1,15 @@
 // Checker state — scopes, variable info, diagnostic tracking, type tables
-from "src-milo/ast.milo" import { Span, Function, StructDecl, EnumDecl, Program, Stmt, ImplDecl }
-from "src-milo/checker/types.milo" import { TypeKind, typeEq, typeName, tyVoid, isCopy }
+from "src-milo/ast.milo" import {
+    Span, Function, StructDecl, EnumDecl, Program, Stmt, ImplDecl
+}
+from "src-milo/checker/types.milo" import {
+    TypeKind, typeEq, typeName, tyVoid, isCopy
+}
 
 // -- Diagnostics --
 
 struct Diagnostic {
-    severity: string,  // "error" or "warning"
+    severity: string, // "error" or "warning"
     message: string,
     hint: string,
     span: Option<Span>,
@@ -183,7 +187,8 @@ fn error(ck: &mut Checker, msg: string, span: Option<Span>) {
         message: msg,
         hint: "",
         span: span,
-    })
+    }
+    )
 }
 
 fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
@@ -192,7 +197,8 @@ fn errorHint(ck: &mut Checker, msg: string, hint: string, span: Option<Span>) {
         message: msg,
         hint: hint,
         span: span,
-    })
+    }
+    )
 }
 
 fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
@@ -201,7 +207,8 @@ fn warn(ck: &mut Checker, msg: string, span: Option<Span>) {
         message: msg,
         hint: "",
         span: span,
-    })
+    }
+    )
 }
 
 // -- Scope management --
@@ -242,7 +249,8 @@ fn setVarMoved(ck: &mut Checker, name: &string, moved: bool) {
                     updated.moved = moved
                     ck.scopes[i].insert(name.clone(), updated)
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
             return
         }
@@ -260,7 +268,8 @@ fn setVarRead(ck: &mut Checker, name: &string) {
                     updated.read = true
                     ck.scopes[i].insert(name.clone(), updated)
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
             return
         }
@@ -272,7 +281,9 @@ fn setVarRead(ck: &mut Checker, name: &string) {
 
 fn hasErrors(ck: &Checker): bool {
     for i in 0..ck.diagnostics.len {
-        if ck.diagnostics[i].severity == "error" { return true }
+        if ck.diagnostics[i].severity == "error" {
+            return true
+        }
     }
     return false
 }
@@ -281,7 +292,9 @@ fn hasErrors(ck: &Checker): bool {
 
 impl Clone for FnParam {
     fn clone(self: &Self): Self {
-        return FnParam { name: self.name.clone(), ty: self.ty.clone() }
+        return FnParam {
+            name: self.name.clone(), ty: self.ty.clone()
+        }
     }
 }
 
@@ -291,7 +304,9 @@ impl Clone for FnSig {
         for i in 0..self.params.len {
             params.push(self.params[i].clone())
         }
-        return FnSig { params: params, ret: self.ret.clone(), variadic: self.variadic, isExtern: self.isExtern }
+        return FnSig {
+            params: params, ret: self.ret.clone(), variadic: self.variadic, isExtern: self.isExtern
+        }
     }
 }
 
@@ -302,7 +317,9 @@ impl Clone for FnSig {
 fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
     match t {
         TypeKind.TStruct(name) => {
-            if ck.enums.contains(name) { return TypeKind.TEnum(name.clone()) }
+            if ck.enums.contains(name) {
+                return TypeKind.TEnum(name.clone())
+            }
             return t.clone()
         }
         TypeKind.TRef(inner, m) => {
@@ -320,8 +337,11 @@ fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
         TypeKind.TArray(elem, size) => {
             var sz: Option<i64> = Option.None
             match size {
-                Option.Some(n) => { sz = Option.Some(n) }
-                Option.None => {}
+                Option.Some(n) => {
+                    sz = Option.Some(n)
+                }
+                Option.None => {
+                }
             }
             return TypeKind.TArray(Heap(normalizeEnumNames(ck, *elem)), sz)
         }
@@ -330,13 +350,16 @@ fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
         // against a closure whose own type resolved the name to TEnum.
         TypeKind.TFn(params, ret) => {
             var nps: Vec<TypeKind> = Vec.new()
-            for i in 0..params.len { nps.push(normalizeEnumNames(ck, params[i])) }
+            for i in 0..params.len {
+                nps.push(normalizeEnumNames(ck, params[i]))
+            }
             return TypeKind.TFn(nps, Heap(normalizeEnumNames(ck, *ret)))
         }
-        _ => { return t.clone() }
+        _ => {
+            return t.clone()
+        }
     }
 }
-
 
 // -- Branch-terminating move merges --
 
@@ -344,10 +367,18 @@ fn normalizeEnumNames(ck: &Checker, t: &TypeKind): TypeKind {
 // moves must not poison the code after the branch (flow-insensitive walk).
 fn stmtTerminates(s: &Stmt): bool {
     match s {
-        Stmt.BreakStmt(sp) => { return true }
-        Stmt.ContinueStmt(sp) => { return true }
-        Stmt.Return(v, sp) => { return true }
-        _ => { return false }
+        Stmt.BreakStmt(sp) => {
+            return true
+        }
+        Stmt.ContinueStmt(sp) => {
+            return true
+        }
+        Stmt.Return(v, sp) => {
+            return true
+        }
+        _ => {
+            return false
+        }
     }
 }
 
@@ -373,7 +404,8 @@ fn restoreMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
                     updated.moved = moved
                     ck.scopes[i].insert(name.clone(), updated)
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
         i = i + 1
@@ -393,7 +425,8 @@ fn orMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
                         updated.moved = true
                         ck.scopes[i].insert(name.clone(), updated)
                     }
-                    Option.None => {}
+                    Option.None => {
+                    }
                 }
             }
         }
@@ -405,26 +438,38 @@ fn orMoves(ck: &mut Checker, snap: &Vec<HashMap<string, bool>>) {
 // oracle's isAllCopyEnum/isAllCopyStruct): an Option<Span> never moves.
 // Recursion terminates because recursive types go through Heap (not Copy).
 fn isCopyCk(ck: &Checker, t: &TypeKind): bool {
-    if isCopy(t) { return true }
+    if isCopy(t) {
+        return true
+    }
     match t {
         TypeKind.TEnum(name) => {
-            if !ck.enums.contains(name) { return false }
+            if !ck.enums.contains(name) {
+                return false
+            }
             let info = ck.enums.get(name)!
             for vn, vi in info.variants {
                 for i in 0..vi.fields.len {
-                    if !isCopyCk(ck, vi.fields[i]) { return false }
+                    if !isCopyCk(ck, vi.fields[i]) {
+                        return false
+                    }
                 }
             }
             return true
         }
         TypeKind.TStruct(name) => {
-            if !ck.structs.contains(name) { return false }
+            if !ck.structs.contains(name) {
+                return false
+            }
             let info = ck.structs.get(name)!
             for i in 0..info.fields.len {
-                if !isCopyCk(ck, info.fields[i].ty) { return false }
+                if !isCopyCk(ck, info.fields[i].ty) {
+                    return false
+                }
             }
             return true
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }

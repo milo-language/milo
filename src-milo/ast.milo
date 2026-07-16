@@ -240,16 +240,23 @@ struct Program {
 
 fn cloneSpan(sp: &Option<Span>): Option<Span> {
     match sp {
-        Option.Some(s) => { return Option.Some(s) }
-        Option.None => { return Option.None }
+        Option.Some(s) => {
+            return Option.Some(s)
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
 fn cloneGlobal(g: &GlobalDecl): GlobalDecl {
     var ty: Option<MiloType> = Option.None
     match g.ty {
-        Option.Some(t) => { ty = Option.Some(t.clone()) }
-        Option.None => {}
+        Option.Some(t) => {
+            ty = Option.Some(t.clone())
+        }
+        Option.None => {
+        }
     }
     return GlobalDecl {
         name: g.name.clone(),
@@ -262,15 +269,23 @@ fn cloneGlobal(g: &GlobalDecl): GlobalDecl {
 
 fn cloneOptI64(o: &Option<i64>): Option<i64> {
     match o {
-        Option.Some(n) => { return Option.Some(n) }
-        Option.None => { return Option.None }
+        Option.Some(n) => {
+            return Option.Some(n)
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
 fn cloneOptString(o: &Option<string>): Option<string> {
     match o {
-        Option.Some(s) => { return Option.Some(s.clone()) }
-        Option.None => { return Option.None }
+        Option.Some(s) => {
+            return Option.Some(s.clone())
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
@@ -308,15 +323,23 @@ fn cloneStmts(v: &Vec<Heap<Stmt>>): Vec<Heap<Stmt>> {
 
 fn cloneOptStmts(o: &Option<Vec<Heap<Stmt>>>): Option<Vec<Heap<Stmt>>> {
     match o {
-        Option.Some(v) => { return Option.Some(cloneStmts(v)) }
-        Option.None => { return Option.None }
+        Option.Some(v) => {
+            return Option.Some(cloneStmts(v))
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
 fn cloneOptType(o: &Option<MiloType>): Option<MiloType> {
     match o {
-        Option.Some(t) => { return Option.Some(t.clone()) }
-        Option.None => { return Option.None }
+        Option.Some(t) => {
+            return Option.Some(t.clone())
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
@@ -324,8 +347,11 @@ impl Clone for MiloType {
     fn clone(self: &Self): Self {
         var fnRet: Option<Heap<MiloType>> = Option.None
         match self.fnRet {
-            Option.Some(r) => { fnRet = Option.Some(Heap((*r).clone())) }
-            Option.None => {}
+            Option.Some(r) => {
+                fnRet = Option.Some(Heap((*r).clone()))
+            }
+            Option.None => {
+            }
         }
         return MiloType {
             name: self.name.clone(),
@@ -344,31 +370,41 @@ impl Clone for MiloType {
 
 impl Clone for Param {
     fn clone(self: &Self): Self {
-        return Param { name: self.name.clone(), ty: self.ty.clone() }
+        return Param {
+            name: self.name.clone(), ty: self.ty.clone()
+        }
     }
 }
 
 impl Clone for StructField {
     fn clone(self: &Self): Self {
-        return StructField { name: self.name.clone(), ty: self.ty.clone() }
+        return StructField {
+            name: self.name.clone(), ty: self.ty.clone()
+        }
     }
 }
 
 impl Clone for TypeParam {
     fn clone(self: &Self): Self {
-        return TypeParam { name: self.name.clone(), bounds: cloneStrings(self.bounds) }
+        return TypeParam {
+            name: self.name.clone(), bounds: cloneStrings(self.bounds)
+        }
     }
 }
 
 impl Clone for Attribute {
     fn clone(self: &Self): Self {
-        return Attribute { name: self.name.clone(), args: cloneStrings(self.args) }
+        return Attribute {
+            name: self.name.clone(), args: cloneStrings(self.args)
+        }
     }
 }
 
 impl Clone for StructLitField {
     fn clone(self: &Self): Self {
-        return StructLitField { name: self.name.clone(), value: Heap((*self.value).clone()) }
+        return StructLitField {
+            name: self.name.clone(), value: Heap((*self.value).clone())
+        }
     }
 }
 
@@ -381,7 +417,9 @@ impl Clone for Pattern {
             Pattern.LiteralPattern(value, kind, span) => {
                 return Pattern.LiteralPattern(value.clone(), kind, cloneSpan(span))
             }
-            Pattern.WildcardPattern(span) => { return Pattern.WildcardPattern(cloneSpan(span)) }
+            Pattern.WildcardPattern(span) => {
+                return Pattern.WildcardPattern(cloneSpan(span))
+            }
         }
     }
 }
@@ -389,12 +427,24 @@ impl Clone for Pattern {
 impl Clone for Expr {
     fn clone(self: &Self): Self {
         match self {
-            Expr.IntLit(val, span) => { return Expr.IntLit(val, cloneSpan(span)) }
-            Expr.FloatLit(val, span) => { return Expr.FloatLit(val, cloneSpan(span)) }
-            Expr.BoolLit(val, span) => { return Expr.BoolLit(val, cloneSpan(span)) }
-            Expr.StringLit(val, span) => { return Expr.StringLit(val.clone(), cloneSpan(span)) }
-            Expr.CharLit(val, span) => { return Expr.CharLit(val, cloneSpan(span)) }
-            Expr.Ident(name, span) => { return Expr.Ident(name.clone(), cloneSpan(span)) }
+            Expr.IntLit(val, span) => {
+                return Expr.IntLit(val, cloneSpan(span))
+            }
+            Expr.FloatLit(val, span) => {
+                return Expr.FloatLit(val, cloneSpan(span))
+            }
+            Expr.BoolLit(val, span) => {
+                return Expr.BoolLit(val, cloneSpan(span))
+            }
+            Expr.StringLit(val, span) => {
+                return Expr.StringLit(val.clone(), cloneSpan(span))
+            }
+            Expr.CharLit(val, span) => {
+                return Expr.CharLit(val, cloneSpan(span))
+            }
+            Expr.Ident(name, span) => {
+                return Expr.Ident(name.clone(), cloneSpan(span))
+            }
             Expr.BinOp(op, left, right, span) => {
                 return Expr.BinOp(op.clone(), Heap((*left).clone()), Heap((*right).clone()), cloneSpan(span))
             }
@@ -421,7 +471,9 @@ impl Clone for Expr {
             Expr.FieldAccess(obj, field, span) => {
                 return Expr.FieldAccess(Heap((*obj).clone()), field.clone(), cloneSpan(span))
             }
-            Expr.ArrayLit(elems, span) => { return Expr.ArrayLit(cloneExprs(elems), cloneSpan(span)) }
+            Expr.ArrayLit(elems, span) => {
+                return Expr.ArrayLit(cloneExprs(elems), cloneSpan(span))
+            }
             Expr.ArrayRepeat(value, count, span) => {
                 return Expr.ArrayRepeat(Heap((*value).clone()), count, cloneSpan(span))
             }
@@ -431,8 +483,12 @@ impl Clone for Expr {
             Expr.EnumLit(enumName, variant, args, span) => {
                 return Expr.EnumLit(enumName.clone(), variant.clone(), cloneExprs(args), cloneSpan(span))
             }
-            Expr.Unwrap(operand, span) => { return Expr.Unwrap(Heap((*operand).clone()), cloneSpan(span)) }
-            Expr.Propagate(operand, span) => { return Expr.Propagate(Heap((*operand).clone()), cloneSpan(span)) }
+            Expr.Unwrap(operand, span) => {
+                return Expr.Unwrap(Heap((*operand).clone()), cloneSpan(span))
+            }
+            Expr.Propagate(operand, span) => {
+                return Expr.Propagate(Heap((*operand).clone()), cloneSpan(span))
+            }
             Expr.DefaultValue(operand, default, span) => {
                 return Expr.DefaultValue(Heap((*operand).clone()), Heap((*default).clone()), cloneSpan(span))
             }
@@ -464,7 +520,9 @@ impl Clone for Expr {
 
 impl Clone for MatchArm {
     fn clone(self: &Self): Self {
-        return MatchArm { pattern: self.pattern.clone(), body: cloneStmts(self.body) }
+        return MatchArm {
+            pattern: self.pattern.clone(), body: cloneStmts(self.body)
+        }
     }
 }
 
@@ -483,8 +541,11 @@ impl Clone for Stmt {
             Stmt.Return(value, span) => {
                 var v: Option<Heap<Expr>> = Option.None
                 match value {
-                    Option.Some(e) => { v = Option.Some(Heap((*e).clone())) }
-                    Option.None => {}
+                    Option.Some(e) => {
+                        v = Option.Some(Heap((*e).clone()))
+                    }
+                    Option.None => {
+                    }
                 }
                 return Stmt.Return(v, cloneSpan(span))
             }
@@ -504,8 +565,12 @@ impl Clone for Stmt {
                 }
                 return Stmt.MatchStmt(Heap((*subject).clone()), armsOut, cloneSpan(span))
             }
-            Stmt.BreakStmt(span) => { return Stmt.BreakStmt(cloneSpan(span)) }
-            Stmt.ContinueStmt(span) => { return Stmt.ContinueStmt(cloneSpan(span)) }
+            Stmt.BreakStmt(span) => {
+                return Stmt.BreakStmt(cloneSpan(span))
+            }
+            Stmt.ContinueStmt(span) => {
+                return Stmt.ContinueStmt(cloneSpan(span))
+            }
             Stmt.IfLetStmt(pattern, subject, thenBody, elseBody, span) => {
                 return Stmt.IfLetStmt(Heap((*pattern).clone()), Heap((*subject).clone()), cloneStmts(thenBody), cloneOptStmts(elseBody), cloneSpan(span))
             }
@@ -533,13 +598,17 @@ impl Clone for StructDecl {
         for i in 0..self.attributes.len {
             attributes.push(self.attributes[i].clone())
         }
-        return StructDecl { name: self.name.clone(), typeParams: typeParams, fields: fields, attributes: attributes }
+        return StructDecl {
+            name: self.name.clone(), typeParams: typeParams, fields: fields, attributes: attributes
+        }
     }
 }
 
 impl Clone for EnumVariant {
     fn clone(self: &Self): Self {
-        return EnumVariant { name: self.name.clone(), fields: cloneTypes(self.fields) }
+        return EnumVariant {
+            name: self.name.clone(), fields: cloneTypes(self.fields)
+        }
     }
 }
 
@@ -557,7 +626,9 @@ impl Clone for EnumDecl {
         for i in 0..self.attributes.len {
             attributes.push(self.attributes[i].clone())
         }
-        return EnumDecl { name: self.name.clone(), typeParams: typeParams, variants: variants, attributes: attributes }
+        return EnumDecl {
+            name: self.name.clone(), typeParams: typeParams, variants: variants, attributes: attributes
+        }
     }
 }
 
@@ -603,8 +674,12 @@ impl Clone for TraitMethod {
     fn clone(self: &Self): Self {
         var body: Option<Vec<Heap<Stmt>>> = Option.None
         match self.body {
-            Option.Some(b) => { body = Option.Some(cloneStmts(b)) }
-            Option.None => { body = Option.None }
+            Option.Some(b) => {
+                body = Option.Some(cloneStmts(b))
+            }
+            Option.None => {
+                body = Option.None
+            }
         }
         return TraitMethod {
             name: self.name.clone(),
@@ -640,8 +715,12 @@ impl Clone for ImplDecl {
     fn clone(self: &Self): Self {
         var traitName: Option<string> = Option.None
         match self.traitName {
-            Option.Some(n) => { traitName = Option.Some(n.clone()) }
-            Option.None => { traitName = Option.None }
+            Option.Some(n) => {
+                traitName = Option.Some(n.clone())
+            }
+            Option.None => {
+                traitName = Option.None
+            }
         }
         var methods: Vec<Function> = Vec.new()
         for i in 0..self.methods.len {

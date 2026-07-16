@@ -13,9 +13,15 @@ from "src-milo/checker/state.milo" import {
     Diagnostic, error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
     normalizeEnumNames, stmtTerminates, snapshotMoves, restoreMoves, orMoves,
 }
-from "src-milo/checker/expr.milo" import { intCoercible, arrayIntCoercible, checkExpr, tryMove, isRootMutable, deref }
-from "src-milo/checker/traits.milo" import { registerBuiltinTraits, registerAllImpls, synthesizeDefaultMethods, processDerives, typeImplementsTrait, resolveMethod }
-from "src-milo/checker/mono.milo" import { registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum }
+from "src-milo/checker/expr.milo" import {
+    intCoercible, arrayIntCoercible, checkExpr, tryMove, isRootMutable, deref
+}
+from "src-milo/checker/traits.milo" import {
+    registerBuiltinTraits, registerAllImpls, synthesizeDefaultMethods, processDerives, typeImplementsTrait, resolveMethod
+}
+from "src-milo/checker/mono.milo" import {
+    registerGenericFn, registerGenericStruct, registerGenericEnum, monomorphizeFn, monomorphizeStruct, monomorphizeEnum
+}
 
 // -- Statement checker --
 
@@ -86,16 +92,19 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
             hint = resolveAstType(ck, ty)
             hasHint = true
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
-    if hasHint { ck.expectedType = Option.Some(hint.clone()) }
+    if hasHint {
+        ck.expectedType = Option.Some(hint.clone())
+    }
     var valType = checkExpr(ck, value)
     ck.expectedType = Option.None
 
     if hasHint {
         if !typeEq(hint, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(hint, valType, value) &&
-            !arrayIntCoercible(hint, valType) && !arrayToVecCoercible(hint, valType) &&
-            !optionIntWrapCoercible(ck, hint, valType) && !interfaceCoercible(ck, hint, valType) {
+        !arrayIntCoercible(hint, valType) && !arrayToVecCoercible(hint, valType) &&
+        !optionIntWrapCoercible(ck, hint, valType) && !interfaceCoercible(ck, hint, valType) {
             error(ck, "type mismatch: '" + name.clone() + "' declared as " + typeName(hint) + " but got " + typeName(valType), cloneSpan(span))
         }
         valType = hint
@@ -108,7 +117,8 @@ fn checkLetDecl(ck: &mut Checker, name: &string, typeAnno: &Option<MiloType>, va
         borrowed: false,
         read: false,
         span: cloneSpan(span),
-    })
+    }
+    )
     tryMove(ck, value)
 }
 
@@ -127,15 +137,21 @@ fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span
     match target {
         Expr.Ident(name, tspan) => {
             match lookup(ck, name) {
-                Option.Some(v) => { targetType = deref(v.ty) }
-                Option.None => { error(ck, "undefined variable '" + name.clone() + "'", cloneSpan(span)) }
+                Option.Some(v) => {
+                    targetType = deref(v.ty)
+                }
+                Option.None => {
+                    error(ck, "undefined variable '" + name.clone() + "'", cloneSpan(span))
+                }
             }
         }
-        _ => { targetType = checkExpr(ck, target) }
+        _ => {
+            targetType = checkExpr(ck, target)
+        }
     }
     let valType = checkExpr(ck, value)
     if !typeEq(targetType, valType) && !typeEq(valType, tyUnknown()) && !intCoercible(targetType, valType, value) &&
-        !optionIntWrapCoercible(ck, targetType, valType) {
+    !optionIntWrapCoercible(ck, targetType, valType) {
         error(ck, "type mismatch: cannot assign " + typeName(valType) + " to " + typeName(targetType), cloneSpan(span))
     }
 
@@ -144,7 +160,8 @@ fn checkAssign(ck: &mut Checker, target: &Expr, value: &Expr, span: &Option<Span
         Expr.Ident(name, tspan) => {
             setVarMoved(ck, name, false)
         }
-        _ => {}
+        _ => {
+        }
     }
     tryMove(ck, value)
 }
@@ -157,7 +174,9 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
             ck.inReturn = true
             // expose the declared return type so a bare generic struct/enum literal
             // (`return HashSet { … }` in setNew<T>) resolves to the right instance
-            if !typeEq(fnRetType, tyUnknown()) { ck.expectedType = Option.Some(fnRetType.clone()) }
+            if !typeEq(fnRetType, tyUnknown()) {
+                ck.expectedType = Option.Some(fnRetType.clone())
+            }
             let valType = checkExpr(ck, *expr)
             ck.expectedType = Option.None
             ck.inReturn = false
@@ -167,7 +186,7 @@ fn checkReturn(ck: &mut Checker, value: &Option<Heap<Expr>>, fnRetType: &TypeKin
                 ck.pendingClosureRet = Option.Some(valType.clone())
             }
             if !typeEq(fnRetType, valType) && !typeEq(valType, tyUnknown()) && !typeEq(fnRetType, tyUnknown())
-                && !intCoercible(fnRetType, valType, *expr) && !interfaceCoercible(ck, fnRetType, valType) {
+            && !intCoercible(fnRetType, valType, *expr) && !interfaceCoercible(ck, fnRetType, valType) {
                 error(ck, "return type mismatch: expected " + typeName(fnRetType) + ", got " + typeName(valType), cloneSpan(span))
             }
             // Deliberately no tryMove here: this checker is flow-insensitive, so
@@ -202,7 +221,9 @@ fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: 
     }
     popScope(ck)
     var thenTerm = false
-    if thenBody.len > 0 { thenTerm = stmtTerminates(*thenBody[thenBody.len - 1]) }
+    if thenBody.len > 0 {
+        thenTerm = stmtTerminates(*thenBody[thenBody.len - 1])
+    }
     let afterThen = snapshotMoves(ck)
     restoreMoves(ck, preSnap)
 
@@ -214,12 +235,19 @@ fn checkIf(ck: &mut Checker, cond: &Expr, thenBody: &Vec<Heap<Stmt>>, elseBody: 
             }
             popScope(ck)
             var elseTerm = false
-            if body.len > 0 { elseTerm = stmtTerminates(*body[body.len - 1]) }
-            if elseTerm { restoreMoves(ck, preSnap) }
+            if body.len > 0 {
+                elseTerm = stmtTerminates(*body[body.len - 1])
+            }
+            if elseTerm {
+                restoreMoves(ck, preSnap)
+            }
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
-    if !thenTerm { orMoves(ck, afterThen) }
+    if !thenTerm {
+        orMoves(ck, afterThen)
+    }
 }
 
 // -- While statement --
@@ -255,12 +283,16 @@ fn checkMatch(ck: &mut Checker, subject: &Expr, arms: &Vec<MatchArm>, fnRetType:
         checkMatchArm(ck, arms[i], subjType, fnRetType)
         armSnaps.push(snapshotMoves(ck))
         var term = false
-        if arms[i].body.len > 0 { term = stmtTerminates(*arms[i].body[arms[i].body.len - 1]) }
+        if arms[i].body.len > 0 {
+            term = stmtTerminates(*arms[i].body[arms[i].body.len - 1])
+        }
         armTerms.push(term)
     }
     restoreMoves(ck, preSnap)
     for i in 0..armSnaps.len {
-        if !armTerms[i] { orMoves(ck, armSnaps[i]) }
+        if !armTerms[i] {
+            orMoves(ck, armSnaps[i])
+        }
     }
 }
 
@@ -286,7 +318,8 @@ fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetTyp
                                         borrowed: false,
                                         read: false,
                                         span: cloneSpan(pspan),
-                                    })
+                                    }
+                                    )
                                 }
                                 k = k + 1
                             }
@@ -300,8 +333,10 @@ fn checkMatchArm(ck: &mut Checker, arm: &MatchArm, subjType: &TypeKind, fnRetTyp
                 }
             }
         }
-        Pattern.LiteralPattern(value, kind, pspan) => {}
-        Pattern.WildcardPattern(pspan) => {}
+        Pattern.LiteralPattern(value, kind, pspan) => {
+        }
+        Pattern.WildcardPattern(pspan) => {
+        }
     }
 
     // Check arm body
@@ -338,17 +373,20 @@ fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<H
                                         borrowed: false,
                                         read: false,
                                         span: cloneSpan(pspan),
-                                    })
+                                    }
+                                    )
                                 }
                                 k = k + 1
                             }
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
         }
-        _ => {}
+        _ => {
+        }
     }
 
     for s in thenBody {
@@ -364,7 +402,8 @@ fn checkIfLet(ck: &mut Checker, pattern: &Pattern, expr: &Expr, thenBody: &Vec<H
             }
             popScope(ck)
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
 }
 
@@ -389,12 +428,16 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
                 TypeKind.TInt(bitsA, signedA) => {
                     match endType {
                         TypeKind.TInt(bitsB, signedB) => {
-                            if bitsB > bitsA { varType = endType.clone() }
+                            if bitsB > bitsA {
+                                varType = endType.clone()
+                            }
                         }
-                        _ => {}
+                        _ => {
+                        }
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
 
             pushScope(ck)
@@ -405,7 +448,8 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
                 borrowed: false,
                 read: false,
                 span: cloneSpan(span),
-            })
+            }
+            )
             ck.loopDepth = ck.loopDepth + 1
             for s in body {
                 checkStmt(ck, *s, fnRetType)
@@ -414,7 +458,8 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
             popScope(ck)
             return
         }
-        _ => {}
+        _ => {
+        }
     }
 
     let iterType = checkExpr(ck, iterable)
@@ -428,11 +473,20 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
             let elemRef = TypeKind.TRef(Heap(elem.clone()), false)
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, varName.clone(), VarInfo { ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
-                    declare(ck, name2.clone(), VarInfo { ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    declare(ck, varName.clone(), VarInfo {
+                        ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
+                    declare(ck, name2.clone(), VarInfo {
+                        ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
                 }
                 Option.None => {
-                    declare(ck, varName.clone(), VarInfo { ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    declare(ck, varName.clone(), VarInfo {
+                        ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
                 }
             }
         }
@@ -440,34 +494,59 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
             let byteType = tyU8()
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, varName.clone(), VarInfo { ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
-                    declare(ck, name2.clone(), VarInfo { ty: byteType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    declare(ck, varName.clone(), VarInfo {
+                        ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
+                    declare(ck, name2.clone(), VarInfo {
+                        ty: byteType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
                 }
                 Option.None => {
-                    declare(ck, varName.clone(), VarInfo { ty: byteType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    declare(ck, varName.clone(), VarInfo {
+                        ty: byteType, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
                 }
             }
         }
         TypeKind.THashMap(key, val) => {
             let keyRef = TypeKind.TRef(Heap(key.clone()), false)
             let valRef = TypeKind.TRef(Heap(val.clone()), false)
-            declare(ck, varName.clone(), VarInfo { ty: keyRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+            declare(ck, varName.clone(), VarInfo {
+                ty: keyRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+            }
+            )
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, name2.clone(), VarInfo { ty: valRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    declare(ck, name2.clone(), VarInfo {
+                        ty: valRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
         TypeKind.TArray(elem, size) => {
             let elemRef = TypeKind.TRef(Heap(elem.clone()), false)
             match varName2 {
                 Option.Some(name2) => {
-                    declare(ck, varName.clone(), VarInfo { ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
-                    declare(ck, name2.clone(), VarInfo { ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    declare(ck, varName.clone(), VarInfo {
+                        ty: tyI64(), mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
+                    declare(ck, name2.clone(), VarInfo {
+                        ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
                 }
                 Option.None => {
-                    declare(ck, varName.clone(), VarInfo { ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                    declare(ck, varName.clone(), VarInfo {
+                        ty: elemRef, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                    }
+                    )
                 }
             }
         }
@@ -478,11 +557,16 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
             for ii in 0..ck.structInsts.len {
                 if ck.structInsts[ii].mangled == sname && ck.structInsts[ii].base == "Channel" {
                     isChan = true
-                    if ck.structInsts[ii].args.len > 0 { elemTy = ck.structInsts[ii].args[0].clone() }
+                    if ck.structInsts[ii].args.len > 0 {
+                        elemTy = ck.structInsts[ii].args[0].clone()
+                    }
                 }
             }
             if isChan {
-                declare(ck, varName.clone(), VarInfo { ty: elemTy, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                declare(ck, varName.clone(), VarInfo {
+                    ty: elemTy, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                }
+                )
             } else {
                 var iterElem: Option<TypeKind> = Option.None
                 if ck.inherentImpls.contains(sname) {
@@ -493,7 +577,10 @@ fn checkForIn(ck: &mut Checker, varName: &string, varName2: &Option<string>, ite
                 }
                 match iterElem {
                     Option.Some(t) => {
-                        declare(ck, varName.clone(), VarInfo { ty: t, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span) })
+                        declare(ck, varName.clone(), VarInfo {
+                            ty: t, mutable: false, moved: false, borrowed: false, read: false, span: cloneSpan(span)
+                        }
+                        )
                     }
                     Option.None => {
                         error(ck, "cannot iterate over type '" + sname.clone() + "'", cloneSpan(span))
@@ -529,8 +616,11 @@ fn checkFunction(ck: &mut Checker, func: &Function) {
         // a &mut param makes the pointee assignable through the ref
         var pMut = false
         match pType.clone() {
-            TypeKind.TRef(inner, m) => { pMut = m }
-            _ => {}
+            TypeKind.TRef(inner, m) => {
+                pMut = m
+            }
+            _ => {
+            }
         }
         declare(ck, param.name.clone(), VarInfo {
             ty: pType,
@@ -539,7 +629,8 @@ fn checkFunction(ck: &mut Checker, func: &Function) {
             borrowed: false,
             read: false,
             span: Option.None,
-        })
+        }
+        )
     }
 
     // Check body
@@ -558,7 +649,8 @@ fn registerFunction(ck: &mut Checker, func: &Function) {
         params.push(FnParam {
             name: param.name.clone(),
             ty: resolveAstType(ck, param.ty),
-        })
+        }
+        )
     }
     let sig = FnSig {
         params: params,
@@ -575,7 +667,8 @@ fn registerStruct(ck: &mut Checker, decl: &StructDecl) {
         fields.push(CkStructField {
             name: field.name.clone(),
             ty: resolveAstType(ck, field.ty),
-        })
+        }
+        )
     }
     let info = StructInfo {
         fields: fields,
@@ -595,7 +688,8 @@ fn registerEnum(ck: &mut Checker, decl: &EnumDecl) {
         variants.insert(decl.variants[i].name.clone(), VariantInfo {
             tag: i as i32,
             fields: fields,
-        })
+        }
+        )
         i = i + 1
     }
     let info = EnumInfo {
@@ -611,33 +705,56 @@ fn registerBuiltinGenericEnums(ck: &mut Checker) {
     var someFields: Vec<MiloType> = Vec.new()
     someFields.push(simpleType("T"))
     var optVariants: Vec<EnumVariant> = Vec.new()
-    optVariants.push(EnumVariant { name: "Some", fields: someFields })
-    optVariants.push(EnumVariant { name: "None", fields: Vec.new() })
+    optVariants.push(EnumVariant {
+        name: "Some", fields: someFields
+    }
+    )
+    optVariants.push(EnumVariant {
+        name: "None", fields: Vec.new()
+    }
+    )
     var optParams: Vec<TypeParam> = Vec.new()
-    optParams.push(TypeParam { name: "T", bounds: Vec.new() })
+    optParams.push(TypeParam {
+        name: "T", bounds: Vec.new()
+    }
+    )
     registerGenericEnum(ck, EnumDecl {
         name: "Option",
         typeParams: optParams,
         variants: optVariants,
         attributes: Vec.new(),
-    })
+    }
+    )
 
     var okFields: Vec<MiloType> = Vec.new()
     okFields.push(simpleType("T"))
     var errFields: Vec<MiloType> = Vec.new()
     errFields.push(simpleType("E"))
     var resVariants: Vec<EnumVariant> = Vec.new()
-    resVariants.push(EnumVariant { name: "Ok", fields: okFields })
-    resVariants.push(EnumVariant { name: "Err", fields: errFields })
+    resVariants.push(EnumVariant {
+        name: "Ok", fields: okFields
+    }
+    )
+    resVariants.push(EnumVariant {
+        name: "Err", fields: errFields
+    }
+    )
     var resParams: Vec<TypeParam> = Vec.new()
-    resParams.push(TypeParam { name: "T", bounds: Vec.new() })
-    resParams.push(TypeParam { name: "E", bounds: Vec.new() })
+    resParams.push(TypeParam {
+        name: "T", bounds: Vec.new()
+    }
+    )
+    resParams.push(TypeParam {
+        name: "E", bounds: Vec.new()
+    }
+    )
     registerGenericEnum(ck, EnumDecl {
         name: "Result",
         typeParams: resParams,
         variants: resVariants,
         attributes: Vec.new(),
-    })
+    }
+    )
 }
 
 // Annotation-side generic instantiation: `Option<i32>` must resolve to the
@@ -646,9 +763,15 @@ fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
     // resolve a type alias name to its base (preserving any &/&mut/* wrapper)
     if !ty.isFn && ty.typeArgs.len == 0 && ck.typeAliases.contains(ty.name) {
         let base = ck.typeAliases.get(ty.name)!
-        if ty.isPtr { return TypeKind.TPtr(Heap(base)) }
-        if ty.isRef { return TypeKind.TRef(Heap(base), false) }
-        if ty.isRefMut { return TypeKind.TRef(Heap(base), true) }
+        if ty.isPtr {
+            return TypeKind.TPtr(Heap(base))
+        }
+        if ty.isRef {
+            return TypeKind.TRef(Heap(base), false)
+        }
+        if ty.isRefMut {
+            return TypeKind.TRef(Heap(base), true)
+        }
         return base
     }
     if ty.typeArgs.len > 0 && !ty.isFn {
@@ -677,10 +800,17 @@ fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
             // pointer whose data ptr is heap-allocated).
             var isIface = false
             match hinner.clone() {
-                TypeKind.TStruct(nm) => { if ck.traits.contains(nm) { isIface = true base = hinner.clone() } }
-                _ => {}
+                TypeKind.TStruct(nm) => {
+                    if ck.traits.contains(nm) {
+                        isIface = true base = hinner.clone()
+                    }
+                }
+                _ => {
+                }
             }
-            if !isIface { base = TypeKind.THeap(Heap(hinner)) }
+            if !isIface {
+                base = TypeKind.THeap(Heap(hinner))
+            }
             matched = true
         } else if ty.name == "HashMap" && ty.typeArgs.len == 2 {
             base = TypeKind.THashMap(Heap(resolveAstType(ck, ty.typeArgs[0])), Heap(resolveAstType(ck, ty.typeArgs[1])))
@@ -689,10 +819,18 @@ fn resolveAstType(ck: &mut Checker, ty: &MiloType): TypeKind {
         if matched {
             // Preserve any &/&mut/* wrapper the annotation spelled — dropping it
             // made a `&mut Arena<T>` param non-mutable and un-derefable.
-            if ty.isArray { base = TypeKind.TArray(Heap(base), ty.arraySize) }
-            if ty.isPtr { return TypeKind.TPtr(Heap(base)) }
-            if ty.isRef { return TypeKind.TRef(Heap(base), false) }
-            if ty.isRefMut { return TypeKind.TRef(Heap(base), true) }
+            if ty.isArray {
+                base = TypeKind.TArray(Heap(base), ty.arraySize)
+            }
+            if ty.isPtr {
+                return TypeKind.TPtr(Heap(base))
+            }
+            if ty.isRef {
+                return TypeKind.TRef(Heap(base), false)
+            }
+            if ty.isRefMut {
+                return TypeKind.TRef(Heap(base), true)
+            }
             return base
         }
     }
@@ -715,18 +853,32 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
         for mi in 0..td.methods.len {
             var mparams: Vec<FnParam> = Vec.new()
             for pi in 0..td.methods[mi].params.len {
-                mparams.push(FnParam { name: td.methods[mi].params[pi].name.clone(), ty: resolveAstType(ck, td.methods[mi].params[pi].ty) })
+                mparams.push(FnParam {
+                    name: td.methods[mi].params[pi].name.clone(), ty: resolveAstType(ck, td.methods[mi].params[pi].ty)
+                }
+                )
             }
             var hasDef = false
             match td.methods[mi].body {
-                Option.Some(b) => { hasDef = true }
-                Option.None => {}
+                Option.Some(b) => {
+                    hasDef = true
+                }
+                Option.None => {
+                }
             }
-            tmethods.insert(td.methods[mi].name.clone(), TraitMethodInfo { params: mparams, ret: resolveAstType(ck, td.methods[mi].retType), hasDefault: hasDef })
+            tmethods.insert(td.methods[mi].name.clone(), TraitMethodInfo {
+                params: mparams, ret: resolveAstType(ck, td.methods[mi].retType), hasDefault: hasDef
+            }
+            )
         }
         var stps: Vec<string> = Vec.new()
-        for si in 0..td.supertraits.len { stps.push(td.supertraits[si].clone()) }
-        ck.traits.insert(td.name.clone(), TraitInfo { name: td.name.clone(), supertraits: stps, methods: tmethods })
+        for si in 0..td.supertraits.len {
+            stps.push(td.supertraits[si].clone())
+        }
+        ck.traits.insert(td.name.clone(), TraitInfo {
+            name: td.name.clone(), supertraits: stps, methods: tmethods
+        }
+        )
     }
 
     // Phase 1: register all declarations (generics park on ck.generic* until
@@ -778,7 +930,10 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
             for fi in 0..vi.fields.len {
                 fields.push(normalizeEnumNames(ck, vi.fields[fi]))
             }
-            newVariants.insert(vn.clone(), VariantInfo { tag: vi.tag, fields: fields })
+            newVariants.insert(vn.clone(), VariantInfo {
+                tag: vi.tag, fields: fields
+            }
+            )
         }
         info.variants = newVariants
         ck.enums.insert(enumNames[ei].clone(), info)
@@ -794,7 +949,8 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
             newFields.push(CkStructField {
                 name: sInfo.fields[fi].name.clone(),
                 ty: normalizeEnumNames(ck, sInfo.fields[fi].ty),
-            })
+            }
+            )
         }
         sInfo.fields = newFields
         ck.structs.insert(structNames[si].clone(), sInfo)
@@ -811,13 +967,18 @@ fn checkProgram(ck: &mut Checker, program: &Program) {
     for gi in 0..program.globals.len {
         var gty = tyUnknown()
         match program.globals[gi].ty {
-            Option.Some(t) => { gty = resolveAstType(ck, t) }
-            Option.None => { gty = checkExpr(ck, *program.globals[gi].value) }
+            Option.Some(t) => {
+                gty = resolveAstType(ck, t)
+            }
+            Option.None => {
+                gty = checkExpr(ck, *program.globals[gi].value)
+            }
         }
         declare(ck, program.globals[gi].name.clone(), VarInfo {
             ty: gty, mutable: program.globals[gi].mutable, moved: false, borrowed: false, read: true,
             span: cloneSpan(program.globals[gi].span),
-        })
+        }
+        )
     }
 
     // Phase 3: check function bodies

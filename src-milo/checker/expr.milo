@@ -1,5 +1,7 @@
 // Expression type checking
-from "src-milo/ast.milo" import { Expr, Param, MiloType, Span, StructLitField, Pattern, Stmt }
+from "src-milo/ast.milo" import {
+    Expr, Param, MiloType, Span, StructLitField, Pattern, Stmt
+}
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName,
     tyI32, tyI64, tyU8, tyBool, tyVoid, tyString, tyUnknown,
@@ -11,25 +13,37 @@ from "src-milo/checker/state.milo" import {
     error, errorHint, warn, pushScope, popScope, declare, lookup, setVarMoved, setVarRead, hasErrors,
     isCopyCk, normalizeEnumNames, snapshotMoves, restoreMoves,
 }
-from "src-milo/checker/mono.milo" import { monomorphizeEnum, monomorphizeFn, monomorphizeStruct, resolveMonoType }
-from "src-milo/checker/traits.milo" import { resolveMethod }
-from "src-milo/checker/stmt.milo" import { checkStmt }
+from "src-milo/checker/mono.milo" import {
+    monomorphizeEnum, monomorphizeFn, monomorphizeStruct, resolveMonoType
+}
+from "src-milo/checker/traits.milo" import {
+    resolveMethod
+}
+from "src-milo/checker/stmt.milo" import {
+    checkStmt
+}
 
 // -- Move tracking --
 
 fn tryMove(ck: &mut Checker, expr: &Expr) {
-    if ck.inReturn { return }
+    if ck.inReturn {
+        return
+    }
     match expr {
         Expr.Ident(name, span) => {
             match lookup(ck, name) {
                 Option.Some(v) => {
-                    if isCopyCk(ck, v.ty) { return }
+                    if isCopyCk(ck, v.ty) {
+                        return
+                    }
                     setVarMoved(ck, name, true)
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
-        _ => {}
+        _ => {
+        }
     }
 }
 
@@ -38,8 +52,12 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
         Expr.Ident(name, span) => {
             let info = lookup(ck, name)
             match info {
-                Option.Some(v) => { return v.mutable }
-                Option.None => { return false }
+                Option.Some(v) => {
+                    return v.mutable
+                }
+                Option.None => {
+                    return false
+                }
             }
         }
         Expr.FieldAccess(obj, field, span) => {
@@ -50,14 +68,19 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
                     match lookup(ck, pname) {
                         Option.Some(v) => {
                             match deref(v.ty) {
-                                TypeKind.TPtr(inner) => { return true }
-                                _ => {}
+                                TypeKind.TPtr(inner) => {
+                                    return true
+                                }
+                                _ => {
+                                }
                             }
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
             return isRootMutable(ck, *obj)
         }
@@ -70,24 +93,33 @@ fn isRootMutable(ck: &Checker, expr: &Expr): bool {
                     match lookup(ck, pname) {
                         Option.Some(v) => {
                             match deref(v.ty) {
-                                TypeKind.TPtr(inner) => { return true }
-                                _ => {}
+                                TypeKind.TPtr(inner) => {
+                                    return true
+                                }
+                                _ => {
+                                }
                             }
                         }
-                        Option.None => {}
+                        Option.None => {
+                        }
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
             return isRootMutable(ck, *obj)
         }
         // writes through a deref target (*p).f / *p — raw pointers are gated
         // by unsafe, heap boxes own their pointee
         Expr.UnaryOp(op, operand, span) => {
-            if op == "*" { return true }
+            if op == "*" {
+                return true
+            }
             return false
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
@@ -98,8 +130,12 @@ fn deref(t: &TypeKind): TypeKind {
         // `inner` is &Heap<TypeKind> — a pointer to the Heap slot. `inner.clone()`
         // would clone through the wrong level and reinterpret the pointer bytes as
         // a TypeKind (garbage tag). Deref to the pointee first.
-        TypeKind.TRef(inner, mutable) => { return (*inner).clone() }
-        _ => { return t.clone() }
+        TypeKind.TRef(inner, mutable) => {
+            return (*inner).clone()
+        }
+        _ => {
+            return t.clone()
+        }
     }
 }
 
@@ -238,14 +274,15 @@ fn checkIdent(ck: &mut Checker, name: &string, span: &Option<Span>): TypeKind {
 
 // -- Binary operators --
 
-
 // An integer literal (or a const expression built only from integer literals) has
 // no intrinsic width — it takes its type from the context. Mirrors the TS
 // checker's const-subexpression coercion, without which `pos + 1` on an i64 and
 // `b != 0` on a u8 are both type errors.
 fn isConstIntExpr(e: &Expr): bool {
     match e {
-        Expr.IntLit(v, span) => { return true }
+        Expr.IntLit(v, span) => {
+            return true
+        }
         Expr.UnaryOp(op, operand, span) => {
             if op == "-" {
                 return isConstIntExpr(*operand)
@@ -258,22 +295,34 @@ fn isConstIntExpr(e: &Expr): bool {
             }
             return false
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
 // A bare float literal defaults to f64 but coerces into an f32 (or any float)
 // target the same way an int literal coerces between integer widths.
 fn floatLitCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
-    if !isFloat(to) { return false }
-    if !isFloat(src) { return false }
+    if !isFloat(to) {
+        return false
+    }
+    if !isFloat(src) {
+        return false
+    }
     match srcExpr {
-        Expr.FloatLit(v, span) => { return true }
+        Expr.FloatLit(v, span) => {
+            return true
+        }
         Expr.UnaryOp(op, operand, span) => {
-            if op == "-" { return floatLitCoercible(to, src, *operand) }
+            if op == "-" {
+                return floatLitCoercible(to, src, *operand)
+            }
             return false
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
@@ -289,7 +338,6 @@ fn intCoercible(to: &TypeKind, src: &TypeKind, srcExpr: &Expr): bool {
     return isConstIntExpr(srcExpr)
 }
 
-
 // A string argument passed where *u8 is expected reads as its data pointer
 // (extern cstr boundary). An int-element array literal takes its element
 // width from the annotation, like scalar const-int coercion.
@@ -299,9 +347,12 @@ fn ptrCoercible(to: &TypeKind, src: &TypeKind): bool {
             // string data pointer at the cstr boundary
             match *inner {
                 TypeKind.TInt(bits, signed) => {
-                    if bits == 8 && typeEq(src, tyString()) { return true }
+                    if bits == 8 && typeEq(src, tyString()) {
+                        return true
+                    }
                 }
-                _ => {}
+                _ => {
+                }
             }
             // array-to-pointer decay: [T; N] (and its Vec lowering) where *T
             // is expected — a borrow of the buffer, not a move
@@ -312,11 +363,14 @@ fn ptrCoercible(to: &TypeKind, src: &TypeKind): bool {
                 TypeKind.TVec(srcElem2) => {
                     return typeEq(*inner, *srcElem2) || (isInteger(*inner) && isInteger(*srcElem2))
                 }
-                _ => {}
+                _ => {
+                }
             }
             return false
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
@@ -330,10 +384,14 @@ fn arrayIntCoercible(to: &TypeKind, src: &TypeKind): bool {
                 TypeKind.TVec(srcElem2) => {
                     return isInteger(*toElem) && isInteger(*srcElem2)
                 }
-                _ => { return false }
+                _ => {
+                    return false
+                }
             }
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
@@ -346,19 +404,31 @@ fn arrayToVecCoercible(to: &TypeKind, src: &TypeKind): bool {
                 TypeKind.TArray(srcElem, srcSize) => {
                     return typeEq(*toElem, *srcElem) || (isInteger(*toElem) && isInteger(*srcElem))
                 }
-                _ => { return false }
+                _ => {
+                    return false
+                }
             }
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
 // operator → overload method name (Add/Sub/Mul/Div traits), or "" if not overloadable
 fn opMethodName(op: &string): string {
-    if op == "+" { return "add" }
-    if op == "-" { return "sub" }
-    if op == "*" { return "mul" }
-    if op == "/" { return "div" }
+    if op == "+" {
+        return "add"
+    }
+    if op == "-" {
+        return "sub"
+    }
+    if op == "*" {
+        return "mul"
+    }
+    if op == "/" {
+        return "div"
+    }
     return ""
 }
 
@@ -367,47 +437,71 @@ fn opMethodName(op: &string): string {
 fn interfaceCoercible(ck: &Checker, hint: &TypeKind, valType: &TypeKind): bool {
     match hint {
         TypeKind.TStruct(iface) => {
-            if !ck.traits.contains(iface) { return false }
+            if !ck.traits.contains(iface) {
+                return false
+            }
             match valType {
-                TypeKind.TStruct(cn) => { return structImplementsInterface(ck, cn, iface) }
+                TypeKind.TStruct(cn) => {
+                    return structImplementsInterface(ck, cn, iface)
+                }
                 TypeKind.THeap(inner) => {
                     match *inner {
-                        TypeKind.TStruct(cn2) => { return structImplementsInterface(ck, cn2, iface) }
-                        _ => { return false }
+                        TypeKind.TStruct(cn2) => {
+                            return structImplementsInterface(ck, cn2, iface)
+                        }
+                        _ => {
+                            return false
+                        }
                     }
                 }
-                _ => { return false }
+                _ => {
+                    return false
+                }
             }
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
 // True if `sname` (a concrete struct) implements every method of interface `iface`
 // (a registered trait) — the requirement to coerce it to an `&iface` trait object.
 fn structImplementsInterface(ck: &Checker, sname: &string, iface: &string): bool {
-    if !ck.traits.contains(iface) { return false }
-    if !ck.structs.contains(sname) { return false }
+    if !ck.traits.contains(iface) {
+        return false
+    }
+    if !ck.structs.contains(sname) {
+        return false
+    }
     let tinfo = ck.traits.get(iface)!
     for mname, minfo in tinfo.methods {
-        if !structHasMethod(ck, sname, mname) { return false }
+        if !structHasMethod(ck, sname, mname) {
+            return false
+        }
     }
     return true
 }
 
 // does struct `sname` define method `method` via an inherent or trait impl?
 fn structHasMethod(ck: &Checker, sname: &string, method: &string): bool {
-    if method.len == 0 { return false }
+    if method.len == 0 {
+        return false
+    }
     if ck.inherentImpls.contains(sname) {
         // extract ONCE: inline `get(sname)!.methods.contains()` clones the nested-Vec
         // ImplDecl on the temporary and hangs (the documented HashMap.get gotcha).
         let implD = ck.inherentImpls.get(sname)!
-        if implD.methods.contains(method) { return true }
+        if implD.methods.contains(method) {
+            return true
+        }
     }
     if ck.traitImpls.contains(sname) {
         let impls = ck.traitImpls.get(sname)!
         for i in 0..impls.len {
-            if impls[i].methods.contains(method) { return true }
+            if impls[i].methods.contains(method) {
+                return true
+            }
         }
     }
     return false
@@ -449,7 +543,8 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
                     return lt.clone()
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
     }
 
@@ -490,7 +585,7 @@ fn checkBinOp(ck: &mut Checker, op: &string, left: &Expr, right: &Expr, span: &O
     // Comparison
     if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
         if !typeEq(lt, rt) && !typeEq(lt, tyUnknown()) && !typeEq(rt, tyUnknown())
-            && !intCoercible(lt, rt, right) && !intCoercible(rt, lt, left) {
+        && !intCoercible(lt, rt, right) && !intCoercible(rt, lt, left) {
             error(ck, "type mismatch in '" + op.clone() + "': " + typeName(lt) + " vs " + typeName(rt), cloneSpan(span))
         }
         if op == "<" || op == ">" || op == "<=" || op == ">=" {
@@ -513,7 +608,9 @@ fn checkUnaryOp(ck: &mut Checker, op: &string, operand: &Expr, span: &Option<Spa
 
     if op == "*" {
         match ot {
-            TypeKind.THeap(inner) => { return (*inner).clone() }
+            TypeKind.THeap(inner) => {
+                return (*inner).clone()
+            }
             TypeKind.TPtr(inner) => {
                 if ck.unsafeDepth == 0 {
                     error(ck, "pointer dereference requires 'unsafe' block", cloneSpan(span))
@@ -650,8 +747,11 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         }
         if args.len >= 1 {
             match *args[0] {
-                Expr.StringLit(s, sp) => {}
-                _ => { error(ck, "embedFile() argument must be a string literal", cloneSpan(span)) }
+                Expr.StringLit(s, sp) => {
+                }
+                _ => {
+                    error(ck, "embedFile() argument must be a string literal", cloneSpan(span))
+                }
             }
         }
         return tyString()
@@ -723,9 +823,12 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
                             if !pMatch {
                                 match params[i] {
                                     TypeKind.TRef(inner, m) => {
-                                        if typeEq(*inner, argType) { pMatch = true }
+                                        if typeEq(*inner, argType) {
+                                            pMatch = true
+                                        }
                                     }
-                                    _ => {}
+                                    _ => {
+                                    }
                                 }
                             }
                             if !pMatch {
@@ -735,10 +838,12 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
                         }
                         return ret.clone()
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
         // Generic function call: infer type args from argument types
         if ck.genericFns.contains(func) {
@@ -750,7 +855,9 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         }
         // offsetOf<T>("field") — byte offset of a field within a struct type
         if func == "offsetOf" {
-            if args.len >= 1 { checkExpr(ck, *args[0]) }
+            if args.len >= 1 {
+                checkExpr(ck, *args[0])
+            }
             return tyI64()
         }
         // zeroed<T>() — a zero value of the instantiated type
@@ -759,7 +866,9 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         }
         // _cstrToString(ptr) — compiler builtin at the extern cstr boundary
         if func == "_cstrToString" {
-            if args.len >= 1 { checkExpr(ck, *args[0]) }
+            if args.len >= 1 {
+                checkExpr(ck, *args[0])
+            }
             return tyString()
         }
         // runtime-support builtins (_atomic*, _callClosure*, scheduler hooks)
@@ -772,7 +881,9 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
         }
         // exit is a compiler builtin when std/os is not imported
         if func == "exit" {
-            if args.len >= 1 { checkExpr(ck, *args[0]) }
+            if args.len >= 1 {
+                checkExpr(ck, *args[0])
+            }
             return tyVoid()
         }
         // Promise(fn) desugars to Promise<T>.run(fn) with T = the fn's return type.
@@ -780,8 +891,12 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
             let argT = checkExpr(ck, *args[0])
             var retT = tyUnknown()
             match argT {
-                TypeKind.TFn(fparams, fret) => { retT = (*fret).clone() }
-                _ => { error(ck, "Promise() argument must be a function", cloneSpan(span)) }
+                TypeKind.TFn(fparams, fret) => {
+                    retT = (*fret).clone()
+                }
+                _ => {
+                    error(ck, "Promise() argument must be a function", cloneSpan(span))
+                }
             }
             var targs: Vec<TypeKind> = Vec.new()
             targs.push(retT)
@@ -798,7 +913,9 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
     // argument below can insert into ck.functions (e.g. registering a struct's
     // interface impl), rehashing the map and dangling `sig`. TypeKind.clone is deep.
     var ownedParams: Vec<TypeKind> = Vec.new()
-    for pci in 0..sig.params.len { ownedParams.push(sig.params[pci].ty.clone()) }
+    for pci in 0..sig.params.len {
+        ownedParams.push(sig.params[pci].ty.clone())
+    }
     let ownedRet = sig.ret.clone()
     let paramCount = sig.params.len
     let isVariadicSig = sig.variadic
@@ -830,11 +947,17 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
                 match (*inner).clone() {
                     TypeKind.TStruct(ifn) => {
                         match argType.clone() {
-                            TypeKind.TStruct(an) => { if structImplementsInterface(ck, an, ifn) { ifaceOk = true } }
-                            _ => {}
+                            TypeKind.TStruct(an) => {
+                                if structImplementsInterface(ck, an, ifn) {
+                                    ifaceOk = true
+                                }
+                            }
+                            _ => {
+                            }
                         }
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
                 // auto-borrow: don't type-error, just check inner matches
                 if !ifaceOk && !typeEq(*inner, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(*inner, argType, *args[i]) {
@@ -843,8 +966,8 @@ fn checkCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, typeArgs: 
             }
             _ => {
                 if !typeEq(paramType, argType) && !typeEq(argType, tyUnknown()) && !intCoercible(paramType, argType, *args[i]) &&
-                    !floatLitCoercible(paramType, argType, *args[i]) &&
-                    !ptrCoercible(paramType, argType) && !optionWrapCoercible(ck, paramType, argType) {
+                !floatLitCoercible(paramType, argType, *args[i]) &&
+                !ptrCoercible(paramType, argType) && !optionWrapCoercible(ck, paramType, argType) {
                     error(ck, "argument " + (i + 1).toString() + " of '" + func.clone() + "': expected " + ptName + ", got " + typeName(argType), cloneSpan(span))
                 }
                 // pointer decay borrows the buffer; it must not move it
@@ -883,10 +1006,12 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
     }
     // A generic-struct literal with no annotation (`Heap { value: 42 }`) infers its
@@ -917,8 +1042,12 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
         var typeArgs: Vec<TypeKind> = Vec.new()
         for tp in 0..tparams.len {
             match inferred.get(tparams[tp]) {
-                Option.Some(t) => { typeArgs.push(t) }
-                Option.None => { typeArgs.push(tyUnknown()) }
+                Option.Some(t) => {
+                    typeArgs.push(t)
+                }
+                Option.None => {
+                    typeArgs.push(tyUnknown())
+                }
             }
         }
         structName = monomorphizeStruct(ck, structName, typeArgs)
@@ -941,9 +1070,9 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
                 let valType = checkExpr(ck, *fields[i].value)
                 ck.expectedType = Option.None
                 if !typeEq(info.fields[j].ty, valType) && !containsUnknown(valType) &&
-                    !(isConstIntExpr(*fields[i].value) && isInteger(info.fields[j].ty)) &&
-                    !floatLitCoercible(info.fields[j].ty, valType, *fields[i].value) &&
-                    !arrayIntCoercible(info.fields[j].ty, valType) && !interfaceCoercible(ck, info.fields[j].ty, valType) {
+                !(isConstIntExpr(*fields[i].value) && isInteger(info.fields[j].ty)) &&
+                !floatLitCoercible(info.fields[j].ty, valType, *fields[i].value) &&
+                !arrayIntCoercible(info.fields[j].ty, valType) && !interfaceCoercible(ck, info.fields[j].ty, valType) {
                     error(ck, "field '" + fields[i].name.clone() + "' of '" + name.clone() + "': expected " + typeName(info.fields[j].ty) + ", got " + typeName(valType), cloneSpan(span))
                 }
                 tryMove(ck, *fields[i].value)
@@ -958,7 +1087,9 @@ fn checkStructLit(ck: &mut Checker, name: &string, fields: &Vec<StructLitField>,
     for k in 0..info.fields.len {
         var present = false
         for m in 0..fields.len {
-            if fields[m].name == info.fields[k].name { present = true }
+            if fields[m].name == info.fields[k].name {
+                present = true
+            }
         }
         if !present {
             error(ck, "missing field '" + info.fields[k].name.clone() + "' in struct '" + structName.clone() + "'", cloneSpan(span))
@@ -975,14 +1106,17 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
     // auto-deref references; and raw pointers (`p.x` on a *Struct), which is an
     // unsafe-gated deref-and-access
     match objType.clone() {
-        TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
+        TypeKind.TRef(inner, mutable) => {
+            objType = inner.clone()
+        }
         TypeKind.TPtr(inner) => {
             if ck.unsafeDepth == 0 {
                 error(ck, "pointer field access requires 'unsafe' block", cloneSpan(span))
             }
             objType = inner.clone()
         }
-        _ => {}
+        _ => {
+        }
     }
 
     match objType.clone() {
@@ -1005,22 +1139,30 @@ fn checkFieldAccess(ck: &mut Checker, obj: &Expr, field: &string, span: &Option<
             return tyUnknown()
         }
         TypeKind.TArray(elem, size) => {
-            if field == "len" { return TypeKind.TInt(32, true) }
+            if field == "len" {
+                return TypeKind.TInt(32, true)
+            }
             error(ck, "cannot access field '" + field.clone() + "' on array", cloneSpan(span))
             return tyUnknown()
         }
         TypeKind.TString => {
-            if field == "len" { return TypeKind.TInt(64, true) }
+            if field == "len" {
+                return TypeKind.TInt(64, true)
+            }
             error(ck, "cannot access field '" + field.clone() + "' on string", cloneSpan(span))
             return tyUnknown()
         }
         TypeKind.TVec(elem) => {
-            if field == "len" { return TypeKind.TInt(64, true) }
+            if field == "len" {
+                return TypeKind.TInt(64, true)
+            }
             error(ck, "cannot access field '" + field.clone() + "' on Vec", cloneSpan(span))
             return tyUnknown()
         }
         TypeKind.THashMap(key, val) => {
-            if field == "len" { return TypeKind.TInt(64, true) }
+            if field == "len" {
+                return TypeKind.TInt(64, true)
+            }
             error(ck, "cannot access field '" + field.clone() + "' on HashMap", cloneSpan(span))
             return tyUnknown()
         }
@@ -1040,12 +1182,18 @@ fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Spa
         match ck.expectedType {
             Option.Some(et) => {
                 match et {
-                    TypeKind.TVec(ve) => { return et.clone() }
-                    TypeKind.TArray(ae, asz) => { return et.clone() }
-                    _ => {}
+                    TypeKind.TVec(ve) => {
+                        return et.clone()
+                    }
+                    TypeKind.TArray(ae, asz) => {
+                        return et.clone()
+                    }
+                    _ => {
+                    }
                 }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
         error(ck, "cannot infer type of empty array literal", cloneSpan(span))
         return tyUnknown()
@@ -1058,18 +1206,28 @@ fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Spa
     match ck.expectedType {
         Option.Some(et) => {
             match et {
-                TypeKind.TVec(ve) => { elemType = (*ve).clone() haveTarget = true }
-                TypeKind.TArray(ae, asz) => { elemType = (*ae).clone() haveTarget = true }
-                _ => {}
+                TypeKind.TVec(ve) => {
+                    elemType = (*ve).clone()
+                    haveTarget = true
+                }
+                TypeKind.TArray(ae, asz) => {
+                    elemType = (*ae).clone()
+                    haveTarget = true
+                }
+                _ => {
+                }
             }
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
     for i in 0..elements.len {
         let t = checkExpr(ck, *elements[i])
-        if !haveTarget && i == 0 { elemType = t.clone() }
+        if !haveTarget && i == 0 {
+            elemType = t.clone()
+        }
         if !typeEq(elemType, t) && !typeEq(t, tyUnknown()) &&
-            !(isConstIntExpr(*elements[i]) && isInteger(elemType)) {
+        !(isConstIntExpr(*elements[i]) && isInteger(elemType)) {
             error(ck, "array element " + i.toString() + ": expected " + typeName(elemType) + ", got " + typeName(t), cloneSpan(span))
         }
     }
@@ -1081,8 +1239,11 @@ fn checkArrayLit(ck: &mut Checker, elements: &Vec<Heap<Expr>>, span: &Option<Spa
 fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Span>): TypeKind {
     var objType = checkExpr(ck, obj)
     match objType.clone() {
-        TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
-        _ => {}
+        TypeKind.TRef(inner, mutable) => {
+            objType = inner.clone()
+        }
+        _ => {
+        }
     }
     let idxType = checkExpr(ck, index)
     if !isInteger(idxType) && !typeEq(idxType, tyUnknown()) {
@@ -1090,9 +1251,15 @@ fn checkIndexAccess(ck: &mut Checker, obj: &Expr, index: &Expr, span: &Option<Sp
     }
 
     match objType.clone() {
-        TypeKind.TArray(elem, size) => { return elem.clone() }
-        TypeKind.TVec(elem) => { return elem.clone() }
-        TypeKind.TString => { return tyU8() }
+        TypeKind.TArray(elem, size) => {
+            return elem.clone()
+        }
+        TypeKind.TVec(elem) => {
+            return elem.clone()
+        }
+        TypeKind.TString => {
+            return tyU8()
+        }
         TypeKind.TPtr(inner) => {
             if ck.unsafeDepth == 0 {
                 error(ck, "pointer indexing requires 'unsafe' block", cloneSpan(span))
@@ -1114,23 +1281,31 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
     // an unknown value type with the declared annotation, so return unknown quietly
     // rather than erroring on the idiomatic `var v: Vec<string> = Vec.new()`.
     if enumName == "Vec" && variant == "new" {
-        if args.len != 0 { error(ck, "'Vec.new' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'Vec.new' takes no arguments", cloneSpan(span))
+        }
         return tyUnknown()
     }
     if enumName == "HashMap" && variant == "new" {
-        if args.len != 0 { error(ck, "'HashMap.new' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'HashMap.new' takes no arguments", cloneSpan(span))
+        }
         return tyUnknown()
     }
     // String statics are compiler builtins
     if enumName == "String" && variant == "withCapacity" {
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return tyString()
     }
     // Promise.all(v)/Promise.race(v) → the generic free fns promiseAll/promiseRace;
     // T is inferred from the Vec<Promise<T>> arg by checkGenericCall.
     if enumName == "Promise" && (variant == "all" || variant == "race") {
         var pfn = "promiseAll"
-        if variant == "race" { pfn = "promiseRace" }
+        if variant == "race" {
+            pfn = "promiseRace"
+        }
         if ck.genericFns.contains(pfn) {
             var noTypeArgs: Vec<MiloType> = Vec.new()
             return checkCall(ck, pfn, args, noTypeArgs, span)
@@ -1149,7 +1324,8 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
                     var noTypeArgs: Vec<MiloType> = Vec.new()
                     return checkCall(ck, fnName, args, noTypeArgs, span)
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
         error(ck, "unknown enum '" + enumName.clone() + "'", cloneSpan(span))
@@ -1167,11 +1343,15 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
         error(ck, "variant '" + enumName.clone() + "." + variant.clone() + "' expects " + variantInfo.fields.len.toString() + " args, got " + args.len.toString(), cloneSpan(span))
     }
 
-    let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
+    let limit = if args.len < variantInfo.fields.len {
+        args.len
+    } else {
+        variantInfo.fields.len
+    }
     for i in 0..limit {
         let argType = checkExpr(ck, *args[i])
         if !typeEq(variantInfo.fields[i], argType) && !containsUnknown(argType) &&
-            !intCoercible(variantInfo.fields[i], argType, *args[i]) {
+        !intCoercible(variantInfo.fields[i], argType, *args[i]) {
             error(ck, "argument " + (i + 1).toString() + " of '" + enumName.clone() + "." + variant.clone() + "': expected " + typeName(variantInfo.fields[i]) + ", got " + typeName(argType), cloneSpan(span))
         }
         tryMove(ck, *args[i])
@@ -1184,7 +1364,9 @@ fn checkEnumLit(ck: &mut Checker, enumName: &string, variant: &string, args: &Ve
 
 fn typeParamIndex(typeParams: &Vec<string>, name: &string): i64 {
     for i in 0..typeParams.len {
-        if typeParams[i] == name { return i }
+        if typeParams[i] == name {
+            return i
+        }
     }
     return -1
 }
@@ -1201,23 +1383,34 @@ fn inferInto(typeParams: &Vec<string>, declTy: &TypeKind, argTy: &TypeKind, infe
         }
         TypeKind.TRef(inner, m) => {
             match argTy {
-                TypeKind.TRef(ai, am) => { inferInto(typeParams, *inner, *ai, inferred) }
-                _ => { inferInto(typeParams, *inner, argTy, inferred) }
+                TypeKind.TRef(ai, am) => {
+                    inferInto(typeParams, *inner, *ai, inferred)
+                }
+                _ => {
+                    inferInto(typeParams, *inner, argTy, inferred)
+                }
             }
         }
         TypeKind.THeap(inner) => {
             match argTy {
-                TypeKind.THeap(ai) => { inferInto(typeParams, *inner, *ai, inferred) }
-                _ => {}
+                TypeKind.THeap(ai) => {
+                    inferInto(typeParams, *inner, *ai, inferred)
+                }
+                _ => {
+                }
             }
         }
         TypeKind.TVec(inner) => {
             match argTy {
-                TypeKind.TVec(ai) => { inferInto(typeParams, *inner, *ai, inferred) }
-                _ => {}
+                TypeKind.TVec(ai) => {
+                    inferInto(typeParams, *inner, *ai, inferred)
+                }
+                _ => {
+                }
             }
         }
-        _ => {}
+        _ => {
+        }
     }
 }
 
@@ -1231,9 +1424,14 @@ fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argT
     var concrete = argTy.clone()
     if declAst.isRef || declAst.isRefMut || declAst.isPtr {
         match argTy {
-            TypeKind.TRef(inner, m) => { concrete = (*inner).clone() }
-            TypeKind.TPtr(inner) => { concrete = (*inner).clone() }
-            _ => {}
+            TypeKind.TRef(inner, m) => {
+                concrete = (*inner).clone()
+            }
+            TypeKind.TPtr(inner) => {
+                concrete = (*inner).clone()
+            }
+            _ => {
+            }
         }
     }
     // A bare type parameter (`T`) binds directly.
@@ -1259,14 +1457,18 @@ fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argT
                         let cr = (*argRet).clone()
                         inferFromAst(ck, typeParams, *dr, cr, inferred)
                     }
-                    Option.None => {}
+                    Option.None => {
+                    }
                 }
             }
-            _ => {}
+            _ => {
+            }
         }
         return
     }
-    if declAst.typeArgs.len == 0 { return }
+    if declAst.typeArgs.len == 0 {
+        return
+    }
     // Builtins carry their args structurally in TypeKind.
     match concrete {
         TypeKind.TVec(elem) => {
@@ -1298,7 +1500,8 @@ fn inferFromAst(ck: &Checker, typeParams: &Vec<string>, declAst: &MiloType, argT
             }
             return
         }
-        _ => {}
+        _ => {
+        }
     }
 }
 
@@ -1320,22 +1523,28 @@ fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, spa
         // (`&Arena<T>`) that typeFromAst flattened for inferInto.
         inferFromAst(ck, generic.typeParams, generic.decl.params[i].ty, argType, inferred)
         match declParams[i] {
-            TypeKind.TRef(inner, m) => {}
-            _ => { tryMove(ck, *args[i]) }
+            TypeKind.TRef(inner, m) => {
+            }
+            _ => {
+                tryMove(ck, *args[i])
+            }
         }
     }
     // Params not fixed by args: infer from the expected type (a let annotation)
     // against the declared return type — e.g. `let a: Arena<X> = arenaNew()`.
     var anyUnbound = false
     for i in 0..generic.typeParams.len {
-        if !inferred.contains(generic.typeParams[i]) { anyUnbound = true }
+        if !inferred.contains(generic.typeParams[i]) {
+            anyUnbound = true
+        }
     }
     if anyUnbound {
         match ck.expectedType {
             Option.Some(et) => {
                 inferFromAst(ck, generic.typeParams, generic.decl.retType, et, inferred)
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
     }
 
@@ -1349,7 +1558,9 @@ fn checkGenericCall(ck: &mut Checker, func: &string, args: &Vec<Heap<Expr>>, spa
         }
     }
     let mangled = monomorphizeFn(ck, func, typeArgs)
-    if !ck.functions.contains(mangled) { return tyUnknown() }
+    if !ck.functions.contains(mangled) {
+        return tyUnknown()
+    }
     let sig = ck.functions.get(mangled)!
     return sig.ret.clone()
 }
@@ -1375,11 +1586,15 @@ fn checkGenericEnumLit(ck: &mut Checker, enumName: &string, variant: &string, ar
     match ck.expectedType {
         Option.Some(et) => {
             match et {
-                TypeKind.TEnum(monoName) => { expEnum = Option.Some(monoName.clone()) }
-                _ => {}
+                TypeKind.TEnum(monoName) => {
+                    expEnum = Option.Some(monoName.clone())
+                }
+                _ => {
+                }
             }
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
     var haveHint = false
     var hintFields: Vec<TypeKind> = Vec.new()
@@ -1389,16 +1604,23 @@ fn checkGenericEnumLit(ck: &mut Checker, enumName: &string, variant: &string, ar
                 let einfo = ck.enums.get(monoName)!
                 if einfo.baseName == enumName && einfo.variants.contains(variant) {
                     let srcFields = einfo.variants.get(variant)!.fields
-                    for fi in 0..srcFields.len { hintFields.push(srcFields[fi].clone()) }
+                    for fi in 0..srcFields.len {
+                        hintFields.push(srcFields[fi].clone())
+                    }
                     haveHint = true
                 }
             }
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
 
     var inferred: HashMap<string, TypeKind> = HashMap.new()
-    let limit = if args.len < variantInfo.fields.len { args.len } else { variantInfo.fields.len }
+    let limit = if args.len < variantInfo.fields.len {
+        args.len
+    } else {
+        variantInfo.fields.len
+    }
     for i in 0..limit {
         let argType = checkExpr(ck, *args[i])
         var effType = argType.clone()
@@ -1446,7 +1668,9 @@ fn unwrapableInner(ck: &Checker, t: &TypeKind): Option<TypeKind> {
             }
             return Option.None
         }
-        _ => { return Option.None }
+        _ => {
+            return Option.None
+        }
     }
 }
 
@@ -1455,14 +1679,22 @@ fn unwrapableInner(ck: &Checker, t: &TypeKind): Option<TypeKind> {
 fn optionWrapCoercible(ck: &Checker, paramType: &TypeKind, argType: &TypeKind): bool {
     match paramType {
         TypeKind.TEnum(name) => {
-            if !ck.enums.contains(name) { return false }
+            if !ck.enums.contains(name) {
+                return false
+            }
             let info = ck.enums.get(name)!
-            if !info.variants.contains("Some") { return false }
+            if !info.variants.contains("Some") {
+                return false
+            }
             let sv = info.variants.get("Some")!
-            if sv.fields.len != 1 { return false }
+            if sv.fields.len != 1 {
+                return false
+            }
             return typeEq(sv.fields[0], argType)
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
@@ -1472,15 +1704,25 @@ fn optionWrapCoercible(ck: &Checker, paramType: &TypeKind, argType: &TypeKind): 
 fn optionIntWrapCoercible(ck: &Checker, optType: &TypeKind, valType: &TypeKind): bool {
     match optType {
         TypeKind.TEnum(name) => {
-            if !ck.enums.contains(name) { return false }
+            if !ck.enums.contains(name) {
+                return false
+            }
             let info = ck.enums.get(name)!
-            if !info.variants.contains("Some") { return false }
+            if !info.variants.contains("Some") {
+                return false
+            }
             let sv = info.variants.get("Some")!
-            if sv.fields.len != 1 { return false }
-            if typeEq(sv.fields[0], valType) { return true }
+            if sv.fields.len != 1 {
+                return false
+            }
+            if typeEq(sv.fields[0], valType) {
+                return true
+            }
             return isInteger(sv.fields[0]) && isInteger(valType)
         }
-        _ => { return false }
+        _ => {
+            return false
+        }
     }
 }
 
@@ -1488,7 +1730,9 @@ fn checkUnwrap(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKind 
     let operandType = checkExpr(ck, operand)
     let inner = unwrapableInner(ck, operandType)
     match inner {
-        Option.Some(t) => { return t }
+        Option.Some(t) => {
+            return t
+        }
         Option.None => {
             error(ck, "'!' requires Option or Result type, got " + typeName(operandType), cloneSpan(span))
             return tyUnknown()
@@ -1508,7 +1752,8 @@ fn checkPropagate(ck: &mut Checker, operand: &Expr, span: &Option<Span>): TypeKi
                 Option.None => {
                     error(ck, "'?' requires function to return Option or Result", cloneSpan(span))
                 }
-                _ => {}
+                _ => {
+                }
             }
             return t
         }
@@ -1530,7 +1775,7 @@ fn checkDefaultValue(ck: &mut Checker, operand: &Expr, default: &Expr, span: &Op
             // a bare int-literal default (`?? 0`) defaults to i32; coerce it to the
             // Option's integer inner type rather than reject the width mismatch.
             if !typeEq(t, defaultType) && !typeEq(defaultType, tyUnknown()) &&
-                !(isConstIntExpr(default) && isInteger(t)) {
+            !(isConstIntExpr(default) && isInteger(t)) {
                 error(ck, "'??' default type mismatch: expected " + typeName(t) + ", got " + typeName(defaultType), cloneSpan(span))
             }
             return t
@@ -1550,24 +1795,42 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
 
     var fromCastable = false
     match fromType.clone() {
-        TypeKind.TPtr(inner) => { fromCastable = true }
-        TypeKind.TArray(elem, size) => { fromCastable = true }
-        TypeKind.TFn(params, ret) => { fromCastable = true }
-        TypeKind.TUnknown => { fromCastable = true }
+        TypeKind.TPtr(inner) => {
+            fromCastable = true
+        }
+        TypeKind.TArray(elem, size) => {
+            fromCastable = true
+        }
+        TypeKind.TFn(params, ret) => {
+            fromCastable = true
+        }
+        TypeKind.TUnknown => {
+            fromCastable = true
+        }
         // string as *u8 — cstr data pointer at extern boundaries
-        TypeKind.TString => { fromCastable = true }
-        _ => {}
+        TypeKind.TString => {
+            fromCastable = true
+        }
+        _ => {
+        }
     }
     let fromOk = isNumeric(fromType) || typeEq(fromType, tyBool()) || fromCastable
     var toCastable = false
     match toType.clone() {
-        TypeKind.TPtr(inner) => { toCastable = true }
-        _ => {}
+        TypeKind.TPtr(inner) => {
+            toCastable = true
+        }
+        _ => {
+        }
     }
     let toOk = isNumeric(toType) || toCastable
 
-    if !fromOk { error(ck, "cannot cast from " + typeName(fromType), cloneSpan(span)) }
-    if !toOk { error(ck, "cannot cast to " + typeName(toType), cloneSpan(span)) }
+    if !fromOk {
+        error(ck, "cannot cast from " + typeName(fromType), cloneSpan(span))
+    }
+    if !toOk {
+        error(ck, "cannot cast to " + typeName(toType), cloneSpan(span))
+    }
 
     match toType.clone() {
         TypeKind.TPtr(inner) => {
@@ -1577,14 +1840,20 @@ fn checkCast(ck: &mut Checker, operand: &Expr, targetType: &MiloType, span: &Opt
             // aren't spuriously unsafe-gated.
             var isNullPtrConst = false
             match operand {
-                Expr.IntLit(v, s) => { if v == 0 { isNullPtrConst = true } }
-                _ => {}
+                Expr.IntLit(v, s) => {
+                    if v == 0 {
+                        isNullPtrConst = true
+                    }
+                }
+                _ => {
+                }
             }
             if ck.unsafeDepth == 0 && !isNullPtrConst {
                 error(ck, "cast to pointer type requires 'unsafe' block", cloneSpan(span))
             }
         }
-        _ => {}
+        _ => {
+        }
     }
 
     return toType
@@ -1596,14 +1865,19 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     var objType = checkExpr(ck, obj)
     // auto-deref references
     match objType.clone() {
-        TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
-        _ => {}
+        TypeKind.TRef(inner, mutable) => {
+            objType = inner.clone()
+        }
+        _ => {
+        }
     }
 
     // x.addrOf(): *T — raw address of any lvalue (the replacement for `&x`).
     // Universal, requires unsafe. 'addrOf' is a reserved method name.
     if method == "addrOf" {
-        if args.len != 0 { error(ck, "'addrOf' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'addrOf' takes no arguments", cloneSpan(span))
+        }
         if ck.unsafeDepth == 0 {
             error(ck, "'addrOf' (raw address-of) requires 'unsafe' block", cloneSpan(span))
         }
@@ -1612,13 +1886,19 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
 
     // numeric.toString()
     if (isInteger(objType) || isFloat(objType)) && method == "toString" {
-        if args.len != 0 { error(ck, "'toString' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'toString' takes no arguments", cloneSpan(span))
+        }
         return tyString()
     }
     // x.checkedAdd/Sub/Mul(y) → Option<T>, None on overflow
     if isInteger(objType) && (method == "checkedAdd" || method == "checkedSub" || method == "checkedMul") {
-        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         var oargs: Vec<TypeKind> = Vec.new()
         oargs.push(objType.clone())
         let mangled = monomorphizeEnum(ck, "Option", oargs)
@@ -1626,8 +1906,12 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
     }
     // x.wrapping{Add,Sub,Mul}/saturating{Add,Sub,Mul}(y) → T (same int type)
     if isInteger(objType) && (method == "wrappingAdd" || method == "wrappingSub" || method == "wrappingMul" || method == "saturatingAdd" || method == "saturatingSub" || method == "saturatingMul") {
-        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return objType.clone()
     }
 
@@ -1636,7 +1920,8 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         TypeKind.TVec(elem) => {
             return checkVecMethod(ck, obj, *elem, method, args, span)
         }
-        _ => {}
+        _ => {
+        }
     }
 
     // HashMap methods
@@ -1644,7 +1929,8 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         TypeKind.THashMap(key, val) => {
             return checkHashMapMethod(ck, obj, *key, *val, method, args, span)
         }
-        _ => {}
+        _ => {
+        }
     }
 
     // String methods
@@ -1652,7 +1938,8 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         TypeKind.TString => {
             return checkStringMethod(ck, obj, method, args, span)
         }
-        _ => {}
+        _ => {
+        }
     }
 
     // Struct/trait methods
@@ -1660,7 +1947,8 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         TypeKind.TStruct(name) => {
             return checkStructMethod(ck, name, method, args, span)
         }
-        _ => {}
+        _ => {
+        }
     }
 
     // Enum methods resolve through the same name-keyed impl tables
@@ -1668,7 +1956,8 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
         TypeKind.TEnum(name) => {
             return checkStructMethod(ck, name, method, args, span)
         }
-        _ => {}
+        _ => {
+        }
     }
 
     // Heap<T> receivers auto-deref to the pointee's methods
@@ -1681,10 +1970,12 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
                 TypeKind.TEnum(name) => {
                     return checkStructMethod(ck, name, method, args, span)
                 }
-                _ => {}
+                _ => {
+                }
             }
         }
-        _ => {}
+        _ => {
+        }
     }
 
     error(ck, "no method '" + method.clone() + "' on type " + typeName(objType), cloneSpan(span))
@@ -1696,7 +1987,9 @@ fn checkMethodCall(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Hea
 fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     // v.ptr(): *T — the Vec's backing data pointer. Safe to obtain (mirrors cstr).
     if method == "ptr" {
-        if args.len != 0 { error(ck, "'ptr' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'ptr' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TPtr(Heap(elem.clone()))
     }
     if method == "push" {
@@ -1709,31 +2002,39 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         }
         let argType = checkExpr(ck, *args[0])
         if !typeEq(elem, argType) && !typeEq(argType, tyUnknown()) &&
-            !(isConstIntExpr(*args[0]) && isInteger(elem)) && !interfaceCoercible(ck, elem, argType) {
+        !(isConstIntExpr(*args[0]) && isInteger(elem)) && !interfaceCoercible(ck, elem, argType) {
             error(ck, "push: expected " + typeName(elem) + ", got " + typeName(argType), cloneSpan(span))
         }
         tryMove(ck, *args[0])
         return tyVoid()
     }
     if method == "reverse" {
-        if args.len != 0 { error(ck, "'reverse' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'reverse' takes no arguments", cloneSpan(span))
+        }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot reverse immutable Vec", cloneSpan(span))
         }
         return tyVoid()
     }
     if method == "pop" {
-        if args.len != 0 { error(ck, "'pop' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'pop' takes no arguments", cloneSpan(span))
+        }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot pop from immutable Vec", cloneSpan(span))
         }
         return elem.clone()
     }
     if method == "remove" {
-        if args.len != 1 { error(ck, "'remove' expects 1 argument (index)", cloneSpan(span)) }
+        if args.len != 1 {
+            error(ck, "'remove' expects 1 argument (index)", cloneSpan(span))
+        }
         if args.len >= 1 {
             let it = checkExpr(ck, *args[0])
-            if !isInteger(it) { error(ck, "'remove' index must be integer", cloneSpan(span)) }
+            if !isInteger(it) {
+                error(ck, "'remove' index must be integer", cloneSpan(span))
+            }
         }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot remove from immutable Vec", cloneSpan(span))
@@ -1741,28 +2042,42 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         return elem.clone()
     }
     if method == "clone" {
-        if args.len != 0 { error(ck, "'clone' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'clone' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TVec(Heap(elem.clone()))
     }
     // v[a..b] desugars to v.slice(a,b): a non-owning Vec view (same element type)
     if method == "slice" {
-        if args.len != 2 { error(ck, "'slice' expects 2 arguments (start, end)", cloneSpan(span)) }
+        if args.len != 2 {
+            error(ck, "'slice' expects 2 arguments (start, end)", cloneSpan(span))
+        }
         for si in 0..args.len {
             let it = checkExpr(ck, *args[si])
-            if !isInteger(it) && !typeEq(it, tyUnknown()) { error(ck, "'slice' bounds must be integer", cloneSpan(span)) }
+            if !isInteger(it) && !typeEq(it, tyUnknown()) {
+                error(ck, "'slice' bounds must be integer", cloneSpan(span))
+            }
         }
         return TypeKind.TVec(Heap(elem.clone()))
     }
     if method == "contains" {
-        if args.len != 1 { error(ck, "'contains' expects 1 argument", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'contains' expects 1 argument", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return tyBool()
     }
     if method == "remove" {
-        if args.len != 1 { error(ck, "'remove' expects 1 argument", cloneSpan(span)) }
+        if args.len != 1 {
+            error(ck, "'remove' expects 1 argument", cloneSpan(span))
+        }
         if args.len >= 1 {
             let idxType = checkExpr(ck, *args[0])
-            if !isInteger(idxType) { error(ck, "'remove' index must be integer", cloneSpan(span)) }
+            if !isInteger(idxType) {
+                error(ck, "'remove' index must be integer", cloneSpan(span))
+            }
         }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot remove from immutable Vec", cloneSpan(span))
@@ -1770,38 +2085,57 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         return elem.clone()
     }
     if method == "each" {
-        if args.len != 1 { error(ck, "'each' expects 1 argument (callback)", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'each' expects 1 argument (callback)", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return tyVoid()
     }
     // map((T) => R): Vec<R>; filter((T) => bool): Vec<T>. The closure's param type
     // is the element type (expectedType drives unannotated-param inference).
     if method == "map" || method == "filter" {
-        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument (callback)", cloneSpan(span)) }
+        if args.len != 1 {
+            error(ck, "'" + method.clone() + "' expects 1 argument (callback)", cloneSpan(span))
+        }
         var fparams: Vec<TypeKind> = Vec.new()
         fparams.push(elem.clone())
         var fret = tyUnknown()
-        if method == "filter" { fret = tyBool() }
+        if method == "filter" {
+            fret = tyBool()
+        }
         ck.expectedType = Option.Some(TypeKind.TFn(fparams, Heap(fret)))
         var closureTy = tyUnknown()
-        if args.len >= 1 { closureTy = checkExpr(ck, *args[0]) }
+        if args.len >= 1 {
+            closureTy = checkExpr(ck, *args[0])
+        }
         ck.expectedType = Option.None
-        if method == "filter" { return TypeKind.TVec(Heap(elem.clone())) }
+        if method == "filter" {
+            return TypeKind.TVec(Heap(elem.clone()))
+        }
         // map: element type is the closure's return type
         var rTy = elem.clone()
         match closureTy {
-            TypeKind.TFn(cp, cr) => { rTy = (*cr).clone() }
-            _ => {}
+            TypeKind.TFn(cp, cr) => {
+                rTy = (*cr).clone()
+            }
+            _ => {
+            }
         }
         return TypeKind.TVec(Heap(rTy))
     }
     // find((&T) => bool): Option<T>; any/all((&T) => bool): bool
     if method == "find" || method == "any" || method == "all" {
-        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument (predicate)", cloneSpan(span)) }
+        if args.len != 1 {
+            error(ck, "'" + method.clone() + "' expects 1 argument (predicate)", cloneSpan(span))
+        }
         var fparams: Vec<TypeKind> = Vec.new()
         fparams.push(TypeKind.TRef(Heap(elem.clone()), false))
         ck.expectedType = Option.Some(TypeKind.TFn(fparams, Heap(tyBool())))
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         ck.expectedType = Option.None
         if method == "find" {
             var optArgs: Vec<TypeKind> = Vec.new()
@@ -1812,14 +2146,20 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         return tyBool()
     }
     if method == "len" {
-        if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'len' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TInt(64, true)
     }
     if method == "swap" {
-        if args.len != 2 { error(ck, "'swap' expects 2 arguments (indices)", cloneSpan(span)) }
+        if args.len != 2 {
+            error(ck, "'swap' expects 2 arguments (indices)", cloneSpan(span))
+        }
         for si in 0..args.len {
             let it = checkExpr(ck, *args[si])
-            if !isInteger(it) { error(ck, "'swap' indices must be integer", cloneSpan(span)) }
+            if !isInteger(it) {
+                error(ck, "'swap' indices must be integer", cloneSpan(span))
+            }
         }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot swap in immutable Vec", cloneSpan(span))
@@ -1827,12 +2167,18 @@ fn checkVecMethod(ck: &mut Checker, obj: &Expr, elem: &TypeKind, method: &string
         return tyVoid()
     }
     if method == "insert" {
-        if args.len != 2 { error(ck, "'insert' expects 2 arguments (index, value)", cloneSpan(span)) }
+        if args.len != 2 {
+            error(ck, "'insert' expects 2 arguments (index, value)", cloneSpan(span))
+        }
         if args.len >= 1 {
             let it = checkExpr(ck, *args[0])
-            if !isInteger(it) { error(ck, "'insert' index must be integer", cloneSpan(span)) }
+            if !isInteger(it) {
+                error(ck, "'insert' index must be integer", cloneSpan(span))
+            }
         }
-        if args.len >= 2 { checkExpr(ck, *args[1]) }
+        if args.len >= 2 {
+            checkExpr(ck, *args[1])
+        }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot insert into immutable Vec", cloneSpan(span))
         }
@@ -1856,11 +2202,11 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         let keyType = checkExpr(ck, *args[0])
         let valType = checkExpr(ck, *args[1])
         if !typeEq(key, keyType) && !typeEq(keyType, tyUnknown()) &&
-            !(isConstIntExpr(*args[0]) && isInteger(key)) {
+        !(isConstIntExpr(*args[0]) && isInteger(key)) {
             error(ck, "insert key: expected " + typeName(key) + ", got " + typeName(keyType), cloneSpan(span))
         }
         if !typeEq(val, valType) && !typeEq(valType, tyUnknown()) &&
-            !(isConstIntExpr(*args[1]) && isInteger(val)) {
+        !(isConstIntExpr(*args[1]) && isInteger(val)) {
             error(ck, "insert value: expected " + typeName(val) + ", got " + typeName(valType), cloneSpan(span))
         }
         tryMove(ck, *args[0])
@@ -1868,8 +2214,12 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         return tyVoid()
     }
     if method == "get" {
-        if args.len != 1 { error(ck, "'get' expects 1 argument (key)", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'get' expects 1 argument (key)", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         // get returns Option<V>, matching the TS oracle
         var optArgs: Vec<TypeKind> = Vec.new()
         optArgs.push(val.clone())
@@ -1877,8 +2227,12 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         return TypeKind.TEnum(mangled)
     }
     if method == "contains" {
-        if args.len != 1 { error(ck, "'contains' expects 1 argument (key)", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'contains' expects 1 argument (key)", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return tyBool()
     }
     if method == "getOrDefault" {
@@ -1889,29 +2243,37 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
         let keyType = checkExpr(ck, *args[0])
         let defType = checkExpr(ck, *args[1])
         if !typeEq(key, keyType) && !typeEq(keyType, tyUnknown()) &&
-            !(isConstIntExpr(*args[0]) && isInteger(key)) {
+        !(isConstIntExpr(*args[0]) && isInteger(key)) {
             error(ck, "getOrDefault key: expected " + typeName(key) + ", got " + typeName(keyType), cloneSpan(span))
         }
         if !typeEq(val, defType) && !typeEq(defType, tyUnknown()) &&
-            !(isConstIntExpr(*args[1]) && isInteger(val)) {
+        !(isConstIntExpr(*args[1]) && isInteger(val)) {
             error(ck, "getOrDefault default: expected " + typeName(val) + ", got " + typeName(defType), cloneSpan(span))
         }
         return val.clone()
     }
     if method == "remove" {
-        if args.len != 1 { error(ck, "'remove' expects 1 argument (key)", cloneSpan(span)) }
+        if args.len != 1 {
+            error(ck, "'remove' expects 1 argument (key)", cloneSpan(span))
+        }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot remove from immutable HashMap", cloneSpan(span))
         }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return tyBool()
     }
     if method == "clone" {
-        if args.len != 0 { error(ck, "'clone' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'clone' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.THashMap(Heap(key.clone()), Heap(val.clone()))
     }
     if method == "len" {
-        if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'len' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TInt(64, true)
     }
     error(ck, "no method '" + method.clone() + "' on HashMap", cloneSpan(span))
@@ -1922,11 +2284,15 @@ fn checkHashMapMethod(ck: &mut Checker, obj: &Expr, key: &TypeKind, val: &TypeKi
 
 fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<Heap<Expr>>, span: &Option<Span>): TypeKind {
     if method == "clone" {
-        if args.len != 0 { error(ck, "'clone' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'clone' takes no arguments", cloneSpan(span))
+        }
         return tyString()
     }
     if method == "contains" || method == "startsWith" || method == "endsWith" {
-        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span)) }
+        if args.len != 1 {
+            error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span))
+        }
         if args.len >= 1 {
             let argType = checkExpr(ck, *args[0])
             if !typeEq(argType, tyString()) && !typeEq(argType, tyUnknown()) {
@@ -1936,60 +2302,100 @@ fn checkStringMethod(ck: &mut Checker, obj: &Expr, method: &string, args: &Vec<H
         return tyBool()
     }
     if method == "split" {
-        if args.len != 1 { error(ck, "'split' expects 1 argument", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'split' expects 1 argument", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return TypeKind.TVec(Heap(tyString()))
     }
     if method == "splitWords" || method == "splitWhitespace" {
-        if args.len != 0 { error(ck, "'" + method.clone() + "' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'" + method.clone() + "' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TVec(Heap(tyString()))
     }
     if method == "reverse" {
-        if args.len != 0 { error(ck, "'reverse' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'reverse' takes no arguments", cloneSpan(span))
+        }
         return tyString()
     }
     if method == "trim" || method == "trimStart" || method == "trimEnd" ||
-       method == "toLower" || method == "toUpper" {
-        if args.len != 0 { error(ck, "'" + method.clone() + "' takes no arguments", cloneSpan(span)) }
+    method == "toLower" || method == "toUpper" {
+        if args.len != 0 {
+            error(ck, "'" + method.clone() + "' takes no arguments", cloneSpan(span))
+        }
         return tyString()
     }
     if method == "substr" {
-        if args.len != 2 { error(ck, "'substr' expects 2 arguments (start, end)", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
-        if args.len >= 2 { checkExpr(ck, *args[1]) }
+        if args.len != 2 {
+            error(ck, "'substr' expects 2 arguments (start, end)", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
+        if args.len >= 2 {
+            checkExpr(ck, *args[1])
+        }
         return tyString()
     }
     if method == "cstr" {
-        if args.len != 0 { error(ck, "'cstr' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'cstr' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TPtr(Heap(tyU8()))
     }
     if method == "substring" || method == "slice" {
-        if args.len != 2 { error(ck, "'" + method.clone() + "' expects 2 arguments (start, end)", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
-        if args.len >= 2 { checkExpr(ck, *args[1]) }
+        if args.len != 2 {
+            error(ck, "'" + method.clone() + "' expects 2 arguments (start, end)", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
+        if args.len >= 2 {
+            checkExpr(ck, *args[1])
+        }
         return tyString()
     }
     if method == "indexOf" || method == "lastIndexOf" {
-        if args.len != 1 { error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len != 1 {
+            error(ck, "'" + method.clone() + "' expects 1 argument", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return TypeKind.TInt(64, true)
     }
     if method == "len" {
-        if args.len != 0 { error(ck, "'len' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'len' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TInt(64, true)
     }
     if method == "replace" {
-        if args.len != 2 { error(ck, "'replace' expects 2 arguments", cloneSpan(span)) }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
-        if args.len >= 2 { checkExpr(ck, *args[1]) }
+        if args.len != 2 {
+            error(ck, "'replace' expects 2 arguments", cloneSpan(span))
+        }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
+        if args.len >= 2 {
+            checkExpr(ck, *args[1])
+        }
         return tyString()
     }
     if method == "push" {
-        if args.len != 1 { error(ck, "'push' expects 1 argument", cloneSpan(span)) }
+        if args.len != 1 {
+            error(ck, "'push' expects 1 argument", cloneSpan(span))
+        }
         if !isRootMutable(ck, obj) {
             error(ck, "cannot push to immutable string", cloneSpan(span))
         }
-        if args.len >= 1 { checkExpr(ck, *args[0]) }
+        if args.len >= 1 {
+            checkExpr(ck, *args[0])
+        }
         return tyVoid()
     }
     if method == "toInt" || method == "parseInt" {
@@ -2063,7 +2469,9 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
 
     // clone() is always available
     if method == "clone" {
-        if args.len != 0 { error(ck, "'clone' takes no arguments", cloneSpan(span)) }
+        if args.len != 0 {
+            error(ck, "'clone' takes no arguments", cloneSpan(span))
+        }
         return TypeKind.TStruct(structName.clone())
     }
 
@@ -2084,7 +2492,8 @@ fn checkStructMethod(ck: &mut Checker, structName: &string, method: &string, arg
                         }
                         return (*fret).clone()
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
             }
         }
@@ -2129,19 +2538,26 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
                 Option.Some(et) => {
                     match et {
                         TypeKind.TFn(fparams, fret) => {
-                            if i < fparams.len { pType = fparams[i].clone() }
+                            if i < fparams.len {
+                                pType = fparams[i].clone()
+                            }
                         }
-                        _ => {}
+                        _ => {
+                        }
                     }
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
         }
         // a `&mut T` closure param makes the pointee assignable through the ref
         var pMut = false
         match pType.clone() {
-            TypeKind.TRef(inner, m) => { pMut = m }
-            _ => {}
+            TypeKind.TRef(inner, m) => {
+                pMut = m
+            }
+            _ => {
+            }
         }
         declare(ck, params[i].name.clone(), VarInfo {
             ty: pType.clone(),
@@ -2150,22 +2566,29 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
             borrowed: false,
             read: false,
             span: Option.None,
-        })
+        }
+        )
         paramTypes.push(pType)
     }
 
     var inferredRet = tyVoid()
     var annotated = false
     match retType {
-        Option.Some(rt) => { inferredRet = resolveMonoType(ck, rt) annotated = true }
-        Option.None => {}
+        Option.Some(rt) => {
+            inferredRet = resolveMonoType(ck, rt)
+            annotated = true
+        }
+        Option.None => {
+        }
     }
 
     // Walk the body so inner locals (`var updated = n`) are declared and checked.
     // Unannotated closures pass an unknown return type so `return` statements don't
     // mismatch and instead record their value type into ck.pendingClosureRet.
     var walkRet = inferredRet.clone()
-    if !annotated { walkRet = tyUnknown() }
+    if !annotated {
+        walkRet = tyUnknown()
+    }
     ck.pendingClosureRet = Option.None
     let snap = snapshotMoves(ck)
     for i in 0..body.len {
@@ -2174,8 +2597,11 @@ fn checkClosure(ck: &mut Checker, params: &Vec<Param>, retType: &Option<MiloType
     restoreMoves(ck, snap)
     if !annotated {
         match ck.pendingClosureRet {
-            Option.Some(t) => { inferredRet = t.clone() }
-            Option.None => {}
+            Option.Some(t) => {
+                inferredRet = t.clone()
+            }
+            Option.None => {
+            }
         }
     }
 

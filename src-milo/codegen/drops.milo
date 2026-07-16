@@ -7,7 +7,9 @@
 // value has its source slot zeroed, so a later drop sees cap==0 / null and is a
 // no-op. Every drop below is guarded by that runtime check, so dropping a
 // moved-from or never-initialized slot is always safe.
-from "src-milo/ast.milo" import { Expr }
+from "src-milo/ast.milo" import {
+    Expr
+}
 from "src-milo/codegen/types.milo" import {
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo,
     emit, emitG, nextTemp, nextLabel, llType, isVecTy, unwrapVec, isHashMapTy,
@@ -23,16 +25,28 @@ from "src-milo/codegen/types.milo" import {
 // recursing into its pointee.
 fn cgNeedsDrop(cg: &Cgen, tyRaw: &string): bool {
     let ty = resolveTyStr(cg, tyRaw)
-    if ty == "string" { return true }
-    if isVecTy(ty) { return true }
-    if isHashMapTy(ty) { return false }
-    if unwrapHeap(ty).len > 0 { return true }
+    if ty == "string" {
+        return true
+    }
+    if isVecTy(ty) {
+        return true
+    }
+    if isHashMapTy(ty) {
+        return false
+    }
+    if unwrapHeap(ty).len > 0 {
+        return true
+    }
     let raw = stripPercent(ty)
-    if cg.fnRets.contains(raw + "$Drop$drop") { return true }
+    if cg.fnRets.contains(raw + "$Drop$drop") {
+        return true
+    }
     if cg.structs.contains(raw) {
         let fields = cg.structs.get(raw)!
         for i in 0..fields.len {
-            if cgNeedsDrop(cg, fields[i].ty) { return true }
+            if cgNeedsDrop(cg, fields[i].ty) {
+                return true
+            }
         }
         return false
     }
@@ -40,7 +54,9 @@ fn cgNeedsDrop(cg: &Cgen, tyRaw: &string): bool {
         let info = cg.enums.get(raw)!
         for vi in 0..info.variants.len {
             for pi in 0..info.variants[vi].payloadTypes.len {
-                if cgNeedsDrop(cg, info.variants[vi].payloadTypes[pi]) { return true }
+                if cgNeedsDrop(cg, info.variants[vi].payloadTypes[pi]) {
+                    return true
+                }
             }
         }
         return false
@@ -160,7 +176,9 @@ fn emitDropValue(cg: &mut Cgen, addr: &string, tyRaw: &string) {
 // Whether a drop helper of this name has already been emitted this module.
 fn dropHelperEmitted(cg: &Cgen, hn: &string): bool {
     for i in 0..cg.dropHelpers.len {
-        if cg.dropHelpers[i] == hn { return true }
+        if cg.dropHelpers[i] == hn {
+            return true
+        }
     }
     return false
 }
@@ -170,8 +188,10 @@ fn dropHelperEmitted(cg: &Cgen, hn: &string): bool {
 // helper is emitted as its own top-level function into cg.globals.
 fn ensureStructDropHelper(cg: &mut Cgen, name: &string) {
     let hn = "milo.drop.struct." + name.clone()
-    if dropHelperEmitted(cg, hn) { return }
-    cg.dropHelpers.push(hn.clone())          // mark BEFORE emit to break cycles
+    if dropHelperEmitted(cg, hn) {
+        return
+    }
+    cg.dropHelpers.push(hn.clone()) // mark BEFORE emit to break cycles
     let savedBody = cg.body.clone()
     let savedTemp = cg.temp
     let savedLabel = cg.label
@@ -201,7 +221,9 @@ fn ensureStructDropHelper(cg: &mut Cgen, name: &string) {
 // variant's struct type, exactly as genMatch binds payloads.
 fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
     let hn = "milo.drop.enum." + name.clone()
-    if dropHelperEmitted(cg, hn) { return }
+    if dropHelperEmitted(cg, hn) {
+        return
+    }
     cg.dropHelpers.push(hn.clone())
     let savedBody = cg.body.clone()
     let savedTemp = cg.temp
@@ -224,7 +246,9 @@ fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
         let payloadTypes = lookupVariantPayload(cg, name, info.variants[vi].name)
         var anyDrop = false
         for pi in 0..payloadTypes.len {
-            if cgNeedsDrop(cg, payloadTypes[pi]) { anyDrop = true }
+            if cgNeedsDrop(cg, payloadTypes[pi]) {
+                anyDrop = true
+            }
         }
         if anyDrop {
             let lbl = nextLabel(cg, "edrop")
@@ -267,7 +291,9 @@ fn ensureEnumDropHelper(cg: &mut Cgen, name: &string) {
 fn variantStructTyDrop(payloadTypes: &Vec<string>): string {
     var s = "{ "
     for i in 0..payloadTypes.len {
-        if i > 0 { s = s + ", " }
+        if i > 0 {
+            s = s + ", "
+        }
         s = s + llType(payloadTypes[i])
     }
     s = s + " }"

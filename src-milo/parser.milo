@@ -1,5 +1,7 @@
 // Recursive descent parser — port of src/parser.ts
-from "src-milo/tokens.milo" import { TokKind, Token }
+from "src-milo/tokens.milo" import {
+    TokKind, Token
+}
 from "src-milo/ast.milo" import {
     MiloType, Param, Expr, Stmt, Function, Program, StructDecl, StructField,
     EnumDecl, EnumVariant, Pattern, MatchArm, Span, ImportDecl, TraitDecl,
@@ -18,7 +20,9 @@ struct Parser {
 }
 
 fn newParser(tokens: Vec<Token>): Parser {
-    return Parser { tokens: tokens, pos: 0, noStructLit: false }
+    return Parser {
+        tokens: tokens, pos: 0, noStructLit: false
+    }
 }
 
 // -- Navigation helpers --
@@ -52,7 +56,10 @@ fn advance(p: &mut Parser): Token {
 }
 
 fn span(tok: &Token): Option<Span> {
-    return Option.Some(Span { line: tok.line, col: tok.col })
+    return Option.Some(Span {
+        line: tok.line, col: tok.col
+    }
+    )
 }
 
 fn at(p: &Parser, kind: TokKind): bool {
@@ -91,8 +98,12 @@ fn isFnType(p: &mut Parser): bool {
     var i = p.pos + 1
     var depth = 1
     while depth > 0 && i < p.tokens.len {
-        if p.tokens[i].kind == TokKind.LParen { depth = depth + 1 }
-        else if p.tokens[i].kind == TokKind.RParen { depth = depth - 1 }
+        if p.tokens[i].kind == TokKind.LParen {
+            depth = depth + 1
+        } 
+        else if p.tokens[i].kind == TokKind.RParen {
+            depth = depth - 1
+        }
         i = i + 1
     }
     return i < p.tokens.len && p.tokens[i].kind == TokKind.FatArrow
@@ -135,7 +146,9 @@ fn parseType(p: &mut Parser): MiloType {
         var fnParams: Vec<MiloType> = Vec.new()
         while !at(p, TokKind.RParen) {
             fnParams.push(parseType(p))
-            if !at(p, TokKind.RParen) { expect(p, TokKind.Comma) }
+            if !at(p, TokKind.RParen) {
+                expect(p, TokKind.Comma)
+            }
         }
         expect(p, TokKind.RParen)
         expect(p, TokKind.FatArrow)
@@ -206,7 +219,9 @@ fn parseOneTypeParam(p: &mut Parser): TypeParam {
             bounds.push(expect(p, TokKind.Ident).value)
         }
     }
-    return TypeParam { name: name, bounds: bounds }
+    return TypeParam {
+        name: name, bounds: bounds
+    }
 }
 
 fn parseTypeParams(p: &mut Parser): Vec<TypeParam> {
@@ -234,7 +249,9 @@ fn parseAttribute(p: &mut Parser): Attribute {
         }
         expect(p, TokKind.RParen)
     }
-    return Attribute { name: name, args: args }
+    return Attribute {
+        name: name, args: args
+    }
 }
 
 // -- Import --
@@ -261,7 +278,9 @@ fn parseImport(p: &mut Parser): ImportDecl {
     // bare import "path" — error
     let tok = advance(p)
     let pathTok = expect(p, TokKind.String)
-    return ImportDecl { path: pathTok.value, names: Option.None, span: span(tok) }
+    return ImportDecl {
+        path: pathTok.value, names: Option.None, span: span(tok)
+    }
 }
 
 // -- Struct --
@@ -276,7 +295,10 @@ fn parseStruct(p: &mut Parser): StructDecl {
         let fieldName = expect(p, TokKind.Ident).value
         expect(p, TokKind.Colon)
         let fieldType = parseType(p)
-        fields.push(StructField { name: fieldName, ty: fieldType })
+        fields.push(StructField {
+            name: fieldName, ty: fieldType
+        }
+        )
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RBrace)
@@ -306,7 +328,10 @@ fn parseEnum(p: &mut Parser): EnumDecl {
             }
             expect(p, TokKind.RParen)
         }
-        variants.push(EnumVariant { name: variantName, fields: fields })
+        variants.push(EnumVariant {
+            name: variantName, fields: fields
+        }
+        )
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RBrace)
@@ -328,7 +353,9 @@ fn parseParam(p: &mut Parser): Param {
         advance(p)
         ty = parseType(p)
     }
-    return Param { name: name, ty: ty }
+    return Param {
+        name: name, ty: ty
+    }
 }
 
 struct ParamResult {
@@ -350,7 +377,9 @@ fn parseParamList(p: &mut Parser): ParamResult {
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RParen)
-    return ParamResult { params: params, variadic: variadic }
+    return ParamResult {
+        params: params, variadic: variadic
+    }
 }
 
 fn parseReturnType(p: &mut Parser): MiloType {
@@ -630,20 +659,37 @@ fn parseMatch(p: &mut Parser): Stmt {
         expect(p, TokKind.LBrace)
         let body = parseStmts(p)
         expect(p, TokKind.RBrace)
-        arms.push(MatchArm { pattern: pattern, body: body })
+        arms.push(MatchArm {
+            pattern: pattern, body: body
+        }
+        )
     }
     expect(p, TokKind.RBrace)
     return Stmt.MatchStmt(Heap(subject), arms, s)
 }
 
 fn parseStmt(p: &mut Parser): Stmt {
-    if at(p, TokKind.Let) { return parseLet(p) }
-    if at(p, TokKind.Var) { return parseVar(p) }
-    if at(p, TokKind.Return) { return parseReturn(p) }
-    if at(p, TokKind.If) { return parseIf(p) }
-    if at(p, TokKind.While) { return parseWhile(p) }
-    if at(p, TokKind.For) { return parseFor(p) }
-    if at(p, TokKind.Match) { return parseMatch(p) }
+    if at(p, TokKind.Let) {
+        return parseLet(p)
+    }
+    if at(p, TokKind.Var) {
+        return parseVar(p)
+    }
+    if at(p, TokKind.Return) {
+        return parseReturn(p)
+    }
+    if at(p, TokKind.If) {
+        return parseIf(p)
+    }
+    if at(p, TokKind.While) {
+        return parseWhile(p)
+    }
+    if at(p, TokKind.For) {
+        return parseFor(p)
+    }
+    if at(p, TokKind.Match) {
+        return parseMatch(p)
+    }
     if at(p, TokKind.Break) {
         let s = span(advance(p))
         return Stmt.BreakStmt(s)
@@ -682,15 +728,33 @@ fn parseStmt(p: &mut Parser): Stmt {
 // maps a compound-assign token to its binary operator, or "" if not compound
 fn compoundOp(k: TokKind): string {
     match k {
-        TokKind.PlusEq => { return "+" }
-        TokKind.MinusEq => { return "-" }
-        TokKind.StarEq => { return "*" }
-        TokKind.SlashEq => { return "/" }
-        TokKind.PercentEq => { return "%" }
-        TokKind.AmpEq => { return "&" }
-        TokKind.PipeEq => { return "|" }
-        TokKind.CaretEq => { return "^" }
-        _ => { return "" }
+        TokKind.PlusEq => {
+            return "+"
+        }
+        TokKind.MinusEq => {
+            return "-"
+        }
+        TokKind.StarEq => {
+            return "*"
+        }
+        TokKind.SlashEq => {
+            return "/"
+        }
+        TokKind.PercentEq => {
+            return "%"
+        }
+        TokKind.AmpEq => {
+            return "&"
+        }
+        TokKind.PipeEq => {
+            return "|"
+        }
+        TokKind.CaretEq => {
+            return "^"
+        }
+        _ => {
+            return ""
+        }
     }
 }
 
@@ -736,7 +800,11 @@ fn parsePattern(p: &mut Parser): Pattern {
         if next.kind == TokKind.Int || next.kind == TokKind.Float {
             advance(p)
             let numTok = advance(p)
-            let litKind = if numTok.kind == TokKind.Int { LiteralKind.LitInt } else { LiteralKind.LitFloat }
+            let litKind = if numTok.kind == TokKind.Int {
+                LiteralKind.LitInt
+            } else {
+                LiteralKind.LitFloat
+            }
             return Pattern.LiteralPattern("-" + numTok.value, litKind, s)
         }
     }
@@ -826,9 +894,9 @@ fn parseComparison(p: &mut Parser): Expr {
         return Expr.IsExpr(Heap(left), Heap(pattern), Option.None)
     }
     while peek(p).kind == TokKind.EqEq || peek(p).kind == TokKind.Neq ||
-          peek(p).kind == TokKind.LtEq || peek(p).kind == TokKind.GtEq ||
-          (peek(p).kind == TokKind.Lt && !atAdjacent(p, TokKind.Lt)) ||
-          (peek(p).kind == TokKind.Gt && !atAdjacent(p, TokKind.Gt)) {
+    peek(p).kind == TokKind.LtEq || peek(p).kind == TokKind.GtEq ||
+    (peek(p).kind == TokKind.Lt && !atAdjacent(p, TokKind.Lt)) ||
+    (peek(p).kind == TokKind.Gt && !atAdjacent(p, TokKind.Gt)) {
         let opTok = advance(p)
         let right = parseShift(p)
         left = Expr.BinOp(opTok.value, Heap(left), Heap(right), Option.None)
@@ -843,7 +911,11 @@ fn parseShift(p: &mut Parser): Expr {
         advance(p)
         advance(p)
         let right = parseAdditive(p)
-        let op = if isLeft { "<<" } else { ">>" }
+        let op = if isLeft {
+            "<<"
+        } else {
+            ">>"
+        }
         left = Expr.BinOp(op, Heap(left), Heap(right), Option.None)
     }
     return left
@@ -875,8 +947,8 @@ fn parseMultiplicative(p: &mut Parser): Expr {
 
 fn parseUnary(p: &mut Parser): Expr {
     if peek(p).kind == TokKind.Minus || peek(p).kind == TokKind.Bang ||
-       peek(p).kind == TokKind.Star || peek(p).kind == TokKind.Tilde ||
-       peek(p).kind == TokKind.Amp {
+    peek(p).kind == TokKind.Star || peek(p).kind == TokKind.Tilde ||
+    peek(p).kind == TokKind.Amp {
         let tok = advance(p)
         let operand = parseUnary(p)
         return Expr.UnaryOp(tok.value, Heap(operand), span(tok))
@@ -945,13 +1017,23 @@ fn isArrowClosure(p: &mut Parser): bool {
     var i = p.pos + 1
     var depth = 1
     while depth > 0 && i < p.tokens.len {
-        if p.tokens[i].kind == TokKind.LParen { depth = depth + 1 }
-        else if p.tokens[i].kind == TokKind.RParen { depth = depth - 1 }
+        if p.tokens[i].kind == TokKind.LParen {
+            depth = depth + 1
+        } 
+        else if p.tokens[i].kind == TokKind.RParen {
+            depth = depth - 1
+        }
         i = i + 1
     }
-    if i >= p.tokens.len { return false }
-    if p.tokens[i].kind == TokKind.FatArrow { return true }
-    if p.tokens[i].kind == TokKind.Colon { return true }
+    if i >= p.tokens.len {
+        return false
+    }
+    if p.tokens[i].kind == TokKind.FatArrow {
+        return true
+    }
+    if p.tokens[i].kind == TokKind.Colon {
+        return true
+    }
     return false
 }
 
@@ -960,7 +1042,9 @@ fn parseClosure(p: &mut Parser, s: Option<Span>, isMove: bool): Expr {
     var params: Vec<Param> = Vec.new()
     while !at(p, TokKind.RParen) {
         params.push(parseParam(p))
-        if !at(p, TokKind.RParen) { expect(p, TokKind.Comma) }
+        if !at(p, TokKind.RParen) {
+            expect(p, TokKind.Comma)
+        }
     }
     expect(p, TokKind.RParen)
     var retType: Option<MiloType> = Option.None
@@ -1083,7 +1167,9 @@ fn parsePrimary(p: &mut Parser): Expr {
             expect(p, TokKind.LParen)
             var args: Vec<Heap<Expr>> = Vec.new()
             while !at(p, TokKind.RParen) {
-                if at(p, TokKind.Eof) { break }
+                if at(p, TokKind.Eof) {
+                    break
+                }
                 args.push(Heap(parseExpr(p)))
                 matchTok(p, TokKind.Comma)
             }
@@ -1139,8 +1225,15 @@ fn parseStructLit(p: &mut Parser, name: string, s: Option<Span>): Expr {
         let fieldSpan = span(nameTok)
         let fieldName = nameTok.value
         // Field shorthand: `{ x }` desugars to `{ x: x }` (value is the binding named `x`).
-        let value = if matchTok(p, TokKind.Colon) { parseExpr(p) } else { Expr.Ident(fieldName.clone(), fieldSpan) }
-        fields.push(StructLitField { name: fieldName, value: Heap(value) })
+        let value = if matchTok(p, TokKind.Colon) {
+            parseExpr(p)
+        } else {
+            Expr.Ident(fieldName.clone(), fieldSpan)
+        }
+        fields.push(StructLitField {
+            name: fieldName, value: Heap(value)
+        }
+        )
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RBrace)
@@ -1153,12 +1246,21 @@ fn parseJsonObject(p: &mut Parser, s: Option<Span>): Expr {
     expect(p, TokKind.LBrace)
     var fields: Vec<StructLitField> = Vec.new()
     while !at(p, TokKind.RBrace) {
-        if at(p, TokKind.Eof) { break }
+        if at(p, TokKind.Eof) {
+            break
+        }
         let nameTok = expect(p, TokKind.Ident)
         let fieldSpan = span(nameTok)
         let fieldName = nameTok.value
-        let value = if matchTok(p, TokKind.Colon) { parseExpr(p) } else { Expr.Ident(fieldName.clone(), fieldSpan) }
-        fields.push(StructLitField { name: fieldName, value: Heap(value) })
+        let value = if matchTok(p, TokKind.Colon) {
+            parseExpr(p)
+        } else {
+            Expr.Ident(fieldName.clone(), fieldSpan)
+        }
+        fields.push(StructLitField {
+            name: fieldName, value: Heap(value)
+        }
+        )
         matchTok(p, TokKind.Comma)
     }
     expect(p, TokKind.RBrace)
@@ -1170,7 +1272,9 @@ fn parseCall(p: &mut Parser, name: string, s: Option<Span>): Expr {
     var args: Vec<Heap<Expr>> = Vec.new()
     while !at(p, TokKind.RParen) {
         // a desynced parse must not spin at EOF forever
-        if at(p, TokKind.Eof) { break }
+        if at(p, TokKind.Eof) {
+            break
+        }
         args.push(Heap(parseExpr(p)))
         matchTok(p, TokKind.Comma)
     }
@@ -1182,22 +1286,30 @@ fn parseCall(p: &mut Parser, name: string, s: Option<Span>): Expr {
 // Lookahead for `name<T, U>(` — distinguishes a type-arg call from a
 // comparison chain without consuming tokens.
 fn isTypeArgCall(p: &Parser): bool {
-    if peek(p).kind != TokKind.Lt { return false }
+    if peek(p).kind != TokKind.Lt {
+        return false
+    }
     var i: i64 = 1
     var depth: i64 = 1
     while depth > 0 {
         let t = peekN(p, i)
-        if t.kind == TokKind.Eof { return false }
-        if t.kind == TokKind.Lt { depth = depth + 1 }
-        if t.kind == TokKind.Gt { depth = depth - 1 }
+        if t.kind == TokKind.Eof {
+            return false
+        }
+        if t.kind == TokKind.Lt {
+            depth = depth + 1
+        }
+        if t.kind == TokKind.Gt {
+            depth = depth - 1
+        }
         if depth > 0 {
             // only type-ish tokens may appear inside the angle brackets; Lt/Gt are
             // allowed so NESTED generics parse (`Channel<Vec<T>>.new`).
             if t.kind != TokKind.Ident && t.kind != TokKind.Comma &&
-                t.kind != TokKind.Star && t.kind != TokKind.LBracket &&
-                t.kind != TokKind.RBracket && t.kind != TokKind.Semicolon &&
-                t.kind != TokKind.Int && t.kind != TokKind.Amp &&
-                t.kind != TokKind.Lt && t.kind != TokKind.Gt {
+            t.kind != TokKind.Star && t.kind != TokKind.LBracket &&
+            t.kind != TokKind.RBracket && t.kind != TokKind.Semicolon &&
+            t.kind != TokKind.Int && t.kind != TokKind.Amp &&
+            t.kind != TokKind.Lt && t.kind != TokKind.Gt {
                 return false
             }
         }
@@ -1233,7 +1345,7 @@ fn parseFString(raw: string, s: Option<Span>): Expr {
     var hadInterp = false
     var i: i64 = 0
     while i < raw.len {
-        if raw[i] == 123 {  // '{'
+        if raw[i] == 123 { // '{'
             hadInterp = true
             if lit.len > 0 {
                 args.push(Heap(Expr.StringLit(lit, s)))
@@ -1243,8 +1355,10 @@ fn parseFString(raw: string, s: Option<Span>): Expr {
             var depth = 1
             var exprStr = ""
             while i < raw.len && depth > 0 {
-                if raw[i] == 123 { depth = depth + 1 }
-                else if raw[i] == 125 {  // '}'
+                if raw[i] == 123 {
+                    depth = depth + 1
+                } 
+                else if raw[i] == 125 { // '}'
                     depth = depth - 1
                     if depth == 0 {
                         i = i + 1
@@ -1299,11 +1413,15 @@ fn parse(p: &mut Parser): Program {
             imports.push(parseImport(p))
         } else if at(p, TokKind.Struct) {
             var s = parseStruct(p)
-            if attrs.len > 0 { s.attributes = attrs }
+            if attrs.len > 0 {
+                s.attributes = attrs
+            }
             structs.push(s)
         } else if at(p, TokKind.Enum) {
             var e = parseEnum(p)
-            if attrs.len > 0 { e.attributes = attrs }
+            if attrs.len > 0 {
+                e.attributes = attrs
+            }
             enums.push(e)
         } else if at(p, TokKind.Extern) {
             // `extern struct` is a C-ABI struct — parse it as a normal struct
@@ -1317,7 +1435,10 @@ fn parse(p: &mut Parser): Program {
                 advance(p)
                 advance(p)
                 let tyName = expect(p, TokKind.Ident).value
-                structs.push(StructDecl { name: tyName, typeParams: Vec.new(), fields: Vec.new(), attributes: Vec.new() })
+                structs.push(StructDecl {
+                    name: tyName, typeParams: Vec.new(), fields: Vec.new(), attributes: Vec.new()
+                }
+                )
             } else {
                 functions.push(parseExternFn(p))
             }
@@ -1339,14 +1460,21 @@ fn parse(p: &mut Parser): Program {
             // (kept out of parseType so it can't misfire on ordinary annotations)
             if at(p, TokKind.LParen) {
                 advance(p)
-                if at(p, TokKind.Minus) { advance(p) }
+                if at(p, TokKind.Minus) {
+                    advance(p)
+                }
                 expect(p, TokKind.Int)
                 expect(p, TokKind.DotDot)
-                if at(p, TokKind.Minus) { advance(p) }
+                if at(p, TokKind.Minus) {
+                    advance(p)
+                }
                 expect(p, TokKind.Int)
                 expect(p, TokKind.RParen)
             }
-            typeAliases.push(TypeAlias { name: aliasName, base: base })
+            typeAliases.push(TypeAlias {
+                name: aliasName, base: base
+            }
+            )
         } else {
             // Skip unexpected token
             advance(p)
@@ -1382,5 +1510,7 @@ fn parseGlobal(p: &mut Parser): GlobalDecl {
     }
     expect(p, TokKind.Eq)
     let value = parseExpr(p)
-    return GlobalDecl { name: name, ty: ty, value: Heap(value), mutable: mutable, span: s }
+    return GlobalDecl {
+        name: name, ty: ty, value: Heap(value), mutable: mutable, span: s
+    }
 }

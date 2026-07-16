@@ -11,7 +11,9 @@
 // path stays on milo0 features that are already rock-solid — this module is compiled
 // by the very compiler it lives in.
 
-from "src-milo/codegen/types.milo" import { Cgen, FieldInfo, alignOf, payloadBytes, stripPercent }
+from "src-milo/codegen/types.milo" import {
+    Cgen, FieldInfo, alignOf, payloadBytes, stripPercent
+}
 
 struct AbiLeaf {
     offset: i64,
@@ -66,22 +68,34 @@ fn alignUp(off: i64, a: i64): i64 {
 fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
     var out: Vec<AbiLeaf> = Vec.new()
     if ty == "f32" {
-        out.push(AbiLeaf { offset: off, size: 4, isFloat: true })
+        out.push(AbiLeaf {
+            offset: off, size: 4, isFloat: true
+        }
+        )
         return out
     }
     if ty == "f64" || ty == "double" {
-        out.push(AbiLeaf { offset: off, size: 8, isFloat: true })
+        out.push(AbiLeaf {
+            offset: off, size: 8, isFloat: true
+        }
+        )
         return out
     }
     if ty == "float" {
-        out.push(AbiLeaf { offset: off, size: 4, isFloat: true })
+        out.push(AbiLeaf {
+            offset: off, size: 4, isFloat: true
+        }
+        )
         return out
     }
     let raw = stripPercent(ty)
     if cg.structs.contains(raw) {
         return abiLeaves(cg, raw, off)
     }
-    out.push(AbiLeaf { offset: off, size: payloadBytes(cg, ty), isFloat: false })
+    out.push(AbiLeaf {
+        offset: off, size: payloadBytes(cg, ty), isFloat: false
+    }
+    )
     return out
 }
 
@@ -89,7 +103,9 @@ fn leavesOf(cg: &Cgen, ty: &string, off: i64): Vec<AbiLeaf> {
 // laying fields out exactly as LLVM does (natural alignment, matching Milo).
 fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
     var out: Vec<AbiLeaf> = Vec.new()
-    if !cg.structs.contains(name) { return out }
+    if !cg.structs.contains(name) {
+        return out
+    }
     let fields = cg.structs.get(name)!
     var off: i64 = 0
     for i in 0..fields.len {
@@ -97,7 +113,10 @@ fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
         off = alignUp(off, alignOf(cg, fty))
         let sub = leavesOf(cg, fty, base + off)
         for j in 0..sub.len {
-            out.push(AbiLeaf { offset: sub[j].offset, size: sub[j].size, isFloat: sub[j].isFloat })
+            out.push(AbiLeaf {
+                offset: sub[j].offset, size: sub[j].size, isFloat: sub[j].isFloat
+            }
+            )
         }
         off = off + payloadBytes(cg, fty)
     }
@@ -107,13 +126,17 @@ fn abiLeaves(cg: &Cgen, name: &string, base: i64): Vec<AbiLeaf> {
 // Byte offset of `fieldName` within struct `name`, laid out as LLVM does (natural
 // alignment). Drives the offsetOf<T>("field") builtin.
 fn structFieldOffset(cg: &Cgen, name: &string, fieldName: &string): i64 {
-    if !cg.structs.contains(name) { return 0 }
+    if !cg.structs.contains(name) {
+        return 0
+    }
     let fields = cg.structs.get(name)!
     var off: i64 = 0
     for i in 0..fields.len {
         let fty = fields[i].ty.clone()
         off = alignUp(off, alignOf(cg, fty))
-        if fields[i].name == fieldName { return off }
+        if fields[i].name == fieldName {
+            return off
+        }
         off = off + payloadBytes(cg, fty)
     }
     return off
@@ -138,20 +161,40 @@ struct Hfa {
 
 fn hfaOf(s: &AbiStruct): Hfa {
     let n = s.leaves.len
-    if n < 1 || n > 4 { return Hfa { kind: "", count: 0, eltTy: "" } }
+    if n < 1 || n > 4 {
+        return Hfa {
+            kind: "", count: 0, eltTy: ""
+        }
+    }
     for i in 0..n {
-        if !s.leaves[i].isFloat { return Hfa { kind: "", count: 0, eltTy: "" } }
+        if !s.leaves[i].isFloat {
+            return Hfa {
+                kind: "", count: 0, eltTy: ""
+            }
+        }
     }
     let sz = s.leaves[0].size
     for i in 0..n {
-        if s.leaves[i].size != sz { return Hfa { kind: "", count: 0, eltTy: "" } }
+        if s.leaves[i].size != sz {
+            return Hfa {
+                kind: "", count: 0, eltTy: ""
+            }
+        }
     }
-    let elt = if sz == 4 { "float" } else { "double" }
-    return Hfa { kind: "hfa", count: n, eltTy: elt }
+    let elt = if sz == 4 {
+        "float"
+    } else {
+        "double"
+    }
+    return Hfa {
+        kind: "hfa", count: n, eltTy: elt
+    }
 }
 
 fn hfaCoerceTy(h: &Hfa): string {
-    if h.count == 1 { return h.eltTy.clone() }
+    if h.count == 1 {
+        return h.eltTy.clone()
+    }
     return "[" + h.count.toString() + " x " + h.eltTy.clone() + "]"
 }
 
@@ -169,11 +212,17 @@ fn sysvEightbyteTy(s: &AbiStruct, k: i64): string {
         if lOff < hi && lOff + lSz > lo {
             count = count + 1
             loneSize = lSz
-            if !s.leaves[i].isFloat { allFloat = false }
+            if !s.leaves[i].isFloat {
+                allFloat = false
+            }
         }
     }
-    if count == 0 || !allFloat { return "i64" }
-    if count == 1 && loneSize == 4 { return "float" }
+    if count == 0 || !allFloat {
+        return "i64"
+    }
+    if count == 1 && loneSize == 4 {
+        return "float"
+    }
     return "double"
 }
 
@@ -181,7 +230,10 @@ fn sysvRegs(s: &AbiStruct): Vec<AbiReg> {
     let n = ceilDiv(s.size, 8)
     var regs: Vec<AbiReg> = Vec.new()
     for k in 0..n {
-        regs.push(AbiReg { ty: sysvEightbyteTy(s, k), offset: k * 8 })
+        regs.push(AbiReg {
+            ty: sysvEightbyteTy(s, k), offset: k * 8
+        }
+        )
     }
     return regs
 }
@@ -191,15 +243,21 @@ fn emptyRegs(): Vec<AbiReg> {
 }
 
 fn directArg(): ArgClass {
-    return ArgClass { kind: "direct", regs: emptyRegs(), container: 0, byval: false, align: 0, name: "" }
+    return ArgClass {
+        kind: "direct", regs: emptyRegs(), container: 0, byval: false, align: 0, name: ""
+    }
 }
 
 fn coerceArg(regs: Vec<AbiReg>, container: i64): ArgClass {
-    return ArgClass { kind: "coerce", regs: regs, container: container, byval: false, align: 0, name: "" }
+    return ArgClass {
+        kind: "coerce", regs: regs, container: container, byval: false, align: 0, name: ""
+    }
 }
 
 fn indirectArg(byval: bool, align: i64, name: &string): ArgClass {
-    return ArgClass { kind: "indirect", regs: emptyRegs(), container: 0, byval: byval, align: align, name: name.clone() }
+    return ArgClass {
+        kind: "indirect", regs: emptyRegs(), container: 0, byval: byval, align: align, name: name.clone()
+    }
 }
 
 fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
@@ -207,20 +265,33 @@ fn classifyArg(arch: &string, s: &AbiStruct): ArgClass {
         let h = hfaOf(s)
         if h.kind == "hfa" {
             var regs: Vec<AbiReg> = Vec.new()
-            regs.push(AbiReg { ty: hfaCoerceTy(h), offset: 0 })
+            regs.push(AbiReg {
+                ty: hfaCoerceTy(h), offset: 0
+            }
+            )
             return coerceArg(regs, ceilDiv(s.size, 8) * 8)
         }
-        if s.size > 16 { return indirectArg(false, s.align, s.name) }
+        if s.size > 16 {
+            return indirectArg(false, s.align, s.name)
+        }
         var regs: Vec<AbiReg> = Vec.new()
         if s.size <= 8 {
-            regs.push(AbiReg { ty: "i64", offset: 0 })
+            regs.push(AbiReg {
+                ty: "i64", offset: 0
+            }
+            )
             return coerceArg(regs, 8)
         }
-        regs.push(AbiReg { ty: "[2 x i64]", offset: 0 })
+        regs.push(AbiReg {
+            ty: "[2 x i64]", offset: 0
+        }
+        )
         return coerceArg(regs, 16)
     }
     // x86_64 System V
-    if s.size > 16 { return indirectArg(true, s.align, s.name) }
+    if s.size > 16 {
+        return indirectArg(true, s.align, s.name)
+    }
     return coerceArg(sysvRegs(s), ceilDiv(s.size, 8) * 8)
 }
 
@@ -228,25 +299,45 @@ fn classifyRet(arch: &string, s: &AbiStruct): RetClass {
     if arch == "aarch64" {
         let h = hfaOf(s)
         if h.kind == "hfa" {
-            return RetClass { kind: "coerce", retTy: hfaCoerceTy(h), container: ceilDiv(s.size, 8) * 8, align: 0, name: "" }
+            return RetClass {
+                kind: "coerce", retTy: hfaCoerceTy(h), container: ceilDiv(s.size, 8) * 8, align: 0, name: ""
+            }
         }
-        if s.size > 16 { return RetClass { kind: "sret", retTy: "", container: 0, align: s.align, name: s.name.clone() } }
+        if s.size > 16 {
+            return RetClass {
+                kind: "sret", retTy: "", container: 0, align: s.align, name: s.name.clone()
+            }
+        }
         if s.size <= 8 {
-            return RetClass { kind: "coerce", retTy: "i64", container: 8, align: 0, name: "" }
+            return RetClass {
+                kind: "coerce", retTy: "i64", container: 8, align: 0, name: ""
+            }
         }
-        return RetClass { kind: "coerce", retTy: "[2 x i64]", container: 16, align: 0, name: "" }
+        return RetClass {
+            kind: "coerce", retTy: "[2 x i64]", container: 16, align: 0, name: ""
+        }
     }
     // x86_64 System V
-    if s.size > 16 { return RetClass { kind: "sret", retTy: "", container: 0, align: s.align, name: s.name.clone() } }
+    if s.size > 16 {
+        return RetClass {
+            kind: "sret", retTy: "", container: 0, align: s.align, name: s.name.clone()
+        }
+    }
     let regs = sysvRegs(s)
     if regs.len == 1 {
-        return RetClass { kind: "coerce", retTy: regs[0].ty.clone(), container: ceilDiv(s.size, 8) * 8, align: 0, name: "" }
+        return RetClass {
+            kind: "coerce", retTy: regs[0].ty.clone(), container: ceilDiv(s.size, 8) * 8, align: 0, name: ""
+        }
     }
     var rt = "{ "
     for i in 0..regs.len {
-        if i > 0 { rt = rt + ", " }
+        if i > 0 {
+            rt = rt + ", "
+        }
         rt = rt + regs[i].ty.clone()
     }
     rt = rt + " }"
-    return RetClass { kind: "coerce", retTy: rt, container: ceilDiv(s.size, 8) * 8, align: 0, name: "" }
+    return RetClass {
+        kind: "coerce", retTy: rt, container: ceilDiv(s.size, 8) * 8, align: 0, name: ""
+    }
 }

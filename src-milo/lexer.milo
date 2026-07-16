@@ -1,5 +1,7 @@
 // Milo lexer — self-hosted port of src/lexer.ts
-from "src-milo/tokens.milo" import { TokKind, TriviaKind, Trivia, Token, keywordKind }
+from "src-milo/tokens.milo" import {
+    TokKind, TriviaKind, Trivia, Token, keywordKind
+}
 
 struct Lexer {
     src: string,
@@ -9,7 +11,9 @@ struct Lexer {
 }
 
 fn newLexer(src: string): Lexer {
-    return Lexer { src: src, pos: 0, line: 1, col: 1 }
+    return Lexer {
+        src: src, pos: 0, line: 1, col: 1
+    }
 }
 
 // -- helpers --
@@ -31,20 +35,30 @@ fn isHexDigit(c: u8): bool {
 }
 
 fn hexVal(c: u8): i64 {
-    if c >= 48 && c <= 57 { return (c - 48) as i64 }
-    if c >= 65 && c <= 70 { return (c - 55) as i64 }
-    if c >= 97 && c <= 102 { return (c - 87) as i64 }
+    if c >= 48 && c <= 57 {
+        return (c - 48) as i64
+    }
+    if c >= 65 && c <= 70 {
+        return (c - 55) as i64
+    }
+    if c >= 97 && c <= 102 {
+        return (c - 87) as i64
+    }
     return 0
 }
 
 fn peekChar(lex: &Lexer): u8 {
-    if lex.pos < lex.src.len { return lex.src[lex.pos] }
+    if lex.pos < lex.src.len {
+        return lex.src[lex.pos]
+    }
     return 0
 }
 
 fn peekCharAt(lex: &Lexer, offset: i64): u8 {
     let idx = lex.pos + offset
-    if idx < lex.src.len { return lex.src[idx] }
+    if idx < lex.src.len {
+        return lex.src[idx]
+    }
     return 0
 }
 
@@ -63,7 +77,9 @@ fn advanceChar(lex: &mut Lexer): u8 {
 
 fn lexError(msg: &string, line: i32, col: i32) {
     eprint($"error[lex]: {line}:{col}: {msg}")
-    unsafe { exit(1) }
+    unsafe {
+        exit(1)
+    }
 }
 
 // -- trivia --
@@ -78,7 +94,10 @@ fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
             newlines = newlines + 1
             advanceChar(lex)
             if newlines >= 2 && !emittedBlank {
-                trivia.push(Trivia { kind: TriviaKind.Blank, text: "", line: lex.line })
+                trivia.push(Trivia {
+                    kind: TriviaKind.Blank, text: "", line: lex.line
+                }
+                )
                 emittedBlank = true
             }
         } else if ch == 32 || ch == 9 || ch == 13 {
@@ -89,7 +108,10 @@ fn readLeadingTrivia(lex: &mut Lexer): Vec<Trivia> {
             while lex.pos < lex.src.len && peekChar(lex) != 10 {
                 text.push(advanceChar(lex))
             }
-            trivia.push(Trivia { kind: TriviaKind.Comment, text: text, line: commentLine })
+            trivia.push(Trivia {
+                kind: TriviaKind.Comment, text: text, line: commentLine
+            }
+            )
             newlines = 0
             emittedBlank = false
         } else {
@@ -115,7 +137,10 @@ fn readTrailingTrivia(lex: &mut Lexer): Vec<Trivia> {
             text.push(advanceChar(lex))
         }
         var result: Vec<Trivia> = Vec.new()
-        result.push(Trivia { kind: TriviaKind.Comment, text: text, line: commentLine })
+        result.push(Trivia {
+            kind: TriviaKind.Comment, text: text, line: commentLine
+        }
+        )
         return result
     }
     var empty: Vec<Trivia> = Vec.new()
@@ -131,12 +156,24 @@ fn lexHexEscape(lex: &mut Lexer): u8 {
 }
 
 fn resolveEscape(c: u8): u8 {
-    if c == 110 { return 10 }
-    if c == 116 { return 9 }
-    if c == 114 { return 13 }
-    if c == 92 { return 92 }
-    if c == 34 { return 34 }
-    if c == 48 { return 0 }
+    if c == 110 {
+        return 10
+    }
+    if c == 116 {
+        return 9
+    }
+    if c == 114 {
+        return 13
+    }
+    if c == 92 {
+        return 92
+    }
+    if c == 34 {
+        return 34
+    }
+    if c == 48 {
+        return 0
+    }
     return c
 }
 
@@ -162,7 +199,9 @@ fn lexString(lex: &mut Lexer, line: i32, col: i32): Token {
     advanceChar(lex)
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
-    return Token { kind: TokKind.String, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+    return Token {
+        kind: TokKind.String, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+    }
 }
 
 fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
@@ -174,13 +213,27 @@ fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
     if peekChar(lex) == 92 {
         advanceChar(lex)
         let esc = advanceChar(lex)
-        if esc == 110 { value = 10 }
-        else if esc == 116 { value = 9 }
-        else if esc == 114 { value = 13 }
-        else if esc == 92 { value = 92 }
-        else if esc == 39 { value = 39 }
-        else if esc == 48 { value = 0 }
-        else { value = esc as i32 }
+        if esc == 110 {
+            value = 10
+        } 
+        else if esc == 116 {
+            value = 9
+        } 
+        else if esc == 114 {
+            value = 13
+        } 
+        else if esc == 92 {
+            value = 92
+        } 
+        else if esc == 39 {
+            value = 39
+        } 
+        else if esc == 48 {
+            value = 0
+        } 
+        else {
+            value = esc as i32
+        }
     } else {
         value = advanceChar(lex) as i32
     }
@@ -190,7 +243,9 @@ fn lexChar(lex: &mut Lexer, line: i32, col: i32): Token {
     advanceChar(lex)
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
-    return Token { kind: TokKind.Char, value: value.toString(), line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+    return Token {
+        kind: TokKind.Char, value: value.toString(), line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+    }
 }
 
 fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
@@ -208,18 +263,38 @@ fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
                 let esc = advanceChar(lex)
                 if esc == 120 {
                     value.push(lexHexEscape(lex))
-                } else if esc == 110 { value.push(10 as u8) }
-                else if esc == 116 { value.push(9 as u8) }
-                else if esc == 114 { value.push(13 as u8) }
-                else if esc == 92 { value.push(92 as u8) }
-                else if esc == 34 { value.push(34 as u8) }
-                else if esc == 48 { value.push(0 as u8) }
-                else if esc == 123 { value.push(123 as u8) }
-                else if esc == 125 { value.push(125 as u8) }
-                else { value.push(esc) }
+                } else if esc == 110 {
+                    value.push(10 as u8)
+                } 
+                else if esc == 116 {
+                    value.push(9 as u8)
+                } 
+                else if esc == 114 {
+                    value.push(13 as u8)
+                } 
+                else if esc == 92 {
+                    value.push(92 as u8)
+                } 
+                else if esc == 34 {
+                    value.push(34 as u8)
+                } 
+                else if esc == 48 {
+                    value.push(0 as u8)
+                } 
+                else if esc == 123 {
+                    value.push(123 as u8)
+                } 
+                else if esc == 125 {
+                    value.push(125 as u8)
+                } 
+                else {
+                    value.push(esc)
+                }
                 continue
             }
-            if ch == 34 { break }
+            if ch == 34 {
+                break
+            }
             if ch == 123 {
                 braceDepth = braceDepth + 1
                 value.push(ch)
@@ -227,14 +302,20 @@ fn lexFString(lex: &mut Lexer, line: i32, col: i32): Token {
             }
             value.push(ch)
         } else {
-            if ch == 123 { braceDepth = braceDepth + 1 }
-            if ch == 125 { braceDepth = braceDepth - 1 }
+            if ch == 123 {
+                braceDepth = braceDepth + 1
+            }
+            if ch == 125 {
+                braceDepth = braceDepth - 1
+            }
             value.push(ch)
         }
     }
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
-    return Token { kind: TokKind.FString, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+    return Token {
+        kind: TokKind.FString, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+    }
 }
 
 fn hexToDecStr(raw: &string): string {
@@ -263,12 +344,16 @@ fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
         var raw: string = ""
         while lex.pos < lex.src.len && (isHexDigit(peekChar(lex)) || peekChar(lex) == 95) {
             let c = advanceChar(lex)
-            if c != 95 { raw.push(c) }
+            if c != 95 {
+                raw.push(c)
+            }
         }
         if raw.len == 0 {
             lexError("hex literal needs at least one digit", line, col)
         }
-        return Token { kind: TokKind.Int, value: hexToDecStr(raw), line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+        return Token {
+            kind: TokKind.Int, value: hexToDecStr(raw), line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+        }
     }
     // binary
     if peekChar(lex) == 48 && (peekCharAt(lex, 1) == 98 || peekCharAt(lex, 1) == 66) {
@@ -277,29 +362,41 @@ fn lexNumber(lex: &mut Lexer, line: i32, col: i32): Token {
         var raw: string = ""
         while lex.pos < lex.src.len && (peekChar(lex) == 48 || peekChar(lex) == 49 || peekChar(lex) == 95) {
             let c = advanceChar(lex)
-            if c != 95 { raw.push(c) }
+            if c != 95 {
+                raw.push(c)
+            }
         }
         if raw.len == 0 {
             lexError("binary literal needs at least one digit", line, col)
         }
-        return Token { kind: TokKind.Int, value: binToDecStr(raw), line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+        return Token {
+            kind: TokKind.Int, value: binToDecStr(raw), line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+        }
     }
     // decimal
     var value: string = ""
     while lex.pos < lex.src.len && (isDigit(peekChar(lex)) || peekChar(lex) == 95) {
         let c = advanceChar(lex)
-        if c != 95 { value.push(c) }
+        if c != 95 {
+            value.push(c)
+        }
     }
     // float: digit(s) then '.' then digit
     if peekChar(lex) == 46 && isDigit(peekCharAt(lex, 1)) {
         value.push(advanceChar(lex))
         while lex.pos < lex.src.len && (isDigit(peekChar(lex)) || peekChar(lex) == 95) {
             let c = advanceChar(lex)
-            if c != 95 { value.push(c) }
+            if c != 95 {
+                value.push(c)
+            }
         }
-        return Token { kind: TokKind.Float, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+        return Token {
+            kind: TokKind.Float, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+        }
     }
-    return Token { kind: TokKind.Int, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+    return Token {
+        kind: TokKind.Int, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+    }
 }
 
 fn lexIdent(lex: &mut Lexer, line: i32, col: i32): Token {
@@ -310,7 +407,9 @@ fn lexIdent(lex: &mut Lexer, line: i32, col: i32): Token {
     let kind = keywordKind(value)
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
-    return Token { kind: kind, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+    return Token {
+        kind: kind, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+    }
 }
 
 // -- main dispatch --
@@ -318,7 +417,9 @@ fn lexIdent(lex: &mut Lexer, line: i32, col: i32): Token {
 fn makeToken(kind: TokKind, value: string, line: i32, col: i32): Token {
     var lt: Vec<Trivia> = Vec.new()
     var tt: Vec<Trivia> = Vec.new()
-    return Token { kind: kind, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt }
+    return Token {
+        kind: kind, value: value, line: line, col: col, leadingTrivia: lt, trailingTrivia: tt
+    }
 }
 
 fn nextToken(lex: &mut Lexer): Token {
@@ -331,15 +432,25 @@ fn nextToken(lex: &mut Lexer): Token {
     let ch = peekChar(lex)
 
     // f-string
-    if ch == 36 && peekCharAt(lex, 1) == 34 { return lexFString(lex, line, col) }
+    if ch == 36 && peekCharAt(lex, 1) == 34 {
+        return lexFString(lex, line, col)
+    }
     // string
-    if ch == 34 { return lexString(lex, line, col) }
+    if ch == 34 {
+        return lexString(lex, line, col)
+    }
     // char
-    if ch == 39 { return lexChar(lex, line, col) }
+    if ch == 39 {
+        return lexChar(lex, line, col)
+    }
     // number
-    if isDigit(ch) { return lexNumber(lex, line, col) }
+    if isDigit(ch) {
+        return lexNumber(lex, line, col)
+    }
     // ident/keyword
-    if isAlpha(ch) { return lexIdent(lex, line, col) }
+    if isAlpha(ch) {
+        return lexIdent(lex, line, col)
+    }
 
     let next = peekCharAt(lex, 1)
     let next2 = peekCharAt(lex, 2)
@@ -461,31 +572,81 @@ fn nextToken(lex: &mut Lexer): Token {
 
     // single-char operators
     advanceChar(lex)
-    if ch == 40 { return makeToken(TokKind.LParen, "(", line, col) }
-    if ch == 41 { return makeToken(TokKind.RParen, ")", line, col) }
-    if ch == 123 { return makeToken(TokKind.LBrace, "{", line, col) }
-    if ch == 125 { return makeToken(TokKind.RBrace, "}", line, col) }
-    if ch == 91 { return makeToken(TokKind.LBracket, "[", line, col) }
-    if ch == 93 { return makeToken(TokKind.RBracket, "]", line, col) }
-    if ch == 58 { return makeToken(TokKind.Colon, ":", line, col) }
-    if ch == 59 { return makeToken(TokKind.Semicolon, ";", line, col) }
-    if ch == 44 { return makeToken(TokKind.Comma, ",", line, col) }
-    if ch == 46 { return makeToken(TokKind.Dot, ".", line, col) }
-    if ch == 42 { return makeToken(TokKind.Star, "*", line, col) }
-    if ch == 43 { return makeToken(TokKind.Plus, "+", line, col) }
-    if ch == 45 { return makeToken(TokKind.Minus, "-", line, col) }
-    if ch == 47 { return makeToken(TokKind.Slash, "/", line, col) }
-    if ch == 37 { return makeToken(TokKind.Percent, "%", line, col) }
-    if ch == 38 { return makeToken(TokKind.Amp, "&", line, col) }
-    if ch == 61 { return makeToken(TokKind.Eq, "=", line, col) }
-    if ch == 60 { return makeToken(TokKind.Lt, "<", line, col) }
-    if ch == 62 { return makeToken(TokKind.Gt, ">", line, col) }
-    if ch == 33 { return makeToken(TokKind.Bang, "!", line, col) }
-    if ch == 63 { return makeToken(TokKind.Question, "?", line, col) }
-    if ch == 124 { return makeToken(TokKind.Pipe, "|", line, col) }
-    if ch == 94 { return makeToken(TokKind.Caret, "^", line, col) }
-    if ch == 126 { return makeToken(TokKind.Tilde, "~", line, col) }
-    if ch == 64 { return makeToken(TokKind.At, "@", line, col) }
+    if ch == 40 {
+        return makeToken(TokKind.LParen, "(", line, col)
+    }
+    if ch == 41 {
+        return makeToken(TokKind.RParen, ")", line, col)
+    }
+    if ch == 123 {
+        return makeToken(TokKind.LBrace, "{", line, col)
+    }
+    if ch == 125 {
+        return makeToken(TokKind.RBrace, "}", line, col)
+    }
+    if ch == 91 {
+        return makeToken(TokKind.LBracket, "[", line, col)
+    }
+    if ch == 93 {
+        return makeToken(TokKind.RBracket, "]", line, col)
+    }
+    if ch == 58 {
+        return makeToken(TokKind.Colon, ":", line, col)
+    }
+    if ch == 59 {
+        return makeToken(TokKind.Semicolon, ";", line, col)
+    }
+    if ch == 44 {
+        return makeToken(TokKind.Comma, ",", line, col)
+    }
+    if ch == 46 {
+        return makeToken(TokKind.Dot, ".", line, col)
+    }
+    if ch == 42 {
+        return makeToken(TokKind.Star, "*", line, col)
+    }
+    if ch == 43 {
+        return makeToken(TokKind.Plus, "+", line, col)
+    }
+    if ch == 45 {
+        return makeToken(TokKind.Minus, "-", line, col)
+    }
+    if ch == 47 {
+        return makeToken(TokKind.Slash, "/", line, col)
+    }
+    if ch == 37 {
+        return makeToken(TokKind.Percent, "%", line, col)
+    }
+    if ch == 38 {
+        return makeToken(TokKind.Amp, "&", line, col)
+    }
+    if ch == 61 {
+        return makeToken(TokKind.Eq, "=", line, col)
+    }
+    if ch == 60 {
+        return makeToken(TokKind.Lt, "<", line, col)
+    }
+    if ch == 62 {
+        return makeToken(TokKind.Gt, ">", line, col)
+    }
+    if ch == 33 {
+        return makeToken(TokKind.Bang, "!", line, col)
+    }
+    if ch == 63 {
+        return makeToken(TokKind.Question, "?", line, col)
+    }
+    if ch == 124 {
+        return makeToken(TokKind.Pipe, "|", line, col)
+    }
+    if ch == 94 {
+        return makeToken(TokKind.Caret, "^", line, col)
+    }
+    if ch == 126 {
+        return makeToken(TokKind.Tilde, "~", line, col)
+    }
+    if ch == 64 {
+        return makeToken(TokKind.At, "@", line, col)
+    }
 
     lexError("unexpected character", line, col)
     return makeToken(TokKind.Eof, "", line, col)
@@ -500,7 +661,9 @@ fn tokenize(src: string): Vec<Token> {
     while true {
         var tok = nextToken(lex)
         tok.leadingTrivia = pendingLeading
-        if tok.kind is TokKind.Eof {
+        if tok.kind
+        is
+        TokKind.Eof {
             tokens.push(tok)
             break
         }

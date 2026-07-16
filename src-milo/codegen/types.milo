@@ -1,6 +1,10 @@
 // Codegen types, state, and LLVM type mapping
-from "src-milo/tokens.milo" import { TokKind }
-from "src-milo/ast.milo" import { MiloType, StructDecl, EnumDecl, Function }
+from "src-milo/tokens.milo" import {
+    TokKind
+}
+from "src-milo/ast.milo" import {
+    MiloType, StructDecl, EnumDecl, Function
+}
 
 // -- Value returned by expression codegen --
 
@@ -223,57 +227,109 @@ fn ensureFree(cg: &mut Cgen) {
 // -- LLVM type mapping --
 
 fn llType(t: &string): string {
-    if t == "i1" { return "i1" }
-    if t == "i8" || t == "u8" { return "i8" }
-    if t == "i16" || t == "u16" { return "i16" }
-    if t == "i32" || t == "u32" { return "i32" }
-    if t == "i64" || t == "u64" || t == "int" { return "i64" }
-    if t == "f32" { return "float" }
-    if t == "f64" || t == "float" { return "double" }
+    if t == "i1" {
+        return "i1"
+    }
+    if t == "i8" || t == "u8" {
+        return "i8"
+    }
+    if t == "i16" || t == "u16" {
+        return "i16"
+    }
+    if t == "i32" || t == "u32" {
+        return "i32"
+    }
+    if t == "i64" || t == "u64" || t == "int" {
+        return "i64"
+    }
+    if t == "f32" {
+        return "float"
+    }
+    if t == "f64" || t == "float" {
+        return "double"
+    }
     // Idempotent on the LLVM float type: some Vals carry "double" directly (float
     // literals, float-op results). Without this, llType("double") hit the i32
     // fallback → a float arg emitted as `i32 3.5`.
-    if t == "double" { return "double" }
-    if t == "bool" { return "i1" }
-    if t == "void" { return "void" }
-    if t == "ptr" { return "ptr" }
-    if t == "string" { return "%String" }
+    if t == "double" {
+        return "double"
+    }
+    if t == "bool" {
+        return "i1"
+    }
+    if t == "void" {
+        return "void"
+    }
+    if t == "ptr" {
+        return "ptr"
+    }
+    if t == "string" {
+        return "%String"
+    }
     // closures/fn-typed values are a { fnptr, envptr } fat pointer ("Closure:R"
     // and "fn:R" carry the return type for call-site disambiguation / retTy)
-    if t == "fn" || t == "Closure" { return "%Closure" }
-    if t.len >= 3 && t[0] == 102 && t[1] == 110 && t[2] == 58 { return "%Closure" }
-    if t.len >= 8 && t[0] == 67 && t[1] == 108 && t[2] == 111 && t[3] == 115 && t[4] == 117 && t[5] == 114 && t[6] == 101 && t[7] == 58 { return "%Closure" }
+    if t == "fn" || t == "Closure" {
+        return "%Closure"
+    }
+    if t.len >= 3 && t[0] == 102 && t[1] == 110 && t[2] == 58 {
+        return "%Closure"
+    }
+    if t.len >= 8 && t[0] == 67 && t[1] == 108 && t[2] == 111 && t[3] == 115 && t[4] == 117 && t[5] == 114 && t[6] == 101 && t[7] == 58 {
+        return "%Closure"
+    }
     // Pointer types
-    if t.len > 0 && t[0] == 42 { return "ptr" }
+    if t.len > 0 && t[0] == 42 {
+        return "ptr"
+    }
     // Heap<T>, Vec<T>, etc. — all pointer-shaped
     if t.len >= 5 && t[0] == 72 && t[1] == 101 && t[2] == 97 && t[3] == 112 && t[4] == 60 {
         return "ptr"
     }
     // Vec<T> — {data, len, cap}, like %String. Must precede the uppercase
     // user-struct rule below, which would otherwise yield "%Vec<T>".
-    if isVecTy(t) { return "%Vec" }
-    if isHashMapTy(t) { return "%HashMap" }
+    if isVecTy(t) {
+        return "%Vec"
+    }
+    if isHashMapTy(t) {
+        return "%HashMap"
+    }
     // Already an LLVM type (%Name)
-    if t.len > 0 && t[0] == 37 { return t.clone() }
+    if t.len > 0 && t[0] == 37 {
+        return t.clone()
+    }
     // Uppercase = user struct
-    if t.len > 0 && t[0] >= 65 && t[0] <= 90 { return "%" + t.clone() }
+    if t.len > 0 && t[0] >= 65 && t[0] <= 90 {
+        return "%" + t.clone()
+    }
     return "i32"
 }
 
 fn isUnsigned(t: &string): bool {
-    if t.len < 1 { return false }
-    return t[0] == 117  // 'u'
+    if t.len < 1 {
+        return false
+    }
+    return t[0] == 117 // 'u'
 }
 
 fn llTypeBytes(ll: &string): i64 {
-    if ll == "i1" || ll == "i8" { return 1 }
-    if ll == "i16" { return 2 }
-    if ll == "i32" { return 4 }
-    if ll == "i64" || ll == "ptr" { return 8 }
+    if ll == "i1" || ll == "i8" {
+        return 1
+    }
+    if ll == "i16" {
+        return 2
+    }
+    if ll == "i32" {
+        return 4
+    }
+    if ll == "i64" || ll == "ptr" {
+        return 8
+    }
     // %String/%Vec/%HashMap are 3-word {ptr,i64,i64} = 24 bytes, NOT 8. Sizing
     // them as 8 undersizes any enum payload holding one (e.g. Result<string>),
     // truncating the string's len/cap → it reads back empty.
-    if ll == "%String" || ll == "%Vec" || ll == "%HashMap" { return 24 }
+    if ll == "%String" || ll == "%Vec" || ll == "%HashMap" {
+        return 24
+    }
     return 8
 }
 
@@ -282,19 +338,31 @@ fn llTypeBytes(ll: &string): i64 {
 // have an i64-array payload so align 8; scalars per their width.
 fn alignOf(cg: &Cgen, pt: &string): i64 {
     let ll = llType(pt)
-    if ll == "i1" || ll == "i8" { return 1 }
-    if ll == "i16" { return 2 }
-    if ll == "i32" { return 4 }
-    if ll == "%String" || ll == "%Vec" || ll == "%HashMap" { return 8 }
+    if ll == "i1" || ll == "i8" {
+        return 1
+    }
+    if ll == "i16" {
+        return 2
+    }
+    if ll == "i32" {
+        return 4
+    }
+    if ll == "%String" || ll == "%Vec" || ll == "%HashMap" {
+        return 8
+    }
     if ll.len > 0 && ll[0] == 37 {
         let raw = stripPercent(pt)
-        if cg.enums.contains(raw) { return 8 }
+        if cg.enums.contains(raw) {
+            return 8
+        }
         if cg.structs.contains(raw) {
             var a: i64 = 1
             let fields = cg.structs.get(raw)!
             for i in 0..fields.len {
                 let fa = alignOf(cg, fields[i].ty)
-                if fa > a { a = fa }
+                if fa > a {
+                    a = fa
+                }
             }
             return a
         }
@@ -324,12 +392,16 @@ fn payloadBytes(cg: &Cgen, pt: &string): i64 {
                 var va: i64 = 1
                 for pi in 0..info.variants[vi].payloadTypes.len {
                     let fa = alignOf(cg, info.variants[vi].payloadTypes[pi])
-                    if fa > va { va = fa }
+                    if fa > va {
+                        va = fa
+                    }
                     s = ((s + fa - 1) / fa) * fa
                     s = s + payloadBytes(cg, info.variants[vi].payloadTypes[pi])
                 }
                 s = ((s + va - 1) / va) * va
-                if s > mx { mx = s }
+                if s > mx {
+                    mx = s
+                }
             }
             return ((mx + 7) / 8) * 8 + 8
         }
@@ -339,7 +411,9 @@ fn payloadBytes(cg: &Cgen, pt: &string): i64 {
             let fields = cg.structs.get(raw)!
             for i in 0..fields.len {
                 let fa = alignOf(cg, fields[i].ty)
-                if fa > maxAlign { maxAlign = fa }
+                if fa > maxAlign {
+                    maxAlign = fa
+                }
                 total = ((total + fa - 1) / fa) * fa
                 total = total + payloadBytes(cg, fields[i].ty)
             }
@@ -350,12 +424,24 @@ fn payloadBytes(cg: &Cgen, pt: &string): i64 {
 }
 
 fn intBits(t: &string): i64 {
-    if t == "i1" { return 1 }
-    if t == "i8" || t == "u8" { return 8 }
-    if t == "i16" || t == "u16" { return 16 }
-    if t == "i32" || t == "u32" { return 32 }
-    if t == "i64" || t == "u64" { return 64 }
-    if t == "ptr" { return 64 }
+    if t == "i1" {
+        return 1
+    }
+    if t == "i8" || t == "u8" {
+        return 8
+    }
+    if t == "i16" || t == "u16" {
+        return 16
+    }
+    if t == "i32" || t == "u32" {
+        return 32
+    }
+    if t == "i64" || t == "u64" {
+        return 64
+    }
+    if t == "ptr" {
+        return 64
+    }
     return 0
 }
 
@@ -376,16 +462,22 @@ fn lookupFnRet(cg: &Cgen, name: &string): string {
 }
 
 fn lookupFieldIndex(cg: &Cgen, structName: &string, fieldName: &string): i64 {
-    if !cg.structs.contains(structName) { return -1 as i64 }
+    if !cg.structs.contains(structName) {
+        return -1 as i64
+    }
     let fields = cg.structs.get(structName)!
     for i in 0..fields.len {
-        if fields[i].name == fieldName { return i }
+        if fields[i].name == fieldName {
+            return i
+        }
     }
     return -1 as i64
 }
 
 fn lookupFieldType(cg: &Cgen, structName: &string, idx: i64): string {
-    if !cg.structs.contains(structName) { return "i32" }
+    if !cg.structs.contains(structName) {
+        return "i32"
+    }
     let fields = cg.structs.get(structName)!
     if idx >= 0 && idx < fields.len {
         return fields[idx].ty.clone()
@@ -394,7 +486,9 @@ fn lookupFieldType(cg: &Cgen, structName: &string, idx: i64): string {
 }
 
 fn lookupVariantTag(cg: &Cgen, enumName: &string, variantName: &string): i32 {
-    if !cg.enums.contains(enumName) { return -1 }
+    if !cg.enums.contains(enumName) {
+        return -1
+    }
     let info = cg.enums.get(enumName)!
     for i in 0..info.variants.len {
         if info.variants[i].name == variantName {
@@ -405,7 +499,9 @@ fn lookupVariantTag(cg: &Cgen, enumName: &string, variantName: &string): i32 {
 }
 
 fn lookupVariantPayload(cg: &Cgen, enumName: &string, variantName: &string): Vec<string> {
-    if !cg.enums.contains(enumName) { return Vec.new() }
+    if !cg.enums.contains(enumName) {
+        return Vec.new()
+    }
     let info = cg.enums.get(enumName)!
     for i in 0..info.variants.len {
         if info.variants[i].name == variantName {
@@ -424,7 +520,9 @@ fn lookupVariantPayload(cg: &Cgen, enumName: &string, variantName: &string): Vec
 }
 
 fn lookupEnumPayloadSlots(cg: &Cgen, enumName: &string): i64 {
-    if !cg.enums.contains(enumName) { return 0 }
+    if !cg.enums.contains(enumName) {
+        return 0
+    }
     return cg.enums.get(enumName)!.payloadSlots
 }
 
@@ -439,38 +537,98 @@ fn stripPercent(ty: &string): string {
 // -- Operator helpers --
 
 fn binOpInt(op: &string, unsigned: bool): string {
-    if op == "+" { return "add" }
-    if op == "-" { return "sub" }
-    if op == "*" { return "mul" }
-    if op == "/" { return if unsigned { "udiv" } else { "sdiv" } }
-    if op == "%" { return if unsigned { "urem" } else { "srem" } }
-    if op == "&" { return "and" }
-    if op == "|" { return "or" }
-    if op == "^" { return "xor" }
-    if op == "<<" { return "shl" }
-    if op == ">>" { return if unsigned { "lshr" } else { "ashr" } }
+    if op == "+" {
+        return "add"
+    }
+    if op == "-" {
+        return "sub"
+    }
+    if op == "*" {
+        return "mul"
+    }
+    if op == "/" {
+        return if unsigned {
+            "udiv"
+        } else {
+            "sdiv"
+        }
+    }
+    if op == "%" {
+        return if unsigned {
+            "urem"
+        } else {
+            "srem"
+        }
+    }
+    if op == "&" {
+        return "and"
+    }
+    if op == "|" {
+        return "or"
+    }
+    if op == "^" {
+        return "xor"
+    }
+    if op == "<<" {
+        return "shl"
+    }
+    if op == ">>" {
+        return if unsigned {
+            "lshr"
+        } else {
+            "ashr"
+        }
+    }
     return ""
 }
 
 fn cmpOpInt(op: &string, unsigned: bool): string {
-    if op == "==" { return "eq" }
-    if op == "!=" { return "ne" }
-    if op == "<" { return if unsigned { "ult" } else { "slt" } }
-    if op == ">" { return if unsigned { "ugt" } else { "sgt" } }
-    if op == "<=" { return if unsigned { "ule" } else { "sle" } }
-    if op == ">=" { return if unsigned { "uge" } else { "sge" } }
+    if op == "==" {
+        return "eq"
+    }
+    if op == "!=" {
+        return "ne"
+    }
+    if op == "<" {
+        return if unsigned {
+            "ult"
+        } else {
+            "slt"
+        }
+    }
+    if op == ">" {
+        return if unsigned {
+            "ugt"
+        } else {
+            "sgt"
+        }
+    }
+    if op == "<=" {
+        return if unsigned {
+            "ule"
+        } else {
+            "sle"
+        }
+    }
+    if op == ">=" {
+        return if unsigned {
+            "uge"
+        } else {
+            "sge"
+        }
+    }
     return ""
 }
 
 fn isArithOp(op: &string): bool {
     return op == "+" || op == "-" || op == "*" || op == "/" ||
-           op == "%" || op == "&" || op == "|" || op == "^" ||
-           op == "<<" || op == ">>"
+    op == "%" || op == "&" || op == "|" || op == "^" ||
+    op == "<<" || op == ">>"
 }
 
 fn isCmpOp(op: &string): bool {
     return op == "==" || op == "!=" || op == "<" || op == ">" ||
-           op == "<=" || op == ">="
+    op == "<=" || op == ">="
 }
 
 // -- Local variable lookup --
@@ -478,7 +636,9 @@ fn isCmpOp(op: &string): bool {
 fn hasLocal(locs: &Vec<Local>, name: &string): bool {
     var i: i64 = locs.len - 1
     while i >= 0 {
-        if locs[i].name == name { return true }
+        if locs[i].name == name {
+            return true
+        }
         i = i - 1
     }
     return false
@@ -499,9 +659,10 @@ fn findLocal(locs: &Vec<Local>, name: &string): Local {
 fn genLoad(cg: &mut Cgen, addr: &string, ty: &string): Val {
     let t = nextTemp(cg)
     emit(cg, "  " + t + " = load " + ty + ", ptr " + addr + "\n")
-    return Val { v: t, ty: ty.clone() }
+    return Val {
+        v: t, ty: ty.clone()
+    }
 }
-
 
 // "Vec<T>" — 'V','e','c','<'
 fn isVecTy(t: &string): bool {
@@ -529,7 +690,7 @@ fn ensureVecTy(cg: &mut Cgen) {
 // "HashMap<" — 'H','a','s','h','M','a','p','<'
 fn isHashMapTy(t: &string): bool {
     return t.len >= 9 && t[0] == 72 && t[1] == 97 && t[2] == 115 && t[3] == 104 &&
-        t[4] == 77 && t[5] == 97 && t[6] == 112 && t[7] == 60
+    t[4] == 77 && t[5] == 97 && t[6] == 112 && t[7] == 60
 }
 
 // top-level comma split of "HashMap<K, V>" (K/V may nest generics)
@@ -538,9 +699,15 @@ fn hashMapKeyTy(t: &string): string {
     var depth = 0
     for i in 0..inner.len {
         let c = inner[i]
-        if c == 60 { depth = depth + 1 }
-        if c == 62 { depth = depth - 1 }
-        if c == 44 && depth == 0 { return inner[0..i].clone() }
+        if c == 60 {
+            depth = depth + 1
+        }
+        if c == 62 {
+            depth = depth - 1
+        }
+        if c == 44 && depth == 0 {
+            return inner[0..i].clone()
+        }
     }
     return "i64"
 }
@@ -550,11 +717,17 @@ fn hashMapValTy(t: &string): string {
     var depth = 0
     for i in 0..inner.len {
         let c = inner[i]
-        if c == 60 { depth = depth + 1 }
-        if c == 62 { depth = depth - 1 }
+        if c == 60 {
+            depth = depth + 1
+        }
+        if c == 62 {
+            depth = depth - 1
+        }
         if c == 44 && depth == 0 {
             var j = i + 1
-            while j < inner.len && inner[j] == 32 { j = j + 1 }
+            while j < inner.len && inner[j] == 32 {
+                j = j + 1
+            }
             return inner[j..inner.len].clone()
         }
     }
@@ -570,16 +743,24 @@ fn hmEntryTy(keyTy: &string, valTy: &string): string {
 // one instantiation the base resolves unambiguously — multi-instantiation
 // sites need type info the AST-directed codegen doesn't carry yet.
 fn nameHasMonoPrefix(name: &string, base: &string): bool {
-    if name.len <= base.len + 1 { return false }
-    if name[base.len] != 95 { return false }
+    if name.len <= base.len + 1 {
+        return false
+    }
+    if name[base.len] != 95 {
+        return false
+    }
     for i in 0..base.len {
-        if name[i] != base[i] { return false }
+        if name[i] != base[i] {
+            return false
+        }
     }
     return true
 }
 
 fn resolveEnumName(cg: &Cgen, base: &string): string {
-    if cg.enums.contains(base) { return base.clone() }
+    if cg.enums.contains(base) {
+        return base.clone()
+    }
     var found = ""
     var count = 0
     for k, v in cg.enums {
@@ -588,12 +769,16 @@ fn resolveEnumName(cg: &Cgen, base: &string): string {
             count = count + 1
         }
     }
-    if count == 1 { return found }
+    if count == 1 {
+        return found
+    }
     return base.clone()
 }
 
 fn resolveStructName(cg: &Cgen, base: &string): string {
-    if cg.structs.contains(base) { return base.clone() }
+    if cg.structs.contains(base) {
+        return base.clone()
+    }
     var found = ""
     var count = 0
     for k, v in cg.structs {
@@ -602,7 +787,9 @@ fn resolveStructName(cg: &Cgen, base: &string): string {
             count = count + 1
         }
     }
-    if count == 1 { return found }
+    if count == 1 {
+        return found
+    }
     return base.clone()
 }
 
@@ -616,7 +803,9 @@ fn resolveTyStr(cg: &Cgen, s: &string): string {
     if isVecTy(s) {
         return "Vec<" + resolveTyStr(cg, unwrapVec(s)) + ">"
     }
-    if isHashMapTy(s) { return s.clone() }
+    if isHashMapTy(s) {
+        return s.clone()
+    }
     var lt: i64 = -1
     for i in 0..s.len {
         if s[i] == 60 {
@@ -624,13 +813,17 @@ fn resolveTyStr(cg: &Cgen, s: &string): string {
             break
         }
     }
-    if lt <= 0 { return s.clone() }
+    if lt <= 0 {
+        return s.clone()
+    }
     let base = s[0..lt].clone()
     if base == "Heap" {
         // Heap<Interface> IS the interface fat pointer (data ptr is heap-allocated) —
         // collapse it to the interface so llType gives %Iface, not a plain ptr.
         let hinner = unwrapHeap(s)
-        if cg.interfaces.contains(hinner) { return hinner.clone() }
+        if cg.interfaces.contains(hinner) {
+            return hinner.clone()
+        }
         return s.clone()
     }
     // Exact mangling first: "Result<i32,string>" → "Result_i32_string" is the
@@ -646,22 +839,34 @@ fn resolveTyStr(cg: &Cgen, s: &string): string {
             mangled.push(c)
         }
     }
-    if cg.enums.contains(mangled) { return mangled }
-    if cg.structs.contains(mangled) { return mangled }
+    if cg.enums.contains(mangled) {
+        return mangled
+    }
+    if cg.structs.contains(mangled) {
+        return mangled
+    }
     // Result<T> sugar mirrors the checker: E defaults to string
     if base == "Result" {
         let sugared = mangled + "_string"
-        if cg.enums.contains(sugared) { return sugared }
+        if cg.enums.contains(sugared) {
+            return sugared
+        }
     }
     let e = resolveEnumName(cg, base)
-    if e != base { return e }
+    if e != base {
+        return e
+    }
     let st = resolveStructName(cg, base)
-    if st != base { return st }
+    if st != base {
+        return st
+    }
     return s.clone()
 }
 
 fn resolveFnName(cg: &Cgen, base: &string): string {
-    if cg.fnRets.contains(base) { return base.clone() }
+    if cg.fnRets.contains(base) {
+        return base.clone()
+    }
     var found = ""
     var count = 0
     for k, v in cg.fnRets {
@@ -670,7 +875,9 @@ fn resolveFnName(cg: &Cgen, base: &string): string {
             count = count + 1
         }
     }
-    if count == 1 { return found }
+    if count == 1 {
+        return found
+    }
     return base.clone()
 }
 
@@ -719,7 +926,6 @@ fn genSizeOf(cg: &mut Cgen, llTy: &string): string {
     return n
 }
 
-
 // Render an AST type back to milo0's internal type-name string. codegen keys
 // everything off these strings (llType, unwrapVec, unwrapHeap), and a bare
 // `ty.name` drops the type arguments -- `Vec<string>` would arrive as "Vec" and
@@ -729,8 +935,12 @@ fn astTypeStr(ty: &MiloType): string {
         // carry the return type ("fn:Response") so an indirect closure call can
         // recover it — a fn-typed param otherwise loses R and defaults to i64.
         match ty.fnRet {
-            Option.Some(r) => { return "fn:" + astTypeStr(*r) }
-            Option.None => { return "fn" }
+            Option.Some(r) => {
+                return "fn:" + astTypeStr(*r)
+            }
+            Option.None => {
+                return "fn"
+            }
         }
     }
     var base = ty.name.clone()

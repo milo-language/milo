@@ -1,5 +1,7 @@
 // Top-level codegen: function emission, program registration, IR assembly
-from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl, Expr, StructLitField }
+from "src-milo/ast.milo" import {
+    Function, Program, StructDecl, EnumDecl, Expr, StructLitField
+}
 
 // Constant initializer text for a module-global's value expression. Globals must
 // be compile-time constants (int/bool/float/char literals, optionally negated).
@@ -7,9 +9,13 @@ from "src-milo/ast.milo" import { Function, Program, StructDecl, EnumDecl, Expr,
 // are all const scalars (int/float/bool). Returns "" if the value isn't such a
 // struct literal, or any field is non-scalar (String/Vec/nested struct).
 fn structLitConst(cg: &Cgen, gllTy: &string, value: &Expr): string {
-    if !(gllTy.len > 0 && gllTy[0] == 37) { return "" }
+    if !(gllTy.len > 0 && gllTy[0] == 37) {
+        return ""
+    }
     let sname = stripPercent(gllTy)
-    if !cg.structs.contains(sname) { return "" }
+    if !cg.structs.contains(sname) {
+        return ""
+    }
     let sfields = cg.structs.get(sname)!
     match value {
         Expr.StructLit(lname, litFields, sp) => {
@@ -17,7 +23,9 @@ fn structLitConst(cg: &Cgen, gllTy: &string, value: &Expr): string {
             for fi in 0..sfields.len {
                 let fll = llType(sfields[fi].ty)
                 let scalar = fll == "i1" || fll == "i8" || fll == "i16" || fll == "i32" || fll == "i64" || fll == "double" || fll == "float"
-                if !scalar { return "" }
+                if !scalar {
+                    return ""
+                }
                 var fval = "0"
                 for lf in 0..litFields.len {
                     if litFields[lf].name == sfields[fi].name {
@@ -28,56 +36,81 @@ fn structLitConst(cg: &Cgen, gllTy: &string, value: &Expr): string {
             }
             var body = "{ "
             for pi in 0..parts.len {
-                if pi > 0 { body = body + ", " }
+                if pi > 0 {
+                    body = body + ", "
+                }
                 body = body + parts[pi].clone()
             }
             return body + " }"
         }
-        _ => { return "" }
+        _ => {
+            return ""
+        }
     }
 }
 
 fn constInitOf(e: &Expr, llTy: &string): string {
     // a pointer global can only be a compile-time-constant null (`0 as *T`); LLVM
     // rejects `global ptr 0`, the null pointer constant is spelled `null`.
-    if llTy == "ptr" { return "null" }
+    if llTy == "ptr" {
+        return "null"
+    }
     match e {
         Expr.IntLit(n, span) => {
-            if llTy == "double" || llTy == "float" { return n.toString() + ".0" }
+            if llTy == "double" || llTy == "float" {
+                return n.toString() + ".0"
+            }
             return n.toString()
         }
         Expr.BoolLit(b, span) => {
-            if b { return "1" }
+            if b {
+                return "1"
+            }
             return "0"
         }
-        Expr.CharLit(c, span) => { return c.toString() }
+        Expr.CharLit(c, span) => {
+            return c.toString()
+        }
         Expr.FloatLit(f, span) => {
             var fs = f.toString()
             var hasPt = false
             for i in 0..fs.len {
-                if fs[i] == 46 || fs[i] == 101 || fs[i] == 69 { hasPt = true }
+                if fs[i] == 46 || fs[i] == 101 || fs[i] == 69 {
+                    hasPt = true
+                }
             }
-            if !hasPt { fs = fs + ".0" }
+            if !hasPt {
+                fs = fs + ".0"
+            }
             return fs
         }
         Expr.UnaryOp(op, operand, span) => {
-            if op == "-" { return "-" + constInitOf(*operand, llTy) }
+            if op == "-" {
+                return "-" + constInitOf(*operand, llTy)
+            }
             return "0"
         }
-        _ => { return "0" }
+        _ => {
+            return "0"
+        }
     }
 }
-from "src-milo/codegen/types.milo" import { astTypeStr,
+from "src-milo/codegen/types.milo" import {
+    astTypeStr,
     Cgen, Val, Local, CgFnSig, FieldInfo, CgVariantInfo, CgEnumInfo,
     cgenNew, nextTemp, emit, emitG, llType, llTypeBytes, payloadBytes, resolveTyStr, isVecTy, unwrapVec,
     ensureStringTy, ensureVecTy,
 }
-from "src-milo/codegen/stmt.milo" import { genStmt, emitScopeDrops }
+from "src-milo/codegen/stmt.milo" import {
+    genStmt, emitScopeDrops
+}
 from "src-milo/codegen/abi.milo" import {
     AbiStruct, ArgClass, RetClass, AbiReg,
     abiStructOf, classifyArg, classifyRet,
 }
-from "src-milo/target.milo" import { getHostTarget }
+from "src-milo/target.milo" import {
+    getHostTarget
+}
 
 // Build function signature table from program declarations.
 fn buildFnTable(prog: &Program): Vec<CgFnSig> {
@@ -98,7 +131,8 @@ fn buildFnTable(prog: &Program): Vec<CgFnSig> {
             paramTys: pts,
             paramRefs: prefs,
             isVariadic: prog.functions[i].isVariadic,
-        })
+        }
+        )
     }
     return sigs
 }
@@ -106,10 +140,16 @@ fn buildFnTable(prog: &Program): Vec<CgFnSig> {
 // True when `t` is a bare (non-ref, non-pointer, non-array) struct type — the only
 // shape that crosses a C extern boundary by value and needs ABI classification.
 fn isByValStruct(cg: &Cgen, t: &MiloType): bool {
-    if t.isPtr || t.isRef || t.isRefMut || t.isArray || t.isFn { return false }
+    if t.isPtr || t.isRef || t.isRefMut || t.isArray || t.isFn {
+        return false
+    }
     let raw = stripPercent(resolveTyStr(cg, astTypeStr(t)))
-    if !cg.structs.contains(raw) { return false }
-    if cg.interfaces.contains(raw) { return false }
+    if !cg.structs.contains(raw) {
+        return false
+    }
+    if cg.interfaces.contains(raw) {
+        return false
+    }
     return true
 }
 
@@ -133,7 +173,9 @@ fn externLoweredParams(cg: &Cgen, f: &Function): Vec<string> {
             let pname = stripPercent(resolveTyStr(cg, astTypeStr(f.params[i].ty)))
             let ac = classifyArg(cg.arch, abiStructOf(cg, pname))
             if ac.kind == "coerce" {
-                for r in 0..ac.regs.len { params.push(ac.regs[r].ty.clone()) }
+                for r in 0..ac.regs.len {
+                    params.push(ac.regs[r].ty.clone())
+                }
             } else {
                 if ac.byval {
                     params.push("ptr byval(%" + ac.name.clone() + ") align " + ac.align.toString())
@@ -152,8 +194,12 @@ fn externLoweredRet(cg: &Cgen, f: &Function): string {
     if isByValStruct(cg, f.retType) {
         let rname = stripPercent(resolveTyStr(cg, astTypeStr(f.retType)))
         let rc = classifyRet(cg.arch, abiStructOf(cg, rname))
-        if rc.kind == "sret" { return "void" }
-        if rc.kind == "coerce" { return rc.retTy.clone() }
+        if rc.kind == "sret" {
+            return "void"
+        }
+        if rc.kind == "coerce" {
+            return rc.retTy.clone()
+        }
     }
     return llType(astTypeStr(f.retType))
 }
@@ -168,12 +214,16 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
             // register types / byval / sret) so it matches the C peer's calling convention.
             let lp = externLoweredParams(cg, f)
             for i in 0..lp.len {
-                if i > 0 { ps = ps + ", " }
+                if i > 0 {
+                    ps = ps + ", "
+                }
                 ps = ps + lp[i].clone()
             }
         } else {
             for i in 0..f.params.len {
-                if i > 0 { ps = ps + ", " }
+                if i > 0 {
+                    ps = ps + ", "
+                }
                 // a fn-typed param of a C extern is a raw function pointer, not milo's
                 // %Closure fat pointer (qsort's cmp is `int(*)(…)`, no env).
                 if f.params[i].ty.isFn {
@@ -184,58 +234,82 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
             }
         }
         if f.isVariadic {
-            if f.params.len > 0 { ps = ps + ", " }
+            if f.params.len > 0 {
+                ps = ps + ", "
+            }
             ps = ps + "..."
         }
         // extern decls double as the runtime-helper declares — coordinate with
         // the ensure* flags in either order (clang rejects a redefinition)
         if f.name == "memcmp" {
-            if cg.declaredMemcmp { return }
+            if cg.declaredMemcmp {
+                return
+            }
             cg.declaredMemcmp = true
         }
         if f.name == "memcpy" {
-            if cg.declaredMemcpy { return }
+            if cg.declaredMemcpy {
+                return
+            }
             cg.declaredMemcpy = true
         }
         if f.name == "malloc" {
-            if cg.declaredMalloc { return }
+            if cg.declaredMalloc {
+                return
+            }
             cg.declaredMalloc = true
         }
         if f.name == "realloc" {
-            if cg.declaredRealloc { return }
+            if cg.declaredRealloc {
+                return
+            }
             cg.declaredRealloc = true
         }
         if f.name == "printf" {
-            if cg.declaredPrintf { return }
+            if cg.declaredPrintf {
+                return
+            }
             cg.declaredPrintf = true
         }
         if f.name == "putchar" {
-            if cg.declaredPutchar { return }
+            if cg.declaredPutchar {
+                return
+            }
             cg.declaredPutchar = true
         }
         if f.name == "snprintf" {
-            if cg.declaredSnprintf { return }
+            if cg.declaredSnprintf {
+                return
+            }
             cg.declaredSnprintf = true
         }
         if f.name == "exit" {
-            if cg.declaredExit { return }
+            if cg.declaredExit {
+                return
+            }
             cg.declaredExit = true
         }
         if f.name == "strlen" {
-            if cg.declaredStrlen { return }
+            if cg.declaredStrlen {
+                return
+            }
             cg.declaredStrlen = true
         }
         // drop glue also emits `declare @free`; share one dedup flag so an
         // explicit `extern fn free` and the drop glue never double-declare it.
         if f.name == "free" {
-            if cg.declaredFree { return }
+            if cg.declaredFree {
+                return
+            }
             cg.declaredFree = true
         }
         // astTypeStr, not .name: a `*u8` return must stay a pointer (`.name` alone
         // drops pointer-ness, declaring e.g. strerror as returning i8 → truncated
         // pointer → strlen on garbage in the self-compiled build).
         var declRet = llType(astTypeStr(f.retType))
-        if cg.abiExterns.contains(f.name) { declRet = externLoweredRet(cg, f) }
+        if cg.abiExterns.contains(f.name) {
+            declRet = externLoweredRet(cg, f)
+        }
         emitG(cg, "declare " + declRet + " @" + f.name + "(" + ps + ")\n")
         return
     }
@@ -247,7 +321,9 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
     // globals that _miloArgCount/_miloArgAt read, and returns an exit code.
     let isMain = f.name == "main"
     var retTyStr = resolveTyStr(cg, astTypeStr(f.retType))
-    if isMain { retTyStr = "i32" }
+    if isMain {
+        retTyStr = "i32"
+    }
     let retLl = llType(retTyStr)
     cg.curRetTy = retTyStr.clone()
     var hdr = "define " + retLl + " @" + f.name + "("
@@ -255,12 +331,16 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
         hdr = hdr + "i32 %_milo_argc, ptr %_milo_argv"
     }
     for pi in 0..f.params.len {
-        if pi > 0 || isMain { hdr = hdr + ", " }
+        if pi > 0 || isMain {
+            hdr = hdr + ", "
+        }
         // A `&T`/`&mut T` param is lowered as a `ptr` to the pointee, so mutations
         // through it are visible to the caller (milo threads `&mut Cgen` etc.).
         let piRef = f.params[pi].ty.isRef || f.params[pi].ty.isRefMut
         var pLl = "ptr"
-        if !piRef { pLl = llType(resolveTyStr(cg, astTypeStr(f.params[pi].ty))) }
+        if !piRef {
+            pLl = llType(resolveTyStr(cg, astTypeStr(f.params[pi].ty)))
+        }
         hdr = hdr + pLl + " %" + f.params[pi].name
     }
     hdr = hdr + ") {\n"
@@ -279,13 +359,19 @@ fn genFn(cg: &mut Cgen, f: &Function, sigs: &Vec<CgFnSig>) {
         let pTyStr = resolveTyStr(cg, astTypeStr(f.params[pj].ty))
         let pIsRef = f.params[pj].ty.isRef || f.params[pj].ty.isRefMut
         if pIsRef {
-            locs.push(Local { name: f.params[pj].name.clone(), ty: pTyStr, addr: "%" + f.params[pj].name, isRef: true })
+            locs.push(Local {
+                name: f.params[pj].name.clone(), ty: pTyStr, addr: "%" + f.params[pj].name, isRef: true
+            }
+            )
         } else {
             let llt = llType(pTyStr)
             let addr = "%" + f.params[pj].name + "_addr"
             emit(cg, "  " + addr + " = alloca " + llt + "\n")
             emit(cg, "  store " + llt + " %" + f.params[pj].name + ", ptr " + addr + "\n")
-            locs.push(Local { name: f.params[pj].name.clone(), ty: pTyStr, addr: addr, isRef: false })
+            locs.push(Local {
+                name: f.params[pj].name.clone(), ty: pTyStr, addr: addr, isRef: false
+            }
+            )
         }
     }
 
@@ -326,9 +412,12 @@ fn genProgram(prog: Program, sourceDir: string): string {
         match prog.globals[gi].ty {
             Option.Some(t) => {
                 let gl = llType(astTypeStr(t))
-                if gl.len > 0 && gl[0] == 37 { hasAggGlobal = true }
+                if gl.len > 0 && gl[0] == 37 {
+                    hasAggGlobal = true
+                }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
     }
     if hasAggGlobal {
@@ -342,8 +431,11 @@ fn genProgram(prog: Program, sourceDir: string): string {
     for gi in 0..prog.globals.len {
         var surfaceTy = "i64"
         match prog.globals[gi].ty {
-            Option.Some(t) => { surfaceTy = astTypeStr(t) }
-            Option.None => {}
+            Option.Some(t) => {
+                surfaceTy = astTypeStr(t)
+            }
+            Option.None => {
+            }
         }
         cg.globalVars.insert(prog.globals[gi].name.clone(), surfaceTy.clone())
     }
@@ -353,7 +445,9 @@ fn genProgram(prog: Program, sourceDir: string): string {
     // Full astTypeStr, not just the name: "Result<i32,string>" must keep its
     // args so use sites can resolve it to the mangled enum.
     for i in 0..prog.functions.len {
-        if prog.functions[i].typeParams.len > 0 { continue }
+        if prog.functions[i].typeParams.len > 0 {
+            continue
+        }
         cg.fnRets.insert(prog.functions[i].name.clone(), astTypeStr(prog.functions[i].retType))
     }
 
@@ -364,7 +458,10 @@ fn genProgram(prog: Program, sourceDir: string): string {
         cg.interfaces.insert(tn.clone(), true)
         var slots: Vec<FieldInfo> = Vec.new()
         for mi in 0..prog.traits[ti].methods.len {
-            slots.push(FieldInfo { name: prog.traits[ti].methods[mi].name.clone(), ty: resolveTyStr(cg, astTypeStr(prog.traits[ti].methods[mi].retType)) })
+            slots.push(FieldInfo {
+                name: prog.traits[ti].methods[mi].name.clone(), ty: resolveTyStr(cg, astTypeStr(prog.traits[ti].methods[mi].retType))
+            }
+            )
         }
         cg.structs.insert(tn.clone(), slots)
     }
@@ -377,7 +474,9 @@ fn genProgram(prog: Program, sourceDir: string): string {
 
     // (1) enum metadata — slots filled in phase 3
     for ei in 0..prog.enums.len {
-        if prog.enums[ei].typeParams.len > 0 { continue }
+        if prog.enums[ei].typeParams.len > 0 {
+            continue
+        }
         let e = prog.enums[ei].clone()
         var variants: Vec<CgVariantInfo> = Vec.new()
         for vi in 0..e.variants.len {
@@ -388,9 +487,15 @@ fn genProgram(prog: Program, sourceDir: string): string {
                 // mangles at read-time, once all mono decls exist).
                 payloadTypes.push(astTypeStr(v.fields[fi]))
             }
-            variants.push(CgVariantInfo { name: v.name.clone(), tag: vi as i32, payloadTypes: payloadTypes })
+            variants.push(CgVariantInfo {
+                name: v.name.clone(), tag: vi as i32, payloadTypes: payloadTypes
+            }
+            )
         }
-        cg.enums.insert(e.name.clone(), CgEnumInfo { name: e.name.clone(), variants: variants, payloadSlots: 0 })
+        cg.enums.insert(e.name.clone(), CgEnumInfo {
+            name: e.name.clone(), variants: variants, payloadSlots: 0
+        }
+        )
     }
 
     // (2) struct metadata (mangling needs enum names, registered above)
@@ -398,15 +503,22 @@ fn genProgram(prog: Program, sourceDir: string): string {
     // field that references a (monomorphized) struct defined later in the list
     // (e.g. Dom { arena: Arena<Node> } before Arena_Node's own decl).
     for si in 0..prog.structs.len {
-        if prog.structs[si].typeParams.len > 0 { continue }
+        if prog.structs[si].typeParams.len > 0 {
+            continue
+        }
         cg.structs.insert(prog.structs[si].name.clone(), Vec.new())
     }
     for si in 0..prog.structs.len {
-        if prog.structs[si].typeParams.len > 0 { continue }
+        if prog.structs[si].typeParams.len > 0 {
+            continue
+        }
         let s = prog.structs[si].clone()
         var fields: Vec<FieldInfo> = Vec.new()
         for fi in 0..s.fields.len {
-            fields.push(FieldInfo { name: s.fields[fi].name.clone(), ty: resolveTyStr(cg, astTypeStr(s.fields[fi].ty)) })
+            fields.push(FieldInfo {
+                name: s.fields[fi].name.clone(), ty: resolveTyStr(cg, astTypeStr(s.fields[fi].ty))
+            }
+            )
         }
         cg.structs.insert(s.name.clone(), fields)
     }
@@ -416,19 +528,29 @@ fn genProgram(prog: Program, sourceDir: string): string {
     // declares + call sites go through the abi.milo classifier (HFA/coerce/byval/sret).
     cg.arch = getHostTarget().arch
     for i in 0..prog.functions.len {
-        if !prog.functions[i].isExtern { continue }
+        if !prog.functions[i].isExtern {
+            continue
+        }
         var wantsAbi = isByValStruct(cg, prog.functions[i].retType)
         for pi in 0..prog.functions[i].params.len {
-            if isByValStruct(cg, prog.functions[i].params[pi].ty) { wantsAbi = true }
+            if isByValStruct(cg, prog.functions[i].params[pi].ty) {
+                wantsAbi = true
+            }
         }
-        if wantsAbi { cg.abiExterns.insert(prog.functions[i].name.clone(), true) }
+        if wantsAbi {
+            cg.abiExterns.insert(prog.functions[i].name.clone(), true)
+        }
     }
 
     // (3) size enums (payloadBytes sees all metadata now) + emit their decls
     for ei in 0..prog.enums.len {
-        if prog.enums[ei].typeParams.len > 0 { continue }
+        if prog.enums[ei].typeParams.len > 0 {
+            continue
+        }
         let ename = prog.enums[ei].name.clone()
-        if !cg.enums.contains(ename) { continue }
+        if !cg.enums.contains(ename) {
+            continue
+        }
         let einfo = cg.enums.get(ename)!
         var maxBytes: i64 = 0
         for vi in 0..einfo.variants.len {
@@ -436,11 +558,16 @@ fn genProgram(prog: Program, sourceDir: string): string {
             for pi in 0..einfo.variants[vi].payloadTypes.len {
                 vBytes = vBytes + payloadBytes(cg, resolveTyStr(cg, einfo.variants[vi].payloadTypes[pi]))
             }
-            if vBytes > maxBytes { maxBytes = vBytes }
+            if vBytes > maxBytes {
+                maxBytes = vBytes
+            }
         }
         let slots = (maxBytes + 7) / 8
         // move einfo's owned fields back in with the computed slot count (no clone)
-        cg.enums.insert(ename.clone(), CgEnumInfo { name: einfo.name, variants: einfo.variants, payloadSlots: slots })
+        cg.enums.insert(ename.clone(), CgEnumInfo {
+            name: einfo.name, variants: einfo.variants, payloadSlots: slots
+        }
+        )
         if slots > 0 {
             emitG(cg, "%" + ename + " = type { i32, [" + slots.toString() + " x i64] }\n")
         } else {
@@ -450,13 +577,19 @@ fn genProgram(prog: Program, sourceDir: string): string {
 
     // (4) emit struct decls (reference enum types emitted in phase 3)
     for si in 0..prog.structs.len {
-        if prog.structs[si].typeParams.len > 0 { continue }
+        if prog.structs[si].typeParams.len > 0 {
+            continue
+        }
         let sname = prog.structs[si].name.clone()
-        if !cg.structs.contains(sname) { continue }
+        if !cg.structs.contains(sname) {
+            continue
+        }
         let sfields = cg.structs.get(sname)!
         var llStruct = "{ "
         for fi in 0..sfields.len {
-            if fi > 0 { llStruct = llStruct + ", " }
+            if fi > 0 {
+                llStruct = llStruct + ", "
+            }
             llStruct = llStruct + llType(sfields[fi].ty)
         }
         llStruct = llStruct + " }"
@@ -475,8 +608,11 @@ fn genProgram(prog: Program, sourceDir: string): string {
     for gi in 0..prog.globals.len {
         var surfaceTy = "i64"
         match prog.globals[gi].ty {
-            Option.Some(t) => { surfaceTy = astTypeStr(t) }
-            Option.None => {}
+            Option.Some(t) => {
+                surfaceTy = astTypeStr(t)
+            }
+            Option.None => {
+            }
         }
         let gllTy = llType(surfaceTy)
         let gname = prog.globals[gi].name.clone()
@@ -496,7 +632,11 @@ fn genProgram(prog: Program, sourceDir: string): string {
                         for ei in 0..elements.len {
                             if structElem {
                                 let sc = structLitConst(cg, elemLl, *elements[ei])
-                                if sc.len == 0 { elemOk = false } else { elems.push(elemLl + " " + sc) }
+                                if sc.len == 0 {
+                                    elemOk = false
+                                } else {
+                                    elems.push(elemLl + " " + sc)
+                                }
                             } else {
                                 elems.push(elemLl + " " + constInitOf(*elements[ei], elemLl))
                             }
@@ -506,7 +646,9 @@ fn genProgram(prog: Program, sourceDir: string): string {
                         var one = ""
                         if structElem {
                             one = structLitConst(cg, elemLl, *val)
-                            if one.len == 0 { elemOk = false }
+                            if one.len == 0 {
+                                elemOk = false
+                            }
                         } else {
                             one = constInitOf(*val, elemLl)
                         }
@@ -514,13 +656,18 @@ fn genProgram(prog: Program, sourceDir: string): string {
                             elems.push(elemLl + " " + one.clone())
                         }
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
-                if !elemOk { elems = Vec.new() }
+                if !elemOk {
+                    elems = Vec.new()
+                }
                 if elems.len > 0 {
                     var dataC = "["
                     for ei in 0..elems.len {
-                        if ei > 0 { dataC = dataC + ", " }
+                        if ei > 0 {
+                            dataC = dataC + ", "
+                        }
                         dataC = dataC + elems[ei].clone()
                     }
                     dataC = dataC + "]"
@@ -546,7 +693,9 @@ fn genProgram(prog: Program, sourceDir: string): string {
                     for fi in 0..sfields.len {
                         let fll = llType(sfields[fi].ty)
                         let scalar = fll == "i1" || fll == "i8" || fll == "i16" || fll == "i32" || fll == "i64" || fll == "double" || fll == "float"
-                        if !scalar { allConst = false }
+                        if !scalar {
+                            allConst = false
+                        }
                         var fval = "0"
                         for lf in 0..litFields.len {
                             if litFields[lf].name == sfields[fi].name {
@@ -558,7 +707,9 @@ fn genProgram(prog: Program, sourceDir: string): string {
                     if allConst {
                         var body = "{ "
                         for pi in 0..parts.len {
-                            if pi > 0 { body = body + ", " }
+                            if pi > 0 {
+                                body = body + ", "
+                            }
                             body = body + parts[pi].clone()
                         }
                         body = body + " }"
@@ -566,7 +717,8 @@ fn genProgram(prog: Program, sourceDir: string): string {
                         structHandled = true
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
         }
         if !arrayHandled && !structHandled {
@@ -582,7 +734,9 @@ fn genProgram(prog: Program, sourceDir: string): string {
     // Emit all functions (generic templates excluded — see registration above)
     let sigs = buildFnTable(prog)
     for j in 0..prog.functions.len {
-        if prog.functions[j].typeParams.len > 0 { continue }
+        if prog.functions[j].typeParams.len > 0 {
+            continue
+        }
         genFn(cg, prog.functions[j], sigs)
     }
 

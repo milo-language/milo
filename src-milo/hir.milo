@@ -1,7 +1,11 @@
 // Typed HIR — every expression carries its resolved TypeKind.
 // Bridges checker output to codegen.
-from "src-milo/ast.milo" import { Span }
-from "src-milo/checker/types.milo" import { TypeKind }
+from "src-milo/ast.milo" import {
+    Span
+}
+from "src-milo/checker/types.milo" import {
+    TypeKind
+}
 
 // -- Expressions --
 
@@ -33,59 +37,59 @@ enum HIRExpr {
     BoolLit(bool, TypeKind, Option<Span>),
     CharLit(i32, TypeKind, Option<Span>),
     StringLit(string, TypeKind, Option<Span>),
-    Ident(string, TypeKind, bool, Option<Span>),  // name, type, isMove, span
+    Ident(string, TypeKind, bool, Option<Span>), // name, type, isMove, span
     BinOp(string, Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, Option<Span>),
     UnaryOp(string, Heap<HIRExpr>, TypeKind, Option<Span>),
-    Call(string, Vec<HIRArg>, TypeKind, bool, Option<Span>),  // func, args, type, variadic, span
+    Call(string, Vec<HIRArg>, TypeKind, bool, Option<Span>), // func, args, type, variadic, span
     StructLit(string, Vec<HIRStructField>, TypeKind, Option<Span>),
     FieldAccess(Heap<HIRExpr>, string, TypeKind, Option<Span>),
     ArrayLit(Vec<Heap<HIRExpr>>, TypeKind, Option<Span>),
     ArrayRepeat(Heap<HIRExpr>, i64, TypeKind, Option<Span>),
-    IndexAccess(Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, bool, bool, Option<Span>),  // obj, idx, type, isMove, isBorrowed
-    EnumLit(string, string, Vec<Heap<HIRExpr>>, TypeKind, Option<Span>),  // enumName, variant, args, type
+    IndexAccess(Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, bool, bool, Option<Span>), // obj, idx, type, isMove, isBorrowed
+    EnumLit(string, string, Vec<Heap<HIRExpr>>, TypeKind, Option<Span>), // enumName, variant, args, type
     ArrayLen(Heap<HIRExpr>, TypeKind, Option<Span>),
     StringLen(Heap<HIRExpr>, TypeKind, Option<Span>),
-    Unwrap(Heap<HIRExpr>, string, TypeKind, Option<Span>),  // operand, enumName, type
-    Propagate(Heap<HIRExpr>, string, TypeKind, TypeKind, Option<Span>),  // operand, enumName, retType, type
-    DefaultValue(Heap<HIRExpr>, Heap<HIRExpr>, string, TypeKind, Option<Span>),  // operand, default, enumName, type
-    Cast(Heap<HIRExpr>, TypeKind, TypeKind, Option<Span>),  // operand, targetType, type
-    IsCheck(Heap<HIRExpr>, i32, TypeKind, Option<Span>),  // operand, tag, type
+    Unwrap(Heap<HIRExpr>, string, TypeKind, Option<Span>), // operand, enumName, type
+    Propagate(Heap<HIRExpr>, string, TypeKind, TypeKind, Option<Span>), // operand, enumName, retType, type
+    DefaultValue(Heap<HIRExpr>, Heap<HIRExpr>, string, TypeKind, Option<Span>), // operand, default, enumName, type
+    Cast(Heap<HIRExpr>, TypeKind, TypeKind, Option<Span>), // operand, targetType, type
+    IsCheck(Heap<HIRExpr>, i32, TypeKind, Option<Span>), // operand, tag, type
     HeapCreate(Heap<HIRExpr>, TypeKind, Option<Span>),
     HeapDeref(Heap<HIRExpr>, TypeKind, Option<Span>),
     PtrDeref(Heap<HIRExpr>, TypeKind, Option<Span>),
-    VecNew(TypeKind, TypeKind, Option<Span>),  // elementType, type
+    VecNew(TypeKind, TypeKind, Option<Span>), // elementType, type
     VecPush(Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, Option<Span>),
     VecPop(Heap<HIRExpr>, TypeKind, Option<Span>),
     VecLen(Heap<HIRExpr>, TypeKind, Option<Span>),
-    HashMapNew(TypeKind, TypeKind, TypeKind, Option<Span>),  // keyType, valueType, type
+    HashMapNew(TypeKind, TypeKind, TypeKind, Option<Span>), // keyType, valueType, type
     HashMapInsert(Heap<HIRExpr>, Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, Option<Span>),
-    HashMapGet(Heap<HIRExpr>, Heap<HIRExpr>, string, TypeKind, Option<Span>),  // map, key, optionEnumName, type
+    HashMapGet(Heap<HIRExpr>, Heap<HIRExpr>, string, TypeKind, Option<Span>), // map, key, optionEnumName, type
     HashMapContains(Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, Option<Span>),
     HashMapRemove(Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, Option<Span>),
     HashMapLen(Heap<HIRExpr>, TypeKind, Option<Span>),
     StringPush(Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, Option<Span>),
     StringSubstr(Heap<HIRExpr>, Heap<HIRExpr>, Heap<HIRExpr>, TypeKind, Option<Span>),
     StringClone(Heap<HIRExpr>, TypeKind, Option<Span>),
-    NumberToString(Heap<HIRExpr>, TypeKind, TypeKind, Option<Span>),  // value, valueType, type
-    Closure(Vec<ClosureParam>, Vec<Heap<HIRStmt>>, Vec<CaptureInfo>, TypeKind, TypeKind, bool, Option<Span>),  // params, body, captures, retType, type, isMove
+    NumberToString(Heap<HIRExpr>, TypeKind, TypeKind, Option<Span>), // value, valueType, type
+    Closure(Vec<ClosureParam>, Vec<Heap<HIRStmt>>, Vec<CaptureInfo>, TypeKind, TypeKind, bool, Option<Span>), // params, body, captures, retType, type, isMove
     ClosureCall(Heap<HIRExpr>, Vec<HIRArg>, TypeKind, Option<Span>),
 }
 
 // -- Statements --
 
 enum HIRStmt {
-    Let(string, TypeKind, Heap<HIRExpr>, bool, Option<Span>),  // name, type, value, mutable
+    Let(string, TypeKind, Heap<HIRExpr>, bool, Option<Span>), // name, type, value, mutable
     Assign(Heap<HIRExpr>, Heap<HIRExpr>, Option<Span>),
-    Return(Option<Heap<HIRExpr>>, TypeKind, Option<Span>),  // value, retType
+    Return(Option<Heap<HIRExpr>>, TypeKind, Option<Span>), // value, retType
     If(Heap<HIRExpr>, Vec<Heap<HIRStmt>>, Option<Vec<Heap<HIRStmt>>>, Option<Span>),
     While(Heap<HIRExpr>, Vec<Heap<HIRStmt>>, Option<Span>),
     Break(Option<Span>),
     Continue(Option<Span>),
     ExprStmt(Heap<HIRExpr>, Option<Span>),
-    Match(Heap<HIRExpr>, Vec<HIRMatchArm>, string, Option<Span>),  // subject, arms, enumName
+    Match(Heap<HIRExpr>, Vec<HIRMatchArm>, string, Option<Span>), // subject, arms, enumName
     UnsafeBlock(Vec<Heap<HIRStmt>>, Option<Span>),
-    ForRange(string, TypeKind, Heap<HIRExpr>, Heap<HIRExpr>, Vec<Heap<HIRStmt>>, Option<Span>),  // varName, varType, start, end, body
-    ForEach(string, Option<string>, TypeKind, Option<TypeKind>, Heap<HIRExpr>, string, Vec<Heap<HIRStmt>>, Option<Span>),  // varName, varName2, varType, varType2, iterable, iterableKind, body
+    ForRange(string, TypeKind, Heap<HIRExpr>, Heap<HIRExpr>, Vec<Heap<HIRStmt>>, Option<Span>), // varName, varType, start, end, body
+    ForEach(string, Option<string>, TypeKind, Option<TypeKind>, Heap<HIRExpr>, string, Vec<Heap<HIRStmt>>, Option<Span>), // varName, varName2, varType, varType2, iterable, iterableKind, body
 }
 
 // -- Match arms --
@@ -101,8 +105,8 @@ struct PatternBinding {
 }
 
 enum HIRPattern {
-    EnumPattern(string, Vec<PatternBinding>, i32),  // variant, bindings, tag
-    LiteralPattern(string, string),  // value, literalKind ("int"|"float"|"string"|"char"|"bool")
+    EnumPattern(string, Vec<PatternBinding>, i32), // variant, bindings, tag
+    LiteralPattern(string, string), // value, literalKind ("int"|"float"|"string"|"char"|"bool")
     WildcardPattern,
 }
 

@@ -33,9 +33,13 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
                     fields.push(HIRField {
                         name: info.fields[j].name.clone(),
                         ty: info.fields[j].ty.clone(),
-                    })
+                    }
+                    )
                 }
-                structs.push(HIRStruct { name: name, fields: fields })
+                structs.push(HIRStruct {
+                    name: name, fields: fields
+                }
+                )
             }
         }
     }
@@ -48,9 +52,13 @@ fn lower(program: &Program, ck: &Checker): HIRModule {
                 name: vname.clone(),
                 tag: vinfo.tag,
                 fields: vinfo.fields.clone(),
-            })
+            }
+            )
         }
-        enums.push(HIREnum { name: key.clone(), variants: variants })
+        enums.push(HIREnum {
+            name: key.clone(), variants: variants
+        }
+        )
     }
 
     // Lower functions
@@ -83,15 +91,19 @@ fn lowerExtern(f: &Function, ck: &Checker): HIRFunction {
         let pType = typeFromAst(f.params[i].ty)
         var innerType = pType.clone()
         match pType {
-            TypeKind.TRef(inner, mutable) => { innerType = inner.clone() }
-            _ => {}
+            TypeKind.TRef(inner, mutable) => {
+                innerType = inner.clone()
+            }
+            _ => {
+            }
         }
         params.push(HIRParam {
             name: f.params[i].name.clone(),
             ty: innerType,
             isRef: f.params[i].ty.isRef,
             isRefMut: f.params[i].ty.isRefMut,
-        })
+        }
+        )
     }
     let retType = typeFromAst(f.retType)
     return HIRFunction {
@@ -121,15 +133,19 @@ fn lowerFn(f: &Function, ck: &Checker): HIRFunction {
         }
         var innerType = pType.clone()
         match pType {
-            TypeKind.TRef(inner, mutable) => { innerType = inner.clone() }
-            _ => {}
+            TypeKind.TRef(inner, mutable) => {
+                innerType = inner.clone()
+            }
+            _ => {
+            }
         }
         params.push(HIRParam {
             name: f.params[i].name.clone(),
             ty: innerType,
             isRef: f.params[i].ty.isRef,
             isRefMut: f.params[i].ty.isRefMut,
-        })
+        }
+        )
     }
 
     var retType = typeFromAst(f.retType)
@@ -160,8 +176,11 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             let hirVal = lowerExpr(*value, ck)
             var valType = hirExprType(hirVal)
             match typeAnno {
-                Option.Some(ty) => { valType = typeFromAst(ty) }
-                Option.None => {}
+                Option.Some(ty) => {
+                    valType = typeFromAst(ty)
+                }
+                Option.None => {
+                }
             }
             return HIRStmt.Let(name.clone(), valType, Heap(hirVal), false, cloneSpan(span))
         }
@@ -169,8 +188,11 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             let hirVal = lowerExpr(*value, ck)
             var valType = hirExprType(hirVal)
             match typeAnno {
-                Option.Some(ty) => { valType = typeFromAst(ty) }
-                Option.None => {}
+                Option.Some(ty) => {
+                    valType = typeFromAst(ty)
+                }
+                Option.None => {
+                }
             }
             return HIRStmt.Let(name.clone(), valType, Heap(hirVal), true, cloneSpan(span))
         }
@@ -202,7 +224,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                     }
                     hirElse = Option.Some(els)
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
             return HIRStmt.If(Heap(hirCond), hirThen, hirElse, cloneSpan(span))
         }
@@ -214,8 +237,12 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             }
             return HIRStmt.While(Heap(hirCond), hirBody, cloneSpan(span))
         }
-        Stmt.BreakStmt(span) => { return HIRStmt.Break(cloneSpan(span)) }
-        Stmt.ContinueStmt(span) => { return HIRStmt.Continue(cloneSpan(span)) }
+        Stmt.BreakStmt(span) => {
+            return HIRStmt.Break(cloneSpan(span))
+        }
+        Stmt.ContinueStmt(span) => {
+            return HIRStmt.Continue(cloneSpan(span))
+        }
         Stmt.ExprStmt(expr, span) => {
             return HIRStmt.ExprStmt(Heap(lowerExpr(*expr, ck)), cloneSpan(span))
         }
@@ -229,8 +256,11 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             var enumName = ""
             let subjType = hirExprType(hirSubj)
             match subjType {
-                TypeKind.TEnum(name) => { enumName = name.clone() }
-                _ => {}
+                TypeKind.TEnum(name) => {
+                    enumName = name.clone()
+                }
+                _ => {
+                }
             }
             return HIRStmt.Match(Heap(hirSubj), hirArms, enumName, cloneSpan(span))
         }
@@ -301,7 +331,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                                 }
                             }
                         }
-                        _ => {}
+                        _ => {
+                        }
                     }
                     var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
                     for i in 0..body.len {
@@ -317,8 +348,11 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             var enumName = ""
             let subjType = hirExprType(hirSubj)
             match subjType {
-                TypeKind.TEnum(name) => { enumName = name.clone() }
-                _ => {}
+                TypeKind.TEnum(name) => {
+                    enumName = name.clone()
+                }
+                _ => {
+                }
             }
             var arms: Vec<HIRMatchArm> = Vec.new()
             // Then arm
@@ -329,7 +363,8 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
             arms.push(HIRMatchArm {
                 pattern: lowerPattern(pattern, ck, enumName),
                 body: hirThen,
-            })
+            }
+            )
             // Else arm (wildcard)
             var hirElse: Vec<Heap<HIRStmt>> = Vec.new()
             match elseBody {
@@ -338,12 +373,14 @@ fn lowerStmt(stmt: &Stmt, fnRetType: &TypeKind, ck: &Checker): HIRStmt {
                         hirElse.push(Heap(lowerStmt(*body[j], fnRetType, ck)))
                     }
                 }
-                Option.None => {}
+                Option.None => {
+                }
             }
             arms.push(HIRMatchArm {
                 pattern: HIRPattern.WildcardPattern,
                 body: hirElse,
-            })
+            }
+            )
             return HIRStmt.Match(Heap(hirSubj), arms, enumName, cloneSpan(span))
         }
     }
@@ -358,20 +395,34 @@ fn lowerMatchArm(arm: &MatchArm, ck: &Checker): HIRMatchArm {
     for i in 0..arm.body.len {
         hirBody.push(Heap(lowerStmt(*arm.body[i], tyVoid(), ck)))
     }
-    return HIRMatchArm { pattern: hirPattern, body: hirBody }
+    return HIRMatchArm {
+        pattern: hirPattern, body: hirBody
+    }
 }
 
 fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern {
     match pattern {
-        Pattern.WildcardPattern(span) => { return HIRPattern.WildcardPattern }
+        Pattern.WildcardPattern(span) => {
+            return HIRPattern.WildcardPattern
+        }
         Pattern.LiteralPattern(value, kind, span) => {
             var kindStr = "int"
             match kind {
-                LiteralKind.LitInt => { kindStr = "int" }
-                LiteralKind.LitFloat => { kindStr = "float" }
-                LiteralKind.LitString => { kindStr = "string" }
-                LiteralKind.LitChar => { kindStr = "char" }
-                LiteralKind.LitBool => { kindStr = "bool" }
+                LiteralKind.LitInt => {
+                    kindStr = "int"
+                }
+                LiteralKind.LitFloat => {
+                    kindStr = "float"
+                }
+                LiteralKind.LitString => {
+                    kindStr = "string"
+                }
+                LiteralKind.LitChar => {
+                    kindStr = "char"
+                }
+                LiteralKind.LitBool => {
+                    kindStr = "bool"
+                }
             }
             return HIRPattern.LiteralPattern(value.clone(), kindStr)
         }
@@ -388,7 +439,8 @@ fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern 
                         hirBindings.push(PatternBinding {
                             name: bindings[i].clone(),
                             ty: vinfo.fields[i].clone(),
-                        })
+                        }
+                        )
                         i = i + 1
                     }
                 }
@@ -400,15 +452,27 @@ fn lowerPattern(pattern: &Pattern, ck: &Checker, enumName: &string): HIRPattern 
 
 fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
     match pattern {
-        Pattern.WildcardPattern(span) => { return HIRPattern.WildcardPattern }
+        Pattern.WildcardPattern(span) => {
+            return HIRPattern.WildcardPattern
+        }
         Pattern.LiteralPattern(value, kind, span) => {
             var kindStr = "int"
             match kind {
-                LiteralKind.LitInt => { kindStr = "int" }
-                LiteralKind.LitFloat => { kindStr = "float" }
-                LiteralKind.LitString => { kindStr = "string" }
-                LiteralKind.LitChar => { kindStr = "char" }
-                LiteralKind.LitBool => { kindStr = "bool" }
+                LiteralKind.LitInt => {
+                    kindStr = "int"
+                }
+                LiteralKind.LitFloat => {
+                    kindStr = "float"
+                }
+                LiteralKind.LitString => {
+                    kindStr = "string"
+                }
+                LiteralKind.LitChar => {
+                    kindStr = "char"
+                }
+                LiteralKind.LitBool => {
+                    kindStr = "bool"
+                }
             }
             return HIRPattern.LiteralPattern(value.clone(), kindStr)
         }
@@ -420,7 +484,8 @@ fn lowerPatternRaw(pattern: &Pattern, ck: &Checker): HIRPattern {
                 hirBindings.push(PatternBinding {
                     name: bindings[i].clone(),
                     ty: tyUnknown(),
-                })
+                }
+                )
             }
             return HIRPattern.EnumPattern(variant.clone(), hirBindings, tag)
         }
@@ -468,8 +533,10 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             }
             if op == "+" {
                 match resultType {
-                    TypeKind.TString => {}
-                    _ => {}
+                    TypeKind.TString => {
+                    }
+                    _ => {
+                    }
                 }
             }
             return HIRExpr.BinOp(op.clone(), Heap(hirLeft), Heap(hirRight), resultType, cloneSpan(span))
@@ -485,11 +552,14 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                     TypeKind.TPtr(inner) => {
                         return HIRExpr.PtrDeref(Heap(hirOp), inner.clone(), cloneSpan(span))
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
             }
             var resultType = opType
-            if op == "!" { resultType = tyBool() }
+            if op == "!" {
+                resultType = tyBool()
+            }
             return HIRExpr.UnaryOp(op.clone(), Heap(hirOp), resultType, cloneSpan(span))
         }
         Expr.Call(func, args, typeArgs, span) => {
@@ -501,7 +571,10 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             var hirArgs: Vec<HIRArg> = Vec.new()
             for i in 0..args.len {
                 let hirArg = lowerExpr(*args[i], ck)
-                hirArgs.push(HIRArg { expr: Heap(hirArg), passByRef: false, refMut: false })
+                hirArgs.push(HIRArg {
+                    expr: Heap(hirArg), passByRef: false, refMut: false
+                }
+                )
             }
             var retType = tyUnknown()
             var variadic = false
@@ -517,7 +590,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                             hirArgs[j].passByRef = true
                             hirArgs[j].refMut = mutable
                         }
-                        _ => {}
+                        _ => {
+                        }
                     }
                     j = j + 1
                 }
@@ -530,7 +604,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 hirFields.push(HIRStructField {
                     name: fields[i].name.clone(),
                     value: Heap(lowerExpr(*fields[i].value, ck)),
-                })
+                }
+                )
             }
             return HIRExpr.StructLit(name.clone(), hirFields, TypeKind.TStruct(name.clone()), cloneSpan(span))
         }
@@ -538,8 +613,11 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             let hirObj = lowerExpr(*obj, ck)
             var objType = hirExprType(hirObj)
             match objType {
-                TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
-                _ => {}
+                TypeKind.TRef(inner, mutable) => {
+                    objType = inner.clone()
+                }
+                _ => {
+                }
             }
             // .len on built-in collections
             if field == "len" {
@@ -556,7 +634,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                     TypeKind.THashMap(key, val) => {
                         return HIRExpr.HashMapLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
             }
             // Struct field — look up type
@@ -572,7 +651,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                         }
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
             return HIRExpr.FieldAccess(Heap(hirObj), field.clone(), fieldType, cloneSpan(span))
         }
@@ -599,16 +679,28 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             let hirIdx = lowerExpr(*index, ck)
             var objType = hirExprType(hirObj)
             match objType {
-                TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
-                _ => {}
+                TypeKind.TRef(inner, mutable) => {
+                    objType = inner.clone()
+                }
+                _ => {
+                }
             }
             var elemType = tyUnknown()
             match objType {
-                TypeKind.TArray(elem, size) => { elemType = elem.clone() }
-                TypeKind.TVec(elem) => { elemType = elem.clone() }
-                TypeKind.TString => { elemType = tyU8() }
-                TypeKind.TPtr(inner) => { elemType = inner.clone() }
-                _ => {}
+                TypeKind.TArray(elem, size) => {
+                    elemType = elem.clone()
+                }
+                TypeKind.TVec(elem) => {
+                    elemType = elem.clone()
+                }
+                TypeKind.TString => {
+                    elemType = tyU8()
+                }
+                TypeKind.TPtr(inner) => {
+                    elemType = inner.clone()
+                }
+                _ => {
+                }
             }
             return HIRExpr.IndexAccess(Heap(hirObj), Heap(hirIdx), elemType, false, false, cloneSpan(span))
         }
@@ -630,8 +722,11 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             let opType = hirExprType(hirOp)
             var enumName = ""
             match opType {
-                TypeKind.TEnum(name) => { enumName = name.clone() }
-                _ => {}
+                TypeKind.TEnum(name) => {
+                    enumName = name.clone()
+                }
+                _ => {
+                }
             }
             return HIRExpr.Unwrap(Heap(hirOp), enumName, tyUnknown(), cloneSpan(span))
         }
@@ -640,8 +735,11 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             let opType = hirExprType(hirOp)
             var enumName = ""
             match opType {
-                TypeKind.TEnum(name) => { enumName = name.clone() }
-                _ => {}
+                TypeKind.TEnum(name) => {
+                    enumName = name.clone()
+                }
+                _ => {
+                }
             }
             return HIRExpr.Propagate(Heap(hirOp), enumName, tyVoid(), tyUnknown(), cloneSpan(span))
         }
@@ -651,8 +749,11 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             let opType = hirExprType(hirOp)
             var enumName = ""
             match opType {
-                TypeKind.TEnum(name) => { enumName = name.clone() }
-                _ => {}
+                TypeKind.TEnum(name) => {
+                    enumName = name.clone()
+                }
+                _ => {
+                }
             }
             let defType = hirExprType(hirDef)
             return HIRExpr.DefaultValue(Heap(hirOp), Heap(hirDef), enumName, defType, cloneSpan(span))
@@ -666,12 +767,26 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
             let hirObj = lowerExpr(*obj, ck)
             var objType = hirExprType(hirObj)
             match objType {
-                TypeKind.TRef(inner, mutable) => { objType = inner.clone() }
-                _ => {}
+                TypeKind.TRef(inner, mutable) => {
+                    objType = inner.clone()
+                }
+                _ => {
+                }
             }
 
             // toString on numbers
-            if (match objType { TypeKind.TInt(b,s) => { true } TypeKind.TFloat(b) => { true } _ => { false } }) && method == "toString" {
+            if (match objType {
+                TypeKind.TInt(b, s) => {
+                    true
+                }
+                TypeKind.TFloat(b) => {
+                    true
+                }
+                _ => {
+                    false
+                }
+            }
+            ) && method == "toString" {
                 return HIRExpr.NumberToString(Heap(hirObj), objType, tyString(), cloneSpan(span))
             }
             // Vec methods
@@ -687,7 +802,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                         return HIRExpr.VecLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
             // HashMap methods
             match objType {
@@ -708,7 +824,8 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                         return HIRExpr.HashMapLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
             // String methods
             match objType {
@@ -728,13 +845,20 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                         return HIRExpr.StringLen(Heap(hirObj), TypeKind.TInt(64, true), cloneSpan(span))
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
             // Fallback: lower as Call with self as first arg
             var hirArgs: Vec<HIRArg> = Vec.new()
-            hirArgs.push(HIRArg { expr: Heap(hirObj), passByRef: true, refMut: false })
+            hirArgs.push(HIRArg {
+                expr: Heap(hirObj), passByRef: true, refMut: false
+            }
+            )
             for i in 0..args.len {
-                hirArgs.push(HIRArg { expr: Heap(lowerExpr(*args[i], ck)), passByRef: false, refMut: false })
+                hirArgs.push(HIRArg {
+                    expr: Heap(lowerExpr(*args[i], ck)), passByRef: false, refMut: false
+                }
+                )
             }
             return HIRExpr.Call(method.clone(), hirArgs, tyUnknown(), false, cloneSpan(span))
         }
@@ -744,13 +868,17 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                 hirParams.push(ClosureParam {
                     name: param.name.clone(),
                     ty: typeFromAst(param.ty),
-                })
+                }
+                )
             }
             var hirBody: Vec<Heap<HIRStmt>> = Vec.new()
             var closureRetType = tyVoid()
             match retType {
-                Option.Some(rt) => { closureRetType = typeFromAst(rt) }
-                Option.None => {}
+                Option.Some(rt) => {
+                    closureRetType = typeFromAst(rt)
+                }
+                Option.None => {
+                }
             }
             for j in 0..body.len {
                 hirBody.push(Heap(lowerStmt(*body[j], closureRetType, ck)))
@@ -782,10 +910,12 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
                                 }
                             }
                         }
-                        _ => {}
+                        _ => {
+                        }
                     }
                 }
-                _ => {}
+                _ => {
+                }
             }
             return HIRExpr.IsCheck(Heap(hirOp), tag, tyBool(), cloneSpan(span))
         }
@@ -796,46 +926,128 @@ fn lowerExpr(expr: &Expr, ck: &Checker): HIRExpr {
 
 fn hirExprType(expr: &HIRExpr): TypeKind {
     match expr {
-        HIRExpr.IntLit(v, t, s) => { return t.clone() }
-        HIRExpr.FloatLit(v, t, s) => { return t.clone() }
-        HIRExpr.BoolLit(v, t, s) => { return t.clone() }
-        HIRExpr.CharLit(v, t, s) => { return t.clone() }
-        HIRExpr.StringLit(v, t, s) => { return t.clone() }
-        HIRExpr.Ident(n, t, m, s) => { return t.clone() }
-        HIRExpr.BinOp(op, l, r, t, s) => { return t.clone() }
-        HIRExpr.UnaryOp(op, o, t, s) => { return t.clone() }
-        HIRExpr.Call(f, a, t, v, s) => { return t.clone() }
-        HIRExpr.StructLit(n, f, t, s) => { return t.clone() }
-        HIRExpr.FieldAccess(o, f, t, s) => { return t.clone() }
-        HIRExpr.ArrayLit(e, t, s) => { return t.clone() }
-        HIRExpr.ArrayRepeat(v, c, t, s) => { return t.clone() }
-        HIRExpr.IndexAccess(o, i, t, m, b, s) => { return t.clone() }
-        HIRExpr.EnumLit(en, v, a, t, s) => { return t.clone() }
-        HIRExpr.ArrayLen(o, t, s) => { return t.clone() }
-        HIRExpr.StringLen(o, t, s) => { return t.clone() }
-        HIRExpr.Unwrap(o, n, t, s) => { return t.clone() }
-        HIRExpr.Propagate(o, n, r, t, s) => { return t.clone() }
-        HIRExpr.DefaultValue(o, d, n, t, s) => { return t.clone() }
-        HIRExpr.Cast(o, tt, t, s) => { return t.clone() }
-        HIRExpr.IsCheck(o, tag, t, s) => { return t.clone() }
-        HIRExpr.HeapCreate(v, t, s) => { return t.clone() }
-        HIRExpr.HeapDeref(o, t, s) => { return t.clone() }
-        HIRExpr.PtrDeref(o, t, s) => { return t.clone() }
-        HIRExpr.VecNew(e, t, s) => { return t.clone() }
-        HIRExpr.VecPush(v, val, t, s) => { return t.clone() }
-        HIRExpr.VecPop(v, t, s) => { return t.clone() }
-        HIRExpr.VecLen(o, t, s) => { return t.clone() }
-        HIRExpr.HashMapNew(k, v, t, s) => { return t.clone() }
-        HIRExpr.HashMapInsert(m, k, v, t, s) => { return t.clone() }
-        HIRExpr.HashMapGet(m, k, n, t, s) => { return t.clone() }
-        HIRExpr.HashMapContains(m, k, t, s) => { return t.clone() }
-        HIRExpr.HashMapRemove(m, k, t, s) => { return t.clone() }
-        HIRExpr.HashMapLen(o, t, s) => { return t.clone() }
-        HIRExpr.StringPush(s1, b, t, s) => { return t.clone() }
-        HIRExpr.StringSubstr(s1, st, en, t, s) => { return t.clone() }
-        HIRExpr.StringClone(s1, t, s) => { return t.clone() }
-        HIRExpr.NumberToString(v, vt, t, s) => { return t.clone() }
-        HIRExpr.Closure(p, b, c, r, t, m, s) => { return t.clone() }
-        HIRExpr.ClosureCall(c, a, t, s) => { return t.clone() }
+        HIRExpr.IntLit(v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.FloatLit(v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.BoolLit(v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.CharLit(v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.StringLit(v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.Ident(n, t, m, s) => {
+            return t.clone()
+        }
+        HIRExpr.BinOp(op, l, r, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.UnaryOp(op, o, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.Call(f, a, t, v, s) => {
+            return t.clone()
+        }
+        HIRExpr.StructLit(n, f, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.FieldAccess(o, f, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.ArrayLit(e, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.ArrayRepeat(v, c, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.IndexAccess(o, i, t, m, b, s) => {
+            return t.clone()
+        }
+        HIRExpr.EnumLit(en, v, a, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.ArrayLen(o, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.StringLen(o, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.Unwrap(o, n, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.Propagate(o, n, r, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.DefaultValue(o, d, n, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.Cast(o, tt, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.IsCheck(o, tag, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HeapCreate(v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HeapDeref(o, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.PtrDeref(o, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.VecNew(e, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.VecPush(v, val, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.VecPop(v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.VecLen(o, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HashMapNew(k, v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HashMapInsert(m, k, v, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HashMapGet(m, k, n, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HashMapContains(m, k, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HashMapRemove(m, k, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.HashMapLen(o, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.StringPush(s1, b, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.StringSubstr(s1, st, en, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.StringClone(s1, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.NumberToString(v, vt, t, s) => {
+            return t.clone()
+        }
+        HIRExpr.Closure(p, b, c, r, t, m, s) => {
+            return t.clone()
+        }
+        HIRExpr.ClosureCall(c, a, t, s) => {
+            return t.clone()
+        }
     }
 }

@@ -3,7 +3,9 @@ from "src-milo/ast.milo" import {
     Function, Stmt, Expr, MiloType, StructDecl, EnumDecl, EnumVariant,
     Param, StructField, TypeParam, Span, StructLitField, MatchArm, Pattern, ImplDecl,
 }
-from "src-milo/checker/traits.milo" import { registerImpl }
+from "src-milo/checker/traits.milo" import {
+    registerImpl
+}
 from "src-milo/checker/types.milo" import {
     TypeKind, typeEq, typeName, typeFromAst, typeFromName, tyUnknown,
     isNumeric, isInteger,
@@ -27,30 +29,57 @@ fn cloneTypeArgs(v: &Vec<TypeKind>): Vec<TypeKind> {
 fn mangleTypeName(t: &TypeKind): string {
     match t {
         TypeKind.TInt(bits, signed) => {
-            if signed { return "i" + bits.toString() }
-            else { return "u" + bits.toString() }
+            if signed {
+                return "i" + bits.toString()
+            } 
+            else {
+                return "u" + bits.toString()
+            }
         }
-        TypeKind.TFloat(bits) => { return "f" + bits.toString() }
-        TypeKind.TBool => { return "bool" }
-        TypeKind.TVoid => { return "void" }
-        TypeKind.TString => { return "string" }
-        TypeKind.TStruct(name) => { return name.clone() }
-        TypeKind.TEnum(name) => { return name.clone() }
-        TypeKind.TPtr(inner) => { return "ptr_" + mangleTypeName(*inner) }
-        TypeKind.THeap(inner) => { return "Heap_" + mangleTypeName(*inner) }
-        TypeKind.TVec(elem) => { return "Vec_" + mangleTypeName(*elem) }
+        TypeKind.TFloat(bits) => {
+            return "f" + bits.toString()
+        }
+        TypeKind.TBool => {
+            return "bool"
+        }
+        TypeKind.TVoid => {
+            return "void"
+        }
+        TypeKind.TString => {
+            return "string"
+        }
+        TypeKind.TStruct(name) => {
+            return name.clone()
+        }
+        TypeKind.TEnum(name) => {
+            return name.clone()
+        }
+        TypeKind.TPtr(inner) => {
+            return "ptr_" + mangleTypeName(*inner)
+        }
+        TypeKind.THeap(inner) => {
+            return "Heap_" + mangleTypeName(*inner)
+        }
+        TypeKind.TVec(elem) => {
+            return "Vec_" + mangleTypeName(*elem)
+        }
         TypeKind.THashMap(key, val) => {
             return "HashMap_" + mangleTypeName(*key) + "_" + mangleTypeName(*val)
         }
         TypeKind.TArray(elem, size) => {
             var s = "arr_" + mangleTypeName(*elem)
             match size {
-                Option.Some(n) => { s = s + "_" + n.toString() }
-                Option.None => {}
+                Option.Some(n) => {
+                    s = s + "_" + n.toString()
+                }
+                Option.None => {
+                }
             }
             return s
         }
-        TypeKind.TRef(inner, mutable) => { return "ref_" + mangleTypeName(*inner) }
+        TypeKind.TRef(inner, mutable) => {
+            return "ref_" + mangleTypeName(*inner)
+        }
         TypeKind.TFn(params, ret) => {
             var s = "fn"
             for i in 0..params.len {
@@ -59,7 +88,9 @@ fn mangleTypeName(t: &TypeKind): string {
             s = s + "_ret_" + mangleTypeName(*ret)
             return s
         }
-        TypeKind.TUnknown => { return "unknown" }
+        TypeKind.TUnknown => {
+            return "unknown"
+        }
     }
 }
 
@@ -89,10 +120,7 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
             return TypeKind.TVec(Heap(substituteTypeKind(*elem, typeMap)))
         }
         TypeKind.THashMap(key, val) => {
-            return TypeKind.THashMap(
-                Heap(substituteTypeKind(*key, typeMap)),
-                Heap(substituteTypeKind(*val, typeMap)),
-            )
+            return TypeKind.THashMap(Heap(substituteTypeKind(*key, typeMap)), Heap(substituteTypeKind(*val, typeMap)),)
         }
         TypeKind.TFn(params, ret) => {
             var newParams: Vec<TypeKind> = Vec.new()
@@ -101,7 +129,9 @@ fn substituteTypeKind(t: &TypeKind, typeMap: &HashMap<string, TypeKind>): TypeKi
             }
             return TypeKind.TFn(newParams, Heap(substituteTypeKind(*ret, typeMap)))
         }
-        _ => { return t.clone() }
+        _ => {
+            return t.clone()
+        }
     }
 }
 
@@ -136,7 +166,11 @@ fn typeKindToMiloType(t: &TypeKind): MiloType {
         }
         TypeKind.TRef(inner, mutable) => {
             var r = typeKindToMiloType(*inner)
-            if mutable { r.isRefMut = true } else { r.isRef = true }
+            if mutable {
+                r.isRefMut = true
+            } else {
+                r.isRef = true
+            }
             return r
         }
         TypeKind.TArray(elem, size) => {
@@ -145,10 +179,16 @@ fn typeKindToMiloType(t: &TypeKind): MiloType {
             r.arraySize = cloneOptI64(size)
             return r
         }
-        TypeKind.TStruct(name) => { return simpleType(name.clone()) }
-        TypeKind.TEnum(name) => { return simpleType(name.clone()) }
+        TypeKind.TStruct(name) => {
+            return simpleType(name.clone())
+        }
+        TypeKind.TEnum(name) => {
+            return simpleType(name.clone())
+        }
         // scalars (int/float/bool/void/string) have no angle-bracket forms
-        _ => { return simpleType(typeName(t)) }
+        _ => {
+            return simpleType(typeName(t))
+        }
     }
 }
 
@@ -161,9 +201,15 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
             // args into the mangled name (Box<T> -> Box_string) via resolveMonoType.
             var result = typeKindToMiloType(typeArgs[i])
             // carry the spelled ptr/ref-ness of the param slot (`&T`, `*T`)
-            if ty.isPtr { result.isPtr = true }
-            if ty.isRef { result.isRef = true }
-            if ty.isRefMut { result.isRefMut = true }
+            if ty.isPtr {
+                result.isPtr = true
+            }
+            if ty.isRef {
+                result.isRef = true
+            }
+            if ty.isRefMut {
+                result.isRefMut = true
+            }
             return result
         }
     }
@@ -187,14 +233,14 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
             Option.Some(ret) => {
                 result.fnRet = Option.Some(Heap(substituteMiloType(*ret, typeParams, typeArgs)))
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
         return result
     }
 
     return ty.clone()
 }
-
 
 // -- Type substitution inside monomorphized bodies --
 // cloneStmts alone leaves T inside bodies (sizeOf<T>(), `x as T`, `let v: T`).
@@ -203,8 +249,12 @@ fn substituteMiloType(ty: &MiloType, typeParams: &Vec<string>, typeArgs: &Vec<Ty
 
 fn substOptType(t: &Option<MiloType>, tps: &Vec<string>, tas: &Vec<TypeKind>): Option<MiloType> {
     match t {
-        Option.Some(ty) => { return Option.Some(substituteMiloType(ty, tps, tas)) }
-        Option.None => { return Option.None }
+        Option.Some(ty) => {
+            return Option.Some(substituteMiloType(ty, tps, tas))
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
@@ -236,11 +286,16 @@ fn substExpr(e: &Expr, tps: &Vec<string>, tas: &Vec<TypeKind>): Expr {
             // inside a generic impl) renames to the concrete instantiation
             var litName = name.clone()
             for ni in 0..tps.len {
-                if tps[ni] == name { litName = typeName(tas[ni]) }
+                if tps[ni] == name {
+                    litName = typeName(tas[ni])
+                }
             }
             var fs: Vec<StructLitField> = Vec.new()
             for i in 0..fields.len {
-                fs.push(StructLitField { name: fields[i].name.clone(), value: Heap(substExpr(*fields[i].value, tps, tas)) })
+                fs.push(StructLitField {
+                    name: fields[i].name.clone(), value: Heap(substExpr(*fields[i].value, tps, tas))
+                }
+                )
             }
             return Expr.StructLit(litName, fs, cloneSpan(span))
         }
@@ -259,7 +314,9 @@ fn substExpr(e: &Expr, tps: &Vec<string>, tas: &Vec<TypeKind>): Expr {
         Expr.EnumLit(enumName, variant, args, span) => {
             var litName = enumName.clone()
             for ni in 0..tps.len {
-                if tps[ni] == enumName { litName = typeName(tas[ni]) }
+                if tps[ni] == enumName {
+                    litName = typeName(tas[ni])
+                }
             }
             return Expr.EnumLit(litName, variant.clone(), substExprs(args, tps, tas), cloneSpan(span))
         }
@@ -281,7 +338,10 @@ fn substExpr(e: &Expr, tps: &Vec<string>, tas: &Vec<TypeKind>): Expr {
         Expr.Closure(params, retType, body, isMove, span) => {
             var ps: Vec<Param> = Vec.new()
             for i in 0..params.len {
-                ps.push(Param { name: params[i].name.clone(), ty: substituteMiloType(params[i].ty, tps, tas) })
+                ps.push(Param {
+                    name: params[i].name.clone(), ty: substituteMiloType(params[i].ty, tps, tas)
+                }
+                )
             }
             return Expr.Closure(ps, substOptType(retType, tps, tas), substStmts(body, tps, tas), isMove, cloneSpan(span))
         }
@@ -294,16 +354,31 @@ fn substExpr(e: &Expr, tps: &Vec<string>, tas: &Vec<TypeKind>): Expr {
         Expr.IfExpr(cond, thenE, elseE, span) => {
             return Expr.IfExpr(Heap(substExpr(*cond, tps, tas)), Heap(substExpr(*thenE, tps, tas)), Heap(substExpr(*elseE, tps, tas)), cloneSpan(span))
         }
-        Expr.IntLit(v, span) => { return Expr.IntLit(v, cloneSpan(span)) }
-        Expr.FloatLit(v, span) => { return Expr.FloatLit(v, cloneSpan(span)) }
-        Expr.BoolLit(v, span) => { return Expr.BoolLit(v, cloneSpan(span)) }
-        Expr.StringLit(v, span) => { return Expr.StringLit(v.clone(), cloneSpan(span)) }
-        Expr.CharLit(v, span) => { return Expr.CharLit(v, cloneSpan(span)) }
-        Expr.Ident(name, span) => { return Expr.Ident(name.clone(), cloneSpan(span)) }
+        Expr.IntLit(v, span) => {
+            return Expr.IntLit(v, cloneSpan(span))
+        }
+        Expr.FloatLit(v, span) => {
+            return Expr.FloatLit(v, cloneSpan(span))
+        }
+        Expr.BoolLit(v, span) => {
+            return Expr.BoolLit(v, cloneSpan(span))
+        }
+        Expr.StringLit(v, span) => {
+            return Expr.StringLit(v.clone(), cloneSpan(span))
+        }
+        Expr.CharLit(v, span) => {
+            return Expr.CharLit(v, cloneSpan(span))
+        }
+        Expr.Ident(name, span) => {
+            return Expr.Ident(name.clone(), cloneSpan(span))
+        }
         Expr.JsonObject(fields, span) => {
             var fs: Vec<StructLitField> = Vec.new()
             for i in 0..fields.len {
-                fs.push(StructLitField { name: fields[i].name.clone(), value: Heap(substExpr(*fields[i].value, tps, tas)) })
+                fs.push(StructLitField {
+                    name: fields[i].name.clone(), value: Heap(substExpr(*fields[i].value, tps, tas))
+                }
+                )
             }
             return Expr.JsonObject(fs, cloneSpan(span))
         }
@@ -320,8 +395,12 @@ fn substStmts(v: &Vec<Heap<Stmt>>, tps: &Vec<string>, tas: &Vec<TypeKind>): Vec<
 
 fn substOptStmts(v: &Option<Vec<Heap<Stmt>>>, tps: &Vec<string>, tas: &Vec<TypeKind>): Option<Vec<Heap<Stmt>>> {
     match v {
-        Option.Some(stmts) => { return Option.Some(substStmts(stmts, tps, tas)) }
-        Option.None => { return Option.None }
+        Option.Some(stmts) => {
+            return Option.Some(substStmts(stmts, tps, tas))
+        }
+        Option.None => {
+            return Option.None
+        }
     }
 }
 
@@ -338,8 +417,12 @@ fn substStmt(s: &Stmt, tps: &Vec<string>, tas: &Vec<TypeKind>): Stmt {
         }
         Stmt.Return(value, span) => {
             match value {
-                Option.Some(e) => { return Stmt.Return(Option.Some(Heap(substExpr(*e, tps, tas))), cloneSpan(span)) }
-                Option.None => { return Stmt.Return(Option.None, cloneSpan(span)) }
+                Option.Some(e) => {
+                    return Stmt.Return(Option.Some(Heap(substExpr(*e, tps, tas))), cloneSpan(span))
+                }
+                Option.None => {
+                    return Stmt.Return(Option.None, cloneSpan(span))
+                }
             }
         }
         Stmt.IfStmt(cond, thenBody, elseBody, span) => {
@@ -354,7 +437,10 @@ fn substStmt(s: &Stmt, tps: &Vec<string>, tas: &Vec<TypeKind>): Stmt {
         Stmt.MatchStmt(subject, arms, span) => {
             var as2: Vec<MatchArm> = Vec.new()
             for i in 0..arms.len {
-                as2.push(MatchArm { pattern: arms[i].pattern.clone(), body: substStmts(arms[i].body, tps, tas) })
+                as2.push(MatchArm {
+                    pattern: arms[i].pattern.clone(), body: substStmts(arms[i].body, tps, tas)
+                }
+                )
             }
             return Stmt.MatchStmt(Heap(substExpr(*subject, tps, tas)), as2, cloneSpan(span))
         }
@@ -367,11 +453,14 @@ fn substStmt(s: &Stmt, tps: &Vec<string>, tas: &Vec<TypeKind>): Stmt {
         Stmt.ForInStmt(varName, varName2, iterable, body, span) => {
             return Stmt.ForInStmt(varName.clone(), cloneOptString(varName2), Heap(substExpr(*iterable, tps, tas)), substStmts(body, tps, tas), cloneSpan(span))
         }
-        Stmt.BreakStmt(span) => { return Stmt.BreakStmt(cloneSpan(span)) }
-        Stmt.ContinueStmt(span) => { return Stmt.ContinueStmt(cloneSpan(span)) }
+        Stmt.BreakStmt(span) => {
+            return Stmt.BreakStmt(cloneSpan(span))
+        }
+        Stmt.ContinueStmt(span) => {
+            return Stmt.ContinueStmt(cloneSpan(span))
+        }
     }
 }
-
 
 // A generic impl that registers after its type already monomorphized (impls
 // land in phase 2, annotations monomorphize in phase 1) replays here.
@@ -405,7 +494,8 @@ fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeArgs: 
             mParams.push(Param {
                 name: gi.methods[mi].params[pi].name.clone(),
                 ty: substituteMiloType(gi.methods[mi].params[pi].ty, tps, tas2),
-            })
+            }
+            )
         }
         monoMethods.push(Function {
             name: gi.methods[mi].name.clone(),
@@ -415,12 +505,16 @@ fn instantiateImpl(ck: &mut Checker, gi: &ImplDecl, mangled: &string, typeArgs: 
             body: substStmts(gi.methods[mi].body, tps, tas2),
             isExtern: false,
             isVariadic: false,
-        })
+        }
+        )
     }
     var cTraitName: Option<string> = Option.None
     match gi.traitName {
-        Option.Some(t) => { cTraitName = Option.Some(t.clone()) }
-        Option.None => {}
+        Option.Some(t) => {
+            cTraitName = Option.Some(t.clone())
+        }
+        Option.None => {
+        }
     }
     let concrete = ImplDecl {
         traitName: cTraitName,
@@ -446,12 +540,16 @@ fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<TypeKi
     var mangled = baseName.clone() + "_"
     var i: i64 = 0
     while i < typeArgs.len {
-        if i > 0 { mangled = mangled + "_" }
+        if i > 0 {
+            mangled = mangled + "_"
+        }
         mangled = mangled + mangleTypeName(typeArgs[i])
         i = i + 1
     }
 
-    if ck.enums.contains(mangled) { return mangled }
+    if ck.enums.contains(mangled) {
+        return mangled
+    }
 
     if !ck.genericEnums.contains(baseName) {
         error(ck, "unknown generic enum '" + baseName.clone() + "'", Option.None)
@@ -475,10 +573,16 @@ fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<TypeKi
         for j in 0..vinfo.fields.len {
             fields.push(substituteTypeKind(vinfo.fields[j], typeMap))
         }
-        variants.insert(vname.clone(), VariantInfo { tag: vinfo.tag, fields: fields })
+        variants.insert(vname.clone(), VariantInfo {
+            tag: vinfo.tag, fields: fields
+        }
+        )
     }
 
-    ck.enums.insert(mangled.clone(), EnumInfo { baseName: baseName.clone(), variants: variants })
+    ck.enums.insert(mangled.clone(), EnumInfo {
+        baseName: baseName.clone(), variants: variants
+    }
+    )
 
     // Create monomorphized EnumDecl for codegen
     var monoVariants: Vec<EnumVariant> = Vec.new()
@@ -488,14 +592,18 @@ fn monomorphizeEnum(ck: &mut Checker, baseName: &string, typeArgsIn: &Vec<TypeKi
         for fi in 0..v.fields.len {
             monoFields.push(substituteMiloType(v.fields[fi], generic.typeParams, typeArgs))
         }
-        monoVariants.push(EnumVariant { name: v.name.clone(), fields: monoFields })
+        monoVariants.push(EnumVariant {
+            name: v.name.clone(), fields: monoFields
+        }
+        )
     }
     ck.monomorphizedEnums.push(EnumDecl {
         name: mangled.clone(),
         typeParams: Vec.new(),
         variants: monoVariants,
         attributes: Vec.new(),
-    })
+    }
+    )
 
     return mangled
 }
@@ -506,12 +614,16 @@ fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
     var mangled = baseName.clone() + "_"
     var i: i64 = 0
     while i < typeArgs.len {
-        if i > 0 { mangled = mangled + "_" }
+        if i > 0 {
+            mangled = mangled + "_"
+        }
         mangled = mangled + mangleTypeName(typeArgs[i])
         i = i + 1
     }
 
-    if ck.structs.contains(mangled) { return mangled }
+    if ck.structs.contains(mangled) {
+        return mangled
+    }
 
     if !ck.genericStructs.contains(baseName) {
         error(ck, "unknown generic struct '" + baseName.clone() + "'", Option.None)
@@ -532,7 +644,10 @@ fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
     var fields: Vec<CkStructField> = Vec.new()
     // Register the (empty) mangled struct first so a field that references it
     // recursively resolves; fields are filled in below.
-    ck.structs.insert(mangled.clone(), StructInfo { fields: Vec.new(), baseName: baseName.clone() })
+    ck.structs.insert(mangled.clone(), StructInfo {
+        fields: Vec.new(), baseName: baseName.clone()
+    }
+    )
     for fi in 0..generic.fields.len {
         // Resolve from the AST field type (which keeps `<T>`): substituteTypeKind on
         // the stored TypeKind can't recover a user-generic arg (TStruct holds only a
@@ -544,10 +659,14 @@ fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
         fields.push(CkStructField {
             name: generic.fields[fi].name.clone(),
             ty: fty,
-        })
+        }
+        )
     }
 
-    ck.structs.insert(mangled.clone(), StructInfo { fields: fields, baseName: baseName.clone() })
+    ck.structs.insert(mangled.clone(), StructInfo {
+        fields: fields, baseName: baseName.clone()
+    }
+    )
 
     // Create monomorphized StructDecl
     var monoFields: Vec<StructField> = Vec.new()
@@ -555,16 +674,21 @@ fn monomorphizeStruct(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKi
         monoFields.push(StructField {
             name: generic.decl.fields[si].name.clone(),
             ty: substituteMiloType(generic.decl.fields[si].ty, generic.typeParams, typeArgs),
-        })
+        }
+        )
     }
     ck.monomorphizedStructs.push(StructDecl {
         name: mangled.clone(),
         typeParams: Vec.new(),
         fields: monoFields,
         attributes: Vec.new(),
-    })
+    }
+    )
 
-    ck.structInsts.push(StructInst { base: baseName.clone(), mangled: mangled.clone(), args: cloneTypeArgs(typeArgs) })
+    ck.structInsts.push(StructInst {
+        base: baseName.clone(), mangled: mangled.clone(), args: cloneTypeArgs(typeArgs)
+    }
+    )
 
     // Instantiate any parked generic impls for this type
     var gii: i64 = 0
@@ -589,19 +713,29 @@ fn resolveMonoType(ck: &mut Checker, ty: &MiloType): TypeKind {
         var isGeneric = false
         if ck.genericEnums.contains(ty.name) {
             var targs: Vec<TypeKind> = Vec.new()
-            for i in 0..ty.typeArgs.len { targs.push(resolveMonoType(ck, ty.typeArgs[i])) }
+            for i in 0..ty.typeArgs.len {
+                targs.push(resolveMonoType(ck, ty.typeArgs[i]))
+            }
             base = TypeKind.TEnum(monomorphizeEnum(ck, ty.name, targs))
             isGeneric = true
         } else if ck.genericStructs.contains(ty.name) {
             var targs: Vec<TypeKind> = Vec.new()
-            for i in 0..ty.typeArgs.len { targs.push(resolveMonoType(ck, ty.typeArgs[i])) }
+            for i in 0..ty.typeArgs.len {
+                targs.push(resolveMonoType(ck, ty.typeArgs[i]))
+            }
             base = TypeKind.TStruct(monomorphizeStruct(ck, ty.name, targs))
             isGeneric = true
         }
         if isGeneric {
-            if ty.isRef { return TypeKind.TRef(Heap(base), false) }
-            if ty.isRefMut { return TypeKind.TRef(Heap(base), true) }
-            if ty.isPtr { return TypeKind.TPtr(Heap(base)) }
+            if ty.isRef {
+                return TypeKind.TRef(Heap(base), false)
+            }
+            if ty.isRefMut {
+                return TypeKind.TRef(Heap(base), true)
+            }
+            if ty.isPtr {
+                return TypeKind.TPtr(Heap(base))
+            }
             return base
         }
     }
@@ -614,12 +748,16 @@ fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>)
     var mangled = baseName.clone() + "_"
     var i: i64 = 0
     while i < typeArgs.len {
-        if i > 0 { mangled = mangled + "_" }
+        if i > 0 {
+            mangled = mangled + "_"
+        }
         mangled = mangled + mangleTypeName(typeArgs[i])
         i = i + 1
     }
 
-    if ck.functions.contains(mangled) { return mangled }
+    if ck.functions.contains(mangled) {
+        return mangled
+    }
 
     if !ck.genericFns.contains(baseName) {
         error(ck, "unknown generic function '" + baseName.clone() + "'", Option.None)
@@ -635,7 +773,8 @@ fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>)
         params.push(FnParam {
             name: generic.decl.params[pi].name.clone(),
             ty: resolveMonoType(ck, subType),
-        })
+        }
+        )
     }
     let subRetType = substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs)
     let ret = resolveMonoType(ck, subRetType)
@@ -644,7 +783,8 @@ fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>)
         ret: ret,
         variadic: false,
         isExtern: false,
-    })
+    }
+    )
 
     // Create concrete function declaration
     var monoParams: Vec<Param> = Vec.new()
@@ -652,7 +792,8 @@ fn monomorphizeFn(ck: &mut Checker, baseName: &string, typeArgs: &Vec<TypeKind>)
         monoParams.push(Param {
             name: generic.decl.params[i].name.clone(),
             ty: substituteMiloType(generic.decl.params[i].ty, generic.typeParams, typeArgs),
-        })
+        }
+        )
     }
 
     let concreteDecl = Function {
@@ -679,7 +820,8 @@ fn registerGenericFn(ck: &mut Checker, f: &Function) {
     ck.genericFns.insert(f.name.clone(), GenericFnInfo {
         typeParams: typeParams,
         decl: f.clone(),
-    })
+    }
+    )
 }
 
 fn registerGenericStruct(ck: &mut Checker, s: &StructDecl) {
@@ -692,13 +834,15 @@ fn registerGenericStruct(ck: &mut Checker, s: &StructDecl) {
         fields.push(CkStructField {
             name: s.fields[j].name.clone(),
             ty: typeFromAst(s.fields[j].ty),
-        })
+        }
+        )
     }
     ck.genericStructs.insert(s.name.clone(), GenericStructInfo {
         typeParams: typeParams,
         decl: s.clone(),
         fields: fields,
-    })
+    }
+    )
 }
 
 fn registerGenericEnum(ck: &mut Checker, e: &EnumDecl) {
@@ -712,11 +856,15 @@ fn registerGenericEnum(ck: &mut Checker, e: &EnumDecl) {
         for fi in 0..e.variants[vi].fields.len {
             fields.push(typeFromAst(e.variants[vi].fields[fi]))
         }
-        variants.insert(e.variants[vi].name.clone(), VariantInfo { tag: vi as i32, fields: fields })
+        variants.insert(e.variants[vi].name.clone(), VariantInfo {
+            tag: vi as i32, fields: fields
+        }
+        )
     }
     ck.genericEnums.insert(e.name.clone(), GenericEnumInfo {
         typeParams: typeParams,
         decl: e.clone(),
         variants: variants,
-    })
+    }
+    )
 }

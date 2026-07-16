@@ -21,11 +21,15 @@ fn registerBuiltinTraits(ck: &mut Checker) {
     // Eq
     var eqMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
     eqMethods.insert("eq", TraitMethodInfo {
-        params: Vec.new(),  // self + other handled via convention
+        params: Vec.new(), // self + other handled via convention
         ret: tyBool(),
         hasDefault: false,
-    })
-    ck.traits.insert("Eq", TraitInfo { name: "Eq", supertraits: Vec.new(), methods: eqMethods })
+    }
+    )
+    ck.traits.insert("Eq", TraitInfo {
+        name: "Eq", supertraits: Vec.new(), methods: eqMethods
+    }
+    )
 
     // Hash
     var hashMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -33,8 +37,12 @@ fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: TypeKind.TInt(64, false),
         hasDefault: false,
-    })
-    ck.traits.insert("Hash", TraitInfo { name: "Hash", supertraits: Vec.new(), methods: hashMethods })
+    }
+    )
+    ck.traits.insert("Hash", TraitInfo {
+        name: "Hash", supertraits: Vec.new(), methods: hashMethods
+    }
+    )
 
     // Clone
     var cloneMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -42,8 +50,12 @@ fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: selfType.clone(),
         hasDefault: false,
-    })
-    ck.traits.insert("Clone", TraitInfo { name: "Clone", supertraits: Vec.new(), methods: cloneMethods })
+    }
+    )
+    ck.traits.insert("Clone", TraitInfo {
+        name: "Clone", supertraits: Vec.new(), methods: cloneMethods
+    }
+    )
 
     // Display
     var displayMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -51,8 +63,12 @@ fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: tyString(),
         hasDefault: false,
-    })
-    ck.traits.insert("Display", TraitInfo { name: "Display", supertraits: Vec.new(), methods: displayMethods })
+    }
+    )
+    ck.traits.insert("Display", TraitInfo {
+        name: "Display", supertraits: Vec.new(), methods: displayMethods
+    }
+    )
 
     // Drop
     var dropMethods: HashMap<string, TraitMethodInfo> = HashMap.new()
@@ -60,8 +76,12 @@ fn registerBuiltinTraits(ck: &mut Checker) {
         params: Vec.new(),
         ret: tyVoid(),
         hasDefault: false,
-    })
-    ck.traits.insert("Drop", TraitInfo { name: "Drop", supertraits: Vec.new(), methods: dropMethods })
+    }
+    )
+    ck.traits.insert("Drop", TraitInfo {
+        name: "Drop", supertraits: Vec.new(), methods: dropMethods
+    }
+    )
 
     // Add, Sub, Mul, Div
     var opTraits: Vec<string> = Vec.new()
@@ -76,8 +96,12 @@ fn registerBuiltinTraits(ck: &mut Checker) {
             params: Vec.new(),
             ret: selfType.clone(),
             hasDefault: false,
-        })
-        ck.traits.insert(op.clone(), TraitInfo { name: op.clone(), supertraits: Vec.new(), methods: methods })
+        }
+        )
+        ck.traits.insert(op.clone(), TraitInfo {
+            name: op.clone(), supertraits: Vec.new(), methods: methods
+        }
+        )
     }
 
     // Register Eq for primitives
@@ -101,13 +125,15 @@ fn registerBuiltinTraits(ck: &mut Checker) {
             ret: tyBool(),
             variadic: false,
             isExtern: false,
-        })
+        }
+        )
         var implList: Vec<ImplInfo> = Vec.new()
         implList.push(ImplInfo {
             traitName: Option.Some("Eq"),
             typeName: primTypes[i].clone(),
             methods: eqImplMethods,
-        })
+        }
+        )
         ck.traitImpls.insert(primTypes[i].clone(), implList)
     }
 }
@@ -115,14 +141,19 @@ fn registerBuiltinTraits(ck: &mut Checker) {
 // -- Check if type implements trait --
 
 fn typeImplementsTrait(ck: &Checker, typeName: &string, traitName: &string): bool {
-    if !ck.traitImpls.contains(typeName) { return false }
+    if !ck.traitImpls.contains(typeName) {
+        return false
+    }
     let impls = ck.traitImpls.get(typeName)!
     for i in 0..impls.len {
         match impls[i].traitName {
             Option.Some(tn) => {
-                if tn == traitName { return true }
+                if tn == traitName {
+                    return true
+                }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
     }
     return false
@@ -166,7 +197,9 @@ fn resolveMethod(ck: &Checker, objTypeName: &string, methodName: &string): Optio
 // monomorphizedFns must carry the concrete type name, not 'Self'.
 fn substSelfMiloType(ty: &MiloType, concrete: &string): MiloType {
     var result = ty.clone()
-    if result.name == "Self" { result.name = concrete.clone() }
+    if result.name == "Self" {
+        result.name = concrete.clone()
+    }
     for j in 0..result.typeArgs.len {
         result.typeArgs[j] = substSelfMiloType(result.typeArgs[j], concrete)
     }
@@ -177,7 +210,8 @@ fn substSelfMiloType(ty: &MiloType, concrete: &string): MiloType {
         Option.Some(ret) => {
             result.fnRet = Option.Some(Heap(substSelfMiloType(*ret, concrete)))
         }
-        Option.None => {}
+        Option.None => {
+        }
     }
     return result
 }
@@ -188,7 +222,8 @@ fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
         out.push(Param {
             name: params[i].name.clone(),
             ty: substSelfMiloType(params[i].ty, concrete),
-        })
+        }
+        )
     }
     return out
 }
@@ -198,53 +233,90 @@ fn substSelfParams(params: &Vec<Param>, concrete: &string): Vec<Param> {
 // register its sig + a traitImpls entry (so `s.method()` resolves) + a codegen fn.
 fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
     for ii in 0..program.impls.len {
-        if program.impls[ii].typeParams.len > 0 { continue }
+        if program.impls[ii].typeParams.len > 0 {
+            continue
+        }
         let sname = program.impls[ii].typeName.clone()
         match program.impls[ii].traitName {
             Option.Some(tn2) => {
                 for ti in 0..program.traits.len {
-                    if program.traits[ti].name != tn2 { continue }
+                    if program.traits[ti].name != tn2 {
+                        continue
+                    }
                     for mi in 0..program.traits[ti].methods.len {
                         let tm = program.traits[ti].methods[mi]
                         var bodyStmts: Vec<Heap<Stmt>> = Vec.new()
                         var hasBody = false
                         match tm.body {
-                            Option.Some(b) => { hasBody = true bodyStmts = cloneStmts(b) }
-                            Option.None => {}
+                            Option.Some(b) => {
+                                hasBody = true bodyStmts = cloneStmts(b)
+                            }
+                            Option.None => {
+                            }
                         }
-                        if !hasBody { continue }
+                        if !hasBody {
+                            continue
+                        }
                         var overridden = false
                         for imi in 0..program.impls[ii].methods.len {
-                            if program.impls[ii].methods[imi].name == tm.name { overridden = true }
+                            if program.impls[ii].methods[imi].name == tm.name {
+                                overridden = true
+                            }
                         }
-                        if overridden { continue }
+                        if overridden {
+                            continue
+                        }
                         let mangled = sname.clone() + "$" + tn2.clone() + "$" + tm.name.clone()
-                        if ck.functions.contains(mangled) { continue }
+                        if ck.functions.contains(mangled) {
+                            continue
+                        }
                         var params: Vec<FnParam> = Vec.new()
                         for pi in 0..tm.params.len {
                             var pType = resolveAstType(ck, tm.params[pi].ty)
                             match pType.clone() {
                                 TypeKind.TRef(inner, mutable) => {
                                     match *inner {
-                                        TypeKind.TStruct(nm) => { if nm == "Self" { pType = TypeKind.TRef(Heap(TypeKind.TStruct(sname.clone())), mutable) } }
-                                        _ => {}
+                                        TypeKind.TStruct(nm) => {
+                                            if nm == "Self" {
+                                                pType = TypeKind.TRef(Heap(TypeKind.TStruct(sname.clone())), mutable)
+                                            }
+                                        }
+                                        _ => {
+                                        }
                                     }
                                 }
-                                TypeKind.TStruct(nm) => { if nm == "Self" { pType = TypeKind.TStruct(sname.clone()) } }
-                                _ => {}
+                                TypeKind.TStruct(nm) => {
+                                    if nm == "Self" {
+                                        pType = TypeKind.TStruct(sname.clone())
+                                    }
+                                }
+                                _ => {
+                                }
                             }
-                            params.push(FnParam { name: tm.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
+                            params.push(FnParam {
+                                name: tm.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType)
+                            }
+                            )
                         }
                         var retType = resolveAstType(ck, tm.retType)
                         match retType.clone() {
-                            TypeKind.TStruct(nm) => { if nm == "Self" { retType = TypeKind.TStruct(sname.clone()) } }
-                            _ => {}
+                            TypeKind.TStruct(nm) => {
+                                if nm == "Self" {
+                                    retType = TypeKind.TStruct(sname.clone())
+                                }
+                            }
+                            _ => {
+                            }
                         }
-                        let sig = FnSig { params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false }
+                        let sig = FnSig {
+                            params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false
+                        }
                         ck.functions.insert(mangled.clone(), sig.clone())
                         var methods: HashMap<string, FnSig> = HashMap.new()
                         methods.insert(tm.name.clone(), sig)
-                        let info = ImplInfo { traitName: Option.Some(tn2.clone()), typeName: sname.clone(), methods: methods }
+                        let info = ImplInfo {
+                            traitName: Option.Some(tn2.clone()), typeName: sname.clone(), methods: methods
+                        }
                         if ck.traitImpls.contains(sname) {
                             var list = ck.traitImpls.get(sname)!
                             list.push(info)
@@ -262,11 +334,13 @@ fn synthesizeDefaultMethods(ck: &mut Checker, program: &Program) {
                             body: bodyStmts,
                             isExtern: false,
                             isVariadic: false,
-                        })
+                        }
+                        )
                     }
                 }
             }
-            Option.None => {}
+            Option.None => {
+            }
         }
     }
 }
@@ -312,24 +386,36 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                                         pType = TypeKind.TRef(Heap(TypeKind.TStruct(tn.clone())), mutable)
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                }
                             }
                         }
                         TypeKind.TStruct(name) => {
-                            if name == "Self" { pType = TypeKind.TStruct(tn.clone()) }
+                            if name == "Self" {
+                                pType = TypeKind.TStruct(tn.clone())
+                            }
                         }
-                        _ => {}
+                        _ => {
+                        }
                     }
-                    params.push(FnParam { name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
+                    params.push(FnParam {
+                        name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType)
+                    }
+                    )
                 }
                 var retType = resolveAstType(ck, m.retType)
                 match retType.clone() {
                     TypeKind.TStruct(name) => {
-                        if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }
+                        if name == "Self" {
+                            retType = TypeKind.TStruct(tn.clone())
+                        }
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
-                let sig = FnSig { params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false }
+                let sig = FnSig {
+                    params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false
+                }
                 ck.functions.insert(mangled.clone(), sig.clone())
                 methods.insert(m.name.clone(), sig)
 
@@ -342,7 +428,8 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     body: cloneStmts(m.body),
                     isExtern: false,
                     isVariadic: false,
-                })
+                }
+                )
             }
 
             let implInfo = ImplInfo {
@@ -379,24 +466,36 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                                         pType = TypeKind.TRef(Heap(TypeKind.TStruct(tn.clone())), mutable)
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                }
                             }
                         }
                         TypeKind.TStruct(name) => {
-                            if name == "Self" { pType = TypeKind.TStruct(tn.clone()) }
+                            if name == "Self" {
+                                pType = TypeKind.TStruct(tn.clone())
+                            }
                         }
-                        _ => {}
+                        _ => {
+                        }
                     }
-                    params.push(FnParam { name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType) })
+                    params.push(FnParam {
+                        name: m.params[pi].name.clone(), ty: normalizeEnumNames(ck, pType)
+                    }
+                    )
                 }
                 var retType = resolveAstType(ck, m.retType)
                 match retType.clone() {
                     TypeKind.TStruct(name) => {
-                        if name == "Self" { retType = TypeKind.TStruct(tn.clone()) }
+                        if name == "Self" {
+                            retType = TypeKind.TStruct(tn.clone())
+                        }
                     }
-                    _ => {}
+                    _ => {
+                    }
                 }
-                let sig = FnSig { params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false }
+                let sig = FnSig {
+                    params: params, ret: normalizeEnumNames(ck, retType), variadic: false, isExtern: false
+                }
                 ck.functions.insert(mangled.clone(), sig.clone())
                 methods.insert(m.name.clone(), sig)
 
@@ -408,14 +507,16 @@ fn registerImpl(ck: &mut Checker, implDecl: &ImplDecl) {
                     body: cloneStmts(m.body),
                     isExtern: false,
                     isVariadic: false,
-                })
+                }
+                )
             }
 
             ck.inherentImpls.insert(tn, ImplInfo {
                 traitName: Option.None,
                 typeName: implDecl.typeName.clone(),
                 methods: methods,
-            })
+            }
+            )
         }
     }
 }
@@ -432,9 +533,13 @@ fn registerAllImpls(ck: &mut Checker, program: &Program) {
 
 fn deriveEq(s: &StructDecl): Option<ImplDecl> {
     // Generate: fn eq(self: &Self, other: &Self): bool { self.f1 == other.f1 && ... }
-    var selfParam = Param { name: "self", ty: simpleType("Self") }
+    var selfParam = Param {
+        name: "self", ty: simpleType("Self")
+    }
     selfParam.ty.isRef = true
-    var otherParam = Param { name: "other", ty: simpleType("Self") }
+    var otherParam = Param {
+        name: "other", ty: simpleType("Self")
+    }
     otherParam.ty.isRef = true
 
     var params: Vec<Param> = Vec.new()
@@ -468,7 +573,8 @@ fn deriveEq(s: &StructDecl): Option<ImplDecl> {
         body: body,
         isExtern: false,
         isVariadic: false,
-    })
+    }
+    )
 
     return Option.Some(ImplDecl {
         traitName: Option.Some("Eq"),
@@ -476,7 +582,8 @@ fn deriveEq(s: &StructDecl): Option<ImplDecl> {
         typeParams: Vec.new(),
         methods: methods,
         span: Option.None,
-    })
+    }
+    )
 }
 
 // -- Process @derive attributes --
@@ -495,8 +602,11 @@ fn processDerives(ck: &mut Checker, program: &Program) {
                     if s.attributes[j].args[k] == "Eq" {
                         let implDecl = deriveEq(s)
                         match implDecl {
-                            Option.Some(decl) => { registerImpl(ck, decl) }
-                            Option.None => {}
+                            Option.Some(decl) => {
+                                registerImpl(ck, decl)
+                            }
+                            Option.None => {
+                            }
                         }
                     }
                 }

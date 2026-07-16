@@ -34,20 +34,27 @@ function fmt(src: string, name: string): string {
   return execFileSync(fmtBin, [f], { encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] });
 }
 
+// Recursive: src-milo/ keeps half its files in checker/ and codegen/, so a top-level-only
+// scan would have watched 12 of its 25 and called that covered.
 function corpus(): string[] {
   const out: string[] = [];
-  for (const sub of ["std", "tests/fixtures"]) {
-    const d = join(ROOT, sub);
-    for (const f of readdirSync(d)) if (f.endsWith(".milo")) out.push(join(d, f));
-  }
+  const walk = (d: string) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (e.name.endsWith(".milo")) out.push(p);
+    }
+  };
+  for (const sub of ["std", "tests/fixtures", "src-milo"]) walk(join(ROOT, sub));
   return out;
 }
 
-// Scoped to std/ + tests/fixtures/, which are 100% formatted today so this gates at zero.
-// src-milo/ (24 of 25 files) and a handful under examples/ + tests/errors/ are NOT
-// formatted — reformatting the self-hosted compiler is a big diff that wants its own
-// change with the selfhost byte-identity tests watched. Tracked in docs/backlog.md.
-test("committed std/ and tests/fixtures/ sources are formatted", () => {
+// std/, tests/fixtures/ and src-milo/ are all formatted, so this gates at zero. src-milo
+// joined once the self-hosted compiler was run through fmt: 24 files changed, and the
+// selfhost lane (173 tests, which rebuilds milo-self from this source) stayed green.
+// A handful under examples/ + tests/errors/ are still unformatted — tests/errors/ is
+// excluded on purpose (the fixtures are deliberately malformed).
+test("committed std/, tests/fixtures/ and src-milo/ sources are formatted", () => {
   const dirty: string[] = [];
   for (const path of corpus()) {
     const src = readFileSync(path, "utf-8");
@@ -64,7 +71,7 @@ test("committed std/ and tests/fixtures/ sources are formatted", () => {
   expect(dirty.length).toBe(0);
 }, 300000);
 
-test("formatting every .milo in std/ and tests/fixtures/ is idempotent", () => {
+test("formatting every .milo in std/, tests/fixtures/ and src-milo/ is idempotent", () => {
   const unstable: string[] = [];
   const failed: string[] = [];
   for (const path of corpus()) {
