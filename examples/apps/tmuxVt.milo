@@ -1,0 +1,376 @@
+// tmuxVt — a minimal VT/ANSI terminal emulator: a screen grid the shell's
+// escapes drive (cursor moves, erase, colors, scroll). Shared by tmuxClone
+// (pane rendering) and tmuxDaemon (server-side screen state for on-attach
+// repaint). Rendering is offered both as direct stdout paint (renderTerm)
+// and as a string (Term.renderString) for sending over a socket.
+
+from "std/io" import {
+    writeStdout
+}
+
+struct Term {
+    cols: i64,
+    rows: i64,
+    chars: Vec<u8>,
+    attrs: Vec<i32>,
+    cr: i64, // cursor row
+    cc: i64, // cursor col
+    attr: i32, // current pen
+    mode: i32, // 0 normal, 1 after ESC, 2 in CSI, 3 in OSC
+    params: Vec<i64>,
+    curParam: i64,
+    haveParam: bool,
+    priv: bool, // CSI '?' private-marker seen
+}
+
+fn newTerm(rows: i64, cols: i64): Term {
+    var chars: Vec<u8> = Vec.new()
+    var attrs: Vec<i32> = Vec.new()
+    let n = rows * cols
+    var i: i64 = 0
+    while i < n {
+        chars.push(32) // space
+        attrs.push(0)
+        i = i + 1
+    }
+    return Term {
+        cols: cols, rows: rows, chars: chars, attrs: attrs,
+        cr: 0, cc: 0, attr: 0, mode: 0,
+        params: Vec.new(), curParam: 0, haveParam: false, priv: false
+    }
+}
+
+impl Term {
+    fn idx(self: &Self, r: i64, c: i64): i64 {
+        return r * self.cols + c
+    }
+
+    fn clearCell(self: &mut Self, r: i64, c: i64): void {
+        let k = self.idx(r, c)
+        self.chars[k] = 32
+        self.attrs[k] = 0
+    }
+
+    fn clearRow(self: &mut Self, r: i64): void {
+        var c: i64 = 0
+        while c < self.cols {
+            self.clearCell(r, c)
+            c = c + 1
+        }
+    }
+
+    // scroll the whole screen up one line, blanking the new bottom row
+    fn scrollUp(self: &mut Self): void {
+        var r: i64 = 1
+        while r < self.rows {
+            var c: i64 = 0
+            while c < self.cols {
+                let dst = self.idx(r - 1, c)
+                let src = self.idx(r, c)
+                self.chars[dst] = self.chars[src]
+                self.attrs[dst] = self.attrs[src]
+                c = c + 1
+            }
+            r = r + 1
+        }
+        self.clearRow(self.rows - 1)
+    }
+
+    fn newline(self: &mut Self): void {
+        if self.cr + 1 >= self.rows {
+            self.scrollUp()
+        } else {
+            self.cr = self.cr + 1
+        }
+    }
+
+    fn putChar(self: &mut Self, ch: u8): void {
+        if self.cc >= self.cols {
+            // wrap
+            self.cc = 0
+            self.newline()
+        }
+        let k = self.idx(self.cr, self.cc)
+        self.chars[k] = ch
+        self.attrs[k] = self.attr
+        self.cc = self.cc + 1
+    }
+
+    fn param(self: &Self, i: i64, dflt: i64): i64 {
+        if i < self.params.len {
+            let v = self.params[i]
+            if v == 0 && i == 0 && !self.haveParam {
+                return dflt
+            }
+            return v
+        }
+        return dflt
+    }
+
+    fn applySgr(self: &mut Self): void {
+        if self.params.len == 0 {
+            self.attr = 0
+            return
+        }
+        var i: i64 = 0
+        while i < self.params.len {
+            let p = self.params[i]
+            if p == 0 {
+                self.attr = 0
+            } else if p == 1 {
+                self.attr = self.attr | 1 // bold on
+            } else if p == 22 {
+                self.attr = self.attr & 0x7ffffffe // bold off
+            } else if p >= 30 && p <= 37 {
+                self.attr = (self.attr & 1) | (((p - 30 + 1) as i32) << 1)
+            } else if p >= 90 && p <= 97 {
+                self.attr = (self.attr & 1) | (((p - 90 + 9) as i32) << 1)
+            } else if p == 39 {
+                self.attr = self.attr & 1 // default fg, keep bold
+            }
+            i = i + 1
+        }
+    }
+
+    // erase display: 0 = cursor→end, 1 = start→cursor, 2 = all
+    fn eraseDisplay(self: &mut Self, kind: i64): void {
+        if kind == 2 {
+            var r: i64 = 0
+            while r < self.rows {
+                self.clearRow(r)
+                r = r + 1
+            }
+        } else if kind == 0 {
+            var c = self.cc
+            while c < self.cols {
+                self.clearCell(self.cr, c)
+                c = c + 1
+            }
+            var r = self.cr + 1
+            while r < self.rows {
+                self.clearRow(r)
+                r = r + 1
+            }
+        } else if kind == 1 {
+            var r: i64 = 0
+            while r < self.cr {
+                self.clearRow(r)
+                r = r + 1
+            }
+            var c: i64 = 0
+            while c <= self.cc && c < self.cols {
+                self.clearCell(self.cr, c)
+                c = c + 1
+            }
+        }
+    }
+
+    // erase line: 0 = cursor→end, 1 = start→cursor, 2 = whole line
+    fn eraseLine(self: &mut Self, kind: i64): void {
+        if kind == 0 {
+            var c = self.cc
+            while c < self.cols {
+                self.clearCell(self.cr, c)
+                c = c + 1
+            }
+        } else if kind == 1 {
+            var c: i64 = 0
+            while c <= self.cc && c < self.cols {
+                self.clearCell(self.cr, c)
+                c = c + 1
+            }
+        } else if kind == 2 {
+            self.clearRow(self.cr)
+        }
+    }
+
+    fn clampCursor(self: &mut Self): void {
+        if self.cr < 0 {
+            self.cr = 0
+        }
+        if self.cr >= self.rows {
+            self.cr = self.rows - 1
+        }
+        if self.cc < 0 {
+            self.cc = 0
+        }
+        if self.cc >= self.cols {
+            self.cc = self.cols - 1
+        }
+    }
+
+    fn dispatchCsi(self: &mut Self, final: u8): void {
+        if final == 109 { // 'm' SGR
+            self.applySgr()
+        } else if final == 72 || final == 102 { // 'H'/'f' cursor position
+            let r = self.param(0, 1) - 1
+            let c = self.param(1, 1) - 1
+            self.cr = r
+            self.cc = c
+            self.clampCursor()
+        } else if final == 65 { // 'A' up
+            self.cr = self.cr - self.param(0, 1)
+            self.clampCursor()
+        } else if final == 66 { // 'B' down
+            self.cr = self.cr + self.param(0, 1)
+            self.clampCursor()
+        } else if final == 67 { // 'C' right
+            self.cc = self.cc + self.param(0, 1)
+            self.clampCursor()
+        } else if final == 68 { // 'D' left
+            self.cc = self.cc - self.param(0, 1)
+            self.clampCursor()
+        } else if final == 71 { // 'G' cursor to column
+            self.cc = self.param(0, 1) - 1
+            self.clampCursor()
+        } else if final == 100 { // 'd' cursor to row
+            self.cr = self.param(0, 1) - 1
+            self.clampCursor()
+        } else if final == 74 { // 'J' erase display
+            self.eraseDisplay(self.param(0, 0))
+        } else if final == 75 { // 'K' erase line
+            self.eraseLine(self.param(0, 0))
+        }
+        // everything else (insert/delete char, DEC private modes, scroll
+        // regions, alt-screen) is consumed and ignored — fine for a shell.
+    }
+
+    fn feedByte(self: &mut Self, b: u8): void {
+        if self.mode == 0 {
+            if b == 27 { // ESC
+                self.mode = 1
+            } else if b == 10 { // LF
+                self.newline()
+            } else if b == 13 { // CR
+                self.cc = 0
+            } else if b == 8 { // BS
+                if self.cc > 0 {
+                    self.cc = self.cc - 1
+                }
+            } else if b == 9 { // TAB
+                var nc = (self.cc / 8 + 1) * 8
+                if nc >= self.cols {
+                    nc = self.cols - 1
+                }
+                self.cc = nc
+            } else if b == 7 { // BEL — ignore
+            } else if b >= 32 { // printable (incl. UTF-8 bytes)
+                self.putChar(b)
+            }
+        } else if self.mode == 1 { // after ESC
+            if b == 91 { // '[' → CSI
+                self.mode = 2
+                self.params = Vec.new()
+                self.curParam = 0
+                self.haveParam = false
+                self.priv = false
+            } else if b == 93 { // ']' → OSC (title etc.)
+                self.mode = 3
+            } else {
+                // ESC ( / ) charset selects, ESC = / >, etc. — consume one byte
+                self.mode = 0
+            }
+        } else if self.mode == 2 { // in CSI
+            if b >= 48 && b <= 57 { // digit
+                self.curParam = self.curParam * 10 + (b - 48) as i64
+                self.haveParam = true
+            } else if b == 59 { // ';'
+                self.params.push(self.curParam)
+                self.curParam = 0
+            } else if b == 63 { // '?' private marker
+                self.priv = true
+            } else if b >= 64 && b <= 126 { // final byte
+                self.params.push(self.curParam)
+                self.dispatchCsi(b)
+                self.mode = 0
+            }
+            // intermediate bytes (space, etc.) ignored
+        } else if self.mode == 3 { // in OSC — until BEL or ESC
+            if b == 7 {
+                self.mode = 0
+            } else if b == 27 {
+                self.mode = 1 // ESC \ (ST) terminator; next byte '\'
+            }
+        }
+    }
+
+    fn feed(self: &mut Self, buf: &[u8; 4096], n: i64): void {
+        var i: i64 = 0
+        while i < n {
+            self.feedByte(buf[i])
+            i = i + 1
+        }
+    }
+}
+
+fn sgrFor(attr: i32): string {
+    var s = "\x1b[0m"
+    if (attr & 1) != 0 {
+        s = s + "\x1b[1m"
+    }
+    let fg = (attr >> 1) as i64
+    if fg >= 1 && fg <= 8 {
+        s = s + $"\x1b[{30 + fg - 1}m"
+    } else if fg >= 9 && fg <= 16 {
+        s = s + $"\x1b[{90 + fg - 9}m"
+    }
+    return s
+}
+
+// Draw a pane's grid into the real terminal at (topRow=4, startCol). One string
+// per row keeps it flicker-light; SGR is re-emitted only when the pen changes.
+fn renderTerm(term: &Term, startCol: i64): void {
+    var r: i64 = 0
+    while r < term.rows {
+        var line = $"\x1b[{4 + r};{startCol}H\x1b[0m"
+        var curAttr: i32 = 0
+        var c: i64 = 0
+        while c < term.cols {
+            let k = r * term.cols + c
+            let a = term.attrs[k]
+            if a != curAttr {
+                line = line + sgrFor(a)
+                curAttr = a
+            }
+            line.push(term.chars[k])
+            c = c + 1
+        }
+        line = line + "\x1b[0m"
+        writeStdout(line)
+        r = r + 1
+    }
+}
+
+// Render the grid to a string (same as renderTerm but returned) so it can be
+// sent over a socket instead of painting stdout directly.
+fn renderTermString(term: &Term, startRow: i64, startCol: i64): string {
+    var out = ""
+    var r: i64 = 0
+    while r < term.rows {
+        out = out + $"\x1b[{startRow + r};{startCol}H\x1b[0m"
+        var curAttr: i32 = 0
+        var c: i64 = 0
+        while c < term.cols {
+            let k = r * term.cols + c
+            let a = term.attrs[k]
+            if a != curAttr {
+                out = out + sgrFor(a)
+                curAttr = a
+            }
+            out.push(term.chars[k])
+            c = c + 1
+        }
+        out = out + "\x1b[0m"
+        r = r + 1
+    }
+    return out
+}
+
+// Full-screen repaint: clear, paint the grid at top-left, park the cursor where
+// the emulator's cursor is. This is what a client gets the instant it (re)attaches.
+fn fullRepaint(term: &Term): string {
+    var out = "\x1b[2J\x1b[H"
+    out = out + renderTermString(term, 1, 1)
+    out = out + $"\x1b[{term.cr + 1};{term.cc + 1}H"
+    return out
+}

@@ -18,6 +18,9 @@
 from "std/pty" import {
     Pty, openAndSpawn, isInteractive
 }
+from "./tmuxVt" import {
+    Term, newTerm, fullRepaint
+}
 from "std/net" import {
     TcpListener, TcpStream, ip4
 }
@@ -55,6 +58,10 @@ fn setNonblock(fd: i32): void {
 fn serveLoop(pty: &Pty, listenFd: i32): void {
     var clientFd: i32 = -1
     var buf: [u8; 4096] = [0; 4096]
+    // server-side screen state: shell output is always fed into this grid
+    // (default PTY size 24x80) so a (re)attaching client can be sent the current
+    // screen, not just whatever the shell prints next.
+    var term = newTerm(24, 80)
     var running = true
     while running {
         var sel = Select.new()
@@ -72,12 +79,16 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
             let n = read(pty.masterFd, buf as *u8, 4096)
             if n == 0 {
                 running = false // shell exited → daemon done
-            } else if n > 0 && clientFd >= 0 {
-                write(clientFd, buf as *u8, n)
+            } else if n > 0 {
+                term.feed(buf, n)
+                if clientFd >= 0 {
+                    write(clientFd, buf as *u8, n)
+                }
             }
         }
 
-        // a new attach? one client at a time — the newcomer takes over
+        // a new attach? one client at a time — the newcomer takes over and is
+        // sent a full repaint of the current screen so it looks continuous.
         let newFd = acceptFd(listenFd)
         if newFd >= 0 {
             if clientFd >= 0 {
@@ -87,6 +98,10 @@ fn serveLoop(pty: &Pty, listenFd: i32): void {
             }
             clientFd = newFd
             setNonblock(clientFd)
+            let rp = fullRepaint(term)
+            unsafe {
+                write(clientFd, rp as *u8, rp.len)
+            }
         }
 
         // client input → shell; EOF (== 0) means the client detached/left
