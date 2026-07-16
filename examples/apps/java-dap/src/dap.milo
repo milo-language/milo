@@ -409,12 +409,8 @@ fn connectJvm(isLaunch: bool, args: &Json, eventCh: Channel<Packet>): Result<Jdw
             }
         }
         var code: i64 = -1
-        match child.wait() {
-            Result.Ok(c) => {
-                code = c as i64
-            }
-            Result.Err(_e) => {
-            }
+        if let Result.Ok(c) = child.wait() {
+            code = c as i64
         }
         let _s = eventCh.send(synthPacket(-4, code, ""))
     }
@@ -744,12 +740,7 @@ impl Sess {
         if killDebuggee {
             let _r = self.io.exitVm(0)
         } else {
-            match self.io.dispose() {
-                Result.Ok(_v) => {
-                }
-                Result.Err(_e) => {
-                }
-            }
+            let _r = self.io.dispose()
         }
     }
 
@@ -796,12 +787,8 @@ impl Sess {
         for t in ids {
             let dapId = self.dapThreadId(t)
             var name: string = "thread-" + dapId.toString()
-            match self.io.threadName(t) {
-                Result.Ok(n) => {
-                    name = n
-                }
-                Result.Err(_e) => {
-                }
+            if let Result.Ok(n) = self.io.threadName(t) {
+                name = n
             }
             arr = arr.raw(jsonObj().int("id", dapId).str("name", name).build())
         }
@@ -880,13 +867,9 @@ impl Sess {
 
         // class loaded already?
         if self.bps[idx].classId == 0 {
-            match self.io.classesBySignature(sig) {
-                Result.Ok(cls) => {
-                    if cls.len > 0 {
-                        self.bps[idx].classId = cls[0]
-                    }
-                }
-                Result.Err(_e) => {
+            if let Result.Ok(cls) = self.io.classesBySignature(sig) {
+                if cls.len > 0 {
+                    self.bps[idx].classId = cls[0]
                 }
             }
         }
@@ -897,12 +880,8 @@ impl Sess {
         } else {
             // defer: arm CLASS_PREPARE for this class (once per file record)
             if self.bps[idx].prepReqId == 0 {
-                match self.io.setClassPrepareReq(className) {
-                    Result.Ok(rid) => {
-                        self.bps[idx].prepReqId = rid
-                    }
-                    Result.Err(_e) => {
-                    }
+                if let Result.Ok(rid) = self.io.setClassPrepareReq(className) {
+                    self.bps[idx].prepReqId = rid
                 }
             }
             var arr = jsonArr()
@@ -919,12 +898,8 @@ impl Sess {
     fn plantBreakpoints(self: &mut Sess, idx: i64): string {
         let classId = self.bps[idx].classId
         var methods: Vec<MethodInfo> = []
-        match self.classMethods(classId) {
-            Result.Ok(m) => {
-                methods = m
-            }
-            Result.Err(_e) => {
-            }
+        if let Result.Ok(m) = self.classMethods(classId) {
+            methods = m
         }
         var arr = jsonArr()
         var lineIdx: i64 = 0
@@ -940,14 +915,10 @@ impl Sess {
                                     typeTag: 1, classId: classId,
                                     methodId: m.methodId, index: entry.codeIndex
                                 }
-                                match self.io.setBreakpointReq(loc) {
-                                    Result.Ok(rid) => {
-                                        self.bps[idx].reqIds.push(rid)
-                                        self.bps[idx].reqLines.push(want)
-                                        planted = true
-                                    }
-                                    Result.Err(_e) => {
-                                    }
+                                if let Result.Ok(rid) = self.io.setBreakpointReq(loc) {
+                                    self.bps[idx].reqIds.push(rid)
+                                    self.bps[idx].reqLines.push(want)
+                                    planted = true
                                 }
                                 break
                             }
@@ -1102,12 +1073,8 @@ impl Sess {
             return
         }
         var typeName: string = "Exception"
-        match self.io.objectType(self.lastExc) {
-            Result.Ok(classId) => {
-                typeName = prettyTypeName(self.classSignature(classId))
-            }
-            Result.Err(_e) => {
-            }
+        if let Result.Ok(classId) = self.io.objectType(self.lastExc) {
+            typeName = prettyTypeName(self.classSignature(classId))
         }
         let msg = self.exceptionMessage(self.lastExc)
         // DAP ExceptionBreakMode: uncaught ⇒ "unhandled", caught ⇒ "always".
@@ -1206,22 +1173,18 @@ impl Sess {
 
     // best-effort line for a code index: greatest table line whose codeIndex <= idx.
     fn lineForIndex(self: &mut Sess, classId: i64, methodId: i64, codeIndex: i64): i64 {
-        match self.io.lineTable(classId, methodId) {
-            Result.Ok(table) => {
-                var best: i64 = 0
-                var bestIdx: i64 = -1
-                for e in table {
-                    if e.codeIndex <= codeIndex && e.codeIndex >= bestIdx {
-                        bestIdx = e.codeIndex
-                        best = e.line
-                    }
-                }
-                return best
-            }
-            Result.Err(_e) => {
-                return 0
+        let Result.Ok(table) = self.io.lineTable(classId, methodId) else {
+            return 0
+        }
+        var best: i64 = 0
+        var bestIdx: i64 = -1
+        for e in table {
+            if e.codeIndex <= codeIndex && e.codeIndex >= bestIdx {
+                bestIdx = e.codeIndex
+                best = e.line
             }
         }
+        return best
     }
 
     // source path for a class: breakpoint files first, then the launch
@@ -1355,14 +1318,10 @@ impl Sess {
         var arr = jsonArr().raw(jsonObj().str("name", "Locals").int("variablesReference", localsRef).bool("expensive", false).build())
         // "This" scope only when the frame has a this object (static methods don't)
         let fr = self.frames[fidx]
-        match self.io.frameThisObject(fr.threadId, fr.frameId) {
-            Result.Ok(v) => {
-                if v.num != 0 {
-                    let thisRef = self.newVarRef(2, v.num)
-                    arr = arr.raw(jsonObj().str("name", "This").int("variablesReference", thisRef).bool("expensive", false).build())
-                }
-            }
-            Result.Err(_e) => {
+        if let Result.Ok(v) = self.io.frameThisObject(fr.threadId, fr.frameId) {
+            if v.num != 0 {
+                let thisRef = self.newVarRef(2, v.num)
+                arr = arr.raw(jsonObj().str("name", "This").int("variablesReference", thisRef).bool("expensive", false).build())
             }
         }
         self.out.respond(seq, c, jsonObj().raw("scopes", arr.build()).build())
@@ -1428,20 +1387,12 @@ impl Sess {
                 value = "null"
             } else {
                 var len: i64 = -1
-                match self.io.arrayLength(v.num) {
-                    Result.Ok(l) => {
-                        len = l
-                    }
-                    Result.Err(_e) => {
-                    }
+                if let Result.Ok(l) = self.io.arrayLength(v.num) {
+                    len = l
                 }
                 var elemType: string = "?"
-                match self.io.objectType(v.num) {
-                    Result.Ok(cid) => {
-                        elemType = prettyTypeName(self.classSignature(cid))
-                    }
-                    Result.Err(_e) => {
-                    }
+                if let Result.Ok(cid) = self.io.objectType(v.num) {
+                    elemType = prettyTypeName(self.classSignature(cid))
                 }
                 typeName = elemType.clone()
                 value = elemType + " (length " + len.toString() + ")"
@@ -1454,12 +1405,8 @@ impl Sess {
                 value = "null"
             } else {
                 var cls: string = "Object"
-                match self.io.objectType(v.num) {
-                    Result.Ok(cid) => {
-                        cls = prettyTypeName(self.classSignature(cid))
-                    }
-                    Result.Err(_e) => {
-                    }
+                if let Result.Ok(cid) = self.io.objectType(v.num) {
+                    cls = prettyTypeName(self.classSignature(cid))
                 }
                 typeName = cls.clone()
                 value = cls + "@" + v.num.toString()
@@ -1488,12 +1435,8 @@ impl Sess {
             // locals of a cached frame, filtered to slots live at the frame's pc
             let fr = self.frames[vr.a]
             var slots: Vec<VarSlot> = []
-            match self.io.variableTable(fr.classId, fr.methodId) {
-                Result.Ok(t) => {
-                    slots = t
-                }
-                Result.Err(_e) => {
-                }
+            if let Result.Ok(t) = self.io.variableTable(fr.classId, fr.methodId) {
+                slots = t
             }
             var slotIdxs: Vec<i64> = []
             var slotTags: Vec<i64> = []
@@ -1534,12 +1477,8 @@ impl Sess {
                 }
             }
             var fields: Vec<FieldInfo> = []
-            match self.io.typeFields(classId) {
-                Result.Ok(f) => {
-                    fields = f
-                }
-                Result.Err(_e) => {
-                }
+            if let Result.Ok(f) = self.io.typeFields(classId) {
+                fields = f
             }
             var ids: Vec<i64> = []
             var names: Vec<string> = []
@@ -1567,12 +1506,8 @@ impl Sess {
         } else {
             // array elements, first 100
             var len: i64 = 0
-            match self.io.arrayLength(vr.a) {
-                Result.Ok(l) => {
-                    len = l
-                }
-                Result.Err(_e) => {
-                }
+            if let Result.Ok(l) = self.io.arrayLength(vr.a) {
+                len = l
             }
             var take = len
             if take > 100 {
@@ -1746,12 +1681,8 @@ impl Sess {
             self.lastExcCaught = ev.caught
             let dapTid = self.dapThreadId(ev.thread)
             var typeName: string = "Exception"
-            match self.io.objectType(ev.exception) {
-                Result.Ok(classId) => {
-                    typeName = prettyTypeName(self.classSignature(classId))
-                }
-                Result.Err(_e) => {
-                }
+            if let Result.Ok(classId) = self.io.objectType(ev.exception) {
+                typeName = prettyTypeName(self.classSignature(classId))
             }
             self.out.event("stopped", jsonObj().str("reason", "exception").str("description", "Paused on exception").str("text", typeName).int("threadId", dapTid).bool("allThreadsStopped", true).build())
         } else if ev.kind == 1 {
