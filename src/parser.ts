@@ -578,6 +578,19 @@ export class Parser {
   private parseLet(): Stmt {
     const letTok = this.expect(TokenKind.Let);
     const s = this.span(letTok);
+    // let-else: `let Enum.Variant(b) = value else { ... }`. A binding name is
+    // always `IDENT =` or `IDENT :`; an enum pattern is `IDENT . Variant`, so the
+    // Dot after the first ident disambiguates without lookahead ambiguity.
+    if (this.at(TokenKind.Ident) && this.tokens[this.pos + 1]?.kind === TokenKind.Dot) {
+      const pattern = this.parsePattern();
+      this.expect(TokenKind.Eq);
+      const value = this.parseExpr();
+      this.expect(TokenKind.Else);
+      this.expect(TokenKind.LBrace);
+      const elseBody = this.parseStmts();
+      this.expect(TokenKind.RBrace);
+      return { kind: "LetElseStmt", pattern, value, elseBody, span: s };
+    }
     const name = this.expect(TokenKind.Ident).value;
     let type: MiloType | null = null;
     if (this.match(TokenKind.Colon)) type = this.parseType();

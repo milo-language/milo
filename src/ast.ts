@@ -96,10 +96,13 @@ export interface MatchArm { pattern: Pattern; body: Stmt[] }
 export interface MatchStmt { kind: "MatchStmt"; subject: Expr; arms: MatchArm[]; span?: Span }
 export interface MatchExpr { kind: "MatchExpr"; subject: Expr; arms: MatchArm[]; span?: Span }
 export interface IfLetStmt { kind: "IfLetStmt"; pattern: Pattern; subject: Expr; thenBody: Stmt[]; elseBody: Stmt[] | null; span?: Span }
+// `let Enum.Variant(b) = value else { ... }` — refutable bind that escapes into
+// the enclosing scope; the else block must diverge (fail-early, bind-forward).
+export interface LetElseStmt { kind: "LetElseStmt"; pattern: Pattern; value: Expr; elseBody: Stmt[]; span?: Span }
 
 export interface UnsafeBlock { kind: "UnsafeBlock"; body: Stmt[]; span?: Span }
 export interface ForInStmt { kind: "ForInStmt"; varName: string; varName2: string | null; iterable: Expr; body: Stmt[]; span?: Span }
-export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | UnsafeBlock | ForInStmt;
+export type Stmt = LetDecl | VarDecl | Assign | Return | IfStmt | WhileStmt | ExprStmt | MatchStmt | BreakStmt | ContinueStmt | IfLetStmt | LetElseStmt | UnsafeBlock | ForInStmt;
 
 // ── Top-level ──
 

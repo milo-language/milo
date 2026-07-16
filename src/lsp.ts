@@ -508,6 +508,10 @@ function findVarHover(
       const r = findVarHover(stmt.thenBody, word, exprTypes, bindTypes); if (r) return r;
       if (stmt.elseBody) { const r2 = findVarHover(stmt.elseBody, word, exprTypes, bindTypes); if (r2) return r2; }
     }
+    if (stmt.kind === "LetElseStmt") {
+      const b = patternBindHover(stmt.pattern); if (b) return b;
+      const r = findVarHover(stmt.elseBody, word, exprTypes, bindTypes); if (r) return r;
+    }
     if (stmt.kind === "WhileStmt") {
       const r = findVarHover(stmt.body, word, exprTypes, bindTypes); if (r) return r;
     }
@@ -975,6 +979,13 @@ function findVarDecl(stmt: Stmt, name: string): Span | null {
     }
     for (const s of stmt.thenBody) { const r = findVarDecl(s, name); if (r) return r; }
     if (stmt.elseBody) for (const s of stmt.elseBody) { const r = findVarDecl(s, name); if (r) return r; }
+  }
+  if (stmt.kind === "LetElseStmt") {
+    // The pattern binding escapes into the enclosing scope — its decl site.
+    if (stmt.pattern.kind === "EnumPattern" && stmt.pattern.bindings.includes(name) && stmt.pattern.span) {
+      return stmt.pattern.span;
+    }
+    for (const s of stmt.elseBody) { const r = findVarDecl(s, name); if (r) return r; }
   }
   return null;
 }
@@ -1538,6 +1549,10 @@ function visitStmtExprs(s: Stmt, cb: (e: Expr) => void) {
       visitExpr(s.subject, cb);
       for (const st of s.thenBody) visitStmtExprs(st, cb);
       if (s.elseBody) for (const st of s.elseBody) visitStmtExprs(st, cb);
+      break;
+    case "LetElseStmt":
+      visitExpr(s.value, cb);
+      for (const st of s.elseBody) visitStmtExprs(st, cb);
       break;
     case "ForInStmt":
       visitExpr(s.iterable, cb);

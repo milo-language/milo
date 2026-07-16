@@ -222,6 +222,36 @@ class LowerCtx {
         }
         return { kind: "Match", subject: this.lowerExpr(stmt.subject), arms, enumName, span: stmt.span };
       }
+      case "LetElseStmt": {
+        // Desugar `let P(b) = v else { E }` into `let b = match v { P(b') => b', _ => E }`.
+        // The match-expr's diverging wildcard arm (E always returns) already
+        // type-checks and codegens, and the outer Let makes `b` escape into the
+        // enclosing scope — exactly let-else's semantics. Rename the arm-internal
+        // binding (b') so its alloca doesn't collide with the outer Let's `b`.
+        let subjType = this.typeOf(stmt.value);
+        if (subjType?.tag === "ref" && subjType.inner.tag === "enum") subjType = subjType.inner;
+        const enumName = subjType?.tag === "enum" ? subjType.name : "";
+        const enumInfo = this.c.enums.get(enumName);
+        const binding = stmt.pattern.kind === "EnumPattern" ? (stmt.pattern.bindings[0] ?? "_") : "_";
+        const hirPat = this.lowerPattern(stmt.pattern, enumInfo);
+        const bindingType = hirPat.kind === "EnumPattern"
+          ? (hirPat.bindings[0]?.type ?? { tag: "unknown" as const })
+          : { tag: "unknown" as const };
+        const innerName = `__letelse_${binding}`;
+        if (hirPat.kind === "EnumPattern" && hirPat.bindings[0]) hirPat.bindings[0].name = innerName;
+        const matchExpr: HIRExpr = {
+          kind: "MatchExpr",
+          subject: this.lowerExpr(stmt.value),
+          arms: [
+            { pattern: hirPat, body: [{ kind: "ExprStmt", expr: { kind: "Ident", name: innerName, type: bindingType, span: stmt.span }, span: stmt.span }] },
+            { pattern: { kind: "WildcardPattern" }, body: stmt.elseBody.map(s => this.lowerStmt(s, fnRetType)) },
+          ],
+          enumName,
+          type: bindingType,
+          span: stmt.span,
+        };
+        return { kind: "Let", name: binding, type: bindingType, value: matchExpr, mutable: false, span: stmt.span };
+      }
       case "MatchStmt": {
         let subjType = this.typeOf(stmt.subject);
         // Matching on a borrowed enum (`&Enum`): the checker already decided this

@@ -2358,6 +2358,45 @@ export class TypeChecker {
         this.tryMove(stmt.subject);
         break;
       }
+      case "LetElseStmt": {
+        const subjType = this.checkExpr(stmt.value);
+        if (subjType.tag !== "enum" && subjType.tag !== "unknown") {
+          this.error(`let-else value must be an enum (Option/Result/…), got ${typeName(subjType)}`, sp);
+          break;
+        }
+        // The else block runs only when the pattern doesn't match, so it must
+        // diverge — otherwise the binding below wouldn't be guaranteed live. It's
+        // checked (in its own scope) BEFORE the binding is declared, so the
+        // binding is not in scope inside it.
+        this.pushScope();
+        for (const s of stmt.elseBody) this.checkStmt(s, fnRetType);
+        this.popScope();
+        if (!this.bodyAlwaysReturns(stmt.elseBody)) {
+          this.error(`let-else block must diverge (return/break/continue) — it runs when the pattern doesn't match`, sp);
+        }
+        if (subjType.tag === "enum" && stmt.pattern.kind === "EnumPattern") {
+          const enumInfo = this.enums.get(subjType.name)!;
+          const ps = stmt.pattern.span;
+          if (stmt.pattern.enumName !== subjType.name && enumInfo.baseName !== stmt.pattern.enumName) {
+            this.error(`pattern enum '${stmt.pattern.enumName}' does not match value type '${subjType.name}'`, ps);
+          }
+          const variant = enumInfo.variants.get(stmt.pattern.variant);
+          if (!variant) {
+            this.error(`enum '${subjType.name}' has no variant '${stmt.pattern.variant}'`, ps);
+          } else if (stmt.pattern.bindings.length !== variant.fields.length) {
+            this.error(`variant '${stmt.pattern.variant}' has ${variant.fields.length} fields, but pattern has ${stmt.pattern.bindings.length} bindings`, ps);
+          }
+          if (variant) {
+            this.patternBindingTypes.set(stmt.pattern, variant.fields.slice(0, stmt.pattern.bindings.length));
+            // Bindings escape into the CURRENT scope (the whole point vs if-let).
+            for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
+              this.declare(stmt.pattern.bindings[i], { type: variant.fields[i], mutable: false, moved: false, borrowed: false, read: false });
+            }
+          }
+        }
+        this.tryMove(stmt.value);
+        break;
+      }
       case "UnsafeBlock": {
         this.unsafeDepth++;
         this.unsafeUsedStack.push(false);
