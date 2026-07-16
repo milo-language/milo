@@ -703,6 +703,20 @@ function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s: Stmt) 
       // The bodies are Stmt[], not Expr — they need `st`. Mirrors IfStmt/MatchStmt below.
       case "IfExpr": ex(e.cond); st(e.thenBody); st(e.elseBody); break;
       case "MatchExpr": ex(e.subject); e.arms.forEach(a => st(a.body)); break;
+      // Leaves: onExpr above already visited them, and they have no sub-expressions.
+      // Listed rather than left to fall through so the check below can be exhaustive.
+      case "IntLit": case "FloatLit": case "BoolLit": case "StringLit": case "CharLit":
+      case "Ident":
+        break;
+      default: {
+        // A missing arm is a SILENT skip: `ex` no-ops on undefined, so a walker that
+        // forgets a node kind under-reports instead of failing. That's how the float
+        // check silently ignored `is` operands and if-expression branches until
+        // 2026-07-16 — the safety profile reported "pass" on code it never looked at.
+        // This makes the next unhandled kind a compile error instead.
+        const _exhaustive: never = e;
+        void _exhaustive;
+      }
     }
   };
   const st = (list: Stmt[]) => {
