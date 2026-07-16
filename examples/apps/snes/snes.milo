@@ -52,11 +52,8 @@ fn dumpPpm(fb: &Vec<i64>, path: &string): void {
         out.push((px & 0xFF) as u8)
         i = i + 1
     }
-    match writeFile(path, out) {
-        Result.Ok(n) => {
-        }
-        Result.Err(e) => {
-        }
+    if let Result.Err(e) = writeFile(path, out) {
+        eprint($"snes: screenshot write failed: {path}: {e}\n")
     }
 }
 
@@ -432,11 +429,8 @@ fn main(): i32 {
                 }
                 if sum != lastSaveSum {
                     lastSaveSum = sum
-                    match writeFile(srmPath, sramToString(m)) {
-                        Result.Ok(n) => {
-                        }
-                        Result.Err(e) => {
-                        }
+                    if let Result.Err(e) = writeFile(srmPath, sramToString(m)) {
+                        eprint($"snes: SRAM save failed: {srmPath}: {e}\n")
                     }
                 }
             }
@@ -506,11 +500,8 @@ fn main(): i32 {
                     }
                 }
                 dumpPpm(fb, slot + ".ppm") // screenshot alongside the state
-                match writeFile(statePath, blob) {
-                    Result.Ok(n) => {
-                    }
-                    Result.Err(e) => {
-                    }
+                if let Result.Err(e) = writeFile(statePath, blob) {
+                    eprint($"snes: state save failed: {statePath}: {e}\n")
                 }
                 saveSeq = saveSeq + 1
             }
