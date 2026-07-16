@@ -3,7 +3,7 @@ system: planning
 purpose: ROI/difficulty-ranked lens over outstanding work; a prioritization view, NOT the source of truth for status
 key-files: docs/roadmap.md (canonical status), docs/safety-roadmap.md
 update-when: an item ships (flip in roadmap.md first, then re-rank here) or a new item is triaged
-last-verified: 2026-07-13
+last-verified: 2026-07-16
 -->
 
 # Backlog — prioritized
@@ -81,6 +81,18 @@ primitives carried it, but these gaps are where the friction was. Ranked.
 **Positive findings (this loop):** `Vec<Pty>` and `Vec<Term>` both work — pushing owned structs-with-drop into a `Vec`, indexing them, calling `&mut` methods on elements (`terms[i].feed(...)`), and whole-element reassignment (`terms[i] = newTerm(...)`) all compile and run. That's what let the daemon go dynamic N-pane. No language gap here — just noting it works.
 
 **Known limitation (not a bug):** on split/resize the daemon rebuilds every pane grid at the new width (shells repaint via SIGWINCH), so on-screen content of *other* panes is cleared at that moment (still live in each shell's own history). True content reflow across a resize is a later polish.
+
+## Ergonomics findings (2026-07-16, ugly-code audit)
+
+From a worst-code sweep of `std/` + `src-milo/`. Two language gaps, three hygiene items.
+
+| # | Item | ROI | Effort | Detail | Ref |
+|---|------|-----|--------|--------|-----|
+| E1 | **Raw-pointer sugar: `ptr == null` + `ptr.offset(n)`** | M | L | Null check today is `dir as i64 == 0 as i64` (both sides cast); pointer arithmetic is `(ctBuf as i64 + outLen as i64) as *u8` (three casts). Recurs across `fs`/`cstr`/`env`/`runtime`/`sync`/`crypto`. Confined to the FFI seam, but the ugliness is accidental, not deliberate friction. | `std/fs.milo:97`, `std/crypto.linux.milo:152` |
+| E2 | **Named enum-variant fields** | H | M | `ForEach(string, Option<string>, TypeKind, Option<TypeKind>, Heap<HIRExpr>, string, Vec<Heap<HIRStmt>>, Option<Span>)` needs a trailing comment decoding the slots. Hits self-hosted compiler hardest (HIR/AST are all sum types). Rust-style `ForEach { varName: string, ... }`. | `src-milo/hir.milo:88` |
+| E3 | **Type-alias hygiene sweep** | M | L | Language has `type X = ...` (parser + range tests use it); `std/` + `src-milo/` use it zero times. `&Option<Vec<Heap<Stmt>>>` is spelled verbatim ~30× — one `type Block = Vec<Heap<Stmt>>` kills it. Pure code debt. | `src-milo/checker/stmt.milo:189` |
+| E4 | **Codegen context struct** | M | M | `locs: &mut Vec<Local>, sigs: &Vec<CgFnSig>, retTy: &string` + 4 label params copy-pasted through every `gen*` fn (13-param signatures). Fold into a `GenCtx`. Code debt, no language gap. | `src-milo/codegen/stmt.milo:205` |
+| E5 | **`jsonParseValue` err flag → `Result`** | L | L | Parser threads `err: &mut bool` through 3 signatures instead of `Result<i64, E>` — predates typed-errors migration. Scratch-vec design itself is deliberate zero-alloc, keep it. | `std/json.milo:964` |
 
 ## Dependency notes
 
