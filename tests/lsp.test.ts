@@ -63,6 +63,26 @@ const BUILTIN_SRC = `fn main() {
 `;
 const BUILTIN_URI = "file:///tmp/milo-lsp-builtin.milo";
 
+// Goto-definition on a local impl-method call (`s.greet()`). Methods live in
+// program.impls, not program.functions, so this used to resolve nowhere.
+const IMPL_SRC = `struct Speaker {
+    name: string,
+}
+
+impl Speaker {
+    fn greet(self: &Speaker): string {
+        return "hi " + self.name
+    }
+}
+
+fn main() {
+    let s = Speaker { name: "x" }
+    let g = s.greet()
+    print(g)
+}
+`;
+const IMPL_URI = "file:///tmp/milo-lsp-impl.milo";
+
 // Hover on a scalar primitive and on a raw pointer (`*u8`) at an FFI boundary.
 const PRIM_SRC = `fn openPad(): *u8 {
     let n: i64 = 3
@@ -132,7 +152,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -196,6 +216,14 @@ test("hover on a global variable shows its kind and type", async () => {
 test("goto-definition on imported stdlib symbol resolves to std/string.milo", async () => {
   const def = await req(3, "textDocument/definition", { textDocument: { uri: STDLIB_URI }, position: STDLIB_POS });
   expect(def?.uri).toContain("std/string.milo");
+});
+
+test("goto-definition on a local impl-method call jumps to the method decl", async () => {
+  // `    let g = s.greet()` — `greet` is on line 12 (0-based), char 16.
+  const def = await req(30, "textDocument/definition", { textDocument: { uri: IMPL_URI }, position: { line: 12, character: 16 } });
+  expect(def?.uri).toBe(IMPL_URI);
+  // `impl Speaker { fn greet(...) }` — the `fn greet` line is 0-based line 5.
+  expect(def?.range?.start?.line).toBe(5);
 });
 
 test("documentSymbol lists top-level decls with nesting", async () => {

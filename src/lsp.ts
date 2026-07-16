@@ -884,6 +884,22 @@ function handleDefinition(uri: string, line: number, character: number): object 
       }
     }
 
+    // Impl methods — `obj.method()` / `self.method()`. Methods live in
+    // program.impls, not program.functions, so the loops above miss them and
+    // cmd-click on a method call resolved nowhere. Name-based like the rest
+    // (jumps to the first `fn <word>` in this file); imported-file methods are
+    // already caught by findInImportedFiles' `fn <word>(` regex below.
+    for (const impl of program.impls) {
+      for (const m of impl.methods) {
+        if (m.name === word) {
+          const mLine = findFnLine(source, m.name);
+          if (mLine >= 0) {
+            return { uri, range: { start: { line: mLine, character: 0 }, end: { line: mLine, character: 0 } } };
+          }
+        }
+      }
+    }
+
     // Search imported files for the symbol
     const importedResult = findInImportedFiles(parsed, sourceDir, word);
     if (importedResult) return importedResult;
