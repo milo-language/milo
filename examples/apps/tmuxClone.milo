@@ -23,7 +23,7 @@ from "std/pty" import {
     Pty, WinSize, isInteractive
 }
 from "std/io" import {
-    writeStdout, flush
+    writeStdout, flush, readFile
 }
 from "std/term" import {
     enableRawMode, restoreTerminal
@@ -37,6 +37,9 @@ from "std/signal" import {
 from "std/env" import {
     getEnvOr
 }
+from "std/fs" import {
+    writeFile
+}
 from "std/os" import {
     ioctl, read
 }
@@ -48,6 +51,82 @@ from "std/platform" import {
 }
 
 let PREFIX: u8 = 2 // Ctrl-B
+
+// ─────────────────────────── themes ───────────────────────────
+//
+// Chrome (borders/titles/footer) is themed; shell content keeps its own colors.
+// The choice is picked on the splash (Tab) and persisted to ~/.tmuxclone-theme.
+// 0 = warm (Milo), 1 = dark, 2 = light.
+
+var gTheme: i64 = 0
+let THEME_COUNT: i64 = 3
+
+fn themeName(t: i64): string {
+    if t == 1 {
+        return "dark"
+    }
+    if t == 2 {
+        return "light"
+    }
+    return "warm"
+}
+
+// border line color
+fn themeBorder(t: i64): string {
+    if t == 1 {
+        return "\x1b[38;2;90;96;110m"
+    } // dark: slate
+    if t == 2 {
+        return "\x1b[38;2;200;200;210m"
+    } // light: pale gray
+    return "\x1b[38;2;145;96;58m" // warm: brown
+}
+
+// focused-title highlight (reverse + accent fg → accent bg, dark text)
+fn themeFocus(t: i64): string {
+    if t == 1 {
+        return "\x1b[7;38;2;120;150;210m"
+    } // dark: blue
+    if t == 2 {
+        return "\x1b[7;38;2;150;120;210m"
+    } // light: violet
+    return "\x1b[7;38;2;200;152;104m" // warm: tan
+}
+
+// chord badge (accent bg, dark bold text)
+fn themeChord(t: i64): string {
+    if t == 1 {
+        return "\x1b[48;2;120;150;210;38;2;16;18;24;1m"
+    }
+    if t == 2 {
+        return "\x1b[48;2;150;120;210;38;2;16;18;24;1m"
+    }
+    return "\x1b[48;2;226;150;162;38;2;34;28;24;1m"
+}
+
+fn themePath(): string {
+    return getEnvOr("HOME", "/tmp") + "/.tmuxclone-theme"
+}
+
+fn loadTheme(): void {
+    match readFile(themePath()) {
+        Result.Ok(s) => {
+            var t: i64 = 0
+            while t < THEME_COUNT {
+                if s.contains(themeName(t)) {
+                    gTheme = t
+                }
+                t = t + 1
+            }
+        }
+        Result.Err(_) => {
+        }
+    }
+}
+
+fn saveTheme(): void {
+    let _ = writeFile(themePath(), themeName(gTheme))
+}
 
 // ─────────────────────────── splash / branding ───────────────────────────
 //
@@ -180,10 +259,35 @@ fn centeredCol(width: i64, cols: i64): i64 {
     return c
 }
 
+// Theme chooser row: each name in its own accent, the selected one boxed.
+fn drawThemeSwatches(row: i64, cols: i64): void {
+    let label = "theme  "
+    var vis = label.len
+    var t: i64 = 0
+    while t < THEME_COUNT {
+        vis = vis + themeName(t).len + 4
+        t = t + 1
+    }
+    moveTo(row, centeredCol(vis, cols))
+    writeStdout("\x1b[K") // clear old swatch row (widths differ per theme)
+    var line = $"\x1b[90m{label}\x1b[0m"
+    t = 0
+    while t < THEME_COUNT {
+        let nm = themeName(t)
+        if t == gTheme {
+            line = line + $"{themeFocus(t)} {nm} \x1b[0m  "
+        } else {
+            line = line + $"\x1b[90m {nm} \x1b[0m  "
+        }
+        t = t + 1
+    }
+    writeStdout(line)
+}
+
 // Paint Milo (half-block trick: two vertical pixels per cell → crisp + square),
-// wordmark + tagline, then hold until a keypress (with a generous auto-continue
-// so it never gets stuck). Stray buffered input is drained first so the splash
-// isn't dismissed the instant it appears.
+// wordmark + tagline + theme chooser, then hold until a keypress (Tab cycles the
+// theme; any other key or a ~8s timeout starts). Stray buffered input is drained
+// first so the splash isn't dismissed the instant it appears.
 fn splash(cols: i64, rows: i64): void {
     writeStdout("\x1b[2J\x1b[H\x1b[?25l")
     let artCol = centeredCol(18, cols) // 18 px wide, 1 col each
@@ -226,8 +330,9 @@ fn splash(cols: i64, rows: i64): void {
     let tag = "a terminal multiplexer"
     moveTo(startRow + hc + 2, centeredCol(tag.len, cols))
     writeStdout($"\x1b[90m{tag}\x1b[0m")
-    let hint = "press any key to start"
-    moveTo(startRow + hc + 4, centeredCol(hint.len, cols))
+    drawThemeSwatches(startRow + hc + 4, cols)
+    let hint = "Tab: change theme   \xc2\xb7   any other key: start"
+    moveTo(startRow + hc + 6, centeredCol(41, cols))
     writeStdout($"\x1b[2;38;2;200;152;104m{hint}\x1b[0m")
     flush()
 
@@ -240,20 +345,29 @@ fn splash(cols: i64, rows: i64): void {
             d = read(0, junk as *u8, 256)
         }
     }
-    // Hold for a real keypress, auto-continuing after ~6s. A splash is one-shot,
-    // so a simple poll is fine (and dodges the main-thread Select.onTimeout quirk
-    // where wait() doesn't actually block off a green task).
+    // Hold: Tab cycles the theme (live), any other key starts, ~8s auto-starts.
+    // A splash is one-shot so a simple poll is fine (and dodges the main-thread
+    // Select.onTimeout quirk where wait() doesn't actually block off a green task).
     var waited: i64 = 0
     var pressed = false
-    while waited < 6000 && !pressed {
-        sleepMs(60)
-        waited = waited + 60
+    while waited < 8000 && !pressed {
+        sleepMs(50)
+        waited = waited + 50
+        var n: i64 = 0
         unsafe {
-            if read(0, junk as *u8, 256) > 0 {
+            n = read(0, junk as *u8, 256)
+        }
+        if n > 0 {
+            if junk[0] == 9 { // Tab → next theme, redraw swatches live
+                gTheme = (gTheme + 1) % THEME_COUNT
+                drawThemeSwatches(startRow + hc + 4, cols)
+                flush()
+            } else {
                 pressed = true
             }
         }
     }
+    saveTheme()
 }
 
 // ─────────────────────────── terminal emulator ───────────────────────────
@@ -625,10 +739,12 @@ fn baseName(path: &string): string {
 
 fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
     writeStdout("\x1b[2J\x1b[H\x1b[?25l")
+    let bc = themeBorder(gTheme)
+    let fc = themeFocus(gTheme)
 
     // top
     moveTo(1, 1)
-    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x8c")
+    writeStdout(bc + "\xe2\x94\x8c")
     for i in 0..half {
         writeStdout("\xe2\x94\x80")
     }
@@ -643,9 +759,9 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
     let title0 = $"{name} 0"
     let title1 = $"{name} 1"
     moveTo(2, 1)
-    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82")
+    writeStdout(bc + "\xe2\x94\x82")
     if focus == 0 {
-        writeStdout("\x1b[7;38;2;200;152;104m")
+        writeStdout(fc)
     } else {
         writeStdout("\x1b[90m")
     }
@@ -657,9 +773,9 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
             writeStdout(" ")
         }
     }
-    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82")
+    writeStdout(bc + "\xe2\x94\x82")
     if focus == 1 {
-        writeStdout("\x1b[7;38;2;200;152;104m")
+        writeStdout(fc)
     } else {
         writeStdout("\x1b[90m")
     }
@@ -671,11 +787,11 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
             writeStdout(" ")
         }
     }
-    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
+    writeStdout(bc + "\xe2\x94\x82\x1b[0m")
 
     // title separator
     moveTo(3, 1)
-    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x9c")
+    writeStdout(bc + "\xe2\x94\x9c")
     for i in 0..half {
         writeStdout("\xe2\x94\x80")
     }
@@ -688,16 +804,16 @@ fn drawBorder(focus: i64, half: i64, paneRows: i64, name: &string): void {
     // side borders down the content area (grid is painted inside these)
     for row in 0..paneRows {
         moveTo(4 + row as i64, 1)
-        writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
+        writeStdout(bc + "\xe2\x94\x82\x1b[0m")
         moveTo(4 + row as i64, half + 2)
-        writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
+        writeStdout(bc + "\xe2\x94\x82\x1b[0m")
         moveTo(4 + row as i64, 2 * half + 3)
-        writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x82\x1b[0m")
+        writeStdout(bc + "\xe2\x94\x82\x1b[0m")
     }
 
     // bottom
     moveTo(4 + paneRows, 1)
-    writeStdout("\x1b[38;2;145;96;58m\xe2\x94\x94")
+    writeStdout(bc + "\xe2\x94\x94")
     for i in 0..half {
         writeStdout("\xe2\x94\x80")
     }
@@ -717,7 +833,7 @@ fn drawFooter(prefixArmed: bool, paneRows: i64): void {
     moveTo(5 + paneRows, 1)
     writeStdout("\x1b[2K") // clear the whole status line first
     if prefixArmed {
-        writeStdout("\x1b[48;2;226;150;162;38;2;34;28;24;1m CHORD \x1b[0m  press:  ")
+        writeStdout(themeChord(gTheme) + " CHORD \x1b[0m  press:  ")
         writeStdout("\x1b[1;32mo\x1b[0m/\x1b[1;32mTab\x1b[0m switch pane   ")
         writeStdout("\x1b[1;31mq\x1b[0m quit   ")
         writeStdout("\x1b[90mEsc or any other key cancels\x1b[0m")
@@ -756,7 +872,8 @@ fn main(): void {
     let termState = enableRawMode()
 
     var ws = termSize()
-    // branding: show Milo the chihuahua before handing off to the multiplexer
+    loadTheme() // restore the saved color scheme (if any) before the picker
+    // branding: show Milo the chihuahua + theme picker before the multiplexer
     splash(ws.cols as i64, ws.rows as i64)
 
     // enable xterm mouse reporting (1000 = clicks) in SGR mode (1006 = coords
