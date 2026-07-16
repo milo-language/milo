@@ -1061,9 +1061,16 @@ fn formatSource(src: string): string {
             atLineStart = true
         }
 
-        // Indent at start of line
+        // Indent at start of line. A line that opens with `.` (or `?.`/`.await`)
+        // can't start a statement — it continues the previous line's method chain,
+        // so give it one extra level to read as a continuation, not a new stmt.
         if atLineStart {
-            for d2 in 0..depth {
+            let chainCont = tok.kind == TokKind.Dot && depth > 0
+            var indentLevels: i64 = depth
+            if chainCont {
+                indentLevels = depth + 1
+            }
+            for d2 in 0..indentLevels {
                 out = out + "    "
             }
             atLineStart = false

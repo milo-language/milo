@@ -175,6 +175,18 @@ test("cosmetic ';' is stripped but '[T; N]' is preserved", () => {
   expect(out).not.toContain("a.len);");
 });
 
+test("method-chain continuation lines indent one level past the statement", () => {
+  const out = format(
+    `fn f() {\n    let msg = a().int("seq", 1).str("type", "x")\n    .int("rs", 2).bool("ok", true)\n    .build()\n    g(msg)\n}\n`);
+  // leading-`.` lines get 8 spaces (2 levels): 1 for the fn body + 1 continuation
+  expect(out).toContain(`\n        .int("rs", 2)`);
+  expect(out).toContain(`\n        .build()`);
+  // the statement itself and the following stmt stay at body indent (4 spaces)
+  expect(out).toContain(`\n    let msg = a()`);
+  expect(out).toContain(`\n    g(msg)`);
+  expect(format(out)).toBe(out); // fixed point
+});
+
 // Property test over the whole repo: formatting must never change the token
 // stream (whitespace-only, apart from dropping cosmetic ';'), and must be a fixed
 // point. This is what makes a format-on-commit hook safe. ';' is excluded from the
