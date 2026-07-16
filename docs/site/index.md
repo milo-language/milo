@@ -31,7 +31,7 @@ What's left is a **simpler Rust with contracts** — `requires` / `ensures` are 
   :captions="[
     'Hand a value to someone else and you no longer have it. That one rule is where memory safety comes from — no lifetime annotations, no borrow-checker puzzles. The compiler catches the mistake at compile time, not at 3am.',
     'Two HTTP+TLS requests overlap instead of queueing. Promise.run starts a green task, not an OS thread, so thousands are cheap. There is no mutex because there is nothing to guard: each task owns its URL, and the same move rules that stop use-after-free stop data races. HTTP, TLS and the scheduler are all stdlib.',
-    'requires and ensures are part of the language, and the SMT solver that discharges them is written in Milo. It proves clamp keeps its promise for every input that meets the precondition — not tested on a few. Pass constants that violate requires and the compiler rejects the call outright.',
+    'requires and ensures are part of the language, and the SMT solver that discharges them is written in Milo. It proves clamp keeps its promise for every input that meets the precondition — not tested on a few. The precondition is enforced too: constants that violate it are rejected at compile time, and debug builds assert it at every call. Release compiles the checks out.',
   ]"
 >
 
