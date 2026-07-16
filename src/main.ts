@@ -961,6 +961,18 @@ async function main() {
 
   const cmd = args[0];
 
+  // Reject an unknown subcommand up front. Otherwise a bare file path (forgot `run`)
+  // falls through every dispatch branch to the generic "no source file" below.
+  const KNOWN_COMMANDS = new Set([
+    "skill", "api", "lsp", "lex", "fmt", "build-lib", "safety", "verify",
+    "wcet", "prove", "test", "run", "build", "emit-ir", "emit-obj", "emit-js",
+  ]);
+  if (!KNOWN_COMMANDS.has(cmd) && cmd !== "--help" && cmd !== "-h") {
+    console.error(`error: unknown command '${cmd}'`);
+    console.error(`run 'milo' with no arguments to see available commands`);
+    process.exit(1);
+  }
+
   if (cmd === "skill") {
     process.stdout.write(SKILL_TEXT);
     return;
