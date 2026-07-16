@@ -51,7 +51,7 @@ fn main() {
     for url in urls {
         let u = url.clone()
         jobs.push(Promise<string>.run(() => {
-            let status = fetch(u.clone())!.status
+            let status = fetch(u)!.status
             return u + " -> " + status.toString()
         }))
     }
