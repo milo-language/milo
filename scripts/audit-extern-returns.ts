@@ -87,6 +87,20 @@ const tmpC = join(tmpdir(), `milo_audit_${crypto.randomUUID().slice(0, 8)}.c`);
 const findings: string[] = [];
 let checked = 0, skipped = 0;
 
+// Every check here IS a compile, so no compiler means nothing is verified. Without this
+// probe that failure is invisible: each decl's compile throws, none of the errors match
+// the "undeclared" patterns, and every one falls through to `skipped` — so the audit
+// reports "checked 0" and exits 0. A green run that verified nothing is worse than a red
+// one. (Found by running this in a bun container, which ships no cc.)
+writeFileSync(tmpC, "int main(void){return 0;}\n");
+try {
+  execSync(`cc -fsyntax-only ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] });
+} catch {
+  console.error("error: no C compiler on PATH (`cc`) — this audit is nothing but compiles, so it can verify nothing without one");
+  try { unlinkSync(tmpC); } catch {}
+  process.exit(2);
+}
+
 // Probe each optional group once rather than per-decl.
 const available: { headers: string[]; flags: string }[] = [];
 for (const g of OPTIONAL) {
@@ -96,8 +110,19 @@ for (const g of OPTIONAL) {
     available.push({ headers: g.headers, flags: g.flags });
   } catch { console.log(`note: ${g.name} headers not found — its decls stay unchecked`); }
 }
-const allHeaders = [...HEADERS, ...available.flatMap(g => g.headers)];
 const allFlags = available.map(g => g.flags).filter(Boolean).join(" ");
+
+// Probe the base headers individually and keep only what this host actually has. One
+// missing header fails EVERY compile — and since a failed compile just marks the decl
+// "skipped", that silently reduces the audit to checking nothing while still exiting 0.
+// That's exactly what `sys/sysctl.h` did on Linux (glibc dropped it in 2.32), and what
+// a hardcoded per-platform list would keep doing every time an OS moves a header.
+// Probing beats maintaining the list.
+const allHeaders = [...HEADERS, ...available.flatMap(g => g.headers)].filter(h => {
+  writeFileSync(tmpC, `#include <${h}>\n`);
+  try { execSync(`cc -fsyntax-only ${allFlags} ${tmpC}`, { stdio: ["pipe", "pipe", "pipe"] }); return true; }
+  catch { return false; }
+});
 
 try {
   for (const d of declsFrom("std")) {
@@ -136,6 +161,13 @@ try {
 
 console.log(`checked ${checked} extern fn return types against this host's headers (${skipped} skipped: pointer/void return, or not declared by the headers above)`);
 for (const f of findings) console.log(`  ${f}`);
+// "Everything skipped" is indistinguishable from "everything passed" in the exit code,
+// and std always has scalar-returning externs — so zero means the audit broke, not that
+// the code is clean.
+if (checked === 0) {
+  console.error(`\nerror: verified nothing — every declaration was skipped. The audit is broken, not the code.`);
+  process.exit(2);
+}
 if (findings.length) {
   console.log(`\n${findings.length} declaration(s) disagree with C. Add @cSig to pin the signature — see docs/language-reference.md.`);
   process.exit(1);
