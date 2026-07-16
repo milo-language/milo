@@ -18,6 +18,10 @@ MEMORY {
 /* Initial stack pointer = top of RAM (stack grows down on ARM). */
 _estack = ORIGIN(RAM) + LENGTH(RAM);
 
+/* RAM reserved for the descending stack, kept clear of the growing heap.
+ * Override by defining _stack_size on the link line (-Wl,--defsym,_stack_size=N). */
+_stack_size = DEFINED(_stack_size) ? _stack_size : 0x4000;  /* 16 KB default */
+
 SECTIONS {
   .isr_vector : {
     KEEP(*(.isr_vector))   /* KEEP: never garbage-collect the vector table */
@@ -43,4 +47,10 @@ SECTIONS {
     *(COMMON)
     _ebss = .;
   } > RAM
+
+  /* Heap: all RAM between the end of .bss and the reserved stack at the top.
+   * The bump allocator in startup.c hands out [_sheap, _eheap). This adapts to
+   * whatever RAM the board's MEMORY block declares — no size baked into C. */
+  _sheap = _ebss;
+  _eheap = _estack - _stack_size;
 }

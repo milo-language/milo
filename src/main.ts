@@ -128,7 +128,7 @@ function embeddedDir(): string {
 // startup (vector table, .data/.bss init, semihosting exit) against the board's
 // linker script. Uses lld (-fuse-ld=lld) and -nostdlib — there is no libc/crt0.
 // Produces a statically-linked ELF runnable under QEMU (-semihosting).
-function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optFlag: string) {
+function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optFlag: string, heapSize: number | null = null) {
   const tc = detectToolchain();
   if (tc.kind !== "clang") {
     console.error(`error: cross-compiling to ${target.triple} requires clang (not llc+cc)`);
@@ -143,10 +143,13 @@ function linkBareMetal(llFile: string, outFile: string, target: TargetInfo, optF
   }
   const opt = optFlag || "-O2";
   const tgt = clangTargetFlags(target);
+  // -DMILO_HEAP_SIZE caps the bump allocator's arena (startup.c); omitted =
+  // heap spans all RAM the linker script leaves free.
+  const heapDef = heapSize != null ? ` -DMILO_HEAP_SIZE=${heapSize}` : "";
   // -nostdlib: no libc/crt0. -Wl,-T,<script>: use our memory map. startup.c is
   // compiled and linked alongside the program IR in a single clang invocation.
   execSync(
-    `${tc.path}${tgt} ${opt} -nostdlib -fuse-ld=lld -Wl,-T,"${ldScript}" "${startup}" "${llFile}" -o "${outFile}" -Wno-override-module`,
+    `${tc.path}${tgt} ${opt}${heapDef} -nostdlib -fuse-ld=lld -Wl,-T,"${ldScript}" "${startup}" "${llFile}" -o "${outFile}" -Wno-override-module`,
     { stdio: ["pipe", "pipe", "pipe"] }
   );
 }
@@ -282,7 +285,7 @@ function detectLibs(ir: string, target: TargetInfo): string {
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null): string {
   const source = readFileSync(sourcePath, "utf-8");
   const debugOverflow = optFlag === "-O0";
   // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
@@ -303,7 +306,7 @@ function compileToBinary(sourcePath: string, outputPath: string | null, target: 
     writeFileSync(tmpLl, ir);
     if (target.bareMetal) {
       // Freestanding link: program IR + startup runtime + linker script → ELF.
-      linkBareMetal(tmpLl, out, target, optFlag);
+      linkBareMetal(tmpLl, out, target, optFlag, heapSize);
     } else {
       const libs = detectLibs(ir, target);
       const extra = extraLinkFlags.length ? " " + extraLinkFlags.join(" ") : "";
@@ -398,8 +401,8 @@ async function runTests(testFiles: string[], target: TargetInfo, optFlag: string
 // rlimits, and one runaway allocation (e.g. a milo-self memory bug) swaps the
 // whole machine to death. Raise with MILO_RUN_MEM_MB, disable with
 // MILO_RUN_UNGUARDED=1. No wall-clock timeout — long-running programs are legal.
-async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false) {
-  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug);
+async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null) {
+  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug, heapSize);
   try {
     if (target.bareMetal) {
       runBareMetalQemu(bin, target);
@@ -464,7 +467,17 @@ function runBareMetalQemu(bin: string, target: TargetInfo) {
   if (r.stderr) process.stdout.write(r.stderr);
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; emitDebug: boolean } {
+// Parse a heap-size argument (bare-metal only): plain bytes, or a k/m suffix
+// (1024-based). "64k" → 65536, "2m" → 2097152. Returns null on malformed input.
+function parseHeapSize(s: string): number | null {
+  const m = /^(\d+)([kKmM]?)$/.exec(s);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  const mult = m[2] === "" ? 1 : (m[2].toLowerCase() === "k" ? 1024 : 1024 * 1024);
+  return n * mult;
+}
+
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; emitDebug: boolean; heapSize: number | null } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -474,6 +487,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   let sanitize = false;
   let targetName: string | null = null;
   let emitHeader = false;
+  let heapSize: number | null = null;
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
@@ -496,11 +510,17 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "--safety" && i + 1 < args.length) { safetyLevel = args[++i]; }
     else if (args[i].startsWith("--target=")) { targetName = args[i].slice(9); }
     else if (args[i] === "--target" && i + 1 < args.length) { targetName = args[++i]; }
+    else if (args[i].startsWith("--heap-size=") || args[i] === "--heap-size") {
+      const raw = args[i] === "--heap-size" ? args[++i] : args[i].slice(12);
+      const parsed = raw == null ? null : parseHeapSize(raw);
+      if (parsed == null) { console.error(`error: --heap-size expects bytes or a k/m suffix (e.g. 64k, 2m), got '${raw}'`); process.exit(1); }
+      heapSize = parsed;
+    }
     else if (args[i] === "--") { rest.push(...args.slice(i + 1)); break; }
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -934,6 +954,8 @@ async function main() {
     console.log("  --deny-all             treat all warnings as errors");
     console.log("                         (off-by-default warnings: unused-move, unused-unsafe)");
     console.log("  --safety=<level>       enforce safety profile (e.g. --safety=do178)");
+    console.log("  --target=<name>        cross-compile target (e.g. cortex-m3)");
+    console.log("  --heap-size=<N>        bare-metal heap cap in bytes or k/m (e.g. 64k); default: all free RAM");
     process.exit(1);
   }
 
@@ -1022,7 +1044,7 @@ async function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -1156,11 +1178,16 @@ async function main() {
     return;
   }
 
+  if (heapSize != null && !target.bareMetal) {
+    console.error("error: --heap-size applies only to bare-metal targets (e.g. --target=cortex-m3)");
+    process.exit(1);
+  }
+
   if (cmd === "run") {
-    await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug);
+    await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize);
   } else if (cmd === "build") {
     const t0 = Date.now();
-    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize);
     reportCompiled(source!, bin, Date.now() - t0);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig, optFlag === "-O0", emitDebug);

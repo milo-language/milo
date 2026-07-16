@@ -54,9 +54,36 @@ memory-safe source → ASIL-D checked → contract checked → bounded loops
   (the tool automotive/avionics actually license) or OTAWA (open, academic,
   Linux-only). Neither is required for the thesis; the flow-fact output (stage 2)
   is already in their input format.
-- **Compute kernels only.** The hosted stdlib (`std/io`, `std/net`, …) is not
-  freestanding — a full app importing them won't link bare-metal. WCET targets
-  are compute kernels by nature, and that path is fully proven here.
+- **No OS-backed stdlib.** `std/io`, `std/net`, … need syscalls, so a full app
+  importing them won't link bare-metal. Pure-compute code — including anything
+  that only needs the heap (`Vec`, `String`, `HashMap`) — links and runs fine
+  (see *Memory* below). WCET kernels are the proven path and, under `--safety`,
+  allocate nothing at all.
+
+## Memory on bare metal
+
+There is no OS to hand out RAM, so the linker script (`embedded/cortex-m/mps2.ld`)
+declares the whole map and `startup.c` acts as the C runtime. Four regions, no GC:
+
+- **Registers / stack** — locals and call frames. The stack starts at the top of
+  RAM and grows down; a reserved gap (`_stack_size`, default 16 KB) keeps it clear
+  of the heap.
+- **Static** (`.data`/`.bss`) — globals and `static` arrays, fixed at link time.
+- **Heap** — everything between the end of `.bss` and the stack gap
+  (`[_sheap, _eheap)`). A bump allocator in `startup.c` serves `malloc`/`free`, so
+  `Vec`/`String`/`HashMap` work unchanged. The size is **not** baked into C — it
+  adapts to whatever RAM the board's `MEMORY` block declares.
+
+```bash
+milo run  pidStep.milo --target=cortex-m3                 # heap = all free RAM
+milo build app.milo    --target=cortex-m3 --heap-size=64k # cap the heap (bytes, or k/m)
+```
+
+Two deliberate limits: `free` is a no-op (bump only — alloc at init, don't churn),
+and exhaustion is unrecoverable — but **observable**: an out-of-memory allocation
+prints `milo: out of memory` and exits `12` (ENOMEM) instead of faulting silently.
+For WCET/ASIL builds none of this matters — `--safety` bans dynamic allocation, so
+the heap is never touched.
 
 ## Available upgrades
 
@@ -65,3 +92,6 @@ memory-safe source → ASIL-D checked → contract checked → bounded loops
 - **aiT evaluation license** → a certifiable WCET bound from the industry tool,
   fed the flow facts from stage 2.
 - **More kernels** — Kalman filter, CRC, PWM ramp — as a WCET-analyzable suite.
+- **Reclaiming allocator** — the bump heap never frees; a free-list (or TLSF, for
+  O(1) real-time behavior) would allow steady-state alloc/free churn instead of
+  init-time-only allocation.

@@ -101,3 +101,49 @@ fn main(): i32 { return add(40, 2) }
   expect(r.out).toContain("exit=42");  // add(40,2) computed on the emulated core
   unlinkSync(src);
 });
+
+// A heap-using program (Vec grow → malloc) links and runs bare-metal against the
+// linker-provided heap region — no size baked into startup.c.
+const HEAP_SRC = `fn main(): i32 {
+    var v: Vec<i32> = []
+    var i: i32 = 0
+    while i < 100 { v.push(i); i = i + 1 }
+    return v.len() as i32
+}
+`;
+
+test.if(hasQemu)("bare-metal heap: a Vec-growing program runs on QEMU", () => {
+  const src = join(tmpdir(), "milo_embed_heap.milo");
+  writeFileSync(src, HEAP_SRC);
+  const r = milo(`run ${src} --target=cortex-m3`);
+  expect(r.code).toBe(0);
+  expect(r.out).toContain("exit=100");  // 100 pushes into a heap-backed Vec
+  unlinkSync(src);
+});
+
+test.if(hasQemu)("--heap-size caps the heap and OOM traps with ENOMEM instead of a silent fault", () => {
+  const src = join(tmpdir(), "milo_embed_oom.milo");
+  writeFileSync(src, HEAP_SRC);
+  const r = milo(`run ${src} --target=cortex-m3 --heap-size=64`);  // 64 B can't hold 100 i32s
+  expect(r.out).toContain("out of memory");
+  expect(r.out).toContain("exit=12");  // ENOMEM — observable, not a silent reboot
+  unlinkSync(src);
+});
+
+test("--heap-size rejects a non-bare-metal target", () => {
+  const src = join(tmpdir(), "milo_heap_host.milo");
+  writeFileSync(src, `fn main(): i32 { return 0 }\n`);
+  const r = milo(`build ${src} --heap-size=64k -o ${join(tmpdir(), "milo_heap_host_bin")}`);
+  expect(r.code).not.toBe(0);
+  expect(r.err).toContain("bare-metal");
+  unlinkSync(src);
+});
+
+test("--heap-size rejects a malformed value", () => {
+  const src = join(tmpdir(), "milo_heap_bad.milo");
+  writeFileSync(src, `fn main(): i32 { return 0 }\n`);
+  const r = milo(`build ${src} --target=cortex-m3 --heap-size=abc -o ${join(tmpdir(), "milo_heap_bad_bin")}`);
+  expect(r.code).not.toBe(0);
+  expect(r.err).toContain("k/m suffix");
+  unlinkSync(src);
+});

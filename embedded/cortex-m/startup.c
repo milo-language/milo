@@ -107,15 +107,45 @@ int memcmp(const void *a, const void *b, size_t n) {
     return 0;
 }
 
-// Bump allocator over a static arena. No reclamation — free() is a no-op. This
-// is a link-time fallback, NOT a WCET-safe heap (see file header).
-static unsigned char g_arena[64 * 1024];
-static size_t g_arena_off = 0;
+// Bump allocator over the RAM the linker script leaves between .bss and the
+// reserved stack ([_sheap, _eheap) — see *.ld). No reclamation: free() is a
+// no-op. This is a link-time fallback, NOT a WCET-safe heap (see file header).
+//
+// The size is NOT baked in here — it adapts to whatever RAM the board's MEMORY
+// block declares. Cap it explicitly for a bounded heap by defining
+// MILO_HEAP_SIZE (bytes) on the link line: clang ... -DMILO_HEAP_SIZE=N.
+extern unsigned char _sheap;   // heap start (= end of .bss), from linker script
+extern unsigned char _eheap;   // heap end (below the reserved stack), from linker
+
+static unsigned char *g_heap_ptr = 0;   // bump cursor; lazily set on first call
+static unsigned char *g_heap_end = 0;
+
+// Out of heap. Unrecoverable here — the bump allocator can't reclaim and Milo's
+// codegen doesn't check malloc's result (it dereferences straight away). So make
+// exhaustion OBSERVABLE (a semihosting message + ENOMEM exit) instead of letting
+// the null propagate into a silent null-deref HardFault-reboot.
+__attribute__((noreturn))
+static void oom(void) {
+    semihost_write0("milo: out of memory (bare-metal heap exhausted)\n");
+    exit(12);  // ENOMEM
+}
+
 void *malloc(size_t n) {
-    n = (n + 7u) & ~(size_t)7u;  // 8-byte align
-    if (g_arena_off + n > sizeof(g_arena)) return 0;  // out of arena
-    void *p = &g_arena[g_arena_off];
-    g_arena_off += n;
+    if (g_heap_ptr == 0) {              // first call: resolve the linker region
+        g_heap_ptr = &_sheap;
+        g_heap_end = &_eheap;
+#ifdef MILO_HEAP_SIZE
+        // Bound the heap to MILO_HEAP_SIZE if that's smaller than the RAM span.
+        if ((size_t)(g_heap_end - g_heap_ptr) > (size_t)(MILO_HEAP_SIZE))
+            g_heap_end = g_heap_ptr + (size_t)(MILO_HEAP_SIZE);
+#endif
+    }
+    n = (n + 7u) & ~(size_t)7u;         // 8-byte align
+    // Overflow-safe exhaustion check: compare remaining space, never ptr + n
+    // (which could wrap past the top of the address space).
+    if (n > (size_t)(g_heap_end - g_heap_ptr)) oom();
+    void *p = g_heap_ptr;
+    g_heap_ptr += n;
     return p;
 }
 
