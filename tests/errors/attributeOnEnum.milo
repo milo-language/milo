@@ -1,0 +1,12 @@
+// @error: is not supported on enums
+// Enums parse attributes but nothing consumes them — processDerives walks only structs.
+// Rejecting is honest; silently ignoring left `@derive(Eq) enum` looking like it worked.
+@derive(Eq)
+enum Color {
+    Red,
+    Green,
+}
+
+fn main() {
+    print(1)
+}

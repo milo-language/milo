@@ -1,0 +1,13 @@
+// @error: unknown attribute '@drive'
+// Attribute names are a closed set. An unrecognized one used to be dropped in silence, so
+// a typo compiled clean while doing nothing — exactly the failure @cLayout exists to close.
+@drive(Eq)
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let p = Point { x: 1, y: 2 }
+    print(p.x)
+}

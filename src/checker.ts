@@ -948,6 +948,7 @@ export class TypeChecker {
 
     // collect @send/@sync annotations
     for (const s of program.structs) {
+      this.validateAttributes(s.name, s.attributes, "struct");
       if (s.attributes) {
         for (const attr of s.attributes) {
           if (attr.name === "send") this.sendTypes.add(s.name);
@@ -956,6 +957,7 @@ export class TypeChecker {
         }
       }
     }
+    for (const e of program.enums) this.validateAttributes(e.name, e.attributes, "enum");
 
     // register enums — two passes so generic enums are available when resolving variant fields
     for (const e of program.enums) {
@@ -1415,6 +1417,25 @@ export class TypeChecker {
 
   private isExternStructType(ty: TypeKind): boolean {
     return ty.tag === "struct" && !!this.structs.get(ty.name)?.isExtern;
+  }
+
+  // The complete set of attributes the compiler acts on. Anything else used to be dropped
+  // in silence, so a typo (`@clayout`, `@drive(Eq)`) looked like it worked while doing
+  // nothing — the same silent-failure class @cLayout exists to close. Enums parse
+  // attributes but nothing consumes them, so those are rejected rather than ignored.
+  private static readonly KNOWN_ATTRS = ["derive", "send", "sync", "cLayout"];
+
+  private validateAttributes(declName: string, attrs: Attribute[] | undefined, target: "struct" | "enum"): void {
+    if (!attrs) return;
+    const known = TypeChecker.KNOWN_ATTRS.map(a => `@${a}`).join(", ");
+    for (const attr of attrs) {
+      if (!TypeChecker.KNOWN_ATTRS.includes(attr.name)) {
+        this.error(`unknown attribute '@${attr.name}' on '${declName}'`, undefined, `known attributes: ${known}`);
+      } else if (target === "enum") {
+        this.error(`'@${attr.name}' is not supported on enums — '${declName}'`, undefined,
+          `only structs consume attributes today; on an enum it would be silently ignored`);
+      }
+    }
   }
 
   // `@cLayout("struct stat", "sys/stat.h")` — the declared layout is checked against the
