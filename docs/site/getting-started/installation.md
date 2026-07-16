@@ -1,24 +1,8 @@
 # Installation
 
-Two ways to get Milo. Most people want the prebuilt binary.
+Milo builds from source. The compiler moves fast, so a clone you can `git pull` keeps you on the latest — no stale prebuilt binaries to strand you on old behavior.
 
-## Option A — Prebuilt binary (recommended)
-
-One command installs a standalone `milo` to `/usr/local/bin`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/cs01/milo/main/install.sh | sh
-```
-
-Then use `milo` from anywhere:
-
-```bash
-milo run examples/hello.milo
-```
-
-## Option B — From source (for contributors)
-
-Building from source needs two dependencies:
+## Dependencies
 
 - **[Bun](https://bun.sh)** — runs the compiler (TypeScript)
 - **LLVM/Clang** — backend code generation and linking
@@ -31,20 +15,36 @@ curl -fsSL https://bun.sh/install | bash
 
 Install LLVM — **macOS:** `brew install llvm` · **Ubuntu/Debian:** `sudo apt install llvm clang`
 
-Clone the repo:
+## Clone and run
 
 ```bash
 git clone https://github.com/cs01/milo.git
 cd milo
 ```
 
-The repo ships a `./milo` wrapper script — it's just `bun run src/main.ts <args>`, so `./milo build`, `./milo run`, etc. work the same as the installed binary (only with a `./` prefix, and run from the repo root).
+The repo ships a `milo` wrapper — it's just `bun run src/main.ts <args>`. Run it in place with `./milo`, or make `milo` work from anywhere with one of:
+
+```bash
+# symlink onto PATH (the wrapper follows the link back to the repo)
+sudo ln -s "$PWD/milo" /usr/local/bin/milo
+
+# — or — add the repo to PATH in your shell rc
+echo "export PATH=\"$PWD:\$PATH\"" >> ~/.zshrc && source ~/.zshrc
+```
+
+Then, from any directory:
+
+```bash
+milo run examples/hello.milo
+milo build examples/hello.milo -o hello
+```
+
+Stay current with `git pull` — the symlink/PATH keeps pointing at the repo, so you're always on the latest.
 
 ## Verify it works
 
 ```bash
-milo run examples/hello.milo     # installed binary
-./milo run examples/hello.milo   # from a repo clone
+milo run examples/hello.milo
 ```
 
 You should see:

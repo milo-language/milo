@@ -1,6 +1,16 @@
 #!/bin/sh
 # Dev wrapper for the from-source compiler: `./milo <args>` == `bun run src/main.ts <args>`.
 # End users install a prebuilt `milo` binary via install.sh; this is for repo clones.
-# Resolve to the repo dir so the compiler finds src/ and std/ regardless of caller cwd.
-DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Resolve to the repo dir so the compiler finds src/ and std/ regardless of caller
+# cwd, and regardless of whether this wrapper was invoked via a symlink (e.g. one in
+# /usr/local/bin) — follow symlinks to the real script before taking its dirname.
+SELF="$0"
+while [ -L "$SELF" ]; do
+  link=$(readlink "$SELF")
+  case "$link" in
+    /*) SELF="$link" ;;
+    *)  SELF="$(dirname -- "$SELF")/$link" ;;
+  esac
+done
+DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 exec bun run "$DIR/src/main.ts" "$@"

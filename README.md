@@ -19,13 +19,6 @@ fn main(): i32 {
 
 ## Install
 
-Prebuilt binary:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/cs01/milo/main/install.sh | sh
-milo run examples/hello.milo
-```
-
 From source (needs [Bun](https://bun.sh) + LLVM): clone the repo and use the `./milo` wrapper — it's just `bun run src/main.ts <args>`:
 
 ```bash
