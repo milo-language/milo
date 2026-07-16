@@ -1,0 +1,231 @@
+// tmuxDaemon — the detach/attach core of a terminal multiplexer, as a daemon.
+//
+// `tmuxdaemon serve`  spawns a shell on a PTY and listens on 127.0.0.1:7373.
+// `tmuxdaemon attach` connects, relays your terminal to the shell, and — this is
+// the point — you can DETACH (Ctrl-B d) and the shell keeps running in the
+// daemon. Re-attach later and it's exactly where you left it.
+//
+// This is the flagship tmux feature (client-server) proved end-to-end for one
+// shell. Multi-pane state + on-attach repaint build on top of this transport.
+//
+// std/net has no AF_UNIX yet, so this uses a localhost TCP port (see backlog).
+//
+//   milo build examples/apps/tmuxDaemon.milo -o tmuxdaemon
+//   ./tmuxdaemon serve &      # start the daemon
+//   ./tmuxdaemon attach       # attach; run commands; Ctrl-B d to detach
+//   ./tmuxdaemon attach       # re-attach — your shell is still there
+
+from "std/pty" import {
+    Pty, openAndSpawn, isInteractive
+}
+from "std/net" import {
+    TcpListener, TcpStream, ip4
+}
+from "std/select" import {
+    Select
+}
+from "std/term" import {
+    enableRawMode, restoreTerminal
+}
+from "std/io" import {
+    writeStdout, flush
+}
+from "std/args" import {
+    args
+}
+from "std/env" import {
+    getEnvOr
+}
+from "std/os" import {
+    read, write, close, acceptFd
+}
+from "std/platform" import {
+    fcntl, fGetfl, fSetfl, oNonblock
+}
+
+let PORT: u16 = 7373
+let PREFIX: u8 = 2 // Ctrl-B
+
+fn setNonblock(fd: i32): void {
+    fcntl(fd, fSetfl(), fcntl(fd, fGetfl()) | oNonblock())
+}
+
+// ── server: hold the shell, relay to whichever client is attached ──
+
+fn serveLoop(pty: &Pty, listenFd: i32): void {
+    var clientFd: i32 = -1
+    var buf: [u8; 4096] = [0; 4096]
+    var running = true
+    while running {
+        var sel = Select.new()
+        sel.onRead(pty.masterFd)
+        sel.onRead(listenFd)
+        if clientFd >= 0 {
+            sel.onRead(clientFd)
+        }
+        sel.wait()
+        sel.destroy()
+
+        // shell output → attached client (drained regardless so the PTY never
+        // wedges while detached; discarded when no one is watching)
+        unsafe {
+            let n = read(pty.masterFd, buf as *u8, 4096)
+            if n == 0 {
+                running = false // shell exited → daemon done
+            } else if n > 0 && clientFd >= 0 {
+                write(clientFd, buf as *u8, n)
+            }
+        }
+
+        // a new attach? one client at a time — the newcomer takes over
+        let newFd = acceptFd(listenFd)
+        if newFd >= 0 {
+            if clientFd >= 0 {
+                unsafe {
+                    close(clientFd)
+                }
+            }
+            clientFd = newFd
+            setNonblock(clientFd)
+        }
+
+        // client input → shell; EOF (== 0) means the client detached/left
+        if clientFd >= 0 {
+            unsafe {
+                let n = read(clientFd, buf as *u8, 4096)
+                if n == 0 {
+                    close(clientFd)
+                    clientFd = -1
+                } else if n > 0 {
+                    write(pty.masterFd, buf as *u8, n)
+                }
+            }
+        }
+    }
+    if clientFd >= 0 {
+        unsafe {
+            close(clientFd)
+        }
+    }
+}
+
+fn runServe(): void {
+    match TcpListener.bind(PORT) {
+        Result.Ok(listener) => {
+            setNonblock(listener.fd)
+            let shell = getEnvOr("SHELL", "/bin/sh")
+            var shArgs: Vec<string> = Vec.new()
+            shArgs.push("-i")
+            match openAndSpawn(shell, shArgs) {
+                Result.Ok(pty) => {
+                    setNonblock(pty.masterFd)
+                    print($"tmuxd: serving on 127.0.0.1:{PORT} (attach with: tmuxdaemon attach)")
+                    serveLoop(pty, listener.fd)
+                    pty.kill()
+                    pty.close()
+                    pty.wait()
+                    print("tmuxd: shell exited, daemon stopped")
+                }
+                Result.Err(m) => {
+                    print($"tmuxd: spawn failed: {m}")
+                }
+            }
+        }
+        Result.Err(_) => {
+            print("tmuxd: bind failed — is a daemon already running on 7373?")
+        }
+    }
+}
+
+// ── client: relay this terminal to the daemon, detach on Ctrl-B d ──
+
+fn attachLoop(sockFd: i32): void {
+    var buf: [u8; 4096] = [0; 4096]
+    var one: [u8; 1] = [0; 1]
+    var prefixArmed = false
+    var done = false
+    while !done {
+        var sel = Select.new()
+        sel.onRead(0)
+        sel.onRead(sockFd)
+        sel.wait()
+        sel.destroy()
+
+        // keyboard → daemon (Ctrl-B d detaches, Ctrl-B Ctrl-B sends a literal)
+        unsafe {
+            let n = read(0, buf as *u8, 4096)
+            var i: i64 = 0
+            while i < n {
+                let b = buf[i]
+                if prefixArmed {
+                    prefixArmed = false
+                    if b == 100 || b == 68 { // d / D → detach
+                        done = true
+                    } else if b == PREFIX {
+                        one[0] = PREFIX
+                        write(sockFd, one as *u8, 1)
+                    }
+                } else if b == PREFIX {
+                    prefixArmed = true
+                } else {
+                    one[0] = b
+                    write(sockFd, one as *u8, 1)
+                }
+                i = i + 1
+            }
+        }
+
+        // daemon → screen
+        unsafe {
+            let n = read(sockFd, buf as *u8, 4096)
+            if n == 0 {
+                done = true // daemon gone
+            } else if n > 0 {
+                write(1, buf as *u8, n)
+            }
+        }
+    }
+}
+
+fn runAttach(): void {
+    if !isInteractive() {
+        print("tmuxd: attach needs a terminal")
+        return
+    }
+    match TcpStream.connect(ip4(127, 0, 0, 1), PORT) {
+        Result.Ok(stream) => {
+            var s = stream
+            let sockFd = s.take() // own the fd ourselves; close on the way out
+            setNonblock(sockFd)
+            let termState = enableRawMode()
+            writeStdout("\x1b[2J\x1b[H")
+            flush()
+            attachLoop(sockFd)
+            restoreTerminal(termState)
+            writeStdout("\x1b[0m\r\n")
+            flush()
+            unsafe {
+                close(sockFd)
+            }
+            print("tmuxd: detached (shell still running in the daemon)")
+        }
+        Result.Err(_) => {
+            print("tmuxd: connect failed — start it first with: tmuxdaemon serve")
+        }
+    }
+}
+
+fn main(): void {
+    let argv = args()
+    var mode = "attach"
+    if argv.len >= 2 {
+        mode = argv[1]
+    }
+    if mode == "serve" {
+        runServe()
+    } else if mode == "attach" {
+        runAttach()
+    } else {
+        print("usage: tmuxdaemon serve | attach")
+    }
+}

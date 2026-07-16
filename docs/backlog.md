@@ -76,6 +76,7 @@ primitives carried it, but these gaps are where the friction was. Ranked.
 | C4 | **Blocking `waitpid` wedges the green runtime** | M | M | Blocking `waitpid` on a `SIGKILL`'d-but-wedged child (stuck writing to a full PTY) hangs the scheduler thread. Now handled inside `Pty` (kill → close master to unwedge → reap), but the runtime interaction is a sharp edge worth a guard. | `std/pty.*.milo`, session |
 | C5 | **No SIGWINCH → resize needs a timer** | M | M | No signal→`Select` arm, so TUI resize is polled (`splitPty` uses `onTimeout(500)`). A signal arm would make it fully event-driven. | `examples/apps/splitPty.milo` |
 | C6 | **Papercuts** | L | L | (a) match-bound values are immutable for `&mut` **fn args** but fine for `&mut` **methods** — inconsistent, forced inlining a spawn helper. (b) `string.push` needs an explicit `as u8` on int literals. (c) ~~`appendFile` missing from `std/fs`~~ ✅ added this session. | session |
+| C7 | **No `AF_UNIX` in `std/net`** | M | M | `std/net` is TCP-only (`TcpListener`/`TcpStream` over `AF_INET`). The tmux-style detach/attach daemon (`examples/apps/tmuxDaemon.milo`) works over a localhost TCP port as a result — fine on one machine, but a unix-domain socket (filesystem-scoped, no port allocation/conflicts, peer-cred auth) is the right transport for a local daemon. Add `UnixListener`/`UnixStream`. | `std/net.milo`, `examples/apps/tmuxDaemon.milo` |
 
 ## Dependency notes
 
