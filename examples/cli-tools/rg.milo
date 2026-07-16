@@ -333,18 +333,15 @@ fn main(): i32 {
         flags = 3
     }
 
-    var re = Regex {
-        _preg: [0; 128], _valid: false
+    // let-else binds directly, so there's no placeholder to pre-size. The old form built
+    // a dummy `Regex { _preg: [0; 128] }` just to satisfy definite-initialization, which
+    // hardcoded the darwin regex_t size into an app — glibc's is 64, so this file could
+    // not compile on Linux at all.
+    let Option.Some(compiled) = regexNewFlags(pattern.clone(), flags) else {
+        print($"rg: invalid regex: {pattern}")
+        return 2
     }
-    match regexNewFlags(pattern.clone(), flags) {
-        Option.Some(r) => {
-            re = r
-        }
-        Option.None => {
-            print($"rg: invalid regex: {pattern}")
-            return 2
-        }
-    }
+    var re = compiled // the search chain takes &mut Regex
 
     // -C sets both; -A/-B override if non-zero
     let ctxVal = args.getI64("context")

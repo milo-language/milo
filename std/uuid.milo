@@ -1,7 +1,10 @@
 // std/uuid — UUID v4 generation (random, RFC 4122)
 
+// randBytes is the portable wrapper (darwin: arc4random_buf, linux: a getentropy loop).
+// This module used to import arc4random_buf directly — a darwin-only extern — so
+// std/uuid, and everything importing it, failed to compile on Linux.
 from "std/random" import {
-    arc4random_buf
+    randBytes
 }
 
 fn _hexChar(n: u8): u8 {
@@ -22,7 +25,7 @@ fn _byteToHex(b: u8): string {
 fn uuidV4(): string {
     var buf: [u8; 16] = [0 as u8; 16]
     unsafe {
-        arc4random_buf(buf as *u8, 16)
+        randBytes(buf as *u8, 16)
     }
 
     // version 4: high nibble of byte 6 = 0100
