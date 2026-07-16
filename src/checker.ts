@@ -1,6 +1,7 @@
 import type { Program, Function, Stmt, Expr, MiloType, StructDecl, Pattern, Span, TraitDecl, MatchArm, Attribute } from "./ast";
-import { simpleType } from "./ast";
-import { TypeKind, typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar } from "./types";
+import { simpleType, declaredType } from "./ast";
+import type { TypeKind } from "./types";
+import { typeFromAst, typeEq, typeName, isNumeric, isCopy, isScalar } from "./types";
 import type { Diagnostic, WarningConfig } from "./diagnostics";
 
 export interface VarInfo {
@@ -165,7 +166,7 @@ export class TypeChecker {
   // inferVecElems holds the live placeholder objects (identity set); pendingInferVecs
   // records each with its span so an unresolved one (no push ever seen) can error.
   private inferVecElems = new WeakSet<object>();
-  private pendingInferVecs: Array<{ elem: TypeKind; span: Span }> = [];
+  private pendingInferVecs: Array<{ elem: TypeKind; span: Span | undefined }> = [];
   private _globalTypes = new Map<string, TypeKind>();
   private functions = new Map<string, FnSig>();
   private fnDecls = new Map<string, Function>();
@@ -434,7 +435,7 @@ export class TypeChecker {
     if (expr.kind === "FieldAccess") return `${this.contractExprToString(expr.object)}.${expr.field}`;
     if (expr.kind === "UnaryOp") return `${expr.op}${this.contractExprToString(expr.operand)}`;
     if (expr.kind === "BinOp") return `${this.contractExprToString(expr.left)} ${expr.op} ${this.contractExprToString(expr.right)}`;
-    if (expr.kind === "CastExpr") return `${this.contractExprToString(expr.expr)} as ${expr.type.name}`;
+    if (expr.kind === "CastExpr") return `${this.contractExprToString(expr.operand)} as ${expr.targetType.name}`;
     return "...";
   }
 
@@ -636,7 +637,7 @@ export class TypeChecker {
             params: m.params.map(p => ({
               name: p.name,
               type: this.substituteSelfInMiloType(
-                this.substituteMiloType(p.type, generic.typeParams, typeArgs),
+                this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs),
                 mangled
               ),
             })),
@@ -659,7 +660,7 @@ export class TypeChecker {
         if (attr.name !== "derive") continue;
         for (const traitName of attr.args) {
           const impl = this.synthesizeDeriveImpl(decl, traitName);
-          if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [], typeAliases: [] }, this._pendingImplFns);
+          if (impl) this.registerImpl(impl, { structs: [], enums: [], functions: [], imports: [], traits: [], impls: [], typeAliases: [], interfaces: [], globals: [] }, this._pendingImplFns);
         }
       }
     }
@@ -681,15 +682,21 @@ export class TypeChecker {
 
   private typeKindToMiloType(t: TypeKind): MiloType {
     switch (t.tag) {
-      case "vec": return { name: "Vec", typeArgs: [this.typeKindToMiloType(t.element)] };
-      case "heap": return { name: "Heap", typeArgs: [this.typeKindToMiloType(t.inner)] };
-      case "ref": return { name: typeName(t.inner), isRef: !t.mutable, isRefMut: t.mutable };
-      case "fn": return { name: "", isFn: true, fnParams: t.params.map(p => this.typeKindToMiloType(p)), fnRet: this.typeKindToMiloType(t.ret) };
-      default: return { name: typeName(t) };
+      case "vec": return { ...simpleType("Vec"), typeArgs: [this.typeKindToMiloType(t.element)] };
+      case "heap": return { ...simpleType("Heap"), typeArgs: [this.typeKindToMiloType(t.inner)] };
+      case "ref": return { ...simpleType(typeName(t.inner)), isRef: !t.mutable, isRefMut: t.mutable };
+      case "fn": return { ...simpleType(""), isFn: true, fnParams: t.params.map(p => this.typeKindToMiloType(p)), fnRet: this.typeKindToMiloType(t.ret) };
+      default: return simpleType(typeName(t));
     }
   }
 
-  private substituteMiloType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType {
+  // Null in, null out: only a closure param may omit its type annotation, and closures
+  // aren't monomorphized — but Param.type is nullable for everyone, so the substitution
+  // paths have to carry that through rather than assert it away.
+  private substituteMiloType(ty: MiloType, typeParams: string[], typeArgs: TypeKind[]): MiloType;
+  private substituteMiloType(ty: MiloType | null, typeParams: string[], typeArgs: TypeKind[]): MiloType | null;
+  private substituteMiloType(ty: MiloType | null, typeParams: string[], typeArgs: TypeKind[]): MiloType | null {
+    if (ty === null) return null;
     const idx = typeParams.indexOf(ty.name);
     if (idx !== -1) {
       const sub = this.typeKindToMiloType(typeArgs[idx]);
@@ -735,7 +742,7 @@ export class TypeChecker {
 
     // Build concrete param types — substitute type params first, then resolve
     const params = generic.decl.params.map(p => ({
-      type: this.resolve(this.substituteMiloType(p.type, generic.typeParams, typeArgs)),
+      type: this.resolve(this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs)),
       name: p.name,
     }));
     const ret = this.resolve(this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs));
@@ -750,7 +757,7 @@ export class TypeChecker {
       typeParams: [],
       params: generic.decl.params.map(p => ({
         name: p.name,
-        type: this.substituteMiloType(p.type, generic.typeParams, typeArgs),
+        type: this.substituteMiloType(declaredType(p), generic.typeParams, typeArgs),
       })),
       retType: this.substituteMiloType(generic.decl.retType, generic.typeParams, typeArgs),
       contracts: generic.decl.contracts ?? [],
@@ -988,7 +995,7 @@ export class TypeChecker {
         if (m.body !== null) {
           this.error(`interface methods cannot have default bodies`, m.span);
         }
-        const params = m.params.map(p => ({ name: p.name, type: this.resolve(p.type) }));
+        const params = m.params.map(p => ({ name: p.name, type: this.resolve(declaredType(p)) }));
         const selfParam = params[0];
         if (!selfParam || selfParam.type.tag !== "ref") {
           this.error(`interface method '${m.name}' must take self by reference (&Self or &mut Self)`, m.span);
@@ -1008,7 +1015,7 @@ export class TypeChecker {
       }
       const methods = new Map<string, TraitMethodInfo>();
       for (const m of t.methods) {
-        const params = m.params.map(p => ({ name: p.name, type: this.resolve(p.type) }));
+        const params = m.params.map(p => ({ name: p.name, type: this.resolve(declaredType(p)) }));
         const ret = this.resolve(m.retType);
         methods.set(m.name, { params, ret, hasDefault: m.body !== null });
       }
@@ -1021,7 +1028,7 @@ export class TypeChecker {
         this.genericFns.set(fn.name, { typeParams: fn.typeParams.map(tp => tp.name), decl: fn });
         continue;
       }
-      const params = fn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+      const params = fn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
       const ret = this.resolve(fn.retType);
       if (ret.tag === "ref") {
         this.error(`function '${fn.name}': cannot return a reference`, undefined, `references are second-class — return an owned value instead`);
@@ -1568,10 +1575,10 @@ export class TypeChecker {
         const concreteFn: Function = {
           ...m,
           name: mangled,
-          params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+          params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
           retType: this.substituteSelfInMiloType(m.retType, typeName),
         };
-        const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+        const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
         const ret = this.resolve(concreteFn.retType);
         this.functions.set(mangled, { params, ret, variadic: false });
         methods.set(m.name, { params, ret, variadic: false });
@@ -1589,14 +1596,14 @@ export class TypeChecker {
             kind: "Function",
             name: mangled,
             typeParams: [],
-            params: traitMethod.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+            params: traitMethod.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
             retType: this.substituteSelfInMiloType(traitMethod.retType, typeName),
             contracts: [],
             body: traitMethod.body!,
             isExtern: false,
             isVariadic: false,
           };
-          const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+          const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
           this.functions.set(mangled, { params, ret, variadic: false });
           methods.set(mName, { params, ret, variadic: false });
@@ -1617,10 +1624,10 @@ export class TypeChecker {
           const concreteFn: Function = {
             ...m,
             name: mangled,
-            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
             retType: this.substituteSelfInMiloType(m.retType, typeName),
           };
-          const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+          const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
           this.functions.set(mangled, { params, ret, variadic: false });
           existing.methods.set(m.name, { params, ret, variadic: false });
@@ -1634,10 +1641,10 @@ export class TypeChecker {
           const concreteFn: Function = {
             ...m,
             name: mangled,
-            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(p.type, typeName) })),
+            params: m.params.map(p => ({ name: p.name, type: this.substituteSelfInMiloType(declaredType(p), typeName) })),
             retType: this.substituteSelfInMiloType(m.retType, typeName),
           };
-          const params = concreteFn.params.map(p => ({ type: this.resolve(p.type), name: p.name }));
+          const params = concreteFn.params.map(p => ({ type: this.resolve(declaredType(p)), name: p.name }));
           const ret = this.resolve(concreteFn.retType);
           this.functions.set(mangled, { params, ret, variadic: false });
           methods.set(m.name, { params, ret, variadic: false });
@@ -1846,7 +1853,7 @@ export class TypeChecker {
     this.currentFnRetType = retType;
 
     for (const p of fn.params) {
-      const pType = this.resolve(p.type);
+      const pType = this.resolve(declaredType(p));
       this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false });
     }
 
@@ -1924,7 +1931,7 @@ export class TypeChecker {
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
-          if (optInner && typeEq(optInner, valType)) {
+          if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
             this.autoWrappedOption.set(stmt.value, hint.name);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
@@ -1976,7 +1983,7 @@ export class TypeChecker {
         if (hint && !typeEq(hint, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(hint);
           const isStringToPtr = valType.tag === "string" && hint.tag === "ptr" && hint.inner.tag === "int" && hint.inner.bits === 8;
-          if (optInner && typeEq(optInner, valType)) {
+          if (optInner && typeEq(optInner, valType) && hint.tag === "enum") {
             this.autoWrappedOption.set(stmt.value, hint.name);
           } else if (hint.tag === "vec" && valType.tag === "array" && typeEq(hint.element, valType.element)) {
             this.arrayToVecCoercions.add(stmt.value);
@@ -2036,7 +2043,7 @@ export class TypeChecker {
         if (!typeEq(targetInfo.type, valType) && valType.tag !== "unknown") {
           const optInner = this.optionInnerType(targetInfo.type);
           const isStringToPtr = valType.tag === "string" && targetInfo.type.tag === "ptr" && targetInfo.type.inner.tag === "int" && targetInfo.type.inner.bits === 8;
-          if (optInner && typeEq(optInner, valType)) {
+          if (optInner && typeEq(optInner, valType) && targetInfo.type.tag === "enum") {
             this.autoWrappedOption.set(stmt.value, targetInfo.type.name);
           } else if (!isStringToPtr) {
             this.error(`type mismatch: cannot assign ${typeName(valType)} to ${typeName(targetInfo.type)}`, sp);
@@ -2849,8 +2856,10 @@ export class TypeChecker {
   // both a `&var`/`&mut` argument and the root of a `&` argument. A mutation
   // through the mutable borrow could invalidate the shared reference (e.g.
   // `push` reallocates), leaving it dangling. Pure argument-origin check.
-  private checkCallSiteExclusivity(args: Expr[], sp: Span) {
-    const muts: { root: string; fields: string[] | null; span: Span }[] = [];
+  // `sp` is the call's own span, used only as a fallback when an argument has
+  // none; both may be undefined, and the diagnostic then carries no source context.
+  private checkCallSiteExclusivity(args: Expr[], sp: Span | undefined) {
+    const muts: { root: string; fields: string[] | null; span: Span | undefined }[] = [];
     const shared: { root: string; fields: string[] | null }[] = [];
     for (const arg of args) {
       const ab = this.autoBorrowed.get(arg);
@@ -3027,7 +3036,7 @@ export class TypeChecker {
       return hint;
     }
     if (expr.kind === "EnumLit" && expr.enumName === "HashMap" && expr.variant === "new" && hint?.tag === "hashmap") {
-      if (expr.args.length !== 0) { this.error(`'HashMap.new' takes no arguments`, sp); }
+      if (expr.args.length !== 0) { this.error(`'HashMap.new' takes no arguments`, expr.span); }
       this.exprTypes.set(expr, hint);
       return hint;
     }
@@ -3403,7 +3412,7 @@ export class TypeChecker {
             }
           }
           for (let i = 0; i < argTypes.length; i++) {
-            const paramTy = genericFn.decl.params[i].type;
+            const paramTy = declaredType(genericFn.decl.params[i]);
             const argIsLiteral = expr.args[i].kind === "IntLit" || expr.args[i].kind === "CharLit" || expr.args[i].kind === "FloatLit";
             // Direct match: param type IS a type param (e.g. val: T)
             if (genericFn.typeParams.includes(paramTy.name)) {
@@ -3486,8 +3495,9 @@ export class TypeChecker {
 
           const concreteSig = this.functions.get(mangled)!;
           for (let i = 0; i < expr.args.length; i++) {
-            if (i < concreteSig.params.length && concreteSig.params[i].type.tag === "ref") {
-              this.setAutoBorrowChecked(expr.args[i], concreteSig.params[i].type.mutable, sp);
+            const sigParamTy = i < concreteSig.params.length ? concreteSig.params[i].type : undefined;
+            if (sigParamTy?.tag === "ref") {
+              this.setAutoBorrowChecked(expr.args[i], sigParamTy.mutable, sp);
               continue;
             }
             // Auto-move closure args (parity with the non-generic call path):
@@ -3639,7 +3649,7 @@ export class TypeChecker {
             const isArrayToPtr = argType.tag === "array" && paramType.tag === "ptr" && typeEq(argType.element, paramType.inner);
             // T auto-wraps to Option<T> (Some(value))
             const optInner = this.optionInnerType(paramType);
-            const isOptionWrap = optInner !== null && typeEq(optInner, argType);
+            const isOptionWrap = optInner !== null && typeEq(optInner, argType) && paramType.tag === "enum";
             // A flexible const-int binding adopts the param's int width (first use).
             const flexInfo = paramType.tag === "int" ? this.flexIntBinding(expr.args[i]) : null;
             if (isOptionWrap) {
@@ -3878,7 +3888,7 @@ export class TypeChecker {
             const typeMap = new Map<string, TypeKind>();
             const literalInferred = new Set<string>();
             for (let i = 0; i < Math.min(1, genericFn.decl.params.length); i++) {
-              const paramTy = genericFn.decl.params[i].type;
+              const paramTy = declaredType(genericFn.decl.params[i]);
               if (paramTy.typeArgs) {
                 let argResolved = argType;
                 if (argResolved.tag === "ref") argResolved = argResolved.inner;
@@ -5115,7 +5125,9 @@ export class TypeChecker {
       } else if (!hasWildcard) {
         this.error(`match on ${typeName(subjType)} requires a wildcard '_' arm`, sp);
       }
-    } else if (isEnum) {
+    } else if (isEnum && subjType.tag === "enum") {
+      // The tag test is redundant — `subjType` is not reassigned after `isEnum` is
+      // computed — but it is what narrows `subjType` for the enum accesses below.
       const enumInfo = this.enums.get(subjType.name)!;
       const covered = new Set<string>();
       let hasWildcard = false;

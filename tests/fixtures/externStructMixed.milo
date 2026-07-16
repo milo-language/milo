@@ -1,14 +1,10 @@
 // structs mixing float and integer fields — per-eightbyte SSE/INTEGER classification
-extern
-
-struct M1 {
+extern struct M1 {
     d: f64,
     i: i64,
 }
 
-extern
-
-struct M2 {
+extern struct M2 {
     i: i32,
     f: f32,
 }

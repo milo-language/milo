@@ -2,6 +2,8 @@
 
 import type { TypeKind } from "./types";
 
+// The slice of Codegen these extracted helpers need. Codegen's matching members are
+// public solely to satisfy this — they are not part of its external API.
 interface CodegenCtx {
   nextTemp(): string;
   nextLabel(prefix: string): string;

@@ -62,7 +62,9 @@ export function listTargets(): string[] {
 }
 
 export function getHostTarget(): TargetInfo {
-  const a = arch();
+  // Widened to string: the "aarch64" arm below is defensive — os.arch() reports
+  // arm64, never aarch64 — but it is kept rather than silently narrowing the check.
+  const a: string = arch();
   const p = platform();
   if (p === "darwin") {
     return targets[a === "arm64" ? "macos-arm64" : "macos-x64"]!;

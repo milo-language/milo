@@ -2,9 +2,7 @@
 // time. `struct timespec` is two 64-bit fields on every target Milo hosts, so a correct
 // declaration must build and run. The mismatch cases live in tests/errors/cLayout*.milo.
 @cLayout("struct timespec", "time.h")
-extern
-
-struct Timespec {
+extern struct Timespec {
     tv_sec: i64,
     tv_nsec: i64,
 }

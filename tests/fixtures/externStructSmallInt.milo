@@ -1,7 +1,5 @@
 // small integer struct passed and returned by value (register coercion)
-extern
-
-struct P {
+extern struct P {
     x: i32,
     y: i32,
 }

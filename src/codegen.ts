@@ -55,11 +55,11 @@ export class Codegen {
   private needsExit = false;
   private needsMalloc = false;
   private needsFree = false;
-  private needsMemcpy = false;
+  public needsMemcpy = false;
   private needsStrlen = false;
-  private needsMemcmp = false;
+  public needsMemcmp = false;
   private hasStringType = false;
-  private hasVecType = false;
+  public hasVecType = false;
   private hasHashMapType = false;
   private needsGetentropy = false;
   private needsStrtod = false;
@@ -78,8 +78,8 @@ export class Codegen {
   private dropHelperBodies: string[][] = [];
   private closureBodies: string[][] = [];
   private closureCounter = 0;
-  private scopeCounter = 0;
-  private entryAllocas: string[] = [];
+  public scopeCounter = 0;
+  public entryAllocas: string[] = [];
   private static BUILTINS = new Set(["print", "eprint", "format", "flush", "exit", "assert", "max", "min", "_miloArgCount", "_miloArgAt", "_cstrToString", "_strDataPtr", "_loadU8", "_loadI32", "_callClosureVoid", "_atomicLoadI64", "_atomicStoreI64", "_atomicAddI64", "_atomicSubI64", "_atomicCasI64", "_atomicLoadBool", "_atomicStoreBool", "_atomicSwapBool", "_schedulerGet", "_schedulerSet"]);
   private needsArgGlobals = false;
   private usesSchedulerGlobal = false;
@@ -395,8 +395,8 @@ export class Codegen {
     this.usedDbgDeclare = true;
   }
 
-  private nextTemp(): string { return `%t${this.tempCounter++}`; }
-  private nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
+  public nextTemp(): string { return `%t${this.tempCounter++}`; }
+  public nextLabel(prefix = "L"): string { return `${prefix}${this.labelCounter++}`; }
   private localAddr(name: string): string {
     // A local/param shadows a same-named global. Decide on membership in `locals`,
     // NOT on whether the entry carries an explicit `addr` — params, closure
@@ -409,7 +409,7 @@ export class Codegen {
   }
   private emit(line: string) { this.output.push(line); }
 
-  private llvmType(t: TypeKind): string {
+  public llvmType(t: TypeKind): string {
     switch (t.tag) {
       case "int":    return `i${t.bits}`;
       case "float":  return t.bits === 32 ? "float" : "double";
@@ -499,7 +499,7 @@ export class Codegen {
     return 8;
   }
 
-  private typeSizeOf(t: TypeKind): number {
+  public typeSizeOf(t: TypeKind): number {
     return this.typeSize(this.llvmType(t));
   }
 
@@ -1565,7 +1565,7 @@ export class Codegen {
     }
   }
 
-  private genLValue(expr: HIRExpr): [string[], string, string] {
+  public genLValue(expr: HIRExpr): [string[], string, string] {
     const lines: string[] = [];
     if (expr.kind === "Ident") {
       const local = this.locals.get(expr.name);
@@ -2966,7 +2966,7 @@ export class Codegen {
   // sretDest: only honored when `expr` itself is a direct call to an
   // sret-lowered fn (set by genStoreInto); the callee then writes straight
   // into that pointer and no aggregate SSA value is materialized.
-  private genExpr(expr: HIRExpr, sretDest?: string): [string[], string, string] {
+  public genExpr(expr: HIRExpr, sretDest?: string): [string[], string, string] {
     const lines: string[] = [];
     const lt = this.llvmType(expr.type);
 
@@ -4571,7 +4571,7 @@ export class Codegen {
     return [lines, s2, "%String"];
   }
 
-  private genStringCmp(lines: string[], lv: string, rv: string, isEq: boolean): [string[], string, string] {
+  public genStringCmp(lines: string[], lv: string, rv: string, isEq: boolean): [string[], string, string] {
     this.needsMemcmp = true;
     const aLen = this.nextTemp();
     lines.push(`  ${aLen} = extractvalue %String ${lv}, 1`);
@@ -8542,7 +8542,7 @@ export class Codegen {
     if (constVal !== null) return constVal;
     if (g.type.tag === "ptr") return "null";
     const tag = g.type.tag;
-    if (tag === "struct" || tag === "array" || tag === "enum" || tag === "string" || tag === "vec" || tag === "hashmap" || tag === "tuple") {
+    if (tag === "struct" || tag === "array" || tag === "enum" || tag === "string" || tag === "vec" || tag === "hashmap") {
       return "zeroinitializer";
     }
     return "0";

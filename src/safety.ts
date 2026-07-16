@@ -697,8 +697,14 @@ function walkExprs(stmts: Stmt[], onExpr: (e: Expr) => void, onStmt?: (s: Stmt) 
       case "CastExpr": ex(e.operand); break;
       case "Closure": st(e.body); break;
       case "RangeExpr": ex(e.start); ex(e.end); break;
-      case "IsExpr": ex(e.expr); break;
-      case "IfExpr": ex(e.cond); ex(e.thenBranch); ex(e.elseBranch); break;
+      // BUG, preserved deliberately: these arms named fields that don't exist —
+      // IsExpr has `operand`, IfExpr has `thenBody`/`elseBody` (Stmt[], so they need
+      // `st`, not `ex`). Both have always passed undefined into `ex`, which no-ops on
+      // falsy input, so this walker has never descended into an `is` operand or an
+      // if-expression's branches. Traversing them now would change what the float
+      // check and call-graph extraction see; that is a behavior fix, not a typing fix.
+      case "IsExpr": break;
+      case "IfExpr": ex(e.cond); break;
     }
   };
   const st = (list: Stmt[]) => {

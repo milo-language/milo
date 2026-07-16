@@ -1,8 +1,6 @@
 // by-value extern struct args/returns are safe (POD copy) — no unsafe block needed,
 // and the struct stays usable after being passed (Copy semantics)
-extern
-
-struct P {
+extern struct P {
     x: i32,
     y: i32,
 }

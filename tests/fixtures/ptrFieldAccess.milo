@@ -2,9 +2,7 @@ extern fn puts(s: *u8): i32
 
 extern fn malloc(size: i64): *u8
 
-extern
-
-struct Point {
+extern struct Point {
     x: i32,
     y: i32,
 }

@@ -1,14 +1,10 @@
 // HFA structs (all-float, 1-4 members) passed/returned in float registers
-extern
-
-struct D2 {
+extern struct D2 {
     x: f64,
     y: f64,
 }
 
-extern
-
-struct F4 {
+extern struct F4 {
     a: f32,
     b: f32,
     c: f32,

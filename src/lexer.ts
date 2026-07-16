@@ -1,4 +1,5 @@
-import { Token, TokenKind, KEYWORDS, Trivia } from "./tokens";
+import type { Token, Trivia } from "./tokens";
+import { TokenKind, KEYWORDS } from "./tokens";
 import { ParseError } from "./diagnostics";
 
 export class Lexer {

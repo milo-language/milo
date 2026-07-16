@@ -1,8 +1,6 @@
 // large struct crosses by value: indirect arg + sret return. The callee mutates its
 // copy; the caller's original stays unchanged (proves a real copy was made).
-extern
-
-struct Big {
+extern struct Big {
     a: i64,
     b: i64,
     c: i64,

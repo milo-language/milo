@@ -28,6 +28,15 @@ export interface Param {
   type: MiloType | null;
 }
 
+// `Param.type` is null only for a closure param whose type is inferred
+// (parseClosure); every param the parser builds for a fn/method/trait/interface
+// decl carries a written type. Paths that only ever see declared params use this
+// to assert that invariant instead of silently defaulting.
+export function declaredType(p: Param): MiloType {
+  if (p.type === null) throw new Error(`internal: parameter '${p.name}' has no declared type (only closure params may omit one)`);
+  return p.type;
+}
+
 export interface StructField {
   name: string;
   type: MiloType;
@@ -150,6 +159,10 @@ export interface Function {
   body: Stmt[];
   isExtern: boolean;
   isVariadic: boolean;
+  // Nothing populates this today — the parser builds Function nodes without a
+  // span, so diagnostics that pass `fn.span` currently render with no source
+  // context. Declared optional to match that reality.
+  span?: Span;
 }
 
 export interface ImportDecl {

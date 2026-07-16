@@ -85,7 +85,7 @@ function parsePkgUrl(url: string): { host: string; path: string; version: string
   return { host: fullPath.slice(0, slashIdx), path: fullPath.slice(slashIdx + 1), version };
 }
 
-export function resolveImports(program: Program, sourceDir: string, target: TargetInfo, entryFile?: string): Program {
+export function resolveImports(program: Program, sourceDir: string, target: TargetInfo, entryFile?: string | null): Program {
   const visited = new Set<string>();
   const structs: typeof program.structs = [];
   const enums: typeof program.enums = [];

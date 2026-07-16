@@ -7,6 +7,7 @@ import { TypeChecker, type CheckResult } from "./checker";
 import { resolveImports } from "./resolver";
 import { ParseError, type Diagnostic } from "./diagnostics";
 import type { Program, Function, Stmt, Expr, Span } from "./ast";
+import { declaredType } from "./ast";
 import { typeName as formatTypeName } from "./types";
 import { getHostTarget } from "./target";
 import { dirname, resolve } from "path";
@@ -88,7 +89,7 @@ function buildSymbolIndex(uri: string, program: Program) {
     symbols.push({ name: fn.name, kind: "function", uri });
     // index params as variables within this function
     for (const p of fn.params) {
-      symbols.push({ name: p.name, kind: "variable", type: p.type.name, uri });
+      symbols.push({ name: p.name, kind: "variable", type: declaredType(p).name, uri });
     }
   }
   for (const s of program.structs) {
@@ -367,7 +368,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     // Free functions
     const f = program.functions.find(fn => fn.name === word && !fn.isExtern);
     if (f) {
-      const params = f.params.map(p => `${p.name}: ${formatMiloType(p.type)}`).join(", ");
+      const params = f.params.map(p => `${p.name}: ${formatMiloType(declaredType(p))}`).join(", ");
       const sig = `fn ${f.name}(${params}): ${formatMiloType(f.retType)}`;
       let hover = `\`\`\`milo\n${sig}\n\`\`\``;
       hover = appendDocAndModule(hover, source, parsed, sourceDir, word, "fn");
@@ -380,7 +381,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
         if (method.name === word) {
           const params = method.params
             .filter(p => p.name !== "self")
-            .map(p => `${p.name}: ${formatMiloType(p.type)}`).join(", ");
+            .map(p => `${p.name}: ${formatMiloType(declaredType(p))}`).join(", ");
           const sig = `fn ${impl.typeName}.${method.name}(${params}): ${formatMiloType(method.retType)}`;
           let hover = `\`\`\`milo\n${sig}\n\`\`\``;
           hover = appendDocAndModule(hover, source, parsed, sourceDir, word, "fn");
@@ -442,7 +443,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     for (const iface of program.interfaces) {
       if (iface.name === word) {
         const methods = iface.methods.map(m => {
-          const params = m.params.map(p => `${p.name}: ${formatMiloType(p.type)}`).join(", ");
+          const params = m.params.map(p => `${p.name}: ${formatMiloType(declaredType(p))}`).join(", ");
           return `    fn ${m.name}(${params}): ${formatMiloType(m.retType)}`;
         }).join("\n");
         return { contents: { kind: "markdown", value: `\`\`\`milo\ninterface ${iface.name} {\n${methods}\n}\n\`\`\`` } };
@@ -454,7 +455,7 @@ function handleHover(uri: string, line: number, character: number): object | nul
     if (enclosing) {
       for (const p of enclosing.fn.params) {
         if (p.name === word) {
-          return { contents: { kind: "markdown", value: `\`\`\`milo\n${p.name}: ${formatMiloType(p.type)}\n\`\`\`` } };
+          return { contents: { kind: "markdown", value: `\`\`\`milo\n${p.name}: ${formatMiloType(declaredType(p))}\n\`\`\`` } };
         }
       }
       const bindTypes = checkResult?.patternBindingTypes ?? new Map();
@@ -1513,13 +1514,13 @@ function handleSignatureHelp(uri: string, line: number, character: number): obje
     });
     const f = program.functions.find(fn => fn.name === name && !fn.isExtern);
     if (f) {
-      const ps = f.params.map(p => `${p.name}: ${formatMiloType(p.type)}`);
+      const ps = f.params.map(p => `${p.name}: ${formatMiloType(declaredType(p))}`);
       return mk(`fn ${f.name}(${ps.join(", ")}): ${formatMiloType(f.retType)}`, ps);
     }
     for (const impl of program.impls) {
       for (const m of impl.methods) {
         if (m.name === name) {
-          const ps = m.params.filter(p => p.name !== "self").map(p => `${p.name}: ${formatMiloType(p.type)}`);
+          const ps = m.params.filter(p => p.name !== "self").map(p => `${p.name}: ${formatMiloType(declaredType(p))}`);
           return mk(`fn ${impl.typeName}.${m.name}(${ps.join(", ")}): ${formatMiloType(m.retType)}`, ps);
         }
       }

@@ -1,7 +1,5 @@
 // extern struct carrying a raw pointer, round-tripped through C by value
-extern
-
-struct Span {
+extern struct Span {
     ptr: *u8,
     len: i64,
 }

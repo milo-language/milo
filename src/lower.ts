@@ -2,6 +2,7 @@
 // Attaches resolved types from checker to every HIR node.
 
 import type { Program, Function as AstFn, Stmt, Expr, Pattern } from "./ast";
+import { declaredType } from "./ast";
 import type { CheckResult, FnSig, EnumInfo } from "./checker";
 import type { HIRModule, HIRFunction, HIRStmt, HIRExpr, HIRArg, HIRPattern, HIRStruct, HIREnum, HIRGlobal } from "./hir";
 import type { TypeKind } from "./types";
@@ -104,15 +105,16 @@ class LowerCtx {
     return { structs, enums, functions, globals, dropImpls: this.c.dropImpls, itables, userFnNames: program.userFnNames, opaqueTypes };
   }
 
-  private lowerParam(p: { name: string; type: import("./ast").MiloType }, sig: import("./checker").FnSig | undefined, i: number) {
-    const resolved = sig?.params[i]?.type ?? typeFromAst(p.type);
+  private lowerParam(p: import("./ast").Param, sig: import("./checker").FnSig | undefined, i: number) {
+    const pType = declaredType(p);
+    const resolved = sig?.params[i]?.type ?? typeFromAst(pType);
     // For ref params, store the inner type — isRef/isRefMut flags handle the indirection
     const innerType = resolved.tag === "ref" ? resolved.inner : resolved;
     return {
       name: p.name,
       type: innerType,
-      isRef: p.type.isRef,
-      isRefMut: p.type.isRefMut,
+      isRef: pType.isRef,
+      isRefMut: pType.isRefMut,
     };
   }
 
@@ -318,7 +320,7 @@ class LowerCtx {
         if (iterType?.tag === "array" && iterType.size === null) {
           iterType = { tag: "vec", element: iterType.element };
         }
-        let iterableKind: "vec" | "string" | "hashmap";
+        let iterableKind: "vec" | "string" | "hashmap" | "array";
         let varType: TypeKind;
         let varType2: TypeKind | null = null;
         if (iterType?.tag === "vec") {

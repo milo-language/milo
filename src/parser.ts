@@ -1,4 +1,5 @@
-import { Token, TokenKind } from "./tokens";
+import type { Token } from "./tokens";
+import { TokenKind } from "./tokens";
 import { Lexer } from "./lexer";
 import { ParseError } from "./diagnostics";
 import type {

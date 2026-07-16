@@ -3,16 +3,12 @@
 // (by-value struct return, non-C-representable return).
 extern type Handle
 
-extern
-
-struct Point {
+extern struct Point {
     x: i32,
     y: i32,
 }
 
-extern
-
-struct Rect {
+extern struct Rect {
     origin: Point,
     w: i32,
     h: i32,

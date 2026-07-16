@@ -790,7 +790,6 @@ export class CodegenJS {
     const val = this.genExpr(expr);
     if (expr.type.tag === "string") return val;
     if (expr.type.tag === "bool") return `(${val} ? "true" : "false")`;
-    if (expr.type.tag === "char") return `String.fromCharCode(${val})`;
     if (expr.type.tag === "float") return `__fmtG(${val})`;
     if (expr.type.tag === "int") return `String(${val})`;
     if (expr.type.tag === "struct") return `__displayStruct(${val})`;

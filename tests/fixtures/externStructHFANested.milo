@@ -1,14 +1,10 @@
 // nested homogeneous-float struct is still an HFA after flattening (3 floats)
-extern
-
-struct P2 {
+extern struct P2 {
     x: f32,
     y: f32,
 }
 
-extern
-
-struct Tri {
+extern struct Tri {
     base: P2,
     z: f32,
 }
