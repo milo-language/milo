@@ -4,7 +4,7 @@ from "std/os" import {
     pipe, read, write
 }
 from "std/platform" import {
-    fcntl, fGetfl, fSetfl, oNonblock
+    fcntl, fGetfl, fSetfl, oNonblock, sigchldNum
 }
 
 extern fn signal(signum: i32, handler: *u8): *u8
@@ -19,10 +19,29 @@ let SIGALRM: i32 = 14
 let SIGTERM: i32 = 15
 let SIGWINCH: i32 = 28 // 28 on both darwin and linux
 
-// Register a handler for a signal. Handler receives the signal number.
-fn onSignal(sig: i32, handler: (i32) => void): void {
+// Child stopped or exited. A fn, not a `let` like its siblings above, for two reasons that
+// both bite: its number is NOT the same on both platforms (20 darwin / 17 linux, verified
+// against sys/signal.h and asm-generic/signal.h), so it has to come from the std/platform
+// split; and module-scope runtime initialization is rejected, so `let SIGCHLD = ...()`
+// cannot work at all — the checker catches that rather than letting it become 0.
+// This is what a child-exit Select arm needs: arm it through installSignalPipe and a
+// reaped child becomes just another readable fd.
+fn sigchld(): i32 {
+    return sigchldNum()
+}
+
+// Register a handler for a signal. The handler receives the signal number.
+//
+// `handler` must be a top-level `fn (i32): void` passed as a raw pointer —
+// `onSignal(sigchld(), myHandler as *u8)` — NOT a closure. A C signal handler has no
+// user-data slot, so a captured environment has nowhere to live. This used to be typed
+// `(i32) => void`, which made it a closure whose code pointer takes (env, sig); C then
+// called it with the signal number in the env slot and the handler read garbage as its
+// `sig` (observed: 1794499728 instead of 20). Nothing caught it because the only in-tree
+// handler, _sigPipeHandler, ignores its argument.
+fn onSignal(sig: i32, handler: *u8): void {
     unsafe {
-        signal(sig, handler as *u8)
+        signal(sig, handler)
     }
 }
 

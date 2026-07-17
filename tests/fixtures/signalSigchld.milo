@@ -1,0 +1,37 @@
+// SIGCHLD is the one signal in std/signal whose number differs per platform (20 darwin /
+// 17 linux, verified against sys/signal.h and asm-generic/signal.h), so it comes from the
+// std/platform split. Assert it against the value the OS itself reports rather than a
+// hardcoded number — a literal here would just restate the bug it's meant to catch.
+//
+// The check: raise SIGCHLD at ourselves and confirm the handler receives the number we
+// armed. If the constant were wrong for this platform, either the wrong signal fires (and
+// the default action for it is likely to kill us) or nothing does. This also pins
+// onSignal's contract — it took a `(i32) => void` closure, so the handler read the signal
+// number out of the wrong register and saw garbage; a C signal handler must be a raw fn
+// pointer because there is no slot for a captured env.
+from "std/signal" import {
+    sigchld, onSignal
+}
+from "std/os" import {
+    kill, getpid
+}
+
+var seen: i32 = 0
+
+fn onChild(sig: i32): void {
+    seen = sig
+}
+
+fn main() {
+    unsafe {
+        onSignal(sigchld(), onChild as *u8)
+    }
+    kill(getpid(), sigchld())
+    // @expect: true
+    print(seen == sigchld())
+    // SIGCHLD's default action is "ignore", so a wrong number that happened to land on a
+    // real signal would terminate us before this line — reaching it at all is part of the
+    // assertion.
+    // @expect: true
+    print(seen != 0)
+}

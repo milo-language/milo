@@ -131,6 +131,14 @@ fn epollOneshot(): u32 {
     return 1073741824
 }
 
+// ── signals ──
+
+// 17 here, 20 on darwin (verified against asm-generic/signal.h and sys/signal.h
+// respectively). The only signal std/signal needs that isn't same-numbered on both.
+fn sigchldNum(): i32 {
+    return 17
+}
+
 // ── fcntl / non-blocking ──
 
 extern fn fcntl(fd: i32, cmd: i32,...): i32

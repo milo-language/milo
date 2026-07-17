@@ -20,9 +20,7 @@ ROI / Effort: **H**igh / **M**edium / **L**ow. Tiers = the quadrant that matters
 
 ## Tier 1 — quick wins (high ROI, low effort) — do first
 
-| # | Item | ROI | Effort | Why / unblocks | Ref |
-|---|------|-----|--------|----------------|-----|
-| 1 | **`std/signal` has no `SIGCHLD`** | M | L | `installSignalPipe` (signal → self-pipe → selectable fd) shipped, and `splitPty` already arms SIGWINCH through it — but `std/signal.milo` defines no `SIGCHLD`, so a child-exit `Select` arm can't be built. Unlike the constants there today (all same-numbered on darwin+linux, per the file's own comments), SIGCHLD differs per platform (20 darwin, 17 linux), so it needs the `std/platform.{darwin,linux}.milo` split. The cheap prerequisite for C2's child-exit arm and C3's `timeout` conversion. | `std/signal.milo installSignalPipe` |
+_Empty — pull the cheapest Tier 2 item up when one qualifies._
 
 ## Tier 2 — strategic (high ROI, higher effort) — plan & invest
 

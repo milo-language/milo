@@ -226,6 +226,17 @@ fn protWrite(): i32
 
 _Undocumented._
 
+### `sigchldNum`
+
+```milo
+fn sigchldNum(): i32
+```
+
+SIGCHLD is 20 here and 17 on linux (verified against sys/signal.h and
+asm-generic/signal.h respectively), which is why it lives in the platform split rather
+than beside the `let SIGx` constants in std/signal — those all happen to agree across
+both platforms.
+
 ### `soError`
 
 ```milo

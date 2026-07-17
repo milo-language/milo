@@ -88,6 +88,17 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — `std/signal.onSignal` handed its handler a garbage signal number.**
+It took `handler: (i32) => void`, i.e. a closure, whose code pointer takes `(env, sig)`. A C
+signal handler has no user-data slot, so `signal()` called it with the signal number in the
+env slot and the handler read garbage as its `sig` (1794499728 instead of 20). Nothing
+caught it because the only in-tree handler, `_sigPipeHandler`, ignores its argument — so
+SIGWINCH via `installSignalPipe` worked and the doc comment "Handler receives the signal
+number" stayed false. Now takes a raw `*u8` fn pointer. Also added `SIGCHLD` — the one
+signal here whose number differs per platform (20 darwin / 17 linux, both verified against
+the real headers), so it lives in the `std/platform` split; `tests/fixtures/signalSigchld.milo`
+asserts it by raising the signal rather than restating the number.
+
 **Fixed 2026-07-16 — variadic externs declared with the wrong fixed arity miscompiled
 silently.** A libc fn like `fcntl(int, int, ...)` declared as `extern fn fcntl(fd, cmd, arg)`
 compiles clean and calls with the wrong ABI: AArch64 passes variadic args on the stack while

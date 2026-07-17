@@ -243,6 +243,9 @@ extern fn system(cmd: *u8): i32
 
 extern fn fork(): i32
 
+@cSig("unistd.h", "pid_t getpid(void)")
+extern fn getpid(): i32
+
 extern fn execl(path: *u8, arg0: *u8,...): i32
 
 extern fn waitpid(pid: i32, status: *u8, options: i32): i32
