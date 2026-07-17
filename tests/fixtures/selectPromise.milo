@@ -1,0 +1,57 @@
+// A Promise can be armed in a Select via p.channel().
+//
+// This is the composition that didn't exist: Promise.blocking runs its body on a foreign
+// OS thread, Select waits on the green event loop, and there was no way to bridge one into
+// the other — so an event-driven `timeout` had to poll instead. Promise has always held a
+// Channel<T> internally; nothing exposed it.
+//
+// Both flavors are covered because they take different paths inside await(): `blocking`
+// results arrive from a real pthread (the channel's cross-thread claim), `run` results from
+// a green task.
+from "std/runtime" import {
+    Promise
+}
+from "std/select" import {
+    Select, selectRecv
+}
+from "std/time" import {
+    sleepMs
+}
+
+fn main(): i32 {
+    // Foreign OS thread result bridged into a Select.
+    let p = Promise<i64>.blocking(move(): i64 => {
+        sleepMs(20)
+        return 42
+    }
+    )
+    var sel = Select.new()
+    selectRecv(sel, p.channel()) // arm 0 — the worker thread fires this
+    // arm 1 is INERT here and is not a safety net: Promise.blocking spawns a real pthread,
+    // so no scheduler exists, and timer arms need the event loop to fire. If the worker
+    // hung, this select would hang despite the timeout. Armed only to prove a dead timer
+    // arm doesn't break the channel claim. The green case below has a scheduler, so its
+    // timeout is live.
+    sel.onTimeout(5000)
+    // @expect: blocking arm 0
+    print("blocking arm ", sel.wait())
+    sel.destroy()
+    // await still owns the fetch: it does the recv and the destroy.
+    // @expect: blocking value 42
+    print("blocking value ", p.await()!)
+
+    // Green-task result, same bridge.
+    let g = Promise<i64>.run(move(): i64 => {
+        return 7
+    }
+    )
+    var sel2 = Select.new()
+    selectRecv(sel2, g.channel())
+    sel2.onTimeout(5000) // live here — Promise.run means a scheduler exists
+    // @expect: green arm 0
+    print("green arm ", sel2.wait())
+    sel2.destroy()
+    // @expect: green value 7
+    print("green value ", g.await()!)
+    return 0
+}

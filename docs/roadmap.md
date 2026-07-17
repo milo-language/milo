@@ -88,6 +88,22 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Shipped 2026-07-16 — a `Promise` can be armed in a `Select` (`p.channel()`).** The two
+concurrency tiers didn't compose: `Promise` runs work on an OS thread, `Select` waits on the
+green event loop, and an event-driven `timeout` wanted to bridge them. `Promise` always held
+a `Channel<T>`; nothing exposed it. Handing it out is safe because `Channel<T>` is a single
+`*u8` and therefore an implicitly Copy handle — it needs no `clone()`, and `let a = ch; let
+b = ch` already alias (the old blocker checked for a `@copy` attribute rather than the
+property). `await()` still owns the fetch.
+
+That needed a third wait tier. With no scheduler (a main using only `Promise.blocking`)
+there is nothing to park on and nothing to poll, so `SelectState` gained a condvar that a
+foreign pthread's claim signals — the same ladder channels already use. **Timer and fd arms
+are inert without a scheduler** (they need the poll loop), so `onTimeout` is not a safety
+net there; `wait()` returns -1 for a select whose arms are all inert rather than blocking on
+a wake that can never come, and mixed arms are not rescued. Documented at the top of
+`std/select.milo`.
+
 **Fixed 2026-07-16 — `Select.wait()` returned `-1` instead of the winning arm on the main
 context.** `schedulerCurrent()` is 0 there, so `schedulerPark()` no-opped and the unclaimed
 `-1` fell straight through — select still woke at the right moment, so callers just couldn't

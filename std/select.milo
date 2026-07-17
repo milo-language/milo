@@ -20,6 +20,21 @@
 //
 // Channel arms are free functions (selectRecv/selectSend) rather than methods
 // because Milo has no method-level generics; fd/timeout arms are methods.
+//
+// LIMITATION — timer and fd arms need a scheduler; channel arms don't.
+// fd/timer readiness is observed by the scheduler's poll loop, so with no scheduler
+// (nothing green ever spawned — e.g. a main that only uses Promise.blocking) those arms
+// are INERT: they are armed, and they never fire. A channel arm still works, because a
+// foreign pthread's send claims it directly.
+//
+// The trap is `onTimeout` as a safety net. It looks like protection and isn't:
+//
+//   selectRecv(sel, p.channel())   // Promise.blocking — real pthread, no scheduler
+//   sel.onTimeout(1000)            // INERT: if the worker hangs, so does this select
+//
+// A select with ONLY inert arms would block on a wake that can never come, so wait()
+// returns -1 for that case instead of hanging. Mixed arms are not rescued — if you want a
+// live timeout, make sure a scheduler exists (spawn any green task, or use Promise.run).
 
 from "std/os" import {
     malloc, free, memset
@@ -31,6 +46,7 @@ from "std/time" import {
     epochMillis
 }
 from "std/runtime" import {
+    schedulerExists,
     _selectStateNew, _selectStateFree, _selectWaitState, _selectTryClaim,
     _selectRegisterFd, _selectUnregisterFd,
     _rtWriteI64, _rtWritePtr, _rtReadI64,
@@ -144,9 +160,33 @@ impl Select {
             i = i + 1
         }
 
+        // With no scheduler, fd and timer arms can never fire — _selectRegisterFd needs the
+        // event loop and silently skips. Only a foreign pthread claiming a channel can wake
+        // us, so a select with no channel arm would block on a signal that never comes.
+        // Return -1 instead of hanging; the caller is misusing Select (arm a channel, or
+        // spawn a green task so a scheduler exists).
+        if !schedulerExists() && !self._hasChannelArm() {
+            self._teardown()
+            return -1
+        }
+
         let winner = _selectWaitState(self._state)
         self._teardown()
         return winner
+    }
+
+    // Can anything fire without a scheduler? Only channel arms: a foreign pthread's send
+    // claims them directly.
+    fn _hasChannelArm(self: &Self): bool {
+        var i: i64 = 0
+        while i < self._count {
+            let kind = _rtReadI64(self._node(i), nodeKind())
+            if kind == kindSelRecv() || kind == kindSelSend() {
+                return true
+            }
+            i = i + 1
+        }
+        return false
     }
 
     // Deregister every arm. Tolerant: an arm that never linked (a synchronously

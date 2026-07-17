@@ -145,6 +145,26 @@ The caller never blocks here; the result arrives over the channel and is
 collected with await(), like any Promise. Fan out across N cores by
 pushing several Promise.blocking handles into Promise.all.
 
+### `Promise.channel`
+
+```milo
+fn Promise.channel(self: &Promise): Channel<T>
+```
+
+The result channel, so a Promise can be armed in a Select:
+
+  selectRecv(sel, p.channel())      // arm 0
+  sel.onTimeout(1000)               // arm 1
+  match sel.wait() { 0 => { let v = p.await()! } 1 => { ... } }
+
+This is the bridge from a Promise.blocking OS-thread result into an event-driven
+wait — previously the two tiers couldn't compose, and an event-driven `timeout`
+wanted exactly this. Await still owns the fetch: when the arm wins, `await()` does
+the recv and the destroy, so don't recv off this handle yourself.
+
+Handing out the channel is safe because Channel<T> is a single *u8 and therefore an
+implicitly Copy handle — this is an alias, not a transfer of ownership.
+
 ### `Promise.promiseAll`
 
 ```milo
@@ -325,6 +345,18 @@ fn ssClaimed(): i64
 ```
 
 _Undocumented._
+
+### `ssCond`
+
+```milo
+fn ssCond(): i64
+```
+
+Signalled by _selectTryClaim. Only the no-scheduler main context waits on it: a green
+task parks instead, and a main context WITH a scheduler polls it. That leaves the case
+where the only thing that can fire an arm is a foreign pthread (Promise.blocking with no
+green task anywhere) — there is no scheduler to drive and no task to unpark, so without
+this the wait had nothing to block on and returned -1 immediately.
 
 ### `sSelFdHead`
 

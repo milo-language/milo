@@ -20,7 +20,7 @@
 // Select when the fd fires or a timer deadline passes.
 
 from "std/os" import {
-    malloc, free, memcpy, memset, mmap, munmap, mprotect, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy, pthread_create, pthread_detach
+    malloc, free, memcpy, memset, mmap, munmap, mprotect, pthread_mutex_init, pthread_mutex_lock, pthread_mutex_unlock, pthread_mutex_destroy, pthread_cond_init, pthread_cond_signal, pthread_cond_wait, pthread_cond_destroy, pthread_create, pthread_detach
 }
 from "std/platform" import {
     getcontext, makecontext, swapcontext,
@@ -231,7 +231,7 @@ fn kindSelTimer(): i64 {
     return 5
 }
 
-// ── SelectState (32 bytes) ──
+// ── SelectState (40 bytes) ──
 // Shared by all arms of one Select. `claimed` records the winning arm (-1 until
 // a source fires); the mutex serializes the claim so at most one arm wins even
 // across a foreign pthread firing a channel. `parked` gates the unpark so a
@@ -252,8 +252,17 @@ fn ssParked(): i64 {
     return 24
 }
 
-fn selectStateSize(): i64 {
+// Signalled by _selectTryClaim. Only the no-scheduler main context waits on it: a green
+// task parks instead, and a main context WITH a scheduler polls it. That leaves the case
+// where the only thing that can fire an arm is a foreign pthread (Promise.blocking with no
+// green task anywhere) — there is no scheduler to drive and no task to unpark, so without
+// this the wait had nothing to block on and returned -1 immediately.
+fn ssCond(): i64 {
     return 32
+}
+
+fn selectStateSize(): i64 {
+    return 40
 }
 
 // ── helpers to read/write i64, i32, ptr at offset ──
@@ -496,6 +505,23 @@ impl Promise<T> {
             _ch: ch,
             _blocking: false
         }
+    }
+
+    // The result channel, so a Promise can be armed in a Select:
+    //
+    //   selectRecv(sel, p.channel())      // arm 0
+    //   sel.onTimeout(1000)               // arm 1
+    //   match sel.wait() { 0 => { let v = p.await()! } 1 => { ... } }
+    //
+    // This is the bridge from a Promise.blocking OS-thread result into an event-driven
+    // wait — previously the two tiers couldn't compose, and an event-driven `timeout`
+    // wanted exactly this. Await still owns the fetch: when the arm wins, `await()` does
+    // the recv and the destroy, so don't recv off this handle yourself.
+    //
+    // Handing out the channel is safe because Channel<T> is a single *u8 and therefore an
+    // implicitly Copy handle — this is an alias, not a transfer of ownership.
+    fn channel(self: &Self): Channel<T> {
+        return self._ch
     }
 
     fn run(f: () => T): Promise<T> {
@@ -762,6 +788,9 @@ fn _selectStateNew(): *u8 {
         let m = malloc(64)
         pthread_mutex_init(m, 0 as *u8)
         _rtWritePtr(st, ssMtx(), m)
+        let c = malloc(48)
+        pthread_cond_init(c, 0 as *u8)
+        _rtWritePtr(st, ssCond(), c)
         _rtWriteI64(st, ssClaimed(), -1)
         _rtWritePtr(st, ssTask(), schedulerCurrent())
         return st
@@ -770,6 +799,9 @@ fn _selectStateNew(): *u8 {
 
 fn _selectStateFree(st: *u8): void {
     let m = _rtReadPtr(st, ssMtx())
+    let c = _rtReadPtr(st, ssCond())
+    pthread_cond_destroy(c)
+    free(c)
     pthread_mutex_destroy(m)
     free(m)
     free(st)
@@ -786,6 +818,9 @@ fn _selectTryClaim(st: *u8, arm: i64): void {
         if _rtReadI64(st, ssParked()) == 1 {
             schedulerUnpark(_rtReadPtr(st, ssTask()))
         }
+        // Wakes a no-scheduler main context blocked in _selectWaitState. Signalled under
+        // the lock so it cannot be missed between the claim and the wait.
+        pthread_cond_signal(_rtReadPtr(st, ssCond()))
     }
     pthread_mutex_unlock(m)
 }
@@ -822,9 +857,15 @@ fn _selectWaitState(st: *u8): i64 {
         // Main context. Leave ssParked at 0: there is no task to unpark, and claiming
         // would try to unpark a null one.
         if !schedulerExists() {
-            // No scheduler means no arm can ever fire — polling would spin forever.
+            // No scheduler to drive and no task to unpark, so the only thing that can fire
+            // an arm is a foreign pthread claiming a channel (Promise.blocking with no
+            // green task anywhere). Block on the condvar it signals — the third tier of the
+            // same ladder channels use. Note fd and timer arms cannot fire here at all:
+            // they need the event loop, and Select.wait refuses that combination up front
+            // rather than blocking on a wake that can never come.
+            pthread_cond_wait(_rtReadPtr(st, ssCond()), m)
             pthread_mutex_unlock(m)
-            return -1
+            continue
         }
         pthread_mutex_unlock(m)
         _schedulerPollMain()
