@@ -484,7 +484,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     var boundAddr = makeZeroedSockaddr()
     var boundLen: u32 = SIZEOF_SOCKADDR_IN
     getsockname(sock.fd, boundAddr, boundLen)
-    let actualPort = ntohs(boundAddr.sinPort)
+    let actualPort = ntohs(boundAddr.sin_port)
 
     print($"listening on http://localhost:{actualPort}")
 
@@ -647,7 +647,7 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
     var boundAddr = makeZeroedSockaddr()
     var boundLen: u32 = SIZEOF_SOCKADDR_IN
     getsockname(sock.fd, boundAddr, boundLen)
-    let actualPort = ntohs(boundAddr.sinPort)
+    let actualPort = ntohs(boundAddr.sin_port)
     print($"listening on http://localhost:{actualPort}")
 
     while true {

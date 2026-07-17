@@ -80,7 +80,7 @@ fn main(): i32 {
     var boundAddr = makeZeroedSockaddr()
     var boundLen: u32 = 16
     getsockname(serverFd, boundAddr, boundLen)
-    let port = ntohs(boundAddr.sinPort)
+    let port = ntohs(boundAddr.sin_port)
 
     setNonblocking(serverFd)
     print("server ready")

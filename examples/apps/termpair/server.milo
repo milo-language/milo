@@ -584,7 +584,7 @@ fn main(): i32 {
     var boundAddr = makeZeroedSockaddr()
     var boundLen: u32 = SIZEOF_SOCKADDR_IN
     getsockname(rawFd, boundAddr, boundLen)
-    let actualPort = ntohs(boundAddr.sinPort)
+    let actualPort = ntohs(boundAddr.sin_port)
 
     print($"termpair server listening on http://localhost:{actualPort}")
     flush()

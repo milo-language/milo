@@ -4,27 +4,30 @@ from "std/os" import {
     htons
 }
 
-struct SockAddrIn {
-    sinFamily: u16,
-    sinPort: u16,
-    sinAddr: u32,
-    sinZero: [u8; 8],
+// C's spelling, not Milo camelCase — @cLayout emits offsetof() with the name verbatim.
+// No sin_len here (that is darwin/BSD); family is u16. Verified against the real header.
+@cLayout("struct sockaddr_in", "netinet/in.h")
+extern struct SockAddrIn {
+    sin_family: u16,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
 }
 
 fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     unsafe {
         return SockAddrIn {
-            sinFamily: 2 as u16,
-            sinPort: htons(port),
-            sinAddr: addr,
-            sinZero: [0; 8],
+            sin_family: 2 as u16,
+            sin_port: htons(port),
+            sin_addr: addr,
+            sin_zero: [0; 8],
         }
     }
 }
 
 fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
-        sinFamily: 0 as u16, sinPort: 0, sinAddr: 0, sinZero: [0; 8],
+        sin_family: 0 as u16, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
     }
 }
 

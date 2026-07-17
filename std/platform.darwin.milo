@@ -4,27 +4,33 @@ from "std/os" import {
     htons
 }
 
-struct SockAddrIn {
-    sinLen: u8,
-    sinFamily: u8,
-    sinPort: u16,
-    sinAddr: u32,
-    sinZero: [u8; 8],
+// Fields carry C's spelling, not Milo camelCase: @cLayout emits
+// `offsetof(struct sockaddr_in, <field>)` with the name verbatim, so `sinLen` would not
+// compile. Timespec in tests/fixtures/cLayout.milo sets the same precedent (tv_sec).
+// Verified against the real header at build time — this layout was an unchecked claim
+// about C until now, which is what the socket layer rests on.
+@cLayout("struct sockaddr_in", "netinet/in.h")
+extern struct SockAddrIn {
+    sin_len: u8,
+    sin_family: u8,
+    sin_port: u16,
+    sin_addr: u32,
+    sin_zero: [u8; 8],
 }
 
 fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     return SockAddrIn {
-        sinLen: 16 as u8,
-        sinFamily: 2 as u8,
-        sinPort: htons(port),
-        sinAddr: addr,
-        sinZero: [0; 8],
+        sin_len: 16 as u8,
+        sin_family: 2 as u8,
+        sin_port: htons(port),
+        sin_addr: addr,
+        sin_zero: [0; 8],
     }
 }
 
 fn makeZeroedSockaddr(): SockAddrIn {
     return SockAddrIn {
-        sinLen: 0, sinFamily: 0, sinPort: 0, sinAddr: 0, sinZero: [0; 8],
+        sin_len: 0, sin_family: 0, sin_port: 0, sin_addr: 0, sin_zero: [0; 8],
     }
 }
 
