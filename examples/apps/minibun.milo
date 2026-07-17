@@ -210,13 +210,36 @@ fn moduleBootstrap(): string {
     "    if(src===undefined) throw new Error('Cannot read module ' + filename);\n" +
     "    if(filename.slice(-5)==='.json'){ module.exports=JSON.parse(src); module.loaded=true; return module.exports; }\n" +
     "    var dir=dirname(filename);\n" +
-    "    var req=function(r){ return loadModule(resolve(dir,r)); };\n" +
+    "    var req=function(r){ var nr = r.slice(0,5)==='node:' ? r.slice(5) : r; if(builtins.hasOwnProperty(nr)) return builtins[nr]; return loadModule(resolve(dir,r)); };\n" +
     "    req.resolve=function(r){ return resolve(dir,r); };\n" +
     "    var fn=new Function('exports','require','module','__filename','__dirname', src);\n" +
     "    fn.call(module.exports, module.exports, req, module, filename, dir);\n" +
     "    module.loaded=true;\n" +
     "    return module.exports;\n" +
     "  }\n" +
+    "  function EventEmitter(){ this._ev={}; }\n" +
+    "  EventEmitter.prototype.on=function(t,f){ (this._ev[t]||(this._ev[t]=[])).push(f); return this; };\n" +
+    "  EventEmitter.prototype.addListener=EventEmitter.prototype.on;\n" +
+    "  EventEmitter.prototype.prependListener=function(t,f){ (this._ev[t]||(this._ev[t]=[])).unshift(f); return this; };\n" +
+    "  EventEmitter.prototype.once=function(t,f){ var s=this; function g(){ s.removeListener(t,g); return f.apply(this,arguments); } g.listener=f; return s.on(t,g); };\n" +
+    "  EventEmitter.prototype.removeListener=function(t,f){ var a=this._ev[t]; if(a){ var i=a.indexOf(f); if(i>=0) a.splice(i,1); } return this; };\n" +
+    "  EventEmitter.prototype.off=EventEmitter.prototype.removeListener;\n" +
+    "  EventEmitter.prototype.removeAllListeners=function(t){ if(t) delete this._ev[t]; else this._ev={}; return this; };\n" +
+    "  EventEmitter.prototype.emit=function(t){ var a=this._ev[t]; var args=Array.prototype.slice.call(arguments,1); if(!a||!a.length){ if(t==='error') throw (args[0]||new Error('Unhandled error event')); return false; } var cp=a.slice(); for(var i=0;i<cp.length;i++) cp[i].apply(this,args); return true; };\n" +
+    "  EventEmitter.prototype.listeners=function(t){ return (this._ev[t]||[]).slice(); };\n" +
+    "  EventEmitter.prototype.listenerCount=function(t){ return (this._ev[t]||[]).length; };\n" +
+    "  EventEmitter.prototype.setMaxListeners=function(){ return this; };\n" +
+    "  EventEmitter.prototype.getMaxListeners=function(){ return 10; };\n" +
+    "  EventEmitter.EventEmitter=EventEmitter; EventEmitter.defaultMaxListeners=10;\n" +
+    "  var pathMod={ sep:'/', delimiter:':', dirname:dirname, normalize:normalize, join:function(){ return normalize(Array.prototype.slice.call(arguments).join('/')); }, basename:function(p,ext){ var b=p.slice(p.lastIndexOf('/')+1); if(ext&&b.length>=ext.length&&b.slice(-ext.length)===ext) b=b.slice(0,b.length-ext.length); return b; }, extname:function(p){ var b=p.slice(p.lastIndexOf('/')+1); var i=b.lastIndexOf('.'); return i>0?b.slice(i):''; }, isAbsolute:function(p){ return p.charAt(0)==='/'; }, resolve:function(){ var r=''; for(var i=0;i<arguments.length;i++){ var a=arguments[i]; if(!a) continue; r=(a.charAt(0)==='/')?a:(r?r+'/'+a:a); } if(r.charAt(0)!=='/') r='/'+r; return normalize(r); }, parse:function(p){ var d=dirname(p); var b=p.slice(p.lastIndexOf('/')+1); var i=b.lastIndexOf('.'); return { root:'/', dir:d, base:b, ext:i>0?b.slice(i):'', name:i>0?b.slice(0,i):b }; } };\n" +
+    "  function inherits(c,s){ c.super_=s; c.prototype=Object.create(s.prototype); c.prototype.constructor=c; }\n" +
+    "  var utilMod={ inherits:inherits, inspect:function(o){ try{ return typeof o==='string'?o:JSON.stringify(o); }catch(e){ return String(o); } }, format:function(){ var a=Array.prototype.slice.call(arguments); if(typeof a[0]!=='string') return a.map(function(x){ return typeof x==='string'?x:JSON.stringify(x); }).join(' '); var f=a.shift(); var i=0; var s=f.replace(/%[sdj%]/g,function(m){ if(m==='%%')return '%'; if(i>=a.length)return m; var x=a[i++]; if(m==='%d')return Number(x); if(m==='%j')return JSON.stringify(x); return String(x); }); for(;i<a.length;i++) s+=' '+(typeof a[i]==='string'?a[i]:JSON.stringify(a[i])); return s; }, isArray:Array.isArray, isBuffer:function(){ return false; }, promisify:function(fn){ return function(){ var args=Array.prototype.slice.call(arguments); var self=this; return new Promise(function(res,rej){ args.push(function(err,v){ if(err) rej(err); else res(v); }); fn.apply(self,args); }); }; }, deprecate:function(fn){ return fn; }, types:{ isDate:function(x){ return x instanceof Date; } } };\n" +
+    "  function assertFn(v,m){ if(!v) throw new Error(m||'AssertionError'); }\n" +
+    "  assertFn.ok=assertFn; assertFn.equal=function(a,b,m){ if(a!=b) throw new Error(m||(a+' != '+b)); }; assertFn.notEqual=function(a,b,m){ if(a==b) throw new Error(m||'notEqual'); }; assertFn.strictEqual=function(a,b,m){ if(a!==b) throw new Error(m||(a+' !== '+b)); }; assertFn.deepEqual=function(){}; assertFn.deepStrictEqual=function(){}; assertFn.fail=function(m){ throw new Error(m||'fail'); };\n" +
+    "  var builtins={ events:EventEmitter, path:pathMod, util:utilMod, assert:assertFn };\n" +
+    "  if(!globalThis.global) globalThis.global=globalThis;\n" +
+    "  if(!globalThis.process){ globalThis.process={ env:{}, argv:['minibun', __entryPath], platform:'darwin', arch:'arm64', version:'v18.0.0', versions:{node:'18.0.0'}, pid:1, title:'minibun', cwd:function(){ return dirname(__entryPath); }, nextTick:function(f){ var a=Array.prototype.slice.call(arguments,1); Promise.resolve().then(function(){ f.apply(null,a); }); }, on:function(){ return this; }, once:function(){ return this; }, emit:function(){ return false; }, exit:function(){}, hrtime:function(t){ return [0,0]; }, stdout:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } }, stderr:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } } }; }\n" +
+    "  if(!globalThis.setTimeout){ globalThis.setTimeout=function(f,ms){ return 0; }; globalThis.clearTimeout=function(){}; globalThis.setInterval=function(){ return 0; }; globalThis.clearInterval=function(){}; globalThis.setImmediate=function(f){ Promise.resolve().then(f); return 0; }; globalThis.clearImmediate=function(){}; }\n" +
     "  globalThis.__runEntry=function(entry){ return loadModule(entry); };\n" +
     "})();\n"
 }

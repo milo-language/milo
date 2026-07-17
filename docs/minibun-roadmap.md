@@ -32,12 +32,17 @@ relative + nested + JSON `require`, both `exports.x` and `module.exports=` style
 The tahoeroads backend now advances past `exports`/`require` to `Cannot find module events`
 (a builtin — M2/M5). Circular requires handled (partial-exports via pre-cache).
 
-### M2 — global scaffolding
-- `process` (`.env`, `.argv`, `.platform`, `.cwd()`, `.nextTick`), `globalThis`, `queueMicrotask`.
-- `process.env` ⟶ Milo env read; `.argv` ⟶ `args()`.
-- **Wall:** `Buffer` is Node's own API, not JSC's typed arrays — defer the full surface; stub
-  `Buffer.from`/`.toString` first.
-- Effort: **1 session.** A lot of npm code trips here before it trips on anything hard.
+### M2 — global scaffolding + builtin-module registry ✅ (partial)
+Shipped: a `builtins` registry in the bootstrap (`require('events'/'path'/'util'/'assert')`,
+`node:` prefix handled), all pure JS. `EventEmitter` (on/once/emit/removeListener/…), `path`
+(join/dirname/basename/extname/resolve/parse), `util` (format/inherits/promisify/inspect),
+`assert`. Globals: `process` (env/argv/platform/cwd/nextTick/stdout.write), `global`, timer
+stubs. Verified against a local builtins test; the tahoeroads backend now clears `events`.
+**Next wall it hit:** `Error.captureStackTrace`/`prepareStackTrace` + V8 CallSite API
+(`callSite.getFileName`) — a dependency uses V8-only stack introspection JSC lacks. Needs a
+CallSite shim (M2.5, compat-tail).
+- **Deferred:** real `process.env` (needs a `__getenv` native), `Buffer` (Node's own API,
+  not JSC typed arrays — stub `from`/`toString` first), `queueMicrotask`.
 
 ### M3 — the event loop (the showcase)
 - `setTimeout`/`setInterval`/`clearTimeout`/`setImmediate`, and **draining** — after top-level
