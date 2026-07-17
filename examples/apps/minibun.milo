@@ -6,9 +6,14 @@
 // is for deep JSC integration; the public embedding API JSC exposes is plain C, which is
 // exactly the seam Milo's FFI is built for.
 //
-// Roadmap: docs/minibun-roadmap.md. Current: M1 (CommonJS modules) — runs any dep-free
-// CJS bundle. The module system (require/cache/resolution) lives in a JS bootstrap over
-// two thin Milo natives (__readFileSync, __fileExists); everything else is Milo.
+// Roadmap: docs/minibun-roadmap.md. Working: CommonJS modules (require/cache/resolution),
+// a builtin-module registry (events/path/util/assert/fs/os/http/net/stream/crypto/… — pure
+// JS over a few thin Milo natives), process/global scaffolding, and an HTTP server whose
+// accept loop is Milo and whose request/response semantics are JS.
+//
+// KNOWN LIMITATION: the server handles ONE request then stops — std/net's TcpListener.accept()
+// returns fd 0 on the second call in a plain accept loop (isolated bug, ~15-line repro, tracked
+// in docs/minibun-roadmap.md). Single-request serving is correct end to end.
 //
 // Build + run (macOS):
 //   milo run examples/apps/minibun.milo -- entry.js      (JSC auto-linked by detectLibs)
@@ -21,6 +26,9 @@ from "std/io" import {
 }
 from "std/fs" import {
     isFile
+}
+from "std/net" import {
+    TcpListener
 }
 from "std/args" import {
     args
@@ -60,6 +68,12 @@ extern fn JSObjectMakeFunctionWithCallback(ctx: *u8, name: *u8, callAsFunction: 
 extern fn JSObjectMake(ctx: *u8, jsClass: *u8, data: *u8): *u8
 
 extern fn JSObjectSetProperty(ctx: *u8, object: *u8, propertyName: *u8, value: *u8, attributes: u32, exception: *u8): void
+
+extern fn JSObjectCallAsFunction(ctx: *u8, object: *u8, thisObject: *u8, argumentCount: i64, arguments: *u8, exception: *u8): *u8
+
+extern fn JSValueToNumber(ctx: *u8, value: *u8, exception: *u8): f64
+
+extern fn JSValueProtect(ctx: *u8, value: *u8): void
 
 // Read a pointer out of a C array of pointers (the callback's `arguments[]`).
 fn loadPtr(p: *u8): *u8 {
@@ -147,6 +161,58 @@ fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, a
     }
 }
 
+// __httpServe(port, handler) — bind/listen, then loop: accept a connection, read the raw
+// request, hand it to the JS handler (which parses it and returns a raw HTTP response
+// string), send that, close. Blocks forever — a running server. Each connection is served
+// on this scheduler; the accept loop is Milo, the HTTP semantics are JS.
+fn nativeHttpServe(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 2 {
+            return JSValueMakeBoolean(ctx, false)
+        }
+        let portV = loadPtr(arguments)
+        let handler = loadPtr((arguments as i64 + 8) as *u8)
+        let port = (JSValueToNumber(ctx, portV, 0 as *u8)) as u16
+        let lr = TcpListener.bind(port)
+        match lr {
+            Result.Err(_e) => {
+                return JSValueMakeBoolean(ctx, false)
+            }
+            Result.Ok(listener) => {
+                // The handler is a bare JSValueRef; the accept() below blocks for seconds
+                // between requests, long enough for JSC's GC to collect it. Pin it.
+                JSValueProtect(ctx, handler)
+                while true {
+                    let ar = listener.accept()
+                    match ar {
+                        Result.Err(_e2) => {
+                        }
+                        Result.Ok(stream) => {
+                            // Everything via stream methods + natural Drop (no take/rawFd,
+                            // no raw read/write, no manual close) — that is the only fd path
+                            // that survives a second accept in this loop.
+                            let reqText = stream.recvOnce()
+                            let reqVal = jsString(ctx, reqText)
+                            let argArr = malloc(8)
+                            var rv = reqVal
+                            memcpy(argArr, (rv.addrOf()) as *u8, 8)
+                            var exc2: *u8 = 0 as *u8
+                            let respVal = JSObjectCallAsFunction(ctx, handler, 0 as *u8, 1, argArr, (exc2.addrOf()) as *u8)
+                            free(argArr)
+                            var respText = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            if exc2 as i64 == 0 {
+                                respText = jsToString(ctx, respVal)
+                            }
+                            let _ = stream.send(respText)
+                        }
+                    }
+                }
+                return JSValueMakeBoolean(ctx, true)
+            }
+        }
+    }
+}
+
 // Bind a native callback as a global function `name`.
 fn setGlobalFn(ctx: *u8, global: *u8, name: string, cb: *u8): void {
     unsafe {
@@ -197,7 +263,7 @@ fn moduleBootstrap(): string {
     "  function resolve(fromDir, req){\n" +
     "    var base;\n" +
     "    if(req.charAt(0)==='/'){ base=normalize(req); }\n" +
-    "    else if(req.charAt(0)==='.'){ base=join(fromDir,req); }\n" +
+    "    else if(req.slice(0,2)==='./' || req.slice(0,3)==='../' || req==='.' || req==='..'){ base=join(fromDir,req); }\n" +
     "    else { var dir=fromDir; while(true){ var c=tryFile(join(dir,'node_modules/'+req)); if(c) return c; var par=dirname(dir); if(par===dir) break; dir=par; } throw new Error('Cannot find module ' + req); }\n" +
     "    var f=tryFile(base); if(f) return f;\n" +
     "    throw new Error('Cannot find module ' + req);\n" +
@@ -211,8 +277,8 @@ fn moduleBootstrap(): string {
     "    if(filename.slice(-5)==='.json'){ module.exports=JSON.parse(src); module.loaded=true; return module.exports; }\n" +
     "    var dir=dirname(filename);\n" +
     "    var req=function(r){ var nr = r.slice(0,5)==='node:' ? r.slice(5) : r; if(builtins.hasOwnProperty(nr)) return builtins[nr]; return loadModule(resolve(dir,r)); };\n" +
-    "    req.resolve=function(r){ return resolve(dir,r); };\n" +
-    "    var fn=new Function('exports','require','module','__filename','__dirname', src);\n" +
+    "    req.resolve=function(r){ return resolve(dir,r); }; req.cache=cache; req.main=undefined; module.require=req;\n" +
+    "    var fn=new Function('exports','require','module','__filename','__dirname', src + '\\n//# sourceURL=' + filename);\n" +
     "    fn.call(module.exports, module.exports, req, module, filename, dir);\n" +
     "    module.loaded=true;\n" +
     "    return module.exports;\n" +
@@ -232,7 +298,7 @@ fn moduleBootstrap(): string {
     "  EventEmitter.prototype.getMaxListeners=function(){ return 10; };\n" +
     "  EventEmitter.EventEmitter=EventEmitter; EventEmitter.defaultMaxListeners=10;\n" +
     "  var pathMod={ sep:'/', delimiter:':', dirname:dirname, normalize:normalize, join:function(){ return normalize(Array.prototype.slice.call(arguments).join('/')); }, basename:function(p,ext){ var b=p.slice(p.lastIndexOf('/')+1); if(ext&&b.length>=ext.length&&b.slice(-ext.length)===ext) b=b.slice(0,b.length-ext.length); return b; }, extname:function(p){ var b=p.slice(p.lastIndexOf('/')+1); var i=b.lastIndexOf('.'); return i>0?b.slice(i):''; }, isAbsolute:function(p){ return p.charAt(0)==='/'; }, resolve:function(){ var r=''; for(var i=0;i<arguments.length;i++){ var a=arguments[i]; if(!a) continue; r=(a.charAt(0)==='/')?a:(r?r+'/'+a:a); } if(r.charAt(0)!=='/') r='/'+r; return normalize(r); }, parse:function(p){ var d=dirname(p); var b=p.slice(p.lastIndexOf('/')+1); var i=b.lastIndexOf('.'); return { root:'/', dir:d, base:b, ext:i>0?b.slice(i):'', name:i>0?b.slice(0,i):b }; } };\n" +
-    "  function inherits(c,s){ c.super_=s; c.prototype=Object.create(s.prototype); c.prototype.constructor=c; }\n" +
+    "  function inherits(c,s){ var proto=(s&&(typeof s==='function'||typeof s==='object')&&s.prototype)?s.prototype:Object.prototype; if(!s||!s.prototype) console.log('[minibun] inherits: super has no prototype (typeof '+typeof s+'), using Object.prototype'); c.super_=s; c.prototype=Object.create(proto); c.prototype.constructor=c; }\n" +
     "  var utilMod={ inherits:inherits, inspect:function(o){ try{ return typeof o==='string'?o:JSON.stringify(o); }catch(e){ return String(o); } }, format:function(){ var a=Array.prototype.slice.call(arguments); if(typeof a[0]!=='string') return a.map(function(x){ return typeof x==='string'?x:JSON.stringify(x); }).join(' '); var f=a.shift(); var i=0; var s=f.replace(/%[sdj%]/g,function(m){ if(m==='%%')return '%'; if(i>=a.length)return m; var x=a[i++]; if(m==='%d')return Number(x); if(m==='%j')return JSON.stringify(x); return String(x); }); for(;i<a.length;i++) s+=' '+(typeof a[i]==='string'?a[i]:JSON.stringify(a[i])); return s; }, isArray:Array.isArray, isBuffer:function(){ return false; }, promisify:function(fn){ return function(){ var args=Array.prototype.slice.call(arguments); var self=this; return new Promise(function(res,rej){ args.push(function(err,v){ if(err) rej(err); else res(v); }); fn.apply(self,args); }); }; }, deprecate:function(fn){ return fn; }, types:{ isDate:function(x){ return x instanceof Date; } } };\n" +
     "  function assertFn(v,m){ if(!v) throw new Error(m||'AssertionError'); }\n" +
     "  assertFn.ok=assertFn; assertFn.equal=function(a,b,m){ if(a!=b) throw new Error(m||(a+' != '+b)); }; assertFn.notEqual=function(a,b,m){ if(a==b) throw new Error(m||'notEqual'); }; assertFn.strictEqual=function(a,b,m){ if(a!==b) throw new Error(m||(a+' !== '+b)); }; assertFn.deepEqual=function(){}; assertFn.deepStrictEqual=function(){}; assertFn.fail=function(m){ throw new Error(m||'fail'); };\n" +
@@ -249,9 +315,43 @@ fn moduleBootstrap(): string {
     "  var sdMod={ StringDecoder:StringDecoder };\n" +
     "  var cryptoMod={ randomBytes:function(n){ var a=[]; for(var i=0;i<n;i++) a.push(Math.floor(Math.random()*256)); return (globalThis.Buffer&&globalThis.Buffer.from)?globalThis.Buffer.from(a):a; }, randomUUID:function(){ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){ var r=Math.random()*16|0; var v=c==='x'?r:(r&0x3|0x8); return v.toString(16); }); }, createHash:function(){ var d=''; return { update:function(x){ d+=String(x); return this; }, digest:function(){ return d; } }; }, createHmac:function(){ var d=''; return { update:function(x){ d+=String(x); return this; }, digest:function(){ return d; } }; }, pbkdf2Sync:function(){ return ''; }, timingSafeEqual:function(a,b){ return String(a)===String(b); } };\n" +
     "  var zlibMod={ createGzip:function(){ return {}; }, createDeflate:function(){ return {}; }, gzipSync:function(x){ return x; }, gunzipSync:function(x){ return x; } };\n" +
-    "  var builtins={ events:EventEmitter, path:pathMod, util:utilMod, assert:assertFn, fs:fsMod, os:osMod, tty:ttyMod, url:urlMod, querystring:qsMod, string_decoder:sdMod, crypto:cryptoMod, zlib:zlibMod, callsites:__parseCallSites, depd:__depd };\n" +
+    "  function __statusText(c){ var m={200:'OK',201:'Created',202:'Accepted',204:'No Content',301:'Moved Permanently',302:'Found',303:'See Other',304:'Not Modified',307:'Temporary Redirect',308:'Permanent Redirect',400:'Bad Request',401:'Unauthorized',403:'Forbidden',404:'Not Found',405:'Method Not Allowed',409:'Conflict',422:'Unprocessable Entity',429:'Too Many Requests',500:'Internal Server Error',502:'Bad Gateway',503:'Service Unavailable'}; return m[c]||'OK'; }\n" +
+    "  function __byteLen(s){ try{ return unescape(encodeURIComponent(s)).length; }catch(e){ return String(s).length; } }\n" +
+    "  function Readable(){ EventEmitter.call(this); } inherits(Readable, EventEmitter); Readable.prototype.pipe=function(d){ return d; }; Readable.prototype.read=function(){ return null; }; Readable.prototype.setEncoding=function(){ return this; }; Readable.prototype.resume=function(){ return this; }; Readable.prototype.pause=function(){ return this; }; Readable.prototype.unpipe=function(){ return this; };\n" +
+    "  function Writable(){ EventEmitter.call(this); } inherits(Writable, EventEmitter); Writable.prototype.write=function(){ return true; }; Writable.prototype.end=function(){ return this; };\n" +
+    "  function Duplex(){ Readable.call(this); } inherits(Duplex, Readable); Duplex.prototype.write=function(){ return true; }; Duplex.prototype.end=function(){ return this; };\n" +
+    "  function Transform(){ Duplex.call(this); } inherits(Transform, Duplex);\n" +
+    "  function PassThrough(){ Transform.call(this); } inherits(PassThrough, Transform);\n" +
+    "  var streamMod={ Readable:Readable, Writable:Writable, Duplex:Duplex, Transform:Transform, PassThrough:PassThrough, Stream:Readable };\n" +
+    "  function parseRequest(text){ var idx=text.indexOf('\\r\\n\\r\\n'); var headPart=idx>=0?text.slice(0,idx):text; var body=idx>=0?text.slice(idx+4):''; var lines=headPart.split('\\r\\n'); var first=(lines[0]||'').split(' '); var method=first[0]||'GET'; var url=first[1]||'/'; var headers={}; for(var i=1;i<lines.length;i++){ var c=lines[i].indexOf(':'); if(c>0) headers[lines[i].slice(0,c).trim().toLowerCase()]=lines[i].slice(c+1).trim(); } var req=new Readable(); req.method=method; req.url=url; req.originalUrl=url; req.headers=headers; req.rawHeaders=[]; req.httpVersion='1.1'; req.body=body; req.socket={ remoteAddress:'127.0.0.1', remotePort:0, encrypted:false }; req.connection=req.socket; req.on=function(ev,cb){ if(ev==='data'&&body) cb(body); if(ev==='end') cb(); return this; }; req.setTimeout=function(){ return this; }; return req; }\n" +
+    "  function ServerResponse(){ this.statusCode=200; this.statusMessage=''; this.headers={}; this._body=''; this._finished=false; this.headersSent=false; this.locals={}; }\n" +
+    "  ServerResponse.prototype.setHeader=function(k,v){ this.headers[String(k).toLowerCase()]=v; return this; };\n" +
+    "  ServerResponse.prototype.getHeader=function(k){ return this.headers[String(k).toLowerCase()]; };\n" +
+    "  ServerResponse.prototype.removeHeader=function(k){ delete this.headers[String(k).toLowerCase()]; };\n" +
+    "  ServerResponse.prototype.hasHeader=function(k){ return this.headers[String(k).toLowerCase()]!==undefined; };\n" +
+    "  ServerResponse.prototype.getHeaders=function(){ return this.headers; };\n" +
+    "  ServerResponse.prototype.writeHead=function(code,a,b){ this.statusCode=code; var h=(a&&typeof a==='object')?a:((b&&typeof b==='object')?b:null); if(typeof a==='string') this.statusMessage=a; if(h) for(var k in h) this.setHeader(k,h[k]); this.headersSent=true; return this; };\n" +
+    "  ServerResponse.prototype.write=function(chunk){ if(chunk!=null) this._body+=(chunk.toString?chunk.toString():String(chunk)); return true; };\n" +
+    "  ServerResponse.prototype.end=function(chunk){ if(chunk!=null) this.write(chunk); this._finished=true; if(this._onfinish) this._onfinish(); return this; };\n" +
+    "  ServerResponse.prototype.on=function(ev,cb){ if(ev==='finish') this._onfinish=cb; return this; };\n" +
+    "  ServerResponse.prototype.once=ServerResponse.prototype.on; ServerResponse.prototype.emit=function(){ return false; };\n" +
+    "  ServerResponse.prototype._raw=function(){ var st=this.statusCode; var h=this.headers; if(h['content-type']===undefined) h['content-type']='text/plain'; h['content-length']=String(__byteLen(this._body)); h['connection']='close'; var out='HTTP/1.1 '+st+' '+__statusText(st)+'\\r\\n'; for(var k in h){ if(h.hasOwnProperty(k)) out+=k+': '+h[k]+'\\r\\n'; } out+='\\r\\n'+this._body; return out; };\n" +
+    "  function createServer(a,b){ var handler=(typeof a==='function')?a:b; var srv=new EventEmitter(); srv._handler=handler; srv.on=function(ev,cb){ if(ev==='request') srv._handler=cb; return EventEmitter.prototype.on.call(this,ev,cb); }; srv.address=function(){ return { port:srv._port, address:'0.0.0.0', family:'IPv4' }; }; srv.setTimeout=function(){ return this; }; srv.close=function(cb){ if(cb) cb(); return this; }; srv.listen=function(port,a2,b2){ if(port&&typeof port==='object') port=port.port; srv._port=port; var cb=(typeof a2==='function')?a2:((typeof b2==='function')?b2:null); if(cb) cb(); EventEmitter.prototype.emit.call(srv,'listening'); __httpServe(port|0, function(reqText){ var req=parseRequest(reqText); var res=new ServerResponse(); try{ srv._handler(req,res); }catch(e){ res.statusCode=500; res._body=String(e&&e.stack||e); } return res._raw(); }); return srv; }; return srv; }\n" +
+    "  var httpMod={ createServer:createServer, Server:function(){ return createServer(); }, STATUS_CODES:{}, METHODS:['GET','POST','PUT','DELETE','HEAD','OPTIONS','PATCH'], IncomingMessage:Readable, ServerResponse:ServerResponse, globalAgent:{}, Agent:function(){} };\n" +
+    "  var netMod={ createServer:function(){ var s=new EventEmitter(); s.listen=function(p,cb){ if(typeof p==='function') cb=p; if(typeof cb==='function') cb(); return this; }; s.close=function(cb){ if(cb) cb(); return this; }; s.address=function(){ return { port:0 }; }; return s; }, Socket:function(){ return new EventEmitter(); }, connect:function(){ return new EventEmitter(); }, isIP:function(){ return 0; }, isIPv4:function(){ return false; }, isIPv6:function(){ return false; } };\n" +
+    "  var cpMod={ spawn:function(){ var e=new EventEmitter(); e.stdout=new EventEmitter(); e.stderr=new EventEmitter(); e.stdin={ write:function(){}, end:function(){} }; e.kill=function(){}; e.pid=0; return e; }, exec:function(c,o,cb){ if(typeof o==='function') cb=o; if(cb) Promise.resolve().then(function(){ cb(null,'',''); }); return new EventEmitter(); }, execSync:function(){ return ''; }, execFile:function(f,a,o,cb){ cb=(typeof o==='function')?o:cb; if(typeof cb==='function') Promise.resolve().then(function(){ cb(null,'',''); }); return new EventEmitter(); }, fork:function(){ return new EventEmitter(); }, spawnSync:function(){ return { status:0, stdout:'', stderr:'', pid:0 }; } };\n" +
+    "  var dnsMod={ lookup:function(h,o,cb){ cb=(typeof o==='function')?o:cb; if(typeof cb==='function') Promise.resolve().then(function(){ cb(null,'127.0.0.1',4); }); }, resolve:function(h,cb){ if(typeof cb==='function') cb(null,[]); }, promises:{ lookup:function(){ return Promise.resolve({ address:'127.0.0.1', family:4 }); } } };\n" +
+    "  var vmMod={ runInThisContext:function(code){ return (0,eval)(code); }, runInNewContext:function(code){ return (0,eval)(code); }, createContext:function(o){ return o||{}; }, Script:function(code){ this.runInThisContext=function(){ return (0,eval)(code); }; this.runInNewContext=function(){ return (0,eval)(code); }; } };\n" +
+    "  var perfMod={ performance:{ now:function(){ return 0; }, timeOrigin:0 }, PerformanceObserver:function(){ return { observe:function(){}, disconnect:function(){} }; } };\n" +
+    "  function AsyncLocalStorage(){ this.getStore=function(){ return undefined; }; this.run=function(s,cb){ return cb(); }; this.enterWith=function(){}; this.exit=function(cb){ return cb(); }; }\n" +
+    "  var asyncHooksMod={ createHook:function(){ return { enable:function(){ return this; }, disable:function(){ return this; } }; }, executionAsyncId:function(){ return 0; }, triggerAsyncId:function(){ return 0; }, AsyncLocalStorage:AsyncLocalStorage, AsyncResource:function(){ this.runInAsyncScope=function(fn,t){ return fn.apply(t, Array.prototype.slice.call(arguments,2)); }; } };\n" +
+    "  var moduleMod={ createRequire:function(){ return function(r){ throw new Error('createRequire not supported: '+r); }; }, _cache:{}, builtinModules:[] };\n" +
+    "  var timersMod={ setTimeout:function(){ return globalThis.setTimeout.apply(null,arguments); }, clearTimeout:function(){ return globalThis.clearTimeout.apply(null,arguments); }, setInterval:function(){ return globalThis.setInterval.apply(null,arguments); }, clearInterval:function(){ return globalThis.clearInterval.apply(null,arguments); }, setImmediate:function(){ return globalThis.setImmediate.apply(null,arguments); } };\n" +
+    "  var builtins={ events:EventEmitter, path:pathMod, util:utilMod, assert:assertFn, fs:fsMod, os:osMod, tty:ttyMod, url:urlMod, querystring:qsMod, string_decoder:sdMod, crypto:cryptoMod, zlib:zlibMod, stream:streamMod, http:httpMod, https:httpMod, net:netMod, child_process:cpMod, dns:dnsMod, vm:vmMod, perf_hooks:perfMod, async_hooks:asyncHooksMod, module:moduleMod, timers:timersMod, callsites:__parseCallSites, depd:__depd };\n" +
+    "  builtins['fs/promises']=fsMod.promises; builtins['node:fs/promises']=fsMod.promises;\n" +
     "  if(!globalThis.global) globalThis.global=globalThis;\n" +
     "  if(!globalThis.Buffer){ function Buffer2(){} Buffer2.from=function(x){ if(typeof x==='string'){ var a=[]; for(var i=0;i<x.length;i++) a.push(x.charCodeAt(i)&0xff); a._str=x; a.toString=function(){ return this._str; }; return a; } if(Array.isArray(x)){ x.toString=function(){ var s=''; for(var i=0;i<this.length;i++) s+=String.fromCharCode(this[i]); return s; }; return x; } return x; }; Buffer2.alloc=function(n,f){ var a=[]; for(var i=0;i<n;i++) a.push(f||0); a._str=''; a.toString=function(){ return this._str; }; return a; }; Buffer2.isBuffer=function(x){ return Array.isArray(x)&&x._str!==undefined; }; Buffer2.concat=function(list){ var s=''; for(var i=0;i<list.length;i++) s+=(list[i]&&list[i].toString?list[i].toString():''); return Buffer2.from(s); }; Buffer2.byteLength=function(s){ return String(s).length; }; globalThis.Buffer=Buffer2; }\n" +
+    "  builtins.buffer={ Buffer:globalThis.Buffer, kMaxLength:2147483647, constants:{ MAX_LENGTH:2147483647 }, SlowBuffer:globalThis.Buffer, INSPECT_MAX_BYTES:50 };\n" +
     "  if(!globalThis.process){ globalThis.process={ env:{}, argv:['minibun', __entryPath], platform:'darwin', arch:'arm64', version:'v18.0.0', versions:{node:'18.0.0'}, pid:1, title:'minibun', cwd:function(){ return dirname(__entryPath); }, nextTick:function(f){ var a=Array.prototype.slice.call(arguments,1); Promise.resolve().then(function(){ f.apply(null,a); }); }, on:function(){ return this; }, once:function(){ return this; }, emit:function(){ return false; }, exit:function(){}, hrtime:function(t){ return [0,0]; }, stdout:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } }, stderr:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } } }; }\n" +
     "  if(!globalThis.setTimeout){ globalThis.setTimeout=function(f,ms){ return 0; }; globalThis.clearTimeout=function(){}; globalThis.setInterval=function(){ return 0; }; globalThis.clearInterval=function(){}; globalThis.setImmediate=function(f){ Promise.resolve().then(f); return 0; }; globalThis.clearImmediate=function(){}; }\n" +
     "  globalThis.__runEntry=function(entry){ return loadModule(entry); };\n" +
@@ -290,6 +390,7 @@ fn main(): i32 {
         installConsole(ctx, global)
         setGlobalFn(ctx, global, "__readFileSync", nativeReadFileSync as *u8)
         setGlobalFn(ctx, global, "__fileExists", nativeFileExists as *u8)
+        setGlobalFn(ctx, global, "__httpServe", nativeHttpServe as *u8)
 
         // Hand the entry path to the bootstrap as a global, avoiding string-quoting in a
         // constructed launcher.
@@ -299,7 +400,7 @@ fn main(): i32 {
 
         var code = evalScript(ctx, moduleBootstrap(), "<bootstrap>")
         if code == 0 {
-            code = evalScript(ctx, "__runEntry(__entryPath)", path)
+            code = evalScript(ctx, "try{ __runEntry(__entryPath); }catch(e){ console.log('Uncaught ' + (e && e.message ? e.message : e) + (e && e.stack ? '\\n' + e.stack : '')); throw e; }", path)
         }
 
         JSGlobalContextRelease(ctx)

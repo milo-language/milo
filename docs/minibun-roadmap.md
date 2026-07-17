@@ -69,11 +69,20 @@ The tahoeroads backend now clears all of the above and stops at `Cannot find mod
   10% express uses, log what's stubbed (no silent truncation).
 - Effort: **1–2 sessions.** The likeliest place express surprises us.
 
-### M6 — the network stack: `net` + `http`
-- `require('net')` ⟶ `std/net` TCP; `require('http').createServer(cb)` ⟶ listener where each
-  connection is a **green task** and the request/response objects wrap `std/http`'s parser.
-- Milo pieces: `std/net` (TCP; note IPv4-only today — backlog #9) + `std/http` (parser) shipped.
-- Effort: **2 sessions.** Binding, not building — the hard parts already exist in std.
+### M6 — the network stack: `net` + `http` ✅ (single-request; multi-request blocked)
+`http.createServer(cb).listen(port)` works end to end: a `__httpServe(port, handler)` Milo
+native binds/listens/accepts (via `std/net`) and calls the JS handler per connection; the
+handler parses the raw request and returns a raw HTTP response string. `http`/`net`/`stream`
+modules + `ServerResponse`/`IncomingMessage` are JS. **Verified:** `curl` gets correct JSON,
+method, url, headers, body from a hand-written server.
+- Added to std/net: `TcpStream.rawFd()` (borrow fd read-only) and `TcpStream.recvOnce()`
+  (single read — `recv()` loops to EOF and deadlocks a keep-alive client).
+- **BLOCKER — multi-request:** `TcpListener.accept()` returns **fd 0** on the 2nd+ call in a
+  plain accept loop (isolated ~15-line repro; independent of read/write/drop/JSC — see
+  [[stdnet-accept-loop-bug]] in memory). Server handles one request then stops. Fixing this
+  std/net bug (root-cause `acceptFd` out-params, or run the loop on a green task) unblocks the
+  server. Also still needed here: async response (handler that calls `res.send` after a
+  Promise) — needs the M3 event-loop drain.
 
 ### M7 — express boots
 - With M1–M6, `express`/`cookie-parser`/`compression` are large *pure-JS* packages requiring

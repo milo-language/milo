@@ -171,6 +171,31 @@ impl TcpStream {
         self.fd = -1 as i32
         return f
     }
+
+    // Borrow the underlying fd read-only, WITHOUT transferring ownership: the stream
+    // still closes it on drop. Use when you want to do a bounded read/write on the raw
+    // fd and let the stream's own Drop close it — avoids `take()` (which needs `&mut`,
+    // forcing a move out of an immutable match binding) and the manual close that pairs
+    // with it. Do not close the returned fd yourself.
+    fn rawFd(self: &Self): i32 {
+        return self.fd
+    }
+
+    // A single read of whatever is currently available, unlike `recv()` which loops until
+    // the peer closes. A keep-alive HTTP client never closes its write half while waiting
+    // for the response, so `recv()` would deadlock; this returns after one segment — enough
+    // for a request's headers.
+    fn recvOnce(self: &Self): string {
+        var result: string = ""
+        var buf: [u8; 65536] = [0; 65536]
+        let n = readFd(self.fd, buf, 65536)
+        if n > 0 {
+            for i in 0..n {
+                result.push(buf[i])
+            }
+        }
+        return result
+    }
 }
 
 // ── TcpListener ──
