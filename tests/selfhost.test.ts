@@ -125,3 +125,48 @@ describe("milo-self", () => {
     }
   });
 });
+
+// Bootstrap convergence — the self-hosting claim itself, which nothing gated until now.
+//
+// If milo-self and the compiler IT builds are the same program, they must emit the same
+// IR for the same input. That is the fixpoint; M5 is recorded as converged on exactly
+// this basis, but scripts/selfhost.sh only ever built stage1, so a divergence could land
+// silently.
+//
+// Compare the EMITTED IR, never the linked binaries. Two links of identical code differ
+// by 47 bytes at ~offset 1369 — the Mach-O LC_UUID, which the linker mints per link — so
+// a binary comparison reports a divergence that isn't there and would read as a broken
+// bootstrap forever. Ask me how I know.
+//
+// Honest limitation: this is correct by construction but has never been seen to FAIL. A
+// synthetic divergence is hard to stage — editing src-milo/ changes stage1 and stage2
+// alike (beforeAll rebuilds stage1 from the same source), so they still agree, and
+// keeping a stale stage1 instead just means the edited string shows up in both files as a
+// data constant. A true divergence needs a real miscompile: milo-self compiling its own
+// source into a compiler that behaves differently. That is exactly the bug worth
+// catching, and exactly what cannot be faked cheaply.
+describe("bootstrap convergence", () => {
+  test("milo-self and the compiler it builds emit identical IR", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "milo-converge-"));
+    try {
+      const entry = join(MILO_ROOT, "src-milo", "main.milo");
+
+      const ir1 = await run(MILO_SELF, ["emit-ir", entry], MILO_ROOT, 120000, 4096);
+      expect(ir1.code).toBe(0);
+      expect(ir1.stdout.length).toBeGreaterThan(1000);
+
+      // stage2: milo-self compiles its own source.
+      const stage2 = join(dir, "stage2.bin");
+      const build = await run(MILO_SELF, ["build", entry, "-o", stage2], MILO_ROOT, 300000, 4096);
+      expect(build.code).toBe(0);
+
+      const ir2 = await run(stage2, ["emit-ir", entry], MILO_ROOT, 120000, 4096);
+      expect(ir2.code).toBe(0);
+
+      // Byte-identical, not merely same-length: a codegen divergence can preserve size.
+      expect(ir2.stdout).toBe(ir1.stdout);
+    } finally {
+      try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    }
+  }, 480000);
+});
