@@ -67,20 +67,39 @@ fn resetSignal(sig: i32): void {
 // signal() installs handlers with SA_RESTART, so kevent auto-restarts after the
 // handler and picks up the now-readable pipe on the next spin.
 
-var _sigPipeW: i32 = -1
+// One write-end per signal number. This was a single global, which silently cross-wired
+// any program that armed two signals: installing the second re-pointed the shared handler
+// at the second pipe, so a SIGWINCH resize arrived on SIGCHLD's fd (and the resize fd
+// never fired). Nothing caught it because only one signal had ever been armed at a time —
+// until `timeout` started arming SIGCHLD while `splitPty` arms SIGWINCH.
+//
+// 64 covers Linux's RT signals; darwin tops out at 32. Index 0 is unused (no signal 0).
+var _sigPipeW: [i32; 64] = [-1; 64]
 
-fn _sigPipeHandler(_sig: i32): void {
+// The handler is shared across signals, so it learns which pipe to write from its
+// argument — the only input a C signal handler gets. Bounds-checked because a signal
+// number outside the table would otherwise index off the end inside a handler.
+fn _sigPipeHandler(sig: i32): void {
     unsafe {
-        var b: [u8; 1] = [1]
-        write(_sigPipeW, b as *u8, 1) // async-signal-safe; nonblocking
+        if sig > 0 && sig < 64 {
+            let w = _sigPipeW[sig as i64]
+            if w >= 0 {
+                var b: [u8; 1] = [1]
+                write(w, b as *u8, 1) // async-signal-safe; nonblocking
+            }
+        }
     }
 }
 
 // Install a self-pipe for `sig` and return its read fd (or -1 on failure). The
 // fd goes readable each time the signal fires; arm it with Select.onRead and
-// call drainSignalFd after it wakes. Single global pipe — one signal at a time
-// (SIGWINCH is the intended user).
+// call drainSignalFd after it wakes. One pipe per signal, so several can be armed at
+// once (SIGWINCH for resizes and SIGCHLD for child exits is the motivating pair).
+// Re-installing the same signal replaces its pipe.
 fn installSignalPipe(sig: i32): i32 {
+    if sig <= 0 || sig >= 64 {
+        return -1
+    }
     unsafe {
         var fds: [i32; 2] = [0; 2]
         if pipe(fds as *u8) != 0 {
@@ -92,7 +111,7 @@ fn installSignalPipe(sig: i32): i32 {
         // must not stall the loop when the pipe is empty
         fcntl(r, fSetfl(), fcntl(r, fGetfl()) | oNonblock())
         fcntl(w, fSetfl(), fcntl(w, fGetfl()) | oNonblock())
-        _sigPipeW = w
+        _sigPipeW[sig as i64] = w
         signal(sig, _sigPipeHandler as *u8)
         return r
     }

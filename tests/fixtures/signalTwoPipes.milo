@@ -1,0 +1,45 @@
+// Two signals can each own a self-pipe at once.
+//
+// _sigPipeW used to be a single global i32, so installing a second signal silently
+// re-pointed the shared handler at the second pipe. Raising SIGWINCH then made SIGCHLD's
+// fd readable while the resize fd stayed empty — a resize delivered as a child exit. It
+// survived because nothing had ever armed two signals at once; `timeout` arming SIGCHLD
+// while `splitPty` arms SIGWINCH is what makes the pair reachable.
+//
+// Both directions are asserted: each signal must hit its OWN pipe and only its own.
+from "std/signal" import {
+    sigchld, installSignalPipe, SIGWINCH
+}
+from "std/os" import {
+    kill, getpid, read
+}
+
+// The pipes are O_NONBLOCK, so this never stalls when empty.
+fn drained(fd: i32): bool {
+    unsafe {
+        var buf: [u8; 8] = [0; 8]
+        return read(fd, buf as *u8, 8) > 0
+    }
+}
+
+fn main(): i32 {
+    let winchFd = installSignalPipe(SIGWINCH)
+    let childFd = installSignalPipe(sigchld())
+
+    kill(getpid(), SIGWINCH)
+    // @expect: winch->winch true
+    print("winch->winch ", drained(winchFd))
+    // @expect: winch->child false
+    print("winch->child ", drained(childFd))
+
+    kill(getpid(), sigchld())
+    // @expect: child->child true
+    print("child->child ", drained(childFd))
+    // @expect: child->winch false
+    print("child->winch ", drained(winchFd))
+
+    // Out-of-range signals are rejected rather than indexing off the table.
+    // @expect: rejected true
+    print("rejected ", installSignalPipe(99) < 0)
+    return 0
+}
