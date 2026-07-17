@@ -34,9 +34,11 @@ with his side of that list. This is the point-by-point audit (2026-07-16).
 | Reflection, quasiquotes | half-done macro system | ❌ none at all — simpler than both answers |
 | No environment capture ("I hate lambda") | capturing closures | ❌ Milo captures; move-capture-copies + Send checks bound the damage |
 
-His core trade — give up performance and expressivity for simplicity, land in
-the Ada/Pascal tier — is Milo's stated ethos. Milo goes further into Ada than
-he proposed: ranged types (`i32(0..50000)`) and `requires`/`ensures` contracts.
+Milo shares half his core trade: expressivity is given up for simplicity, but
+performance is not — the bet is that proof and fresh design make that half of
+the trade unnecessary (design.md, Ethos). On the safety side Milo goes further
+into Ada than he proposed: ranged types (`i32(0..50000)`) and
+`requires`/`ensures` contracts.
 
 ## Decisions taken from this review
 
@@ -76,9 +78,11 @@ he proposed: ranged types (`i32(0..50000)`) and `requires`/`ensures` contracts.
 ## Why his conclusion doesn't apply
 
 He concluded his Rust had no future because 2010 needed a C++ replacement and
-simplicity couldn't win that fight. Milo isn't in that fight: the contracts/SMT
-lane and Ada-tier positioning make the comparison SPARK ergonomics, not C++
-benchmarks. The post functions as a favorable design review of Milo's core
+simplicity couldn't win that fight. Milo isn't in that fight — but it doesn't
+adopt his concession either. He accepted "slower, in the Ada/Pascal tier" as the
+price of simplicity; Milo's bet (design.md, Ethos) is that the price isn't
+mandatory: proof deletes checks instead of paying for them forever. The post
+functions as a favorable design review of Milo's core
 choices — green threads, second-class refs, no lifetimes, local inference, no
 shadowing — with one correction (overflow default) and one warning heeded
 (iterator adapters).

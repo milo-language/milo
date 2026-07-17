@@ -2,6 +2,62 @@
 
 Design decisions and rationale. Syntax and semantics live in [language-reference.md](language-reference.md); this doc covers *why*.
 
+## Ethos
+
+**Safe, readable, and provable by default — full low-level control one keyword away.**
+
+The compiler is a collaborator, not a gate. It makes the correct path the path of
+least resistance, then stays out of the way. Seven principles, in priority order —
+**when two conflict, the lower number wins** (precedent: overflow traps in release,
+#1, despite a measured runtime cost, #5):
+
+1. **No silent footgun.** Every hazard is a compile error, never a wrong answer at
+   runtime. If the compiler can't rule a mistake out, it says so — it does not guess.
+2. **The correct path is the default path.** You fall into single-owner, memory-safe,
+   readable structure without trying. The compiler guides the code into simple something readable and comprehensible.
+3. **The language stays small.** Every feature is paid for in cognitive load, checker
+   complexity, and provability, so expressivity is traded away deliberately: no
+   metaprogramming, no lifetimes, no associated types, traits frozen at their current
+   scope, eager combinators over lazy adapters. One way to do a thing beats two.
+   A rejected feature is a decision, recorded so it doesn't get re-pitched.
+4. **Safety by construction, not annotation.** Move semantics + second-class references
+   + bounds checks give memory safety with *no lifetimes, ever*. The unsafe thing is
+   unsayable, not merely discouraged — so there is nothing to prove to the compiler.
+5. **Visible, minimal cost.** `let`/`var` expose what the machine does; no hidden GC,
+   no hidden dispatch, no hidden allocation. Ideally zero overhead — a little, if it
+   buys safety, and only where you can see it.
+6. **Provable, not just safe.** Contracts → SMT discharge → DO-178C. Correctness you
+   can demonstrate to a certifier, not merely believe. This is the destination the
+   other principles clear the road for.
+7. **Explicit escape hatches.** `unsafe`, raw pointers, wrapping arithmetic, full memory
+   control — opt-in, visible, and confined to where you asked for them. The guardrails
+   are the default, not a cage; when you need C's power you take it deliberately, and the
+   reviewer can see exactly where.
+
+The bet (vs [Graydon Hoare's retrospective](graydon-review.md)): he would have traded
+performance and expressivity for simplicity, expecting less popularity. Milo bets that
+with hindsight, a fresh codebase, and AI-assisted development you need not trade at all —
+the constraints that forced Rust's complexity don't apply when you design around them from
+the start. Milo isn't refighting Rust's 2010 war (dethrone C++ on raw speed at any
+complexity cost), and it doesn't accept the old safety-critical trade either (Ada/SPARK's
+"slower and bureaucratic, but certifiable"). It takes SPARK's best ideas — ranged types,
+contracts, proof — without the perf surrender: a check the compiler can prove unnecessary
+is deleted, one it can't is kept and cheap, and the escape hatches are there when you've
+measured. Fast and provably safe, not one or the other.
+
+**In one line: SPARK's guarantees without SPARK's ceremony, in a language people would
+pick anyway.** The proof-then-delete-checks pipeline is not a gamble — it is SPARK's
+production practice (prove absence of runtime errors, compile with checks suppressed;
+30 years of avionics/rail/NVIDIA-firmware mileage). What has never existed is that
+pipeline as the *default path* of a language with mainstream ergonomics — enums + match,
+closures, inference, green threads, contracts as plain syntax the same person writes.
+"People would pick it anyway" is a safety property, not marketing: languages nobody
+dogfoods for fun never get the feedback loop that hardens them (Milo's emulators and CLI
+tools are where its papercuts get found). Nearest relatives, for calibration: SPARK has
+the proof but not the ergonomics; Rust has the ergonomics but chose lifetime/trait
+complexity; Hylo shares the no-lifetimes bet (second-class refs / mutable value
+semantics) but remains a research language. The combination is the contribution.
+
 ## Position
 
 Use instead of C. Use instead of Rust when you don't need Rust's full power.
@@ -83,6 +139,30 @@ One model — green tasks — with a single OS-thread escape hatch. No async/awa
 - **`Promise.blocking(f)`** is the one escape hatch to a real OS thread — for CPU-bound work or blocking FFI that would otherwise starve the single-threaded cooperative scheduler. Its captures must be `Send` (compiler-enforced); the result comes back through the same `await`. Shared state across parallel workers goes through channels or `AtomicI64`/`AtomicBool` (seq_cst). `@send`/`@sync` annotate user types wrapping unsafe internals. (Public `Thread`/`Mutex`/`RwLock`/`parallel` were removed 2026-07-10 — see [concurrency-simplification.md](concurrency-simplification.md).)
 
 The key design point: the same blocking `stream.recv()` works in a task and on a `Promise.blocking` thread. I/O functions check `schedulerCurrent()` at runtime — in a green task they set non-blocking and yield on EAGAIN; on an OS thread they block. Exit semantics are Go's: when `main` returns the process exits and outstanding tasks are abandoned — wait explicitly (`join`, `WaitGroup`, `Promise`, channel) or `schedulerRunToCompletion()`. No manual event loop, no scheduler auto-drain.
+
+### The same patterns elsewhere
+
+Every row is shipped Milo (`std/runtime`, `std/sync`, `std/select`), not planned:
+
+| Pattern | Milo | Go | Rust (tokio) | TypeScript |
+|---|---|---|---|---|
+| Spawn concurrent work | `Task.spawn(f)` | `go f()` | `tokio::spawn(async {…})` | — (single thread; `Worker` + messages) |
+| Result-bearing task | `Promise<T>.run(f)` … `p.await()` | channel by hand | `JoinHandle` + `.await` | `new Promise` / `await p` |
+| Offload blocking/CPU work | `Promise.blocking(f)` | `go f()` (runtime multiplexes) | `spawn_blocking` | `Worker` threads |
+| Fan-out, wait for all | `Promise.all` / `WaitGroup` | `sync.WaitGroup` | `join!` / `JoinSet` | `Promise.all` |
+| First of N wins | `Promise.race` / `Select` | `select {}` | `select!` | `Promise.race` |
+| Wait on channels + fds + timers + signals at once | `Select` arms (incl. a `Promise` via `p.channel()`) | `select {}` (channels only; fds need goroutine shims) | `select!` (futures) | — |
+| Timeout an operation | `sel.onTimeout(ms)` arm | `context.WithTimeout` | `tokio::time::timeout` | `AbortSignal.timeout` |
+| Stream of values | `Channel<T>` + `for x in ch` | channel + `range` | `mpsc` + `Stream` | async iterators |
+| Blocking call inside concurrent code | just call it — I/O parks the green task | just call it | **must not** — needs `.await` or `spawn_blocking` | **must not** — blocks the event loop |
+| Function coloring | none | none | `async fn` is viral | `async` is viral |
+| Data-race safety | compile time (`Send`-checked captures, no shared mutable state) | runtime detector; races compile fine | compile time (`Send`/`Sync`) | single-threaded by construction |
+| Cancel in-flight work | explicit (cancel channel); a losing `Select` arm keeps running | explicit (`context` cancellation) | drop the future — built in | `AbortController` |
+
+Two honest rows: cancellation is where Rust's future-as-data model genuinely earns its
+complexity — Milo and Go both make you cancel explicitly. And Go matches Milo on
+coloring/blocking ergonomics; Milo's edge over Go is the left half of this doc
+(compile-time data-race safety, move semantics, no GC), not this table.
 
 ## FFI
 
@@ -173,25 +253,23 @@ fn getName(): &string {  // ERROR: cannot return a reference
 
 ## Alignment with Graydon Hoare's "The Rust I Wanted"
 
-In [a 2023 blog post](https://graydon2.dreamwidth.org/307291.html), Rust's original designer listed the design choices he wanted but lost to community pressure or LLVM constraints. Many of Milo's decisions independently align — convergent evolution toward "simplicity over expressivity":
+Milo's core decisions independently converge with the design Rust's original
+designer wanted but lost — move-default, built-in containers, interior iteration,
+green threads, second-class `&`, no lifetimes, local-only inference, simple
+grammar, first-class errors, simplicity over zero-cost abstraction. The full
+point-by-point scorecard, the deliberate divergences (traits over ML modules;
+capturing closures; nominal over structural), and the decisions taken from that
+review live in **[graydon-review.md](graydon-review.md)** — the single source, so
+this file and that one can't drift.
 
-| Hoare's preference | Why Rust couldn't | Milo |
-|---|---|---|
-| **Move semantics as default** | Rust eventually adopted this | ✅ Default from day one |
-| **Built-in containers** | Vec/HashMap are library code needing aggressive cross-crate inlining, hurting compile times | ✅ Vec, HashMap, string have direct compiler support |
-| **Interior iteration** | LLVM couldn't do coroutines at the time | ✅ `for x in vec` is built-in, no iterator objects |
-| **Green threads, not async/await** | Go-style FFI issues, ripped out twice | ✅ `Task.spawn` with cooperative scheduling |
-| **Second-class `&` references** | Iterators needed first-class refs | ✅ Refs are param/local only |
-| **No explicit lifetimes** | Forced by first-class references | ✅ No lifetimes, ever |
-| **Simple local-only type inference** | Type system people won | ✅ Local inference only |
-| **Simple grammar** | Lost every argument | ✅ Recursive descent, LL-friendly |
-| **First-class error handling** | 1.0 shipped a void; `?` came later | ✅ Result + `?`/`!`/`??` from day one |
-| **Simplicity over zero-cost abstraction** | Community prioritized C++-competitive perf | ✅ Core ethos |
-| **Integer overflow safety** | Debug-only traps; Hoare wanted more | ✅ Compile-time checks + debug traps + explicit wrapping/saturating |
-
-Deliberate divergences: traits instead of ML modules (more ergonomic, kept simple); closures capture their environment (too useful for `map`/`filter`; escaping captures need explicit `move`); threads + channels instead of actors-only; nominal types instead of structural (clearer errors, better with traits). Not adopted (yet): tail calls, auto-bignum, decimal floats, reflection, richer dyn dispatch.
-
-The meta-lesson: Hoare would have traded performance and expressivity for simplicity, expecting less popularity. Milo bets that with hindsight, a fresh codebase, and AI-assisted development, you can have both — the constraints that forced Rust's complexity (LLVM-era limitations, library-defined containers, stored iterators) don't apply when you design around them from the start.
+One decision that split from his answer *and* from Rust-as-shipped: **integer
+overflow.** He wanted auto-bignum (off-ethos — unpredictable allocation in a
+safety lane); Rust traps in debug and wraps in release. Milo's default is
+**trap in all build modes**, with `--no-overflow-checks` and the explicit
+`wrappingAdd`/`saturatingAdd`/`checkedAdd` methods as the opt-outs, and range
+analysis deleting checks where it can prove them safe. Silent release-mode wrap
+was the one footgun Milo had inherited from Rust; trapping by default closes it
+(principle #1).
 
 ## Open Questions
 
