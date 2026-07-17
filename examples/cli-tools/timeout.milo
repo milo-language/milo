@@ -9,6 +9,15 @@ from "std/time" import {
 from "std/args" import {
     args
 }
+from "std/signal" import {
+    sigchld, installSignalPipe, drainSignalFd, resetSignal
+}
+from "std/select" import {
+    Select
+}
+from "std/runtime" import {
+    schedulerEnsureInit
+}
 
 fn printHelp(): void {
     print("Usage: timeout [OPTION] DURATION COMMAND [ARG]...")
@@ -221,18 +230,67 @@ fn main(): i32 {
 
     let deadlineMs = epochMillis() + secs * 1000
 
+    // Wait on the child's exit as an EVENT rather than polling waitpid every 50ms:
+    // SIGCHLD makes a pipe readable, and Select waits on that fd and the deadline together.
+    // fd arms are claimed by the scheduler's poll loop, so a scheduler has to exist even
+    // though this program spawns no green tasks.
+    schedulerEnsureInit()
+    // Install BEFORE forking. A child that exits in the window between fork and install
+    // would deliver SIGCHLD to a default handler and we'd wait for an event already gone.
+    let sigFd = installSignalPipe(sigchld())
+
     let pid = fork()
     if pid < 0 {
         print("error: fork failed")
         return 125
     }
     if pid == 0 {
+        // The handler AND its pipe write-end are inherited across fork. This child calls
+        // system(), which forks again — that grandchild's exit would fire this inherited
+        // handler and write to the pipe the PARENT is selecting on, waking it for a death
+        // that isn't the one it's waiting for. Restore the default disposition first.
+        resetSignal(sigchld())
         let code = system(cmd)
         exit((code >> 8) & 255)
     }
 
     var status: [u8; 4] = [0; 4]
-    while epochMillis() < deadlineMs {
+    var timedOut = false
+    while true {
+        let remainMs = deadlineMs - epochMillis()
+        if remainMs <= 0 {
+            timedOut = true
+            break
+        }
+
+        var sel = Select.new()
+        sel.onRead(sigFd) // arm 0 — some child exited
+        sel.onTimeout(remainMs) // arm 1 — deadline
+        let w = sel.wait()
+        sel.destroy()
+
+        if w == 1 {
+            timedOut = true
+            break
+        }
+        if w < 0 {
+            // No arm can fire (no scheduler) — fall back rather than spin.
+            sleepMs(50)
+            let rf = waitpid(pid, status, 1)
+            if rf > 0 {
+                let sigf = status[0] as i32 & 127
+                if sigf == 0 {
+                    return status[1] as i32
+                }
+                return 128 + sigf
+            }
+            if rf < 0 {
+                return 125
+            }
+            continue
+        }
+
+        drainSignalFd(sigFd)
         let r = waitpid(pid, status, 1)
         if r > 0 {
             let sig = status[0] as i32 & 127
@@ -244,7 +302,10 @@ fn main(): i32 {
         if r < 0 {
             return 125
         }
-        sleepMs(50)
+        // r == 0: SIGCHLD fired but our child is still alive — re-arm for the remainder.
+    }
+    if !timedOut {
+        return 125
     }
 
     // timed out

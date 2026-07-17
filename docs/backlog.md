@@ -66,7 +66,6 @@ primitives carried it, but these gaps are where the friction was. Ranked.
 
 | # | Item | ROI | Effort | Detail | Ref |
 |---|------|-----|--------|--------|-----|
-| C3 | **`timeout` is a `waitpid(WNOHANG)`+sleep poll** | M | M | The one genuine I/O-poll left after the sweep (animation demos are frame timers, correctly untouched): `timeout`'s main loop is `waitpid(pid, status, WNOHANG)` + `sleepMs(50)`. Clean conversion is blocked on the child-exit `Select` arm (the child-exit arm) — that now works end to end; see `tests/fixtures/selectChildExit.milo` for the exact pattern to copy. | `examples/cli-tools/timeout.milo` waitpid loop |
 | C4 | **Blocking `waitpid` wedges the green runtime** | M | M | Blocking `waitpid` on a `SIGKILL`'d-but-wedged child (stuck writing to a full PTY) hangs the scheduler thread. Now handled inside `Pty` (kill → close master to unwedge → reap; see the "unwedges a child blocked writing" comment), but the runtime interaction is a sharp edge worth a guard. | `std/pty.*.milo` `Pty.kill`/close |
 | C5 | **Papercuts** | L | L | (a) match-bound values are immutable for `&mut` **fn args** but fine for `&mut` **methods** — inconsistent, forced inlining a spawn helper. (b) `string.push` needs an explicit `as u8` on int literals (re-verified: `s.push(65)` still errors "expected u8, got i64"). | session |
 | C6 | **No `AF_UNIX` in `std/net`** | M | M | `std/net` is TCP-only (zero hits for `AF_UNIX`/`UnixListener`/`UnixStream`). The tmux-style detach/attach daemon works over a localhost TCP port as a result — fine on one machine, but a unix-domain socket (filesystem-scoped, no port allocation, peer-cred auth) is the right transport for a local daemon. Add `UnixListener`/`UnixStream`. | `std/net.milo`, `examples/apps/tmuxDaemon.milo` |
@@ -86,5 +85,5 @@ primitives carried it, but these gaps are where the friction was. Ranked.
 ## Dependency notes
 
 - **Byte views (#7) gate the zero-copy form of the JSON byte-feed (#8).** #8 works without it (materialize per event), but hands out copies until #7 lands.
-- **C3 (`timeout` conversion) is unblocked**: the child-exit arm now works end to end — `installSignalPipe(sigchld())` + `sel.onRead(fd)` + `waitpid(..., WNOHANG)`, covered by `tests/fixtures/selectChildExit.milo`. Nothing gates C3 but the rewrite itself.
+- **The child-exit arm is the pattern to copy** for any event-driven child wait: `installSignalPipe(sigchld())` + `sel.onRead(fd)` + `waitpid(..., WNOHANG)` (`tests/fixtures/selectChildExit.milo`, and `examples/cli-tools/timeout.milo` for a real use incl. the fork/inherit hazards).
 - **Compile-time reduction likely wants MIR (Tier 3)** for real wins — profile before committing.

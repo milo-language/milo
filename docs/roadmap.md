@@ -88,6 +88,18 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Shipped 2026-07-16 — `timeout` waits on an event, not a 50ms poll.** Its loop was
+`waitpid(pid, status, WNOHANG)` + `sleepMs(50)` — the last genuine I/O poll in the tree. Now
+a `Select` over the SIGCHLD self-pipe fd and the deadline. Behaviour is identical (verified
+case-by-case against the pre-change binary: exit code, timeout=124 in 1.04s not 5s,
+`-k`, and signal-death — which returns 0 both before and after, because the child exits
+*normally* after `system()` returns). Three hazards the conversion has to handle, all
+documented at the call site: fd arms need a scheduler even with no green tasks
+(`schedulerEnsureInit()`); the pipe must be installed BEFORE `fork` or a fast child's exit
+is missed; and the handler plus its pipe write-end are **inherited across fork**, so the
+child calls `resetSignal(sigchld())` before `system()` — otherwise its grandchild's exit
+wakes the parent for the wrong death.
+
 **Fixed 2026-07-16 — a timer-only main-context `Select` spun forever (regression from the
 same day's C1 fix).** The main wait loop polls the scheduler and re-checks the claim, but
 `_schedulerRunOnce` returns early when `numTasks == 0` and only polls the event loop while
