@@ -88,6 +88,18 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Shipped 2026-07-16 — `--overflow-checks`.** `+ - *` trap at `-O0` but silently WRAP at
+-O2/-O3: `i64::MAX + 1` quietly becomes `i64::MIN` in a release build (Rust's wart; Swift
+traps in every mode). The flag turns traps on at any -O so the cost can be measured before
+deciding the default. `tests/overflowChecks.test.ts` pins BOTH halves against `--release` —
+it lives outside tests/runtime-errors/ because that harness compiles at `--debug`, where
+overflow already traps, so a fixture there would pass whether or not the flag worked.
+**Not yet the default**, and the benchmark to justify that is still owed: the compiler
+proves most arithmetic safe and emits no check at all (`matmul` emits zero traps even with
+the flag on), while arithmetic-dominated code with unprovable operand ranges measured
+~+8% (0.37s -> 0.40s over 400M iterations). Real benchmarks are sub-0.3s and need a quiet
+machine to measure credibly.
+
 **Fixed 2026-07-16 — a fixed-size array of Copy elements is now Copy** (Rust's
 `[T; N]: Copy where T: Copy`). `[u8; 16]` — an IPv6 address — could not be passed to two
 functions: the first call MOVED it, and the compiler's own hint said to "clone it at the

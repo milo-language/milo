@@ -395,9 +395,12 @@ function detectLibs(ir: string, target: TargetInfo): string {
   return libs;
 }
 
-function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null): string {
+function compileToBinary(sourcePath: string, outputPath: string | null, target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, extraLinkFlags: string[] = [], sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, forceOverflowChecks = false): string {
   const source = readFileSync(sourcePath, "utf-8");
-  const debugOverflow = optFlag === "-O0";
+  // Arithmetic traps at -O0 but silently WRAPS at -O2/-O3 — the one real footgun left
+  // (Rust's wart; Swift traps in every mode). `--overflow-checks` turns them on at any -O
+  // so the cost can be measured before deciding whether to flip the default.
+  const debugOverflow = optFlag === "-O0" || forceOverflowChecks;
   // DWARF is gated on -g alone (compose `-g --debug` for -O0 + line info). Keeping it
   // off --debug leaves the -O0 path — used by the runtime-error test harness — byte
   // -identical and free of per-build dsymutil / .dSYM litter.
@@ -517,8 +520,8 @@ async function runTests(testFiles: string[], target: TargetInfo, optFlag: string
 // rlimits, and one runaway allocation (e.g. a milo-self memory bug) swaps the
 // whole machine to death. Raise with MILO_RUN_MEM_MB, disable with
 // MILO_RUN_UNGUARDED=1. No wall-clock timeout — long-running programs are legal.
-async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null) {
-  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug, heapSize);
+async function runFile(sourcePath: string, extraArgs: string[], target: TargetInfo, optFlag: string = "", warningConfig?: WarningConfig, sanitize: boolean = false, emitDebug = false, heapSize: number | null = null, overflowChecks = false) {
+  const bin = compileToBinary(sourcePath, null, target, optFlag, warningConfig, [], sanitize, emitDebug, heapSize, overflowChecks);
   try {
     if (target.bareMetal) {
       runBareMetalQemu(bin, target);
@@ -593,7 +596,7 @@ function parseHeapSize(s: string): number | null {
   return n * mult;
 }
 
-function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null } {
+function parseArgs(args: string[]): { output: string | null; source: string | null; rest: string[]; optFlag: string; warningConfig: WarningConfig; noEntry: boolean; safetyLevel: string | null; sanitize: boolean; targetName: string | null; emitHeader: boolean; emitDebug: boolean; heapSize: number | null; overflowChecks: boolean } {
   let output: string | null = null;
   let source: string | null = null;
   let optFlag = "-O2";
@@ -607,6 +610,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
   const rest: string[] = [];
   const denied = new Set<string>();
   const allowed = new Set<string>();
+  let overflowChecks = false;
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "-o" && i + 1 < args.length) { output = args[++i]; }
     else if (args[i] === "--release") { optFlag = "-O3"; }
@@ -614,6 +618,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (args[i] === "-g") { emitDebug = true; } // DWARF line info, composes with any -O
     else if (args[i] === "--no-entry") { noEntry = true; }
     else if (args[i] === "--sanitize") { sanitize = true; }
+    else if (args[i] === "--overflow-checks") { overflowChecks = true; }
     else if (args[i] === "--emit-header") { emitHeader = true; }
     else if (args[i] === "-O" && i + 1 < args.length) { optFlag = `-O${args[++i]}`; }
     else if (/^-O[0-3sz]$/.test(args[i])) { optFlag = args[i]; }
@@ -636,7 +641,7 @@ function parseArgs(args: string[]): { output: string | null; source: string | nu
     else if (!source) { source = args[i]; }
     else { rest.push(args[i]); }
   }
-  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize };
+  return { output, source, rest, optFlag, warningConfig: { denied, allowed }, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks };
 }
 
 const SKILL_TEXT = `# Milo Language Guide
@@ -1066,6 +1071,7 @@ async function main() {
     console.log("  -g                     emit DWARF line info (source-level lldb/hades); composes with any -O / --debug");
     console.log("  -O<level>              clang opt level: 0,1,2,3,s,z (default: -O2)");
     console.log("  --sanitize             link with AddressSanitizer (requires clang)");
+    console.log("  --overflow-checks     trap on +/-/* overflow at any -O (default: only --debug)");
     console.log("  --deny=<warning>       treat warning as error (e.g. --deny=unused-variable)");
     console.log("  --allow=<warning>      suppress warning (e.g. --allow=unused-result)");
     console.log("  --deny-all             treat all warnings as errors");
@@ -1178,7 +1184,7 @@ async function main() {
     return;
   }
 
-  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize } = parseArgs(args.slice(1));
+  const { output, source, rest, optFlag, warningConfig, noEntry, safetyLevel, sanitize, targetName, emitHeader, emitDebug, heapSize, overflowChecks } = parseArgs(args.slice(1));
   let target = getHostTarget();
   if (targetName) {
     const resolved = resolveTarget(targetName);
@@ -1318,10 +1324,10 @@ async function main() {
   }
 
   if (cmd === "run") {
-    await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize);
+    await runFile(source!, rest, target, optFlag, warningConfig, sanitize, emitDebug, heapSize, overflowChecks);
   } else if (cmd === "build") {
     const t0 = Date.now();
-    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize);
+    const bin = compileToBinary(source!, output, target, optFlag, warningConfig, rest, sanitize, emitDebug, heapSize, overflowChecks);
     reportCompiled(source!, bin, Date.now() - t0);
   } else if (cmd === "emit-ir") {
     compileToIr(source!, output, target, warningConfig, optFlag === "-O0", emitDebug);
