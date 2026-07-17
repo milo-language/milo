@@ -399,7 +399,6 @@ impl WsConn {
 fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
-    let SIZEOF_SOCKADDR_IN: u32 = 16
 
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     if fd < 0 {
@@ -407,7 +406,7 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
     }
 
     var addr = makeSockaddr(port, ip)
-    if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+    if connectFdIn(fd, addr) < 0 {
         close(fd)
         return Result.Err("connect() failed")
     }
@@ -468,7 +467,6 @@ fn wsConnect(ip: u32, port: u16, path: &string): Result<WsConn, string> {
 fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<WsConn, string> {
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
-    let SIZEOF_SOCKADDR_IN: u32 = 16
 
     unsafe {
         let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -477,7 +475,7 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
         }
 
         var addr = makeSockaddr(port, ip)
-        if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        if connectFdIn(fd, addr) < 0 {
             close(fd)
             return Result.Err("connect() failed")
         }

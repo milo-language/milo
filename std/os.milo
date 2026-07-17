@@ -3,8 +3,9 @@
 // these imports exist for the green-aware wrappers at the bottom of this
 // file; the resolver's visited-set makes the std/os ↔ std/runtime cycle safe
 from "std/platform" import {
-    getErrno, eagain, einprogress, solSocket, soError, SockAddrIn, SockAddrStorage, makeZeroedSockaddr,
-    makeZeroedSockaddrStorage, sockAddrStorageLen
+    getErrno, eagain, einprogress, solSocket, soError, SockAddr, SockAddrIn, SockAddrIn6, SockAddrUn,
+    SockAddrStorage, makeZeroedSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, sockAddrInLen,
+    sockAddrIn6Len, sockAddrUnLen
 }
 from "std/event" import {
     setNonblocking
@@ -94,7 +95,12 @@ extern fn snprintf(buf: *u8, size: i64, fmt: *u8,...): i32
 
 extern fn socket(domain: i32, sockType: i32, protocol: i32): i32
 
-extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+// The socket syscalls take `struct sockaddr *` and read the family from its first bytes,
+// so ONE extern must serve every family — Milo can't declare bind twice (the resolver
+// merges every decl of an imported file, so a second one at another type just loses).
+// Raw here, typed at the wrappers below: the unsafe seam stays inside std/os and callers
+// never hand-write an addrlen, which is where a wrong-length bug would come from.
+extern fn bind(sockfd: i32, addr: *SockAddr, addrlen: u32): i32
 
 extern fn listen(sockfd: i32, backlog: i32): i32
 
@@ -103,7 +109,7 @@ extern fn listen(sockfd: i32, backlog: i32): i32
 // IPv6 peer (28 bytes) — a live bug independent of AF_UNIX.
 extern fn accept(sockfd: i32, addr: &mut SockAddrStorage, addrlen: &mut u32): i32
 
-extern fn connect(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
+extern fn connect(sockfd: i32, addr: *SockAddr, addrlen: u32): i32
 
 extern fn setsockopt(fd: i32, level: i32, opt: i32, val: &i32, len: u32): i32
 
@@ -113,9 +119,65 @@ extern fn htons(hostshort: u16): u16
 
 extern fn ntohs(netshort: u16): u16
 
-extern fn getsockname(fd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
+// Same shape as accept: the kernel writes back whatever family the socket is, so the
+// buffer must be storage-sized, not sockaddr_in-sized.
+extern fn getsockname(fd: i32, addr: &mut SockAddrStorage, addrlen: &mut u32): i32
 
 extern fn inet_pton(af: i32, src: *u8, dst: *u8): i32
+
+// ── typed sockaddr wrappers ──
+// One per family. Each owns its own addrlen, so no caller can pass the wrong one.
+
+// The bound port, whatever family the socket is. getsockname writes into storage-sized
+// space because the kernel picks the family; sin_port and sin6_port BOTH sit at offset 2
+// (same invariant as sun_path), so one read serves v4 and v6. Returns -1 on failure.
+fn getSockPort(fd: i32): i32 {
+    unsafe {
+        var st = makeZeroedSockaddrStorage()
+        var len: u32 = sockAddrStorageLen()
+        if getsockname(fd, st, len) < 0 {
+            return -1
+        }
+        let portPtr = (st.addrOf() as i64 + 2) as *u16
+        return ntohs(*portPtr) as i32
+    }
+}
+
+fn bindIn(fd: i32, addr: &SockAddrIn): i32 {
+    unsafe {
+        return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
+    }
+}
+
+fn bindIn6(fd: i32, addr: &SockAddrIn6): i32 {
+    unsafe {
+        return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
+    }
+}
+
+fn bindUn(fd: i32, addr: &SockAddrUn): i32 {
+    unsafe {
+        return bind(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
+    }
+}
+
+fn connectIn(fd: i32, addr: &SockAddrIn): i32 {
+    unsafe {
+        return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
+    }
+}
+
+fn connectIn6(fd: i32, addr: &SockAddrIn6): i32 {
+    unsafe {
+        return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
+    }
+}
+
+fn connectUn(fd: i32, addr: &SockAddrUn): i32 {
+    unsafe {
+        return connect(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
+    }
+}
 
 // ── TLS (OpenSSL) ──
 
@@ -374,7 +436,9 @@ fn acceptFd(fd: i32): i32 {
 
 // connect(2). In a green task: nonblocking connect, park until writable,
 // then check SO_ERROR. Returns 0 on success, <0 on failure.
-fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
+// Green-aware connect. Takes the raw seam so it serves every family; the per-family
+// entry points below (connectFdIn/connectFdIn6/connectFdUn) are what callers use.
+fn connectFd(fd: i32, addr: *SockAddr, addrlen: u32): i32 {
     if schedulerCurrent() as i64 == 0 {
         return connect(fd, addr, addrlen)
     }
@@ -396,6 +460,24 @@ fn connectFd(fd: i32, addr: &SockAddrIn, addrlen: u32): i32 {
         return -1
     }
     return 0
+}
+
+fn connectFdIn(fd: i32, addr: &SockAddrIn): i32 {
+    unsafe {
+        return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrInLen())
+    }
+}
+
+fn connectFdIn6(fd: i32, addr: &SockAddrIn6): i32 {
+    unsafe {
+        return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrIn6Len())
+    }
+}
+
+fn connectFdUn(fd: i32, addr: &SockAddrUn): i32 {
+    unsafe {
+        return connectFd(fd, (addr.addrOf()) as *SockAddr, sockAddrUnLen())
+    }
 }
 
 // ── green-aware TLS IO ──

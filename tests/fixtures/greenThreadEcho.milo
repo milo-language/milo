@@ -6,6 +6,7 @@
 // @expect: echo: hello from 2
 
 from "std/os" import {
+    connectIn, bindIn, getSockPort,
     socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe
 }
 from "std/platform" import {
@@ -47,7 +48,7 @@ fn doClient(port: u16, id: i32): void {
     let SOCK_STREAM: i32 = 1
     let fd = socket(AF_INET, SOCK_STREAM, 0)
     var addr2 = makeSockaddr(port, 16777343)
-    connect(fd, addr2, 16)
+    connectIn(fd, addr2)
     setNonblocking(fd)
     print("client ", id, " connected")
     let msg = format("hello from ", id)
@@ -74,13 +75,11 @@ fn main(): i32 {
     var one: i32 = 1
     setsockopt(serverFd, solSocket(), soReuseaddr(), one, 4)
     var addr = makeSockaddr(0 as u16, 0)
-    bind(serverFd, addr, 16)
+    bindIn(serverFd, addr)
     listen(serverFd, 128)
 
-    var boundAddr = makeZeroedSockaddr()
-    var boundLen: u32 = 16
-    getsockname(serverFd, boundAddr, boundLen)
-    let port = ntohs(boundAddr.sin_port)
+    // family-agnostic: sin_port and sin6_port both sit at offset 2
+    let port = getSockPort(serverFd)
 
     setNonblocking(serverFd)
     print("server ready")
@@ -127,8 +126,8 @@ fn main(): i32 {
 
     // run clients sequentially so output order is deterministic
     Task.spawn(move(): void => {
-        doClient(port, 1)
-        doClient(port, 2)
+        doClient(port as u16, 1)
+        doClient(port as u16, 2)
     }
     )
 

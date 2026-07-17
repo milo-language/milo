@@ -259,6 +259,22 @@ fn sockAddrStorageLen(): u32
 
 _Undocumented._
 
+### `sockAddrUnLen`
+
+```milo
+fn sockAddrUnLen(): u32
+```
+
+Whole-struct length; bind/connect want it for AF_UNIX.
+
+### `sockAddrUnMaxPath`
+
+```milo
+fn sockAddrUnMaxPath(): i64
+```
+
+Longest path that still leaves room for the NUL the kernel expects.
+
 ### `soError`
 
 ```milo

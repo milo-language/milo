@@ -1,7 +1,7 @@
 // termpair server — WebSocket relay for terminal sharing
 
 from "std/os" import {
-    accept, bind, close, getsockname, listen, ntohs, read, write,
+    accept, bindIn, close, getSockPort, listen, ntohs, read, write,
     setsockopt, socket, malloc, free, memcpy
 }
 from "std/platform" import {
@@ -436,7 +436,6 @@ fn handleGetTerminal(terminalId: &string): string {
 
 // Accept loop — blocks on kqueue until a connection is ready
 fn acceptLoop(rawFd: i32): void {
-    let SIZEOF_SOCKADDR_IN: u32 = 16
     setNonblocking(rawFd)
 
     while true {
@@ -562,7 +561,6 @@ fn main(): i32 {
 
     let AF_INET: i32 = 2
     let SOCK_STREAM: i32 = 1
-    let SIZEOF_SOCKADDR_IN: u32 = 16
 
     let rawFd = socket(AF_INET, SOCK_STREAM, 0)
     if rawFd < 0 {
@@ -574,7 +572,7 @@ fn main(): i32 {
     setsockopt(rawFd, solSocket(), soReuseaddr(), one, 4)
 
     var addr = makeSockaddr(port, 0)
-    if bind(rawFd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+    if bindIn(rawFd, addr) < 0 {
         print("error: bind() failed")
         return 1
     }
@@ -583,10 +581,8 @@ fn main(): i32 {
         return 1
     }
 
-    var boundAddr = makeZeroedSockaddr()
-    var boundLen: u32 = SIZEOF_SOCKADDR_IN
-    getsockname(rawFd, boundAddr, boundLen)
-    let actualPort = ntohs(boundAddr.sin_port)
+    // family-agnostic: sin_port and sin6_port both sit at offset 2
+    let actualPort = getSockPort(rawFd)
 
     print($"termpair server listening on http://localhost:{actualPort}")
     flush()

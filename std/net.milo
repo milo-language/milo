@@ -69,7 +69,6 @@ impl TcpStream {
     fn connect(ip: u32, port: u16): Result<TcpStream, NetError> {
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
-        let SIZEOF_SOCKADDR_IN: u32 = 16
 
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         if fd < 0 {
@@ -78,7 +77,7 @@ impl TcpStream {
 
         var addr = makeSockaddr(port, ip)
 
-        if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        if connectFdIn(fd, addr) < 0 {
             close(fd)
             return Result.Err(NetError.ConnectionFailed("connect() failed"))
         }
@@ -156,7 +155,6 @@ impl TcpListener {
     fn bind(port: u16): Result<TcpListener, NetError> {
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
-        let SIZEOF_SOCKADDR_IN: u32 = 16
 
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         if fd < 0 {
@@ -167,7 +165,7 @@ impl TcpListener {
         setsockopt(fd, solSocket(), soReuseaddr(), one, 4)
 
         var addr = makeSockaddr(port, 0)
-        if bind(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+        if bindIn(fd, addr) < 0 {
             close(fd)
             return Result.Err(NetError.ConnectionFailed("bind() failed"))
         }
@@ -225,7 +223,6 @@ impl TlsStream {
     fn connect(ip: u32, port: u16, hostname: &string): Result<TlsStream, NetError> {
         let AF_INET: i32 = 2
         let SOCK_STREAM: i32 = 1
-        let SIZEOF_SOCKADDR_IN: u32 = 16
 
         unsafe {
             let fd = socket(AF_INET, SOCK_STREAM, 0)
@@ -235,7 +232,7 @@ impl TlsStream {
 
             var addr = makeSockaddr(port, ip)
 
-            if connectFd(fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+            if connectFdIn(fd, addr) < 0 {
                 close(fd)
                 return Result.Err(NetError.ConnectionFailed("connect() failed"))
             }

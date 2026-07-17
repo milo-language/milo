@@ -6,6 +6,12 @@ from "std/os" import {
 
 // C's spelling, not Milo camelCase — @cLayout emits offsetof() with the name verbatim.
 // No sin_len here (that is darwin/BSD); family is u16. Verified against the real header.
+// Opaque marker for "a sockaddr of some family". The socket syscalls take a
+// `struct sockaddr *` and read the family out of the first bytes, so one extern must serve
+// sockaddr_in / sockaddr_in6 / sockaddr_un. A nominal opaque type rather than a bare *u8:
+// same zero cost, but a typo can't pass just any pointer.
+extern type SockAddr
+
 @cLayout("struct sockaddr_in", "netinet/in.h")
 extern struct SockAddrIn {
     sin_family: u16,
@@ -55,6 +61,16 @@ fn sockAddrInLen(): u32 {
 
 fn sockAddrIn6Len(): u32 {
     return 28
+}
+
+// Whole-struct length; bind/connect want it for AF_UNIX.
+fn sockAddrUnLen(): u32 {
+    return 110
+}
+
+// Longest path that still leaves room for the NUL the kernel expects.
+fn sockAddrUnMaxPath(): i64 {
+    return 107
 }
 
 fn sockAddrStorageLen(): u32 {

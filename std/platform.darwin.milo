@@ -9,6 +9,12 @@ from "std/os" import {
 // compile. Timespec in tests/fixtures/cLayout.milo sets the same precedent (tv_sec).
 // Verified against the real header at build time — this layout was an unchecked claim
 // about C until now, which is what the socket layer rests on.
+// Opaque marker for "a sockaddr of some family". The socket syscalls take a
+// `struct sockaddr *` and read the family out of the first bytes, so one extern must serve
+// sockaddr_in / sockaddr_in6 / sockaddr_un. A nominal opaque type rather than a bare *u8:
+// same zero cost, but a typo can't pass just any pointer.
+extern type SockAddr
+
 @cLayout("struct sockaddr_in", "netinet/in.h")
 extern struct SockAddrIn {
     sin_len: u8,
@@ -64,6 +70,16 @@ fn sockAddrInLen(): u32 {
 
 fn sockAddrIn6Len(): u32 {
     return 28
+}
+
+// Whole-struct length; bind/connect want it for AF_UNIX.
+fn sockAddrUnLen(): u32 {
+    return 106
+}
+
+// Longest path that still leaves room for the NUL the kernel expects.
+fn sockAddrUnMaxPath(): i64 {
+    return 103
 }
 
 fn sockAddrStorageLen(): u32 {

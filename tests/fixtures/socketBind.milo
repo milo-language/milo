@@ -18,7 +18,7 @@ fn main(): i32 {
         return 1
     }
     var addr = makeSockaddr(0, 0)
-    let result = bind(fd, addr, 16)
+    let result = bindIn(fd, addr)
     if result == 0 {
         print("bind ok")
     } else {

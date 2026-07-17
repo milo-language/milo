@@ -1,7 +1,7 @@
 // std/http — high-level HTTP server for Milo
 
 from "std/os" import {
-    accept, bind, close, getsockname, listen, ntohs, read, setsockopt, socket, write
+    accept, bind, close, getsockname, listen, ntohs, read, setsockopt, socket, write, getSockPort
 }
 from "std/platform" import {
     SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, makeZeroedSockaddrStorage, sockAddrStorageLen
@@ -453,7 +453,6 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     let SOCK_STREAM: i32 = 1
     let BACKLOG: i32 = 1024
     let BUF_SIZE: i64 = 8192
-    let SIZEOF_SOCKADDR_IN: u32 = 16
 
     var bindPort: u16 = 0
     if let Option.Some(p) = port {
@@ -473,7 +472,7 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
 
     var addr = makeSockaddr(bindPort, 0)
 
-    if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+    if bindIn(sock.fd, addr) < 0 {
         return Result.Err("bind() failed")
     }
 
@@ -481,10 +480,8 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
         return Result.Err("listen() failed")
     }
 
-    var boundAddr = makeZeroedSockaddr()
-    var boundLen: u32 = SIZEOF_SOCKADDR_IN
-    getsockname(sock.fd, boundAddr, boundLen)
-    let actualPort = ntohs(boundAddr.sin_port)
+    // family-agnostic: works for a v4 or v6 listener
+    let actualPort = getSockPort(sock.fd)
 
     print($"listening on http://localhost:{actualPort}")
 
@@ -620,7 +617,6 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
     let SOCK_STREAM: i32 = 1
     let BACKLOG: i32 = 1024
     let BUF_SIZE: i64 = 8192
-    let SIZEOF_SOCKADDR_IN: u32 = 16
 
     var bindPort: u16 = 0
     if let Option.Some(p) = port {
@@ -639,17 +635,15 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
     setsockopt(sock.fd, solSocket(), soReuseaddr(), one, 4)
 
     var addr = makeSockaddr(bindPort, 0)
-    if bind(sock.fd, addr, SIZEOF_SOCKADDR_IN) < 0 {
+    if bindIn(sock.fd, addr) < 0 {
         return Result.Err("bind() failed")
     }
     if listen(sock.fd, BACKLOG) < 0 {
         return Result.Err("listen() failed")
     }
 
-    var boundAddr = makeZeroedSockaddr()
-    var boundLen: u32 = SIZEOF_SOCKADDR_IN
-    getsockname(sock.fd, boundAddr, boundLen)
-    let actualPort = ntohs(boundAddr.sin_port)
+    // family-agnostic: works for a v4 or v6 listener
+    let actualPort = getSockPort(sock.fd)
     print($"listening on http://localhost:{actualPort}")
 
     while true {
