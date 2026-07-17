@@ -83,7 +83,9 @@ method, url, headers, body from a hand-written server.
   closing stdin — and every later `accept()` legitimately returned the freed fd 0. Fixed by
   making all fd `Drop` guards `fd > 0` (zero value drops as a no-op, per the move-zero
   contract); regression fixture `tests/fixtures/dropZeroedFdSlot.milo`. Multi-request serving
-  verified with curl x3 against the minibun http server. Still needed here: async response
+  verified with curl against the minibun http server, and with a full CRUD demo
+  (`examples/apps/minibun-notes.js` — a hand-written Express-style JSON API: routing,
+  `:params`, and in-memory state persisting across requests). Still needed here: async response
   (handler that calls `res.send` after a Promise) — needs the M3 event-loop drain.
 
 ### M7 — express boots

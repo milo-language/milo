@@ -15,6 +15,10 @@
 // issue — fd guards closed fd 0 on zeroed moved-from slots — fixed in std; see
 // docs/minibun-roadmap.md M6).
 //
+// Demo — a hand-written Express-style JSON API (routing, :params, persistent state):
+//   milo run examples/apps/minibun.milo -- examples/apps/minibun-notes.js
+//   curl localhost:8080/notes  ·  curl -X POST 'localhost:8080/notes?text=hi'
+//
 // Build + run (macOS):
 //   milo run examples/apps/minibun.milo -- entry.js      (JSC auto-linked by detectLibs)
 
