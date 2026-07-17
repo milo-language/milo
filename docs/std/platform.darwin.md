@@ -237,6 +237,30 @@ asm-generic/signal.h respectively), which is why it lives in the platform split 
 than beside the `let SIGx` constants in std/signal — those all happen to agree across
 both platforms.
 
+### `sockAddrIn6Len`
+
+```milo
+fn sockAddrIn6Len(): u32
+```
+
+_Undocumented._
+
+### `sockAddrInLen`
+
+```milo
+fn sockAddrInLen(): u32
+```
+
+_Undocumented._
+
+### `sockAddrStorageLen`
+
+```milo
+fn sockAddrStorageLen(): u32
+```
+
+_Undocumented._
+
 ### `soError`
 
 ```milo

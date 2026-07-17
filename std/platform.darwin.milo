@@ -18,6 +18,51 @@ extern struct SockAddrIn {
     sin_zero: [u8; 8],
 }
 
+// IPv6. Same 28 bytes on linux, but the header differs: darwin splits len/family into two
+// u8s where linux has a single u16 family. C's spelling, same reason as sockaddr_in.
+@cLayout("struct sockaddr_in6", "netinet/in.h")
+extern struct SockAddrIn6 {
+    sin6_len: u8,
+    sin6_family: u8,
+    sin6_port: u16,
+    sin6_flowinfo: u32,
+    sin6_addr: [u8; 16],
+    sin6_scope_id: u32,
+}
+
+// Unix domain. 106 here, 110 on linux (u16 family, no sun_len, 108-byte path) — but
+// sun_path lands at offset 2 on both.
+@cLayout("struct sockaddr_un", "sys/un.h")
+extern struct SockAddrUn {
+    sun_len: u8,
+    sun_family: u8,
+    sun_path: [u8; 104],
+}
+
+// sockaddr_storage — big enough for any family. accept()/recvfrom() let the KERNEL pick
+// the family, so they must write into this, never a 16-byte sockaddr_in: a v6 peer needs
+// 28 bytes and would otherwise be truncated (acceptFd does exactly that today).
+@cLayout("struct sockaddr_storage", "sys/socket.h")
+extern struct SockAddrStorage {
+    ss_len: u8,
+    ss_family: u8,
+    __ss_pad1: [u8; 6],
+    __ss_align: i64,
+    __ss_pad2: [u8; 112],
+}
+
+fn sockAddrInLen(): u32 {
+    return 16
+}
+
+fn sockAddrIn6Len(): u32 {
+    return 28
+}
+
+fn sockAddrStorageLen(): u32 {
+    return 128
+}
+
 fn makeSockaddr(port: u16, addr: u32): SockAddrIn {
     return SockAddrIn {
         sin_len: 16 as u8,

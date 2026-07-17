@@ -227,6 +227,30 @@ fn sigchldNum(): i32
 17 here, 20 on darwin (verified against asm-generic/signal.h and sys/signal.h
 respectively). The only signal std/signal needs that isn't same-numbered on both.
 
+### `sockAddrIn6Len`
+
+```milo
+fn sockAddrIn6Len(): u32
+```
+
+_Undocumented._
+
+### `sockAddrInLen`
+
+```milo
+fn sockAddrInLen(): u32
+```
+
+_Undocumented._
+
+### `sockAddrStorageLen`
+
+```milo
+fn sockAddrStorageLen(): u32
+```
+
+_Undocumented._
+
 ### `soError`
 
 ```milo
