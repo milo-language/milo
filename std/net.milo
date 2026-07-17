@@ -49,7 +49,13 @@ struct TcpStream {
 
 impl Drop for TcpStream {
     fn drop(self: &mut Self): void {
-        if self.fd >= 0 {
+        // `> 0`, not `>= 0`: drop glue runs on moved-from slots, which move-zeroing
+        // leaves all-zero — every Drop impl must be a no-op on the zero value, or a
+        // loop like `let ar = listener.accept()` + `match ar` closes fd 0 (stdin) on
+        // each reassign-drop and every later accept() returns the freed fd 0.
+        // Tradeoff: a real socket on fd 0 (only possible if stdin was closed at
+        // startup) is leaked instead of closed.
+        if self.fd > 0 {
             close(self.fd)
         }
     }
@@ -208,7 +214,8 @@ struct TcpListener {
 
 impl Drop for TcpListener {
     fn drop(self: &mut Self): void {
-        if self.fd >= 0 {
+        // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop).
+        if self.fd > 0 {
             close(self.fd)
         }
     }
@@ -302,7 +309,8 @@ impl Drop for TlsStream {
             if self.ctx != 0 {
                 SSL_CTX_free(self.ctx as *u8)
             }
-            if self.fd >= 0 {
+            // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop).
+            if self.fd > 0 {
                 close(self.fd)
             }
         }

@@ -221,7 +221,10 @@ struct File {
 
 impl Drop for File {
     fn drop(self: &mut Self): void {
-        if self.fd >= 0 {
+        // `> 0`: drop glue runs on moved-from slots, which move-zeroing leaves
+        // all-zero — the zero value must drop as a no-op or we close fd 0 (stdin).
+        // See TcpStream.drop in std/net for the full story.
+        if self.fd > 0 {
             close(self.fd)
         }
     }

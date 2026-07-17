@@ -1,0 +1,39 @@
+// @expect: fd0 preserved
+
+// Regression: drop glue runs on zeroed moved-from slots (the move-zero convention),
+// so fd-holding Drop impls must treat fd 0 as "not owned" (`fd > 0`, not `>= 0`).
+// A let-bound Result matched in a loop reassign-drops the previous iteration's
+// (payload-zeroed) value each time; with the old `fd >= 0` guard that was close(0),
+// so every 2nd+ accept()/open() in a plain loop returned the freed fd 0 — this
+// killed multi-request TCP servers in the main context.
+from "std/io" import {
+    File
+}
+from "std/os" import {
+    open
+}
+
+fn main(): i32 {
+    // Occupy fd 0 if the harness ran us without stdin, so the probe below is
+    // deterministic regardless of how the test driver wires the child's stdio.
+    let _pin = open("/dev/null", 0)
+    var i = 0
+    while i < 3 {
+        let fr = File.openRead("/dev/null")
+        match fr {
+            Result.Err(_e) => {
+                print("open err")
+            }
+            Result.Ok(_f) => {
+            }
+        }
+        i = i + 1
+    }
+    let probe = open("/dev/null", 0)
+    if probe > 0 {
+        print("fd0 preserved")
+    } else {
+        print("fd0 was closed")
+    }
+    return 0
+}

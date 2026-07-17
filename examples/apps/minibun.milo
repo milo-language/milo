@@ -11,9 +11,9 @@
 // JS over a few thin Milo natives), process/global scaffolding, and an HTTP server whose
 // accept loop is Milo and whose request/response semantics are JS.
 //
-// KNOWN LIMITATION: the server handles ONE request then stops — std/net's TcpListener.accept()
-// returns fd 0 on the second call in a plain accept loop (isolated bug, ~15-line repro, tracked
-// in docs/minibun-roadmap.md). Single-request serving is correct end to end.
+// The server serves multiple sequential requests (the fd-0 accept bug was a std Drop-glue
+// issue — fd guards closed fd 0 on zeroed moved-from slots — fixed in std; see
+// docs/minibun-roadmap.md M6).
 //
 // Build + run (macOS):
 //   milo run examples/apps/minibun.milo -- entry.js      (JSC auto-linked by detectLibs)
@@ -188,9 +188,6 @@ fn nativeHttpServe(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, ar
                         Result.Err(_e2) => {
                         }
                         Result.Ok(stream) => {
-                            // Everything via stream methods + natural Drop (no take/rawFd,
-                            // no raw read/write, no manual close) — that is the only fd path
-                            // that survives a second accept in this loop.
                             let reqText = stream.recvOnce()
                             let reqVal = jsString(ctx, reqText)
                             let argArr = malloc(8)

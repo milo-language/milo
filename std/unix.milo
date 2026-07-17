@@ -36,7 +36,8 @@ struct UnixStream {
 
 impl Drop for UnixStream {
     fn drop(self: &mut Self): void {
-        if self.fd >= 0 {
+        // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
+        if self.fd > 0 {
             close(self.fd)
         }
     }
@@ -114,7 +115,8 @@ struct UnixListener {
 
 impl Drop for UnixListener {
     fn drop(self: &mut Self): void {
-        if self.fd >= 0 {
+        // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
+        if self.fd > 0 {
             close(self.fd)
         }
     }

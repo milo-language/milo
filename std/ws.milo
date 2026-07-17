@@ -71,7 +71,8 @@ impl Drop for WsConn {
                 if self._ctx != 0 {
                     SSL_CTX_free(self._ctx as *u8)
                 }
-                if self.fd >= 0 {
+                // `> 0`: zeroed moved-from slots must drop as a no-op (see TcpStream.drop in std/net).
+                if self.fd > 0 {
                     close(self.fd)
                 }
             }

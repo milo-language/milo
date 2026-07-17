@@ -69,7 +69,7 @@ The tahoeroads backend now clears all of the above and stops at `Cannot find mod
   10% express uses, log what's stubbed (no silent truncation).
 - Effort: **1–2 sessions.** The likeliest place express surprises us.
 
-### M6 — the network stack: `net` + `http` ✅ (single-request; multi-request blocked)
+### M6 — the network stack: `net` + `http` ✅ (multi-request works)
 `http.createServer(cb).listen(port)` works end to end: a `__httpServe(port, handler)` Milo
 native binds/listens/accepts (via `std/net`) and calls the JS handler per connection; the
 handler parses the raw request and returns a raw HTTP response string. `http`/`net`/`stream`
@@ -77,12 +77,14 @@ modules + `ServerResponse`/`IncomingMessage` are JS. **Verified:** `curl` gets c
 method, url, headers, body from a hand-written server.
 - Added to std/net: `TcpStream.rawFd()` (borrow fd read-only) and `TcpStream.recvOnce()`
   (single read — `recv()` loops to EOF and deadlocks a keep-alive client).
-- **BLOCKER — multi-request:** `TcpListener.accept()` returns **fd 0** on the 2nd+ call in a
-  plain accept loop (isolated ~15-line repro; independent of read/write/drop/JSC — see
-  [[stdnet-accept-loop-bug]] in memory). Server handles one request then stops. Fixing this
-  std/net bug (root-cause `acceptFd` out-params, or run the loop on a green task) unblocks the
-  server. Also still needed here: async response (handler that calls `res.send` after a
-  Promise) — needs the M3 event-loop drain.
+- **RESOLVED — multi-request:** the fd-0 accept bug was NOT in `acceptFd`/out-params. Root
+  cause: drop glue runs on moved-from (zeroed) slots, and fd-holding `Drop` impls guarded
+  `fd >= 0`, so the reassign-drop of a let-bound `Result` in a loop called `close(0)` —
+  closing stdin — and every later `accept()` legitimately returned the freed fd 0. Fixed by
+  making all fd `Drop` guards `fd > 0` (zero value drops as a no-op, per the move-zero
+  contract); regression fixture `tests/fixtures/dropZeroedFdSlot.milo`. Multi-request serving
+  verified with curl x3 against the minibun http server. Still needed here: async response
+  (handler that calls `res.send` after a Promise) — needs the M3 event-loop drain.
 
 ### M7 — express boots
 - With M1–M6, `express`/`cookie-parser`/`compression` are large *pure-JS* packages requiring
