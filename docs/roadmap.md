@@ -88,6 +88,15 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Shipped 2026-07-16 — IPv6 in `std/net`.** `ip6("::1")` (16 raw bytes via `inet_pton`),
+`TcpStream.connect6`, `TcpListener.bind6`, with `scopeId` for link-local peers. Added
+ALONGSIDE the v4 API, not replacing it: `ip4()` returns a u32 and `connect(ip: u32, ...)`
+bakes IPv4 into its signature, and a u32 cannot hold a 128-bit address. `AF_INET6` is 30 on
+darwin / 10 on linux (verified) — one of the few socket constants that genuinely differs —
+so it comes from the platform split. A v4 literal is NOT auto-mapped: `ip6("127.0.0.1")` is
+None rather than a v4-mapped address, which is the trap that made node-milo's v4-only stack
+appear to work. Verified by a real ::1 round-trip (`tests/fixtures/tcpIpv6.milo`).
+
 **Shipped 2026-07-16 — `std/unix` (AF_UNIX stream sockets).** `UnixListener`/`UnixStream`
 with the same shape as the TCP pair (green-aware `accept`/`connect`, `incoming()` channel,
 `take()`), so a local daemon gets a filesystem-scoped transport instead of a localhost TCP

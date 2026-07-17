@@ -10,6 +10,15 @@ fn addrinfoAddrOffset(): i64
 
 offset of aiAddr field in struct addrinfo (swapped with aiCanonname vs macOS)
 
+### `afInet6`
+
+```milo
+fn afInet6(): i32
+```
+
+AF_INET6 is 10 here — one of the few socket constants that actually differs across the
+two platforms (AF_INET and AF_UNIX are both the same on each).
+
 ### `direntNameOffset`
 
 ```milo
@@ -137,6 +146,15 @@ fn makeSockaddr(port: u16, addr: u32): SockAddrIn
 ```
 
 _Undocumented._
+
+### `makeSockaddr6`
+
+```milo
+fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6
+```
+
+IPv6 address. `addr` is the 16 raw bytes in network order; `scopeId` is the interface
+index for a link-local address (fe80::/10), 0 otherwise.
 
 ### `makeSockaddrUn`
 

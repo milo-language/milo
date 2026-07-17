@@ -1,10 +1,10 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
 from "std/os" import {
-    SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl, SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd
+    SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl, SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd, connectFdIn6, bindIn6, inet_pton
 }
 from "std/platform" import {
-    SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr
+    SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr, makeSockaddr6, afInet6
 }
 from "std/json" import {
     Json, jsonParse
@@ -57,6 +57,28 @@ impl Drop for TcpStream {
 
 // Construct an IPv4 address from four octets.
 // Example: ip4(127, 0, 0, 1) for localhost.
+// Parse an IPv6 literal ("::1", "2001:db8::1") into its 16 raw bytes.
+// None if the text isn't a valid v6 address — inet_pton is strict, and a v4 literal like
+// "127.0.0.1" is NOT auto-mapped, so it returns None here rather than a v4-mapped address.
+fn ip6(text: &string): Option < [u8; 16] > {
+    unsafe {
+        var out: [u8; 16] = [0; 16]
+        var cbuf: [u8; 64] = [0; 64]
+        if text.len >= 64 {
+            return Option.None
+        }
+        var i: i64 = 0
+        while i < text.len {
+            cbuf[i] = text[i]
+            i = i + 1
+        }
+        if inet_pton(afInet6(), cbuf as *u8, out as *u8) != 1 {
+            return Option.None
+        }
+        return Option.Some(out)
+    }
+}
+
 fn ip4(a: u8, b: u8, c: u8, d: u8): u32 {
     let a32 = a as u32
     let b32 = b as u32
@@ -82,6 +104,25 @@ impl TcpStream {
             return Result.Err(NetError.ConnectionFailed("connect() failed"))
         }
 
+        return Result.Ok(TcpStream {
+            fd: fd
+        }
+        )
+    }
+
+    // IPv6 connect. Added alongside connect() rather than replacing it: a u32 cannot hold
+    // a 128-bit address, so the v4 entry point keeps its shape. `scopeId` is the interface
+    // index for a link-local peer (fe80::/10), 0 otherwise.
+    fn connect6(addr: [u8; 16], port: u16, scopeId: u32): Result<TcpStream, NetError> {
+        let fd = socket(afInet6(), 1, 0)
+        if fd < 0 {
+            return Result.Err(NetError.ConnectionFailed("socket() failed"))
+        }
+        var sa = makeSockaddr6(port, addr, scopeId)
+        if connectFdIn6(fd, sa) < 0 {
+            close(fd)
+            return Result.Err(NetError.ConnectionFailed("connect() failed"))
+        }
         return Result.Ok(TcpStream {
             fd: fd
         }
@@ -166,6 +207,30 @@ impl TcpListener {
 
         var addr = makeSockaddr(port, 0)
         if bindIn(fd, addr) < 0 {
+            close(fd)
+            return Result.Err(NetError.ConnectionFailed("bind() failed"))
+        }
+        if listen(fd, 1024) < 0 {
+            close(fd)
+            return Result.Err(NetError.ConnectionFailed("listen() failed"))
+        }
+        return Result.Ok(TcpListener {
+            fd: fd
+        }
+        )
+    }
+
+    // Bind an IPv6 listener. Added alongside bind(); pass the 16 raw bytes (`ip6("::1")`,
+    // or all-zero for the v6 wildcard "::").
+    fn bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError> {
+        let fd = socket(afInet6(), 1, 0)
+        if fd < 0 {
+            return Result.Err(NetError.ConnectionFailed("socket() failed"))
+        }
+        var one: i32 = 1
+        setsockopt(fd, solSocket(), soReuseaddr(), one, 4)
+        var sa = makeSockaddr6(port, addr, 0)
+        if bindIn6(fd, sa) < 0 {
             close(fd)
             return Result.Err(NetError.ConnectionFailed("bind() failed"))
         }

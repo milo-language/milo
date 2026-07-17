@@ -1,0 +1,58 @@
+// IPv6 in std/net — a real ::1 round-trip.
+//
+// Added alongside the v4 API rather than replacing it: `ip4()` returns a u32 and
+// `connect(ip: u32, ...)` bakes IPv4 into its signature, and a u32 cannot hold a 128-bit
+// address. So v6 gets `ip6()` (16 raw bytes) + `connect6`/`bind6`.
+//
+// This needed the sockaddr seam: bind/connect take `struct sockaddr *` and read the family
+// from its first bytes, so they cannot be declared per-family. AF_INET6 is 30 on darwin and
+// 10 on linux — one of the few socket constants that actually differs — so it comes from
+// the platform split.
+from "std/net" import {
+    TcpListener, TcpStream, ip6
+}
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/os" import {
+    close, getSockPort
+}
+
+fn main(): i32 {
+    // @expect: parsed ::1 true
+    print("parsed ::1 ", ip6("::1").isSome())
+
+    // A v4 literal is NOT auto-mapped by inet_pton — it must fail rather than silently
+    // become a v4-mapped address.
+    // @expect: v4 literal rejected true
+    print("v4 literal rejected ", ip6("127.0.0.1").isNone())
+
+    // NOTE: ip6() is called twice rather than reusing `loopback` — a [u8; 16] is neither
+    // Copy nor cloneable today, so passing it to bind6 moves it. The compiler even
+    // suggests .clone(), which arrays don't have. Tracked as a papercut.
+    let lis = TcpListener.bind6(ip6("::1")!, 0)!
+    // getSockPort is family-agnostic: sin_port and sin6_port both sit at offset 2
+    let port = getSockPort(lis.fd) as u16
+
+    Task.spawn(move(): void => {
+        match lis.accept() {
+            Result.Ok(conn) => {
+                let msg = conn.recv()!
+                print("server got ", msg)
+            }
+            Result.Err(e) => {
+                print("accept failed")
+            }
+        }
+    }
+    )
+
+    let cli = TcpStream.connect6(ip6("::1")!, port, 0)!
+    let _n = cli.send("hello over v6")!
+    let fd = cli.take()
+    close(fd)
+
+    // @expect: server got hello over v6
+    schedulerRunToCompletion()
+    return 0
+}

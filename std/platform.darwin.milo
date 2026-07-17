@@ -64,6 +64,31 @@ fn makeZeroedSockaddrStorage(): SockAddrStorage {
     }
 }
 
+// AF_INET6 is 30 here — one of the few socket constants that actually differs across the
+// two platforms (AF_INET and AF_UNIX are both the same on each).
+fn afInet6(): i32 {
+    return 30
+}
+
+// IPv6 address. `addr` is the 16 raw bytes in network order; `scopeId` is the interface
+// index for a link-local address (fe80::/10), 0 otherwise.
+fn makeSockaddr6(port: u16, addr: [u8; 16], scopeId: u32): SockAddrIn6 {
+    var a = SockAddrIn6 {
+        sin6_len: 28 as u8,
+        sin6_family: 30 as u8,
+        sin6_port: htons(port),
+        sin6_flowinfo: 0,
+        sin6_addr: [0; 16],
+        sin6_scope_id: scopeId,
+    }
+    var i: i64 = 0
+    while i < 16 {
+        a.sin6_addr[i] = addr[i]
+        i = i + 1
+    }
+    return a
+}
+
 fn sockAddrInLen(): u32 {
     return 16
 }

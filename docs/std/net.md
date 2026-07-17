@@ -32,8 +32,19 @@ _Undocumented._
 fn Drop.ip4(a: u8, b: u8, c: u8, d: u8): u32
 ```
 
+_Undocumented._
+
+### `Drop.ip6`
+
+```milo
+fn Drop.ip6(text: &string): Option < [u8; 16] >
+```
+
 Construct an IPv4 address from four octets.
 Example: ip4(127, 0, 0, 1) for localhost.
+Parse an IPv6 literal ("::1", "2001:db8::1") into its 16 raw bytes.
+None if the text isn't a valid v6 address — inet_pton is strict, and a v4 literal like
+"127.0.0.1" is NOT auto-mapped, so it returns None here rather than a v4-mapped address.
 
 ### `Response.decodeChunked`
 
@@ -271,6 +282,15 @@ Bind to 0.0.0.0:port and start listening. SO_REUSEADDR is set so a quick
 restart doesn't fail with "address already in use". Pass port 0 to let the
 OS choose a free port (recover it via the accepted peer or getsockname).
 
+### `TcpListener.bind6`
+
+```milo
+fn TcpListener.bind6(addr: [u8; 16], port: u16): Result<TcpListener, NetError>
+```
+
+Bind an IPv6 listener. Added alongside bind(); pass the 16 raw bytes (`ip6("::1")`,
+or all-zero for the v6 wildcard "::").
+
 ### `TcpStream.connect`
 
 ```milo
@@ -278,6 +298,16 @@ fn TcpStream.connect(ip: u32, port: u16): Result<TcpStream, NetError>
 ```
 
 _Undocumented._
+
+### `TcpStream.connect6`
+
+```milo
+fn TcpStream.connect6(addr: [u8; 16], port: u16, scopeId: u32): Result<TcpStream, NetError>
+```
+
+IPv6 connect. Added alongside connect() rather than replacing it: a u32 cannot hold
+a 128-bit address, so the v4 entry point keeps its shape. `scopeId` is the interface
+index for a link-local peer (fe80::/10), 0 otherwise.
 
 ### `TcpStream.incoming`
 
