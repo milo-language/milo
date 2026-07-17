@@ -1,0 +1,27 @@
+// string.push takes an int literal without an explicit `as u8`.
+//
+// It used to demand `s.push(65 as u8)`: the arg was checked with no expected type, so the
+// literal inferred i64 and then failed a u8 equality check. Vec.push always hinted its arg;
+// string.push just didn't. The literal now coerces, and nothing else loosens — an
+// out-of-range literal is caught by the coercion ("overflows u8"), and a real i64 value is
+// still rejected (see tests/errors/stringPushI64.milo).
+fn main() {
+    var s: string = ""
+    s.push(72)
+    s.push(105)
+    // @expect: Hi
+    print(s)
+
+    // An explicit cast still works — this is additive, not a replacement.
+    var t: string = ""
+    t.push(65 as u8)
+    // @expect: A
+    print(t)
+
+    // A u8 variable, the case that always worked.
+    var u: string = ""
+    let c: u8 = 66
+    u.push(c)
+    // @expect: B
+    print(u)
+}

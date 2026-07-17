@@ -4946,8 +4946,11 @@ export class TypeChecker {
             if (!this.isRootMutable(expr.object)) {
               this.error(`cannot push to immutable string`, sp, `declare with 'var' to make it mutable`);
             }
-            const argType = this.checkExpr(expr.args[0]);
+            // Hint the arg with u8 so an int literal coerces — `s.push(65)` demanded an
+            // explicit `as u8` only because this checked without a hint, unlike Vec.push.
+            // An out-of-range literal is still rejected by the coercion itself.
             const u8t: TypeKind = { tag: "int", bits: 8, signed: false };
+            const argType = this.checkExprWithHint(expr.args[0], u8t);
             if (!typeEq(u8t, argType) && argType.tag !== "unknown") {
               this.error(`string.push: expected u8, got ${typeName(argType)}`, sp);
             }

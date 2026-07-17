@@ -1,0 +1,10 @@
+// @error: string.push: expected u8, got i64
+// Hinting string.push's arg with u8 lets an int LITERAL coerce (s.push(65)), but must not
+// start accepting an actual i64 value — that would be a silent truncation, which is the
+// opposite of what the papercut fix was for.
+fn main() {
+    var s: string = ""
+    let n: i64 = 65
+    s.push(n)
+    print(s)
+}

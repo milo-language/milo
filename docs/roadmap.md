@@ -88,6 +88,13 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — `string.push(65)` needed an explicit `as u8`.** The arg was checked
+with no expected type, so an int literal inferred i64 and then failed a u8 equality check;
+`Vec.push` had always hinted its arg. Nothing else loosens: an out-of-range literal is
+rejected by the coercion ("integer literal 300 overflows u8"), and a real i64 value is still
+refused (`tests/errors/stringPushI64.milo`) — silently truncating that is the opposite of
+the point.
+
 **Fixed 2026-07-16 — signal self-pipes were a single global, cross-wiring any program that
 armed two signals.** `_sigPipeW` was one `i32`, so installing a second signal re-pointed the
 shared handler at the second pipe: raising SIGWINCH made **SIGCHLD's** fd readable while the
