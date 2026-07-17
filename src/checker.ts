@@ -1067,6 +1067,7 @@ export class TypeChecker {
             `only '@cSig' applies to a fn; it would be silently ignored otherwise`);
         }
       }
+      this.checkVariadicExtern(fn);
       if (fn.typeParams.length > 0) {
         this.genericFns.set(fn.name, { typeParams: fn.typeParams.map(tp => tp.name), decl: fn });
         continue;
@@ -1535,6 +1536,60 @@ export class TypeChecker {
   // library you imported, and warning about one is noise you can't act on. Same reasoning
   // as the unused-unsafe lint. `entryFile` is unset when the checker is driven directly
   // (tests/tools), which correctly means "everything is user code".
+  // libc symbols that are variadic in the real headers on BOTH darwin and linux.
+  // Declaring one of these with fixed arity compiles clean and silently calls it with the
+  // wrong ABI: on AArch64 a variadic callee reads its variadic args off the stack, while a
+  // fixed-arity call passes them in registers, so the callee sees garbage. It is silent
+  // because on x86_64 the two conventions coincide for integer args — the code "works"
+  // until it meets an ARM64 machine.
+  //
+  // This cost node-milo hours: `fcntl(fd, F_SETFL, flags)` declared fixed-arity meant
+  // O_NONBLOCK never landed, so every socket in the runtime stayed blocking and the bug
+  // surfaced as a throughput mystery, not as a bad declaration. Milo already has the `...`
+  // syntax and std/platform declares fcntl correctly; nothing checked that anyone else did.
+  //
+  // Conservative on purpose: only names whose variadic-ness is not in dispute. `execl`,
+  // `execlp` and `execle` are NUL-terminated variadic lists; `syscall`, `ioctl`, `fcntl`,
+  // `open`/`openat` take a mode/arg only for some commands; the printf/scanf families are
+  // variadic by definition.
+  // name → how many parameters are FIXED in the C prototype (everything after is `...`).
+  // The count is what matters, not the name: `open(const char *, int, ...)` declared with
+  // exactly its 2 fixed params is fine (no variadic arg is ever passed), while
+  // `fcntl(int, int, ...)` declared with 3 absorbs the variadic arg into a fixed one and
+  // is the bug. Getting this wrong in either direction misplaces an argument.
+  private static readonly VARIADIC_LIBC = new Map<string, number>([
+    ["fcntl", 2], ["open", 2], ["openat", 3], ["ioctl", 2], ["syscall", 1],
+    ["printf", 1], ["fprintf", 2], ["sprintf", 2], ["snprintf", 3], ["dprintf", 2],
+    ["scanf", 1], ["fscanf", 2], ["sscanf", 2],
+    ["execl", 2], ["execlp", 2], ["execle", 2],
+  ]);
+
+  private checkVariadicExtern(fn: Function): void {
+    if (!fn.isExtern) return;
+    const fixed = TypeChecker.VARIADIC_LIBC.get(fn.name);
+    if (fixed === undefined) return;
+    if (this.entryFile && fn.span?.file && fn.span.file !== this.entryFile) return;
+
+    const why = `On AArch64 a variadic callee reads its variadic args off the stack while a ` +
+      `fixed-arity call passes them in registers, so the callee sees garbage. x86_64 hides this ` +
+      `(the conventions agree for integer args), which is why it survives testing.`;
+
+    if (!fn.isVariadic && fn.params.length > fixed) {
+      this.error(
+        `extern '${fn.name}' declares ${fn.params.length} fixed parameters but C fixes only ${fixed} — ` +
+        `the rest are variadic, so this miscompiles silently on AArch64`,
+        fn.span,
+        `declare it 'extern fn ${fn.name}(<${fixed} fixed param(s)>,...): ...' and pass the rest as variadic args. ${why}`);
+      return;
+    }
+    if (fn.isVariadic && fn.params.length !== fixed) {
+      this.error(
+        `extern '${fn.name}' declares ${fn.params.length} fixed parameter(s) before '...' but C fixes ${fixed}`,
+        fn.span,
+        `a parameter on the wrong side of the '...' is passed in the wrong place. ${why}`);
+    }
+  }
+
   private warnUnverifiedExtern(s: StructDecl): void {
     if (!s.isExtern || s.isOpaque) return;              // opaque types have no fields to verify
     if (s.attributes?.some(a => a.name === "cLayout")) return;
@@ -4439,6 +4494,33 @@ export class TypeChecker {
               const at = this.checkExprWithHint(expr.args[0], inner);
               if (!typeEq(inner, at) && at.tag !== "unknown") {
                 this.error(`'unwrapOr': default must be ${typeName(inner)}, got ${typeName(at)}`, sp);
+              }
+              return this.setType(expr, inner);
+            }
+            return this.setType(expr, { tag: "unknown" });
+          }
+          // unwrapOrElse(f) — like unwrapOr but the default is computed only when None.
+          // Same Copy gate as unwrapOr, for the same reason: the payload is loaded, not
+          // moved out.
+          if (expr.method === "unwrapOrElse") {
+            if (expr.args.length !== 1) { this.error(`'unwrapOrElse' expects 1 argument`, sp); }
+            const inner = this.unwrapableInner(objType);
+            if (inner && !isCopy(inner)) {
+              this.error(`'unwrapOrElse' on a non-Copy Option<${typeName(inner)}> — use 'match' to move the value out`, sp);
+              return this.setType(expr, inner);
+            }
+            if (inner) {
+              const cbHint: TypeKind = { tag: "fn", params: [], ret: inner };
+              const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+              if (cbType.tag !== "fn") {
+                this.error(`'unwrapOrElse' argument must be a function`, sp);
+                return this.setType(expr, inner);
+              }
+              if (cbType.params.length !== 0) {
+                this.error(`'unwrapOrElse': callback takes no arguments`, sp);
+              }
+              if (!typeEq(inner, cbType.ret) && cbType.ret.tag !== "unknown") {
+                this.error(`'unwrapOrElse': callback must return ${typeName(inner)}, got ${typeName(cbType.ret)}`, sp);
               }
               return this.setType(expr, inner);
             }

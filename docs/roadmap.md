@@ -88,6 +88,18 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — variadic externs declared with the wrong fixed arity miscompiled
+silently.** A libc fn like `fcntl(int, int, ...)` declared as `extern fn fcntl(fd, cmd, arg)`
+compiles clean and calls with the wrong ABI: AArch64 passes variadic args on the stack while
+a fixed-arity call puts them in registers, so the callee reads garbage. x86_64 hides it (the
+conventions agree for integer args). node-milo lost hours to exactly this — `O_NONBLOCK`
+never landed, so every socket stayed blocking and it presented as a throughput mystery.
+The checker now compares each extern against libc's real fixed-param count
+(`checkVariadicExtern`). It immediately found a live one in **our own std**: `execl` was
+declared with 1 fixed param but C fixes 2 (`path`, `arg0`), so `std/process.spawn` handed
+every child a garbage `argv[0]` and shifted the real one to `argv[1]` — observable as
+`/bin/echo` echoing its own path. Covered by `tests/errors/variadicExternFixedArity.milo`.
+
 **Fixed 2026-07-16 — `std/net` + `std/ws` TLS clients verified no certificates.** Both
 called `SSL_CTX_set_default_verify_paths` and stopped: that loads the trust store but an
 OpenSSL client defaults to `SSL_VERIFY_NONE`, so it was never consulted. A self-signed

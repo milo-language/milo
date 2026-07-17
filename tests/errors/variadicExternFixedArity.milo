@@ -1,0 +1,11 @@
+// @error: extern 'fcntl' declares 3 fixed parameters but C fixes only 2
+// The exact declaration that cost node-milo hours: fcntl(fd, F_SETFL, flags) with fixed
+// arity compiles clean, but on AArch64 the variadic callee reads its third arg off the
+// stack while a fixed-arity call passes it in a register — so O_NONBLOCK never landed and
+// every socket in the runtime stayed blocking. It presented as a throughput mystery, not
+// as a bad declaration, because x86_64's conventions coincide for integer args.
+extern fn fcntl(fd: i32, cmd: i32, arg: i32): i32
+
+fn main() {
+    print(fcntl(0, 3, 0))
+}

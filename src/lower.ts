@@ -670,10 +670,14 @@ class LowerCtx {
           return { kind: "BoolToString", value: this.lowerExpr(expr.object), type, span: expr.span };
         }
         if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Option"
-            && (expr.method === "isSome" || expr.method === "isNone" || expr.method === "unwrapOr")) {
+            && (expr.method === "isSome" || expr.method === "isNone" || expr.method === "unwrapOr"
+                || expr.method === "unwrapOrElse")) {
           return {
             kind: "OptionOp", op: expr.method, value: this.lowerExpr(expr.object),
-            default: expr.method === "unwrapOr" ? this.lowerExpr(expr.args[0]) : undefined,
+            // For unwrapOrElse the slot carries the CLOSURE, not a value — codegen calls
+            // it only on the None branch.
+            default: (expr.method === "unwrapOr" || expr.method === "unwrapOrElse")
+              ? this.lowerExpr(expr.args[0]) : undefined,
             enumName: objType.name, type, span: expr.span,
           };
         }

@@ -1,0 +1,27 @@
+// Option.unwrapOrElse(f) — unwrapOr with a lazily-computed default.
+//
+// The whole point is that f runs ONLY on None. unwrapOr lowers to a `select`, which
+// evaluates both arms; reusing that here would call f even when Some, which is exactly
+// what a caller picks unwrapOrElse to avoid. So this fixture asserts the side effect's
+// absence via output ordering: "fallback ran" must appear once, after the 5.
+fn fallback(): i64 {
+    print("fallback ran")
+    return 42
+}
+
+fn main() {
+    let some: Option<i64> = Option.Some(5)
+    // @expect: 5
+    print(some.unwrapOrElse(() => fallback()))
+
+    let none: Option<i64> = Option.None
+    // @expect: fallback ran
+    // @expect: 42
+    print(none.unwrapOrElse(() => fallback()))
+
+    // Closures capture, same as anywhere else.
+    let base = 7
+    let n2: Option<i64> = Option.None
+    // @expect: 70
+    print(n2.unwrapOrElse(() => base * 10))
+}

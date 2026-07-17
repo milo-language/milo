@@ -8473,12 +8473,43 @@ export class Codegen {
       lines.push(`  ${r} = xor i1 ${isSome}, true`);
       return [lines, r, "i1"];
     }
-    // unwrapOr
+    // unwrapOr / unwrapOrElse
     const payloadTy = this.llvmType(expr.type);
     const payloadPtr = this.nextTemp();
     lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
     const payload = this.nextTemp();
     lines.push(`  ${payload} = load ${payloadTy}, ptr ${payloadPtr}`);
+
+    // unwrapOrElse must BRANCH, not select: select evaluates both arms, which would call
+    // the closure even when Some — the exact thing the caller chose unwrapOrElse to avoid.
+    if (expr.op === "unwrapOrElse") {
+      const someLabel = this.nextLabel("uoe.some");
+      const noneLabel = this.nextLabel("uoe.none");
+      const contLabel = this.nextLabel("uoe.cont");
+      lines.push(`  br i1 ${isSome}, label %${someLabel}, label %${noneLabel}`);
+      lines.push(`${someLabel}:`);
+      lines.push(`  br label %${contLabel}`);
+      lines.push(`${noneLabel}:`);
+      const [cl, cv] = this.genExpr(expr.default!);
+      lines.push(...cl);
+      const fnPtr = this.nextTemp();
+      lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+      const envPtr = this.nextTemp();
+      lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+      const called = this.nextTemp();
+      lines.push(`  ${called} = call ${payloadTy} ${fnPtr}(ptr ${envPtr})`);
+      // The closure body may itself branch, so the incoming block for the phi is
+      // wherever control actually ended up — not noneLabel.
+      const noneEnd = this.nextLabel("uoe.none.end");
+      lines.push(`  br label %${noneEnd}`);
+      lines.push(`${noneEnd}:`);
+      lines.push(`  br label %${contLabel}`);
+      lines.push(`${contLabel}:`);
+      const r = this.nextTemp();
+      lines.push(`  ${r} = phi ${payloadTy} [ ${payload}, %${someLabel} ], [ ${called}, %${noneEnd} ]`);
+      return [lines, r, payloadTy];
+    }
+
     const [dl, dv] = this.genExpr(expr.default!);
     lines.push(...dl);
     const r = this.nextTemp();
