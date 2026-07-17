@@ -64,6 +64,22 @@ fn sockAddrIn6Len(): u32 {
 }
 
 // Whole-struct length; bind/connect want it for AF_UNIX.
+// AF_UNIX address for `path`. Truncates at sockAddrUnMaxPath so the kernel always sees a
+// NUL-terminated path; callers should reject longer paths rather than connect to a
+// silently shortened one (UnixListener/UnixStream do).
+fn makeSockaddrUn(path: &string): SockAddrUn {
+    var a = SockAddrUn {
+        sun_family: 1 as u16,
+        sun_path: [0; 108],
+    }
+    var i: i64 = 0
+    while i < path.len && i < sockAddrUnMaxPath() {
+        a.sun_path[i] = path[i]
+        i = i + 1
+    }
+    return a
+}
+
 fn sockAddrUnLen(): u32 {
     return 110
 }

@@ -56,6 +56,7 @@ Generated from `std/**/*.milo` doc-comments — do not edit by hand.
 - [std/time](./time.md)
 - [std/toml](./toml.md)
 - [std/unicode](./unicode.md)
+- [std/unix](./unix.md)
 - [std/url](./url.md)
 - [std/uuid](./uuid.md)
 - [std/ws](./ws.md)

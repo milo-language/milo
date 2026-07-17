@@ -88,6 +88,16 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Shipped 2026-07-16 — `std/unix` (AF_UNIX stream sockets).** `UnixListener`/`UnixStream`
+with the same shape as the TCP pair (green-aware `accept`/`connect`, `incoming()` channel,
+`take()`), so a local daemon gets a filesystem-scoped transport instead of a localhost TCP
+port. It needed the sockaddr seam first: the syscalls take `struct sockaddr *` and read the
+family from its first bytes, so `bind`/`connect` cannot be declared per-family (the resolver
+merges every decl of an imported file, so a second one at another type just loses). With
+`std/os` declaring them raw against `*SockAddr` behind typed per-family wrappers, this module
+holds no `unsafe` at all. A path longer than `sun_path` is rejected rather than silently
+truncated into a different socket. See `tests/fixtures/unixSocket.milo`.
+
 **Fixed 2026-07-16 — a `&mut self` method on a match-bound COPY silently discarded the write.**
 `match b { Box.Full(c) => { c.bump() } }` compiled, ran against a snapshot, and threw the
 result away (inside `bump` v==2, after the match v==1) — while the identical operation

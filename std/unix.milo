@@ -1,0 +1,169 @@
+// std/unix — unix-domain (AF_UNIX) stream sockets.
+//
+// The right transport for a local daemon: filesystem-scoped rather than port-scoped, so no
+// port allocation and no accidental exposure to the network. The tmux-style detach/attach
+// daemon uses a localhost TCP port only because this didn't exist.
+//
+// This needed the std/os sockaddr seam first. The syscalls take `struct sockaddr *` and
+// read the family from its first bytes, so ONE extern must serve every family — Milo can't
+// declare `bind` twice (the resolver merges every decl of an imported file, so a second one
+// at another type just loses). std/os declares them raw against `*SockAddr` and exposes a
+// typed wrapper per family; this module is a consumer of `bindUn`/`connectFdUn`, and holds
+// no unsafe of its own.
+from "std/os" import {
+    socket, close, listen, acceptFd, readFd, writeFd, unlink, bindUn, connectFdUn
+}
+from "std/platform" import {
+    SockAddrUn, makeSockaddrUn, sockAddrUnMaxPath
+}
+from "std/sync" import {
+    Channel
+}
+from "std/io" import {
+    fdChannel
+}
+
+// 1 on both darwin and linux (verified), so unlike AF_INET6 it needs no platform split.
+let AF_UNIX: i32 = 1
+let SOCK_STREAM_UNIX: i32 = 1
+
+// ── UnixStream ──
+
+// A connected unix-domain socket. Closes its fd on drop.
+struct UnixStream {
+    fd: i32,
+}
+
+impl Drop for UnixStream {
+    fn drop(self: &mut Self): void {
+        if self.fd >= 0 {
+            close(self.fd)
+        }
+    }
+}
+
+impl UnixStream {
+    // Connect to a listening socket at `path`. Inside the green scheduler this yields
+    // rather than blocking the whole runtime.
+    fn connect(path: &string): Result<UnixStream, string> {
+        // Reject rather than connect to a silently truncated path: sun_path is a fixed
+        // 104/108 bytes, and a shortened path is a different socket.
+        if path.len > sockAddrUnMaxPath() {
+            return Result.Err("unix socket path too long")
+        }
+        let fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0)
+        if fd < 0 {
+            return Result.Err("socket() failed")
+        }
+        var addr = makeSockaddrUn(path)
+        if connectFdUn(fd, addr) < 0 {
+            close(fd)
+            return Result.Err("connect() failed")
+        }
+        return Result.Ok(UnixStream {
+            fd: fd
+        }
+        )
+    }
+
+    fn send(self: &Self, data: &string): Result<i64, string> {
+        let n = writeFd(self.fd, data, data.len)
+        if n < 0 {
+            return Result.Err("send failed")
+        }
+        return Result.Ok(n)
+    }
+
+    // Read until the peer closes. Prefer incoming() to consume as bytes arrive.
+    fn recv(self: &Self): Result<string, string> {
+        var result: string = ""
+        var buf: [u8; 4096] = [0; 4096]
+        while true {
+            let n = readFd(self.fd, buf, 4096)
+            if n <= 0 {
+                break
+            }
+            for i in 0..n {
+                result.push(buf[i])
+            }
+        }
+        return Result.Ok(result)
+    }
+
+    // Inbound bytes as an iterable channel, pumped on a green task — the same shape as
+    // TcpStream.incoming.
+    fn incoming(self: &Self): Channel<string> {
+        return fdChannel(self.fd)
+    }
+
+    // Release the fd to the caller; this stream no longer closes it on drop.
+    fn take(self: &mut Self): i32 {
+        let f = self.fd
+        self.fd = -1 as i32
+        return f
+    }
+}
+
+// ── UnixListener ──
+
+// A listening unix-domain socket. Closes its fd on drop — but NOT the socket file; call
+// removeSocketFile to clean that up.
+struct UnixListener {
+    fd: i32,
+}
+
+impl Drop for UnixListener {
+    fn drop(self: &mut Self): void {
+        if self.fd >= 0 {
+            close(self.fd)
+        }
+    }
+}
+
+impl UnixListener {
+    // Bind to `path` and listen. bind() fails EADDRINUSE if the file already exists — even
+    // one left by a crashed process that never cleaned up — so a stale socket file is
+    // removed first. That is the standard dance, and it is why the path should live
+    // somewhere only this daemon writes.
+    fn bind(path: &string): Result<UnixListener, string> {
+        if path.len > sockAddrUnMaxPath() {
+            return Result.Err("unix socket path too long")
+        }
+        unlink(path)
+        let fd = socket(AF_UNIX, SOCK_STREAM_UNIX, 0)
+        if fd < 0 {
+            return Result.Err("socket() failed")
+        }
+        var addr = makeSockaddrUn(path)
+        if bindUn(fd, addr) < 0 {
+            close(fd)
+            return Result.Err("bind() failed")
+        }
+        if listen(fd, 128) < 0 {
+            close(fd)
+            return Result.Err("listen() failed")
+        }
+        return Result.Ok(UnixListener {
+            fd: fd
+        }
+        )
+    }
+
+    // Accept one connection. Inside the green scheduler this yields instead of blocking the
+    // runtime — acceptFd is family-agnostic and already green-aware.
+    fn accept(self: &Self): Result<UnixStream, string> {
+        let clientFd = acceptFd(self.fd)
+        if clientFd < 0 {
+            return Result.Err("accept() failed")
+        }
+        return Result.Ok(UnixStream {
+            fd: clientFd
+        }
+        )
+    }
+}
+
+// Remove a socket file. Dropping a UnixListener closes its fd but leaves the path behind.
+fn removeSocketFile(path: &string): void {
+    unlink(path)
+}

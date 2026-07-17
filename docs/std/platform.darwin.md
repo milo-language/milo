@@ -138,6 +138,17 @@ fn makeSockaddr(port: u16, addr: u32): SockAddrIn
 
 _Undocumented._
 
+### `makeSockaddrUn`
+
+```milo
+fn makeSockaddrUn(path: &string): SockAddrUn
+```
+
+Whole-struct length; bind/connect want it for AF_UNIX.
+AF_UNIX address for `path`. Truncates at sockAddrUnMaxPath so the kernel always sees a
+NUL-terminated path; callers should reject longer paths rather than connect to a
+silently shortened one (UnixListener/UnixStream do).
+
 ### `makeZeroedSockaddr`
 
 ```milo
@@ -275,7 +286,7 @@ _Undocumented._
 fn sockAddrUnLen(): u32
 ```
 
-Whole-struct length; bind/connect want it for AF_UNIX.
+_Undocumented._
 
 ### `sockAddrUnMaxPath`
 

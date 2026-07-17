@@ -1,0 +1,59 @@
+// std/unix round-trip over an AF_UNIX socket.
+//
+// This is what the std/os sockaddr seam was for: the syscalls take `struct sockaddr *` and
+// pick the family from its first bytes, so bind/connect can't be declared per-family. With
+// the raw *SockAddr extern + typed wrappers, AF_UNIX is an ordinary consumer — this module
+// contains no unsafe at all.
+from "std/unix" import {
+    UnixListener, UnixStream, removeSocketFile
+}
+from "std/runtime" import {
+    Task, schedulerRunToCompletion
+}
+from "std/os" import {
+    close
+}
+
+fn main(): i32 {
+    let path = "/tmp/milo-unixsocket-fixture.sock"
+    let lis = UnixListener.bind(path)!
+    // @expect: listening true
+    print("listening ", true)
+
+    Task.spawn(move(): void => {
+        match lis.accept() {
+            Result.Ok(conn) => {
+                let msg = conn.recv()!
+                print("server got ", msg)
+            }
+            Result.Err(e) => {
+                print("accept failed ", e)
+            }
+        }
+    }
+    )
+
+    let cli = UnixStream.connect(path)!
+    let _n = cli.send("hello over unix")!
+    // Close the client so the server's recv() sees EOF and returns.
+    let fd = cli.take()
+    close(fd)
+
+    // @expect: server got hello over unix
+    // Go exit semantics: main no longer drains implicitly, so wait for the server task.
+    schedulerRunToCompletion()
+
+    // A path longer than sun_path must be REJECTED, not silently truncated to a
+    // different socket.
+    var long: string = ""
+    var i: i64 = 0
+    while i < 200 {
+        long.push(97)
+        i = i + 1
+    }
+    // @expect: long path rejected true
+    print("long path rejected ", UnixStream.connect(long).isErr())
+
+    removeSocketFile(path)
+    return 0
+}
