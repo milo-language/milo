@@ -18,6 +18,7 @@ bun test                                                  # full test suite
 bun test tests/run.test.ts -t "arithmetic"                # single fixture by name
 ./benchmarks/run.sh                                       # reproduce perf numbers
 bun run src/main.ts api <terms>                           # search std signatures (name + doc, ranked)
+bun run src/main.ts doc <file|dir> [-o out]               # reference markdown from doc-comments
 bun run src/main.ts api --module std/json                 # dump one module's full API
 ```
 

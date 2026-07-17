@@ -7,9 +7,9 @@
 // Upgrade path: back this with the parsed AST (exact generics / re-exports /
 // visibility) once it earns its keep; the CLI surface stays identical.
 
-import { readFileSync, readdirSync, existsSync } from "fs";
+import { readFileSync, readdirSync, existsSync, statSync, mkdirSync, writeFileSync } from "fs";
 import { fileURLToPath } from "url";
-import { resolve, dirname, relative } from "path";
+import { resolve, dirname, relative, join } from "path";
 import { STDLIB_DIR, readStd, bundledStdPaths } from "./stdlibBundle";
 
 interface Entry {
@@ -66,9 +66,15 @@ function leadingDoc(lines: string[], idx: number): { first: string; full: string
   return { first: buf.length ? buf[0] : "", full: buf.join("\n") };
 }
 
-function parseModule(file: string): Entry[] {
-  const module = "std/" + relative(resolve(STDLIB_DIR, "std"), file).replace(/\.milo$/, "").replace(/\\/g, "/");
-  const src = readStd(file);
+// `root` names an arbitrary project directory: the module is then its path relative
+// to that root, and the source comes off disk. Without it this is the std path, where
+// modules are "std/"-prefixed and readStd also serves the bundle embedded in a shipped
+// binary (no std/ on disk to walk).
+function parseModule(file: string, root?: string): Entry[] {
+  const module = root !== undefined
+    ? relative(root, file).replace(/\.milo$/, "").replace(/\\/g, "/")
+    : "std/" + relative(resolve(STDLIB_DIR, "std"), file).replace(/\.milo$/, "").replace(/\\/g, "/");
+  const src = root !== undefined ? readFileSync(file, "utf-8") : readStd(file);
   if (src === null) return [];
   const lines = src.split("\n");
   const entries: Entry[] = [];
@@ -119,6 +125,24 @@ export function stdDocsByModule(): Map<string, string> {
     const stem = module.replace(/^std\//, "");
     out.set(stem, renderMarkdown(entries));
   }
+  return out;
+}
+
+// Same rendering as the std reference, over any directory (or a single .milo file).
+// Keyed by module path relative to `root`, so callers can write <out>/<module>.md.
+export function docsByModuleForPath(target: string): Map<string, string> {
+  const isFile = statSync(target).isFile();
+  const root = isFile ? dirname(resolve(target)) : resolve(target);
+  const files: string[] = [];
+  if (isFile) files.push(resolve(target));
+  else walkMilo(root, files);
+
+  const byMod = new Map<string, Entry[]>();
+  for (const f of files) {
+    for (const e of parseModule(f, root)) (byMod.get(e.module) ?? byMod.set(e.module, []).get(e.module)!).push(e);
+  }
+  const out = new Map<string, string>();
+  for (const [module, entries] of byMod) out.set(module, renderMarkdown(entries));
   return out;
 }
 
@@ -179,6 +203,47 @@ function renderMarkdown(entries: Entry[]): string {
     }
   }
   return out.join("\n");
+}
+
+// `milo doc <path> [-o <dir>]` — reference markdown for a file or directory.
+// Without -o it prints to stdout, so `milo doc foo.milo | less` works and the
+// common case needs no output directory.
+export function runMiloDoc(args: string[]): number {
+  const oIdx = args.findIndex(a => a === "-o" || a === "--out");
+  const outDir = oIdx >= 0 ? args[oIdx + 1] : undefined;
+  // Guard on oIdx >= 0: with no -o, oIdx is -1 and `i !== oIdx + 1` would drop argv[0] —
+  // the target itself.
+  const positional = args.filter((a, i) => (oIdx < 0 || (i !== oIdx && i !== oIdx + 1)) && !a.startsWith("-"));
+  const target = positional[0];
+  if (!target) {
+    process.stderr.write("usage: milo doc <file.milo|dir> [-o <outdir>]\n");
+    return 1;
+  }
+  if (!existsSync(target)) {
+    process.stderr.write(`milo doc: no such file or directory: ${target}\n`);
+    return 1;
+  }
+  if (oIdx >= 0 && !outDir) {
+    process.stderr.write("milo doc: -o needs a directory\n");
+    return 1;
+  }
+
+  const docs = docsByModuleForPath(target);
+  if (docs.size === 0) {
+    process.stderr.write(`milo doc: no .milo sources found under ${target}\n`);
+    return 1;
+  }
+  if (!outDir) {
+    process.stdout.write([...docs.keys()].sort().map(k => docs.get(k)!).join("\n"));
+    return 0;
+  }
+  for (const [module, md] of docs) {
+    const path = join(outDir, `${module}.md`);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, md);
+  }
+  process.stderr.write(`milo doc: wrote ${docs.size} file(s) to ${outDir}/\n`);
+  return 0;
 }
 
 export function runApiSearch(args: string[]): number {

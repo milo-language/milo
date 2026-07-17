@@ -1059,6 +1059,7 @@ async function main() {
     console.log("  wcet <file>            emit OTAWA flow facts (loop bounds) for WCET analysis");
     console.log("  skill                  print language guide for LLMs");
     console.log("  api <terms>            search std signatures by name/doc (--module std/x to dump one, --markdown to emit reference docs)");
+    console.log("  doc <file|dir>         reference markdown from doc-comments (-o <dir> to write one .md per module)");
     console.log("options:");
     console.log("  --release              optimize (-O3)");
     console.log("  --debug                no optimization (-O0)");
@@ -1080,7 +1081,7 @@ async function main() {
   // Reject an unknown subcommand up front. Otherwise a bare file path (forgot `run`)
   // falls through every dispatch branch to the generic "no source file" below.
   const KNOWN_COMMANDS = new Set([
-    "skill", "api", "lsp", "lex", "fmt", "build-lib", "safety", "verify",
+    "skill", "api", "doc", "lsp", "lex", "fmt", "build-lib", "safety", "verify",
     "wcet", "prove", "test", "run", "build", "emit-ir", "emit-obj", "emit-js",
   ]);
   if (!KNOWN_COMMANDS.has(cmd) && cmd !== "--help" && cmd !== "-h") {
@@ -1097,6 +1098,11 @@ async function main() {
   if (cmd === "api") {
     const { runApiSearch } = require("./api-search");
     process.exit(runApiSearch(args.slice(1)));
+  }
+
+  if (cmd === "doc") {
+    const { runMiloDoc } = require("./api-search");
+    process.exit(runMiloDoc(args.slice(1)));
   }
 
   if (cmd === "lsp") {
