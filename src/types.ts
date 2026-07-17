@@ -117,6 +117,16 @@ export function isCopy(t: TypeKind, enumIsCopy?: (name: string) => boolean, stru
   if (t.tag === "int" || t.tag === "float" || t.tag === "bool" || t.tag === "ptr" || t.tag === "fn" || t.tag === "ref") return true;
   if (t.tag === "enum" && enumIsCopy && enumIsCopy(t.name)) return true;
   if (t.tag === "struct" && structIsAllCopy && structIsAllCopy(t.name)) return true;
+  // A fixed-size array of Copy elements is itself Copy — it is a value with no heap and no
+  // drop glue, exactly like the struct case above (Rust: `[T; N]: Copy where T: Copy`).
+  // Without this, `[u8; 16]` (an IPv6 address) could not be passed to two functions: the
+  // first call moved it, and the compiler's own hint suggested `.clone()`, which arrays do
+  // not have — a diagnostic naming a fix that cannot be applied.
+  //
+  // This does NOT make big buffers copy by value: `[u8; 4096]` decays to `*u8` at every
+  // call in std (readFd/writeFd take pointers), and nothing passes a large array by value.
+  // An array of non-Copy elements (`[string; 4]`) stays non-Copy via the element check.
+  if (t.tag === "array") return isCopy(t.element, enumIsCopy, structIsAllCopy);
   return false;
 }
 

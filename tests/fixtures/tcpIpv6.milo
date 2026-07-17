@@ -27,10 +27,10 @@ fn main(): i32 {
     // @expect: v4 literal rejected true
     print("v4 literal rejected ", ip6("127.0.0.1").isNone())
 
-    // NOTE: ip6() is called twice rather than reusing `loopback` — a [u8; 16] is neither
-    // Copy nor cloneable today, so passing it to bind6 moves it. The compiler even
-    // suggests .clone(), which arrays don't have. Tracked as a papercut.
-    let lis = TcpListener.bind6(ip6("::1")!, 0)!
+    // `loopback` is reused below: [u8; 16] is Copy (an array of Copy elements), so passing
+    // it to bind6 doesn't move it.
+    let loopback = ip6("::1")!
+    let lis = TcpListener.bind6(loopback, 0)!
     // getSockPort is family-agnostic: sin_port and sin6_port both sit at offset 2
     let port = getSockPort(lis.fd) as u16
 
@@ -47,7 +47,7 @@ fn main(): i32 {
     }
     )
 
-    let cli = TcpStream.connect6(ip6("::1")!, port, 0)!
+    let cli = TcpStream.connect6(loopback, port, 0)!
     let _n = cli.send("hello over v6")!
     let fd = cli.take()
     close(fd)

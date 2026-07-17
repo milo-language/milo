@@ -88,6 +88,15 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — a fixed-size array of Copy elements is now Copy** (Rust's
+`[T; N]: Copy where T: Copy`). `[u8; 16]` — an IPv6 address — could not be passed to two
+functions: the first call MOVED it, and the compiler's own hint said to "clone it at the
+point of transfer", which arrays have no method for. The diagnostic named a fix that could
+not be applied. The element check keeps it sound: `[string; 2]` still moves
+(`tests/errors/arrayNonCopyMove.milo`), so two owners can't free the same heap. It does not
+make big buffers copy by value either — `[u8; 4096]` decays to `*u8` at every call site in
+std, and nothing passes a large array by value.
+
 **Shipped 2026-07-16 — IPv6 in `std/net`.** `ip6("::1")` (16 raw bytes via `inet_pton`),
 `TcpStream.connect6`, `TcpListener.bind6`, with `scopeId` for link-local peers. Added
 ALONGSIDE the v4 API, not replacing it: `ip4()` returns a u32 and `connect(ip: u32, ...)`

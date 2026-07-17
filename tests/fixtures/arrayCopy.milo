@@ -1,0 +1,48 @@
+// A fixed-size array of Copy elements is itself Copy (Rust: `[T; N]: Copy where T: Copy`).
+//
+// Before this, `[u8; 16]` — an IPv6 address — could not be handed to two functions: the
+// first call moved it, and the compiler's hint said to "clone it at the point of transfer",
+// which arrays have no method for. The diagnostic named a fix that could not be applied.
+//
+// The element check is what keeps this honest: an array of non-Copy elements still moves.
+// See tests/errors/arrayNonCopyMove.milo for that half.
+fn firstByte(a: [u8; 4]): i64 {
+    return a[0] as i64
+}
+
+struct Pt {
+    x: i64,
+    y: i64,
+}
+
+fn sumX(ps: [Pt; 2]): i64 {
+    return ps[0].x + ps[1].x
+}
+
+fn main() {
+    let raw: [u8; 4] = [7, 8, 9, 10]
+    // @expect: 7
+    print(firstByte(raw))
+    // passing it a second time is the whole point
+    // @expect: 7
+    print(firstByte(raw))
+
+    // Arrays of all-Copy STRUCTS are Copy too — the element rule composes.
+    let pts: [Pt; 2] = [Pt {
+        x: 1, y: 2
+    }
+    , Pt {
+        x: 3, y: 4
+    }
+    ]
+    // @expect: 4
+    print(sumX(pts))
+    // @expect: 4
+    print(sumX(pts))
+
+    // The copy is a snapshot: mutating the callee's copy can't reach the caller's array.
+    var mine: [u8; 4] = [1, 2, 3, 4]
+    let _ = firstByte(mine)
+    // @expect: 1
+    print(mine[0])
+}

@@ -1,0 +1,13 @@
+// @error: use of moved variable 'x'
+// The element rule is what makes "arrays are Copy" safe: `[u8; N]` is Copy, but an array
+// of NON-Copy elements must still move, or the two `takes` calls below would each own the
+// same heap strings and free them twice.
+fn takes(a: [string; 2]): i64 {
+    return a[0].len
+}
+
+fn main() {
+    let x: [string; 2] = ["ab", "cd"]
+    print(takes(x))
+    print(takes(x))
+}
