@@ -37,6 +37,19 @@ fn main() {
 `;
 const RICH_URI = "file:///tmp/milo-lsp-rich.milo";
 
+// Two functions, each with its own param `a`. Renaming one must not touch the other:
+// they are different bindings that merely share a name. The existing rename test only
+// covers `add`, a unique global — the case a text-based rename gets right by luck.
+const SCOPE_SRC = `fn f(a: i32): i32 {
+    return a
+}
+
+fn g(a: i32): i32 {
+    return a * 2
+}
+`;
+const SCOPE_URI = "file:///tmp/milo-lsp-scope.milo";
+
 // Hover on an enum-pattern payload binding (`n` in `Option.Some(n)`).
 const MATCH_SRC = `struct Node {
     name: string,
@@ -194,7 +207,7 @@ beforeAll(async () => {
   })();
   await req(1, "initialize", { capabilities: {} });
   await send({ jsonrpc: "2.0", method: "initialized", params: {} });
-  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC]] as const) {
+  for (const [uri, text] of [[STDLIB_URI, STDLIB_SRC], [RICH_URI, RICH_SRC], [MATCH_URI, MATCH_SRC], [BUILTIN_URI, BUILTIN_SRC], [PRIM_URI, PRIM_SRC], [GLOBAL_URI, GLOBAL_SRC], [IMPL_URI, IMPL_SRC], [ENUM_URI, ENUM_SRC], [METHOD_URI, METHOD_SRC], [SCOPE_URI, SCOPE_SRC]] as const) {
     await send({ jsonrpc: "2.0", method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "milo", version: 1, text } } });
   }
 });
@@ -316,6 +329,13 @@ test("rename produces edits for every occurrence", async () => {
   const edit = await req(12, "textDocument/rename", { textDocument: { uri: RICH_URI }, position: { line: 5, character: 3 }, newName: "plus" });
   expect(edit.changes[RICH_URI].length).toBeGreaterThanOrEqual(2);
   expect(edit.changes[RICH_URI].every((e: any) => e.newText === "plus")).toBe(true);
+});
+
+test("rename of a param stays inside its own function", async () => {
+  // `a` on f's param (line 0, char 5). g's `a` is a different binding.
+  const edit = await req(40, "textDocument/rename", { textDocument: { uri: SCOPE_URI }, position: { line: 0, character: 5 }, newName: "n" });
+  const lines = (edit.changes[SCOPE_URI] ?? []).map((e: any) => e.range.start.line).sort();
+  expect(lines).toEqual([0, 1]); // f's decl + f's use — NOT g's on lines 4/5
 });
 
 test("documentHighlight highlights occurrences in the file", async () => {

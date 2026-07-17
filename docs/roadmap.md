@@ -125,7 +125,7 @@ Runtime pressure from `node-milo` changes the order here: binary data and FFI sa
 
 ### Tooling
 
-- [ ] **LSP: rename + find references**
+- [x] ~~**LSP: rename + find references**~~ — shipped: `textDocument/references`, `documentHighlight`, and `rename`, plus workspace-wide search over every `.milo` under the workspace root. Name-based like hover/goto (not scope-resolved), which is fine for the read-only ones. Rename is the exception — it WRITES, so params/locals are confined to their enclosing function in their own file; only top-level names get the workspace-wide replace. Before that, renaming `a` in `fn f(a)` also rewrote the unrelated `a` in `fn g(a)`.
 - [ ] **Doc comments + generation** — `///` comments, `milo doc` to generate HTML/markdown
 - [ ] **Cross-compilation** — `--target aarch64-linux` etc. (infrastructure exists in target.ts, needs CLI flag + sysroot handling)
 - [ ] **Benchmarking** — `@bench` annotations, `milo bench` runner

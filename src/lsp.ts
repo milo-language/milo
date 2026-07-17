@@ -1777,11 +1777,72 @@ function handleDocumentHighlight(uri: string, line: number, character: number): 
   }));
 }
 
+// The enclosing fn's line span: from its decl line to just before the next fn's.
+// Coarse, but it matches how findEnclosingFn already scopes hover/goto.
+function enclosingFnLineRange(source: string, program: Program, line: number): { start: number; end: number } | null {
+  const lines = source.split("\n");
+  const declLines: number[] = [];
+  const allFns: Function[] = [...program.functions, ...program.impls.flatMap(i => i.methods)];
+  for (const fn of allFns) {
+    if (fn.isExtern) continue;
+    const re = new RegExp(`\\bfn\\s+${escapeRe(fn.name)}\\s*[<(]`);
+    for (let i = 0; i < lines.length; i++) {
+      if (re.test(lines[i])) { declLines.push(i); break; }
+    }
+  }
+  declLines.sort((a, b) => a - b);
+  let start = -1;
+  for (const d of declLines) {
+    if (d <= line) start = d; else break;
+  }
+  if (start < 0) return null;
+  const next = declLines.find(d => d > start);
+  return { start, end: (next ?? lines.length) - 1 };
+}
+
+// Is `word` a param or local of the fn containing `line`? Locals shadow globals
+// (innermost binding wins), so this is checked before any global treatment.
+function isFnLocalBinding(source: string, program: Program, line: number, word: string): boolean {
+  const enclosing = findEnclosingFn(source, program, line);
+  if (!enclosing) return false;
+  if (enclosing.fn.params.some(p => p.name === word)) return true;
+  for (const stmt of enclosing.fn.body) {
+    if (findVarDecl(stmt, word)) return true;
+  }
+  return false;
+}
+
+// Rename is the one WRITE among these name-based features, and that changes the stakes:
+// the same text-matching that is merely imprecise for hover/references silently
+// CORRUPTS code here. `a` in `fn f(a)` and `a` in `fn g(a)` are unrelated bindings that
+// happen to share a name, so a workspace-wide word replace rewrites both. Params and
+// locals are therefore confined to their own function in their own file; only top-level
+// names (fn/struct/enum) keep the workspace-wide rename, where sharing a name across
+// files really does mean the same symbol.
 function handleRename(uri: string, line: number, character: number, newName: string): object | null {
   const source = documents.get(uri);
   if (!source) return null;
   const word = getWordAt(source, line, character);
   if (!word) return null;
+
+  try {
+    const program = new Parser(new Lexer(source).tokenize()).parse();
+    if (isFnLocalBinding(source, program, line, word)) {
+      const r = enclosingFnLineRange(source, program, line);
+      if (r) {
+        const edits = wordOccurrences(source, word)
+          .filter(o => o.line >= r.start && o.line <= r.end)
+          .map(o => ({
+            range: { start: { line: o.line, character: o.startCol }, end: { line: o.line, character: o.startCol + word.length } },
+            newText: newName,
+          }));
+        return { changes: { [uri]: edits } };
+      }
+    }
+  } catch (e) {
+    process.stderr.write(`milod: rename parse error for word="${word}": ${e instanceof Error ? e.message : String(e)}\n`);
+  }
+
   const changes: Record<string, object[]> = {};
   for (const l of referenceLocations(word)) {
     (changes[l.uri] ??= []).push({
