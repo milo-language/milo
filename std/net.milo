@@ -1,7 +1,7 @@
 // std/net — TCP, DNS, HTTP client with automatic cleanup
 
 from "std/os" import {
-    SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_ctrl, SSL_free, SSL_new, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd
+    SSL_CTX_free, SSL_CTX_new, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_ctrl, SSL_free, SSL_get_verify_result, SSL_new, SSL_set1_host, SSL_set_fd, TLS_client_method, acceptFd, bind, close, connectFd, freeaddrinfo, getaddrinfo, listen, readFd, setsockopt, socket, sslConnectFd, sslReadFd, sslWriteFd, writeFd
 }
 from "std/platform" import {
     SockAddrIn, addrinfoAddrOffset, makeSockaddr, solSocket, soReuseaddr
@@ -21,6 +21,14 @@ from "std/runtime" import {
 from "std/event" import {
     setNonblocking
 }
+
+// ── TLS verification constants ──
+
+// openssl/ssl.h: SSL_VERIFY_PEER. Makes the handshake fail on an untrusted chain
+// instead of silently accepting it (the client default is SSL_VERIFY_NONE).
+let SSL_VERIFY_PEER: i32 = 1
+// openssl/x509_vfy.h: X509_V_OK.
+let X509_V_OK: i64 = 0
 
 // ── NetError ──
 
@@ -240,6 +248,11 @@ impl TlsStream {
                 return Result.Err(NetError.TlsError("SSL_CTX_new failed"))
             }
             SSL_CTX_set_default_verify_paths(ctx)
+            // Without SSL_VERIFY_PEER this client accepted ANY certificate — a
+            // self-signed cert that `openssl s_client` rejects handshook fine, so a
+            // MITM was undetectable. Loading the trust store above looks like
+            // verification but does not enable it.
+            SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, 0 as *u8)
 
             let ssl = SSL_new(ctx)
             let sslAddr = ssl as i64
@@ -249,8 +262,11 @@ impl TlsStream {
                 return Result.Err(NetError.TlsError("SSL_new failed"))
             }
 
-            // SNI hostname for certificate validation
+            // SNI: tells the server which cert to send. It verifies nothing.
             SSL_ctrl(ssl, 55, 0, hostname)
+            // This is the check SNI is often mistaken for: without it, a cert valid for
+            // any other host would satisfy the handshake.
+            SSL_set1_host(ssl, hostname)
             SSL_set_fd(ssl, fd)
 
             // fd is nonblocking when connecting from a green task; sslConnectFd
@@ -261,6 +277,16 @@ impl TlsStream {
                 SSL_CTX_free(ctx)
                 close(fd)
                 return Result.Err(NetError.TlsError("SSL handshake failed"))
+            }
+            // Not redundant with SSL_VERIFY_PEER, despite appearances: with the
+            // set_verify line removed, this alone still rejects an untrusted chain
+            // (verified by deleting each in turn). Two independent mechanisms, so
+            // losing either one in a refactor cannot silently reopen the hole.
+            if SSL_get_verify_result(ssl) != X509_V_OK {
+                SSL_free(ssl)
+                SSL_CTX_free(ctx)
+                close(fd)
+                return Result.Err(NetError.TlsError("certificate verification failed"))
             }
 
             return Result.Ok(TlsStream {

@@ -88,6 +88,16 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — `std/net` + `std/ws` TLS clients verified no certificates.** Both
+called `SSL_CTX_set_default_verify_paths` and stopped: that loads the trust store but an
+OpenSSL client defaults to `SSL_VERIFY_NONE`, so it was never consulted. A self-signed
+cert that `openssl s_client` rejects handshook fine, and an attacker's cert for any host
+satisfied `wss://` — a MITM was undetectable. Loading the CA store *looked* like
+verification, which is why it survived. Now: `SSL_VERIFY_PEER` + `SSL_set1_host`
+(hostname binding — SNI selects the server's cert, it verifies nothing) +
+`SSL_get_verify_result`. Covered by `tests/tlsVerify.test.ts`, whose hostname case holds
+the chain valid so it can only fail on the hostname.
+
 See **[docs/safety-roadmap.md](safety-roadmap.md)** for the full plan. Summary:
 
 1. `unsafe` blocks — quarantine FFI and low-level code behind a grep target

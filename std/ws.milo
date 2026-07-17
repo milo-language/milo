@@ -1,7 +1,7 @@
 // std/ws — WebSocket server protocol (RFC 6455)
 
 from "std/os" import {
-    close, readFd, writeFd, htons, malloc, free, memcpy, socket, connectFd, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_new, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free, SSL_ctrl
+    close, readFd, writeFd, htons, malloc, free, memcpy, socket, connectFd, TLS_client_method, SSL_CTX_new, SSL_CTX_free, SSL_CTX_set_default_verify_paths, SSL_CTX_set_verify, SSL_new, SSL_set1_host, SSL_set_fd, sslConnectFd, sslReadFd, sslWriteFd, SSL_free, SSL_ctrl
 }
 from "std/crypto" import {
     sha1Bytes
@@ -489,6 +489,10 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
             return Result.Err("SSL_CTX_new failed")
         }
         SSL_CTX_set_default_verify_paths(ctx)
+        // SSL_VERIFY_PEER (1). Without it wss:// accepted any certificate, self-signed
+        // included — the trust store above is loaded but never consulted, because an
+        // OpenSSL client defaults to SSL_VERIFY_NONE.
+        SSL_CTX_set_verify(ctx, 1, 0 as *u8)
 
         let ssl = SSL_new(ctx)
         if ssl as i64 == 0 {
@@ -497,8 +501,11 @@ fn wsConnectTls(ip: u32, port: u16, hostname: &string, path: &string): Result<Ws
             return Result.Err("SSL_new failed")
         }
 
-        // SSL_ctrl(SSL_CTRL_SET_TLSEXT_HOSTNAME=55) sets SNI hostname.
+        // SSL_ctrl(SSL_CTRL_SET_TLSEXT_HOSTNAME=55) sets SNI hostname — which selects
+        // the server's cert but verifies nothing. SSL_set1_host binds the cert to the
+        // hostname we actually asked for.
         SSL_ctrl(ssl, 55, 0, hostname)
+        SSL_set1_host(ssl, hostname)
         SSL_set_fd(ssl, fd)
 
         if sslConnectFd(ssl, fd) != 1 {
