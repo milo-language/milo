@@ -88,6 +88,19 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — a `&mut self` method on a match-bound COPY silently discarded the write.**
+`match b { Box.Full(c) => { c.bump() } }` compiled, ran against a snapshot, and threw the
+result away (inside `bump` v==2, after the match v==1) — while the identical operation
+through a `&mut` fn arg was correctly rejected. The method receiver was the one path that
+skipped `setAutoBorrowChecked`. Rejecting every copy-bound receiver is too blunt (it broke
+six shipped programs); three things must line up for the loss to be observable: the binding
+is by value (a ref writes through), the payload is Copy (a non-Copy payload is MOVED, so the
+binding owns it), AND the subject is a place that outlives the arm. `match Child.spawn(...)
+{ Ok(child) => child.closeStdin() }` is legal for the opposite reason — the subject is a
+temporary, so the binding IS the owner. if-let and let-else share the binding path and are
+covered. Fixtures pin both directions: `tests/errors/matchCopyBindMutate.milo` and
+`tests/fixtures/matchTempBindMutate.milo`.
+
 **Fixed 2026-07-16 — `string.push(65)` needed an explicit `as u8`.** The arg was checked
 with no expected type, so an int literal inferred i64 and then failed a u8 equality check;
 `Vec.push` had always hinted its arg. Nothing else loosens: an out-of-range literal is

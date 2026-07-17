@@ -11,6 +11,12 @@ export interface VarInfo {
   borrowed: boolean;
   read: boolean;
   span?: Span;
+  // A pattern binding that holds a COPY of the payload: bound by value, and the payload
+  // type is Copy, so it is a snapshot the enum can't see through. Mutating it through a
+  // '&mut self' method compiles and then silently throws the write away (the copy dies at
+  // the arm's end). Non-Copy payloads bound by value are MOVED instead — the binding owns
+  // the value, so writes are real and this stays false.
+  copyBind?: boolean;
   // For a ref/slice binding: the source vars this binding's borrow froze.
   // Released (borrowed=false) when the binding's scope pops, so a slice in an
   // inner block doesn't freeze its source for the rest of the function.
@@ -2614,7 +2620,8 @@ export class TypeChecker {
             const bindTypes = variant.fields.slice(0, stmt.pattern.bindings.length).map(t => this.payloadBindType(t, subjBorrows));
             this.patternBindingTypes.set(stmt.pattern, bindTypes);
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false,
+                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.subject)) });
             }
           }
           for (const s of stmt.thenBody) this.checkStmt(s, fnRetType);
@@ -2667,7 +2674,8 @@ export class TypeChecker {
             this.patternBindingTypes.set(stmt.pattern, bindTypes);
             // Bindings escape into the CURRENT scope (the whole point vs if-let).
             for (let i = 0; i < Math.min(stmt.pattern.bindings.length, variant.fields.length); i++) {
-              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(stmt.pattern.bindings[i], { type: bindTypes[i], mutable: false, moved: false, borrowed: false, read: false,
+                copyBind: this.isCopyBind(bindTypes[i], this.isPlaceExpr(stmt.value)) });
             }
           }
         }
@@ -5117,6 +5125,7 @@ export class TypeChecker {
             if (selfParam.type.tag === "ref") {
               // a `&var self` method may mutate the receiver — same hazard as builtins
               if (selfParam.type.mutable) this.errorIfFrozen(expr.object, `call '${expr.method}' on`, sp);
+              if (selfParam.type.mutable) this.errorIfCopyBind(expr.object, expr.method, sp);
               this.autoBorrowed.set(expr.object, { mutable: selfParam.type.mutable });
             } else {
               this.tryMove(expr.object);
@@ -5310,6 +5319,46 @@ export class TypeChecker {
 
   // A borrowed subject's non-Copy payload binds as `&T` (a view into the still-
   // owned subject); Copy payloads and owned subjects bind by value.
+  // Would a write through this binding be thrown away? Only if it is a by-value COPY:
+  // a ref binding writes through to the enum, and a by-value NON-Copy payload was moved
+  // into the binding, which then owns it. Both are real; a Copy snapshot is not.
+  // A '&mut self' method on a copy-bound pattern binding runs against a snapshot and the
+  // write disappears at the end of the arm. The '&mut' fn-arg path already rejects the
+  // same thing ("cannot pass immutable 'n' as a '&mut' argument"); this was the one way
+  // through. Only copy binds are refused: a moved (non-Copy) binding owns its value, so
+  // its writes are real — six shipped programs rely on that.
+  private errorIfCopyBind(recv: Expr, method: string, sp?: Span): void {
+    let root: Expr = recv;
+    while (root.kind === "FieldAccess" || root.kind === "IndexAccess") root = root.object;
+    if (root.kind !== "Ident") return;
+    const info = this.lookup(root.name);
+    if (!info?.copyBind) return;
+    this.error(
+      `'${method}' takes '&mut self', but '${root.name}' is a copy of the matched payload — the write would be discarded`,
+      sp,
+      `a pattern binding of a Copy type is a snapshot, not a view into the enum. Match on a reference, or rebuild the enum from the method's result.`);
+  }
+
+  // Would a write through this binding be thrown away where someone could SEE it?
+  // Three things must line up:
+  //  - the binding is by value (a ref writes through to the enum), and
+  //  - the payload is Copy (a non-Copy payload is MOVED, so the binding owns it), and
+  //  - the subject is a PLACE that outlives the arm.
+  // That last one is what keeps `match Child.spawn(...) { Ok(child) => child.close() }`
+  // legal: the subject is a temporary, so the binding is the only owner and its write is
+  // the real one. Only `var b = ...; match b { ... }` can observe the discard.
+  private isCopyBind(bt: TypeKind, subjectIsPlace: boolean): boolean {
+    if (!subjectIsPlace) return false;
+    if (bt.tag === "ref") return false;
+    return isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n));
+  }
+
+  private isPlaceExpr(e: Expr): boolean {
+    let root: Expr = e;
+    while (root.kind === "FieldAccess" || root.kind === "IndexAccess") root = root.object;
+    return root.kind === "Ident";
+  }
+
   private payloadBindType(bt: TypeKind, subjBorrows: boolean): TypeKind {
     if (subjBorrows && !isCopy(bt, (n) => this.isAllCopyEnum(n), (n) => this.isAllCopyStruct(n))) {
       return { tag: "ref", inner: bt, mutable: false };
@@ -5440,7 +5489,8 @@ export class TypeChecker {
                 bt = { tag: "ref", inner: bt, mutable: false };
               }
               bindTypes.push(bt);
-              this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false });
+              this.declare(arm.pattern.bindings[i], { type: bt, mutable: false, moved: false, borrowed: false, read: false,
+                copyBind: this.isCopyBind(bt, this.isPlaceExpr(subject)) });
             }
             this.patternBindingTypes.set(arm.pattern, bindTypes);
           }

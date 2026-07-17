@@ -1,0 +1,41 @@
+// @error: is a copy of the matched payload — the write would be discarded
+// A `&mut self` method on a copy-bound pattern binding used to compile and silently throw
+// the write away: inside bump v==2, after the match v==1. The identical operation through
+// a `&mut` fn arg was always rejected ("cannot pass immutable 'n' as a '&mut' argument"),
+// so the two paths disagreed and the accepting one was wrong.
+//
+// Three things have to line up for this to be a real loss, and they all do here:
+//   - Ctr is all-i64, so it is Copy and the binding is a snapshot (a non-Copy payload is
+//     MOVED into the binding, which then owns it — that write is real);
+//   - the binding is by value, not a `&` view into the enum;
+//   - the subject `b` is a VARIABLE that outlives the arm, so the discard is observable.
+// Matching a temporary (`match Child.spawn(...)`) is legal for exactly the opposite
+// reason — see tests/fixtures/matchTempBindMutate.milo.
+struct Ctr {
+    v: i64,
+}
+
+impl Ctr {
+    fn bump(self: &mut Self): void {
+        self.v = self.v + 1
+    }
+}
+
+enum Box {
+    Full(Ctr),
+    Empty,
+}
+
+fn main() {
+    var b = Box.Full(Ctr {
+        v: 1
+    }
+    )
+    match b {
+        Box.Full(c) => {
+            c.bump()
+        }
+        Box.Empty => {
+        }
+    }
+}

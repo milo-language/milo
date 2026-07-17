@@ -1,0 +1,44 @@
+// The other side of tests/errors/matchCopyBindMutate.milo: mutating a copy-bound payload
+// is LEGAL when the subject is a temporary.
+//
+// `match makeCtr() { ... }` has no original to observe a discard — the binding is the only
+// owner, so its write is the real one. This is not a corner case: `match Child.spawn(...)
+// { Result.Ok(child) => { child.closeStdin() } }` is exactly this shape, and Child is
+// all-i32 (Copy). A rule that rejected every copy-bound `&mut` method broke six shipped
+// programs for this reason. The subject being a place is what makes the loss observable.
+struct Ctr {
+    v: i64,
+}
+
+impl Ctr {
+    fn bump(self: &mut Self): void {
+        self.v = self.v + 1
+    }
+}
+
+enum Box {
+    Full(Ctr),
+    Empty,
+}
+
+fn makeCtr(): Box {
+    return Box.Full(Ctr {
+        v: 1
+    }
+    )
+}
+
+fn main() {
+    // subject is a temporary — the binding owns it, so bump() is real and visible
+    match makeCtr() {
+        Box.Full(c) => {
+            c.bump()
+            c.bump()
+            // @expect: 3
+            print(c.v)
+        }
+        Box.Empty => {
+            print("unreachable")
+        }
+    }
+}
