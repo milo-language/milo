@@ -8473,6 +8473,77 @@ export class Codegen {
       lines.push(`  ${r} = xor i1 ${isSome}, true`);
       return [lines, r, "i1"];
     }
+    // map(f): Option<T> -> Option<U>. Handled before the payload load below, because for
+    // map `expr.type` is the RESULT enum, not the payload type.
+    if (expr.op === "map") {
+      if (expr.type.tag !== "enum") throw new Error("Option.map result is not an enum");
+      const resEnum = expr.type.name;
+      const resTy = `%${resEnum}`;
+      const resLayout = this.enumLayouts.get(resEnum);
+      const srcLayout = this.enumLayouts.get(expr.enumName);
+      if (!resLayout || !srcLayout) throw new Error(`enum layout not found for ${resEnum}/${expr.enumName}`);
+      const resSome = resLayout.variants.get("Some");
+      const resNone = resLayout.variants.get("None");
+      const srcSome = srcLayout.variants.get("Some");
+      if (!resSome || !resNone || !srcSome) throw new Error("Option enum missing Some/None variants");
+
+      // The closure value is built unconditionally (it is just a {fn,env} pair); only the
+      // CALL is conditional.
+      const [cl, cv] = this.genExpr(expr.default!);
+      lines.push(...cl);
+      const fnPtr = this.nextTemp();
+      lines.push(`  ${fnPtr} = extractvalue { ptr, ptr } ${cv}, 0`);
+      const envPtr = this.nextTemp();
+      lines.push(`  ${envPtr} = extractvalue { ptr, ptr } ${cv}, 1`);
+
+      const resAddr = `%__optmap.${this.scopeCounter++}.addr`;
+      this.entryAllocas.push(`  ${resAddr} = alloca ${resTy}`);
+      lines.push(`  store ${resTy} zeroinitializer, ptr ${resAddr}`);
+
+      const someLabel = this.nextLabel("optmap.some");
+      const noneLabel = this.nextLabel("optmap.none");
+      const contLabel = this.nextLabel("optmap.cont");
+      lines.push(`  br i1 ${isSome}, label %${someLabel}, label %${noneLabel}`);
+
+      lines.push(`${someLabel}:`);
+      const srcPayloadPtr = this.nextTemp();
+      lines.push(`  ${srcPayloadPtr} = getelementptr ${enumTy}, ptr ${addr}, i32 0, i32 1`);
+      // The checker types the callback param as &T, so the payload is passed by pointer —
+      // that is what keeps a non-Copy inner from being moved out of the receiver.
+      const cbType = expr.default!.type;
+      const paramIsRef = cbType.tag === "fn" && cbType.params.length > 0 && cbType.params[0].tag === "ref";
+      let callArg = srcPayloadPtr;
+      let callArgTy = "ptr";
+      if (!paramIsRef) {
+        const srcTy = srcSome.fieldTypes[0] ?? "i64";
+        const loaded = this.nextTemp();
+        lines.push(`  ${loaded} = load ${srcTy}, ptr ${srcPayloadPtr}`);
+        callArg = loaded;
+        callArgTy = srcTy;
+      }
+      const resPayloadTy = resSome.fieldTypes[0] ?? "i64";
+      const called = this.nextTemp();
+      lines.push(`  ${called} = call ${resPayloadTy} ${fnPtr}(ptr ${envPtr}, ${callArgTy} ${callArg})`);
+      const someTagPtr = this.nextTemp();
+      lines.push(`  ${someTagPtr} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
+      lines.push(`  store i32 ${resSome.tag}, ptr ${someTagPtr}`);
+      const resPayloadPtr = this.nextTemp();
+      lines.push(`  ${resPayloadPtr} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 1`);
+      lines.push(`  store ${resPayloadTy} ${called}, ptr ${resPayloadPtr}`);
+      lines.push(`  br label %${contLabel}`);
+
+      lines.push(`${noneLabel}:`);
+      const noneTagPtr = this.nextTemp();
+      lines.push(`  ${noneTagPtr} = getelementptr ${resTy}, ptr ${resAddr}, i32 0, i32 0`);
+      lines.push(`  store i32 ${resNone.tag}, ptr ${noneTagPtr}`);
+      lines.push(`  br label %${contLabel}`);
+
+      lines.push(`${contLabel}:`);
+      const out = this.nextTemp();
+      lines.push(`  ${out} = load ${resTy}, ptr ${resAddr}`);
+      return [lines, out, resTy];
+    }
+
     // unwrapOr / unwrapOrElse
     const payloadTy = this.llvmType(expr.type);
     const payloadPtr = this.nextTemp();

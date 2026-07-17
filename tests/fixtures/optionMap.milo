@@ -1,0 +1,58 @@
+// Option.map(f): Option<T> -> Option<U>.
+//
+// The callback takes the payload by REF, which is what makes this safe without the Copy
+// gate that unwrapOr/unwrapOrElse need: those load the payload out, so an owned inner
+// would end up with two owners. map never moves it.
+//
+// Like unwrapOrElse, f must run ONLY on Some — the ordering of "mapped" below pins that.
+fn double(n: &i64): i64 {
+    return n * 2
+}
+
+fn main() {
+    let some: Option<i64> = Option.Some(21)
+    // @expect: 42
+    print(some.map((n) => double(n)).unwrapOr(0))
+
+    let none: Option<i64> = Option.None
+    // @expect: -1
+    print(none.map((n) => double(n)).unwrapOr(0 - 1))
+
+    // The callback must not run on None: nothing is printed before the -1 above, and
+    // "mapped" appears exactly once here.
+    let s2: Option<i64> = Option.Some(3)
+    // @expect: mapped
+    // @expect: 30
+    print(s2.map((n) => {
+        print("mapped")
+        return n * 10
+    }
+    ).unwrapOr(0))
+
+    // U need not equal T — that is the whole point of map over unwrapOr.
+    let s3: Option<i64> = Option.Some(7)
+    // @expect: true
+    print(s3.map((n) => n > 5).unwrapOr(false))
+
+    // Chaining, and closures capture.
+    let base = 100
+    let s4: Option<i64> = Option.Some(2)
+    // @expect: 200
+    print(s4.map((n) => n * base).unwrapOr(0))
+
+    // Non-Copy inner — the case the missing Copy gate rests on. The receiver keeps
+    // ownership (callback takes &string), so it is still readable afterwards and its
+    // payload is freed once, not twice.
+    let s5: Option<string> = Option.Some("hello")
+    // @expect: 5
+    print(s5.map((v) => v.len).unwrapOr(0))
+    match s5 {
+        Option.Some(v) => {
+            // @expect: hello
+            print(v)
+        }
+        Option.None => {
+            print("unreachable")
+        }
+    }
+}

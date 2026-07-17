@@ -671,12 +671,13 @@ class LowerCtx {
         }
         if (objType?.tag === "enum" && this.c.enums.get(objType.name)?.baseName === "Option"
             && (expr.method === "isSome" || expr.method === "isNone" || expr.method === "unwrapOr"
-                || expr.method === "unwrapOrElse")) {
+                || expr.method === "unwrapOrElse" || expr.method === "map")) {
           return {
             kind: "OptionOp", op: expr.method, value: this.lowerExpr(expr.object),
-            // For unwrapOrElse the slot carries the CLOSURE, not a value — codegen calls
-            // it only on the None branch.
-            default: (expr.method === "unwrapOr" || expr.method === "unwrapOrElse")
+            // For unwrapOrElse and map the slot carries the CLOSURE, not a value — codegen
+            // calls it only on the Some/None branch that needs it. `type` already names the
+            // result enum (Option<U> for map), so no extra field is needed.
+            default: (expr.method === "unwrapOr" || expr.method === "unwrapOrElse" || expr.method === "map")
               ? this.lowerExpr(expr.args[0]) : undefined,
             enumName: objType.name, type, span: expr.span,
           };

@@ -4499,6 +4499,26 @@ export class TypeChecker {
             }
             return this.setType(expr, { tag: "unknown" });
           }
+          // map(f): Option<T> -> Option<U>. The callback takes the payload BY REF, which is
+          // why this needs no Copy gate (unlike unwrapOr/unwrapOrElse, which load the
+          // payload out): nothing is moved out of the receiver, so an owned inner can't be
+          // aliased into two owners.
+          if (expr.method === "map") {
+            if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }
+            const inner = this.unwrapableInner(objType);
+            if (!inner) return this.setType(expr, { tag: "unknown" });
+            const cbHint: TypeKind = { tag: "fn", params: [{ tag: "ref", inner, mutable: false }], ret: { tag: "unknown" } };
+            const cbType = this.checkExprWithHint(expr.args[0], cbHint);
+            if (cbType.tag !== "fn") {
+              this.error(`'map' argument must be a function`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            if (cbType.ret.tag === "void") {
+              this.error(`'map': callback must return a value — use 'match' for a side effect`, sp);
+              return this.setType(expr, { tag: "unknown" });
+            }
+            return this.setType(expr, { tag: "enum", name: this.monomorphizeEnum("Option", [cbType.ret]) });
+          }
           // unwrapOrElse(f) — like unwrapOr but the default is computed only when None.
           // Same Copy gate as unwrapOr, for the same reason: the payload is loaded, not
           // moved out.

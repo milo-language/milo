@@ -88,6 +88,16 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Shipped 2026-07-16 — `Option.map` / `Option.unwrapOrElse`.** Both lower through `OptionOp`
+with a real branch rather than the `select` that `unwrapOr` uses: `select` evaluates both
+arms, so the callback would run even when it shouldn't — defeating the point of each. `map`
+builds its result enum via `monomorphizeEnum("Option", [U])`, so `U` need not equal `T`
+(`Option<i64>.map(n => n > 5)` gives `Option<bool>`). `map` takes the payload by `&T`, which
+is why it needs no Copy gate, unlike `unwrapOr`/`unwrapOrElse` which load the payload out —
+nothing is moved out of the receiver, so an owned inner can't gain a second owner. Fixtures
+`optionMap.milo` / `optionUnwrapOrElse.milo` pin laziness via output ordering and cover the
+non-Copy (`Option<string>`) case.
+
 **Fixed 2026-07-16 — `std/signal.onSignal` handed its handler a garbage signal number.**
 It took `handler: (i32) => void`, i.e. a closure, whose code pointer takes `(env, sig)`. A C
 signal handler has no user-data slot, so `signal()` called it with the signal number in the
