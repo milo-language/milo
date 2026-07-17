@@ -392,6 +392,11 @@ function detectLibs(ir: string, target: TargetInfo): string {
       ? " -L/opt/homebrew/opt/sqlite/lib -lsqlite3"
       : " -lsqlite3";
   }
+  // JavaScriptCore: a system framework on darwin (zero install); on linux it's the
+  // heavier libjavascriptcoregtk, so we only auto-link on darwin.
+  if (ir.includes("@JSGlobalContextCreate") || ir.includes("@JSEvaluateScript")) {
+    if (target.os === "darwin") libs += " -framework JavaScriptCore";
+  }
   return libs;
 }
 

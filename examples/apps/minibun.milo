@@ -1,0 +1,157 @@
+// minibun — a minimal JavaScript runtime in Milo.
+//
+// Proves the feasibility-audit conclusion in the smallest possible form: JS runs on
+// JavaScriptCore (the system framework on macOS — zero install), but the native host —
+// the `console.log` binding, the file loader, the exception reporter — is memory-safe,
+// bounds-checked Milo. bun's 82K LOC of C++ glue is for deep JSC integration; the public
+// embedding API JSC exposes is plain C, which is exactly the seam Milo's FFI is built for.
+//
+// Build + run (macOS):
+//   milo build examples/apps/minibun.milo -o /tmp/minibun -- -framework JavaScriptCore
+//   /tmp/minibun hello.js
+// Or just `milo run examples/apps/minibun.milo -- hello.js` (the framework is auto-linked
+// by detectLibs in src/main.ts once a JSC symbol is present).
+
+from "std/os" import {
+    malloc, free, memcpy
+}
+from "std/io" import {
+    readFile
+}
+from "std/args" import {
+    args
+}
+from "std/cstr" import {
+    CStr
+}
+
+// ── JavaScriptCore C API (public embedding surface — all opaque refs are `*u8`) ──
+
+extern fn JSGlobalContextCreate(globalObjectClass: *u8): *u8
+
+extern fn JSGlobalContextRelease(ctx: *u8): void
+
+extern fn JSContextGetGlobalObject(ctx: *u8): *u8
+
+extern fn JSEvaluateScript(ctx: *u8, script: *u8, thisObject: *u8, sourceURL: *u8, startingLineNumber: i32, exception: *u8): *u8
+
+extern fn JSStringCreateWithUTF8CString(s: *u8): *u8
+
+extern fn JSStringRelease(s: *u8): void
+
+extern fn JSStringGetMaximumUTF8CStringSize(s: *u8): i64
+
+extern fn JSStringGetUTF8CString(s: *u8, buffer: *u8, bufferSize: i64): i64
+
+extern fn JSValueToStringCopy(ctx: *u8, value: *u8, exception: *u8): *u8
+
+extern fn JSValueMakeUndefined(ctx: *u8): *u8
+
+extern fn JSValueIsUndefined(ctx: *u8, value: *u8): bool
+
+extern fn JSObjectMakeFunctionWithCallback(ctx: *u8, name: *u8, callAsFunction: *u8): *u8
+
+extern fn JSObjectMake(ctx: *u8, jsClass: *u8, data: *u8): *u8
+
+extern fn JSObjectSetProperty(ctx: *u8, object: *u8, propertyName: *u8, value: *u8, attributes: u32, exception: *u8): void
+
+// Read a pointer out of a C array of pointers (the callback's `arguments[]`).
+fn loadPtr(p: *u8): *u8 {
+    unsafe {
+        var out: *u8 = 0 as *u8
+        memcpy((out.addrOf()) as *u8, p, 8)
+        return out
+    }
+}
+
+// A JSValue -> owned Milo string, via JSC's own toString. Reused for console.log args
+// and for rendering an uncaught exception.
+fn jsToString(ctx: *u8, val: *u8): string {
+    unsafe {
+        let jstr = JSValueToStringCopy(ctx, val, 0 as *u8)
+        let cap = JSStringGetMaximumUTF8CStringSize(jstr)
+        let buf = malloc(cap)
+        JSStringGetUTF8CString(jstr, buf, cap)
+        let out = CStr.wrap(buf)!.toString()
+        free(buf)
+        JSStringRelease(jstr)
+        return out
+    }
+}
+
+// The `console.log` implementation — JSC calls THIS Milo function directly (C ABI, same
+// mechanism as std/runtime's pthread trampoline). Space-joins its args and prints one line.
+fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        var line = ""
+        var i: i64 = 0
+        while i < argCount {
+            let argVal = loadPtr((arguments as i64 + i * 8) as *u8)
+            if i > 0 {
+                line = line + " "
+            }
+            line = line + jsToString(ctx, argVal)
+            i = i + 1
+        }
+        print(line)
+        return JSValueMakeUndefined(ctx)
+    }
+}
+
+// Install a `console` object on the global with `.log` bound to the Milo callback.
+fn installConsole(ctx: *u8): void {
+    unsafe {
+        let global = JSContextGetGlobalObject(ctx)
+        let fnName = JSStringCreateWithUTF8CString("log")
+        let logFn = JSObjectMakeFunctionWithCallback(ctx, fnName, consoleLog as *u8)
+        let console = JSObjectMake(ctx, 0 as *u8, 0 as *u8)
+        let logKey = JSStringCreateWithUTF8CString("log")
+        JSObjectSetProperty(ctx, console, logKey, logFn, 0 as u32, 0 as *u8)
+        let consoleKey = JSStringCreateWithUTF8CString("console")
+        JSObjectSetProperty(ctx, global, consoleKey, console, 0 as u32, 0 as *u8)
+        JSStringRelease(fnName)
+        JSStringRelease(logKey)
+        JSStringRelease(consoleKey)
+    }
+}
+
+fn main(): i32 {
+    let argv = args()
+    if argv.len < 2 {
+        print("usage: minibun <file.js>")
+        return 1
+    }
+    let path = argv[1]
+
+    let readResult = readFile(path)
+    let src = match readResult {
+        Result.Ok(s) => {
+            s
+        }
+        Result.Err(_e) => {
+            print("minibun: cannot read " + path)
+            return 1
+        }
+    }
+
+    unsafe {
+        let ctx = JSGlobalContextCreate(0 as *u8)
+        installConsole(ctx)
+
+        let script = JSStringCreateWithUTF8CString(src)
+        let url = JSStringCreateWithUTF8CString(path)
+        var exc: *u8 = 0 as *u8
+        JSEvaluateScript(ctx, script, 0 as *u8, url, 1, (exc.addrOf()) as *u8)
+
+        var code: i32 = 0
+        if exc as i64 != 0 {
+            print("Uncaught " + jsToString(ctx, exc))
+            code = 1
+        }
+
+        JSStringRelease(script)
+        JSStringRelease(url)
+        JSGlobalContextRelease(ctx)
+        return code
+    }
+}
