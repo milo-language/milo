@@ -1,0 +1,40 @@
+// A timer-only Select on the main context must fire, not spin.
+//
+// Regression test for a hang I introduced fixing C1. The main-context wait loop polls via
+// the scheduler and re-checks the claim — but `_schedulerRunOnce` returns EARLY when
+// numTasks == 0, and even past that guard only polls the event loop while tasks remain.
+// Select arms don't live on the task list (fd/timer arms hang off sSelFdHead and are
+// claimed by _pollAndWake), so once the last green task finished, the poll became a no-op
+// and the loop spun forever. Before C1 this returned -1 immediately — wrong, but it
+// terminated.
+//
+// The spawned task is deliberately SHORT: it must be gone by the time the timer matters,
+// which is exactly the condition that hangs. selectMainContext.milo doesn't catch this —
+// its task is still alive when the claim lands.
+from "std/select" import {
+    Select
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    sleepMs
+}
+
+fn main(): i32 {
+    // Creates a scheduler, then finishes immediately — numTasks drops to 0.
+    Task.spawn(move(): void => {
+        sleepMs(1)
+    }
+    )
+    sleepMs(30)
+
+    var sel = Select.new()
+    sel.onTimeout(50) // the only arm; nothing else can claim it
+    let w = sel.wait()
+    sel.destroy()
+
+    // @expect: timer arm 0
+    print("timer arm ", w)
+    return 0
+}

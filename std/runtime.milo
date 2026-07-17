@@ -868,7 +868,7 @@ fn _selectWaitState(st: *u8): i64 {
             continue
         }
         pthread_mutex_unlock(m)
-        _schedulerPollMain()
+        _schedulerPollMainSelect()
     }
     return -1
 }
@@ -1189,6 +1189,31 @@ fn _schedulerBlockMain(): void {
 // most a few ms of latency and no busy-spin.
 fn _schedulerPollMain(): void {
     _schedulerRunOnce(4)
+}
+
+// Select's main-context wait needs a different poll from a channel's.
+//
+// _schedulerRunOnce returns EARLY when numTasks == 0 — and even past that guard it only
+// polls the event loop when tasks remain. Select arms don't live on the task list: fd and
+// timer arms hang off sSelFdHead and are claimed by _pollAndWake (_wakeSelectFds /
+// _wakeSelectTimers). So once the last green task finishes, _schedulerPollMain becomes a
+// no-op and a main-context select waiting on a timer would spin on it forever. That is a
+// real hang — `Task.spawn` a short task, then select on a timeout, and the task is gone by
+// the time the timer matters.
+//
+// Poll the event loop directly when there is nothing runnable. _pollAndWake is safe with
+// zero tasks and _selMinTimeout already bounds the sleep by the nearest arm deadline, so
+// this blocks rather than busy-spins.
+fn _schedulerPollMainSelect(): void {
+    let sched = _getSched()
+    if sched as i64 == 0 {
+        return
+    }
+    if _rtReadI64(sched, sNumTasks()) > 0 {
+        _schedulerRunOnce(4)
+        return
+    }
+    _pollAndWake(sched, 4)
 }
 
 // Drive the scheduler until every spawned task has finished, then tear it down.

@@ -1,0 +1,65 @@
+// Child-exit Select arm — the leftover half of backlog C2.
+//
+// No new API was needed; the pieces just never existed at the same time:
+//   installSignalPipe(sigchld())  -> SIGCHLD makes an fd readable (the self-pipe trick)
+//   sel.onRead(fd)               -> arm it like any other fd
+//   waitpid(pid, buf, WNOHANG)   -> reap on wake without blocking the runtime
+//
+// SIGCHLD landed earlier today (it is the one signal whose number differs per platform:
+// 20 darwin / 17 linux). WNOHANG is 1 on both (verified against sys/wait.h and
+// linux/wait.h), so it needs no platform split.
+//
+// fd arms need a scheduler, so a green task must exist — see the limitation note at the
+// top of std/select.milo. The timeout arm must NOT win: if it does, the signal fd never
+// fired and the arm is broken.
+from "std/signal" import {
+    sigchld, installSignalPipe, drainSignalFd
+}
+from "std/select" import {
+    Select
+}
+from "std/process" import {
+    Process
+}
+from "std/os" import {
+    waitpid
+}
+from "std/runtime" import {
+    Task
+}
+from "std/time" import {
+    sleepMs
+}
+
+fn main(): i32 {
+    Task.spawn(move(): void => {
+        sleepMs(200)
+    }
+    )
+
+    let fd = installSignalPipe(sigchld())
+    // @expect: pipe ok true
+    print("pipe ok ", fd >= 0)
+
+    // /usr/bin/true exits at once and prints nothing, so it can't pollute stdout here.
+    let p = Process.spawn("/usr/bin/true")!
+
+    var sel = Select.new()
+    sel.onRead(fd) // arm 0 — child exit
+    sel.onTimeout(5000) // arm 1 — must not win
+    let w = sel.wait()
+    sel.destroy()
+    // @expect: arm 0
+    print("arm ", w)
+
+    drainSignalFd(fd)
+
+    unsafe {
+        var status: [i32; 1] = [0]
+        // WNOHANG: the child is already gone, so this returns its pid without blocking.
+        let reaped = waitpid(p.pid, status as *u8, 1)
+        // @expect: reaped true
+        print("reaped ", reaped == p.pid)
+    }
+    return 0
+}

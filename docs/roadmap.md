@@ -88,6 +88,22 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — a timer-only main-context `Select` spun forever (regression from the
+same day's C1 fix).** The main wait loop polls the scheduler and re-checks the claim, but
+`_schedulerRunOnce` returns early when `numTasks == 0` and only polls the event loop while
+tasks remain. Select arms don't live on the task list — fd/timer arms hang off `sSelFdHead`
+and are claimed by `_pollAndWake` — so once the last green task finished, the poll became a
+no-op and the loop spun. Before C1 this returned `-1` immediately: wrong, but it terminated.
+`_schedulerPollMainSelect` now polls the event loop directly when nothing is runnable
+(`_selMinTimeout` bounds the sleep, so it blocks rather than busy-spins). Caught by building
+the child-exit arm, not by the suite — `selectMainContext.milo` misses it because its task is
+still alive when the claim lands. `tests/fixtures/selectTimerMain.milo` pins it.
+
+**Shipped 2026-07-16 — child-exit `Select` arm.** No new API: `installSignalPipe(sigchld())`
++ `sel.onRead(fd)` + `waitpid(pid, buf, WNOHANG)`. The pieces just never existed at once —
+SIGCHLD landed the same day, and WNOHANG is 1 on both platforms (verified). Unblocks the
+event-driven `timeout` rewrite. See `tests/fixtures/selectChildExit.milo`.
+
 **Shipped 2026-07-16 — a `Promise` can be armed in a `Select` (`p.channel()`).** The two
 concurrency tiers didn't compose: `Promise` runs work on an OS thread, `Select` waits on the
 green event loop, and an event-driven `timeout` wanted to bridge them. `Promise` always held
