@@ -44,14 +44,18 @@ CallSite shim (M2.5, compat-tail).
 - **Deferred:** real `process.env` (needs a `__getenv` native), `Buffer` (Node's own API,
   not JSC typed arrays — stub `from`/`toString` first), `queueMicrotask`.
 
-### M3 — the event loop (the showcase)
-- `setTimeout`/`setInterval`/`clearTimeout`/`setImmediate`, and **draining** — after top-level
-  eval returns, pump timers + microtasks until quiescent (Node's actual model).
-- Back timers with `Task.spawn` + a timer heap on the green scheduler; drain via the
-  `schedulerRunToCompletion` pattern already in `std/runtime`.
-- async/await + Promises: JSC runs them natively — the runtime only has to drain the
-  microtask queue, no `Future` machinery.
-- Effort: **1 session.** This is where "the event loop is Milo's" stops being a slogan.
+### M3 — async responses (microtask drain) ✅ (partial)
+**Async route handlers now work.** Key realization: JSC drains its microtask queue only at
+the *outermost* API boundary, so the accept loop must run at the **top level in `main()`**
+(not nested inside the entry eval). `server.listen()` therefore stores `{port, handler}` in a
+global and *returns* instead of blocking; `main()` reads it after the entry eval and runs
+`serveMain`. Per request it makes two calls — `handler(reqText)` returns the JS `res` object
+(and JSC drains microtasks on return, running Promise `.then`/`async` continuations), then
+`__mbGetRaw(res)` renders the now-finished response. Verified: a `Promise.resolve().then(() =>
+res.end('async body'))` handler returns its body; sync handlers (notes CRUD) unaffected.
+- **Still deferred:** real `setTimeout`/`setInterval` firing (timers, not just microtasks) —
+  needs a timer heap pumped between accepts; today `setTimeout` is a no-op. An async handler
+  that awaits a *timer* (not just a Promise chain) won't complete.
 
 ### M4 — core sync builtins: `fs`, `path`, `os` ✅
 `fs` (readFileSync/existsSync/statSync/readFile-async-shim/promises.readFile) over the

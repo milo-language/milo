@@ -63,6 +63,8 @@ extern fn JSValueToStringCopy(ctx: *u8, value: *u8, exception: *u8): *u8
 
 extern fn JSValueMakeUndefined(ctx: *u8): *u8
 
+extern fn JSValueIsUndefined(ctx: *u8, value: *u8): bool
+
 extern fn JSValueMakeString(ctx: *u8, s: *u8): *u8
 
 extern fn JSValueMakeBoolean(ctx: *u8, boolean: bool): *u8
@@ -78,6 +80,8 @@ extern fn JSObjectCallAsFunction(ctx: *u8, object: *u8, thisObject: *u8, argumen
 extern fn JSValueToNumber(ctx: *u8, value: *u8, exception: *u8): f64
 
 extern fn JSValueProtect(ctx: *u8, value: *u8): void
+
+extern fn JSObjectGetProperty(ctx: *u8, object: *u8, propertyName: *u8, exception: *u8): *u8
 
 // Read a pointer out of a C array of pointers (the callback's `arguments[]`).
 fn loadPtr(p: *u8): *u8 {
@@ -110,6 +114,39 @@ fn jsString(ctx: *u8, s: string): *u8 {
         let v = JSValueMakeString(ctx, jstr)
         JSStringRelease(jstr)
         return v
+    }
+}
+
+// Call a 1-arg JS function; returns its result, or null on a thrown exception.
+fn callJs1(ctx: *u8, func: *u8, arg: *u8): *u8 {
+    unsafe {
+        let argArr = malloc(8)
+        var a = arg
+        memcpy(argArr, (a.addrOf()) as *u8, 8)
+        var exc: *u8 = 0 as *u8
+        let r = JSObjectCallAsFunction(ctx, func, 0 as *u8, 1, argArr, (exc.addrOf()) as *u8)
+        free(argArr)
+        if exc as i64 != 0 {
+            return 0 as *u8
+        }
+        return r
+    }
+}
+
+// Read property `name` off a JS object.
+fn getProp(ctx: *u8, obj: *u8, name: string): *u8 {
+    unsafe {
+        let n = JSStringCreateWithUTF8CString(name)
+        let v = JSObjectGetProperty(ctx, obj, n, 0 as *u8)
+        JSStringRelease(n)
+        return v
+    }
+}
+
+// Look up a global by name (a JS function/value on globalThis).
+fn lookupGlobal(ctx: *u8, name: string): *u8 {
+    unsafe {
+        return getProp(ctx, JSContextGetGlobalObject(ctx), name)
     }
 }
 
@@ -165,50 +202,38 @@ fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, a
     }
 }
 
-// __httpServe(port, handler) — bind/listen, then loop: accept a connection, read the raw
-// request, hand it to the JS handler (which parses it and returns a raw HTTP response
-// string), send that, close. Blocks forever — a running server. Each connection is served
-// on this scheduler; the accept loop is Milo, the HTTP semantics are JS.
-fn nativeHttpServe(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
-    unsafe {
-        if argCount < 2 {
-            return JSValueMakeBoolean(ctx, false)
+// The server accept loop — run from main() at the TOP LEVEL (not nested inside the entry
+// eval), so each `handler(reqText)` call is an outermost JSC API entry: JSC drains the
+// microtask queue when it returns, running any async route continuations, so `__mbGetRaw`
+// then sees the finished response. (A nested call — e.g. if listen() blocked here directly —
+// would NOT drain, and async handlers would return empty bodies.) `handler` returns the JS
+// `res` object; `getRaw` renders it to a raw HTTP response string.
+fn serveMain(ctx: *u8, port: u16, handler: *u8, getRaw: *u8): void {
+    let lr = TcpListener.bind(port)
+    match lr {
+        Result.Err(_e) => {
         }
-        let portV = loadPtr(arguments)
-        let handler = loadPtr((arguments as i64 + 8) as *u8)
-        let port = (JSValueToNumber(ctx, portV, 0 as *u8)) as u16
-        let lr = TcpListener.bind(port)
-        match lr {
-            Result.Err(_e) => {
-                return JSValueMakeBoolean(ctx, false)
-            }
-            Result.Ok(listener) => {
-                // The handler is a bare JSValueRef; the accept() below blocks for seconds
-                // between requests, long enough for JSC's GC to collect it. Pin it.
-                JSValueProtect(ctx, handler)
-                while true {
-                    let ar = listener.accept()
-                    match ar {
-                        Result.Err(_e2) => {
-                        }
-                        Result.Ok(stream) => {
-                            let reqText = stream.recvOnce()
-                            let reqVal = jsString(ctx, reqText)
-                            let argArr = malloc(8)
-                            var rv = reqVal
-                            memcpy(argArr, (rv.addrOf()) as *u8, 8)
-                            var exc2: *u8 = 0 as *u8
-                            let respVal = JSObjectCallAsFunction(ctx, handler, 0 as *u8, 1, argArr, (exc2.addrOf()) as *u8)
-                            free(argArr)
-                            var respText = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-                            if exc2 as i64 == 0 {
-                                respText = jsToString(ctx, respVal)
+        Result.Ok(listener) => {
+            JSValueProtect(ctx, handler)
+            JSValueProtect(ctx, getRaw)
+            while true {
+                let ar = listener.accept()
+                match ar {
+                    Result.Err(_e2) => {
+                    }
+                    Result.Ok(stream) => {
+                        let reqText = stream.recvOnce()
+                        let resObj = callJs1(ctx, handler, jsString(ctx, reqText))
+                        var respText = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        if resObj as i64 != 0 {
+                            let rawVal = callJs1(ctx, getRaw, resObj)
+                            if rawVal as i64 != 0 {
+                                respText = jsToString(ctx, rawVal)
                             }
-                            let _ = stream.send(respText)
                         }
+                        let _ = stream.send(respText)
                     }
                 }
-                return JSValueMakeBoolean(ctx, true)
             }
         }
     }
@@ -338,7 +363,7 @@ fn moduleBootstrap(): string {
     "  ServerResponse.prototype.on=function(ev,cb){ if(ev==='finish') this._onfinish=cb; return this; };\n" +
     "  ServerResponse.prototype.once=ServerResponse.prototype.on; ServerResponse.prototype.emit=function(){ return false; };\n" +
     "  ServerResponse.prototype._raw=function(){ var st=this.statusCode; var h=this.headers; if(h['content-type']===undefined) h['content-type']='text/plain'; h['content-length']=String(__byteLen(this._body)); h['connection']='close'; var out='HTTP/1.1 '+st+' '+__statusText(st)+'\\r\\n'; for(var k in h){ if(h.hasOwnProperty(k)) out+=k+': '+h[k]+'\\r\\n'; } out+='\\r\\n'+this._body; return out; };\n" +
-    "  function createServer(a,b){ var handler=(typeof a==='function')?a:b; var srv=new EventEmitter(); srv._handler=handler; srv.on=function(ev,cb){ if(ev==='request') srv._handler=cb; return EventEmitter.prototype.on.call(this,ev,cb); }; srv.address=function(){ return { port:srv._port, address:'0.0.0.0', family:'IPv4' }; }; srv.setTimeout=function(){ return this; }; srv.close=function(cb){ if(cb) cb(); return this; }; srv.listen=function(port,a2,b2){ if(port&&typeof port==='object') port=port.port; srv._port=port; var cb=(typeof a2==='function')?a2:((typeof b2==='function')?b2:null); if(cb) cb(); EventEmitter.prototype.emit.call(srv,'listening'); __httpServe(port|0, function(reqText){ var req=parseRequest(reqText); var res=new ServerResponse(); try{ srv._handler(req,res); }catch(e){ res.statusCode=500; res._body=String(e&&e.stack||e); } return res._raw(); }); return srv; }; return srv; }\n" +
+    "  function createServer(a,b){ var handler=(typeof a==='function')?a:b; var srv=new EventEmitter(); srv._handler=handler; srv.on=function(ev,cb){ if(ev==='request') srv._handler=cb; return EventEmitter.prototype.on.call(this,ev,cb); }; srv.address=function(){ return { port:srv._port, address:'0.0.0.0', family:'IPv4' }; }; srv.setTimeout=function(){ return this; }; srv.close=function(cb){ if(cb) cb(); return this; }; srv.listen=function(port,a2,b2){ if(port&&typeof port==='object') port=port.port; srv._port=port; var cb=(typeof a2==='function')?a2:((typeof b2==='function')?b2:null); if(cb) cb(); EventEmitter.prototype.emit.call(srv,'listening'); globalThis.__mbServer={ port:port|0, handler:function(reqText){ var req=parseRequest(reqText); var res=new ServerResponse(); try{ srv._handler(req,res); }catch(e){ res.statusCode=500; res._body=String(e&&e.stack||e); res._finished=true; } return res; } }; return srv; }; return srv; }\n" +
     "  var httpMod={ createServer:createServer, Server:function(){ return createServer(); }, STATUS_CODES:{}, METHODS:['GET','POST','PUT','DELETE','HEAD','OPTIONS','PATCH'], IncomingMessage:Readable, ServerResponse:ServerResponse, globalAgent:{}, Agent:function(){} };\n" +
     "  var netMod={ createServer:function(){ var s=new EventEmitter(); s.listen=function(p,cb){ if(typeof p==='function') cb=p; if(typeof cb==='function') cb(); return this; }; s.close=function(cb){ if(cb) cb(); return this; }; s.address=function(){ return { port:0 }; }; return s; }, Socket:function(){ return new EventEmitter(); }, connect:function(){ return new EventEmitter(); }, isIP:function(){ return 0; }, isIPv4:function(){ return false; }, isIPv6:function(){ return false; } };\n" +
     "  var cpMod={ spawn:function(){ var e=new EventEmitter(); e.stdout=new EventEmitter(); e.stderr=new EventEmitter(); e.stdin={ write:function(){}, end:function(){} }; e.kill=function(){}; e.pid=0; return e; }, exec:function(c,o,cb){ if(typeof o==='function') cb=o; if(cb) Promise.resolve().then(function(){ cb(null,'',''); }); return new EventEmitter(); }, execSync:function(){ return ''; }, execFile:function(f,a,o,cb){ cb=(typeof o==='function')?o:cb; if(typeof cb==='function') Promise.resolve().then(function(){ cb(null,'',''); }); return new EventEmitter(); }, fork:function(){ return new EventEmitter(); }, spawnSync:function(){ return { status:0, stdout:'', stderr:'', pid:0 }; } };\n" +
@@ -359,6 +384,7 @@ fn moduleBootstrap(): string {
     "  builtins.buffer={ Buffer:globalThis.Buffer, kMaxLength:2147483647, constants:{ MAX_LENGTH:2147483647 }, SlowBuffer:globalThis.Buffer, INSPECT_MAX_BYTES:50 };\n" +
     "  if(!globalThis.process){ globalThis.process={ env:{}, argv:['minibun', __entryPath], platform:'darwin', arch:'arm64', version:'v18.0.0', versions:{node:'18.0.0'}, pid:1, title:'minibun', cwd:function(){ return dirname(__entryPath); }, nextTick:function(f){ var a=Array.prototype.slice.call(arguments,1); Promise.resolve().then(function(){ f.apply(null,a); }); }, on:function(){ return this; }, once:function(){ return this; }, emit:function(){ return false; }, exit:function(){}, hrtime:function(t){ return [0,0]; }, stdout:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } }, stderr:{ write:function(s){ if(typeof s!=='string') s=String(s); if(s.slice(-1)==='\\n') s=s.slice(0,-1); console.log(s); return true; } } }; }\n" +
     "  if(!globalThis.setTimeout){ globalThis.setTimeout=function(f,ms){ return 0; }; globalThis.clearTimeout=function(){}; globalThis.setInterval=function(){ return 0; }; globalThis.clearInterval=function(){}; globalThis.setImmediate=function(f){ Promise.resolve().then(f); return 0; }; globalThis.clearImmediate=function(){}; }\n" +
+    "  globalThis.__mbGetRaw=function(res){ return res._raw(); };\n" +
     "  globalThis.__runEntry=function(entry){ return loadModule(entry); };\n" +
     "})();\n"
 }
@@ -395,7 +421,6 @@ fn main(): i32 {
         installConsole(ctx, global)
         setGlobalFn(ctx, global, "__readFileSync", nativeReadFileSync as *u8)
         setGlobalFn(ctx, global, "__fileExists", nativeFileExists as *u8)
-        setGlobalFn(ctx, global, "__httpServe", nativeHttpServe as *u8)
 
         // Hand the entry path to the bootstrap as a global, avoiding string-quoting in a
         // constructed launcher.
@@ -406,6 +431,19 @@ fn main(): i32 {
         var code = evalScript(ctx, moduleBootstrap(), "<bootstrap>")
         if code == 0 {
             code = evalScript(ctx, "try{ __runEntry(__entryPath); }catch(e){ console.log('Uncaught ' + (e && e.message ? e.message : e) + (e && e.stack ? '\\n' + e.stack : '')); throw e; }", path)
+        }
+
+        // If the entry registered an HTTP server (server.listen stores __mbServer and
+        // returns instead of blocking), run its accept loop here — at the top level, so
+        // async route handlers' microtasks drain between requests.
+        if code == 0 {
+            let serverObj = lookupGlobal(ctx, "__mbServer")
+            if !JSValueIsUndefined(ctx, serverObj) {
+                let port = (JSValueToNumber(ctx, getProp(ctx, serverObj, "port"), 0 as *u8)) as u16
+                let handler = getProp(ctx, serverObj, "handler")
+                let getRaw = lookupGlobal(ctx, "__mbGetRaw")
+                serveMain(ctx, port, handler, getRaw)
+            }
         }
 
         JSGlobalContextRelease(ctx)
