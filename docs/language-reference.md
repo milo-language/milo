@@ -545,6 +545,41 @@ On panic, `!` prints the source location and error message, then exits:
 error at 12:38: connection refused
 ```
 
+### Option Combinators
+
+Builtin methods on any `Option<T>`, for the cases where `!`/`?`/`??` don't fit:
+
+```milo
+let opt: i32? = Option.Some(21)
+
+opt.isSome()                 // bool
+opt.isNone()                 // bool
+opt.unwrapOr(0)              // T — the default is evaluated eagerly
+opt.unwrapOrElse(() => 0)    // T — the closure runs ONLY if None
+opt.map((n) => n * 2)        // Option<U> — Some(42); None maps to None
+```
+
+`unwrapOr` and `??` are the same operation; `??` is the terse form, and unlike `unwrapOr`
+it has no Copy restriction — `opt ?? "d"` works on an `Option<string>` where
+`opt.unwrapOr("d")` is rejected.
+
+Two rules worth knowing, both consequences of how the payload is reached:
+
+- **`unwrapOr`/`unwrapOrElse` require a Copy inner.** They load the payload out, so for an
+  owned type (`string`, `Vec<T>`) that would produce a second owner and a double free. The
+  compiler rejects it and points you at `match`, which can move the value out safely.
+- **`map` has no such restriction.** Its callback receives the payload by reference, so
+  nothing is moved out of the receiver — the original stays usable afterwards:
+
+```milo
+let s: string? = Option.Some("hello")
+let n = s.map((v) => v.len).unwrapOr(0)   // 5
+match s { Option.Some(v) => { print(v) } Option.None => {} }   // still owns "hello"
+```
+
+`map`'s result type is independent of `T` — `Option<i64>.map((n) => n > 5)` is
+`Option<bool>`. `isOk`/`isErr`/`unwrapOr` mirror these on `Result`.
+
 These also work with `Result`. Writing `Result<T>` with one type argument defaults the error type to `string` — `Result<i32>` is `Result<i32, string>`:
 
 ```milo
