@@ -88,6 +88,16 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — signal self-pipes were a single global, cross-wiring any program that
+armed two signals.** `_sigPipeW` was one `i32`, so installing a second signal re-pointed the
+shared handler at the second pipe: raising SIGWINCH made **SIGCHLD's** fd readable while the
+resize fd stayed empty — a resize delivered as a child exit, silently. It survived because
+nothing had ever armed two at once; `timeout` arming SIGCHLD while `splitPty` arms SIGWINCH
+is what made the pair reachable. Now one write-end per signal, and the shared handler picks
+the pipe from its argument (the only input a C handler gets). Out-of-range signals are
+rejected instead of indexing off the table. `tests/fixtures/signalTwoPipes.milo` asserts both
+directions — each signal hits its own pipe and only its own.
+
 **Shipped 2026-07-16 — `timeout` waits on an event, not a 50ms poll.** Its loop was
 `waitpid(pid, status, WNOHANG)` + `sleepMs(50)` — the last genuine I/O poll in the tree. Now
 a `Select` over the SIGCHLD self-pipe fd and the deadline. Behaviour is identical (verified
