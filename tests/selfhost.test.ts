@@ -70,6 +70,22 @@ describe("milo-self", () => {
     expect(existsSync(MILO_SELF)).toBe(true);
   });
 
+  // parseAttribute demanded TokKind.Ident for every attribute arg, but @cSig/@cLayout
+  // take string literals. expect() soft-validates — it prints and returns the token
+  // anyway — so the args still parsed correctly and the ONLY symptom was 42 bogus
+  // "parse error" lines on every self-build. Correct output is exactly why it survived:
+  // nothing failed, so nothing caught it. Gate on stderr, not just the exit code.
+  test("check of a file with string attribute args is silent", async () => {
+    const src = join(tmpDir, "attrArgs.milo");
+    writeFileSync(src,
+      '@cSig("unistd.h", "int close(int)")\n' +
+      "extern fn close(fd: i32): i32\n\n" +
+      "fn main(): i32 {\n    return 0\n}\n");
+    const r = await run(MILO_SELF, ["check", src]);
+    expect(r.stderr).not.toContain("parse error");
+    expect(r.code).toBe(0);
+  }, 60000);
+
   // The M1 gate: milo-self must survive the most trivial input that exists.
   describe("smoke", () => {
     const trivial = "fn main(): i32 {\n    return 0\n}\n";

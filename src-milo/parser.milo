@@ -76,11 +76,14 @@ fn matchTok(p: &mut Parser, kind: TokKind): bool {
 
 fn expect(p: &mut Parser, kind: TokKind): Token {
     let tok = advance(p)
-    // Soft validation: the parser is expected to call with the right kind, so
-    // this never fires on well-formed input; on mismatch, surface a diagnostic
-    // rather than silently accepting (no recovery yet — parsing continues).
+    // Soft validation: on a kind mismatch this prints but still returns the token, so
+    // parsing continues (no recovery yet). That tolerance is load-bearing and also
+    // dangerous — a caller expecting the wrong kind still gets correct output, so the
+    // only symptom is the diagnostic. Exactly that hid a parseAttribute bug for 42
+    // errors per self-build. Include the token text: a bare line:col names neither the
+    // file nor the token, which is most of what made that one hard to place.
     if !(tok.kind == kind) {
-        eprint("parse error: unexpected token at line " + tok.line.toString() + ":" + tok.col.toString())
+        eprint("parse error: unexpected token '" + tok.value + "' at line " + tok.line.toString() + ":" + tok.col.toString())
     }
     return tok
 }
@@ -238,14 +241,24 @@ fn parseTypeParams(p: &mut Parser): Vec<TypeParam> {
 
 // -- Attributes --
 
+// An attribute arg is either a bare ident (`@derive(Copy)`) or a string literal
+// (`@cSig("unistd.h", "int close(int)")`). Demanding Ident for both is why every
+// self-build printed 42 parse errors for std/os.milo's @cSig args.
+fn parseAttributeArg(p: &mut Parser): string {
+    if at(p, TokKind.String) {
+        return advance(p).value
+    }
+    return expect(p, TokKind.Ident).value
+}
+
 fn parseAttribute(p: &mut Parser): Attribute {
     expect(p, TokKind.At)
     let name = expect(p, TokKind.Ident).value
     var args: Vec<string> = Vec.new()
     if matchTok(p, TokKind.LParen) {
-        args.push(expect(p, TokKind.Ident).value)
+        args.push(parseAttributeArg(p))
         while matchTok(p, TokKind.Comma) {
-            args.push(expect(p, TokKind.Ident).value)
+            args.push(parseAttributeArg(p))
         }
         expect(p, TokKind.RParen)
     }
