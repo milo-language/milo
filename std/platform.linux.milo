@@ -42,6 +42,13 @@ extern struct SockAddrStorage {
     __ss_align: u64,
 }
 
+// 128 bytes of zeroes; the kernel fills in whichever family the peer used.
+fn makeZeroedSockaddrStorage(): SockAddrStorage {
+    unsafe {
+        return zeroed<SockAddrStorage>()
+    }
+}
+
 fn sockAddrInLen(): u32 {
     return 16
 }

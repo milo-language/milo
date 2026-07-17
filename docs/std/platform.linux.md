@@ -146,6 +146,14 @@ fn makeZeroedSockaddr(): SockAddrIn
 
 _Undocumented._
 
+### `makeZeroedSockaddrStorage`
+
+```milo
+fn makeZeroedSockaddrStorage(): SockAddrStorage
+```
+
+128 bytes of zeroes; the kernel fills in whichever family the peer used.
+
 ### `mapAnon`
 
 ```milo

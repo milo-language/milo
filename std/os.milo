@@ -3,7 +3,8 @@
 // these imports exist for the green-aware wrappers at the bottom of this
 // file; the resolver's visited-set makes the std/os ↔ std/runtime cycle safe
 from "std/platform" import {
-    getErrno, eagain, einprogress, solSocket, soError, SockAddrIn, makeZeroedSockaddr
+    getErrno, eagain, einprogress, solSocket, soError, SockAddrIn, SockAddrStorage, makeZeroedSockaddr,
+    makeZeroedSockaddrStorage, sockAddrStorageLen
 }
 from "std/event" import {
     setNonblocking
@@ -97,7 +98,10 @@ extern fn bind(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
 extern fn listen(sockfd: i32, backlog: i32): i32
 
-extern fn accept(sockfd: i32, addr: &mut SockAddrIn, addrlen: &mut u32): i32
+// accept lets the KERNEL choose the peer's family, so the out-param must be sized for any
+// of them. This took a 16-byte sockaddr_in with addrlen=16, which silently truncates an
+// IPv6 peer (28 bytes) — a live bug independent of AF_UNIX.
+extern fn accept(sockfd: i32, addr: &mut SockAddrStorage, addrlen: &mut u32): i32
 
 extern fn connect(sockfd: i32, addr: &SockAddrIn, addrlen: u32): i32
 
@@ -351,8 +355,10 @@ fn acceptFd(fd: i32): i32 {
         setNonblocking(fd)
     }
     while true {
-        var clientAddr = makeZeroedSockaddr()
-        var addrlen: u32 = 16
+        // Storage-sized, not sockaddr_in-sized: the kernel writes whatever family the
+        // peer used, and a v6 peer needs 28 bytes.
+        var clientAddr = makeZeroedSockaddrStorage()
+        var addrlen: u32 = sockAddrStorageLen()
         let clientFd = accept(fd, clientAddr, addrlen)
         if clientFd < 0 && inGreen && getErrno() == eagain() {
             schedulerWaitRead(fd)

@@ -2186,7 +2186,7 @@ A concurrent echo server handling multiple clients with green threads:
 
 ```milo
 from "std/os" import { socket, bind, listen, accept, read, write, close, setsockopt, getsockname, ntohs }
-from "std/platform" import { makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain }
+from "std/platform" import { makeSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, solSocket, soReuseaddr, getErrno, eagain }
 from "std/event" import { setNonblocking }
 from "std/runtime" import { Task, schedulerWaitRead }
 
@@ -2197,8 +2197,10 @@ fn main(): i32 {
 
         Task.spawn(move (): void => {
             while true {
-                var clientAddr = makeZeroedSockaddr()
-                var addrlen: u32 = 16
+                // accept lets the kernel pick the peer's family, so the buffer is
+                // sockaddr_storage-sized — a v6 peer does not fit a 16-byte sockaddr_in
+                var clientAddr = makeZeroedSockaddrStorage()
+                var addrlen: u32 = sockAddrStorageLen()
                 let clientFd = accept(serverFd, clientAddr, addrlen)
                 if clientFd < 0 {
                     if getErrno() == eagain() {

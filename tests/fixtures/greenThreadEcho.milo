@@ -9,7 +9,7 @@ from "std/os" import {
     socket, bind, listen, accept, connect, read, write, close, setsockopt, getsockname, ntohs, pipe
 }
 from "std/platform" import {
-    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain
+    SockAddrIn, makeSockaddr, makeZeroedSockaddr, makeZeroedSockaddrStorage, sockAddrStorageLen, solSocket, soReuseaddr, getErrno, eagain
 }
 from "std/event" import {
     setNonblocking
@@ -89,8 +89,10 @@ fn main(): i32 {
     Task.spawn(move(): void => {
         var handled = 0
         while handled < 2 {
-            var clientAddr = makeZeroedSockaddr()
-            var addrlen: u32 = 16
+            // storage-sized: accept lets the kernel pick the peer's family, and a v6
+            // peer does not fit a 16-byte sockaddr_in
+            var clientAddr = makeZeroedSockaddrStorage()
+            var addrlen: u32 = sockAddrStorageLen()
             let clientFd = accept(serverFd, clientAddr, addrlen)
             if clientFd < 0 {
                 if getErrno() == eagain() {

@@ -4,7 +4,7 @@ from "std/os" import {
     accept, bind, close, getsockname, listen, ntohs, read, setsockopt, socket, write
 }
 from "std/platform" import {
-    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr
+    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, makeZeroedSockaddrStorage, sockAddrStorageLen
 }
 
 // ── Public types ──
@@ -489,8 +489,10 @@ fn serve(port: u16?, handler: (&Request) => Response): Result<void> {
     print($"listening on http://localhost:{actualPort}")
 
     while true {
-        var clientAddr = makeZeroedSockaddr()
-        var addrlen: u32 = SIZEOF_SOCKADDR_IN
+        // storage-sized: accept lets the kernel pick the peer family, and a v6 peer
+        // does not fit a 16-byte sockaddr_in
+        var clientAddr = makeZeroedSockaddrStorage()
+        var addrlen: u32 = sockAddrStorageLen()
         let clientFd = accept(sock.fd, clientAddr, addrlen)
         if clientFd < 0 {
             continue
@@ -651,8 +653,10 @@ fn serveRouter(port: u16?, router: &Router): Result<void> {
     print($"listening on http://localhost:{actualPort}")
 
     while true {
-        var clientAddr = makeZeroedSockaddr()
-        var addrlen: u32 = SIZEOF_SOCKADDR_IN
+        // storage-sized: accept lets the kernel pick the peer family, and a v6 peer
+        // does not fit a 16-byte sockaddr_in
+        var clientAddr = makeZeroedSockaddrStorage()
+        var addrlen: u32 = sockAddrStorageLen()
         let clientFd = accept(sock.fd, clientAddr, addrlen)
         if clientFd < 0 {
             continue

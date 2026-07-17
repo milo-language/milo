@@ -5,7 +5,7 @@ from "std/os" import {
     setsockopt, socket, malloc, free, memcpy
 }
 from "std/platform" import {
-    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain
+    SockAddrIn, makeSockaddr, makeZeroedSockaddr, solSocket, soReuseaddr, getErrno, eagain, makeZeroedSockaddrStorage, sockAddrStorageLen
 }
 from "std/event" import {
     setNonblocking
@@ -442,8 +442,10 @@ fn acceptLoop(rawFd: i32): void {
     while true {
         schedulerWaitRead(rawFd)
         while true {
-            var clientAddr = makeZeroedSockaddr()
-            var addrlen: u32 = SIZEOF_SOCKADDR_IN
+            // storage-sized: accept lets the kernel pick the peer family, and a v6 peer
+            // does not fit a 16-byte sockaddr_in
+            var clientAddr = makeZeroedSockaddrStorage()
+            var addrlen: u32 = sockAddrStorageLen()
             let clientFd = accept(rawFd, clientAddr, addrlen)
             if clientFd < 0 {
                 break
