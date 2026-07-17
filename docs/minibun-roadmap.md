@@ -53,10 +53,15 @@ CallSite shim (M2.5, compat-tail).
   microtask queue, no `Future` machinery.
 - Effort: **1 session.** This is where "the event loop is Milo's" stops being a slogan.
 
-### M4 — core sync builtins: `fs`, `path`, `os`
-- `require('fs')` / `require('path')` return native modules backed by `std/fs` / `std/path`.
-- `readFileSync`, `existsSync`, `writeFileSync`, `path.join/resolve/dirname/extname`.
-- Effort: **1 session**, mostly mechanical mapping. Sync first; async fs waits on M3.
+### M4 — core sync builtins: `fs`, `path`, `os` ✅
+`fs` (readFileSync/existsSync/statSync/readFile-async-shim/promises.readFile) over the
+`__readFileSync`/`__fileExists` natives; `path` and `os` pure JS. Plus, added the same pass:
+`tty`, `url` (over JSC's native URL), `querystring`, `string_decoder`, a `crypto` shim
+(randomBytes/randomUUID/createHash — insecure stubs, real impl deferred), `zlib` no-ops, a
+minimal `Buffer`, and `callsites`/`depd` shims for the V8-stack-API gap (**M2.5** — JSC has no
+`Error.prepareStackTrace` CallSite hook; shimming the specific packages beats emulating V8).
+The tahoeroads backend now clears all of the above and stops at `Cannot find module http`.
+- **Deferred:** writeFileSync (needs a `__writeFile` native), real crypto/Buffer/zlib.
 
 ### M5 — EventEmitter + minimal streams
 - `EventEmitter` (on/emit/once) — foundational for http and streams.
