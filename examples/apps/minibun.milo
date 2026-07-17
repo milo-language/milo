@@ -1,22 +1,26 @@
 // minibun — a minimal JavaScript runtime in Milo.
 //
-// Proves the feasibility-audit conclusion in the smallest possible form: JS runs on
-// JavaScriptCore (the system framework on macOS — zero install), but the native host —
-// the `console.log` binding, the file loader, the exception reporter — is memory-safe,
-// bounds-checked Milo. bun's 82K LOC of C++ glue is for deep JSC integration; the public
-// embedding API JSC exposes is plain C, which is exactly the seam Milo's FFI is built for.
+// JS runs on JavaScriptCore (the system framework on macOS — zero install), but the
+// runtime host — the module loader, the `console.log` binding, the file/exists natives,
+// the exception reporter — is memory-safe, bounds-checked Milo. bun's 82K LOC of C++ glue
+// is for deep JSC integration; the public embedding API JSC exposes is plain C, which is
+// exactly the seam Milo's FFI is built for.
+//
+// Roadmap: docs/minibun-roadmap.md. Current: M1 (CommonJS modules) — runs any dep-free
+// CJS bundle. The module system (require/cache/resolution) lives in a JS bootstrap over
+// two thin Milo natives (__readFileSync, __fileExists); everything else is Milo.
 //
 // Build + run (macOS):
-//   milo build examples/apps/minibun.milo -o /tmp/minibun -- -framework JavaScriptCore
-//   /tmp/minibun hello.js
-// Or just `milo run examples/apps/minibun.milo -- hello.js` (the framework is auto-linked
-// by detectLibs in src/main.ts once a JSC symbol is present).
+//   milo run examples/apps/minibun.milo -- entry.js      (JSC auto-linked by detectLibs)
 
 from "std/os" import {
     malloc, free, memcpy
 }
 from "std/io" import {
     readFile
+}
+from "std/fs" import {
+    isFile
 }
 from "std/args" import {
     args
@@ -47,7 +51,9 @@ extern fn JSValueToStringCopy(ctx: *u8, value: *u8, exception: *u8): *u8
 
 extern fn JSValueMakeUndefined(ctx: *u8): *u8
 
-extern fn JSValueIsUndefined(ctx: *u8, value: *u8): bool
+extern fn JSValueMakeString(ctx: *u8, s: *u8): *u8
+
+extern fn JSValueMakeBoolean(ctx: *u8, boolean: bool): *u8
 
 extern fn JSObjectMakeFunctionWithCallback(ctx: *u8, name: *u8, callAsFunction: *u8): *u8
 
@@ -64,8 +70,8 @@ fn loadPtr(p: *u8): *u8 {
     }
 }
 
-// A JSValue -> owned Milo string, via JSC's own toString. Reused for console.log args
-// and for rendering an uncaught exception.
+// A JSValue -> owned Milo string, via JSC's own toString. Reused everywhere a JS value
+// must cross into Milo (console args, native fn args, exception text).
 fn jsToString(ctx: *u8, val: *u8): string {
     unsafe {
         let jstr = JSValueToStringCopy(ctx, val, 0 as *u8)
@@ -79,8 +85,20 @@ fn jsToString(ctx: *u8, val: *u8): string {
     }
 }
 
-// The `console.log` implementation — JSC calls THIS Milo function directly (C ABI, same
-// mechanism as std/runtime's pthread trampoline). Space-joins its args and prints one line.
+// A Milo string -> JS string value.
+fn jsString(ctx: *u8, s: string): *u8 {
+    unsafe {
+        let jstr = JSStringCreateWithUTF8CString(s)
+        let v = JSValueMakeString(ctx, jstr)
+        JSStringRelease(jstr)
+        return v
+    }
+}
+
+// ── native functions JSC calls directly (C ABI, same mechanism as std/runtime's
+//    pthread trampoline) ──
+
+// console.log(...args) — space-joins and prints one line.
 fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
         var line = ""
@@ -98,10 +116,50 @@ fn consoleLog(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, argumen
     }
 }
 
-// Install a `console` object on the global with `.log` bound to the Milo callback.
-fn installConsole(ctx: *u8): void {
+// __readFileSync(path) -> string | undefined. The module loader's file access.
+fn nativeReadFileSync(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
     unsafe {
-        let global = JSContextGetGlobalObject(ctx)
+        if argCount < 1 {
+            return JSValueMakeUndefined(ctx)
+        }
+        let path = jsToString(ctx, loadPtr(arguments))
+        let r = readFile(path)
+        match r {
+            Result.Ok(s) => {
+                return jsString(ctx, s)
+            }
+            Result.Err(_e) => {
+                return JSValueMakeUndefined(ctx)
+            }
+        }
+    }
+}
+
+// __fileExists(path) -> bool. Backed by isFile so it is false for directories, which is
+// what the resolver wants (directories are probed via /index.js and /package.json).
+fn nativeFileExists(ctx: *u8, _function: *u8, _thisObject: *u8, argCount: i64, arguments: *u8, _exception: *u8): *u8 {
+    unsafe {
+        if argCount < 1 {
+            return JSValueMakeBoolean(ctx, false)
+        }
+        let path = jsToString(ctx, loadPtr(arguments))
+        return JSValueMakeBoolean(ctx, isFile(path))
+    }
+}
+
+// Bind a native callback as a global function `name`.
+fn setGlobalFn(ctx: *u8, global: *u8, name: string, cb: *u8): void {
+    unsafe {
+        let n = JSStringCreateWithUTF8CString(name)
+        let f = JSObjectMakeFunctionWithCallback(ctx, n, cb)
+        JSObjectSetProperty(ctx, global, n, f, 0 as u32, 0 as *u8)
+        JSStringRelease(n)
+    }
+}
+
+// Install `console.log` (nested under a `console` object) on the global.
+fn installConsole(ctx: *u8, global: *u8): void {
+    unsafe {
         let fnName = JSStringCreateWithUTF8CString("log")
         let logFn = JSObjectMakeFunctionWithCallback(ctx, fnName, consoleLog as *u8)
         let console = JSObjectMake(ctx, 0 as *u8, 0 as *u8)
@@ -115,6 +173,71 @@ fn installConsole(ctx: *u8): void {
     }
 }
 
+// The CommonJS module system, in JS over the two natives above. new Function() gives each
+// module the (exports, require, module, __filename, __dirname) wrapper Node uses; resolve()
+// probes .js/.json/index.js/package.json#main and walks node_modules for bare specifiers.
+// Built as line-by-line concatenation (no multiline string literals) — one JS line per
+// Milo line keeps it debuggable.
+fn moduleBootstrap(): string {
+    return "" +
+    "(function(){\n" +
+    "  var cache = {};\n" +
+    "  function dirname(p){ var i = p.lastIndexOf('/'); if(i<0) return '.'; if(i===0) return '/'; return p.slice(0,i); }\n" +
+    "  function normalize(p){ var abs = p.charAt(0)==='/'; var parts = p.split('/'); var out=[]; for(var k=0;k<parts.length;k++){ var s=parts[k]; if(s===''||s==='.') continue; if(s==='..'){ out.pop(); continue; } out.push(s); } return (abs?'/':'')+out.join('/'); }\n" +
+    "  function join(a,b){ return normalize(a+'/'+b); }\n" +
+    "  function tryFile(base){\n" +
+    "    if(__fileExists(base)) return base;\n" +
+    "    if(__fileExists(base+'.js')) return base+'.js';\n" +
+    "    if(__fileExists(base+'.json')) return base+'.json';\n" +
+    "    if(__fileExists(base+'/index.js')) return base+'/index.js';\n" +
+    "    var pj=base+'/package.json';\n" +
+    "    if(__fileExists(pj)){ try{ var m=JSON.parse(__readFileSync(pj)).main||'index.js'; var mf=join(base,m); if(__fileExists(mf)) return mf; if(__fileExists(mf+'.js')) return mf+'.js'; if(__fileExists(mf+'/index.js')) return mf+'/index.js'; }catch(e){} }\n" +
+    "    return null;\n" +
+    "  }\n" +
+    "  function resolve(fromDir, req){\n" +
+    "    var base;\n" +
+    "    if(req.charAt(0)==='/'){ base=normalize(req); }\n" +
+    "    else if(req.charAt(0)==='.'){ base=join(fromDir,req); }\n" +
+    "    else { var dir=fromDir; while(true){ var c=tryFile(join(dir,'node_modules/'+req)); if(c) return c; var par=dirname(dir); if(par===dir) break; dir=par; } throw new Error('Cannot find module ' + req); }\n" +
+    "    var f=tryFile(base); if(f) return f;\n" +
+    "    throw new Error('Cannot find module ' + req);\n" +
+    "  }\n" +
+    "  function loadModule(filename){\n" +
+    "    if(cache[filename]) return cache[filename].exports;\n" +
+    "    var module={exports:{},filename:filename,loaded:false};\n" +
+    "    cache[filename]=module;\n" +
+    "    var src=__readFileSync(filename);\n" +
+    "    if(src===undefined) throw new Error('Cannot read module ' + filename);\n" +
+    "    if(filename.slice(-5)==='.json'){ module.exports=JSON.parse(src); module.loaded=true; return module.exports; }\n" +
+    "    var dir=dirname(filename);\n" +
+    "    var req=function(r){ return loadModule(resolve(dir,r)); };\n" +
+    "    req.resolve=function(r){ return resolve(dir,r); };\n" +
+    "    var fn=new Function('exports','require','module','__filename','__dirname', src);\n" +
+    "    fn.call(module.exports, module.exports, req, module, filename, dir);\n" +
+    "    module.loaded=true;\n" +
+    "    return module.exports;\n" +
+    "  }\n" +
+    "  globalThis.__runEntry=function(entry){ return loadModule(entry); };\n" +
+    "})();\n"
+}
+
+// Evaluate `code`; on an uncaught exception print it and return 1.
+fn evalScript(ctx: *u8, code: string, sourceName: string): i32 {
+    unsafe {
+        let script = JSStringCreateWithUTF8CString(code)
+        let url = JSStringCreateWithUTF8CString(sourceName)
+        var exc: *u8 = 0 as *u8
+        JSEvaluateScript(ctx, script, 0 as *u8, url, 1, (exc.addrOf()) as *u8)
+        JSStringRelease(script)
+        JSStringRelease(url)
+        if exc as i64 != 0 {
+            print("Uncaught " + jsToString(ctx, exc))
+            return 1
+        }
+        return 0
+    }
+}
+
 fn main(): i32 {
     let argv = args()
     if argv.len < 2 {
@@ -123,34 +246,25 @@ fn main(): i32 {
     }
     let path = argv[1]
 
-    let readResult = readFile(path)
-    let src = match readResult {
-        Result.Ok(s) => {
-            s
-        }
-        Result.Err(_e) => {
-            print("minibun: cannot read " + path)
-            return 1
-        }
-    }
-
     unsafe {
         let ctx = JSGlobalContextCreate(0 as *u8)
-        installConsole(ctx)
+        let global = JSContextGetGlobalObject(ctx)
 
-        let script = JSStringCreateWithUTF8CString(src)
-        let url = JSStringCreateWithUTF8CString(path)
-        var exc: *u8 = 0 as *u8
-        JSEvaluateScript(ctx, script, 0 as *u8, url, 1, (exc.addrOf()) as *u8)
+        installConsole(ctx, global)
+        setGlobalFn(ctx, global, "__readFileSync", nativeReadFileSync as *u8)
+        setGlobalFn(ctx, global, "__fileExists", nativeFileExists as *u8)
 
-        var code: i32 = 0
-        if exc as i64 != 0 {
-            print("Uncaught " + jsToString(ctx, exc))
-            code = 1
+        // Hand the entry path to the bootstrap as a global, avoiding string-quoting in a
+        // constructed launcher.
+        let epName = JSStringCreateWithUTF8CString("__entryPath")
+        JSObjectSetProperty(ctx, global, epName, jsString(ctx, path.clone()), 0 as u32, 0 as *u8)
+        JSStringRelease(epName)
+
+        var code = evalScript(ctx, moduleBootstrap(), "<bootstrap>")
+        if code == 0 {
+            code = evalScript(ctx, "__runEntry(__entryPath)", path)
         }
 
-        JSStringRelease(script)
-        JSStringRelease(url)
         JSGlobalContextRelease(ctx)
         return code
     }

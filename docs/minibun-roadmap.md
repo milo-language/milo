@@ -24,15 +24,13 @@ part Milo is uniquely suited for.
 ### M0 — eval + console.log + exceptions ✅ (c484a47)
 Context, `console.log` via a Milo callback, uncaught-exception reporting, file loader.
 
-### M1 — CommonJS module system  ⟶ kills the `exports` error
-The immediate wall. No language work; pure runtime plumbing on the Milo side.
-- Wrap each module source: `(function(exports, require, module, __dirname, __filename){ … })`,
-  eval the wrapper, call it with a fresh `module.exports = {}`.
-- Native `require(id)`: resolve (relative → file with `.js`/`.json`/`/index.js` probing;
-  bare → walk `node_modules`), cache by resolved path, return `module.exports`.
-- Milo pieces: `std/io` readFile, `std/path` join/dirname/resolve — all shipped.
-- **Wall:** circular requires (return the partial `exports`); JSON modules (parse to a value).
-- Effort: **1 session.** Unlocks any pure-JS CJS bundle with no external deps.
+### M1 — CommonJS module system ✅  ⟶ kills the `exports` error
+Module system (require/cache/resolution) in a JS bootstrap over two Milo natives
+(`__readFileSync`, `__fileExists`); `new Function` supplies the CJS wrapper. Resolves
+`.js`/`.json`/`/index.js`/`package.json#main` and walks `node_modules`. Verified: multi-file
+relative + nested + JSON `require`, both `exports.x` and `module.exports=` styles, `__dirname`.
+The tahoeroads backend now advances past `exports`/`require` to `Cannot find module events`
+(a builtin — M2/M5). Circular requires handled (partial-exports via pre-cache).
 
 ### M2 — global scaffolding
 - `process` (`.env`, `.argv`, `.platform`, `.cwd()`, `.nextTick`), `globalThis`, `queueMicrotask`.
