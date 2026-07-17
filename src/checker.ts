@@ -224,6 +224,12 @@ export class TypeChecker {
   private closureScopeDepth: number | null = null;
   private currentClosureCaptures: Map<string, CaptureInfo> | null = null;
   private closureParamHints: TypeKind[] | null = null;
+  // The expected RETURN type of a closure being checked against a fn-typed hint. Without
+  // it an un-annotated `() => 0` always infers i64, so `opt.unwrapOrElse(() => 0)` on an
+  // Option<i32> failed with "callback must return i32, got i64" — the literal never saw
+  // the context that would have coerced it. Param hints were already propagated; this is
+  // the other half.
+  private closureRetHint: TypeKind | null = null;
   private currentFnRetType: TypeKind = { tag: "void" };
   private loopDepth = 0;
   // Track variables moved exclusively inside return stmts within loops.
@@ -3314,6 +3320,7 @@ export class TypeChecker {
     }
     if (hint && expr.kind === "Closure" && hint.tag === "fn") {
       this.closureParamHints = hint.params;
+      this.closureRetHint = hint.ret;
     }
     const prevHint = this.returnHint;
     this.returnHint = hint;
@@ -4401,6 +4408,8 @@ export class TypeChecker {
       case "Closure": {
         const paramHints = this.closureParamHints;
         this.closureParamHints = null;
+        const retHint = this.closureRetHint;
+        this.closureRetHint = null;
         const savedClosureScopeDepth = this.closureScopeDepth;
         const savedClosureCaptures = this.currentClosureCaptures;
         this.currentClosureCaptures = new Map();
@@ -4421,7 +4430,13 @@ export class TypeChecker {
           paramTypes.push(pType);
           this.declare(p.name, { type: pType, mutable: pType.tag === "ref" && pType.mutable, moved: false, borrowed: false, read: false });
         }
-        let inferredRet: TypeKind = expr.retType ? this.resolve(expr.retType) : { tag: "unknown" };
+        // An explicit annotation always wins; otherwise take the caller's expected return
+        // type so literals in the body get coerced against it (`() => 0` against an
+        // Option<i32> is i32, not i64). Falls back to inferring from the body, which is
+        // what a hint of `unknown` (e.g. Vec.map, whose U is whatever you return) leaves.
+        let inferredRet: TypeKind = expr.retType
+          ? this.resolve(expr.retType)
+          : (retHint && retHint.tag !== "unknown" ? retHint : { tag: "unknown" });
         const savedRetType = this.currentFnRetType;
         this.currentFnRetType = inferredRet;
         for (const s of expr.body) this.checkStmt(s, inferredRet);

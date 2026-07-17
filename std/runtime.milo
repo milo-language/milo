@@ -792,19 +792,44 @@ fn _selectTryClaim(st: *u8, arm: i64): void {
 
 // Task side, called after every arm is registered. Returns the winning arm
 // index, parking until a source fires. See SelectState for the race handling.
+//
+// Two contexts, and conflating them is what made this return -1 for so long. A green task
+// can park: some other task (or the event loop) will claim an arm and unpark it. The MAIN
+// context cannot — `schedulerCurrent()` is 0 there, so `schedulerPark()` no-ops, and the
+// old code fell straight through to read an unclaimed `-1` and return it. Callers could
+// see that select had woken but not which arm fired, so the demos worked around it by
+// draining every arm.
+//
+// Main context takes the same shape channels already use (`_schedulerPollMain` in
+// std/sync): nobody else drives the scheduler, so poll it a bounded tick and re-check the
+// claim. Parking there, or driving the poll from inside the lock, is what hangs.
 fn _selectWaitState(st: *u8): i64 {
     let m = _rtReadPtr(st, ssMtx())
-    pthread_mutex_lock(m)
-    let already = _rtReadI64(st, ssClaimed())
-    if already >= 0 {
+    while true {
+        pthread_mutex_lock(m)
+        let already = _rtReadI64(st, ssClaimed())
+        if already >= 0 {
+            pthread_mutex_unlock(m)
+            return already
+        }
+        if schedulerCurrent() as i64 != 0 {
+            _rtWriteI64(st, ssParked(), 1)
+            _rtWritePtr(st, ssTask(), schedulerCurrent())
+            pthread_mutex_unlock(m)
+            schedulerPark()
+            return _rtReadI64(st, ssClaimed())
+        }
+        // Main context. Leave ssParked at 0: there is no task to unpark, and claiming
+        // would try to unpark a null one.
+        if !schedulerExists() {
+            // No scheduler means no arm can ever fire — polling would spin forever.
+            pthread_mutex_unlock(m)
+            return -1
+        }
         pthread_mutex_unlock(m)
-        return already
+        _schedulerPollMain()
     }
-    _rtWriteI64(st, ssParked(), 1)
-    _rtWritePtr(st, ssTask(), schedulerCurrent())
-    pthread_mutex_unlock(m)
-    schedulerPark()
-    return _rtReadI64(st, ssClaimed())
+    return -1
 }
 
 // Link an fd/read-or-write or timer node into the scheduler's select list and,

@@ -88,6 +88,22 @@ End goal: compiler compiles itself, producing equivalent IR for the full Milo so
 
 ### Safety Hardening
 
+**Fixed 2026-07-16 — `Select.wait()` returned `-1` instead of the winning arm on the main
+context.** `schedulerCurrent()` is 0 there, so `schedulerPark()` no-opped and the unclaimed
+`-1` fell straight through — select still woke at the right moment, so callers just couldn't
+tell which arm fired and the demos drained every arm to compensate. Main now takes the shape
+channels already use (`_schedulerPollMain`): it can't park, because nobody else would drive
+the scheduler, so it polls a bounded tick and re-checks the claim. Green tasks still park.
+`tests/fixtures/selectMainContext.milo` pins the arm index (a 5s timeout arm makes a stalled
+poll fail on the index rather than hang the suite).
+
+**Fixed 2026-07-16 — a closure's expected return type was never propagated.** Param hints
+were, but not the return, so an un-annotated `() => 0` always inferred i64 and
+`opt.unwrapOrElse(() => 0)` on an `Option<i32>` failed with "callback must return i32, got
+i64". The caller's expected return now seeds the closure's body context (an explicit
+annotation still wins; an `unknown` hint, as Vec.map gives, still infers from the body).
+Caught by the language-reference doc test, which type-checks every `milo` block.
+
 **Shipped 2026-07-16 — `Option.map` / `Option.unwrapOrElse`.** Both lower through `OptionOp`
 with a real branch rather than the `select` that `unwrapOr` uses: `select` evaluates both
 arms, so the callback would run even when it shouldn't — defeating the point of each. `map`

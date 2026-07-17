@@ -550,13 +550,13 @@ error at 12:38: connection refused
 Builtin methods on any `Option<T>`, for the cases where `!`/`?`/`??` don't fit:
 
 ```milo
-let opt: i32? = Option.Some(21)
-
-opt.isSome()                 // bool
-opt.isNone()                 // bool
-opt.unwrapOr(0)              // T — the default is evaluated eagerly
-opt.unwrapOrElse(() => 0)    // T — the closure runs ONLY if None
-opt.map((n) => n * 2)        // Option<U> — Some(42); None maps to None
+fn combinators(opt: i32?): void {
+    print(opt.isSome())                // bool
+    print(opt.isNone())                // bool
+    print(opt.unwrapOr(0))             // T — the default is evaluated eagerly
+    print(opt.unwrapOrElse(() => 0))   // T — the closure runs ONLY if None
+    print(opt.map((n) => n * 2)!)      // Option<U> — Some(42); None maps to None
+}
 ```
 
 `unwrapOr` and `??` are the same operation; `??` is the terse form, and unlike `unwrapOr`
