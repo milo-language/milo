@@ -866,9 +866,11 @@ function handleDefinition(uri: string, line: number, character: number): object 
     const sourceDir = uri.startsWith("file://") ? dirname(fileURLToPath(uri)) : ".";
     const program = resolveImports(parsed, sourceDir, hostTarget, uri.startsWith("file://") ? fileURLToPath(uri) : uri);
 
-    // Find function definition — local first, then imported files
+    // Find function definition — local first, then imported files.
+    // Extern fns are declarations, but the `extern fn NAME(...)` line IS the
+    // def site users cmd-click to — jump there like any other fn.
     for (const fn of program.functions) {
-      if (fn.name === word && !fn.isExtern) {
+      if (fn.name === word) {
         const fnLine = findFnLine(source, fn.name);
         if (fnLine >= 0) {
           return { uri, range: { start: { line: fnLine, character: 0 }, end: { line: fnLine, character: 0 } } };
