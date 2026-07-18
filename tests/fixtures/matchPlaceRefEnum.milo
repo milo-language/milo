@@ -1,0 +1,76 @@
+// Matching an enum place (v[i], s.field) through an immutable '&' param is
+// lowered in place (no clone of the slot). Guards the fast path in genEnumMatch:
+// borrowed string payloads must read the arena slot, survive repeated matches,
+// and .clone() out of the borrow must yield an owned copy.
+
+enum Node {
+    Word(string),
+    Pair(string, i64),
+    Num(i64),
+    Nothing,
+}
+
+struct Arena {
+    nodes: Vec<Node>,
+}
+
+fn describe(a: &Arena, i: i64): string {
+    match a.nodes[i] {
+        Node.Word(w) => {
+            return "word:" + w.clone()
+        }
+        Node.Pair(k, _n) => {
+            return "pair:" + k.clone()
+        }
+        Node.Num(_n) => {
+            return "num"
+        }
+        Node.Nothing => {
+            return "nothing"
+        }
+    }
+}
+
+fn total(a: &Arena): i64 {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < a.nodes.len() {
+        match a.nodes[i] {
+            Node.Pair(_k, n) => {
+                sum = sum + n
+            }
+            Node.Num(n) => {
+                sum = sum + n
+            }
+            _ => {
+            }
+        }
+        i = i + 1
+    }
+    return sum
+}
+
+fn main() {
+    var nodes: Vec<Node> = Vec.new()
+    nodes.push(Node.Word("hello"))
+    nodes.push(Node.Pair("k", 7))
+    nodes.push(Node.Num(35))
+    nodes.push(Node.Nothing)
+    let a = Arena {
+        nodes: nodes
+    }
+    print(describe(a, 0))
+    print(describe(a, 1))
+    print(describe(a, 2))
+    print(describe(a, 3))
+    // same slots matched again: the in-place match must not have consumed them
+    print(describe(a, 0))
+    print(total(a))
+}
+
+// @expect: word:hello
+// @expect: pair:k
+// @expect: num
+// @expect: nothing
+// @expect: word:hello
+// @expect: 42

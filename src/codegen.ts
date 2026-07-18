@@ -2594,6 +2594,19 @@ export class Codegen {
       const local = this.locals.get(stmt.subject.name)!;
       subjAddr = this.localAddr(stmt.subject.name);
       subjTy = local.type;
+    } else if (stmt.subjectIsRef && this.placeRootedAtImmutableRef(stmt.subject)) {
+      // Place subject (s.field / v[i]) rooted at an immutable '&' binding:
+      // match the slot in place — no clone of the enum (or its heap payloads).
+      // Sound only for an immutable root: the checker rejects '&'/'&mut'
+      // aliasing in one call and refs are second-class (never stored), so
+      // nothing in the arm's call tree can mutate the container while payload
+      // borrows are live. A mutable-rooted place keeps the clone-into-temp
+      // path below, because the arm body may legally mutate the container
+      // (e.g. v.push) and invalidate the matched slot.
+      const [pl, pAddr, pTy] = this.genLValue(stmt.subject);
+      lines.push(...pl);
+      subjAddr = pAddr;
+      subjTy = pTy;
     } else {
       const [subjLines, subjVal, subjTyL] = this.genExpr(stmt.subject);
       lines.push(...subjLines);
@@ -2654,6 +2667,19 @@ export class Codegen {
     lines.push(`${endLabel}:`);
     if (allArmsTerminated) lines.push(`  unreachable`);
     return [lines, allArmsTerminated];
+  }
+
+  // True when `e` is a field/index chain whose root is a local bound as an
+  // immutable reference (a '&T' param or an immutable ref binding). Such a
+  // place can be matched in place: no writer to the referent can exist while
+  // the ref is live (see comment at the call site in genEnumMatch).
+  private placeRootedAtImmutableRef(e: HIRExpr): boolean {
+    if (e.kind !== "FieldAccess" && e.kind !== "IndexAccess") return false;
+    let root: HIRExpr = e;
+    while (root.kind === "FieldAccess" || root.kind === "IndexAccess") root = root.object;
+    if (root.kind !== "Ident") return false;
+    const local = this.locals.get(root.name);
+    return !!local && local.isRef && !local.mutable;
   }
 
   private extractBindings(
