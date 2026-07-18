@@ -96,8 +96,11 @@ for (const file of files) {
       ok = want ? !!threw && threw.input.includes(want) : !threw;
       if (want && !ok) out = threw ? out : `expected uncaught ${want}, nothing thrown`;
     } catch (e: any) {
+      // an uncaught JS exception exits 1, which lands here — for a negative
+      // test that IS the pass condition when the type matches
       out = (e.stdout ?? "") + (e.stderr ?? "") || `timeout/crash (${e.signal ?? e.status})`;
-      if (want) out = `expected uncaught ${want}, got ${out.trim()}`;
+      if (want && new RegExp(`^Uncaught .*${want}`, "m").test(out)) ok = true;
+      else if (want) out = `expected uncaught ${want}, got ${out.trim()}`;
     }
     if (ok) pass++;
     else {
