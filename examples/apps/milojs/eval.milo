@@ -216,6 +216,9 @@ let NATIVE_MATH_MIN: i64 = 15
 let NATIVE_MATH_MAX: i64 = 16
 let NATIVE_MATH_RANDOM: i64 = 17
 let NATIVE_REGEXP: i64 = 18
+let NATIVE_OBJECT_DEFINEPROPERTY: i64 = 19
+let NATIVE_OBJECT_KEYS: i64 = 20
+let NATIVE_OBJECT_ASSIGN: i64 = 21
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -278,6 +281,92 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             flags = toStr(argVals[1])
         }
         return makeRegex(st, pat, flags)
+    }
+    if id == NATIVE_OBJECT_DEFINEPROPERTY {
+        // only the data-descriptor form: {value: ...}. get/set accessors are not
+        // supported yet, so a descriptor without `value` defines undefined.
+        if argVals.len() < 3 {
+            return JSValue.Undefined
+        }
+        let target = cloneValue(argVals[0])
+        let key = toStr(argVals[1])
+        match target {
+            JSValue.Obj(o) => {
+                var v = JSValue.Undefined
+                match cloneValue(argVals[2]) {
+                    JSValue.Obj(d) => {
+                        v = getMember(st, d, "value")
+                    }
+                    _ => {
+                    }
+                }
+                setMember(st, o, key, v)
+                return JSValue.Obj(o)
+            }
+            _ => {
+                return target
+            }
+        }
+    }
+    if id == NATIVE_OBJECT_KEYS {
+        let arr = newArray(st)
+        if argVals.len() > 0 {
+            pushTemp(st, JSValue.Obj(arr))
+            match cloneValue(argVals[0]) {
+                JSValue.Obj(o) => {
+                    if st.objects[o].isArray {
+                        var i: i64 = 0
+                        let n = arrLen(st, o)
+                        while i < n {
+                            arrPush(st, arr, JSValue.Str(i64ToStr(i)))
+                            i = i + 1
+                        }
+                    }
+                    var k: i64 = 0
+                    let np = st.objects[o].props.len()
+                    while k < np {
+                        arrPush(st, arr, JSValue.Str(st.objects[o].props[k].key.clone()))
+                        k = k + 1
+                    }
+                }
+                _ => {
+                }
+            }
+            popTemp(st)
+        }
+        return JSValue.Obj(arr)
+    }
+    if id == NATIVE_OBJECT_ASSIGN {
+        if argVals.len() == 0 {
+            return JSValue.Undefined
+        }
+        let target = cloneValue(argVals[0])
+        match target {
+            JSValue.Obj(t) => {
+                var s: i64 = 1
+                while s < argVals.len() {
+                    match cloneValue(argVals[s]) {
+                        JSValue.Obj(src) => {
+                            var k: i64 = 0
+                            let np = st.objects[src].props.len()
+                            while k < np {
+                                let key = st.objects[src].props[k].key.clone()
+                                let v = cloneValue(st.objects[src].props[k].value)
+                                setMember(st, t, key, v)
+                                k = k + 1
+                            }
+                        }
+                        _ => {
+                        }
+                    }
+                    s = s + 1
+                }
+                return JSValue.Obj(t)
+            }
+            _ => {
+                return target
+            }
+        }
     }
     return JSValue.Undefined
 }
@@ -587,7 +676,9 @@ fn requireModule(prog: &Prog, spec: &string, st: &mut Interp): JSValue {
     }
     let path = resolveSpec(dir, spec)
     if path.len() == 0 {
-        eprint("milojs: cannot resolve '" + spec + "' — npm package resolution is not implemented yet")
+        // relative and node_modules specifiers resolve; what lands here is a node
+        // builtin (path/fs/http/...) which still needs a shim module
+        eprint("milojs: cannot resolve '" + spec + "' — no such package, and node builtin modules are not implemented yet")
         return JSValue.Undefined
     }
     let idx = findModule(st, path)
@@ -654,6 +745,11 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, math, "E", JSValue.Number(2.718281828459045))
     scopeDefine(st, 0, "Math", JSValue.Obj(math))
     scopeDefine(st, 0, "RegExp", JSValue.Native(NATIVE_REGEXP))
+    let objectCtor = newObject(st)
+    objSet(st, objectCtor, "defineProperty", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTY))
+    objSet(st, objectCtor, "keys", JSValue.Native(NATIVE_OBJECT_KEYS))
+    objSet(st, objectCtor, "assign", JSValue.Native(NATIVE_OBJECT_ASSIGN))
+    scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).

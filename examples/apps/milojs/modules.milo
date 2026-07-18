@@ -98,42 +98,128 @@ fn endsWithJs(p: &string): bool {
     return p[n - 3] == '.' && p[n - 2] == 'j' && p[n - 1] == 's'
 }
 
-// Resolve a require specifier against the requiring module's directory. Only
-// relative specifiers are handled; a bare name (an npm package) returns "" —
-// node_modules resolution is not implemented yet.
-fn resolveSpec(dir: &string, spec: &string): string {
-    if spec.len() == 0 {
-        return ""
-    }
-    if spec[0] != '.' {
-        return ""
-    }
-    var joined = spec.clone()
-    if dir.len() > 0 {
-        joined = dir + "/" + spec
-    }
-    var base = normalizePath(joined)
-    if endsWithJs(base) {
-        return base
-    }
-    // try `base.js`, then `base/index.js`
-    let asJs = base + ".js"
-    match readFile(asJs.clone()) {
+fn fileExists(p: &string): bool {
+    match readFile(p.clone()) {
         Result.Ok(_s) => {
-            return asJs
+            return true
+        }
+        Result.Err(_e) => {
+            return false
+        }
+    }
+}
+
+// Pull the "main" field out of a package.json without a full JSON parse (this
+// runs during pre-load, before any interpreter state exists).
+fn scanPkgMain(txt: &string): string {
+    let key = "\"main\""
+    let at = jsIndexOf(txt, key, 0)
+    if at < 0 {
+        return ""
+    }
+    var i = at + key.len()
+    // skip whitespace and the colon
+    while i < txt.len() && (txt[i] == ' ' || txt[i] == ':' || txt[i] == 9 as u8 || txt[i] == 10 as u8 || txt[i] == 13 as u8) {
+        i = i + 1
+    }
+    if i >= txt.len() || txt[i] != 34 as u8 {
+        return ""
+    }
+    i = i + 1
+    var out = String.withCapacity(32)
+    while i < txt.len() && txt[i] != 34 as u8 {
+        out.push(txt[i])
+        i = i + 1
+    }
+    return out
+}
+
+// Node's file/directory resolution: exact file, then +.js, then the directory's
+// package.json "main", then index.js.
+fn resolveAsFileOrDir(base: &string): string {
+    if endsWithJs(base) && fileExists(base) {
+        return base.clone()
+    }
+    let asJs = base + ".js"
+    if fileExists(asJs) {
+        return asJs
+    }
+    let pkg = base + "/package.json"
+    match readFile(pkg.clone()) {
+        Result.Ok(txt) => {
+            let mainRel = scanPkgMain(txt)
+            if mainRel.len() > 0 {
+                let mp = normalizePath(base + "/" + mainRel)
+                if fileExists(mp) && endsWithJs(mp) {
+                    return mp
+                }
+                let mpJs = mp + ".js"
+                if fileExists(mpJs) {
+                    return mpJs
+                }
+                let mpIdx = mp + "/index.js"
+                if fileExists(mpIdx) {
+                    return mpIdx
+                }
+            }
         }
         Result.Err(_e) => {
         }
     }
     let asIndex = base + "/index.js"
-    match readFile(asIndex.clone()) {
-        Result.Ok(_s) => {
-            return asIndex
+    if fileExists(asIndex) {
+        return asIndex
+    }
+    return ""
+}
+
+// A bare specifier (an npm package): walk up from `dir` looking in node_modules.
+fn resolveBare(dir: &string, spec: &string): string {
+    var cur = dir.clone()
+    var going = true
+    while going {
+        var candBase = "node_modules/" + spec
+        if cur.len() > 0 {
+            candBase = cur + "/node_modules/" + spec
         }
-        Result.Err(_e) => {
+        let hit = resolveAsFileOrDir(candBase)
+        if hit.len() > 0 {
+            return hit
+        }
+        if cur.len() == 0 {
+            going = false
+        } else {
+            let up = dirOf(cur)
+            if up == cur {
+                going = false
+            } else {
+                cur = up
+            }
         }
     }
-    return base
+    return ""
+}
+
+// Resolve a require specifier against the requiring module's directory.
+// Relative specifiers resolve as files/directories; bare names walk node_modules.
+fn resolveSpec(dir: &string, spec: &string): string {
+    if spec.len() == 0 {
+        return ""
+    }
+    if spec[0] == '.' {
+        var joined = spec.clone()
+        if dir.len() > 0 {
+            joined = dir + "/" + spec
+        }
+        let base = normalizePath(joined)
+        let hit = resolveAsFileOrDir(base)
+        if hit.len() > 0 {
+            return hit
+        }
+        // report the un-found path so the error message is useful
+        return base
+    }
+    return resolveBare(dir, spec)
 }
 
 // Find every `require("literal")` in a token stream.
