@@ -1781,6 +1781,26 @@ fn parseImport(p: &mut PState, prog: &mut Prog): i64 {
     return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
 }
 
+// Destructuring lowers to a hidden temp plus one declarator per bound name
+// (`__d12`, `__a3`, `__f7`). Those temps are declarators like any other, so
+// `export const { a, b } = obj` would otherwise export them alongside a and b.
+fn isSyntheticTemp(name: &string): bool {
+    if name.len() < 3 || name[0] != '_' || name[1] != '_' {
+        return false
+    }
+    if name[2] != 'd' && name[2] != 'a' && name[2] != 'f' {
+        return false
+    }
+    var i: i64 = 3
+    while i < name.len() {
+        if name[i] < '0' || name[i] > '9' {
+            return false
+        }
+        i = i + 1
+    }
+    return name.len() > 3
+}
+
 // `exports.name = local` as a statement — the desugaring target for every
 // `export` form.
 fn exportAssign(prog: &mut Prog, name: string, local: string): i64 {
@@ -1857,7 +1877,7 @@ fn parseExport(p: &mut PState, prog: &mut Prog, list: &mut Vec<i64>) {
             var i: i64 = 0
             while i < prog.declLists[d].len() {
                 let n = prog.declLists[d][i].name.clone()
-                if n.len() > 0 {
+                if n.len() > 0 && !isSyntheticTemp(n) {
                     list.push(exportAssign(prog, n.clone(), n))
                 }
                 i = i + 1
