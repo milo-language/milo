@@ -136,6 +136,12 @@ fn builtinSource(name: &string): string {
     if name == "tty" {
         return embedFile("lib/tty.js")
     }
+    if name == "depd" {
+        return embedFile("lib/depd.js")
+    }
+    if name == "@prisma/client" {
+        return embedFile("lib/prisma-client.js")
+    }
     if name == "buffer" {
         return embedFile("lib/buffer.js")
     }

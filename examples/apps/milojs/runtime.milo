@@ -186,6 +186,8 @@ struct Interp {
     nextTimerId: i64,
     // native recursion depth, so runaway recursion throws instead of crashing
     callDepth: i64,
+    // the constructor of the call currently being set up, for new.target
+    newTarget: JSValue,
     // module specifiers already reported as unresolvable, to avoid repeats
     reportedMissing: Vec<string>,
     gcThreshold: i64,

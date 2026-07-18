@@ -2200,7 +2200,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     let proto = getFuncProto(st, fIdx)
                     st.objects[obj].proto = proto
                     pushTemp(st, JSValue.Obj(obj))
+                    st.newTarget = JSValue.Func(fIdx, envIdx)
                     let result = callFunction(prog, fIdx, envIdx, argVals, JSValue.Obj(obj), st)
+                    st.newTarget = JSValue.Undefined
                     popTemp(st)
                     popTemp(st)
                     // a constructor that returns an object replaces the new instance
@@ -2463,6 +2465,9 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
     // arrows have no own `this` — it stays lexical (resolved up the scope chain)
     if !prog.funcs[fIdx].isArrow {
         scopeDefine(st, callScope, "this", thisVal)
+        // new.target is the constructor this frame was invoked with, or
+        // undefined for a plain call
+        scopeDefine(st, callScope, "new.target", cloneValue(st.newTarget))
         // a named function expression can refer to itself by name from inside its
         // own body, even though the name is not bound in the enclosing scope
         let selfName = prog.funcs[fIdx].name.clone()
