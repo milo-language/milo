@@ -74,6 +74,8 @@ let T_NULLISH: i32 = 62
 // regex literal, so it's a safe separator)
 let T_REGEX: i32 = 63
 let T_IN: i32 = 64
+let T_BREAK: i32 = 65
+let T_CONTINUE: i32 = 66
 
 struct Token {
     kind: i32,
@@ -156,6 +158,12 @@ fn keywordKind(s: &string): i32 {
     }
     if s == "in" {
         return T_IN
+    }
+    if s == "break" {
+        return T_BREAK
+    }
+    if s == "continue" {
+        return T_CONTINUE
     }
     return T_IDENT
 }

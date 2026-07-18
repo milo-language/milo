@@ -98,6 +98,49 @@ fn endsWithJs(p: &string): bool {
     return p[n - 3] == '.' && p[n - 2] == 'j' && p[n - 1] == 's'
 }
 
+// Node builtin modules, written in JS and embedded at compile time so the
+// runtime is a single self-contained binary. Registered under "builtin:<name>".
+// Strip a "node:" prefix if present.
+fn stripNodePrefix(spec: &string): string {
+    if spec.len() > 5 && spec[0] == 'n' && spec[1] == 'o' && spec[2] == 'd' && spec[3] == 'e' && spec[4] == ':' {
+        var out = String.withCapacity(spec.len() - 5)
+        var i: i64 = 5
+        while i < spec.len() {
+            out.push(spec[i])
+            i = i + 1
+        }
+        return out
+    }
+    return spec.clone()
+}
+
+fn builtinSource(name: &string): string {
+    if name == "path" {
+        return embedFile("lib/path.js")
+    }
+    if name == "events" {
+        return embedFile("lib/events.js")
+    }
+    if name == "util" {
+        return embedFile("lib/util.js")
+    }
+    return ""
+}
+
+fn isBuiltinPath(path: &string): bool {
+    return path.len() > 8 && path[0] == 'b' && path[1] == 'u' && path[2] == 'i' && path[3] == 'l' && path[4] == 't' && path[5] == 'i' && path[6] == 'n' && path[7] == ':'
+}
+
+fn builtinNameOf(path: &string): string {
+    var out = String.withCapacity(path.len())
+    var i: i64 = 8
+    while i < path.len() {
+        out.push(path[i])
+        i = i + 1
+    }
+    return out
+}
+
 fn fileExists(p: &string): bool {
     match readFile(p.clone()) {
         Result.Ok(_s) => {
@@ -206,6 +249,11 @@ fn resolveSpec(dir: &string, spec: &string): string {
     if spec.len() == 0 {
         return ""
     }
+    // node builtins (with or without the node: prefix) come first
+    let bare = stripNodePrefix(spec)
+    if builtinSource(bare).len() > 0 {
+        return "builtin:" + bare
+    }
     if spec[0] == '.' {
         var joined = spec.clone()
         if dir.len() > 0 {
@@ -258,6 +306,17 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
         head = head + 1
         if findModule(st, path) >= 0 {
             // already registered
+        } else if isBuiltinPath(path) {
+            let src = builtinSource(builtinNameOf(path))
+            let toks = lex(src)
+            var bp = PState {
+                toks: toks, pos: 0
+            }
+            let btop = parseProgram(bp, prog)
+            st.modPaths.push(path.clone())
+            st.modBlocks.push(btop)
+            st.modExports.push(JSValue.Undefined)
+            st.modState.push(0)
         } else {
             match readFile(path.clone()) {
                 Result.Ok(src) => {

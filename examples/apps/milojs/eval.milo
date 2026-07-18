@@ -27,6 +27,9 @@ from "std/math" import {
 enum Flow {
     Normal,
     Ret(JSValue),
+    // loop control; these never escape a function boundary
+    Break,
+    Continue,
 }
 
 fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
@@ -219,6 +222,9 @@ let NATIVE_REGEXP: i64 = 18
 let NATIVE_OBJECT_DEFINEPROPERTY: i64 = 19
 let NATIVE_OBJECT_KEYS: i64 = 20
 let NATIVE_OBJECT_ASSIGN: i64 = 21
+let NATIVE_NUMBER: i64 = 22
+let NATIVE_STRING: i64 = 23
+let NATIVE_BOOLEAN: i64 = 24
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -281,6 +287,24 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             flags = toStr(argVals[1])
         }
         return makeRegex(st, pat, flags)
+    }
+    if id == NATIVE_NUMBER {
+        if argVals.len() == 0 {
+            return JSValue.Number(0.0)
+        }
+        return JSValue.Number(toNum(argVals[0]))
+    }
+    if id == NATIVE_STRING {
+        if argVals.len() == 0 {
+            return JSValue.Str("")
+        }
+        return JSValue.Str(toStr(argVals[0]))
+    }
+    if id == NATIVE_BOOLEAN {
+        if argVals.len() == 0 {
+            return JSValue.Bool(false)
+        }
+        return JSValue.Bool(truthy(argVals[0]))
     }
     if id == NATIVE_OBJECT_DEFINEPROPERTY {
         // only the data-descriptor form: {value: ...}. get/set accessors are not
@@ -750,6 +774,9 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "keys", JSValue.Native(NATIVE_OBJECT_KEYS))
     objSet(st, objectCtor, "assign", JSValue.Native(NATIVE_OBJECT_ASSIGN))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
+    scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
+    scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
+    scopeDefine(st, 0, "Boolean", JSValue.Native(NATIVE_BOOLEAN))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
@@ -1229,6 +1256,17 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
         scopeDefine(st, callScope, pName, v)
         j = j + 1
     }
+    // `arguments` — ES5 libraries lean on it for variadics (path.join etc).
+    // Arrows don't get their own, matching JS.
+    if !prog.funcs[fIdx].isArrow {
+        let argsArr = newArray(st)
+        var ai: i64 = 0
+        while ai < argVals.len() {
+            arrPush(st, argsArr, cloneValue(argVals[ai]))
+            ai = ai + 1
+        }
+        scopeDefine(st, callScope, "arguments", JSValue.Obj(argsArr))
+    }
     let body = prog.funcs[fIdx].body
     let flow = execBlock(prog, body, st, callScope)
     popActive(st)
@@ -1236,7 +1274,7 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
         Flow.Ret(v) => {
             return v
         }
-        Flow.Normal => {
+        _ => {
             return JSValue.Undefined
         }
     }
@@ -1671,7 +1709,7 @@ fn execTry(prog: &Prog, tryB: i64, param: &string, catchB: i64, finallyB: i64, s
             hadRet = true
             savedRet = cloneValue(v)
         }
-        Flow.Normal => {
+        _ => {
         }
     }
     st.throwing = false
@@ -1691,7 +1729,7 @@ fn execTry(prog: &Prog, tryB: i64, param: &string, catchB: i64, finallyB: i64, s
         Flow.Ret(fv) => {
             return Flow.Ret(fv)
         }
-        Flow.Normal => {
+        _ => {
         }
     }
     if st.throwing {
@@ -1717,6 +1755,62 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         Stmt.Decl(name, e) => {
             let v = evalExpr(prog, e, st, scope)
             scopeDefine(st, scope, name, v)
+            return Flow.Normal
+        }
+        Stmt.ForIn(name, objExpr, body) => {
+            let ov = evalExpr(prog, objExpr, st, scope)
+            var keys: Vec<string> = Vec.new()
+            match ov {
+                JSValue.Obj(o) => {
+                    if st.objects[o].isArray {
+                        var e: i64 = 0
+                        let ne = arrLen(st, o)
+                        while e < ne {
+                            keys.push(i64ToStr(e))
+                            e = e + 1
+                        }
+                    }
+                    // own properties, then inherited ones (JS enumerates the chain)
+                    var cur = o
+                    while cur >= 0 {
+                        var k: i64 = 0
+                        let np = st.objects[cur].props.len()
+                        while k < np {
+                            keys.push(st.objects[cur].props[k].key.clone())
+                            k = k + 1
+                        }
+                        cur = st.objects[cur].proto
+                    }
+                }
+                _ => {
+                }
+            }
+            let loopScope = newScope(st, scope)
+            pushActive(st, loopScope)
+            var i: i64 = 0
+            var looping = true
+            while looping && i < keys.len() {
+                scopeDefine(st, loopScope, name.clone(), JSValue.Str(keys[i].clone()))
+                let flow = execStmt(prog, body, st, loopScope)
+                match flow {
+                    Flow.Ret(v) => {
+                        popActive(st)
+                        return Flow.Ret(v)
+                    }
+                    Flow.Break => {
+                        looping = false
+                    }
+                    Flow.Continue => {
+                    }
+                    Flow.Normal => {
+                    }
+                }
+                if st.throwing {
+                    looping = false
+                }
+                i = i + 1
+            }
+            popActive(st)
             return Flow.Normal
         }
         Stmt.MultiDecl(listIdx) => {
@@ -1757,6 +1851,11 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         Flow.Ret(v) => {
                             return Flow.Ret(v)
                         }
+                        Flow.Break => {
+                            looping = false
+                        }
+                        Flow.Continue => {
+                        }
                         Flow.Normal => {
                         }
                     }
@@ -1789,15 +1888,23 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                         looping = false
                     } else {
                         let flow = execStmt(prog, body, st, loopScope)
+                        var broke = false
                         match flow {
                             Flow.Ret(v) => {
                                 popActive(st)
                                 return Flow.Ret(v)
                             }
+                            Flow.Break => {
+                                broke = true
+                            }
+                            Flow.Continue => {
+                            }
                             Flow.Normal => {
                             }
                         }
-                        if st.throwing {
+                        if broke {
+                            looping = false
+                        } else if st.throwing {
                             looping = false
                         } else if update >= 0 {
                             evalExpr(prog, update, st, loopScope)
@@ -1838,6 +1945,12 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         Stmt.Empty => {
             return Flow.Normal
         }
+        Stmt.Break => {
+            return Flow.Break
+        }
+        Stmt.Continue => {
+            return Flow.Continue
+        }
     }
 }
 
@@ -1853,6 +1966,12 @@ fn execBlock(prog: &Prog, blockIdx: i64, st: &mut Interp, scope: i64): Flow {
         match flow {
             Flow.Ret(v) => {
                 return Flow.Ret(v)
+            }
+            Flow.Break => {
+                return Flow.Break
+            }
+            Flow.Continue => {
+                return Flow.Continue
             }
             Flow.Normal => {
             }

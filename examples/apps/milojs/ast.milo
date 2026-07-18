@@ -62,6 +62,10 @@ enum Stmt {
     Throw(i64),
     // let/var/const with one or more declarators: index into prog.declLists
     MultiDecl(i64),
+    // for (name in objExpr) body
+    ForIn(string, i64, i64),
+    Break,
+    Continue,
     // try block, catch-param name ("" if none), catch block idx (-1 if none),
     // finally block idx (-1 if none). Block idxs index prog.blocks.
     Try(i64, string, i64, i64),
@@ -203,6 +207,15 @@ fn cloneStmt(s: &Stmt): Stmt {
         }
         Stmt.MultiDecl(listIdx) => {
             return Stmt.MultiDecl(listIdx)
+        }
+        Stmt.ForIn(name, objExpr, body) => {
+            return Stmt.ForIn(name.clone(), objExpr, body)
+        }
+        Stmt.Break => {
+            return Stmt.Break
+        }
+        Stmt.Continue => {
+            return Stmt.Continue
         }
     }
 }

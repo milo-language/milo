@@ -719,6 +719,28 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_FOR {
         advance(p)
         expect(p, T_LPAREN)
+        // for (x in obj) — look ahead past an optional declarator keyword for
+        // `IDENT in`; if it isn't there, rewind and parse a C-style for
+        let savedPos = p.pos
+        var forInName = ""
+        if peekKind(p) == T_VAR || peekKind(p) == T_LET || peekKind(p) == T_CONST {
+            advance(p)
+        }
+        if peekKind(p) == T_IDENT {
+            let cand = p.toks[p.pos].text.clone()
+            advance(p)
+            if peekKind(p) == T_IN {
+                forInName = cand
+            }
+        }
+        if forInName.len() > 0 {
+            advance(p)
+            let objExpr = parseExpr(p, prog)
+            expect(p, T_RPAREN)
+            let body = parseStmt(p, prog)
+            return addStmt(prog, Stmt.ForIn(forInName, objExpr, body))
+        }
+        p.pos = savedPos
         // init clause (consumes its own terminating ;)
         var init = -1
         if peekKind(p) == T_SEMI {
@@ -742,6 +764,20 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         expect(p, T_RPAREN)
         let body = parseStmt(p, prog)
         return addStmt(prog, Stmt.For(init, cond, update, body))
+    }
+    if k == T_BREAK {
+        advance(p)
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.Break)
+    }
+    if k == T_CONTINUE {
+        advance(p)
+        if peekKind(p) == T_SEMI {
+            advance(p)
+        }
+        return addStmt(prog, Stmt.Continue)
     }
     if k == T_THROW {
         advance(p)
