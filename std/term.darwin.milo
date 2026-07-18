@@ -56,6 +56,40 @@ fn enableRawMode(): TermState {
     return state
 }
 
+// Like enableRawMode but VMIN=1: read(0,…) blocks until one byte arrives instead
+// of returning immediately. For an input-driven loop (a line editor) this waits on
+// the keyboard without busy-spinning, which VMIN=0 would force.
+fn enableRawModeBlocking(): TermState {
+    var state = TermState {
+        saved: [0; 80],
+    }
+
+    unsafe {
+        tcgetattr(0, state.saved as *u8)
+
+        var raw: [u8; 80] = [0; 80]
+        for i in 0..80 {
+            raw[i] = state.saved[i]
+        }
+
+        let b0 = raw[24] as i32
+        raw[24] = (b0 & 0x77) as u8
+        let b1 = raw[25] as i32
+        raw[25] = (b1 & 0xFA) as u8
+
+        let i1 = raw[1] as i32
+        raw[1] = (i1 & 0xFD) as u8
+
+        // VMIN=1, VTIME=0 — block for at least one byte
+        raw[48] = 1
+        raw[49] = 0
+
+        tcsetattr(0, 0, raw as *u8)
+    }
+
+    return state
+}
+
 fn restoreTerminal(state: &TermState): void {
     unsafe {
         tcsetattr(0, 0, state.saved as *u8)
