@@ -945,6 +945,19 @@ fn repl(st: &mut Interp): i32 {
                 pending = ""
                 history.push(source.clone())
 
+                // A line that doesn't parse is not run at all: the parser
+                // recovers by skipping tokens, so executing the wreckage does
+                // real damage (`let a -6` would bind `a` to undefined). Re-parse
+                // into the throwaway Prog just to emit the diagnostic, leaving
+                // the session's Prog untouched.
+                if probe.errored {
+                    var report = PState {
+                        toks: lex(source), pos: 0, curClass: "", file: "<repl>", errored: false, eofError: false, quiet: false
+                    }
+                    let reportTop = parseProgram(report, scratch)
+                    continue
+                }
+
                 var p = PState {
                     toks: lex(source), pos: 0, curClass: "", file: "<repl>", errored: false, eofError: false, quiet: false
                 }
