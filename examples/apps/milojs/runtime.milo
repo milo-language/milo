@@ -696,6 +696,20 @@ fn collect(st: &mut Interp) {
         }
         mt = mt + 1
     }
+    // constructor-side objects held only in Interp fields are roots: nothing in
+    // the scope chain references them, since the globals bind the native itself
+    if st.dateCtorProps >= 0 {
+        markObject(st, st.dateCtorProps)
+    }
+    if st.stringCtorProps >= 0 {
+        markObject(st, st.stringCtorProps)
+    }
+    if st.arrayCtorObj >= 0 {
+        markObject(st, st.arrayCtorObj)
+    }
+    if st.promiseCtorObj >= 0 {
+        markObject(st, st.promiseCtorObj)
+    }
     // native-constructor property bags are roots too
     var np: i64 = 0
     while np < st.nativeProps.len() {
