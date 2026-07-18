@@ -1113,6 +1113,25 @@ fn compoundOp(k: i32): string {
 }
 
 fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
+    // `yield` binds looser than everything but the comma operator, so it belongs
+    // here rather than with the unary operators: `yield a + b` yields the sum.
+    // Parsed but not executable — calling a generator throws first (eval.milo),
+    // so this exists to let generator-containing files parse at all.
+    if peekKind(p) == T_YIELD {
+        advance(p)
+        var op = "yield"
+        if peekKind(p) == T_STAR {
+            advance(p)
+            op = "yield*"
+        }
+        // operandless `yield` — the next token closes the expression
+        let k2 = peekKind(p)
+        if k2 == T_SEMI || k2 == T_RPAREN || k2 == T_RBRACE || k2 == T_RBRACKET || k2 == T_COMMA || k2 == T_COLON || k2 == T_EOF {
+            return addExpr(prog, Expr.Un(op, addExpr(prog, Expr.UndefLit)))
+        }
+        let arg = parseExpr(p, prog)
+        return addExpr(prog, Expr.Un(op, arg))
+    }
     let left = parseTernary(p, prog)
     let k = peekKind(p)
     if k == T_EQ {
