@@ -443,7 +443,7 @@ fn closeImplied(dom: &Dom, stack: &mut Vec<Handle<Node>>, newTag: &string) {
     while go && stack.len() > 1 {
         let topName = nodeName(dom, topOf(stack))
         if shouldImplicitClose(topName, newTag) {
-            stack.pop()
+            stack.pop()!
         } else {
             go = false
         }
@@ -545,7 +545,7 @@ fn parseEndTag(dom: &mut Dom, stack: &mut Vec<Handle<Node>>, src: &string, pos: 
     }
     if found {
         while stack.len() > k {
-            stack.pop()
+            stack.pop()!
         }
     }
     return i

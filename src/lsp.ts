@@ -390,6 +390,12 @@ function handleHover(uri: string, line: number, character: number): object | nul
       }
     }
 
+    // Builtin instance methods (Vec.pop / .push / .len / …) — resolved in the
+    // checker, so plain symbol lookup misses them. Gated on a real MethodCall of
+    // this name on the line, so it won't hijack a same-named field or free fn.
+    const methodHover = findBuiltinMethodHover(source, word, line, exprTypes);
+    if (methodHover) return { contents: { kind: "markdown", value: methodHover } };
+
     // Enums and variants
     const enumHover = findEnumHover(source, program, word, line, character, parsed, sourceDir);
     if (enumHover) return { contents: { kind: "markdown", value: enumHover } };
@@ -691,6 +697,47 @@ const BUILTIN_TYPE_HOVERS: Record<string, { doc: string; ctors: Record<string, s
     },
   },
 };
+
+// Builtin instance methods on collections (Vec/Array). These are resolved in the
+// checker, not by symbol lookup, so hovering the method name (`v.pop`) otherwise
+// finds nothing. Each entry renders a signature specialized to the receiver's
+// element type `T`, plus a one-line doc. Mutating ops note the `var` requirement.
+const BUILTIN_METHOD_HOVERS: Record<string, (recv: string, elem: string) => string> = {
+  push: (r, t) => `\`\`\`milo\nfn ${r}.push(value: ${t})\n\`\`\`\nAppends \`value\` to the end (mutates — receiver must be \`var\`). Moves \`value\` in.`,
+  pop: (r, t) => `\`\`\`milo\nfn ${r}.pop(): Option<${t}>\n\`\`\`\nRemoves and returns the last element as \`Some\`, or \`None\` if empty (mutates — receiver must be \`var\`). Pull the value out with \`!\` (panic if empty), \`?\` (bail), or \`?? fallback\`.`,
+  insert: (r, t) => `\`\`\`milo\nfn ${r}.insert(index: i64, value: ${t})\n\`\`\`\nInserts \`value\` at \`index\`, shifting later elements right (mutates — receiver must be \`var\`).`,
+  remove: (r, t) => `\`\`\`milo\nfn ${r}.remove(index: i64): ${t}\n\`\`\`\nRemoves and returns the element at \`index\`, shifting later elements left (mutates — receiver must be \`var\`).`,
+  swap: (r, _t) => `\`\`\`milo\nfn ${r}.swap(a: i64, b: i64)\n\`\`\`\nSwaps the elements at indices \`a\` and \`b\` in place (mutates — receiver must be \`var\`).`,
+  reverse: (r, _t) => `\`\`\`milo\nfn ${r}.reverse()\n\`\`\`\nReverses the elements in place (mutates — receiver must be \`var\`).`,
+  sort: (r, _t) => `\`\`\`milo\nfn ${r}.sort()\n\`\`\`\nSorts ascending in place; requires a comparable element (int, float, string, bool). Mutates — receiver must be \`var\`.`,
+  len: (r, _t) => `\`\`\`milo\nfn ${r}.len(): i64\n\`\`\`\nNumber of elements.`,
+  isEmpty: (r, _t) => `\`\`\`milo\nfn ${r}.isEmpty(): bool\n\`\`\`\n\`true\` when \`len() == 0\`.`,
+};
+
+// Hover for a builtin instance method (`v.pop()`). Only fires when there is an
+// actual MethodCall of this name on the hovered line — so a struct field or free
+// fn that happens to share the name (`foo.len` field access) is left alone. The
+// receiver type comes from the checker's expr types, letting `T` resolve concretely.
+function findBuiltinMethodHover(
+  source: string, word: string, line: number,
+  exprTypes: Map<Expr, import("./types").TypeKind>,
+): string | null {
+  const make = BUILTIN_METHOD_HOVERS[word];
+  if (!make) return null;
+  let recv: import("./types").TypeKind | null = null;
+  let found = false;
+  for (const [e] of exprTypes) {
+    if (e.kind === "MethodCall" && e.method === word && e.span?.line === line + 1) {
+      recv = exprTypes.get(e.object) ?? null;
+      found = true;
+      break;
+    }
+  }
+  if (!found) return null;
+  const elem = recv && (recv.tag === "vec" || recv.tag === "array") ? formatTypeName(recv.element) : "T";
+  const recvName = recv ? formatTypeName(recv) : "Vec<T>";
+  return make(recvName, elem);
+}
 
 // Scalar primitives + the two string types. Keyed by the exact type keyword;
 // the value is the markdown body shown on hover.

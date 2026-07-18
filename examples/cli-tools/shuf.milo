@@ -48,7 +48,7 @@ fn main(): i32 {
 
     // drop trailing empty element from final newline
     if lines.len > 0 && lines[lines.len - 1].len == 0 {
-        lines.pop()
+        lines.pop()!
     }
 
     if lines.len == 0 {

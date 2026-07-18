@@ -4939,16 +4939,22 @@ export class Codegen {
     return [lines, "void", "void"];
   }
 
+  // pop(): Option<T> — Some(last) when non-empty, None when empty. The popped
+  // slot's ownership transfers into the Some payload (len-- makes the slot dead),
+  // so the value moves out with no clone. No panic path: `!` handles that.
   private genVecPop(expr: HIRExpr & { kind: "VecPop" }, lines: string[]): [string[], string, string] {
     this.hasVecType = true;
-    this.needsPrintf = true;
-    this.needsExit = true;
-    this.needsPutchar = true;
 
     const vecType = expr.vec.type;
     if (vecType.tag !== "vec") throw new Error("VecPop on non-vec type");
     const elemTy = this.llvmType(vecType.element);
-    const elemSize = this.typeSizeOf(vecType.element);
+
+    const enumTy = `%${expr.optionEnumName}`;
+    const enumLayout = this.enumLayouts.get(expr.optionEnumName);
+    if (!enumLayout) throw new Error(`enum layout not found for ${expr.optionEnumName}`);
+    const noneVariant = enumLayout.variants.get("None");
+    const someVariant = enumLayout.variants.get("Some");
+    if (!noneVariant || !someVariant) throw new Error("Option enum missing Some/None variants");
 
     const [vecPtrLines, vecPtr] = this.genLValue(expr.vec);
     lines.push(...vecPtrLines);
@@ -4959,26 +4965,22 @@ export class Codegen {
     const len = this.nextTemp();
     lines.push(`  ${len} = load i64, ptr ${lenPtr}`);
 
-    // panic if empty
+    // result Option, defaulted to None
+    const resultAddr = `%__pop_result.${this.scopeCounter++}.addr`;
+    this.entryAllocas.push(`  ${resultAddr} = alloca ${enumTy}`);
+    lines.push(`  store ${enumTy} zeroinitializer, ptr ${resultAddr}`);
+    const tagPtr = this.nextTemp();
+    lines.push(`  ${tagPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 0`);
+    lines.push(`  store i32 ${noneVariant.tag}, ptr ${tagPtr}`);
+
     const isEmpty = this.nextTemp();
     lines.push(`  ${isEmpty} = icmp eq i64 ${len}, 0`);
-    const panicLabel = this.nextLabel("vec.pop.panic");
-    const okLabel = this.nextLabel("vec.pop.ok");
-    lines.push(`  br i1 ${isEmpty}, label %${panicLabel}, label %${okLabel}`);
+    const someLabel = this.nextLabel("vec.pop.some");
+    const endLabel = this.nextLabel("vec.pop.end");
+    lines.push(`  br i1 ${isEmpty}, label %${endLabel}, label %${someLabel}`);
 
-    lines.push(`${panicLabel}:`);
-    const span = expr.span;
-    const errMsg = `pop on empty Vec at ${span?.line ?? 0}:${span?.col ?? 0}`;
-    const { label: errLabel, length: errLen } = this.addString(errMsg);
-    const errPtr = this.nextTemp();
-    lines.push(`  ${errPtr} = getelementptr [${errLen} x i8], ptr ${errLabel}, i32 0, i32 0`);
-    lines.push(`  call i32 (ptr, ...) @printf(ptr ${errPtr})`);
-    lines.push(`  call i32 @putchar(i32 10)`);
-    lines.push(`  call void @exit(i32 1)`);
-    lines.push(`  unreachable`);
-
-    // ok: len--, load value at data[new_len]
-    lines.push(`${okLabel}:`);
+    // some: len--, move value out of data[new_len] into Some payload
+    lines.push(`${someLabel}:`);
     const newLen = this.nextTemp();
     lines.push(`  ${newLen} = sub i64 ${len}, 1`);
     lines.push(`  store i64 ${newLen}, ptr ${lenPtr}`);
@@ -4992,7 +4994,16 @@ export class Codegen {
     const val = this.nextTemp();
     lines.push(`  ${val} = load ${elemTy}, ptr ${elemPtr}`);
 
-    return [lines, val, elemTy];
+    lines.push(`  store i32 ${someVariant.tag}, ptr ${tagPtr}`);
+    const payloadPtr = this.nextTemp();
+    lines.push(`  ${payloadPtr} = getelementptr ${enumTy}, ptr ${resultAddr}, i32 0, i32 1`);
+    lines.push(`  store ${elemTy} ${val}, ptr ${payloadPtr}`);
+    lines.push(`  br label %${endLabel}`);
+
+    lines.push(`${endLabel}:`);
+    const result = this.nextTemp();
+    lines.push(`  ${result} = load ${enumTy}, ptr ${resultAddr}`);
+    return [lines, result, enumTy];
   }
 
   // shared helper: extract closure fn/env and vec data/len for functional methods

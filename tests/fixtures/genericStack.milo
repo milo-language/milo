@@ -12,10 +12,7 @@ fn stackPush<T>(s: &mut Stack<T>, val: T): void {
 }
 
 fn stackPop<T>(s: &mut Stack<T>): Option<T> {
-    if s.items.len() == 0 {
-        return Option.None
-    }
-    return Option.Some(s.items.pop())
+    return s.items.pop()
 }
 
 fn stackLen<T>(s: &Stack<T>): i64 {

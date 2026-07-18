@@ -1,0 +1,11 @@
+// @error: Option
+
+// pop() returns Option<T>, not T — using it as a bare i32 must fail.
+// Force the value out with `!`, `?`, or `??`.
+fn main(): i32 {
+    var v: Vec<i32> = Vec.new()
+    v.push(1)
+    let x: i32 = v.pop()
+    print(x)
+    return 0
+}

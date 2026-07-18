@@ -423,9 +423,12 @@ export class CodegenJS {
         return `__propagate(${this.genExpr(expr.operand)})`;
       }
       case "DefaultValue": {
+        // Bind the operand once — it may have side effects (e.g. a mutating
+        // Vec.pop()); embedding it twice would evaluate it twice.
         const operand = this.genExpr(expr.operand);
         const def = this.genExpr(expr.default);
-        return `(${operand}.tag === 0 ? ${operand}.data[0] : ${def})`;
+        const t = this.nextTemp();
+        return `((${t}) => ${t}.tag === 0 ? ${t}.data[0] : ${def})(${operand})`;
       }
       case "Cast":
         return this.genCast(expr);
@@ -441,7 +444,9 @@ export class CodegenJS {
       case "VecPush":
         return `${this.genExpr(expr.vec)}.push(${this.genExpr(expr.value)})`;
       case "VecPop":
-        return `${this.genExpr(expr.vec)}.pop()`;
+        // pop(): Option<T> — Some(last)/None. Bind the array once so the length
+        // check and the mutating .pop() hit the same reference.
+        return `((_v) => _v.length > 0 ? ${expr.optionEnumName}.Some(_v.pop()) : ${expr.optionEnumName}.None())(${this.genExpr(expr.vec)})`;
       case "VecReverse":
         return `${this.genExpr(expr.object)}.reverse()`;
       case "VecSwap": {

@@ -229,7 +229,7 @@ fn evalExpr(arena: &Arena<Expr>, h: Handle<Expr>, env: &mut Vec<Binding>): Value
             }
             )
             let result = evalExpr(arena, body, env)
-            env.pop()
+            env.pop()!
             return result
         }
     }

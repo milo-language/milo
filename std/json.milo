@@ -1740,7 +1740,7 @@ impl JsonPull {
             if c == '}' {
                 self.pos = self.pos + 1
                 if self.stack.len > 0 {
-                    self.stack.pop()
+                    self.stack.pop()!
                 }
                 return jsonTok(JsonEvent.EndObject)
             }
@@ -1752,7 +1752,7 @@ impl JsonPull {
             if c == ']' {
                 self.pos = self.pos + 1
                 if self.stack.len > 0 {
-                    self.stack.pop()
+                    self.stack.pop()!
                 }
                 return jsonTok(JsonEvent.EndArray)
             }

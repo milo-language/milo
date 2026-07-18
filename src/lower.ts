@@ -749,7 +749,8 @@ class LowerCtx {
             return { kind: "VecPush", vec: this.lowerExpr(expr.object), value: this.lowerExpr(expr.args[0]), type, span: expr.span };
           }
           if (expr.method === "pop") {
-            return { kind: "VecPop", vec: this.lowerExpr(expr.object), type, span: expr.span };
+            const optionEnumName = type.tag === "enum" ? type.name : "";
+            return { kind: "VecPop", vec: this.lowerExpr(expr.object), elementType: objType.element, optionEnumName, type, span: expr.span };
           }
           if (expr.method === "map") {
             const resultElem = type.tag === "vec" ? type.element : { tag: "unknown" as const };

@@ -964,10 +964,10 @@ fn formatSource(src: string): string {
             }
             // Restore the enclosing block's paren/bracket nesting (see parenStack).
             if parenStack.len > 0 {
-                parenDepth = parenStack.pop()
+                parenDepth = parenStack.pop()!
             }
             if bracketStack.len > 0 {
-                bracketDepth = bracketStack.pop()
+                bracketDepth = bracketStack.pop()!
             }
             if !atLineStart {
                 out = out + "\n"

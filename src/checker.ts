@@ -4707,7 +4707,9 @@ export class TypeChecker {
             if (!this.isRootMutable(expr.object)) {
               this.error(`cannot pop from immutable Vec`, sp, `declare with 'var' to make it mutable`);
             }
-            return this.setType(expr, objType.element);
+            // Returns Option<T> — Some(last) or None when empty; caller picks the
+            // failure policy via `!`/`?`/`??`. Mirrors HashMap.get / Vec.find.
+            return this.setType(expr, this.resolveOptionForValue(objType.element, sp));
           }
           if (expr.method === "map") {
             if (expr.args.length !== 1) { this.error(`'map' expects 1 argument`, sp); return this.setType(expr, { tag: "unknown" }); }

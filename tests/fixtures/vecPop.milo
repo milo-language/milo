@@ -1,7 +1,10 @@
+// pop(): Option<T> — Some(last) / None on empty. Caller picks the policy.
 // @expect: 30
 // @expect: 2
 // @expect: 20
 // @expect: 1
+// @expect: 99
+// @expect: empty
 
 fn main(): i32 {
     var v: Vec<i32> = Vec.new()
@@ -9,13 +12,28 @@ fn main(): i32 {
     v.push(20)
     v.push(30)
 
-    let a = v.pop()
+    let a = v.pop()! // 30 — known non-empty, unwrap
     print(a)
     print(v.len)
 
-    let b = v.pop()
-    print(b)
-    print(v.len)
+    if let Option.Some(b) = v.pop() { // 20 — handle the Some arm
+        print(b)
+        print(v.len)
+    }
+
+    v.pop()! // drain the last element (10), discard
+
+    let c = v.pop() ?? 99 // None → fallback
+    print(c)
+
+    match v.pop() { // None again → the empty branch
+        Option.Some(x) => {
+            print(x)
+        }
+        Option.None => {
+            print("empty")
+        }
+    }
 
     return 0
 }

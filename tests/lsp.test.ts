@@ -72,6 +72,8 @@ const MATCH_URI = "file:///tmp/milo-lsp-match.milo";
 const BUILTIN_SRC = `fn main() {
     let v: Vec<i32> = Vec.new()
     v.push(1)
+    var w: Vec<i32> = Vec.new()
+    let x = w.pop()
 }
 `;
 const BUILTIN_URI = "file:///tmp/milo-lsp-builtin.milo";
@@ -240,6 +242,15 @@ test("hover on builtin Vec type and Vec.new constructor", async () => {
   // `new` in `Vec.new()` (line 1, char 27).
   const onCtor = await req(23, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 1, character: 27 } });
   expect(onCtor?.contents?.value).toContain("Vec.new");
+});
+
+test("hover on builtin Vec instance methods (.push / .pop) shows a specialized sig", async () => {
+  // `push` in `v.push(1)` (line 2, char 7) — element type resolved to i32.
+  const onPush = await req(40, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 2, character: 7 } });
+  expect(onPush?.contents?.value).toContain("Vec<i32>.push(value: i32)");
+  // `pop` in `let x = w.pop()` (line 4, char 15) — returns Option of the element type.
+  const onPop = await req(41, "textDocument/hover", { textDocument: { uri: BUILTIN_URI }, position: { line: 4, character: 15 } });
+  expect(onPop?.contents?.value).toContain("Vec<i32>.pop(): Option<i32>");
 });
 
 test("hover on a raw pointer and a scalar primitive", async () => {

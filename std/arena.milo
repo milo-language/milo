@@ -48,7 +48,7 @@ fn arenaNew<T>(): Arena<T> {
 fn arenaAlloc<T>(a: &mut Arena<T>, val: T): Handle<T> {
     if a.freeList.len > 0 {
         let fi = a.freeList[a.freeList.len - 1]
-        a.freeList.pop()
+        a.freeList.pop()!
         let idx = fi as i64
         a.data[idx] = val
         let gen = a.gens[idx]
