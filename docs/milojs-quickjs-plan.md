@@ -1,3 +1,10 @@
+<!-- doc-meta
+system: milojs
+purpose: per-lane work plan driving scripts/quickjs-sweep.ts conformance toward 100%
+key-files: scripts/quickjs-sweep.ts, examples/apps/milojs/parser.milo, examples/apps/milojs/modules.milo, docs/milojs-roadmap.md
+update-when: a lane lands (update the score, delete the lane) or the sweep harness changes
+-->
+
 # milojs QuickJS-parity plan
 
 Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for agents
