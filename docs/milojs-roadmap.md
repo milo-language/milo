@@ -84,11 +84,25 @@ nesting, arrays-of-objects — arrays reuse the object heap (a JSObj with an `el
 flag), so the GC marks elements alongside props for free. `console.log` matches bun for scalar
 arrays; the multi-line wrap bun applies to arrays *containing* objects/arrays is a known cosmetic
 gap (bun's inspect layout heuristic), not a semantic one.
-**Still open:** prototype-chain lookup, `this` binding, `new`, general method dispatch (object
-methods stored as function-valued props already call, minus `this`). Closures capturing heap
-environment records.
-**Gate:** prototype-based method dispatch + array push/index round-trips; a class-ish pattern
-(constructor + prototype methods) runs.
+**`this` / `new` / method dispatch done (00c06b2):** method calls bind `this` to the receiver;
+`new Ctor(args)` builds an object, runs the constructor with `this`, and honors a constructor that
+returns an object. The constructor-assigns-methods pattern and method chaining (`return this`)
+work. `this` is a plain identifier bound in each call scope (plain calls get `this = undefined`).
+A **temp-root stack** (`Interp.tempRoots`, marked by `collect`) keeps in-flight receivers,
+closures, and part-built literals alive across a GC triggered mid-dispatch (a call argument can be
+another call) — verified byte-identical under 177 collections. This closed a real
+memory-safety hazard, not a theoretical one.
+**Still open:** prototype-*chain* lookup for *shared* methods (`Ctor.prototype.m`) — needs
+functions to carry a prototype object; today each instance gets its own methods. `for` loops,
+ternary, `typeof`, `instanceof`, `throw`/`try`/`catch`.
+**Gate:** prototype-based method dispatch + a class-ish pattern (constructor + prototype methods).
+
+**Test yardstick (decided):** milojs *is* the engine, so unlike minibun's JSC, both test262 and
+QuickJS's own `~/git/quickjs/tests/` grade milojs directly. QuickJS's suite is the near-term
+target (local, pure-JS, self-contained `assert()`), but its `test_language.js` needs
+`try`/`catch`/`throw`, `typeof`, `for`, `instanceof` — so those features gate suite adoption.
+Until then: byte-identical-vs-bun differential smokes in `tests/`. Package test suites don't
+apply (they need the node runtime = minibun's layer, not the engine).
 
 ### Stage 4 — bytecode VM ⬜
 Compile the AST to a register or stack bytecode; retire the tree-walker. Needed for speed and
