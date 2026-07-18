@@ -105,6 +105,79 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
     objSet(st, o, key, value)
 }
 
+// Read an assignable target (identifier / member / computed index) as a value.
+// Backs ++/-- and compound assignment; the base object of a member target is
+// evaluated here and again by writeLValue (harmless unless the base has side
+// effects, which is rare).
+fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
+    let t = getExpr(prog, targetIdx)
+    match t {
+        Expr.Ident(name) => {
+            return scopeLookup(st, scope, name)
+        }
+        Expr.Member(objIdx, name) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            match ov {
+                JSValue.Obj(o) => {
+                    return getMember(st, o, name)
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        Expr.Index(objIdx, keyIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            match ov {
+                JSValue.Obj(o) => {
+                    return getMember(st, o, key)
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
+        }
+        _ => {
+            return JSValue.Undefined
+        }
+    }
+}
+
+fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: JSValue) {
+    let t = getExpr(prog, targetIdx)
+    match t {
+        Expr.Ident(name) => {
+            scopeAssign(st, scope, name, value)
+        }
+        Expr.Member(objIdx, name) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            match ov {
+                JSValue.Obj(o) => {
+                    setMember(st, o, name.clone(), value)
+                }
+                _ => {
+                }
+            }
+        }
+        Expr.Index(objIdx, keyIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            match ov {
+                JSValue.Obj(o) => {
+                    setMember(st, o, key, value)
+                }
+                _ => {
+                }
+            }
+        }
+        _ => {
+        }
+    }
+}
+
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
 fn typeofStr(v: &JSValue): string {
     match v {
@@ -293,6 +366,34 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     return JSValue.Undefined
                 }
             }
+        }
+        Expr.Update(targetIdx, isInc, isPrefix) => {
+            let old = readLValue(prog, targetIdx, st, scope)
+            let oldNum = toNum(old)
+            var newNum = oldNum + 1.0
+            if !isInc {
+                newNum = oldNum - 1.0
+            }
+            writeLValue(prog, targetIdx, st, scope, JSValue.Number(newNum))
+            if isPrefix {
+                return JSValue.Number(newNum)
+            }
+            // postfix yields the numeric value before the update (JS coerces)
+            return JSValue.Number(oldNum)
+        }
+        Expr.CompoundAssign(targetIdx, op, rhsIdx) => {
+            let cur = readLValue(prog, targetIdx, st, scope)
+            let rhs = evalExpr(prog, rhsIdx, st, scope)
+            let result = evalBin(op, cur, rhs)
+            writeLValue(prog, targetIdx, st, scope, cloneValue(result))
+            return result
+        }
+        Expr.Cond(c, a, b) => {
+            let vc = evalExpr(prog, c, st, scope)
+            if truthy(vc) {
+                return evalExpr(prog, a, st, scope)
+            }
+            return evalExpr(prog, b, st, scope)
         }
         Expr.FuncExpr(f) => {
             return JSValue.Func(f, scope)

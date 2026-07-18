@@ -53,6 +53,14 @@ let T_CATCH: i32 = 44
 let T_FINALLY: i32 = 45
 let T_THROW: i32 = 46
 let T_TYPEOF: i32 = 47
+let T_INC: i32 = 48
+let T_DEC: i32 = 49
+let T_PLUSEQ: i32 = 50
+let T_MINUSEQ: i32 = 51
+let T_STAREQ: i32 = 52
+let T_SLASHEQ: i32 = 53
+let T_PERCENTEQ: i32 = 54
+let T_QUESTION: i32 = 55
 
 struct Token {
     kind: i32,
@@ -246,6 +254,27 @@ fn lex(src: &string): Vec<Token> {
         } else if c == '|' && i + 1 < n && src[i + 1] == '|' {
             i = i + 2
             pushTok(toks, T_OROR)
+        } else if c == '+' && i + 1 < n && src[i + 1] == '+' {
+            i = i + 2
+            pushTok(toks, T_INC)
+        } else if c == '-' && i + 1 < n && src[i + 1] == '-' {
+            i = i + 2
+            pushTok(toks, T_DEC)
+        } else if c == '+' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_PLUSEQ)
+        } else if c == '-' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_MINUSEQ)
+        } else if c == '*' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_STAREQ)
+        } else if c == '/' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_SLASHEQ)
+        } else if c == '%' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_PERCENTEQ)
         } else {
             var k: i32 = -1
             if c == '+' {
@@ -286,6 +315,8 @@ fn lex(src: &string): Vec<Token> {
                 k = T_RBRACKET
             } else if c == ':' {
                 k = T_COLON
+            } else if c == '?' {
+                k = T_QUESTION
             }
             if k >= 0 {
                 pushTok(toks, k)

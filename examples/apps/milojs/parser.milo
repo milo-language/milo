@@ -206,6 +206,15 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
             go = false
         }
     }
+    // postfix ++/-- binds to the completed postfix expression, applies once
+    let pk = peekKind(p)
+    if pk == T_INC {
+        advance(p)
+        e = addExpr(prog, Expr.Update(e, true, false))
+    } else if pk == T_DEC {
+        advance(p)
+        e = addExpr(prog, Expr.Update(e, false, false))
+    }
     return e
 }
 
@@ -225,6 +234,16 @@ fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
         advance(p)
         let e = parseUnary(p, prog)
         return addExpr(prog, Expr.Un("typeof", e))
+    }
+    if k == T_INC {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Update(e, true, true))
+    }
+    if k == T_DEC {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Update(e, false, true))
     }
     return parsePostfix(p, prog)
 }
@@ -335,9 +354,39 @@ fn parseOr(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
+// c ? a : b — sits between the logical operators and assignment
+fn parseTernary(p: &mut PState, prog: &mut Prog): i64 {
+    let cond = parseOr(p, prog)
+    if peekKind(p) == T_QUESTION {
+        advance(p)
+        let a = parseExpr(p, prog)
+        expect(p, T_COLON)
+        let b = parseExpr(p, prog)
+        return addExpr(prog, Expr.Cond(cond, a, b))
+    }
+    return cond
+}
+
+fn compoundOp(k: i32): string {
+    if k == T_PLUSEQ {
+        return "+"
+    }
+    if k == T_MINUSEQ {
+        return "-"
+    }
+    if k == T_STAREQ {
+        return "*"
+    }
+    if k == T_SLASHEQ {
+        return "/"
+    }
+    return "%"
+}
+
 fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
-    let left = parseOr(p, prog)
-    if peekKind(p) == T_EQ {
+    let left = parseTernary(p, prog)
+    let k = peekKind(p)
+    if k == T_EQ {
         advance(p)
         let rhs = parseExpr(p, prog)
         let leftNode = getExpr(prog, left)
@@ -358,6 +407,12 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
                 return rhs
             }
         }
+    }
+    if k == T_PLUSEQ || k == T_MINUSEQ || k == T_STAREQ || k == T_SLASHEQ || k == T_PERCENTEQ {
+        advance(p)
+        let op = compoundOp(k)
+        let rhs = parseExpr(p, prog)
+        return addExpr(prog, Expr.CompoundAssign(left, op, rhs))
     }
     return left
 }

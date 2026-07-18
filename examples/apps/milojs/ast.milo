@@ -26,6 +26,12 @@ enum Expr {
     ArrLit(i64),
     // new Ctor(args): constructor expr, arg-list index
     New(i64, i64),
+    // ++/-- on an lvalue: target expr, isIncrement, isPrefix
+    Update(i64, bool, bool),
+    // x op= y on an lvalue: target expr, op ("+","-","*","/","%"), rhs expr
+    CompoundAssign(i64, string, i64),
+    // ternary c ? a : b
+    Cond(i64, i64, i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -120,6 +126,15 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.New(callee, args) => {
             return Expr.New(callee, args)
+        }
+        Expr.Update(target, inc, prefix) => {
+            return Expr.Update(target, inc, prefix)
+        }
+        Expr.CompoundAssign(target, op, rhs) => {
+            return Expr.CompoundAssign(target, op.clone(), rhs)
+        }
+        Expr.Cond(c, a, b) => {
+            return Expr.Cond(c, a, b)
         }
     }
 }
