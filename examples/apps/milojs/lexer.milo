@@ -88,6 +88,13 @@ let T_STARSTAR: i32 = 75
 let T_VOID: i32 = 76
 let T_ASYNC: i32 = 77
 let T_AWAIT: i32 = 78
+let T_SHLEQ: i32 = 79
+let T_SHREQ: i32 = 80
+let T_USHREQ: i32 = 81
+let T_AMPEQ: i32 = 82
+let T_PIPEEQ: i32 = 83
+let T_CARETEQ: i32 = 84
+let T_STARSTAREQ: i32 = 85
 
 struct Token {
     kind: i32,
@@ -512,6 +519,27 @@ fn lex(src: &string): Vec<Token> {
                 i = i + 1
             }
             pushTok(toks, T_NEQ)
+        } else if c == '>' && i + 3 < n && src[i + 1] == '>' && src[i + 2] == '>' && src[i + 3] == '=' {
+            i = i + 4
+            pushTok(toks, T_USHREQ)
+        } else if c == '<' && i + 2 < n && src[i + 1] == '<' && src[i + 2] == '=' {
+            i = i + 3
+            pushTok(toks, T_SHLEQ)
+        } else if c == '>' && i + 2 < n && src[i + 1] == '>' && src[i + 2] == '=' {
+            i = i + 3
+            pushTok(toks, T_SHREQ)
+        } else if c == '*' && i + 2 < n && src[i + 1] == '*' && src[i + 2] == '=' {
+            i = i + 3
+            pushTok(toks, T_STARSTAREQ)
+        } else if c == '&' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_AMPEQ)
+        } else if c == '|' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_PIPEEQ)
+        } else if c == '^' && i + 1 < n && src[i + 1] == '=' {
+            i = i + 2
+            pushTok(toks, T_CARETEQ)
         } else if c == '>' && i + 2 < n && src[i + 1] == '>' && src[i + 2] == '>' {
             i = i + 3
             pushTok(toks, T_USHR)

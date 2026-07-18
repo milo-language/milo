@@ -303,6 +303,18 @@ fn parseParam(p: &mut PState, prog: &mut Prog, params: &mut Vec<string>, prelude
     return false
 }
 
+// `a = 1, b = 2` in a for-init or for-update. parseExpr deliberately stops at a
+// comma (declarator lists need that), so sequences are stitched up here.
+fn parseCommaSeq(p: &mut PState, prog: &mut Prog): i64 {
+    var e = parseExpr(p, prog)
+    while peekKind(p) == T_COMMA {
+        advance(p)
+        let right = parseExpr(p, prog)
+        e = addExpr(prog, Expr.Comma(e, right))
+    }
+    return e
+}
+
 fn isPatternStart(p: &PState): bool {
     let k = peekKind(p)
     return k == T_LBRACE || k == T_LBRACKET
@@ -904,6 +916,27 @@ fn compoundOp(k: i32): string {
     if k == T_SLASHEQ {
         return "/"
     }
+    if k == T_SHLEQ {
+        return "<<"
+    }
+    if k == T_SHREQ {
+        return ">>"
+    }
+    if k == T_USHREQ {
+        return ">>>"
+    }
+    if k == T_AMPEQ {
+        return "&"
+    }
+    if k == T_PIPEEQ {
+        return "|"
+    }
+    if k == T_CARETEQ {
+        return "^"
+    }
+    if k == T_STARSTAREQ {
+        return "**"
+    }
     return "%"
 }
 
@@ -932,7 +965,7 @@ fn parseExpr(p: &mut PState, prog: &mut Prog): i64 {
             }
         }
     }
-    if k == T_PLUSEQ || k == T_MINUSEQ || k == T_STAREQ || k == T_SLASHEQ || k == T_PERCENTEQ {
+    if k == T_PLUSEQ || k == T_MINUSEQ || k == T_STAREQ || k == T_SLASHEQ || k == T_PERCENTEQ || k == T_SHLEQ || k == T_SHREQ || k == T_USHREQ || k == T_AMPEQ || k == T_PIPEEQ || k == T_CARETEQ || k == T_STARSTAREQ {
         advance(p)
         let op = compoundOp(k)
         let rhs = parseExpr(p, prog)
@@ -1159,7 +1192,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         } else if peekKind(p) == T_LET || peekKind(p) == T_VAR || peekKind(p) == T_CONST {
             init = parseStmt(p, prog)
         } else {
-            let ie = parseExpr(p, prog)
+            let ie = parseCommaSeq(p, prog)
             init = addStmt(prog, Stmt.ExprStmt(ie))
             expect(p, T_SEMI)
         }
@@ -1170,7 +1203,7 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         expect(p, T_SEMI)
         var update = -1
         if peekKind(p) != T_RPAREN {
-            update = parseExpr(p, prog)
+            update = parseCommaSeq(p, prog)
         }
         expect(p, T_RPAREN)
         let body = parseStmt(p, prog)
