@@ -2,7 +2,7 @@
 
 A memory-safe, intentionally simple systems language with formal verification. Friendly to humans and AI.
 
-**→ [cs01.github.io/milo](https://cs01.github.io/milo/)**: docs, language tour, playground, and demos you can play in the browser.
+**[cs01.github.io/milo](https://cs01.github.io/milo/)**: docs, language tour, playground, and demos you can play in the browser.
 
 ```milo
 from "std/http" import { Request, Response, serve }

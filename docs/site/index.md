@@ -21,7 +21,7 @@ hero:
 
 <div class="intro">
 
-Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase, no matter how large. People and AI ship with confidence that their code is correct. <a href="/milo/language/">Learn more →</a>
+Milo is a memory-safe systems language that guides you to simple, correct, readable programs. Contracts are built in, enabling formal verification that guarantees correctness across your codebase, no matter how large. People and AI ship with confidence that their code is correct. <a href="/milo/language/">Learn more</a>
 
 </div>
 
@@ -118,15 +118,15 @@ fn main() {
       <h3>Tetris</h3>
       <p>The classic, in your terminal.</p>
     </a>
-    <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo">
-      <div class="tile-emoji">📊</div>
-      <h3>System Monitor</h3>
-      <p>A live htop-style view of your machine.</p>
+    <a class="tile" href="https://github.com/cs01/milo/tree/main/examples/apps/java-dap">
+      <div class="tile-emoji">☕</div>
+      <h3>Java Debugger</h3>
+      <p>A JVM debug adapter, so hades debugs Java too.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo">
       <div class="tile-emoji">📦</div>
       <h3>Package Manager</h3>
-      <p>Install and publish Milo packages straight from git.</p>
+      <p>Milo's own package manager. Install and publish packages over git.</p>
     </a>
     <a class="tile" href="https://github.com/cs01/milo/blob/main/tools/smtSolve.milo">
       <div class="tile-emoji">🧮</div>
@@ -135,7 +135,7 @@ fn main() {
     </a>
   </div>
   <div class="showcase-cta">
-    <a class="showcase-cta-btn" href="/milo/demos">Explore the full showcase →</a>
+    <a class="showcase-cta-btn" href="/milo/demos">Explore the full showcase</a>
   </div>
 </div>
 

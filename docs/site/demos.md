@@ -8,33 +8,37 @@ last-verified: 2026-07-15
 
 # Showcase
 
-Real programs written in Milo. Every one is a single `.milo` file — clone the repo and [run or build any of them yourself](#run-these-yourself) with the `./milo` wrapper. They double as integration tests for the standard library.
+Real programs written in Milo. Every one is a single `.milo` file. Clone the repo and [run or build any of them yourself](#run-these-yourself) with the `./milo` wrapper. They double as integration tests for the standard library.
 
-## Emulators — desktop and browser
+## Emulators: desktop and browser
 
-Three retro-console cores. Same Milo source runs two ways: native binary on desktop (SDL video/audio/input) or JavaScript in the browser via `milo emit-js`. No plugins — drop a ROM and play.
+Three retro-console cores. Same Milo source runs two ways: native binary on desktop (SDL video/audio/input) or JavaScript in the browser via `milo emit-js`. No plugins. Drop a ROM and play.
 
-### <a href="/milo/nes/" target="_self">NES →</a>
+### <a href="/milo/nes/" target="_self">NES</a>
 
 Cycle-stepped 6502, PPU, and APU with DMC audio and multiple mappers. Ships six free homebrew games playable in one click: **Blade Buster**, **Battle Kid**, **Super PakPak**, **Sir Ababol**, **Lawn Mower**, **Mad Wizard**. Drag in your own `.nes` ROM to play anything else.
 
-### <a href="/milo/genesis/" target="_self">Genesis / Mega Drive →</a>
+### <a href="/milo/genesis/" target="_self">Genesis / Mega Drive</a>
 
 Motorola 68000 + Z80 dual-CPU core with the VDP graphics processor and FM/PSG audio. Preset homebrew: **Headship**, **Astro Perdido**, **Gravity Pig**, **Dragon's Castle**. Accepts `.md` / `.bin` / `.gen` / `.smd` ROMs.
 
-### <a href="/milo/snes/" target="_self">SNES →</a>
+### <a href="/milo/snes/" target="_self">SNES</a>
 
 65C816 CPU plus the SNES PPU, including a Super FX (GSU) coprocessor core. Plays Super Mario World and Donkey Kong Country; Star Fox boots with GSU-rendered 3D. Load an `.sfc` / `.smc` ROM.
 
-> All three run natively too — `examples/apps/arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`examples/apps/retro/`](https://github.com/cs01/milo/tree/main/examples/apps/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
+> All three run natively too: `examples/apps/arcade.sh <rom>` builds the right core with SDL video, audio, and input. [`examples/apps/retro/`](https://github.com/cs01/milo/tree/main/examples/apps/retro) turns them into a Raspberry Pi couch console with a gamepad-driven menu.
 
 ## Debugger
 
-### <a href="https://github.com/cs01/milo/tree/main/examples/apps/hades" target="_blank">hades →</a>
+### <a href="https://github.com/cs01/milo/tree/main/examples/apps/hades" target="_blank">hades</a>
 
-[![hades web UI — stopped at a breakpoint inside classify(), showing the source view, call stack, locals, and a live lldb terminal](/hades/debugging.png)](https://github.com/cs01/milo/tree/main/examples/apps/hades)
+[![hades web UI stopped at a breakpoint inside classify(), showing the source view, call stack, locals, and a live lldb terminal](/hades/debugging.png)](https://github.com/cs01/milo/tree/main/examples/apps/hades)
 
-A web + AI interface for any DAP debugger (lldb-dap, debugpy), written in Milo. One binary, two subcommands: `hades web` serves a React + Monaco + xterm.js debugging UI from a Milo HTTP/WebSocket server — breakpoints, stepping, call stacks, expandable locals, watch expressions, an ARM64/x86 disassembly pane, and a real PTY terminal you can type into while your program runs. `hades mcp` exposes the same session to an AI over MCP: both you and the model see and drive the same debuggee. Debugs Milo binaries too — the compiler emits standard DWARF.
+A web + AI interface for any DAP debugger (lldb-dap, debugpy), written in Milo. One binary, two subcommands: `hades web` serves a React + Monaco + xterm.js debugging UI from a Milo HTTP/WebSocket server: breakpoints, stepping, call stacks, expandable locals, watch expressions, an ARM64/x86 disassembly pane, and a real PTY terminal you can type into while your program runs. `hades mcp` exposes the same session to an AI over MCP: both you and the model see and drive the same debuggee. Debugs Milo binaries too; the compiler emits standard DWARF.
+
+### <a href="https://github.com/cs01/milo/tree/main/examples/apps/java-dap" target="_blank">java-dap</a>
+
+A standalone Debug Adapter Protocol server for the JVM, written in Milo. No Eclipse, no jdt.ls, no JVM-side code: the whole adapter is a DAP-to-JDWP protocol translator in about 1300 lines. Works with any DAP client, and hades finds it automatically, so you can debug Java the same way you debug Milo.
 
 ## Terminal & graphics apps
 
@@ -42,21 +46,21 @@ TUIs in [`examples/apps/`](https://github.com/cs01/milo/tree/main/examples/apps)
 
 | Program | What it is |
 |---------|-----------|
-| [tetris](https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo) | Event-driven terminal Tetris — one green task parked on a Select, no polling |
+| [tetris](https://github.com/cs01/milo/blob/main/examples/apps/tetris.milo) | Event-driven terminal Tetris; one green task parked on a Select, no polling |
 | [sysmon](https://github.com/cs01/milo/blob/main/examples/apps/sysmon.milo) | htop-style live system monitor |
 | [donut](https://github.com/cs01/milo/blob/main/examples/apps/donut.milo) | The classic spinning 3D torus, truecolor-shaded |
 | [plasma](https://github.com/cs01/milo/blob/main/examples/apps/plasma.milo) | Full-screen truecolor animation; doubles as a render-throughput benchmark |
-| [aquarium](https://github.com/cs01/milo/blob/main/examples/apps/aquarium.milo) | Truecolor pixel aquarium — fish, bubbles, swaying seaweed |
+| [aquarium](https://github.com/cs01/milo/blob/main/examples/apps/aquarium.milo) | Truecolor pixel aquarium: fish, bubbles, swaying seaweed |
 | [chihuahua](https://github.com/cs01/milo/blob/main/examples/apps/chihuahua.milo) | DVD-logo-style bouncing screensaver with a shaded pixel-art sprite |
-| [splitPty](https://github.com/cs01/milo/blob/main/examples/apps/splitPty.milo) | Two commands side-by-side in real PTYs — a mini tmux |
+| [splitPty](https://github.com/cs01/milo/blob/main/examples/apps/splitPty.milo) | Two commands side-by-side in real PTYs; a mini tmux |
 | [flightController](https://github.com/cs01/milo/blob/main/examples/apps/flightController.milo) | Single-axis PID altitude controller with an interactive TUI |
-| [menu](https://github.com/cs01/milo/blob/main/examples/apps/menu.milo) | Fullscreen SDL retro-console front-end — gamepad/keyboard ROM picker |
+| [menu](https://github.com/cs01/milo/blob/main/examples/apps/menu.milo) | Fullscreen SDL retro-console front-end with a gamepad/keyboard ROM picker |
 
 ## Servers & network apps
 
 | Program | What it is |
 |---------|-----------|
-| [termpair](https://github.com/cs01/milo/tree/main/examples/apps/termpair) | Share your terminal in the browser — WebSocket relay with end-to-end AES encryption, client and server both in Milo |
+| [termpair](https://github.com/cs01/milo/tree/main/examples/apps/termpair) | Share your terminal in the browser: WebSocket relay with end-to-end AES encryption, client and server both in Milo |
 | [weather](https://github.com/cs01/milo/tree/main/examples/apps/weather) | weather.gov frontend served from a single static binary |
 | [serve](https://github.com/cs01/milo/blob/main/examples/apps/serve.milo) | Static file server with directory listing |
 | [webserver](https://github.com/cs01/milo/blob/main/examples/apps/webserver.milo) | HTTP server with routing, path params, middleware |
@@ -96,7 +100,7 @@ Coreutils-style tools in [`examples/cli-tools/`](https://github.com/cs01/milo/tr
 | [calc](https://github.com/cs01/milo/blob/main/examples/cli-tools/calc.milo) | Expression evaluator |
 | [parallel](https://github.com/cs01/milo/blob/main/examples/cli-tools/parallel.milo) | Run shell commands in parallel across input lines (fork-based) |
 | [timeout](https://github.com/cs01/milo/blob/main/examples/cli-tools/timeout.milo) | Run a command with a time limit |
-| [pkg](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) | Package manager for Milo — git transport, GitHub registry, lockfile |
+| [pkg](https://github.com/cs01/milo/blob/main/examples/cli-tools/pkg.milo) | Milo's own package manager: install and publish packages over git, with a lockfile and GitHub registry |
 
 ## Run these yourself
 
