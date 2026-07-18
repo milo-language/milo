@@ -740,6 +740,11 @@ fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
         let e = parseUnary(p, prog)
         return addExpr(prog, Expr.Un("void", e))
     }
+    if k == T_DELETE {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("delete", e))
+    }
     if k == T_AWAIT {
         advance(p)
         let e = parseUnary(p, prog)

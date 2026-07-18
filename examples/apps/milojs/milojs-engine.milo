@@ -15,6 +15,9 @@
 from "std/io" import {
     readFile
 }
+from "std/strconv" import {
+    parseInt
+}
 from "std/env" import {
     getEnv
 }
@@ -35,6 +38,24 @@ fn main(): i32 {
     match r {
         Result.Ok(src) => {
             var gcStats = false
+            // same knob the runtime honours, so the GC-stress pass reaches the
+            // engine binary too
+            var gcThreshold: i64 = 1024
+            match getEnv("MILOJS_GC_THRESHOLD") {
+                Option.Some(tv) => {
+                    match parseInt(tv) {
+                        Option.Some(n) => {
+                            if n > 0 {
+                                gcThreshold = n
+                            }
+                        }
+                        Option.None => {
+                        }
+                    }
+                }
+                Option.None => {
+                }
+            }
             match getEnv("MILOJS_GC_STATS") {
                 Option.Some(_v) => {
                     gcStats = true
@@ -42,7 +63,7 @@ fn main(): i32 {
                 Option.None => {
                 }
             }
-            var st = makeInterp(gcStats, 1024)
+            var st = makeInterp(gcStats, gcThreshold)
             bootInterp(st)
             return runSource(src, st)
         }

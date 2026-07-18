@@ -1,0 +1,17 @@
+start
+end sync
+micro
+cleanup
+still rejected: keep
+immediate
+t 0
+args x y
+race fast
+all rejects: boom
+tick 1
+settled fulfilled rejected
+deferred handler 42
+tick 2
+all [1,2,3]
+tick 3
+t 20

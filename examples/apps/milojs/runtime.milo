@@ -42,6 +42,41 @@ struct Prop {
     isAccessor: bool,
 }
 
+// A pending timer. intervalMs > 0 reschedules after firing (setInterval).
+struct Timer {
+    id: i64,
+    dueMs: f64,
+    intervalMs: f64,
+    cb: JSValue,
+    args: Vec<JSValue>,
+    active: bool,
+}
+
+// A queued microtask: call cb with one argument. Promise reactions and
+// process.nextTick both land here.
+struct Microtask {
+    cb: JSValue,
+    arg: JSValue,
+    // promise to settle with cb's result, or -1 for a plain call
+    // (queueMicrotask / process.nextTick)
+    derived: i64,
+    // when cb is not callable the value passes through to `derived` unchanged;
+    // this says whether it passes through as a rejection
+    passthroughReject: bool,
+    // .finally: discard the handler's result and keep the original settlement
+    isFinally: bool,
+}
+
+// A .then registration on a not-yet-settled promise: which handlers to run and
+// which promise to settle with their result.
+struct Reaction {
+    onFulfilled: JSValue,
+    onRejected: JSValue,
+    derived: i64,
+    // .finally: run the handler for effect, then pass the original settlement on
+    isFinally: bool,
+}
+
 struct JSObj {
     props: Vec<Prop>,
     elems: Vec<JSValue>,
@@ -61,6 +96,8 @@ struct JSObj {
     // promise left pending by its executor stays pending forever.
     promiseState: i64,
     promiseValue: JSValue,
+    // handlers registered while this promise was still pending
+    reactions: Vec<Reaction>,
     // Function.prototype.bind result: calling this object calls boundTarget with
     // boundThis and boundArgs prepended. Objects are used because a JSValue has
     // nowhere to carry the captured receiver.
@@ -138,6 +175,10 @@ struct Interp {
     dateCtorProps: i64,
     // monotonic counter behind Symbol(); symbols are unique strings here
     symbolCounter: i64,
+    // the event loop: microtasks drain to empty before any timer fires
+    timers: Vec<Timer>,
+    microtasks: Vec<Microtask>,
+    nextTimerId: i64,
     gcThreshold: i64,
     gcRuns: i64,
     gcStats: bool,
@@ -146,7 +187,7 @@ struct Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, reactions: Vec.new(), isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isFunctionLike: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena
@@ -254,6 +295,30 @@ fn objDefineAccessor(st: &mut Interp, obj: i64, key: string, getter: JSValue, se
         key: key, value: JSValue.Undefined, getter: getter, setter: setter, isAccessor: true
     }
     )
+}
+
+// Remove an own property. An array index becomes a hole (undefined) rather than
+// shifting the remaining elements, matching JS.
+fn objDeleteKey(st: &mut Interp, obj: i64, key: &string) {
+    if st.objects[obj].isArray {
+        let ai = asArrayIndex(key)
+        if ai >= 0 && ai < st.objects[obj].elems.len() {
+            st.objects[obj].elems[ai] = JSValue.Undefined
+            return
+        }
+    }
+    var kept: Vec<Prop> = Vec.new()
+    var i: i64 = 0
+    while i < st.objects[obj].props.len() {
+        if st.objects[obj].props[i].key != key {
+            kept.push(Prop {
+                key: st.objects[obj].props[i].key.clone(), value: cloneValue(st.objects[obj].props[i].value), getter: cloneValue(st.objects[obj].props[i].getter), setter: cloneValue(st.objects[obj].props[i].setter), isAccessor: st.objects[obj].props[i].isAccessor
+            }
+            )
+        }
+        i = i + 1
+    }
+    st.objects[obj].props = kept
 }
 
 // Index of `key` on `obj` itself (not its prototype chain), or -1.
@@ -393,6 +458,11 @@ fn popTemp(st: &mut Interp) {
 // object handle roots its heap slot; primitives root nothing. The three mark
 // functions are mutually recursive and all idempotent (mark flags), so cyclic
 // closure/object graphs terminate.
+// resolve/reject functions encode their promise handle in the native id, so a
+// stored resolver has to keep that promise alive — otherwise the promise is
+// swept while its resolver is still reachable from a closure or timer.
+let NATIVE_RESOLVER_BASE: i64 = 1000000
+
 fn markValue(st: &mut Interp, v: &JSValue) {
     match v {
         JSValue.Func(_f, envIdx) => {
@@ -401,8 +471,16 @@ fn markValue(st: &mut Interp, v: &JSValue) {
         JSValue.Obj(objIdx) => {
             markObject(st, objIdx)
         }
+        JSValue.Native(id) => {
+            // a resolve/reject function encodes its promise handle in the native
+            // id, so it must keep that promise alive — otherwise a resolver held
+            // in a closure or timer outlives the promise it settles
+            if id >= NATIVE_RESOLVER_BASE {
+                markObject(st, (id - NATIVE_RESOLVER_BASE) / 2)
+            }
+        }
         _ => {
-            // primitives and native functions reference no heap slot
+            // other primitives reference no heap slot
         }
     }
 }
@@ -435,9 +513,16 @@ fn markObject(st: &mut Interp, i: i64) {
         vals.push(cloneValue(st.objects[i].elems[e]))
         e = e + 1
     }
-    // a settled promise keeps its value alive
+    // a promise keeps its value and every pending reaction alive
     if st.objects[i].promiseState >= 0 {
         vals.push(cloneValue(st.objects[i].promiseValue))
+        var r: i64 = 0
+        while r < st.objects[i].reactions.len() {
+            vals.push(cloneValue(st.objects[i].reactions[r].onFulfilled))
+            vals.push(cloneValue(st.objects[i].reactions[r].onRejected))
+            markObject(st, st.objects[i].reactions[r].derived)
+            r = r + 1
+        }
     }
     // a Map/Set keeps its entries alive
     if st.objects[i].isMap || st.objects[i].isSet {
@@ -545,6 +630,35 @@ fn collect(st: &mut Interp) {
             markObject(st, st.funcProtos[fp])
         }
         fp = fp + 1
+    }
+    // pending timer callbacks and queued microtasks are roots — nothing else
+    // references them until they run
+    var tm: i64 = 0
+    while tm < st.timers.len() {
+        if st.timers[tm].active {
+            let cb = cloneValue(st.timers[tm].cb)
+            markValue(st, cb)
+            var ta: i64 = 0
+            while ta < st.timers[tm].args.len() {
+                let av = cloneValue(st.timers[tm].args[ta])
+                markValue(st, av)
+                ta = ta + 1
+            }
+        }
+        tm = tm + 1
+    }
+    var mt: i64 = 0
+    while mt < st.microtasks.len() {
+        let mcb = cloneValue(st.microtasks[mt].cb)
+        let marg = cloneValue(st.microtasks[mt].arg)
+        markValue(st, mcb)
+        markValue(st, marg)
+        // the derived promise of a discarded `p.then(cb)` is referenced only by
+        // this queued microtask once settlePromise has cleared p.reactions
+        if st.microtasks[mt].derived >= 0 {
+            markObject(st, st.microtasks[mt].derived)
+        }
+        mt = mt + 1
     }
     // as are static-property bags
     var fs: i64 = 0

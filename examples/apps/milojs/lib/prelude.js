@@ -44,6 +44,73 @@ var Intl = {
   }
 };
 
+// --- Promise combinators ---------------------------------------------------
+// Written in JS on top of .then now that reactions are real. The native
+// versions read promiseState at call time, so a pending element resolved as
+// undefined; these wait properly.
+Promise.all = function (items) {
+  return new Promise(function (resolve, reject) {
+    var list = [];
+    for (var i = 0; i < items.length; i++) list.push(items[i]);
+    var out = [];
+    var remaining = list.length;
+    if (remaining === 0) { resolve(out); return; }
+    for (var j = 0; j < list.length; j++) {
+      (function (idx) {
+        Promise.resolve(list[idx]).then(function (v) {
+          out[idx] = v;
+          remaining -= 1;
+          if (remaining === 0) resolve(out);
+        }, reject);
+      })(j);
+    }
+  });
+};
+
+Promise.allSettled = function (items) {
+  return new Promise(function (resolve) {
+    var list = [];
+    for (var i = 0; i < items.length; i++) list.push(items[i]);
+    var out = [];
+    var remaining = list.length;
+    if (remaining === 0) { resolve(out); return; }
+    for (var j = 0; j < list.length; j++) {
+      (function (idx) {
+        Promise.resolve(list[idx]).then(function (v) {
+          out[idx] = { status: 'fulfilled', value: v };
+          remaining -= 1;
+          if (remaining === 0) resolve(out);
+        }, function (e) {
+          out[idx] = { status: 'rejected', reason: e };
+          remaining -= 1;
+          if (remaining === 0) resolve(out);
+        });
+      })(j);
+    }
+  });
+};
+
+Promise.race = function (items) {
+  return new Promise(function (resolve, reject) {
+    for (var i = 0; i < items.length; i++) {
+      Promise.resolve(items[i]).then(resolve, reject);
+    }
+  });
+};
+
+Promise.any = function (items) {
+  return new Promise(function (resolve, reject) {
+    var remaining = items.length;
+    if (remaining === 0) { reject(new Error('All promises were rejected')); return; }
+    for (var i = 0; i < items.length; i++) {
+      Promise.resolve(items[i]).then(resolve, function (e) {
+        remaining -= 1;
+        if (remaining === 0) reject(e);
+      });
+    }
+  });
+};
+
 // --- globalThis ------------------------------------------------------------
 // Not a real global object (there is no property bag behind the scope chain),
 // but code that only reads well-known globals off it works.

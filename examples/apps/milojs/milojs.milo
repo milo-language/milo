@@ -13,6 +13,9 @@
 from "std/io" import {
     readFile
 }
+from "std/string" import {
+    strSplit, strTrim, strSlice
+}
 from "std/environ" import {
     envVars
 }
@@ -32,22 +35,22 @@ from "./ast" import {
     Prog
 }
 from "./value" import {
-    JSValue
+    JSValue, objHandle
 }
 from "./runtime" import {
-    Interp, newObject, newArray, objSet, arrPush, scopeDefine
+    Interp, newObject, newArray, objSet, arrPush, scopeDefine, scopeLookup, objGet
 }
 from "./driver" import {
     makeInterp, bootInterp
 }
 from "./modules" import {
-    preloadGraph
+    preloadGraph, dirOf, fileExists
 }
 from "./eval" import {
     runModule
 }
 from "./eval" import {
-    execBlock
+    execBlock, runEventLoop
 }
 from "./value" import {
     toStr
@@ -105,16 +108,77 @@ fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
     scopeDefine(st, 0, "globalThis", JSValue.Obj(glob))
 }
 
+// KEY=VALUE lines from a file into process.env, matching node's --env-file.
+// Blank lines and # comments are skipped; surrounding quotes are stripped.
+fn loadEnvFile(st: &mut Interp, envPath: &string) {
+    match readFile(envPath.clone()) {
+        Result.Ok(text) => {
+            let procVal = scopeLookup(st, 0, "process")
+            let procObj = objHandle(procVal)
+            if procObj < 0 {
+                return
+            }
+            let envObj = objHandle(objGet(st, procObj, "env"))
+            if envObj < 0 {
+                return
+            }
+            for line in strSplit(text, "\n") {
+                let trimmed = strTrim(line)
+                if trimmed.len() > 0 && trimmed[0] != '#' {
+                    var eq: i64 = -1
+                    var i: i64 = 0
+                    while i < trimmed.len() && eq < 0 {
+                        if trimmed[i] == '=' {
+                            eq = i
+                        }
+                        i = i + 1
+                    }
+                    if eq > 0 {
+                        let key = strTrim(strSlice(trimmed, 0, eq))
+                        var value = strTrim(strSlice(trimmed, eq + 1, trimmed.len()))
+                        // strip one layer of matching quotes
+                        if value.len() >= 2 {
+                            let q = value[0]
+                            if (q == 34 as u8 || q == 39 as u8) && value[value.len() - 1] == q {
+                                value = strSlice(value, 1, value.len() - 1)
+                            }
+                        }
+                        objSet(st, envObj, key, JSValue.Str(value))
+                    }
+                }
+            }
+        }
+        Result.Err(_e) => {
+            eprint("milojs: cannot read env file '" + envPath + "'")
+        }
+    }
+}
+
 fn main(): i32 {
     let argv = args()
-    if argv.len() < 2 {
+    // node-compatible flags: --env-file=<path> / --env-file <path>
+    var envFile = ""
+    var path = ""
+    var ai: i64 = 1
+    while ai < argv.len() {
+        let a = argv[ai].clone()
+        if a.len() > 11 && strSlice(a, 0, 11) == "--env-file=" {
+            envFile = strSlice(a, 11, a.len())
+        } else if a == "--env-file" && ai + 1 < argv.len() {
+            ai = ai + 1
+            envFile = argv[ai].clone()
+        } else if path.len() == 0 {
+            path = a
+        }
+        ai = ai + 1
+    }
+    if path.len() == 0 {
         // no script → interactive REPL
         var st = makeInterp(false, 1024)
         bootInterp(st)
         setupNodeGlobals(st, "<repl>")
         return repl(st)
     }
-    let path = argv[1].clone()
 
     var gcStats = false
     match getEnv("MILOJS_GC_STATS") {
@@ -145,6 +209,26 @@ fn main(): i32 {
     var st = makeInterp(gcStats, gcThreshold)
     bootInterp(st)
     setupNodeGlobals(st, path.clone())
+    if envFile.len() > 0 {
+        loadEnvFile(st, envFile)
+    } else {
+        // Convenience over node, which needs --env-file: find the nearest .env
+        // walking up from the entry script. A bundle usually lives in dist/
+        // while its .env sits at the project root.
+        var dir = dirOf(path)
+        var depth: i64 = 0
+        var found = false
+        while !found && depth < 6 && dir.len() > 1 {
+            let candidate = dir + "/.env"
+            if fileExists(candidate) {
+                loadEnvFile(st, candidate)
+                found = true
+            } else {
+                dir = dirOf(dir)
+            }
+            depth = depth + 1
+        }
+    }
 
     // Parse the entry and everything it requires into one shared program, then
     // run the entry as a CommonJS module.
@@ -166,6 +250,8 @@ fn main(): i32 {
         execBlock(prog, st.modBlocks[preludeIdx], st, 0)
     }
     runModule(prog, entryIdx, st)
+    // the entry module only schedules work; the loop is what keeps a server alive
+    runEventLoop(prog, st)
     if st.throwing {
         eprint("Uncaught " + describeThrown(st, st.thrownValue))
         return 1

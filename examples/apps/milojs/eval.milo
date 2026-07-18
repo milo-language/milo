@@ -9,7 +9,7 @@ from "./value" import {
     JSValue
 }
 from "./runtime" import {
-    Interp
+    Interp, Timer, Microtask, Reaction, NATIVE_RESOLVER_BASE
 }
 from "./builtins" import {
     stringMethod, jsCharAt, mjStringifyVal, mjJsonParse, mjJsonOmitted
@@ -30,7 +30,7 @@ from "std/env" import {
     getEnv
 }
 from "std/time" import {
-    epochMillis
+    epochMillis, sleepMs
 }
 from "std/datetime" import {
     dateTimeFromEpoch, dateTimeFromEpochLocal
@@ -507,7 +507,11 @@ let NATIVE_ENCODE_URI_COMPONENT: i64 = 58
 let NATIVE_DECODE_URI_COMPONENT: i64 = 59
 let NATIVE_ENCODE_URI: i64 = 60
 let NATIVE_DECODE_URI: i64 = 61
-let NATIVE_RESOLVER_BASE: i64 = 1000000
+let NATIVE_SET_TIMEOUT: i64 = 62
+let NATIVE_SET_INTERVAL: i64 = 63
+let NATIVE_CLEAR_TIMER: i64 = 64
+let NATIVE_SET_IMMEDIATE: i64 = 65
+let NATIVE_QUEUE_MICROTASK: i64 = 66
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -646,10 +650,15 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         if argVals.len() > 0 {
             v = cloneValue(argVals[0])
         }
-        // first settle wins, as in JS
+        // first settle wins, as in JS. resolve(p) where p is a promise adopts it.
         if st.objects[target].promiseState == 0 {
-            st.objects[target].promiseState = 1 + (off % 2)
-            st.objects[target].promiseValue = v
+            let state = 1 + (off % 2)
+            let vp = objHandle(v)
+            if state == 1 && vp >= 0 && isPromise(st, vp) {
+                adoptPromise(st, target, vp)
+            } else {
+                settlePromise(st, target, state, v)
+            }
         }
         return JSValue.Undefined
     }
@@ -900,6 +909,73 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         return JSValue.Undefined
     }
     if id == NATIVE_NOOP {
+        return JSValue.Undefined
+    }
+    if id == NATIVE_SET_TIMEOUT || id == NATIVE_SET_INTERVAL || id == NATIVE_SET_IMMEDIATE {
+        if argVals.len() == 0 {
+            return JSValue.Number(0.0)
+        }
+        var delay = 0.0
+        if id != NATIVE_SET_IMMEDIATE && argVals.len() > 1 {
+            delay = toNum(argVals[1])
+        }
+        if delay != delay || delay < 0.0 {
+            delay = 0.0
+        }
+        // extra args after the delay are passed through to the callback
+        var extra: Vec<JSValue> = Vec.new()
+        var firstExtra: i64 = 2
+        if id == NATIVE_SET_IMMEDIATE {
+            firstExtra = 1
+        }
+        var ei = firstExtra
+        while ei < argVals.len() {
+            extra.push(cloneValue(argVals[ei]))
+            ei = ei + 1
+        }
+        var repeat = 0.0
+        if id == NATIVE_SET_INTERVAL {
+            repeat = delay
+            if repeat <= 0.0 {
+                // a zero-delay interval would spin the loop forever
+                repeat = 1.0
+            }
+        }
+        let tid = st.nextTimerId
+        st.nextTimerId = st.nextTimerId + 1
+        // setImmediate sorts ahead of every real timer, so it runs first once
+        // microtasks are drained. Node leaves setImmediate-vs-setTimeout(0)
+        // ordering unspecified at top level; this makes it deterministic.
+        var due = (epochMillis() as f64) + delay
+        if id == NATIVE_SET_IMMEDIATE {
+            due = 0.0
+        }
+        st.timers.push(Timer {
+            id: tid, dueMs: due, intervalMs: repeat, cb: cloneValue(argVals[0]), args: extra, active: true
+        }
+        )
+        return JSValue.Number(tid as f64)
+    }
+    if id == NATIVE_CLEAR_TIMER {
+        if argVals.len() > 0 {
+            let tid = toNum(argVals[0]) as i64
+            var i: i64 = 0
+            while i < st.timers.len() {
+                if st.timers[i].id == tid {
+                    st.timers[i].active = false
+                }
+                i = i + 1
+            }
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_QUEUE_MICROTASK {
+        if argVals.len() > 0 {
+            st.microtasks.push(Microtask {
+                cb: cloneValue(argVals[0]), arg: JSValue.Undefined, derived: -1, passthroughReject: false, isFinally: false
+            }
+            )
+        }
         return JSValue.Undefined
     }
     if id == NATIVE_ENCODE_URI_COMPONENT || id == NATIVE_ENCODE_URI {
@@ -1598,6 +1674,13 @@ fn setupGlobals(st: &mut Interp) {
     st.objects[functionCtor].isFunctionLike = true
     objSet(st, functionCtor, "prototype", JSValue.Obj(functionProto))
     scopeDefine(st, 0, "Function", JSValue.Obj(functionCtor))
+    scopeDefine(st, 0, "setTimeout", JSValue.Native(NATIVE_SET_TIMEOUT))
+    scopeDefine(st, 0, "setInterval", JSValue.Native(NATIVE_SET_INTERVAL))
+    scopeDefine(st, 0, "clearTimeout", JSValue.Native(NATIVE_CLEAR_TIMER))
+    scopeDefine(st, 0, "clearInterval", JSValue.Native(NATIVE_CLEAR_TIMER))
+    scopeDefine(st, 0, "clearImmediate", JSValue.Native(NATIVE_CLEAR_TIMER))
+    scopeDefine(st, 0, "setImmediate", JSValue.Native(NATIVE_SET_IMMEDIATE))
+    scopeDefine(st, 0, "queueMicrotask", JSValue.Native(NATIVE_QUEUE_MICROTASK))
     scopeDefine(st, 0, "encodeURIComponent", JSValue.Native(NATIVE_ENCODE_URI_COMPONENT))
     scopeDefine(st, 0, "decodeURIComponent", JSValue.Native(NATIVE_DECODE_URI_COMPONENT))
     scopeDefine(st, 0, "encodeURI", JSValue.Native(NATIVE_ENCODE_URI))
@@ -1752,6 +1835,10 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             return evalBin(op, va, vb)
         }
         Expr.Un(op, a) => {
+            // delete needs the unevaluated target, not its value
+            if op == "delete" {
+                return evalDelete(prog, a, st, scope)
+            }
             // typeof is the one context where an undeclared name is legal
             if op == "typeof" {
                 let inner = getExpr(prog, a)
@@ -1797,12 +1884,43 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if ps == 1 {
                         return pv
                     }
-                    // Still pending. There is no event loop, so nothing can ever
-                    // settle it — throw rather than silently yielding undefined
-                    // and letting the caller compute on garbage.
-                    st.throwing = true
-                    st.thrownValue = JSValue.Str("TypeError: await on a pending promise — milojs has no event loop yet")
-                    return JSValue.Undefined
+                    // Pending. Milo has no coroutines, so this native frame
+                    // cannot suspend; instead the event loop is drained in place
+                    // until the promise settles. Ordering therefore differs from
+                    // real JS — work queued *after* this await can run before the
+                    // awaiting function resumes — but the value flow is correct.
+                    // If nothing is runnable the await can never complete, which
+                    // is a deadlock and is reported as one.
+                    // the promise may be a temporary (await new Promise(...)),
+                    // reachable from nothing while the drain runs user code
+                    pushTemp(st, JSValue.Obj(po))
+                    var spins: i64 = 0
+                    while st.objects[po].promiseState == 0 && !st.throwing {
+                        if st.microtasks.len() > 0 {
+                            drainMicrotasks(prog, st)
+                        } else {
+                            compactTimers(st)
+                            if !runOneTimer(prog, st) {
+                                popTemp(st)
+                                st.throwing = true
+                                st.thrownValue = makeError(st, "TypeError", "await on a promise that can never settle (no pending work)")
+                                return JSValue.Undefined
+                            }
+                        }
+                        spins = spins + 1
+                    }
+                    popTemp(st)
+                    if st.throwing {
+                        return JSValue.Undefined
+                    }
+                    let settled = st.objects[po].promiseState
+                    let sv = cloneValue(st.objects[po].promiseValue)
+                    if settled == 2 {
+                        st.throwing = true
+                        st.thrownValue = sv
+                        return JSValue.Undefined
+                    }
+                    return sv
                 }
                 return va
             }
@@ -2380,6 +2498,256 @@ fn isSymbolValue(v: &JSValue): bool {
     }
 }
 
+// Drain every queued microtask. Microtasks may enqueue more, which is correct:
+// JS runs the queue to exhaustion before the next timer.
+// Settle a promise and queue every reaction that was waiting on it. Settling
+// twice is ignored, as in JS.
+fn settlePromise(st: &mut Interp, p: i64, state: i64, value: JSValue) {
+    if p < 0 || !isPromise(st, p) {
+        return
+    }
+    if st.objects[p].promiseState != 0 {
+        return
+    }
+    st.objects[p].promiseState = state
+    st.objects[p].promiseValue = cloneValue(value)
+    var i: i64 = 0
+    while i < st.objects[p].reactions.len() {
+        var handler = cloneValue(st.objects[p].reactions[i].onFulfilled)
+        if state == 2 {
+            handler = cloneValue(st.objects[p].reactions[i].onRejected)
+        }
+        st.microtasks.push(Microtask {
+            cb: handler, arg: cloneValue(value), derived: st.objects[p].reactions[i].derived, passthroughReject: state == 2, isFinally: st.objects[p].reactions[i].isFinally
+        }
+        )
+        i = i + 1
+    }
+    st.objects[p].reactions = Vec.new()
+}
+
+// Make `derived` follow `source`: settle now if it already has, else register.
+fn adoptPromise(st: &mut Interp, derived: i64, source: i64) {
+    let state = st.objects[source].promiseState
+    if state == 0 {
+        st.objects[source].reactions.push(Reaction {
+            onFulfilled: JSValue.Undefined, onRejected: JSValue.Undefined, derived: derived, isFinally: false
+        }
+        )
+        return
+    }
+    settlePromise(st, derived, state, cloneValue(st.objects[source].promiseValue))
+}
+
+fn describeThrownValue(st: &Interp, v: &JSValue): string {
+    let h = objHandle(v)
+    if h >= 0 && st.objects[h].isError {
+        return toStr(objGet(st, h, "name")) + ": " + toStr(objGet(st, h, "message"))
+    }
+    return toStr(v)
+}
+
+fn drainMicrotasks(prog: &Prog, st: &mut Interp) {
+    var guard: i64 = 0
+    while st.microtasks.len() > 0 && guard < 1000000 {
+        let task = cloneValue(st.microtasks[0].cb)
+        let arg = cloneValue(st.microtasks[0].arg)
+        let derived = st.microtasks[0].derived
+        let passthrough = st.microtasks[0].passthroughReject
+        let isFinallyTask = st.microtasks[0].isFinally
+        var rest: Vec<Microtask> = Vec.new()
+        var i: i64 = 1
+        while i < st.microtasks.len() {
+            rest.push(Microtask {
+                cb: cloneValue(st.microtasks[i].cb), arg: cloneValue(st.microtasks[i].arg), derived: st.microtasks[i].derived, passthroughReject: st.microtasks[i].passthroughReject, isFinally: st.microtasks[i].isFinally
+            }
+            )
+            i = i + 1
+        }
+        st.microtasks = rest
+        if derived < 0 {
+            var args: Vec<JSValue> = Vec.new()
+            args.push(arg)
+            let _ = callValue(prog, task, args, JSValue.Undefined, st)
+            if st.throwing {
+                eprint("Uncaught (in microtask) " + describeThrownValue(st, st.thrownValue))
+                st.throwing = false
+                st.thrownValue = JSValue.Undefined
+            }
+        } else if !isCallable(task) {
+            // no handler for this state: the value flows to the derived promise
+            var passState: i64 = 1
+            if passthrough {
+                passState = 2
+            }
+            settlePromise(st, derived, passState, arg)
+        } else {
+            // the handler runs user code, so the settlement value and the derived
+            // promise must stay rooted across it — the microtask that held them
+            // has already been popped off the queue
+            pushTemp(st, cloneValue(arg))
+            pushTemp(st, JSValue.Obj(derived))
+            var args: Vec<JSValue> = Vec.new()
+            args.push(cloneValue(arg))
+            let r = callValue(prog, task, args, JSValue.Undefined, st)
+            popTemp(st)
+            popTemp(st)
+            if st.throwing {
+                let err = cloneValue(st.thrownValue)
+                st.throwing = false
+                st.thrownValue = JSValue.Undefined
+                settlePromise(st, derived, 2, err)
+            } else if isFinallyTask {
+                // finally: the handler's value is discarded, the original
+                // settlement (including a rejection) continues down the chain
+                var origState: i64 = 1
+                if passthrough {
+                    origState = 2
+                }
+                settlePromise(st, derived, origState, arg)
+            } else {
+                let rp = objHandle(r)
+                if rp >= 0 && isPromise(st, rp) {
+                    // adopt the returned promise's eventual state
+                    adoptPromise(st, derived, rp)
+                } else {
+                    settlePromise(st, derived, 1, r)
+                }
+            }
+        }
+        guard = guard + 1
+    }
+}
+
+// Index of the earliest active timer, or -1 when none remain.
+fn earliestTimer(st: &Interp): i64 {
+    var best: i64 = -1
+    var i: i64 = 0
+    while i < st.timers.len() {
+        if st.timers[i].active {
+            if best < 0 || st.timers[i].dueMs < st.timers[best].dueMs {
+                best = i
+            }
+        }
+        i = i + 1
+    }
+    return best
+}
+
+// Run one due timer, sleeping until it is due. Returns false when there is
+// nothing left to run.
+fn runOneTimer(prog: &Prog, st: &mut Interp): bool {
+    let idx = earliestTimer(st)
+    if idx < 0 {
+        return false
+    }
+    let nowMs = epochMillis() as f64
+    let due = st.timers[idx].dueMs
+    if due > nowMs {
+        sleepMs((due - nowMs) as i64)
+    }
+    let cb = cloneValue(st.timers[idx].cb)
+    var args: Vec<JSValue> = Vec.new()
+    var ai: i64 = 0
+    while ai < st.timers[idx].args.len() {
+        args.push(cloneValue(st.timers[idx].args[ai]))
+        ai = ai + 1
+    }
+    if st.timers[idx].intervalMs > 0.0 {
+        st.timers[idx].dueMs = (epochMillis() as f64) + st.timers[idx].intervalMs
+    } else {
+        st.timers[idx].active = false
+    }
+    let _ = callValue(prog, cb, args, JSValue.Undefined, st)
+    if st.throwing {
+        eprint("Uncaught (in timer) " + toStr(st.thrownValue))
+        st.throwing = false
+        st.thrownValue = JSValue.Undefined
+    }
+    return true
+}
+
+// The event loop: microtasks to exhaustion, then one timer, repeat. Returns when
+// nothing is left to run — which for a server with an interval never happens.
+fn runEventLoop(prog: &Prog, st: &mut Interp) {
+    var going = true
+    while going {
+        drainMicrotasks(prog, st)
+        compactTimers(st)
+        if !runOneTimer(prog, st) {
+            going = false
+        }
+    }
+}
+
+// Drop cancelled timers so the list cannot grow without bound in a long run.
+fn compactTimers(st: &mut Interp) {
+    var anyDead = false
+    var i: i64 = 0
+    while i < st.timers.len() {
+        if !st.timers[i].active {
+            anyDead = true
+        }
+        i = i + 1
+    }
+    if !anyDead {
+        return
+    }
+    var live: Vec<Timer> = Vec.new()
+    var j: i64 = 0
+    while j < st.timers.len() {
+        if st.timers[j].active {
+            var args: Vec<JSValue> = Vec.new()
+            var k: i64 = 0
+            while k < st.timers[j].args.len() {
+                args.push(cloneValue(st.timers[j].args[k]))
+                k = k + 1
+            }
+            live.push(Timer {
+                id: st.timers[j].id, dueMs: st.timers[j].dueMs, intervalMs: st.timers[j].intervalMs, cb: cloneValue(st.timers[j].cb), args: args, active: true
+            }
+            )
+        }
+        j = j + 1
+    }
+    st.timers = live
+}
+
+// `delete obj.k` / `delete obj[k]` — remove an own property. Array elements
+// become holes (undefined) rather than shifting, as in JS. Always returns true
+// here; the non-configurable cases the spec reports false for do not arise.
+fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
+    let node = getExpr(prog, targetIdx)
+    match node {
+        Expr.Member(objIdx, name) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            let o = objHandle(ov)
+            if o >= 0 {
+                objDeleteKey(st, o, name)
+            }
+            return JSValue.Bool(true)
+        }
+        Expr.Index(objIdx, keyIdx) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            pushTemp(st, cloneValue(ov))
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            popTemp(st)
+            let key = toStr(kv)
+            let o = objHandle(ov)
+            if o >= 0 {
+                objDeleteKey(st, o, key)
+            }
+            return JSValue.Bool(true)
+        }
+        _ => {
+            // `delete someVariable` is not permitted on bindings; evaluate for
+            // effect and report false
+            let _ = evalExpr(prog, targetIdx, st, scope)
+            return JSValue.Bool(false)
+        }
+    }
+}
+
 fn isSuperName(name: &string): bool {
     if name.len() < 8 {
         return false
@@ -2687,61 +3055,51 @@ fn isArrayMethod(name: &string): bool {
 // .then/.catch/.finally on an already-settled promise. Callbacks run immediately
 // (no microtask queue), so ordering differs from real JS, but the value flow and
 // the rejection-skips-onFulfilled rule match.
-fn promiseMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
-    let state = st.objects[o].promiseState
-    let value = cloneValue(st.objects[o].promiseValue)
-    if name == "finally" {
+// .then/.catch/.finally. Handlers never run synchronously: they are queued as
+// microtasks, so ordering matches JS instead of the old settle-in-place model.
+fn promiseMethod(o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    var onFul = JSValue.Undefined
+    var onRej = JSValue.Undefined
+    var isFinally = false
+    if name == "then" {
         if args.len() > 0 {
-            var noArgs: Vec<JSValue> = Vec.new()
-            let _ = callValue(prog, args[0], noArgs, JSValue.Undefined, st)
+            onFul = cloneValue(args[0])
         }
-        return JSValue.Obj(o)
-    }
-    if state == 0 {
-        // A handler registered on a pending promise would need to be stored and
-        // run on settlement; with no event loop it would simply be dropped, so
-        // say so instead of losing it silently.
-        st.throwing = true
-        st.thrownValue = JSValue.Str("TypeError: ." + name.clone() + "() on a pending promise — milojs has no event loop yet")
-        return JSValue.Obj(o)
-    }
-    var cb = JSValue.Undefined
-    if name == "catch" {
-        if state != 2 {
-            return JSValue.Obj(o)
+        if args.len() > 1 {
+            onRej = cloneValue(args[1])
         }
+    } else if name == "catch" {
         if args.len() > 0 {
-            cb = cloneValue(args[0])
+            onRej = cloneValue(args[0])
         }
     } else {
-        if state == 1 && args.len() > 0 {
-            cb = cloneValue(args[0])
-        } else if state == 2 {
-            if args.len() > 1 {
-                cb = cloneValue(args[1])
-            } else {
-                return JSValue.Obj(o)
-            }
+        // finally: run the callback on either path, then pass the ORIGINAL
+        // settlement through — the callback's return value is discarded and a
+        // rejection stays a rejection
+        if args.len() > 0 {
+            onFul = cloneValue(args[0])
+            onRej = cloneValue(args[0])
         }
+        isFinally = true
     }
-    if objHandle(cb) < 0 && !isCallable(cb) {
-        // no handler for this state — the promise passes through unchanged
-        return JSValue.Obj(o)
+    let derived = newPromise(st, 0, JSValue.Undefined)
+    let state = st.objects[o].promiseState
+    if state == 0 {
+        st.objects[o].reactions.push(Reaction {
+            onFulfilled: onFul, onRejected: onRej, derived: derived, isFinally: isFinally
+        }
+        )
+    } else {
+        var handler = onFul
+        if state == 2 {
+            handler = onRej
+        }
+        st.microtasks.push(Microtask {
+            cb: handler, arg: cloneValue(st.objects[o].promiseValue), derived: derived, passthroughReject: state == 2, isFinally: isFinally
+        }
+        )
     }
-    var cbArgs: Vec<JSValue> = Vec.new()
-    cbArgs.push(value)
-    let r = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
-    if st.throwing {
-        let err = cloneValue(st.thrownValue)
-        st.throwing = false
-        st.thrownValue = JSValue.Undefined
-        return JSValue.Obj(newPromise(st, 2, err))
-    }
-    let ro = objHandle(r)
-    if ro >= 0 && isPromise(st, ro) {
-        return r
-    }
-    return JSValue.Obj(newPromise(st, 1, r))
+    return JSValue.Obj(derived)
 }
 
 fn isCallable(v: &JSValue): bool {
@@ -3306,7 +3664,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
             }
             if isPromise(st, o) && (name == "then" || name == "catch" || name == "finally") {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
-                let r = promiseMethod(prog, o, name, argVals, st)
+                let r = promiseMethod(o, name, argVals, st)
                 popTemp(st)
                 return r
             }
