@@ -22,6 +22,8 @@ enum JSValue {
     Func(i64, i64),
     // heap object handle — index into Interp.objects (stable, GC-managed)
     Obj(i64),
+    // a built-in function/constructor, identified by a native id (see callNative)
+    Native(i64),
 }
 
 fn cloneValue(v: &JSValue): JSValue {
@@ -46,6 +48,9 @@ fn cloneValue(v: &JSValue): JSValue {
         }
         JSValue.Obj(o) => {
             return JSValue.Obj(o)
+        }
+        JSValue.Native(id) => {
+            return JSValue.Native(id)
         }
     }
 }
@@ -138,6 +143,9 @@ fn toStr(v: &JSValue): string {
             // string coercion (""+obj, String(obj)); console.log uses inspect() instead
             return "[object Object]"
         }
+        JSValue.Native(_id) => {
+            return "function"
+        }
     }
 }
 
@@ -177,6 +185,9 @@ fn toNum(v: &JSValue): f64 {
         JSValue.Obj(_o) => {
             return jsNan()
         }
+        JSValue.Native(_id) => {
+            return jsNan()
+        }
     }
 }
 
@@ -201,6 +212,9 @@ fn truthy(v: &JSValue): bool {
             return true
         }
         JSValue.Obj(_o) => {
+            return true
+        }
+        JSValue.Native(_id) => {
             return true
         }
     }
@@ -291,6 +305,16 @@ fn jsEquals(a: &JSValue, b: &JSValue): bool {
             match b {
                 JSValue.Obj(o2) => {
                     return o1 == o2
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        JSValue.Native(id1) => {
+            match b {
+                JSValue.Native(id2) => {
+                    return id1 == id2
                 }
                 _ => {
                     return false

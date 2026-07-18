@@ -61,6 +61,7 @@ let T_STAREQ: i32 = 52
 let T_SLASHEQ: i32 = 53
 let T_PERCENTEQ: i32 = 54
 let T_QUESTION: i32 = 55
+let T_INSTANCEOF: i32 = 56
 
 struct Token {
     kind: i32,
@@ -137,6 +138,9 @@ fn keywordKind(s: &string): i32 {
     }
     if s == "typeof" {
         return T_TYPEOF
+    }
+    if s == "instanceof" {
+        return T_INSTANCEOF
     }
     return T_IDENT
 }

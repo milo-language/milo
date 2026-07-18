@@ -32,7 +32,7 @@ from "./runtime" import {
     Interp, newScope, collect
 }
 from "./eval" import {
-    execBlock
+    execBlock, setupGlobals
 }
 from "./value" import {
     i64ToStr, toStr
@@ -71,6 +71,7 @@ fn main(): i32 {
             }
             // scope 0 = global (never collected — always a GC root)
             newScope(st, -1)
+            setupGlobals(st)
             execBlock(prog, top, st, 0)
             if st.throwing {
                 eprint("Uncaught " + toStr(st.thrownValue))

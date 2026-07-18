@@ -11,6 +11,9 @@ from "./value" import {
 from "./runtime" import {
     Interp
 }
+from "./builtins" import {
+    stringMethod, charAt
+}
 from "std/math" import {
     mathMod
 }
@@ -178,6 +181,90 @@ fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: 
     }
 }
 
+// Built-in function/constructor ids. The Error family shares one path; the
+// specific kind is carried in the object's `name` property.
+let NATIVE_ERROR: i64 = 0
+let NATIVE_TYPE_ERROR: i64 = 1
+let NATIVE_RANGE_ERROR: i64 = 2
+let NATIVE_SYNTAX_ERROR: i64 = 3
+let NATIVE_REFERENCE_ERROR: i64 = 4
+
+fn nativeErrorName(id: i64): string {
+    if id == NATIVE_TYPE_ERROR {
+        return "TypeError"
+    }
+    if id == NATIVE_RANGE_ERROR {
+        return "RangeError"
+    }
+    if id == NATIVE_SYNTAX_ERROR {
+        return "SyntaxError"
+    }
+    if id == NATIVE_REFERENCE_ERROR {
+        return "ReferenceError"
+    }
+    return "Error"
+}
+
+fn isErrorCtor(id: i64): bool {
+    return id >= NATIVE_ERROR && id <= NATIVE_REFERENCE_ERROR
+}
+
+// Invoke a native function/constructor. Error(msg) and new Error(msg) behave the
+// same (both mint an error object), matching JS.
+fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
+    if isErrorCtor(id) {
+        let o = newObject(st)
+        st.objects[o].isError = true
+        objSet(st, o, "name", JSValue.Str(nativeErrorName(id)))
+        var msg = ""
+        if argVals.len() > 0 {
+            msg = toStr(argVals[0])
+        }
+        objSet(st, o, "message", JSValue.Str(msg))
+        return JSValue.Obj(o)
+    }
+    return JSValue.Undefined
+}
+
+// x instanceof C: for a user constructor, the object must have been made by it
+// (its `ctor` slot matches); for a native Error constructor, the object must be
+// an error whose kind matches (Error itself matches any error).
+fn instanceOf(st: &Interp, val: &JSValue, ctor: &JSValue): bool {
+    match val {
+        JSValue.Obj(o) => {
+            match ctor {
+                JSValue.Func(fIdx, _e) => {
+                    return st.objects[o].ctor == fIdx
+                }
+                JSValue.Native(id) => {
+                    if !st.objects[o].isError {
+                        return false
+                    }
+                    if id == NATIVE_ERROR {
+                        return true
+                    }
+                    let nm = objGet(st, o, "name")
+                    return toStr(nm) == nativeErrorName(id)
+                }
+                _ => {
+                    return false
+                }
+            }
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
+fn setupGlobals(st: &mut Interp) {
+    scopeDefine(st, 0, "Error", JSValue.Native(NATIVE_ERROR))
+    scopeDefine(st, 0, "TypeError", JSValue.Native(NATIVE_TYPE_ERROR))
+    scopeDefine(st, 0, "RangeError", JSValue.Native(NATIVE_RANGE_ERROR))
+    scopeDefine(st, 0, "SyntaxError", JSValue.Native(NATIVE_SYNTAX_ERROR))
+    scopeDefine(st, 0, "ReferenceError", JSValue.Native(NATIVE_REFERENCE_ERROR))
+}
+
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
 fn typeofStr(v: &JSValue): string {
     match v {
@@ -201,6 +288,9 @@ fn typeofStr(v: &JSValue): string {
         }
         JSValue.Obj(_o) => {
             return "object"
+        }
+        JSValue.Native(_id) => {
+            return "function"
         }
     }
 }
@@ -246,6 +336,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 }
                 return evalExpr(prog, b, st, scope)
             }
+            if op == "instanceof" {
+                let lv = evalExpr(prog, a, st, scope)
+                let rv = evalExpr(prog, b, st, scope)
+                return JSValue.Bool(instanceOf(st, lv, rv))
+            }
             let va = evalExpr(prog, a, st, scope)
             let vb = evalExpr(prog, b, st, scope)
             return evalBin(op, va, vb)
@@ -274,6 +369,12 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 JSValue.Obj(o) => {
                     return getMember(st, o, name)
                 }
+                JSValue.Str(s) => {
+                    if name == "length" {
+                        return JSValue.Number(s.len() as f64)
+                    }
+                    return JSValue.Undefined
+                }
                 _ => {
                     return JSValue.Undefined
                 }
@@ -286,6 +387,14 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             match ov {
                 JSValue.Obj(o) => {
                     return getMember(st, o, key)
+                }
+                JSValue.Str(s) => {
+                    // s[i] → a single-character string (or undefined out of range)
+                    let i = toNum(kv) as i64
+                    if i >= 0 && i < s.len() {
+                        return JSValue.Str(charAt(s, i))
+                    }
+                    return JSValue.Undefined
                 }
                 _ => {
                     return JSValue.Undefined
@@ -347,6 +456,8 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     pushTemp(st, JSValue.Func(fIdx, envIdx))
                     let argVals = evalArgs(prog, argsIdx, st, scope)
                     let obj = newObject(st)
+                    // record the constructor so `obj instanceof Ctor` can match
+                    st.objects[obj].ctor = fIdx
                     pushTemp(st, JSValue.Obj(obj))
                     let result = callFunction(prog, fIdx, envIdx, argVals, JSValue.Obj(obj), st)
                     popTemp(st)
@@ -360,6 +471,10 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                             return JSValue.Obj(obj)
                         }
                     }
+                }
+                JSValue.Native(id) => {
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    return callNative(id, argVals, st)
                 }
                 _ => {
                     print("milojs: TypeError: value is not a constructor")
@@ -533,29 +648,269 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
     }
 }
 
-// Call a member as a method: `this` binds to the receiver. Handles the built-in
-// array methods, then function-valued properties. The receiver is temp-rooted
-// across argument evaluation (an argument may be a call that triggers GC).
+// Invoke any callable JSValue (user function or native).
+fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+    match fnVal {
+        JSValue.Func(fIdx, envIdx) => {
+            return callFunction(prog, fIdx, envIdx, args, thisVal, st)
+        }
+        JSValue.Native(id) => {
+            return callNative(id, args, st)
+        }
+        _ => {
+            return JSValue.Undefined
+        }
+    }
+}
+
+// The (element, index, array) triple JS array-iteration callbacks receive.
+fn makeCbArgs(st: &Interp, o: i64, i: i64): Vec<JSValue> {
+    var v: Vec<JSValue> = Vec.new()
+    v.push(arrGet(st, o, i))
+    v.push(JSValue.Number(i as f64))
+    v.push(JSValue.Obj(o))
+    return v
+}
+
+fn isArrayMethod(name: &string): bool {
+    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop"
+}
+
+// Dispatch a built-in Array method. `o` (the array) is temp-rooted by the caller;
+// the result array and the callback are additionally rooted while callbacks run
+// (a callback can allocate and collect).
+fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    let n = arrLen(st, o)
+    if name == "push" {
+        var j: i64 = 0
+        while j < args.len() {
+            arrPush(st, o, cloneValue(args[j]))
+            j = j + 1
+        }
+        return JSValue.Number(arrLen(st, o) as f64)
+    }
+    if name == "pop" {
+        if n == 0 {
+            return JSValue.Undefined
+        }
+        return st.objects[o].elems.pop()!
+    }
+    if name == "join" {
+        var sep = ","
+        if args.len() > 0 {
+            sep = toStr(args[0])
+        }
+        var out = ""
+        var i: i64 = 0
+        while i < n {
+            if i > 0 {
+                out = out + sep
+            }
+            let e = arrGet(st, o, i)
+            // JS renders null/undefined as empty in join
+            match e {
+                JSValue.Null => {
+                }
+                JSValue.Undefined => {
+                }
+                _ => {
+                    out = out + toStr(e)
+                }
+            }
+            i = i + 1
+        }
+        return JSValue.Str(out)
+    }
+    if name == "indexOf" {
+        var i: i64 = 0
+        while i < n {
+            let e = arrGet(st, o, i)
+            if args.len() > 0 && jsEquals(e, args[0]) {
+                return JSValue.Number(i as f64)
+            }
+            i = i + 1
+        }
+        return JSValue.Number(0.0 - 1.0)
+    }
+    if name == "includes" {
+        var i: i64 = 0
+        while i < n {
+            let e = arrGet(st, o, i)
+            if args.len() > 0 && jsEquals(e, args[0]) {
+                return JSValue.Bool(true)
+            }
+            i = i + 1
+        }
+        return JSValue.Bool(false)
+    }
+    if name == "slice" {
+        var a: i64 = 0
+        var b = n
+        if args.len() > 0 {
+            a = toNum(args[0]) as i64
+        }
+        if args.len() > 1 {
+            b = toNum(args[1]) as i64
+        }
+        if a < 0 {
+            a = n + a
+            if a < 0 {
+                a = 0
+            }
+        }
+        if b < 0 {
+            b = n + b
+        }
+        if b > n {
+            b = n
+        }
+        let sliced = newArray(st)
+        var i = a
+        while i < b {
+            arrPush(st, sliced, arrGet(st, o, i))
+            i = i + 1
+        }
+        return JSValue.Obj(sliced)
+    }
+    if name == "reverse" {
+        var i: i64 = 0
+        var j = n - 1
+        while i < j {
+            let lo = arrGet(st, o, i)
+            let hi = arrGet(st, o, j)
+            arrSet(st, o, i, hi)
+            arrSet(st, o, j, lo)
+            i = i + 1
+            j = j - 1
+        }
+        return JSValue.Obj(o)
+    }
+    if name == "concat" {
+        let joined = newArray(st)
+        pushTemp(st, JSValue.Obj(joined))
+        var i: i64 = 0
+        while i < n {
+            arrPush(st, joined, arrGet(st, o, i))
+            i = i + 1
+        }
+        var a: i64 = 0
+        while a < args.len() {
+            let av = cloneValue(args[a])
+            match av {
+                JSValue.Obj(other) => {
+                    if st.objects[other].isArray {
+                        var k: i64 = 0
+                        let m = arrLen(st, other)
+                        while k < m {
+                            arrPush(st, joined, arrGet(st, other, k))
+                            k = k + 1
+                        }
+                    } else {
+                        arrPush(st, joined, JSValue.Obj(other))
+                    }
+                }
+                _ => {
+                    arrPush(st, joined, cloneValue(args[a]))
+                }
+            }
+            a = a + 1
+        }
+        popTemp(st)
+        return JSValue.Obj(joined)
+    }
+    // callback methods: root the callback across the loop
+    var cb = JSValue.Undefined
+    if args.len() > 0 {
+        cb = cloneValue(args[0])
+    }
+    pushTemp(st, cloneValue(cb))
+    if name == "map" {
+        let mapped = newArray(st)
+        pushTemp(st, JSValue.Obj(mapped))
+        var i: i64 = 0
+        while i < n {
+            let cbArgs = makeCbArgs(st, o, i)
+            let r = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+            arrPush(st, mapped, r)
+            i = i + 1
+        }
+        popTemp(st)
+        popTemp(st)
+        return JSValue.Obj(mapped)
+    }
+    if name == "filter" {
+        let kept = newArray(st)
+        pushTemp(st, JSValue.Obj(kept))
+        var i: i64 = 0
+        while i < n {
+            let elem = arrGet(st, o, i)
+            let cbArgs = makeCbArgs(st, o, i)
+            let keep = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+            if truthy(keep) {
+                arrPush(st, kept, elem)
+            }
+            i = i + 1
+        }
+        popTemp(st)
+        popTemp(st)
+        return JSValue.Obj(kept)
+    }
+    if name == "forEach" {
+        var i: i64 = 0
+        while i < n {
+            let cbArgs = makeCbArgs(st, o, i)
+            let _ = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+            i = i + 1
+        }
+        popTemp(st)
+        return JSValue.Undefined
+    }
+    if name == "reduce" {
+        var acc = JSValue.Undefined
+        var start: i64 = 0
+        if args.len() > 1 {
+            acc = cloneValue(args[1])
+        } else {
+            if n > 0 {
+                acc = arrGet(st, o, 0)
+                start = 1
+            }
+        }
+        pushTemp(st, cloneValue(acc))
+        var i = start
+        while i < n {
+            var cbArgs: Vec<JSValue> = Vec.new()
+            cbArgs.push(cloneValue(acc))
+            cbArgs.push(arrGet(st, o, i))
+            cbArgs.push(JSValue.Number(i as f64))
+            acc = callValue(prog, cb, cbArgs, JSValue.Undefined, st)
+            i = i + 1
+        }
+        popTemp(st)
+        popTemp(st)
+        return acc
+    }
+    popTemp(st)
+    return JSValue.Undefined
+}
+
+// Call a member as a method: `this` binds to the receiver. String and array
+// receivers dispatch to built-in methods; object receivers use function-valued
+// properties. The receiver is temp-rooted across argument evaluation (an argument
+// may be a call that triggers GC).
 fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
     match recv {
+        JSValue.Str(s) => {
+            let argVals = evalArgs(prog, argsIdx, st, scope)
+            return stringMethod(name, s, argVals, st)
+        }
         JSValue.Obj(o) => {
             pushTemp(st, JSValue.Obj(o))
-            if st.objects[o].isArray && (name == "push" || name == "pop") {
+            if st.objects[o].isArray && isArrayMethod(name) {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
-                if name == "push" {
-                    var j: i64 = 0
-                    while j < argVals.len() {
-                        arrPush(st, o, cloneValue(argVals[j]))
-                        j = j + 1
-                    }
-                    popTemp(st)
-                    return JSValue.Number(arrLen(st, o) as f64)
-                }
+                let r = arrayMethod(prog, o, name, argVals, st)
                 popTemp(st)
-                if arrLen(st, o) == 0 {
-                    return JSValue.Undefined
-                }
-                return st.objects[o].elems.pop()
+                return r
             }
             let m = getMember(st, o, name)
             match m {
@@ -634,6 +989,10 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                     popTemp(st)
                     return r
                 }
+                JSValue.Native(id) => {
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    return callNative(id, argVals, st)
+                }
                 _ => {
                     print("milojs: TypeError: value is not a function")
                     return JSValue.Undefined
@@ -693,8 +1052,8 @@ fn execTry(prog: &Prog, tryB: i64, param: &string, catchB: i64, finallyB: i64, s
     pushActive(st, finScope)
     let finFlow = execBlock(prog, finallyB, st, finScope)
     popActive(st)
-    savedRet = st.tempRoots.pop()
-    savedThrow = st.tempRoots.pop()
+    savedRet = st.tempRoots.pop()!
+    savedThrow = st.tempRoots.pop()!
 
     match finFlow {
         Flow.Ret(fv) => {

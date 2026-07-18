@@ -1,0 +1,288 @@
+// Built-in String methods (and the string-building helpers they need). These
+// operate on byte offsets — correct for ASCII, which is all the test corpus
+// needs; a UTF-16-accurate length/index is future work. Array methods that take
+// a callback (map/filter/forEach/reduce) live in eval.milo, where callFunction
+// is; the callback-free ones (join/indexOf/slice/…) are here.
+
+from "./value" import {
+    JSValue
+}
+from "./runtime" import {
+    Interp
+}
+
+fn isWs(c: u8): bool {
+    return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
+}
+
+// Normalize a possibly-negative slice index to [0, len], JS-style.
+fn clampIndex(idx: i64, len: i64): i64 {
+    var i = idx
+    if i < 0 {
+        i = len + i
+    }
+    if i < 0 {
+        i = 0
+    }
+    if i > len {
+        i = len
+    }
+    return i
+}
+
+fn strSlice(s: &string, start: i64, end: i64): string {
+    let len = s.len()
+    let a = clampIndex(start, len)
+    let b = clampIndex(end, len)
+    var out = String.withCapacity(0)
+    var i = a
+    while i < b {
+        out.push(s[i])
+        i = i + 1
+    }
+    return out
+}
+
+// First index of `sub` in `s` at or after `start`, or -1. (`from` is a reserved keyword.)
+fn jsIndexOf(s: &string, sub: &string, start: i64): i64 {
+    let n = s.len()
+    let m = sub.len()
+    if m == 0 {
+        if start > n {
+            return n
+        }
+        if start < 0 {
+            return 0
+        }
+        return start
+    }
+    var i = start
+    if i < 0 {
+        i = 0
+    }
+    while i + m <= n {
+        var j: i64 = 0
+        var matched = true
+        while j < m {
+            if s[i + j] != sub[j] {
+                matched = false
+                j = m
+            } else {
+                j = j + 1
+            }
+        }
+        if matched {
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+fn jsContains(s: &string, sub: &string): bool {
+    return jsIndexOf(s, sub, 0) >= 0
+}
+
+fn jsStartsWith(s: &string, sub: &string): bool {
+    let m = sub.len()
+    if m > s.len() {
+        return false
+    }
+    var j: i64 = 0
+    while j < m {
+        if s[j] != sub[j] {
+            return false
+        }
+        j = j + 1
+    }
+    return true
+}
+
+fn jsEndsWith(s: &string, sub: &string): bool {
+    let n = s.len()
+    let m = sub.len()
+    if m > n {
+        return false
+    }
+    var j: i64 = 0
+    while j < m {
+        if s[n - m + j] != sub[j] {
+            return false
+        }
+        j = j + 1
+    }
+    return true
+}
+
+fn strUpper(s: &string): string {
+    var out = String.withCapacity(s.len())
+    var i: i64 = 0
+    while i < s.len() {
+        var c = s[i]
+        if c >= 'a' && c <= 'z' {
+            c = c - 32
+        }
+        out.push(c)
+        i = i + 1
+    }
+    return out
+}
+
+fn strLower(s: &string): string {
+    var out = String.withCapacity(s.len())
+    var i: i64 = 0
+    while i < s.len() {
+        var c = s[i]
+        if c >= 'A' && c <= 'Z' {
+            c = c + 32
+        }
+        out.push(c)
+        i = i + 1
+    }
+    return out
+}
+
+fn jsTrim(s: &string): string {
+    let n = s.len()
+    var a: i64 = 0
+    while a < n && isWs(s[a]) {
+        a = a + 1
+    }
+    var b = n
+    while b > a && isWs(s[b - 1]) {
+        b = b - 1
+    }
+    return strSlice(s, a, b)
+}
+
+fn jsRepeat(s: &string, count: i64): string {
+    var out = String.withCapacity(0)
+    var k: i64 = 0
+    while k < count {
+        var i: i64 = 0
+        while i < s.len() {
+            out.push(s[i])
+            i = i + 1
+        }
+        k = k + 1
+    }
+    return out
+}
+
+fn charAt(s: &string, idx: i64): string {
+    var out = String.withCapacity(1)
+    if idx >= 0 && idx < s.len() {
+        out.push(s[idx])
+    }
+    return out
+}
+
+fn argNum(args: &Vec<JSValue>, i: i64, dflt: i64): i64 {
+    if i < args.len() {
+        return toNum(args[i]) as i64
+    }
+    return dflt
+}
+
+fn argStr(args: &Vec<JSValue>, i: i64): string {
+    if i < args.len() {
+        return toStr(args[i])
+    }
+    return ""
+}
+
+// s.split(sep) → a new heap array. No arg → [s]; empty sep → one entry per char.
+fn jsSplit(s: &string, args: &Vec<JSValue>, st: &mut Interp): i64 {
+    let arr = newArray(st)
+    if args.len() == 0 {
+        arrPush(st, arr, JSValue.Str(s.clone()))
+        return arr
+    }
+    let sep = toStr(args[0])
+    if sep.len() == 0 {
+        var i: i64 = 0
+        while i < s.len() {
+            arrPush(st, arr, JSValue.Str(charAt(s, i)))
+            i = i + 1
+        }
+        return arr
+    }
+    var start: i64 = 0
+    var idx = jsIndexOf(s, sep, start)
+    while idx >= 0 {
+        arrPush(st, arr, JSValue.Str(strSlice(s, start, idx)))
+        start = idx + sep.len()
+        idx = jsIndexOf(s, sep, start)
+    }
+    arrPush(st, arr, JSValue.Str(strSlice(s, start, s.len())))
+    return arr
+}
+
+// Dispatch a String method by name. Callback-taking methods don't exist on
+// strings, so this needs nothing from eval — only heap access for split.
+fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp): JSValue {
+    if name == "toUpperCase" {
+        return JSValue.Str(strUpper(s))
+    }
+    if name == "toLowerCase" {
+        return JSValue.Str(strLower(s))
+    }
+    if name == "trim" {
+        return JSValue.Str(jsTrim(s))
+    }
+    if name == "toString" {
+        return JSValue.Str(s.clone())
+    }
+    if name == "charAt" {
+        return JSValue.Str(charAt(s, argNum(args, 0, 0)))
+    }
+    if name == "charCodeAt" {
+        let i = argNum(args, 0, 0)
+        if i >= 0 && i < s.len() {
+            return JSValue.Number(s[i] as f64)
+        }
+        return JSValue.Number(jsNan())
+    }
+    if name == "indexOf" {
+        return JSValue.Number(jsIndexOf(s, argStr(args, 0), 0) as f64)
+    }
+    if name == "includes" {
+        return JSValue.Bool(jsContains(s, argStr(args, 0)))
+    }
+    if name == "startsWith" {
+        return JSValue.Bool(jsStartsWith(s, argStr(args, 0)))
+    }
+    if name == "endsWith" {
+        return JSValue.Bool(jsEndsWith(s, argStr(args, 0)))
+    }
+    if name == "slice" || name == "substring" {
+        let a = argNum(args, 0, 0)
+        let b = argNum(args, 1, s.len())
+        return JSValue.Str(strSlice(s, a, b))
+    }
+    if name == "repeat" {
+        return JSValue.Str(jsRepeat(s, argNum(args, 0, 0)))
+    }
+    if name == "concat" {
+        var out = s.clone()
+        var i: i64 = 0
+        while i < args.len() {
+            out = out + toStr(args[i])
+            i = i + 1
+        }
+        return JSValue.Str(out)
+    }
+    if name == "split" {
+        return JSValue.Obj(jsSplit(s, args, st))
+    }
+    if name == "replace" {
+        let pat = argStr(args, 0)
+        let rep = argStr(args, 1)
+        let idx = jsIndexOf(s, pat, 0)
+        if idx < 0 || pat.len() == 0 {
+            return JSValue.Str(s.clone())
+        }
+        return JSValue.Str(strSlice(s, 0, idx) + rep + strSlice(s, idx + pat.len(), s.len()))
+    }
+    return JSValue.Undefined
+}

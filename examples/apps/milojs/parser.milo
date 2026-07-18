@@ -307,6 +307,10 @@ fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
             }
             let right = parseAdd(p, prog)
             left = addExpr(prog, Expr.Bin(op, left, right))
+        } else if k == T_INSTANCEOF {
+            advance(p)
+            let right = parseAdd(p, prog)
+            left = addExpr(prog, Expr.Bin("instanceof", left, right))
         } else {
             go = false
         }
