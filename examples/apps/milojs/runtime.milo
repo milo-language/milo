@@ -819,6 +819,23 @@ fn scopeLookup(st: &Interp, scope: i64, name: &string): JSValue {
     return JSValue.Undefined
 }
 
+// Lookup and existence check in one chain walk — the identifier-read hot path
+// previously walked the whole chain twice (scopeHas, then scopeLookup).
+fn scopeTryLookup(st: &Interp, scope: i64, name: &string): Option<JSValue> {
+    var s = scope
+    while s >= 0 {
+        var i = st.scopes[s].vars.len() - 1
+        while i >= 0 {
+            if st.scopes[s].vars[i].name == name {
+                return Option.Some(cloneValue(st.scopes[s].vars[i].value))
+            }
+            i = i - 1
+        }
+        s = st.scopes[s].parent
+    }
+    return Option.None
+}
+
 // Is `name` bound anywhere on the scope chain? Distinguishes an undeclared
 // identifier from one declared and holding undefined — the two are otherwise
 // indistinguishable, which silently turns typos into undefined.

@@ -1,7 +1,10 @@
 // AST node types plus the Prog arena that owns them. Every child link is an i64
 // index into one of Prog's flat Vecs (-1 means "none"), so the recursive tree is
-// expressed without recursive owned types. getExpr/getStmt clone a node out by
-// index for matching; addExpr/addStmt append and return the new index.
+// expressed without recursive owned types. The evaluator matches arena slots in
+// place (match prog.exprs[i] borrows the payloads); getExpr/getStmt clone a node
+// out by index for the few callers that mutate prog while inspecting a node
+// (parser lvalue rewriting) — cloning per visit in the evaluator was the
+// dominant interpreter cost. addExpr/addStmt append and return the new index.
 
 enum Expr {
     Num(f64),

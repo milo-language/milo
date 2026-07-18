@@ -383,18 +383,21 @@ fn setMember(st: &mut Interp, o: i64, key: string, value: JSValue) {
 // evaluated here and again by writeLValue (harmless unless the base has side
 // effects, which is rare).
 fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
-    let t = getExpr(prog, targetIdx)
-    match t {
+    match prog.exprs[targetIdx] {
         Expr.Ident(name) => {
-            // reading an undeclared identifier is a ReferenceError in JS; without
-            // this a typo just evaluates to undefined and the failure surfaces
-            // somewhere else entirely
-            if !scopeHas(st, scope, name) {
-                st.throwing = true
-                st.thrownValue = makeError(st, "ReferenceError", name.clone() + " is not defined")
-                return JSValue.Undefined
+            match scopeTryLookup(st, scope, name) {
+                Option.Some(v) => {
+                    return v
+                }
+                Option.None => {
+                    // reading an undeclared identifier is a ReferenceError in JS;
+                    // without this a typo just evaluates to undefined and the
+                    // failure surfaces somewhere else entirely
+                    st.throwing = true
+                    st.thrownValue = makeError(st, "ReferenceError", name.clone() + " is not defined")
+                    return JSValue.Undefined
+                }
             }
-            return scopeLookup(st, scope, name)
         }
         Expr.Member(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
@@ -430,10 +433,9 @@ fn readLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue
 }
 
 fn writeLValue(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64, value: JSValue) {
-    let t = getExpr(prog, targetIdx)
-    match t {
+    match prog.exprs[targetIdx] {
         Expr.Ident(name) => {
-            scopeAssign(st, scope, name, value)
+            scopeAssign(st, scope, name.clone(), value)
         }
         Expr.Member(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
@@ -1937,13 +1939,14 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
     if st.throwing {
         return JSValue.Undefined
     }
-    let node = getExpr(prog, idx)
-    match node {
+    // match the arena slot in place — cloning the node (and its string payloads)
+    // per visit was the dominant interpreter cost
+    match prog.exprs[idx] {
         Expr.Num(n) => {
             return JSValue.Number(n)
         }
         Expr.StrLit(s) => {
-            return JSValue.Str(s)
+            return JSValue.Str(s.clone())
         }
         Expr.BoolLit(b) => {
             return JSValue.Bool(b)
@@ -1955,17 +1958,24 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             return JSValue.Undefined
         }
         Expr.Ident(name) => {
-            // reading an undeclared identifier is a ReferenceError in JS; without
-            // this a typo just evaluates to undefined and the failure surfaces
-            // somewhere else entirely
-            // `this` is never a ReferenceError — unbound at module top level it is
-            // simply undefined, and CommonJS code reads it freely
-            if !scopeHas(st, scope, name) && name != "this" {
-                st.throwing = true
-                st.thrownValue = makeError(st, "ReferenceError", name.clone() + " is not defined")
-                return JSValue.Undefined
+            match scopeTryLookup(st, scope, name) {
+                Option.Some(v) => {
+                    return v
+                }
+                Option.None => {
+                    // reading an undeclared identifier is a ReferenceError in JS;
+                    // without this a typo just evaluates to undefined and the
+                    // failure surfaces somewhere else entirely
+                    // `this` is never a ReferenceError — unbound at module top
+                    // level it is simply undefined, and CommonJS code reads it
+                    // freely
+                    if name != "this" {
+                        st.throwing = true
+                        st.thrownValue = makeError(st, "ReferenceError", name.clone() + " is not defined")
+                    }
+                    return JSValue.Undefined
+                }
             }
-            return scopeLookup(st, scope, name)
         }
         Expr.Bin(op, a, b) => {
             // && and || short-circuit and yield the operand value, JS-style
@@ -2045,8 +2055,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             // typeof is the one context where an undeclared name is legal
             if op == "typeof" {
-                let inner = getExpr(prog, a)
-                match inner {
+                match prog.exprs[a] {
                     Expr.Ident(iname) => {
                         if !scopeHas(st, scope, iname) {
                             return JSValue.Str("undefined")
@@ -2139,7 +2148,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.Assign(name, e) => {
             let v = evalExpr(prog, e, st, scope)
-            scopeAssign(st, scope, name, cloneValue(v))
+            scopeAssign(st, scope, name.clone(), cloneValue(v))
             return v
         }
         Expr.Call(callee, argsIdx) => {
@@ -2322,8 +2331,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             let n = prog.arrLits[litIdx].len()
             while i < n {
                 let elemIdx = prog.arrLits[litIdx][i]
-                let node = getExpr(prog, elemIdx)
-                match node {
+                match prog.exprs[elemIdx] {
                     Expr.Spread(inner) => {
                         let sv = evalExpr(prog, inner, st, scope)
                         var tmp: Vec<JSValue> = Vec.new()
@@ -2458,7 +2466,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             return evalExpr(prog, b, st, scope)
         }
         Expr.RegexLit(pat, flags) => {
-            return makeRegex(st, pat, flags)
+            return makeRegex(st, pat.clone(), flags.clone())
         }
         Expr.OptIndex(objIdx, keyIdx) => {
             let ov = evalExpr(prog, objIdx, st, scope)
@@ -2524,8 +2532,7 @@ fn evalArgs(prog: &Prog, argsIdx: i64, st: &mut Interp, scope: i64): Vec<JSValue
     let n = prog.argLists[argsIdx].len()
     while j < n {
         let eIdx = prog.argLists[argsIdx][j]
-        let node = getExpr(prog, eIdx)
-        match node {
+        match prog.exprs[eIdx] {
             Expr.Spread(inner) => {
                 let v = evalExpr(prog, inner, st, scope)
                 pushTemp(st, cloneValue(v))
@@ -2749,8 +2756,7 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
 // Best-effort name for a callee expression, so "is not a function" says which
 // one. Diagnostics only.
 fn describeCallee(prog: &Prog, calleeIdx: i64): string {
-    let node = getExpr(prog, calleeIdx)
-    match node {
+    match prog.exprs[calleeIdx] {
         Expr.Ident(n) => {
             return n.clone()
         }
@@ -3068,8 +3074,7 @@ fn compactTimers(st: &mut Interp) {
 // become holes (undefined) rather than shifting, as in JS. Always returns true
 // here; the non-configurable cases the spec reports false for do not arise.
 fn evalDelete(prog: &Prog, targetIdx: i64, st: &mut Interp, scope: i64): JSValue {
-    let node = getExpr(prog, targetIdx)
-    match node {
+    match prog.exprs[targetIdx] {
         Expr.Member(objIdx, name) => {
             let ov = evalExpr(prog, objIdx, st, scope)
             let o = objHandle(ov)
@@ -4196,8 +4201,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
 
 fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
     // builtin: console.log(...)
-    let calleeNode = getExpr(prog, calleeIdx)
-    match calleeNode {
+    match prog.exprs[calleeIdx] {
         Expr.Ident(fname) => {
             // super(...) — parsed as a call of __super$<Class>. The base
             // constructor runs against the instance being built, so `this` has
@@ -4238,8 +4242,7 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
             }
         }
         Expr.Member(objIdx, name) => {
-            let objNode = getExpr(prog, objIdx)
-            match objNode {
+            match prog.exprs[objIdx] {
                 Expr.Ident(objName) => {
                     if objName == "console" && (name == "log" || name == "error" || name == "warn" || name == "info") {
                         let argVals = evalArgs(prog, argsIdx, st, scope)
@@ -4274,13 +4277,11 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
 
     // A Member/Index callee is a method call: `this` binds to the receiver.
     // Anything else is a plain call with `this` = undefined.
-    let methodNode = getExpr(prog, calleeIdx)
-    match methodNode {
+    match prog.exprs[calleeIdx] {
         Expr.Member(objIdx, name) => {
             // super.method() — the base's *prototype* holds the method, and it
             // must run against the current `this`, not against the base itself
-            let baseNode = getExpr(prog, objIdx)
-            match baseNode {
+            match prog.exprs[objIdx] {
                 Expr.Ident(bname) => {
                     if isSuperName(bname) {
                         let baseVal = scopeLookup(st, scope, bname)
@@ -4428,11 +4429,10 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
     if st.throwing {
         return Flow.Normal
     }
-    let node = getStmt(prog, idx)
-    match node {
+    match prog.stmts[idx] {
         Stmt.Decl(name, e) => {
             let v = evalExpr(prog, e, st, scope)
-            scopeDefine(st, scope, name, v)
+            scopeDefine(st, scope, name.clone(), v)
             return Flow.Normal
         }
         Stmt.DoWhile(body, cond) => {
@@ -4745,8 +4745,7 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
                 execStmt(prog, init, st, loopScope)
                 // names the init clause declared with let/const need re-binding
                 // per iteration
-                let initNode = getStmt(prog, init)
-                match initNode {
+                match prog.stmts[init] {
                     Stmt.MultiDecl(listIdx) => {
                         var di: i64 = 0
                         while di < prog.declLists[listIdx].len() {
@@ -4879,8 +4878,7 @@ fn hoistStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64) {
     if idx < 0 {
         return
     }
-    let node = getStmt(prog, idx)
-    match node {
+    match prog.stmts[idx] {
         Stmt.FuncDecl(fIdx) => {
             let fname = prog.funcs[fIdx].name.clone()
             if fname.len() > 0 {
