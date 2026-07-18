@@ -65,6 +65,189 @@
   function __qsParse(s){ var o={}; if(!s) return o; s=String(s); if(s.charAt(0)==='?') s=s.slice(1); var ps=s.split('&'); for(var i=0;i<ps.length;i++){ if(!ps[i]) continue; var kv=ps[i].split('='); var k=decodeURIComponent(kv[0]); var v=kv.length>1?decodeURIComponent(kv[1]):''; if(o[k]===undefined) o[k]=v; else if(Array.isArray(o[k])) o[k].push(v); else o[k]=[o[k],v]; } return o; }
   function __qsStringify(o){ if(!o) return ''; var out=[]; for(var k in o){ if(!o.hasOwnProperty(k)) continue; var v=o[k]; if(Array.isArray(v)){ for(var i=0;i<v.length;i++) out.push(encodeURIComponent(k)+'='+encodeURIComponent(v[i])); } else out.push(encodeURIComponent(k)+'='+encodeURIComponent(v)); } return out.join('&'); }
   var qsMod={ parse:__qsParse, stringify:__qsStringify, escape:encodeURIComponent, unescape:decodeURIComponent };
+  // WHATWG Headers. JSC core's native Headers (when present) is NOT for-of iterable, and
+  // server code does `for (const [k,v] of response.headers)` — so we install our own, which
+  // implements entries()/[Symbol.iterator]. Overrides native intentionally.
+  (function () {
+    function Headers(init) {
+      this._l = []; // [lowerName, value]
+      if (init == null) return;
+      if (init instanceof Headers) { init._l.forEach(function (e) { this._l.push([e[0], e[1]]); }, this); }
+      else if (typeof init.forEach === 'function' && !Array.isArray(init)) { init.forEach(function (v, k) { this.append(k, v); }, this); }
+      else if (Array.isArray(init)) { init.forEach(function (p) { this.append(p[0], p[1]); }, this); }
+      else { for (var k in init) if (Object.prototype.hasOwnProperty.call(init, k)) this.append(k, init[k]); }
+    }
+    var H = Headers.prototype;
+    H.append = function (k, v) { this._l.push([String(k).toLowerCase(), String(v)]); };
+    H.set = function (k, v) { k = String(k).toLowerCase(); v = String(v); var done = false; this._l = this._l.filter(function (e) { if (e[0] === k) { if (!done) { e[1] = v; done = true; return true; } return false; } return true; }); if (!done) this._l.push([k, v]); };
+    H.get = function (k) { k = String(k).toLowerCase(); var vs = this._l.filter(function (e) { return e[0] === k; }).map(function (e) { return e[1]; }); return vs.length ? vs.join(', ') : null; };
+    H.getSetCookie = function () { return this._l.filter(function (e) { return e[0] === 'set-cookie'; }).map(function (e) { return e[1]; }); };
+    H.has = function (k) { k = String(k).toLowerCase(); return this._l.some(function (e) { return e[0] === k; }); };
+    H['delete'] = function (k) { k = String(k).toLowerCase(); this._l = this._l.filter(function (e) { return e[0] !== k; }); };
+    H.forEach = function (cb, thisArg) { this.entries().forEach(function (e) { cb.call(thisArg, e[1], e[0], this); }, this); };
+    // WHATWG sorts + combines same-name values; good enough: unique sorted names, values joined.
+    H.entries = function () { var names = []; var seen = {}; this._l.forEach(function (e) { if (!seen[e[0]]) { seen[e[0]] = true; names.push(e[0]); } }); names.sort(); var self = this; return names.map(function (n) { return [n, self.get(n)]; }); };
+    H.keys = function () { return this.entries().map(function (e) { return e[0]; }); };
+    H.values = function () { return this.entries().map(function (e) { return e[1]; }); };
+    function arrIter(arr) { var i = 0; var it = { next: function () { return i < arr.length ? { value: arr[i++], done: false } : { value: undefined, done: true }; } }; it[Symbol.iterator] = function () { return this; }; return it; }
+    H[Symbol.iterator] = function () { return arrIter(this.entries()); };
+    // entries/keys/values should be iterable too when consumed by for-of; return arrays (already iterable).
+    globalThis.Headers = Headers;
+  })();
+
+  // WHATWG URL/URLSearchParams/Request/Response — JavaScriptCore core (unlike a browser JSC)
+  // ships none of these. tRPC/undici-style server code needs them (new URL(...), new Request()).
+  if (!globalThis.URLSearchParams) {
+    function URLSearchParams(init) {
+      this._list = [];
+      if (init == null || init === '') return;
+      if (typeof init === 'string') {
+        var s = init.charAt(0) === '?' ? init.slice(1) : init;
+        if (s) s.split('&').forEach(function (pair) {
+          if (!pair) return;
+          var i = pair.indexOf('=');
+          var k = i < 0 ? pair : pair.slice(0, i);
+          var v = i < 0 ? '' : pair.slice(i + 1);
+          this._list.push([decodeURIComponent(k.replace(/\+/g, ' ')), decodeURIComponent(v.replace(/\+/g, ' '))]);
+        }, this);
+      } else if (typeof init.forEach === 'function' && !Array.isArray(init)) {
+        init.forEach(function (v, k) { this._list.push([String(k), String(v)]); }, this);
+      } else if (Array.isArray(init)) {
+        init.forEach(function (p) { this._list.push([String(p[0]), String(p[1])]); }, this);
+      } else {
+        for (var k in init) if (Object.prototype.hasOwnProperty.call(init, k)) this._list.push([k, String(init[k])]);
+      }
+    }
+    var SP = URLSearchParams.prototype;
+    SP.append = function (k, v) { this._list.push([String(k), String(v)]); };
+    SP.set = function (k, v) { k = String(k); v = String(v); var done = false; this._list = this._list.filter(function (e) { if (e[0] === k) { if (!done) { e[1] = v; done = true; return true; } return false; } return true; }); if (!done) this._list.push([k, v]); };
+    SP.get = function (k) { k = String(k); for (var i = 0; i < this._list.length; i++) if (this._list[i][0] === k) return this._list[i][1]; return null; };
+    SP.getAll = function (k) { k = String(k); return this._list.filter(function (e) { return e[0] === k; }).map(function (e) { return e[1]; }); };
+    SP.has = function (k) { k = String(k); return this._list.some(function (e) { return e[0] === k; }); };
+    SP['delete'] = function (k) { k = String(k); this._list = this._list.filter(function (e) { return e[0] !== k; }); };
+    SP.forEach = function (cb, thisArg) { this._list.slice().forEach(function (e) { cb.call(thisArg, e[1], e[0], this); }, this); };
+    SP.keys = function () { return this._list.map(function (e) { return e[0]; }); };
+    SP.values = function () { return this._list.map(function (e) { return e[1]; }); };
+    SP.entries = function () { return this._list.map(function (e) { return e.slice(); }); };
+    SP.sort = function () { this._list.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; }); };
+    SP.toString = function () { return this._list.map(function (e) { return encodeURIComponent(e[0]) + '=' + encodeURIComponent(e[1]); }).join('&'); };
+    globalThis.URLSearchParams = URLSearchParams;
+  }
+  if (!globalThis.URL) {
+    var __ABS = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+    function __parseURL(input) {
+      var m = input.match(/^([a-zA-Z][a-zA-Z0-9+.-]*:)(\/\/)?([^\/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/);
+      if (!m) return null;
+      var protocol = m[1].toLowerCase(), slashes = !!m[2], authority = m[3] || '', pathname = m[4] || '', search = m[5] || '', hash = m[6] || '';
+      var username = '', password = '', host = authority, hostname = authority, port = '';
+      if (slashes) {
+        var at = authority.lastIndexOf('@');
+        if (at >= 0) { var ui = authority.slice(0, at); authority = authority.slice(at + 1); var ci = ui.indexOf(':'); if (ci >= 0) { username = ui.slice(0, ci); password = ui.slice(ci + 1); } else username = ui; }
+        host = authority;
+        var pi = authority.indexOf(':');
+        if (pi >= 0) { hostname = authority.slice(0, pi); port = authority.slice(pi + 1); } else hostname = authority;
+        pathname = pathname ? (pathname.charAt(0) === '/' ? pathname : '/' + pathname) : '/';
+      }
+      return { protocol: protocol, slashes: slashes, username: username, password: password, host: host, hostname: hostname, port: port, pathname: pathname, search: search, hash: hash };
+    }
+    function URL(url, base) {
+      url = String(url);
+      var parsed;
+      if (__ABS.test(url)) parsed = __parseURL(url);
+      else {
+        if (base === undefined || base === null) throw new TypeError('Invalid URL: ' + url);
+        var b = (base instanceof URL) ? base : new URL(String(base));
+        var auth = b._p.username ? (b._p.username + (b._p.password ? ':' + b._p.password : '') + '@') : '';
+        var prefix = b._p.protocol + '//' + auth + b._p.host;
+        if (url.charAt(0) === '/') parsed = __parseURL(prefix + url);
+        else if (url.charAt(0) === '#') parsed = __parseURL(prefix + b._p.pathname + b._p.search + url);
+        else if (url.charAt(0) === '?') parsed = __parseURL(prefix + b._p.pathname + url);
+        else { var basePath = b._p.pathname.slice(0, b._p.pathname.lastIndexOf('/') + 1); parsed = __parseURL(prefix + basePath + url); }
+      }
+      if (!parsed) throw new TypeError('Invalid URL: ' + url);
+      this._p = parsed;
+      this.searchParams = new globalThis.URLSearchParams(parsed.search);
+    }
+    Object.defineProperties(URL.prototype, {
+      protocol: { get: function () { return this._p.protocol; }, enumerable: true },
+      username: { get: function () { return this._p.username; }, enumerable: true },
+      password: { get: function () { return this._p.password; }, enumerable: true },
+      host: { get: function () { return this._p.host; }, enumerable: true },
+      hostname: { get: function () { return this._p.hostname; }, enumerable: true },
+      port: { get: function () { return this._p.port; }, enumerable: true },
+      pathname: { get: function () { return this._p.pathname; }, enumerable: true },
+      hash: { get: function () { return this._p.hash; }, enumerable: true },
+      search: { get: function () { var s = this.searchParams.toString(); return s ? '?' + s : ''; }, enumerable: true },
+      origin: { get: function () { return this._p.protocol + '//' + this._p.host; }, enumerable: true },
+      href: { get: function () { return this.toString(); }, set: function (v) { var p = __parseURL(String(v)); if (p) { this._p = p; this.searchParams = new globalThis.URLSearchParams(p.search); } }, enumerable: true }
+    });
+    URL.prototype.toString = function () {
+      var p = this._p;
+      var auth = p.username ? (p.username + (p.password ? ':' + p.password : '') + '@') : '';
+      return p.protocol + (p.slashes ? '//' : '') + auth + p.host + p.pathname + this.search + p.hash;
+    };
+    URL.prototype.toJSON = function () { return this.toString(); };
+    globalThis.URL = URL;
+  }
+  if (!globalThis.Request) {
+    function Request(input, init) {
+      init = init || {};
+      if (input instanceof Request) {
+        this.url = input.url; this.method = (init.method || input.method).toUpperCase();
+        this.headers = new globalThis.Headers(init.headers || input.headers);
+        this._bodyInit = init.body !== undefined ? init.body : input._bodyInit; this.signal = init.signal || input.signal || null;
+      } else {
+        this.url = String(input); this.method = (init.method || 'GET').toUpperCase();
+        this.headers = new globalThis.Headers(init.headers); this._bodyInit = init.body; this.signal = init.signal || null;
+      }
+      this.credentials = init.credentials || 'same-origin'; this.mode = init.mode || 'cors'; this.redirect = init.redirect || 'follow'; this.bodyUsed = false;
+    }
+    Request.prototype.text = function () { this.bodyUsed = true; var b = this._bodyInit; return Promise.resolve(b == null ? '' : (typeof b === 'string' ? b : String(b))); };
+    Request.prototype.json = function () { return this.text().then(function (t) { return t ? JSON.parse(t) : null; }); };
+    Request.prototype.arrayBuffer = function () { return this.text(); };
+    Request.prototype.clone = function () { return new Request(this); };
+    globalThis.Request = Request;
+  }
+  // Minimal web ReadableStream yielding a body once — enough for consumers that do
+  // `response.body.getReader()` then read()/cancel() (e.g. tRPC's node adapter).
+  if (!globalThis.ReadableStream) {
+    function ReadableStream(src) { this._src = src; this.locked = false; }
+    ReadableStream.prototype.getReader = function () {
+      var stream = this; stream.locked = true;
+      var chunks = (stream._chunks || []).slice(); var i = 0; var cancelled = false;
+      return {
+        read: function () { if (cancelled || i >= chunks.length) return Promise.resolve({ done: true, value: undefined }); return Promise.resolve({ done: false, value: chunks[i++] }); },
+        cancel: function () { cancelled = true; return Promise.resolve(); },
+        releaseLock: function () { stream.locked = false; },
+        closed: Promise.resolve(undefined)
+      };
+    };
+    ReadableStream.prototype.cancel = function () { return Promise.resolve(); };
+    ReadableStream.__fromBody = function (text) { var s = new ReadableStream(); s._chunks = (text == null || text === '') ? [] : [text]; return s; };
+    globalThis.ReadableStream = ReadableStream;
+  }
+  if (!globalThis.Response) {
+    function Response(body, init) {
+      init = init || {};
+      this._bodyInit = (body == null) ? null : body;
+      this.status = init.status !== undefined ? init.status : 200;
+      this.statusText = init.statusText || '';
+      this.ok = this.status >= 200 && this.status < 300;
+      this.headers = new globalThis.Headers(init.headers);
+      this.url = init.url || ''; this.redirected = false; this.type = 'default'; this.bodyUsed = false;
+      // tRPC's node adapter consumes response.body via getReader(); model it as a 1-chunk stream.
+      this.body = (this._bodyInit == null) ? null : globalThis.ReadableStream.__fromBody(typeof this._bodyInit === 'string' ? this._bodyInit : String(this._bodyInit));
+    }
+    Response.prototype.text = function () { this.bodyUsed = true; var b = this._bodyInit; return Promise.resolve(b == null ? '' : (typeof b === 'string' ? b : String(b))); };
+    Response.prototype.json = function () { return this.text().then(function (t) { return JSON.parse(t); }); };
+    Response.prototype.arrayBuffer = function () { return this.text(); };
+    Response.prototype.blob = function () { return this.text(); };
+    Response.prototype.clone = function () { return new Response(this._bodyInit, { status: this.status, statusText: this.statusText, headers: this.headers }); };
+    Response.json = function (data, init) { init = init || {}; var h = new globalThis.Headers(init.headers); if (!h.has('content-type')) h.set('content-type', 'application/json'); return new Response(JSON.stringify(data), { status: init.status || 200, statusText: init.statusText, headers: h }); };
+    Response.error = function () { var r = new Response(null, { status: 0 }); r.type = 'error'; return r; };
+    Response.redirect = function (url, status) { return new Response(null, { status: status || 302, headers: { location: String(url) } }); };
+    globalThis.Response = Response;
+  }
   var urlMod={ parse:function(u){ try{ var x=new URL(u,'http://localhost'); return { href:x.href, protocol:x.protocol, host:x.host, hostname:x.hostname, port:x.port, pathname:x.pathname, search:x.search, query:x.search?x.search.slice(1):'', hash:x.hash, path:x.pathname+x.search }; }catch(e){ return { pathname:u, path:u, query:'', search:'' }; } }, format:function(o){ if(typeof o==='string') return o; return (o.protocol||'')+'//'+(o.host||o.hostname||'')+(o.pathname||'')+(o.search||''); }, resolve:function(a,b){ try{ return new URL(b,a).href; }catch(e){ return b; } }, URL:globalThis.URL, URLSearchParams:globalThis.URLSearchParams };
   function StringDecoder(enc){ this.enc=enc; } StringDecoder.prototype.write=function(b){ return b&&b.toString?b.toString():String(b); }; StringDecoder.prototype.end=function(){ return ''; };
   var sdMod={ StringDecoder:StringDecoder };
@@ -81,7 +264,7 @@
   Stream.Readable=Readable; Stream.Writable=Writable; Stream.Duplex=Duplex; Stream.Transform=Transform; Stream.PassThrough=PassThrough; Stream.Stream=Stream;
   var streamMod=Stream;
   function parseRequest(text){ var idx=text.indexOf('\r\n\r\n'); var headPart=idx>=0?text.slice(0,idx):text; var body=idx>=0?text.slice(idx+4):''; var lines=headPart.split('\r\n'); var first=(lines[0]||'').split(' '); var method=first[0]||'GET'; var url=first[1]||'/'; var headers={}; for(var i=1;i<lines.length;i++){ var c=lines[i].indexOf(':'); if(c>0) headers[lines[i].slice(0,c).trim().toLowerCase()]=lines[i].slice(c+1).trim(); } var req=new Readable(); req.method=method; req.url=url; req.originalUrl=url; req.headers=headers; req.rawHeaders=[]; req.httpVersion='1.1'; req.body=body; req.socket={ remoteAddress:'127.0.0.1', remotePort:0, encrypted:false }; req.connection=req.socket; req.on=function(ev,cb){ if(ev==='data'&&body) cb(body); if(ev==='end') cb(); return this; }; req.setTimeout=function(){ return this; }; return req; }
-  function ServerResponse(){ this.statusCode=200; this.statusMessage=''; this.headers={}; this._body=''; this._finished=false; this.headersSent=false; this.locals={}; }
+  function ServerResponse(){ this.statusCode=200; this.statusMessage=''; this.headers={}; this._body=''; this._finished=false; this.headersSent=false; this.writable=true; this.finished=false; this.locals={}; }
   ServerResponse.prototype.setHeader=function(k,v){ this.headers[String(k).toLowerCase()]=v; return this; };
   ServerResponse.prototype.getHeader=function(k){ return this.headers[String(k).toLowerCase()]; };
   ServerResponse.prototype.removeHeader=function(k){ delete this.headers[String(k).toLowerCase()]; };
@@ -89,12 +272,76 @@
   ServerResponse.prototype.getHeaders=function(){ return this.headers; };
   ServerResponse.prototype.writeHead=function(code,a,b){ this.statusCode=code; var h=(a&&typeof a==='object')?a:((b&&typeof b==='object')?b:null); if(typeof a==='string') this.statusMessage=a; if(h) for(var k in h) this.setHeader(k,h[k]); this.headersSent=true; return this; };
   ServerResponse.prototype.write=function(chunk){ if(chunk!=null) this._body+=(chunk.toString?chunk.toString():String(chunk)); return true; };
-  ServerResponse.prototype.end=function(chunk){ if(chunk!=null) this.write(chunk); this._finished=true; if(this._onfinish) this._onfinish(); return this; };
+  ServerResponse.prototype.end=function(chunk){ if(chunk!=null) this.write(chunk); this._finished=true; this.finished=true; this.writable=false; if(this._onfinish) this._onfinish(); return this; };
+  ServerResponse.prototype.flush=function(){};
   ServerResponse.prototype.on=function(ev,cb){ if(ev==='finish') this._onfinish=cb; return this; };
   ServerResponse.prototype.once=ServerResponse.prototype.on; ServerResponse.prototype.emit=function(){ return false; };
   ServerResponse.prototype._raw=function(){ var st=this.statusCode; var h=this.headers; if(h['content-type']===undefined) h['content-type']='text/plain'; h['content-length']=String(__byteLen(this._body)); h['connection']='close'; var out='HTTP/1.1 '+st+' '+__statusText(st)+'\r\n'; for(var k in h){ if(h.hasOwnProperty(k)) out+=k+': '+h[k]+'\r\n'; } out+='\r\n'+this._body; return out; };
   function createServer(a,b){ var handler=(typeof a==='function')?a:b; var srv=new EventEmitter(); srv._handler=handler; srv.on=function(ev,cb){ if(ev==='request') srv._handler=cb; return EventEmitter.prototype.on.call(this,ev,cb); }; srv.address=function(){ return { port:srv._port, address:'0.0.0.0', family:'IPv4' }; }; srv.setTimeout=function(){ return this; }; srv.close=function(cb){ if(cb) cb(); return this; }; srv.listen=function(port,a2,b2){ if(port&&typeof port==='object') port=port.port; srv._port=port; var cb=(typeof a2==='function')?a2:((typeof b2==='function')?b2:null); if(cb) cb(); EventEmitter.prototype.emit.call(srv,'listening'); globalThis.__mbServer={ port:port|0, handler:function(reqText){ var req=parseRequest(reqText); var res=new ServerResponse(); try{ srv._handler(req,res); }catch(e){ res.statusCode=500; res._body=String(e&&e.stack||e); res._finished=true; } return res; } }; return srv; }; return srv; }
-  var httpMod={ createServer:createServer, Server:function(){ return createServer(); }, STATUS_CODES:{}, METHODS:['GET','POST','PUT','DELETE','HEAD','OPTIONS','PATCH'], IncomingMessage:Readable, ServerResponse:ServerResponse, globalAgent:{}, Agent:function(){} };
+  // Node HTTP client (http.request/get). node-fetch and many libs do `https.request(opts)`.
+  // Implemented over the blocking __fetch native: buffer the request body, do one synchronous
+  // round-trip, then replay the response as a Readable emitting 'response'->'data'->'end'.
+  function __optsToUrl(o, defProto) {
+    if (typeof o === 'string') return o;
+    if (o instanceof globalThis.URL) return o.toString();
+    var proto = o.protocol || defProto || 'http:';
+    var host = o.hostname || o.host || 'localhost';
+    var hasPort = host.indexOf(':') >= 0;
+    var port = (o.port && !hasPort) ? (':' + o.port) : '';
+    var path = o.path || (o.pathname ? (o.pathname + (o.search || '')) : '/');
+    return proto + '//' + host + port + path;
+  }
+  function ClientRequest(options, cb, defProto) {
+    EventEmitter.call(this);
+    var optObj = (typeof options === 'string' || options instanceof globalThis.URL) ? {} : (options || {});
+    this._url = __optsToUrl(options, defProto);
+    this._method = String(optObj.method || 'GET').toUpperCase();
+    this._headers = {};
+    var h = optObj.headers || {};
+    for (var k in h) if (Object.prototype.hasOwnProperty.call(h, k)) this._headers[k] = h[k];
+    this._body = '';
+    this.destroyed = false;
+    this.finished = false;
+    if (typeof cb === 'function') this.once('response', cb);
+  }
+  inherits(ClientRequest, EventEmitter);
+  ClientRequest.prototype.setHeader = function (k, v) { this._headers[k] = v; return this; };
+  ClientRequest.prototype.getHeader = function (k) { return this._headers[k]; };
+  ClientRequest.prototype.removeHeader = function (k) { delete this._headers[k]; };
+  ClientRequest.prototype.setTimeout = function (ms, cb) { if (typeof cb === 'function') this.once('timeout', cb); return this; };
+  ClientRequest.prototype.flushHeaders = function () { };
+  ClientRequest.prototype.write = function (chunk) { if (chunk != null) this._body += (chunk.toString ? chunk.toString() : String(chunk)); return true; };
+  ClientRequest.prototype.abort = function () { this.destroyed = true; this.aborted = true; this.emit('abort'); };
+  ClientRequest.prototype.destroy = function (e) { this.destroyed = true; if (e) this.emit('error', e); return this; };
+  ClientRequest.prototype.end = function (chunk) {
+    if (chunk != null && typeof chunk !== 'function') this.write(chunk);
+    this.finished = true;
+    var self = this;
+    Promise.resolve().then(function () { self._run(); });
+    return this;
+  };
+  ClientRequest.prototype._run = function () {
+    if (this.destroyed) return;
+    var self = this;
+    var lines = [];
+    for (var k in this._headers) if (Object.prototype.hasOwnProperty.call(this._headers, k)) lines.push(k + ': ' + this._headers[k]);
+    var raw;
+    try { raw = __fetch(this._url, this._method, lines.join('\r\n'), this._body); }
+    catch (e) { this.emit('error', e); return; }
+    if (!raw || raw.error) { var er = new Error('request failed: ' + ((raw && raw.error) || 'unknown') + ' (' + this._url + ')'); this.emit('error', er); return; }
+    var res = new Readable();
+    res.statusCode = raw.status; res.statusMessage = ''; res.httpVersion = '1.1';
+    res.headers = {}; res.rawHeaders = [];
+    String(raw.headers || '').split('\r\n').forEach(function (l) { var i = l.indexOf(':'); if (i > 0) { var name = l.slice(0, i).trim(); var val = l.slice(i + 1).trim(); res.headers[name.toLowerCase()] = val; res.rawHeaders.push(name, val); } });
+    res.setEncoding = function () { return this; };
+    var body = raw.body || '';
+    this.emit('response', res);
+    Promise.resolve().then(function () { if (!res.destroyed) { if (body) res.emit('data', body); res.emit('end'); res.emit('close'); } });
+  };
+  function __clientRequest(defProto) { return function (options, cb) { return new ClientRequest(options, cb, defProto); }; }
+  function __clientGet(defProto) { return function (options, cb) { var r = new ClientRequest(options, cb, defProto); r.end(); return r; }; }
+  var httpMod={ createServer:createServer, Server:function(){ return createServer(); }, request:__clientRequest('http:'), get:__clientGet('http:'), STATUS_CODES:{}, METHODS:['GET','POST','PUT','DELETE','HEAD','OPTIONS','PATCH'], IncomingMessage:Readable, ServerResponse:ServerResponse, ClientRequest:ClientRequest, globalAgent:{}, Agent:function(){} };
+  var httpsMod={ createServer:createServer, Server:function(){ return createServer(); }, request:__clientRequest('https:'), get:__clientGet('https:'), STATUS_CODES:{}, METHODS:httpMod.METHODS, IncomingMessage:Readable, ServerResponse:ServerResponse, ClientRequest:ClientRequest, globalAgent:{}, Agent:function(){} };
   var netMod={ createServer:function(){ var s=new EventEmitter(); s.listen=function(p,cb){ if(typeof p==='function') cb=p; if(typeof cb==='function') cb(); return this; }; s.close=function(cb){ if(cb) cb(); return this; }; s.address=function(){ return { port:0 }; }; return s; }, Socket:function(){ return new EventEmitter(); }, connect:function(){ return new EventEmitter(); }, isIP:function(){ return 0; }, isIPv4:function(){ return false; }, isIPv6:function(){ return false; } };
   var cpMod={ spawn:function(){ var e=new EventEmitter(); e.stdout=new EventEmitter(); e.stderr=new EventEmitter(); e.stdin={ write:function(){}, end:function(){} }; e.kill=function(){}; e.pid=0; return e; }, exec:function(c,o,cb){ if(typeof o==='function') cb=o; if(cb) Promise.resolve().then(function(){ cb(null,'',''); }); return new EventEmitter(); }, execSync:function(){ return ''; }, execFile:function(f,a,o,cb){ cb=(typeof o==='function')?o:cb; if(typeof cb==='function') Promise.resolve().then(function(){ cb(null,'',''); }); return new EventEmitter(); }, fork:function(){ return new EventEmitter(); }, spawnSync:function(){ return { status:0, stdout:'', stderr:'', pid:0 }; } };
   var dnsMod={ lookup:function(h,o,cb){ cb=(typeof o==='function')?o:cb; if(typeof cb==='function') Promise.resolve().then(function(){ cb(null,'127.0.0.1',4); }); }, resolve:function(h,cb){ if(typeof cb==='function') cb(null,[]); }, promises:{ lookup:function(){ return Promise.resolve({ address:'127.0.0.1', family:4 }); } } };
@@ -104,7 +351,7 @@
   var asyncHooksMod={ createHook:function(){ return { enable:function(){ return this; }, disable:function(){ return this; } }; }, executionAsyncId:function(){ return 0; }, triggerAsyncId:function(){ return 0; }, AsyncLocalStorage:AsyncLocalStorage, AsyncResource:function(){ this.runInAsyncScope=function(fn,t){ return fn.apply(t, Array.prototype.slice.call(arguments,2)); }; } };
   var moduleMod={ createRequire:function(){ return function(r){ throw new Error('createRequire not supported: '+r); }; }, _cache:{}, builtinModules:[] };
   var timersMod={ setTimeout:function(){ return globalThis.setTimeout.apply(null,arguments); }, clearTimeout:function(){ return globalThis.clearTimeout.apply(null,arguments); }, setInterval:function(){ return globalThis.setInterval.apply(null,arguments); }, clearInterval:function(){ return globalThis.clearInterval.apply(null,arguments); }, setImmediate:function(){ return globalThis.setImmediate.apply(null,arguments); } };
-  var builtins={ events:EventEmitter, path:pathMod, util:utilMod, assert:assertFn, fs:fsMod, os:osMod, tty:ttyMod, url:urlMod, querystring:qsMod, string_decoder:sdMod, crypto:cryptoMod, zlib:zlibMod, stream:streamMod, http:httpMod, https:httpMod, net:netMod, child_process:cpMod, dns:dnsMod, vm:vmMod, perf_hooks:perfMod, async_hooks:asyncHooksMod, module:moduleMod, timers:timersMod, callsites:__parseCallSites, depd:__depd };
+  var builtins={ events:EventEmitter, path:pathMod, util:utilMod, assert:assertFn, fs:fsMod, os:osMod, tty:ttyMod, url:urlMod, querystring:qsMod, string_decoder:sdMod, crypto:cryptoMod, zlib:zlibMod, stream:streamMod, http:httpMod, https:httpsMod, net:netMod, child_process:cpMod, dns:dnsMod, vm:vmMod, perf_hooks:perfMod, async_hooks:asyncHooksMod, module:moduleMod, timers:timersMod, callsites:__parseCallSites, depd:__depd };
   builtins['fs/promises']=fsMod.promises; builtins['node:fs/promises']=fsMod.promises;
   if(!globalThis.global) globalThis.global=globalThis;
   if(!globalThis.TextDecoder){ globalThis.TextDecoder=function(enc,opts){ this.encoding=(enc||'utf-8').toLowerCase(); this.fatal=!!(opts&&opts.fatal); this.ignoreBOM=!!(opts&&opts.ignoreBOM); }; globalThis.TextDecoder.prototype.decode=function(buf){ if(buf==null) return ''; var bytes; if(buf.buffer&&buf.byteLength!==undefined) bytes=new Uint8Array(buf.buffer,buf.byteOffset||0,buf.byteLength); else if(buf.length!==undefined) bytes=buf; else bytes=new Uint8Array(buf); var out='',i=0,n=bytes.length; while(i<n){ var c=bytes[i++]; if(c<0x80) out+=String.fromCharCode(c); else if(c<0xE0) out+=String.fromCharCode(((c&0x1F)<<6)|(bytes[i++]&0x3F)); else if(c<0xF0) out+=String.fromCharCode(((c&0x0F)<<12)|((bytes[i++]&0x3F)<<6)|(bytes[i++]&0x3F)); else { var cp=((c&0x07)<<18)|((bytes[i++]&0x3F)<<12)|((bytes[i++]&0x3F)<<6)|(bytes[i++]&0x3F); cp-=0x10000; out+=String.fromCharCode(0xD800+(cp>>10),0xDC00+(cp&0x3FF)); } } return out; }; }
