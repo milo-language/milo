@@ -198,6 +198,143 @@ fn nativeHandle(v: &JSValue): i64 {
     }
 }
 
+// Integer-to-radix, matching Number.prototype.toString(radix). The fractional
+// part is dropped — real code uses this for hex/binary of integers.
+fn numToRadix(n: f64, radix: i64): string {
+    if n != n {
+        return "NaN"
+    }
+    var i = n as i64
+    if i == 0 {
+        return "0"
+    }
+    var neg = false
+    if i < 0 {
+        neg = true
+        i = 0 - i
+    }
+    var out = ""
+    while i > 0 {
+        let d = i % radix
+        var ch = String.withCapacity(1)
+        if d < 10 {
+            ch.push(('0' as i64 + d) as u8)
+        } else {
+            ch.push(('a' as i64 + (d - 10)) as u8)
+        }
+        out = ch + out
+        i = i / radix
+    }
+    if neg {
+        return "-" + out
+    }
+    return out
+}
+
+// Number.prototype.toFixed — fixed-point with `digits` decimals, half-up.
+fn numToFixed(n: f64, digits: i64): string {
+    if n != n {
+        return "NaN"
+    }
+    if digits <= 0 {
+        return i64ToStr(roundHalfAwayFromZero(n))
+    }
+    var scale = 1.0
+    var k: i64 = 0
+    while k < digits {
+        scale = scale * 10.0
+        k = k + 1
+    }
+    let scaled = roundHalfAwayFromZero(n * scale)
+    var neg = false
+    var v = scaled
+    if v < 0 {
+        neg = true
+        v = 0 - v
+    }
+    var frac = i64ToStr(v % (scale as i64))
+    while frac.len() < digits {
+        frac = "0" + frac
+    }
+    var out = i64ToStr(v / (scale as i64)) + "." + frac
+    if neg {
+        return "-" + out
+    }
+    return out
+}
+
+fn roundHalfAwayFromZero(x: f64): i64 {
+    if x < 0.0 {
+        return (x - 0.5) as i64
+    }
+    return (x + 0.5) as i64
+}
+
+// parseInt/parseFloat: read the longest valid numeric prefix, NaN if none.
+// Unlike toNum, trailing garbage is ignored rather than poisoning the result.
+fn jsParsePrefixNum(s: &string, radix: i64): f64 {
+    var i: i64 = 0
+    let n = s.len()
+    while i < n && (s[i] == ' ' || s[i] == 9 as u8 || s[i] == 10 as u8 || s[i] == 13 as u8) {
+        i = i + 1
+    }
+    var neg = false
+    if i < n && (s[i] == '+' || s[i] == '-') {
+        neg = s[i] == '-'
+        i = i + 1
+    }
+    if radix == 16 && i + 1 < n && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X') {
+        i = i + 2
+    } else if radix == 10 && i + 1 < n && s[i] == '0' && (s[i + 1] == 'x' || s[i + 1] == 'X') {
+        // an 0x prefix forces hex even when no radix was given
+        i = i + 2
+        return jsParseDigits(s, i, 16, neg)
+    }
+    return jsParseDigits(s, i, radix, neg)
+}
+
+fn jsParseDigits(s: &string, start: i64, radix: i64, neg: bool): f64 {
+    var i = start
+    let n = s.len()
+    var acc: f64 = 0.0
+    var any = false
+    var seenDot = false
+    var scale: f64 = 1.0
+    while i < n {
+        let c = s[i]
+        var d: i64 = -1
+        if c >= '0' && c <= '9' {
+            d = (c - '0') as i64
+        } else if c >= 'a' && c <= 'z' {
+            d = (c - 'a') as i64 + 10
+        } else if c >= 'A' && c <= 'Z' {
+            d = (c - 'A') as i64 + 10
+        }
+        if c == '.' && radix == 10 && !seenDot {
+            seenDot = true
+            i = i + 1
+        } else if d < 0 || d >= radix {
+            i = n
+        } else {
+            any = true
+            if seenDot {
+                scale = scale / 10.0
+                acc = acc + (d as f64) * scale
+            } else {
+                acc = acc * (radix as f64) + (d as f64)
+            }
+            i = i + 1
+        }
+    }
+    if !any {
+        return jsNan()
+    }
+    if neg {
+        return 0.0 - acc
+    }
+    return acc
+}
+
 fn objHandle(v: &JSValue): i64 {
     match v {
         JSValue.Obj(o) => {

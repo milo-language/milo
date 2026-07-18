@@ -343,6 +343,10 @@ let NATIVE_OBJECT_CREATE: i64 = 39
 let NATIVE_OBJECT_GETPROTO: i64 = 40
 let NATIVE_OBJECT_SETPROTO: i64 = 41
 let NATIVE_OBJECT_GETOWNPROPDESC: i64 = 42
+let NATIVE_PARSE_INT: i64 = 43
+let NATIVE_PARSE_FLOAT: i64 = 44
+let NATIVE_SYMBOL: i64 = 45
+let NATIVE_OBJECT_DEFINEPROPERTIES: i64 = 46
 let NATIVE_RESOLVER_BASE: i64 = 1000000
 
 fn nativeErrorName(id: i64): string {
@@ -583,6 +587,59 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
             }
         }
         return JSValue.Bool(false)
+    }
+    if id == NATIVE_PARSE_INT || id == NATIVE_PARSE_FLOAT {
+        if argVals.len() == 0 {
+            return JSValue.Number(jsNan())
+        }
+        let text = toStr(argVals[0])
+        if id == NATIVE_PARSE_FLOAT {
+            return JSValue.Number(jsParsePrefixNum(text, 10))
+        }
+        var radix: i64 = 10
+        if argVals.len() > 1 {
+            let r = toNum(argVals[1]) as i64
+            if r >= 2 && r <= 36 {
+                radix = r
+            }
+        }
+        return JSValue.Number(jsParsePrefixNum(text, radix))
+    }
+    if id == NATIVE_SYMBOL {
+        // Symbols are modelled as unique strings; enough for the well-known
+        // ones used as property keys, not for real symbol semantics
+        var desc = ""
+        if argVals.len() > 0 {
+            desc = toStr(argVals[0])
+        }
+        st.symbolCounter = st.symbolCounter + 1
+        return JSValue.Str("@@sym:" + desc + ":" + i64ToStr(st.symbolCounter))
+    }
+    if id == NATIVE_OBJECT_DEFINEPROPERTIES {
+        if argVals.len() < 2 {
+            return JSValue.Undefined
+        }
+        let o = objHandle(argVals[0])
+        let descs = objHandle(argVals[1])
+        if o < 0 || descs < 0 {
+            return cloneValue(argVals[0])
+        }
+        var i: i64 = 0
+        while i < st.objects[descs].props.len() {
+            let key = st.objects[descs].props[i].key.clone()
+            let d = objHandle(st.objects[descs].props[i].value)
+            if d >= 0 {
+                let g = getMember(st, d, "get")
+                let sfn = getMember(st, d, "set")
+                if isCallable(g) || isCallable(sfn) {
+                    objDefineAccessor(st, o, key, g, sfn)
+                } else {
+                    setMember(st, o, key, getMember(st, d, "value"))
+                }
+            }
+            i = i + 1
+        }
+        return JSValue.Obj(o)
     }
     if id == NATIVE_OBJECT_CREATE {
         let o = newObject(st)
@@ -1178,6 +1235,7 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "getPrototypeOf", JSValue.Native(NATIVE_OBJECT_GETPROTO))
     objSet(st, objectCtor, "setPrototypeOf", JSValue.Native(NATIVE_OBJECT_SETPROTO))
     objSet(st, objectCtor, "getOwnPropertyDescriptor", JSValue.Native(NATIVE_OBJECT_GETOWNPROPDESC))
+    objSet(st, objectCtor, "defineProperties", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTIES))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
@@ -1186,6 +1244,9 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "Infinity", JSValue.Number(jsInfinity()))
     scopeDefine(st, 0, "isNaN", JSValue.Native(NATIVE_IS_NAN))
     scopeDefine(st, 0, "isFinite", JSValue.Native(NATIVE_IS_FINITE))
+    scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
+    scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))
+    scopeDefine(st, 0, "Symbol", JSValue.Native(NATIVE_SYMBOL))
     let arrayCtor = newObject(st)
     objSet(st, arrayCtor, "isArray", JSValue.Native(NATIVE_ARRAY_ISARRAY))
     scopeDefine(st, 0, "Array", JSValue.Obj(arrayCtor))
@@ -1326,6 +1387,15 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 return JSValue.Number(0.0 - toNum(va))
             }
             if op == "typeof" {
+                // a bind() result is an object internally but a function to JS
+                let th = objHandle(va)
+                if th >= 0 && st.objects[th].isBound {
+                    return JSValue.Str("function")
+                }
+                // symbols are unique strings internally; typeof still says symbol
+                if isSymbolValue(va) {
+                    return JSValue.Str("symbol")
+                }
                 return JSValue.Str(typeofStr(va))
             }
             if op == "void" {
@@ -1878,6 +1948,20 @@ fn describeCallee(prog: &Prog, calleeIdx: i64): string {
     }
 }
 
+fn isSymbolValue(v: &JSValue): bool {
+    match v {
+        JSValue.Str(s) => {
+            if s.len() < 6 {
+                return false
+            }
+            return s[0] == '@' && s[1] == '@' && s[2] == 's' && s[3] == 'y' && s[4] == 'm' && s[5] == ':'
+        }
+        _ => {
+            return false
+        }
+    }
+}
+
 fn isSuperName(name: &string): bool {
     if name.len() < 8 {
         return false
@@ -1926,6 +2010,26 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
         }
         JSValue.Native(id) => {
             return callNative(id, args, st)
+        }
+        JSValue.Obj(o) => {
+            // a bind() result: the captured receiver wins over the call site's
+            if st.objects[o].isBound {
+                let target = cloneValue(st.objects[o].boundTarget)
+                let boundThis = cloneValue(st.objects[o].boundThis)
+                var merged: Vec<JSValue> = Vec.new()
+                var b: i64 = 0
+                while b < st.objects[o].boundArgs.len() {
+                    merged.push(cloneValue(st.objects[o].boundArgs[b]))
+                    b = b + 1
+                }
+                var a: i64 = 0
+                while a < args.len() {
+                    merged.push(cloneValue(args[a]))
+                    a = a + 1
+                }
+                return callValue(prog, target, merged, boundThis, st)
+            }
+            return JSValue.Undefined
         }
         _ => {
             return JSValue.Undefined
@@ -2445,7 +2549,38 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
 // receivers dispatch to built-in methods; object receivers use function-valued
 // properties. The receiver is temp-rooted across argument evaluation (an argument
 // may be a call that triggers GC).
+// toString/valueOf and friends on a number, boolean, string, null or undefined.
+fn primitiveMethod(name: &string, recv: &JSValue, args: &Vec<JSValue>): JSValue {
+    if name == "valueOf" {
+        return cloneValue(recv)
+    }
+    if name == "toFixed" || name == "toPrecision" {
+        var digits: i64 = 0
+        if args.len() > 0 {
+            digits = toNum(args[0]) as i64
+        }
+        return JSValue.Str(numToFixed(toNum(recv), digits))
+    }
+    // toString(radix) — only meaningful for numbers, and only for integers here
+    if args.len() > 0 {
+        let radix = toNum(args[0]) as i64
+        if radix >= 2 && radix <= 36 && radix != 10 {
+            return JSValue.Str(numToRadix(toNum(recv), radix))
+        }
+    }
+    return JSValue.Str(toStr(recv))
+}
+
 fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
+    // Methods every primitive answers to. JS boxes the receiver for these; here
+    // they are answered directly, which covers the cases real code uses.
+    if name == "toString" || name == "valueOf" || name == "toFixed" || name == "toPrecision" || name == "toLocaleString" {
+        let isPrimitive = objHandle(recv) < 0 && funcHandle(recv) < 0
+        if isPrimitive {
+            let argVals = evalArgs(prog, argsIdx, st, scope)
+            return primitiveMethod(name, recv, argVals)
+        }
+    }
     match recv {
         JSValue.Str(s) => {
             let argVals = evalArgs(prog, argsIdx, st, scope)
@@ -2509,6 +2644,23 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
         JSValue.Func(bf, benv) => {
             // method call on a function value: either a static (Class.make())
             // or .call/.apply, which retarget `this`
+            if name == "bind" {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                let bo = newObject(st)
+                st.objects[bo].isBound = true
+                st.objects[bo].boundTarget = JSValue.Func(bf, benv)
+                if argVals.len() > 0 {
+                    st.objects[bo].boundThis = cloneValue(argVals[0])
+                }
+                var extra: Vec<JSValue> = Vec.new()
+                var bi: i64 = 1
+                while bi < argVals.len() {
+                    extra.push(cloneValue(argVals[bi]))
+                    bi = bi + 1
+                }
+                st.objects[bo].boundArgs = extra
+                return JSValue.Obj(bo)
+            }
             if name == "call" || name == "apply" {
                 var argVals = evalArgs(prog, argsIdx, st, scope)
                 var thisArg = JSValue.Undefined
@@ -2671,6 +2823,14 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                 JSValue.Native(id) => {
                     let argVals = evalArgs(prog, argsIdx, st, scope)
                     return callNative(id, argVals, st)
+                }
+                JSValue.Obj(bo) => {
+                    if st.objects[bo].isBound {
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        return callValue(prog, JSValue.Obj(bo), argVals, JSValue.Undefined, st)
+                    }
+                    print("milojs: TypeError: " + describeCallee(prog, calleeIdx) + " is not a function")
+                    return JSValue.Undefined
                 }
                 _ => {
                     print("milojs: TypeError: " + describeCallee(prog, calleeIdx) + " is not a function")
