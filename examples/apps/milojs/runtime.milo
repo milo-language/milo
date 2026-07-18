@@ -52,6 +52,10 @@ struct Interp {
     // heap-object arena + its own free-list, GC'd by the same collector as scopes
     objects: Vec<JSObj>,
     objFreeList: Vec<i64>,
+    // values held on the native stack across an operation that may collect (e.g. a
+    // method receiver while its arguments — which can themselves be calls — are
+    // evaluated). Rooted by collect so an in-flight object/closure isn't swept.
+    tempRoots: Vec<JSValue>,
     allocSinceGc: i64,
     gcThreshold: i64,
     gcRuns: i64,
@@ -188,6 +192,14 @@ fn popActive(st: &mut Interp) {
     st.active.pop()
 }
 
+fn pushTemp(st: &mut Interp, v: JSValue) {
+    st.tempRoots.push(v)
+}
+
+fn popTemp(st: &mut Interp) {
+    st.tempRoots.pop()
+}
+
 // Mark whatever a value keeps alive: a closure roots its captured scope, an
 // object handle roots its heap slot; primitives root nothing. The three mark
 // functions are mutually recursive and all idempotent (mark flags), so cyclic
@@ -281,6 +293,12 @@ fn collect(st: &mut Interp) {
     while a < st.active.len() {
         markScope(st, st.active[a])
         a = a + 1
+    }
+    var t: i64 = 0
+    while t < st.tempRoots.len() {
+        let tv = cloneValue(st.tempRoots[t])
+        markValue(st, tv)
+        t = t + 1
     }
     var freed: i64 = 0
     var s: i64 = 0

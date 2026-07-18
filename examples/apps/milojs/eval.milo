@@ -201,6 +201,9 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.ObjLit(litIdx) => {
             let obj = newObject(st)
+            // root the part-built object so a GC while evaluating later property
+            // values (a value may be a call) can't reclaim it
+            pushTemp(st, JSValue.Obj(obj))
             var i: i64 = 0
             let n = prog.objLits[litIdx].len()
             while i < n {
@@ -210,10 +213,15 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 objSet(st, obj, key, v)
                 i = i + 1
             }
+            popTemp(st)
             return JSValue.Obj(obj)
         }
+
         Expr.ArrLit(litIdx) => {
             let arr = newArray(st)
+            // root the part-built array so a GC while evaluating later elements
+            // (an element may be a call) can't reclaim it
+            pushTemp(st, JSValue.Obj(arr))
             var i: i64 = 0
             let n = prog.arrLits[litIdx].len()
             while i < n {
@@ -222,7 +230,35 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 arrPush(st, arr, v)
                 i = i + 1
             }
+            popTemp(st)
             return JSValue.Obj(arr)
+        }
+        Expr.New(calleeIdx, argsIdx) => {
+            let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+            match calleeVal {
+                JSValue.Func(fIdx, envIdx) => {
+                    pushTemp(st, JSValue.Func(fIdx, envIdx))
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    let obj = newObject(st)
+                    pushTemp(st, JSValue.Obj(obj))
+                    let result = callFunction(prog, fIdx, envIdx, argVals, JSValue.Obj(obj), st)
+                    popTemp(st)
+                    popTemp(st)
+                    // a constructor that returns an object replaces the new instance
+                    match result {
+                        JSValue.Obj(r) => {
+                            return JSValue.Obj(r)
+                        }
+                        _ => {
+                            return JSValue.Obj(obj)
+                        }
+                    }
+                }
+                _ => {
+                    print("milojs: TypeError: value is not a constructor")
+                    return JSValue.Undefined
+                }
+            }
         }
         Expr.FuncExpr(f) => {
             return JSValue.Func(f, scope)
@@ -330,6 +366,84 @@ fn inspectTop(st: &Interp, v: &JSValue): string {
     }
 }
 
+// Invoke a Milo-level JS function: a fresh scope off the closure's captured env,
+// with `this` and the parameters bound, then run the body. argVals is consumed.
+fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, thisVal: JSValue, st: &mut Interp): JSValue {
+    let callScope = newScope(st, envIdx)
+    // root the frame across the whole call so a GC inside the body (or a nested
+    // call) can't reclaim it
+    pushActive(st, callScope)
+    scopeDefine(st, callScope, "this", thisVal)
+    var j: i64 = 0
+    let nParams = prog.funcs[fIdx].params.len()
+    while j < nParams {
+        let pName = prog.funcs[fIdx].params[j].clone()
+        var v = JSValue.Undefined
+        if j < argVals.len() {
+            v = cloneValue(argVals[j])
+        }
+        scopeDefine(st, callScope, pName, v)
+        j = j + 1
+    }
+    let body = prog.funcs[fIdx].body
+    let flow = execBlock(prog, body, st, callScope)
+    popActive(st)
+    match flow {
+        Flow.Ret(v) => {
+            return v
+        }
+        Flow.Normal => {
+            return JSValue.Undefined
+        }
+    }
+}
+
+// Call a member as a method: `this` binds to the receiver. Handles the built-in
+// array methods, then function-valued properties. The receiver is temp-rooted
+// across argument evaluation (an argument may be a call that triggers GC).
+fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
+    match recv {
+        JSValue.Obj(o) => {
+            pushTemp(st, JSValue.Obj(o))
+            if st.objects[o].isArray && (name == "push" || name == "pop") {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                if name == "push" {
+                    var j: i64 = 0
+                    while j < argVals.len() {
+                        arrPush(st, o, cloneValue(argVals[j]))
+                        j = j + 1
+                    }
+                    popTemp(st)
+                    return JSValue.Number(arrLen(st, o) as f64)
+                }
+                popTemp(st)
+                if arrLen(st, o) == 0 {
+                    return JSValue.Undefined
+                }
+                return st.objects[o].elems.pop()
+            }
+            let m = getMember(st, o, name)
+            match m {
+                JSValue.Func(fIdx, envIdx) => {
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    let r = callFunction(prog, fIdx, envIdx, argVals, JSValue.Obj(o), st)
+                    popTemp(st)
+                    return r
+                }
+                _ => {
+                    popTemp(st)
+                    print("milojs: TypeError: value is not a function")
+                    return JSValue.Undefined
+                }
+            }
+        }
+        _ => {
+            print("milojs: TypeError: value is not a function")
+            return JSValue.Undefined
+        }
+    }
+}
+
 fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i64): JSValue {
     // builtin: console.log(...)
     let calleeNode = getExpr(prog, calleeIdx)
@@ -361,75 +475,35 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
         }
     }
 
-    // array methods: arr.push(...) / arr.pop(). Guard on the name first so a
-    // non-method member access isn't evaluated twice.
+    // A Member/Index callee is a method call: `this` binds to the receiver.
+    // Anything else is a plain call with `this` = undefined.
     let methodNode = getExpr(prog, calleeIdx)
     match methodNode {
         Expr.Member(objIdx, name) => {
-            if name == "push" || name == "pop" {
-                let recv = evalExpr(prog, objIdx, st, scope)
-                match recv {
-                    JSValue.Obj(o) => {
-                        if st.objects[o].isArray {
-                            let argVals = evalArgs(prog, argsIdx, st, scope)
-                            if name == "push" {
-                                var j: i64 = 0
-                                while j < argVals.len() {
-                                    arrPush(st, o, cloneValue(argVals[j]))
-                                    j = j + 1
-                                }
-                                return JSValue.Number(arrLen(st, o) as f64)
-                            }
-                            if arrLen(st, o) == 0 {
-                                return JSValue.Undefined
-                            }
-                            return st.objects[o].elems.pop()
-                        }
-                    }
-                    _ => {
-                    }
-                }
-            }
+            let recv = evalExpr(prog, objIdx, st, scope)
+            return callMember(prog, recv, name, argsIdx, st, scope)
+        }
+        Expr.Index(objIdx, keyIdx) => {
+            let recv = evalExpr(prog, objIdx, st, scope)
+            let kv = evalExpr(prog, keyIdx, st, scope)
+            let key = toStr(kv)
+            return callMember(prog, recv, key, argsIdx, st, scope)
         }
         _ => {
-        }
-    }
-
-    let calleeVal = evalExpr(prog, calleeIdx, st, scope)
-    match calleeVal {
-        JSValue.Func(fIdx, envIdx) => {
-            let argVals = evalArgs(prog, argsIdx, st, scope)
-            // call scope hangs off the closure's captured scope — lexical, not dynamic
-            let callScope = newScope(st, envIdx)
-            // root the frame across the whole call so a GC inside the body (or in
-            // a nested call) can't reclaim it
-            pushActive(st, callScope)
-            var j: i64 = 0
-            let nParams = prog.funcs[fIdx].params.len()
-            while j < nParams {
-                let pName = prog.funcs[fIdx].params[j].clone()
-                var v = JSValue.Undefined
-                if j < argVals.len() {
-                    v = cloneValue(argVals[j])
+            let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+            match calleeVal {
+                JSValue.Func(fIdx, envIdx) => {
+                    pushTemp(st, JSValue.Func(fIdx, envIdx))
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    let r = callFunction(prog, fIdx, envIdx, argVals, JSValue.Undefined, st)
+                    popTemp(st)
+                    return r
                 }
-                scopeDefine(st, callScope, pName, v)
-                j = j + 1
-            }
-            let body = prog.funcs[fIdx].body
-            let flow = execBlock(prog, body, st, callScope)
-            popActive(st)
-            match flow {
-                Flow.Ret(v) => {
-                    return v
-                }
-                Flow.Normal => {
+                _ => {
+                    print("milojs: TypeError: value is not a function")
                     return JSValue.Undefined
                 }
             }
-        }
-        _ => {
-            print("milojs: TypeError: value is not a function")
-            return JSValue.Undefined
         }
     }
 }

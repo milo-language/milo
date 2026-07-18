@@ -46,6 +46,7 @@ let T_EOF: i32 = 37
 let T_LBRACKET: i32 = 38
 let T_RBRACKET: i32 = 39
 let T_COLON: i32 = 40
+let T_NEW: i32 = 41
 
 struct Token {
     kind: i32,
@@ -101,6 +102,9 @@ fn keywordKind(s: &string): i32 {
     }
     if s == "undefined" {
         return T_UNDEFINED
+    }
+    if s == "new" {
+        return T_NEW
     }
     return T_IDENT
 }

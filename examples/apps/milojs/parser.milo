@@ -87,9 +87,43 @@ fn parsePrimary(p: &mut PState, prog: &mut Prog): i64 {
     if k == T_LBRACKET {
         return parseArrayLiteral(p, prog)
     }
+    if k == T_NEW {
+        return parseNew(p, prog)
+    }
     // unexpected token: consume it so parsing always makes progress
     advance(p)
     return addExpr(prog, Expr.UndefLit)
+}
+
+// new Ctor(args) — the constructor may be a member chain (new a.b.C()). The arg
+// list is parsed here; a following postfix chain (new C().x) is left to the caller.
+fn parseNew(p: &mut PState, prog: &mut Prog): i64 {
+    expect(p, T_NEW)
+    var callee = parsePrimary(p, prog)
+    while peekKind(p) == T_DOT {
+        advance(p)
+        var name = ""
+        if peekKind(p) == T_IDENT {
+            name = p.toks[p.pos].text.clone()
+            advance(p)
+        }
+        callee = addExpr(prog, Expr.Member(callee, name))
+    }
+    var argIdxs: Vec<i64> = Vec.new()
+    if peekKind(p) == T_LPAREN {
+        advance(p)
+        if peekKind(p) != T_RPAREN {
+            argIdxs.push(parseExpr(p, prog))
+            while peekKind(p) == T_COMMA {
+                advance(p)
+                argIdxs.push(parseExpr(p, prog))
+            }
+        }
+        expect(p, T_RPAREN)
+    }
+    prog.argLists.push(argIdxs)
+    let listIdx = prog.argLists.len() - 1
+    return addExpr(prog, Expr.New(callee, listIdx))
 }
 
 // [ expr, expr, ... ] — element expressions, trailing comma tolerated

@@ -24,6 +24,8 @@ enum Expr {
     SetMember(i64, i64, i64),
     // array literal: index into prog.arrLits (a list of element-expr indices)
     ArrLit(i64),
+    // new Ctor(args): constructor expr, arg-list index
+    New(i64, i64),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -108,6 +110,9 @@ fn cloneExpr(e: &Expr): Expr {
         }
         Expr.ArrLit(i) => {
             return Expr.ArrLit(i)
+        }
+        Expr.New(callee, args) => {
+            return Expr.New(callee, args)
         }
     }
 }
