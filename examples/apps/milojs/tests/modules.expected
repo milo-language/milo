@@ -1,0 +1,6 @@
+cfg 2 value a"b\cA
+[1,2,3]
+true 42
+true
+A B
+B A undefined

@@ -1221,7 +1221,11 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                     if ps == 1 {
                         return pv
                     }
-                    // still pending: nothing can ever settle it
+                    // Still pending. There is no event loop, so nothing can ever
+                    // settle it — throw rather than silently yielding undefined
+                    // and letting the caller compute on garbage.
+                    st.throwing = true
+                    st.thrownValue = JSValue.Str("TypeError: await on a pending promise — milojs has no event loop yet")
                     return JSValue.Undefined
                 }
                 return va
@@ -1813,6 +1817,14 @@ fn promiseMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &m
             var noArgs: Vec<JSValue> = Vec.new()
             let _ = callValue(prog, args[0], noArgs, JSValue.Undefined, st)
         }
+        return JSValue.Obj(o)
+    }
+    if state == 0 {
+        // A handler registered on a pending promise would need to be stored and
+        // run on settlement; with no event loop it would simply be dropped, so
+        // say so instead of losing it silently.
+        st.throwing = true
+        st.thrownValue = JSValue.Str("TypeError: ." + name.clone() + "() on a pending promise — milojs has no event loop yet")
         return JSValue.Obj(o)
     }
     var cb = JSValue.Undefined

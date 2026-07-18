@@ -1,0 +1,12 @@
+then 42
+res 1
+caught boom
+np hi
+rej nope
+all [1,2,6]
+settled 2 fulfilled rejected
+race first
+try bad
+awaited [2,4]
+await non-promise 42
+async rejected: async-throw
