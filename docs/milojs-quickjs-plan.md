@@ -11,6 +11,12 @@ Working plan for driving `scripts/quickjs-sweep.ts` toward 100%. Written for age
 picking up individual lanes; each lane is independent and lists exact anchors.
 Current: **55/149 cases (36.9%)**. Delete lanes here as they land.
 
+**Lane 1 (ESM) is now the only thing that matters: it blocks 73 of the 94 failures.**
+Landing `yield` (24a0099) fixed 29 parse failures but moved all 29 into the import
+bucket — `test_builtin.js` parses now and dies on its first line, `import { assert }
+from "./assert.js"`. Every remaining bucket is ≤5 cases. Do lane 1, re-measure, and
+expect a large step plus a crop of newly-visible runtime gaps.
+
 ## Ground rules (read first, all of them)
 
 1. **Coordinate on dirty files.** Another agent may hold `ast.milo` / `eval.milo` /
@@ -38,7 +44,7 @@ Current: **55/149 cases (36.9%)**. Delete lanes here as they land.
 5. Tests importing `qjs:std` / `qjs:os` / workers / bjson are host-facility tests,
    not conformance gaps — they stay in `SKIP_FILES` in the sweep.
 
-## Lane 1 — ESM import/export: 44 cases, the whale
+## Lane 1 — ESM import/export: 73 cases, the whale
 
 `import` is not a token today; it evaluates as an undefined identifier →
 `ReferenceError: import is not defined` × 44. Strategy: **desugar ESM onto the
@@ -128,14 +134,18 @@ Dynamic `import()` (1 case, `dynamic_import_rejection_handled.js`): desugar to a
 Promise wrapping `require` — resolve with the exports, reject with the thrown
 error. Needs the promise machinery already in eval.milo. Do this last; it's 1 case.
 
-## Lane 2 — yield as an *expression*: 29 cases — GENERATOR AGENT'S LANE
+## Lane 2 — yield as an expression: DONE (24a0099)
 
-c3f7d11 added `function*` syntax, but `yield` is still not a token: test_builtin.js
-dies at line 1146 `ret = 2 + (yield 1)` → "expected …, found number", killing all
-29 remaining cases in the file. **The parse-only fix is the whole 29-case win**:
-generator *semantics* stay behind the existing runtime TypeError (eval.milo:2652)
-and only `test_generator` itself needs them. Parse `yield [expr]` / `yield* expr`
-at assignment-expression level, only valid inside a generator body.
+`T_YIELD` in the lexer; `yield` / `yield*` parsed in `parseExpr` (looser than
+ternary, tighter than comma) as `Expr.Un("yield", …)`, mirroring how `await` is
+handled. Operandless `yield` is detected by peeking for a closing token. Parse-only
+by design — calling a generator still throws TypeError in `callFunction`, so the
+`Un("yield")` node is never evaluated and `eval.milo` needed no change.
+
+Caveat left behind: `yield` is now a keyword *everywhere*, not only inside
+generator bodies, so `var yield = 1` in sloppy-mode code no longer parses. Real JS
+reserves it contextually. Nothing in the suite or `tests/*.js` hits this; fix by
+threading an `inGenerator` flag through `PState` if it ever bites.
 
 ## Lane 3 — small fixes, ~6 cases, one sitting
 
@@ -151,9 +161,9 @@ Run the sweep with `-v` to get exact file:case names, then:
    construction + `register()` to not throw — GC-behavior asserts don't exist in
    them. Stub class: constructor stores the callback, `register`/`unregister`
    no-ops. Verify WeakMap-with-Symbol-keys works while in there (bug1352 uses it).
-4. **padStart/padEnd length cap** (1 case): `str-pad-leak.js` currently burns the
-   10s timeout allocating. Throw RangeError above a sane max (e.g. 2^30), which
-   is what the test expects.
+4. ~~**padStart/padEnd length cap**~~ DONE (a0ccf92) — throws RangeError past 2^29.
+   Worth 0 cases (the test already completed inside the timeout at -O2); kept
+   because V8's behavior is to throw and the old path could allocate gigabytes.
 5. **Investigate individually** (3 cases): `cannot read property of a non-object`
    ×2, `toString is not a function` ×1, the one real `assertion failed`. Each is
    a genuine semantic bug — bisect the test body the way lane 2 was found
