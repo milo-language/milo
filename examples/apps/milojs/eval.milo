@@ -3531,6 +3531,12 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
         }
         _ => {
             let calleeVal = evalExpr(prog, calleeIdx, st, scope)
+            // evaluating the callee can throw (an undeclared name is a
+            // ReferenceError); reporting "is not a function" on top of that just
+            // buries the real error
+            if st.throwing {
+                return JSValue.Undefined
+            }
             match calleeVal {
                 JSValue.Func(fIdx, envIdx) => {
                     pushTemp(st, JSValue.Func(fIdx, envIdx))
