@@ -28,7 +28,8 @@ type_name   = "i8" | "i16" | "i32" | "i64"
 block       = "{" { ";" | statement } "}" ;
 
 statement   = let_decl | let_else | var_decl | assign_stmt | return_stmt
-            | if_stmt | while_stmt | expr_stmt ;
+            | if_stmt | while_stmt | for_stmt | break_stmt | continue_stmt
+            | expr_stmt ;
 
 let_decl    = "let" IDENT [ ":" type ] "=" expr ;
 let_else    = "let" pattern "=" expr "else" block ;  (* pattern binds into the enclosing scope; block must diverge *)
@@ -37,6 +38,9 @@ assign_stmt = IDENT "=" expr ;
 return_stmt = "return" [ expr ] ;
 if_stmt     = "if" expr block [ "else" ( if_stmt | block ) ] ;
 while_stmt  = "while" expr { "invariant" expr } block ;
+for_stmt    = "for" IDENT "in" expr block ;  (* expr is a range (a..b) or an iterable (Vec, etc.) *)
+break_stmt  = "break" ;      (* only valid inside a loop body; exits the innermost loop *)
+continue_stmt = "continue" ; (* only valid inside a loop body; jumps to the innermost loop's next iteration *)
 expr_stmt   = expr ;
 
 (* Expressions — precedence low to high *)
