@@ -1858,6 +1858,26 @@ fn callFunction(prog: &Prog, fIdx: i64, envIdx: i64, argVals: Vec<JSValue>, this
 // its prototype, statics on its own property bag. `extends` chains the prototype
 // so instances inherit the base's methods, and records the base constructor
 // under __super$<Name> so super(...) can find it.
+// Best-effort name for a callee expression, so "is not a function" says which
+// one. Diagnostics only.
+fn describeCallee(prog: &Prog, calleeIdx: i64): string {
+    let node = getExpr(prog, calleeIdx)
+    match node {
+        Expr.Ident(n) => {
+            return n.clone()
+        }
+        Expr.Member(_o, n) => {
+            return "." + n.clone()
+        }
+        Expr.OptMember(_o, n) => {
+            return "?." + n.clone()
+        }
+        _ => {
+            return "value"
+        }
+    }
+}
+
 fn isSuperName(name: &string): bool {
     if name.len() < 8 {
         return false
@@ -2481,7 +2501,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 }
                 _ => {
                     popTemp(st)
-                    print("milojs: TypeError: value is not a function")
+                    print("milojs: TypeError: ." + name.clone() + " is not a function")
                     return JSValue.Undefined
                 }
             }
@@ -2524,11 +2544,11 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 return callValue(prog, m, argVals, JSValue.Func(bf, benv), st)
             }
-            print("milojs: TypeError: value is not a function")
+            print("milojs: TypeError: ." + name.clone() + " is not a function (on a function value)")
             return JSValue.Undefined
         }
         _ => {
-            print("milojs: TypeError: value is not a function")
+            print("milojs: TypeError: cannot call ." + name.clone() + " on a non-object")
             return JSValue.Undefined
         }
     }
@@ -2653,7 +2673,7 @@ fn evalCall(prog: &Prog, calleeIdx: i64, argsIdx: i64, st: &mut Interp, scope: i
                     return callNative(id, argVals, st)
                 }
                 _ => {
-                    print("milojs: TypeError: value is not a function")
+                    print("milojs: TypeError: " + describeCallee(prog, calleeIdx) + " is not a function")
                     return JSValue.Undefined
                 }
             }
