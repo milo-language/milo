@@ -392,6 +392,80 @@ fn stringMethod(name: &string, s: &string, args: &Vec<JSValue>, st: &mut Interp)
         }
         return JSValue.Str(out)
     }
+    if name == "at" {
+        var idx = argNum(args, 0, 0)
+        if idx < 0 {
+            idx = s.len() + idx
+        }
+        if idx < 0 || idx >= s.len() {
+            return JSValue.Undefined
+        }
+        return JSValue.Str(jsCharAt(s, idx))
+    }
+    if name == "codePointAt" {
+        // byte-oriented like charCodeAt — correct for ASCII, which is the same
+        // limit the rest of this file carries
+        let i = argNum(args, 0, 0)
+        if i < 0 || i >= s.len() {
+            return JSValue.Undefined
+        }
+        return JSValue.Number(s[i] as f64)
+    }
+    if name == "replaceAll" {
+        let pat = argStr(args, 0)
+        let rep = argStr(args, 1)
+        if pat.len() == 0 {
+            return JSValue.Str(s.clone())
+        }
+        var out = String.withCapacity(s.len())
+        var at: i64 = 0
+        var hit = jsIndexOf(s, pat, at)
+        while hit >= 0 {
+            var k = at
+            while k < hit {
+                out.push(s[k])
+                k = k + 1
+            }
+            var r: i64 = 0
+            while r < rep.len() {
+                out.push(rep[r])
+                r = r + 1
+            }
+            at = hit + pat.len()
+            hit = jsIndexOf(s, pat, at)
+        }
+        var t = at
+        while t < s.len() {
+            out.push(s[t])
+            t = t + 1
+        }
+        return JSValue.Str(out)
+    }
+    if name == "localeCompare" {
+        // no ICU here, so this is a plain byte-order comparison
+        let other = argStr(args, 0)
+        var i: i64 = 0
+        while i < s.len() && i < other.len() {
+            if s[i] < other[i] {
+                return JSValue.Number(0.0 - 1.0)
+            }
+            if s[i] > other[i] {
+                return JSValue.Number(1.0)
+            }
+            i = i + 1
+        }
+        if s.len() < other.len() {
+            return JSValue.Number(0.0 - 1.0)
+        }
+        if s.len() > other.len() {
+            return JSValue.Number(1.0)
+        }
+        return JSValue.Number(0.0)
+    }
+    if name == "normalize" {
+        // strings are byte buffers, so every form is already "normalized"
+        return JSValue.Str(s.clone())
+    }
     if name == "split" {
         return JSValue.Obj(jsSplit(s, args, st))
     }
