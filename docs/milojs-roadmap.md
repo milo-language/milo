@@ -165,11 +165,31 @@ own the queue, so no more "drain only at the outermost boundary" gymnastics.
 **Gate:** `examples/apps/minibun-notes.js` (the Express-style CRUD demo) serves requests with
 milojs as the engine. `RegExp` is the likeliest long pole — scope to what express needs.
 
-### Stage 6 — test262 conformance lock ⬜
-Same probe → fix → lock pattern used for JSON (RFC 8259) and base64: run a test262 subset as the
-oracle, fix failures, lock a passing subset as a regression fixture set. Full ES2020 conformance
-is a decade (it is for QuickJS too — one person's life work); we lock the subset our apps need
-and grow it, logging exactly what is unimplemented (no silent truncation).
+### Stage 6 — test262 conformance, measured and growing ⬜  ← a first-class goal, not just an app-subset
+**Why this is a real goal, not a footnote:** an engine that only runs "the subset our apps need"
+is a private tool nobody else can trust. What makes milojs usable *as* an embeddable engine
+(the QuickJS-alternative pitch) is a **published, honest conformance number that goes up over
+time**. So test262 is the standing metric, not a one-time lock.
+
+Concretely:
+- **Harness:** vendor a pinned test262 checkout; a milojs runner that parses each test's YAML
+  frontmatter (`includes`, `flags: [onlyStrict|noStrict|module|raw|async]`, `negative`,
+  `features`), prepends `harness/sta.js`+`assert.js`, runs strict & sloppy, and honors negative
+  (parse vs runtime) + async (`$DONE`) tests. This is the QuickJS `run-test262` contract.
+- **Metric:** report `pass / total` per top-level area (`language/`, `built-ins/`,
+  `intl402/`, `annexB/`) every run, checked into a `test262-status.md` so the trend is visible.
+  Exclude nothing silently — an excluded/failing test is logged with the reason.
+- **Grow-and-lock:** probe → fix → lock (the JSON/base64 pattern), but the locked set is a
+  *ratchet on the whole suite* — the number only moves up, regressions fail CI.
+- **Honesty:** full ES2020 is a decade (QuickJS too — one person's life's work). We do **not**
+  claim conformance we don't have; we publish exactly where we are and grow it. `RegExp`, `Date`,
+  and Number formatting are the big "expressible ≠ spec-correct" cliffs — expect the number to
+  stall there and log precisely which sub-areas are unimplemented.
+
+Target ladder (illustrative, to be set from the first real run): boot minibun (Stage 5) needs
+only a slice; a *credible public engine* wants `language/` + core `built-ins/` in the high
+90s%. Measure first (see below — the QuickJS `tests/` microtests are the cheap pre-test262
+smoke), then set the ladder.
 
 ## Critical path & honesty
 
