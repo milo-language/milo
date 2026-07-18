@@ -252,6 +252,58 @@ fn callBuiltinByName(prog: &Prog, recv: &JSValue, name: &string, args: Vec<JSVal
             let m = getMember(st, o, name)
             return callValue(prog, m, args, JSValue.Obj(o), st)
         }
+        JSValue.Func(bf, benv) => {
+            // Function.prototype.apply.call(fn, thisArg, args) lands here with
+            // recv = fn: re-dispatch against the function itself
+            if name == "call" || name == "apply" {
+                var thisArg = JSValue.Undefined
+                if args.len() > 0 {
+                    thisArg = cloneValue(args[0])
+                }
+                var rest: Vec<JSValue> = Vec.new()
+                if name == "apply" {
+                    if args.len() > 1 {
+                        let ah = objHandle(args[1])
+                        if ah >= 0 && st.objects[ah].isArray {
+                            var ai: i64 = 0
+                            while ai < arrLen(st, ah) {
+                                rest.push(arrGet(st, ah, ai))
+                                ai = ai + 1
+                            }
+                        }
+                    }
+                } else {
+                    var ai: i64 = 1
+                    while ai < args.len() {
+                        rest.push(cloneValue(args[ai]))
+                        ai = ai + 1
+                    }
+                }
+                return callFunction(prog, bf, benv, rest, thisArg, st)
+            }
+            if name == "bind" {
+                let bo = newObject(st)
+                st.objects[bo].isBound = true
+                st.objects[bo].boundTarget = JSValue.Func(bf, benv)
+                if args.len() > 0 {
+                    st.objects[bo].boundThis = cloneValue(args[0])
+                }
+                var extra: Vec<JSValue> = Vec.new()
+                var bi: i64 = 1
+                while bi < args.len() {
+                    extra.push(cloneValue(args[bi]))
+                    bi = bi + 1
+                }
+                st.objects[bo].boundArgs = extra
+                return JSValue.Obj(bo)
+            }
+            let statics = getFuncStatics(st, bf)
+            let m = getMember(st, statics, name)
+            if isCallable(m) {
+                return callValue(prog, m, args, JSValue.Func(bf, benv), st)
+            }
+            return JSValue.Undefined
+        }
         _ => {
             return primitiveMethod(name, recv, args)
         }
@@ -1534,6 +1586,18 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, dateCtorObj, "now", JSValue.Native(NATIVE_DATE_NOW))
     st.dateCtorProps = dateCtorObj
     scopeDefine(st, 0, "Date", JSValue.Native(NATIVE_DATE))
+    // Function.prototype.{call,apply,bind} are bound-method values: invoking
+    // .call on them re-targets to whatever function is passed as the receiver,
+    // which is how Function.prototype.apply.call(fn, ...) resolves
+    let functionProto = newObject(st)
+    objSet(st, functionProto, "call", makeBoundMethod(st, JSValue.Undefined, "call"))
+    objSet(st, functionProto, "apply", makeBoundMethod(st, JSValue.Undefined, "apply"))
+    objSet(st, functionProto, "bind", makeBoundMethod(st, JSValue.Undefined, "bind"))
+    st.objects[functionProto].isFunctionLike = true
+    let functionCtor = newObject(st)
+    st.objects[functionCtor].isFunctionLike = true
+    objSet(st, functionCtor, "prototype", JSValue.Obj(functionProto))
+    scopeDefine(st, 0, "Function", JSValue.Obj(functionCtor))
     scopeDefine(st, 0, "encodeURIComponent", JSValue.Native(NATIVE_ENCODE_URI_COMPONENT))
     scopeDefine(st, 0, "decodeURIComponent", JSValue.Native(NATIVE_DECODE_URI_COMPONENT))
     scopeDefine(st, 0, "encodeURI", JSValue.Native(NATIVE_ENCODE_URI))
@@ -1708,7 +1772,7 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             if op == "typeof" {
                 // a bind() result is an object internally but a function to JS
                 let th = objHandle(va)
-                if th >= 0 && st.objects[th].isBound {
+                if th >= 0 && (st.objects[th].isBound || st.objects[th].isFunctionLike) {
                     return JSValue.Str("function")
                 }
                 // symbols are unique strings internally; typeof still says symbol
