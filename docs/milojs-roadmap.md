@@ -108,9 +108,14 @@ chaining. String helpers live in a new `builtins.milo`; callback array methods s
 (they need `callFunction`). *Hazard found:* Milo flat-compiles all files into one namespace, so
 milojs helper names must not collide with std (mine shadowed `std/string`'s `strIndexOf` and broke
 std internally until renamed).
+**JSON landed (e943e78):** `JSON.stringify` (compact, nested, escaping, undefined/function
+omission, NaN/Infinity→null) and `JSON.parse` (recursive-descent over a byte cursor, builds heap
+objects/arrays, temp-rooted while building). `JSON` is a global object whose methods are native
+functions; `callMember` now dispatches `Native`-valued props. The real path
+`JSON.parse(x).map(...).reduce(...)` is byte-identical to bun.
 **Still open:** prototype-*chain* lookup for *shared* methods (`Ctor.prototype.m`) — needs
-functions to carry a prototype object; today each instance gets its own methods. `JSON`,
-`Math`, `switch`, `for...in`/`for...of`, bitwise ops, real `===` (currently aliases `==`).
+functions to carry a prototype object; today each instance gets its own methods. `Math`,
+`switch`, `for...in`/`for...of`, bitwise ops, real `===` (currently aliases `==`).
 **Gate:** prototype-based method dispatch + a class-ish pattern (constructor + prototype methods).
 
 **Test yardstick (decided):** milojs *is* the engine, so unlike minibun's JSC, both test262 and
