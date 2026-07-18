@@ -1,0 +1,33 @@
+// IEEE 754: every comparison with NaN is false except !=, which is true.
+// Regression: `!=` was lowered to `fcmp one` (ordered), making both `x == x`
+// and `x != x` false for NaN.
+fn main() {
+    var z = 0.0
+    let nan = z / z
+
+    // @expect: false
+    print(boolStr(nan == nan))
+    // @expect: true
+    print(boolStr(nan != nan))
+    // @expect: true
+    print(boolStr(!(nan == nan)))
+    // @expect: false
+    print(boolStr(nan < 1.0))
+    // @expect: false
+    print(boolStr(nan >= 1.0))
+
+    // ordinary values still behave
+    let a = 1.5
+    let b = 2.5
+    // @expect: true
+    print(boolStr(a != b))
+    // @expect: false
+    print(boolStr(a == b))
+}
+
+fn boolStr(b: bool): string {
+    if b {
+        return "true"
+    }
+    return "false"
+}

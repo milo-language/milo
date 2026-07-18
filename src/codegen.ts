@@ -3192,7 +3192,9 @@ export class Codegen {
         const intCmps: Record<string, string> = unsigned
           ? { "==": "eq", "!=": "ne", "<": "ult", ">": "ugt", "<=": "ule", ">=": "uge" }
           : { "==": "eq", "!=": "ne", "<": "slt", ">": "sgt", "<=": "sle", ">=": "sge" };
-        const floatCmps: Record<string, string> = { "==": "oeq", "!=": "one", "<": "olt", ">": "ogt", "<=": "ole", ">=": "oge" };
+        // "!=" must be `une` (unordered-or-not-equal), not `one`: for NaN operands
+        // `one` is false, which would make both `x == x` and `x != x` false.
+        const floatCmps: Record<string, string> = { "==": "oeq", "!=": "une", "<": "olt", ">": "ogt", "<=": "ole", ">=": "oge" };
         if (expr.op in intOps) {
           const op = isFloat ? floatOps[expr.op] : intOps[expr.op];
           const checkedOps: Record<string, string> = { "+": "add", "-": "sub", "*": "mul" };
