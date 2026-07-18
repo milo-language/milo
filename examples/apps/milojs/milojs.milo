@@ -1,14 +1,14 @@
-// milojs — a JavaScript interpreter written in pure Milo, aimed at replacing
-// minibun's JavaScriptCore dependency with an engine that has no C++ in it.
+// milojs — the runtime (a Node/Bun-style host) built on the milojs engine. Where
+// milojs-engine runs raw JS, milojs adds the things a program expects from Node:
+// process/global, and (being built out) a CommonJS module loader plus fs/http/etc.
+// shims — the same node-compat layer minibun-runtime.js provides, but running on
+// the pure-Milo engine instead of JavaScriptCore.
 //
-// This entry point wires the pipeline together: lex → parse → evaluate. The
-// interesting parts live in the modules it imports:
-//   lexer.milo    source text → tokens
-//   ast.milo      AST node types + the index-addressed Prog arena
-//   parser.milo   tokens → AST
-//   value.milo    the JSValue type + JS coercion rules
-//   runtime.milo  the scope arena, object heap, and mark-sweep GC
-//   eval.milo     the tree-walking evaluator
+//   milojs app.js            run app.js as a Node-style program
+//
+// Status: the engine + built-in globals are in place; process is wired. The
+// module loader (require) and the fs/http/stream/Buffer shims are the next build
+// — until require lands, a real npm bundle stops at "require is not defined".
 
 from "std/io" import {
     readFile
@@ -16,45 +16,72 @@ from "std/io" import {
 from "std/env" import {
     getEnv
 }
-from "std/argparse" import {
-    newParser
-}
-from "./lexer" import {
-    lex
+from "std/args" import {
+    args
 }
 from "./ast" import {
     Prog
 }
-from "./parser" import {
-    PState, parseProgram
+from "./value" import {
+    JSValue
 }
 from "./runtime" import {
-    Interp, newScope, collect
+    Interp, newObject, newArray, objSet, arrPush, scopeDefine
 }
-from "./eval" import {
-    execBlock, setupGlobals
+from "./driver" import {
+    makeInterp, bootInterp, runSource
 }
-from "./value" import {
-    i64ToStr, toStr
+
+fn addEnvVar(st: &mut Interp, envObj: i64, name: string) {
+    match getEnv(name.clone()) {
+        Option.Some(v) => {
+            objSet(st, envObj, name, JSValue.Str(v))
+        }
+        Option.None => {
+        }
+    }
+}
+
+// Install the Node-style globals a program reaches for before any user code runs.
+fn setupNodeGlobals(st: &mut Interp, entryPath: string) {
+    let proc = newObject(st)
+
+    let argv = newArray(st)
+    arrPush(st, argv, JSValue.Str("milojs"))
+    arrPush(st, argv, JSValue.Str(entryPath.clone()))
+    objSet(st, proc, "argv", JSValue.Obj(argv))
+
+    let env = newObject(st)
+    addEnvVar(st, env, "PORT")
+    addEnvVar(st, env, "NODE_ENV")
+    addEnvVar(st, env, "HOME")
+    addEnvVar(st, env, "PATH")
+    objSet(st, proc, "env", JSValue.Obj(env))
+
+    objSet(st, proc, "platform", JSValue.Str("darwin"))
+    objSet(st, proc, "version", JSValue.Str("v20.0.0"))
+    objSet(st, proc, "exitCode", JSValue.Number(0.0))
+
+    scopeDefine(st, 0, "process", JSValue.Obj(proc))
+
+    // `global` mirrors the global object; a bare {} for now (getters would need
+    // real global-object reflection the engine doesn't expose yet)
+    let glob = newObject(st)
+    scopeDefine(st, 0, "global", JSValue.Obj(glob))
+    scopeDefine(st, 0, "globalThis", JSValue.Obj(glob))
 }
 
 fn main(): i32 {
-    var parser = newParser("milojs", "a JavaScript interpreter written in Milo")
-    parser.addPositional("file", "the .js file to run")
-    let parsed = parser.parse()
-    let path = parsed.getString("file")
+    let argv = args()
+    if argv.len() < 2 {
+        eprint("usage: milojs <app.js>")
+        return 1
+    }
+    let path = argv[1].clone()
 
-    let r = readFile(path)
+    let r = readFile(path.clone())
     match r {
         Result.Ok(src) => {
-            let toks = lex(src)
-            var prog = Prog {
-                exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
-            }
-            var p = PState {
-                toks: toks, pos: 0
-            }
-            let top = parseProgram(p, prog)
             var gcStats = false
             match getEnv("MILOJS_GC_STATS") {
                 Option.Some(_v) => {
@@ -63,29 +90,13 @@ fn main(): i32 {
                 Option.None => {
                 }
             }
-            var st = Interp {
-                scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
-                objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
-                throwing: false, thrownValue: JSValue.Undefined,
-                rngState: 88172645463325252,
-                allocSinceGc: 0, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
-            }
-            // scope 0 = global (never collected — always a GC root)
-            newScope(st, -1)
-            setupGlobals(st)
-            execBlock(prog, top, st, 0)
-            if st.throwing {
-                eprint("Uncaught " + toStr(st.thrownValue))
-                return 1
-            }
-            if st.gcStats {
-                collect(st)
-                print("[gc] total runs " + i64ToStr(st.gcRuns) + ", arena slots " + i64ToStr(st.scopes.len()) + ", free " + i64ToStr(st.freeList.len()))
-            }
-            return 0
+            var st = makeInterp(gcStats)
+            bootInterp(st)
+            setupNodeGlobals(st, path)
+            return runSource(src, st)
         }
         Result.Err(_e) => {
-            print("milojs: cannot read '" + path + "'")
+            eprint("milojs: cannot read '" + path + "'")
             return 1
         }
     }

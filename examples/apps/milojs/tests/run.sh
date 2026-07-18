@@ -3,7 +3,7 @@
 # from bun). Regenerate an expected file with:  bun tests/foo.js > tests/foo.expected
 set -u
 cd "$(dirname "$0")/../../../.." || exit 1
-ENGINE="examples/apps/milojs/milojs.milo"
+ENGINE="examples/apps/milojs/milojs-engine.milo"
 DIR="examples/apps/milojs/tests"
 fail=0
 for js in "$DIR"/*.js; do

@@ -1,0 +1,54 @@
+// milojs-engine — the JavaScript engine: a pure-Milo interpreter (no C++). Runs a
+// raw .js file against the built-in globals (console, Math, JSON, RegExp, Error).
+// No Node runtime here — that is milojs.milo, which layers a module loader and
+// node-compat shims on top of this engine.
+//
+// Pipeline (in the imported modules):
+//   lexer.milo    source text → tokens
+//   ast.milo      AST node types + the index-addressed Prog arena
+//   parser.milo   tokens → AST
+//   value.milo    the JSValue type + JS coercion rules
+//   runtime.milo  the scope arena, object heap, and mark-sweep GC
+//   eval.milo     the tree-walking evaluator
+//   driver.milo   makeInterp / bootInterp / runSource (shared with the runtime)
+
+from "std/io" import {
+    readFile
+}
+from "std/env" import {
+    getEnv
+}
+from "std/argparse" import {
+    newParser
+}
+from "./driver" import {
+    makeInterp, bootInterp, runSource
+}
+
+fn main(): i32 {
+    var parser = newParser("milojs-engine", "the milojs JavaScript engine — runs a raw .js file")
+    parser.addPositional("file", "the .js file to run")
+    let parsed = parser.parse()
+    let path = parsed.getString("file")
+
+    let r = readFile(path)
+    match r {
+        Result.Ok(src) => {
+            var gcStats = false
+            match getEnv("MILOJS_GC_STATS") {
+                Option.Some(_v) => {
+                    gcStats = true
+                }
+                Option.None => {
+                }
+            }
+            var st = makeInterp(gcStats)
+            bootInterp(st)
+            return runSource(src, st)
+        }
+        Result.Err(_e) => {
+            eprint("milojs-engine: cannot read '" + path + "'")
+            return 1
+        }
+    }
+}

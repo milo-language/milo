@@ -1,0 +1,61 @@
+// Shared setup for both entry points: milojs-core (the interpreter) and milojs
+// (the runtime). Builds an interpreter, wires the global scope, and runs a source
+// string to completion.
+
+from "./lexer" import {
+    lex
+}
+from "./ast" import {
+    Prog
+}
+from "./parser" import {
+    PState, parseProgram
+}
+from "./value" import {
+    toStr, i64ToStr, JSValue
+}
+from "./runtime" import {
+    Interp, newScope, collect
+}
+from "./eval" import {
+    execBlock, setupGlobals
+}
+
+fn makeInterp(gcStats: bool): Interp {
+    return Interp {
+        scopes: Vec.new(), freeList: Vec.new(), active: Vec.new(),
+        objects: Vec.new(), objFreeList: Vec.new(), funcProtos: Vec.new(), regexes: Vec.new(), tempRoots: Vec.new(),
+        throwing: false, thrownValue: JSValue.Undefined,
+        rngState: 88172645463325252,
+        allocSinceGc: 0, gcThreshold: 1024, gcRuns: 0, gcStats: gcStats
+    }
+}
+
+// scope 0 = global (never collected — always a GC root), then install builtins
+fn bootInterp(st: &mut Interp) {
+    newScope(st, -1)
+    setupGlobals(st)
+}
+
+// Lex, parse, and execute a source string in the given interpreter's globals.
+// Returns 0 on success, 1 if an uncaught exception escaped.
+fn runSource(src: &string, st: &mut Interp): i32 {
+    let toks = lex(src)
+    var prog = Prog {
+        exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new()
+    }
+    var p = PState {
+        toks: toks, pos: 0
+    }
+    let top = parseProgram(p, prog)
+    execBlock(prog, top, st, 0)
+    if st.throwing {
+        eprint("Uncaught " + toStr(st.thrownValue))
+        return 1
+    }
+    if st.gcStats {
+        collect(st)
+        eprint("[gc] total runs " + i64ToStr(st.gcRuns) + ", arena slots " + i64ToStr(st.scopes.len()) + ", free " + i64ToStr(st.freeList.len()))
+    }
+    return 0
+}

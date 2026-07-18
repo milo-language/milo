@@ -63,6 +63,11 @@ let T_PERCENTEQ: i32 = 54
 let T_QUESTION: i32 = 55
 let T_INSTANCEOF: i32 = 56
 let T_ARROW: i32 = 57
+// template literals: BEGIN, then CHUNK (literal text) and hole expressions
+// alternating, then END. A CHUNK always precedes each hole and follows the last.
+let T_TEMPLATE_BEGIN: i32 = 58
+let T_TEMPLATE_CHUNK: i32 = 59
+let T_TEMPLATE_END: i32 = 60
 
 struct Token {
     kind: i32,
