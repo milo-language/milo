@@ -336,7 +336,7 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
             // own requires have to be queued like any other module's
             let bspecs = scanRequires(toks)
             var bp = PState {
-                toks: toks, pos: 0, curClass: "", file: path.clone()
+                toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false
             }
             let btop = parseProgram(bp, prog)
             st.modPaths.push(path.clone())
@@ -364,7 +364,7 @@ fn preloadGraph(entryPath: string, prog: &mut Prog, st: &mut Interp): i64 {
                     let toks = lex(text)
                     let specs = scanRequires(toks)
                     var p = PState {
-                        toks: toks, pos: 0, curClass: "", file: path.clone()
+                        toks: toks, pos: 0, curClass: "", file: path.clone(), errored: false
                     }
                     let top = parseProgram(p, prog)
                     st.modPaths.push(path.clone())

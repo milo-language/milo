@@ -4,6 +4,9 @@
 from "std/strconv" import {
     parseFloat
 }
+from "./value" import {
+    i64ToStr
+}
 
 let T_NUM: i32 = 0
 let T_STR: i32 = 1
@@ -681,4 +684,296 @@ fn lex(src: &string): Vec<Token> {
     }
     pushTok(toks, T_EOF)
     return toks
+}
+
+// Human-readable name for a token kind, for parse errors. Punctuation tokens
+// carry no text of their own, so without this a diagnostic can only print the
+// raw kind number.
+fn tokenName(kind: i32): string {
+    if kind == T_NUM {
+        return "number"
+    }
+    if kind == T_STR {
+        return "string"
+    }
+    if kind == T_IDENT {
+        return "identifier"
+    }
+    if kind == T_LET {
+        return "'let'"
+    }
+    if kind == T_VAR {
+        return "'var'"
+    }
+    if kind == T_CONST {
+        return "'const'"
+    }
+    if kind == T_FUNCTION {
+        return "'function'"
+    }
+    if kind == T_RETURN {
+        return "'return'"
+    }
+    if kind == T_IF {
+        return "'if'"
+    }
+    if kind == T_ELSE {
+        return "'else'"
+    }
+    if kind == T_WHILE {
+        return "'while'"
+    }
+    if kind == T_TRUE {
+        return "'true'"
+    }
+    if kind == T_FALSE {
+        return "'false'"
+    }
+    if kind == T_NULL {
+        return "'null'"
+    }
+    if kind == T_UNDEFINED {
+        return "'undefined'"
+    }
+    if kind == T_PLUS {
+        return "'+'"
+    }
+    if kind == T_MINUS {
+        return "'-'"
+    }
+    if kind == T_STAR {
+        return "'*'"
+    }
+    if kind == T_SLASH {
+        return "'/'"
+    }
+    if kind == T_PERCENT {
+        return "'%'"
+    }
+    if kind == T_EQEQ {
+        return "'=='"
+    }
+    if kind == T_NEQ {
+        return "'!='"
+    }
+    if kind == T_LT {
+        return "'<'"
+    }
+    if kind == T_GT {
+        return "'>'"
+    }
+    if kind == T_LE {
+        return "'<='"
+    }
+    if kind == T_GE {
+        return "'>='"
+    }
+    if kind == T_EQ {
+        return "'='"
+    }
+    if kind == T_ANDAND {
+        return "'&&'"
+    }
+    if kind == T_OROR {
+        return "'||'"
+    }
+    if kind == T_NOT {
+        return "'!'"
+    }
+    if kind == T_LPAREN {
+        return "'('"
+    }
+    if kind == T_RPAREN {
+        return "')'"
+    }
+    if kind == T_LBRACE {
+        return "'{'"
+    }
+    if kind == T_RBRACE {
+        return "'}'"
+    }
+    if kind == T_COMMA {
+        return "','"
+    }
+    if kind == T_SEMI {
+        return "';'"
+    }
+    if kind == T_DOT {
+        return "'.'"
+    }
+    if kind == T_EOF {
+        return "end of input"
+    }
+    if kind == T_LBRACKET {
+        return "'['"
+    }
+    if kind == T_RBRACKET {
+        return "']'"
+    }
+    if kind == T_COLON {
+        return "':'"
+    }
+    if kind == T_NEW {
+        return "'new'"
+    }
+    if kind == T_FOR {
+        return "'for'"
+    }
+    if kind == T_TRY {
+        return "'try'"
+    }
+    if kind == T_CATCH {
+        return "'catch'"
+    }
+    if kind == T_FINALLY {
+        return "'finally'"
+    }
+    if kind == T_THROW {
+        return "'throw'"
+    }
+    if kind == T_TYPEOF {
+        return "'typeof'"
+    }
+    if kind == T_INC {
+        return "'++'"
+    }
+    if kind == T_DEC {
+        return "'--'"
+    }
+    if kind == T_PLUSEQ {
+        return "'+='"
+    }
+    if kind == T_MINUSEQ {
+        return "'-='"
+    }
+    if kind == T_STAREQ {
+        return "'*='"
+    }
+    if kind == T_SLASHEQ {
+        return "'/='"
+    }
+    if kind == T_PERCENTEQ {
+        return "'%='"
+    }
+    if kind == T_QUESTION {
+        return "'?'"
+    }
+    if kind == T_INSTANCEOF {
+        return "'instanceof'"
+    }
+    if kind == T_ARROW {
+        return "'=>'"
+    }
+    if kind == T_TEMPLATE_BEGIN {
+        return "template literal"
+    }
+    if kind == T_TEMPLATE_CHUNK {
+        return "template text"
+    }
+    if kind == T_TEMPLATE_END {
+        return "end of template"
+    }
+    if kind == T_SPREAD {
+        return "'...'"
+    }
+    if kind == T_NULLISH {
+        return "'??'"
+    }
+    if kind == T_REGEX {
+        return "regex literal"
+    }
+    if kind == T_IN {
+        return "'in'"
+    }
+    if kind == T_BREAK {
+        return "'break'"
+    }
+    if kind == T_CONTINUE {
+        return "'continue'"
+    }
+    if kind == T_OPTCHAIN {
+        return "'?.'"
+    }
+    if kind == T_SHL {
+        return "'<<'"
+    }
+    if kind == T_SHR {
+        return "'>>'"
+    }
+    if kind == T_USHR {
+        return "'>>>'"
+    }
+    if kind == T_AMP {
+        return "'&'"
+    }
+    if kind == T_PIPE {
+        return "'|'"
+    }
+    if kind == T_CARET {
+        return "'^'"
+    }
+    if kind == T_TILDE {
+        return "'~'"
+    }
+    if kind == T_STARSTAR {
+        return "'**'"
+    }
+    if kind == T_VOID {
+        return "'void'"
+    }
+    if kind == T_ASYNC {
+        return "'async'"
+    }
+    if kind == T_AWAIT {
+        return "'await'"
+    }
+    if kind == T_SHLEQ {
+        return "'<<='"
+    }
+    if kind == T_SHREQ {
+        return "'>>='"
+    }
+    if kind == T_USHREQ {
+        return "'>>>='"
+    }
+    if kind == T_AMPEQ {
+        return "'&='"
+    }
+    if kind == T_PIPEEQ {
+        return "'|='"
+    }
+    if kind == T_CARETEQ {
+        return "'^='"
+    }
+    if kind == T_STARSTAREQ {
+        return "'**='"
+    }
+    if kind == T_CLASS {
+        return "'class'"
+    }
+    if kind == T_EXTENDS {
+        return "'extends'"
+    }
+    if kind == T_SUPER {
+        return "'super'"
+    }
+    if kind == T_STRICTEQ {
+        return "'==='"
+    }
+    if kind == T_STRICTNEQ {
+        return "'!=='"
+    }
+    if kind == T_DO {
+        return "'do'"
+    }
+    if kind == T_SWITCH {
+        return "'switch'"
+    }
+    if kind == T_CASE {
+        return "'case'"
+    }
+    if kind == T_DEFAULT {
+        return "'default'"
+    }
+    return "token " + i64ToStr(kind as i64)
 }

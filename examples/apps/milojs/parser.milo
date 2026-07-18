@@ -21,6 +21,9 @@ struct PState {
     // enclosing class name while parsing a class body, so `super(...)` can be
     // rewritten to a call of that class's recorded base constructor
     curClass: string,
+    // the parser never stops at a bad token, so one mistake cascades into a
+    // string of confusing follow-on errors. Only the first is worth showing.
+    errored: bool,
 }
 
 fn peekKind(p: &PState): i32 {
@@ -50,22 +53,43 @@ fn isPropName(p: &PState): bool {
 // Human-readable text for a token, for diagnostics.
 fn tokenDesc(p: &PState, i: i64): string {
     if i < 0 || i >= p.toks.len() {
-        return "<eof>"
+        return "end of input"
     }
     if p.toks[i].text.len() > 0 {
-        return p.toks[i].text.clone()
+        return "'" + p.toks[i].text.clone() + "'"
     }
-    return "<" + i64ToStr(p.toks[i].kind as i64) + ">"
+    return tokenName(p.toks[i].kind)
+}
+
+// The offending token with a couple on each side, so an error points at
+// recognisable source text rather than a bare token index.
+fn tokenContext(p: &PState): string {
+    var out = ""
+    var i = p.pos - 2
+    while i <= p.pos + 2 {
+        if i >= 0 && i < p.toks.len() {
+            if i == p.pos {
+                out = out + " >>" + tokenDesc(p, i) + "<<"
+            } else {
+                out = out + " " + tokenDesc(p, i)
+            }
+        }
+        i = i + 1
+    }
+    return out
 }
 
 // Consume `kind` if present; parser is forgiving (bad input still terminates).
-// On mismatch, report the offending token with its neighbours so the unsupported
-// syntax is identifiable rather than just a token index.
+// Only the first mismatch of a parse is reported: with no error recovery, every
+// later `expect` is reacting to the same original mistake.
 fn expect(p: &mut PState, kind: i32) {
     if peekKind(p) == kind {
         advance(p)
     } else {
-        eprint("milojs: parse error in " + p.file + " at token " + i64ToStr(p.pos) + ": expected <" + i64ToStr(kind as i64) + ">, got '" + tokenDesc(p, p.pos) + "'  …" + tokenDesc(p, p.pos - 2) + " " + tokenDesc(p, p.pos - 1) + " >>" + tokenDesc(p, p.pos) + "<< " + tokenDesc(p, p.pos + 1) + " " + tokenDesc(p, p.pos + 2) + "…")
+        if !p.errored {
+            p.errored = true
+            eprint("milojs: " + p.file + ": expected " + tokenName(kind) + ", found " + tokenDesc(p, p.pos) + "\n  " + tokenContext(p))
+        }
     }
 }
 
@@ -1132,6 +1156,12 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         return addStmt(prog, Stmt.MultiDecl(prog.declLists.len() - 1))
     }
     if k == T_FUNCTION {
+        // in statement position a name is mandatory; without this the missing
+        // name surfaces as a confusing complaint about the `(` that follows
+        if p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_IDENT && !p.errored {
+            p.errored = true
+            eprint("milojs: " + p.file + ": function statements require a name")
+        }
         let f = parseFunction(p, prog, false)
         return addStmt(prog, Stmt.FuncDecl(f))
     }

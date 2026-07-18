@@ -64,7 +64,7 @@ fn runSource(src: &string, st: &mut Interp): i32 {
         exprs: Vec.new(), stmts: Vec.new(), blocks: Vec.new(), argLists: Vec.new(), funcs: Vec.new(), objLits: Vec.new(), arrLits: Vec.new(), declLists: Vec.new(), classes: Vec.new(), switches: Vec.new()
     }
     var p = PState {
-        toks: toks, pos: 0, curClass: "", file: "<entry>"
+        toks: toks, pos: 0, curClass: "", file: "<entry>", errored: false
     }
     let top = parseProgram(p, prog)
     execBlock(prog, top, st, 0)

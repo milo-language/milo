@@ -776,7 +776,7 @@ fn repl(st: &mut Interp): i32 {
 
                 let toks = lex(line)
                 var p = PState {
-                    toks: toks, pos: 0, curClass: "", file: "<repl>"
+                    toks: toks, pos: 0, curClass: "", file: "<repl>", errored: false
                 }
                 let top = parseProgram(p, prog)
                 let val = runLine(prog, top, st)
