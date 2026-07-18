@@ -113,9 +113,15 @@ omission, NaN/Infinity→null) and `JSON.parse` (recursive-descent over a byte c
 objects/arrays, temp-rooted while building). `JSON` is a global object whose methods are native
 functions; `callMember` now dispatches `Native`-valued props. The real path
 `JSON.parse(x).map(...).reduce(...)` is byte-identical to bun.
-**Still open:** prototype-*chain* lookup for *shared* methods (`Ctor.prototype.m`) — needs
-functions to carry a prototype object; today each instance gets its own methods. `Math`,
-`switch`, `for...in`/`for...of`, bitwise ops, real `===` (currently aliases `==`).
+**Prototype-chain landed (eeb9043):** functions get a lazily-created `.prototype` object
+(`funcProtos`, a GC root); `new F()` links the instance's `proto`; `getMember` walks own-props →
+prototype chain (own props shadow). Shared methods, `this`-chaining through prototype methods,
+`instanceof`, and shared function identity (`a.m === b.m`) all byte-identical to bun — the ES5
+class pattern works. This was the last core *language* gap.
+**Still open (library, not language):** `Math`, **regex** (implement in Milo — backtracking,
+JS-flavor subset; do NOT link C), Promises/async event model, `switch`, `for...in`/`for...of`,
+bitwise ops, real `===` (currently aliases `==`). These + minibun's node shims are the Stage-5
+path to booting minibun on the engine.
 **Gate:** prototype-based method dispatch + a class-ish pattern (constructor + prototype methods).
 
 **Test yardstick (decided):** milojs *is* the engine, so unlike minibun's JSC, both test262 and
