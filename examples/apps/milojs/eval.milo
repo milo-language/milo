@@ -3322,6 +3322,17 @@ fn currentModule(st: &Interp): string {
     return " (in " + st.modPathStack[st.modPathStack.len() - 1].clone() + ")"
 }
 
+fn isBoundThisSet(st: &Interp, o: i64): bool {
+    match st.objects[o].boundThis {
+        JSValue.Undefined => {
+            return false
+        }
+        _ => {
+            return true
+        }
+    }
+}
+
 fn isSuperName(name: &string): bool {
     if name.len() < 8 {
         return false
@@ -3392,7 +3403,13 @@ fn callValue(prog: &Prog, fnVal: &JSValue, args: Vec<JSValue>, thisVal: JSValue,
             if st.objects[o].isBound {
                 if st.objects[o].boundMethod.len() > 0 {
                     let mname = st.objects[o].boundMethod.clone()
-                    let recvV = cloneValue(st.objects[o].boundThis)
+                    var recvV = cloneValue(st.objects[o].boundThis)
+                    // an unbound builtin method (Object.prototype.toString stored
+                    // with no bound this) takes the call-site receiver, so
+                    // ({}).toString() gets `this` = {} rather than undefined
+                    if !isBoundThisSet(st, o) {
+                        recvV = cloneValue(thisVal)
+                    }
                     return callBuiltinByName(prog, recvV, mname, args, st)
                 }
                 let target = cloneValue(st.objects[o].boundTarget)
@@ -3620,7 +3637,7 @@ fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSVa
 }
 
 fn isArrayMethod(name: &string): bool {
-    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill"
+    return name == "map" || name == "filter" || name == "forEach" || name == "reduce" || name == "join" || name == "indexOf" || name == "includes" || name == "slice" || name == "reverse" || name == "concat" || name == "push" || name == "pop" || name == "find" || name == "findIndex" || name == "some" || name == "every" || name == "shift" || name == "unshift" || name == "splice" || name == "sort" || name == "lastIndexOf" || name == "flat" || name == "fill" || name == "at"
 }
 
 // Dispatch a built-in Array method. `o` (the array) is temp-rooted by the caller;
@@ -3814,13 +3831,47 @@ fn arrayMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut
         }
         return JSValue.Number(0.0 - 1.0)
     }
+    if name == "at" {
+        var idx: i64 = 0
+        if args.len() > 0 {
+            idx = toNum(args[0]) as i64
+        }
+        if idx < 0 {
+            idx = n + idx
+        }
+        if idx < 0 || idx >= n {
+            return JSValue.Undefined
+        }
+        return arrGet(st, o, idx)
+    }
     if name == "fill" {
         var v = JSValue.Undefined
         if args.len() > 0 {
             v = cloneValue(args[0])
         }
-        var i: i64 = 0
-        while i < n {
+        // fill(value, start, end) — the range args are optional but not ignorable
+        var start: i64 = 0
+        if args.len() > 1 {
+            start = toNum(args[1]) as i64
+            if start < 0 {
+                start = n + start
+            }
+        }
+        var end = n
+        if args.len() > 2 {
+            end = toNum(args[2]) as i64
+            if end < 0 {
+                end = n + end
+            }
+        }
+        if start < 0 {
+            start = 0
+        }
+        if end > n {
+            end = n
+        }
+        var i = start
+        while i < end {
             st.objects[o].elems[i] = cloneValue(v)
             i = i + 1
         }
@@ -4229,7 +4280,7 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                     return r
                 }
             }
-            if name == "hasOwnProperty" {
+            if name == "hasOwnProperty" || name == "isPrototypeOf" || name == "propertyIsEnumerable" {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = callBuiltinByName(prog, JSValue.Obj(o), name, argVals, st)
                 popTemp(st)
@@ -4290,6 +4341,14 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                     return JSValue.Undefined
                 }
                 _ => {
+                    // plain objects are not linked to Object.prototype, so its
+                    // methods (toString/valueOf) fall through to here
+                    if name == "toString" || name == "valueOf" {
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        let r = callBuiltinByName(prog, JSValue.Obj(o), name, argVals, st)
+                        popTemp(st)
+                        return r
+                    }
                     popTemp(st)
                     st.throwing = true
                     st.thrownValue = makeError(st, "TypeError", name.clone() + " is not a function" + currentModule(st))
