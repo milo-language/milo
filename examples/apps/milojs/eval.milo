@@ -4163,6 +4163,20 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                     popTemp(st)
                     return r
                 }
+                JSValue.Obj(fo) => {
+                    // a bound-method or bind() result stored as a property: it is
+                    // callable (typeof reports "function") but is not a Func/Native
+                    if st.objects[fo].isBound {
+                        let argVals = evalArgs(prog, argsIdx, st, scope)
+                        let r = callValue(prog, JSValue.Obj(fo), argVals, JSValue.Obj(o), st)
+                        popTemp(st)
+                        return r
+                    }
+                    popTemp(st)
+                    st.throwing = true
+                    st.thrownValue = makeError(st, "TypeError", name.clone() + " is not a function" + currentModule(st))
+                    return JSValue.Undefined
+                }
                 _ => {
                     popTemp(st)
                     st.throwing = true
