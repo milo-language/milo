@@ -76,6 +76,16 @@ let T_REGEX: i32 = 63
 let T_IN: i32 = 64
 let T_BREAK: i32 = 65
 let T_CONTINUE: i32 = 66
+let T_OPTCHAIN: i32 = 67
+let T_SHL: i32 = 68
+let T_SHR: i32 = 69
+let T_USHR: i32 = 70
+let T_AMP: i32 = 71
+let T_PIPE: i32 = 72
+let T_CARET: i32 = 73
+let T_TILDE: i32 = 74
+let T_STARSTAR: i32 = 75
+let T_VOID: i32 = 76
 
 struct Token {
     kind: i32,
@@ -85,6 +95,20 @@ struct Token {
 
 fn isSpace(c: u8): bool {
     return c == ' ' || c == 9 as u8 || c == 10 as u8 || c == 13 as u8
+}
+
+// digit value of a hex/oct/bin char, or -1
+fn hexDigitVal(c: u8): i64 {
+    if c >= '0' && c <= '9' {
+        return (c - '0') as i64
+    }
+    if c >= 'a' && c <= 'f' {
+        return (c - 'a') as i64 + 10
+    }
+    if c >= 'A' && c <= 'F' {
+        return (c - 'A') as i64 + 10
+    }
+    return -1
 }
 
 fn isDigit(c: u8): bool {
@@ -152,6 +176,9 @@ fn keywordKind(s: &string): i32 {
     }
     if s == "typeof" {
         return T_TYPEOF
+    }
+    if s == "void" {
+        return T_VOID
     }
     if s == "instanceof" {
         return T_INSTANCEOF
@@ -321,12 +348,62 @@ fn lex(src: &string): Vec<Token> {
         } else if c == '/' && prevAllowsRegex(toks) {
             i = scanRegexLit(src, i, toks)
         } else if isDigit(c) || (c == '.' && i + 1 < n && isDigit(src[i + 1])) {
+            var v: f64 = 0.0
             var txt = String.withCapacity(16)
+            // 0x / 0b / 0o literals are parsed digit-by-digit; parseFloat only
+            // understands decimal
+            var radix: i64 = 0
+            if c == '0' && i + 1 < n {
+                let n1 = src[i + 1]
+                if n1 == 'x' || n1 == 'X' {
+                    radix = 16
+                } else if n1 == 'b' || n1 == 'B' {
+                    radix = 2
+                } else if n1 == 'o' || n1 == 'O' {
+                    radix = 8
+                }
+            }
+            if radix > 0 {
+                i = i + 2
+                var acc: f64 = 0.0
+                var going = true
+                while i < n && going {
+                    let d = hexDigitVal(src[i])
+                    if d < 0 || d >= radix {
+                        going = false
+                    } else {
+                        acc = acc * (radix as f64) + (d as f64)
+                        i = i + 1
+                    }
+                }
+                v = acc
+                toks.push(Token {
+                    kind: T_NUM, num: v, text: ""
+                }
+                )
+                continue
+            }
             while i < n && (isDigit(src[i]) || src[i] == '.') {
                 txt.push(src[i])
                 i = i + 1
             }
-            var v: f64 = 0.0
+            // exponent part: 1e10, 1.5E-3
+            if i < n && (src[i] == 'e' || src[i] == 'E') {
+                var j = i + 1
+                if j < n && (src[j] == '+' || src[j] == '-') {
+                    j = j + 1
+                }
+                if j < n && isDigit(src[j]) {
+                    while i < j {
+                        txt.push(src[i])
+                        i = i + 1
+                    }
+                    while i < n && isDigit(src[i]) {
+                        txt.push(src[i])
+                        i = i + 1
+                    }
+                }
+            }
             match parseFloat(txt) {
                 Option.Some(x) => {
                     v = x
@@ -427,6 +504,18 @@ fn lex(src: &string): Vec<Token> {
                 i = i + 1
             }
             pushTok(toks, T_NEQ)
+        } else if c == '>' && i + 2 < n && src[i + 1] == '>' && src[i + 2] == '>' {
+            i = i + 3
+            pushTok(toks, T_USHR)
+        } else if c == '<' && i + 1 < n && src[i + 1] == '<' {
+            i = i + 2
+            pushTok(toks, T_SHL)
+        } else if c == '>' && i + 1 < n && src[i + 1] == '>' {
+            i = i + 2
+            pushTok(toks, T_SHR)
+        } else if c == '*' && i + 1 < n && src[i + 1] == '*' {
+            i = i + 2
+            pushTok(toks, T_STARSTAR)
         } else if c == '<' && i + 1 < n && src[i + 1] == '=' {
             i = i + 2
             pushTok(toks, T_LE)
@@ -439,6 +528,9 @@ fn lex(src: &string): Vec<Token> {
         } else if c == '|' && i + 1 < n && src[i + 1] == '|' {
             i = i + 2
             pushTok(toks, T_OROR)
+        } else if c == '?' && i + 1 < n && src[i + 1] == '.' && !(i + 2 < n && isDigit(src[i + 2])) {
+            i = i + 2
+            pushTok(toks, T_OPTCHAIN)
         } else if c == '?' && i + 1 < n && src[i + 1] == '?' {
             i = i + 2
             pushTok(toks, T_NULLISH)
@@ -508,6 +600,14 @@ fn lex(src: &string): Vec<Token> {
                 k = T_COLON
             } else if c == '?' {
                 k = T_QUESTION
+            } else if c == '&' {
+                k = T_AMP
+            } else if c == '|' {
+                k = T_PIPE
+            } else if c == '^' {
+                k = T_CARET
+            } else if c == '~' {
+                k = T_TILDE
             }
             if k >= 0 {
                 pushTok(toks, k)

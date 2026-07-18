@@ -17,11 +17,14 @@ from "./builtins" import {
 from "./regex" import {
     regexCompile, regexExec
 }
+from "std/io" import {
+    readFile
+}
 from "./modules" import {
     dirOf, resolveSpec, findModule
 }
 from "std/math" import {
-    mathMod
+    mathMod, mathPow
 }
 
 enum Flow {
@@ -50,6 +53,34 @@ fn evalBin(op: &string, a: &JSValue, b: &JSValue): JSValue {
     }
     if op == "%" {
         return JSValue.Number(mathMod(toNum(a), toNum(b)))
+    }
+    if op == "**" {
+        return JSValue.Number(mathPow(toNum(a), toNum(b)))
+    }
+    if op == "&" {
+        return JSValue.Number((toInt32(a) & toInt32(b)) as f64)
+    }
+    if op == "|" {
+        return JSValue.Number((toInt32(a) | toInt32(b)) as f64)
+    }
+    if op == "^" {
+        return JSValue.Number((toInt32(a) ^ toInt32(b)) as f64)
+    }
+    if op == "<<" || op == ">>" || op == ">>>" {
+        // JS masks the shift count to 5 bits; >>> is the only unsigned one
+        let sh = toUint32(b) & 31
+        if op == ">>>" {
+            return JSValue.Number((toUint32(a) >> sh) as f64)
+        }
+        let lhs = toInt32(a)
+        if op == ">>" {
+            return JSValue.Number((lhs >> sh) as f64)
+        }
+        var r = (lhs << sh) & 4294967295
+        if r >= 2147483648 {
+            r = r - 4294967296
+        }
+        return JSValue.Number(r as f64)
     }
     if op == "==" {
         return JSValue.Bool(jsEquals(a, b))
@@ -225,6 +256,11 @@ let NATIVE_OBJECT_ASSIGN: i64 = 21
 let NATIVE_NUMBER: i64 = 22
 let NATIVE_STRING: i64 = 23
 let NATIVE_BOOLEAN: i64 = 24
+let NATIVE_READ_FILE_SYNC: i64 = 25
+let NATIVE_FILE_EXISTS: i64 = 26
+let NATIVE_OBJECT_VALUES: i64 = 27
+let NATIVE_OBJECT_ENTRIES: i64 = 28
+let NATIVE_OBJECT_FREEZE: i64 = 29
 
 fn nativeErrorName(id: i64): string {
     if id == NATIVE_TYPE_ERROR {
@@ -306,6 +342,32 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
         }
         return JSValue.Bool(truthy(argVals[0]))
     }
+    if id == NATIVE_READ_FILE_SYNC {
+        if argVals.len() == 0 {
+            return JSValue.Undefined
+        }
+        match readFile(toStr(argVals[0])) {
+            Result.Ok(txt) => {
+                return JSValue.Str(txt)
+            }
+            Result.Err(_e) => {
+                return JSValue.Undefined
+            }
+        }
+    }
+    if id == NATIVE_FILE_EXISTS {
+        if argVals.len() == 0 {
+            return JSValue.Bool(false)
+        }
+        match readFile(toStr(argVals[0])) {
+            Result.Ok(_txt) => {
+                return JSValue.Bool(true)
+            }
+            Result.Err(_e) => {
+                return JSValue.Bool(false)
+            }
+        }
+    }
     if id == NATIVE_OBJECT_DEFINEPROPERTY {
         // only the data-descriptor form: {value: ...}. get/set accessors are not
         // supported yet, so a descriptor without `value` defines undefined.
@@ -331,6 +393,63 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
                 return target
             }
         }
+    }
+    if id == NATIVE_OBJECT_FREEZE {
+        // no real immutability yet — callers only rely on the identity return
+        if argVals.len() > 0 {
+            return cloneValue(argVals[0])
+        }
+        return JSValue.Undefined
+    }
+    if id == NATIVE_OBJECT_VALUES || id == NATIVE_OBJECT_ENTRIES {
+        let wantPairs = id == NATIVE_OBJECT_ENTRIES
+        let arr = newArray(st)
+        if argVals.len() > 0 {
+            pushTemp(st, JSValue.Obj(arr))
+            match cloneValue(argVals[0]) {
+                JSValue.Obj(o) => {
+                    if st.objects[o].isArray {
+                        var i: i64 = 0
+                        let n = arrLen(st, o)
+                        while i < n {
+                            let v = arrGet(st, o, i)
+                            if wantPairs {
+                                let pair = newArray(st)
+                                pushTemp(st, JSValue.Obj(pair))
+                                arrPush(st, pair, JSValue.Str(i64ToStr(i)))
+                                arrPush(st, pair, v)
+                                popTemp(st)
+                                arrPush(st, arr, JSValue.Obj(pair))
+                            } else {
+                                arrPush(st, arr, v)
+                            }
+                            i = i + 1
+                        }
+                    }
+                    var k: i64 = 0
+                    let np = st.objects[o].props.len()
+                    while k < np {
+                        let key = st.objects[o].props[k].key.clone()
+                        let v = cloneValue(st.objects[o].props[k].value)
+                        if wantPairs {
+                            let pair = newArray(st)
+                            pushTemp(st, JSValue.Obj(pair))
+                            arrPush(st, pair, JSValue.Str(key))
+                            arrPush(st, pair, v)
+                            popTemp(st)
+                            arrPush(st, arr, JSValue.Obj(pair))
+                        } else {
+                            arrPush(st, arr, v)
+                        }
+                        k = k + 1
+                    }
+                }
+                _ => {
+                }
+            }
+            popTemp(st)
+        }
+        return JSValue.Obj(arr)
     }
     if id == NATIVE_OBJECT_KEYS {
         let arr = newArray(st)
@@ -773,10 +892,16 @@ fn setupGlobals(st: &mut Interp) {
     objSet(st, objectCtor, "defineProperty", JSValue.Native(NATIVE_OBJECT_DEFINEPROPERTY))
     objSet(st, objectCtor, "keys", JSValue.Native(NATIVE_OBJECT_KEYS))
     objSet(st, objectCtor, "assign", JSValue.Native(NATIVE_OBJECT_ASSIGN))
+    objSet(st, objectCtor, "values", JSValue.Native(NATIVE_OBJECT_VALUES))
+    objSet(st, objectCtor, "entries", JSValue.Native(NATIVE_OBJECT_ENTRIES))
+    objSet(st, objectCtor, "freeze", JSValue.Native(NATIVE_OBJECT_FREEZE))
     scopeDefine(st, 0, "Object", JSValue.Obj(objectCtor))
     scopeDefine(st, 0, "Number", JSValue.Native(NATIVE_NUMBER))
     scopeDefine(st, 0, "String", JSValue.Native(NATIVE_STRING))
     scopeDefine(st, 0, "Boolean", JSValue.Native(NATIVE_BOOLEAN))
+    // file natives, named as minibun's runtime expects them
+    scopeDefine(st, 0, "__readFileSync", JSValue.Native(NATIVE_READ_FILE_SYNC))
+    scopeDefine(st, 0, "__fileExists", JSValue.Native(NATIVE_FILE_EXISTS))
 }
 
 // typeof: never throws, even for an unbound name (scopeLookup returns undefined).
@@ -907,6 +1032,16 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
             }
             if op == "typeof" {
                 return JSValue.Str(typeofStr(va))
+            }
+            if op == "void" {
+                return JSValue.Undefined
+            }
+            if op == "+" {
+                return JSValue.Number(toNum(va))
+            }
+            if op == "~" {
+                let r = (0 - toInt32(va)) - 1
+                return JSValue.Number(r as f64)
             }
             return JSValue.Bool(!truthy(va))
         }
@@ -1100,6 +1235,23 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
         }
         Expr.RegexLit(pat, flags) => {
             return makeRegex(st, pat, flags)
+        }
+        Expr.OptMember(objIdx, name) => {
+            let ov = evalExpr(prog, objIdx, st, scope)
+            match ov {
+                JSValue.Obj(o) => {
+                    return getMember(st, o, name)
+                }
+                JSValue.Str(s) => {
+                    if name == "length" {
+                        return JSValue.Number(s.len() as f64)
+                    }
+                    return JSValue.Undefined
+                }
+                _ => {
+                    return JSValue.Undefined
+                }
+            }
         }
         Expr.FuncExpr(f) => {
             return JSValue.Func(f, scope)
@@ -1755,6 +1907,73 @@ fn execStmt(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): Flow {
         Stmt.Decl(name, e) => {
             let v = evalExpr(prog, e, st, scope)
             scopeDefine(st, scope, name, v)
+            return Flow.Normal
+        }
+        Stmt.ForOf(name, objExpr, body) => {
+            let ov = evalExpr(prog, objExpr, st, scope)
+            // the snapshot's element handles are only kept alive by the source
+            // object, so it must stay rooted for the whole loop
+            pushTemp(st, cloneValue(ov))
+            var vals: Vec<JSValue> = Vec.new()
+            var iterable = false
+            match ov {
+                JSValue.Obj(o) => {
+                    if st.objects[o].isArray {
+                        iterable = true
+                        var e: i64 = 0
+                        let ne = arrLen(st, o)
+                        while e < ne {
+                            vals.push(arrGet(st, o, e))
+                            e = e + 1
+                        }
+                    }
+                }
+                JSValue.Str(s) => {
+                    iterable = true
+                    var e: i64 = 0
+                    let ne = s.len()
+                    while e < ne {
+                        vals.push(JSValue.Str(jsCharAt(s, e)))
+                        e = e + 1
+                    }
+                }
+                _ => {
+                }
+            }
+            if !iterable {
+                popTemp(st)
+                st.throwing = true
+                st.thrownValue = JSValue.Str("TypeError: value is not iterable")
+                return Flow.Normal
+            }
+            let loopScope = newScope(st, scope)
+            pushActive(st, loopScope)
+            var i: i64 = 0
+            var looping = true
+            while looping && i < vals.len() {
+                scopeDefine(st, loopScope, name.clone(), cloneValue(vals[i]))
+                let flow = execStmt(prog, body, st, loopScope)
+                match flow {
+                    Flow.Ret(v) => {
+                        popActive(st)
+                        popTemp(st)
+                        return Flow.Ret(v)
+                    }
+                    Flow.Break => {
+                        looping = false
+                    }
+                    Flow.Continue => {
+                    }
+                    Flow.Normal => {
+                    }
+                }
+                if st.throwing {
+                    looping = false
+                }
+                i = i + 1
+            }
+            popActive(st)
+            popTemp(st)
             return Flow.Normal
         }
         Stmt.ForIn(name, objExpr, body) => {

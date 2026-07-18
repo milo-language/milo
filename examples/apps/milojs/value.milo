@@ -154,6 +154,29 @@ fn toStr(v: &JSValue): string {
     }
 }
 
+// JS ToInt32 / ToUint32: truncate toward zero, wrap modulo 2^32. Every bitwise
+// operator coerces through these, which is why 1e10 | 0 is 1410065408 and not 1e10.
+fn toInt32(v: &JSValue): i64 {
+    let n = toNum(v)
+    // NaN and the infinities all coerce to 0
+    if n != n || n > 1000000000000000000.0 || n < -1000000000000000000.0 {
+        return 0
+    }
+    var t = mathFloor(mathAbs(n)) as i64
+    if n < 0.0 {
+        t = 0 - t
+    }
+    var m = t & 4294967295
+    if m >= 2147483648 {
+        m = m - 4294967296
+    }
+    return m
+}
+
+fn toUint32(v: &JSValue): i64 {
+    return toInt32(v) & 4294967295
+}
+
 fn toNum(v: &JSValue): f64 {
     match v {
         JSValue.Undefined => {

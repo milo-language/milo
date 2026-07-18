@@ -325,8 +325,34 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
         } else {
             advance(p)
         }
-        expect(p, T_COLON)
-        let valIdx = parseExpr(p, prog)
+        // shorthand `{ req, ip }` is `{ req: req, ip: ip }`
+        var valIdx = -1
+        if peekKind(p) == T_LPAREN {
+            // method shorthand `{ foo(a) { ... } }` — a plain function-valued prop
+            advance(p)
+            var mparams: Vec<string> = Vec.new()
+            while peekKind(p) != T_RPAREN && peekKind(p) != T_EOF {
+                if peekKind(p) == T_IDENT {
+                    mparams.push(p.toks[p.pos].text.clone())
+                }
+                advance(p)
+                if peekKind(p) == T_COMMA {
+                    advance(p)
+                }
+            }
+            expect(p, T_RPAREN)
+            let mbody = parseBraceBlock(p, prog)
+            prog.funcs.push(FuncDef {
+                name: key.clone(), params: mparams, body: mbody, isArrow: false
+            }
+            )
+            valIdx = addExpr(prog, Expr.FuncExpr(prog.funcs.len() - 1))
+        } else if peekKind(p) == T_COLON {
+            advance(p)
+            valIdx = parseExpr(p, prog)
+        } else {
+            valIdx = addExpr(prog, Expr.Ident(key.clone()))
+        }
         props.push(PropInit {
             key: key, val: valIdx
         }
@@ -370,6 +396,14 @@ fn parsePostfix(p: &mut PState, prog: &mut Prog): i64 {
                 advance(p)
             }
             e = addExpr(prog, Expr.Member(e, name))
+        } else if k == T_OPTCHAIN {
+            advance(p)
+            var name = ""
+            if isPropName(p) {
+                name = p.toks[p.pos].text.clone()
+                advance(p)
+            }
+            e = addExpr(prog, Expr.OptMember(e, name))
         } else if k == T_LBRACKET {
             advance(p)
             let keyIdx = parseExpr(p, prog)
@@ -408,6 +442,21 @@ fn parseUnary(p: &mut PState, prog: &mut Prog): i64 {
         let e = parseUnary(p, prog)
         return addExpr(prog, Expr.Un("typeof", e))
     }
+    if k == T_VOID {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("void", e))
+    }
+    if k == T_TILDE {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("~", e))
+    }
+    if k == T_PLUS {
+        advance(p)
+        let e = parseUnary(p, prog)
+        return addExpr(prog, Expr.Un("+", e))
+    }
     if k == T_INC {
         advance(p)
         let e = parseUnary(p, prog)
@@ -426,7 +475,11 @@ fn parseMul(p: &mut PState, prog: &mut Prog): i64 {
     var go = true
     while go {
         let k = peekKind(p)
-        if k == T_STAR || k == T_SLASH || k == T_PERCENT {
+        if k == T_STARSTAR {
+            advance(p)
+            let right = parseUnary(p, prog)
+            left = addExpr(prog, Expr.Bin("**", left, right))
+        } else if k == T_STAR || k == T_SLASH || k == T_PERCENT {
             advance(p)
             var op = "*"
             if k == T_SLASH {
@@ -463,8 +516,30 @@ fn parseAdd(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
+fn parseShift(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseAdd(p, prog)
+    var go = true
+    while go {
+        let k = peekKind(p)
+        if k == T_SHL || k == T_SHR || k == T_USHR {
+            advance(p)
+            var op = "<<"
+            if k == T_SHR {
+                op = ">>"
+            } else if k == T_USHR {
+                op = ">>>"
+            }
+            let right = parseAdd(p, prog)
+            left = addExpr(prog, Expr.Bin(op, left, right))
+        } else {
+            go = false
+        }
+    }
+    return left
+}
+
+fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseShift(p, prog)
     var go = true
     while go {
         let k = peekKind(p)
@@ -478,15 +553,15 @@ fn parseRel(p: &mut PState, prog: &mut Prog): i64 {
             } else if k == T_GE {
                 op = ">="
             }
-            let right = parseAdd(p, prog)
+            let right = parseShift(p, prog)
             left = addExpr(prog, Expr.Bin(op, left, right))
         } else if k == T_INSTANCEOF {
             advance(p)
-            let right = parseAdd(p, prog)
+            let right = parseShift(p, prog)
             left = addExpr(prog, Expr.Bin("instanceof", left, right))
         } else if k == T_IN {
             advance(p)
-            let right = parseAdd(p, prog)
+            let right = parseShift(p, prog)
             left = addExpr(prog, Expr.Bin("in", left, right))
         } else {
             go = false
@@ -515,11 +590,41 @@ fn parseEq(p: &mut PState, prog: &mut Prog): i64 {
     return left
 }
 
-fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
+fn parseBitAnd(p: &mut PState, prog: &mut Prog): i64 {
     var left = parseEq(p, prog)
-    while peekKind(p) == T_ANDAND {
+    while peekKind(p) == T_AMP {
         advance(p)
         let right = parseEq(p, prog)
+        left = addExpr(prog, Expr.Bin("&", left, right))
+    }
+    return left
+}
+
+fn parseBitXor(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseBitAnd(p, prog)
+    while peekKind(p) == T_CARET {
+        advance(p)
+        let right = parseBitAnd(p, prog)
+        left = addExpr(prog, Expr.Bin("^", left, right))
+    }
+    return left
+}
+
+fn parseBitOr(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseBitXor(p, prog)
+    while peekKind(p) == T_PIPE {
+        advance(p)
+        let right = parseBitXor(p, prog)
+        left = addExpr(prog, Expr.Bin("|", left, right))
+    }
+    return left
+}
+
+fn parseAnd(p: &mut PState, prog: &mut Prog): i64 {
+    var left = parseBitOr(p, prog)
+    while peekKind(p) == T_ANDAND {
+        advance(p)
+        let right = parseBitOr(p, prog)
         left = addExpr(prog, Expr.Bin("&&", left, right))
     }
     return left
@@ -723,6 +828,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
         // `IDENT in`; if it isn't there, rewind and parse a C-style for
         let savedPos = p.pos
         var forInName = ""
+        // `of` is not a reserved word in JS — it lexes as an identifier, so
+        // for-of is detected by text, unlike for-in's real T_IN keyword
+        var isOf = false
         if peekKind(p) == T_VAR || peekKind(p) == T_LET || peekKind(p) == T_CONST {
             advance(p)
         }
@@ -731,6 +839,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             if peekKind(p) == T_IN {
                 forInName = cand
+            } else if peekKind(p) == T_IDENT && p.toks[p.pos].text == "of" {
+                forInName = cand
+                isOf = true
             }
         }
         if forInName.len() > 0 {
@@ -738,6 +849,9 @@ fn parseStmt(p: &mut PState, prog: &mut Prog): i64 {
             let objExpr = parseExpr(p, prog)
             expect(p, T_RPAREN)
             let body = parseStmt(p, prog)
+            if isOf {
+                return addStmt(prog, Stmt.ForOf(forInName, objExpr, body))
+            }
             return addStmt(prog, Stmt.ForIn(forInName, objExpr, body))
         }
         p.pos = savedPos

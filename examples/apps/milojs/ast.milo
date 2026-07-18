@@ -39,6 +39,8 @@ enum Expr {
     Comma(i64, i64),
     // /pattern/flags written literally
     RegexLit(string, string),
+    // a?.b — yields undefined when the base is null/undefined
+    OptMember(i64, string),
 }
 
 // One key/value pair in an object literal; val is an expr index.
@@ -64,6 +66,8 @@ enum Stmt {
     MultiDecl(i64),
     // for (name in objExpr) body
     ForIn(string, i64, i64),
+    // for (name of iterExpr) body
+    ForOf(string, i64, i64),
     Break,
     Continue,
     // try block, catch-param name ("" if none), catch block idx (-1 if none),
@@ -167,6 +171,9 @@ fn cloneExpr(e: &Expr): Expr {
         Expr.RegexLit(pat, flags) => {
             return Expr.RegexLit(pat.clone(), flags.clone())
         }
+        Expr.OptMember(obj, name) => {
+            return Expr.OptMember(obj, name.clone())
+        }
     }
 }
 
@@ -210,6 +217,9 @@ fn cloneStmt(s: &Stmt): Stmt {
         }
         Stmt.ForIn(name, objExpr, body) => {
             return Stmt.ForIn(name.clone(), objExpr, body)
+        }
+        Stmt.ForOf(name, objExpr, body) => {
+            return Stmt.ForOf(name.clone(), objExpr, body)
         }
         Stmt.Break => {
             return Stmt.Break
