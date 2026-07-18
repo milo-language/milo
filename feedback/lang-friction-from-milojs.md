@@ -71,6 +71,14 @@ ordinary identifiers everywhere except the two constructs that use them.
 position), or at least list them in the reference's reserved-word set so it's not a
 surprise.
 
+**RESOLVED (2026-07-18):** `from` and `in` are now contextual (soft) keywords —
+ordinary identifiers everywhere except their one keyword position each. Dropped both
+from `KEYWORDS` (lexer emits them as `Ident`); the parser recognizes the keyword role
+by position via `atSoftKw`/`expectSoftKw` (`src/parser.ts`). `from` is an import only
+when followed by the path string, so a top-level `from` binding still parses as an
+expression. `fn pick(from: i64, in: i64)` and `let in = 5` now compile. Covered by
+`tests/fixtures/softKeywordFromIn.milo`; formatter round-trips them, LSP unaffected.
+
 ## 4. Formatter puts `}` / `)` on their own line after a struct literal (reads oddly)
 
 After a struct literal the formatter breaks the closing `}` / `)` onto its own line

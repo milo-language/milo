@@ -30,6 +30,19 @@ export class Parser {
 
   private at(kind: TokenKind): boolean { return this.peek().kind === kind; }
 
+  // `from` and `in` are contextual (soft) keywords: keyword-meaning only in import
+  // and for-in position, ordinary identifiers everywhere else (param/var names). The
+  // lexer emits them as Ident; these check the keyword role by text.
+  private atSoftKw(kw: string): boolean {
+    const t = this.peek();
+    return t.kind === TokenKind.Ident && t.value === kw;
+  }
+  private expectSoftKw(kw: string): Token {
+    const tok = this.peek();
+    if (tok.kind === TokenKind.Ident && tok.value === kw) return this.advance();
+    this.error(`expected '${kw}', got '${tok.kind}' ('${tok.value}')`, tok);
+  }
+
   private match(kind: TokenKind): Token | null {
     if (this.at(kind)) return this.advance();
     return null;
@@ -82,7 +95,9 @@ export class Parser {
         if (!attrs) attrs = [];
         attrs.push(this.parseAttribute());
       }
-      if (this.at(TokenKind.Import) || this.at(TokenKind.From)) {
+      // `from` is an import only when followed by the path string; otherwise it's an
+      // ordinary identifier (e.g. a top-level binding), so let it fall through.
+      if (this.at(TokenKind.Import) || (this.atSoftKw("from") && this.peekN(1).kind === TokenKind.String)) {
         imports.push(this.parseImport());
       } else if (this.at(TokenKind.Struct)) {
         const s = this.parseStruct();
@@ -129,7 +144,7 @@ export class Parser {
   }
 
   private parseImport(): ImportDecl {
-    if (this.at(TokenKind.From)) {
+    if (this.atSoftKw("from")) {
       const tok = this.advance();
       const pathTok = this.expect(TokenKind.String);
       this.expect(TokenKind.Import);
@@ -769,7 +784,7 @@ export class Parser {
     if (this.match(TokenKind.Comma)) {
       varName2 = this.expect(TokenKind.Ident).value;
     }
-    this.expect(TokenKind.In);
+    this.expectSoftKw("in");
     const iterableOrStart = this.parseExpr();
     let iterable: Expr;
     if (this.match(TokenKind.DotDot)) {
