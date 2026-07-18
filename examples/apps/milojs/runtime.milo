@@ -76,6 +76,9 @@ struct JSObj {
     // process.env: unknown keys are resolved from the real environment on read,
     // because there is no portable way to enumerate it from Milo yet
     isEnv: bool,
+    // Date instance: milliseconds since the epoch (JS's whole time model)
+    isDate: bool,
+    dateMs: f64,
     isMap: bool,
     isSet: bool,
     mapKeys: Vec<JSValue>,
@@ -128,6 +131,8 @@ struct Interp {
     promiseCtorObj: i64,
     // property bag for statics on the String constructor (fromCharCode)
     stringCtorProps: i64,
+    // property bag for statics on the Date constructor (Date.now)
+    dateCtorProps: i64,
     // monotonic counter behind Symbol(); symbols are unique strings here
     symbolCounter: i64,
     gcThreshold: i64,
@@ -138,7 +143,7 @@ struct Interp {
 fn allocObj(st: &mut Interp, isArray: bool): i64 {
     st.allocSinceGc = st.allocSinceGc + 1
     let obj = JSObj {
-        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), mark: false, free: false
+        props: Vec.new(), elems: Vec.new(), isArray: isArray, ctor: -1, proto: -1, isError: false, regexId: -1, promiseState: -1, promiseValue: JSValue.Undefined, isBound: false, boundTarget: JSValue.Undefined, boundThis: JSValue.Undefined, boundArgs: Vec.new(), boundMethod: "", isEnv: false, isDate: false, dateMs: 0.0, isMap: false, isSet: false, mapKeys: Vec.new(), mapVals: Vec.new(), mark: false, free: false
     }
     // reuse a freed slot if one exists (indices are stable — handles hold them),
     // otherwise grow the arena

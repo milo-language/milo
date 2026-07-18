@@ -49,6 +49,8 @@ enum Expr {
 struct PropInit {
     key: string,
     val: i64,
+    // 0 plain, 1 getter, 2 setter — accessors are installed rather than assigned
+    kind: i64,
 }
 
 enum Stmt {
@@ -107,6 +109,8 @@ struct ClassMember {
     name: string,
     fnIdx: i64,
     isStatic: bool,
+    // 0 plain method, 1 getter, 2 setter
+    kind: i64,
 }
 
 struct ClassDef {

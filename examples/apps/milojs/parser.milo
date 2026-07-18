@@ -547,7 +547,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             advance(p)
             let se = parseExpr(p, prog)
             props.push(PropInit {
-                key: "...", val: se
+                key: "...", val: se, kind: 0
             }
             )
             if peekKind(p) == T_COMMA {
@@ -555,6 +555,17 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
             }
         } else {
             var key = ""
+            var accessorKind: i64 = 0
+            // `get name() {}` / `set name(v) {}` — only an accessor when a name
+            // and parameter list follow, since `get` is a valid property name too
+            if (peekKind(p) == T_IDENT && (p.toks[p.pos].text == "get" || p.toks[p.pos].text == "set")) && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_COLON && p.toks[p.pos + 1].kind != T_COMMA && p.toks[p.pos + 1].kind != T_RBRACE && p.toks[p.pos + 1].kind != T_LPAREN {
+                if p.toks[p.pos].text == "get" {
+                    accessorKind = 1
+                } else {
+                    accessorKind = 2
+                }
+                advance(p)
+            }
             var isMethodAsync = false
             // `async foo() {}` — `async` is only a modifier when a method name follows
             if peekKind(p) == T_ASYNC && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_COLON && p.toks[p.pos + 1].kind != T_COMMA && p.toks[p.pos + 1].kind != T_RBRACE && p.toks[p.pos + 1].kind != T_LPAREN {
@@ -601,7 +612,7 @@ fn parseObjectLiteral(p: &mut PState, prog: &mut Prog): i64 {
                 valIdx = addExpr(prog, Expr.Ident(key.clone()))
             }
             props.push(PropInit {
-                key: key, val: valIdx
+                key: key, val: valIdx, kind: accessorKind
             }
             )
             if peekKind(p) == T_COMMA {
@@ -1388,8 +1399,13 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
                 isAsyncM = true
                 advance(p)
             }
-            // get/set are parsed as ordinary methods; the accessor is lost
+            var memberKind: i64 = 0
             if (peekKind(p) == T_IDENT && (p.toks[p.pos].text == "get" || p.toks[p.pos].text == "set")) && p.pos + 1 < p.toks.len() && p.toks[p.pos + 1].kind != T_LPAREN {
+                if p.toks[p.pos].text == "get" {
+                    memberKind = 1
+                } else {
+                    memberKind = 2
+                }
                 advance(p)
             }
             var mname = ""
@@ -1425,7 +1441,7 @@ fn parseClass(p: &mut PState, prog: &mut Prog): i64 {
                     ctorFn = fidx
                 } else {
                     members.push(ClassMember {
-                        name: mname, fnIdx: fidx, isStatic: isStatic
+                        name: mname, fnIdx: fidx, isStatic: isStatic, kind: memberKind
                     }
                     )
                 }

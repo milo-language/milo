@@ -29,6 +29,12 @@ from "std/os" import {
 from "std/env" import {
     getEnv
 }
+from "std/time" import {
+    epochMillis
+}
+from "std/datetime" import {
+    dateTimeFromEpoch, dateTimeFromEpochLocal
+}
 from "std/fs" import {
     currentDir
 }
@@ -443,6 +449,12 @@ let NATIVE_NOOP: i64 = 52
 let NATIVE_PROCESS_HRTIME: i64 = 53
 let NATIVE_PROCESS_CWD: i64 = 54
 let NATIVE_STRING_FROMCHARCODE: i64 = 55
+let NATIVE_DATE: i64 = 56
+let NATIVE_DATE_NOW: i64 = 57
+let NATIVE_ENCODE_URI_COMPONENT: i64 = 58
+let NATIVE_DECODE_URI_COMPONENT: i64 = 59
+let NATIVE_ENCODE_URI: i64 = 60
+let NATIVE_DECODE_URI: i64 = 61
 let NATIVE_RESOLVER_BASE: i64 = 1000000
 
 fn nativeErrorName(id: i64): string {
@@ -837,6 +849,48 @@ fn callNative(id: i64, argVals: &Vec<JSValue>, st: &mut Interp): JSValue {
     }
     if id == NATIVE_NOOP {
         return JSValue.Undefined
+    }
+    if id == NATIVE_ENCODE_URI_COMPONENT || id == NATIVE_ENCODE_URI {
+        var text = ""
+        if argVals.len() > 0 {
+            text = toStr(argVals[0])
+        }
+        // encodeURI leaves the reserved delimiters alone; encodeURIComponent does not
+        let keepReserved = id == NATIVE_ENCODE_URI
+        return JSValue.Str(uriEncode(text, keepReserved))
+    }
+    if id == NATIVE_DECODE_URI_COMPONENT || id == NATIVE_DECODE_URI {
+        var text = ""
+        if argVals.len() > 0 {
+            text = toStr(argVals[0])
+        }
+        if uriHasBadEscape(text) {
+            st.throwing = true
+            st.thrownValue = makeError(st, "URIError", "URI malformed")
+            return JSValue.Undefined
+        }
+        return JSValue.Str(uriDecode(text))
+    }
+    if id == NATIVE_DATE_NOW {
+        return JSValue.Number(epochMillis() as f64)
+    }
+    if id == NATIVE_DATE {
+        let o = newObject(st)
+        st.objects[o].isDate = true
+        if argVals.len() == 0 {
+            st.objects[o].dateMs = epochMillis() as f64
+        } else {
+            // new Date(ms) or new Date(isoString); anything else is Invalid Date
+            match cloneValue(argVals[0]) {
+                JSValue.Str(sv) => {
+                    st.objects[o].dateMs = parseIsoDate(sv)
+                }
+                _ => {
+                    st.objects[o].dateMs = toNum(argVals[0])
+                }
+            }
+        }
+        return JSValue.Obj(o)
     }
     if id == NATIVE_STRING_FROMCHARCODE {
         var out = String.withCapacity(argVals.len())
@@ -1476,6 +1530,14 @@ fn setupGlobals(st: &mut Interp) {
     scopeDefine(st, 0, "parseInt", JSValue.Native(NATIVE_PARSE_INT))
     scopeDefine(st, 0, "parseFloat", JSValue.Native(NATIVE_PARSE_FLOAT))
     scopeDefine(st, 0, "Symbol", JSValue.Native(NATIVE_SYMBOL))
+    let dateCtorObj = newObject(st)
+    objSet(st, dateCtorObj, "now", JSValue.Native(NATIVE_DATE_NOW))
+    st.dateCtorProps = dateCtorObj
+    scopeDefine(st, 0, "Date", JSValue.Native(NATIVE_DATE))
+    scopeDefine(st, 0, "encodeURIComponent", JSValue.Native(NATIVE_ENCODE_URI_COMPONENT))
+    scopeDefine(st, 0, "decodeURIComponent", JSValue.Native(NATIVE_DECODE_URI_COMPONENT))
+    scopeDefine(st, 0, "encodeURI", JSValue.Native(NATIVE_ENCODE_URI))
+    scopeDefine(st, 0, "decodeURI", JSValue.Native(NATIVE_DECODE_URI))
     scopeDefine(st, 0, "Map", JSValue.Native(NATIVE_MAP))
     scopeDefine(st, 0, "WeakMap", JSValue.Native(NATIVE_MAP))
     scopeDefine(st, 0, "Set", JSValue.Native(NATIVE_SET))
@@ -1777,7 +1839,23 @@ fn evalExpr(prog: &Prog, idx: i64, st: &mut Interp, scope: i64): JSValue {
                 let key = prog.objLits[litIdx][i].key.clone()
                 let valIdx = prog.objLits[litIdx][i].val
                 let v = evalExpr(prog, valIdx, st, scope)
-                if key == "..." {
+                let propKind = prog.objLits[litIdx][i].kind
+                if propKind > 0 {
+                    // a getter and setter for the same key share one property
+                    let existing = objOwnIndex(st, obj, key)
+                    var g = JSValue.Undefined
+                    var sfn = JSValue.Undefined
+                    if existing >= 0 && st.objects[obj].props[existing].isAccessor {
+                        g = cloneValue(st.objects[obj].props[existing].getter)
+                        sfn = cloneValue(st.objects[obj].props[existing].setter)
+                    }
+                    if propKind == 1 {
+                        g = v
+                    } else {
+                        sfn = v
+                    }
+                    objDefineAccessor(st, obj, key, g, sfn)
+                } else if key == "..." {
                     let src = objHandle(v)
                     if src >= 0 {
                         if st.objects[src].isArray {
@@ -2258,11 +2336,27 @@ fn instantiateClass(prog: &Prog, classIdx: i64, st: &mut Interp, scope: i64): JS
         let mName = prog.classes[classIdx].members[i].name.clone()
         let mFn = prog.classes[classIdx].members[i].fnIdx
         let mv = JSValue.Func(mFn, scope)
+        let mKind = prog.classes[classIdx].members[i].kind
+        var target = proto
         if prog.classes[classIdx].members[i].isStatic {
-            let statics = getFuncStatics(st, ctorFn)
-            objSet(st, statics, mName, mv)
+            target = getFuncStatics(st, ctorFn)
+        }
+        if mKind > 0 {
+            let existing = objOwnIndex(st, target, mName)
+            var g = JSValue.Undefined
+            var sfn = JSValue.Undefined
+            if existing >= 0 && st.objects[target].props[existing].isAccessor {
+                g = cloneValue(st.objects[target].props[existing].getter)
+                sfn = cloneValue(st.objects[target].props[existing].setter)
+            }
+            if mKind == 1 {
+                g = mv
+            } else {
+                sfn = mv
+            }
+            objDefineAccessor(st, target, mName, g, sfn)
         } else {
-            objSet(st, proto, mName, mv)
+            objSet(st, target, mName, mv)
         }
         i = i + 1
     }
@@ -2437,6 +2531,74 @@ fn mapMethod(prog: &Prog, o: i64, name: &string, args: &Vec<JSValue>, st: &mut I
         }
         popTemp(st)
         return JSValue.Undefined
+    }
+    return JSValue.Undefined
+}
+
+// Date instance methods. Everything derives from the stored epoch milliseconds.
+// ISO-8601 in UTC, the format Date.prototype.toISOString produces.
+fn isoFromMillis(ms: f64): string {
+    if ms != ms {
+        return "Invalid Date"
+    }
+    let total = (ms / 1000.0) as i64
+    let dt = dateTimeFromEpoch(total)
+    var frac = mathMod(ms, 1000.0) as i64
+    if frac < 0 {
+        frac = frac + 1000
+    }
+    return i64ToStr(dt.year as i64) + "-" + pad2(dt.month as i64) + "-" + pad2(dt.day as i64) + "T" + pad2(dt.hour as i64) + ":" + pad2(dt.minute as i64) + ":" + pad2(dt.second as i64) + "." + pad3(frac) + "Z"
+}
+
+fn dateMethod(st: &mut Interp, o: i64, name: &string, args: &Vec<JSValue>): JSValue {
+    let ms = st.objects[o].dateMs
+    if name == "getTime" || name == "valueOf" {
+        return JSValue.Number(ms)
+    }
+    if name == "setTime" {
+        var v = 0.0
+        if args.len() > 0 {
+            v = toNum(args[0])
+        }
+        st.objects[o].dateMs = v
+        return JSValue.Number(v)
+    }
+    if name == "toISOString" || name == "toJSON" {
+        return JSValue.Str(isoFromMillis(ms))
+    }
+    if name == "getFullYear" || name == "getMonth" || name == "getDate" || name == "getHours" || name == "getMinutes" || name == "getSeconds" || name == "getMilliseconds" || name == "getDay" {
+        // getFullYear/getHours/... are local-time accessors in JS; only the
+        // getUTC* family and toISOString work in UTC
+        let dt = dateTimeFromEpochLocal((ms / 1000.0) as i64)
+        if name == "getFullYear" {
+            return JSValue.Number(dt.year as f64)
+        }
+        if name == "getMonth" {
+            // JS months are zero-based
+            return JSValue.Number((dt.month - 1) as f64)
+        }
+        if name == "getDate" {
+            return JSValue.Number(dt.day as f64)
+        }
+        if name == "getHours" {
+            return JSValue.Number(dt.hour as f64)
+        }
+        if name == "getMinutes" {
+            return JSValue.Number(dt.minute as f64)
+        }
+        if name == "getSeconds" {
+            return JSValue.Number(dt.second as f64)
+        }
+        if name == "getDay" {
+            return JSValue.Number(dt.weekday as f64)
+        }
+        return JSValue.Number(mathMod(ms, 1000.0))
+    }
+    if name == "toString" || name == "toUTCString" || name == "toLocaleString" || name == "toLocaleDateString" || name == "toLocaleTimeString" || name == "toDateString" {
+        return JSValue.Str(isoFromMillis(ms))
+    }
+    if name == "getTimezoneOffset" {
+        return JSValue.Number(0.0)
     }
     return JSValue.Undefined
 }
@@ -3056,6 +3218,12 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
                 popTemp(st)
                 return r
             }
+            if st.objects[o].isDate {
+                let argVals = evalArgs(prog, argsIdx, st, scope)
+                let r = dateMethod(st, o, name, argVals)
+                popTemp(st)
+                return r
+            }
             if st.objects[o].isMap || st.objects[o].isSet {
                 let argVals = evalArgs(prog, argsIdx, st, scope)
                 let r = mapMethod(prog, o, name, argVals, st)
@@ -3097,6 +3265,13 @@ fn callMember(prog: &Prog, recv: JSValue, name: &string, argsIdx: i64, st: &mut 
         }
         JSValue.Native(nid) => {
             // statics hanging off a native constructor, e.g. String.fromCharCode
+            if nid == NATIVE_DATE && st.dateCtorProps >= 0 {
+                let m = getMember(st, st.dateCtorProps, name)
+                if isCallable(m) {
+                    let argVals = evalArgs(prog, argsIdx, st, scope)
+                    return callValue(prog, m, argVals, JSValue.Undefined, st)
+                }
+            }
             if nid == NATIVE_STRING && st.stringCtorProps >= 0 {
                 let m = getMember(st, st.stringCtorProps, name)
                 if isCallable(m) {
